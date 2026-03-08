@@ -19,12 +19,9 @@ const CONFIG_SCHEMA = {
   'old-mcap-max':   { type: 'number', min: 0, max: 1e15, default: 1000000 },
   'hvnc-min-vol':   { type: 'number', min: 0, max: 1e15, default: 300000 },
   'sound-volume':   { type: 'number', min: 0, max: 100, default: 50 },
+  'sound-mode':     { type: 'string', allowed: ['on', 'off'], default: 'on' },
 };
 
-/**
- * Valida uma key+value contra o schema.
- * Retorna { valid, value (sanitizado), error }
- */
 function validateConfigEntry(key, value) {
   const schema = CONFIG_SCHEMA[key];
   if (!schema) {
@@ -59,10 +56,6 @@ function validateConfigEntry(key, value) {
   return { valid: false, error: `Unknown type for ${key}` };
 }
 
-/**
- * Valida um objeto inteiro de configs.
- * Retorna { valid, configs (sanitizados), errors[] }
- */
 function validateConfigs(obj) {
   const configs = {};
   const errors = [];
@@ -83,22 +76,17 @@ function validateConfigs(obj) {
   };
 }
 
-/**
- * GET all configs for a user. Returns object with defaults filled in.
- */
 async function getAll(userId) {
   const { rows } = await db.query(
     'SELECT config_key, config_value FROM user_configs WHERE user_id = $1',
     [userId]
   );
 
-  // Start with defaults
   const configs = {};
   for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
     configs[key] = schema.default;
   }
 
-  // Override with saved values
   for (const row of rows) {
     const schema = CONFIG_SCHEMA[row.config_key];
     if (schema) {
@@ -111,9 +99,6 @@ async function getAll(userId) {
   return configs;
 }
 
-/**
- * SET (upsert) multiple configs at once. Only valid keys are written.
- */
 async function setMultiple(userId, configs) {
   if (Object.keys(configs).length === 0) return;
 
@@ -138,10 +123,6 @@ async function setMultiple(userId, configs) {
   }
 }
 
-/**
- * REPLACE all configs (PUT semantics): delete all, then insert new ones.
- * Keys not included revert to defaults.
- */
 async function replaceAll(userId, configs) {
   const client = await db.getClient();
   try {
@@ -162,9 +143,6 @@ async function replaceAll(userId, configs) {
   }
 }
 
-/**
- * DELETE a single config key (revert to default).
- */
 async function remove(userId, key) {
   const { rowCount } = await db.query(
     'DELETE FROM user_configs WHERE user_id = $1 AND config_key = $2',

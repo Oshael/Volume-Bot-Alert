@@ -1057,3 +1057,30 @@ Notas r�pidas para evitar erros recorrentes:
 ### Observacao de compatibilidade
 - O HTML atual ja usa `io(API_BASE, { auth: { token } })`, entao a remocao de JWT via query string no backend nao exige mudanca nesse client.
 - A atualizacao do HTML mais novo continua adiada ate o backend da Etapa 6 ficar estavel em producao.
+
+## Update 2026-03-08 - Testes de producao no frontend Vercel/Railway
+
+### Resultado dos testes manuais
+- Login em producao via frontend Vercel: ok.
+- Segunda sessao com outro usuario: ok.
+- Pump monitor/alertas: ok no fluxo observado.
+- Subscription compartilhada PumpFun: ok apos correcao de refcount por socket.
+- `logout-all`: falhou no primeiro teste porque as sessoes ja conectadas continuavam ativas no navegador/socket.
+- Persistencia por conta: comportamento inconsistente no primeiro teste; parte do estado ainda vazava pelo `localStorage` global do browser.
+
+### Correcoes aplicadas apos esse teste
+- Backend:
+  - `src/services/socket-hub.js` agora rastreia sockets por usuario e permite revogar conexoes ativas quando a sessao e invalidada.
+  - `src/routes/auth.js` agora revoga sockets ativos em `logout`, `logout-all` e `change-password`.
+  - `src/models/user-config.js` passou a aceitar `sound-mode` como config persistida por usuario.
+- Frontend integrado:
+  - `volume-alert-botV57.html` agora usa chaves de storage escopadas por usuario autenticado para `bot_config` e `manual_tokens`.
+  - `volume-alert-botV57.html` inclui `sound-mode` no conjunto de configs sincronizadas.
+  - `volume-alert-botV57.html` faz verificacao periodica de sessao autenticada e executa logout local quando a sessao for revogada.
+  - `syncConfigsToServer()` agora acusa erro se o backend rejeitar a atualizacao.
+
+### Proximo passo imediato
+1. Re-deploy no Railway com essas correcoes adicionais.
+2. Re-deploy do frontend Vercel se ele estiver apontando para o arquivo HTML atualizado.
+3. Repetir o teste de persistencia por conta com 2 usuarios.
+4. Repetir o teste de `logout-all` e confirmar logout efetivo nas sessoes abertas.

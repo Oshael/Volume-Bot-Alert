@@ -719,6 +719,22 @@ var authToken = null;
 var currentUser = null;
 var socketClient = null;
 var authValidated = false;
+let authSessionCheckTimer = null;
+
+function getUserStorageKey(baseKey) {
+  return currentUser?.id ? (baseKey + '_user_' + currentUser.id) : baseKey;
+}
+
+function setUserStorageJson(baseKey, value) {
+  localStorage.setItem(getUserStorageKey(baseKey), JSON.stringify(value));
+}
+
+function getUserStorageJson(baseKey, fallback) {
+  const raw = localStorage.getItem(getUserStorageKey(baseKey));
+  if (raw == null) return fallback;
+  try { return JSON.parse(raw); } catch (_) { return fallback; }
+}
+
 
 async function ensureSessionValid() {
   if (!authToken) return false;
@@ -1178,7 +1194,7 @@ const CONFIG_FIELDS = [
   'threshold','mcap-threshold','min-vol','min-mcap','max-mcap',
   'interval','min-mcap-remove','dead-cycles','chain',
   'pump-entry-vol','pump-min-vol','pump-bond-mcap',
-  'old-mcap-min','old-mcap-max','hvnc-min-vol','sound-volume'
+  'old-mcap-min','old-mcap-max','hvnc-min-vol','sound-mode','sound-volume'
 ];
 
 function readConfigFromUI() {
@@ -1192,7 +1208,7 @@ function readConfigFromUI() {
 
 function saveConfig() {
   const cfg = readConfigFromUI();
-  localStorage.setItem('bot_config', JSON.stringify(cfg));
+  setUserStorageJson('bot_config', cfg);
   scheduleConfigSync(cfg);
 }
 
@@ -1236,7 +1252,7 @@ function applyMcapRemoveFilter() {
 
 function loadConfig() {
   try {
-    const cfg = JSON.parse(localStorage.getItem('bot_config') || '{}');
+    const cfg = getUserStorageJson('bot_config', {});
     if (!Object.keys(cfg).length) return;
     CONFIG_FIELDS.forEach(id => {
       const el = document.getElementById(id);
@@ -1268,12 +1284,17 @@ function scheduleConfigSync(cfg) {
 }
 
 async function syncConfigsToServer(cfg) {
-  await apiAuthFetch('/api/config', {
+  const res = await apiAuthFetch('/api/config', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ configs: cfg })
   });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`config sync failed (${res.status}) ${txt}`);
+  }
 }
+
 
 function scheduleManualTokensSync(manualAddresses) {
   if (!authToken) return;
@@ -1325,13 +1346,13 @@ function saveManualTokens() {
   const manual = Object.entries(state.tokens)
     .filter(([, tok]) => tok._userManual === true)
     .map(([addr]) => addr);
-  localStorage.setItem('manual_tokens', JSON.stringify(manual));
+  setUserStorageJson('manual_tokens', manual);
   scheduleManualTokensSync(manual);
 }
 
 async function loadManualTokens(savedOverride = null) {
   try {
-    const saved = Array.isArray(savedOverride) ? savedOverride : JSON.parse(localStorage.getItem('manual_tokens') || '[]');
+    const saved = Array.isArray(savedOverride) ? savedOverride : getUserStorageJson('manual_tokens', []);
     if (!saved.length) return;
     logTicker(`⟳ Loading ${saved.length} saved token(s)...`);
     for (const addr of saved) {
@@ -2876,7 +2897,7 @@ function applyConfigToUI(cfg) {
     const el = document.getElementById(id);
     if (el && cfg[id] !== undefined) el.value = cfg[id];
   });
-  localStorage.setItem('bot_config', JSON.stringify(readConfigFromUI()));
+  setUserStorageJson('bot_config', readConfigFromUI());
 }
 
 function applyServerBlocklist(blocklist) {
@@ -2906,7 +2927,7 @@ async function loadUserStateFromServer() {
       .map(t => (typeof t === 'string' ? t : t?.address))
       .filter(Boolean);
 
-    localStorage.setItem('manual_tokens', JSON.stringify(manualAddresses));
+    setUserStorageJson('manual_tokens', manualAddresses);
 
     for (const [addr, tok] of Object.entries(state.tokens)) {
       if (tok?._userManual) delete state.tokens[addr];
@@ -3074,16 +3095,12 @@ async function doRegister() {
 }
 
 // ── Logout ──
-async function doLogout() {
-  try {
-    if (authToken) {
-      await fetch(`${API_BASE}/api/auth/logout`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${authToken}` },
-      });
-    }
-  } catch (_) {}
+function finishLogout() {
   disconnectServerSocket();
+  if (authSessionCheckTimer) {
+    clearInterval(authSessionCheckTimer);
+    authSessionCheckTimer = null;
+  }
   authValidated = false;
   authToken = null;
   currentUser = null;
@@ -3094,8 +3111,19 @@ async function doLogout() {
   }
   document.getElementById('app-container').classList.remove('visible');
   document.getElementById('login-screen').classList.remove('hidden');
-  // Stop the bot if running
   if (typeof stopBot === 'function') try { stopBot(); } catch(_) {}
+}
+
+async function doLogout(skipServer = false) {
+  try {
+    if (!skipServer && authToken) {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+    }
+  } catch (_) {}
+  finishLogout();
 }
 
 // ── Session restore ──
@@ -3147,6 +3175,15 @@ async function onAuthenticated() {
   }
 
   connectServerSocket();
+  if (authSessionCheckTimer) clearInterval(authSessionCheckTimer);
+  authSessionCheckTimer = setInterval(async () => {
+    if (!authToken) return;
+    const ok = await ensureSessionValid();
+    if (!ok) {
+      logTicker('Session expired or revoked. Logging out...');
+      await doLogout(true);
+    }
+  }, 30000);
 }
 
 // ── Enter key support ──
@@ -3164,6 +3201,12 @@ tryRestoreSession();
 </script>
 </body>
 </html>
+
+
+
+
+
+
 
 
 

@@ -9,6 +9,7 @@
  * - pump:status       - PumpFun connection status
  * - sol:price         - SOL/USD price update
  * - dex:tokenData     - DexScreener data for requested token
+ * - auth:revoked      - session revoked; client must logout
  *
  * Events received from clients:
  * - dex:subscribe     - { address } - request DexScreener data for a token
@@ -28,9 +29,10 @@ const dexscreener = require('./dexscreener');
 let io = null;
 let solPriceTimer = null;
 
-const SOL_PRICE_BROADCAST_INTERVAL = 30000; // broadcast price every 30s
-const socketSubscriptions = new Map(); // socketId -> Set<mint>
-const mintSubscribers = new Map(); // mint -> Set<socketId>
+const SOL_PRICE_BROADCAST_INTERVAL = 30000;
+const socketSubscriptions = new Map();
+const mintSubscribers = new Map();
+const userSockets = new Map();
 
 function sanitizeMint(rawMint) {
   if (typeof rawMint !== 'string') return null;
@@ -46,6 +48,28 @@ function ensureSocketSubscriptions(socket) {
     socketSubscriptions.set(socket.id, subscriptions);
   }
   return subscriptions;
+}
+
+function trackUserSocket(socket) {
+  const userId = socket.user?.id;
+  if (!userId) return;
+  let sockets = userSockets.get(userId);
+  if (!sockets) {
+    sockets = new Set();
+    userSockets.set(userId, sockets);
+  }
+  sockets.add(socket.id);
+}
+
+function untrackUserSocket(socket) {
+  const userId = socket.user?.id;
+  if (!userId) return;
+  const sockets = userSockets.get(userId);
+  if (!sockets) return;
+  sockets.delete(socket.id);
+  if (sockets.size === 0) {
+    userSockets.delete(userId);
+  }
 }
 
 function subscribeSocketToMint(socket, mint) {
@@ -118,10 +142,26 @@ function cleanupSocketSubscriptions(socket) {
   }
 }
 
-/**
- * Initialize Socket.io on the HTTP server.
- * @param {http.Server} httpServer
- */
+function revokeUserSockets(userId, reason = 'session_revoked') {
+  if (!io) return 0;
+  const sockets = userSockets.get(userId);
+  if (!sockets || sockets.size === 0) return 0;
+
+  const socketIds = Array.from(sockets);
+  for (const socketId of socketIds) {
+    const socket = io.sockets.sockets.get(socketId);
+    if (!socket) continue;
+    socket.emit('auth:revoked', { reason });
+    setTimeout(() => {
+      try {
+        socket.disconnect(true);
+      } catch (_) {}
+    }, 25);
+  }
+
+  return socketIds.length;
+}
+
 function init(httpServer) {
   io = new Server(httpServer, {
     cors: {
@@ -134,7 +174,6 @@ function init(httpServer) {
 
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
-
     if (!token) {
       return next(new Error('Authentication required'));
     }
@@ -162,6 +201,7 @@ function init(httpServer) {
   io.on('connection', (socket) => {
     console.log(`[Socket.io] ${socket.user.username} connected (${socket.id})`);
     ensureSocketSubscriptions(socket);
+    trackUserSocket(socket);
 
     socket.emit('sol:price', { price: solPrice.getPrice() });
     socket.emit('pump:status', pumpfun.getStatus());
@@ -196,12 +236,12 @@ function init(httpServer) {
 
     socket.on('disconnect', (reason) => {
       cleanupSocketSubscriptions(socket);
+      untrackUserSocket(socket);
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
   });
 
   startServices();
-
   console.log('[Socket.io] Initialized');
   return io;
 }
@@ -247,6 +287,7 @@ function stop() {
   pumpfun.stop();
   socketSubscriptions.clear();
   mintSubscribers.clear();
+  userSockets.clear();
   if (io) {
     io.close();
     io = null;
@@ -257,6 +298,7 @@ function getStatus() {
   return {
     clients: io ? io.engine.clientsCount : 0,
     trackedPumpSubscriptions: mintSubscribers.size,
+    trackedAuthenticatedUsers: userSockets.size,
     pumpfun: pumpfun.getStatus(),
     solPrice: solPrice.getStatus(),
   };
@@ -266,4 +308,4 @@ function getIO() {
   return io;
 }
 
-module.exports = { init, stop, getStatus, getIO };
+module.exports = { init, stop, getStatus, getIO, revokeUserSockets };
