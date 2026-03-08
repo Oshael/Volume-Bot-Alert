@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Volume Alert Bot â€” Solana</title>
+<title>Volume Alert Bot — Solana</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
 <style>
@@ -360,7 +360,7 @@
   }
 
   @media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
-  /* â”€â”€ Login Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* ── Login Screen ────────────────────────────────────────── */
   #login-screen {
     position: fixed; inset: 0; z-index: 10000;
     background: var(--bg);
@@ -440,18 +440,18 @@
 <body>
 <div class="scanlines"></div>
 
-<!-- â”€â”€ Login / Register Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+<!-- ── Login / Register Screen ──────────────────────────── -->
 <div id="login-screen">
   <div class="login-box">
     <h2><div style="width:10px;height:10px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan)"></div> VOLUME ALERT BOT</h2>
-    <div class="login-sub">Solana Â· Real-time Monitor</div>
+    <div class="login-sub">Solana · Real-time Monitor</div>
 
     <!-- Login Form -->
     <div id="login-form">
       <label>Email</label>
       <input type="email" id="login-email" placeholder="email@example.com" autocomplete="email">
       <label>Password</label>
-      <input type="password" id="login-password" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" autocomplete="current-password">
+      <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
       <button class="login-btn" id="login-btn" onclick="doLogin()">LOGIN</button>
       <div class="login-error" id="login-error"></div>
       <div class="login-toggle">Don't have an account? <a onclick="showRegister()">Register</a></div>
@@ -474,7 +474,7 @@
   </div>
 </div>
 
-<!-- â”€â”€ App Container (hidden until authenticated) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+<!-- ── App Container (hidden until authenticated) ────────── -->
 <div id="app-container">
 
 <header>
@@ -482,16 +482,16 @@
     <div class="logo-dot"></div>
     <div>
       <h1>VOLUME ALERT BOT</h1>
-      <div class="subtitle">Solana Â· DexScreener Feed Â· 5m Monitor</div>
+      <div class="subtitle">Solana · DexScreener Feed · 5m Monitor</div>
     </div>
   </div>
   <div class="status-bar">
     <div class="status-item"><span>STATUS</span><div id="run-status" class="status-value">STOPPED</div></div>
     <div class="status-item"><span>CYCLE</span><div id="cycle-count" class="status-value">0</div></div>
-    <div class="status-item"><span>UPTIME</span><div id="uptime-count" class="status-value">â€”</div></div>
+    <div class="status-item"><span>UPTIME</span><div id="uptime-count" class="status-value">—</div></div>
     <div class="status-item"><span>ALERTS</span><div id="alert-count" class="status-value">0</div></div>
     <div class="status-item"><span>TIMEOUTS</span><div id="timeout-count" class="status-value" style="color:var(--muted)">0</div></div>
-    <div class="status-item"><span id="notif-status">ðŸ”• SOUND OFF</span></div>
+    <div class="status-item"><span id="notif-status">🔕 SOUND OFF</span></div>
   </div>
 </header>
 
@@ -540,7 +540,7 @@
     </select>
   </div>
   <div class="config-item">
-    <label>ðŸš¨ High Vol New Coin â€” min total vol ($)</label>
+    <label>🚨 High Vol New Coin — min total vol ($)</label>
     <input type="number" id="hvnc-min-vol" value="300000" min="0" placeholder="0 = disabled">
   </div>
   <!-- Row 2 remaining: sound -->
@@ -557,36 +557,36 @@
   </div>
   <!-- Row 3: Sound files -->
   <div class="config-item">
-    <label>ðŸŸ¢ Sound level NORMAL (+50%) â€” MP3/WAV/OGG</label>
+    <label>🟢 Sound level NORMAL (+50%) — MP3/WAV/OGG</label>
     <input type="file" id="sound-normal" accept="audio/*" onchange="loadLevelSound('normal',this)" style="font-size:11px;padding:6px 8px">
     <span id="sound-normal-name" style="font-size:10px;color:var(--muted);margin-top:2px">Default (tone)</span>
   </div>
   <div class="config-item">
-    <label>ðŸŸ¡ Sound level CRITICAL (+100%) â€” MP3/WAV/OGG</label>
+    <label>🟡 Sound level CRITICAL (+100%) — MP3/WAV/OGG</label>
     <input type="file" id="sound-critical" accept="audio/*" onchange="loadLevelSound('critical',this)" style="font-size:11px;padding:6px 8px">
     <span id="sound-critical-name" style="font-size:10px;color:var(--muted);margin-top:2px">Default (tone)</span>
   </div>
   <div class="config-item">
-    <label>ðŸ”´ Sound level MEGA (+200%) â€” MP3/WAV/OGG</label>
+    <label>🔴 Sound level MEGA (+200%) — MP3/WAV/OGG</label>
     <input type="file" id="sound-mega" accept="audio/*" onchange="loadLevelSound('mega',this)" style="font-size:11px;padding:6px 8px">
     <span id="sound-mega-name" style="font-size:10px;color:var(--muted);margin-top:2px">Default (tone)</span>
   </div>
 </div>
 
 <div class="btn-row">
-  <button class="btn-start" id="btn-start" onclick="toggleBot()">â–¶ START MONITORING</button>
+  <button class="btn-start" id="btn-start" onclick="toggleBot()">▶ START MONITORING</button>
   <button class="btn-test" onclick="addManualToken()">+ ADD TOKEN</button>
-  <button class="btn-test" onclick="loadTrendingBtn(this)">âŸ³ LOAD TRENDING SOL</button>
-  <button class="btn-test" onclick="clearAlerts()">âœ• CLEAR ALERTS</button>
-  <button class="btn-test" style="border-color:var(--green);color:var(--green)" onclick="playAlert('normal');setTimeout(()=>playAlert('critical'),500);setTimeout(()=>playAlert('mega'),1100)">â–¶ TEST SOUND</button>
-  <button class="btn-test" style="border-color:#ffaa00;color:#ffaa00" onclick="debugTokens()">ðŸ” DEBUG MCAP</button>
+  <button class="btn-test" onclick="loadTrendingBtn(this)">⟳ LOAD TRENDING SOL</button>
+  <button class="btn-test" onclick="clearAlerts()">✕ CLEAR ALERTS</button>
+  <button class="btn-test" style="border-color:var(--green);color:var(--green)" onclick="playAlert('normal');setTimeout(()=>playAlert('critical'),500);setTimeout(()=>playAlert('mega'),1100)">▶ TEST SOUND</button>
+  <button class="btn-test" style="border-color:#ffaa00;color:#ffaa00" onclick="debugTokens()">🔍 DEBUG MCAP</button>
 </div>
 
 <div id="migrate-toast-container"></div>
 <input type="hidden" id="pump-bond-mcap" value="35000">
 
 <div id="blocklist-bar" style="display:none;align-items:center;gap:8px;margin-bottom:12px;background:var(--surface);border:1px solid rgba(255,60,95,0.2);border-radius:6px;padding:8px 12px;flex-wrap:wrap">
-  <span style="font-size:10px;color:var(--red);white-space:nowrap;text-transform:uppercase;letter-spacing:1px">ðŸš« Blocked:</span>
+  <span style="font-size:10px;color:var(--red);white-space:nowrap;text-transform:uppercase;letter-spacing:1px">🚫 Blocked:</span>
   <div id="blocklist-tags" style="display:flex;gap:6px;flex-wrap:wrap;flex:1"></div>
   <button onclick="clearBlocklist()" style="font-size:10px;padding:4px 10px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer;font-family:inherit">CLEAR ALL</button>
 </div>
@@ -594,10 +594,10 @@
 <div id="old-tokens-bar" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px;background:var(--surface);border:1px solid rgba(255,170,0,0.2);border-radius:6px;padding:10px 12px">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <div style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:10px;color:#ffaa00;text-transform:uppercase;letter-spacing:1px;font-weight:700">â³ Old Tokens</span>
+      <span style="font-size:10px;color:#ffaa00;text-transform:uppercase;letter-spacing:1px;font-weight:700">⏳ Old Tokens</span>
       <div id="old-removal-log-wrapper" style="position:relative;display:none">
         <div id="old-removal-log-badge" style="font-size:9px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid rgba(255,170,0,0.15);border-radius:4px;background:rgba(255,170,0,0.04);transition:all 0.15s" onmouseenter="document.getElementById('old-removal-log-panel').style.display='block'" onmouseleave="">
-          ðŸ“‹ <span id="old-removal-log-count">0</span> removed
+          📋 <span id="old-removal-log-count">0</span> removed
         </div>
         <div id="old-removal-log-panel" style="display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:340px;max-width:500px;max-height:320px;overflow-y:auto;background:var(--bg);border:1px solid rgba(255,170,0,0.3);border-radius:6px;padding:8px;z-index:100;box-shadow:0 4px 20px rgba(0,0,0,0.5)" onmouseenter="this.style.display='block'" onmouseleave="this.style.display='none'">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -619,7 +619,7 @@
           style="width:90px;font-size:9px;padding:2px 5px;background:var(--bg);border:1px solid var(--border);color:#ffaa00;border-radius:3px;font-family:inherit;margin-left:4px"
           onchange="saveConfig();applyOldTokensMcapFilter()">
       </span>
-      <span style="font-size:9px;color:var(--muted)">1d â€“ 7d old Â· continuously monitored</span>
+      <span style="font-size:9px;color:var(--muted)">1d – 7d old · continuously monitored</span>
     </div>
   </div>
   <div id="old-tokens-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
@@ -627,8 +627,8 @@
 
 <div id="manual-tokens-bar" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px;background:var(--surface);border:1px solid rgba(0,212,255,0.2);border-radius:6px;padding:10px 12px">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <span style="font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;font-weight:700">ðŸ“Œ Manual Tokens</span>
-    <span style="font-size:9px;color:var(--muted)">Pinned Â· always monitored Â· removing here keeps them in the monitor panel if they have volume</span>
+    <span style="font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;font-weight:700">📌 Manual Tokens</span>
+    <span style="font-size:9px;color:var(--muted)">Pinned · always monitored · removing here keeps them in the monitor panel if they have volume</span>
   </div>
   <div id="manual-tokens-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
 </div>
@@ -651,7 +651,7 @@
     </div>
     <div class="monitored-list" id="monitored-list">
       <div class="empty-state">
-        <div class="empty-icon">â¬¡</div>
+        <div class="empty-icon">⬡</div>
         <div class="empty-text">Add tokens or load trending</div>
       </div>
     </div>
@@ -663,7 +663,7 @@
 
   <div class="panel pump-panel">
     <div class="panel-header" style="border-color:rgba(176,106,255,0.2)">
-      <span style="color:var(--pump-color)">âš¡ PUMPFUN â€” LIVE</span>
+      <span style="color:var(--pump-color)">⚡ PUMPFUN — LIVE</span>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="font-size:9px;color:var(--muted)">ENTRY ($)</span>
         <input type="number" id="pump-entry-vol" value="20000" min="0" style="width:70px;font-size:10px;padding:2px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px">
@@ -674,24 +674,24 @@
     </div>
     <div class="pump-list" id="pump-list">
       <div class="empty-state">
-        <div class="empty-icon" style="color:var(--pump-color);opacity:0.4">âš¡</div>
+        <div class="empty-icon" style="color:var(--pump-color);opacity:0.4">⚡</div>
         <div class="empty-text">Waiting for WebSocket connection...</div>
       </div>
     </div>
     <div style="padding:8px 12px;border-top:1px solid rgba(176,106,255,0.15);display:flex;align-items:center;justify-content:space-between">
-      <span id="pump-status" style="font-size:10px;color:var(--muted)">â— Disconnected</span>
+      <span id="pump-status" style="font-size:10px;color:var(--muted)">● Disconnected</span>
       <button onclick="togglePumpWs()" id="pump-btn" style="font-size:10px;padding:4px 12px;background:rgba(176,106,255,0.1);border:1px solid rgba(176,106,255,0.3);color:var(--pump-color);border-radius:4px;cursor:pointer;font-family:inherit">CONNECT</button>
     </div>
   </div>
 
   <div class="panel">
     <div class="panel-header">
-      <span>ðŸ”” ALERTS</span>
+      <span>🔔 ALERTS</span>
       <span class="count" id="alerts-count-badge">0</span>
     </div>
     <div class="alerts-list" id="alerts-list">
       <div class="empty-state">
-        <div class="empty-icon">â—ˆ</div>
+        <div class="empty-icon">◈</div>
         <div class="empty-text">Waiting for signals...</div>
       </div>
     </div>
@@ -699,7 +699,7 @@
 </div>
 
 <div class="ticker" id="ticker">
-  <span class="ticker-item">Bot ready â€” add tokens and start monitoring</span>
+  <span class="ticker-item">Bot ready — add tokens and start monitoring</span>
 </div>
 
 <script>
@@ -712,7 +712,7 @@ const state = {
   alertCount: 0,
   sortBy: 'vol5m',
   lastTrendingRefresh: 0,
-  blocklist: new Set(), // CAs e sÃ­mbolos bloqueados
+  blocklist: new Set(), // CAs e símbolos bloqueados
 };
 
 var authToken = null;
@@ -759,7 +759,7 @@ async function requireAuthOrBlock(actionLabel) {
   return false;
 }
 
-// CORS proxy helper â€” tenta direto primeiro, depois via proxy
+// CORS proxy helper — tenta direto primeiro, depois via proxy
 const PROXIES = [
   url => url,                                                          // direto
   url => `https://corsproxy.io/?${encodeURIComponent(url)}`,          // proxy 1
@@ -782,7 +782,7 @@ async function apiFetch(url) {
           el.textContent = timeoutCount;
           el.style.color = timeoutCount > 5 ? 'var(--red)' : 'var(--yellow)';
         }
-        logTicker(`â± Timeout (${timeoutCount}) â€” ${new URL(wrap(url)).hostname}`);
+        logTicker(`⏱ Timeout (${timeoutCount}) — ${new URL(wrap(url)).hostname}`);
       }
       continue;
     }
@@ -806,7 +806,7 @@ async function fetchPairData(address) {
 const oldTokens = {};
 const OLD_MIN_AGE = 86400000;    // 1 dia em ms
 const OLD_MAX_AGE = 604800000;   // 7 dias em ms
-// Tokens manually dismissed â€” never re-added automatically to Old Tokens bar
+// Tokens manually dismissed — never re-added automatically to Old Tokens bar
 const dismissedOldTokens = new Set(JSON.parse(localStorage.getItem('old_dismissed') || '[]'));
 function saveDismissedOld() {
   localStorage.setItem('old_dismissed', JSON.stringify([...dismissedOldTokens]));
@@ -872,7 +872,7 @@ function renderOldRemovalLog() {
         <div style="font-size:9px;color:var(--muted)">${e.reason}</div>
         <div style="font-size:8px;color:var(--muted);opacity:0.6">${time}</div>
       </div>
-      <button onclick="removeOldLogEntry(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;opacity:0.4;flex-shrink:0" onmouseover="this.style.opacity=1;this.style.color='var(--red)'" onmouseout="this.style.opacity=0.4;this.style.color='var(--muted)'" title="Dismiss">âœ•</button>
+      <button onclick="removeOldLogEntry(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;opacity:0.4;flex-shrink:0" onmouseover="this.style.opacity=1;this.style.color='var(--red)'" onmouseout="this.style.opacity=0.4;this.style.color='var(--muted)'" title="Dismiss">✕</button>
     </div>`;
   }).join('');
 }
@@ -891,7 +891,7 @@ async function loadOldTokens() {
     if (!saved.length) return;
     for (const t of saved) {
       oldTokens[t.addr] = { symbol: t.symbol, name: t.name, imageUrl: t.imageUrl, mcap: t.mcap, pairUrl: t.pairUrl, addedAt: t.addedAt, createdAt: t.createdAt || null };
-      // Garante que o token estÃ¡ sendo monitorado
+      // Garante que o token está sendo monitorado
       if (!state.tokens[t.addr]) {
         addToken(t.addr, t.name, t.symbol);
         if (state.tokens[t.addr]) {
@@ -925,7 +925,7 @@ function applyOldTokensMcapFilter() {
 
 function addOldToken(addr, tok) {
   if (oldTokens[addr]) return;
-  if (dismissedOldTokens.has(addr)) return; // user manually dismissed â€” never re-add
+  if (dismissedOldTokens.has(addr)) return; // user manually dismissed — never re-add
   const mcap = tok.mcap || 0;
   const min = getOldMcapMin(), max = getOldMcapMax();
   if (mcap > 0 && (mcap < min || mcap > max)) return;
@@ -943,7 +943,7 @@ function addOldToken(addr, tok) {
     state.tokens[addr].oldToken = true;  // marca como token velho (mcap filter pode agir)
   }
   renderOldTokens();
-  logTicker(`â³ Old token detected: ${tok.symbol}`);
+  logTicker(`⏳ Old token detected: ${tok.symbol}`);
 }
 
 function removeOldToken(addr) {
@@ -977,10 +977,10 @@ function renderManualBar() {
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
           <a href="${dexUrl}" target="_blank" style="font-weight:700;color:var(--cyan);font-size:12px;white-space:nowrap;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${sym}</a>
-          <a href="${dexUrl}" target="_blank" title="DexScreener" style="color:var(--cyan);opacity:0.7;font-size:11px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7">â†—</a>
-          <a href="${xSearch}" target="_blank" title="Search on X" style="color:#1d9bf0;opacity:0.8;font-size:11px;text-decoration:none;font-weight:700;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">ð•</a>
-          ${xProfile ? `<a href="${xProfile}" target="_blank" title="X Profile" style="color:#1d9bf0;opacity:0.6;font-size:10px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">ðŸ‘¤</a>` : ''}
-          <button onclick="copyManualCA('${addr}',this)" title="Copy CA" style="background:none;border:1px solid rgba(0,212,255,0.2);color:var(--muted);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;font-family:inherit;line-height:1.4" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='rgba(0,212,255,0.2)';this.style.color='var(--muted)'">â§‰</button>
+          <a href="${dexUrl}" target="_blank" title="DexScreener" style="color:var(--cyan);opacity:0.7;font-size:11px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7">↗</a>
+          <a href="${xSearch}" target="_blank" title="Search on X" style="color:#1d9bf0;opacity:0.8;font-size:11px;text-decoration:none;font-weight:700;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">𝕏</a>
+          ${xProfile ? `<a href="${xProfile}" target="_blank" title="X Profile" style="color:#1d9bf0;opacity:0.6;font-size:10px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">👤</a>` : ''}
+          <button onclick="copyManualCA('${addr}',this)" title="Copy CA" style="background:none;border:1px solid rgba(0,212,255,0.2);color:var(--muted);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;font-family:inherit;line-height:1.4" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='rgba(0,212,255,0.2)';this.style.color='var(--muted)'">⧉</button>
         </div>
         <div style="font-size:10px;color:var(--muted);white-space:nowrap;margin-top:2px">
           <span>MCAP <span id="mb-mcap-${addr}" style="color:#fff;font-weight:700">$${fmt(tok.mcap||0)}</span><span id="mb-mcap-ch-${addr}" style="font-size:9px;font-weight:700;margin-left:4px">${(() => { const ch = getMcapChange5m(tok); return ch ? `<span style="color:${ch.color}">${ch.str}</span>` : ''; })()}</span></span>
@@ -994,7 +994,7 @@ function renderManualBar() {
         <div style="font-size:9px;color:var(--muted);margin-top:1px">
           ${(() => {
             const pcFmt = (label, val, id) => {
-              if (val == null || val === undefined) return `<span>${label} <span id="${id}" style="color:var(--muted)">â€“</span></span>`;
+              if (val == null || val === undefined) return `<span>${label} <span id="${id}" style="color:var(--muted)">–</span></span>`;
               const c = val >= 0 ? 'var(--green)' : 'var(--red)';
               const s = val >= 0 ? '+' : '';
               return `<span>${label} <span id="${id}" style="color:${c};font-weight:700">${s}${val.toFixed(2)}%</span></span>`;
@@ -1007,7 +1007,7 @@ function renderManualBar() {
           })()}
         </div>
       </div>
-      <button onclick="removeManualToken('${addr}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:0.5;flex-shrink:0;transition:opacity 0.15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Unpin">âœ•</button>
+      <button onclick="removeManualToken('${addr}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:0.5;flex-shrink:0;transition:opacity 0.15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Unpin">✕</button>
     </div>`;
   }).join('');
 }
@@ -1015,7 +1015,7 @@ function renderManualBar() {
 function copyManualCA(addr, btn) {
   navigator.clipboard.writeText(addr).then(() => {
     const orig = btn.textContent;
-    btn.textContent = 'âœ“';
+    btn.textContent = '✓';
     btn.style.color = 'var(--green)';
     setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
   });
@@ -1024,7 +1024,7 @@ function copyManualCA(addr, btn) {
 function copyOldCA(addr, btn) {
   navigator.clipboard.writeText(addr).then(() => {
     const orig = btn.textContent;
-    btn.textContent = 'âœ“';
+    btn.textContent = '✓';
     btn.style.color = 'var(--green)';
     setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
   });
@@ -1038,7 +1038,7 @@ function removeManualToken(addr) {
   }
   saveManualTokens();
   renderManualBar();
-  logTicker(`ðŸ“Œ Unpinned: ${sym}`);
+  logTicker(`📌 Unpinned: ${sym}`);
 }
 
 function updateManualBar() {
@@ -1065,7 +1065,7 @@ function updateManualBar() {
     const mbPcUpdate = (id, val) => {
       const pcEl = document.getElementById(id);
       if (!pcEl) return;
-      if (val == null || val === undefined) { pcEl.textContent = 'â€“'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
+      if (val == null || val === undefined) { pcEl.textContent = '–'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
       const s = val >= 0 ? '+' : '';
       pcEl.textContent = `${s}${val.toFixed(2)}%`;
       pcEl.style.color = val >= 0 ? 'var(--green)' : 'var(--red)';
@@ -1098,13 +1098,13 @@ function renderOldTokens() {
          <div style="display:none;width:30px;height:30px;border-radius:50%;background:rgba(255,170,0,0.12);align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#ffaa00">${(t.symbol||'?').slice(0,2)}</div>`
       : `<div style="display:flex;width:30px;height:30px;border-radius:50%;background:rgba(255,170,0,0.12);align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#ffaa00">${(t.symbol||'?').slice(0,2)}</div>`;
 
-    const ageStr = t.createdAt ? fmtAge(t.createdAt) : 'â€“';
+    const ageStr = t.createdAt ? fmtAge(t.createdAt) : '–';
 
     const pc1h  = t.priceChange1h;
     const pc6h  = t.priceChange6h;
     const pc24h = t.priceChange24h;
     const pcSpan = (label, val, id) => {
-      if (val == null || val === undefined) return `<span>${label} <span id="${id}" style="color:var(--muted)">â€“</span></span>`;
+      if (val == null || val === undefined) return `<span>${label} <span id="${id}" style="color:var(--muted)">–</span></span>`;
       const c = val >= 0 ? 'var(--green)' : 'var(--red)';
       const s = val >= 0 ? '+' : '';
       return `<span>${label} <span id="${id}" style="color:${c};font-weight:700">${s}${val.toFixed(2)}%</span></span>`;
@@ -1118,9 +1118,9 @@ function renderOldTokens() {
       <div style="min-width:0">
         <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
           <a href="${dexUrl}" target="_blank" style="font-weight:700;color:#ffaa00;font-size:11px;text-decoration:none;white-space:nowrap">${t.symbol}</a>
-          <a href="${xSearch}" target="_blank" title="Search on X" style="color:#1d9bf0;opacity:0.8;font-size:11px;text-decoration:none;font-weight:700;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">ð•</a>
-          ${xProfile ? `<a href="${xProfile}" target="_blank" title="X Profile" style="color:#1d9bf0;opacity:0.6;font-size:10px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">ðŸ‘¤</a>` : ''}
-          <button onclick="copyOldCA('${addr}',this)" title="Copy CA" style="background:none;border:1px solid rgba(255,170,0,0.2);color:var(--muted);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;font-family:inherit;line-height:1.4" onmouseover="this.style.borderColor='#ffaa00';this.style.color='#ffaa00'" onmouseout="this.style.borderColor='rgba(255,170,0,0.2)';this.style.color='var(--muted)'">â§‰</button>
+          <a href="${xSearch}" target="_blank" title="Search on X" style="color:#1d9bf0;opacity:0.8;font-size:11px;text-decoration:none;font-weight:700;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">𝕏</a>
+          ${xProfile ? `<a href="${xProfile}" target="_blank" title="X Profile" style="color:#1d9bf0;opacity:0.6;font-size:10px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">👤</a>` : ''}
+          <button onclick="copyOldCA('${addr}',this)" title="Copy CA" style="background:none;border:1px solid rgba(255,170,0,0.2);color:var(--muted);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;font-family:inherit;line-height:1.4" onmouseover="this.style.borderColor='#ffaa00';this.style.color='#ffaa00'" onmouseout="this.style.borderColor='rgba(255,170,0,0.2)';this.style.color='var(--muted)'">⧉</button>
         </div>
         <div style="font-size:10px;color:var(--muted);white-space:nowrap;margin-top:1px">AGE <span style="color:#e0eaf5">${ageStr}</span> <span style="margin-left:4px">MCAP</span> <span id="ot-mcap-${addr}" style="color:#fff;font-weight:700;font-size:12px">$${fmt(t.mcap)}</span><span id="ot-mcap-ch-${addr}" style="font-size:9px;font-weight:700;margin-left:4px"></span></div>
         <div style="font-size:9px;color:var(--muted);white-space:nowrap;margin-top:1px;display:flex;gap:6px">
@@ -1129,7 +1129,7 @@ function renderOldTokens() {
           ${pcSpan('24H', pc24h, `ot-pc24h-${addr}`)}
         </div>
       </div>
-      <button onclick="removeOldToken('${addr}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:0.6;transition:opacity 0.15s;margin-left:2px" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Remove">âœ•</button>
+      <button onclick="removeOldToken('${addr}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:0.6;transition:opacity 0.15s;margin-left:2px" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Remove">✕</button>
     </div>`;
   }).join('');
 }
@@ -1141,16 +1141,16 @@ function updateOldTokensMcap() {
   for (const [addr, ot] of Object.entries(oldTokens)) {
     const tok = state.tokens[addr];
     if (!tok) continue;
-    // Only act on confirmed mcap values (mcap > 0) â€” skip if API returned nothing
+    // Only act on confirmed mcap values (mcap > 0) — skip if API returned nothing
     if (tok.mcap && tok.mcap > 0) {
       if (tok.mcap < min || tok.mcap > max) {
-        // MCAP confirmed out of range â€” remove automatically
+        // MCAP confirmed out of range — remove automatically
         const reason = tok.mcap < min
-          ? `MCAP dropped to $${fmt(tok.mcap)} â€” below min $${fmt(min)}`
-          : `MCAP rose to $${fmt(tok.mcap)} â€” above max $${fmt(max)}`;
+          ? `MCAP dropped to $${fmt(tok.mcap)} — below min $${fmt(min)}`
+          : `MCAP rose to $${fmt(tok.mcap)} — above max $${fmt(max)}`;
         logOldTokenRemoval(addr, ot, reason);
         delete oldTokens[addr];
-        logTicker(`â³ Old token removed â€” MCAP $${fmt(tok.mcap)} out of range: ${tok.symbol || addr.slice(0,8)}`);
+        logTicker(`⏳ Old token removed — MCAP $${fmt(tok.mcap)} out of range: ${tok.symbol || addr.slice(0,8)}`);
         changed = true;
         continue;
       }
@@ -1176,7 +1176,7 @@ function updateOldTokensMcap() {
     const pcUpdate = (id, val) => {
       const pcEl = document.getElementById(id);
       if (!pcEl) return;
-      if (val == null || val === undefined) { pcEl.textContent = 'â€“'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
+      if (val == null || val === undefined) { pcEl.textContent = '–'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
       const s = val >= 0 ? '+' : '';
       pcEl.textContent = `${s}${val.toFixed(2)}%`;
       pcEl.style.color = val >= 0 ? 'var(--green)' : 'var(--red)';
@@ -1189,7 +1189,7 @@ function updateOldTokensMcap() {
   if (changed) { saveOldTokens(); renderOldTokens(); }
 }
 
-// ---- PersistÃªncia de configuraÃ§Ãµes ----
+// ---- Persistência de configurações ----
 const CONFIG_FIELDS = [
   'threshold','mcap-threshold','min-vol','min-mcap','max-mcap',
   'interval','min-mcap-remove','dead-cycles','chain',
@@ -1216,14 +1216,14 @@ function sweepMcapFilter(minMcapRemove) {
   if (!minMcapRemove || minMcapRemove <= 0) return 0;
   let removed = 0;
   for (const [addr, tok] of Object.entries(state.tokens)) {
-    // SÃ³ protege tokens que o prÃ³prio usuÃ¡rio adicionou via CA
+    // Só protege tokens que o próprio usuário adicionou via CA
     const isProtected = tok._userManual === true;
     const mcap = tok.mcap || 0;
     console.log(`[SWEEP] ${tok.symbol || addr.slice(0,8)} | mcap=${mcap} | _userManual=${tok._userManual} | isProtected=${isProtected} | willRemove=${!isProtected && mcap > 0 && mcap < minMcapRemove}`);
     if (isProtected) continue;
     if (mcap > 0 && mcap < minMcapRemove) {
       delete state.tokens[addr];
-      logTicker(`ðŸ—‘ ${tok.symbol || addr.slice(0,8)} removed â€” MCAP $${fmt(mcap)} < min $${fmt(minMcapRemove)}`);
+      logTicker(`🗑 ${tok.symbol || addr.slice(0,8)} removed — MCAP $${fmt(mcap)} < min $${fmt(minMcapRemove)}`);
       removed++;
     }
   }
@@ -1231,7 +1231,7 @@ function sweepMcapFilter(minMcapRemove) {
   return removed;
 }
 
-// Debug: expÃµe estado dos tokens no console
+// Debug: expõe estado dos tokens no console
 function debugTokens() {
   const min = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
   console.log(`=== DEBUG TOKENS (min-mcap-remove: ${min}) ===`);
@@ -1341,7 +1341,7 @@ async function syncBlocklistToServer() {
   });
 }
 
-// ---- PersistÃªncia de tokens manuais ----
+// ---- Persistência de tokens manuais ----
 function saveManualTokens() {
   const manual = Object.entries(state.tokens)
     .filter(([, tok]) => tok._userManual === true)
@@ -1354,7 +1354,7 @@ async function loadManualTokens(savedOverride = null) {
   try {
     const saved = Array.isArray(savedOverride) ? savedOverride : getUserStorageJson('manual_tokens', []);
     if (!saved.length) return;
-    logTicker(`âŸ³ Loading ${saved.length} saved token(s)...`);
+    logTicker(`? Loading ${saved.length} saved token(s)...`);
     for (const addr of saved) {
       if (isBlocked(addr)) continue;
       if (!state.tokens[addr]) {
@@ -1362,7 +1362,7 @@ async function loadManualTokens(savedOverride = null) {
       }
       if (state.tokens[addr]) {
         state.tokens[addr].manual = true;
-        state.tokens[addr]._userManual = true;
+        state.tokens[addr]._userManual = true; // flag definitiva: adicionado pelo usu?rio
       }
 
       const pair = await fetchPairData(addr);
@@ -1378,7 +1378,7 @@ async function loadManualTokens(savedOverride = null) {
     }
     renderManualBar();
     renderMonitored();
-    logTicker(`âœ“ ${saved.length} manual token(s) loaded`);
+    logTicker(`? ${saved.length} manual token(s) loaded`);
   } catch {}
 }
 
@@ -1390,7 +1390,7 @@ function addToken(addr, name, symbol) {
     symbol: symbol || '???',
     lastVol: null, vol5m: null, prevVol: null,
     deadCycles: 0,   // cycles consecutivos sem volume
-    manual: false,   // tokens adicionados manualmente nunca sÃ£o removidos
+    manual: false,   // tokens adicionados manualmente nunca são removidos
   };
   renderMonitored();
 }
@@ -1418,7 +1418,7 @@ async function addManualToken() {
     state.tokens[addr].mcap = pair.marketCap || pair.fdv || 0;
     state.tokens[addr].twitterUrl = (pair.info?.socials || []).find(s => s.type === 'twitter')?.url || null;
     state.tokens[addr].createdAt = pair.pairCreatedAt || null;
-    logTicker(`âœ“ Added: ${pair.baseToken?.symbol}`);
+    logTicker(`? Added: ${pair.baseToken?.symbol}`);
   }
 
   saveManualTokens();
@@ -1429,19 +1429,19 @@ async function addManualToken() {
 
 async function loadTrendingBtn(btn) {
   btn.disabled = true;
-  btn.textContent = 'âŸ³ LOADING...';
+  btn.textContent = '⟳ LOADING...';
   await loadTrending();
   btn.disabled = false;
-  btn.textContent = 'âŸ³ LOAD TRENDING SOL';
+  btn.textContent = '⟳ LOAD TRENDING SOL';
 }
 
 async function loadTrending(silent = false) {
-  if (!silent) logTicker('âŸ³ Loading trending Solana...');
+  if (!silent) logTicker('⟳ Loading trending Solana...');
   let loaded = 0;
   const chain = document.getElementById('chain').value;
   const seen = new Set(Object.keys(state.tokens));
 
-  // Coleta endereÃ§os dos 3 endpoints de boost/profiles
+  // Coleta endereços dos 3 endpoints de boost/profiles
   const addrs = [];
 
   const profiles = await apiFetch('https://api.dexscreener.com/token-profiles/latest/v1');
@@ -1468,7 +1468,7 @@ async function loadTrending(silent = false) {
       .forEach(t => { if (t.tokenAddress) addrs.push(t.tokenAddress); });
   }
 
-  // Para cada endereÃ§o novo, busca os dados do par e filtra por vol5m > 0
+  // Para cada endereço novo, busca os dados do par e filtra por vol5m > 0
   const uniqueAddrs = [...new Set(addrs)].filter(a => !seen.has(a));
 
   // Busca em paralelo (lotes de 10)
@@ -1489,15 +1489,15 @@ async function loadTrending(silent = false) {
 
       if (!pair) continue;
 
-      // SÃ³ adiciona se tiver volume 5m real
+      // Só adiciona se tiver volume 5m real
       const vol5m = pair.volume?.m5 || 0;
       if (vol5m === 0) continue;
 
-      // Filtra por MCAP mÃ­nimo â€” usa marketCap ou fdv, rejeita se abaixo do mÃ­nimo
+      // Filtra por MCAP mínimo — usa marketCap ou fdv, rejeita se abaixo do mínimo
       const mcapVal = pair.marketCap || pair.fdv || 0;
       const minMcapRemoveNow = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
       if (minMcapRemoveNow > 0 && mcapVal > 0 && mcapVal < minMcapRemoveNow) {
-        logTicker(`âŠ˜ ${pair.baseToken?.symbol || addr.slice(0,6)} skipped â€” MCAP $${fmt(mcapVal)} < min $${fmt(minMcapRemoveNow)}`);
+        logTicker(`⊘ ${pair.baseToken?.symbol || addr.slice(0,6)} skipped — MCAP $${fmt(mcapVal)} < min $${fmt(minMcapRemoveNow)}`);
         continue;
       }
 
@@ -1520,9 +1520,9 @@ async function loadTrending(silent = false) {
 
   if (!silent) {
     if (loaded > 0) {
-      logTicker(`âœ“ ${loaded} tokens carregados`);
+      logTicker(`✓ ${loaded} tokens carregados`);
     } else {
-      logTicker('âœ• API unavailable. Paste a CA manually below.');
+      logTicker('✕ API unavailable. Paste a CA manually below.');
     }
   }
   return loaded;
@@ -1537,17 +1537,17 @@ async function toggleBot() {
 
 async function startBotFlow() {
   if (!await requireAuthOrBlock('start monitoring')) return;
-  // Se nÃ£o tem tokens, carrega o trending automaticamente antes de iniciar
+  // Se não tem tokens, carrega o trending automaticamente antes de iniciar
   if (Object.keys(state.tokens).length === 0) {
-    document.getElementById('btn-start').textContent = 'âŸ³ LOADING TOKENS...';
+    document.getElementById('btn-start').textContent = '⟳ LOADING TOKENS...';
     document.getElementById('btn-start').disabled = true;
-    logTicker('âŸ³ No tokens found â€” loading trending automatically...');
+    logTicker('⟳ No tokens found — loading trending automatically...');
     await loadTrending();
     document.getElementById('btn-start').disabled = false;
-    // Se ainda nÃ£o tem tokens apÃ³s tentar carregar, avisa
+    // Se ainda não tem tokens após tentar carregar, avisa
     if (Object.keys(state.tokens).length === 0) {
-      logTicker('âœ• Could not load tokens. Add manually.');
-      document.getElementById('btn-start').textContent = 'â–¶ START MONITORING';
+      logTicker('✕ Could not load tokens. Add manually.');
+      document.getElementById('btn-start').textContent = '▶ START MONITORING';
       return;
     }
   }
@@ -1560,7 +1560,7 @@ function startBot() {
   const secs = parseInt(document.getElementById('interval').value) * 1000;
   document.getElementById('run-status').textContent = 'ACTIVE';
   document.getElementById('run-status').className = 'status-value active';
-  document.getElementById('btn-start').textContent = 'â–  STOP';
+  document.getElementById('btn-start').textContent = '■ STOP';
   document.getElementById('btn-start').classList.add('running');
   runCycle();
   state.interval = setInterval(runCycle, secs);
@@ -1572,7 +1572,7 @@ function startBot() {
     const m = Math.floor((ms % 3600000) / 60000);
     el.textContent = h > 0 ? `${h}h${String(m).padStart(2,'0')}m` : `${m}m`;
   }, 1000);
-  logTicker('â–¶ Bot started');
+  logTicker('▶ Bot started');
 }
 
 function stopBot() {
@@ -1582,10 +1582,10 @@ function stopBot() {
   state.startedAt = null;
   document.getElementById('run-status').textContent = 'STOPPED';
   document.getElementById('run-status').className = 'status-value';
-  document.getElementById('uptime-count').textContent = 'â€”';
-  document.getElementById('btn-start').textContent = 'â–¶ START MONITORING';
+  document.getElementById('uptime-count').textContent = '—';
+  document.getElementById('btn-start').textContent = '▶ START MONITORING';
   document.getElementById('btn-start').classList.remove('running');
-  logTicker('â–  Bot stopped');
+  logTicker('■ Bot stopped');
 }
 
 async function runCycle() {
@@ -1598,11 +1598,11 @@ async function runCycle() {
   // Sweep inicial
   sweepMcapFilter(minMcapRemove);
 
-  // Auto-refresh trending â€” apÃ³s completar, sweep novamente para remover o que entrou com mcap baixo
+  // Auto-refresh trending — após completar, sweep novamente para remover o que entrou com mcap baixo
   const before = Object.keys(state.tokens).length;
   loadTrending(true).then(() => {
     const added = Object.keys(state.tokens).length - before;
-    if (added > 0) logTicker(`ðŸ†• ${added} new token(s) added`);
+    if (added > 0) logTicker(`🆕 ${added} new token(s) added`);
     sweepMcapFilter(minMcapRemove); // garante que nada com mcap baixo ficou
     renderMonitored();
   });
@@ -1641,13 +1641,13 @@ async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, m
   if (!tok) return;
   if (isBlocked(addr, tok.symbol)) { delete state.tokens[addr]; return; }
 
-  // Remove imediatamente se MKT CAP abaixo do mÃ­nimo (exceto manuais)
-  // Nota: aceita mcap=0 caso a API nÃ£o retornou valor (evita remoÃ§Ã£o por dado ausente)
+  // Remove imediatamente se MKT CAP abaixo do mínimo (exceto manuais)
+  // Nota: aceita mcap=0 caso a API não retornou valor (evita remoção por dado ausente)
   const isProtected = tok._userManual === true;
   const minMcapOk = !isProtected && minMcapRemove > 0 && mcap > 0 && mcap < minMcapRemove;
   if (minMcapOk) {
     delete state.tokens[addr];
-    logTicker(`ðŸ—‘ ${pair.baseToken?.symbol || addr.slice(0,8)} removed â€” MCAP $${fmt(mcap)} < min $${fmt(minMcapRemove)}`);
+    logTicker(`🗑 ${pair.baseToken?.symbol || addr.slice(0,8)} removed — MCAP $${fmt(mcap)} < min $${fmt(minMcapRemove)}`);
     return;
   }
 
@@ -1671,7 +1671,7 @@ async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, m
   tok.priceChange24h = pair.priceChange?.h24;
   if (createdAt && !tok.createdAt) tok.createdAt = createdAt;
 
-  // Auto-detecta tokens velhos (1dâ€“7d) e adiciona Ã  barra
+  // Auto-detecta tokens velhos (1d–7d) e adiciona à barra
   if (tok.createdAt) {
     const age = Date.now() - tok.createdAt;
     if (age >= OLD_MIN_AGE && age <= OLD_MAX_AGE && !oldTokens[addr]) {
@@ -1684,7 +1684,7 @@ async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, m
     tok.deadCycles = (tok.deadCycles || 0) + 1;
     if (!tok.manual && tok.deadCycles >= deadCycles) {
       delete state.tokens[addr];
-      logTicker(`ðŸ—‘ ${tok.symbol} removed â€” no volume for ${deadCycles} cycles`);
+      logTicker(`🗑 ${tok.symbol} removed — no volume for ${deadCycles} cycles`);
       return;
     }
   } else {
@@ -1692,9 +1692,9 @@ async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, m
   }
 
   const passesFilters = (vol) => {
-    if (vol < minVol) { logTicker(`âŠ˜ ${tok.symbol} skipped â€” vol5m $${fmt(vol)} < min $${fmt(minVol)}`); return false; }
-    if (minMcap > 0 && mcap < minMcap) { logTicker(`âŠ˜ ${tok.symbol} skipped â€” mcap $${fmt(mcap)} < min $${fmt(minMcap)}`); return false; }
-    if (maxMcap > 0 && mcap > maxMcap) { logTicker(`âŠ˜ ${tok.symbol} skipped â€” mcap $${fmt(mcap)} > mÃ¡x $${fmt(maxMcap)}`); return false; }
+    if (vol < minVol) { logTicker(`⊘ ${tok.symbol} skipped — vol5m $${fmt(vol)} < min $${fmt(minVol)}`); return false; }
+    if (minMcap > 0 && mcap < minMcap) { logTicker(`⊘ ${tok.symbol} skipped — mcap $${fmt(mcap)} < min $${fmt(minMcap)}`); return false; }
+    if (maxMcap > 0 && mcap > maxMcap) { logTicker(`⊘ ${tok.symbol} skipped — mcap $${fmt(mcap)} > máx $${fmt(maxMcap)}`); return false; }
     return true;
   };
 
@@ -1712,11 +1712,11 @@ async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, m
     }
   }
 
-  // High Volume New Coin â€” token < 30min + vol24h >= threshold
+  // High Volume New Coin — token < 30min + vol24h >= threshold
   if (hvncMinVol > 0 && tok.createdAt && !tok._hvncFired) {
     const ageMs = Date.now() - tok.createdAt;
     if (ageMs < 30 * 60 * 1000 && vol24h >= hvncMinVol) {
-      tok._hvncFired = true; // sÃ³ dispara uma vez por token
+      tok._hvncFired = true; // só dispara uma vez por token
       fireAlert(addr, tok, 0, vol5m, 'hvnc');
     }
   }
@@ -1745,14 +1745,14 @@ function fireAlert(addr, tok, change, vol, triggerType) {
   renderAlerts();
   playAlert(level);
   if (isHvnc) {
-    logTicker(`ðŸš¨ ${tok.symbol} HIGH VOLUME NEW COIN â€” $${fmtVol(tok.vol24h)} total vol`);
+    logTicker(`🚨 ${tok.symbol} HIGH VOLUME NEW COIN — $${fmtVol(tok.vol24h)} total vol`);
     if (Notification.permission === 'granted') {
-      new Notification(`ðŸš¨ ${tok.symbol} High Volume New Coin`, { body: `$${fmtVol(tok.vol24h)} total volume | ${tok.name}` });
+      new Notification(`🚨 ${tok.symbol} High Volume New Coin`, { body: `$${fmtVol(tok.vol24h)} total volume | ${tok.name}` });
     }
   } else {
-    logTicker(`ðŸ”” ${tok.symbol} +${pct}% ${label} 5m`);
+    logTicker(`🔔 ${tok.symbol} +${pct}% ${label} 5m`);
     if (Notification.permission === 'granted') {
-      new Notification(`ðŸ”” ${tok.symbol} +${pct}% ${label}`, { body: `${label} 5m spike | ${tok.name}` });
+      new Notification(`🔔 ${tok.symbol} +${pct}% ${label}`, { body: `${label} 5m spike | ${tok.name}` });
     }
   }
 }
@@ -1761,7 +1761,7 @@ function playAlert(level) {
   if (document.getElementById('sound-mode').value === 'off') return;
   const volPct = (parseInt(document.getElementById('sound-volume')?.value || 80)) / 100;
 
-  // Som customizado por nÃ­vel tem prioridade
+  // Som customizado por nível tem prioridade
   if (soundBuffers[level] && soundCtxs[level]) {
     try {
       const ctx = soundCtxs[level];
@@ -1776,7 +1776,7 @@ function playAlert(level) {
     } catch {}
   }
 
-  // Som padrÃ£o gerado por sÃ­ntese
+  // Som padrão gerado por síntese
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const configs = {
@@ -1801,7 +1801,7 @@ function playAlert(level) {
   } catch {}
 }
 
-// --- Sons por nÃ­vel ---
+// --- Sons por nível ---
 const soundBuffers = { normal: null, critical: null, mega: null };
 const soundCtxs   = { normal: null, critical: null, mega: null };
 
@@ -1811,8 +1811,8 @@ function saveSoundToStorage(level, base64, fileName) {
     localStorage.setItem(`sound_b64_${level}`, base64);
     localStorage.setItem(`sound_name_${level}`, fileName);
   } catch(e) {
-    // localStorage quota exceeded (large audio files) â€” skip silently
-    logTicker(`âš  Sound ${level} too large to persist â€” will reset on reload`);
+    // localStorage quota exceeded (large audio files) — skip silently
+    logTicker(`⚠ Sound ${level} too large to persist — will reset on reload`);
   }
 }
 
@@ -1825,7 +1825,7 @@ async function decodeSoundFromBase64(level, base64, fileName) {
     soundCtxs[level] = ctx;
     soundBuffers[level] = await ctx.decodeAudioData(bytes.buffer);
     const nameEl = document.getElementById(`sound-${level}-name`);
-    if (nameEl) nameEl.textContent = 'âœ“ ' + fileName;
+    if (nameEl) nameEl.textContent = '✓ ' + fileName;
   } catch {}
 }
 
@@ -1842,7 +1842,7 @@ function loadLevelSound(level, input) {
   const file = input.files[0];
   if (!file) return;
   const nameEl = document.getElementById(`sound-${level}-name`);
-  nameEl.textContent = 'âŸ³ Loading...';
+  nameEl.textContent = '⟳ Loading...';
   const reader = new FileReader();
   reader.onload = async (e) => {
     try {
@@ -1851,13 +1851,13 @@ function loadLevelSound(level, input) {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       soundCtxs[level] = ctx;
       soundBuffers[level] = await ctx.decodeAudioData(arrayBuf);
-      nameEl.textContent = 'âœ“ ' + file.name;
-      logTicker(`âœ“ Sound ${level} loaded: ${file.name}`);
+      nameEl.textContent = '✓ ' + file.name;
+      logTicker(`✓ Sound ${level} loaded: ${file.name}`);
       // Persist as base64
       const base64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
       saveSoundToStorage(level, base64, file.name);
     } catch {
-      nameEl.textContent = 'âœ• Error loading';
+      nameEl.textContent = '✕ Error loading';
     }
   };
   reader.readAsArrayBuffer(file);
@@ -1870,7 +1870,7 @@ let customAudioCtx = null;
 
 
 // Returns {pct, color} for 5m MCAP change using rolling history
-// tok.mcapHistory = [{mcap, ts}, ...] â€” populated each cycle, pruned after 6min
+// tok.mcapHistory = [{mcap, ts}, ...] — populated each cycle, pruned after 6min
 function getMcapChange5m(tok) {
   const history = tok.mcapHistory;
   if (!history || history.length < 2) return null;
@@ -1899,22 +1899,22 @@ function pushMcapHistory(tok, mcap) {
 }
 
 function fmt(n) {
-  if (!n && n !== 0) return 'â€“';
-  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';  // mcap mantÃ©m decimais
+  if (!n && n !== 0) return '–';
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';  // mcap mantém decimais
   if (n >= 1e3) return Math.round(n/1e3) + 'K';
   return Math.round(n).toString();
 }
 
 function fmtVol(n) {
   // Volumes sem decimais
-  if (!n && n !== 0) return 'â€“';
+  if (!n && n !== 0) return '–';
   if (n >= 1e6) return Math.round(n/1e6) + 'M';
   if (n >= 1e3) return Math.round(n/1e3) + 'K';
   return Math.round(n).toString();
 }
 
 function fmtAge(createdAt) {
-  if (!createdAt) return 'â€“';
+  if (!createdAt) return '–';
   const ms = Date.now() - createdAt;
   if (ms < 60000) return `${Math.floor(ms/1000)}s`;
   const mins = Math.floor(ms / 60000);
@@ -1929,9 +1929,9 @@ function fmtAge(createdAt) {
 
 function copyCA(addr, btn) {
   navigator.clipboard.writeText(addr).then(() => {
-    btn.textContent = 'âœ“ Copied';
+    btn.textContent = '✓ Copied';
     btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'â§‰ Copy CA'; btn.classList.remove('copied'); }, 1500);
+    setTimeout(() => { btn.textContent = '⧉ Copy CA'; btn.classList.remove('copied'); }, 1500);
   });
 }
 
@@ -1948,11 +1948,11 @@ function renderMonitored() {
   document.getElementById('token-count').textContent = entries.length;
 
   if (entries.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">â¬¡</div><div class="empty-text">Add tokens or load trending</div></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-text">Add tokens or load trending</div></div>`;
     return;
   }
 
-  // Aplica filtro de MCAP mÃ­nimo â€” deleta do state (nÃ£o sÃ³ esconde)
+  // Aplica filtro de MCAP mínimo — deleta do state (não só esconde)
   const minMcapRemoveRender = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
   if (minMcapRemoveRender > 0) {
     for (const [addr, tok] of Object.entries(state.tokens)) {
@@ -1973,7 +1973,7 @@ function renderMonitored() {
   list.innerHTML = sorted.map(([addr, tok]) => {
     const change = tok.prevVol > 0 ? ((tok.vol5m - tok.prevVol) / tok.prevVol * 100) : null;
     const changeClass = change >= 50 ? 'high' : change >= 20 ? 'med' : 'low';
-    const changeStr = change !== null ? (change >= 0 ? '+' : '') + change.toFixed(1) + '%' : 'â€“';
+    const changeStr = change !== null ? (change >= 0 ? '+' : '') + change.toFixed(1) + '%' : '–';
     const dexUrl = tok.pairUrl || `https://dexscreener.com/solana/${addr}`;
 
     // highlight do campo ativo na linha
@@ -1989,16 +1989,16 @@ function renderMonitored() {
         ${avatarHtml}
         <div style="min-width:0">
           <div class="token-name">${tok.symbol} <span style="color:var(--muted);font-size:11px;font-weight:400">${tok.name}</span>
-            <a href="${dexUrl}" target="_blank" style="color:var(--cyan);font-size:9px;margin-left:6px;text-decoration:none;opacity:0.7">â†— DEX</a>
-            <a href="https://x.com/search?q=%24${encodeURIComponent(tok.symbol)}" target="_blank" style="color:#1d9bf0;font-size:9px;margin-left:4px;text-decoration:none;opacity:0.85">ð•</a>
+            <a href="${dexUrl}" target="_blank" style="color:var(--cyan);font-size:9px;margin-left:6px;text-decoration:none;opacity:0.7">↗ DEX</a>
+            <a href="https://x.com/search?q=%24${encodeURIComponent(tok.symbol)}" target="_blank" style="color:#1d9bf0;font-size:9px;margin-left:4px;text-decoration:none;opacity:0.85">𝕏</a>
           </div>
           <div style="display:flex;gap:10px;margin-top:3px;flex-wrap:wrap;align-items:center">
-            <span style="font-size:9px;color:var(--muted)">MCAP <span style="${hl('mcap')}">${tok.mcap ? '$'+fmt(tok.mcap) : 'â€“'}</span>${(() => { const ch = getMcapChange5m(tok); return ch ? ` <span style="font-size:9px;color:${ch.color};font-weight:700">${ch.str}</span>` : ''; })()}</span>
+            <span style="font-size:9px;color:var(--muted)">MCAP <span style="${hl('mcap')}">${tok.mcap ? '$'+fmt(tok.mcap) : '–'}</span>${(() => { const ch = getMcapChange5m(tok); return ch ? ` <span style="font-size:9px;color:${ch.color};font-weight:700">${ch.str}</span>` : ''; })()}</span>
             <span style="font-size:9px;color:var(--muted)">AGE <span style="color:#fff">${fmtAge(tok.createdAt)}</span></span>
-            <span style="font-size:9px;color:var(--muted)">1H <span style="color:#fff">${tok.vol1h ? '$'+fmtVol(tok.vol1h) : 'â€“'}</span></span>
-            <span style="font-size:9px;color:var(--muted)">6H <span style="color:#fff">${tok.vol6h ? '$'+fmtVol(tok.vol6h) : 'â€“'}</span></span>
-            <span style="font-size:9px;color:var(--muted)">24H <span style="color:#fff">${tok.vol24h ? '$'+fmtVol(tok.vol24h) : 'â€“'}</span></span>
-            <button class="btn-copy-ca" onclick="copyCA('${addr}',this)">â§‰ Copy CA</button>
+            <span style="font-size:9px;color:var(--muted)">1H <span style="color:#fff">${tok.vol1h ? '$'+fmtVol(tok.vol1h) : '–'}</span></span>
+            <span style="font-size:9px;color:var(--muted)">6H <span style="color:#fff">${tok.vol6h ? '$'+fmtVol(tok.vol6h) : '–'}</span></span>
+            <span style="font-size:9px;color:var(--muted)">24H <span style="color:#fff">${tok.vol24h ? '$'+fmtVol(tok.vol24h) : '–'}</span></span>
+            <button class="btn-copy-ca" onclick="copyCA('${addr}',this)">⧉ Copy CA</button>
           </div>
         </div>
         <div style="text-align:right;flex-shrink:0">
@@ -2006,7 +2006,7 @@ function renderMonitored() {
           <div style="font-size:9px;color:var(--muted);margin-top:2px">VOL 5M</div>
         </div>
         <div class="change-badge ${changeClass}">${changeStr}</div>
-        <button class="btn-block" onclick="blockToken('${addr}','${tok.symbol}')">ðŸš«</button>
+        <button class="btn-block" onclick="blockToken('${addr}','${tok.symbol}')">🚫</button>
       </div>`;
   }).join('');
 }
@@ -2014,7 +2014,7 @@ function renderMonitored() {
 function renderAlerts() {
   const list = document.getElementById('alerts-list');
   if (state.alerts.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon">â—ˆ</div><div class="empty-text">Waiting for signals...</div></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-text">Waiting for signals...</div></div>`;
     return;
   }
   list.innerHTML = state.alerts.slice(0, 50).map(a => {
@@ -2031,18 +2031,18 @@ function renderAlerts() {
           <div class="alert-top">
             <span class="alert-token">${a.symbol} <span style="color:var(--muted);font-size:10px">${a.name}</span></span>
             ${a.isHvnc
-              ? `<span style="font-weight:700;font-size:13px;color:#ff6b00;text-align:right;line-height:1.2">ðŸš¨ High Volume New Coin<br><span style="font-size:11px;color:#ffaa00">$${fmtVol(a.hvncVol)} total vol</span></span>`
+              ? `<span style="font-weight:700;font-size:13px;color:#ff6b00;text-align:right;line-height:1.2">🚨 High Volume New Coin<br><span style="font-size:11px;color:#ffaa00">$${fmtVol(a.hvncVol)} total vol</span></span>`
               : `<span class="alert-pct ${a.level}">+${a.pct}% <span style="font-size:10px;opacity:0.7">${a.label||'VOL'}</span></span>`
             }
           </div>
           <div class="alert-details" style="margin-top:3px;display:flex;gap:12px;flex-wrap:wrap">
-            <span><span style="color:var(--muted)">VOL 5M</span> $${fmtVol(a.prevVol)} â†’ <span style="color:var(--green);font-weight:700">$${fmtVol(a.vol)}</span></span>
-            ${a.prevMcap ? `<span><span style="color:var(--muted)">MCAP</span> $${fmt(a.prevMcap)} â†’ <span style="color:${a.mcap >= a.prevMcap ? 'var(--green)' : 'var(--red)'};font-weight:700">$${fmt(a.mcap)}</span></span>` : ''}
+            <span><span style="color:var(--muted)">VOL 5M</span> $${fmtVol(a.prevVol)} → <span style="color:var(--green);font-weight:700">$${fmtVol(a.vol)}</span></span>
+            ${a.prevMcap ? `<span><span style="color:var(--muted)">MCAP</span> $${fmt(a.prevMcap)} → <span style="color:${a.mcap >= a.prevMcap ? 'var(--green)' : 'var(--red)'};font-weight:700">$${fmt(a.mcap)}</span></span>` : ''}
           </div>
         </div>
       </div>
       <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
-        <span style="font-size:11px"><span style="color:var(--muted)">MCAP</span> <span style="font-size:13px;font-weight:700;color:${a.mcap < a.prevMcap ? 'var(--red)' : 'var(--green)'};font-weight:700">${a.mcap ? '$'+fmt(a.mcap) : 'â€“'}</span></span>
+        <span style="font-size:11px"><span style="color:var(--muted)">MCAP</span> <span style="font-size:13px;font-weight:700;color:${a.mcap < a.prevMcap ? 'var(--red)' : 'var(--green)'};font-weight:700">${a.mcap ? '$'+fmt(a.mcap) : '–'}</span></span>
         <span style="font-size:10px"><span style="color:var(--muted)">AGE</span> <span style="color:var(--text)">${fmtAge(a.createdAt)}</span></span>
         <span style="font-size:10px"><span style="color:var(--muted)">1H</span> <span style="color:var(--text)">$${fmtVol(a.vol1h)}</span></span>
         <span style="font-size:10px"><span style="color:var(--muted)">6H</span> <span style="color:var(--text)">$${fmtVol(a.vol6h)}</span></span>
@@ -2050,11 +2050,11 @@ function renderAlerts() {
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <a href="${dexUrl}" target="_blank" style="color:var(--cyan);font-size:11px;text-decoration:none;opacity:0.9">â†— DexScreener</a>
-          <a href="https://x.com/search?q=%24${encodeURIComponent(a.symbol)}" target="_blank" style="color:#1d9bf0;font-size:11px;text-decoration:none;opacity:0.9">ð• Buscar $${a.symbol}</a>
-          ${a.twitterUrl ? `<a href="${a.twitterUrl}" target="_blank" style="color:#1d9bf0;font-size:11px;text-decoration:none;opacity:0.9">ð• Perfil</a>` : ''}
-          <button class="btn-copy-ca" onclick="copyCA('${a.addr}',this)">â§‰ Copiar CA</button>
-          <button class="btn-block" onclick="blockToken('${a.addr}','${a.symbol}')">ðŸš« Block</button>
+          <a href="${dexUrl}" target="_blank" style="color:var(--cyan);font-size:11px;text-decoration:none;opacity:0.9">↗ DexScreener</a>
+          <a href="https://x.com/search?q=%24${encodeURIComponent(a.symbol)}" target="_blank" style="color:#1d9bf0;font-size:11px;text-decoration:none;opacity:0.9">𝕏 Buscar $${a.symbol}</a>
+          ${a.twitterUrl ? `<a href="${a.twitterUrl}" target="_blank" style="color:#1d9bf0;font-size:11px;text-decoration:none;opacity:0.9">𝕏 Perfil</a>` : ''}
+          <button class="btn-copy-ca" onclick="copyCA('${a.addr}',this)">⧉ Copiar CA</button>
+          <button class="btn-block" onclick="blockToken('${a.addr}','${a.symbol}')">🚫 Block</button>
         </div>
         <span class="alert-time">${a.time}</span>
       </div>
@@ -2065,7 +2065,7 @@ function renderAlerts() {
 function blockToken(addr, symbol) {
   state.blocklist.add(addr);
   state.blocklist.add(symbol.toUpperCase());
-  // Guarda mapeamento addr -> symbol para exibiÃ§Ã£o
+  // Guarda mapeamento addr -> symbol para exibição
   if (!state.blocklistMeta) state.blocklistMeta = {};
   state.blocklistMeta[addr] = symbol;
   // Remove da lista de monitorados
@@ -2083,7 +2083,7 @@ function blockToken(addr, symbol) {
   const pumpList = document.getElementById('pump-list');
   const row = pumpList.querySelector(`[data-mint="${addr}"]`);
   if (row) row.remove();
-  logTicker(`ðŸš« Blocked: ${symbol}`);
+  logTicker(`🚫 Blocked: ${symbol}`);
 }
 
 function renderBlocklist() {
@@ -2096,8 +2096,8 @@ function renderBlocklist() {
   tags.innerHTML = entries.map(addr => {
     const sym = meta[addr] || addr.slice(0,8);
     return `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,60,95,0.1);border:1px solid rgba(255,60,95,0.25);color:var(--red);font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px">
-      ðŸš« ${sym}
-      <span onclick="unblockToken('${addr}','${sym}')" style="cursor:pointer;opacity:0.6;margin-left:4px;font-size:11px" title="Unblock">âœ•</span>
+      🚫 ${sym}
+      <span onclick="unblockToken('${addr}','${sym}')" style="cursor:pointer;opacity:0.6;margin-left:4px;font-size:11px" title="Unblock">✕</span>
     </span>`;
   }).join('');
 }
@@ -2108,7 +2108,7 @@ function unblockToken(addr, symbol) {
   if (state.blocklistMeta) delete state.blocklistMeta[addr];
   renderBlocklist();
   scheduleBlocklistSync();
-  logTicker(`âœ“ Unblocked: ${symbol || addr.slice(0,8)}`);
+  logTicker(`✓ Unblocked: ${symbol || addr.slice(0,8)}`);
 }
 
 function clearBlocklist() {
@@ -2143,7 +2143,7 @@ function logTicker(msg) {
 // Notification permission
 if ('Notification' in window) {
   Notification.requestPermission().then(p => {
-    document.getElementById('notif-status').textContent = p === 'granted' ? 'ðŸ”” NOTIF ON' : 'ðŸ”• SEM NOTIF';
+    document.getElementById('notif-status').textContent = p === 'granted' ? '🔔 NOTIF ON' : '🔕 SEM NOTIF';
   });
 }
 
@@ -2152,7 +2152,7 @@ renderMonitored();
 renderAlerts();
 
 // ============================================================
-// PUMPFUN WEBSOCKET â€” volume acumulado por janela de 60s
+// PUMPFUN WEBSOCKET — volume acumulado por janela de 60s
 // ============================================================
 const pumpState = {
   ws: null,
@@ -2237,7 +2237,7 @@ async function resolveImage(mint, uri) {
     }
   };
 
-  // 1st priority: PumpFun API â€” most reliable, always has image_uri
+  // 1st priority: PumpFun API — most reliable, always has image_uri
   try {
     const pumpRes = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(`https://frontend-api.pump.fun/coins/${mint}`)}`, { signal: AbortSignal.timeout(5000) });
     if (pumpRes.ok) {
@@ -2291,7 +2291,7 @@ function handlePumpMessage(msg) {
   const now = Date.now();
   const solPx = pumpState.solPrice;
 
-  // New token created â€” subscribe to its trades immediately
+  // New token created — subscribe to its trades immediately
   if (msg.txType === 'create') {
     if (!pumpState.tokens[mint]) {
       pumpState.tokens[mint] = {
@@ -2302,10 +2302,10 @@ function handlePumpMessage(msg) {
         mcap: msg.usd_market_cap || (msg.marketCapSol ? msg.marketCapSol * solPx : 0),
         vol5m: [],
         lastAlert: 0,
-        createdAt: now, // timestamp of creation â€” used for age filter in Final Stretch
+        createdAt: now, // timestamp of creation — used for age filter in Final Stretch
       };
     }
-    // Subscreve trades desse token especÃ­fico
+    // Subscreve trades desse token específico
     if (pumpState.transport === 'direct' && pumpState.ws?.readyState === WebSocket.OPEN) {
       pumpState.ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] }));
     } else if (pumpState.transport === 'server' && socketClient?.connected) {
@@ -2316,11 +2316,11 @@ function handlePumpMessage(msg) {
       pumpState.tokens[mint]._imageResolved = true;
       resolveImage(mint, msg.uri);
     }
-    logTicker(`âš¡ New token: ${msg.symbol || mint.slice(0,8)}`);
+    logTicker(`⚡ New token: ${msg.symbol || mint.slice(0,8)}`);
     return;
   }
 
-  // Token migrated to DEX â€” show popup, remove from panel, auto-update bond target
+  // Token migrated to DEX — show popup, remove from panel, auto-update bond target
   if (msg.txType === 'migrate') {
     const tok = pumpState.tokens[mint];
     if (tok && !tok._migrated) {
@@ -2340,9 +2340,9 @@ function handlePumpMessage(msg) {
           const avg = Math.round(pumpState.recentMigrationMcaps.reduce((a,b)=>a+b,0) / pumpState.recentMigrationMcaps.length);
           const bondField = document.getElementById('pump-bond-mcap');
           if (bondField) { bondField.value = avg; saveConfig(); }
-          logTicker(`ðŸš€ ${tok.symbol || mint.slice(0,6)} migrated at $${fmtVol(tok.mcap)} MCAP â€” bond target updated to $${fmtVol(avg)}`);
+          logTicker(`🚀 ${tok.symbol || mint.slice(0,6)} migrated at $${fmtVol(tok.mcap)} MCAP — bond target updated to $${fmtVol(avg)}`);
         } else {
-          logTicker(`ðŸš€ ${tok.symbol || mint.slice(0,6)} migrated at $${fmtVol(tok.mcap)} MCAP`);
+          logTicker(`🚀 ${tok.symbol || mint.slice(0,6)} migrated at $${fmtVol(tok.mcap)} MCAP`);
         }
       }
       // Remove from panel
@@ -2378,12 +2378,12 @@ function handlePumpMessage(msg) {
   if (msg.symbol) tok.symbol = msg.symbol.replace(/[\r\n\t]+/g,' ').trim();
   if (msg.image) tok.image = ipfsToHttp(msg.image);
   if (msg.uri) tok._uri = msg.uri;
-  // Se ainda nÃ£o tem imagem e nunca tentou resolver, tenta UMA vez
+  // Se ainda não tem imagem e nunca tentou resolver, tenta UMA vez
   if (!tok.image && !tok._imageResolved) {
     tok._imageResolved = true;
     resolveImage(mint, tok._uri);
   }
-  // Update MCAP â€” prefer usd_market_cap, fallback to marketCapSol * solPrice
+  // Update MCAP — prefer usd_market_cap, fallback to marketCapSol * solPrice
   // vTokensInBondingCurve stops being sent but usd_market_cap should always come with trades
   if (msg.usd_market_cap && msg.usd_market_cap > 0) tok.mcap = msg.usd_market_cap;
   else if (msg.marketCapSol && msg.marketCapSol > 0) tok.mcap = msg.marketCapSol * solPx;
@@ -2395,7 +2395,7 @@ function handlePumpMessage(msg) {
     // Compute MCAP from bonding curve reserves if usd_market_cap missing
     if (!msg.usd_market_cap && !msg.marketCapSol && solPx > 0) {
       // PumpFun: total supply 1B, price = virtualSolReserves/vTokensInBondingCurve
-      const vSol = msg.virtualSolReserves / 1e9; // lamports â†’ SOL
+      const vSol = msg.virtualSolReserves / 1e9; // lamports → SOL
       const vTok = msg.vTokensInBondingCurve || 1;
       const price = (vSol / vTok) * solPx;
       tok.mcap = price * 1_000_000_000; // 1B total supply
@@ -2409,13 +2409,13 @@ function handlePumpMessage(msg) {
     tok.vol5m = tok.vol5m.filter(t => now - t.ts <= 300000); // 5 min
     tok.volTotal = (tok.volTotal || 0) + usd; // volume total acumulado
   }
-  tok.lastTrade = now; // timestamp do Ãºltimo trade recebido
+  tok.lastTrade = now; // timestamp do último trade recebido
 
   const vol5mTotal = tok.vol5m.reduce((s, t) => s + t.usd, 0);
 
   renderPumpToken(mint, tok, vol5mTotal);
 
-  // Alerta 1x por token por sessÃ£o
+  // Alerta 1x por token por sessão
   const minVol = parseFloat(document.getElementById('pump-min-vol').value) || 100000;
   if (vol5mTotal >= minVol && !tok._alertFired) {
     tok._alertFired = true;
@@ -2423,7 +2423,7 @@ function handlePumpMessage(msg) {
   }
 }
 
-// Atualiza preÃ§o SOL periodicamente para converter solAmount â†’ USD
+// Atualiza preço SOL periodicamente para converter solAmount → USD
 async function fetchSolPrice() {
   try {
     const d = await apiFetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
@@ -2433,11 +2433,11 @@ async function fetchSolPrice() {
 fetchSolPrice();
 setInterval(fetchSolPrice, 60000);
 
-// ---- PumpFun Garbage Collector â€” remove tokens inativos ----
+// ---- PumpFun Garbage Collector — remove tokens inativos ----
 const PUMP_GC_INTERVAL = 30000;  // roda a cada 30s
 const PUMP_GC_INACTIVE = 600000; // 10 minutos sem trades = inativo
-const PUMP_GC_LOW_MCAP = 4000;       // MCAP mÃ­nimo pra ficar no painel
-const PUMP_GC_LOW_MCAP_TIME = 480000; // 8 minutos abaixo do mÃ­nimo = removido
+const PUMP_GC_LOW_MCAP = 4000;       // MCAP mínimo pra ficar no painel
+const PUMP_GC_LOW_MCAP_TIME = 480000; // 8 minutos abaixo do mínimo = removido
 
 function pumpGarbageCollect() {
   if (!pumpState.connected) return;
@@ -2446,10 +2446,10 @@ function pumpGarbageCollect() {
   const mintsToRemove = [];
 
   for (const [mint, tok] of Object.entries(pumpState.tokens)) {
-    if (tok._migrated) continue; // migrado, vai ser limpo pelo handler de migraÃ§Ã£o
+    if (tok._migrated) continue; // migrado, vai ser limpo pelo handler de migração
     const lastTrade = tok.lastTrade || tok.createdAt || 0;
 
-    // Inatividade: sem trades hÃ¡ 10 minutos
+    // Inatividade: sem trades há 10 minutos
     if (now - lastTrade >= PUMP_GC_INACTIVE) {
       mintsToRemove.push(mint);
       continue;
@@ -2464,7 +2464,7 @@ function pumpGarbageCollect() {
         continue;
       }
     } else {
-      tok._lowMcapSince = 0; // reset: MCAP voltou acima do mÃ­nimo
+      tok._lowMcapSince = 0; // reset: MCAP voltou acima do mínimo
     }
   }
 
@@ -2490,7 +2490,7 @@ function pumpGarbageCollect() {
 
   if (removed > 0) {
     document.getElementById('pump-count').textContent = document.querySelectorAll('.pump-token-row').length;
-    logTicker(`ðŸ§¹ GC: ${removed} inactive token${removed > 1 ? 's' : ''} removed from PumpFun`);
+    logTicker(`🧹 GC: ${removed} inactive token${removed > 1 ? 's' : ''} removed from PumpFun`);
   }
 }
 setInterval(pumpGarbageCollect, PUMP_GC_INTERVAL);
@@ -2513,34 +2513,34 @@ setInterval(pumpGarbageCollect, PUMP_GC_INTERVAL);
         if (res.ok) {
           const data = await res.json();
           const count = Array.isArray(data) ? data.length : (data?.coins?.length || '?');
-          logTicker(`âœ… PumpFun REST OK via ${px || 'direct'} â€” got ${count} coins | ${ep.split('/')[2]}`);
+          logTicker(`✅ PumpFun REST OK via ${px || 'direct'} — got ${count} coins | ${ep.split('/')[2]}`);
           return;
         } else {
-          logTicker(`âš  PumpFun REST ${res.status} via ${px || 'direct'} | ${ep.split('/')[2]}`);
+          logTicker(`⚠ PumpFun REST ${res.status} via ${px || 'direct'} | ${ep.split('/')[2]}`);
         }
       } catch(e) {
-        // silent â€” try next
+        // silent — try next
       }
     }
   }
-  logTicker('âŒ PumpFun REST API unreachable via all proxies â€” staying with WebSocket only');
+  logTicker('❌ PumpFun REST API unreachable via all proxies — staying with WebSocket only');
 })();
 
 
 
 // ---- Silence-based migration detection ----
-// Se um token ficou 30s sem trades E tem MCAP >= $30K, assumir migraÃ§Ã£o
+// Se um token ficou 30s sem trades E tem MCAP >= $30K, assumir migração
 // O PumpFun para de enviar trades de um token assim que ele migra para DEX
 setInterval(() => {
   const now = Date.now();
   const SILENCE_MS = 5000;    // 5s sem trades
-  const MIN_MCAP   = 30000;   // mÃ­nimo $30K de MCAP para considerar migraÃ§Ã£o
+  const MIN_MCAP   = 30000;   // mínimo $30K de MCAP para considerar migração
   for (const [mint, tok] of Object.entries(pumpState.tokens || {})) {
     if (tok._migrated) continue;
-    if (!tok.lastTrade) continue;                          // ainda nÃ£o recebeu nenhum trade
-    if ((tok.mcap || 0) < MIN_MCAP) continue;             // MCAP baixo demais â€” provavelmente morreu
+    if (!tok.lastTrade) continue;                          // ainda não recebeu nenhum trade
+    if ((tok.mcap || 0) < MIN_MCAP) continue;             // MCAP baixo demais — provavelmente morreu
     if (now - tok.lastTrade < SILENCE_MS) continue;       // ainda ativo
-    // Token silencioso com MCAP alto â€” provavelmente migrou
+    // Token silencioso com MCAP alto — provavelmente migrou
     tok._migrated = true;
     const vol5mTotal = tok.vol5m.reduce((s, t) => s + t.usd, 0);
     showMigrateToast(tok, vol5mTotal, mint);
@@ -2552,7 +2552,7 @@ setInterval(() => {
       const avg = Math.round(pumpState.recentMigrationMcaps.reduce((a,b)=>a+b,0) / pumpState.recentMigrationMcaps.length);
       const bondField = document.getElementById('pump-bond-mcap');
       if (bondField) { bondField.value = avg; saveConfig(); }
-      logTicker(`ðŸš€ ${tok.symbol} migrated (silence 30s) at $${fmtVol(tok.mcap)} â€” bond â†’ $${fmtVol(avg)}`);
+      logTicker(`🚀 ${tok.symbol} migrated (silence 30s) at $${fmtVol(tok.mcap)} — bond → $${fmtVol(avg)}`);
     }
     setTimeout(() => {
       const r = document.querySelector(`[data-mint="${mint}"]`);
@@ -2586,10 +2586,10 @@ function renderPumpToken(mint, tok, vol5mTotal) {
 
   if (vol5mTotal < entryVol) return;
 
-  // Bonding curve target â€” sempre ativo com default $35K, atualiza automaticamente a cada migraÃ§Ã£o real
+  // Bonding curve target — sempre ativo com default $35K, atualiza automaticamente a cada migração real
   const migrateMcapUSD = parseFloat(document.getElementById('pump-bond-mcap').value) || 35000;
   const bondPct = Math.min(100, ((tok.mcap || 0) / migrateMcapUSD) * 100).toFixed(0);
-  const hasMigration = (pumpState.migrationCount || 0) >= 1; // barra sÃ³ aparece apÃ³s 1Âª migraÃ§Ã£o confirmada
+  const hasMigration = (pumpState.migrationCount || 0) >= 1; // barra só aparece após 1ª migração confirmada
   const showBar = hasMigration;
   const pct = bondPct;
 
@@ -2606,7 +2606,7 @@ function renderPumpToken(mint, tok, vol5mTotal) {
       const avg = Math.round(pumpState.recentMigrationMcaps.reduce((a,b)=>a+b,0) / pumpState.recentMigrationMcaps.length);
       const bondField = document.getElementById('pump-bond-mcap');
       if (bondField) { bondField.value = avg; saveConfig(); }
-      logTicker(`ðŸš€ ${tok.symbol} migrated (bondPctâ‰¥100) at $${fmtVol(tok.mcap)} â€” bond â†’ $${fmtVol(avg)}`);
+      logTicker(`🚀 ${tok.symbol} migrated (bondPct≥100) at $${fmtVol(tok.mcap)} — bond → $${fmtVol(avg)}`);
     }
     setTimeout(() => {
       const r = document.querySelector(`[data-mint="${mint}"]`);
@@ -2671,21 +2671,21 @@ function renderPumpToken(mint, tok, vol5mTotal) {
 
     const copyBtn = document.createElement('button');
     copyBtn.title = 'Copy CA';
-    copyBtn.textContent = 'â§‰';
+    copyBtn.textContent = '⧉';
     copyBtn.style.cssText = 'background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:1px 3px;line-height:1;opacity:0.5;';
     copyBtn.onmouseenter = () => { copyBtn.style.color='var(--text)'; copyBtn.style.opacity='1'; };
     copyBtn.onmouseleave = () => { copyBtn.style.color='var(--muted)'; copyBtn.style.opacity='0.5'; };
     copyBtn.onclick = () => {
       navigator.clipboard.writeText(mint).then(() => {
-        copyBtn.textContent = 'âœ“';
+        copyBtn.textContent = '✓';
         copyBtn.style.color = 'var(--green)';
-        setTimeout(() => { copyBtn.textContent = 'â§‰'; copyBtn.style.color = 'var(--muted)'; }, 1200);
+        setTimeout(() => { copyBtn.textContent = '⧉'; copyBtn.style.color = 'var(--muted)'; }, 1200);
       });
     };
 
     const removeBtn = document.createElement('button');
     removeBtn.title = 'Remove';
-    removeBtn.textContent = 'âœ•';
+    removeBtn.textContent = '✕';
     removeBtn.style.cssText = 'background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:1px 3px;line-height:1;opacity:0.5;';
     removeBtn.onmouseenter = () => { removeBtn.style.color='var(--red)'; removeBtn.style.opacity='1'; };
     removeBtn.onmouseleave = () => { removeBtn.style.color='var(--muted)'; removeBtn.style.opacity='0.5'; };
@@ -2736,7 +2736,7 @@ function renderPumpToken(mint, tok, vol5mTotal) {
 }
 
 function firePumpAlert(mint, tok, vol5mTotal) {
-  // HVNC dedup â€” if this is HVNC, only fire once ever for this token
+  // HVNC dedup — if this is HVNC, only fire once ever for this token
   const hvncMinVol = parseFloat(document.getElementById('hvnc-min-vol').value) || 0;
   const isHvnc = hvncMinVol > 0 && tok.createdAt && (Date.now() - tok.createdAt < 1800000) && vol5mTotal >= hvncMinVol;
   if (isHvnc) {
@@ -2759,7 +2759,7 @@ function firePumpAlert(mint, tok, vol5mTotal) {
           <span class="alert-token">${sym} <span style="color:var(--muted);font-size:10px">${name}</span></span>
           <span style="font-weight:700;font-size:15px;color:var(--pump-color)">$${fmtVol(vol5mTotal)} <span style="font-size:10px;opacity:0.8">VOL 5M</span></span>
         </div>
-        <div style="margin-top:4px"><span class="pump-badge">âš¡ PUMPSWAP â€” nÃ£o listado na DEX</span></div>
+        <div style="margin-top:4px"><span class="pump-badge">⚡ PUMPSWAP — não listado na DEX</span></div>
       </div>
     </div>
     <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
@@ -2767,7 +2767,7 @@ function firePumpAlert(mint, tok, vol5mTotal) {
       <span style="font-size:10px"><span style="color:var(--muted)">MCAP</span> <span style="color:var(--text)">$${fmt(tok.mcap)}</span></span>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">
-      <button class="btn-block" onclick="blockToken('${mint}','${sym}')">ðŸš« Block</button>
+      <button class="btn-block" onclick="blockToken('${mint}','${sym}')">🚫 Block</button>
       <span class="alert-time">${now}</span>
     </div>
   </div>`;
@@ -2783,7 +2783,7 @@ function firePumpAlert(mint, tok, vol5mTotal) {
   badge.textContent = (parseInt(badge.textContent) || 0) + 1;
 
   playAlert('mega');
-  logTicker(`âš¡ PumpFun ${sym} â€” VOL 5M $${fmtVol(vol5mTotal)}`);
+  logTicker(`⚡ PumpFun ${sym} — VOL 5M $${fmtVol(vol5mTotal)}`);
 }
 
 // ---- Migration toast ----
@@ -2791,7 +2791,7 @@ function playMigrateSound() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const vol = (parseInt(document.getElementById('sound-volume')?.value) || 80) / 100;
-    // Three rising tones: C5 â†’ E5 â†’ G5
+    // Three rising tones: C5 → E5 → G5
     [[523, 0], [659, 0.12], [784, 0.24]].forEach(([freq, delay]) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
@@ -2810,7 +2810,7 @@ function showMigrateToast(tok, vol5mTotal, mint) {
   const container = document.getElementById('migrate-toast-container');
   if (!container) return;
   const sym  = (tok.symbol || '??').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const age  = tok.createdAt ? fmtAge(tok.createdAt) : 'â€“';
+  const age  = tok.createdAt ? fmtAge(tok.createdAt) : '–';
   const vol  = vol5mTotal > 0 ? `$${fmtVol(vol5mTotal)} vol 5m` : '';
   const imgHtml = tok.image
     ? `<img class="migrate-toast-img" src="${tok.image}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="migrate-toast-placeholder" style="display:none">${sym.slice(0,2)}</div>`
@@ -2821,10 +2821,10 @@ function showMigrateToast(tok, vol5mTotal, mint) {
   toast.innerHTML = `
     ${imgHtml}
     <div class="migrate-toast-body">
-      <div class="migrate-toast-label">ðŸš€ Token Migrated</div>
+      <div class="migrate-toast-label">🚀 Token Migrated</div>
       <div class="migrate-toast-ticker">${sym}</div>
       <div class="migrate-toast-meta">AGE <span>${age}</span>${vol ? `&nbsp;&nbsp;VOL <span>${vol}</span>` : ''}</div>
-      ${mint ? `<button class="migrate-copy-btn" title="Copy contract address">â§‰ Copy CA</button>` : ''}
+      ${mint ? `<button class="migrate-copy-btn" title="Copy contract address">⧉ Copy CA</button>` : ''}
     </div>`;
 
   container.prepend(toast);
@@ -2836,9 +2836,9 @@ function showMigrateToast(tok, vol5mTotal, mint) {
       btn.onclick = (e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(mint).then(() => {
-          btn.textContent = 'âœ“ Copied!';
+          btn.textContent = '✓ Copied!';
           btn.style.color = 'var(--green)';
-          setTimeout(() => { btn.textContent = 'â§‰ Copy CA'; btn.style.color = ''; }, 1500);
+          setTimeout(() => { btn.textContent = '⧉ Copy CA'; btn.style.color = ''; }, 1500);
         });
       };
     }
@@ -2869,9 +2869,9 @@ function showMigrateToast(tok, vol5mTotal, mint) {
 </div><!-- /app-container -->
 
 <script>
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//  AUTH â€” Login, Register, Session Management
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ══════════════════════════════════════════════════════════════
+//  AUTH — Login, Register, Session Management
+// ══════════════════════════════════════════════════════════════
 
 const API_BASE = (() => {
   const qsApi = new URLSearchParams(window.location.search).get('api');
@@ -2890,7 +2890,6 @@ const API_BASE = (() => {
     return 'http://localhost:3000';
   }
 
-  // Production static frontend is hosted on Vercel while the API lives on Railway.
   if (window.location.hostname.endsWith('vercel.app')) {
     return RAILWAY_API_BASE;
   }
@@ -3016,7 +3015,7 @@ function disconnectServerSocket() {
   try { socketClient.disconnect(); } catch (_) {}
   socketClient = null;
 }
-// â”€â”€ UI Toggles â”€â”€
+// ── UI Toggles ──
 function showLogin() {
   document.getElementById('login-form').style.display = 'block';
   document.getElementById('register-form').style.display = 'none';
@@ -3028,7 +3027,7 @@ function showRegister() {
   document.getElementById('reg-error').textContent = '';
 }
 
-// â”€â”€ Login â”€â”€
+// ── Login ──
 async function doLogin() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
@@ -3068,7 +3067,7 @@ async function doLogin() {
   }
 }
 
-// â”€â”€ Register â”€â”€
+// ── Register ──
 async function doRegister() {
   const username = document.getElementById('reg-username').value.trim();
   const email = document.getElementById('reg-email').value.trim();
@@ -3112,7 +3111,7 @@ async function doRegister() {
   }
 }
 
-// â”€â”€ Logout â”€â”€
+// ── Logout ──
 function finishLogout() {
   disconnectServerSocket();
   if (authSessionCheckTimer) {
@@ -3144,7 +3143,7 @@ async function doLogout(skipServer = false) {
   finishLogout();
 }
 
-// â”€â”€ Session restore â”€â”€
+// ── Session restore ──
 async function tryRestoreSession() {
   const saved = sessionStorage.getItem('auth_token');
   if (!saved) return;
@@ -3163,12 +3162,12 @@ async function tryRestoreSession() {
       sessionStorage.removeItem('auth_token');
     }
   } catch (_) {
-    // Server offline â€” stay on login screen
+    // Server offline — stay on login screen
     sessionStorage.removeItem('auth_token');
   }
 }
 
-// â”€â”€ Authenticated â€” show app â”€â”€
+// ── Authenticated — show app ──
 async function onAuthenticated() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app-container').classList.add('visible');
@@ -3204,7 +3203,7 @@ async function onAuthenticated() {
   }, 30000);
 }
 
-// â”€â”€ Enter key support â”€â”€
+// ── Enter key support ──
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   if (document.getElementById('login-form').style.display !== 'none') {
@@ -3214,13 +3213,11 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// â”€â”€ Auto-restore on load â”€â”€
+// ── Auto-restore on load ──
 tryRestoreSession();
 </script>
 </body>
 </html>
-
-
 
 
 

@@ -1142,3 +1142,47 @@ Notas rï¿½pidas para evitar erros recorrentes:
 - Para teste local do HTML com backend Railway, sempre lembrar dos dois requisitos juntos:
   - servidor estatico local na pasta certa;
   - `http://localhost:8080` incluido no `CORS_ORIGINS` do Railway.
+
+## Update 2026-03-08 - Incidente de encoding no HTML (nao repetir)
+
+### O que aconteceu
+- O arquivo `volume-alert-botV57.html` ficou com texto visualmente corrompido na UI (`â€”`, `ðŸ`, `Ã`, etc.).
+- O problema apareceu depois de uma regravacao ampla do HTML usando PowerShell/serializacao de texto durante patches rapidos.
+- O comportamento funcional do bot continuou parcialmente correto, mas varios caracteres especiais da interface ficaram quebrados:
+  - travessoes e bullets (`—`, `·`)
+  - icones/emoji (`?`, `??`, `?`, `??`, etc.)
+  - alguns comentarios e strings com acentos
+
+### Causa raiz
+- O HTML deste projeto contem muitos caracteres Unicode validos na UI.
+- Regravar o arquivo inteiro por caminhos que passam pelo decoding/encoding errado do PowerShell pode introduzir mojibake.
+- Em especial, reescrever trechos grandes de `volume-alert-botV57.html` via `Get-Content` / `Set-Content` / replace amplo e depois salvar pode corromper caracteres mesmo quando o arquivo continua com sintaxe valida.
+- O `CLAUDE.md`/`AGENTS.md` ja dizia para preservar o comportamento e a UI do bot; o incidente mostrou que aqui tambem existe um requisito tecnico implicito: preservar rigorosamente o encoding UTF-8 do HTML.
+
+### Procedimento correto para mexer nesse HTML daqui para frente
+1. Nao fazer regravacao ampla do arquivo inteiro por PowerShell quando a mudanca for pequena.
+2. Preferir alteracoes cirurgicas via `apply_patch`.
+3. Se `apply_patch` falhar, preferir script Node lendo e escrevendo explicitamente em UTF-8 (`fs.readFileSync(..., 'utf8')` / `fs.writeFileSync(..., 'utf8')`).
+4. Evitar `Set-Content` / replace amplo em PowerShell para esse arquivo, principalmente em blocos grandes.
+5. Depois de qualquer alteracao no HTML, validar duas coisas antes de commit:
+- sintaxe do script embutido;
+- presenca de strings UI conhecidas com caracteres especiais, por exemplo:
+  - `Volume Alert Bot — Solana`
+  - `Solana · Real-time Monitor`
+  - `? START MONITORING`
+  - `?? Manual Tokens`
+  - `? PUMPFUN — LIVE`
+  - `?? ALERTS`
+
+### Procedimento de recuperacao validado
+- Restaurar `volume-alert-botV57.html` a partir do ultimo commit bom conhecido.
+- Reaplicar somente os diffs funcionais necessarios, sem reserializar o arquivo inteiro.
+- No incidente desta sessao, a recuperacao segura foi:
+  - restaurar o HTML a partir do commit `74fe98d`;
+  - reaplicar apenas:
+    - fix de persistencia dos manual tokens no `F5`;
+    - fallback de `API_BASE` para o Railway quando o frontend roda em `vercel.app`.
+
+### Regra pratica
+- Se aparecer texto quebrado na UI (`â€”`, `ðŸ`, `Ã`, etc.), assumir problema de encoding antes de assumir bug de logica.
+- Antes de publicar novo HTML no Vercel, sempre conferir o arquivo local e evitar commit de UI corrompida.
