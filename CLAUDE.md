@@ -1084,3 +1084,61 @@ Notas r�pidas para evitar erros recorrentes:
 2. Re-deploy do frontend Vercel se ele estiver apontando para o arquivo HTML atualizado.
 3. Repetir o teste de persistencia por conta com 2 usuarios.
 4. Repetir o teste de `logout-all` e confirmar logout efetivo nas sessoes abertas.
+
+## Update 2026-03-08 - Procedimento real validado para frontend local + Railway/Vercel
+
+### Problemas reais encontrados nesta etapa
+- O frontend no Vercel chegou a carregar o HTML novo, mas `/api/config` falhava em producao com `{"error":"Failed to load configs"}`.
+- A causa nao era o HTML: o Postgres do Railway ainda nao tinha as tabelas da Etapa 4 (`user_configs`, `user_tokens`, `user_blocklist`).
+- Rodar `node src/utils/db-init-stage4.js` localmente usando `DATABASE_URL` interno do Railway falha com `ENOTFOUND postgres.railway.internal`.
+- Para testar o HTML local contra o backend do Railway, `CORS_ORIGINS` precisava incluir `http://localhost:8080`; sem isso o login falha com erro de CORS.
+- O teste com `python -m http.server 8080` so funciona se o terminal estiver na pasta correta do projeto; fora dela o browser recebe `404 file not found` para `volume-alert-botV57.html`.
+
+### Procedimento que funcionou de verdade
+1. Criar as tabelas da Etapa 4 no banco do Railway usando conexao publica do Postgres.
+- No terminal local, apontar temporariamente `DATABASE_URL` para a `DATABASE_PUBLIC_URL` do servico Postgres do Railway.
+- Tambem definir SSL para conexao publica.
+- Comandos usados:
+  - PowerShell:
+    - `$env:DATABASE_URL = "<DATABASE_PUBLIC_URL_DO_RAILWAY>"`
+    - `$env:DB_SSL = "true"`
+    - `$env:DB_SSL_REJECT_UNAUTHORIZED = "false"`
+    - `node src/utils/db-init-stage4.js`
+- Resultado esperado: `Stage 4 tables created successfully` com:
+  - `user_configs`
+  - `user_tokens`
+  - `user_blocklist`
+
+2. Confirmar que `/api/config` passou a responder em producao.
+- Comandos usados:
+  - `$base = "https://volume-bot-alert-production.up.railway.app"`
+  - login via `POST /api/auth/login`
+  - depois `GET /api/config` com `Authorization: Bearer $login.token`
+- Se `/api/config` retornar dados, o backend de persistencia por usuario esta operacional.
+
+3. Testar o HTML local contra o Railway antes de publicar no Vercel.
+- Entrar na pasta correta do projeto:
+  - `cd "C:\Users\ezequ\Downloads\Volume-Alert-Server"`
+- Subir servidor estatico local:
+  - `python -m http.server 8080`
+- Abrir no navegador:
+  - `http://localhost:8080/volume-alert-botV57.html?api=https://volume-bot-alert-production.up.railway.app`
+- Nao usar `file:///...` para esse teste e nao iniciar o `http.server` fora da pasta do projeto.
+
+4. Liberar localhost no CORS do backend durante testes locais.
+- `CORS_ORIGINS` no Railway precisa incluir exatamente:
+  - `https://volume-alert-front-end.vercel.app,http://localhost:8080`
+- Se tambem houver teste local em outra porta, adicionar explicitamente a origem correspondente.
+- Apos alterar `CORS_ORIGINS`, fazer redeploy/restart do servico API no Railway.
+
+### Estado validado apos esse procedimento
+- `GET /api/config` em producao: ok.
+- Persistencia de config por conta entre sessoes/navegadores: ok apos criacao correta das tabelas Stage 4.
+- Frontend local servindo o HTML novo contra Railway: ok usando `python -m http.server 8080` na pasta do projeto.
+
+### Regra pratica para nao repetir esse retrabalho
+- Se login funcionar mas configuracoes por conta nao persistirem, verificar `/api/config` antes de culpar o HTML.
+- Se `/api/config` falhar em producao, conferir primeiro se o banco do Railway realmente tem as tabelas `user_configs`, `user_tokens` e `user_blocklist`.
+- Para teste local do HTML com backend Railway, sempre lembrar dos dois requisitos juntos:
+  - servidor estatico local na pasta certa;
+  - `http://localhost:8080` incluido no `CORS_ORIGINS` do Railway.

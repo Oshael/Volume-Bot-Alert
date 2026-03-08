@@ -1356,18 +1356,28 @@ async function loadManualTokens(savedOverride = null) {
     if (!saved.length) return;
     logTicker(`⟳ Loading ${saved.length} saved token(s)...`);
     for (const addr of saved) {
-      if (state.tokens[addr] || isBlocked(addr)) continue;
-      const pair = await fetchPairData(addr);
-      if (pair) {
-        addToken(addr, pair.baseToken?.name, pair.baseToken?.symbol);
-      } else {
+      if (isBlocked(addr)) continue;
+      if (!state.tokens[addr]) {
         addToken(addr, null, null);
       }
       if (state.tokens[addr]) {
-        state.tokens[addr].manual     = true;
-        state.tokens[addr]._userManual = true; // flag definitiva: adicionado pelo usuário
+        state.tokens[addr].manual = true;
+        state.tokens[addr]._userManual = true;
       }
+
+      const pair = await fetchPairData(addr);
+      if (!pair || !state.tokens[addr]) continue;
+
+      state.tokens[addr].name = pair.baseToken?.name || state.tokens[addr].name;
+      state.tokens[addr].symbol = pair.baseToken?.symbol || state.tokens[addr].symbol;
+      state.tokens[addr].imageUrl = pair.info?.imageUrl || pair.info?.header || pair.baseToken?.logoUri || state.tokens[addr].imageUrl || null;
+      state.tokens[addr].pairUrl = pair.url || state.tokens[addr].pairUrl || null;
+      state.tokens[addr].mcap = pair.marketCap || pair.fdv || state.tokens[addr].mcap || 0;
+      state.tokens[addr].twitterUrl = (pair.info?.socials || []).find(s => s.type === 'twitter')?.url || state.tokens[addr].twitterUrl || null;
+      state.tokens[addr].createdAt = pair.pairCreatedAt || state.tokens[addr].createdAt || null;
     }
+    renderManualBar();
+    renderMonitored();
     logTicker(`✓ ${saved.length} manual token(s) loaded`);
   } catch {}
 }
@@ -1390,30 +1400,31 @@ async function addManualToken() {
   const addr = inp.value.trim();
   if (!addr) return;
   inp.value = '';
-  const pair = await fetchPairData(addr);
-  if (pair) {
-    addToken(addr, pair.baseToken?.name, pair.baseToken?.symbol);
-    if (state.tokens[addr]) {
-      state.tokens[addr].manual      = true;
-      state.tokens[addr]._userManual = true;
-      // Try all known image fields from DexScreener response
-      state.tokens[addr].imageUrl  = pair.info?.imageUrl || pair.info?.header || pair.baseToken?.logoUri || null;
-      state.tokens[addr].pairUrl   = pair.url || null;
-      state.tokens[addr].mcap      = pair.marketCap || pair.fdv || 0;
-      state.tokens[addr].twitterUrl = (pair.info?.socials || []).find(s => s.type === 'twitter')?.url || null;
-      state.tokens[addr].createdAt  = pair.pairCreatedAt || null;
-    }
-    saveManualTokens();
-    renderManualBar();
-    // Re-render after short delay in case image resolves asynchronously
-    setTimeout(() => renderManualBar(), 1500);
-    logTicker(`✓ Added: ${pair.baseToken?.symbol}`);
-  } else {
+
+  if (!state.tokens[addr]) {
     addToken(addr, null, null);
-    if (state.tokens[addr]) { state.tokens[addr].manual = true; state.tokens[addr]._userManual = true; }
-    saveManualTokens();
-    renderManualBar();
   }
+  if (state.tokens[addr]) {
+    state.tokens[addr].manual = true;
+    state.tokens[addr]._userManual = true;
+  }
+
+  const pair = await fetchPairData(addr);
+  if (pair && state.tokens[addr]) {
+    state.tokens[addr].name = pair.baseToken?.name || state.tokens[addr].name;
+    state.tokens[addr].symbol = pair.baseToken?.symbol || state.tokens[addr].symbol;
+    state.tokens[addr].imageUrl = pair.info?.imageUrl || pair.info?.header || pair.baseToken?.logoUri || null;
+    state.tokens[addr].pairUrl = pair.url || null;
+    state.tokens[addr].mcap = pair.marketCap || pair.fdv || 0;
+    state.tokens[addr].twitterUrl = (pair.info?.socials || []).find(s => s.type === 'twitter')?.url || null;
+    state.tokens[addr].createdAt = pair.pairCreatedAt || null;
+    logTicker(`✓ Added: ${pair.baseToken?.symbol}`);
+  }
+
+  saveManualTokens();
+  renderManualBar();
+  renderMonitored();
+  setTimeout(() => renderManualBar(), 1500);
 }
 
 async function loadTrendingBtn(btn) {
@@ -3201,6 +3212,8 @@ tryRestoreSession();
 </script>
 </body>
 </html>
+
+
 
 
 
