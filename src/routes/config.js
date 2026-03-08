@@ -1,0 +1,264 @@
+const express = require('express');
+const router = express.Router();
+const { authenticate } = require('../middleware/auth');
+const userConfig = require('../models/user-config');
+const userToken = require('../models/user-token');
+const userBlocklist = require('../models/user-blocklist');
+
+// All config routes require authentication
+router.use(authenticate);
+
+// ── Limites ────────────────────────────────────────────────────────
+const MAX_TOKENS = 200;      // máx tokens manuais por user
+const MAX_BLOCKLIST = 500;   // máx blocklist por user
+
+// ══════════════════════════════════════════════════════════════════
+//  CONFIGS (thresholds, intervals, etc.)
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/config
+ * Retorna todas as configs do user (com defaults preenchidos).
+ */
+router.get('/', async (req, res) => {
+  try {
+    const configs = await userConfig.getAll(req.user.id);
+    const tokens = await userToken.getAll(req.user.id);
+    const blocklist = await userBlocklist.getAll(req.user.id);
+
+    res.json({
+      configs,
+      tokens,
+      blocklist,
+    });
+  } catch (err) {
+    console.error('GET /config error:', err.message);
+    res.status(500).json({ error: 'Failed to load configs' });
+  }
+});
+
+/**
+ * PUT /api/config
+ * Replace ALL configs + tokens + blocklist (full sync).
+ * Body: { configs: {...}, tokens: [...], blocklist: [...] }
+ */
+router.put('/', async (req, res) => {
+  try {
+    const { configs, tokens, blocklist } = req.body;
+
+    // ── Configs ──
+    if (configs && typeof configs === 'object') {
+      const validation = userConfig.validateConfigs(configs);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: 'Invalid config values',
+          details: validation.errors,
+        });
+      }
+      await userConfig.replaceAll(req.user.id, validation.configs);
+    }
+
+    // ── Tokens ──
+    if (Array.isArray(tokens)) {
+      if (tokens.length > MAX_TOKENS) {
+        return res.status(400).json({
+          error: `Maximum ${MAX_TOKENS} manual tokens allowed`,
+        });
+      }
+      // Validate addresses
+      const invalid = tokens.filter(t => {
+        const addr = (t.address || t).toString().trim();
+        return !userToken.isValidAddress(addr);
+      });
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: `${invalid.length} invalid token address(es)`,
+        });
+      }
+      await userToken.setAll(req.user.id, tokens);
+    }
+
+    // ── Blocklist ──
+    if (Array.isArray(blocklist)) {
+      if (blocklist.length > MAX_BLOCKLIST) {
+        return res.status(400).json({
+          error: `Maximum ${MAX_BLOCKLIST} blocked tokens allowed`,
+        });
+      }
+      await userBlocklist.setAll(req.user.id, blocklist);
+    }
+
+    // Return updated state
+    const result = {
+      configs: await userConfig.getAll(req.user.id),
+      tokens: await userToken.getAll(req.user.id),
+      blocklist: await userBlocklist.getAll(req.user.id),
+    };
+
+    res.json({ message: 'Config synced', ...result });
+  } catch (err) {
+    console.error('PUT /config error:', err.message);
+    res.status(500).json({ error: 'Failed to sync configs' });
+  }
+});
+
+/**
+ * PATCH /api/config
+ * Partial update — only updates keys that are sent.
+ * Body: { configs: {...} }
+ */
+router.patch('/', async (req, res) => {
+  try {
+    const { configs } = req.body;
+
+    if (!configs || typeof configs !== 'object' || Object.keys(configs).length === 0) {
+      return res.status(400).json({ error: 'configs object is required' });
+    }
+
+    const validation = userConfig.validateConfigs(configs);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'Invalid config values',
+        details: validation.errors,
+      });
+    }
+
+    // Reject if nothing valid to update
+    if (Object.keys(validation.configs).length === 0) {
+      return res.status(400).json({ error: 'No valid config keys to update' });
+    }
+
+    await userConfig.setMultiple(req.user.id, validation.configs);
+
+    const updated = await userConfig.getAll(req.user.id);
+    res.json({ message: 'Config updated', configs: updated });
+  } catch (err) {
+    console.error('PATCH /config error:', err.message);
+    res.status(500).json({ error: 'Failed to update configs' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  MANUAL TOKENS
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/config/tokens
+ * Add a manual token.
+ * Body: { address, label? }
+ */
+router.post('/tokens', async (req, res) => {
+  try {
+    const { address, label } = req.body;
+
+    if (!address || typeof address !== 'string') {
+      return res.status(400).json({ error: 'address is required' });
+    }
+
+    const addr = address.trim();
+    if (!userToken.isValidAddress(addr)) {
+      return res.status(400).json({ error: 'Invalid token address format' });
+    }
+
+    // Check limit
+    const currentCount = await userToken.count(req.user.id);
+    if (currentCount >= MAX_TOKENS) {
+      return res.status(400).json({
+        error: `Maximum ${MAX_TOKENS} manual tokens reached`,
+      });
+    }
+
+    const result = await userToken.add(req.user.id, addr, label || null);
+    if (!result) {
+      return res.status(409).json({ error: 'Token already added' });
+    }
+
+    res.status(201).json({ message: 'Token added', token: result });
+  } catch (err) {
+    console.error('POST /config/tokens error:', err.message);
+    res.status(500).json({ error: 'Failed to add token' });
+  }
+});
+
+/**
+ * DELETE /api/config/tokens/:address
+ * Remove a manual token.
+ */
+router.delete('/tokens/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    const removed = await userToken.remove(req.user.id, address);
+
+    if (!removed) {
+      return res.status(404).json({ error: 'Token not found' });
+    }
+
+    res.json({ message: 'Token removed' });
+  } catch (err) {
+    console.error('DELETE /config/tokens error:', err.message);
+    res.status(500).json({ error: 'Failed to remove token' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  BLOCKLIST
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/config/blocklist
+ * Block a token.
+ * Body: { address, label? }
+ */
+router.post('/blocklist', async (req, res) => {
+  try {
+    const { address, label } = req.body;
+
+    if (!address || typeof address !== 'string') {
+      return res.status(400).json({ error: 'address is required' });
+    }
+
+    const addr = address.trim();
+    if (!userToken.isValidAddress(addr)) {
+      return res.status(400).json({ error: 'Invalid token address format' });
+    }
+
+    const currentList = await userBlocklist.getAll(req.user.id);
+    if (currentList.length >= MAX_BLOCKLIST) {
+      return res.status(400).json({
+        error: `Maximum ${MAX_BLOCKLIST} blocked tokens reached`,
+      });
+    }
+
+    const result = await userBlocklist.add(req.user.id, addr, label || null);
+    if (!result) {
+      return res.status(409).json({ error: 'Token already blocked' });
+    }
+
+    res.status(201).json({ message: 'Token blocked', blocked: result });
+  } catch (err) {
+    console.error('POST /config/blocklist error:', err.message);
+    res.status(500).json({ error: 'Failed to block token' });
+  }
+});
+
+/**
+ * DELETE /api/config/blocklist/:address
+ * Unblock a token.
+ */
+router.delete('/blocklist/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    const removed = await userBlocklist.remove(req.user.id, address);
+
+    if (!removed) {
+      return res.status(404).json({ error: 'Blocked token not found' });
+    }
+
+    res.json({ message: 'Token unblocked' });
+  } catch (err) {
+    console.error('DELETE /config/blocklist error:', err.message);
+    res.status(500).json({ error: 'Failed to unblock token' });
+  }
+});
+
+module.exports = router;

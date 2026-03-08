@@ -1,0 +1,3192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Volume Alert Bot — Solana</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #080b10;
+    --surface: #0d1117;
+    --border: #1a2030;
+    --green: #00ff88;
+    --red: #ff3c5f;
+    --yellow: #ffcc00;
+    --cyan: #00d4ff;
+    --text: #c8d8e8;
+    --muted: #7a8fa8;
+    --alert-bg: #0a1a10;
+    --pump-color: #b06aff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Space Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .scanlines {
+    position: fixed; inset: 0; pointer-events: none; z-index: 999;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,136,0.015) 2px, rgba(0,255,136,0.015) 4px);
+  }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px; border-bottom: 1px solid var(--border); padding-bottom: 16px;
+  }
+
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-dot { width: 10px; height: 10px; background: var(--green); border-radius: 50%; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(0,255,136,0.4)} 50%{opacity:0.7;box-shadow:0 0 0 6px rgba(0,255,136,0)} }
+
+  h1 { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
+  .subtitle { font-size: 10px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
+
+  .status-bar { display: flex; gap: 20px; align-items: center; font-size: 11px; }
+  .status-item { display: flex; align-items: center; gap: 6px; }
+  .status-item span { color: var(--muted); }
+  .status-value { color: var(--cyan); font-weight: 700; }
+  .status-value.active { color: var(--green); }
+
+  .config-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+
+  .config-item { display: flex; flex-direction: column; gap: 6px; }
+  label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; }
+  
+  input, select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 13px;
+    padding: 8px 10px; border-radius: 4px; outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus, select:focus { border-color: var(--cyan); }
+
+  .btn-row { display: flex; gap: 10px; margin-bottom: 20px; }
+
+  button {
+    font-family: 'Space Mono', monospace; font-size: 12px; font-weight: 700;
+    padding: 10px 20px; border-radius: 4px; border: none; cursor: pointer;
+    text-transform: uppercase; letter-spacing: 1px; transition: all 0.15s;
+  }
+
+  .btn-start {
+    background: var(--green); color: #000;
+  }
+  .btn-start:hover { background: #00ffaa; transform: translateY(-1px); }
+  .btn-start.running { background: var(--red); color: #fff; }
+
+  .btn-clear { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .btn-clear:hover { border-color: var(--red); color: var(--red); }
+
+  .btn-test { background: transparent; border: 1px solid var(--cyan); color: var(--cyan); }
+  .btn-test:hover { background: rgba(0,212,255,0.1); }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  .panel.pump-panel { border-color: rgba(176,106,255,0.3); }
+
+  /* PumpFun badge on alert cards */
+  .pump-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(176,106,255,0.15); border: 1px solid rgba(176,106,255,0.4);
+    color: var(--pump-color); font-size: 9px; font-weight: 700;
+    padding: 2px 7px; border-radius: 3px; letter-spacing: 0.5px;
+  }
+  .alert-row.pump-alert { border-color: var(--pump-color); background: rgba(176,106,255,0.06); }
+
+  /* pump panel list */
+  .pump-list { height: 340px; overflow-y: auto; padding: 8px; }
+  .pump-list::-webkit-scrollbar { width: 4px; }
+  .pump-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .pump-token-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 4px;
+    margin-bottom: 4px; border: 1px solid transparent;
+    transition: background 0.2s; font-size: 12px; min-height: 52px;
+  }
+  .pump-token-row:hover { background: rgba(176,106,255,0.05); border-color: rgba(176,106,255,0.15); }
+
+  .pump-vol-bar {
+    height: 3px; background: rgba(176,106,255,0.2); border-radius: 2px; margin-top: 4px;
+  }
+  .pump-vol-bar-fill {
+    height: 3px; background: var(--pump-color); border-radius: 2px; transition: width 0.4s;
+  }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px;
+  }
+
+  .panel-header .count {
+    background: var(--border); padding: 2px 8px; border-radius: 20px;
+    font-size: 11px; color: var(--text);
+  }
+
+  .monitored-list, .alerts-list {
+    height: 340px; overflow-y: auto; padding: 8px;
+  }
+
+  .monitored-list::-webkit-scrollbar, .alerts-list::-webkit-scrollbar { width: 4px; }
+  .monitored-list::-webkit-scrollbar-thumb, .alerts-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .token-row {
+    display: grid; grid-template-columns: 36px 1fr auto auto;
+    align-items: center; padding: 8px 10px; border-radius: 4px;
+    margin-bottom: 4px; border: 1px solid transparent;
+    transition: all 0.3s; font-size: 12px; gap: 8px;
+  }
+  .token-row:hover { background: rgba(255,255,255,0.03); border-color: var(--border); }
+
+  .token-name { font-weight: 700; color: #fff; font-size: 13px; }
+  .token-addr { color: var(--muted); font-size: 9px; margin-top: 1px; }
+
+  .vol-badge {
+    font-size: 11px; font-weight: 700; padding: 3px 8px;
+    border-radius: 3px; text-align: right;
+  }
+  .vol-badge.up { color: var(--green); }
+  .vol-badge.down { color: var(--red); }
+
+  .change-badge {
+    font-size: 11px; font-weight: 700; padding: 3px 8px;
+    border-radius: 3px; min-width: 60px; text-align: center;
+  }
+  .change-badge.high { background: rgba(0,255,136,0.15); color: var(--green); border: 1px solid rgba(0,255,136,0.3); }
+  .change-badge.med { background: rgba(255,204,0,0.1); color: var(--yellow); border: 1px solid rgba(255,204,0,0.3); }
+  .change-badge.low { color: var(--muted); }
+
+  .alert-row {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 10px 12px; border-radius: 4px; margin-bottom: 6px;
+    animation: slideIn 0.3s ease;
+    border-left: 3px solid var(--green);
+    background: var(--alert-bg);
+  }
+
+  @keyframes slideIn { from { opacity:0; transform: translateX(-10px); } to { opacity:1; transform: none; } }
+
+  .alert-row.critical { border-color: var(--yellow); background: rgba(255,204,0,0.05); }
+  .alert-row.mega { border-color: #ff6b00; background: rgba(255,107,0,0.08); }
+
+  .alert-top { display: flex; justify-content: space-between; align-items: center; }
+  .alert-token { font-weight: 700; color: #fff; font-size: 13px; }
+  .alert-pct { font-weight: 700; font-size: 15px; color: var(--green); }
+  .alert-pct.critical { color: var(--yellow); }
+  .alert-pct.mega { color: #ff6b00; }
+  .alert-details { font-size: 10px; color: var(--muted); }
+  .alert-time { font-size: 9px; color: var(--muted); text-align: right; }
+
+  .btn-block {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 9px; font-weight: 700; font-family: 'Space Mono', monospace;
+    padding: 2px 8px; border-radius: 3px; cursor: pointer;
+    background: rgba(255,60,95,0.08); border: 1px solid rgba(255,60,95,0.25);
+    color: var(--red); opacity: 0.7; transition: opacity 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .btn-block:hover { opacity: 1; background: rgba(255,60,95,0.18); }
+
+  .btn-copy-ca {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 9px; font-weight: 700; font-family: 'Space Mono', monospace;
+    padding: 2px 8px; border-radius: 3px; cursor: pointer;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.13);
+    color: var(--muted); transition: all 0.15s; letter-spacing: 0.5px;
+  }
+  .btn-copy-ca:hover { color: #fff; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.09); }
+  .btn-copy-ca.copied { color: var(--green); border-color: rgba(0,255,136,0.35); background: rgba(0,255,136,0.08); }
+
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 200px; color: var(--muted); gap: 8px;
+  }
+  .empty-icon { font-size: 28px; opacity: 0.4; }
+  .empty-text { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; }
+
+  .add-token-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+  .add-token-row input { flex: 1; }
+  .btn-add { background: rgba(0,255,136,0.1); border: 1px solid rgba(0,255,136,0.3); color: var(--green); }
+  .btn-add:hover { background: rgba(0,255,136,0.2); }
+
+  /* Migration toast popup */
+  #migrate-toast-container {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 8px;
+    pointer-events: none; max-height: 90vh; overflow: hidden;
+  }
+  .migrate-toast {
+    background: linear-gradient(135deg, rgba(0,10,20,0.97), rgba(10,25,10,0.97));
+    border: 1px solid rgba(0,255,136,0.45);
+    border-radius: 10px; padding: 12px 20px;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 4px 24px rgba(0,255,136,0.18), 0 0 0 1px rgba(0,255,136,0.1);
+    min-width: 280px; max-width: 420px;
+    animation: toastIn 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    pointer-events: auto; overflow: hidden;
+  }
+  .migrate-toast.fade-out {
+    animation: toastOut 0.7s ease forwards;
+  }
+  @keyframes toastIn {
+    from { opacity:0; transform:translateY(-18px) scale(0.95); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
+  }
+  .migrate-copy-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--muted);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin-top: 4px;
+    transition: all 0.15s;
+  }
+  .migrate-copy-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  @keyframes toastOut {
+    0%   { opacity:1; transform:translateY(0) scale(1); }
+    70%  { opacity:1; transform:translateY(0) scale(1); }
+    100% { opacity:0; transform:translateY(-10px) scale(0.97); }
+  }
+  .migrate-toast-img {
+    width: 42px; height: 42px; min-width: 42px; min-height: 42px;
+    max-width: 42px; max-height: 42px;
+    border-radius: 50%; object-fit: cover;
+    border: 2px solid rgba(0,255,136,0.4); flex-shrink: 0;
+    background: rgba(0,255,136,0.08);
+  }
+  .migrate-toast-placeholder {
+    width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(0,255,136,0.1); border: 2px solid rgba(0,255,136,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: var(--green);
+  }
+  .migrate-toast-body { flex: 1; min-width: 0; }
+  .migrate-toast-label {
+    font-size: 9px; color: var(--green); text-transform: uppercase;
+    letter-spacing: 1.5px; font-weight: 700; margin-bottom: 2px;
+  }
+  .migrate-toast-ticker {
+    font-size: 16px; font-weight: 700; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .migrate-toast-meta {
+    font-size: 10px; color: var(--muted); margin-top: 3px;
+  }
+  .migrate-toast-meta span { color: var(--green); font-weight: 700; }
+
+  .ticker {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding: 6px 16px; font-size: 10px; color: var(--muted);
+    display: flex; gap: 8px; overflow: hidden;
+  }
+  .ticker-item { white-space: nowrap; }
+  .ticker-item .up { color: var(--green); }
+  .ticker-item .dn { color: var(--red); }
+
+  #notif-status { font-size: 10px; }
+
+  .sort-tabs { display: flex; gap: 2px; }
+  .sort-tab {
+    font-family: 'Space Mono', monospace; font-size: 9px; font-weight: 700;
+    padding: 3px 7px; border-radius: 3px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); cursor: pointer;
+    text-transform: uppercase; letter-spacing: 0.5px; transition: all 0.15s;
+  }
+  .sort-tab:hover { border-color: var(--cyan); color: var(--cyan); }
+  .sort-tab.active { background: rgba(0,212,255,0.12); border-color: var(--cyan); color: var(--cyan); }
+
+  .tok-avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    object-fit: cover; flex-shrink: 0;
+    background: var(--border);
+    border: 1px solid var(--border);
+    display: block;
+  }
+  .tok-avatar-placeholder {
+    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    background: var(--border); display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: var(--muted); border: 1px solid var(--border);
+  }
+  .alert-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    object-fit: cover;
+    background: var(--border); border: 1px solid var(--border);
+    display: block;
+  }
+  .alert-avatar-placeholder {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--border); display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: var(--muted); border: 1px solid var(--border);
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px; background: var(--border);
+    border-radius: 2px; outline: none; padding: 0; border: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; background: var(--cyan);
+    border-radius: 50%; cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; background: var(--cyan);
+    border-radius: 50%; cursor: pointer; border: none;
+  }
+
+  @media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
+  /* ── Login Screen ────────────────────────────────────────── */
+  #login-screen {
+    position: fixed; inset: 0; z-index: 10000;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Space Mono', monospace;
+  }
+  #login-screen.hidden { display: none; }
+  .login-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 36px 32px 28px;
+    width: 360px;
+    max-width: 90vw;
+  }
+  .login-box h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--cyan);
+    margin-bottom: 4px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .login-box .login-sub {
+    font-size: 10px; color: var(--muted); margin-bottom: 20px;
+  }
+  .login-box label {
+    display: block; font-size: 10px; color: var(--muted);
+    margin-bottom: 4px; margin-top: 12px; text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .login-box input[type="text"],
+  .login-box input[type="password"],
+  .login-box input[type="email"] {
+    width: 100%; padding: 9px 12px; font-size: 12px;
+    font-family: 'Space Mono', monospace;
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 5px; outline: none;
+    transition: border-color 0.15s;
+  }
+  .login-box input:focus {
+    border-color: var(--cyan);
+  }
+  .login-box .login-btn {
+    width: 100%; margin-top: 20px; padding: 10px;
+    font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700;
+    background: var(--cyan); color: var(--bg);
+    border: none; border-radius: 5px; cursor: pointer;
+    transition: opacity 0.15s; text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .login-box .login-btn:hover { opacity: 0.85; }
+  .login-box .login-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .login-box .login-error {
+    margin-top: 12px; font-size: 10px; color: var(--red);
+    min-height: 14px; text-align: center;
+  }
+  .login-box .login-toggle {
+    margin-top: 16px; font-size: 10px; color: var(--muted);
+    text-align: center;
+  }
+  .login-box .login-toggle a {
+    color: var(--cyan); cursor: pointer; text-decoration: none;
+  }
+  .login-box .login-toggle a:hover { text-decoration: underline; }
+  #app-container { display: none; }
+  #app-container.visible { display: block; }
+  .logout-btn {
+    background: none; border: 1px solid rgba(255,60,95,0.25);
+    color: var(--muted); cursor: pointer; font-size: 9px;
+    padding: 3px 10px; border-radius: 4px; font-family: 'Space Mono', monospace;
+    transition: all 0.15s; margin-left: 8px;
+  }
+  .logout-btn:hover { border-color: var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+
+<!-- ── Login / Register Screen ──────────────────────────── -->
+<div id="login-screen">
+  <div class="login-box">
+    <h2><div style="width:10px;height:10px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan)"></div> VOLUME ALERT BOT</h2>
+    <div class="login-sub">Solana · Real-time Monitor</div>
+
+    <!-- Login Form -->
+    <div id="login-form">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="email@example.com" autocomplete="email">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+      <button class="login-btn" id="login-btn" onclick="doLogin()">LOGIN</button>
+      <div class="login-error" id="login-error"></div>
+      <div class="login-toggle">Don't have an account? <a onclick="showRegister()">Register</a></div>
+    </div>
+
+    <!-- Register Form -->
+    <div id="register-form" style="display:none">
+      <label>Username</label>
+      <input type="text" id="reg-username" placeholder="username" autocomplete="username">
+      <label>Email</label>
+      <input type="email" id="reg-email" placeholder="email@example.com" autocomplete="email">
+      <label>Password</label>
+      <input type="password" id="reg-password" placeholder="min 8 characters" autocomplete="new-password">
+      <label>Invite Code</label>
+      <input type="text" id="reg-invite" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off">
+      <button class="login-btn" id="reg-btn" onclick="doRegister()">REGISTER</button>
+      <div class="login-error" id="reg-error"></div>
+      <div class="login-toggle">Already have an account? <a onclick="showLogin()">Login</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── App Container (hidden until authenticated) ────────── -->
+<div id="app-container">
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    <div>
+      <h1>VOLUME ALERT BOT</h1>
+      <div class="subtitle">Solana · DexScreener Feed · 5m Monitor</div>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="status-item"><span>STATUS</span><div id="run-status" class="status-value">STOPPED</div></div>
+    <div class="status-item"><span>CYCLE</span><div id="cycle-count" class="status-value">0</div></div>
+    <div class="status-item"><span>UPTIME</span><div id="uptime-count" class="status-value">—</div></div>
+    <div class="status-item"><span>ALERTS</span><div id="alert-count" class="status-value">0</div></div>
+    <div class="status-item"><span>TIMEOUTS</span><div id="timeout-count" class="status-value" style="color:var(--muted)">0</div></div>
+    <div class="status-item"><span id="notif-status">🔕 SOUND OFF</span></div>
+  </div>
+</header>
+
+<div class="config-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))">
+  <!-- Row 1: Alert thresholds -->
+  <div class="config-item">
+    <label>Alert when 5m volume rises (%)</label>
+    <input type="number" id="threshold" value="50" min="1" max="1000">
+  </div>
+  <div class="config-item">
+    <label>Alert when MKT CAP rises (%) in 5m</label>
+    <input type="number" id="mcap-threshold" value="50" min="1" max="10000" placeholder="0 = disabled">
+  </div>
+  <div class="config-item">
+    <label>Min 5m volume to alert ($)</label>
+    <input type="number" id="min-vol" value="500" min="0" placeholder="ex: 500">
+  </div>
+  <div class="config-item">
+    <label>Min market cap to alert ($)</label>
+    <input type="number" id="min-mcap" value="10000" min="0" placeholder="ex: 10000">
+  </div>
+  <div class="config-item">
+    <label>Max market cap to alert ($)</label>
+    <input type="number" id="max-mcap" value="0" min="0" placeholder="0 = no limit">
+  </div>
+  <div class="config-item">
+    <label>Check interval (seconds)</label>
+    <input type="number" id="interval" value="30" min="10" max="300">
+  </div>
+  <!-- Row 2: Token management + chain + HVNC -->
+  <div class="config-item">
+    <label>Min MKT CAP to stay monitored ($)</label>
+    <input type="number" id="min-mcap-remove" value="0" min="0" placeholder="0 = disabled">
+  </div>
+  <div class="config-item">
+    <label>Remove token with no volume after (cycles)</label>
+    <input type="number" id="dead-cycles" value="10" min="1" max="50" placeholder="ex: 10">
+  </div>
+  <div class="config-item">
+    <label>Chain</label>
+    <select id="chain">
+      <option value="solana">Solana</option>
+      <option value="ethereum">Ethereum</option>
+      <option value="bsc">BSC</option>
+      <option value="base">Base</option>
+    </select>
+  </div>
+  <div class="config-item">
+    <label>🚨 High Vol New Coin — min total vol ($)</label>
+    <input type="number" id="hvnc-min-vol" value="300000" min="0" placeholder="0 = disabled">
+  </div>
+  <!-- Row 2 remaining: sound -->
+  <div class="config-item">
+    <label>Sound alert</label>
+    <select id="sound-mode">
+      <option value="on">Enabled</option>
+      <option value="off">Disabled</option>
+    </select>
+  </div>
+  <div class="config-item">
+    <label>Sound volume: <span id="vol-label">80%</span></label>
+    <input type="range" id="sound-volume" min="0" max="100" value="80" oninput="document.getElementById('vol-label').textContent=this.value+'%'">
+  </div>
+  <!-- Row 3: Sound files -->
+  <div class="config-item">
+    <label>🟢 Sound level NORMAL (+50%) — MP3/WAV/OGG</label>
+    <input type="file" id="sound-normal" accept="audio/*" onchange="loadLevelSound('normal',this)" style="font-size:11px;padding:6px 8px">
+    <span id="sound-normal-name" style="font-size:10px;color:var(--muted);margin-top:2px">Default (tone)</span>
+  </div>
+  <div class="config-item">
+    <label>🟡 Sound level CRITICAL (+100%) — MP3/WAV/OGG</label>
+    <input type="file" id="sound-critical" accept="audio/*" onchange="loadLevelSound('critical',this)" style="font-size:11px;padding:6px 8px">
+    <span id="sound-critical-name" style="font-size:10px;color:var(--muted);margin-top:2px">Default (tone)</span>
+  </div>
+  <div class="config-item">
+    <label>🔴 Sound level MEGA (+200%) — MP3/WAV/OGG</label>
+    <input type="file" id="sound-mega" accept="audio/*" onchange="loadLevelSound('mega',this)" style="font-size:11px;padding:6px 8px">
+    <span id="sound-mega-name" style="font-size:10px;color:var(--muted);margin-top:2px">Default (tone)</span>
+  </div>
+</div>
+
+<div class="btn-row">
+  <button class="btn-start" id="btn-start" onclick="toggleBot()">▶ START MONITORING</button>
+  <button class="btn-test" onclick="addManualToken()">+ ADD TOKEN</button>
+  <button class="btn-test" onclick="loadTrendingBtn(this)">⟳ LOAD TRENDING SOL</button>
+  <button class="btn-test" onclick="clearAlerts()">✕ CLEAR ALERTS</button>
+  <button class="btn-test" style="border-color:var(--green);color:var(--green)" onclick="playAlert('normal');setTimeout(()=>playAlert('critical'),500);setTimeout(()=>playAlert('mega'),1100)">▶ TEST SOUND</button>
+  <button class="btn-test" style="border-color:#ffaa00;color:#ffaa00" onclick="debugTokens()">🔍 DEBUG MCAP</button>
+</div>
+
+<div id="migrate-toast-container"></div>
+<input type="hidden" id="pump-bond-mcap" value="35000">
+
+<div id="blocklist-bar" style="display:none;align-items:center;gap:8px;margin-bottom:12px;background:var(--surface);border:1px solid rgba(255,60,95,0.2);border-radius:6px;padding:8px 12px;flex-wrap:wrap">
+  <span style="font-size:10px;color:var(--red);white-space:nowrap;text-transform:uppercase;letter-spacing:1px">🚫 Blocked:</span>
+  <div id="blocklist-tags" style="display:flex;gap:6px;flex-wrap:wrap;flex:1"></div>
+  <button onclick="clearBlocklist()" style="font-size:10px;padding:4px 10px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer;font-family:inherit">CLEAR ALL</button>
+</div>
+
+<div id="old-tokens-bar" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px;background:var(--surface);border:1px solid rgba(255,170,0,0.2);border-radius:6px;padding:10px 12px">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:10px;color:#ffaa00;text-transform:uppercase;letter-spacing:1px;font-weight:700">⏳ Old Tokens</span>
+      <div id="old-removal-log-wrapper" style="position:relative;display:none">
+        <div id="old-removal-log-badge" style="font-size:9px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid rgba(255,170,0,0.15);border-radius:4px;background:rgba(255,170,0,0.04);transition:all 0.15s" onmouseenter="document.getElementById('old-removal-log-panel').style.display='block'" onmouseleave="">
+          📋 <span id="old-removal-log-count">0</span> removed
+        </div>
+        <div id="old-removal-log-panel" style="display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:340px;max-width:500px;max-height:320px;overflow-y:auto;background:var(--bg);border:1px solid rgba(255,170,0,0.3);border-radius:6px;padding:8px;z-index:100;box-shadow:0 4px 20px rgba(0,0,0,0.5)" onmouseenter="this.style.display='block'" onmouseleave="this.style.display='none'">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span style="font-size:9px;color:#ffaa00;font-weight:700;text-transform:uppercase;letter-spacing:1px">Removal Log</span>
+            <button onclick="clearOldRemovalLog()" style="font-size:8px;color:var(--muted);background:none;border:1px solid rgba(255,255,255,0.1);border-radius:3px;padding:1px 6px;cursor:pointer;font-family:inherit" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--muted)'">Clear All</button>
+          </div>
+          <div id="old-removal-log-list"></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:9px;color:var(--muted)">MCAP MIN
+        <input type="number" id="old-mcap-min" value="120000" min="0"
+          style="width:80px;font-size:9px;padding:2px 5px;background:var(--bg);border:1px solid var(--border);color:#ffaa00;border-radius:3px;font-family:inherit;margin-left:4px"
+          onchange="saveConfig();applyOldTokensMcapFilter()">
+      </span>
+      <span style="font-size:9px;color:var(--muted)">MCAP MAX
+        <input type="number" id="old-mcap-max" value="1000000" min="0"
+          style="width:90px;font-size:9px;padding:2px 5px;background:var(--bg);border:1px solid var(--border);color:#ffaa00;border-radius:3px;font-family:inherit;margin-left:4px"
+          onchange="saveConfig();applyOldTokensMcapFilter()">
+      </span>
+      <span style="font-size:9px;color:var(--muted)">1d – 7d old · continuously monitored</span>
+    </div>
+  </div>
+  <div id="old-tokens-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+</div>
+
+<div id="manual-tokens-bar" style="display:none;flex-direction:column;gap:8px;margin-bottom:12px;background:var(--surface);border:1px solid rgba(0,212,255,0.2);border-radius:6px;padding:10px 12px">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span style="font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;font-weight:700">📌 Manual Tokens</span>
+    <span style="font-size:9px;color:var(--muted)">Pinned · always monitored · removing here keeps them in the monitor panel if they have volume</span>
+  </div>
+  <div id="manual-tokens-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <div class="panel-header">
+      <span>MONITORED TOKENS</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:9px;color:var(--muted)">SORT BY</span>
+        <div class="sort-tabs" id="sort-tabs">
+          <button class="sort-tab active" data-sort="vol5m"  onclick="setSort('vol5m',this)">5M</button>
+          <button class="sort-tab"        data-sort="vol1h"  onclick="setSort('vol1h',this)">1H</button>
+          <button class="sort-tab"        data-sort="vol6h"  onclick="setSort('vol6h',this)">6H</button>
+          <button class="sort-tab"        data-sort="vol24h" onclick="setSort('vol24h',this)">24H</button>
+          <button class="sort-tab"        data-sort="mcap"   onclick="setSort('mcap',this)">MCAP</button>
+        </div>
+        <span class="count" id="token-count">0</span>
+      </div>
+    </div>
+    <div class="monitored-list" id="monitored-list">
+      <div class="empty-state">
+        <div class="empty-icon">⬡</div>
+        <div class="empty-text">Add tokens or load trending</div>
+      </div>
+    </div>
+    <div class="add-token-row">
+      <input type="text" id="manual-addr" placeholder="Token address (CA)..." />
+      <button class="btn-add" onclick="addManualToken()">ADD</button>
+    </div>
+  </div>
+
+  <div class="panel pump-panel">
+    <div class="panel-header" style="border-color:rgba(176,106,255,0.2)">
+      <span style="color:var(--pump-color)">⚡ PUMPFUN — LIVE</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:9px;color:var(--muted)">ENTRY ($)</span>
+        <input type="number" id="pump-entry-vol" value="20000" min="0" style="width:70px;font-size:10px;padding:2px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px">
+        <span style="font-size:9px;color:var(--muted)">ALERT ($)</span>
+        <input type="number" id="pump-min-vol" value="100000" min="0" style="width:70px;font-size:10px;padding:2px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px">
+        <span class="count" id="pump-count" style="background:rgba(176,106,255,0.15);color:var(--pump-color)">0</span>
+      </div>
+    </div>
+    <div class="pump-list" id="pump-list">
+      <div class="empty-state">
+        <div class="empty-icon" style="color:var(--pump-color);opacity:0.4">⚡</div>
+        <div class="empty-text">Waiting for WebSocket connection...</div>
+      </div>
+    </div>
+    <div style="padding:8px 12px;border-top:1px solid rgba(176,106,255,0.15);display:flex;align-items:center;justify-content:space-between">
+      <span id="pump-status" style="font-size:10px;color:var(--muted)">● Disconnected</span>
+      <button onclick="togglePumpWs()" id="pump-btn" style="font-size:10px;padding:4px 12px;background:rgba(176,106,255,0.1);border:1px solid rgba(176,106,255,0.3);color:var(--pump-color);border-radius:4px;cursor:pointer;font-family:inherit">CONNECT</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <span>🔔 ALERTS</span>
+      <span class="count" id="alerts-count-badge">0</span>
+    </div>
+    <div class="alerts-list" id="alerts-list">
+      <div class="empty-state">
+        <div class="empty-icon">◈</div>
+        <div class="empty-text">Waiting for signals...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ticker" id="ticker">
+  <span class="ticker-item">Bot ready — add tokens and start monitoring</span>
+</div>
+
+<script>
+const state = {
+  running: false,
+  interval: null,
+  tokens: {},
+  alerts: [],
+  cycles: 0,
+  alertCount: 0,
+  sortBy: 'vol5m',
+  lastTrendingRefresh: 0,
+  blocklist: new Set(), // CAs e símbolos bloqueados
+};
+
+var authToken = null;
+var currentUser = null;
+var socketClient = null;
+var authValidated = false;
+
+async function ensureSessionValid() {
+  if (!authToken) return false;
+  try {
+    const res = await apiAuthFetch('/api/auth/me');
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => null);
+    if (data?.user) currentUser = data.user;
+    authValidated = true;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function requireAuthOrBlock(actionLabel) {
+  const ok = await ensureSessionValid();
+  if (ok) return true;
+  authValidated = false;
+  logTicker(`Auth required for ${actionLabel}. Please login.`);
+  try { await doLogout(); } catch (_) {}
+  return false;
+}
+
+// CORS proxy helper — tenta direto primeiro, depois via proxy
+const PROXIES = [
+  url => url,                                                          // direto
+  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,          // proxy 1
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, // proxy 2
+];
+
+let timeoutCount = 0;
+
+async function apiFetch(url) {
+  for (const wrap of PROXIES) {
+    try {
+      const res = await fetch(wrap(url), { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      return await res.json();
+    } catch(e) {
+      if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+        timeoutCount++;
+        const el = document.getElementById('timeout-count');
+        if (el) {
+          el.textContent = timeoutCount;
+          el.style.color = timeoutCount > 5 ? 'var(--red)' : 'var(--yellow)';
+        }
+        logTicker(`⏱ Timeout (${timeoutCount}) — ${new URL(wrap(url)).hostname}`);
+      }
+      continue;
+    }
+  }
+  return null;
+}
+
+async function fetchPairData(address) {
+  const chain = document.getElementById('chain').value;
+  const data = await apiFetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+  if (!data?.pairs?.length) return null;
+  const pairs = data.pairs.filter(p => p.chainId === chain);
+  const pool = pairs.length > 0 ? pairs : data.pairs;
+  return pool.sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0))[0];
+}
+
+
+// --- Token management ---
+// ---- Tokens Velhos ----
+// Estrutura: { addr: { symbol, name, imageUrl, mcap, pairUrl, addedAt } }
+const oldTokens = {};
+const OLD_MIN_AGE = 86400000;    // 1 dia em ms
+const OLD_MAX_AGE = 604800000;   // 7 dias em ms
+// Tokens manually dismissed — never re-added automatically to Old Tokens bar
+const dismissedOldTokens = new Set(JSON.parse(localStorage.getItem('old_dismissed') || '[]'));
+function saveDismissedOld() {
+  localStorage.setItem('old_dismissed', JSON.stringify([...dismissedOldTokens]));
+}
+
+// ---- Old Tokens Removal Log ----
+const OLD_LOG_EXPIRY = 12 * 60 * 60 * 1000; // 12 hours
+let oldRemovalLog = JSON.parse(localStorage.getItem('old_removal_log') || '[]');
+// Prune expired on load
+oldRemovalLog = oldRemovalLog.filter(e => Date.now() - e.ts < OLD_LOG_EXPIRY);
+localStorage.setItem('old_removal_log', JSON.stringify(oldRemovalLog));
+
+function logOldTokenRemoval(addr, ot, reason) {
+  const entry = {
+    addr,
+    symbol: ot.symbol || addr.slice(0, 8),
+    imageUrl: ot.imageUrl || null,
+    pairUrl: ot.pairUrl || null,
+    mcap: ot.mcap || 0,
+    reason,
+    ts: Date.now()
+  };
+  oldRemovalLog.unshift(entry); // newest first
+  // Prune expired
+  oldRemovalLog = oldRemovalLog.filter(e => Date.now() - e.ts < OLD_LOG_EXPIRY);
+  localStorage.setItem('old_removal_log', JSON.stringify(oldRemovalLog));
+  renderOldRemovalLog();
+}
+
+function removeOldLogEntry(idx) {
+  oldRemovalLog.splice(idx, 1);
+  localStorage.setItem('old_removal_log', JSON.stringify(oldRemovalLog));
+  renderOldRemovalLog();
+}
+
+function clearOldRemovalLog() {
+  oldRemovalLog = [];
+  localStorage.setItem('old_removal_log', JSON.stringify(oldRemovalLog));
+  renderOldRemovalLog();
+}
+
+function renderOldRemovalLog() {
+  // Prune expired
+  oldRemovalLog = oldRemovalLog.filter(e => Date.now() - e.ts < OLD_LOG_EXPIRY);
+  const wrapper = document.getElementById('old-removal-log-wrapper');
+  const countEl = document.getElementById('old-removal-log-count');
+  const listEl  = document.getElementById('old-removal-log-list');
+  if (!wrapper || !listEl) return;
+  if (!oldRemovalLog.length) { wrapper.style.display = 'none'; return; }
+  wrapper.style.display = 'block';
+  countEl.textContent = oldRemovalLog.length;
+  listEl.innerHTML = oldRemovalLog.map((e, i) => {
+    const d = new Date(e.ts);
+    const time = d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const sym = (e.symbol || '??').replace(/</g,'&lt;');
+    const imgHtml = e.imageUrl
+      ? `<img src="${e.imageUrl}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,170,0,0.3);flex-shrink:0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div style="display:none;width:22px;height:22px;border-radius:50%;background:rgba(255,170,0,0.1);align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#ffaa00;flex-shrink:0">${sym.slice(0,2)}</div>`
+      : `<div style="display:flex;width:22px;height:22px;border-radius:50%;background:rgba(255,170,0,0.1);align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#ffaa00;flex-shrink:0">${sym.slice(0,2)}</div>`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 4px;border-bottom:1px solid rgba(255,255,255,0.04)">
+      ${imgHtml}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:700;color:#ffaa00"><a href="${e.pairUrl || `https://dexscreener.com/solana/${e.addr}`}" target="_blank" style="color:#ffaa00;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${sym}</a> <span style="font-weight:400;color:var(--muted);font-size:9px">MCAP $${fmt(e.mcap)}</span></div>
+        <div style="font-size:9px;color:var(--muted)">${e.reason}</div>
+        <div style="font-size:8px;color:var(--muted);opacity:0.6">${time}</div>
+      </div>
+      <button onclick="removeOldLogEntry(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;opacity:0.4;flex-shrink:0" onmouseover="this.style.opacity=1;this.style.color='var(--red)'" onmouseout="this.style.opacity=0.4;this.style.color='var(--muted)'" title="Dismiss">✕</button>
+    </div>`;
+  }).join('');
+}
+// Render on load
+setTimeout(renderOldRemovalLog, 500);
+
+function saveOldTokens() {
+  localStorage.setItem('old_tokens', JSON.stringify(
+    Object.entries(oldTokens).map(([addr, t]) => ({ addr, ...t }))
+  ));
+}
+
+async function loadOldTokens() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('old_tokens') || '[]');
+    if (!saved.length) return;
+    for (const t of saved) {
+      oldTokens[t.addr] = { symbol: t.symbol, name: t.name, imageUrl: t.imageUrl, mcap: t.mcap, pairUrl: t.pairUrl, addedAt: t.addedAt, createdAt: t.createdAt || null };
+      // Garante que o token está sendo monitorado
+      if (!state.tokens[t.addr]) {
+        addToken(t.addr, t.name, t.symbol);
+        if (state.tokens[t.addr]) {
+          state.tokens[t.addr].manual   = true;
+          state.tokens[t.addr].oldToken = true;
+        }
+      }
+    }
+    renderOldTokens();
+  } catch {}
+}
+
+function getOldMcapMin() { return parseFloat(document.getElementById('old-mcap-min')?.value) || 120000; }
+function getOldMcapMax() { return parseFloat(document.getElementById('old-mcap-max')?.value) || 1000000; }
+
+function applyOldTokensMcapFilter() {
+  const min = getOldMcapMin(), max = getOldMcapMax();
+  let changed = false;
+  for (const [addr, ot] of Object.entries(oldTokens)) {
+    if (ot.mcap > 0 && (ot.mcap < min || ot.mcap > max)) {
+      const reason = ot.mcap < min
+        ? `MCAP $${fmt(ot.mcap)} below min $${fmt(min)}`
+        : `MCAP $${fmt(ot.mcap)} above max $${fmt(max)}`;
+      logOldTokenRemoval(addr, ot, reason);
+      delete oldTokens[addr];
+      changed = true;
+    }
+  }
+  if (changed) { saveOldTokens(); renderOldTokens(); }
+}
+
+function addOldToken(addr, tok) {
+  if (oldTokens[addr]) return;
+  if (dismissedOldTokens.has(addr)) return; // user manually dismissed — never re-add
+  const mcap = tok.mcap || 0;
+  const min = getOldMcapMin(), max = getOldMcapMax();
+  if (mcap > 0 && (mcap < min || mcap > max)) return;
+  oldTokens[addr] = {
+    symbol: tok.symbol, name: tok.name,
+    imageUrl: tok.imageUrl || null,
+    mcap: mcap,
+    pairUrl: tok.pairUrl || null,
+    twitterUrl: tok.twitterUrl || null,
+    createdAt: tok.createdAt || null,
+    addedAt: Date.now(),
+  };
+  if (state.tokens[addr]) {
+    state.tokens[addr].manual   = true;  // protege de dead-cycles
+    state.tokens[addr].oldToken = true;  // marca como token velho (mcap filter pode agir)
+  }
+  renderOldTokens();
+  logTicker(`⏳ Old token detected: ${tok.symbol}`);
+}
+
+function removeOldToken(addr) {
+  delete oldTokens[addr];
+  dismissedOldTokens.add(addr); // prevent auto re-add
+  saveDismissedOld();
+  saveOldTokens();
+  renderOldTokens();
+}
+
+// ---- Manual Tokens Bar ----
+function renderManualBar() {
+  const bar  = document.getElementById('manual-tokens-bar');
+  const list = document.getElementById('manual-tokens-list');
+  const entries = Object.entries(state.tokens).filter(([,tok]) => tok._userManual);
+  if (!entries.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+
+  list.innerHTML = entries.map(([addr, tok]) => {
+    const dexUrl   = tok.pairUrl || `https://dexscreener.com/solana/${addr}`;
+    const xSearch  = `https://x.com/search?q=%24${encodeURIComponent(tok.symbol || '')}`;
+    const xProfile = tok.twitterUrl || null;
+    const sym      = tok.symbol || addr.slice(0,6);
+    const imgHtml  = tok.imageUrl
+      ? `<img src="${tok.imageUrl}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,212,255,0.3)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+         <div id="mb-ph-${addr}" style="display:none;width:34px;height:34px;border-radius:50%;background:rgba(0,212,255,0.1);align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--cyan)">${sym.slice(0,2)}</div>`
+      : `<div id="mb-ph-${addr}" style="display:flex;width:34px;height:34px;border-radius:50%;background:rgba(0,212,255,0.1);align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--cyan)">${sym.slice(0,2)}</div>`;
+
+    return `<div style="display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid rgba(0,212,255,0.18);border-radius:7px;padding:8px 11px;min-width:0">
+      <div style="display:flex;align-items:center;flex-shrink:0">${imgHtml}</div>
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+          <a href="${dexUrl}" target="_blank" style="font-weight:700;color:var(--cyan);font-size:12px;white-space:nowrap;text-decoration:none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${sym}</a>
+          <a href="${dexUrl}" target="_blank" title="DexScreener" style="color:var(--cyan);opacity:0.7;font-size:11px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7">↗</a>
+          <a href="${xSearch}" target="_blank" title="Search on X" style="color:#1d9bf0;opacity:0.8;font-size:11px;text-decoration:none;font-weight:700;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">𝕏</a>
+          ${xProfile ? `<a href="${xProfile}" target="_blank" title="X Profile" style="color:#1d9bf0;opacity:0.6;font-size:10px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">👤</a>` : ''}
+          <button onclick="copyManualCA('${addr}',this)" title="Copy CA" style="background:none;border:1px solid rgba(0,212,255,0.2);color:var(--muted);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;font-family:inherit;line-height:1.4" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='rgba(0,212,255,0.2)';this.style.color='var(--muted)'">⧉</button>
+        </div>
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;margin-top:2px">
+          <span>MCAP <span id="mb-mcap-${addr}" style="color:#fff;font-weight:700">$${fmt(tok.mcap||0)}</span><span id="mb-mcap-ch-${addr}" style="font-size:9px;font-weight:700;margin-left:4px">${(() => { const ch = getMcapChange5m(tok); return ch ? `<span style="color:${ch.color}">${ch.str}</span>` : ''; })()}</span></span>
+          <span style="margin-left:8px">AGE <span style="color:var(--text)">${fmtAge(tok.createdAt)}</span></span>
+        </div>
+        <div style="font-size:9px;color:var(--muted);margin-top:2px">
+          <span>5M <span id="mb-v5-${addr}" style="color:var(--text)">$${fmtVol(tok.vol5m||0)}</span></span>
+          <span style="margin-left:6px">1H <span id="mb-v1-${addr}" style="color:var(--text)">$${fmtVol(tok.vol1h||0)}</span></span>
+          <span style="margin-left:6px">6H <span id="mb-v6-${addr}" style="color:var(--text)">$${fmtVol(tok.vol6h||0)}</span></span>
+        </div>
+        <div style="font-size:9px;color:var(--muted);margin-top:1px">
+          ${(() => {
+            const pcFmt = (label, val, id) => {
+              if (val == null || val === undefined) return `<span>${label} <span id="${id}" style="color:var(--muted)">–</span></span>`;
+              const c = val >= 0 ? 'var(--green)' : 'var(--red)';
+              const s = val >= 0 ? '+' : '';
+              return `<span>${label} <span id="${id}" style="color:${c};font-weight:700">${s}${val.toFixed(2)}%</span></span>`;
+            };
+            return [
+              pcFmt('1H', tok.priceChange1h, `mb-pc1h-${addr}`),
+              pcFmt('6H', tok.priceChange6h, `mb-pc6h-${addr}`),
+              pcFmt('24H', tok.priceChange24h, `mb-pc24h-${addr}`)
+            ].join('<span style="margin-left:6px"></span>');
+          })()}
+        </div>
+      </div>
+      <button onclick="removeManualToken('${addr}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:0.5;flex-shrink:0;transition:opacity 0.15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Unpin">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function copyManualCA(addr, btn) {
+  navigator.clipboard.writeText(addr).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  });
+}
+
+function copyOldCA(addr, btn) {
+  navigator.clipboard.writeText(addr).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  });
+}
+
+function removeManualToken(addr) {
+  const sym = state.tokens[addr]?.symbol || addr.slice(0,8);
+  if (state.tokens[addr]) {
+    state.tokens[addr]._userManual = false;
+    state.tokens[addr].manual      = false;
+  }
+  saveManualTokens();
+  renderManualBar();
+  logTicker(`📌 Unpinned: ${sym}`);
+}
+
+function updateManualBar() {
+  const entries = Object.entries(state.tokens).filter(([,tok]) => tok._userManual);
+  if (!entries.length) { document.getElementById('manual-tokens-bar').style.display = 'none'; return; }
+  document.getElementById('manual-tokens-bar').style.display = 'flex';
+  let needsRender = false;
+  for (const [addr, tok] of entries) {
+    const mcapEl = document.getElementById(`mb-mcap-${addr}`);
+    if (!mcapEl) { needsRender = true; break; }
+    mcapEl.textContent = '$' + fmt(tok.mcap||0);
+    const mcapChEl = document.getElementById(`mb-mcap-ch-${addr}`);
+    if (mcapChEl) {
+      const ch = getMcapChange5m(tok);
+      mcapChEl.innerHTML = ch ? `<span style="color:${ch.color}">${ch.str}</span>` : '';
+    }
+    const v5El = document.getElementById(`mb-v5-${addr}`);
+    const v1El = document.getElementById(`mb-v1-${addr}`);
+    const v6El = document.getElementById(`mb-v6-${addr}`);
+    if (v5El) v5El.textContent = '$' + fmtVol(tok.vol5m||0);
+    if (v1El) v1El.textContent = '$' + fmtVol(tok.vol1h||0);
+    if (v6El) v6El.textContent = '$' + fmtVol(tok.vol6h||0);
+    // Update price changes in-place
+    const mbPcUpdate = (id, val) => {
+      const pcEl = document.getElementById(id);
+      if (!pcEl) return;
+      if (val == null || val === undefined) { pcEl.textContent = '–'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
+      const s = val >= 0 ? '+' : '';
+      pcEl.textContent = `${s}${val.toFixed(2)}%`;
+      pcEl.style.color = val >= 0 ? 'var(--green)' : 'var(--red)';
+      pcEl.style.fontWeight = '700';
+    };
+    mbPcUpdate(`mb-pc1h-${addr}`, tok.priceChange1h);
+    mbPcUpdate(`mb-pc6h-${addr}`, tok.priceChange6h);
+    mbPcUpdate(`mb-pc24h-${addr}`, tok.priceChange24h);
+    // If token now has an image but the card still shows the placeholder, re-render
+    if (tok.imageUrl) {
+      const imgEl = document.querySelector(`#manual-tokens-list img[src="${tok.imageUrl}"]`);
+      const placeholder = document.getElementById(`mb-ph-${addr}`);
+      if (!imgEl && placeholder) { needsRender = true; break; }
+    }
+  }
+  if (needsRender) renderManualBar();
+}
+
+function renderOldTokens() {
+  const bar  = document.getElementById('old-tokens-bar');
+  const list = document.getElementById('old-tokens-list');
+  const entries = Object.entries(oldTokens);
+  if (!entries.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+
+  list.innerHTML = entries.map(([addr, t]) => {
+    const dexUrl = t.pairUrl || `https://dexscreener.com/solana/${addr}`;
+    const imgHtml = t.imageUrl
+      ? `<img src="${t.imageUrl}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,170,0,0.35)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+         <div style="display:none;width:30px;height:30px;border-radius:50%;background:rgba(255,170,0,0.12);align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#ffaa00">${(t.symbol||'?').slice(0,2)}</div>`
+      : `<div style="display:flex;width:30px;height:30px;border-radius:50%;background:rgba(255,170,0,0.12);align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#ffaa00">${(t.symbol||'?').slice(0,2)}</div>`;
+
+    const ageStr = t.createdAt ? fmtAge(t.createdAt) : '–';
+
+    const pc1h  = t.priceChange1h;
+    const pc6h  = t.priceChange6h;
+    const pc24h = t.priceChange24h;
+    const pcSpan = (label, val, id) => {
+      if (val == null || val === undefined) return `<span>${label} <span id="${id}" style="color:var(--muted)">–</span></span>`;
+      const c = val >= 0 ? 'var(--green)' : 'var(--red)';
+      const s = val >= 0 ? '+' : '';
+      return `<span>${label} <span id="${id}" style="color:${c};font-weight:700">${s}${val.toFixed(2)}%</span></span>`;
+    };
+
+    const xSearch  = `https://x.com/search?q=%24${encodeURIComponent(t.symbol || '')}`;
+    const xProfile = t.twitterUrl || null;
+
+    return `<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid rgba(255,170,0,0.25);border-radius:6px;padding:7px 10px">
+      <div style="display:flex;align-items:center">${imgHtml}</div>
+      <div style="min-width:0">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+          <a href="${dexUrl}" target="_blank" style="font-weight:700;color:#ffaa00;font-size:11px;text-decoration:none;white-space:nowrap">${t.symbol}</a>
+          <a href="${xSearch}" target="_blank" title="Search on X" style="color:#1d9bf0;opacity:0.8;font-size:11px;text-decoration:none;font-weight:700;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">𝕏</a>
+          ${xProfile ? `<a href="${xProfile}" target="_blank" title="X Profile" style="color:#1d9bf0;opacity:0.6;font-size:10px;text-decoration:none;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">👤</a>` : ''}
+          <button onclick="copyOldCA('${addr}',this)" title="Copy CA" style="background:none;border:1px solid rgba(255,170,0,0.2);color:var(--muted);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;font-family:inherit;line-height:1.4" onmouseover="this.style.borderColor='#ffaa00';this.style.color='#ffaa00'" onmouseout="this.style.borderColor='rgba(255,170,0,0.2)';this.style.color='var(--muted)'">⧉</button>
+        </div>
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;margin-top:1px">AGE <span style="color:#e0eaf5">${ageStr}</span> <span style="margin-left:4px">MCAP</span> <span id="ot-mcap-${addr}" style="color:#fff;font-weight:700;font-size:12px">$${fmt(t.mcap)}</span><span id="ot-mcap-ch-${addr}" style="font-size:9px;font-weight:700;margin-left:4px"></span></div>
+        <div style="font-size:9px;color:var(--muted);white-space:nowrap;margin-top:1px;display:flex;gap:6px">
+          ${pcSpan('1H', pc1h, `ot-pc1h-${addr}`)}
+          ${pcSpan('6H', pc6h, `ot-pc6h-${addr}`)}
+          ${pcSpan('24H', pc24h, `ot-pc24h-${addr}`)}
+        </div>
+      </div>
+      <button onclick="removeOldToken('${addr}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:0.6;transition:opacity 0.15s;margin-left:2px" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Remove">✕</button>
+    </div>`;
+  }).join('');
+}
+
+// Atualiza mcap dos tokens velhos com dados do ciclo atual
+function updateOldTokensMcap() {
+  let changed = false;
+  const min = getOldMcapMin(), max = getOldMcapMax();
+  for (const [addr, ot] of Object.entries(oldTokens)) {
+    const tok = state.tokens[addr];
+    if (!tok) continue;
+    // Only act on confirmed mcap values (mcap > 0) — skip if API returned nothing
+    if (tok.mcap && tok.mcap > 0) {
+      if (tok.mcap < min || tok.mcap > max) {
+        // MCAP confirmed out of range — remove automatically
+        const reason = tok.mcap < min
+          ? `MCAP dropped to $${fmt(tok.mcap)} — below min $${fmt(min)}`
+          : `MCAP rose to $${fmt(tok.mcap)} — above max $${fmt(max)}`;
+        logOldTokenRemoval(addr, ot, reason);
+        delete oldTokens[addr];
+        logTicker(`⏳ Old token removed — MCAP $${fmt(tok.mcap)} out of range: ${tok.symbol || addr.slice(0,8)}`);
+        changed = true;
+        continue;
+      }
+      ot.mcap = tok.mcap;
+      // Feed 5m history on the oldToken object
+      if (!ot.mcapHistory) ot.mcapHistory = tok.mcapHistory || [];
+      else ot.mcapHistory = tok.mcapHistory || ot.mcapHistory;
+    }
+    if (tok.imageUrl) ot.imageUrl = tok.imageUrl;
+    if (tok.createdAt) ot.createdAt = tok.createdAt;
+    if (tok.twitterUrl && !ot.twitterUrl) { ot.twitterUrl = tok.twitterUrl; changed = true; }
+    else if (tok.twitterUrl) ot.twitterUrl = tok.twitterUrl;
+    if (tok.priceChange1h !== undefined) ot.priceChange1h = tok.priceChange1h;
+    if (tok.priceChange6h !== undefined) ot.priceChange6h = tok.priceChange6h;
+    if (tok.priceChange24h !== undefined) ot.priceChange24h = tok.priceChange24h;
+    const el = document.getElementById(`ot-mcap-${addr}`);
+    if (el && ot.mcap) el.textContent = '$' + fmt(ot.mcap);
+    const chEl = document.getElementById(`ot-mcap-ch-${addr}`);
+    if (chEl) {
+      const ch = getMcapChange5m(tok);
+      chEl.innerHTML = ch ? `<span style="color:${ch.color}">${ch.str}</span>` : '';
+    }
+    const pcUpdate = (id, val) => {
+      const pcEl = document.getElementById(id);
+      if (!pcEl) return;
+      if (val == null || val === undefined) { pcEl.textContent = '–'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
+      const s = val >= 0 ? '+' : '';
+      pcEl.textContent = `${s}${val.toFixed(2)}%`;
+      pcEl.style.color = val >= 0 ? 'var(--green)' : 'var(--red)';
+      pcEl.style.fontWeight = '700';
+    };
+    pcUpdate(`ot-pc1h-${addr}`, ot.priceChange1h);
+    pcUpdate(`ot-pc6h-${addr}`, ot.priceChange6h);
+    pcUpdate(`ot-pc24h-${addr}`, ot.priceChange24h);
+  }
+  if (changed) { saveOldTokens(); renderOldTokens(); }
+}
+
+// ---- Persistência de configurações ----
+const CONFIG_FIELDS = [
+  'threshold','mcap-threshold','min-vol','min-mcap','max-mcap',
+  'interval','min-mcap-remove','dead-cycles','chain',
+  'pump-entry-vol','pump-min-vol','pump-bond-mcap',
+  'old-mcap-min','old-mcap-max','hvnc-min-vol','sound-volume'
+];
+
+function readConfigFromUI() {
+  const cfg = {};
+  CONFIG_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) cfg[id] = el.value;
+  });
+  return cfg;
+}
+
+function saveConfig() {
+  const cfg = readConfigFromUI();
+  localStorage.setItem('bot_config', JSON.stringify(cfg));
+  scheduleConfigSync(cfg);
+}
+
+function sweepMcapFilter(minMcapRemove) {
+  if (!minMcapRemove || minMcapRemove <= 0) return 0;
+  let removed = 0;
+  for (const [addr, tok] of Object.entries(state.tokens)) {
+    // Só protege tokens que o próprio usuário adicionou via CA
+    const isProtected = tok._userManual === true;
+    const mcap = tok.mcap || 0;
+    console.log(`[SWEEP] ${tok.symbol || addr.slice(0,8)} | mcap=${mcap} | _userManual=${tok._userManual} | isProtected=${isProtected} | willRemove=${!isProtected && mcap > 0 && mcap < minMcapRemove}`);
+    if (isProtected) continue;
+    if (mcap > 0 && mcap < minMcapRemove) {
+      delete state.tokens[addr];
+      logTicker(`🗑 ${tok.symbol || addr.slice(0,8)} removed — MCAP $${fmt(mcap)} < min $${fmt(minMcapRemove)}`);
+      removed++;
+    }
+  }
+  console.log(`[SWEEP] Total removed: ${removed}`);
+  return removed;
+}
+
+// Debug: expõe estado dos tokens no console
+function debugTokens() {
+  const min = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
+  console.log(`=== DEBUG TOKENS (min-mcap-remove: ${min}) ===`);
+  for (const [addr, tok] of Object.entries(state.tokens)) {
+    console.log(`${tok.symbol || addr.slice(0,8)} | mcap=${tok.mcap} | manual=${tok.manual} | oldToken=${tok.oldToken}`);
+  }
+  console.log('===');
+  sweepMcapFilter(min);
+  renderMonitored();
+  alert(`Sweep ran. Check the console (F12) for details.`);
+}
+
+function applyMcapRemoveFilter() {
+  const minMcapRemove = parseFloat(document.getElementById('min-mcap-remove').value) || 0;
+  const removed = sweepMcapFilter(minMcapRemove);
+  if (removed > 0) renderMonitored();
+}
+
+function loadConfig() {
+  try {
+    const cfg = JSON.parse(localStorage.getItem('bot_config') || '{}');
+    if (!Object.keys(cfg).length) return;
+    CONFIG_FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && cfg[id] !== undefined) el.value = cfg[id];
+    });
+  } catch {}
+}
+
+// Salva config automaticamente ao mudar qualquer campo
+function initConfigPersistence() {
+  CONFIG_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('change', saveConfig);
+      if (id === 'min-mcap-remove') el.addEventListener('change', applyMcapRemoveFilter);
+    }
+  });
+}
+let configSyncTimer = null;
+let manualTokensSyncTimer = null;
+let blocklistSyncTimer = null;
+
+function scheduleConfigSync(cfg) {
+  if (!authToken) return;
+  if (configSyncTimer) clearTimeout(configSyncTimer);
+  configSyncTimer = setTimeout(() => {
+    syncConfigsToServer(cfg).catch(() => {});
+  }, 450);
+}
+
+async function syncConfigsToServer(cfg) {
+  await apiAuthFetch('/api/config', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ configs: cfg })
+  });
+}
+
+function scheduleManualTokensSync(manualAddresses) {
+  if (!authToken) return;
+  if (manualTokensSyncTimer) clearTimeout(manualTokensSyncTimer);
+  manualTokensSyncTimer = setTimeout(() => {
+    syncManualTokensToServer(manualAddresses).catch(err => console.warn(err.message || err));
+  }, 450);
+}
+
+async function syncManualTokensToServer(manualAddresses) {
+  const payload = Array.from(new Set((manualAddresses || []).filter(Boolean))).map(address => ({ address }));
+  const res = await apiAuthFetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tokens: payload })
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`manual token sync failed (${res.status}) ${txt}`);
+  }
+}
+
+function getBlocklistEntriesForSync() {
+  const meta = state.blocklistMeta || {};
+  return Object.keys(meta).map(address => ({
+    address,
+    label: meta[address] || null,
+  }));
+}
+
+function scheduleBlocklistSync() {
+  if (!authToken) return;
+  if (blocklistSyncTimer) clearTimeout(blocklistSyncTimer);
+  blocklistSyncTimer = setTimeout(() => {
+    syncBlocklistToServer().catch(() => {});
+  }, 450);
+}
+
+async function syncBlocklistToServer() {
+  await apiAuthFetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ blocklist: getBlocklistEntriesForSync() })
+  });
+}
+
+// ---- Persistência de tokens manuais ----
+function saveManualTokens() {
+  const manual = Object.entries(state.tokens)
+    .filter(([, tok]) => tok._userManual === true)
+    .map(([addr]) => addr);
+  localStorage.setItem('manual_tokens', JSON.stringify(manual));
+  scheduleManualTokensSync(manual);
+}
+
+async function loadManualTokens(savedOverride = null) {
+  try {
+    const saved = Array.isArray(savedOverride) ? savedOverride : JSON.parse(localStorage.getItem('manual_tokens') || '[]');
+    if (!saved.length) return;
+    logTicker(`⟳ Loading ${saved.length} saved token(s)...`);
+    for (const addr of saved) {
+      if (state.tokens[addr] || isBlocked(addr)) continue;
+      const pair = await fetchPairData(addr);
+      if (pair) {
+        addToken(addr, pair.baseToken?.name, pair.baseToken?.symbol);
+      } else {
+        addToken(addr, null, null);
+      }
+      if (state.tokens[addr]) {
+        state.tokens[addr].manual     = true;
+        state.tokens[addr]._userManual = true; // flag definitiva: adicionado pelo usuário
+      }
+    }
+    logTicker(`✓ ${saved.length} manual token(s) loaded`);
+  } catch {}
+}
+
+function addToken(addr, name, symbol) {
+  if (!addr || state.tokens[addr]) return;
+  if (isBlocked(addr, symbol)) return;
+  state.tokens[addr] = {
+    name: name || symbol || addr.slice(0,8),
+    symbol: symbol || '???',
+    lastVol: null, vol5m: null, prevVol: null,
+    deadCycles: 0,   // cycles consecutivos sem volume
+    manual: false,   // tokens adicionados manualmente nunca são removidos
+  };
+  renderMonitored();
+}
+
+async function addManualToken() {
+  const inp = document.getElementById('manual-addr');
+  const addr = inp.value.trim();
+  if (!addr) return;
+  inp.value = '';
+  const pair = await fetchPairData(addr);
+  if (pair) {
+    addToken(addr, pair.baseToken?.name, pair.baseToken?.symbol);
+    if (state.tokens[addr]) {
+      state.tokens[addr].manual      = true;
+      state.tokens[addr]._userManual = true;
+      // Try all known image fields from DexScreener response
+      state.tokens[addr].imageUrl  = pair.info?.imageUrl || pair.info?.header || pair.baseToken?.logoUri || null;
+      state.tokens[addr].pairUrl   = pair.url || null;
+      state.tokens[addr].mcap      = pair.marketCap || pair.fdv || 0;
+      state.tokens[addr].twitterUrl = (pair.info?.socials || []).find(s => s.type === 'twitter')?.url || null;
+      state.tokens[addr].createdAt  = pair.pairCreatedAt || null;
+    }
+    saveManualTokens();
+    renderManualBar();
+    // Re-render after short delay in case image resolves asynchronously
+    setTimeout(() => renderManualBar(), 1500);
+    logTicker(`✓ Added: ${pair.baseToken?.symbol}`);
+  } else {
+    addToken(addr, null, null);
+    if (state.tokens[addr]) { state.tokens[addr].manual = true; state.tokens[addr]._userManual = true; }
+    saveManualTokens();
+    renderManualBar();
+  }
+}
+
+async function loadTrendingBtn(btn) {
+  btn.disabled = true;
+  btn.textContent = '⟳ LOADING...';
+  await loadTrending();
+  btn.disabled = false;
+  btn.textContent = '⟳ LOAD TRENDING SOL';
+}
+
+async function loadTrending(silent = false) {
+  if (!silent) logTicker('⟳ Loading trending Solana...');
+  let loaded = 0;
+  const chain = document.getElementById('chain').value;
+  const seen = new Set(Object.keys(state.tokens));
+
+  // Coleta endereços dos 3 endpoints de boost/profiles
+  const addrs = [];
+
+  const profiles = await apiFetch('https://api.dexscreener.com/token-profiles/latest/v1');
+  if (profiles) {
+    (Array.isArray(profiles) ? profiles : [])
+      .filter(t => t.chainId === chain)
+      .slice(0, 30)
+      .forEach(t => { if (t.tokenAddress) addrs.push(t.tokenAddress); });
+  }
+
+  const boostsTop = await apiFetch('https://api.dexscreener.com/token-boosts/top/v1');
+  if (boostsTop) {
+    (Array.isArray(boostsTop) ? boostsTop : [])
+      .filter(t => t.chainId === chain)
+      .slice(0, 20)
+      .forEach(t => { if (t.tokenAddress) addrs.push(t.tokenAddress); });
+  }
+
+  const boostsLatest = await apiFetch('https://api.dexscreener.com/token-boosts/latest/v1');
+  if (boostsLatest) {
+    (Array.isArray(boostsLatest) ? boostsLatest : [])
+      .filter(t => t.chainId === chain)
+      .slice(0, 20)
+      .forEach(t => { if (t.tokenAddress) addrs.push(t.tokenAddress); });
+  }
+
+  // Para cada endereço novo, busca os dados do par e filtra por vol5m > 0
+  const uniqueAddrs = [...new Set(addrs)].filter(a => !seen.has(a));
+
+  // Busca em paralelo (lotes de 10)
+  const BATCH = 10;
+  for (let i = 0; i < uniqueAddrs.length; i += BATCH) {
+    const batch = uniqueAddrs.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(addr => apiFetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`))
+    );
+    for (let j = 0; j < batch.length; j++) {
+      const addr = batch[j];
+      const data = results[j];
+      if (!data?.pairs?.length) continue;
+
+      const pairs = data.pairs.filter(p => p.chainId === chain);
+      const pair = (pairs.length > 0 ? pairs : data.pairs)
+        .sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0))[0];
+
+      if (!pair) continue;
+
+      // Só adiciona se tiver volume 5m real
+      const vol5m = pair.volume?.m5 || 0;
+      if (vol5m === 0) continue;
+
+      // Filtra por MCAP mínimo — usa marketCap ou fdv, rejeita se abaixo do mínimo
+      const mcapVal = pair.marketCap || pair.fdv || 0;
+      const minMcapRemoveNow = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
+      if (minMcapRemoveNow > 0 && mcapVal > 0 && mcapVal < minMcapRemoveNow) {
+        logTicker(`⊘ ${pair.baseToken?.symbol || addr.slice(0,6)} skipped — MCAP $${fmt(mcapVal)} < min $${fmt(minMcapRemoveNow)}`);
+        continue;
+      }
+
+      seen.add(addr);
+      addToken(addr, pair.baseToken?.name, pair.baseToken?.symbol);
+      if (state.tokens[addr]) {
+        const tok = state.tokens[addr];
+        tok.imageUrl  = pair.info?.imageUrl || null;
+        tok.pairUrl   = pair.url || null;
+        tok.mcap      = pair.marketCap || pair.fdv || 0;
+        tok.vol5m     = vol5m;
+        tok.vol1h     = pair.volume?.h1  || 0;
+        tok.vol6h     = pair.volume?.h6  || 0;
+        tok.vol24h    = pair.volume?.h24 || 0;
+        tok.createdAt = pair.pairCreatedAt || null;
+      }
+      loaded++;
+    }
+  }
+
+  if (!silent) {
+    if (loaded > 0) {
+      logTicker(`✓ ${loaded} tokens carregados`);
+    } else {
+      logTicker('✕ API unavailable. Paste a CA manually below.');
+    }
+  }
+  return loaded;
+}
+
+// --- Bot loop ---
+async function toggleBot() {
+  if (state.running) { stopBot(); return; }
+  if (!await requireAuthOrBlock('start monitoring')) return;
+  startBotFlow();
+}
+
+async function startBotFlow() {
+  if (!await requireAuthOrBlock('start monitoring')) return;
+  // Se não tem tokens, carrega o trending automaticamente antes de iniciar
+  if (Object.keys(state.tokens).length === 0) {
+    document.getElementById('btn-start').textContent = '⟳ LOADING TOKENS...';
+    document.getElementById('btn-start').disabled = true;
+    logTicker('⟳ No tokens found — loading trending automatically...');
+    await loadTrending();
+    document.getElementById('btn-start').disabled = false;
+    // Se ainda não tem tokens após tentar carregar, avisa
+    if (Object.keys(state.tokens).length === 0) {
+      logTicker('✕ Could not load tokens. Add manually.');
+      document.getElementById('btn-start').textContent = '▶ START MONITORING';
+      return;
+    }
+  }
+  startBot();
+}
+
+function startBot() {
+  state.running = true;
+  state.startedAt = Date.now();
+  const secs = parseInt(document.getElementById('interval').value) * 1000;
+  document.getElementById('run-status').textContent = 'ACTIVE';
+  document.getElementById('run-status').className = 'status-value active';
+  document.getElementById('btn-start').textContent = '■ STOP';
+  document.getElementById('btn-start').classList.add('running');
+  runCycle();
+  state.interval = setInterval(runCycle, secs);
+  state.uptimeInterval = setInterval(() => {
+    const el = document.getElementById('uptime-count');
+    if (!el || !state.startedAt) return;
+    const ms = Date.now() - state.startedAt;
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    el.textContent = h > 0 ? `${h}h${String(m).padStart(2,'0')}m` : `${m}m`;
+  }, 1000);
+  logTicker('▶ Bot started');
+}
+
+function stopBot() {
+  state.running = false;
+  clearInterval(state.interval);
+  clearInterval(state.uptimeInterval);
+  state.startedAt = null;
+  document.getElementById('run-status').textContent = 'STOPPED';
+  document.getElementById('run-status').className = 'status-value';
+  document.getElementById('uptime-count').textContent = '—';
+  document.getElementById('btn-start').textContent = '▶ START MONITORING';
+  document.getElementById('btn-start').classList.remove('running');
+  logTicker('■ Bot stopped');
+}
+
+async function runCycle() {
+  state.cycles++;
+  document.getElementById('cycle-count').textContent = state.cycles;
+
+  const deadCycles    = parseInt(document.getElementById('dead-cycles').value) || 10;
+  const minMcapRemove = parseFloat(document.getElementById('min-mcap-remove').value) || 0;
+
+  // Sweep inicial
+  sweepMcapFilter(minMcapRemove);
+
+  // Auto-refresh trending — após completar, sweep novamente para remover o que entrou com mcap baixo
+  const before = Object.keys(state.tokens).length;
+  loadTrending(true).then(() => {
+    const added = Object.keys(state.tokens).length - before;
+    if (added > 0) logTicker(`🆕 ${added} new token(s) added`);
+    sweepMcapFilter(minMcapRemove); // garante que nada com mcap baixo ficou
+    renderMonitored();
+  });
+  const threshold     = parseFloat(document.getElementById('threshold').value) / 100;
+  const mcapThreshold = parseFloat(document.getElementById('mcap-threshold').value) / 100;
+  const minVol        = parseFloat(document.getElementById('min-vol').value) || 0;
+  const minMcap       = parseFloat(document.getElementById('min-mcap').value) || 0;
+  const maxMcap       = parseFloat(document.getElementById('max-mcap').value) || 0;
+  const hvncMinVol    = parseFloat(document.getElementById('hvnc-min-vol').value) || 0;
+  const addrs = Object.keys(state.tokens);
+
+  // Processa em lotes paralelos de 10 (evita sobrecarregar a API)
+  const BATCH = 10;
+  for (let i = 0; i < addrs.length; i += BATCH) {
+    const batch = addrs.slice(i, i + BATCH);
+    await Promise.all(batch.map(addr => processToken(addr, { threshold, mcapThreshold, minVol, minMcap, maxMcap, deadCycles, minMcapRemove, hvncMinVol })));
+  }
+
+  renderMonitored();
+  updateOldTokensMcap();
+  updateManualBar();
+}
+
+async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, maxMcap, deadCycles, minMcapRemove, hvncMinVol }) {
+  const pair = await fetchPairData(addr);
+  if (!pair) return;
+
+  const vol5m      = pair.volume?.m5  || 0;
+  const vol1h      = pair.volume?.h1  || 0;
+  const vol6h      = pair.volume?.h6  || 0;
+  const vol24h     = pair.volume?.h24 || 0;
+  const mcap       = pair.marketCap   || pair.fdv || 0;
+  const createdAt  = pair.pairCreatedAt || null;
+
+  const tok = state.tokens[addr];
+  if (!tok) return;
+  if (isBlocked(addr, tok.symbol)) { delete state.tokens[addr]; return; }
+
+  // Remove imediatamente se MKT CAP abaixo do mínimo (exceto manuais)
+  // Nota: aceita mcap=0 caso a API não retornou valor (evita remoção por dado ausente)
+  const isProtected = tok._userManual === true;
+  const minMcapOk = !isProtected && minMcapRemove > 0 && mcap > 0 && mcap < minMcapRemove;
+  if (minMcapOk) {
+    delete state.tokens[addr];
+    logTicker(`🗑 ${pair.baseToken?.symbol || addr.slice(0,8)} removed — MCAP $${fmt(mcap)} < min $${fmt(minMcapRemove)}`);
+    return;
+  }
+
+  tok.name      = pair.baseToken?.name   || tok.name;
+  tok.symbol    = pair.baseToken?.symbol || tok.symbol;
+  tok.pairUrl   = pair.url || `https://dexscreener.com/solana/${pair.pairAddress || addr}`;
+  tok.imageUrl  = tok.imageUrl || pair.info?.imageUrl || pair.baseToken?.logoUri || null;
+  tok.twitterUrl = (pair.info?.socials || []).find(s => s.type === 'twitter')?.url || tok.twitterUrl || null;
+  tok.prevVol   = tok.vol5m;
+  tok.prevMcap  = tok.mcap;
+  tok.vol5m     = vol5m;
+  tok.vol1h     = vol1h;
+  tok.vol6h     = vol6h;
+  tok.vol24h    = vol24h;
+  tok.mcap      = mcap;
+  pushMcapHistory(tok, mcap);
+  tok.price     = pair.priceUsd;
+  tok.priceChange5m = pair.priceChange?.m5;
+  tok.priceChange1h = pair.priceChange?.h1;
+  tok.priceChange6h = pair.priceChange?.h6;
+  tok.priceChange24h = pair.priceChange?.h24;
+  if (createdAt && !tok.createdAt) tok.createdAt = createdAt;
+
+  // Auto-detecta tokens velhos (1d–7d) e adiciona à barra
+  if (tok.createdAt) {
+    const age = Date.now() - tok.createdAt;
+    if (age >= OLD_MIN_AGE && age <= OLD_MAX_AGE && !oldTokens[addr]) {
+      addOldToken(addr, tok);
+    }
+  }
+
+  // Rastreia cycles sem volume
+  if (vol5m === 0) {
+    tok.deadCycles = (tok.deadCycles || 0) + 1;
+    if (!tok.manual && tok.deadCycles >= deadCycles) {
+      delete state.tokens[addr];
+      logTicker(`🗑 ${tok.symbol} removed — no volume for ${deadCycles} cycles`);
+      return;
+    }
+  } else {
+    tok.deadCycles = 0;
+  }
+
+  const passesFilters = (vol) => {
+    if (vol < minVol) { logTicker(`⊘ ${tok.symbol} skipped — vol5m $${fmt(vol)} < min $${fmt(minVol)}`); return false; }
+    if (minMcap > 0 && mcap < minMcap) { logTicker(`⊘ ${tok.symbol} skipped — mcap $${fmt(mcap)} < min $${fmt(minMcap)}`); return false; }
+    if (maxMcap > 0 && mcap > maxMcap) { logTicker(`⊘ ${tok.symbol} skipped — mcap $${fmt(mcap)} > máx $${fmt(maxMcap)}`); return false; }
+    return true;
+  };
+
+  if (tok.prevVol !== null && tok.prevVol > 0) {
+    const volChange = (vol5m - tok.prevVol) / tok.prevVol;
+    if (volChange >= threshold && passesFilters(vol5m)) {
+      fireAlert(addr, tok, volChange, vol5m, 'vol');
+    }
+  }
+
+  if (mcapThreshold > 0 && tok.prevMcap !== null && tok.prevMcap > 0) {
+    const mcapChange = (mcap - tok.prevMcap) / tok.prevMcap;
+    if (mcapChange >= mcapThreshold && passesFilters(vol5m)) {
+      fireAlert(addr, tok, mcapChange, vol5m, 'mcap');
+    }
+  }
+
+  // High Volume New Coin — token < 30min + vol24h >= threshold
+  if (hvncMinVol > 0 && tok.createdAt && !tok._hvncFired) {
+    const ageMs = Date.now() - tok.createdAt;
+    if (ageMs < 30 * 60 * 1000 && vol24h >= hvncMinVol) {
+      tok._hvncFired = true; // só dispara uma vez por token
+      fireAlert(addr, tok, 0, vol5m, 'hvnc');
+    }
+  }
+}
+
+function fireAlert(addr, tok, change, vol, triggerType) {
+  const pct = (change * 100).toFixed(1);
+  const now = new Date().toLocaleTimeString('en-US');
+  const isHvnc = triggerType === 'hvnc';
+  const level = isHvnc ? 'mega' : (change >= 2 ? 'mega' : change >= 1 ? 'critical' : 'normal');
+  const label = isHvnc ? 'HVNC' : (triggerType === 'mcap' ? 'MCAP' : 'VOL');
+
+  state.alerts.unshift({
+    symbol: tok.symbol, name: tok.name, pct, vol, prevVol: tok.prevVol,
+    mcap: tok.mcap, prevMcap: tok.prevMcap,
+    vol1h: tok.vol1h, vol6h: tok.vol6h, vol24h: tok.vol24h,
+    createdAt: tok.createdAt,
+    time: now, level, label, addr, pairUrl: tok.pairUrl, imageUrl: tok.imageUrl,
+    twitterUrl: tok.twitterUrl || null,
+    isHvnc, hvncVol: isHvnc ? tok.vol24h : null
+  });
+  state.alertCount++;
+  document.getElementById('alert-count').textContent = state.alertCount;
+  document.getElementById('alerts-count-badge').textContent = state.alerts.length;
+
+  renderAlerts();
+  playAlert(level);
+  if (isHvnc) {
+    logTicker(`🚨 ${tok.symbol} HIGH VOLUME NEW COIN — $${fmtVol(tok.vol24h)} total vol`);
+    if (Notification.permission === 'granted') {
+      new Notification(`🚨 ${tok.symbol} High Volume New Coin`, { body: `$${fmtVol(tok.vol24h)} total volume | ${tok.name}` });
+    }
+  } else {
+    logTicker(`🔔 ${tok.symbol} +${pct}% ${label} 5m`);
+    if (Notification.permission === 'granted') {
+      new Notification(`🔔 ${tok.symbol} +${pct}% ${label}`, { body: `${label} 5m spike | ${tok.name}` });
+    }
+  }
+}
+
+function playAlert(level) {
+  if (document.getElementById('sound-mode').value === 'off') return;
+  const volPct = (parseInt(document.getElementById('sound-volume')?.value || 80)) / 100;
+
+  // Som customizado por nível tem prioridade
+  if (soundBuffers[level] && soundCtxs[level]) {
+    try {
+      const ctx = soundCtxs[level];
+      const source = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      source.buffer = soundBuffers[level];
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.value = volPct;
+      source.start(0);
+      return;
+    } catch {}
+  }
+
+  // Som padrão gerado por síntese
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const configs = {
+      normal:   { freqs: [523, 659, 784],            type: 'triangle', dur: 0.35, gap: 0.18 },
+      critical: { freqs: [659, 880, 659, 880],       type: 'square',   dur: 0.28, gap: 0.15 },
+      mega:     { freqs: [880, 1047, 1319, 1047, 880], type: 'sawtooth', dur: 0.3, gap: 0.14 }
+    };
+    const cfg = configs[level] || configs.normal;
+    cfg.freqs.forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const comp = ctx.createDynamicsCompressor();
+      osc.connect(gain); gain.connect(comp); comp.connect(ctx.destination);
+      osc.frequency.value = f; osc.type = cfg.type;
+      const t = ctx.currentTime + i * cfg.gap;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(volPct * 0.9, t + 0.02);
+      gain.gain.setValueAtTime(volPct * 0.9, t + cfg.dur * 0.6);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + cfg.dur);
+      osc.start(t); osc.stop(t + cfg.dur + 0.05);
+    });
+  } catch {}
+}
+
+// --- Sons por nível ---
+const soundBuffers = { normal: null, critical: null, mega: null };
+const soundCtxs   = { normal: null, critical: null, mega: null };
+
+// Saves sound as base64 in localStorage so it persists across sessions
+function saveSoundToStorage(level, base64, fileName) {
+  try {
+    localStorage.setItem(`sound_b64_${level}`, base64);
+    localStorage.setItem(`sound_name_${level}`, fileName);
+  } catch(e) {
+    // localStorage quota exceeded (large audio files) — skip silently
+    logTicker(`⚠ Sound ${level} too large to persist — will reset on reload`);
+  }
+}
+
+async function decodeSoundFromBase64(level, base64, fileName) {
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    soundCtxs[level] = ctx;
+    soundBuffers[level] = await ctx.decodeAudioData(bytes.buffer);
+    const nameEl = document.getElementById(`sound-${level}-name`);
+    if (nameEl) nameEl.textContent = '✓ ' + fileName;
+  } catch {}
+}
+
+// Load persisted sounds on startup
+async function loadPersistedSounds() {
+  for (const level of ['normal', 'critical', 'mega']) {
+    const b64 = localStorage.getItem(`sound_b64_${level}`);
+    const name = localStorage.getItem(`sound_name_${level}`);
+    if (b64 && name) await decodeSoundFromBase64(level, b64, name);
+  }
+}
+
+function loadLevelSound(level, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const nameEl = document.getElementById(`sound-${level}-name`);
+  nameEl.textContent = '⟳ Loading...';
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      // Decode for immediate playback
+      const arrayBuf = e.target.result.slice(0);
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      soundCtxs[level] = ctx;
+      soundBuffers[level] = await ctx.decodeAudioData(arrayBuf);
+      nameEl.textContent = '✓ ' + file.name;
+      logTicker(`✓ Sound ${level} loaded: ${file.name}`);
+      // Persist as base64
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+      saveSoundToStorage(level, base64, file.name);
+    } catch {
+      nameEl.textContent = '✕ Error loading';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Keep old loadCustomSound for backward compat (no-op)
+function loadCustomSound() {}
+let customSoundBuffer = null;
+let customAudioCtx = null;
+
+
+// Returns {pct, color} for 5m MCAP change using rolling history
+// tok.mcapHistory = [{mcap, ts}, ...] — populated each cycle, pruned after 6min
+function getMcapChange5m(tok) {
+  const history = tok.mcapHistory;
+  if (!history || history.length < 2) return null;
+  if (!tok.mcap) return null;
+  // Use the oldest available entry as baseline (from first cycle onward)
+  const oldest = history[0];
+  if (!oldest || !oldest.mcap) return null;
+  const pct = ((tok.mcap - oldest.mcap) / oldest.mcap) * 100;
+  if (Math.abs(pct) < 0.01) return null; // too small to show
+  const color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+  const sign = pct >= 0 ? '+' : '';
+  // Label changes based on how old the baseline is
+  const ageMin = Math.round((Date.now() - oldest.ts) / 60000);
+  const label = ageMin >= 5 ? '5m' : ageMin >= 1 ? `${ageMin}m` : '';
+  return { pct, color, str: `${sign}${pct.toFixed(2)}%`, label };
+}
+
+function pushMcapHistory(tok, mcap) {
+  if (!mcap || mcap <= 0) return;
+  if (!tok.mcapHistory) tok.mcapHistory = [];
+  tok.mcapHistory.push({ mcap, ts: Date.now() });
+  // Prune entries older than 6 minutes, but always keep at least the oldest for baseline
+  const cutoff = Date.now() - 360000;
+  const pruned = tok.mcapHistory.filter(e => e.ts >= cutoff);
+  tok.mcapHistory = pruned.length > 0 ? pruned : tok.mcapHistory.slice(-1);
+}
+
+function fmt(n) {
+  if (!n && n !== 0) return '–';
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';  // mcap mantém decimais
+  if (n >= 1e3) return Math.round(n/1e3) + 'K';
+  return Math.round(n).toString();
+}
+
+function fmtVol(n) {
+  // Volumes sem decimais
+  if (!n && n !== 0) return '–';
+  if (n >= 1e6) return Math.round(n/1e6) + 'M';
+  if (n >= 1e3) return Math.round(n/1e3) + 'K';
+  return Math.round(n).toString();
+}
+
+function fmtAge(createdAt) {
+  if (!createdAt) return '–';
+  const ms = Date.now() - createdAt;
+  if (ms < 60000) return `${Math.floor(ms/1000)}s`;
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hrs < 24) return remMins > 0 ? `${hrs}h${remMins}m` : `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d`;
+}
+
+
+function copyCA(addr, btn) {
+  navigator.clipboard.writeText(addr).then(() => {
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '⧉ Copy CA'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+function setSort(field, btn) {
+  state.sortBy = field;
+  document.querySelectorAll('.sort-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderMonitored();
+}
+
+function renderMonitored() {
+  const list = document.getElementById('monitored-list');
+  const entries = Object.entries(state.tokens);
+  document.getElementById('token-count').textContent = entries.length;
+
+  if (entries.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-text">Add tokens or load trending</div></div>`;
+    return;
+  }
+
+  // Aplica filtro de MCAP mínimo — deleta do state (não só esconde)
+  const minMcapRemoveRender = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
+  if (minMcapRemoveRender > 0) {
+    for (const [addr, tok] of Object.entries(state.tokens)) {
+      const isProtected = tok._userManual === true;
+      if (!isProtected && tok.mcap > 0 && tok.mcap < minMcapRemoveRender) {
+        delete state.tokens[addr];
+      }
+    }
+  }
+
+  const sorted = Object.entries(state.tokens)
+    .sort((a, b) => {
+      const fieldMap = { vol5m: 'vol5m', vol1h: 'vol1h', vol6h: 'vol6h', vol24h: 'vol24h', mcap: 'mcap' };
+      const f = fieldMap[state.sortBy] || 'vol5m';
+      return (b[1][f] || 0) - (a[1][f] || 0);
+    });
+
+  list.innerHTML = sorted.map(([addr, tok]) => {
+    const change = tok.prevVol > 0 ? ((tok.vol5m - tok.prevVol) / tok.prevVol * 100) : null;
+    const changeClass = change >= 50 ? 'high' : change >= 20 ? 'med' : 'low';
+    const changeStr = change !== null ? (change >= 0 ? '+' : '') + change.toFixed(1) + '%' : '–';
+    const dexUrl = tok.pairUrl || `https://dexscreener.com/solana/${addr}`;
+
+    // highlight do campo ativo na linha
+    const hl = (f) => state.sortBy === f ? 'color:var(--cyan);font-weight:700' : 'color:var(--text)';
+
+    const avatarHtml = tok.imageUrl
+      ? `<img src="${tok.imageUrl}" class="tok-avatar" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        + `<div class="tok-avatar-placeholder" style="display:none">${tok.symbol.slice(0,2)}</div>`
+      : `<div class="tok-avatar-placeholder">${tok.symbol.slice(0,2)}</div>`;
+
+    return `
+      <div class="token-row" style="grid-template-columns:36px 1fr auto auto auto">
+        ${avatarHtml}
+        <div style="min-width:0">
+          <div class="token-name">${tok.symbol} <span style="color:var(--muted);font-size:11px;font-weight:400">${tok.name}</span>
+            <a href="${dexUrl}" target="_blank" style="color:var(--cyan);font-size:9px;margin-left:6px;text-decoration:none;opacity:0.7">↗ DEX</a>
+            <a href="https://x.com/search?q=%24${encodeURIComponent(tok.symbol)}" target="_blank" style="color:#1d9bf0;font-size:9px;margin-left:4px;text-decoration:none;opacity:0.85">𝕏</a>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:3px;flex-wrap:wrap;align-items:center">
+            <span style="font-size:9px;color:var(--muted)">MCAP <span style="${hl('mcap')}">${tok.mcap ? '$'+fmt(tok.mcap) : '–'}</span>${(() => { const ch = getMcapChange5m(tok); return ch ? ` <span style="font-size:9px;color:${ch.color};font-weight:700">${ch.str}</span>` : ''; })()}</span>
+            <span style="font-size:9px;color:var(--muted)">AGE <span style="color:#fff">${fmtAge(tok.createdAt)}</span></span>
+            <span style="font-size:9px;color:var(--muted)">1H <span style="color:#fff">${tok.vol1h ? '$'+fmtVol(tok.vol1h) : '–'}</span></span>
+            <span style="font-size:9px;color:var(--muted)">6H <span style="color:#fff">${tok.vol6h ? '$'+fmtVol(tok.vol6h) : '–'}</span></span>
+            <span style="font-size:9px;color:var(--muted)">24H <span style="color:#fff">${tok.vol24h ? '$'+fmtVol(tok.vol24h) : '–'}</span></span>
+            <button class="btn-copy-ca" onclick="copyCA('${addr}',this)">⧉ Copy CA</button>
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div class="vol-badge ${(tok.vol5m || 0) > 0 ? 'up' : ''}" style="${hl('vol5m')}">$${fmtVol(tok.vol5m)}</div>
+          <div style="font-size:9px;color:var(--muted);margin-top:2px">VOL 5M</div>
+        </div>
+        <div class="change-badge ${changeClass}">${changeStr}</div>
+        <button class="btn-block" onclick="blockToken('${addr}','${tok.symbol}')">🚫</button>
+      </div>`;
+  }).join('');
+}
+
+function renderAlerts() {
+  const list = document.getElementById('alerts-list');
+  if (state.alerts.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-text">Waiting for signals...</div></div>`;
+    return;
+  }
+  list.innerHTML = state.alerts.slice(0, 50).map(a => {
+    const dexUrl = a.pairUrl || `https://dexscreener.com/solana/${a.addr}`;
+    const avatarHtml = a.imageUrl
+      ? `<img src="${a.imageUrl}" class="alert-avatar" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        + `<div class="alert-avatar-placeholder" style="display:none">${a.symbol.slice(0,2)}</div>`
+      : `<div class="alert-avatar-placeholder">${a.symbol.slice(0,2)}</div>`;
+    return `
+    <div class="alert-row ${a.level}">
+      <div style="display:grid;grid-template-columns:40px 1fr;gap:8px;align-items:center">
+        ${avatarHtml}
+        <div>
+          <div class="alert-top">
+            <span class="alert-token">${a.symbol} <span style="color:var(--muted);font-size:10px">${a.name}</span></span>
+            ${a.isHvnc
+              ? `<span style="font-weight:700;font-size:13px;color:#ff6b00;text-align:right;line-height:1.2">🚨 High Volume New Coin<br><span style="font-size:11px;color:#ffaa00">$${fmtVol(a.hvncVol)} total vol</span></span>`
+              : `<span class="alert-pct ${a.level}">+${a.pct}% <span style="font-size:10px;opacity:0.7">${a.label||'VOL'}</span></span>`
+            }
+          </div>
+          <div class="alert-details" style="margin-top:3px;display:flex;gap:12px;flex-wrap:wrap">
+            <span><span style="color:var(--muted)">VOL 5M</span> $${fmtVol(a.prevVol)} → <span style="color:var(--green);font-weight:700">$${fmtVol(a.vol)}</span></span>
+            ${a.prevMcap ? `<span><span style="color:var(--muted)">MCAP</span> $${fmt(a.prevMcap)} → <span style="color:${a.mcap >= a.prevMcap ? 'var(--green)' : 'var(--red)'};font-weight:700">$${fmt(a.mcap)}</span></span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
+        <span style="font-size:11px"><span style="color:var(--muted)">MCAP</span> <span style="font-size:13px;font-weight:700;color:${a.mcap < a.prevMcap ? 'var(--red)' : 'var(--green)'};font-weight:700">${a.mcap ? '$'+fmt(a.mcap) : '–'}</span></span>
+        <span style="font-size:10px"><span style="color:var(--muted)">AGE</span> <span style="color:var(--text)">${fmtAge(a.createdAt)}</span></span>
+        <span style="font-size:10px"><span style="color:var(--muted)">1H</span> <span style="color:var(--text)">$${fmtVol(a.vol1h)}</span></span>
+        <span style="font-size:10px"><span style="color:var(--muted)">6H</span> <span style="color:var(--text)">$${fmtVol(a.vol6h)}</span></span>
+        <span style="font-size:10px"><span style="color:var(--muted)">24H</span> <span style="color:var(--text)">$${fmtVol(a.vol24h)}</span></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <a href="${dexUrl}" target="_blank" style="color:var(--cyan);font-size:11px;text-decoration:none;opacity:0.9">↗ DexScreener</a>
+          <a href="https://x.com/search?q=%24${encodeURIComponent(a.symbol)}" target="_blank" style="color:#1d9bf0;font-size:11px;text-decoration:none;opacity:0.9">𝕏 Buscar $${a.symbol}</a>
+          ${a.twitterUrl ? `<a href="${a.twitterUrl}" target="_blank" style="color:#1d9bf0;font-size:11px;text-decoration:none;opacity:0.9">𝕏 Perfil</a>` : ''}
+          <button class="btn-copy-ca" onclick="copyCA('${a.addr}',this)">⧉ Copiar CA</button>
+          <button class="btn-block" onclick="blockToken('${a.addr}','${a.symbol}')">🚫 Block</button>
+        </div>
+        <span class="alert-time">${a.time}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function blockToken(addr, symbol) {
+  state.blocklist.add(addr);
+  state.blocklist.add(symbol.toUpperCase());
+  // Guarda mapeamento addr -> symbol para exibição
+  if (!state.blocklistMeta) state.blocklistMeta = {};
+  state.blocklistMeta[addr] = symbol;
+  // Remove da lista de monitorados
+  delete state.tokens[addr];
+  // Remove do pumpState
+  delete pumpState.tokens[addr];
+  // Remove alertas desse token
+  state.alerts = state.alerts.filter(a => a.addr !== addr && a.symbol?.toUpperCase() !== symbol.toUpperCase());
+  saveManualTokens();
+  renderMonitored();
+  renderAlerts();
+  renderBlocklist();
+  scheduleBlocklistSync();
+  // Remove do painel pump visualmente
+  const pumpList = document.getElementById('pump-list');
+  const row = pumpList.querySelector(`[data-mint="${addr}"]`);
+  if (row) row.remove();
+  logTicker(`🚫 Blocked: ${symbol}`);
+}
+
+function renderBlocklist() {
+  const bar = document.getElementById('blocklist-bar');
+  const tags = document.getElementById('blocklist-tags');
+  const meta = state.blocklistMeta || {};
+  const entries = Object.keys(meta);
+  if (entries.length === 0) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  tags.innerHTML = entries.map(addr => {
+    const sym = meta[addr] || addr.slice(0,8);
+    return `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,60,95,0.1);border:1px solid rgba(255,60,95,0.25);color:var(--red);font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px">
+      🚫 ${sym}
+      <span onclick="unblockToken('${addr}','${sym}')" style="cursor:pointer;opacity:0.6;margin-left:4px;font-size:11px" title="Unblock">✕</span>
+    </span>`;
+  }).join('');
+}
+
+function unblockToken(addr, symbol) {
+  state.blocklist.delete(addr);
+  if (symbol) state.blocklist.delete(symbol.toUpperCase());
+  if (state.blocklistMeta) delete state.blocklistMeta[addr];
+  renderBlocklist();
+  scheduleBlocklistSync();
+  logTicker(`✓ Unblocked: ${symbol || addr.slice(0,8)}`);
+}
+
+function clearBlocklist() {
+  state.blocklist.clear();
+  state.blocklistMeta = {};
+  renderBlocklist();
+  scheduleBlocklistSync();
+  logTicker("\u2713 Blocklist cleared");
+}
+
+function isBlocked(addr, symbol) {
+  return state.blocklist.has(addr) || state.blocklist.has((symbol || '').toUpperCase());
+}
+
+function clearAlerts() {
+  state.alerts = [];
+  state.alertCount = 0;
+  document.getElementById('alert-count').textContent = 0;
+  document.getElementById('alerts-count-badge').textContent = 0;
+  renderAlerts();
+}
+
+function logTicker(msg) {
+  const t = document.getElementById('ticker');
+  const span = document.createElement('span');
+  span.className = 'ticker-item';
+  span.innerHTML = `<span style="color:var(--muted)">[${new Date().toLocaleTimeString('en-US')}]</span> ${msg} &nbsp;&nbsp;&nbsp;`;
+  t.prepend(span);
+  if (t.children.length > 20) t.removeChild(t.lastChild);
+}
+
+// Notification permission
+if ('Notification' in window) {
+  Notification.requestPermission().then(p => {
+    document.getElementById('notif-status').textContent = p === 'granted' ? '🔔 NOTIF ON' : '🔕 SEM NOTIF';
+  });
+}
+
+// Init
+renderMonitored();
+renderAlerts();
+
+// ============================================================
+// PUMPFUN WEBSOCKET — volume acumulado por janela de 60s
+// ============================================================
+const pumpState = {
+  ws: null,
+  connected: false,
+  transport: 'none', // none | direct | server
+  solPrice: 150,
+  tokens: {},
+};
+
+function togglePumpWs() {
+  if (pumpState.connected) disconnectPump();
+  else connectPump();
+}
+
+async function connectPump() {
+  if (!await requireAuthOrBlock('pump stream')) return;
+
+  const btn = document.getElementById('pump-btn');
+  const status = document.getElementById('pump-status');
+  status.textContent = 'Connecting...';
+  status.style.color = 'var(--yellow)';
+  btn.textContent = 'CONNECTING...';
+  btn.disabled = true;
+
+  if (!socketClient) {
+    connectServerSocket();
+  }
+
+  if (socketClient?.connected) {
+    pumpState.connected = true;
+    pumpState.transport = 'server';
+    status.textContent = 'Connected via server stream';
+    status.style.color = 'var(--green)';
+    btn.textContent = 'DISCONNECT';
+    btn.disabled = false;
+    btn.style.cssText = 'font-size:10px;padding:4px 12px;background:rgba(255,60,95,0.1);border:1px solid rgba(255,60,95,0.3);color:var(--red);border-radius:4px;cursor:pointer;font-family:inherit';
+    logTicker('PumpFun stream connected via backend socket');
+    return;
+  }
+
+  pumpState.connected = false;
+  pumpState.transport = 'none';
+  status.textContent = 'Server socket not connected';
+  status.style.color = 'var(--red)';
+  btn.textContent = 'RETRY';
+  btn.disabled = false;
+  btn.style.cssText = 'font-size:10px;padding:4px 12px;background:rgba(176,106,255,0.1);border:1px solid rgba(176,106,255,0.3);color:var(--pump-color);border-radius:4px;cursor:pointer;font-family:inherit';
+  logTicker('PumpFun stream requires authenticated backend socket');
+}
+
+function disconnectPump() {
+  if (pumpState.transport === 'direct' && pumpState.ws) pumpState.ws.close();
+  pumpState.connected = false;
+  pumpState.transport = 'none';
+  const status = document.getElementById('pump-status');
+  const btn = document.getElementById('pump-btn');
+  if (status) { status.textContent = 'Disconnected'; status.style.color = 'var(--muted)'; }
+  if (btn) {
+    btn.textContent = 'CONNECT';
+    btn.disabled = false;
+    btn.style.cssText = 'font-size:10px;padding:4px 12px;background:rgba(176,106,255,0.1);border:1px solid rgba(176,106,255,0.3);color:var(--pump-color);border-radius:4px;cursor:pointer;font-family:inherit';
+  }
+}
+
+// Converte ipfs:// para gateway HTTP e busca a imagem do metadata URI
+function ipfsToHttp(url) {
+  if (!url) return null;
+  if (url.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${url.slice(7)}`;
+  return url;
+}
+
+async function resolveImage(mint, uri) {
+  if (!pumpState.tokens[mint]) return;
+
+  const updateRow = (imgUrl) => {
+    const row = document.getElementById('pump-list')?.querySelector(`[data-mint="${mint}"]`);
+    if (row) {
+      const imgContainer = row.firstElementChild;
+      if (imgContainer) {
+        imgContainer.innerHTML = `<img src="${imgUrl}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;border:1px solid rgba(176,106,255,0.3)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div style="display:none;width:36px;height:36px;border-radius:50%;background:rgba(176,106,255,0.1);align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--pump-color)">${(pumpState.tokens[mint]?.symbol||'?').slice(0,2)}</div>`;
+      }
+    }
+  };
+
+  // 1st priority: PumpFun API — most reliable, always has image_uri
+  try {
+    const pumpRes = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(`https://frontend-api.pump.fun/coins/${mint}`)}`, { signal: AbortSignal.timeout(5000) });
+    if (pumpRes.ok) {
+      const data = await pumpRes.json();
+      const imgUrl = data.image_uri || data.image || null;
+      if (imgUrl && pumpState.tokens[mint]) {
+        pumpState.tokens[mint].image = ipfsToHttp(imgUrl);
+        updateRow(pumpState.tokens[mint].image);
+        return;
+      }
+    }
+  } catch {}
+
+  // 2nd priority: metadata JSON via IPFS gateways (only if uri provided)
+  if (uri) {
+    const httpUri = ipfsToHttp(uri);
+    const urls = [httpUri];
+    if (uri.startsWith('ipfs://')) {
+      const cid = uri.slice(7);
+      urls.push(`https://cf-ipfs.com/ipfs/${cid}`);
+      urls.push(`https://gateway.pinata.cloud/ipfs/${cid}`);
+    } else if (httpUri.includes('ipfs.io/ipfs/')) {
+      const cid = httpUri.split('ipfs.io/ipfs/')[1];
+      if (cid) {
+        urls.push(`https://cf-ipfs.com/ipfs/${cid}`);
+        urls.push(`https://gateway.pinata.cloud/ipfs/${cid}`);
+      }
+    }
+
+    for (const fetchUrl of urls) {
+      try {
+        const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) continue;
+        const meta = await res.json();
+        const imageUrl = meta.image || meta.image_url || null;
+        if (imageUrl && pumpState.tokens[mint]) {
+          pumpState.tokens[mint].image = ipfsToHttp(imageUrl);
+          updateRow(pumpState.tokens[mint].image);
+          return;
+        }
+      } catch {}
+    }
+  }
+}
+
+function handlePumpMessage(msg) {
+  const mint = msg.mint;
+  if (!mint) return;
+  if (isBlocked(mint, msg.symbol)) return;
+
+  const now = Date.now();
+  const solPx = pumpState.solPrice;
+
+  // New token created — subscribe to its trades immediately
+  if (msg.txType === 'create') {
+    if (!pumpState.tokens[mint]) {
+      pumpState.tokens[mint] = {
+        name: msg.name || mint.slice(0,8),
+        symbol: msg.symbol || mint.slice(0,6),
+        image: msg.image ? ipfsToHttp(msg.image) : null,
+        _uri: msg.uri || null,
+        mcap: msg.usd_market_cap || (msg.marketCapSol ? msg.marketCapSol * solPx : 0),
+        vol5m: [],
+        lastAlert: 0,
+        createdAt: now, // timestamp of creation — used for age filter in Final Stretch
+      };
+    }
+    // Subscreve trades desse token específico
+    if (pumpState.transport === 'direct' && pumpState.ws?.readyState === WebSocket.OPEN) {
+      pumpState.ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] }));
+    } else if (pumpState.transport === 'server' && socketClient?.connected) {
+      socketClient.emit('pump:subscribe', { mint });
+    }
+    // Busca imagem do metadata em background (1x por token)
+    if (msg.uri) {
+      pumpState.tokens[mint]._imageResolved = true;
+      resolveImage(mint, msg.uri);
+    }
+    logTicker(`⚡ New token: ${msg.symbol || mint.slice(0,8)}`);
+    return;
+  }
+
+  // Token migrated to DEX — show popup, remove from panel, auto-update bond target
+  if (msg.txType === 'migrate') {
+    const tok = pumpState.tokens[mint];
+    if (tok && !tok._migrated) {
+      tok._migrated = true;
+      // Compute vol5m total at time of migration
+      const vol5mTotal = tok.vol5m.reduce((s, t) => s + t.usd, 0);
+      // Show migration toast
+      showMigrateToast(tok, vol5mTotal, mint);
+      // Auto-update pump-bond-mcap with this real migration MCAP (rolling average of last 3)
+      if (tok.mcap > 0) {
+        pumpState.recentMigrationMcaps = pumpState.recentMigrationMcaps || [];
+        pumpState.migrationCount = (pumpState.migrationCount || 0) + 1;
+        pumpState.recentMigrationMcaps.push(tok.mcap);
+        if (pumpState.recentMigrationMcaps.length > 3) pumpState.recentMigrationMcaps.shift();
+        // Update bond target on 1st migration, then every 3 after
+        if (pumpState.migrationCount === 1 || pumpState.migrationCount % 3 === 0) {
+          const avg = Math.round(pumpState.recentMigrationMcaps.reduce((a,b)=>a+b,0) / pumpState.recentMigrationMcaps.length);
+          const bondField = document.getElementById('pump-bond-mcap');
+          if (bondField) { bondField.value = avg; saveConfig(); }
+          logTicker(`🚀 ${tok.symbol || mint.slice(0,6)} migrated at $${fmtVol(tok.mcap)} MCAP — bond target updated to $${fmtVol(avg)}`);
+        } else {
+          logTicker(`🚀 ${tok.symbol || mint.slice(0,6)} migrated at $${fmtVol(tok.mcap)} MCAP`);
+        }
+      }
+      // Remove from panel
+      const row = document.querySelector(`[data-mint="${mint}"]`);
+      if (row) row.remove();
+      delete pumpState.tokens[mint];
+      const count = document.querySelectorAll('.pump-token-row').length;
+      document.getElementById('pump-count').textContent = count;
+    }
+    return;
+  }
+
+  // Trade recebido
+  if (!pumpState.tokens[mint]) {
+    pumpState.tokens[mint] = {
+      name: msg.name || mint.slice(0,8),
+      symbol: msg.symbol || mint.slice(0,6),
+      image: msg.image || null,
+      mcap: msg.usd_market_cap || (msg.marketCapSol ? msg.marketCapSol * solPx : 0),
+      vol5m: [],
+      lastAlert: 0,
+    };
+    // Subscreve trades individuais para receber evento migrate via WS
+    if (pumpState.transport === 'direct' && pumpState.ws?.readyState === WebSocket.OPEN) {
+      pumpState.ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: [mint] }));
+    } else if (pumpState.transport === 'server' && socketClient?.connected) {
+      socketClient.emit('pump:subscribe', { mint });
+    }
+  }
+
+  const tok = pumpState.tokens[mint];
+  if (msg.name)   tok.name   = msg.name.replace(/[\r\n\t]+/g,' ').trim();
+  if (msg.symbol) tok.symbol = msg.symbol.replace(/[\r\n\t]+/g,' ').trim();
+  if (msg.image) tok.image = ipfsToHttp(msg.image);
+  if (msg.uri) tok._uri = msg.uri;
+  // Se ainda não tem imagem e nunca tentou resolver, tenta UMA vez
+  if (!tok.image && !tok._imageResolved) {
+    tok._imageResolved = true;
+    resolveImage(mint, tok._uri);
+  }
+  // Update MCAP — prefer usd_market_cap, fallback to marketCapSol * solPrice
+  // vTokensInBondingCurve stops being sent but usd_market_cap should always come with trades
+  if (msg.usd_market_cap && msg.usd_market_cap > 0) tok.mcap = msg.usd_market_cap;
+  else if (msg.marketCapSol && msg.marketCapSol > 0) tok.mcap = msg.marketCapSol * solPx;
+  // Store bonding curve progress (PumpFun migrates at $69K MCAP)
+  if (msg.bondingCurveKey !== undefined) tok.bondingCurveKey = msg.bondingCurveKey;
+  if (typeof msg.vTokensInBondingCurve === 'number') tok.vTokensInBondingCurve = msg.vTokensInBondingCurve;
+  if (typeof msg.virtualSolReserves === 'number') {
+    tok.virtualSolReserves = msg.virtualSolReserves;
+    // Compute MCAP from bonding curve reserves if usd_market_cap missing
+    if (!msg.usd_market_cap && !msg.marketCapSol && solPx > 0) {
+      // PumpFun: total supply 1B, price = virtualSolReserves/vTokensInBondingCurve
+      const vSol = msg.virtualSolReserves / 1e9; // lamports → SOL
+      const vTok = msg.vTokensInBondingCurve || 1;
+      const price = (vSol / vTok) * solPx;
+      tok.mcap = price * 1_000_000_000; // 1B total supply
+    }
+  }
+
+  // Acumula volume em USD na janela deslizante de 5 minutos
+  const usd = msg.solAmount ? msg.solAmount * solPx : 0;
+  if (usd > 0) {
+    tok.vol5m.push({ ts: now, usd });
+    tok.vol5m = tok.vol5m.filter(t => now - t.ts <= 300000); // 5 min
+    tok.volTotal = (tok.volTotal || 0) + usd; // volume total acumulado
+  }
+  tok.lastTrade = now; // timestamp do último trade recebido
+
+  const vol5mTotal = tok.vol5m.reduce((s, t) => s + t.usd, 0);
+
+  renderPumpToken(mint, tok, vol5mTotal);
+
+  // Alerta 1x por token por sessão
+  const minVol = parseFloat(document.getElementById('pump-min-vol').value) || 100000;
+  if (vol5mTotal >= minVol && !tok._alertFired) {
+    tok._alertFired = true;
+    firePumpAlert(mint, tok, vol5mTotal);
+  }
+}
+
+// Atualiza preço SOL periodicamente para converter solAmount → USD
+async function fetchSolPrice() {
+  try {
+    const d = await apiFetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+    if (d?.solana?.usd) pumpState.solPrice = d.solana.usd;
+  } catch {}
+}
+fetchSolPrice();
+setInterval(fetchSolPrice, 60000);
+
+// ---- PumpFun Garbage Collector — remove tokens inativos ----
+const PUMP_GC_INTERVAL = 30000;  // roda a cada 30s
+const PUMP_GC_INACTIVE = 600000; // 10 minutos sem trades = inativo
+const PUMP_GC_LOW_MCAP = 4000;       // MCAP mínimo pra ficar no painel
+const PUMP_GC_LOW_MCAP_TIME = 480000; // 8 minutos abaixo do mínimo = removido
+
+function pumpGarbageCollect() {
+  if (!pumpState.connected) return;
+  const now = Date.now();
+  let removed = 0;
+  const mintsToRemove = [];
+
+  for (const [mint, tok] of Object.entries(pumpState.tokens)) {
+    if (tok._migrated) continue; // migrado, vai ser limpo pelo handler de migração
+    const lastTrade = tok.lastTrade || tok.createdAt || 0;
+
+    // Inatividade: sem trades há 10 minutos
+    if (now - lastTrade >= PUMP_GC_INACTIVE) {
+      mintsToRemove.push(mint);
+      continue;
+    }
+
+    // Low MCAP: abaixo de 4k por 8 minutos consecutivos
+    if (tok.mcap > 0 && tok.mcap < PUMP_GC_LOW_MCAP) {
+      if (!tok._lowMcapSince) {
+        tok._lowMcapSince = now;
+      } else if (now - tok._lowMcapSince >= PUMP_GC_LOW_MCAP_TIME) {
+        mintsToRemove.push(mint);
+        continue;
+      }
+    } else {
+      tok._lowMcapSince = 0; // reset: MCAP voltou acima do mínimo
+    }
+  }
+
+  for (const mint of mintsToRemove) {
+    const tok = pumpState.tokens[mint];
+    const sym = tok.symbol || mint.slice(0, 8);
+
+    // Unsubscribe do stream
+    if (pumpState.transport === 'direct' && pumpState.ws?.readyState === WebSocket.OPEN) {
+      pumpState.ws.send(JSON.stringify({ method: 'unsubscribeTokenTrade', keys: [mint] }));
+    } else if (pumpState.transport === 'server' && socketClient?.connected) {
+      socketClient.emit('pump:unsubscribe', { mint });
+    }
+
+    // Remove do DOM
+    const row = document.querySelector(`[data-mint="${mint}"]`);
+    if (row) row.remove();
+
+    // Remove do state
+    delete pumpState.tokens[mint];
+    removed++;
+  }
+
+  if (removed > 0) {
+    document.getElementById('pump-count').textContent = document.querySelectorAll('.pump-token-row').length;
+    logTicker(`🧹 GC: ${removed} inactive token${removed > 1 ? 's' : ''} removed from PumpFun`);
+  }
+}
+setInterval(pumpGarbageCollect, PUMP_GC_INTERVAL);
+
+// ---- PumpFun REST API probe (one-time test) ----
+// Tests if the REST API is reachable. Result appears in ticker. Safe to remove if confirmed working/not working.
+(async function probePumpRestApi() {
+  const endpoints = [
+    'https://client-api-2-74b1891ee9f9.herokuapp.com/coins?offset=0&limit=3&sort=market_cap&order=DESC&includeNsfw=false',
+    'https://frontend-api.pump.fun/coins?offset=0&limit=3&sort=market_cap&order=DESC&includeNsfw=false',
+  ];
+  const proxies = ['', 'https://corsproxy.io/?', 'https://api.allorigins.win/raw?url='];
+
+  for (const ep of endpoints) {
+    for (const px of proxies) {
+      try {
+        const url = px + encodeURIComponent(ep).replace(/^https%3A%2F%2F/, px ? 'https%3A%2F%2F' : 'https://');
+        const finalUrl = px ? px + ep : ep;
+        const res = await fetch(finalUrl, { signal: AbortSignal.timeout(6000) });
+        if (res.ok) {
+          const data = await res.json();
+          const count = Array.isArray(data) ? data.length : (data?.coins?.length || '?');
+          logTicker(`✅ PumpFun REST OK via ${px || 'direct'} — got ${count} coins | ${ep.split('/')[2]}`);
+          return;
+        } else {
+          logTicker(`⚠ PumpFun REST ${res.status} via ${px || 'direct'} | ${ep.split('/')[2]}`);
+        }
+      } catch(e) {
+        // silent — try next
+      }
+    }
+  }
+  logTicker('❌ PumpFun REST API unreachable via all proxies — staying with WebSocket only');
+})();
+
+
+
+// ---- Silence-based migration detection ----
+// Se um token ficou 30s sem trades E tem MCAP >= $30K, assumir migração
+// O PumpFun para de enviar trades de um token assim que ele migra para DEX
+setInterval(() => {
+  const now = Date.now();
+  const SILENCE_MS = 5000;    // 5s sem trades
+  const MIN_MCAP   = 30000;   // mínimo $30K de MCAP para considerar migração
+  for (const [mint, tok] of Object.entries(pumpState.tokens || {})) {
+    if (tok._migrated) continue;
+    if (!tok.lastTrade) continue;                          // ainda não recebeu nenhum trade
+    if ((tok.mcap || 0) < MIN_MCAP) continue;             // MCAP baixo demais — provavelmente morreu
+    if (now - tok.lastTrade < SILENCE_MS) continue;       // ainda ativo
+    // Token silencioso com MCAP alto — provavelmente migrou
+    tok._migrated = true;
+    const vol5mTotal = tok.vol5m.reduce((s, t) => s + t.usd, 0);
+    showMigrateToast(tok, vol5mTotal, mint);
+    pumpState.migrationCount = (pumpState.migrationCount || 0) + 1;
+    if (tok.mcap > 0) {
+      pumpState.recentMigrationMcaps = pumpState.recentMigrationMcaps || [];
+      pumpState.recentMigrationMcaps.push(tok.mcap);
+      if (pumpState.recentMigrationMcaps.length > 3) pumpState.recentMigrationMcaps.shift();
+      const avg = Math.round(pumpState.recentMigrationMcaps.reduce((a,b)=>a+b,0) / pumpState.recentMigrationMcaps.length);
+      const bondField = document.getElementById('pump-bond-mcap');
+      if (bondField) { bondField.value = avg; saveConfig(); }
+      logTicker(`🚀 ${tok.symbol} migrated (silence 30s) at $${fmtVol(tok.mcap)} — bond → $${fmtVol(avg)}`);
+    }
+    setTimeout(() => {
+      const r = document.querySelector(`[data-mint="${mint}"]`);
+      if (r) r.remove();
+      delete pumpState.tokens[mint];
+      document.getElementById('pump-count').textContent = document.querySelectorAll('.pump-token-row').length;
+    }, 1500);
+  }
+}, 3000); // checa a cada 3s
+
+loadConfig();
+initConfigPersistence();
+loadPersistedSounds();
+loadManualTokens().then(() => {
+  const minMcapRemove = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
+  if (minMcapRemove > 0) sweepMcapFilter(minMcapRemove);
+  renderManualBar();
+});
+loadOldTokens();
+
+// Render individual de linha no painel PumpFun (throttled por token)
+const pumpRenderThrottle = {};
+function renderPumpToken(mint, tok, vol5mTotal) {
+  if (pumpRenderThrottle[mint]) return;
+  pumpRenderThrottle[mint] = true;
+  setTimeout(() => delete pumpRenderThrottle[mint], 800);
+
+  const list = document.getElementById('pump-list');
+  const minVol   = parseFloat(document.getElementById('pump-min-vol').value)   || 100000;
+  const entryVol = parseFloat(document.getElementById('pump-entry-vol').value) || 20000;
+
+  if (vol5mTotal < entryVol) return;
+
+  // Bonding curve target — sempre ativo com default $35K, atualiza automaticamente a cada migração real
+  const migrateMcapUSD = parseFloat(document.getElementById('pump-bond-mcap').value) || 35000;
+  const bondPct = Math.min(100, ((tok.mcap || 0) / migrateMcapUSD) * 100).toFixed(0);
+  const hasMigration = (pumpState.migrationCount || 0) >= 1; // barra só aparece após 1ª migração confirmada
+  const showBar = hasMigration;
+  const pct = bondPct;
+
+  // Fallback migration detection: bondPct >= 100 = token atingiu target, provavelmente migrou
+  if (parseFloat(bondPct) >= 100 && !tok._migrated) {
+    tok._migrated = true;
+    const vol5mForToast = tok.vol5m.reduce((s, t) => s + t.usd, 0);
+    showMigrateToast(tok, vol5mForToast, mint);
+    pumpState.migrationCount = (pumpState.migrationCount || 0) + 1;
+    if (tok.mcap > 0) {
+      pumpState.recentMigrationMcaps = pumpState.recentMigrationMcaps || [];
+      pumpState.recentMigrationMcaps.push(tok.mcap);
+      if (pumpState.recentMigrationMcaps.length > 3) pumpState.recentMigrationMcaps.shift();
+      const avg = Math.round(pumpState.recentMigrationMcaps.reduce((a,b)=>a+b,0) / pumpState.recentMigrationMcaps.length);
+      const bondField = document.getElementById('pump-bond-mcap');
+      if (bondField) { bondField.value = avg; saveConfig(); }
+      logTicker(`🚀 ${tok.symbol} migrated (bondPct≥100) at $${fmtVol(tok.mcap)} — bond → $${fmtVol(avg)}`);
+    }
+    setTimeout(() => {
+      const r = document.querySelector(`[data-mint="${mint}"]`);
+      if (r) r.remove();
+      delete pumpState.tokens[mint];
+      document.getElementById('pump-count').textContent = document.querySelectorAll('.pump-token-row').length;
+    }, 1500);
+    return;
+  }
+  // Sanitiza: remove quebras de linha, escapa HTML
+  const sanitize = s => (s || '').replace(/[\r\n\t]+/g, ' ').trim().replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const sym  = sanitize(tok.symbol) || '??';
+  const name = sanitize(tok.name);
+  const volColor = '#ffffff'; // VOL sempre branco
+
+  let row = list.querySelector(`[data-mint="${mint}"]`);
+
+  if (!row) {
+    const empty = list.querySelector('.empty-state');
+    if (empty) empty.remove();
+    const existingRows = list.querySelectorAll('.pump-token-row');
+    if (existingRows.length >= 150) existingRows[existingRows.length - 1].remove();
+
+    const div = document.createElement('div');
+    div.className = 'pump-token-row';
+    div.setAttribute('data-mint', mint);
+
+    const img = document.createElement('div');
+    img.style.cssText = 'width:36px;height:36px;flex-shrink:0';
+    if (tok.image) {
+      img.innerHTML = `<img src="${tok.image}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;border:1px solid rgba(176,106,255,0.3)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div style="display:none;width:36px;height:36px;border-radius:50%;background:rgba(176,106,255,0.1);align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--pump-color)">${sym.slice(0,2)}</div>`;
+    } else {
+      img.innerHTML = `<div style="display:flex;width:36px;height:36px;border-radius:50%;background:rgba(176,106,255,0.1);align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--pump-color)">${sym.slice(0,2)}</div>`;
+      // Retry image resolution if not yet attempted or previously failed
+      if (!tok._imageRetried) {
+        tok._imageRetried = true;
+        resolveImage(mint, tok._uri || null);
+      }
+    }
+
+    const info = document.createElement('div');
+    info.style.cssText = 'min-width:0;overflow:hidden;flex:1';
+    info.innerHTML = `
+      <div style="font-weight:700;color:#fff;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        ${sym} <span class="p-name" style="color:var(--muted);font-size:10px;font-weight:400">${name}</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:2px;align-items:center">
+        <span style="font-size:9px;color:var(--muted)">VOL 5M <span class="p-vol" style="color:#fff;font-weight:700">$${fmtVol(vol5mTotal)}</span></span>
+        <span style="font-size:9px;color:var(--muted)">MCAP <span class="p-mcap" style="color:var(--pump-color);font-weight:700">$${fmt(tok.mcap)}</span></span>
+        ${tok.createdAt ? `<span style="font-size:9px;color:var(--muted)">AGE <span class="p-age" style="color:var(--text)">${fmtAge(tok.createdAt)}</span></span>` : ''}
+      </div>
+      <div class="pump-vol-bar p-bond-bar" style="margin-top:4px;display:${showBar?'block':'none'}" title="Bonding curve: ${bondPct}% of ${migrateMcapUSD>0?'$'+fmtVol(migrateMcapUSD):'~$35K'}"><div class="p-bar pump-vol-bar-fill" style="width:${bondPct}%;background:${parseFloat(bondPct)>80?'var(--green)':parseFloat(bondPct)>50?'#ffaa00':'var(--pump-color)'}"></div></div>`;
+
+    const total = document.createElement('div');
+    total.className = 'p-total';
+    total.style.cssText = 'flex-shrink:0;text-align:right;line-height:1.3';
+    total.innerHTML = `<div class="p-total-mcap" style="font-size:12px;font-weight:700;color:var(--pump-color)"><span style="font-size:10px;color:var(--muted);font-weight:400">MC </span>$${fmt(tok.mcap)}</div><div class="p-total-vol" style="font-size:11px;color:${volColor};font-weight:700"><span style="font-size:10px;color:var(--muted);font-weight:400">V </span>$${fmtVol(tok.volTotal || vol5mTotal)}</div>`;
+
+    // Right column: total (mcap+vol) + action buttons (copy + remove) stacked
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.title = 'Copy CA';
+    copyBtn.textContent = '⧉';
+    copyBtn.style.cssText = 'background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:1px 3px;line-height:1;opacity:0.5;';
+    copyBtn.onmouseenter = () => { copyBtn.style.color='var(--text)'; copyBtn.style.opacity='1'; };
+    copyBtn.onmouseleave = () => { copyBtn.style.color='var(--muted)'; copyBtn.style.opacity='0.5'; };
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(mint).then(() => {
+        copyBtn.textContent = '✓';
+        copyBtn.style.color = 'var(--green)';
+        setTimeout(() => { copyBtn.textContent = '⧉'; copyBtn.style.color = 'var(--muted)'; }, 1200);
+      });
+    };
+
+    const removeBtn = document.createElement('button');
+    removeBtn.title = 'Remove';
+    removeBtn.textContent = '✕';
+    removeBtn.style.cssText = 'background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:1px 3px;line-height:1;opacity:0.5;';
+    removeBtn.onmouseenter = () => { removeBtn.style.color='var(--red)'; removeBtn.style.opacity='1'; };
+    removeBtn.onmouseleave = () => { removeBtn.style.color='var(--muted)'; removeBtn.style.opacity='0.5'; };
+    removeBtn.onclick = () => {
+      div.remove();
+      delete pumpState.tokens[mint];
+      document.getElementById('pump-count').textContent = document.querySelectorAll('.pump-token-row').length;
+    };
+
+    actions.appendChild(copyBtn);
+    actions.appendChild(removeBtn);
+
+    div.appendChild(img);
+    div.appendChild(info);
+    div.appendChild(total);
+    div.appendChild(actions);
+    list.appendChild(div);
+    row = div;
+  } else {
+    const volEl      = row.querySelector('.p-vol');
+    const mcapEl     = row.querySelector('.p-mcap');
+    const ageEl      = row.querySelector('.p-age');
+    const totalMcap  = row.querySelector('.p-total-mcap');
+    const totalVol   = row.querySelector('.p-total-vol');
+    const barEl      = row.querySelector('.p-bar');
+    if (volEl)     volEl.textContent     = '$' + fmtVol(vol5mTotal);
+    if (mcapEl)    mcapEl.textContent    = '$' + fmt(tok.mcap);
+    if (ageEl && tok.createdAt) ageEl.textContent = fmtAge(tok.createdAt);
+    if (totalMcap) { totalMcap.innerHTML = `<span style="font-size:10px;color:var(--muted);font-weight:400">MC </span>$${fmt(tok.mcap)}`; totalMcap.style.color = "var(--pump-color)"; }
+    if (totalVol)  { totalVol.innerHTML = `<span style="font-size:10px;color:var(--muted);font-weight:400">V </span>$${fmtVol(tok.volTotal || vol5mTotal)}`; totalVol.style.color = volColor; }
+    if (barEl) {
+      barEl.style.width = bondPct + '%';
+      barEl.style.background = parseFloat(bondPct) > 80 ? 'var(--green)' : parseFloat(bondPct) > 50 ? '#ffaa00' : 'var(--pump-color)';
+      const bondBar = row.querySelector('.p-bond-bar');
+      if (bondBar) bondBar.style.display = showBar ? 'block' : 'none';
+    }
+  }
+
+  // Reordena por MCAP desc (tokens com maior MCAP no topo)
+  const allRows = [...list.querySelectorAll('.pump-token-row')];
+  allRows.sort((a, b) => {
+    const mcap = el => pumpState.tokens[el.getAttribute('data-mint')]?.mcap || 0;
+    return mcap(b) - mcap(a);
+  });
+  allRows.forEach(r => list.appendChild(r));
+
+  document.getElementById('pump-count').textContent = allRows.length;
+}
+
+function firePumpAlert(mint, tok, vol5mTotal) {
+  // HVNC dedup — if this is HVNC, only fire once ever for this token
+  const hvncMinVol = parseFloat(document.getElementById('hvnc-min-vol').value) || 0;
+  const isHvnc = hvncMinVol > 0 && tok.createdAt && (Date.now() - tok.createdAt < 1800000) && vol5mTotal >= hvncMinVol;
+  if (isHvnc) {
+    if (tok._hvncPumpFired) return; // already fired HVNC alert for this pump token
+    tok._hvncPumpFired = true;
+  }
+  const now = new Date().toLocaleTimeString('en-US');
+  const sym  = (tok.symbol || '??').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const name = (tok.name   || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const imgHtml = tok.image
+    ? `<img src="${tok.image}" class="alert-avatar" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="alert-avatar-placeholder" style="display:none;background:rgba(176,106,255,0.15);color:var(--pump-color)">${sym.slice(0,2)}</div>`
+    : `<div class="alert-avatar-placeholder" style="background:rgba(176,106,255,0.15);color:var(--pump-color)">${sym.slice(0,2)}</div>`;
+
+  const alertHtml = `
+  <div class="alert-row pump-alert">
+    <div style="display:grid;grid-template-columns:40px 1fr;gap:8px;align-items:center">
+      ${imgHtml}
+      <div>
+        <div class="alert-top">
+          <span class="alert-token">${sym} <span style="color:var(--muted);font-size:10px">${name}</span></span>
+          <span style="font-weight:700;font-size:15px;color:var(--pump-color)">$${fmtVol(vol5mTotal)} <span style="font-size:10px;opacity:0.8">VOL 5M</span></span>
+        </div>
+        <div style="margin-top:4px"><span class="pump-badge">⚡ PUMPSWAP — não listado na DEX</span></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:14px;margin-top:6px;flex-wrap:wrap">
+      <span style="font-size:10px"><span style="color:var(--muted)">VOL 5M</span> <span style="color:var(--pump-color);font-weight:700">$${fmtVol(vol5mTotal)}</span></span>
+      <span style="font-size:10px"><span style="color:var(--muted)">MCAP</span> <span style="color:var(--text)">$${fmt(tok.mcap)}</span></span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">
+      <button class="btn-block" onclick="blockToken('${mint}','${sym}')">🚫 Block</button>
+      <span class="alert-time">${now}</span>
+    </div>
+  </div>`;
+
+  const list = document.getElementById('alerts-list');
+  const empty = list.querySelector('.empty-state');
+  if (empty) empty.remove();
+  list.insertAdjacentHTML('afterbegin', alertHtml);
+
+  state.alertCount++;
+  document.getElementById('alert-count').textContent = state.alertCount;
+  const badge = document.getElementById('alerts-count-badge');
+  badge.textContent = (parseInt(badge.textContent) || 0) + 1;
+
+  playAlert('mega');
+  logTicker(`⚡ PumpFun ${sym} — VOL 5M $${fmtVol(vol5mTotal)}`);
+}
+
+// ---- Migration toast ----
+function playMigrateSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const vol = (parseInt(document.getElementById('sound-volume')?.value) || 80) / 100;
+    // Three rising tones: C5 → E5 → G5
+    [[523, 0], [659, 0.12], [784, 0.24]].forEach(([freq, delay]) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = freq;
+      const t = ctx.currentTime + delay;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol * 0.4, t + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      o.start(t); o.stop(t + 0.36);
+    });
+  } catch {}
+}
+
+function showMigrateToast(tok, vol5mTotal, mint) {
+  const container = document.getElementById('migrate-toast-container');
+  if (!container) return;
+  const sym  = (tok.symbol || '??').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const age  = tok.createdAt ? fmtAge(tok.createdAt) : '–';
+  const vol  = vol5mTotal > 0 ? `$${fmtVol(vol5mTotal)} vol 5m` : '';
+  const imgHtml = tok.image
+    ? `<img class="migrate-toast-img" src="${tok.image}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="migrate-toast-placeholder" style="display:none">${sym.slice(0,2)}</div>`
+    : `<div class="migrate-toast-placeholder">${sym.slice(0,2)}</div>`;
+
+  const toast = document.createElement('div');
+  toast.className = 'migrate-toast';
+  toast.innerHTML = `
+    ${imgHtml}
+    <div class="migrate-toast-body">
+      <div class="migrate-toast-label">🚀 Token Migrated</div>
+      <div class="migrate-toast-ticker">${sym}</div>
+      <div class="migrate-toast-meta">AGE <span>${age}</span>${vol ? `&nbsp;&nbsp;VOL <span>${vol}</span>` : ''}</div>
+      ${mint ? `<button class="migrate-copy-btn" title="Copy contract address">⧉ Copy CA</button>` : ''}
+    </div>`;
+
+  container.prepend(toast);
+
+  // Copy CA button logic
+  if (mint) {
+    const btn = toast.querySelector('.migrate-copy-btn');
+    if (btn) {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(mint).then(() => {
+          btn.textContent = '✓ Copied!';
+          btn.style.color = 'var(--green)';
+          setTimeout(() => { btn.textContent = '⧉ Copy CA'; btn.style.color = ''; }, 1500);
+        });
+      };
+    }
+  }
+
+  playMigrateSound();
+
+  // Hover pause: clear timers on mouseenter, restart on mouseleave
+  const DISPLAY_MS = 7000;
+  const FADEOUT_MS = 700;
+  let fadeTimer, removeTimer;
+
+  function startTimers() {
+    fadeTimer  = setTimeout(() => toast.classList.add('fade-out'), DISPLAY_MS - FADEOUT_MS);
+    removeTimer = setTimeout(() => toast.remove(), DISPLAY_MS);
+  }
+  function clearTimers() {
+    clearTimeout(fadeTimer);
+    clearTimeout(removeTimer);
+    toast.classList.remove('fade-out');
+  }
+
+  toast.addEventListener('mouseenter', clearTimers);
+  toast.addEventListener('mouseleave', startTimers);
+  startTimers();
+}
+</script>
+</div><!-- /app-container -->
+
+<script>
+// ══════════════════════════════════════════════════════════════
+//  AUTH — Login, Register, Session Management
+// ══════════════════════════════════════════════════════════════
+
+const API_BASE = (() => {
+  const qsApi = new URLSearchParams(window.location.search).get('api');
+  if (qsApi) return qsApi.replace(/\/+$/, '');
+
+  // Local file and some browser contexts expose origin as "null".
+  if (window.location.protocol === 'file:' || window.location.origin === 'null') {
+    return 'http://localhost:3000';
+  }
+
+  // If frontend is served from a dev static server, keep API on backend port.
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (isLocalHost && window.location.port && window.location.port !== '3000') {
+    return 'http://localhost:3000';
+  }
+
+  return window.location.origin;
+})();
+console.log('[AUTH] API_BASE =', API_BASE, 'origin =', window.location.origin, 'protocol =', window.location.protocol);
+
+authToken = authToken || null;
+currentUser = currentUser || null;
+socketClient = socketClient || null;
+
+async function apiAuthFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  return fetch(`${API_BASE}${path}`, { ...options, headers });
+}
+
+function applyConfigToUI(cfg) {
+  if (!cfg || typeof cfg !== 'object') return;
+  CONFIG_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && cfg[id] !== undefined) el.value = cfg[id];
+  });
+  localStorage.setItem('bot_config', JSON.stringify(readConfigFromUI()));
+}
+
+function applyServerBlocklist(blocklist) {
+  state.blocklist.clear();
+  state.blocklistMeta = {};
+  for (const item of (blocklist || [])) {
+    const addr = (item?.address || '').trim();
+    if (!addr) continue;
+    const sym = (item?.label || '').trim();
+    state.blocklist.add(addr);
+    if (sym) state.blocklist.add(sym.toUpperCase());
+    state.blocklistMeta[addr] = sym || addr.slice(0, 8);
+  }
+  renderBlocklist();
+}
+
+async function loadUserStateFromServer() {
+  if (!authToken) return false;
+  try {
+    const res = await apiAuthFetch('/api/config');
+    if (!res.ok) return false;
+    const data = await res.json();
+
+    applyConfigToUI(data.configs || {});
+
+    const manualAddresses = (data.tokens || [])
+      .map(t => (typeof t === 'string' ? t : t?.address))
+      .filter(Boolean);
+
+    localStorage.setItem('manual_tokens', JSON.stringify(manualAddresses));
+
+    for (const [addr, tok] of Object.entries(state.tokens)) {
+      if (tok?._userManual) delete state.tokens[addr];
+    }
+
+    await loadManualTokens(manualAddresses);
+    renderMonitored();
+    renderManualBar();
+
+    applyServerBlocklist(data.blocklist || []);
+
+    logTicker('User config synced from server');
+    return true;
+  } catch (err) {
+    console.warn('Failed to sync user config from server:', err);
+    return false;
+  }
+}
+
+function connectServerSocket() {
+  if (!authToken || typeof io !== 'function') return;
+  disconnectServerSocket();
+
+  socketClient = io(API_BASE, {
+    transports: ['websocket'],
+    auth: { token: authToken },
+  });
+
+  socketClient.on('connect', () => {
+    logTicker('Socket connected to backend');
+  });
+
+  socketClient.on('connect_error', (err) => {
+    console.warn('Socket connect_error:', err?.message || err);
+    logTicker(`Socket error: ${err?.message || 'connect_error'}`);
+  });
+
+  socketClient.on('sol:price', (payload) => {
+    if (payload?.price && Number.isFinite(Number(payload.price))) {
+      pumpState.solPrice = Number(payload.price);
+    }
+  });
+
+  socketClient.on('pump:newToken', (msg) => {
+    if (pumpState.transport === 'server') handlePumpMessage(msg);
+  });
+
+  socketClient.on('pump:trade', (msg) => {
+    if (pumpState.transport === 'server') handlePumpMessage(msg);
+  });
+
+  socketClient.on('pump:migrate', (msg) => {
+    if (pumpState.transport === 'server') handlePumpMessage(msg);
+  });
+
+  socketClient.on('pump:status', (status) => {
+    if (pumpState.transport !== 'server') return;
+    const el = document.getElementById('pump-status');
+    if (!el) return;
+    const connected = !!status?.connected;
+    el.textContent = connected ? 'Connected via server' : 'Server stream disconnected';
+    el.style.color = connected ? 'var(--green)' : 'var(--red)';
+  });
+}
+
+function disconnectServerSocket() {
+  if (!socketClient) return;
+  try { socketClient.disconnect(); } catch (_) {}
+  socketClient = null;
+}
+// ── UI Toggles ──
+function showLogin() {
+  document.getElementById('login-form').style.display = 'block';
+  document.getElementById('register-form').style.display = 'none';
+  document.getElementById('login-error').textContent = '';
+}
+function showRegister() {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('register-form').style.display = 'block';
+  document.getElementById('reg-error').textContent = '';
+}
+
+// ── Login ──
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+
+  if (!email || !password) { errEl.textContent = 'All fields are required'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'LOGGING IN...';
+  errEl.textContent = '';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errEl.textContent = data.error || 'Login failed';
+      return;
+    }
+
+    authToken = data.token;
+    currentUser = data.user;
+    authValidated = true;
+    sessionStorage.setItem('auth_token', authToken);
+    await onAuthenticated();
+  } catch (err) {
+    console.error('Login request failed', { err, apiBase: API_BASE });
+    errEl.textContent = `Cannot connect to server (${API_BASE})`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'LOGIN';
+  }
+}
+
+// ── Register ──
+async function doRegister() {
+  const username = document.getElementById('reg-username').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const inviteCode = document.getElementById('reg-invite').value.trim();
+  const errEl = document.getElementById('reg-error');
+  const btn = document.getElementById('reg-btn');
+
+  if (!username || !email || !password || !inviteCode) {
+    errEl.textContent = 'All fields are required'; return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'REGISTERING...';
+  errEl.textContent = '';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password, inviteCode }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errEl.textContent = data.error || 'Registration failed';
+      return;
+    }
+
+    authToken = data.token;
+    currentUser = data.user;
+    authValidated = true;
+    sessionStorage.setItem('auth_token', authToken);
+    await onAuthenticated();
+  } catch (err) {
+    console.error('Register request failed', { err, apiBase: API_BASE });
+    errEl.textContent = `Cannot connect to server (${API_BASE})`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'REGISTER';
+  }
+}
+
+// ── Logout ──
+async function doLogout() {
+  try {
+    if (authToken) {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+    }
+  } catch (_) {}
+  disconnectServerSocket();
+  authValidated = false;
+  authToken = null;
+  currentUser = null;
+  sessionStorage.removeItem('auth_token');
+  if (pumpState.transport === 'server') {
+    pumpState.transport = 'none';
+    pumpState.connected = false;
+  }
+  document.getElementById('app-container').classList.remove('visible');
+  document.getElementById('login-screen').classList.remove('hidden');
+  // Stop the bot if running
+  if (typeof stopBot === 'function') try { stopBot(); } catch(_) {}
+}
+
+// ── Session restore ──
+async function tryRestoreSession() {
+  const saved = sessionStorage.getItem('auth_token');
+  if (!saved) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: { 'Authorization': `Bearer ${saved}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      authToken = saved;
+      currentUser = data.user;
+      authValidated = true;
+      await onAuthenticated();
+    } else {
+      sessionStorage.removeItem('auth_token');
+    }
+  } catch (_) {
+    // Server offline — stay on login screen
+    sessionStorage.removeItem('auth_token');
+  }
+}
+
+// ── Authenticated — show app ──
+async function onAuthenticated() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-container').classList.add('visible');
+
+  // Update header with user info + logout
+  const statusBar = document.querySelector('.status-bar');
+  if (statusBar && !document.getElementById('user-status')) {
+    const userDiv = document.createElement('div');
+    userDiv.id = 'user-status';
+    userDiv.className = 'status-item';
+    userDiv.innerHTML = `<span>${currentUser?.username || 'User'}</span><button class="logout-btn" onclick="doLogout()">LOGOUT</button>`;
+    statusBar.appendChild(userDiv);
+  } else if (document.getElementById('user-status')) {
+    document.getElementById('user-status').querySelector('span').textContent = currentUser?.username || 'User';
+  }
+
+  const synced = await loadUserStateFromServer();
+  if (!synced) {
+    loadConfig();
+    await loadManualTokens();
+    renderManualBar();
+  }
+
+  connectServerSocket();
+}
+
+// ── Enter key support ──
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  if (document.getElementById('login-form').style.display !== 'none') {
+    if (document.activeElement?.id?.startsWith('login-')) doLogin();
+  } else {
+    if (document.activeElement?.id?.startsWith('reg-')) doRegister();
+  }
+});
+
+// ── Auto-restore on load ──
+tryRestoreSession();
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

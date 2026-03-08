@@ -1,0 +1,90 @@
+﻿{
+    "baseUrl":  "http://localhost:3000",
+    "generatedAt":  "2026-03-07T04:35:42.7439483-03:00",
+    "summary":  {
+                    "pass":  9,
+                    "fail":  1,
+                    "warn":  2,
+                    "skip":  1
+                },
+    "tests":  [
+                  {
+                      "id":  "T0",
+                      "name":  "Health check",
+                      "status":  "PASS",
+                      "details":  "Server reachable."
+                  },
+                  {
+                      "id":  "T2",
+                      "name":  "User enumeration",
+                      "status":  "PASS",
+                      "details":  "Response for existing/non-existing user is indistinguishable."
+                  },
+                  {
+                      "id":  "T3",
+                      "name":  "JWT/session",
+                      "status":  "PASS",
+                      "details":  "Invalid token denied and revoked session cannot be reused."
+                  },
+                  {
+                      "id":  "T4",
+                      "name":  "RBAC/admin protection",
+                      "status":  "PASS",
+                      "details":  "Regular user blocked from admin routes."
+                  },
+                  {
+                      "id":  "T5",
+                      "name":  "IDOR/isolation",
+                      "status":  "PASS",
+                      "details":  "User B cannot see User A config token."
+                  },
+                  {
+                      "id":  "T6",
+                      "name":  "Input validation",
+                      "status":  "PASS",
+                      "details":  "Malformed/suspicious payloads rejected safely."
+                  },
+                  {
+                      "id":  "T7",
+                      "name":  "CORS policy",
+                      "status":  "PASS",
+                      "details":  "Untrusted origin blocked; trusted origin allowed."
+                  },
+                  {
+                      "id":  "T8",
+                      "name":  "Rate limiting",
+                      "status":  "PASS",
+                      "details":  "Observed 53 responses with 429 in 130 requests."
+                  },
+                  {
+                      "id":  "T9",
+                      "name":  "WebSocket auth",
+                      "status":  "SKIP",
+                      "details":  "socket.io-client is not installed."
+                  },
+                  {
+                      "id":  "T10",
+                      "name":  "Basic stress/DoS smoke",
+                      "status":  "FAIL",
+                      "details":  "Server unhealthy after stress (status 429)."
+                  },
+                  {
+                      "id":  "T11A",
+                      "name":  "Dependency vulnerabilities",
+                      "status":  "WARN",
+                      "details":  "npm audit found high=2 critical=0."
+                  },
+                  {
+                      "id":  "T11B",
+                      "name":  "Secret scan",
+                      "status":  "PASS",
+                      "details":  "No obvious secrets found outside excluded paths."
+                  },
+                  {
+                      "id":  "T12",
+                      "name":  "Security headers",
+                      "status":  "WARN",
+                      "details":  "Missing headers: X-Content-Type-Options, X-Frame-Options, Referrer-Policy"
+                  }
+              ]
+}
