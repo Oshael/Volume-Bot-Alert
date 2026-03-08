@@ -904,7 +904,7 @@ Cobertura completa:
 
 ---
 
-## Etapa 6 - Hardening + Deploy (planejada)
+## Etapa 6 - Hardening + Deploy (em andamento)
 
 ### Objetivo
 Levar o sistema de desenvolvimento validado na Etapa 5 para um ambiente de producao seguro, observavel e operavel.
@@ -975,3 +975,85 @@ Levar o sistema de desenvolvimento validado na Etapa 5 para um ambiente de produ
 3. Definir variaveis de producao (`NODE_ENV`, `JWT_SECRET`, `CORS_ORIGINS`, `FORCE_HTTPS`, `DATABASE_URL`).
 4. Deploy inicial + `npm run db:init`.
 5. Rodar bateria `security-check.ps1` contra URL Railway e validar login/ws/logout-all.
+
+## Update 2026-03-08 - Valida��o de Produ��o (Railway) conclu�da
+
+Validado com sucesso em produ��o (`Volume-Bot-Alert`):
+- Deploy online no Railway com healthcheck passando (`/api/health` = `status: ok`).
+- Vari�veis cr�ticas configuradas e aplicadas no servi�o API (`NODE_ENV`, `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`, `DB_SSL`).
+- Inicializa��o de schema conclu�da com sucesso (`npm run db:init`) no banco correto.
+- Bootstrap invite criado com sucesso e registro do primeiro usu�rio conclu�do.
+- Usu�rio admin autenticando com sucesso em produ��o.
+- Fluxo de sess�o validado:
+  - `POST /api/auth/login`
+  - `GET /api/auth/me`
+  - `GET /api/admin/stats`
+  - `POST /api/auth/logout-all`
+  - novo login ap�s logout-all
+- Troca de senha validada (sess�es anteriores revogadas conforme esperado).
+
+Observa��es importantes para pr�ximas sess�es:
+- Evitar colar JWT manualmente em comandos PowerShell; sempre reutilizar `$login.token`.
+- Em PowerShell, preferir `ConvertTo-Json`/`Invoke-RestMethod` (ou `curl.exe` com JSON simples) para evitar erro de parse (`Unexpected token \\ in JSON`).
+- `postgres.railway.internal` s� resolve dentro da rede Railway; para scripts locais usar `DATABASE_PUBLIC_URL` + SSL.
+
+## Pr�ximos passos (ap�s valida��o produ��o em 2026-03-08)
+
+Plano objetivo para continuar na pr�xima conversa:
+1. Frontend
+- Implementar frontend e integrar com backend Railway.
+- Fluxos m�nimos: login, register com invite, `/api/auth/me`, logout, admin stats.
+
+2. CORS
+- Assim que frontend tiver URL p�blica, atualizar `CORS_ORIGINS` no Railway (manter localhost apenas para dev).
+
+3. Credenciais e segredos
+- Consolidar credenciais finais de produ��o em cofre seguro.
+- Evitar edi��o manual desnecess�ria de vari�veis do Postgres.
+- Manter `DATABASE_URL` da API consistente com a senha real do banco.
+
+4. Backup e recupera��o
+- Backup j� gerado (`backup-volume-alert-2026-03-08.dump`).
+- Definir rotina: backup semanal + teste de restore mensal.
+
+5. Checklist de valida��o p�s-frontend
+- `/api/health` ok
+- Login ok
+- `/api/auth/me` ok
+- `/api/admin/stats` ok
+- `logout-all` + novo login ok
+
+Notas r�pidas para evitar erros recorrentes:
+- Em PowerShell, preferir `ConvertTo-Json` + `Invoke-RestMethod`.
+- N�o colar JWT manualmente; usar sempre token retornado pelo login.
+- `postgres.railway.internal` n�o resolve localmente; scripts locais usam `DATABASE_PUBLIC_URL` + SSL.
+
+
+## Update 2026-03-08 - Hardening backend realtime compartilhado
+
+### Objetivo imediato
+- Priorizar backend da Etapa 6 antes de atualizar o HTML mais novo.
+- Fechar riscos de producao no stream compartilhado sem exigir mudanca de infraestrutura no Railway.
+
+### Correcoes aplicadas nesta sessao
+- `src/services/socket-hub.js`
+  - tracking de subscriptions PumpFun por socket;
+  - refcount global por mint;
+  - cleanup automatico no disconnect;
+  - limpeza de subscriptions locais quando token migra;
+  - JWT do Socket.io aceito apenas via `auth.token`.
+- `src/services/pumpfun-ws.js`
+  - remove auto-subscribe server-side em todo token `create`;
+  - servidor so assina trades quando ao menos um cliente pedir;
+  - reset de stats volateis no stop.
+
+### Proximos passos imediatos
+1. Re-deploy no Railway com essas correcoes.
+2. Validar socket em producao com 2 usuarios simultaneos.
+3. Confirmar que unsubscribe de um cliente nao corta trades do outro.
+4. Revalidar `logout-all` em cenario multi-aba/multi-cliente.
+5. Rodar `security-check.ps1` novamente contra a URL Railway apos o deploy.
+
+### Observacao de compatibilidade
+- O HTML atual ja usa `io(API_BASE, { auth: { token } })`, entao a remocao de JWT via query string no backend nao exige mudanca nesse client.
+- A atualizacao do HTML mais novo continua adiada ate o backend da Etapa 6 ficar estavel em producao.

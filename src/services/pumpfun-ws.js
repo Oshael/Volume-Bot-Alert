@@ -4,10 +4,10 @@
  * Distributes raw trade data and token creation events to all connected clients.
  *
  * Events emitted via onEvent callback:
- * - { type: 'newToken', data: {...} }        — new token created on PumpFun
- * - { type: 'trade', data: {...} }           — trade on a subscribed token
- * - { type: 'migrate', data: {...} }         — token migrated to DEX
- * - { type: 'status', data: { connected } }  — connection status change
+ * - { type: 'newToken', data: {...} }        - new token created on PumpFun
+ * - { type: 'trade', data: {...} }           - trade on a subscribed token
+ * - { type: 'migrate', data: {...} }         - token migrated to DEX
+ * - { type: 'status', data: { connected } }  - connection status change
  */
 
 const WebSocket = require('ws');
@@ -79,26 +79,16 @@ function connect() {
       return; // ignore non-JSON
     }
 
-    // New token created
     if (msg.txType === 'create') {
-      // Auto-subscribe to trades for this token
-      const mint = msg.mint;
-      if (mint && !subscribedTokens.has(mint)) {
-        subscribedTokens.add(mint);
-        stats.subscribedCount = subscribedTokens.size;
-        safeSend({ method: 'subscribeTokenTrade', keys: [mint] });
-      }
       emit('newToken', msg);
       return;
     }
 
-    // Trade on subscribed token
     if (msg.txType === 'buy' || msg.txType === 'sell') {
       emit('trade', msg);
       return;
     }
 
-    // Migration event
     if (msg.txType === 'migrate') {
       const mint = msg.mint;
       if (mint) {
@@ -107,7 +97,6 @@ function connect() {
         safeSend({ method: 'unsubscribeTokenTrade', keys: [mint] });
       }
       emit('migrate', msg);
-      return;
     }
   });
 
@@ -162,13 +151,9 @@ function scheduleReconnect() {
     reconnectTimer = null;
     connect();
   }, reconnectDelay);
-  // Exponential backoff with cap
   reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
 }
 
-/**
- * Unsubscribe from a token (e.g. garbage collected).
- */
 function unsubscribeToken(mint) {
   if (subscribedTokens.has(mint)) {
     subscribedTokens.delete(mint);
@@ -177,9 +162,6 @@ function unsubscribeToken(mint) {
   }
 }
 
-/**
- * Subscribe to a specific token's trades.
- */
 function subscribeToken(mint) {
   if (!subscribedTokens.has(mint)) {
     subscribedTokens.add(mint);
@@ -188,10 +170,6 @@ function subscribeToken(mint) {
   }
 }
 
-/**
- * Start the PumpFun connection.
- * @param {Function} onEvent — callback receiving { type, data } events
- */
 function start(onEvent) {
   if (isRunning) return;
   isRunning = true;
@@ -216,6 +194,8 @@ function stop() {
   subscribedTokens.clear();
   stats.connected = false;
   stats.subscribedCount = 0;
+  stats.messagesReceived = 0;
+  stats.lastMessage = null;
 }
 
 function getStatus() {

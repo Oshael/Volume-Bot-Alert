@@ -3,17 +3,17 @@
  * Authenticates clients via JWT, distributes real-time data.
  *
  * Events sent to clients:
- * - pump:newToken     — new token created on PumpFun
- * - pump:trade        — trade event on subscribed token
- * - pump:migrate      — token migrated to DEX
- * - pump:status       — PumpFun connection status
- * - sol:price         — SOL/USD price update
- * - dex:tokenData     — DexScreener data for requested token
+ * - pump:newToken     - new token created on PumpFun
+ * - pump:trade        - trade event on subscribed token
+ * - pump:migrate      - token migrated to DEX
+ * - pump:status       - PumpFun connection status
+ * - sol:price         - SOL/USD price update
+ * - dex:tokenData     - DexScreener data for requested token
  *
  * Events received from clients:
- * - dex:subscribe     — { address } — request DexScreener data for a token
- * - pump:subscribe    — { mint }    — subscribe to a specific PumpFun token
- * - pump:unsubscribe  — { mint }    — unsubscribe from a PumpFun token
+ * - dex:subscribe     - { address } - request DexScreener data for a token
+ * - pump:subscribe    - { mint }    - subscribe to a specific PumpFun token
+ * - pump:unsubscribe  - { mint }    - unsubscribe from a PumpFun token
  */
 
 const { Server } = require('socket.io');
@@ -29,6 +29,94 @@ let io = null;
 let solPriceTimer = null;
 
 const SOL_PRICE_BROADCAST_INTERVAL = 30000; // broadcast price every 30s
+const socketSubscriptions = new Map(); // socketId -> Set<mint>
+const mintSubscribers = new Map(); // mint -> Set<socketId>
+
+function sanitizeMint(rawMint) {
+  if (typeof rawMint !== 'string') return null;
+  const mint = rawMint.replace(/[^a-zA-Z0-9]/g, '');
+  if (mint.length < 20 || mint.length > 64) return null;
+  return mint;
+}
+
+function ensureSocketSubscriptions(socket) {
+  let subscriptions = socketSubscriptions.get(socket.id);
+  if (!subscriptions) {
+    subscriptions = new Set();
+    socketSubscriptions.set(socket.id, subscriptions);
+  }
+  return subscriptions;
+}
+
+function subscribeSocketToMint(socket, mint) {
+  const socketMints = ensureSocketSubscriptions(socket);
+  if (socketMints.has(mint)) return false;
+
+  socketMints.add(mint);
+
+  let subscribers = mintSubscribers.get(mint);
+  if (!subscribers) {
+    subscribers = new Set();
+    mintSubscribers.set(mint, subscribers);
+  }
+
+  subscribers.add(socket.id);
+  if (subscribers.size === 1) {
+    pumpfun.subscribeToken(mint);
+  }
+
+  return true;
+}
+
+function unsubscribeSocketFromMint(socket, mint) {
+  const socketMints = socketSubscriptions.get(socket.id);
+  if (socketMints) {
+    socketMints.delete(mint);
+    if (socketMints.size === 0) {
+      socketSubscriptions.delete(socket.id);
+    }
+  }
+
+  const subscribers = mintSubscribers.get(mint);
+  if (!subscribers) return false;
+
+  subscribers.delete(socket.id);
+  if (subscribers.size === 0) {
+    mintSubscribers.delete(mint);
+    pumpfun.unsubscribeToken(mint);
+    return true;
+  }
+
+  return false;
+}
+
+function clearMintSubscriptions(mint) {
+  const subscribers = mintSubscribers.get(mint);
+  if (!subscribers) return;
+
+  for (const socketId of subscribers) {
+    const socketMints = socketSubscriptions.get(socketId);
+    if (!socketMints) continue;
+    socketMints.delete(mint);
+    if (socketMints.size === 0) {
+      socketSubscriptions.delete(socketId);
+    }
+  }
+
+  mintSubscribers.delete(mint);
+}
+
+function cleanupSocketSubscriptions(socket) {
+  const socketMints = socketSubscriptions.get(socket.id);
+  if (!socketMints || socketMints.size === 0) {
+    socketSubscriptions.delete(socket.id);
+    return;
+  }
+
+  for (const mint of Array.from(socketMints)) {
+    unsubscribeSocketFromMint(socket, mint);
+  }
+}
 
 /**
  * Initialize Socket.io on the HTTP server.
@@ -44,9 +132,8 @@ function init(httpServer) {
     pingTimeout: 20000,
   });
 
-  // ---- JWT Authentication middleware ----
   io.use(async (socket, next) => {
-    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    const token = socket.handshake.auth?.token;
 
     if (!token) {
       return next(new Error('Authentication required'));
@@ -54,14 +141,11 @@ function init(httpServer) {
 
     try {
       const decoded = jwt.verify(token, config.jwt.secret);
-
-      // Validate session in DB
       const sessionValid = await Session.isValid(token);
       if (!sessionValid) {
         return next(new Error('Session expired or revoked'));
       }
 
-      // Check user exists and is active
       const user = await User.findById(decoded.userId);
       if (!user || !user.is_active) {
         return next(new Error('User not found or deactivated'));
@@ -75,21 +159,16 @@ function init(httpServer) {
     }
   });
 
-  // ---- Connection handler ----
   io.on('connection', (socket) => {
     console.log(`[Socket.io] ${socket.user.username} connected (${socket.id})`);
+    ensureSocketSubscriptions(socket);
 
-    // Send current SOL price immediately
     socket.emit('sol:price', { price: solPrice.getPrice() });
-
-    // Send PumpFun status
     socket.emit('pump:status', pumpfun.getStatus());
 
-    // ---- Client requests DexScreener data for a token ----
     socket.on('dex:subscribe', async (data) => {
       if (!data?.address || typeof data.address !== 'string') return;
 
-      // Sanitize: only allow alphanumeric addresses
       const address = data.address.replace(/[^a-zA-Z0-9]/g, '');
       if (address.length < 20 || address.length > 64) return;
 
@@ -103,27 +182,24 @@ function init(httpServer) {
       }
     });
 
-    // ---- Client subscribes to a PumpFun token ----
     socket.on('pump:subscribe', (data) => {
-      if (!data?.mint || typeof data.mint !== 'string') return;
-      const mint = data.mint.replace(/[^a-zA-Z0-9]/g, '');
-      if (mint.length < 20 || mint.length > 64) return;
-      pumpfun.subscribeToken(mint);
+      const mint = sanitizeMint(data?.mint);
+      if (!mint) return;
+      subscribeSocketToMint(socket, mint);
     });
 
-    // ---- Client unsubscribes from a PumpFun token ----
     socket.on('pump:unsubscribe', (data) => {
-      if (!data?.mint || typeof data.mint !== 'string') return;
-      const mint = data.mint.replace(/[^a-zA-Z0-9]/g, '');
-      pumpfun.unsubscribeToken(mint);
+      const mint = sanitizeMint(data?.mint);
+      if (!mint) return;
+      unsubscribeSocketFromMint(socket, mint);
     });
 
     socket.on('disconnect', (reason) => {
+      cleanupSocketSubscriptions(socket);
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
   });
 
-  // ---- Start services ----
   startServices();
 
   console.log('[Socket.io] Initialized');
@@ -131,17 +207,14 @@ function init(httpServer) {
 }
 
 function startServices() {
-  // Start SOL price polling
   solPrice.start();
 
-  // Broadcast SOL price to all clients periodically
   solPriceTimer = setInterval(() => {
     if (io) {
       io.emit('sol:price', { price: solPrice.getPrice() });
     }
   }, SOL_PRICE_BROADCAST_INTERVAL);
 
-  // Start PumpFun WebSocket with event handler
   pumpfun.start((event) => {
     if (!io) return;
 
@@ -153,6 +226,9 @@ function startServices() {
         io.emit('pump:trade', event.data);
         break;
       case 'migrate':
+        if (event.data?.mint) {
+          clearMintSubscriptions(event.data.mint);
+        }
         io.emit('pump:migrate', event.data);
         break;
       case 'status':
@@ -169,6 +245,8 @@ function stop() {
   }
   solPrice.stop();
   pumpfun.stop();
+  socketSubscriptions.clear();
+  mintSubscribers.clear();
   if (io) {
     io.close();
     io = null;
@@ -178,14 +256,12 @@ function stop() {
 function getStatus() {
   return {
     clients: io ? io.engine.clientsCount : 0,
+    trackedPumpSubscriptions: mintSubscribers.size,
     pumpfun: pumpfun.getStatus(),
     solPrice: solPrice.getStatus(),
   };
 }
 
-/**
- * Get the Socket.io instance (for use in other modules).
- */
 function getIO() {
   return io;
 }
