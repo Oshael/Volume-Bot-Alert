@@ -11,58 +11,75 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-});
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return value === 'true' || value === '1';
+}
+
+const poolConfig = {};
+
+if (process.env.DATABASE_URL || process.env.POSTGRES_URL) {
+  poolConfig.connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+} else {
+  poolConfig.host = process.env.DB_HOST;
+  poolConfig.port = parseInt(process.env.DB_PORT, 10) || 5432;
+  poolConfig.database = process.env.DB_NAME;
+  poolConfig.user = process.env.DB_USER;
+  poolConfig.password = process.env.DB_PASSWORD;
+}
+
+if (parseBoolean(process.env.DB_SSL, false) || process.env.PGSSLMODE === 'require') {
+  poolConfig.ssl = {
+    rejectUnauthorized: parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, false),
+  };
+}
+
+const pool = new Pool(poolConfig);
 
 async function createBootstrapInvite() {
   const code = uuidv4().replace(/-/g, '').slice(0, 16).toUpperCase();
   const expiryHours = 24;
 
   try {
-    // Allow NULL created_by for bootstrap — alter constraint temporarily
-    await pool.query(`
-      INSERT INTO invites (code, created_by, max_uses, expires_at)
-      VALUES ($1, NULL, 1, NOW() + INTERVAL '${expiryHours} hours')
-    `, [code]);
+    // Allow NULL created_by for bootstrap.
+    await pool.query(
+      `INSERT INTO invites (code, created_by, max_uses, expires_at)
+       VALUES ($1, NULL, 1, NOW() + INTERVAL '${expiryHours} hours')`,
+      [code]
+    );
 
     console.log('');
-    console.log('✅ Bootstrap invite created!');
+    console.log('Bootstrap invite created!');
     console.log('');
-    console.log(`   Code: ${code}`);
-    console.log(`   Expires in: ${expiryHours} hours`);
-    console.log(`   Max uses: 1`);
+    console.log(`Code: ${code}`);
+    console.log(`Expires in: ${expiryHours} hours`);
+    console.log('Max uses: 1');
     console.log('');
-    console.log('   Use this code to register the first user, then promote to admin:');
-    console.log("   UPDATE users SET role = 'admin' WHERE username = 'your_username';");
+    console.log('Use this code to register the first user, then promote to admin:');
+    console.log("UPDATE users SET role = 'admin' WHERE username = 'your_username';");
     console.log('');
   } catch (err) {
-    console.error('❌ Failed to create invite:', err.message);
+    console.error('Failed to create invite:', err.message);
 
-    // If foreign key constraint fails, we need to handle bootstrap differently
     if (err.code === '23502' || err.code === '23503') {
       console.log('');
-      console.log('The invites table requires created_by. Adjusting for bootstrap...');
+      console.log('Invites table requires created_by. Adjusting bootstrap constraint...');
 
       try {
-        // Make created_by nullable for bootstrap
         await pool.query('ALTER TABLE invites ALTER COLUMN created_by DROP NOT NULL');
-        await pool.query(`
-          INSERT INTO invites (code, created_by, max_uses, expires_at)
-          VALUES ($1, NULL, 1, NOW() + INTERVAL '${expiryHours} hours')
-        `, [code]);
+        await pool.query(
+          `INSERT INTO invites (code, created_by, max_uses, expires_at)
+           VALUES ($1, NULL, 1, NOW() + INTERVAL '${expiryHours} hours')`,
+          [code]
+        );
 
         console.log('');
-        console.log('✅ Bootstrap invite created!');
-        console.log(`   Code: ${code}`);
-        console.log(`   Expires in: ${expiryHours} hours`);
+        console.log('Bootstrap invite created!');
+        console.log(`Code: ${code}`);
+        console.log(`Expires in: ${expiryHours} hours`);
         console.log('');
       } catch (err2) {
-        console.error('❌ Still failed:', err2.message);
+        console.error('Still failed:', err2.message);
       }
     }
   } finally {
