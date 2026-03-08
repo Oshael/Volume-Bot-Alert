@@ -7,13 +7,30 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const { Pool } = require('pg');
 
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-});
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return value === 'true' || value === '1';
+}
+
+const poolConfig = {};
+
+if (process.env.DATABASE_URL || process.env.POSTGRES_URL) {
+  poolConfig.connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+} else {
+  poolConfig.host = process.env.DB_HOST;
+  poolConfig.port = parseInt(process.env.DB_PORT, 10) || 5432;
+  poolConfig.database = process.env.DB_NAME;
+  poolConfig.user = process.env.DB_USER;
+  poolConfig.password = process.env.DB_PASSWORD;
+}
+
+if (parseBoolean(process.env.DB_SSL, false) || process.env.PGSSLMODE === 'require') {
+  poolConfig.ssl = {
+    rejectUnauthorized: parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, false),
+  };
+}
+
+const pool = new Pool(poolConfig);
 
 const schema = `
 -- Users table
@@ -77,25 +94,25 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
 `;
 
 async function init() {
-  console.log('🔧 Initializing database...');
+  console.log('Initializing database...');
   try {
     await pool.query(schema);
-    console.log('✅ All tables created successfully.');
+    console.log('All tables created successfully.');
 
     // Check if admin exists
     const { rows } = await pool.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
     if (rows.length === 0) {
       console.log('');
-      console.log('⚠  No admin user found.');
-      console.log('   Create one by registering with an invite code,');
-      console.log('   then manually promote via SQL:');
-      console.log("   UPDATE users SET role = 'admin' WHERE username = 'your_username';");
+      console.log('No admin user found.');
+      console.log('Create one by registering with an invite code,');
+      console.log('then manually promote via SQL:');
+      console.log("UPDATE users SET role = 'admin' WHERE username = 'your_username';");
       console.log('');
-      console.log('   Or generate a bootstrap invite:');
-      console.log('   npm run invite:create');
+      console.log('Or generate a bootstrap invite:');
+      console.log('npm run invite:create');
     }
   } catch (err) {
-    console.error('❌ Database initialization failed:', err.message);
+    console.error('Database initialization failed:', err.message);
     process.exit(1);
   } finally {
     await pool.end();
