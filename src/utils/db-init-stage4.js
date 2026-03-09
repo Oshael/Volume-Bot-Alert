@@ -44,6 +44,18 @@ const TABLES = `
 
   CREATE INDEX IF NOT EXISTS idx_user_blocklist_user
     ON user_blocklist(user_id);
+
+  -- user_starred_tokens: favoritos por user
+  CREATE TABLE IF NOT EXISTS user_starred_tokens (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    address     VARCHAR(64) NOT NULL,
+    starred_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, address)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_starred_tokens_user
+    ON user_starred_tokens(user_id);
 `;
 
 async function init() {
@@ -53,6 +65,7 @@ async function init() {
     console.log('   - user_configs');
     console.log('   - user_tokens');
     console.log('   - user_blocklist');
+    console.log('   - user_starred_tokens');
   } catch (err) {
     console.error('❌ Failed to create tables:', err.message);
     process.exit(1);

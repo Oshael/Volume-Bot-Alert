@@ -124,6 +124,7 @@ describe('Config — GET defaults', () => {
     expect(res.body.configs).toBeDefined();
     expect(res.body.tokens).toBeDefined();
     expect(res.body.blocklist).toBeDefined();
+    expect(res.body.starredTokens).toBeDefined();
 
     // Check defaults
     expect(res.body.configs.threshold).toBe(50);
@@ -145,6 +146,7 @@ describe('Config — GET defaults', () => {
     // Empty arrays for new user
     expect(res.body.tokens).toHaveLength(0);
     expect(res.body.blocklist).toHaveLength(0);
+    expect(res.body.starredTokens).toHaveLength(0);
   });
 });
 
@@ -321,12 +323,17 @@ describe('Config — PUT (full sync)', () => {
         blocklist: [
           { address: VALID_ADDR_3, label: 'SCAM' },
         ],
+        starredTokens: [
+          { address: VALID_ADDR_1 },
+          { address: VALID_ADDR_3 },
+        ],
       });
 
     expect(res.status).toBe(200);
     expect(res.body.configs.threshold).toBe(75);
     expect(res.body.tokens).toHaveLength(2);
     expect(res.body.blocklist).toHaveLength(1);
+    expect(res.body.starredTokens).toHaveLength(2);
   });
 
   test('PUT with invalid config rejects entire request', async () => {
@@ -378,17 +385,34 @@ describe('Config — PUT (full sync)', () => {
     expect(after.body.configs.threshold).toBe(50);
   });
 
-  test('PUT with only tokens (no configs)', async () => {
+
+
+  test('PUT with starred tokens persists favorites', async () => {
     const res = await request(app)
       .put('/api/config')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        tokens: [{ address: VALID_ADDR_1, label: 'OnlyToken' }],
+        starredTokens: [
+          { address: VALID_ADDR_1 },
+          { address: VALID_ADDR_2 },
+        ],
       });
 
     expect(res.status).toBe(200);
-    expect(res.body.tokens).toHaveLength(1);
-    expect(res.body.tokens[0].label).toBe('OnlyToken');
+    expect(res.body.starredTokens).toHaveLength(2);
+    expect(res.body.starredTokens.map(t => t.address)).toEqual([VALID_ADDR_1, VALID_ADDR_2]);
+  });
+
+  test('PUT with invalid starred token rejects', async () => {
+    const res = await request(app)
+      .put('/api/config')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        starredTokens: [{ address: INVALID_ADDR }],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid starred token address/i);
   });
 });
 
@@ -621,11 +645,25 @@ describe('Config — User isolation', () => {
       .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.body.blocklist).toHaveLength(0);
+    expect(res.body.starredTokens).toHaveLength(0);
 
     // Cleanup
     await request(app)
       .delete(`/api/config/blocklist/${VALID_ADDR_3}`)
       .set('Authorization', `Bearer ${token}`);
+  });
+
+  test('User A starred tokens are invisible to User B', async () => {
+    await request(app)
+      .put('/api/config')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ starredTokens: [{ address: VALID_ADDR_1 }] });
+
+    const res = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.body.starredTokens).toHaveLength(0);
   });
 });
 

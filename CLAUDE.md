@@ -1239,3 +1239,126 @@ Notas r�pidas para evitar erros recorrentes:
 ### Regra de escopo
 - Nao iniciar trabalho de "encriptar", "esconder" ou blindar o HTML atual antes de fechar os itens acima.
 - Nao migrar para o HTML mais novo antes de a base atual da Etapa 6 estar considerada estavel.
+
+## Update 2026-03-08 - `PUT /api/config` tornado atomico e validado
+
+### Correcao aplicada
+- O endpoint `PUT /api/config` foi ajustado para validar `configs`, `tokens` e `blocklist` antes de gravar qualquer dado.
+- A escrita completa do full sync agora roda em uma unica transacao de banco.
+- Resultado esperado a partir dessa correcao:
+  - se qualquer parte do payload for invalida, nada e persistido parcialmente;
+  - o estado anterior da conta permanece intacto.
+
+### Validacao manual realizada
+- Foi salvo um valor conhecido de `threshold`.
+- Depois foi enviado um `PUT /api/config` com:
+  - `configs.threshold` novo
+  - `tokens` invalidos de proposito
+- O request falhou e, em seguida, `GET /api/config` confirmou que o `threshold` anterior permaneceu igual.
+- Conclusao: o problema de gravacao parcial do full sync foi resolvido.
+
+### Estado atualizado dos gaps da Etapa 6
+- `PUT /api/config` atomico: resolvido.
+- `single replica only`: ainda precisa ficar documentado explicitamente como restricao operacional atual.
+- Checklist/runbook da Etapa 6: ainda precisa ser alinhado ao estado real ja validado.
+- Compatibilidade do schema `/api/config` com o HTML mais novo: continua como divida de migracao, nao como bloqueador da base atual.
+
+### Proximos passos imediatos
+1. Documentar explicitamente no projeto que a topologia suportada atual e `single replica only`.
+2. Atualizar checklist/runbook da Etapa 6 com o que ja foi validado em producao.
+3. Encerrar a Etapa 6 com a base atual estabilizada antes de migrar para o HTML mais novo.
+
+## Update 2026-03-09 - Estado atual do security check
+
+### Resultado consolidado do security check
+- `T0 Health check`: PASS
+- `T2 User enumeration`: PASS
+- `T3 JWT/session`: PASS
+- `T4 RBAC/admin protection`: PASS
+- `T6 Input validation`: PASS
+- `T7 CORS policy`: PASS
+- `T11B Secret scan`: PASS
+- `T12 Security headers`: PASS
+
+### Itens nao marcados como falha de producao neste momento
+- `T5 IDOR/isolation`: ficou como SKIP em execucao impactada por lockout/rate limit de auth; nao tratar como falha confirmada da aplicacao sem reexecucao isolada.
+- `T8 Rate limiting`: SKIP quando nao solicitado explicitamente; ja houve validacao separada anterior com PASS.
+- `T9 WebSocket auth`: SKIP por falha de execucao do teste auxiliar no ambiente local, nao por evidencia de falha do backend.
+- `T10 Basic stress/DoS smoke`: SKIP quando nao solicitado explicitamente; ja houve validacao separada anterior com PASS.
+
+### Observacao operacional importante
+- O auth rate limit/lockout pode interferir na bateria completa do script se varios testes de login forem rodados em sequencia com as mesmas contas.
+- Quando aparecer `Too many authentication attempts, please try again later`, tratar isso como protecao ativa do backend, nao como senha invalida.
+
+### Pendencia objetiva apos security check
+- `npm audit` ainda reporta `high=2` e `critical=0`.
+- Proximo passo: identificar exatamente quais dependencias estao gerando esses findings e decidir se e possivel atualizar/mitigar agora na Etapa 6.
+
+## Update 2026-03-09 - Etapa 6 considerada praticamente fechada operacionalmente
+
+### Status de encerramento operacional
+- A Etapa 6 fica considerada praticamente fechada do ponto de vista operacional da base atual.
+- Deploy Railway: operacional.
+- Frontend Vercel integrado ao backend Railway: operacional.
+- Auth, sessao, persistencia por conta, socket compartilhado e `logout-all`: validados em producao.
+- `PUT /api/config` atomico: corrigido e validado contra gravacao parcial.
+- Documentacao operacional da Etapa 6: alinhada ao estado real atual.
+
+### Restricao operacional explicitada
+- A topologia suportada no estado atual continua sendo `single replica only`.
+- Escalabilidade horizontal fica adiada ate existir coordenacao multi-instancia para sockets/sessoes/subscriptions.
+
+### Risco residual conhecido
+- `npm audit` continua reportando findings `high` ligados a cadeia de dependencias de `bcrypt`:
+  - `bcrypt`
+  - `@mapbox/node-pre-gyp`
+  - `tar`
+- No estado atual, isso fica tratado como risco residual conhecido da Etapa 6, nao como bloqueador imediato do go-live da base atual.
+- Nao existe `fixAvailable` simples no resultado atual do audit.
+- Follow-up futuro recomendado: reavaliar a estrategia de hashing/dependencia nativa quando houver janela para hardening adicional.
+
+### Proxima etapa aprovada
+- A partir daqui, o foco sai do hardening/deploy da base atual e vai para o planejamento da migracao do HTML mais novo do bot.
+- Antes da migracao, sera obrigatorio comparar o HTML mais novo com a baseline atual para garantir que nenhum bug fix importante seja perdido.
+
+### Checklist minimo para a proxima fase
+1. Inventariar os fixes obrigatorios da baseline atual do frontend.
+2. Comparar esses fixes com o HTML mais novo.
+3. Identificar gaps de compatibilidade com o schema atual de `/api/config`.
+4. Planejar migracao com regressao obrigatoria dos fluxos criticos.
+
+
+## Update 2026-03-09 - Migracao V68 em andamento
+
+### Estado atual da migracao do frontend V68
+- O `volume-alert-botV68.html` passou a incorporar a camada de autenticacao e integracao com o backend:
+  - login/register/restauracao de sessao;
+  - `API_BASE` com fallback Railway quando servido em `vercel.app`;
+  - `Socket.io` autenticado via `auth.token`;
+  - persistencia por usuario para `configs`, `manual_tokens`, `blocklist`, dismissed sets, removal logs e starred tokens;
+  - sincronizacao com `/api/config`.
+- O backend tambem foi ampliado para aceitar os novos campos de config do V68.
+
+### Bugs de migracao ja identificados e tratados
+- O backend rejeitava campos novos do V68 em `/api/config` (`old-per-page`, `old-week-mcap-min`, `old-week-mcap-max`, `old-week-per-page`, `meteora-min-pool`) enquanto a versao nova do schema nao estava deployada no Railway.
+- O full sync de `manual_tokens`/`blocklist` falhava com `500 Failed to sync configs` porque `normalizeAddressItems(...)` nao existia em `src/routes/config.js`; isso foi corrigido.
+- Depois dessa correcao, o V68 passou a salvar corretamente alteracoes de config e tokens manuais.
+
+### Bug aberto atual do V68
+- PumpFun no modo `server stream` conectava e recebia eventos `pump:newToken` (ticker mostrava `New token: ...`), mas o painel nao renderizava tokens.
+- Causa raiz identificada no frontend V68:
+  - o codigo de subscribe/unsubscribe do modo `server` ficou preso dentro de um `if (pumpState.ws?.readyState === WebSocket.OPEN)`;
+  - como no modo backend nao existe WebSocket PumpFun direto no browser, o cliente nunca emitia `pump:subscribe` para o servidor;
+  - resultado: chegavam eventos de `newToken`, mas nao chegavam trades suficientes para alimentar `vol5m` e renderizar rows no painel.
+- Correcao aplicada localmente no V68:
+  - `pump:subscribe` e `pump:unsubscribe` agora sao emitidos corretamente quando `pumpState.transport === 'server' && socketClient?.connected`, independentemente de `pumpState.ws`.
+- Hardening adicional aplicado no V68 para PumpFun:
+  - trades agora guardam tambem `solAmount` e o calculo de `vol5m` passou a recalcular o total em USD com o `SOL/USD` atual;
+  - isso evita perder volume quando os primeiros trades chegam antes de `pumpState.solPrice` estar preenchido.
+
+### Proximo reteste obrigatorio do V68
+1. Conectar PumpFun no V68 local.
+2. Confirmar que novas rows aparecem no painel central.
+3. Confirmar que `vol5m` acumula e respeita `pump-entry-vol`.
+4. Confirmar que remover token e GC enviam `pump:unsubscribe` corretamente.
+5. So depois disso considerar trocar o `index.html` publicado no frontend.
