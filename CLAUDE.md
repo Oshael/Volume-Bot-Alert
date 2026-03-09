@@ -1186,3 +1186,56 @@ Notas rï¿½pidas para evitar erros recorrentes:
 ### Regra pratica
 - Se aparecer texto quebrado na UI (`â€”`, `ðŸ`, `Ã`, etc.), assumir problema de encoding antes de assumir bug de logica.
 - Antes de publicar novo HTML no Vercel, sempre conferir o arquivo local e evitar commit de UI corrompida.
+
+## Update 2026-03-08 - Validacao final dos fluxos de sessao e persistencia
+
+### Testes concluidos em producao
+- Persistencia de configuracoes por conta: ok.
+- Persistencia de manual tokens por conta: ok.
+- Mesma conta em multiplas sessoes/navegadores: ok.
+- Frontend Vercel usando backend Railway por fallback automatico de `API_BASE`: ok.
+- `logout-all`: ok.
+  - Sessao que disparou o logout foi invalidada.
+  - Demais sessoes abertas da mesma conta tambem foram invalidadas.
+  - Novo login apos `logout-all`: ok.
+
+### Estado atual da Etapa 6
+- Backend compartilhado com subscriptions PumpFun por socket/refcount: validado.
+- Persistencia por usuario via `/api/config`: validada em producao.
+- Fluxo de login/logout/logout-all com frontend integrado: validado em producao.
+- Deploy Railway + frontend Vercel: operacional.
+
+### Proximo foco a partir daqui
+- Continuar o hardening final da Etapa 6 com revisao objetiva do que ainda falta para producao estavel.
+- Tratar qualquer bug residual do frontend atual sem migrar ainda para o HTML mais novo.
+- So depois disso partir para atualizar o frontend para a versao mais avancada do bot.
+
+## Update 2026-03-08 - Decisao de prioridade: fechar Etapa 6 antes de endurecer anti-copia
+
+### Decisao tomada
+- A prioridade imediata nao sera tentar "esconder" ou ofuscar o HTML atual.
+- A prioridade imediata sera terminar a Etapa 6 e deixar a base confiavel em producao.
+- O trabalho de protecao real do produto sera tratado depois, com a direcao de mover o maximo possivel da logica valiosa do bot para o backend.
+
+### Motivo da decisao
+- Frontend servido ao navegador nunca e segredo real; ofuscacao so dificulta copia casual.
+- O HTML atual ainda nao e a versao final mais avancada do bot, entao investir forte em protecao dele agora gera retrabalho.
+- O valor real do produto precisa migrar progressivamente para o backend, nao ficar dependente de esconder JavaScript no browser.
+
+### Ordem de trabalho aprovada
+1. Fechar Etapa 6 e estabilizar producao atual.
+2. Corrigir os gaps restantes de backend/producao identificados na revisao final.
+3. Manter o HTML atual apenas como baseline estavel.
+4. So depois preparar a migracao para o HTML mais novo.
+5. Apos a migracao, avaliar protecao superficial do frontend final (minify/obfuscate) apenas como camada secundaria.
+6. Em paralelo ao longo das proximas etapas, mover logica critica do bot para o backend ate o frontend virar principalmente interface.
+
+### Gaps restantes da Etapa 6 que ainda importam
+- Tornar `PUT /api/config` atomicamente consistente para nao gravar estado parcial em erro.
+- Deixar documentado explicitamente que a topologia suportada atual e `single replica only`.
+- Atualizar checklist/runbook da Etapa 6 para refletir o estado real validado em producao.
+- Revisar compatibilidade do schema `/api/config` com a futura migracao do HTML mais novo.
+
+### Regra de escopo
+- Nao iniciar trabalho de "encriptar", "esconder" ou blindar o HTML atual antes de fechar os itens acima.
+- Nao migrar para o HTML mais novo antes de a base atual da Etapa 6 estar considerada estavel.

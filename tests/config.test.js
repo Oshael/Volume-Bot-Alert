@@ -349,6 +349,30 @@ describe('Config — PUT (full sync)', () => {
     expect(res.body.error).toMatch(/invalid token address/i);
   });
 
+  test('PUT with invalid token does not persist partial config changes', async () => {
+    await request(app)
+      .patch('/api/config')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ configs: { threshold: 50 } });
+
+    const res = await request(app)
+      .put('/api/config')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        configs: { threshold: 123 },
+        tokens: [{ address: INVALID_ADDR }],
+      });
+
+    expect(res.status).toBe(400);
+
+    const after = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(after.status).toBe(200);
+    expect(after.body.configs.threshold).toBe(50);
+  });
+
   test('PUT with only tokens (no configs)', async () => {
     const res = await request(app)
       .put('/api/config')

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
+const db = require('../models/db');
 const userConfig = require('../models/user-config');
 const userToken = require('../models/user-token');
 const userBlocklist = require('../models/user-blocklist');
@@ -45,8 +46,11 @@ router.get('/', async (req, res) => {
 router.put('/', async (req, res) => {
   try {
     const { configs, tokens, blocklist } = req.body;
+    let validatedConfigs = null;
+    let normalizedTokens = null;
+    let normalizedBlocklist = null;
 
-    // ── Configs ──
+    // Validate everything first so the request is all-or-nothing.
     if (configs && typeof configs === 'object') {
       const validation = userConfig.validateConfigs(configs);
       if (!validation.valid) {
@@ -55,40 +59,87 @@ router.put('/', async (req, res) => {
           details: validation.errors,
         });
       }
-      await userConfig.replaceAll(req.user.id, validation.configs);
+      validatedConfigs = validation.configs;
     }
 
-    // ── Tokens ──
     if (Array.isArray(tokens)) {
       if (tokens.length > MAX_TOKENS) {
         return res.status(400).json({
           error: `Maximum ${MAX_TOKENS} manual tokens allowed`,
         });
       }
-      // Validate addresses
-      const invalid = tokens.filter(t => {
-        const addr = (t.address || t).toString().trim();
-        return !userToken.isValidAddress(addr);
-      });
+
+      normalizedTokens = normalizeAddressItems(tokens);
+      const invalid = normalizedTokens.filter((t) => !userToken.isValidAddress(t.address));
       if (invalid.length > 0) {
         return res.status(400).json({
           error: `${invalid.length} invalid token address(es)`,
         });
       }
-      await userToken.setAll(req.user.id, tokens);
     }
 
-    // ── Blocklist ──
     if (Array.isArray(blocklist)) {
       if (blocklist.length > MAX_BLOCKLIST) {
         return res.status(400).json({
           error: `Maximum ${MAX_BLOCKLIST} blocked tokens allowed`,
         });
       }
-      await userBlocklist.setAll(req.user.id, blocklist);
+
+      normalizedBlocklist = normalizeAddressItems(blocklist);
+      const invalid = normalizedBlocklist.filter((item) => !userToken.isValidAddress(item.address));
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: `${invalid.length} invalid blocked token address(es)`,
+        });
+      }
     }
 
-    // Return updated state
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+
+      if (validatedConfigs) {
+        await client.query('DELETE FROM user_configs WHERE user_id = $1', [req.user.id]);
+        for (const [key, value] of Object.entries(validatedConfigs)) {
+          await client.query(
+            'INSERT INTO user_configs (user_id, config_key, config_value) VALUES ($1, $2, $3)',
+            [req.user.id, key, String(value)]
+          );
+        }
+      }
+
+      if (normalizedTokens) {
+        await client.query('DELETE FROM user_tokens WHERE user_id = $1', [req.user.id]);
+        for (const tokenItem of normalizedTokens) {
+          await client.query(
+            `INSERT INTO user_tokens (user_id, address, label)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, address) DO NOTHING`,
+            [req.user.id, tokenItem.address, tokenItem.label]
+          );
+        }
+      }
+
+      if (normalizedBlocklist) {
+        await client.query('DELETE FROM user_blocklist WHERE user_id = $1', [req.user.id]);
+        for (const blockedItem of normalizedBlocklist) {
+          await client.query(
+            `INSERT INTO user_blocklist (user_id, address, label)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, address) DO NOTHING`,
+            [req.user.id, blockedItem.address, blockedItem.label]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
     const result = {
       configs: await userConfig.getAll(req.user.id),
       tokens: await userToken.getAll(req.user.id),
