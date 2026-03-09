@@ -1362,3 +1362,51 @@ Notas r�pidas para evitar erros recorrentes:
 3. Confirmar que `vol5m` acumula e respeita `pump-entry-vol`.
 4. Confirmar que remover token e GC enviam `pump:unsubscribe` corretamente.
 5. So depois disso considerar trocar o `index.html` publicado no frontend.
+
+
+## Update 2026-03-09 - V68: progresso recente de migracao
+
+### Itens fechados nesta rodada
+- PumpFun live no V68 integrado: validado em uso real.
+- Persistencia de `starred tokens`: integrada ao backend e validada entre browsers apos atualizar a versao testada.
+- Trading terminals:
+  - `Axiom` confirmado com prioridade `pairAddress -> mintAddress -> addr`.
+  - `Padre` alinhado para usar a mesma prioridade da `Axiom`.
+- Dropdown do trading terminal no V68:
+  - foi ajustado para comportamento edge-aware na viewport;
+  - abre para baixo perto do topo e para cima perto da parte inferior;
+  - deixou de causar scroll/clipping indevido na barra.
+- Delta do V69 incorporado ao V68 integrado:
+  - auto-migracao de `Recent Tokens` para `Old Tokens 1 Week+` ao passar de 7 dias, respeitando o range de MCAP da barra destino.
+
+### Estado atual do V68 integrado
+- Auth/sessao/sync por conta: ok.
+- Manual tokens: ok.
+- PumpFun live: ok.
+- `logout-all`: ok.
+- Exclusao entre barras: ok.
+- Dismissed tokens: ok.
+- Regra critica de alerta com MCAP invalidando o sinal: ok.
+- Primeira migracao/calibracao: ok.
+- `starred tokens`: ok com backend.
+- Trading terminal behavior: ok para `Axiom` e `Padre`.
+
+### Pendencias restantes mais provaveis da migracao
+- Revisar/validar `removal logs` no fluxo integrado.
+- Revisar se ainda existe algum comportamento fino do `CLAUDE_HTML_PURO_.md` que nao tenha sido exercitado manualmente.
+- Decidir a estrategia para carregar o historico inicial de moedas no produto (idealmente entrando pelo backend como seed, nao so pelo HTML).
+- So depois disso considerar o V68 como baseline definitiva publicada.
+
+
+## Bootstrap Seed (Cold Start)
+- Added project seed file: `data/initial-monitored-tokens.txt` with 85 unique token contracts.
+- Added authenticated backend endpoint `GET /api/bootstrap/tokens` in `src/routes/bootstrap.js`.
+- Registered bootstrap route in `src/server.js` under `/api/bootstrap`.
+- Integrated `volume-alert-botV68.html` to load bootstrap tokens only for cold-start accounts.
+- Cold-start rules:
+  - seed is fetched only when the user has no current monitored/manual/old/old-week baseline
+  - seed is applied once per user via `bootstrap_seed_applied` scoped storage flag
+  - seed tokens are added as monitored baseline only
+  - seed tokens do NOT become `_userManual` and do NOT populate `manual_tokens`
+- Product intent: improve first-run experience without polluting user-owned state.
+
