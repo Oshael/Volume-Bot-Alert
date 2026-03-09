@@ -131,6 +131,11 @@ describe('Config — GET defaults', () => {
     expect(res.body.configs.chain).toBe('solana');
     expect(res.body.configs['min-vol']).toBe(500);
     expect(res.body.configs['pump-entry-vol']).toBe(20000);
+    expect(res.body.configs['old-per-page']).toBe(30);
+    expect(res.body.configs['old-week-mcap-min']).toBe(120000);
+    expect(res.body.configs['old-week-mcap-max']).toBe(5000000);
+    expect(res.body.configs['old-week-per-page']).toBe(30);
+    expect(res.body.configs['meteora-min-pool']).toBe(5000);
 
     // All schema keys present
     for (const key of Object.keys(CONFIG_SCHEMA)) {

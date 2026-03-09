@@ -14,12 +14,17 @@ const CONFIG_SCHEMA = {
   chain:            { type: 'string', allowed: ['solana', 'ethereum', 'bsc', 'base'], default: 'solana' },
   'pump-entry-vol': { type: 'number', min: 0, max: 1e12, default: 20000 },
   'pump-min-vol':   { type: 'number', min: 0, max: 1e12, default: 100000 },
-  'pump-bond-mcap': { type: 'number', min: 0, max: 1e12, default: 35000 },
-  'old-mcap-min':   { type: 'number', min: 0, max: 1e15, default: 120000 },
-  'old-mcap-max':   { type: 'number', min: 0, max: 1e15, default: 1000000 },
-  'hvnc-min-vol':   { type: 'number', min: 0, max: 1e15, default: 300000 },
-  'sound-volume':   { type: 'number', min: 0, max: 100, default: 50 },
-  'sound-mode':     { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'pump-bond-mcap':  { type: 'number', min: 0, max: 1e12, default: 35000 },
+  'old-mcap-min':    { type: 'number', min: 0, max: 1e15, default: 120000 },
+  'old-mcap-max':    { type: 'number', min: 0, max: 1e15, default: 1000000 },
+  'old-per-page':    { type: 'number', min: 10, max: 500, default: 30 },
+  'old-week-mcap-min': { type: 'number', min: 0, max: 1e15, default: 120000 },
+  'old-week-mcap-max': { type: 'number', min: 0, max: 1e15, default: 5000000 },
+  'old-week-per-page': { type: 'number', min: 10, max: 500, default: 30 },
+  'hvnc-min-vol':    { type: 'number', min: 0, max: 1e15, default: 300000 },
+  'meteora-min-pool': { type: 'number', min: 0, max: 1e15, default: 5000 },
+  'sound-volume':    { type: 'number', min: 0, max: 100, default: 50 },
+  'sound-mode':      { type: 'string', allowed: ['on', 'off'], default: 'on' },
 };
 
 function validateConfigEntry(key, value) {
