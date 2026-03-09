@@ -13,6 +13,25 @@ router.use(authenticate);
 const MAX_TOKENS = 200;      // máx tokens manuais por user
 const MAX_BLOCKLIST = 500;   // máx blocklist por user
 
+function normalizeAddressItems(items) {
+  return items
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { address: item.trim(), label: null };
+      }
+
+      if (!item || typeof item !== 'object') {
+        return { address: '', label: null };
+      }
+
+      return {
+        address: String(item.address || '').trim(),
+        label: item.label == null ? null : String(item.label).trim() || null,
+      };
+    })
+    .filter((item) => item.address);
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  CONFIGS (thresholds, intervals, etc.)
 // ══════════════════════════════════════════════════════════════════
