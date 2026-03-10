@@ -14,6 +14,7 @@ const inviteRoutes = require('./routes/invites');
 const healthRoutes = require('./routes/health');
 const adminRoutes = require('./routes/admin');
 const bootstrapRoutes = require('./routes/bootstrap');
+const catalogRoutes = require('./routes/catalog');
 
 // Services
 const socketHub = require('./services/socket-hub');
@@ -81,6 +82,7 @@ app.use('/api/invites', inviteRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/config', require('./routes/config'));
 app.use('/api/bootstrap', bootstrapRoutes);
+app.use('/api/catalog', catalogRoutes);
 
 // ---- WebSocket Hub Status (admin only) ----
 const { authenticate, requireAdmin } = require('./middleware/auth');

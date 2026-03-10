@@ -942,7 +942,8 @@ const USER_SCOPED_STORAGE_KEYS = new Set([
   'old_week_dismissed',
   'old_week_removal_log',
   'starred_tokens',
-  'bootstrap_seed_applied'
+  'bootstrap_seed_applied',
+  'bootstrap_tokens'
 ]);
 
 function isUserScopedStorageKey(key) {
@@ -3549,6 +3550,7 @@ function handlePumpMessage(msg) {
       const vol5mTotal = getPumpVol5mTotal(tok);
       // Show migration toast
       showMigrateToast(tok, vol5mTotal, mint);
+    reportMigratedToken(tok, mint).catch(() => {});
       // Auto-update pump-bond-mcap with this real migration MCAP (rolling average of last 3)
       if (tok.mcap > 0) {
         pumpState.recentMigrationMcaps = pumpState.recentMigrationMcaps || [];
@@ -3766,6 +3768,7 @@ setInterval(() => {
     tok._migrated = true;
     const vol5mTotal = getPumpVol5mTotal(tok);
     showMigrateToast(tok, vol5mTotal, mint);
+    reportMigratedToken(tok, mint).catch(() => {});
     pumpState.migrationCount = (pumpState.migrationCount || 0) + 1;
     if (tok.mcap > 0) {
       pumpState.recentMigrationMcaps = pumpState.recentMigrationMcaps || [];
@@ -3842,6 +3845,7 @@ function renderPumpToken(mint, tok, vol5mTotal) {
     tok._migrated = true;
     const vol5mForToast = tok.vol5m.reduce((s, t) => s + t.usd, 0);
     showMigrateToast(tok, vol5mForToast, mint);
+    reportMigratedToken(tok, mint).catch(() => {});
     pumpState.migrationCount = (pumpState.migrationCount || 0) + 1;
     if (tok.mcap > 0) {
       pumpState.recentMigrationMcaps = pumpState.recentMigrationMcaps || [];
@@ -4161,6 +4165,33 @@ async function apiAuthFetch(path, options = {}) {
   return fetch(`${API_BASE}${path}`, { ...options, headers });
 }
 
+async function reportMigratedToken(tok, mint) {
+  if (!authToken) return false;
+  const address = String(mint || tok?.mintAddress || tok?.addr || '').trim();
+  if (!address) return false;
+
+  try {
+    const res = await apiAuthFetch('/api/catalog/migrated', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        address,
+        symbol: tok?.symbol || null,
+        name: tok?.name || null,
+        mcap: tok?.mcap || null,
+        price: tok?.price || null,
+        pairAddress: tok?.pairAddress || null,
+        pairUrl: tok?.pairUrl || null,
+        imageUrl: tok?.image || tok?.imageUrl || null,
+        twitterUrl: tok?.twitterUrl || null,
+      }),
+    });
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
 function applyConfigToUI(cfg) {
   if (!cfg || typeof cfg !== 'object') return;
   CONFIG_FIELDS.forEach(id => {
@@ -4217,6 +4248,34 @@ function hasUserBootstrapBaseline() {
     || getUserStorageJson('old_week_tokens', []).length > 0;
 }
 
+async function loadPersistedBootstrapTokens(savedOverride = null) {
+  try {
+    const saved = Array.isArray(savedOverride) ? savedOverride : getUserStorageJson('bootstrap_tokens', []);
+    if (!saved.length) return false;
+
+    let added = 0;
+    for (const addr of saved) {
+      if (isBlocked(addr)) continue;
+      if (state.tokens[addr]) continue;
+      addToken(addr, null, null);
+      if (state.tokens[addr]) {
+        state.tokens[addr]._bootstrapSeed = true;
+        added++;
+      }
+    }
+
+    if (added > 0) {
+      renderMonitored();
+      return true;
+    }
+
+    return false;
+  } catch (err) {
+    console.warn('Failed to load persisted bootstrap tokens:', err);
+    return false;
+  }
+}
+
 async function loadBootstrapTokensIfNeeded() {
   if (!authToken) return false;
   if (storageGetItem('bootstrap_seed_applied') === '1') return false;
@@ -4235,6 +4294,8 @@ async function loadBootstrapTokensIfNeeded() {
       .filter(Boolean);
 
     if (!addresses.length) return false;
+
+    setUserStorageJson('bootstrap_tokens', addresses);
 
     let added = 0;
     for (const addr of addresses) {
@@ -4521,6 +4582,7 @@ async function onAuthenticated() {
     renderManualBar();
   }
 
+  await loadPersistedBootstrapTokens();
   await loadBootstrapTokensIfNeeded();
 
   loadPersistedSounds();
