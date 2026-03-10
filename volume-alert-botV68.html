@@ -2369,6 +2369,7 @@ let configSyncTimer = null;
 let manualTokensSyncTimer = null;
 let blocklistSyncTimer = null;
 let starredSyncTimer = null;
+let bootstrapTokensSyncTimer = null;
 
 function scheduleConfigSync(cfg) {
   if (!authToken) return;
@@ -2443,6 +2444,14 @@ function scheduleStarredSync(addresses) {
   }, 450);
 }
 
+function scheduleBootstrapTokensSync(addresses) {
+  if (!authToken) return;
+  if (bootstrapTokensSyncTimer) clearTimeout(bootstrapTokensSyncTimer);
+  bootstrapTokensSyncTimer = setTimeout(() => {
+    syncBootstrapTokensToServer(addresses).catch(err => console.warn(err.message || err));
+  }, 450);
+}
+
 async function syncStarredToServer(addresses) {
   const payload = Array.from(new Set((addresses || []).filter(Boolean))).map(address => ({ address }));
   const res = await apiAuthFetch('/api/config', {
@@ -2453,6 +2462,19 @@ async function syncStarredToServer(addresses) {
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`starred token sync failed (${res.status}) ${txt}`);
+  }
+}
+
+async function syncBootstrapTokensToServer(addresses) {
+  const payload = Array.from(new Set((addresses || []).filter(Boolean))).map(address => ({ address }));
+  const res = await apiAuthFetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bootstrapTokens: payload })
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`bootstrap token sync failed (${res.status}) ${txt}`);
   }
 }
 
@@ -3544,6 +3566,7 @@ function handlePumpMessage(msg) {
   // Token migrated to DEX — show popup, remove from panel, auto-update bond target
   if (msg.txType === 'migrate') {
     const tok = pumpState.tokens[mint];
+  if (!tok.createdAt) tok.createdAt = now;
     if (tok && !tok._migrated) {
       tok._migrated = true;
       // Compute vol5m total at time of migration
@@ -3586,6 +3609,7 @@ function handlePumpMessage(msg) {
       mcap: msg.usd_market_cap || (msg.marketCapSol ? msg.marketCapSol * solPx : 0),
       vol5m: [],
       lastAlert: 0,
+      createdAt: now,
     };
     // Subscreve trades individuais para receber evento migrate via WS
     if (pumpState.transport === 'direct' && pumpState.ws?.readyState === WebSocket.OPEN) {
@@ -3756,7 +3780,7 @@ setInterval(pumpGarbageCollect, PUMP_GC_INTERVAL);
 // O PumpFun para de enviar trades de um token assim que ele migra para DEX
 setInterval(() => {
   const now = Date.now();
-  const SILENCE_MS = 60000;   // 1 minuto sem trades
+  const SILENCE_MS = 30000;   // 30s sem trades
   const MIN_MCAP   = 30000;   // mínimo $30K de MCAP para considerar migração
   for (const [mint, tok] of Object.entries(pumpState.tokens || {})) {
     if (tok._migrated) continue;
@@ -4296,6 +4320,7 @@ async function loadBootstrapTokensIfNeeded() {
     if (!addresses.length) return false;
 
     setUserStorageJson('bootstrap_tokens', addresses);
+    scheduleBootstrapTokensSync(addresses);
 
     let added = 0;
     for (const addr of addresses) {
@@ -4342,6 +4367,14 @@ async function loadUserStateFromServer() {
       .map(t => (typeof t === 'string' ? t : t?.address))
       .filter(Boolean);
     applyStarredTokens(starredAddresses);
+
+    const bootstrapAddresses = (data.bootstrapTokens || [])
+      .map(t => (typeof t === 'string' ? t : t?.address))
+      .filter(Boolean);
+    if (bootstrapAddresses.length) {
+      setUserStorageJson('bootstrap_tokens', bootstrapAddresses);
+      storageSetItem('bootstrap_seed_applied', '1');
+    }
 
     for (const [addr, tok] of Object.entries(state.tokens)) {
       if (tok?._userManual) delete state.tokens[addr];

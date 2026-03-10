@@ -56,6 +56,18 @@ const TABLES = `
 
   CREATE INDEX IF NOT EXISTS idx_user_starred_tokens_user
     ON user_starred_tokens(user_id);
+
+  -- user_bootstrap_tokens: baseline bootstrap tokens per user
+  CREATE TABLE IF NOT EXISTS user_bootstrap_tokens (
+    id        SERIAL PRIMARY KEY,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    address   VARCHAR(64) NOT NULL,
+    added_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, address)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_bootstrap_tokens_user
+    ON user_bootstrap_tokens(user_id);
 `;
 
 async function init() {
@@ -66,6 +78,7 @@ async function init() {
     console.log('   - user_tokens');
     console.log('   - user_blocklist');
     console.log('   - user_starred_tokens');
+    console.log('   - user_bootstrap_tokens');
   } catch (err) {
     console.error('❌ Failed to create tables:', err.message);
     process.exit(1);
