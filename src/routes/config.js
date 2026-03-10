@@ -6,6 +6,7 @@ const userConfig = require('../models/user-config');
 const userToken = require('../models/user-token');
 const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
+const tokenCatalog = require('../models/token-catalog');
 
 // All config routes require authentication
 router.use(authenticate);
@@ -32,6 +33,22 @@ function normalizeAddressItems(items) {
       };
     })
     .filter((item) => item.address);
+}
+
+async function upsertCatalogItems(items, source) {
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  for (const item of items) {
+    try {
+      await tokenCatalog.upsertToken({
+        address: item.address,
+        chain: 'solana',
+        source,
+      });
+    } catch (err) {
+      console.error(`[TokenCatalog] Failed to upsert ${source} token ${item.address}:`, err.message);
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -194,6 +211,12 @@ router.put('/', async (req, res) => {
       client.release();
     }
 
+    await Promise.all([
+      upsertCatalogItems(normalizedTokens, 'user-manual'),
+      upsertCatalogItems(normalizedBlocklist, 'blocklist'),
+      upsertCatalogItems(normalizedStarred, 'starred'),
+    ]);
+
     const result = {
       configs: await userConfig.getAll(req.user.id),
       tokens: await userToken.getAll(req.user.id),
@@ -279,6 +302,16 @@ router.post('/tokens', async (req, res) => {
       return res.status(409).json({ error: 'Token already added' });
     }
 
+    try {
+      await tokenCatalog.upsertToken({
+        address: addr,
+        chain: 'solana',
+        source: 'user-manual',
+      });
+    } catch (catalogErr) {
+      console.error(`[TokenCatalog] Failed to catalog manual token ${addr}:`, catalogErr.message);
+    }
+
     res.status(201).json({ message: 'Token added', token: result });
   } catch (err) {
     console.error('POST /config/tokens error:', err.message);
@@ -338,6 +371,16 @@ router.post('/blocklist', async (req, res) => {
     const result = await userBlocklist.add(req.user.id, addr, label || null);
     if (!result) {
       return res.status(409).json({ error: 'Token already blocked' });
+    }
+
+    try {
+      await tokenCatalog.upsertToken({
+        address: addr,
+        chain: 'solana',
+        source: 'blocklist',
+      });
+    } catch (catalogErr) {
+      console.error(`[TokenCatalog] Failed to catalog blocked token ${addr}:`, catalogErr.message);
     }
 
     res.status(201).json({ message: 'Token blocked', blocked: result });

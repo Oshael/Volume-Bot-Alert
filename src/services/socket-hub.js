@@ -25,6 +25,7 @@ const User = require('../models/user');
 const solPrice = require('./sol-price');
 const pumpfun = require('./pumpfun-ws');
 const dexscreener = require('./dexscreener');
+const tokenCatalog = require('../models/token-catalog');
 
 let io = null;
 let solPriceTimer = null;
@@ -39,6 +40,56 @@ function sanitizeMint(rawMint) {
   const mint = rawMint.replace(/[^a-zA-Z0-9]/g, '');
   if (mint.length < 20 || mint.length > 64) return null;
   return mint;
+}
+
+function queueCatalogUpsert(token, source = 'unknown') {
+  Promise.resolve()
+    .then(() => tokenCatalog.upsertToken({ ...token, source }))
+    .catch((err) => {
+      const address = token?.address || token?.mint || 'unknown';
+      console.error(`[TokenCatalog] Failed to upsert ${source} token ${address}:`, err.message);
+    });
+}
+
+function buildCatalogTokenFromDex(address, data) {
+  const bestPair = dexscreener.getBestPair(data, 'solana');
+  if (!bestPair) return null;
+
+  const twitterUrl = bestPair.info?.socials?.find((item) => item.type === 'twitter')?.url || null;
+
+  return {
+    address,
+    chain: bestPair.chainId || 'solana',
+    symbol: bestPair.baseToken?.symbol || null,
+    name: bestPair.baseToken?.name || null,
+    mcap: bestPair.marketCap || null,
+    price: bestPair.priceUsd || null,
+    pairAddress: bestPair.pairAddress || null,
+    pairUrl: bestPair.url || null,
+    imageUrl: bestPair.info?.imageUrl || null,
+    twitterUrl,
+    isActiveMonitorCandidate: true,
+  };
+}
+
+function buildCatalogTokenFromPump(msg) {
+  const address = sanitizeMint(msg?.mint);
+  if (!address) return null;
+
+  const solUsd = solPrice.getPrice();
+  const marketCapSol = Number(msg?.marketCapSol);
+  const mcap = Number.isFinite(marketCapSol) && solUsd > 0 ? marketCapSol * solUsd : null;
+
+  return {
+    address,
+    chain: 'solana',
+    symbol: msg?.symbol || null,
+    name: msg?.name || null,
+    mcap,
+    imageUrl: msg?.image || null,
+    twitterUrl: msg?.twitter || null,
+    isActiveMonitorCandidate: true,
+  };
 }
 
 function ensureSocketSubscriptions(socket) {
@@ -216,6 +267,10 @@ function init(httpServer) {
         const result = await dexscreener.getTokenPairs(address);
         if (result) {
           socket.emit('dex:tokenData', { address, data: result });
+          const catalogToken = buildCatalogTokenFromDex(address, result);
+          if (catalogToken) {
+            queueCatalogUpsert(catalogToken, 'dexscreener');
+          }
         }
       } catch (err) {
         console.error(`[Socket.io] DexScreener error for ${address}:`, err.message);
@@ -259,18 +314,25 @@ function startServices() {
     if (!io) return;
 
     switch (event.type) {
-      case 'newToken':
+      case 'newToken': {
         io.emit('pump:newToken', event.data);
         break;
-      case 'trade':
+      }
+      case 'trade': {
         io.emit('pump:trade', event.data);
         break;
-      case 'migrate':
+      }
+      case 'migrate': {
+        const catalogToken = buildCatalogTokenFromPump(event.data);
+        if (catalogToken) {
+          queueCatalogUpsert(catalogToken, 'pumpfun-migrated');
+        }
         if (event.data?.mint) {
           clearMintSubscriptions(event.data.mint);
         }
         io.emit('pump:migrate', event.data);
         break;
+      }
       case 'status':
         io.emit('pump:status', event.data);
         break;
