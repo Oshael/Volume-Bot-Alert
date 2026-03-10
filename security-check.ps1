@@ -1,5 +1,6 @@
 param(
   [string]$BaseUrl = "http://localhost:3000",
+  [string]$FrontendOrigin = "",
   [string]$UserEmail = "",
   [string]$UserPassword = "",
   [string]$UserBEmail = "",
@@ -113,6 +114,10 @@ function Get-Token {
 Write-Host ""
 Write-Host "== Security Check =="
 Write-Host "Base URL: $BaseUrl"
+Write-Host "Frontend Origin: $(if ([string]::IsNullOrWhiteSpace($FrontendOrigin)) { '<auto/none>' } else { $FrontendOrigin })"
+Write-Host "User creds provided: $(-not [string]::IsNullOrWhiteSpace($UserEmail) -and -not [string]::IsNullOrWhiteSpace($UserPassword))"
+Write-Host "User B creds provided: $(-not [string]::IsNullOrWhiteSpace($UserBEmail) -and -not [string]::IsNullOrWhiteSpace($UserBPassword))"
+Write-Host "Admin creds provided: $(-not [string]::IsNullOrWhiteSpace($AdminEmail) -and -not [string]::IsNullOrWhiteSpace($AdminPassword))"
 Write-Host ""
 
 # 0) Health
@@ -231,26 +236,40 @@ if (-not $userToken) {
 }
 
 # 7) CORS policy checks
-$corsEvil = Invoke-Api -Method OPTIONS -Path "/api/auth/login" -Headers @{
-  Origin = "http://evil.com"
-  "Access-Control-Request-Method" = "POST"
-  "Access-Control-Request-Headers" = "content-type"
-}
-$corsLocal = Invoke-Api -Method OPTIONS -Path "/api/auth/login" -Headers @{
-  Origin = "http://localhost:3000"
-  "Access-Control-Request-Method" = "POST"
-  "Access-Control-Request-Headers" = "content-type"
+$trustedOrigin = $FrontendOrigin
+if ([string]::IsNullOrWhiteSpace($trustedOrigin)) {
+  try {
+    $parsedBase = [uri]$BaseUrl
+    if ($parsedBase.Host -in @('localhost', '127.0.0.1')) {
+      $trustedOrigin = $parsedBase.GetLeftPart([System.UriPartial]::Authority)
+    }
+  } catch {}
 }
 
-$evilAcaOrigin = "$($corsEvil.headers['Access-Control-Allow-Origin'])"
-$localAcaOrigin = "$($corsLocal.headers['Access-Control-Allow-Origin'])"
-$evilBlocked = -not $evilAcaOrigin -or $evilAcaOrigin -ne "http://evil.com"
-$localAllowed = ($corsLocal.statusCode -in 200,204) -and ($localAcaOrigin -eq "http://localhost:3000" -or $localAcaOrigin -eq "*")
-
-if ($evilBlocked -and $localAllowed) {
-  Add-Result -Id "T7" -Name "CORS policy" -Status "PASS" -Details "Untrusted origin blocked; trusted origin allowed."
+if ([string]::IsNullOrWhiteSpace($trustedOrigin)) {
+  Add-Result -Id "T7" -Name "CORS policy" -Status "SKIP" -Details "Provide -FrontendOrigin to validate the trusted browser origin in production."
 } else {
-  Add-Result -Id "T7" -Name "CORS policy" -Status "FAIL" -Details "CORS behavior unexpected. evil='$evilAcaOrigin', local='$localAcaOrigin'."
+  $corsEvil = Invoke-Api -Method OPTIONS -Path "/api/auth/login" -Headers @{
+    Origin = "http://evil.com"
+    "Access-Control-Request-Method" = "POST"
+    "Access-Control-Request-Headers" = "content-type"
+  }
+  $corsTrusted = Invoke-Api -Method OPTIONS -Path "/api/auth/login" -Headers @{
+    Origin = $trustedOrigin
+    "Access-Control-Request-Method" = "POST"
+    "Access-Control-Request-Headers" = "content-type"
+  }
+
+  $evilAcaOrigin = "$($corsEvil.headers['Access-Control-Allow-Origin'])"
+  $trustedAcaOrigin = "$($corsTrusted.headers['Access-Control-Allow-Origin'])"
+  $evilBlocked = -not $evilAcaOrigin -or $evilAcaOrigin -ne "http://evil.com"
+  $trustedAllowed = ($corsTrusted.statusCode -in 200,204) -and ($trustedAcaOrigin -eq $trustedOrigin -or $trustedAcaOrigin -eq "*")
+
+  if ($evilBlocked -and $trustedAllowed) {
+    Add-Result -Id "T7" -Name "CORS policy" -Status "PASS" -Details "Untrusted origin blocked; trusted origin allowed."
+  } else {
+    Add-Result -Id "T7" -Name "CORS policy" -Status "FAIL" -Details "CORS behavior unexpected. evil='$evilAcaOrigin', trusted='$trustedAcaOrigin', expectedTrusted='$trustedOrigin'."
+  }
 }
 
 # 8) Rate limit (optional)
@@ -279,7 +298,7 @@ $wsScript = @(
   '  console.log("SKIP:socket.io-client not installed");',
   '  process.exit(2);',
   '}',
-  'const socket = io("http://localhost:3000", {',
+  'const socket = io("' + $BaseUrl.Replace('\', '\\').Replace('"', '\"') + '", {',
   '  transports: ["websocket"],',
   '  timeout: 5000,',
   '  auth: { token: "invalid.token.value" }',

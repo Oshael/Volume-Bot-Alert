@@ -80,9 +80,10 @@ If a feature appears visually correct but violates one of the rules below, the m
 ## 3. Alert Rules
 
 ### 3.1 Volume alert safety
-- A volume increase alone is not sufficient when other protection rules say the token should not alert.
-- If the rule set says a token should not alert because market cap fell while volume rose, that protection must be preserved.
-- Migration is not complete until this exact condition is verified in the V68-integrated frontend.
+- Standard monitored alerts (`VOL` and `MCAP`) must share a cooldown per token.
+- If a token alerts by `VOL`, it must not immediately alert again by `MCAP` inside the shared cooldown window.
+- If a token alerts by `MCAP`, it must not immediately alert again by `VOL` inside the shared cooldown window.
+- HVNC remains separate from that shared cooldown.
 
 ### 3.2 Old-token surge alerts
 - Old-token surge alerts must keep using price change rules, not volume-only logic.
@@ -178,6 +179,7 @@ The migration to integrated V68 is not complete until the following are explicit
 
 - Same account loads the same config in another browser.
 - Same account loads the same manual tokens in another browser.
+- Cold-start bootstrap baseline persists after later user changes/reloads.
 - Manual token add/remove survives `F5`.
 - PumpFun panel connects and renders live rows.
 - PumpFun live rows react to the configured entry threshold.

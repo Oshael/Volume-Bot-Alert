@@ -15,6 +15,7 @@ Status legend:
 - Login and authenticated session flow: `validated`
 - Config persistence per account: `validated`
 - Manual token persistence per account: `validated`
+- Bootstrap baseline persists across reload after cold-start import: `validated`
 - Same-account reload stability for configs/manual tokens: `validated`
 - `logout-all` revoking all sessions: `validated`
 - Vercel/Railway API resolution model: `validated`
@@ -47,6 +48,7 @@ Status legend:
 ### Alerts
 - Old-token surge one-shot behavior via `oldAlertFired`: `code-reviewed`
 - HVNC and Pump HVNC flags remain separated: `code-reviewed`
+- Shared cooldown between standard `VOL` and `MCAP` alerts: `validated`
 - Pump alert one-shot semantics per session: `code-reviewed`
 - Rule that blocks alert when MCAP behavior invalidates the volume signal: `validated`
 - Alert identity/actions preserved on rendered cards: `pending-manual`
@@ -81,7 +83,7 @@ The following behavior hooks are present in `volume-alert-botV68.html`:
 3. Verify the alert rule where volume rises but MCAP falls does not beep incorrectly.
 4. Verify first migration of the session calibrates bond target as intended.
 5. Sweep remaining fine-grained behavior from CLAUDE_HTML_PURO_.md that has not been exercised manually yet.
-6. Define the long-term backend token catalog/history strategy.
+6. Start the backend-first token catalog/history phase.
 
 ## Working Rule
 
