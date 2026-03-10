@@ -1,4 +1,4 @@
-const db = require('./db');
+﻿const db = require('./db');
 const { isValidAddress } = require('./user-token');
 
 function toNumberOrNull(value) {
@@ -48,7 +48,43 @@ async function listRecentByAddress(address, limit = 100) {
   return rows;
 }
 
+async function listHistoryByAddress(address, options = {}) {
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    throw new Error('Invalid token address format');
+  }
+
+  const limit = Math.max(1, Math.min(Number(options.limit) || 168, 1000));
+  const hours = options.hours == null ? null : Math.max(1, Math.min(Number(options.hours) || 0, 24 * 30));
+  const days = options.days == null ? null : Math.max(1, Math.min(Number(options.days) || 0, 30));
+
+  let lookbackHours = hours;
+  if (lookbackHours == null && days != null) {
+    lookbackHours = days * 24;
+  }
+
+  const params = [addr, limit];
+  let whereExtra = '';
+  if (lookbackHours != null) {
+    params.push(lookbackHours);
+    whereExtra = `AND ts >= NOW() - ($3::int * INTERVAL '1 hour')`;
+  }
+
+  const { rows } = await db.query(
+    `SELECT token_address, ts, mcap, price, vol_5m, vol_1h, vol_6h, vol_24h, source
+     FROM token_market_snapshots
+     WHERE token_address = $1
+       ${whereExtra}
+     ORDER BY ts DESC
+     LIMIT $2`,
+    params
+  );
+
+  return rows.reverse();
+}
+
 module.exports = {
   insertSnapshot,
   listRecentByAddress,
+  listHistoryByAddress,
 };

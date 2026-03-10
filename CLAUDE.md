@@ -1452,3 +1452,13 @@ Notas r�pidas para evitar erros recorrentes:
 - Current scope is intentionally limited to schema + model layer.
 - Ingestion, eligibility engine, snapshot history, and sparkline support remain future steps of the same phase.
 
+
+## Update 2026-03-10 - History read endpoint added
+- Added authenticated history endpoint GET /api/catalog/history/:address in src/routes/catalog.js.
+- Added listHistoryByAddress() in src/models/token-market-snapshot.js.
+- Endpoint supports query filters:
+  - limit
+  - hours
+  - days
+- Response is returned in chronological order to support sparkline rendering.
+- Next immediate step after this endpoint: consume it from frontend for first sparkline prototype, then continue wiring frontend-originated Recent/Old/alert tokens into permanent backend catalog persistence.

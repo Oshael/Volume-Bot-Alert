@@ -1,4 +1,4 @@
-# Next Backend Architecture
+﻿# Next Backend Architecture
 
 ## Current Progress
 - Phase 1 started.
@@ -159,3 +159,7 @@ Frontend receives prepared state instead of raw heavy polling burden.
 6. Read APIs for frontend visible state.
 7. Sparkline endpoint/UI.
 8. Gradual removal of equivalent heavy polling from frontend.
+## Next Session
+1. Add history read endpoints on top of `token_market_snapshots`.
+2. Then wire frontend-originated `Recent Tokens`, `Old Tokens 1 Week+`, and alert-triggered tokens into backend catalog persistence so bar visibility and alerts also promote tokens into permanent backend memory.
+

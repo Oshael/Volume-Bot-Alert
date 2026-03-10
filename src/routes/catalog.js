@@ -1,9 +1,35 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const tokenCatalog = require('../models/token-catalog');
+const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const { isValidAddress } = require('../models/user-token');
 
 router.use(authenticate);
+
+router.get('/history/:address', async (req, res) => {
+  try {
+    const address = String(req.params?.address || '').trim();
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    const snapshots = await tokenMarketSnapshot.listHistoryByAddress(address, {
+      limit: req.query?.limit,
+      hours: req.query?.hours,
+      days: req.query?.days,
+    });
+
+    res.json({
+      address,
+      count: snapshots.length,
+      snapshots,
+    });
+  } catch (err) {
+    console.error('GET /catalog/history/:address error:', err.message);
+    res.status(500).json({ error: 'Failed to load token history' });
+  }
+});
 
 router.post('/migrated', async (req, res) => {
   try {
