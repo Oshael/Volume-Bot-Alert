@@ -18,6 +18,7 @@ const catalogRoutes = require('./routes/catalog');
 
 // Services
 const socketHub = require('./services/socket-hub');
+const catalogWorker = require('./services/catalog-worker');
 
 const app = express();
 const server = http.createServer(app);
@@ -87,7 +88,10 @@ app.use('/api/catalog', catalogRoutes);
 // ---- WebSocket Hub Status (admin only) ----
 const { authenticate, requireAdmin } = require('./middleware/auth');
 app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
-  res.json(socketHub.getStatus());
+  res.json({
+    ...socketHub.getStatus(),
+    catalogWorker: catalogWorker.getStatus(),
+  });
 });
 
 // ---- 404 handler ----
@@ -116,6 +120,7 @@ setInterval(async () => {
 
 // ---- Initialize Socket.io ----
 socketHub.init(server);
+catalogWorker.start();
 
 // ---- Start ----
 server.listen(config.port, () => {

@@ -4,7 +4,7 @@
 - Phase 1 started.
 - Database init script created: `src/utils/db-init-stage5.js`.
 - Base model created: `src/models/token-catalog.js`.
-- Current scope is schema + access layer only; ingestion and eligibility engine are still pending.
+- Phase 1.5 started: operational catalog fields + first eligibility worker scaffold added.
 
 ## Goal
 Move the bot from frontend-heavy monitoring to backend-owned token memory and historical market data.
@@ -151,9 +151,10 @@ Frontend receives prepared state instead of raw heavy polling burden.
 
 ## Recommended Build Order
 1. Permanent token catalog table + seed importer.
-2. Snapshot tables for MCAP/price and Meteora TVL.
-3. Background polling workers in backend.
-4. Eligibility engine for re-entry into monitoring.
-5. Read APIs for frontend visible state.
-6. Sparkline endpoint/UI.
-7. Gradual removal of equivalent heavy polling from frontend.
+2. Operational catalog fields and first eligibility worker.
+3. Snapshot tables for MCAP/price and Meteora TVL.
+4. Background polling workers in backend.
+5. Eligibility engine for re-entry into monitoring.
+6. Read APIs for frontend visible state.
+7. Sparkline endpoint/UI.
+8. Gradual removal of equivalent heavy polling from frontend.
