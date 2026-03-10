@@ -1435,3 +1435,20 @@ Notas r�pidas para evitar erros recorrentes:
   - Sparkline should already be populated with real hours/days of data when the user opens the bot.
   - Intended UX: compact green inline chart per token, similar to PumpFun-style mini charting.
 
+
+
+## Known Limitation ? Frontend MCAP Delta Baseline
+- The current V68 baseline computes the visible MCAP delta from a short in-memory history window in the browser.
+- Result: the displayed 5m-style MCAP delta can appear to "jump", "reset", or change direction when the oldest baseline sample ages out of the local window.
+- This is not necessarily a fetch bug; it is a consequence of the current baseline strategy (`mcapHistory` rolling window in frontend memory).
+- A real fix requires backend historical storage of MCAP/price over time (24/7), so delta and future sparkline views can use persistent history instead of ephemeral client memory.
+
+
+
+## Update 2026-03-10 - Backend-first Phase Started
+- Started the backend-first phase by creating the initial permanent token catalog foundation.
+- Added DB init script: `src/utils/db-init-stage5.js`.
+- Added base model: `src/models/token-catalog.js`.
+- Current scope is intentionally limited to schema + model layer.
+- Ingestion, eligibility engine, snapshot history, and sparkline support remain future steps of the same phase.
+
