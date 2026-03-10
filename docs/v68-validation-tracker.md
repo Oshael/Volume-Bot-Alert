@@ -18,6 +18,7 @@ Status legend:
 - Same-account reload stability for configs/manual tokens: `validated`
 - `logout-all` revoking all sessions: `validated`
 - Vercel/Railway API resolution model: `validated`
+- Cold-start bootstrap seed via backend: `validated`
 
 ### PumpFun
 - Backend socket connection for PumpFun stream: `validated`
@@ -32,7 +33,7 @@ Status legend:
 - Old Tokens and Old Week bars mutually exclusive: `validated`
 - `enforceBarExclusion()` cleanup pass present: `validated`
 - Recent/old-token exclusivity as intended by V68 UX: `validated`
-- Recent -> Old Week auto-migration at 7 days: `code-reviewed`
+- Recent -> Old Week auto-migration at 7 days: `validated`
 - Dismissed old-token items do not re-enter incorrectly: `validated`
 - Dismissed old-week items do not re-enter incorrectly: `validated`
 
@@ -50,12 +51,16 @@ Status legend:
 - Rule that blocks alert when MCAP behavior invalidates the volume signal: `validated`
 - Alert identity/actions preserved on rendered cards: `pending-manual`
 
+- Trading terminal dropdown edge-aware direction: `validated`
+- Padre terminal link priority (`pairAddress -> mintAddress -> addr`): `validated`
+
 ### Persistence semantics still needing explicit check in V68 integrated flow
-- Starred tokens: `open` (backend persistence being added)
+- Starred tokens: `validated`
 - Dismissed sets after account reload: `validated`
-- Removal logs after account reload: `pending-manual`
+- Removal logs after account reload: `validated`
 - Sound persistence and per-account expectations: `validated` (local-only by design for audio files)
-- Axiom terminal link priority (`pairAddress -> mintAddress -> addr`): `code-reviewed`
+- Axiom terminal link priority (`pairAddress -> mintAddress -> addr`): `validated`
+- Padre terminal link priority (`pairAddress -> mintAddress -> addr`): `validated`
 
 ## Evidence From Code Review
 
@@ -75,9 +80,8 @@ The following behavior hooks are present in `volume-alert-botV68.html`:
 2. Verify dismissed tokens do not re-enter old bars incorrectly.
 3. Verify the alert rule where volume rises but MCAP falls does not beep incorrectly.
 4. Verify first migration of the session calibrates bond target as intended.
-5. Verify starred tokens now sync across browsers once backend persistence deploys.
-6. Verify Recent -> Old Week auto-migration when a token passes 7 days.
-7. Verify Axiom terminal links open with the pair address path when available.
+5. Sweep remaining fine-grained behavior from CLAUDE_HTML_PURO_.md that has not been exercised manually yet.
+6. Define the long-term backend token catalog/history strategy.
 
 ## Working Rule
 

@@ -2187,6 +2187,7 @@ function tradeBtnHtml(addr, mintAddr, pairAddr) {
 // ---- Old Tokens alert: +100% 1H or +150% 6H ----
 const OLD_ALERT_1H_PCT = 100;  // +100% price change in 1H
 const OLD_ALERT_6H_PCT = 150;  // +150% price change in 6H
+const STANDARD_ALERT_COOLDOWN_MS = 60000;
 // Tracks which tokens already fired old alert (prevent duplicates)
 const oldAlertFired = new Set();
 
@@ -2503,6 +2504,7 @@ function addToken(addr, name, symbol) {
     lastVol: null, vol5m: null, prevVol: null,
     deadCycles: 0,
     manual: false,
+    lastAlert: 0,
   };
   renderMonitored();
 }
@@ -2865,8 +2867,15 @@ function fireAlert(addr, tok, change, vol, triggerType) {
   const pct = (change * 100).toFixed(1);
   const now = new Date().toLocaleTimeString('en-US');
   const isHvnc = triggerType === 'hvnc';
+  const isStandardAlert = triggerType === 'vol' || triggerType === 'mcap';
   const level = isHvnc ? 'mega' : (change >= 2 ? 'mega' : change >= 1 ? 'critical' : 'normal');
   const label = isHvnc ? 'HVNC' : (triggerType === 'mcap' ? 'MCAP' : 'VOL');
+
+  if (isStandardAlert) {
+    const nowTs = Date.now();
+    if (tok.lastAlert && (nowTs - tok.lastAlert) < STANDARD_ALERT_COOLDOWN_MS) return;
+    tok.lastAlert = nowTs;
+  }
 
   state.alerts.unshift({
     symbol: tok.symbol, name: tok.name, pct, vol, prevVol: tok.prevVol,
@@ -4203,8 +4212,7 @@ function applyStarredTokens(addresses) {
 }
 
 function hasUserBootstrapBaseline() {
-  return Object.keys(state.tokens).length > 0
-    || getUserStorageJson('manual_tokens', []).length > 0
+  return getUserStorageJson('manual_tokens', []).length > 0
     || getUserStorageJson('old_tokens', []).length > 0
     || getUserStorageJson('old_week_tokens', []).length > 0;
 }

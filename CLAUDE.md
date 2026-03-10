@@ -1410,3 +1410,28 @@ Notas r�pidas para evitar erros recorrentes:
   - seed tokens do NOT become `_userManual` and do NOT populate `manual_tokens`
 - Product intent: improve first-run experience without polluting user-owned state.
 
+
+
+## Permanent Token Catalog (Next Architecture Step)
+- After V68 is stable in production, the next backend-first feature is a persistent token catalog/history.
+- Goal: tokens discovered by the bot should remain known to the backend even when they fall out of the active UI ranges.
+- UX intent: token can disappear from visible bars, but continue to exist in backend history and become eligible to re-enter monitoring when its MCAP/rules fit again.
+- This is separate from `manual_tokens` and separate from the cold-start seed.
+- Recommended implementation phase: after V68 publication as the next backendization step.
+
+
+
+## Post-Stability Roadmap
+- Permanent token catalog/history.
+  - Backend keeps tokens known even when they leave visible UI bars.
+  - Tokens can re-enter monitoring automatically when MCAP/range rules fit again.
+  - This becomes the long-term memory of the bot, separate from `manual_tokens` and separate from the cold-start seed.
+- Persist Meteora pool history in backend.
+  - Store pool TVL snapshots over time.
+  - Enable real historical movement views for Meteora pool over 1H / 6H / 24H.
+- Inline sparkline mini-chart for price/MCAP history.
+  - Backend accumulates MCAP/price history in PostgreSQL continuously (24/7).
+  - Frontend receives prebuilt historical series on load.
+  - Sparkline should already be populated with real hours/days of data when the user opens the bot.
+  - Intended UX: compact green inline chart per token, similar to PumpFun-style mini charting.
+
