@@ -5,6 +5,7 @@
 - Database init script created: `src/utils/db-init-stage5.js`.
 - Base model created: `src/models/token-catalog.js`.
 - Phase 1.5 started: operational catalog fields + first eligibility worker scaffold added.
+- Phase 2 started: `token_market_snapshots` schema + first market snapshot worker scaffold added.
 
 ## Goal
 Move the bot from frontend-heavy monitoring to backend-owned token memory and historical market data.

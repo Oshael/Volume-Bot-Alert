@@ -109,6 +109,19 @@ async function listDueForEvaluation(limit = 25) {
   return rows;
 }
 
+async function listEligibleForSnapshots(limit = 25) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 200));
+  const { rows } = await db.query(
+    `SELECT *
+     FROM token_catalog
+     WHERE eligible_for_monitoring = TRUE
+     ORDER BY last_evaluated_at DESC NULLS LAST, last_seen_at DESC
+     LIMIT $1`,
+    [safeLimit]
+  );
+  return rows;
+}
+
 async function applyEvaluationResult(address, result) {
   const addr = String(address || '').trim();
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
@@ -178,5 +191,6 @@ module.exports = {
   getByAddress,
   listRecent,
   listDueForEvaluation,
+  listEligibleForSnapshots,
   applyEvaluationResult,
 };

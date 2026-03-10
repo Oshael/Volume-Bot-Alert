@@ -19,6 +19,7 @@ const catalogRoutes = require('./routes/catalog');
 // Services
 const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
+const marketSnapshotWorker = require('./services/market-snapshot-worker');
 
 const app = express();
 const server = http.createServer(app);
@@ -91,6 +92,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
   res.json({
     ...socketHub.getStatus(),
     catalogWorker: catalogWorker.getStatus(),
+    marketSnapshotWorker: marketSnapshotWorker.getStatus(),
   });
 });
 
@@ -121,6 +123,7 @@ setInterval(async () => {
 // ---- Initialize Socket.io ----
 socketHub.init(server);
 catalogWorker.start();
+marketSnapshotWorker.start();
 
 // ---- Start ----
 server.listen(config.port, () => {
