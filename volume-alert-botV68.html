@@ -980,22 +980,33 @@ function getUserStorageJson(baseKey, fallback) {
 }
 
 async function ensureSessionValid() {
-  if (!authToken) return false;
+  if (!authToken) return { ok: false, fatal: true, reason: 'missing_token' };
   try {
     const res = await apiAuthFetch('/api/auth/me');
-    if (!res.ok) return false;
-    const data = await res.json().catch(() => null);
-    if (data?.user) currentUser = data.user;
-    authValidated = true;
-    return true;
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data?.user) currentUser = data.user;
+      authValidated = true;
+      return { ok: true, fatal: false, reason: 'ok' };
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, fatal: true, reason: 'auth_invalid' };
+    }
+
+    return { ok: false, fatal: false, reason: 'transient_error' };
   } catch (_) {
-    return false;
+    return { ok: false, fatal: false, reason: 'network_error' };
   }
 }
 
 async function requireAuthOrBlock(actionLabel) {
-  const ok = await ensureSessionValid();
-  if (ok) return true;
+  const session = await ensureSessionValid();
+  if (session.ok) return true;
+  if (!session.fatal) {
+    logTicker('Auth check temporarily unavailable for ' + actionLabel + '. Try again.');
+    return false;
+  }
   authValidated = false;
   logTicker('Auth required for ' + actionLabel + '. Please login.');
   try { await doLogout(true); } catch (_) {}
@@ -1483,7 +1494,7 @@ function addOldToken(addr, tok) {
     state.tokens[addr].oldToken = true;  // marca como token velho (mcap filter pode agir)
   }
   renderOldTokens();
-  logTicker(`🟢 Recent token detected: ${tok.symbol}`);
+  logTicker(`Recent token detected: ${tok.symbol}`);
 }
 
 function removeOldToken(addr) {
@@ -1614,7 +1625,7 @@ function addOldWeekToken(addr, tok) {
   }
   renderOldWeekTokens();
   saveOldWeekTokens();
-  logTicker(`📅 Old token 1W+ detected: ${tok.symbol}`);
+  logTicker(`Old token 1W+ detected: ${tok.symbol}`);
 }
 
 function removeOldWeekToken(addr) {
@@ -2816,6 +2827,10 @@ async function processToken(addr, { threshold, mcapThreshold, minVol, minMcap, m
   tok.priceChange6h = pair.priceChange?.h6;
   tok.priceChange24h = pair.priceChange?.h24;
   if (createdAt && !tok.createdAt) tok.createdAt = createdAt;
+
+  if (!tok._userManual && mcap >= 30000) {
+    reportCatalogPromotion(tok, { address: addr, source: 'monitored-token' }).catch(() => {});
+  }
 
   // Auto-detecta tokens velhos e adiciona às barras (com exclusão mútua)
   if (tok.createdAt) {
@@ -4189,6 +4204,72 @@ async function apiAuthFetch(path, options = {}) {
   return fetch(`${API_BASE}${path}`, { ...options, headers });
 }
 
+const catalogPromotionSent = new Set();
+const catalogPromotionRetryAt = new Map();
+const CATALOG_PROMOTION_RETRY_MS = 40000;
+
+function buildCatalogPromotionPayload(tok, options = {}) {
+  const address = String(options.address || tok?.mintAddress || tok?.addr || tok?.address || '').trim();
+  if (!address) return null;
+
+  return {
+    address,
+    chain: options.chain || document.getElementById('chain')?.value || 'solana',
+    source: options.source || 'monitored-token',
+    symbol: options.symbol || tok?.symbol || null,
+    name: options.name || tok?.name || null,
+    mcap: options.mcap != null ? options.mcap : (tok?.mcap ?? null),
+    price: options.price != null ? options.price : (tok?.price ?? null),
+    pairAddress: options.pairAddress || tok?.pairAddress || null,
+    pairUrl: options.pairUrl || tok?.pairUrl || null,
+    imageUrl: options.imageUrl || tok?.imageUrl || tok?.image || null,
+    twitterUrl: options.twitterUrl || tok?.twitterUrl || null,
+    isActiveMonitorCandidate: options.isActiveMonitorCandidate,
+  };
+}
+
+async function reportCatalogPromotion(tok, options = {}) {
+  if (!authToken) return false;
+  const payload = buildCatalogPromotionPayload(tok, options);
+  if (!payload) return false;
+
+  const dedupeKey = `${payload.source}:${payload.address}`;
+  if (catalogPromotionSent.has(dedupeKey)) return true;
+
+  const retryAt = catalogPromotionRetryAt.get(dedupeKey) || 0;
+  if (Date.now() < retryAt) return false;
+
+  try {
+    const res = await apiAuthFetch('/api/catalog/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 201) {
+      catalogPromotionRetryAt.delete(dedupeKey);
+      catalogPromotionSent.add(dedupeKey);
+      return true;
+    }
+
+    if (res.status === 202) {
+      const data = await res.json().catch(() => null);
+      catalogPromotionRetryAt.set(dedupeKey, data?.retryAt || (Date.now() + CATALOG_PROMOTION_RETRY_MS));
+      return false;
+    }
+
+    if (res.status >= 400 && res.status < 500) {
+      catalogPromotionSent.add(dedupeKey);
+      return false;
+    }
+
+    return false;
+  } catch (_) {
+    catalogPromotionRetryAt.set(dedupeKey, Date.now() + CATALOG_PROMOTION_RETRY_MS);
+    return false;
+  }
+}
+
 async function reportMigratedToken(tok, mint) {
   if (!authToken) return false;
   const address = String(mint || tok?.mintAddress || tok?.addr || '').trim();
@@ -4411,7 +4492,17 @@ function connectServerSocket() {
 
   socketClient.on('connect_error', (err) => {
     console.warn('Socket connect_error:', err?.message || err);
-    logTicker(`Socket error: ${err?.message || 'connect_error'}`);
+    logTicker('Socket error: ' + (err?.message || 'connect_error'));
+  });
+
+  socketClient.on('disconnect', (reason) => {
+    console.warn('Socket disconnected:', reason);
+    logTicker('Socket disconnected: ' + (reason || 'unknown'));
+  });
+
+  socketClient.on('auth:revoked', async () => {
+    logTicker('Session revoked by server. Logging out...');
+    await doLogout(true);
   });
 
   socketClient.on('sol:price', (payload) => {
@@ -4635,10 +4726,12 @@ async function onAuthenticated() {
   if (authSessionCheckTimer) clearInterval(authSessionCheckTimer);
   authSessionCheckTimer = setInterval(async () => {
     if (!authToken) return;
-    const ok = await ensureSessionValid();
-    if (!ok) {
+    const session = await ensureSessionValid();
+    if (!session.ok && session.fatal) {
       logTicker('Session expired or revoked. Logging out...');
       await doLogout(true);
+    } else if (!session.ok) {
+      logTicker('Session validation temporarily unavailable. Keeping current login.');
     }
   }, 30000);
 }
@@ -4670,3 +4763,5 @@ tryRestoreSession();
 </script>
 </body>
 </html>
+
+

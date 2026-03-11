@@ -1,37 +1,45 @@
-/**
- * DexScreener Service
- * Centralized server-side polling for token data.
- * No CORS issues — server fetches directly from DexScreener API.
- *
- * Used for:
- * - Monitored token data (volume, mcap, price changes)
- * - Token pair lookup by address
- */
-
 const DEXSCREENER_BASE = 'https://api.dexscreener.com';
-const REQUEST_TIMEOUT = 10000; // 10s
+const REQUEST_TIMEOUT = 10000;
+const CACHE_TTL_MS = 40000;
+const ERROR_COOLDOWN_MS = 15000;
 
-/**
- * Fetch token pairs from DexScreener.
- * @param {string} address — token contract address
- * @returns {Object|null} — pair data or null on error
- */
-async function getTokenPairs(address) {
+const tokenCache = new Map();
+const inFlightRequests = new Map();
+
+function getCacheEntry(address) {
+  const entry = tokenCache.get(address);
+  if (!entry) return null;
+  if (Date.now() >= entry.expiresAt) {
+    tokenCache.delete(address);
+    return null;
+  }
+  return entry;
+}
+
+function setCacheEntry(address, data, ttlMs) {
+  tokenCache.set(address, {
+    data,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+async function fetchTokenPairsUncached(address) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-
     const res = await fetch(`${DEXSCREENER_BASE}/latest/dex/tokens/${address}`, {
       signal: controller.signal,
     });
-    clearTimeout(timeout);
 
     if (!res.ok) {
       console.error(`[DexScreener] Error ${res.status} for ${address}`);
+      setCacheEntry(address, null, ERROR_COOLDOWN_MS);
       return null;
     }
 
     const data = await res.json();
+    setCacheEntry(address, data, CACHE_TTL_MS);
     return data;
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -39,16 +47,32 @@ async function getTokenPairs(address) {
     } else {
       console.error(`[DexScreener] Fetch error for ${address}:`, err.message);
     }
+    setCacheEntry(address, null, ERROR_COOLDOWN_MS);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-/**
- * Batch fetch multiple tokens with throttling.
- * @param {string[]} addresses — array of token addresses
- * @param {number} delayMs — delay between requests (default 100ms)
- * @returns {Map<string, Object>} — address → pair data
- */
+async function getTokenPairs(address) {
+  const addr = String(address || '').trim();
+  if (!addr) return null;
+
+  const cached = getCacheEntry(addr);
+  if (cached) return cached.data;
+
+  const inFlight = inFlightRequests.get(addr);
+  if (inFlight) return inFlight;
+
+  const request = fetchTokenPairsUncached(addr)
+    .finally(() => {
+      inFlightRequests.delete(addr);
+    });
+
+  inFlightRequests.set(addr, request);
+  return request;
+}
+
 async function batchGetTokens(addresses, delayMs = 100) {
   const results = new Map();
 
@@ -57,7 +81,6 @@ async function batchGetTokens(addresses, delayMs = 100) {
     if (data) {
       results.set(addr, data);
     }
-    // Throttle to avoid rate limiting
     if (delayMs > 0) {
       await new Promise(r => setTimeout(r, delayMs));
     }
@@ -66,24 +89,28 @@ async function batchGetTokens(addresses, delayMs = 100) {
   return results;
 }
 
-/**
- * Extract best pair for a given chain from DexScreener response.
- * @param {Object} data — DexScreener response with pairs[]
- * @param {string} chain — chain to filter by (default: 'solana')
- * @returns {Object|null} — best pair (highest liquidity) or null
- */
 function getBestPair(data, chain = 'solana') {
   if (!data?.pairs?.length) return null;
 
   const chainPairs = data.pairs.filter(p => p.chainId === chain);
   if (!chainPairs.length) return null;
 
-  // Sort by liquidity USD descending, pick the best
   return chainPairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+}
+
+function clearCache(address = null) {
+  if (address) {
+    tokenCache.delete(String(address).trim());
+    inFlightRequests.delete(String(address).trim());
+    return;
+  }
+  tokenCache.clear();
+  inFlightRequests.clear();
 }
 
 module.exports = {
   getTokenPairs,
   batchGetTokens,
   getBestPair,
+  clearCache,
 };
