@@ -608,10 +608,6 @@
   </div>
   <!-- Row 2: Token management + chain + HVNC -->
   <div class="config-item">
-    <label>Min MKT CAP to stay monitored ($)</label>
-    <input type="number" id="min-mcap-remove" value="0" min="0" placeholder="0 = disabled">
-  </div>
-  <div class="config-item">
     <label>Remove token with no volume after (cycles)</label>
     <input type="number" id="dead-cycles" value="10" min="1" max="50" placeholder="ex: 10">
   </div>
@@ -1599,7 +1595,8 @@ function applyOldWeekMcapFilter() {
       changed = true;
     }
   }
-  if (changed) { saveOldWeekTokens(); renderOldWeekTokens(); }
+  if (changed) saveOldWeekTokens();
+  if (Object.keys(oldWeekTokens).length > 0 || changed) renderOldWeekTokens();
 }
 
 function addOldWeekToken(addr, tok) {
@@ -1803,7 +1800,8 @@ function updateOldWeekTokensMcap() {
     // Update Meteora TVL in-place
     updateMeteoraTvlInPlace(addr, 'ow');
   }
-  if (changed) { saveOldWeekTokens(); renderOldWeekTokens(); }
+  if (changed) saveOldWeekTokens();
+  if (Object.keys(oldWeekTokens).length > 0 || changed) renderOldWeekTokens();
 }
 
 // ---- Manual Tokens Bar ----
@@ -1911,50 +1909,15 @@ function removeManualToken(addr) {
   renderManualBar();
   logTicker(`📌 Unpinned: ${sym}`);
 }
-
 function updateManualBar() {
   const entries = Object.entries(state.tokens).filter(([,tok]) => tok._userManual);
-  if (!entries.length) { document.getElementById('manual-tokens-bar').style.display = 'none'; return; }
-  document.getElementById('manual-tokens-bar').style.display = 'flex';
-  let needsRender = false;
-  for (const [addr, tok] of entries) {
-    const mcapEl = document.getElementById(`mb-mcap-${addr}`);
-    if (!mcapEl) { needsRender = true; break; }
-    mcapEl.textContent = '$' + fmt(tok.mcap||0);
-    const mcapChEl = document.getElementById(`mb-mcap-ch-${addr}`);
-    if (mcapChEl) {
-      const ch = getMcapChange5m(tok);
-      mcapChEl.innerHTML = ch ? `<span style="color:${ch.color}">${ch.str}</span>` : '';
-    }
-    const v5El = document.getElementById(`mb-v5-${addr}`);
-    const v1El = document.getElementById(`mb-v1-${addr}`);
-    const v6El = document.getElementById(`mb-v6-${addr}`);
-    if (v5El) v5El.textContent = '$' + fmtVol(tok.vol5m||0);
-    if (v1El) v1El.textContent = '$' + fmtVol(tok.vol1h||0);
-    if (v6El) v6El.textContent = '$' + fmtVol(tok.vol6h||0);
-    // Update price changes in-place
-    const mbPcUpdate = (id, val) => {
-      const pcEl = document.getElementById(id);
-      if (!pcEl) return;
-      if (val == null || val === undefined) { pcEl.textContent = '–'; pcEl.style.color = 'var(--muted)'; pcEl.style.fontWeight = '400'; return; }
-      const s = val >= 0 ? '+' : '';
-      pcEl.textContent = `${s}${val.toFixed(2)}%`;
-      pcEl.style.color = val >= 0 ? 'var(--green)' : 'var(--red)';
-      pcEl.style.fontWeight = '700';
-    };
-    mbPcUpdate(`mb-pc1h-${addr}`, tok.priceChange1h);
-    mbPcUpdate(`mb-pc6h-${addr}`, tok.priceChange6h);
-    mbPcUpdate(`mb-pc24h-${addr}`, tok.priceChange24h);
-    // Update Meteora TVL in-place
-    updateMeteoraTvlInPlace(addr, 'mb');
-    // If token now has an image but the card still shows the placeholder, re-render
-    if (tok.imageUrl) {
-      const imgEl = document.querySelector(`#manual-tokens-list img[src="${tok.imageUrl}"]`);
-      const placeholder = document.getElementById(`mb-ph-${addr}`);
-      if (!imgEl && placeholder) { needsRender = true; break; }
-    }
+  if (!entries.length) {
+    document.getElementById('manual-tokens-bar').style.display = 'none';
+    return;
   }
-  if (needsRender) renderManualBar();
+
+  // Re-render the whole bar so any active sort criterion reorders rows live.
+  renderManualBar();
 }
 
 let oldTokensPage = 0;
@@ -2146,8 +2109,10 @@ function updateOldTokensMcap() {
     // Update Meteora TVL in-place
     updateMeteoraTvlInPlace(addr, 'ot');
   }
-  if (weekChanged) { saveOldWeekTokens(); renderOldWeekTokens(); }
-  if (changed) { saveOldTokens(); renderOldTokens(); }
+  if (weekChanged) saveOldWeekTokens();
+  if (changed) saveOldTokens();
+  if (Object.keys(oldWeekTokens).length > 0 || weekChanged) renderOldWeekTokens();
+  if (Object.keys(oldTokens).length > 0 || changed) renderOldTokens();
 }
 
 // ---- Persistência de configurações ----
@@ -2292,7 +2257,7 @@ function fireOldTokenAlert(addr, tok, ot, badge, type) {
 
 const CONFIG_FIELDS = [
   'threshold','mcap-threshold','min-vol','min-mcap','max-mcap',
-  'interval','min-mcap-remove','dead-cycles','chain',
+  'interval','dead-cycles','chain',
   'pump-entry-vol','pump-min-vol','pump-bond-mcap',
   'old-mcap-min','old-mcap-max','old-per-page','old-week-mcap-min','old-week-mcap-max','old-week-per-page','hvnc-min-vol',
   'meteora-min-pool','sound-mode','sound-volume'
@@ -2313,8 +2278,9 @@ function saveConfig() {
   scheduleConfigSync(cfg);
 }
 
-function sweepMcapFilter(minMcapRemove) {
-  if (!minMcapRemove || minMcapRemove <= 0) return 0;
+const MONITORED_MIN_MCAP = 30000;
+
+function sweepMcapFilter(minMcapRemove = MONITORED_MIN_MCAP) {
   let removed = 0;
   for (const [addr, tok] of Object.entries(state.tokens)) {
     const isProtected = tok._userManual === true;
@@ -2332,20 +2298,19 @@ function sweepMcapFilter(minMcapRemove) {
 }
 
 function debugTokens() {
-  const min = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
-  console.log(`=== DEBUG TOKENS (min-mcap-remove: ${min}) ===`);
+  const min = MONITORED_MIN_MCAP;
+  console.log('=== DEBUG TOKENS (monitored min mcap: ' + min + ') ===');
   for (const [addr, tok] of Object.entries(state.tokens)) {
-    console.log(`${tok.symbol || addr.slice(0,8)} | mcap=${tok.mcap} | manual=${tok.manual} | oldToken=${tok.oldToken}`);
+    console.log((tok.symbol || addr.slice(0,8)) + ' | mcap=' + tok.mcap + ' | manual=' + tok.manual + ' | oldToken=' + tok.oldToken);
   }
   console.log('===');
-  sweepMcapFilter(min);
+  sweepMcapFilter(MONITORED_MIN_MCAP);
   renderMonitored();
   alert('Sweep ran. Check the console (F12) for details.');
 }
 
 function applyMcapRemoveFilter() {
-  const minMcapRemove = parseFloat(document.getElementById('min-mcap-remove').value) || 0;
-  const removed = sweepMcapFilter(minMcapRemove);
+  const removed = sweepMcapFilter(MONITORED_MIN_MCAP);
   if (removed > 0) renderMonitored();
 }
 
@@ -2369,10 +2334,6 @@ function initConfigPersistence() {
     el.addEventListener('change', persist);
     el.addEventListener('input', persist);
 
-    if (id === 'min-mcap-remove') {
-      el.addEventListener('change', applyMcapRemoveFilter);
-      el.addEventListener('input', applyMcapRemoveFilter);
-    }
   });
 }
 
@@ -2637,18 +2598,16 @@ async function loadTrending(silent = false) {
 
       if (!pair) continue;
 
-      // Só adiciona se tiver volume 5m real
+      // So adiciona se tiver volume 5m real
       const vol5m = pair.volume?.m5 || 0;
       if (vol5m === 0) continue;
-
-      // Filtra por MCAP mínimo — usa marketCap ou fdv, rejeita se abaixo do mínimo
+      // Fixed monitored floor: tokens under 30k do not enter monitoring
       const mcapVal = pair.marketCap || pair.fdv || 0;
-      const minMcapRemoveNow = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
-      if (minMcapRemoveNow > 0 && mcapVal > 0 && mcapVal < minMcapRemoveNow) {
-        logTicker(`⊘ ${pair.baseToken?.symbol || addr.slice(0,6)} skipped — MCAP $${fmt(mcapVal)} < min $${fmt(minMcapRemoveNow)}`);
+      const minMcapRemoveNow = MONITORED_MIN_MCAP;
+      if (mcapVal > 0 && mcapVal < minMcapRemoveNow) {
+        logTicker('SKIP ' + (pair.baseToken?.symbol || addr.slice(0,6)) + ' - MCAP $' + fmt(mcapVal) + ' < min $' + fmt(minMcapRemoveNow));
         continue;
       }
-
       seen.add(addr);
       addToken(addr, pair.baseToken?.name, pair.baseToken?.symbol);
       if (state.tokens[addr]) {
@@ -2682,23 +2641,22 @@ function toggleBot() {
 }
 
 async function startBotFlow() {
-  // Se não tem tokens, carrega o trending automaticamente antes de iniciar
+  // Se nao tem tokens, carrega o trending automaticamente antes de iniciar
   if (Object.keys(state.tokens).length === 0) {
-    document.getElementById('btn-start').textContent = '⟳ LOADING TOKENS...';
+    document.getElementById('btn-start').textContent = 'LOADING TOKENS...';
     document.getElementById('btn-start').disabled = true;
-    logTicker('⟳ No tokens found — loading trending automatically...');
+    logTicker('No tokens found - loading trending automatically...');
     await loadTrending();
     document.getElementById('btn-start').disabled = false;
-    // Se ainda não tem tokens após tentar carregar, avisa
+    // Se ainda nao tem tokens apos tentar carregar, avisa
     if (Object.keys(state.tokens).length === 0) {
-      logTicker('✕ Could not load tokens. Add manually.');
-      document.getElementById('btn-start').textContent = '▶ START MONITORING';
+      logTicker('Could not load tokens. Add manually.');
+      document.getElementById('btn-start').textContent = 'START MONITORING';
       return;
     }
   }
   startBot();
 }
-
 function startBot() {
   state.running = true;
   state.startedAt = Date.now();
@@ -2746,17 +2704,16 @@ async function runCycle() {
   document.getElementById('cycle-count').textContent = state.cycles;
 
   const deadCycles    = parseInt(document.getElementById('dead-cycles').value) || 10;
-  const minMcapRemove = parseFloat(document.getElementById('min-mcap-remove').value) || 0;
 
   // Sweep inicial
-  sweepMcapFilter(minMcapRemove);
+  sweepMcapFilter(MONITORED_MIN_MCAP);
 
   // Auto-refresh trending — após completar, sweep novamente para remover o que entrou com mcap baixo
   const before = Object.keys(state.tokens).length;
   loadTrending(true).then(() => {
     const added = Object.keys(state.tokens).length - before;
     if (added > 0) logTicker(`🆕 ${added} new token(s) added`);
-    sweepMcapFilter(minMcapRemove); // garante que nada com mcap baixo ficou
+    sweepMcapFilter(MONITORED_MIN_MCAP); // garante que nada com mcap baixo ficou
     renderMonitored();
   });
   const threshold     = parseFloat(document.getElementById('threshold').value) / 100;
@@ -2771,7 +2728,7 @@ async function runCycle() {
   const BATCH = 10;
   for (let i = 0; i < addrs.length; i += BATCH) {
     const batch = addrs.slice(i, i + BATCH);
-    await Promise.all(batch.map(addr => processToken(addr, { threshold, mcapThreshold, minVol, minMcap, maxMcap, deadCycles, minMcapRemove, hvncMinVol })));
+    await Promise.all(batch.map(addr => processToken(addr, { threshold, mcapThreshold, minVol, minMcap, maxMcap, deadCycles, minMcapRemove: MONITORED_MIN_MCAP, hvncMinVol })));
   }
 
   renderMonitored();
@@ -3164,13 +3121,11 @@ function renderMonitored() {
   }
 
   // Aplica filtro de MCAP mínimo — deleta do state (não só esconde)
-  const minMcapRemoveRender = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
-  if (minMcapRemoveRender > 0) {
-    for (const [addr, tok] of Object.entries(state.tokens)) {
-      const isProtected = tok._userManual === true;
-      if (!isProtected && tok.mcap > 0 && tok.mcap < minMcapRemoveRender) {
+  const minMcapRemoveRender = MONITORED_MIN_MCAP;
+  for (const [addr, tok] of Object.entries(state.tokens)) {
+    const isProtected = tok._userManual === true;
+    if (!isProtected && tok.mcap > 0 && tok.mcap < minMcapRemoveRender) {
         delete state.tokens[addr];
-      }
     }
   }
 
@@ -4712,8 +4667,7 @@ async function onAuthenticated() {
   loadPersistedSounds();
   loadOldAlertSounds();
 
-  const minMcapRemove = parseFloat(document.getElementById('min-mcap-remove')?.value) || 0;
-  if (minMcapRemove > 0) sweepMcapFilter(minMcapRemove);
+  sweepMcapFilter(MONITORED_MIN_MCAP);
 
   enforceBarExclusion();
   renderManualBar();
@@ -4763,5 +4717,7 @@ tryRestoreSession();
 </script>
 </body>
 </html>
+
+
 
 
