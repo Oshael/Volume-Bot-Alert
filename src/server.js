@@ -125,7 +125,6 @@ setInterval(async () => {
 // ---- Initialize Socket.io ----
 socketHub.init(server);
 catalogWorker.start();
-marketSnapshotWorker.start();
 meteoraSnapshotWorker.start();
 
 // ---- Start ----
@@ -164,5 +163,4 @@ server.listen(config.port, () => {
 });
 
 module.exports = { app, server }; // export for testing
-
 

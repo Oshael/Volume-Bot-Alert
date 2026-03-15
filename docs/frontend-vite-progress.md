@@ -339,6 +339,38 @@ Implemented:
 - current rendering uses:
   - `PCHANGE 1H`, or
   - `PCHANGE 6H`
+
+Validated:
+- build passes
+
+### 17. Bot-off update gating
+Implemented:
+- frontend realtime token updates are now gated by monitoring mode
+- when the bot is `stopped`, the frontend no longer processes:
+  - Dex token updates
+  - PumpFun token/trade/migration updates
+  - SOL price refreshes
+  - tracked-token re-subscribe loops
+- when the bot is started again, those flows resume normally
+
+Validated:
+- behavior was checked in browser while toggling start/stop
+
+### 18. Meteora backendized flow
+Implemented:
+- the initial `V68` client-side Meteora behavior was first ported into the modular frontend
+- Meteora was then moved behind backend endpoints:
+  - `POST /api/catalog/meteora/batch`
+  - `GET /api/catalog/meteora/:address/history`
+- frontend tables now show only the total pool TVL in the Meteora column
+- the `1H / 6H / 24H` deltas are shown only in the hover tooltip
+- frontend now consumes backend batch data instead of calling Meteora directly from the browser
+
+Validated:
+- browser network confirmed successful `POST /api/catalog/meteora/batch`
+- hover tooltip rendering was validated after visual cleanup
+- refresh no longer loses the Meteora history state because the source is now backend-backed
+  - `PCHANGE 6H`
   in the alert badge subtitle
 
 Validated:

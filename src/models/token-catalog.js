@@ -102,7 +102,9 @@ async function listDueForEvaluation(limit = 25) {
     `SELECT *
      FROM token_catalog
      WHERE next_evaluation_at <= NOW()
-     ORDER BY next_evaluation_at ASC, last_seen_at DESC
+     ORDER BY next_evaluation_at ASC,
+              COALESCE(last_vol_24h, last_vol_6h, last_vol_1h, last_vol_5m, 0) DESC,
+              last_seen_at DESC
      LIMIT $1`,
     [safeLimit]
   );
@@ -160,6 +162,11 @@ async function applyEvaluationResult(address, result) {
   const twitterUrl = toNullableText(result.twitterUrl);
   const lastMcap = Number.isFinite(Number(result.mcap)) ? Number(result.mcap) : null;
   const lastPrice = Number.isFinite(Number(result.price)) ? Number(result.price) : null;
+  const monitorPriority = toNullableText(result.monitorPriority) || 'dormant';
+  const lastVol5m = Number.isFinite(Number(result.vol5m)) ? Number(result.vol5m) : null;
+  const lastVol1h = Number.isFinite(Number(result.vol1h)) ? Number(result.vol1h) : null;
+  const lastVol6h = Number.isFinite(Number(result.vol6h)) ? Number(result.vol6h) : null;
+  const lastVol24h = Number.isFinite(Number(result.vol24h)) ? Number(result.vol24h) : null;
 
   const { rows } = await db.query(
     `UPDATE token_catalog
@@ -179,8 +186,13 @@ async function applyEvaluationResult(address, result) {
          last_twitter_url = COALESCE($13, last_twitter_url),
          last_mcap = COALESCE($14, last_mcap),
          last_price = COALESCE($15, last_price),
+         monitor_priority = $16,
+         last_vol_5m = COALESCE($17, last_vol_5m),
+         last_vol_1h = COALESCE($18, last_vol_1h),
+         last_vol_6h = COALESCE($19, last_vol_6h),
+         last_vol_24h = COALESCE($20, last_vol_24h),
          metadata_updated_at = CASE
-           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL
+           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $17 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL
            THEN NOW()
            ELSE metadata_updated_at
          END
@@ -202,6 +214,11 @@ async function applyEvaluationResult(address, result) {
       twitterUrl,
       lastMcap,
       lastPrice,
+      monitorPriority,
+      lastVol5m,
+      lastVol1h,
+      lastVol6h,
+      lastVol24h,
     ]
   );
 

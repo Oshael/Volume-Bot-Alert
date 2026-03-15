@@ -224,20 +224,45 @@ These notes capture product/architecture decisions discussed after the first cat
 ### 9. Monitoring priority policy to implement later
 - Global eligibility and monitoring priority are not the same concept.
 - A token may remain in the permanent catalog while being checked less often depending on its current state.
-- Status: documented and agreed at the product level, but not implemented yet in backend workers/DB logic.
-- The agreed first draft of the backend priority policy is:
+- Status: first implementation now exists in backend worker logic and local DB schema.
+- The agreed current backend priority policy is:
 
 #### Dormant
 - Applies to tokens with no useful pair / no meaningful signs / effectively dead state.
-- Planned recheck interval: `10 minutes`.
+- Planned recheck interval: `8 minutes`.
 
 #### Low Priority
 - Applies when `marketCap < 30k`.
-- Planned recheck interval: `6 minutes`.
+- Planned recheck interval: `3 minutes`.
 
 #### Normal Priority
 - Applies when `30k <= marketCap < 100k`.
-- Planned base recheck interval: `2m30s`.
+- Planned base recheck interval: `1 minute`.
+
+#### Normal Priority Boosts
+- For tokens in the `30k <= marketCap < 100k` band, boosts are based on Dex-delivered `PCHANGE`.
+- If `PCHANGE 1H >= 150%`, planned recheck interval becomes `20s`.
+- If `PCHANGE 6H >= 200%`, planned recheck interval becomes `40s`.
+- If both boost conditions are true, use the smaller interval (`20s`).
+
+#### High Priority
+- Applies when `marketCap >= 100k`.
+- Planned base recheck interval: `10s`.
+- Internal ordering should be by volume only.
+- Within the due queue, tokens with higher total volume should be evaluated first.
+
+#### Persistence rule during evaluation
+- Every successful Dex evaluation should persist the latest market data into backend-owned state.
+- At minimum this includes:
+  - `mcap`
+  - `price`
+  - `vol_5m`
+  - `vol_1h`
+  - `vol_6h`
+  - `vol_24h`
+  - pair/metadata fields already tracked in the catalog
+- `PCHANGE` should be used as a live evaluation signal for priority.
+- `PCHANGE` is not currently required in historical snapshot persistence.
 
 ## Additional Session Notes
 
@@ -255,22 +280,23 @@ These notes capture product/architecture decisions discussed after the first cat
 - This change is intended for `NODE_ENV=development` only and should not affect production behavior.
 
 ### Confirmed future work not yet implemented
-- Meteora historical pool deltas still need frontend exposure/tooltips.
-- Frontend should stop updating token data entirely when monitoring is off; current behavior still needs a dedicated pass.
+- Priority engine may still need tuning after real production usage, especially thresholds and scaling behavior.
+- Historical Dex snapshots should continue to be the source of comparison for MCAP/volume changes.
+- `PCHANGE` is intentionally not required in snapshot persistence right now; the team currently only needs it as a live evaluation signal.
 
-#### Volume-growth boost inside the normal band
-- For tokens in the `30k <= marketCap < 100k` band, priority should be boosted based on percentage growth of volume over time.
-- This boost should be based on backend comparison/history, not only the raw current Dex payload.
-- Superseded decision:
-  - instead of using percentage growth of volume, use the `%` change data delivered by Dex (`PCHANGE`) as the boost signal.
-  - the exact thresholds still need implementation, but the direction is now `PCHANGE`-driven rather than backend-computed volume-growth driven.
-
-#### High Priority
-- Applies when `marketCap >= 100k`.
-- Planned base recheck interval: `10s`.
-- Tokens in this band should still be internally ordered by priority.
-- Higher total volume should increase priority within the high-priority queue.
-- Higher market cap should also increase priority within the high-priority queue.
+### Implemented follow-up state
+- Frontend stop/start monitoring now gates realtime token updates as intended.
+- Meteora is now backendized for the active frontend flow:
+  - backend stores `token_meteora_snapshots`
+  - backend exposes batch/history routes
+  - frontend consumes backend Meteora batch data and shows deltas in hover tooltip
+- The first version of the backend priority engine now:
+  - classifies tokens into `dormant`, `low`, `normal`, `high`
+  - computes `next_evaluation_at` using the agreed timing policy
+  - boosts normal-band tokens using Dex `PCHANGE`
+  - orders due evaluation by volume
+  - persists successful Dex evaluations into `token_market_snapshots`
+- The previous dedicated `marketSnapshotWorker` no longer drives the active snapshot flow; snapshot persistence is now coupled to the catalog evaluation pass.
 
 ### 10. BirdEye adoption direction
 - Future priority/monitoring work is expected to use BirdEye as an additional market-data source for richer token information and price/value data.
