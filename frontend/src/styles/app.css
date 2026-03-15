@@ -933,6 +933,81 @@ a {
   backdrop-filter: none;
 }
 
+.legacy-userbar {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 2px;
+}
+
+.legacy-userbar-link {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.legacy-userbar-link:hover {
+  color: var(--text);
+}
+
+.logout-link {
+  color: rgba(255, 60, 95, 0.9);
+}
+
+.logout-link:hover {
+  color: var(--red);
+}
+
+.legacy-user-menu {
+  position: relative;
+}
+
+.legacy-user-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(8, 11, 16, 0.98);
+  z-index: 40;
+}
+
+.legacy-user-menu.open .legacy-user-dropdown {
+  display: flex;
+}
+
+.legacy-user-dd-item {
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.legacy-user-dd-item:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .config-item {
   display: flex;
   flex-direction: column;

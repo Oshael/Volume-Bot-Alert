@@ -12,7 +12,7 @@ const CONFIG_SCHEMA = {
   interval:         { type: 'number', min: 5, max: 600, default: 30 },
   'dead-cycles':    { type: 'number', min: 1, max: 1000, default: 10 },
   chain:            { type: 'string', allowed: ['solana', 'ethereum', 'bsc', 'base'], default: 'solana' },
-  'pump-entry-vol': { type: 'number', min: 0, max: 1e12, default: 20000 },
+  'pump-entry-vol': { type: 'number', min: 0, max: 1e12, default: 3000 },
   'pump-min-vol':   { type: 'number', min: 0, max: 1e12, default: 100000 },
   'pump-bond-mcap':  { type: 'number', min: 0, max: 1e12, default: 35000 },
   'old-mcap-min':    { type: 'number', min: 0, max: 1e15, default: 120000 },

@@ -7,13 +7,13 @@ export function renderConfigSection(state: AppState, controller: AppController) 
   section.innerHTML = `
     <div class="card-topline"><span class="section-tag">CONFIG</span><span class="count-pill">${state.configSummary.loaded ? 'SYNCED' : 'EMPTY'}</span></div>
     <h2>Config Hydration</h2>
-    <p>The new frontend is consuming the account-scoped payload from <code>/api/config</code>, including manual tokens, bootstrap tokens, and the bar MCAP ranges used for age routing.</p>
+    <p>The new frontend is consuming the account-scoped payload from <code>/api/config</code>, together with the global eligible catalog feed and the bar MCAP ranges used for age routing.</p>
     <div class="summary-grid">
       <div class="summary-box"><span>Config Keys</span><strong>${state.configSummary.configCount}</strong></div>
       <div class="summary-box"><span>Manual Tokens</span><strong>${state.configSummary.manualTokens}</strong></div>
       <div class="summary-box"><span>Blocklist</span><strong>${state.configSummary.blocklist}</strong></div>
       <div class="summary-box"><span>Starred</span><strong>${state.configSummary.starredTokens}</strong></div>
-      <div class="summary-box"><span>Bootstrap</span><strong>${state.configSummary.bootstrapTokens}</strong></div>
+      <div class="summary-box"><span>Eligible Global</span><strong>${state.configSummary.eligibleCatalogTokens}</strong></div>
     </div>
     <div class="button-row"><button type="button" class="action-button" data-action="reload-config" ${state.session.status === 'authenticated' && !state.ui.busy ? '' : 'disabled'}>Reload /api/config</button></div>
   `;

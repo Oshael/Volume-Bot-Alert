@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getStatusMetrics, type AppState } from '../../state/app-state';
+import type { AppState } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import { renderFlash } from './shared';
 
@@ -9,8 +9,6 @@ const CONFIG_FIELDS: Array<{ key: string; label: string; type?: 'number' | 'text
   { key: 'min-vol', label: 'Min 5m volume to alert ($)', min: 0 },
   { key: 'min-mcap', label: 'Min market cap to alert ($)', min: 0 },
   { key: 'max-mcap', label: 'Max market cap to alert ($)', min: 0, placeholder: '0 = no limit' },
-  { key: 'interval', label: 'Check interval (seconds)', min: 5 },
-  { key: 'dead-cycles', label: 'Remove token with no volume after (cycles)', min: 0 },
   { key: 'chain', label: 'Chain', type: 'text' },
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
 ];
@@ -25,7 +23,6 @@ export function renderLegacyShell(state: AppState, controller: AppController) {
   }
 
   wrapper.append(
-    renderLegacyHeader(state, controller),
     renderLegacyConfig(state, controller),
     renderLegacyActions(state, controller),
   );
@@ -62,40 +59,20 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
   return section;
 }
 
-function renderLegacyHeader(state: AppState, controller: AppController) {
-  const header = document.createElement('header');
-  header.className = 'legacy-topbar';
-  const metrics = getStatusMetrics(state);
-  const soundLabel = state.ui.soundEnabled ? 'NOTIF ON' : 'SOUND OFF';
-
-  header.innerHTML = `
-    <div class="legacy-logo">
-      <div class="logo-dot"></div>
-      <div>
-        <h1>VOLUME ALERT BOT</h1>
-        <div class="subtitle">Solana  DexScreener Feed  5m Monitor</div>
-      </div>
-    </div>
-    <div class="status-bar">
-      ${metrics.map((metric) => `
-        <div class="status-item">
-          <span>${metric.label}</span>
-          <div class="status-value ${metric.tone === 'ok' ? 'active' : ''} ${metric.tone === 'warn' ? 'warn' : ''}">${metric.value}</div>
-        </div>
-      `).join('')}
-      <div class="status-item"><span>${soundLabel.includes('ON') ? '??' : '??'} ${soundLabel}</span></div>
-      <div class="status-item user-status"><span>${state.session.username ?? state.session.email ?? 'User'}</span><button type="button" class="logout-btn" data-action="logout">LOGOUT</button></div>
-    </div>
-  `;
-
-  header.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
-  return header;
-}
-
 function renderLegacyConfig(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'config-grid legacy-config-grid';
   section.innerHTML = `
+    <div class="legacy-userbar">
+      <button type="button" class="legacy-userbar-link logout-link" data-action="logout">Log Out</button>
+      <div class="legacy-user-menu" data-user-menu>
+        <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu">${state.session.username ?? state.session.email ?? 'User'}</button>
+        <div class="legacy-user-dropdown">
+          <button type="button" class="legacy-user-dd-item">Profile (Soon)</button>
+          <button type="button" class="legacy-user-dd-item">Preferences (Soon)</button>
+        </div>
+      </div>
+    </div>
     ${CONFIG_FIELDS.map((field) => renderConfigField(state, field)).join('')}
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
@@ -123,6 +100,12 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
 
   section.querySelector<HTMLSelectElement>('select[name="sound-mode"]')?.addEventListener('change', (event) => {
     controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
+  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item').forEach((button) => {
+    button.addEventListener('click', () => {
+      section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+    });
   });
 
   const volumeInput = section.querySelector<HTMLInputElement>('input[name="sound-volume"]');
@@ -222,11 +205,6 @@ function renderLegacyActions(state: AppState, controller: AppController) {
     ${renderFlash(state)}
     <div class="legacy-button-strip">
       <button type="button" class="legacy-btn btn-start ${isRunning ? 'running' : ''}" data-action="toggle-monitoring">${isRunning ? ' STOP' : '? START MONITORING'}</button>
-      <a class="legacy-btn legacy-btn-accent" href="#manual-tokens-section">+ ADD TOKEN</a>
-      <button type="button" class="legacy-btn legacy-btn-accent" data-action="reload-config">? LOAD CONFIG</button>
-      <button type="button" class="legacy-btn legacy-btn-clear" data-action="clear-notice">? CLEAR STATUS</button>
-      <button type="button" class="legacy-btn legacy-btn-accent legacy-btn-sound" data-action="toggle-sound">${state.ui.soundEnabled ? '?? SOUND ON' : '?? SOUND OFF'}</button>
-      <button type="button" class="legacy-btn legacy-btn-clear" data-action="logout-all">LOGOUT ALL</button>
     </div>
   `;
 
@@ -237,10 +215,6 @@ function renderLegacyActions(state: AppState, controller: AppController) {
     }
     controller.startMonitoring();
   });
-  section.querySelector<HTMLButtonElement>('[data-action="reload-config"]')?.addEventListener('click', () => void controller.reloadConfig());
-  section.querySelector<HTMLButtonElement>('[data-action="clear-notice"]')?.addEventListener('click', () => controller.clearNotice());
-  section.querySelector<HTMLButtonElement>('[data-action="toggle-sound"]')?.addEventListener('click', () => controller.setSoundEnabled(!state.ui.soundEnabled));
-  section.querySelector<HTMLButtonElement>('[data-action="logout-all"]')?.addEventListener('click', () => void controller.logoutAll());
   section.querySelector<HTMLButtonElement>('[data-action="dismiss-flash"]')?.addEventListener('click', () => controller.clearNotice());
   return section;
 }
@@ -283,8 +257,6 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
     'min-vol': 500,
     'min-mcap': 10000,
     'max-mcap': 0,
-    interval: 30,
-    'dead-cycles': 10,
     'hvnc-min-vol': 300000,
   };
   return String(defaults[key] ?? 0);

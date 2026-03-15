@@ -1,4 +1,5 @@
 import { apiFetch } from './base';
+import eligibleCatalogCsv from '../../../../token_catalog_eligible.csv?raw';
 
 export interface ReportMigratedTokenPayload {
   address: string;
@@ -29,4 +30,110 @@ export function reportMigratedToken(payload: ReportMigratedTokenPayload, token?:
     }),
     token,
   });
+}
+
+export interface EligibleCatalogToken {
+  address: string;
+  symbol?: string | null;
+  name?: string | null;
+  mcap?: number | null;
+  lastSeenAt?: string | null;
+  lastEvaluatedAt?: string | null;
+}
+
+const FRONTEND_MONITORED_MIN_MCAP = 30_000;
+
+function splitCsvLine(line: string) {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current);
+  return cells;
+}
+
+function parseEligibleCatalogCsv(raw: string): EligibleCatalogToken[] {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const rows: EligibleCatalogToken[] = [];
+  for (const line of lines.slice(1)) {
+    const [address, symbol, name, eligible, lastMcap, lastSeenAt, lastEvaluatedAt] = splitCsvLine(line);
+    if (!address || eligible !== 't') {
+      continue;
+    }
+
+    const mcap = Number(lastMcap);
+    const normalizedMcap = Number.isFinite(mcap) ? mcap : null;
+    if (!(normalizedMcap != null && normalizedMcap >= FRONTEND_MONITORED_MIN_MCAP)) {
+      continue;
+    }
+
+    rows.push({
+      address,
+      symbol: symbol || null,
+      name: name || null,
+      mcap: normalizedMcap,
+      lastSeenAt: lastSeenAt || null,
+      lastEvaluatedAt: lastEvaluatedAt || null,
+    });
+  }
+
+  return rows;
+}
+
+const eligibleCatalogFixture = parseEligibleCatalogCsv(eligibleCatalogCsv);
+
+export function fetchEligibleCatalogFixture() {
+  return Promise.resolve([...eligibleCatalogFixture]);
+}
+
+export function fetchEligibleCatalog(token?: string | null) {
+  return apiFetch<{
+    tokens: Array<{
+      address: string;
+      symbol?: string | null;
+      name?: string | null;
+      mcap?: number | null;
+      lastSeenAt?: string | null;
+      lastEvaluatedAt?: string | null;
+    }>;
+  }>(`/api/catalog/eligible?minMcap=${FRONTEND_MONITORED_MIN_MCAP}`, { token })
+    .then((response) => response.tokens.map((item) => ({
+      address: item.address,
+      symbol: item.symbol ?? null,
+      name: item.name ?? null,
+      mcap: item.mcap ?? null,
+      lastSeenAt: item.lastSeenAt ?? null,
+      lastEvaluatedAt: item.lastEvaluatedAt ?? null,
+    })))
+    .catch(() => fetchEligibleCatalogFixture());
 }

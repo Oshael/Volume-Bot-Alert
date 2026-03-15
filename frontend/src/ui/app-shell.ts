@@ -58,6 +58,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   wireHoverPersistence(root);
   wireTradeMenus(root);
   wireSortMenus(root);
+  wireUserMenus(root);
   applyHoverState(root);
 }
 
@@ -68,6 +69,7 @@ let currentHoverKey: string | null = null;
 let hoverWired = false;
 let tradeWired = false;
 let sortMenusWired = false;
+let userMenusWired = false;
 
 function wireHoverPersistence(root: HTMLElement) {
   if (hoverWired) return;
@@ -156,6 +158,33 @@ function wireSortMenus(root: HTMLElement) {
     if (!wrap) {
       for (const openWrap of root.querySelectorAll<HTMLElement>('[data-sort-wrap].open')) {
         openWrap.classList.remove('open');
+      }
+    }
+  });
+}
+
+function wireUserMenus(root: HTMLElement) {
+  if (userMenusWired) return;
+  userMenusWired = true;
+
+  root.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const toggle = target?.closest<HTMLElement>('[data-action="toggle-user-menu"]');
+    const menu = target?.closest<HTMLElement>('[data-user-menu]');
+
+    for (const openMenu of root.querySelectorAll<HTMLElement>('[data-user-menu].open')) {
+      if (openMenu !== menu) openMenu.classList.remove('open');
+    }
+
+    if (toggle && menu) {
+      event.preventDefault();
+      menu.classList.toggle('open');
+      return;
+    }
+
+    if (!menu) {
+      for (const openMenu of root.querySelectorAll<HTMLElement>('[data-user-menu].open')) {
+        openMenu.classList.remove('open');
       }
     }
   });

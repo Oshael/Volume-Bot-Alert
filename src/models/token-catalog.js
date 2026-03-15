@@ -122,6 +122,28 @@ async function listEligibleForSnapshots(limit = 25) {
   return rows;
 }
 
+async function listEligibleVisible(limit = 500, minMcap = 30000) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 5000));
+  const safeMinMcap = Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000;
+  const { rows } = await db.query(
+    `SELECT
+       address,
+       symbol,
+       name,
+       eligible_for_monitoring,
+       last_mcap,
+       last_seen_at,
+       last_evaluated_at
+     FROM token_catalog
+     WHERE eligible_for_monitoring = TRUE
+       AND COALESCE(last_mcap, 0) >= $2
+     ORDER BY last_seen_at DESC, last_evaluated_at DESC NULLS LAST
+     LIMIT $1`,
+    [safeLimit, safeMinMcap]
+  );
+  return rows;
+}
+
 async function applyEvaluationResult(address, result) {
   const addr = String(address || '').trim();
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
@@ -192,5 +214,6 @@ module.exports = {
   listRecent,
   listDueForEvaluation,
   listEligibleForSnapshots,
+  listEligibleVisible,
   applyEvaluationResult,
 };

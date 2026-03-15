@@ -10,7 +10,6 @@ export interface ConfigPayload {
   tokens: AddressItem[];
   blocklist: AddressItem[];
   starredTokens: Array<{ address: string }>;
-  bootstrapTokens: Array<{ address: string }>;
 }
 
 export function fetchConfig(token?: string | null) {

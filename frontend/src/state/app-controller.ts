@@ -9,7 +9,7 @@ import {
   type ConfigPayload,
 } from '../services/api/config';
 import { normalizeManualDexPayload } from '../services/dex/normalize';
-import { reportMigratedToken } from '../services/api/catalog';
+import { fetchEligibleCatalog, reportMigratedToken, type EligibleCatalogToken } from '../services/api/catalog';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -160,7 +160,6 @@ export function createAppController(): AppController {
         tokens: state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
         blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
         starredTokens: snapshot.map((address) => ({ address })),
-        bootstrapTokens: state.data.bootstrapTokens.map((address) => ({ address })),
       }, token);
 
       if (revision == starredPersistRevision) {
@@ -246,7 +245,7 @@ export function createAppController(): AppController {
   }
 
   function getPumpVisibleTokens() {
-    const entryVol = getPumpConfigNumber('pump-entry-vol', 20000);
+    const entryVol = getPumpConfigNumber('pump-entry-vol', 3000);
     const maxAgeMin = getPumpConfigNumber('pump-max-age-min', 0);
     const now = Date.now();
     return state.data.pumpTokens.filter((item) => {
@@ -915,7 +914,7 @@ export function createAppController(): AppController {
       setNotice(`Local monitored alert: ${symbol}`);
     }
   }
-  function rebuildTrackedState(payload: ConfigPayload) {
+  function rebuildTrackedState(payload: ConfigPayload, eligibleCatalogTokens: EligibleCatalogToken[] = []) {
     const existing = new Map(state.data.monitoredTokens.map((item) => [item.address, item]));
     const blockedSet = new Set(payload.blocklist.map((item) => item.address));
 
@@ -933,19 +932,23 @@ export function createAppController(): AppController {
     for (const item of manualTokens) {
       monitoredMap.set(item.address, item);
     }
-    for (const address of payload.bootstrapTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b))) {
-      if (blockedSet.has(address)) continue;
-      if (monitoredMap.has(address)) continue;
-      const existingItem = existing.get(address);
-      monitoredMap.set(address, {
+    for (const item of eligibleCatalogTokens
+      .slice()
+      .sort((a, b) => a.address.localeCompare(b.address))) {
+      if (blockedSet.has(item.address)) continue;
+      if (monitoredMap.has(item.address)) continue;
+      const existingItem = existing.get(item.address);
+      monitoredMap.set(item.address, {
         ...existingItem,
-        address,
-        label: existingItem?.label ?? 'Bootstrap',
+        address: item.address,
+        label: existingItem?.label ?? item.symbol ?? 'Eligible',
+        symbol: existingItem?.symbol ?? item.symbol ?? null,
+        name: existingItem?.name ?? item.name ?? null,
+        mcap: existingItem?.mcap ?? item.mcap ?? null,
         manual: false,
         _userManual: false,
       });
     }
-
     state.data.manualTokens = manualTokens;
     state.data.monitoredTokens = [...monitoredMap.values()];
     state.data.recentTokens = [];
@@ -954,7 +957,7 @@ export function createAppController(): AppController {
     console.info('[tracked:rebuild]', {
       manualCount: manualTokens.length,
       monitoredCount: monitoredMap.size,
-      bootstrapCount: payload.bootstrapTokens.length,
+      eligibleCatalogCount: eligibleCatalogTokens.length,
       payloadTokenCount: payload.tokens.length,
       payloadTokens: payload.tokens.map((item) => item.address),
     });
@@ -1132,7 +1135,7 @@ export function createAppController(): AppController {
       manualTokens: 0,
       blocklist: 0,
       starredTokens: 0,
-      bootstrapTokens: 0,
+      eligibleCatalogTokens: 0,
     };
     state.pumpfun.connected = false;
     state.pumpfun.statusLabel = 'disconnected';
@@ -1151,7 +1154,7 @@ export function createAppController(): AppController {
       oldWeekRemovalLog: [],
       blocklist: [],
       starredTokens: [],
-      bootstrapTokens: [],
+      eligibleCatalogTokens: [],
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -1176,14 +1179,14 @@ export function createAppController(): AppController {
     hydrateSoundSettings();
   }
 
-  function applyConfig(payload: ConfigPayload) {
+  function applyConfig(payload: ConfigPayload, eligibleCatalogTokens: EligibleCatalogToken[] = []) {
     state.configSummary = {
       loaded: true,
       configCount: Object.keys(payload.configs || {}).length,
       manualTokens: payload.tokens.length,
       blocklist: payload.blocklist.length,
       starredTokens: payload.starredTokens.length,
-      bootstrapTokens: payload.bootstrapTokens.length,
+      eligibleCatalogTokens: eligibleCatalogTokens.length,
     };
     state.data.configs = payload.configs || {};
     state.pumpfun.bondTargetMcap = getConfigNumber('pump-bond-mcap', state.pumpfun.bondTargetMcap || 35000);
@@ -1191,17 +1194,20 @@ export function createAppController(): AppController {
     persistSoundSettings();
     state.data.blocklist = sortAddresses(payload.blocklist);
     state.data.starredTokens = payload.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
-    state.data.bootstrapTokens = payload.bootstrapTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+    state.data.eligibleCatalogTokens = eligibleCatalogTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
     state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
     state.bars.blocklist = payload.blocklist.length;
-    rebuildTrackedState(payload);
+    rebuildTrackedState(payload, eligibleCatalogTokens);
     refreshPumpPanelCounts();
     syncTrackedTokenSubscriptions();
   }
 
   async function reloadConfigInternal(token: string) {
-    const payload = await fetchConfig(token);
-    applyConfig(payload);
+    const [payload, eligibleCatalogTokens] = await Promise.all([
+      fetchConfig(token),
+      fetchEligibleCatalog(token),
+    ]);
+    applyConfig(payload, eligibleCatalogTokens);
   }
 
   return {
@@ -1366,7 +1372,6 @@ export function createAppController(): AppController {
         const session = await fetchCurrentSession(token);
         applySession(session.user, token);
         await reloadConfigInternal(token);
-        startMonitoringTimers();
         setNotice('Session restored from /api/auth/me and /api/config.');
       } catch (error) {
         clearAuthToken();
@@ -1390,7 +1395,6 @@ export function createAppController(): AppController {
         setAuthToken(result.token);
         applySession(result.user, result.token);
         await reloadConfigInternal(result.token);
-        startMonitoringTimers();
         setNotice(result.message);
       } catch (error) {
         clearAuthToken();
@@ -1573,7 +1577,6 @@ export function createAppController(): AppController {
           tokens: nextTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
           blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
           starredTokens: state.data.starredTokens.map((address) => ({ address })),
-          bootstrapTokens: state.data.bootstrapTokens.map((address) => ({ address })),
         }, token);
 
         console.info('[manual:add] backend-sync-ok', {
@@ -1613,7 +1616,6 @@ export function createAppController(): AppController {
           tokens: nextTokens,
           blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
           starredTokens: state.data.starredTokens.map((address) => ({ address })),
-          bootstrapTokens: state.data.bootstrapTokens.map((address) => ({ address })),
         }, token);
 
         state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
@@ -1690,11 +1692,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-
-
-
 
 
 

@@ -11,7 +11,7 @@ export function renderPumpfunSection(state: AppState, controller: AppController)
       <span style="color:var(--pump-color)">&#9889; PUMPFUN - LIVE</span>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="font-size:9px;color:var(--muted)">ENTRY ($)</span>
-        <input class="panel-mini-input" name="pump-entry-vol" type="number" value="${fmtConfig(state, 'pump-entry-vol', 20000)}">
+        <input class="panel-mini-input" name="pump-entry-vol" type="number" value="${fmtConfig(state, 'pump-entry-vol', 3000)}">
         <span style="font-size:9px;color:var(--muted)">ALERT ($)</span>
         <input class="panel-mini-input" name="pump-min-vol" type="number" value="${fmtConfig(state, 'pump-min-vol', 100000)}">
         <span class="count" style="background:rgba(176,106,255,0.15);color:var(--pump-color)">${visibleTokens.length}</span>
@@ -27,7 +27,7 @@ export function renderPumpfunSection(state: AppState, controller: AppController)
   section.querySelectorAll<HTMLInputElement>('.panel-mini-input').forEach((input) => {
     input.addEventListener('change', () => {
       void controller.saveMonitoringConfig({
-        'pump-entry-vol': Number((section.querySelector('input[name="pump-entry-vol"]') as HTMLInputElement)?.value || 20000),
+        'pump-entry-vol': Number((section.querySelector('input[name="pump-entry-vol"]') as HTMLInputElement)?.value || 3000),
         'pump-min-vol': Number((section.querySelector('input[name="pump-min-vol"]') as HTMLInputElement)?.value || 100000),
       });
     });
@@ -46,7 +46,7 @@ export function renderPumpfunSection(state: AppState, controller: AppController)
 }
 
 function getVisiblePumpTokens(state: AppState) {
-  const entryVol = fmtConfig(state, 'pump-entry-vol', 20000);
+  const entryVol = fmtConfig(state, 'pump-entry-vol', 3000);
   const maxAgeMin = fmtConfig(state, 'pump-max-age-min', 0);
   const now = Date.now();
   return [...state.data.pumpTokens]

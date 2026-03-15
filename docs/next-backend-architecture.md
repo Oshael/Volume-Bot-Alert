@@ -163,3 +163,98 @@ Frontend receives prepared state instead of raw heavy polling burden.
 1. Add history read endpoints on top of `token_market_snapshots`.
 2. Then wire frontend-originated `Recent Tokens`, `Old Tokens 1 Week+`, and alert-triggered tokens into backend catalog persistence so bar visibility and alerts also promote tokens into permanent backend memory.
 
+## Agreed Follow-Ups
+
+These notes capture product/architecture decisions discussed after the first catalog phases so the next sessions do not depend on chat history.
+
+### 1. Global catalog should drive new-account discovery
+- New accounts should not depend on the static seed file as their main source of monitored tokens.
+- The long-term source for new-account baseline should be the live backend catalog on Railway.
+- The relevant shared subset for all accounts is the set of tokens that are currently considered globally eligible for monitoring.
+- This means new accounts should receive the current eligible catalog view, not an outdated per-user bootstrap snapshot derived from `data/initial-monitored-tokens.txt`.
+
+### 2. Manual tokens have dual meaning
+- A manual token is both:
+  - a per-user preference ("I always want to track this token"), and
+  - a catalog-ingestion path when the token does not already exist in the backend catalog.
+- If a user adds a manual token that is already in `token_catalog`, it should remain only a user-level manual association for that account.
+- If a user adds a manual token that is not yet in `token_catalog`, the backend should upsert it into the permanent catalog and also keep it as a manual token for that user.
+- Different accounts may have different manual overlays even when they share the same global eligible catalog view.
+
+### 3. Shared visible set vs per-user overlay
+- The intended frontend model is:
+  - shared/global tokens = backend catalog tokens that are currently eligible,
+  - per-user overlay = manual tokens,
+  - per-user filtering = blocklist, starred state, dismiss state, UI preferences, sound/config preferences.
+- In other words, the meaningful difference between normal user accounts should not be the global monitored baseline; it should be the personal overlay and user-specific filters/preferences.
+
+### 4. Bootstrap tokens should lose their central role
+- `user_bootstrap_tokens` may still exist temporarily for compatibility or migration purposes.
+- However, they should not remain the primary source of truth for what a new account sees.
+- If kept, they should be treated as legacy/bootstrap scaffolding rather than the long-term monitored baseline.
+
+### 5. Rediscovery / re-entry behavior must be global
+- If an old token falls out of relevance and later becomes relevant again, all accounts should be able to see it once the backend marks it eligible again.
+- A new account created shortly before that re-entry should still receive the token once it becomes globally eligible.
+- Therefore, account onboarding cannot rely only on a one-time bootstrap snapshot; the live backend eligibility layer must remain authoritative.
+
+### 6. Current ingestion assumptions confirmed
+- Manual tokens already act as one catalog-ingestion source.
+- PumpFun migrations already act as another catalog-ingestion source.
+- Dex discovery currently appears to depend on an active product flow (for example a user session causing Dex fetch/subscription activity), rather than a fully autonomous global discovery crawler.
+- That current behavior is acceptable for now and matches the intended product mental model: the bot grows its catalog through active usage plus migrations/manual additions.
+
+### 7. Need to formalize one official backend eligibility rule
+- Current code paths use more than one threshold/meaning for "eligible":
+  - catalog worker currently treats `marketCap > 0` as eligible,
+  - explicit catalog promotion uses `marketCap >= 30000`,
+  - frontend monitored visibility also effectively treats `>= 30000` as the practical floor for non-manual tokens.
+- This mismatch must be resolved in a future step so the backend becomes the single source of truth for eligibility semantics.
+
+### 8. Global junk suppression is preferable to hard delete
+- Some migrated tokens are effectively garbage and should not remain visible forever.
+- The preferred long-term direction is not physical deletion from the permanent catalog as a first response.
+- Instead, add a global suppression/junk state in the catalog so these tokens:
+  - stay auditable in backend memory,
+  - can be excluded from eligibility and new-account views,
+  - can later be restored if needed,
+  - do not pollute the monitored baseline for all users.
+- Automatic garbage detection still needs a careful heuristic and should be conservative.
+
+### 9. Monitoring priority policy to implement later
+- Global eligibility and monitoring priority are not the same concept.
+- A token may remain in the permanent catalog while being checked less often depending on its current state.
+- Status: documented and agreed at the product level, but not implemented yet in backend workers/DB logic.
+- The agreed first draft of the backend priority policy is:
+
+#### Dormant
+- Applies to tokens with no useful pair / no meaningful signs / effectively dead state.
+- Planned recheck interval: `10 minutes`.
+
+#### Low Priority
+- Applies when `marketCap < 30k`.
+- Planned recheck interval: `6 minutes`.
+
+#### Normal Priority
+- Applies when `30k <= marketCap < 100k`.
+- Planned base recheck interval: `2m30s`.
+
+#### Volume-growth boost inside the normal band
+- For tokens in the `30k <= marketCap < 100k` band, priority should be boosted based on percentage growth of volume over time.
+- This boost should be based on backend comparison/history, not only the raw current Dex payload.
+- Superseded decision:
+  - instead of using percentage growth of volume, use the `%` change data delivered by Dex (`PCHANGE`) as the boost signal.
+  - the exact thresholds still need implementation, but the direction is now `PCHANGE`-driven rather than backend-computed volume-growth driven.
+
+#### High Priority
+- Applies when `marketCap >= 100k`.
+- Planned base recheck interval: `10s`.
+- Tokens in this band should still be internally ordered by priority.
+- Higher total volume should increase priority within the high-priority queue.
+- Higher market cap should also increase priority within the high-priority queue.
+
+### 10. BirdEye adoption direction
+- Future priority/monitoring work is expected to use BirdEye as an additional market-data source for richer token information and price/value data.
+- The remaining design question is timing: the best interval strategy still needs practical tuning after BirdEye is integrated.
+- The team currently prefers using Dex-delivered `PCHANGE` values as the boost signal instead of backend-computed percentage growth of volume.
+- Status: discussed and recorded only; no BirdEye integration or priority-engine implementation has been added yet.

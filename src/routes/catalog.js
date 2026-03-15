@@ -13,6 +13,29 @@ const promoteRetryState = new Map();
 
 router.use(authenticate);
 
+router.get('/eligible', async (req, res) => {
+  try {
+    const tokens = await tokenCatalog.listEligibleVisible(req.query?.limit, req.query?.minMcap);
+    res.json({
+      tokens: tokens.map((item) => ({
+        address: item.address,
+        symbol: item.symbol || null,
+        name: item.name || null,
+        eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
+        mcap: item.last_mcap == null ? null : Number(item.last_mcap),
+        lastSeenAt: item.last_seen_at || null,
+        lastEvaluatedAt: item.last_evaluated_at || null,
+      })),
+      count: tokens.length,
+      source: 'token_catalog',
+      minMcap: Number.isFinite(Number(req.query?.minMcap)) ? Number(req.query.minMcap) : MONITORED_MIN_MCAP,
+    });
+  } catch (err) {
+    console.error('GET /catalog/eligible error:', err.message);
+    res.status(500).json({ error: 'Failed to load eligible catalog tokens' });
+  }
+});
+
 function buildCatalogTokenPayload(body = {}, fallbackSource = 'unknown') {
   return {
     address: body.address || body.mint || null,

@@ -141,7 +141,7 @@ export interface ConfigSummary {
   manualTokens: number;
   blocklist: number;
   starredTokens: number;
-  bootstrapTokens: number;
+  eligibleCatalogTokens: number;
 }
 
 export interface AppState {
@@ -184,7 +184,7 @@ export interface AppState {
     oldWeekRemovalLog: RemovalLogEntry[];
     blocklist: AddressItem[];
     starredTokens: string[];
-    bootstrapTokens: string[];
+    eligibleCatalogTokens: string[];
     alerts: AlertEntry[];
     pumpTokens: PumpTokenEntry[];
     recentPumpMigrations: PumpMigrationEntry[];
@@ -250,7 +250,7 @@ export function createAppState(): AppState {
       manualTokens: 0,
       blocklist: 0,
       starredTokens: 0,
-      bootstrapTokens: 0,
+      eligibleCatalogTokens: 0,
     },
     data: {
       configs: {},
@@ -264,7 +264,7 @@ export function createAppState(): AppState {
       oldWeekRemovalLog: [],
       blocklist: [],
       starredTokens: [],
-      bootstrapTokens: [],
+      eligibleCatalogTokens: [],
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -308,8 +308,6 @@ export function getStatusMetrics(state: AppState): StatusMetric[] {
     },
   ];
 }
-
-
 
 
 

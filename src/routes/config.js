@@ -6,7 +6,6 @@ const userConfig = require('../models/user-config');
 const userToken = require('../models/user-token');
 const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
-const userBootstrapToken = require('../models/user-bootstrap-token');
 const tokenCatalog = require('../models/token-catalog');
 
 // All config routes require authentication
@@ -16,7 +15,6 @@ router.use(authenticate);
 const MAX_TOKENS = 200;      // máx tokens manuais por user
 const MAX_BLOCKLIST = 500;   // máx blocklist por user
 const MAX_STARRED = 500;     // max favorites per user
-const MAX_BOOTSTRAP = 500;   // max bootstrap baseline tokens per user
 
 function normalizeAddressItems(items) {
   return items
@@ -67,14 +65,12 @@ router.get('/', async (req, res) => {
     const tokens = await userToken.getAll(req.user.id);
     const blocklist = await userBlocklist.getAll(req.user.id);
     const starredTokens = await userStarredToken.getAll(req.user.id);
-    const bootstrapTokens = await userBootstrapToken.getAll(req.user.id);
 
     res.json({
       configs,
       tokens,
       blocklist,
       starredTokens,
-      bootstrapTokens,
     });
   } catch (err) {
     console.error('GET /config error:', err.message);
@@ -89,12 +85,11 @@ router.get('/', async (req, res) => {
  */
 router.put('/', async (req, res) => {
   try {
-    const { configs, tokens, blocklist, starredTokens, bootstrapTokens } = req.body;
+    const { configs, tokens, blocklist, starredTokens } = req.body;
     let validatedConfigs = null;
     let normalizedTokens = null;
     let normalizedBlocklist = null;
     let normalizedStarred = null;
-    let normalizedBootstrap = null;
 
     // Validate everything first so the request is all-or-nothing.
     if (configs && typeof configs === 'object') {
@@ -156,23 +151,6 @@ router.put('/', async (req, res) => {
       }
     }
 
-    if (Array.isArray(bootstrapTokens)) {
-      if (bootstrapTokens.length > MAX_BOOTSTRAP) {
-        return res.status(400).json({
-          error: `Maximum ${MAX_BOOTSTRAP} bootstrap tokens allowed`,
-        });
-      }
-
-      normalizedBootstrap = normalizeAddressItems(bootstrapTokens);
-      const invalid = normalizedBootstrap.filter((item) => !userToken.isValidAddress(item.address));
-      if (invalid.length > 0) {
-        return res.status(400).json({
-          error: `${invalid.length} invalid bootstrap token address(es)`,
-        });
-      }
-    }
-
-
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
@@ -223,18 +201,6 @@ router.put('/', async (req, res) => {
         }
       }
 
-      if (normalizedBootstrap) {
-        await client.query('DELETE FROM user_bootstrap_tokens WHERE user_id = $1', [req.user.id]);
-        for (const bootstrapItem of normalizedBootstrap) {
-          await client.query(
-            `INSERT INTO user_bootstrap_tokens (user_id, address)
-             VALUES ($1, $2)
-             ON CONFLICT (user_id, address) DO NOTHING`,
-            [req.user.id, bootstrapItem.address]
-          );
-        }
-      }
-
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -247,7 +213,6 @@ router.put('/', async (req, res) => {
       upsertCatalogItems(normalizedTokens, 'user-manual'),
       upsertCatalogItems(normalizedBlocklist, 'blocklist'),
       upsertCatalogItems(normalizedStarred, 'starred'),
-      upsertCatalogItems(normalizedBootstrap, 'bootstrap-user'),
     ]);
 
     const result = {
@@ -255,7 +220,6 @@ router.put('/', async (req, res) => {
       tokens: await userToken.getAll(req.user.id),
       blocklist: await userBlocklist.getAll(req.user.id),
       starredTokens: await userStarredToken.getAll(req.user.id),
-      bootstrapTokens: await userBootstrapToken.getAll(req.user.id),
     };
 
     res.json({ message: 'Config synced', ...result });
