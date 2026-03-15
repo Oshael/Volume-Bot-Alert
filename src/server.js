@@ -56,6 +56,12 @@ app.use(cors({
   },
   credentials: true,
 }));
+app.options('*', cors({
+  origin: (origin, callback) => {
+    return callback(null, isAllowedOrigin(origin));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(generalLimiter);
