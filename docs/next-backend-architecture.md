@@ -239,6 +239,25 @@ These notes capture product/architecture decisions discussed after the first cat
 - Applies when `30k <= marketCap < 100k`.
 - Planned base recheck interval: `2m30s`.
 
+## Additional Session Notes
+
+### Frontend/backend behavior validated
+- Shared monitored baseline now comes from backend eligible catalog instead of per-user bootstrap tokens.
+- New-account flow was validated with backend running: freshly created accounts receive the global eligible set.
+- Frontend only displays shared/global monitored entries at `mcap >= 30k`; manual tokens remain user-specific exceptions.
+
+### Bootstrap tokens status
+- `bootstrapTokens` has been removed from the active frontend/backend config flow.
+- Legacy data may still exist in older code/database paths, but it is no longer the active source of monitored state.
+
+### Local development operational note
+- Development rate limiting was disabled in local backend middleware because repeated frontend/session testing was triggering `429 Too Many Requests` on `/api/auth/me`.
+- This change is intended for `NODE_ENV=development` only and should not affect production behavior.
+
+### Confirmed future work not yet implemented
+- Meteora historical pool deltas still need frontend exposure/tooltips.
+- Frontend should stop updating token data entirely when monitoring is off; current behavior still needs a dedicated pass.
+
 #### Volume-growth boost inside the normal band
 - For tokens in the `30k <= marketCap < 100k` band, priority should be boosted based on percentage growth of volume over time.
 - This boost should be based on backend comparison/history, not only the raw current Dex payload.

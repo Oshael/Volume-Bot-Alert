@@ -194,6 +194,13 @@ async function submitLegacyConfig(section: HTMLElement, controller: AppControlle
     payload[key] = input.value;
   }
 
+  console.info('[config-debug-ui]', {
+    stage: 'submitLegacyConfig',
+    minVolInputValue: (section.querySelector('input[name="min-vol"]') as HTMLInputElement | null)?.value ?? null,
+    payloadMinVol: payload['min-vol'],
+    payload,
+  });
+
   await controller.saveMonitoringConfig(payload);
 }
 

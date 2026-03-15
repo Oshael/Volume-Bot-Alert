@@ -11,6 +11,7 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
   keyGenerator: (req) => req.ip,
+  skip: () => config.nodeEnv === 'development',
 });
 
 /**
@@ -25,6 +26,7 @@ const authLimiter = rateLimit({
   message: { error: 'Too many authentication attempts, please try again later' },
   keyGenerator: (req) => req.ip,
   skipSuccessfulRequests: false,
+  skip: () => config.nodeEnv === 'development',
 });
 
 module.exports = { generalLimiter, authLimiter };

@@ -73,6 +73,7 @@ export interface PumpTokenEntry {
   mint: string;
   mintAddress?: string | null;
   pairAddress?: string | null;
+  metadataUri?: string | null;
   name?: string | null;
   symbol?: string | null;
   imageUrl?: string | null;
@@ -91,6 +92,8 @@ export interface PumpTokenEntry {
   vTokensInBondingCurve?: number | null;
   virtualSolReserves?: number | null;
   hidden?: boolean;
+  _imageResolved?: boolean;
+  _imageResolving?: boolean;
 }
 
 export interface PumpMigrationEntry {
@@ -308,7 +311,5 @@ export function getStatusMetrics(state: AppState): StatusMetric[] {
     },
   ];
 }
-
-
 
 

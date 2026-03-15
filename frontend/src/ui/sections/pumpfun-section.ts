@@ -68,7 +68,8 @@ function renderPumpRow(token: PumpTokenEntry, busy: boolean, state: AppState) {
   const vol5m = getPumpVolume5m(token);
   const bondPct = Math.min(100, Math.max(0, ((token.mcap || 0) / Math.max(1, state.pumpfun.bondTargetMcap || 35000)) * 100));
   const showBond = state.pumpfun.migrationCount >= 1;
-  const bondTone = bondPct > 80 ? 'bond-hot' : bondPct > 50 ? 'bond-warm' : 'bond-cool';
+  const bondTone = bondPct > 60 ? 'bond-hot' : bondPct > 30 ? 'bond-warm' : 'bond-cool';
+  const mcapTone = showBond ? `pump-mcap-tone ${bondTone}` : 'pump-mcap-tone bond-cool';
   const avatar = token.imageUrl ? `<img src="${token.imageUrl}" alt="${symbol}" class="tok-avatar" />` : `<div class="tok-avatar-placeholder">${symbol.slice(0, 2).toUpperCase()}</div>`;
 
   return `
@@ -76,10 +77,10 @@ function renderPumpRow(token: PumpTokenEntry, busy: boolean, state: AppState) {
       ${avatar}
       <div class="pump-row-main">
         <div class="panel-row-title"><span class="token-name">${symbol}</span> <span class="token-addr">${subtitle}</span></div>
-        <div class="panel-row-meta pump-meta-line"><span class="meta-white">VOL 5M ${fmtMoney(vol5m)}</span> <span class="pump-inline-mcap">MCAP ${fmtMoney(token.mcap)}</span> <span class="meta-white">AGE ${age}</span></div>
+        <div class="panel-row-meta pump-meta-line"><span class="meta-white">VOL 5M ${fmtMoney(vol5m)}</span> <span class="pump-inline-mcap ${mcapTone}">MCAP ${fmtMoney(token.mcap)}</span> <span class="meta-white">AGE ${age}</span></div>
         ${showBond ? `<div class="pump-bond-shell compact"><div class="pump-bond-fill ${bondTone}" style="width:${bondPct.toFixed(0)}%"></div></div>` : ''}
       </div>
-      <div class="pump-side-metrics"><div class="pump-mcap">MC ${fmtMoney(token.mcap)}</div><div class="pump-vol">V ${fmtMoney(token.volTotal)}</div></div>
+      <div class="pump-side-metrics"><div class="pump-mcap ${mcapTone}">MC ${fmtMoney(token.mcap)}</div><div class="pump-vol">V ${fmtMoney(token.volTotal)}</div></div>
       <div class="pump-inline-actions"><button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${token.mint}" title="Copy contract">&#10697;</button>${renderTradeTerminalMenu(token.mint, token.mintAddress || token.mint, token.pairAddress)}<button type="button" class="action-glyph danger-glyph" data-action="remove-pump" data-mint="${token.mint}" ${busy ? 'disabled' : ''} title="Remove row">X</button></div>
     </article>
   `;

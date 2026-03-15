@@ -74,7 +74,7 @@ function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean) {
 
 function renderAlertHeadline(alert: AlertEntry, toneClass: string) {
   if (alert.isOldSurge) {
-    return `<span class="alert-badge-v68 old-surge">\u{1F525} OLD TOKEN SURGE<br><span class="alert-badge-sub">${fmtPct(alert.pct)}</span></span>`;
+    return `<span class="alert-badge-v68 old-surge">\u{1F525} OLD TOKEN SURGE<br><span class="alert-badge-sub">${fmtPct(alert.pct)} ${alert.label || 'PCHANGE'}</span></span>`;
   }
   if (alert.isHvnc) {
     return `<span class="alert-badge-v68 mega">\u{1F6A8} High Volume New Coin<br><span class="alert-badge-sub">${fmtMoney(alert.volume24h)} total vol</span></span>`;

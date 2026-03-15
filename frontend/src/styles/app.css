@@ -704,15 +704,15 @@ a {
 }
 
 .pump-bond-fill.bond-cool {
-  background: var(--accent-violet);
+  background: #2ea8ff;
 }
 
 .pump-bond-fill.bond-warm {
-  background: #ffaa00;
+  background: var(--accent-violet);
 }
 
 .pump-bond-fill.bond-hot {
-  background: var(--accent-green);
+  background: #ffaa00;
 }
 .pump-toast-container {
   position: fixed;
@@ -804,15 +804,15 @@ a {
 }
 
 .pump-bond-fill.bond-cool {
-  background: var(--accent-violet);
+  background: #2ea8ff;
 }
 
 .pump-bond-fill.bond-warm {
-  background: #ffaa00;
+  background: var(--accent-violet);
 }
 
 .pump-bond-fill.bond-hot {
-  background: var(--accent-green);
+  background: #ffaa00;
 }
 
 .app-shell {
@@ -1863,12 +1863,15 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .pump-token-row {
-  grid-template-columns: 36px 1fr auto auto;
+  grid-template-columns: 44px minmax(0, 1fr) 102px auto;
+  align-items: center;
+  gap: 14px;
 }
 
 .pump-side-metrics {
   text-align: right;
-  min-width: 84px;
+  min-width: 102px;
+  padding-top: 2px;
 }
 
 .pump-mcap {
@@ -1879,7 +1882,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .pump-vol {
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .pump-inline-actions {
@@ -2724,13 +2727,13 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-row .token-name,
 .monitored-token-row .token-name,
 .pump-token-row .token-name {
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .alert-row .token-addr,
 .monitored-token-row .token-addr,
 .pump-token-row .token-addr {
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .alert-row .inline-link,
@@ -2810,17 +2813,87 @@ TEMP_LEGACY_BAR_TITLE {
 
 .pump-meta-line .meta-white {
   color: #fff !important;
+  font-size: 11px;
 }
 
 .pump-inline-mcap {
   color: var(--pump-color) !important;
   font-weight: 700;
+  font-size: 11px;
+}
+
+.pump-token-row .tok-avatar,
+.pump-token-row .tok-avatar-placeholder {
+  width: 42px;
+  height: 42px;
+  align-self: center;
+  object-position: center center;
+}
+
+.pump-token-row .tok-avatar-placeholder {
+  font-size: 13px;
+}
+
+.pump-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 5px;
+  padding-left: 10px;
+  line-height: 1.35;
+}
+
+.pump-token-row .token-name {
+  font-size: 13px;
+}
+
+.pump-token-row .token-addr {
+  font-size: 11px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pump-token-row .panel-row-title {
+  gap: 10px;
+  align-items: center;
+  line-height: 1.15;
+  padding-left: 10px;
+}
+
+.pump-token-row .pump-row-main {
+  min-width: 0;
+  padding-top: 0;
+}
+
+.pump-token-row .panel-row-meta span {
+  white-space: nowrap;
+}
+
+.pump-mcap-tone.bond-cool {
+  color: #2ea8ff !important;
+}
+
+.pump-mcap-tone.bond-warm {
+  color: var(--accent-violet) !important;
+}
+
+.pump-mcap-tone.bond-hot {
+  color: #ffaa00 !important;
 }
 
 .monitored-token-row-v68 {
-  grid-template-columns: 36px minmax(0, 1fr) 78px;
+  grid-template-columns: 42px minmax(0, 1fr) 78px;
   gap: 12px !important;
   padding: 12px 12px !important;
+}
+
+.monitored-token-row .tok-avatar,
+.monitored-token-row .tok-avatar-placeholder {
+  width: 42px;
+  height: 42px;
 }
 
 .monitored-row-main .panel-row-title {

@@ -95,6 +95,100 @@ function clearTransientRetry(userId, address, source) {
   promoteRetryState.delete(getRetryKey(userId, address, source));
 }
 
+function toHttpAssetUrl(url) {
+  const value = String(url || '').trim();
+  if (!value) return null;
+  if (value.startsWith('ipfs://')) {
+    return `https://ipfs.io/ipfs/${value.slice('ipfs://'.length)}`;
+  }
+  return value;
+}
+
+function buildMetadataGatewayUrls(uri) {
+  const normalized = toHttpAssetUrl(uri);
+  if (!normalized) return [];
+
+  const urls = [normalized];
+  if (String(uri || '').startsWith('ipfs://')) {
+    const cid = String(uri).slice('ipfs://'.length);
+    urls.push(`https://cf-ipfs.com/ipfs/${cid}`);
+    urls.push(`https://gateway.pinata.cloud/ipfs/${cid}`);
+  } else if (normalized.includes('/ipfs/')) {
+    const cid = normalized.split('/ipfs/')[1];
+    if (cid) {
+      urls.push(`https://cf-ipfs.com/ipfs/${cid}`);
+      urls.push(`https://gateway.pinata.cloud/ipfs/${cid}`);
+    }
+  }
+
+  return [...new Set(urls)];
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 5000) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!response.ok) {
+    return { ok: false, status: response.status, body: null };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    body: await response.json(),
+  };
+}
+
+async function resolvePumpfunMetadata(mint, metadataUri) {
+  try {
+    const pump = await fetchJsonWithTimeout(`https://frontend-api.pump.fun/coins/${mint}`);
+    if (pump.ok && pump.body) {
+      return {
+        symbol: pump.body.symbol || null,
+        name: pump.body.name || null,
+        imageUrl: toHttpAssetUrl(pump.body.image_uri || pump.body.image || null),
+      };
+    }
+  } catch (_) {
+    // Fall through to URI/Dex fallbacks when PumpFun is unavailable upstream.
+  }
+
+  for (const url of buildMetadataGatewayUrls(metadataUri)) {
+    try {
+      const metadata = await fetchJsonWithTimeout(url);
+      if (metadata.ok && metadata.body) {
+        const imageUrl = toHttpAssetUrl(metadata.body.image || metadata.body.image_url || null);
+        if (imageUrl) {
+          return {
+            symbol: metadata.body.symbol || null,
+            name: metadata.body.name || null,
+            imageUrl,
+          };
+        }
+      }
+    } catch (_) {
+      // Try the next gateway.
+    }
+  }
+
+  try {
+    const dexData = await dexscreener.getTokenPairs(mint);
+    const bestPair = dexscreener.getBestPair(dexData, 'solana');
+    if (bestPair) {
+      return {
+        symbol: bestPair.baseToken?.symbol || null,
+        name: bestPair.baseToken?.name || null,
+        imageUrl: toHttpAssetUrl(bestPair.info?.imageUrl || bestPair.info?.header || bestPair.baseToken?.logoUri || null),
+      };
+    }
+  } catch (_) {
+    // Leave the placeholder if Dex also has no image.
+  }
+
+  return null;
+}
+
 async function buildValidatedPromotion(user, body = {}) {
   const requested = buildCatalogTokenPayload(body, 'unknown');
   const address = String(requested.address || '').trim();
@@ -192,6 +286,31 @@ router.get('/history/:address', async (req, res) => {
   } catch (err) {
     console.error('GET /catalog/history/:address error:', err.message);
     res.status(500).json({ error: 'Failed to load token history' });
+  }
+});
+
+router.get('/pumpfun/:mint/meta', async (req, res) => {
+  try {
+    const mint = String(req.params?.mint || '').trim();
+    const metadataUri = String(req.query?.uri || '').trim() || null;
+    if (!isValidAddress(mint)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    const payload = await resolvePumpfunMetadata(mint, metadataUri);
+    if (!payload?.imageUrl) {
+      return res.status(404).json({ error: 'PumpFun metadata unavailable' });
+    }
+
+    res.json({
+      mint,
+      symbol: payload?.symbol || null,
+      name: payload?.name || null,
+      imageUrl: payload.imageUrl || null,
+    });
+  } catch (err) {
+    console.error('GET /catalog/pumpfun/:mint/meta error:', err.message);
+    res.status(500).json({ error: 'Failed to load PumpFun metadata' });
   }
 });
 

@@ -258,6 +258,91 @@ Implemented:
   - `sol:price`
 - PumpFun live state now exists in modular frontend state:
   - connection status
+
+### 12. Global eligible catalog flow
+Implemented:
+- frontend no longer uses bootstrap tokens as the active baseline
+- global eligible catalog feed now comes from backend `GET /api/catalog/eligible`
+- frontend only shows shared/global tokens with `mcap >= 30k`
+- manual tokens remain a per-user overlay on top of the shared eligible set
+- compatibility fallback to local `token_catalog_eligible.csv` still exists for development if the endpoint fails
+
+Validated:
+- fresh account login now shows the shared eligible token set when backend is running
+- build passes
+
+### 13. Config contract cleanup
+Implemented:
+- `bootstrapTokens` removed from the active frontend contract
+- `/api/config` frontend flow now works with:
+  - `configs`
+  - `tokens`
+  - `blocklist`
+  - `starredTokens`
+- frontend config save bug traced and fixed:
+  - backend save/reload path verified
+  - UI draft system no longer overwrites freshly loaded config values after rerender
+  - config form now preserves in-flight values during save to avoid visual jump-back on blur
+
+Validated:
+- `min-vol` now persists correctly across save + refresh
+- build passes
+
+### 14. Monitoring shell simplification
+Implemented:
+- bot no longer auto-starts monitoring on login/session restore
+- start/stop remains manual
+- extra legacy action buttons next to monitoring toggle removed
+- header/logo above the monitoring button removed
+- compact top-right user menu added with:
+  - `Log Out`
+  - clickable username
+  - placeholder menu items for future profile/preferences actions
+
+Validated:
+- build passes
+
+### 15. PumpFun live polish and parity fixes
+Implemented:
+- `pump-entry-vol` default changed to `3000`
+- PumpFun token image resolution now supports:
+  - direct socket image when present
+  - IPFS-to-HTTP conversion
+  - backend metadata route via `/api/catalog/pumpfun/:mint/meta`
+  - backend fallback chain using PumpFun API, metadata URI/IPFS gateways, and DexScreener image fields
+- PumpLive row layout tuned repeatedly for parity:
+  - avatar resized and spacing corrected
+  - title/subtitle/meta line rebalanced
+  - MCAP color now follows migration progress state
+  - migration progress color bands now use:
+    - `0%-30%` blue
+    - `30%-60%` violet
+    - `60%-100%` yellow
+- PumpLive current visual sizing after validation:
+  - avatar: `42px`
+  - placeholder: `42px`
+  - placeholder text: `13px`
+  - ticker: `13px`
+  - subtitle: `11px`
+  - `VOL / MCAP / AGE`: `11px`
+  - right-side `MC`: `13px`
+  - right-side `V`: `13px`
+  - right column min width: `102px`
+
+Validated:
+- build passes after each iteration
+- layout no longer visibly collides with avatar space in the tested state
+
+### 16. Alerts wording refinement
+Implemented:
+- `OLD TOKEN SURGE` alert now explicitly labels the percent source when it comes from old-token price change logic
+- current rendering uses:
+  - `PCHANGE 1H`, or
+  - `PCHANGE 6H`
+  in the alert badge subtitle
+
+Validated:
+- build passes
   - SOL/USD price
   - visible pump rows
   - session migration count

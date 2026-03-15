@@ -53,7 +53,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   }
 
   root.append(shell);
-  applyConfigDraft(root, configDraft);
+  applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
   wireHoverPersistence(root);
   wireTradeMenus(root);
@@ -232,22 +232,30 @@ function captureConfigDraft(root: HTMLElement): ConfigDraft | null {
   };
 }
 
-function applyConfigDraft(root: HTMLElement, draft: ConfigDraft | null) {
+function applyConfigDraft(root: HTMLElement, draft: ConfigDraft | null, state: AppState) {
   if (!draft) return;
 
   const configSection = root.querySelector('.legacy-config-grid');
   if (!configSection) return;
 
-  for (const field of configSection.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]')) {
-    const value = draft.values[field.name];
-    if (value != null) {
-      field.value = value;
+  if (!draft.focusedName && state.ui.busy) {
+    for (const field of configSection.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]')) {
+      const value = draft.values[field.name];
+      if (value != null) {
+        field.value = value;
+      }
     }
+    return;
   }
 
   if (!draft.focusedName) return;
   const focused = configSection.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${draft.focusedName}"]`);
   if (!focused) return;
+
+  const value = draft.values[draft.focusedName];
+  if (value != null) {
+    focused.value = value;
+  }
 
   focused.focus();
   if (focused instanceof HTMLInputElement && draft.selectionStart != null && draft.selectionEnd != null) {

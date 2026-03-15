@@ -137,3 +137,17 @@ export function fetchEligibleCatalog(token?: string | null) {
     })))
     .catch(() => fetchEligibleCatalogFixture());
 }
+
+export function fetchPumpfunTokenMeta(mint: string, token?: string | null, metadataUri?: string | null) {
+  const params = new URLSearchParams();
+  if (metadataUri) {
+    params.set('uri', metadataUri);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return apiFetch<{
+    mint: string;
+    symbol?: string | null;
+    name?: string | null;
+    imageUrl?: string | null;
+  }>(`/api/catalog/pumpfun/${encodeURIComponent(mint)}/meta${suffix}`, { token });
+}

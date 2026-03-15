@@ -9,7 +9,7 @@ import {
   type ConfigPayload,
 } from '../services/api/config';
 import { normalizeManualDexPayload } from '../services/dex/normalize';
-import { fetchEligibleCatalog, reportMigratedToken, type EligibleCatalogToken } from '../services/api/catalog';
+import { fetchEligibleCatalog, fetchPumpfunTokenMeta, reportMigratedToken, type EligibleCatalogToken } from '../services/api/catalog';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -37,6 +37,7 @@ const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const OLD_ALERT_1H_PCT = 100;
 const OLD_ALERT_6H_PCT = 150;
+const PUMP_IMAGE_TIMEOUT_MS = 5000;
 
 export interface AppController {
   state: AppState;
@@ -84,6 +85,21 @@ export function createAppController(): AppController {
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
+
+  function writeConfigDebug(stage: string, extra: Record<string, unknown> = {}) {
+    const debugWindow = window as Window & {
+      __botConfigDebug?: Array<Record<string, unknown>>;
+    };
+    const entry = {
+      stage,
+      ts: new Date().toISOString(),
+      sessionEmail: state.session.email,
+      minVol: state.data.configs['min-vol'],
+      ...extra,
+    };
+    debugWindow.__botConfigDebug = [...(debugWindow.__botConfigDebug || []).slice(-39), entry];
+    console.info('[config-debug]', entry);
+  }
 
   function emit() {
     for (const listener of listeners) {
@@ -140,8 +156,10 @@ export function createAppController(): AppController {
     }
 
     try {
+      writeConfigDebug('persistUiConfigs:before-patch', { configs });
       const result = await patchConfig(configs, token);
       state.data.configs = { ...state.data.configs, ...result.configs };
+      writeConfigDebug('persistUiConfigs:after-patch', { configs: result.configs });
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to persist UI config');
       emit();
@@ -163,6 +181,12 @@ export function createAppController(): AppController {
       }, token);
 
       if (revision == starredPersistRevision) {
+        state.data.configs = result.configs || {};
+        applyUiPreferencesFromConfigs();
+        writeConfigDebug('persistStarredTokens:after-sync', {
+          starredCount: result.starredTokens.length,
+          syncedMinVol: result.configs?.['min-vol'],
+        });
         state.data.starredTokens = result.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
         emit();
       }
@@ -242,6 +266,17 @@ export function createAppController(): AppController {
 
   function getPumpConfigNumber(key: string, fallback: number) {
     return getConfigNumber(key, fallback);
+  }
+
+  function toHttpAssetUrl(url: string | null | undefined) {
+    const value = String(url || '').trim();
+    if (!value) {
+      return null;
+    }
+    if (value.startsWith('ipfs://')) {
+      return `https://ipfs.io/ipfs/${value.slice('ipfs://'.length)}`;
+    }
+    return value;
   }
 
   function getPumpVisibleTokens() {
@@ -463,6 +498,47 @@ export function createAppController(): AppController {
     }
   }
 
+  async function resolvePumpTokenImage(mint: string) {
+    const token = state.data.pumpTokens.find((item) => item.mint === mint);
+    const sessionToken = state.session.token;
+    if (!token || !sessionToken || token.imageUrl || token._imageResolved || token._imageResolving) {
+      return;
+    }
+
+    token._imageResolving = true;
+    emit();
+
+    try {
+      const timeout = window.setTimeout(() => {
+        state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
+          ? { ...item, _imageResolved: true, _imageResolving: false }
+          : item);
+        emit();
+      }, PUMP_IMAGE_TIMEOUT_MS);
+
+      try {
+        const data = await fetchPumpfunTokenMeta(mint, sessionToken, token.metadataUri || null);
+        if (!data?.imageUrl) {
+          return;
+        }
+
+        state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
+          ? { ...item, imageUrl: data.imageUrl, _imageResolved: true, _imageResolving: false }
+          : item);
+        emit();
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (_) {
+      // Keep the placeholder avatar if runtime image resolution fails.
+    } finally {
+      state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
+        ? { ...item, _imageResolved: true, _imageResolving: false }
+        : item);
+      emit();
+    }
+  }
+
   function createOrUpdatePumpToken(raw: Record<string, unknown>, mode: 'new' | 'trade') {
     const mint = String(raw.mint || '').trim();
     if (!mint || isBlocked(mint)) {
@@ -476,22 +552,26 @@ export function createAppController(): AppController {
       mint,
       mintAddress: mint,
       pairAddress: typeof raw.pairAddress === 'string' && raw.pairAddress.trim() ? raw.pairAddress.trim() : null,
+      metadataUri: typeof raw.uri === 'string' && raw.uri.trim() ? raw.uri.trim() : null,
       name: String(raw.name || mint.slice(0, 8)),
       symbol: String(raw.symbol || mint.slice(0, 6)),
-      imageUrl: typeof raw.image === 'string' ? raw.image : null,
+      imageUrl: typeof raw.image === 'string' ? toHttpAssetUrl(raw.image) : null,
       createdAt: now,
       mcap: null,
       volTotal: 0,
       vol5m: [],
       hidden: false,
+      _imageResolved: false,
+      _imageResolving: false,
     };
 
     token.name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : token.name;
     token.symbol = typeof raw.symbol === 'string' && raw.symbol.trim() ? raw.symbol.trim() : token.symbol;
-    token.imageUrl = typeof raw.image === 'string' && raw.image.trim() ? raw.image : token.imageUrl;
+    token.imageUrl = typeof raw.image === 'string' && raw.image.trim() ? toHttpAssetUrl(raw.image) : token.imageUrl;
     token.createdAt = token.createdAt ?? now;
     token.mintAddress = token.mintAddress || mint;
     token.pairAddress = typeof raw.pairAddress === 'string' && raw.pairAddress.trim() ? raw.pairAddress.trim() : token.pairAddress || null;
+    token.metadataUri = typeof raw.uri === 'string' && raw.uri.trim() ? raw.uri.trim() : token.metadataUri || null;
 
     const usdMcap = Number(raw.usd_market_cap);
     const marketCapSol = Number(raw.marketCapSol);
@@ -535,6 +615,10 @@ export function createAppController(): AppController {
 
     state.data.pumpTokens.sort((a, b) => (b.mcap || 0) - (a.mcap || 0));
     refreshPumpPanelCounts();
+
+    if (!token.imageUrl) {
+      void resolvePumpTokenImage(mint);
+    }
   }
   function logRemoval(target: 'recent' | 'oldWeek', token: ManualTokenEntry, reason: string) {
     const entry: RemovalLogEntry = {
@@ -791,11 +875,14 @@ export function createAppController(): AppController {
       const pc1h = token.priceChange1h ?? null;
       const pc6h = token.priceChange6h ?? null;
       let pct = 0;
+      let surgeWindow: '1H' | '6H' | null = null;
 
       if (pc6h != null && pc6h >= OLD_ALERT_6H_PCT) {
         pct = pc6h;
+        surgeWindow = '6H';
       } else if (pc1h != null && pc1h >= OLD_ALERT_1H_PCT) {
         pct = pc1h;
+        surgeWindow = '1H';
       }
 
       if (pct > 0) {
@@ -821,7 +908,7 @@ export function createAppController(): AppController {
           prevMcap: token.prevMcap ?? null,
           mcap: token.mcap ?? null,
           pct,
-          label: 'OLD SURGE',
+          label: surgeWindow ? `PCHANGE ${surgeWindow}` : 'PCHANGE',
           isOldSurge: true,
         });
         setNotice(`Old token surge alert: ${symbol}`);
@@ -1189,6 +1276,10 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: eligibleCatalogTokens.length,
     };
     state.data.configs = payload.configs || {};
+    writeConfigDebug('applyConfig', {
+      loadedMinVol: payload.configs?.['min-vol'],
+      configKeys: Object.keys(payload.configs || {}),
+    });
     state.pumpfun.bondTargetMcap = getConfigNumber('pump-bond-mcap', state.pumpfun.bondTargetMcap || 35000);
     applyUiPreferencesFromConfigs();
     persistSoundSettings();
@@ -1207,6 +1298,9 @@ export function createAppController(): AppController {
       fetchConfig(token),
       fetchEligibleCatalog(token),
     ]);
+    writeConfigDebug('reloadConfigInternal:fetched', {
+      fetchedMinVol: payload.configs?.['min-vol'],
+    });
     applyConfig(payload, eligibleCatalogTokens);
   }
 
@@ -1494,8 +1588,19 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        const result = await patchConfig(configs, token);
-        state.data.configs = { ...state.data.configs, ...result.configs };
+        writeConfigDebug('saveMonitoringConfig:before-patch', {
+          outgoingConfigs: configs,
+          outgoingMinVol: configs['min-vol'],
+        });
+        const patchResult = await patchConfig(configs, token);
+        writeConfigDebug('saveMonitoringConfig:after-patch', {
+          outgoingMinVol: configs['min-vol'],
+          responseMinVol: patchResult.configs?.['min-vol'],
+        });
+        await reloadConfigInternal(token);
+        writeConfigDebug('saveMonitoringConfig:after-reload', {
+          reloadedMinVol: state.data.configs['min-vol'],
+        });
         sweepMinMcapRemove();
         deriveAgeBuckets();
         if (monitoringInterval) {
@@ -1572,12 +1677,18 @@ export function createAppController(): AppController {
           .concat([{ address: normalizedAddress, label: label ?? null }])
           .sort((a, b) => a.address.localeCompare(b.address));
 
-        await syncConfig({
+        const result = await syncConfig({
           configs: state.data.configs,
           tokens: nextTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
           blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
           starredTokens: state.data.starredTokens.map((address) => ({ address })),
         }, token);
+
+        state.data.configs = result.configs || {};
+        applyUiPreferencesFromConfigs();
+        writeConfigDebug('addManualToken:after-sync', {
+          syncedMinVol: result.configs?.['min-vol'],
+        });
 
         console.info('[manual:add] backend-sync-ok', {
           address: normalizedAddress,
@@ -1611,12 +1722,18 @@ export function createAppController(): AppController {
           .filter((item) => item.address !== address)
           .map((item) => ({ address: item.address, label: item.label ?? null }));
 
-        await syncConfig({
+        const result = await syncConfig({
           configs: state.data.configs,
           tokens: nextTokens,
           blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
           starredTokens: state.data.starredTokens.map((address) => ({ address })),
         }, token);
+
+        state.data.configs = result.configs || {};
+        applyUiPreferencesFromConfigs();
+        writeConfigDebug('removeManualToken:after-sync', {
+          syncedMinVol: result.configs?.['min-vol'],
+        });
 
         state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
         state.data.monitoredTokens = state.data.monitoredTokens.map((item) => item.address === address ? { ...item, manual: false, _userManual: false } : item);
@@ -1692,15 +1809,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-
-
-
-
-
-
-
 
 
 
