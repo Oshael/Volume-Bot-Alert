@@ -265,7 +265,6 @@ Implemented:
 - global eligible catalog feed now comes from backend `GET /api/catalog/eligible`
 - frontend only shows shared/global tokens with `mcap >= 30k`
 - manual tokens remain a per-user overlay on top of the shared eligible set
-- compatibility fallback to local `token_catalog_eligible.csv` still exists for development if the endpoint fails
 
 Validated:
 - fresh account login now shows the shared eligible token set when backend is running
