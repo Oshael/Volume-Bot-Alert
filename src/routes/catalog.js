@@ -3,12 +3,18 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
+const meteora = require('../services/meteora');
 const { isValidAddress } = require('../models/user-token');
 
 const MONITORED_MIN_MCAP = 30000;
 const TRANSIENT_RETRY_MS = 40000;
+const METEORA_STALE_MS = 60 * 1000;
+const METEORA_DELTA_1H_MS = 60 * 60 * 1000;
+const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
+const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
 const promoteRetryState = new Map();
 
 router.use(authenticate);
@@ -64,6 +70,102 @@ function extractTwitterUrl(pair) {
 function toNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function toDateOrNull(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function computeMeteoraDelta(history, latestTvl, windowMs) {
+  if (!Array.isArray(history) || history.length < 2 || !(latestTvl > 0)) {
+    return null;
+  }
+
+  const now = Date.now();
+  const targetTs = now - windowMs;
+  let baseline = null;
+
+  for (const point of history) {
+    const pointTs = toDateOrNull(point.ts)?.getTime();
+    const tvl = Number(point.total_tvl);
+    if (!Number.isFinite(pointTs) || !(tvl > 0)) {
+      continue;
+    }
+
+    if (pointTs <= targetTs) {
+      baseline = { ts: pointTs, tvl };
+    } else if (!baseline) {
+      baseline = { ts: pointTs, tvl };
+      break;
+    } else {
+      break;
+    }
+  }
+
+  if (!baseline || !(baseline.tvl > 0)) {
+    return null;
+  }
+
+  const pct = ((latestTvl - baseline.tvl) / baseline.tvl) * 100;
+  return Math.abs(pct) < 0.01 ? null : pct;
+}
+
+function buildMeteoraSummary(address, historyRows) {
+  const latest = historyRows[historyRows.length - 1] || null;
+  if (!latest) {
+    return {
+      address,
+      tvl: null,
+      poolAddress: null,
+      poolCount: 0,
+      lastSnapshotAt: null,
+      change1h: null,
+      change6h: null,
+      change24h: null,
+      noPool: true,
+    };
+  }
+
+  const latestTvl = Number(latest.total_tvl);
+  return {
+    address,
+    tvl: Number.isFinite(latestTvl) ? latestTvl : null,
+    poolAddress: latest.best_pool_address || null,
+    poolCount: Number(latest.pool_count) || 0,
+    lastSnapshotAt: latest.ts || null,
+    change1h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_1H_MS),
+    change6h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_6H_MS),
+    change24h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_24H_MS),
+    noPool: false,
+  };
+}
+
+async function refreshMeteoraSnapshots(addresses) {
+  if (!Array.isArray(addresses) || addresses.length === 0) {
+    return {};
+  }
+
+  const results = await meteora.fetchMeteoraBulk(addresses);
+  const now = new Date();
+  for (const address of addresses) {
+    const item = results[address];
+    if (!item || !(Number(item.tvl) > 0)) {
+      continue;
+    }
+
+    await tokenMeteoraSnapshot.insertSnapshot({
+      tokenAddress: address,
+      ts: now,
+      totalTvl: item.tvl,
+      bestPoolAddress: item.poolAddress,
+      poolCount: item.poolCount,
+      source: 'meteora',
+    });
+  }
+
+  return results;
 }
 
 function getMarketCap(pair) {
@@ -286,6 +388,82 @@ router.get('/history/:address', async (req, res) => {
   } catch (err) {
     console.error('GET /catalog/history/:address error:', err.message);
     res.status(500).json({ error: 'Failed to load token history' });
+  }
+});
+
+router.post('/meteora/batch', async (req, res) => {
+  try {
+    const addresses = [...new Set((req.body?.addresses || []).map((value) => String(value || '').trim()).filter(Boolean))];
+    if (addresses.length === 0) {
+      return res.json({ items: [], count: 0 });
+    }
+    if (addresses.length > 400) {
+      return res.status(400).json({ error: 'Too many addresses requested' });
+    }
+    if (addresses.some((address) => !isValidAddress(address))) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    const latestRows = await tokenMeteoraSnapshot.getLatestByAddresses(addresses);
+    const latestMap = new Map(latestRows.map((row) => [row.token_address, row]));
+    const staleOrMissing = addresses.filter((address) => {
+      const latest = latestMap.get(address);
+      const latestTs = toDateOrNull(latest?.ts)?.getTime() || 0;
+      return !latest || Date.now() - latestTs >= METEORA_STALE_MS;
+    });
+
+    if (staleOrMissing.length > 0) {
+      await refreshMeteoraSnapshots(staleOrMissing);
+    }
+
+    const historyRows = await tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 });
+    const grouped = new Map();
+    for (const row of historyRows) {
+      const current = grouped.get(row.token_address) || [];
+      current.push(row);
+      grouped.set(row.token_address, current);
+    }
+
+    const items = addresses.map((address) => buildMeteoraSummary(address, grouped.get(address) || []));
+    res.json({
+      items,
+      count: items.length,
+    });
+  } catch (err) {
+    console.error('POST /catalog/meteora/batch error:', err.message);
+    res.status(500).json({ error: 'Failed to load Meteora batch data' });
+  }
+});
+
+router.get('/meteora/:address/history', async (req, res) => {
+  try {
+    const address = String(req.params?.address || '').trim();
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    const latestRows = await tokenMeteoraSnapshot.getLatestByAddresses([address]);
+    const latest = latestRows[0] || null;
+    const latestTs = toDateOrNull(latest?.ts)?.getTime() || 0;
+    if (!latest || Date.now() - latestTs >= METEORA_STALE_MS) {
+      await refreshMeteoraSnapshots([address]);
+    }
+
+    const snapshots = await tokenMeteoraSnapshot.listHistoryByAddress(address, {
+      limit: req.query?.limit,
+      hours: req.query?.hours,
+      days: req.query?.days,
+    });
+
+    res.json({
+      address,
+      count: snapshots.length,
+      snapshots,
+      summary: buildMeteoraSummary(address, snapshots),
+    });
+  } catch (err) {
+    console.error('GET /catalog/meteora/:address/history error:', err.message);
+    res.status(500).json({ error: 'Failed to load Meteora history' });
   }
 });
 

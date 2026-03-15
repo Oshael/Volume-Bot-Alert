@@ -42,7 +42,15 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
         <span class="legacy-bar-note">Pinned &middot; always monitored</span>
       </div>
     </div>
-    ${renderManualTokenTable(state.data.manualTokens, state.ui.busy, state.data.starredTokens, state.ui.manualSort, state.ui.manualSortWindow)}
+    ${renderManualTokenTable(
+      state.data.manualTokens,
+      state.ui.busy,
+      state.data.starredTokens,
+      state.ui.manualSort,
+      state.ui.manualSortWindow,
+      state.data.meteoraByAddress,
+      Number(state.data.configs['meteora-min-pool']) || 5000,
+    )}
   `;
 
   bindTokenActions(section, controller);
@@ -86,5 +94,4 @@ export function renderManualTokenEntryForm(state: AppState, controller: AppContr
 
   return wrap;
 }
-
 

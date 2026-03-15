@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, ManualTokenEntry, RemovalLogEntry } from '../../state/app-state';
+import type { AppState, ManualTokenEntry, MeteoraEntry, RemovalLogEntry } from '../../state/app-state';
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -188,14 +188,14 @@ function sortBucketTokens(tokens: ManualTokenEntry[], mode: BucketSortMode, wind
   });
 }
 
-export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortMode: BucketSortMode = 'mcap', sortWindow: BucketSortWindow = '24h') {
+export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortMode: BucketSortMode = 'mcap', sortWindow: BucketSortWindow = '24h', meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens loaded for this account yet.</p>';
   const starredSet = new Set(starredTokens);
   const sorted = sortBucketTokens(tokens, sortMode, sortWindow);
-  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet });
+  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool });
 }
 
-export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortMode: BucketSortMode = 'vol', sortWindow: BucketSortWindow = '24h') {
+export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortMode: BucketSortMode = 'vol', sortWindow: BucketSortWindow = '24h', meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
   if (tokens.length === 0) return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
 
   const starredSet = new Set(starredTokens);
@@ -207,7 +207,7 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
   const pageItems = sorted.slice(pageStart, pageStart + safePerPage);
 
   return `
-    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, startRank: pageStart + 1 })}
+    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1 })}
     <div class="bucket-footer">
       <label class="compact-inline"><span>Per Page</span><input type="number" min="10" step="1" data-action="${mode === 'recent' ? 'recent-per-page' : 'old-week-per-page'}" value="${safePerPage}" /></label>
       <div class="bucket-page-indicator">Page ${safePage + 1} / ${totalPages}</div>
@@ -225,6 +225,8 @@ function renderTokenTableShell(options: {
   rows: ManualTokenEntry[];
   busy: boolean;
   starredSet: Set<string>;
+  meteoraByAddress: Record<string, MeteoraEntry>;
+  meteoraMinPool: number;
   startRank?: number;
 }) {
   return `
@@ -249,14 +251,14 @@ function renderTokenTableShell(options: {
           </tr>
         </thead>
         <tbody>
-          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), (options.startRank ?? 1) + index)).join('')}
+          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), options.meteoraByAddress, options.meteoraMinPool, (options.startRank ?? 1) + index)).join('')}
         </tbody>
       </table>
     </div>
   `;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, rank: number) {
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const dexUrl = item.pairUrl || `https://dexscreener.com/solana/${item.address}`;
   const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
@@ -297,9 +299,84 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
       <td class="num-col">${renderPctSpan(item.priceChange1h)}</td>
       <td class="num-col">${renderPctSpan(item.priceChange6h)}</td>
       <td class="num-col">${renderPctSpan(item.priceChange24h)}</td>
-      <td class="num-col meteora-col">-</td>
+      <td class="num-col meteora-col">${renderMeteoraCell(item.address, meteoraByAddress[item.address], meteoraMinPool)}</td>
       <td class="action-col">${actionButton}</td>
     </tr>
+  `;
+}
+
+const METEORA_TVL_HISTORY_1H = 3600000;
+const METEORA_TVL_HISTORY_6H = 21600000;
+const METEORA_TVL_HISTORY_24H = 86400000;
+
+function getMeteoraTvlChange(entry: MeteoraEntry, windowMs: number) {
+  if (windowMs === METEORA_TVL_HISTORY_1H && entry.change1h != null) {
+    return entry.change1h;
+  }
+  if (windowMs === METEORA_TVL_HISTORY_6H && entry.change6h != null) {
+    return entry.change6h;
+  }
+  if (windowMs === METEORA_TVL_HISTORY_24H && entry.change24h != null) {
+    return entry.change24h;
+  }
+
+  const history = entry.history || [];
+  if (history.length < 2 || !(entry.tvl > 0)) {
+    return null;
+  }
+
+  const now = Date.now();
+  const targetTs = now - windowMs;
+  let baseline: { tvl: number; ts: number } | null = null;
+
+  for (const point of history) {
+    if (point.ts <= targetTs) {
+      baseline = point;
+    } else if (!baseline) {
+      baseline = point;
+      break;
+    } else {
+      break;
+    }
+  }
+
+  if (!baseline || !(baseline.tvl > 0)) {
+    return null;
+  }
+
+  const pct = ((entry.tvl - baseline.tvl) / baseline.tvl) * 100;
+  return Math.abs(pct) < 0.01 ? null : pct;
+}
+
+function renderMeteoraDelta(label: string, value: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return `<div class="meteora-tip-line"><span>${label}</span><span class="muted">-</span></div>`;
+  }
+
+  const cls = value >= 0 ? 'pct-pos' : 'pct-neg';
+  return `<div class="meteora-tip-line"><span>${label}</span><span class="${cls}">${value >= 0 ? '+' : ''}${value.toFixed(1)}%</span></div>`;
+}
+
+function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, minPool: number) {
+  if (!entry || entry.noPool || !(entry.tvl > 0) || (minPool > 0 && entry.tvl < minPool)) {
+    return '-';
+  }
+
+  const ch1h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_1H);
+  const ch6h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_6H);
+  const ch24h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_24H);
+  const poolLabel = (entry.poolCount || 0) > 1 ? `${entry.poolCount} pools` : '1 pool';
+
+  return `
+    <div class="met-tip-wrap">
+      <span class="meteora-value">$${fmtCompact(entry.tvl)}</span>
+      <div class="met-tip-dd">
+        <div class="meteora-tip-head"><span>🌊 Meteora TVL</span><span>${poolLabel}</span></div>
+        ${renderMeteoraDelta('1H', ch1h)}
+        ${renderMeteoraDelta('6H', ch6h)}
+        ${renderMeteoraDelta('24H', ch24h)}
+      </div>
+    </div>
   `;
 }
 
@@ -345,6 +422,13 @@ export function fmtMoney(value?: number | null) {
   return `$${value.toFixed(0)}`;
 }
 
+function fmtCompact(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return '-';
+  if (Math.abs(value) >= 1000000) return `${(value / 1000000).toFixed(2)}M`;
+  if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(0)}K`;
+  return value.toFixed(0);
+}
+
 export function fmtPct(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return '-';
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
@@ -375,9 +459,3 @@ export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: 
   wrapper.innerHTML = renderManualTokenTable([item], busy, options.isStarred ? [item.address] : []);
   return wrapper.innerHTML;
 }
-
-
-
-
-
-

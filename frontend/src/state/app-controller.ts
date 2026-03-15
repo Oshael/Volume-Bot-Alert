@@ -1,4 +1,4 @@
-import { createAppState, type AddressItem, type AlertEntry, type AppState, type ManualTokenEntry, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
+import { createAppState, type AddressItem, type AlertEntry, type AppState, type ManualTokenEntry, type MeteoraEntry, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import { fetchCurrentSession, login, logout, logoutAll, type SessionUser } from '../services/api/auth';
 import {
   addBlockedToken as addBlockedTokenRequest,
@@ -9,7 +9,7 @@ import {
   type ConfigPayload,
 } from '../services/api/config';
 import { normalizeManualDexPayload } from '../services/dex/normalize';
-import { fetchEligibleCatalog, fetchPumpfunTokenMeta, reportMigratedToken, type EligibleCatalogToken } from '../services/api/catalog';
+import { fetchEligibleCatalog, fetchMeteoraBatch, fetchPumpfunTokenMeta, reportMigratedToken, type EligibleCatalogToken } from '../services/api/catalog';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -38,6 +38,9 @@ const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const OLD_ALERT_1H_PCT = 100;
 const OLD_ALERT_6H_PCT = 150;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
+const METEORA_POLL_INTERVAL_MS = 30000;
+const METEORA_FETCH_HAS_POOL_COOLDOWN_MS = 25000;
+const METEORA_FETCH_NO_POOL_COOLDOWN_MS = 5 * 60 * 1000;
 
 export interface AppController {
   state: AppState;
@@ -82,6 +85,7 @@ export function createAppController(): AppController {
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
+  let meteoraPollTimer: ReturnType<typeof setInterval> | null = null;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -266,6 +270,101 @@ export function createAppController(): AppController {
 
   function getPumpConfigNumber(key: string, fallback: number) {
     return getConfigNumber(key, fallback);
+  }
+
+  function getMeteoraMinPool() {
+    return getConfigNumber('meteora-min-pool', 5000);
+  }
+
+  function getMeteoraTrackedAddresses() {
+    const addresses = new Set<string>();
+    for (const item of state.data.monitoredTokens) addresses.add(item.address);
+    for (const item of state.data.recentTokens) addresses.add(item.address);
+    for (const item of state.data.oldWeekTokens) addresses.add(item.address);
+    return [...addresses];
+  }
+
+  async function meteoraPollAll() {
+    if (state.runtime.mode !== 'active') {
+      return;
+    }
+
+    const addresses = getMeteoraTrackedAddresses();
+    if (addresses.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const toFetch = addresses.filter((address) => {
+      const cached = state.data.meteoraByAddress[address];
+      if (!cached?.lastFetch) {
+        return true;
+      }
+
+      const cooldown = cached.noPool ? METEORA_FETCH_NO_POOL_COOLDOWN_MS : METEORA_FETCH_HAS_POOL_COOLDOWN_MS;
+      return now - cached.lastFetch >= cooldown;
+    });
+
+    if (toFetch.length === 0) {
+      return;
+    }
+
+    const sessionToken = state.session.token;
+    if (!sessionToken) {
+      return;
+    }
+
+    const items = await fetchMeteoraBatch(toFetch, sessionToken);
+    let changed = false;
+    for (const item of items) {
+      const address = String(item.address || '').trim();
+      if (!address) continue;
+
+      if (item.noPool || !(Number(item.tvl) > 0)) {
+        const existing = state.data.meteoraByAddress[address];
+        state.data.meteoraByAddress[address] = existing
+          ? { ...existing, noPool: true, lastFetch: now }
+          : { tvl: 0, noPool: true, lastFetch: now, history: [] };
+        changed = true;
+        continue;
+      }
+
+      const nextEntry: MeteoraEntry = {
+        ...(state.data.meteoraByAddress[address] || { history: [] }),
+        tvl: Number(item.tvl) || 0,
+        poolAddress: item.poolAddress || null,
+        poolCount: Number(item.poolCount) || 0,
+        noPool: false,
+        lastFetch: now,
+        lastSnapshotAt: item.lastSnapshotAt || null,
+        change1h: item.change1h ?? null,
+        change6h: item.change6h ?? null,
+        change24h: item.change24h ?? null,
+      };
+      state.data.meteoraByAddress[address] = nextEntry;
+      changed = true;
+    }
+
+    if (changed) {
+      emit();
+    }
+  }
+
+  function startMeteoraPoll() {
+    if (meteoraPollTimer || state.runtime.mode !== 'active') {
+      return;
+    }
+    void meteoraPollAll();
+    meteoraPollTimer = setInterval(() => {
+      void meteoraPollAll();
+    }, METEORA_POLL_INTERVAL_MS);
+  }
+
+  function stopMeteoraPoll() {
+    if (meteoraPollTimer) {
+      clearInterval(meteoraPollTimer);
+      meteoraPollTimer = null;
+    }
   }
 
   function toHttpAssetUrl(url: string | null | undefined) {
@@ -801,6 +900,9 @@ export function createAppController(): AppController {
   }
 
   function syncTrackedTokenSubscriptions() {
+    if (state.runtime.mode !== 'active') {
+      return;
+    }
     for (const item of state.data.monitoredTokens) {
       if (!isBlocked(item.address)) {
         requestDexToken(item.address);
@@ -1097,6 +1199,7 @@ export function createAppController(): AppController {
     startedAt = Date.now();
     computeUptimeLabel();
     runMonitoringCycle();
+    startMeteoraPoll();
     monitoringInterval = setInterval(runMonitoringCycle, seconds * 1000);
     pumpGcInterval = setInterval(() => {
       runPumpGarbageCollection();
@@ -1112,6 +1215,7 @@ export function createAppController(): AppController {
     if (monitoringInterval) clearInterval(monitoringInterval);
     if (uptimeInterval) clearInterval(uptimeInterval);
     if (pumpGcInterval) clearInterval(pumpGcInterval);
+    stopMeteoraPoll();
     monitoringInterval = null;
     uptimeInterval = null;
     pumpGcInterval = null;
@@ -1139,6 +1243,9 @@ export function createAppController(): AppController {
         emit();
       },
       onDexTokenData(payload) {
+        if (state.runtime.mode !== 'active') {
+          return;
+        }
         const debugWindow = window as Window & { __botDexDebug?: { patchCount: number; lastAddress: string | null; lastAt: number | null } };
         const currentDebug = debugWindow.__botDexDebug ?? { patchCount: 0, lastAddress: null, lastAt: null };
         debugWindow.__botDexDebug = {
@@ -1160,6 +1267,9 @@ export function createAppController(): AppController {
         emit();
       },
       onSolPrice(payload) {
+        if (state.runtime.mode !== 'active') {
+          return;
+        }
         const price = Number(payload.price);
         if (Number.isFinite(price) && price > 0) {
           state.pumpfun.solPriceUsd = price;
@@ -1167,6 +1277,9 @@ export function createAppController(): AppController {
         emit();
       },
       onPumpNewToken(payload) {
+        if (state.runtime.mode !== 'active') {
+          return;
+        }
         createOrUpdatePumpToken(payload, 'new');
         const mint = String(payload.mint || '').trim();
         if (mint) {
@@ -1175,10 +1288,16 @@ export function createAppController(): AppController {
         emit();
       },
       onPumpTrade(payload) {
+        if (state.runtime.mode !== 'active') {
+          return;
+        }
         createOrUpdatePumpToken(payload, 'trade');
         emit();
       },
       onPumpMigrate(payload) {
+        if (state.runtime.mode !== 'active') {
+          return;
+        }
         const mint = String(payload.mint || '').trim();
         if (!mint) return;
         const token = state.data.pumpTokens.find((item) => item.mint === mint);
@@ -1242,6 +1361,7 @@ export function createAppController(): AppController {
       blocklist: [],
       starredTokens: [],
       eligibleCatalogTokens: [],
+      meteoraByAddress: {},
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -1291,6 +1411,9 @@ export function createAppController(): AppController {
     rebuildTrackedState(payload, eligibleCatalogTokens);
     refreshPumpPanelCounts();
     syncTrackedTokenSubscriptions();
+    if (state.runtime.mode === 'active') {
+      void meteoraPollAll();
+    }
   }
 
   async function reloadConfigInternal(token: string) {
@@ -1662,7 +1785,9 @@ export function createAppController(): AppController {
       state.bars.manual = state.data.manualTokens.length;
       refreshMonitoredPanelCounts();
       deriveAgeBuckets();
-      requestDexToken(normalizedAddress);
+      if (state.runtime.mode === 'active') {
+        requestDexToken(normalizedAddress);
+      }
       console.info('[manual:add] local-state-applied', {
         address: normalizedAddress,
         afterManualCount: state.data.manualTokens.length,
@@ -1809,9 +1934,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-
 
 
 

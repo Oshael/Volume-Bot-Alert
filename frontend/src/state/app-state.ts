@@ -69,6 +69,24 @@ export interface PumpVolumePoint {
   ts: number;
 }
 
+export interface MeteoraTvlPoint {
+  tvl: number;
+  ts: number;
+}
+
+export interface MeteoraEntry {
+  tvl: number;
+  poolAddress?: string | null;
+  poolCount?: number;
+  noPool?: boolean;
+  lastFetch?: number;
+  lastSnapshotAt?: string | null;
+  change1h?: number | null;
+  change6h?: number | null;
+  change24h?: number | null;
+  history?: MeteoraTvlPoint[];
+}
+
 export interface PumpTokenEntry {
   mint: string;
   mintAddress?: string | null;
@@ -188,6 +206,7 @@ export interface AppState {
     blocklist: AddressItem[];
     starredTokens: string[];
     eligibleCatalogTokens: string[];
+    meteoraByAddress: Record<string, MeteoraEntry>;
     alerts: AlertEntry[];
     pumpTokens: PumpTokenEntry[];
     recentPumpMigrations: PumpMigrationEntry[];
@@ -268,6 +287,7 @@ export function createAppState(): AppState {
       blocklist: [],
       starredTokens: [],
       eligibleCatalogTokens: [],
+      meteoraByAddress: {},
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -311,5 +331,3 @@ export function getStatusMetrics(state: AppState): StatusMetric[] {
     },
   ];
 }
-
-

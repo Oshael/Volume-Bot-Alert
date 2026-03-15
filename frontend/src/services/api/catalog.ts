@@ -41,6 +41,18 @@ export interface EligibleCatalogToken {
   lastEvaluatedAt?: string | null;
 }
 
+export interface MeteoraBatchItem {
+  address: string;
+  tvl?: number | null;
+  poolAddress?: string | null;
+  poolCount?: number;
+  lastSnapshotAt?: string | null;
+  change1h?: number | null;
+  change6h?: number | null;
+  change24h?: number | null;
+  noPool?: boolean;
+}
+
 const FRONTEND_MONITORED_MIN_MCAP = 30_000;
 
 function splitCsvLine(line: string) {
@@ -150,4 +162,15 @@ export function fetchPumpfunTokenMeta(mint: string, token?: string | null, metad
     name?: string | null;
     imageUrl?: string | null;
   }>(`/api/catalog/pumpfun/${encodeURIComponent(mint)}/meta${suffix}`, { token });
+}
+
+export function fetchMeteoraBatch(addresses: string[], token?: string | null) {
+  return apiFetch<{
+    items: MeteoraBatchItem[];
+    count: number;
+  }>('/api/catalog/meteora/batch', {
+    method: 'POST',
+    body: JSON.stringify({ addresses }),
+    token,
+  }).then((response) => response.items || []);
 }

@@ -49,7 +49,18 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         <span class="legacy-bar-note">1d - 7d &middot; recent</span>
       </div>
     </div>
-    ${renderPagedAgeBucketList(state.data.recentTokens, state.ui.busy, 'recent', state.ui.recentPage, state.ui.recentPerPage, state.data.starredTokens, state.ui.recentSort, state.ui.recentSortWindow)}
+    ${renderPagedAgeBucketList(
+      state.data.recentTokens,
+      state.ui.busy,
+      'recent',
+      state.ui.recentPage,
+      state.ui.recentPerPage,
+      state.data.starredTokens,
+      state.ui.recentSort,
+      state.ui.recentSortWindow,
+      state.data.meteoraByAddress,
+      Number(state.data.configs['meteora-min-pool']) || 5000,
+    )}
   `;
   bindTokenActions(section, controller);
   bindCopyButtons(section);
@@ -116,7 +127,18 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         <span class="legacy-bar-note">7d+ &middot; no max age</span>
       </div>
     </div>
-    ${renderPagedAgeBucketList(state.data.oldWeekTokens, state.ui.busy, 'old-week', state.ui.oldWeekPage, state.ui.oldWeekPerPage, state.data.starredTokens, state.ui.oldWeekSort, state.ui.oldWeekSortWindow)}
+    ${renderPagedAgeBucketList(
+      state.data.oldWeekTokens,
+      state.ui.busy,
+      'old-week',
+      state.ui.oldWeekPage,
+      state.ui.oldWeekPerPage,
+      state.data.starredTokens,
+      state.ui.oldWeekSort,
+      state.ui.oldWeekSortWindow,
+      state.data.meteoraByAddress,
+      Number(state.data.configs['meteora-min-pool']) || 5000,
+    )}
   `;
   bindTokenActions(section, controller);
   bindCopyButtons(section);
@@ -135,4 +157,3 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   section.querySelector<HTMLButtonElement>('[data-action="clear-old-week-log"]')?.addEventListener('click', () => controller.clearOldWeekRemovalLog());
   return section;
 }
-
