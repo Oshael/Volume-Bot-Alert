@@ -28,24 +28,31 @@ const server = http.createServer(app);
 // ---- Security middlewares ----
 app.use(helmet());
 const allowedCorsOrigins = new Set(config.corsOrigins);
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedCorsOrigins.has(origin)) return callback(null, true);
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedCorsOrigins.has(origin)) return true;
+
+  try {
+    const parsed = new URL(origin);
+    const hostname = parsed.hostname.toLowerCase();
 
     if (config.nodeEnv === 'development') {
-      if (origin === 'null') return callback(null, true);
-
-      try {
-        const parsed = new URL(origin);
-        const isLocalHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-        if (isLocalHost) return callback(null, true);
-      } catch (_) {
-        // Ignore malformed origins and deny below.
-      }
+      const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
+      if (origin === 'null' || isLocalHost) return true;
     }
 
-    return callback(null, false);
+    // Accept Vercel aliases/preview deployments for the frontend project.
+    if (hostname === 'volume-bot-alert-frontend.vercel.app') return true;
+    if (hostname.endsWith('.vercel.app') && hostname.startsWith('volume-bot-alert-frontend-')) return true;
+  } catch (_) {
+    // Ignore malformed origins and deny below.
+  }
+
+  return false;
+}
+app.use(cors({
+  origin: (origin, callback) => {
+    return callback(null, isAllowedOrigin(origin));
   },
   credentials: true,
 }));
@@ -163,4 +170,3 @@ server.listen(config.port, () => {
 });
 
 module.exports = { app, server }; // export for testing
-
