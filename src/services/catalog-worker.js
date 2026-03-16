@@ -110,8 +110,35 @@ function derivePrioritySnapshot(bestPair) {
   };
 }
 
+function getRetryMsForPriority(priority) {
+  switch (String(priority || '').trim().toLowerCase()) {
+    case 'high':
+      return HIGH_RECHECK_MS;
+    case 'normal':
+      return NORMAL_RECHECK_MS;
+    case 'low':
+      return LOW_RECHECK_MS;
+    case 'dormant':
+    default:
+      return DORMANT_RECHECK_MS;
+  }
+}
+
 async function evaluateToken(token) {
   const data = await dexscreener.getTokenPairs(token.address);
+  if (!data) {
+    const retryMs = getRetryMsForPriority(token.monitor_priority);
+    return tokenCatalog.applyEvaluationResult(token.address, {
+      eligibilityState: 'dex-unavailable',
+      eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
+      suppressedReason: 'dex_unavailable',
+      monitorPriority: token.monitor_priority || 'dormant',
+      nextEvaluationAt: new Date(Date.now() + retryMs),
+      lastEvaluationError: 'dex_unavailable',
+      evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
+    });
+  }
+
   const bestPair = dexscreener.getBestPair(data, token.chain || 'solana');
 
   if (!bestPair) {
