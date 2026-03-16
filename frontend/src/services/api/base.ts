@@ -1,6 +1,7 @@
 ﻿import { getAuthToken } from '../../utils/auth-storage';
 
-const PROD_API_BASE = 'https://volume-alert-server-production.up.railway.app';
+const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
+  || 'https://volume-alert-server-production.up.railway.app';
 
 export function resolveApiBase(locationLike: Location = window.location): string {
   const params = new URLSearchParams(locationLike.search);
