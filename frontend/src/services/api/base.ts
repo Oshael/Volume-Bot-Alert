@@ -41,6 +41,7 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
 
   const response = await fetch(`${resolveApiBase()}${path}`, {
     ...init,
+    cache: 'no-store',
     credentials: 'include',
     headers,
   });
