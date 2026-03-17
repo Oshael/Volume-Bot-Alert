@@ -227,7 +227,8 @@ export interface AppState {
     recentSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
     oldWeekSort: 'vol' | 'mcap' | 'pchange' | 'age';
     oldWeekSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
-    monitoredSort: '5m' | '1h' | '6h' | '24h' | 'mcap';
+    monitoredSort: 'vol' | 'mcap' | 'age';
+    monitoredSortWindow: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest';
     soundEnabled: boolean;
     soundVolume: number;
   };
@@ -308,7 +309,8 @@ export function createAppState(): AppState {
       recentSortWindow: '24h',
       oldWeekSort: 'vol',
       oldWeekSortWindow: '24h',
-      monitoredSort: '5m',
+      monitoredSort: 'vol',
+      monitoredSortWindow: '5m',
       soundEnabled: true,
       soundVolume: 0.05,
     },

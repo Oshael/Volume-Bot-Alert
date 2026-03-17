@@ -67,7 +67,7 @@ export interface AppController {
   setManualSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
   setRecentSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
   setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
-  setMonitoredSort(mode: '5m' | '1h' | '6h' | '24h' | 'mcap'): void;
+  setMonitoredSort(mode: 'vol' | 'mcap' | 'age', window?: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
   toggleStarredToken(address: string): Promise<void>;
@@ -280,6 +280,10 @@ export function createAppController(): AppController {
 
   function normalizeBucketAgeWindow(window: string | undefined): 'newest' | 'oldest' {
     return window === 'oldest' ? 'oldest' : 'newest';
+  }
+
+  function normalizeMonitoredVolWindow(window: string | undefined): '5m' | '1h' | '6h' | '24h' {
+    return window === '1h' || window === '6h' || window === '24h' ? window : '5m';
   }
 
   function getPumpConfigNumber(key: string, fallback: number) {
@@ -1346,7 +1350,8 @@ export function createAppController(): AppController {
     state.ui.recentSortWindow = '24h';
     state.ui.oldWeekSort = 'vol';
     state.ui.oldWeekSortWindow = '24h';
-    state.ui.monitoredSort = '5m';
+    state.ui.monitoredSort = 'vol';
+    state.ui.monitoredSortWindow = '5m';
     hydrateSoundSettings();
   }
 
@@ -1536,8 +1541,13 @@ export function createAppController(): AppController {
       }
       emit();
     },
-    setMonitoredSort(mode: '5m' | '1h' | '6h' | '24h' | 'mcap') {
+    setMonitoredSort(mode: 'vol' | 'mcap' | 'age', window?: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest') {
       state.ui.monitoredSort = mode;
+      if (mode === 'age') {
+        state.ui.monitoredSortWindow = normalizeBucketAgeWindow(window);
+      } else if (mode === 'vol') {
+        state.ui.monitoredSortWindow = normalizeMonitoredVolWindow(window);
+      }
       emit();
     },
     setSoundEnabled(enabled: boolean) {
@@ -1903,7 +1913,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
 
 
 

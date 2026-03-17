@@ -110,10 +110,18 @@ export function bindBucketSortControls(section: ParentNode, controller: AppContr
 }
 
 export function bindMonitoredSortControls(section: ParentNode, controller: AppController) {
-  section.querySelectorAll<HTMLButtonElement>('[data-monitored-sort]').forEach((button) => {
+  section.querySelectorAll<HTMLButtonElement>('[data-monitored-sort-mode]').forEach((button) => {
     button.addEventListener('click', () => {
-      const mode = button.dataset.monitoredSort as '5m' | '1h' | '6h' | '24h' | 'mcap' | undefined;
-      if (mode) controller.setMonitoredSort(mode);
+      const mode = button.dataset.monitoredSortMode as 'vol' | 'mcap' | 'age' | undefined;
+      const window = button.dataset.monitoredSortWindow as '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest' | undefined;
+      if (!mode) return;
+
+      const wrap = button.closest<HTMLElement>('[data-sort-wrap]');
+      if (wrap) {
+        wrap.classList.remove('open');
+      }
+
+      controller.setMonitoredSort(mode, window);
     });
   });
 }

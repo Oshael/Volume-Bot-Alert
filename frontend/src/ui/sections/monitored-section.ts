@@ -6,17 +6,33 @@ import { bindCopyButtons, bindMonitoredSortControls, bindTokenActions, fmtAge, f
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'panel legacy-panel';
+  const monitoredVolActive = state.ui.monitoredSort === 'vol' ? 'active' : '';
+  const monitoredMcapActive = state.ui.monitoredSort === 'mcap' ? 'active' : '';
+  const monitoredAgeActive = state.ui.monitoredSort === 'age' ? 'active' : '';
+  const monitoredVol5m = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '5m' ? 'active' : '';
+  const monitoredVol1h = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '1h' ? 'active' : '';
+  const monitoredVol6h = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '6h' ? 'active' : '';
+  const monitoredVol24h = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '24h' ? 'active' : '';
+  const monitoredAgeNewest = state.ui.monitoredSort === 'age' && state.ui.monitoredSortWindow === 'newest' ? 'active' : '';
+  const monitoredAgeOldest = state.ui.monitoredSort === 'age' && state.ui.monitoredSortWindow === 'oldest' ? 'active' : '';
   const tracked = [...state.data.monitoredTokens]
     .filter((item) => item._userManual || !((item.mcap ?? 0) > 0 && (item.mcap ?? 0) < 30000))
     .sort((a, b) => {
       const mode = state.ui.monitoredSort;
+      const window = state.ui.monitoredSortWindow;
       const metric = (entry: ManualTokenEntry) => {
+        if (mode === 'age') return entry.createdAt || 0;
         if (mode === 'mcap') return entry.mcap || 0;
-        if (mode === '1h') return entry.volume1h || 0;
-        if (mode === '6h') return entry.volume6h || 0;
-        if (mode === '24h') return entry.volume24h || 0;
+        if (window === '1h') return entry.volume1h || 0;
+        if (window === '6h') return entry.volume6h || 0;
+        if (window === '24h') return entry.volume24h || 0;
         return entry.volume5m || 0;
       };
+      if (mode === 'age' && window === 'oldest') {
+        const delta = metric(a) - metric(b);
+        if (delta !== 0) return delta;
+        return (b.mcap || 0) - (a.mcap || 0);
+      }
       const delta = metric(b) - metric(a);
       if (delta !== 0) return delta;
       return (b.mcap || 0) - (a.mcap || 0);
@@ -24,14 +40,26 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   section.innerHTML = `
     <div class="panel-header">
       <span>MONITORED TOKENS</span>
-      <div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:9px;color:var(--muted)">SORT BY</span>
-        <div class="sort-tabs">
-          <button type="button" class="sort-tab ${state.ui.monitoredSort === '5m' ? 'active' : ''}" data-monitored-sort="5m">5M</button>
-          <button type="button" class="sort-tab ${state.ui.monitoredSort === '1h' ? 'active' : ''}" data-monitored-sort="1h">1H</button>
-          <button type="button" class="sort-tab ${state.ui.monitoredSort === '6h' ? 'active' : ''}" data-monitored-sort="6h">6H</button>
-          <button type="button" class="sort-tab ${state.ui.monitoredSort === '24h' ? 'active' : ''}" data-monitored-sort="24h">24H</button>
-          <button type="button" class="sort-tab ${state.ui.monitoredSort === 'mcap' ? 'active' : ''}" data-monitored-sort="mcap">MCAP</button>
+      <div class="panel-header-controls">
+        <span class="panel-header-label">SORT BY</span>
+        <div class="sort-pill-group monitored-sort-group">
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${monitoredVolActive}" data-sort-toggle="monitored-vol">VOL</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${monitoredVol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
+              <button type="button" class="sort-menu-item ${monitoredVol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
+              <button type="button" class="sort-menu-item ${monitoredVol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
+              <button type="button" class="sort-menu-item ${monitoredVol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
+            </div>
+          </div>
+          <button type="button" class="old-filter-btn ${monitoredMcapActive}" data-monitored-sort-mode="mcap">MCAP</button>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${monitoredAgeActive}" data-sort-toggle="monitored-age">AGE</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${monitoredAgeNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
+              <button type="button" class="sort-menu-item ${monitoredAgeOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
+            </div>
+          </div>
         </div>
         <span class="count">${tracked.length}</span>
       </div>
