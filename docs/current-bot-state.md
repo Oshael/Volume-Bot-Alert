@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, Old Surge session-baseline rules, top-menu alert controls, instant starred sync polish, and manual-token backend restore.
+Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, Old Surge session-baseline rules, top-menu alert controls, instant starred sync polish, and validated backend-backed manual-token restore across devices.
 
 ## Current Runtime Shape
 
@@ -144,6 +144,7 @@ Current caution:
   - manual token also acts as a catalog-ingestion path
   - `_userManual` is the protection flag for `min-mcap-remove`
   - restoring manual tokens must not depend on dashboard success; `GET /api/config` alone is enough to restore the list across browsers/devices
+  - tracked-state rebuild now consumes `payload.tokens` from `GET /api/config` directly, which fixed the previous reload/device-sync bug
 
 ### 4. Catalog worker
 - Worker: `src/services/catalog-worker.js`
@@ -342,10 +343,23 @@ Current limitation:
   - `Manual Tokens`
   - `Alerts`
 
+### Padre terminal quick fix
+- The Padre terminal link now uses:
+  - `https://trade.padre.gg/trade/solana/{address}`
+- Link resolution order is:
+  - `pairAddress`
+  - `mintAddress`
+  - fallback `address`
+- Important nuance:
+  - the bot always opens the same computed Padre URL for a given token
+  - the Padre app itself may later rewrite/canonicalize the visible URL after page load
+  - that post-load rewrite is Padre behavior, not bot-side link switching
+
 ### Manual token reload stability
 - manual tokens are expected to survive `F5`
 - manual tokens are also expected to restore across different browsers/devices for the same authenticated account
 - backend catalog tracking remains separate from the user manual-token list itself
+- this behavior has now been validated after fixing the rebuild path that previously ignored backend `payload.tokens` during reload
 
 ## Known Open Issues / Review Targets
 - Consider deduplicating/caching PumpFun metadata fetches more aggressively if `429` persists.

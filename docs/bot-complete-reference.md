@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-17`.
+Last reviewed against code on `2026-03-17` after the final backend-backed manual-token restore fix.
 
 ## High-Level Product Shape
 
@@ -229,6 +229,7 @@ Important:
 - backend is the source of truth for which manual tokens a user sees
 - frontend still applies optimistic UI updates
 - backend also ingests the token for global catalog tracking through a separate catalog path
+- the reload path now rebuilds manual-token UI state directly from `GET /api/config` payload tokens, which is what makes same-account cross-device restore work correctly
 
 ### Monitored tokens baseline
 - backend
@@ -266,6 +267,7 @@ Reasons:
 Important:
 - the session restoring does not auto-start monitoring
 - the user still needs to click `START MONITORING`
+- manual-token restore is intentionally independent of dashboard success; `GET /api/config` alone is sufficient to recover the per-user manual list
 
 ## Monitored Tokens
 
@@ -407,6 +409,32 @@ Current sections using the stronger starred state:
 - Old Week table
 - Monitored cards
 - Alert cards
+
+## Terminal Links
+
+Files:
+- `frontend/src/ui/sections/shared.ts`
+
+Current link behavior:
+- Axiom:
+  - uses `terminalAddress`
+- Photon:
+  - uses `tokenAddress`
+- BullX:
+  - uses `tokenAddress`
+- GMGN:
+  - uses `tokenAddress`
+- Padre:
+  - uses `https://trade.padre.gg/trade/solana/{address}`
+  - current address selection order:
+    - `pairAddress`
+    - `mintAddress`
+    - fallback `address`
+
+Important Padre note:
+- the bot only computes and opens the initial Padre URL
+- Padre may rewrite the visible URL after load
+- that later rewrite is Padre-side behavior, not a second-stage link transform in the bot
 
 ## PumpFun Panel
 
@@ -635,6 +663,7 @@ Manual-token distinction:
 - the per-user manual-token list lives in config/token endpoints
 - the global tracked/catalog version of that token lives in `token_catalog`
 - these are intentionally separate layers
+- the previous bug was not in backend persistence itself, but in frontend rebuild logic using stale local manual state instead of backend `payload.tokens`
 
 ## Current Rate Limiting
 
