@@ -63,6 +63,8 @@ export interface ManualTokenEntry {
   deadCycles?: number;
   _hvncFired?: boolean;
   _oldSurgeFired?: boolean;
+  _oldSurgeSessionBase1h?: number | null;
+  _oldSurgeSessionBase6h?: number | null;
 }
 
 export interface PumpVolumePoint {

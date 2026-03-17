@@ -38,6 +38,7 @@ const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const OLD_ALERT_1H_PCT = 100;
 const OLD_ALERT_6H_PCT = 150;
+const OLD_SURGE_SESSION_DELTA_PCT = 50;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 10 * 1000;
 
@@ -894,11 +895,25 @@ export function createAppController(): AppController {
       const pc6h = token.priceChange6h ?? null;
       let pct = 0;
       let surgeWindow: '1H' | '6H' | null = null;
+      const base1h = token._oldSurgeSessionBase1h;
+      const base6h = token._oldSurgeSessionBase6h;
 
-      if (pc6h != null && pc6h >= OLD_ALERT_6H_PCT) {
+      if (token._oldSurgeSessionBase1h == null) {
+        token._oldSurgeSessionBase1h = pc1h;
+      }
+      if (token._oldSurgeSessionBase6h == null) {
+        token._oldSurgeSessionBase6h = pc6h;
+      }
+
+      const crossed6h = base6h != null && base6h < OLD_ALERT_6H_PCT && pc6h != null && pc6h >= OLD_ALERT_6H_PCT;
+      const rose50AfterHot6h = base6h != null && base6h >= OLD_ALERT_6H_PCT && pc6h != null && pc6h >= base6h + OLD_SURGE_SESSION_DELTA_PCT;
+      const crossed1h = base1h != null && base1h < OLD_ALERT_1H_PCT && pc1h != null && pc1h >= OLD_ALERT_1H_PCT;
+      const rose50AfterHot1h = base1h != null && base1h >= OLD_ALERT_1H_PCT && pc1h != null && pc1h >= base1h + OLD_SURGE_SESSION_DELTA_PCT;
+
+      if (crossed6h || rose50AfterHot6h) {
         pct = pc6h;
         surgeWindow = '6H';
-      } else if (pc1h != null && pc1h >= OLD_ALERT_1H_PCT) {
+      } else if (crossed1h || rose50AfterHot1h) {
         pct = pc1h;
         surgeWindow = '1H';
       }
@@ -1058,6 +1073,8 @@ export function createAppController(): AppController {
         deadCycles: existingItem?.deadCycles ?? base.deadCycles ?? 0,
         _hvncFired: existingItem?._hvncFired ?? base._hvncFired,
         _oldSurgeFired: existingItem?._oldSurgeFired ?? base._oldSurgeFired,
+        _oldSurgeSessionBase1h: existingItem?._oldSurgeSessionBase1h ?? base._oldSurgeSessionBase1h ?? null,
+        _oldSurgeSessionBase6h: existingItem?._oldSurgeSessionBase6h ?? base._oldSurgeSessionBase6h ?? null,
       };
     }
 
@@ -1928,7 +1945,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
 
 
 
