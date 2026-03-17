@@ -12,6 +12,7 @@ const NORMAL_BOOST_6H_RECHECK_MS = 40 * 1000;
 const NORMAL_BOOST_1H_RECHECK_MS = 20 * 1000;
 const HIGH_RECHECK_MS = 10 * 1000;
 const ERROR_RECHECK_MS = 5 * 60 * 1000;
+const MANUAL_BOOTSTRAP_RECHECK_MS = 5 * 1000;
 
 let timer = null;
 let running = false;
@@ -42,6 +43,7 @@ function derivePrioritySnapshot(bestPair) {
   const vol24h = toNumber(bestPair?.volume?.h24);
   const pchange1h = toNumber(bestPair?.priceChange?.h1);
   const pchange6h = toNumber(bestPair?.priceChange?.h6);
+  const pchange24h = toNumber(bestPair?.priceChange?.h24);
 
   if (!(marketCap > 0)) {
     return {
@@ -50,6 +52,9 @@ function derivePrioritySnapshot(bestPair) {
       vol1h,
       vol6h,
       vol24h,
+      pchange1h,
+      pchange6h,
+      pchange24h,
       monitorPriority: 'dormant',
       nextEvaluationAt: new Date(Date.now() + DORMANT_RECHECK_MS),
       eligibleForMonitoring: false,
@@ -65,6 +70,9 @@ function derivePrioritySnapshot(bestPair) {
       vol1h,
       vol6h,
       vol24h,
+      pchange1h,
+      pchange6h,
+      pchange24h,
       monitorPriority: 'low',
       nextEvaluationAt: new Date(Date.now() + LOW_RECHECK_MS),
       eligibleForMonitoring: true,
@@ -88,6 +96,9 @@ function derivePrioritySnapshot(bestPair) {
       vol1h,
       vol6h,
       vol24h,
+      pchange1h,
+      pchange6h,
+      pchange24h,
       monitorPriority: 'normal',
       nextEvaluationAt: new Date(Date.now() + nextMs),
       eligibleForMonitoring: true,
@@ -102,6 +113,9 @@ function derivePrioritySnapshot(bestPair) {
     vol1h,
     vol6h,
     vol24h,
+    pchange1h,
+    pchange6h,
+    pchange24h,
     monitorPriority: 'high',
     nextEvaluationAt: new Date(Date.now() + HIGH_RECHECK_MS),
     eligibleForMonitoring: true,
@@ -124,10 +138,17 @@ function getRetryMsForPriority(priority) {
   }
 }
 
+function shouldFastRetryManualBootstrap(token) {
+  return String(token?.source || '').trim().toLowerCase() === 'user-manual'
+    && !token?.last_eligible_at;
+}
+
 async function evaluateToken(token) {
   const data = await dexscreener.getTokenPairs(token.address);
   if (!data) {
-    const retryMs = getRetryMsForPriority(token.monitor_priority);
+    const retryMs = shouldFastRetryManualBootstrap(token)
+      ? MANUAL_BOOTSTRAP_RECHECK_MS
+      : getRetryMsForPriority(token.monitor_priority);
     return tokenCatalog.applyEvaluationResult(token.address, {
       eligibilityState: 'dex-unavailable',
       eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
@@ -143,12 +164,15 @@ async function evaluateToken(token) {
 
   if (!bestPair) {
     status.totalIneligible++;
+    const nextRetryMs = shouldFastRetryManualBootstrap(token)
+      ? MANUAL_BOOTSTRAP_RECHECK_MS
+      : DORMANT_RECHECK_MS;
     return tokenCatalog.applyEvaluationResult(token.address, {
       eligibilityState: 'dex-missing',
       eligibleForMonitoring: false,
       suppressedReason: 'dex_pair_missing',
       monitorPriority: 'dormant',
-      nextEvaluationAt: new Date(Date.now() + DORMANT_RECHECK_MS),
+      nextEvaluationAt: new Date(Date.now() + nextRetryMs),
       lastEvaluationError: null,
       evaluationErrorCount: 0,
     });
@@ -192,6 +216,10 @@ async function evaluateToken(token) {
     vol1h: snapshot.vol1h,
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
+    priceChange1h: snapshot.pchange1h,
+    priceChange6h: snapshot.pchange6h,
+    priceChange24h: snapshot.pchange24h,
+    tokenCreatedAt: toNumber(bestPair.pairCreatedAt),
   });
 }
 

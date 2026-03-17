@@ -9,8 +9,9 @@ import {
   type ConfigPayload,
 } from '../services/api/config';
 import { normalizeManualDexPayload } from '../services/dex/normalize';
-import { fetchEligibleCatalog, fetchMeteoraBatch, fetchPumpfunTokenMeta, reportMigratedToken, type EligibleCatalogToken } from '../services/api/catalog';
+import { fetchDashboardMonitored, fetchMeteoraBatch, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
+import { loadManualTokens as loadScopedManualTokens, resolveScopedManualTokens, saveManualTokens as saveScopedManualTokens } from '../utils/manual-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
   loadDismissedOldWeek,
@@ -22,7 +23,7 @@ import {
   saveOldWeekRemovalLog,
   saveRecentRemovalLog,
 } from '../utils/bar-storage';
-import { bindSocketLifecycle, disconnectSocket, requestDexToken, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
+import { bindSocketLifecycle, disconnectSocket, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -41,6 +42,7 @@ const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const METEORA_POLL_INTERVAL_MS = 30000;
 const METEORA_FETCH_HAS_POOL_COOLDOWN_MS = 25000;
 const METEORA_FETCH_NO_POOL_COOLDOWN_MS = 5 * 60 * 1000;
+const MONITORED_REFRESH_INTERVAL_MS = 10 * 1000;
 
 export interface AppController {
   state: AppState;
@@ -86,6 +88,7 @@ export function createAppController(): AppController {
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
   let meteoraPollTimer: ReturnType<typeof setInterval> | null = null;
+  let monitoredRefreshInFlight = false;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -140,6 +143,17 @@ export function createAppController(): AppController {
     return state.session.email || state.session.username || 'anonymous';
   }
 
+  function getStoredManualTokens() {
+    return loadScopedManualTokens(getStorageScope());
+  }
+
+  function persistManualTokens(items = state.data.manualTokens) {
+    return saveScopedManualTokens(
+      getStorageScope(),
+      items.map((item) => ({ address: item.address, label: item.label ?? null })),
+    );
+  }
+
   function hydrateSoundSettings() {
     const soundSettings = loadSoundSettings(getStorageScope());
     state.ui.soundEnabled = soundSettings.enabled;
@@ -179,7 +193,7 @@ export function createAppController(): AppController {
     try {
       const result = await syncConfig({
         configs: state.data.configs,
-        tokens: state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
+        tokens: [],
         blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
         starredTokens: snapshot.map((address) => ({ address })),
       }, token);
@@ -899,17 +913,6 @@ export function createAppController(): AppController {
     state.runtime.uptimeLabel = hours > 0 ? `${hours}h${String(minutes).padStart(2, '0')}m` : `${minutes}m`;
   }
 
-  function syncTrackedTokenSubscriptions() {
-    if (state.runtime.mode !== 'active') {
-      return;
-    }
-    for (const item of state.data.monitoredTokens) {
-      if (!isBlocked(item.address)) {
-        requestDexToken(item.address);
-      }
-    }
-  }
-
   function passesAlertFilters(token: ManualTokenEntry) {
     const minVol = getConfigNumber('min-vol', 500);
     const minMcap = getConfigNumber('min-mcap', 10000);
@@ -1103,40 +1106,79 @@ export function createAppController(): AppController {
       setNotice(`Local monitored alert: ${symbol}`);
     }
   }
-  function rebuildTrackedState(payload: ConfigPayload, eligibleCatalogTokens: EligibleCatalogToken[] = []) {
+  function rebuildTrackedState(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
     const existing = new Map(state.data.monitoredTokens.map((item) => [item.address, item]));
     const blockedSet = new Set(payload.blocklist.map((item) => item.address));
+    const dashboardByAddress = new Map(monitoredDashboardTokens.map((item) => [item.address, item]));
+
+    function mergeDashboardFields(
+      existingItem: ManualTokenEntry | undefined,
+      dashboardItem: DashboardMonitoredToken | undefined,
+      base: ManualTokenEntry,
+    ) {
+      const nextMcap = dashboardItem?.mcap ?? existingItem?.mcap ?? base.mcap ?? null;
+      const nextVolume5m = dashboardItem?.volume5m ?? existingItem?.volume5m ?? base.volume5m ?? null;
+
+      return {
+        ...base,
+        mintAddress: existingItem?.mintAddress ?? dashboardItem?.address ?? base.address,
+        pairAddress: dashboardItem?.pairAddress ?? existingItem?.pairAddress ?? base.pairAddress ?? null,
+        pairUrl: dashboardItem?.pairUrl ?? existingItem?.pairUrl ?? base.pairUrl ?? null,
+        imageUrl: dashboardItem?.imageUrl ?? existingItem?.imageUrl ?? base.imageUrl ?? null,
+        twitterUrl: dashboardItem?.twitterUrl ?? existingItem?.twitterUrl ?? base.twitterUrl ?? null,
+        symbol: dashboardItem?.symbol ?? existingItem?.symbol ?? base.symbol ?? null,
+        name: dashboardItem?.name ?? existingItem?.name ?? base.name ?? null,
+        createdAt: dashboardItem?.tokenCreatedAt ?? existingItem?.createdAt ?? base.createdAt ?? null,
+        mcap: nextMcap,
+        priceUsd: dashboardItem?.priceUsd ?? existingItem?.priceUsd ?? base.priceUsd ?? null,
+        volume5m: nextVolume5m,
+        volume1h: dashboardItem?.volume1h ?? existingItem?.volume1h ?? base.volume1h ?? null,
+        volume6h: dashboardItem?.volume6h ?? existingItem?.volume6h ?? base.volume6h ?? null,
+        volume24h: dashboardItem?.volume24h ?? existingItem?.volume24h ?? base.volume24h ?? null,
+        priceChange1h: dashboardItem?.priceChange1h ?? existingItem?.priceChange1h ?? base.priceChange1h ?? null,
+        priceChange6h: dashboardItem?.priceChange6h ?? existingItem?.priceChange6h ?? base.priceChange6h ?? null,
+        priceChange24h: dashboardItem?.priceChange24h ?? existingItem?.priceChange24h ?? base.priceChange24h ?? null,
+        mcapDelta: dashboardItem?.mcapDelta ?? existingItem?.mcapDelta ?? base.mcapDelta ?? null,
+        prevMcap: dashboardItem?.prevMcap ?? existingItem?.prevMcap ?? base.prevMcap ?? null,
+        prevVolume5m: existingItem?.volume5m != null ? existingItem.volume5m : existingItem?.prevVolume5m ?? base.prevVolume5m ?? null,
+        lastAlertAt: existingItem?.lastAlertAt ?? base.lastAlertAt ?? null,
+        deadCycles: existingItem?.deadCycles ?? base.deadCycles ?? 0,
+        _hvncFired: existingItem?._hvncFired ?? base._hvncFired,
+        _oldSurgeFired: existingItem?._oldSurgeFired ?? base._oldSurgeFired,
+      };
+    }
 
     const manualTokens = sortAddresses(payload.tokens)
       .filter((item) => !blockedSet.has(item.address))
-      .map((item) => ({
-        ...existing.get(item.address),
-        address: item.address,
-        label: item.label ?? null,
-        manual: true,
-        _userManual: true,
-      }));
+      .map((item) => {
+        const existingItem = existing.get(item.address);
+        const dashboardItem = dashboardByAddress.get(item.address);
+        return mergeDashboardFields(existingItem, dashboardItem, {
+          ...existingItem,
+          address: item.address,
+          label: item.label ?? null,
+          manual: true,
+          _userManual: true,
+        });
+      });
 
     const monitoredMap = new Map<string, ManualTokenEntry>();
     for (const item of manualTokens) {
       monitoredMap.set(item.address, item);
     }
-    for (const item of eligibleCatalogTokens
+    for (const item of monitoredDashboardTokens
       .slice()
       .sort((a, b) => a.address.localeCompare(b.address))) {
       if (blockedSet.has(item.address)) continue;
       if (monitoredMap.has(item.address)) continue;
       const existingItem = existing.get(item.address);
-      monitoredMap.set(item.address, {
+      monitoredMap.set(item.address, mergeDashboardFields(existingItem, item, {
         ...existingItem,
         address: item.address,
         label: existingItem?.label ?? item.symbol ?? 'Eligible',
-        symbol: existingItem?.symbol ?? item.symbol ?? null,
-        name: existingItem?.name ?? item.name ?? null,
-        mcap: existingItem?.mcap ?? item.mcap ?? null,
         manual: false,
         _userManual: false,
-      });
+      }));
     }
     state.data.manualTokens = manualTokens;
     state.data.monitoredTokens = [...monitoredMap.values()];
@@ -1146,7 +1188,7 @@ export function createAppController(): AppController {
     console.info('[tracked:rebuild]', {
       manualCount: manualTokens.length,
       monitoredCount: monitoredMap.size,
-      eligibleCatalogCount: eligibleCatalogTokens.length,
+      eligibleCatalogCount: monitoredDashboardTokens.length,
       payloadTokenCount: payload.tokens.length,
       payloadTokens: payload.tokens.map((item) => item.address),
     });
@@ -1183,24 +1225,42 @@ export function createAppController(): AppController {
     }
   }
 
+  async function refreshMonitoredDashboard() {
+    const token = state.session.token;
+    if (!token || monitoredRefreshInFlight) {
+      return;
+    }
+
+    monitoredRefreshInFlight = true;
+    try {
+      const monitoredDashboardTokens = await fetchDashboardMonitored(token);
+      applyMonitoredDashboard(monitoredDashboardTokens);
+      emit();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to refresh monitored dashboard');
+      emit();
+    } finally {
+      monitoredRefreshInFlight = false;
+    }
+  }
+
   function runMonitoringCycle() {
     state.runtime.cycle += 1;
     sweepMinMcapRemove();
     refreshMonitoredPanelCounts();
     computeUptimeLabel();
-    syncTrackedTokenSubscriptions();
+    void refreshMonitoredDashboard();
     emit();
   }
 
   function startMonitoringTimers() {
     if (monitoringInterval) return;
-    const seconds = Math.max(5, getConfigNumber('interval', 30));
     state.runtime.mode = 'active';
     startedAt = Date.now();
     computeUptimeLabel();
     runMonitoringCycle();
     startMeteoraPoll();
-    monitoringInterval = setInterval(runMonitoringCycle, seconds * 1000);
+    monitoringInterval = setInterval(runMonitoringCycle, MONITORED_REFRESH_INTERVAL_MS);
     pumpGcInterval = setInterval(() => {
       runPumpGarbageCollection();
       emit();
@@ -1230,9 +1290,6 @@ export function createAppController(): AppController {
       onStatus(message) {
         state.ui.notice = message;
         emit();
-        if (message === 'Socket connected.') {
-          syncTrackedTokenSubscriptions();
-        }
       },
       onRevoked(reason) {
         clearAuthToken();
@@ -1386,14 +1443,42 @@ export function createAppController(): AppController {
     hydrateSoundSettings();
   }
 
-  function applyConfig(payload: ConfigPayload, eligibleCatalogTokens: EligibleCatalogToken[] = []) {
+  function applyMonitoredDashboard(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
+    const manualPayload: ConfigPayload = {
+      configs: state.data.configs,
+      tokens: getStoredManualTokens(),
+      blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
+      starredTokens: state.data.starredTokens.map((address) => ({ address })),
+    };
+
+    for (const item of monitoredDashboardTokens) {
+      if (!item?.address || !item.meteora) continue;
+      state.data.meteoraByAddress[item.address] = {
+        ...(state.data.meteoraByAddress[item.address] || { history: [] }),
+        tvl: Number(item.meteora.tvl) || 0,
+        poolAddress: item.meteora.poolAddress || null,
+        poolCount: Number(item.meteora.poolCount) || 0,
+        noPool: Boolean(item.meteora.noPool),
+        lastSnapshotAt: item.meteora.lastSnapshotAt || null,
+        change1h: item.meteora.change1h ?? null,
+        change6h: item.meteora.change6h ?? null,
+        change24h: item.meteora.change24h ?? null,
+      };
+    }
+
+    state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
+    state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+    rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+  }
+
+  function applyConfig(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
     state.configSummary = {
       loaded: true,
       configCount: Object.keys(payload.configs || {}).length,
       manualTokens: payload.tokens.length,
       blocklist: payload.blocklist.length,
       starredTokens: payload.starredTokens.length,
-      eligibleCatalogTokens: eligibleCatalogTokens.length,
+      eligibleCatalogTokens: monitoredDashboardTokens.length,
     };
     state.data.configs = payload.configs || {};
     writeConfigDebug('applyConfig', {
@@ -1405,26 +1490,32 @@ export function createAppController(): AppController {
     persistSoundSettings();
     state.data.blocklist = sortAddresses(payload.blocklist);
     state.data.starredTokens = payload.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
-    state.data.eligibleCatalogTokens = eligibleCatalogTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
     state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
     state.bars.blocklist = payload.blocklist.length;
-    rebuildTrackedState(payload, eligibleCatalogTokens);
+    applyMonitoredDashboard(monitoredDashboardTokens);
     refreshPumpPanelCounts();
-    syncTrackedTokenSubscriptions();
     if (state.runtime.mode === 'active') {
       void meteoraPollAll();
     }
   }
 
   async function reloadConfigInternal(token: string) {
-    const [payload, eligibleCatalogTokens] = await Promise.all([
-      fetchConfig(token),
-      fetchEligibleCatalog(token),
-    ]);
+    const payload = await fetchConfig(token);
+    let monitoredDashboardTokens: DashboardMonitoredToken[] = [];
+
+    try {
+      monitoredDashboardTokens = await fetchDashboardMonitored(token);
+    } catch (error) {
+      writeConfigDebug('reloadConfigInternal:dashboard-failed', {
+        error: error instanceof Error ? error.message : 'unknown_dashboard_error',
+      });
+    }
+
+    const resolvedManualTokens = resolveScopedManualTokens(getStorageScope(), payload.tokens);
     writeConfigDebug('reloadConfigInternal:fetched', {
       fetchedMinVol: payload.configs?.['min-vol'],
     });
-    applyConfig(payload, eligibleCatalogTokens);
+    applyConfig({ ...payload, tokens: resolvedManualTokens }, monitoredDashboardTokens);
   }
 
   return {
@@ -1783,11 +1874,9 @@ export function createAppController(): AppController {
 
       state.configSummary.manualTokens = state.data.manualTokens.length;
       state.bars.manual = state.data.manualTokens.length;
+      persistManualTokens();
       refreshMonitoredPanelCounts();
       deriveAgeBuckets();
-      if (state.runtime.mode === 'active') {
-        requestDexToken(normalizedAddress);
-      }
       console.info('[manual:add] local-state-applied', {
         address: normalizedAddress,
         afterManualCount: state.data.manualTokens.length,
@@ -1797,23 +1886,8 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        const nextTokens = [...state.data.manualTokens]
-          .filter((item) => item.address !== normalizedAddress)
-          .concat([{ address: normalizedAddress, label: label ?? null }])
-          .sort((a, b) => a.address.localeCompare(b.address));
-
-        const result = await syncConfig({
-          configs: state.data.configs,
-          tokens: nextTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
-          blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
-          starredTokens: state.data.starredTokens.map((address) => ({ address })),
-        }, token);
-
-        state.data.configs = result.configs || {};
-        applyUiPreferencesFromConfigs();
-        writeConfigDebug('addManualToken:after-sync', {
-          syncedMinVol: result.configs?.['min-vol'],
-        });
+        await trackManualToken(normalizedAddress, token);
+        await reloadConfigInternal(token);
 
         console.info('[manual:add] backend-sync-ok', {
           address: normalizedAddress,
@@ -1843,25 +1917,9 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        const nextTokens = state.data.manualTokens
-          .filter((item) => item.address !== address)
-          .map((item) => ({ address: item.address, label: item.label ?? null }));
-
-        const result = await syncConfig({
-          configs: state.data.configs,
-          tokens: nextTokens,
-          blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
-          starredTokens: state.data.starredTokens.map((address) => ({ address })),
-        }, token);
-
-        state.data.configs = result.configs || {};
-        applyUiPreferencesFromConfigs();
-        writeConfigDebug('removeManualToken:after-sync', {
-          syncedMinVol: result.configs?.['min-vol'],
-        });
-
         state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
         state.data.monitoredTokens = state.data.monitoredTokens.map((item) => item.address === address ? { ...item, manual: false, _userManual: false } : item);
+        persistManualTokens();
         state.configSummary.manualTokens = state.data.manualTokens.length;
         state.bars.manual = state.data.manualTokens.length;
         deriveAgeBuckets();
@@ -1934,18 +1992,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

@@ -83,8 +83,48 @@ async function listHistoryByAddress(address, options = {}) {
   return rows.reverse();
 }
 
+async function listLatestByAddresses(addresses, limitPerAddress = 2) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const safeLimit = Math.max(1, Math.min(Number(limitPerAddress) || 2, 120));
+  const { rows } = await db.query(
+    `WITH ranked AS (
+       SELECT
+         token_address,
+         ts,
+         mcap,
+         price,
+         vol_5m,
+         vol_1h,
+         vol_6h,
+         vol_24h,
+         source,
+         ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY ts DESC) AS rn
+       FROM token_market_snapshots
+       WHERE token_address = ANY($1::varchar[])
+     )
+     SELECT token_address, ts, mcap, price, vol_5m, vol_1h, vol_6h, vol_24h, source
+     FROM ranked
+     WHERE rn <= $2
+     ORDER BY token_address ASC, ts DESC`,
+    [unique, safeLimit]
+  );
+
+  return rows;
+}
+
 module.exports = {
   insertSnapshot,
   listRecentByAddress,
   listHistoryByAddress,
+  listLatestByAddresses,
 };

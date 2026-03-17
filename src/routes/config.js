@@ -51,6 +51,25 @@ async function upsertCatalogItems(items, source) {
   }
 }
 
+async function upsertCatalogItemsAndSchedule(items, source) {
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  for (const item of items) {
+    try {
+      await tokenCatalog.upsertToken({
+        address: item.address,
+        chain: 'solana',
+        source,
+      });
+      if (source === 'user-manual') {
+        await tokenCatalog.scheduleImmediateEvaluation(item.address);
+      }
+    } catch (err) {
+      console.error(`[TokenCatalog] Failed to upsert ${source} token ${item.address}:`, err.message);
+    }
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  CONFIGS (thresholds, intervals, etc.)
 // ══════════════════════════════════════════════════════════════════
@@ -210,7 +229,7 @@ router.put('/', async (req, res) => {
     }
 
     await Promise.all([
-      upsertCatalogItems(normalizedTokens, 'user-manual'),
+      upsertCatalogItemsAndSchedule(normalizedTokens, 'user-manual'),
       upsertCatalogItems(normalizedBlocklist, 'blocklist'),
       upsertCatalogItems(normalizedStarred, 'starred'),
     ]);
@@ -306,6 +325,7 @@ router.post('/tokens', async (req, res) => {
         chain: 'solana',
         source: 'user-manual',
       });
+      await tokenCatalog.scheduleImmediateEvaluation(addr);
     } catch (catalogErr) {
       console.error(`[TokenCatalog] Failed to catalog manual token ${addr}:`, catalogErr.message);
     }

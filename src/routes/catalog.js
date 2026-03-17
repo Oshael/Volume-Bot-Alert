@@ -6,12 +6,10 @@ const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
-const meteora = require('../services/meteora');
 const { isValidAddress } = require('../models/user-token');
 
 const MONITORED_MIN_MCAP = 30000;
 const TRANSIENT_RETRY_MS = 40000;
-const METEORA_STALE_MS = 60 * 1000;
 const METEORA_DELTA_1H_MS = 60 * 60 * 1000;
 const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
 const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
@@ -42,6 +40,30 @@ router.get('/eligible', async (req, res) => {
   }
 });
 
+router.post('/manual-track', async (req, res) => {
+  try {
+    const address = String(req.body?.address || '').trim();
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    await tokenCatalog.upsertToken({
+      address,
+      chain: 'solana',
+      source: 'user-manual',
+    });
+    await tokenCatalog.scheduleImmediateEvaluation(address);
+
+    res.status(201).json({
+      message: 'Manual token scheduled for catalog tracking',
+      tracked: { address },
+    });
+  } catch (err) {
+    console.error('POST /catalog/manual-track error:', err.message);
+    res.status(500).json({ error: 'Failed to schedule manual token tracking' });
+  }
+});
+
 function buildCatalogTokenPayload(body = {}, fallbackSource = 'unknown') {
   return {
     address: body.address || body.mint || null,
@@ -51,6 +73,10 @@ function buildCatalogTokenPayload(body = {}, fallbackSource = 'unknown') {
     name: body.name || null,
     mcap: body.mcap || null,
     price: body.price || null,
+    priceChange1h: body.priceChange1h ?? null,
+    priceChange6h: body.priceChange6h ?? null,
+    priceChange24h: body.priceChange24h ?? null,
+    tokenCreatedAt: body.tokenCreatedAt ?? null,
     pairAddress: body.pairAddress || null,
     pairUrl: body.pairUrl || null,
     imageUrl: body.imageUrl || null,
@@ -140,32 +166,6 @@ function buildMeteoraSummary(address, historyRows) {
     change24h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_24H_MS),
     noPool: false,
   };
-}
-
-async function refreshMeteoraSnapshots(addresses) {
-  if (!Array.isArray(addresses) || addresses.length === 0) {
-    return {};
-  }
-
-  const results = await meteora.fetchMeteoraBulk(addresses);
-  const now = new Date();
-  for (const address of addresses) {
-    const item = results[address];
-    if (!item || !(Number(item.tvl) > 0)) {
-      continue;
-    }
-
-    await tokenMeteoraSnapshot.insertSnapshot({
-      tokenAddress: address,
-      ts: now,
-      totalTvl: item.tvl,
-      bestPoolAddress: item.poolAddress,
-      poolCount: item.poolCount,
-      source: 'meteora',
-    });
-  }
-
-  return results;
 }
 
 function getMarketCap(pair) {
@@ -358,6 +358,10 @@ async function buildValidatedPromotion(user, body = {}) {
       name: bestPair.baseToken?.name || requested.name,
       mcap: marketCap,
       price: toNumber(bestPair.priceUsd),
+      priceChange1h: toNumber(bestPair?.priceChange?.h1),
+      priceChange6h: toNumber(bestPair?.priceChange?.h6),
+      priceChange24h: toNumber(bestPair?.priceChange?.h24),
+      tokenCreatedAt: toNumber(bestPair?.pairCreatedAt),
       pairAddress: bestPair.pairAddress || requested.pairAddress,
       pairUrl: bestPair.url || requested.pairUrl,
       imageUrl: bestPair.info?.imageUrl || requested.imageUrl,
@@ -404,18 +408,6 @@ router.post('/meteora/batch', async (req, res) => {
       return res.status(400).json({ error: 'Invalid token address' });
     }
 
-    const latestRows = await tokenMeteoraSnapshot.getLatestByAddresses(addresses);
-    const latestMap = new Map(latestRows.map((row) => [row.token_address, row]));
-    const staleOrMissing = addresses.filter((address) => {
-      const latest = latestMap.get(address);
-      const latestTs = toDateOrNull(latest?.ts)?.getTime() || 0;
-      return !latest || Date.now() - latestTs >= METEORA_STALE_MS;
-    });
-
-    if (staleOrMissing.length > 0) {
-      await refreshMeteoraSnapshots(staleOrMissing);
-    }
-
     const historyRows = await tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 });
     const grouped = new Map();
     for (const row of historyRows) {
@@ -440,13 +432,6 @@ router.get('/meteora/:address/history', async (req, res) => {
     const address = String(req.params?.address || '').trim();
     if (!isValidAddress(address)) {
       return res.status(400).json({ error: 'Invalid token address' });
-    }
-
-    const latestRows = await tokenMeteoraSnapshot.getLatestByAddresses([address]);
-    const latest = latestRows[0] || null;
-    const latestTs = toDateOrNull(latest?.ts)?.getTime() || 0;
-    if (!latest || Date.now() - latestTs >= METEORA_STALE_MS) {
-      await refreshMeteoraSnapshots([address]);
     }
 
     const snapshots = await tokenMeteoraSnapshot.listHistoryByAddress(address, {

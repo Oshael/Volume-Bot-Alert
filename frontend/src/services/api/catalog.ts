@@ -31,6 +31,14 @@ export function reportMigratedToken(payload: ReportMigratedTokenPayload, token?:
   });
 }
 
+export function trackManualToken(address: string, token?: string | null) {
+  return apiFetch<{ message: string; tracked: { address: string } }>('/api/catalog/manual-track', {
+    method: 'POST',
+    body: JSON.stringify({ address }),
+    token,
+  });
+}
+
 export interface EligibleCatalogToken {
   address: string;
   symbol?: string | null;
@@ -38,6 +46,33 @@ export interface EligibleCatalogToken {
   mcap?: number | null;
   lastSeenAt?: string | null;
   lastEvaluatedAt?: string | null;
+}
+
+export interface DashboardMonitoredToken {
+  address: string;
+  symbol?: string | null;
+  name?: string | null;
+  pairAddress?: string | null;
+  pairUrl?: string | null;
+  imageUrl?: string | null;
+  twitterUrl?: string | null;
+  eligibleForMonitoring?: boolean;
+  monitorPriority?: string | null;
+  mcap?: number | null;
+  priceUsd?: number | null;
+  volume5m?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
+  volume24h?: number | null;
+  priceChange1h?: number | null;
+  priceChange6h?: number | null;
+  priceChange24h?: number | null;
+  tokenCreatedAt?: number | null;
+  prevMcap?: number | null;
+  mcapDelta?: number | null;
+  lastSeenAt?: string | null;
+  lastEvaluatedAt?: string | null;
+  meteora?: MeteoraBatchItem | null;
 }
 
 export interface MeteoraBatchItem {
@@ -73,6 +108,11 @@ export function fetchEligibleCatalog(token?: string | null) {
       lastSeenAt: item.lastSeenAt ?? null,
       lastEvaluatedAt: item.lastEvaluatedAt ?? null,
     })));
+}
+
+export function fetchDashboardMonitored(token?: string | null) {
+  return apiFetch<{ tokens: DashboardMonitoredToken[] }>('/api/dashboard/monitored', { token })
+    .then((response) => response.tokens || []);
 }
 
 export function fetchPumpfunTokenMeta(mint: string, token?: string | null, metadataUri?: string | null) {

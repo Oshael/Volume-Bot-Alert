@@ -56,6 +56,7 @@ export interface ManualTokenEntry {
   priceChange1h?: number | null;
   priceChange6h?: number | null;
   priceChange24h?: number | null;
+  mcapDelta?: number | null;
   prevVolume5m?: number | null;
   prevMcap?: number | null;
   lastAlertAt?: number | null;

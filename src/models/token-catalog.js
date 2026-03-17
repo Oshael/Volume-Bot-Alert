@@ -33,14 +33,21 @@ async function upsertToken(token) {
   const isActiveMonitorCandidate = token.isActiveMonitorCandidate == null ? true : !!token.isActiveMonitorCandidate;
   const lastMcap = Number.isFinite(Number(token.mcap)) ? Number(token.mcap) : null;
   const lastPrice = Number.isFinite(Number(token.price)) ? Number(token.price) : null;
+  const lastPriceChange1h = Number.isFinite(Number(token.priceChange1h)) ? Number(token.priceChange1h) : null;
+  const lastPriceChange6h = Number.isFinite(Number(token.priceChange6h)) ? Number(token.priceChange6h) : null;
+  const lastPriceChange24h = Number.isFinite(Number(token.priceChange24h)) ? Number(token.priceChange24h) : null;
+  const lastTokenCreatedAtMs = Number.isFinite(Number(token.tokenCreatedAt)) ? Math.trunc(Number(token.tokenCreatedAt)) : null;
 
   const { rows } = await db.query(
     `INSERT INTO token_catalog (
        address, chain, symbol, name, source,
        last_mcap, last_price, last_pair_address, last_pair_url,
-       last_image_url, last_twitter_url, is_active_monitor_candidate
+       last_image_url, last_twitter_url,
+       last_price_change_1h, last_price_change_6h, last_price_change_24h,
+       last_token_created_at_ms,
+       is_active_monitor_candidate
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      ON CONFLICT (address) DO UPDATE SET
        chain = EXCLUDED.chain,
        symbol = COALESCE(EXCLUDED.symbol, token_catalog.symbol),
@@ -53,6 +60,10 @@ async function upsertToken(token) {
        last_pair_url = COALESCE(EXCLUDED.last_pair_url, token_catalog.last_pair_url),
        last_image_url = COALESCE(EXCLUDED.last_image_url, token_catalog.last_image_url),
        last_twitter_url = COALESCE(EXCLUDED.last_twitter_url, token_catalog.last_twitter_url),
+       last_price_change_1h = COALESCE(EXCLUDED.last_price_change_1h, token_catalog.last_price_change_1h),
+       last_price_change_6h = COALESCE(EXCLUDED.last_price_change_6h, token_catalog.last_price_change_6h),
+       last_price_change_24h = COALESCE(EXCLUDED.last_price_change_24h, token_catalog.last_price_change_24h),
+       last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
        is_active_monitor_candidate = EXCLUDED.is_active_monitor_candidate,
        metadata_updated_at = NOW()
      RETURNING *`,
@@ -68,6 +79,10 @@ async function upsertToken(token) {
       lastPairUrl,
       lastImageUrl,
       lastTwitterUrl,
+      lastPriceChange1h,
+      lastPriceChange6h,
+      lastPriceChange24h,
+      lastTokenCreatedAtMs,
       isActiveMonitorCandidate,
     ]
   );
@@ -146,6 +161,59 @@ async function listEligibleVisible(limit = 500, minMcap = 30000) {
   return rows;
 }
 
+async function listDashboardMonitored(limit = 500, minMcap = 30000) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 5000));
+  const safeMinMcap = Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000;
+  const { rows } = await db.query(
+    `SELECT
+       address,
+       symbol,
+       name,
+       eligible_for_monitoring,
+       last_mcap,
+       last_price,
+       last_vol_5m,
+       last_vol_1h,
+       last_vol_6h,
+       last_vol_24h,
+       last_price_change_1h,
+       last_price_change_6h,
+       last_price_change_24h,
+       last_token_created_at_ms,
+       last_pair_address,
+       last_pair_url,
+       last_image_url,
+       last_twitter_url,
+       monitor_priority,
+       last_seen_at,
+       last_evaluated_at
+     FROM token_catalog
+     WHERE eligible_for_monitoring = TRUE
+       AND COALESCE(last_mcap, 0) >= $2
+     ORDER BY last_seen_at DESC, last_evaluated_at DESC NULLS LAST
+     LIMIT $1`,
+    [safeLimit, safeMinMcap]
+  );
+  return rows;
+}
+
+async function scheduleImmediateEvaluation(address) {
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    throw new Error('Invalid token address format');
+  }
+
+  const { rows } = await db.query(
+    `UPDATE token_catalog
+     SET next_evaluation_at = NOW()
+     WHERE address = $1
+     RETURNING *`,
+    [addr]
+  );
+
+  return rows[0] || null;
+}
+
 async function applyEvaluationResult(address, result) {
   const addr = String(address || '').trim();
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
@@ -167,6 +235,10 @@ async function applyEvaluationResult(address, result) {
   const lastVol1h = Number.isFinite(Number(result.vol1h)) ? Number(result.vol1h) : null;
   const lastVol6h = Number.isFinite(Number(result.vol6h)) ? Number(result.vol6h) : null;
   const lastVol24h = Number.isFinite(Number(result.vol24h)) ? Number(result.vol24h) : null;
+  const lastPriceChange1h = Number.isFinite(Number(result.priceChange1h)) ? Number(result.priceChange1h) : null;
+  const lastPriceChange6h = Number.isFinite(Number(result.priceChange6h)) ? Number(result.priceChange6h) : null;
+  const lastPriceChange24h = Number.isFinite(Number(result.priceChange24h)) ? Number(result.priceChange24h) : null;
+  const lastTokenCreatedAtMs = Number.isFinite(Number(result.tokenCreatedAt)) ? Math.trunc(Number(result.tokenCreatedAt)) : null;
 
   const { rows } = await db.query(
     `UPDATE token_catalog
@@ -191,8 +263,12 @@ async function applyEvaluationResult(address, result) {
          last_vol_1h = COALESCE($18, last_vol_1h),
          last_vol_6h = COALESCE($19, last_vol_6h),
          last_vol_24h = COALESCE($20, last_vol_24h),
+         last_price_change_1h = COALESCE($21, last_price_change_1h),
+         last_price_change_6h = COALESCE($22, last_price_change_6h),
+         last_price_change_24h = COALESCE($23, last_price_change_24h),
+         last_token_created_at_ms = COALESCE($24, last_token_created_at_ms),
          metadata_updated_at = CASE
-           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $17 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL
+           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $17 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL OR $21 IS NOT NULL OR $22 IS NOT NULL OR $23 IS NOT NULL OR $24 IS NOT NULL
            THEN NOW()
            ELSE metadata_updated_at
          END
@@ -219,6 +295,10 @@ async function applyEvaluationResult(address, result) {
       lastVol1h,
       lastVol6h,
       lastVol24h,
+      lastPriceChange1h,
+      lastPriceChange6h,
+      lastPriceChange24h,
+      lastTokenCreatedAtMs,
     ]
   );
 
@@ -232,5 +312,7 @@ module.exports = {
   listDueForEvaluation,
   listEligibleForSnapshots,
   listEligibleVisible,
+  listDashboardMonitored,
+  scheduleImmediateEvaluation,
   applyEvaluationResult,
 };

@@ -263,7 +263,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
   const dexUrl = item.pairUrl || `https://dexscreener.com/solana/${item.address}`;
   const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const mcapDelta = item.prevMcap && item.prevMcap > 0 && item.mcap != null ? ((item.mcap - item.prevMcap) / item.prevMcap) * 100 : null;
+  const mcapDelta = item.mcapDelta ?? (item.prevMcap && item.prevMcap > 0 && item.mcap != null ? ((item.mcap - item.prevMcap) / item.prevMcap) * 100 : null);
   const actionButton = mode === 'manual'
     ? `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${item.address}" ${busy ? 'disabled' : ''}>X</button>`
     : `<button type="button" class="inline-icon danger" data-action="${mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week'}" data-address="${item.address}" ${busy ? 'disabled' : ''}>X</button>`;
