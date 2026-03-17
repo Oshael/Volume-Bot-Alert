@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, Old Surge session-baseline rules, top-menu alert controls, and instant starred sync polish.
+Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, Old Surge session-baseline rules, top-menu alert controls, instant starred sync polish, and manual-token backend restore.
 
 ## Current Runtime Shape
 
@@ -54,6 +54,7 @@ Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery
   - `GET /api/config`
 - Returned user-scoped data:
   - `configs`
+  - `tokens`
   - `blocklist`
   - `starredTokens`
 
@@ -121,13 +122,16 @@ Current caution:
 - in production, `429` can still happen when dashboard polling combines with other frontend API traffic
 
 ### 3. Manual Tokens
-- Current frontend source of truth:
-  - account-scoped browser storage
+- Current source of truth:
+  - backend per-user manual-token list from `GET /api/config`
+- Dedicated user endpoints:
+  - `POST /api/config/tokens`
+  - `DELETE /api/config/tokens/:address`
 - Backend ingestion endpoint:
   - `POST /api/catalog/manual-track`
 - Current add flow:
   1. frontend adds the token optimistically to local state
-  2. frontend persists the manual list locally per authenticated account
+  2. frontend persists the manual token to the authenticated user via `POST /api/config/tokens`
   3. frontend asks backend to track the token in catalog
   4. backend upserts it into `token_catalog`
   5. backend schedules immediate catalog evaluation
@@ -136,9 +140,10 @@ Current caution:
      - `GET /api/dashboard/monitored`
 
 - Intended semantics:
-  - manual token is a per-user overlay
+  - manual token list is a backend-persisted per-user overlay
   - manual token also acts as a catalog-ingestion path
   - `_userManual` is the protection flag for `min-mcap-remove`
+  - restoring manual tokens must not depend on dashboard success; `GET /api/config` alone is enough to restore the list across browsers/devices
 
 ### 4. Catalog worker
 - Worker: `src/services/catalog-worker.js`
@@ -224,11 +229,11 @@ Current caution:
 ### Backend-persisted per account
 - auth/session state
 - user configs
+- manual tokens
 - blocklist
 - starred tokens
 
 ### Browser-local but account-scoped
-- manual tokens
 - dismissed Recent set
 - dismissed Old Week set
 - Recent removal log
@@ -293,6 +298,9 @@ Current limitation:
   - they drop back below threshold and cross again
   - or they advance at least `+40` percentage points beyond the last alert of that same type
 - The old behavior where near-identical monitored alerts could re-fire after cooldown is no longer intended
+- Tokens now also have a cross-alert block:
+  - if a token fires one alert type, other alert types for that same token are blocked for `2m`
+  - `Surge` is evaluated before local `VOL/MCAP`, so it wins when both would qualify in the same cycle
 
 ### Old Token Surge rule
 - Old Surge no longer fires immediately on bot start just because a token is already hot
@@ -300,6 +308,14 @@ Current limitation:
   - if `PCHANGE 1H` or `PCHANGE 6H` crosses its threshold during the session, it alerts
   - if the token already started above threshold, it only alerts after rising an additional `+50` percentage points above the session baseline
 - This prevents noisy “instant boot alerts” while still allowing genuinely stronger continuation moves to alert later in the same session
+- Surge is now additionally age-gated:
+  - tokens younger than `2d` do not qualify for Surge at all
+  - tokens from `2d` to `7d` can show as `Recent Token Surge`
+  - tokens older than `7d` show as `Old Token Surge`
+- Current visual contract:
+  - `Recent Token Surge` is green
+  - `Old Token Surge` is orange
+  - standard `50%-100%` monitored alerts are blue
 
 ### Top config controls
 - The top config area now exposes:
@@ -327,8 +343,9 @@ Current limitation:
   - `Alerts`
 
 ### Manual token reload stability
-- manual tokens are now expected to survive `F5` from local per-account frontend storage
-- backend tracking is no longer required for the manual bar itself
+- manual tokens are expected to survive `F5`
+- manual tokens are also expected to restore across different browsers/devices for the same authenticated account
+- backend catalog tracking remains separate from the user manual-token list itself
 
 ## Known Open Issues / Review Targets
 - Consider deduplicating/caching PumpFun metadata fetches more aggressively if `429` persists.

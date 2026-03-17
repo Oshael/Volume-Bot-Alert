@@ -1,9 +1,11 @@
 import { createAppState, type AddressItem, type AlertEntry, type AppState, type ManualTokenEntry, type MeteoraEntry, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import { fetchCurrentSession, login, logout, logoutAll, type SessionUser } from '../services/api/auth';
 import {
+  addManualToken as addManualTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
   fetchConfig,
   patchConfig,
+  removeManualToken as removeManualTokenRequest,
   removeBlockedToken as removeBlockedTokenRequest,
   syncConfig,
   type ConfigPayload,
@@ -11,7 +13,6 @@ import {
 import { normalizeManualDexPayload } from '../services/dex/normalize';
 import { fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
-import { loadManualTokens as loadScopedManualTokens, resolveScopedManualTokens, saveManualTokens as saveScopedManualTokens } from '../utils/manual-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
   loadDismissedOldWeek,
@@ -174,17 +175,6 @@ export function createAppController(): AppController {
 
   function getStorageScope() {
     return state.session.email || state.session.username || 'anonymous';
-  }
-
-  function getStoredManualTokens() {
-    return loadScopedManualTokens(getStorageScope());
-  }
-
-  function persistManualTokens(items = state.data.manualTokens) {
-    return saveScopedManualTokens(
-      getStorageScope(),
-      items.map((item) => ({ address: item.address, label: item.label ?? null })),
-    );
   }
 
   function hydrateSoundSettings() {
@@ -1465,7 +1455,7 @@ export function createAppController(): AppController {
   function applyMonitoredDashboard(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
     const manualPayload: ConfigPayload = {
       configs: state.data.configs,
-      tokens: getStoredManualTokens(),
+      tokens: state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
       blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
       starredTokens: state.data.starredTokens.map((address) => ({ address })),
     };
@@ -1528,11 +1518,10 @@ export function createAppController(): AppController {
       });
     }
 
-    const resolvedManualTokens = resolveScopedManualTokens(getStorageScope(), payload.tokens);
     writeConfigDebug('reloadConfigInternal:fetched', {
       fetchedMinVol: payload.configs?.['min-vol'],
     });
-    applyConfig({ ...payload, tokens: resolvedManualTokens }, monitoredDashboardTokens);
+    applyConfig(payload, monitoredDashboardTokens);
   }
 
   return {
@@ -1902,7 +1891,6 @@ export function createAppController(): AppController {
 
       state.configSummary.manualTokens = state.data.manualTokens.length;
       state.bars.manual = state.data.manualTokens.length;
-      persistManualTokens();
       refreshMonitoredPanelCounts();
       deriveAgeBuckets();
       console.info('[manual:add] local-state-applied', {
@@ -1914,6 +1902,12 @@ export function createAppController(): AppController {
       emit();
 
       try {
+        const result = await addManualTokenRequest(normalizedAddress, label ?? null, token);
+        if (result?.token) {
+          state.data.manualTokens = state.data.manualTokens.map((item) => item.address === normalizedAddress
+            ? { ...item, label: result.token.label ?? item.label ?? null }
+            : item);
+        }
         await trackManualToken(normalizedAddress, token);
         await reloadConfigInternal(token);
 
@@ -1947,11 +1941,13 @@ export function createAppController(): AppController {
       try {
         state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
         state.data.monitoredTokens = state.data.monitoredTokens.map((item) => item.address === address ? { ...item, manual: false, _userManual: false } : item);
-        persistManualTokens();
         state.configSummary.manualTokens = state.data.manualTokens.length;
         state.bars.manual = state.data.manualTokens.length;
         deriveAgeBuckets();
         refreshMonitoredPanelCounts();
+        emit();
+        await removeManualTokenRequest(address, token);
+        await reloadConfigInternal(token);
         setNotice('Token removed');
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to remove manual token');
@@ -2020,6 +2016,3 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-

@@ -218,15 +218,17 @@ Endpoint:
 
 User-scoped persisted data:
 - configs
+- manual tokens
 - blocklist
 - starred tokens
 
 ### Manual tokens
-- frontend local storage, scoped by authenticated account
+- backend user data, scoped by authenticated account
 
 Important:
-- backend is not the source of truth for which manual tokens a user sees
-- backend only ingests the token for global catalog tracking
+- backend is the source of truth for which manual tokens a user sees
+- frontend still applies optimistic UI updates
+- backend also ingests the token for global catalog tracking through a separate catalog path
 
 ### Monitored tokens baseline
 - backend
@@ -257,7 +259,7 @@ Reasons:
    - `GET /api/dashboard/monitored`
 4. frontend rebuilds tracked state from:
    - backend monitored payload
-   - local manual tokens for that account
+   - backend manual tokens for that account
    - blocklist
    - starred tokens
 
@@ -466,6 +468,8 @@ Rules:
   - does not re-fire just because cooldown expired
   - re-fires only if it drops back below threshold and crosses again
   - or if it advances another `+40` percentage points beyond the previous VOL alert
+- cross-alert rule:
+  - if the same token has already fired another alert type in the last `2m`, this alert is suppressed
 
 ### Monitored MCAP alert
 Rules:
@@ -477,6 +481,8 @@ Rules:
   - does not re-fire just because cooldown expired
   - re-fires only if it drops back below threshold and crosses again
   - or if it advances another `+40` percentage points beyond the previous MCAP alert
+- cross-alert rule:
+  - if the same token has already fired another alert type in the last `2m`, this alert is suppressed
 
 ### HVNC
 Meaning:
@@ -490,6 +496,7 @@ Rules:
 ### Old Token Surge
 Rules:
 - only evaluated for routed Recent / Old Week tokens
+- only evaluated for tokens aged at least `2d`
 - thresholds:
   - `1H >= user-configured threshold` default `100%`
   - `6H >= user-configured threshold` default `150%`
@@ -500,8 +507,13 @@ Current session-baseline logic:
 - if token already starts above threshold, it only alerts after gaining another `+50` percentage points above the session baseline
 
 Badge label in alert card:
-- `RECENT TOKEN SURGE` when token age is up to `7d`
+- no Surge alert for tokens younger than `2d`
+- `RECENT TOKEN SURGE` when token age is from `2d` up to `7d`
 - `OLD TOKEN SURGE` when older than `7d`
+
+Priority / conflict rule:
+- `Surge` is evaluated before local `VOL/MCAP`
+- if `Surge` fires, local monitored alerts for that token are blocked by the shared `2m` cross-alert window
 
 ### PumpFun alerts
 Rules:
@@ -527,6 +539,19 @@ Behavior:
 - fallback synthesized patterns still exist
 - sound respects enable/disable and volume UI settings
 - sound now also respects per-alert-type toggles stored in user config
+
+## Alert Color Semantics
+
+Files:
+- `frontend/src/ui/sections/alerts-section.ts`
+- `frontend/src/styles/app.css`
+
+Current visual mapping:
+- standard monitored alerts in the `50%-100%` range use blue
+- `critical` alerts at `100%-200%` use yellow
+- `mega` alerts above `200%` use orange
+- `Recent Token Surge` uses green
+- `Old Token Surge` uses orange
 
 ## Top Config Menu
 
@@ -579,6 +604,7 @@ If no valid pair exists:
 - users
 - sessions
 - configs
+- manual tokens
 - blocklist
 - starred tokens
 - token catalog
@@ -586,7 +612,6 @@ If no valid pair exists:
 - Meteora snapshots
 
 ### Browser-local and account-scoped
-- manual tokens
 - dismissed Recent set
 - dismissed Old Week set
 - Recent removal log
@@ -605,6 +630,11 @@ A token can enter `token_catalog` from:
 Important distinction:
 - reevaluation is not discovery
 - the catalog worker only works on tokens already inside the catalog
+
+Manual-token distinction:
+- the per-user manual-token list lives in config/token endpoints
+- the global tracked/catalog version of that token lives in `token_catalog`
+- these are intentionally separate layers
 
 ## Current Rate Limiting
 
@@ -647,6 +677,7 @@ Reason for this split:
 - `PUT /api/config`
 - `PATCH /api/config`
 - `POST /api/config/tokens`
+- `DELETE /api/config/tokens/:address`
 
 ### Catalog
 - `POST /api/catalog/manual-track`
