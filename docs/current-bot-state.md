@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, and Old Surge session-baseline rules.
+Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, Old Surge session-baseline rules, top-menu alert controls, and instant starred sync polish.
 
 ## Current Runtime Shape
 
@@ -289,6 +289,10 @@ Current limitation:
 - `VOL` and `MCAP` monitored alerts are computed on the frontend from monitored state deltas
 - Current monitored alert evaluation runs during dashboard-driven rebuilds, not only socket patch merges
 - This matters because the monitored table is now backend-driven and no longer relies on Dex socket updates as the primary refresh path
+- `VOL` and `MCAP` now only repeat if:
+  - they drop back below threshold and cross again
+  - or they advance at least `+40` percentage points beyond the last alert of that same type
+- The old behavior where near-identical monitored alerts could re-fire after cooldown is no longer intended
 
 ### Old Token Surge rule
 - Old Surge no longer fires immediately on bot start just because a token is already hot
@@ -296,6 +300,31 @@ Current limitation:
   - if `PCHANGE 1H` or `PCHANGE 6H` crosses its threshold during the session, it alerts
   - if the token already started above threshold, it only alerts after rising an additional `+50` percentage points above the session baseline
 - This prevents noisy “instant boot alerts” while still allowing genuinely stronger continuation moves to alert later in the same session
+
+### Top config controls
+- The top config area now exposes:
+  - `Surge Threshold`
+    - editable `1H` and `6H` surge thresholds
+  - `Alert Toggles`
+    - `VOL`
+    - `MCAP`
+    - `High Volume New Coin`
+    - `Surge`
+    - `PumpFun VOL`
+    - `PumpFun HVNC`
+  - `Sound By Alert Type`
+    - the same per-type families above, but for sound playback only
+- These toggles are backend-persisted user configs
+- `Sound Alert` remains the master on/off switch, while `Sound By Alert Type` is the per-kind gate
+
+### Starred-token sync
+- Toggling a star now updates immediately across every visible surface rendering that same address
+- This includes:
+  - `Monitored`
+  - `Recent`
+  - `Old Tokens 1 Week+`
+  - `Manual Tokens`
+  - `Alerts`
 
 ### Manual token reload stability
 - manual tokens are now expected to survive `F5` from local per-account frontend storage

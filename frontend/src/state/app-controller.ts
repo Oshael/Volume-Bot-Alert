@@ -37,7 +37,8 @@ const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const OLD_SURGE_SESSION_DELTA_PCT = 50;
-const REPEAT_LOCAL_ALERT_STEP_PCT = 15;
+const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
+const CROSS_ALERT_BLOCK_MS = 2 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 10 * 1000;
 
@@ -164,6 +165,10 @@ export function createAppController(): AppController {
       default:
         return true;
     }
+  }
+
+  function isCrossAlertBlocked(token: ManualTokenEntry, now: number) {
+    return Boolean(token.lastAlertAt && now - token.lastAlertAt < CROSS_ALERT_BLOCK_MS);
   }
 
   function getStorageScope() {
@@ -884,6 +889,9 @@ export function createAppController(): AppController {
     }
 
     const now = Date.now();
+    if (isCrossAlertBlocked(token, now)) {
+      return;
+    }
     const symbol = token.symbol || token.label || token.address.slice(0, 8);
     const ageMs = token.createdAt ? now - token.createdAt : Number.POSITIVE_INFINITY;
     const hvncMinVol = getConfigNumber('hvnc-min-vol', 300000);
@@ -952,6 +960,8 @@ export function createAppController(): AppController {
 
       if (pct > 0) {
         token._oldSurgeFired = true;
+        token.lastAlertAt = now;
+        token._lastAlertKind = 'old-surge';
         pushAlert({
           id: `${token.address}-${now}-old-surge`,
           kind: 'old-surge',
@@ -987,6 +997,9 @@ export function createAppController(): AppController {
     }
 
     const now = Date.now();
+    if (isCrossAlertBlocked(token, now)) {
+      return;
+    }
     const threshold = getConfigNumber('threshold', 50) / 100;
     const mcapThreshold = getConfigNumber('mcap-threshold', 50) / 100;
     const previousVol = token.prevVolume5m ?? null;
@@ -1080,9 +1093,11 @@ export function createAppController(): AppController {
       if (firedKind === 'vol') {
         token._volAlertAboveThreshold = true;
         token._lastVolAlertPct = alert.pct;
+        token._lastAlertKind = 'monitored-vol';
       } else if (firedKind === 'mcap') {
         token._mcapAlertAboveThreshold = true;
         token._lastMcapAlertPct = alert.pct;
+        token._lastAlertKind = 'monitored-mcap';
       }
       pushAlert(alert);
       setNotice(`Local monitored alert: ${symbol}`);
@@ -1133,6 +1148,7 @@ export function createAppController(): AppController {
         _mcapAlertAboveThreshold: existingItem?._mcapAlertAboveThreshold ?? base._mcapAlertAboveThreshold ?? false,
         _lastVolAlertPct: existingItem?._lastVolAlertPct ?? base._lastVolAlertPct ?? null,
         _lastMcapAlertPct: existingItem?._lastMcapAlertPct ?? base._lastMcapAlertPct ?? null,
+        _lastAlertKind: existingItem?._lastAlertKind ?? base._lastAlertKind ?? null,
       };
     }
 
@@ -1192,8 +1208,8 @@ export function createAppController(): AppController {
     if (state.runtime.mode === 'active' && alertCandidates.size > 0) {
       for (const token of state.data.monitoredTokens) {
         if (!alertCandidates.has(token.address)) continue;
-        maybeFireLocalAlert(token);
         maybeFireSpecialAlerts(token);
+        maybeFireLocalAlert(token);
       }
     }
     refreshMonitoredPanelCounts();
@@ -1216,8 +1232,8 @@ export function createAppController(): AppController {
         prevMcap: item.mcap ?? item.prevMcap ?? null,
         deadCycles: patch.volume5m === 0 ? (item.deadCycles ?? 0) + 1 : 0,
       };
-      maybeFireLocalAlert(nextEntry);
       maybeFireSpecialAlerts(nextEntry);
+      maybeFireLocalAlert(nextEntry);
       return nextEntry;
     });
 
@@ -2003,9 +2019,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-
 
 
 

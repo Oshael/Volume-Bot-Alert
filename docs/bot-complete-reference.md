@@ -391,6 +391,7 @@ Files:
 Behavior:
 - starred tokens are persisted in backend user data
 - starring applies across all sections for the same address
+- UI sync is now immediate across all visible instances of the same address when the star is clicked
 
 Current visual treatment:
 - stronger gold glow
@@ -461,6 +462,10 @@ Rules:
 - respects `max-mcap`
 - suppressed if MCAP is declining during the same comparison
 - shares standard cooldown with monitored MCAP alerts
+- repeat rule:
+  - does not re-fire just because cooldown expired
+  - re-fires only if it drops back below threshold and crosses again
+  - or if it advances another `+40` percentage points beyond the previous VOL alert
 
 ### Monitored MCAP alert
 Rules:
@@ -468,6 +473,10 @@ Rules:
 - respects `mcap-threshold`
 - also passes the general alert filters
 - shares standard cooldown with monitored VOL alerts
+- repeat rule:
+  - does not re-fire just because cooldown expired
+  - re-fires only if it drops back below threshold and crosses again
+  - or if it advances another `+40` percentage points beyond the previous MCAP alert
 
 ### HVNC
 Meaning:
@@ -482,8 +491,8 @@ Rules:
 Rules:
 - only evaluated for routed Recent / Old Week tokens
 - thresholds:
-  - `1H >= 100%`
-  - `6H >= 150%`
+  - `1H >= user-configured threshold` default `100%`
+  - `6H >= user-configured threshold` default `150%`
 
 Current session-baseline logic:
 - does not fire immediately on boot just because the token already started hot
@@ -517,6 +526,34 @@ Behavior:
 - custom sounds can be saved per account scope
 - fallback synthesized patterns still exist
 - sound respects enable/disable and volume UI settings
+- sound now also respects per-alert-type toggles stored in user config
+
+## Top Config Menu
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/styles/app.css`
+- `src/models/user-config.js`
+
+Current top-row controls include:
+- global monitored thresholds
+- `Sound Alert`
+- `Surge Threshold`
+- `Alert Toggles`
+- `Sound By Alert Type`
+
+Current per-type toggle families:
+- `VOL`
+- `MCAP`
+- `High Volume New Coin`
+- `Surge`
+- `PumpFun VOL`
+- `PumpFun HVNC`
+
+Persistence:
+- these are backend-persisted user config values
+- `Sound Alert` is the master sound gate
+- `Sound By Alert Type` is the per-kind sound gate
 
 ## `D` Column / MCAP Delta
 

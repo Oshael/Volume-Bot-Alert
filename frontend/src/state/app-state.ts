@@ -69,6 +69,7 @@ export interface ManualTokenEntry {
   _mcapAlertAboveThreshold?: boolean;
   _lastVolAlertPct?: number | null;
   _lastMcapAlertPct?: number | null;
+  _lastAlertKind?: AlertEntry['kind'] | null;
 }
 
 export interface PumpVolumePoint {
