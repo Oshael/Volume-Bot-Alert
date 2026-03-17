@@ -1449,10 +1449,10 @@ export function createAppController(): AppController {
     hydrateSoundSettings();
   }
 
-  function applyMonitoredDashboard(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
+  function applyMonitoredDashboard(monitoredDashboardTokens: DashboardMonitoredToken[] = [], manualTokensOverride?: Array<{ address: string; label?: string | null }>) {
     const manualPayload: ConfigPayload = {
       configs: state.data.configs,
-      tokens: state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
+      tokens: (manualTokensOverride ?? state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null }))),
       blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
       starredTokens: state.data.starredTokens.map((address) => ({ address })),
     };
@@ -1499,7 +1499,7 @@ export function createAppController(): AppController {
     state.data.starredTokens = payload.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
     state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
     state.bars.blocklist = payload.blocklist.length;
-    applyMonitoredDashboard(monitoredDashboardTokens);
+    applyMonitoredDashboard(monitoredDashboardTokens, payload.tokens);
     refreshPumpPanelCounts();
   }
 
