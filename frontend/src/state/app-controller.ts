@@ -215,9 +215,6 @@ export function createAppController(): AppController {
 
     try {
       const result = await syncConfig({
-        configs: state.data.configs,
-        tokens: state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null })),
-        blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
         starredTokens: snapshot.map((address) => ({ address })),
       }, token);
 

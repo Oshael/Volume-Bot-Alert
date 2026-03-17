@@ -12,6 +12,13 @@ export interface ConfigPayload {
   starredTokens: Array<{ address: string }>;
 }
 
+export interface ConfigSyncPayload {
+  configs?: Record<string, string | number>;
+  tokens?: AddressItem[];
+  blocklist?: AddressItem[];
+  starredTokens?: Array<{ address: string }>;
+}
+
 export function fetchConfig(token?: string | null) {
   return apiFetch<ConfigPayload>('/api/config', { token });
 }
@@ -27,7 +34,7 @@ export function patchConfig(
   });
 }
 
-export function syncConfig(payload: ConfigPayload, token?: string | null) {
+export function syncConfig(payload: ConfigSyncPayload, token?: string | null) {
   return apiFetch<{ message: string } & ConfigPayload>('/api/config', {
     method: 'PUT',
     body: JSON.stringify(payload),
