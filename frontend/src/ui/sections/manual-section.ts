@@ -9,12 +9,15 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const manualVolActive = state.ui.manualSort === 'vol' ? 'active' : '';
   const manualMcapActive = state.ui.manualSort === 'mcap' ? 'active' : '';
   const manualPchangeActive = state.ui.manualSort === 'pchange' ? 'active' : '';
+  const manualAgeActive = state.ui.manualSort === 'age' ? 'active' : '';
   const manualVol1h = state.ui.manualSort === 'vol' && state.ui.manualSortWindow === '1h' ? 'active' : '';
   const manualVol6h = state.ui.manualSort === 'vol' && state.ui.manualSortWindow === '6h' ? 'active' : '';
   const manualVol24h = state.ui.manualSort === 'vol' && state.ui.manualSortWindow === '24h' ? 'active' : '';
   const manualPchange1h = state.ui.manualSort === 'pchange' && state.ui.manualSortWindow === '1h' ? 'active' : '';
   const manualPchange6h = state.ui.manualSort === 'pchange' && state.ui.manualSortWindow === '6h' ? 'active' : '';
   const manualPchange24h = state.ui.manualSort === 'pchange' && state.ui.manualSortWindow === '24h' ? 'active' : '';
+  const manualAgeNewest = state.ui.manualSort === 'age' && state.ui.manualSortWindow === 'newest' ? 'active' : '';
+  const manualAgeOldest = state.ui.manualSort === 'age' && state.ui.manualSortWindow === 'oldest' ? 'active' : '';
   section.innerHTML = `
     <div class="legacy-bar-head">
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
@@ -36,6 +39,13 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
               <button type="button" class="sort-menu-item ${manualPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
               <button type="button" class="sort-menu-item ${manualPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
               <button type="button" class="sort-menu-item ${manualPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
+            </div>
+          </div>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${manualAgeActive}" data-sort-toggle="age">AGE</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${manualAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
+              <button type="button" class="sort-menu-item ${manualAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
             </div>
           </div>
         </div>
@@ -94,4 +104,3 @@ export function renderManualTokenEntryForm(state: AppState, controller: AppContr
 
   return wrap;
 }
-

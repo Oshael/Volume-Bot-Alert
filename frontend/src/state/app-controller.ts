@@ -64,9 +64,9 @@ export interface AppController {
   setOldWeekPage(page: number): void;
   setRecentPerPage(perPage: number): void;
   setOldWeekPerPage(perPage: number): void;
-  setManualSort(mode: 'vol' | 'mcap' | 'pchange', window?: '1h' | '6h' | '24h'): void;
-  setRecentSort(mode: 'vol' | 'mcap' | 'pchange', window?: '1h' | '6h' | '24h'): void;
-  setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange', window?: '1h' | '6h' | '24h'): void;
+  setManualSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
+  setRecentSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
+  setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
   setMonitoredSort(mode: '5m' | '1h' | '6h' | '24h' | 'mcap'): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
@@ -274,8 +274,12 @@ export function createAppController(): AppController {
     state.runtime.alerts = state.data.alerts.length;
   }
 
-  function normalizeBucketSortWindow(window: string | undefined): '1h' | '6h' | '24h' {
+  function normalizeBucketMetricWindow(window: string | undefined): '1h' | '6h' | '24h' {
     return window === '1h' || window === '6h' || window === '24h' ? window : '24h';
+  }
+
+  function normalizeBucketAgeWindow(window: string | undefined): 'newest' | 'oldest' {
+    return window === 'oldest' ? 'oldest' : 'newest';
   }
 
   function getPumpConfigNumber(key: string, fallback: number) {
@@ -1505,24 +1509,30 @@ export function createAppController(): AppController {
       void persistUiConfigs({ 'old-week-per-page': state.ui.oldWeekPerPage });
       emit();
     },
-    setManualSort(mode: 'vol' | 'mcap' | 'pchange', window?: '1h' | '6h' | '24h') {
+    setManualSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest') {
       state.ui.manualSort = mode;
-      if (mode !== 'mcap') {
-        state.ui.manualSortWindow = normalizeBucketSortWindow(window);
+      if (mode === 'age') {
+        state.ui.manualSortWindow = normalizeBucketAgeWindow(window);
+      } else if (mode !== 'mcap') {
+        state.ui.manualSortWindow = normalizeBucketMetricWindow(window);
       }
       emit();
     },
-    setRecentSort(mode: 'vol' | 'mcap' | 'pchange', window?: '1h' | '6h' | '24h') {
+    setRecentSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest') {
       state.ui.recentSort = mode;
-      if (mode !== 'mcap') {
-        state.ui.recentSortWindow = normalizeBucketSortWindow(window);
+      if (mode === 'age') {
+        state.ui.recentSortWindow = normalizeBucketAgeWindow(window);
+      } else if (mode !== 'mcap') {
+        state.ui.recentSortWindow = normalizeBucketMetricWindow(window);
       }
       emit();
     },
-    setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange', window?: '1h' | '6h' | '24h') {
+    setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest') {
       state.ui.oldWeekSort = mode;
-      if (mode !== 'mcap') {
-        state.ui.oldWeekSortWindow = normalizeBucketSortWindow(window);
+      if (mode === 'age') {
+        state.ui.oldWeekSortWindow = normalizeBucketAgeWindow(window);
+      } else if (mode !== 'mcap') {
+        state.ui.oldWeekSortWindow = normalizeBucketMetricWindow(window);
       }
       emit();
     },
@@ -1893,7 +1903,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
 
 
 

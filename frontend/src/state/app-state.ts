@@ -221,12 +221,12 @@ export interface AppState {
     oldWeekPage: number;
     recentPerPage: number;
     oldWeekPerPage: number;
-    manualSort: 'vol' | 'mcap' | 'pchange';
-    manualSortWindow: '1h' | '6h' | '24h';
-    recentSort: 'vol' | 'mcap' | 'pchange';
-    recentSortWindow: '1h' | '6h' | '24h';
-    oldWeekSort: 'vol' | 'mcap' | 'pchange';
-    oldWeekSortWindow: '1h' | '6h' | '24h';
+    manualSort: 'vol' | 'mcap' | 'pchange' | 'age';
+    manualSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
+    recentSort: 'vol' | 'mcap' | 'pchange' | 'age';
+    recentSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
+    oldWeekSort: 'vol' | 'mcap' | 'pchange' | 'age';
+    oldWeekSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
     monitoredSort: '5m' | '1h' | '6h' | '24h' | 'mcap';
     soundEnabled: boolean;
     soundVolume: number;

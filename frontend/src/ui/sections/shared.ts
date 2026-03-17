@@ -152,8 +152,8 @@ export function renderFlash(state: AppState) {
 export function renderLogSummary(title: string, entries: RemovalLogEntry[], clearAction: string, tone: 'recent' | 'old-week') {
   if (entries.length === 0) return '';
   return `
-    <div class="log-hover ${tone}">
-      <div class="legacy-removal-badge">${entries.length} removed</div>
+    <div class="log-hover ${tone}" data-log-hover>
+      <button type="button" class="legacy-removal-badge" data-log-hover-toggle>${entries.length} removed</button>
       <div class="log-hover-panel ${tone}">
         <div class="log-hover-head">
           <span>${title}</span>
@@ -165,10 +165,11 @@ export function renderLogSummary(title: string, entries: RemovalLogEntry[], clea
   `;
 }
 
-type BucketSortMode = 'vol' | 'mcap' | 'pchange';
-type BucketSortWindow = '1h' | '6h' | '24h';
+type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
+type BucketSortWindow = '1h' | '6h' | '24h' | 'newest' | 'oldest';
 
 function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
+  if (mode === 'age') return item.createdAt || 0;
   if (mode === 'mcap') return item.mcap || 0;
   if (mode === 'pchange') {
     if (window === '1h') return item.priceChange1h || 0;
@@ -182,7 +183,9 @@ function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: B
 
 function sortBucketTokens(tokens: ManualTokenEntry[], mode: BucketSortMode, window: BucketSortWindow) {
   return [...tokens].sort((a, b) => {
-    const delta = getBucketMetric(b, mode, window) - getBucketMetric(a, mode, window);
+    const delta = mode === 'age' && window === 'oldest'
+      ? getBucketMetric(a, mode, window) - getBucketMetric(b, mode, window)
+      : getBucketMetric(b, mode, window) - getBucketMetric(a, mode, window);
     if (delta !== 0) return delta;
     return (b.mcap || 0) - (a.mcap || 0);
   });
@@ -209,7 +212,6 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
   return `
     ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1 })}
     <div class="bucket-footer">
-      <label class="compact-inline"><span>Per Page</span><input type="number" min="10" step="1" data-action="${mode === 'recent' ? 'recent-per-page' : 'old-week-per-page'}" value="${safePerPage}" /></label>
       <div class="bucket-page-indicator">Page ${safePage + 1} / ${totalPages}</div>
       <div class="button-row compact bucket-footer-actions">
         <button type="button" class="action-button small" data-action="${mode === 'recent' ? 'recent-prev' : 'old-week-prev'}" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
@@ -234,7 +236,7 @@ function renderTokenTableShell(options: {
       <table class="token-table ${options.tone}">
         <thead>
           <tr>
-            ${options.mode === 'manual' ? '' : '<th class="rank-col">#</th>'}
+            <th class="rank-col">#</th>
             <th>Token</th>
             <th class="num-col">Age</th>
             <th class="num-col">MCAP</th>
@@ -270,7 +272,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
 
   return `
     <tr class="${isStarred ? 'token-starred' : ''}" data-hover-key="${mode}:${item.address}">
-      ${mode === 'manual' ? '' : `<td class="rank-col">#${rank}</td>`}
+      <td class="rank-col">#${rank}</td>
       <td>
         <div class="token-cell">
           ${renderAvatar(item, symbol)}

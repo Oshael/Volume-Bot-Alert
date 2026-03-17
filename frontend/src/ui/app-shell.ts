@@ -58,6 +58,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   wireHoverPersistence(root);
   wireTradeMenus(root);
   wireSortMenus(root);
+  wireLogHovers(root);
   wireUserMenus(root);
   applyHoverState(root);
 }
@@ -70,6 +71,7 @@ let hoverWired = false;
 let tradeWired = false;
 let sortMenusWired = false;
 let userMenusWired = false;
+let logHoverWired = false;
 
 function wireHoverPersistence(root: HTMLElement) {
   if (hoverWired) return;
@@ -157,6 +159,33 @@ function wireSortMenus(root: HTMLElement) {
 
     if (!wrap) {
       for (const openWrap of root.querySelectorAll<HTMLElement>('[data-sort-wrap].open')) {
+        openWrap.classList.remove('open');
+      }
+    }
+  });
+}
+
+function wireLogHovers(root: HTMLElement) {
+  if (logHoverWired) return;
+  logHoverWired = true;
+
+  root.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const toggle = target?.closest<HTMLElement>('[data-log-hover-toggle]');
+    const wrap = target?.closest<HTMLElement>('[data-log-hover]');
+
+    for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
+      if (openWrap !== wrap) openWrap.classList.remove('open');
+    }
+
+    if (toggle && wrap) {
+      event.preventDefault();
+      wrap.classList.toggle('open');
+      return;
+    }
+
+    if (!wrap) {
+      for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
         openWrap.classList.remove('open');
       }
     }

@@ -10,12 +10,15 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const recentVolActive = state.ui.recentSort === 'vol' ? 'active' : '';
   const recentMcapActive = state.ui.recentSort === 'mcap' ? 'active' : '';
   const recentPchangeActive = state.ui.recentSort === 'pchange' ? 'active' : '';
+  const recentAgeActive = state.ui.recentSort === 'age' ? 'active' : '';
   const recentVol1h = state.ui.recentSort === 'vol' && state.ui.recentSortWindow === '1h' ? 'active' : '';
   const recentVol6h = state.ui.recentSort === 'vol' && state.ui.recentSortWindow === '6h' ? 'active' : '';
   const recentVol24h = state.ui.recentSort === 'vol' && state.ui.recentSortWindow === '24h' ? 'active' : '';
   const recentPchange1h = state.ui.recentSort === 'pchange' && state.ui.recentSortWindow === '1h' ? 'active' : '';
   const recentPchange6h = state.ui.recentSort === 'pchange' && state.ui.recentSortWindow === '6h' ? 'active' : '';
   const recentPchange24h = state.ui.recentSort === 'pchange' && state.ui.recentSortWindow === '24h' ? 'active' : '';
+  const recentAgeNewest = state.ui.recentSort === 'age' && state.ui.recentSortWindow === 'newest' ? 'active' : '';
+  const recentAgeOldest = state.ui.recentSort === 'age' && state.ui.recentSortWindow === 'oldest' ? 'active' : '';
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -43,6 +46,13 @@ export function renderRecentSection(state: AppState, controller: AppController) 
               <button type="button" class="sort-menu-item ${recentPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
               <button type="button" class="sort-menu-item ${recentPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
               <button type="button" class="sort-menu-item ${recentPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
+            </div>
+          </div>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${recentAgeActive}" data-sort-toggle="age">AGE</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${recentAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
+              <button type="button" class="sort-menu-item ${recentAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
             </div>
           </div>
         </div>
@@ -88,12 +98,15 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const oldWeekVolActive = state.ui.oldWeekSort === 'vol' ? 'active' : '';
   const oldWeekMcapActive = state.ui.oldWeekSort === 'mcap' ? 'active' : '';
   const oldWeekPchangeActive = state.ui.oldWeekSort === 'pchange' ? 'active' : '';
+  const oldWeekAgeActive = state.ui.oldWeekSort === 'age' ? 'active' : '';
   const oldWeekVol1h = state.ui.oldWeekSort === 'vol' && state.ui.oldWeekSortWindow === '1h' ? 'active' : '';
   const oldWeekVol6h = state.ui.oldWeekSort === 'vol' && state.ui.oldWeekSortWindow === '6h' ? 'active' : '';
   const oldWeekVol24h = state.ui.oldWeekSort === 'vol' && state.ui.oldWeekSortWindow === '24h' ? 'active' : '';
   const oldWeekPchange1h = state.ui.oldWeekSort === 'pchange' && state.ui.oldWeekSortWindow === '1h' ? 'active' : '';
   const oldWeekPchange6h = state.ui.oldWeekSort === 'pchange' && state.ui.oldWeekSortWindow === '6h' ? 'active' : '';
   const oldWeekPchange24h = state.ui.oldWeekSort === 'pchange' && state.ui.oldWeekSortWindow === '24h' ? 'active' : '';
+  const oldWeekAgeNewest = state.ui.oldWeekSort === 'age' && state.ui.oldWeekSortWindow === 'newest' ? 'active' : '';
+  const oldWeekAgeOldest = state.ui.oldWeekSort === 'age' && state.ui.oldWeekSortWindow === 'oldest' ? 'active' : '';
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -121,6 +134,13 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
               <button type="button" class="sort-menu-item ${oldWeekPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
               <button type="button" class="sort-menu-item ${oldWeekPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
               <button type="button" class="sort-menu-item ${oldWeekPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
+            </div>
+          </div>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${oldWeekAgeActive}" data-sort-toggle="age">AGE</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${oldWeekAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
+              <button type="button" class="sort-menu-item ${oldWeekAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
             </div>
           </div>
         </div>

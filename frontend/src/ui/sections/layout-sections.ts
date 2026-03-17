@@ -211,7 +211,7 @@ function renderLegacyActions(state: AppState, controller: AppController) {
   section.innerHTML = `
     ${renderFlash(state)}
     <div class="legacy-button-strip">
-      <button type="button" class="legacy-btn btn-start ${isRunning ? 'running' : ''}" data-action="toggle-monitoring">${isRunning ? ' STOP' : '? START MONITORING'}</button>
+      <button type="button" class="legacy-btn btn-start ${isRunning ? 'running' : ''}" data-action="toggle-monitoring">${isRunning ? ' STOP' : '&#9654; START MONITORING'}</button>
     </div>
   `;
 

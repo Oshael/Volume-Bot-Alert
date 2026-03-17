@@ -5,7 +5,7 @@ This is the canonical documentation for the current integrated bot state in this
 
 It is based on the active backend/frontend code, with older migration notes used only as secondary context.
 
-Last reviewed against code on `2026-03-16`.
+Last reviewed against code on `2026-03-17`.
 
 ## Current Runtime Shape
 
@@ -78,7 +78,8 @@ Last reviewed against code on `2026-03-16`.
 ### Meteora
 - Source of truth: backend-persisted snapshots
 - Collection is done by backend worker
-- Frontend reads persisted summaries via backend routes
+- Frontend reads persisted summaries from `GET /api/dashboard/monitored`
+- The legacy batch route still exists on backend, but the active frontend no longer polls `POST /api/catalog/meteora/batch`
 
 ## Active Data Flows
 
@@ -110,6 +111,10 @@ Important:
 - Current intended effect:
   - frontend no longer depends on `dex:subscribe` as the main monitored refresh mechanism
   - frontend refresh should read backend-prepared state instead of causing Dex fetches itself
+
+Current caution:
+- this `10s` polling cadence is still aggressive relative to the backend-wide rate limiter
+- in production, `429` can still happen when dashboard polling combines with other frontend API traffic
 
 ### 3. Manual Tokens
 - Current frontend source of truth:
@@ -153,9 +158,17 @@ Important:
 - Snapshot worker: `src/services/meteora-snapshot-worker.js`
 - Worker polls eligible catalog tokens every `30s`
 - Read routes:
-  - `POST /api/catalog/meteora/batch`
   - `GET /api/catalog/meteora/:address/history`
+- Active frontend read path:
+  - embedded `meteora` payload inside `GET /api/dashboard/monitored`
 - Current read path is DB-backed, not upstream-fetch-backed
+
+### 6. PumpFun metadata enrichment
+- Frontend still resolves some PumpFun token images/metadata through:
+  - `GET /api/catalog/pumpfun/:mint/meta`
+- This happens when incoming PumpFun tokens are missing image/meta in local state
+- These are individual per-mint requests, not socket messages
+- This route is one of the current contributors to frontend-triggered `429` alongside dashboard polling
 
 ## Current UI/Behavior Contract
 
@@ -172,6 +185,7 @@ Important:
 - Routing is frontend-derived from tracked token age and MCAP windows
 - `_userManual` tokens are excluded from routed discovery bars
 - Dismissed sets are stored locally and are account-scoped in browser storage
+- Removal-log hover is now click-sticky as well as hover-driven, so the panel can stay open while the user reads it
 
 ### PumpFun
 - `X` removes a row from the panel only
@@ -208,20 +222,44 @@ Important:
   - `mcapDelta`
 - Backend implementation today:
   - route requests a larger recent snapshot window per token
-  - it walks that list looking for the latest snapshot with valid `mcap`
-  - it then uses the next valid `mcap` snapshot as the previous baseline
+  - it filters to snapshots with valid `mcap`
+  - it uses the newest valid snapshot as current
+  - it then looks for a valid baseline around `~5 minutes` back
+  - if no near-5m point exists, it falls back to the oldest valid snapshot still inside the fetched window
 
 Current limitation:
 - if there is no pair of valid snapshots in the fetched window, `mcapDelta` still remains `null`
 - this is acceptable fallback behavior for now
+
+### Routed/manual table sorting
+- `Manual Tokens`, `Recent Tokens`, and `Old Tokens 1 Week+` all support:
+  - `VOL`
+  - `MCAP`
+  - `PCHANGE`
+  - `AGE`
+- `AGE` currently supports two directions in the UI:
+  - `NEWEST`
+  - `OLDEST`
+- `Manual Tokens` now has the same `#` ranking column as Recent/Old
+- The duplicate footer-level `Per Page` control was removed from Recent/Old; the active `Per Page` control is the header one
+
+### Rate limiting reality
+- Backend still applies a general API limiter by IP through `src/middleware/rate-limit.js`
+- The current limiter is safe for auth abuse protection, but it is tight relative to the production frontend polling pattern
+- Recent observed `429` sources are:
+  - `GET /api/dashboard/monitored`
+  - `GET /api/catalog/pumpfun/:mint/meta`
+- Current conclusion:
+  - the active frontend is no longer wasting requests on `meteora/batch`
+  - remaining `429` pressure comes mainly from dashboard polling plus per-token PumpFun metadata fetches
 
 ### Manual token reload stability
 - manual tokens are now expected to survive `F5` from local per-account frontend storage
 - backend tracking is no longer required for the manual bar itself
 
 ## Known Open Issues / Review Targets
-- Re-verify whether any remaining frontend path still depends on live Dex push more than intended.
-- Keep Meteora fully backend-owned for collection and frontend-only for reads.
+- Revisit general API rate limiting versus real production polling.
+- Consider deduplicating/caching PumpFun metadata fetches more aggressively if `429` persists.
 
 ## Documentation Policy Going Forward
 - This file is the primary state-of-the-world document.
