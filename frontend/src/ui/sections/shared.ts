@@ -37,12 +37,17 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
       if (!address) return;
 
       const willBeStarred = !button.classList.contains('active');
-      button.classList.toggle('active', willBeStarred);
-      button.innerHTML = willBeStarred ? '&#9733;' : '&#9734;';
+      const root = button.ownerDocument || document;
+      const selector = `[data-action="toggle-star"][data-address="${CSS.escape(address)}"]`;
 
-      const tokenRow = button.closest('.token-starred, tr, article, .token-row, .alert-row');
-      if (tokenRow instanceof HTMLElement) {
-        tokenRow.classList.toggle('token-starred', willBeStarred);
+      for (const starButton of root.querySelectorAll<HTMLButtonElement>(selector)) {
+        starButton.classList.toggle('active', willBeStarred);
+        starButton.innerHTML = willBeStarred ? '&#9733;' : '&#9734;';
+
+        const tokenRow = starButton.closest('.token-starred, tr, article, .token-row, .alert-row');
+        if (tokenRow instanceof HTMLElement) {
+          tokenRow.classList.toggle('token-starred', willBeStarred);
+        }
       }
 
       void controller.toggleStarredToken(address);
