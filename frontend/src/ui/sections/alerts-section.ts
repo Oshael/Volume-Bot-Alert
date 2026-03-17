@@ -2,6 +2,8 @@ import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, fmtAge, fmtMoney, fmtPct, renderTradeTerminalMenu } from './shared';
 
+const RECENT_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function renderAlertsSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'panel legacy-panel alerts-panel';
@@ -74,7 +76,9 @@ function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean) {
 
 function renderAlertHeadline(alert: AlertEntry, toneClass: string) {
   if (alert.isOldSurge) {
-    return `<span class="alert-badge-v68 old-surge">\u{1F525} OLD TOKEN SURGE<br><span class="alert-badge-sub">${fmtPct(alert.pct)} ${alert.label || 'PCHANGE'}</span></span>`;
+    const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
+    const surgeTitle = tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
+    return `<span class="alert-badge-v68 old-surge">\u{1F525} ${surgeTitle}<br><span class="alert-badge-sub">${fmtPct(alert.pct)} ${alert.label || 'PCHANGE'}</span></span>`;
   }
   if (alert.isHvnc) {
     return `<span class="alert-badge-v68 mega">\u{1F6A8} High Volume New Coin<br><span class="alert-badge-sub">${fmtMoney(alert.volume24h)} total vol</span></span>`;
