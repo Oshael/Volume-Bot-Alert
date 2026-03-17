@@ -9,7 +9,7 @@ import {
   type ConfigPayload,
 } from '../services/api/config';
 import { normalizeManualDexPayload } from '../services/dex/normalize';
-import { fetchDashboardMonitored, fetchMeteoraBatch, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
+import { fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
 import { loadManualTokens as loadScopedManualTokens, resolveScopedManualTokens, saveManualTokens as saveScopedManualTokens } from '../utils/manual-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -39,9 +39,6 @@ const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const OLD_ALERT_1H_PCT = 100;
 const OLD_ALERT_6H_PCT = 150;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
-const METEORA_POLL_INTERVAL_MS = 30000;
-const METEORA_FETCH_HAS_POOL_COOLDOWN_MS = 25000;
-const METEORA_FETCH_NO_POOL_COOLDOWN_MS = 5 * 60 * 1000;
 const MONITORED_REFRESH_INTERVAL_MS = 10 * 1000;
 
 export interface AppController {
@@ -87,7 +84,6 @@ export function createAppController(): AppController {
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
-  let meteoraPollTimer: ReturnType<typeof setInterval> | null = null;
   let monitoredRefreshInFlight = false;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -288,97 +284,6 @@ export function createAppController(): AppController {
 
   function getMeteoraMinPool() {
     return getConfigNumber('meteora-min-pool', 5000);
-  }
-
-  function getMeteoraTrackedAddresses() {
-    const addresses = new Set<string>();
-    for (const item of state.data.monitoredTokens) addresses.add(item.address);
-    for (const item of state.data.recentTokens) addresses.add(item.address);
-    for (const item of state.data.oldWeekTokens) addresses.add(item.address);
-    return [...addresses];
-  }
-
-  async function meteoraPollAll() {
-    if (state.runtime.mode !== 'active') {
-      return;
-    }
-
-    const addresses = getMeteoraTrackedAddresses();
-    if (addresses.length === 0) {
-      return;
-    }
-
-    const now = Date.now();
-    const toFetch = addresses.filter((address) => {
-      const cached = state.data.meteoraByAddress[address];
-      if (!cached?.lastFetch) {
-        return true;
-      }
-
-      const cooldown = cached.noPool ? METEORA_FETCH_NO_POOL_COOLDOWN_MS : METEORA_FETCH_HAS_POOL_COOLDOWN_MS;
-      return now - cached.lastFetch >= cooldown;
-    });
-
-    if (toFetch.length === 0) {
-      return;
-    }
-
-    const sessionToken = state.session.token;
-    if (!sessionToken) {
-      return;
-    }
-
-    const items = await fetchMeteoraBatch(toFetch, sessionToken);
-    let changed = false;
-    for (const item of items) {
-      const address = String(item.address || '').trim();
-      if (!address) continue;
-
-      if (item.noPool || !(Number(item.tvl) > 0)) {
-        const existing = state.data.meteoraByAddress[address];
-        state.data.meteoraByAddress[address] = existing
-          ? { ...existing, noPool: true, lastFetch: now }
-          : { tvl: 0, noPool: true, lastFetch: now, history: [] };
-        changed = true;
-        continue;
-      }
-
-      const nextEntry: MeteoraEntry = {
-        ...(state.data.meteoraByAddress[address] || { history: [] }),
-        tvl: Number(item.tvl) || 0,
-        poolAddress: item.poolAddress || null,
-        poolCount: Number(item.poolCount) || 0,
-        noPool: false,
-        lastFetch: now,
-        lastSnapshotAt: item.lastSnapshotAt || null,
-        change1h: item.change1h ?? null,
-        change6h: item.change6h ?? null,
-        change24h: item.change24h ?? null,
-      };
-      state.data.meteoraByAddress[address] = nextEntry;
-      changed = true;
-    }
-
-    if (changed) {
-      emit();
-    }
-  }
-
-  function startMeteoraPoll() {
-    if (meteoraPollTimer || state.runtime.mode !== 'active') {
-      return;
-    }
-    void meteoraPollAll();
-    meteoraPollTimer = setInterval(() => {
-      void meteoraPollAll();
-    }, METEORA_POLL_INTERVAL_MS);
-  }
-
-  function stopMeteoraPoll() {
-    if (meteoraPollTimer) {
-      clearInterval(meteoraPollTimer);
-      meteoraPollTimer = null;
-    }
   }
 
   function toHttpAssetUrl(url: string | null | undefined) {
@@ -1259,7 +1164,6 @@ export function createAppController(): AppController {
     startedAt = Date.now();
     computeUptimeLabel();
     runMonitoringCycle();
-    startMeteoraPoll();
     monitoringInterval = setInterval(runMonitoringCycle, MONITORED_REFRESH_INTERVAL_MS);
     pumpGcInterval = setInterval(() => {
       runPumpGarbageCollection();
@@ -1275,7 +1179,6 @@ export function createAppController(): AppController {
     if (monitoringInterval) clearInterval(monitoringInterval);
     if (uptimeInterval) clearInterval(uptimeInterval);
     if (pumpGcInterval) clearInterval(pumpGcInterval);
-    stopMeteoraPoll();
     monitoringInterval = null;
     uptimeInterval = null;
     pumpGcInterval = null;
@@ -1459,6 +1362,7 @@ export function createAppController(): AppController {
         poolAddress: item.meteora.poolAddress || null,
         poolCount: Number(item.meteora.poolCount) || 0,
         noPool: Boolean(item.meteora.noPool),
+        lastFetch: Date.now(),
         lastSnapshotAt: item.meteora.lastSnapshotAt || null,
         change1h: item.meteora.change1h ?? null,
         change6h: item.meteora.change6h ?? null,
@@ -1494,9 +1398,6 @@ export function createAppController(): AppController {
     state.bars.blocklist = payload.blocklist.length;
     applyMonitoredDashboard(monitoredDashboardTokens);
     refreshPumpPanelCounts();
-    if (state.runtime.mode === 'active') {
-      void meteoraPollAll();
-    }
   }
 
   async function reloadConfigInternal(token: string) {
@@ -1992,7 +1893,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
 
 
 
