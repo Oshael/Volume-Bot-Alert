@@ -82,7 +82,7 @@ export function renderTradeTerminalMenu(address: string, mintAddress?: string | 
     { label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon' },
     { label: 'BullX', href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx' },
     { label: 'GMGN', href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn' },
-    { label: 'Padre', href: `https://trade.padre.gg/sol/${terminalAddress}`, cls: 'padre' },
+    { label: 'Padre', href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre' },
   ];
 
   return `
