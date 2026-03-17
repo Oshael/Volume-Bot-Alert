@@ -1061,11 +1061,16 @@ export function createAppController(): AppController {
       };
     }
 
+    const alertCandidates = new Set<string>();
+
     const manualTokens = sortAddresses(payload.tokens)
       .filter((item) => !blockedSet.has(item.address))
       .map((item) => {
         const existingItem = existing.get(item.address);
         const dashboardItem = dashboardByAddress.get(item.address);
+        if (existingItem) {
+          alertCandidates.add(item.address);
+        }
         return mergeDashboardFields(existingItem, dashboardItem, {
           ...existingItem,
           address: item.address,
@@ -1085,6 +1090,9 @@ export function createAppController(): AppController {
       if (blockedSet.has(item.address)) continue;
       if (monitoredMap.has(item.address)) continue;
       const existingItem = existing.get(item.address);
+      if (existingItem) {
+        alertCandidates.add(item.address);
+      }
       monitoredMap.set(item.address, mergeDashboardFields(existingItem, item, {
         ...existingItem,
         address: item.address,
@@ -1106,6 +1114,13 @@ export function createAppController(): AppController {
       payloadTokens: payload.tokens.map((item) => item.address),
     });
     deriveAgeBuckets();
+    if (state.runtime.mode === 'active' && alertCandidates.size > 0) {
+      for (const token of state.data.monitoredTokens) {
+        if (!alertCandidates.has(token.address)) continue;
+        maybeFireLocalAlert(token);
+        maybeFireSpecialAlerts(token);
+      }
+    }
     refreshMonitoredPanelCounts();
   }
 
@@ -1913,7 +1928,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
 
 
 
