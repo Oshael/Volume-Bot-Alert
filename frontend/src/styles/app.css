@@ -1009,13 +1009,18 @@ a {
 }
 
 .config-item {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(30px, auto) auto;
   gap: 6px;
+  align-content: start;
 }
 
 label,
 .config-item label {
+  display: flex;
+  align-items: flex-start;
+  min-height: 30px;
+  line-height: 1.35;
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 1.5px;
@@ -1061,7 +1066,7 @@ textarea:focus {
 
 .legacy-sound-strip {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 24px;
   flex-wrap: nowrap;
   width: fit-content;
@@ -1076,9 +1081,10 @@ textarea:focus {
 }
 
 .legacy-sound-item {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(32px, auto) minmax(28px, auto) auto minmax(20px, auto);
   gap: 4px;
+  align-content: start;
   width: 148px;
   flex: 0 0 148px;
 }
@@ -1091,6 +1097,8 @@ textarea:focus {
   font-size: 10px;
   letter-spacing: 1px;
   text-transform: uppercase;
+  line-height: 1.3;
+  min-height: 32px;
 }
 
 .sound-dot {
@@ -1111,8 +1119,14 @@ textarea:focus {
   font-size: 10px;
 }
 
+.legacy-sound-sub {
+  line-height: 1.3;
+  min-height: 28px;
+}
+
 .legacy-sound-picker {
-  display: block;
+  display: flex;
+  align-items: flex-start;
 }
 
 .legacy-file-btn {
@@ -1143,6 +1157,38 @@ textarea:focus {
 
 .legacy-volume-slider {
   width: 100%;
+}
+
+.legacy-config-grid input:not([type="range"]),
+.legacy-config-grid select,
+.config-menu-button {
+  min-height: 30px;
+  height: 30px;
+  border-color: rgba(0, 212, 255, 0.22);
+  background: rgba(5, 14, 24, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.04);
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  line-height: 1;
+}
+
+.legacy-config-grid input:not([type="range"]) {
+  padding: 0 8px;
+}
+
+.legacy-config-grid select {
+  padding: 0 30px 0 8px;
+}
+
+.legacy-config-grid input:not([type="range"]):focus,
+.legacy-config-grid select:focus,
+.config-menu-wrap.open .config-menu-button,
+.config-menu-button:hover {
+  border-color: rgba(0, 212, 255, 0.5);
+  background: rgba(7, 20, 34, 0.98);
+  color: var(--cyan);
 }
 
 .legacy-config-grid input[type="range"] {
@@ -1466,6 +1512,98 @@ TEMP_LEGACY_BAR_TITLE {
   color: var(--cyan);
   border-color: rgba(0, 212, 255, 0.45);
   background: rgba(0, 212, 255, 0.08);
+}
+
+.config-item-menu {
+  min-width: 0;
+}
+
+.config-menu-wrap {
+  display: flex;
+  width: 100%;
+}
+
+.config-menu-button {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  justify-content: center;
+}
+
+.config-menu-dropdown {
+  min-width: min(280px, 100%);
+  padding: 8px;
+  gap: 8px;
+}
+
+.config-menu-summary {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.config-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-toggle-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.config-toggle-item.active {
+  color: var(--green);
+  border-color: rgba(0, 255, 136, 0.35);
+  background: rgba(0, 255, 136, 0.08);
+}
+
+.config-toggle-state {
+  font-weight: 700;
+}
+
+.config-threshold-dropdown {
+  min-width: 220px;
+}
+
+.config-threshold-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.config-threshold-field {
+  display: grid;
+  gap: 4px;
+}
+
+.config-threshold-field span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.config-threshold-field input {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 

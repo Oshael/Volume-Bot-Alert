@@ -65,6 +65,10 @@ export interface ManualTokenEntry {
   _oldSurgeFired?: boolean;
   _oldSurgeSessionBase1h?: number | null;
   _oldSurgeSessionBase6h?: number | null;
+  _volAlertAboveThreshold?: boolean;
+  _mcapAlertAboveThreshold?: boolean;
+  _lastVolAlertPct?: number | null;
+  _lastMcapAlertPct?: number | null;
 }
 
 export interface PumpVolumePoint {

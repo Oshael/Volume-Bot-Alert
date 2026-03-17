@@ -5,7 +5,10 @@ This is the canonical documentation for the current integrated bot state in this
 
 It is based on the active backend/frontend code, with older migration notes used only as secondary context.
 
-Last reviewed against code on `2026-03-17`.
+For the full technical/behavior reference, see:
+- `docs/bot-complete-reference.md`
+
+Last reviewed against code on `2026-03-17` after rate-limit split, Dex discovery restoration, monitored alert fixes, and Old Surge session-baseline rules.
 
 ## Current Runtime Shape
 
@@ -31,6 +34,7 @@ Last reviewed against code on `2026-03-17`.
   - `src/routes/catalog.js`
   - `src/routes/dashboard.js`
   - `src/services/catalog-worker.js`
+  - `src/services/dex-discovery-worker.js`
   - `src/services/meteora-snapshot-worker.js`
   - `src/services/socket-hub.js`
 
@@ -154,6 +158,20 @@ Current caution:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
   - newly added manual tokens get `5s` retry cadence until first classification
 
+### 4b. Dex discovery worker
+- Worker: `src/services/dex-discovery-worker.js`
+- Poll loop: every `60s`
+- Current discovery feeds:
+  - `GET /token-profiles/latest/v1`
+  - `GET /token-boosts/top/v1`
+  - `GET /token-boosts/latest/v1`
+- Current behavior:
+  - collects Solana token addresses from those feeds
+  - deduplicates them
+  - upserts them into `token_catalog` with source `dexscreener-discovery`
+  - schedules immediate evaluation in the normal catalog worker
+- This restored the old `loadTrending()`-style discovery behavior that had been missing from the backendized bot
+
 ### 5. Meteora flow
 - Snapshot worker: `src/services/meteora-snapshot-worker.js`
 - Worker polls eligible catalog tokens every `30s`
@@ -197,6 +215,9 @@ Current caution:
 - HVNC remains separate
 - Old-surge remains separate
 - Alerts are still frontend-owned behavior
+- Monitored alert evaluation now runs both on:
+  - live patch merges
+  - `GET /api/dashboard/monitored` rebuilds
 
 ## Persistence Model
 
@@ -244,22 +265,45 @@ Current limitation:
 - The duplicate footer-level `Per Page` control was removed from Recent/Old; the active `Per Page` control is the header one
 
 ### Rate limiting reality
-- Backend still applies a general API limiter by IP through `src/middleware/rate-limit.js`
-- The current limiter is safe for auth abuse protection, but it is tight relative to the production frontend polling pattern
-- Recent observed `429` sources are:
-  - `GET /api/dashboard/monitored`
-  - `GET /api/catalog/pumpfun/:mint/meta`
+- Backend rate limiting is now split by route behavior through `src/middleware/rate-limit.js`
+- Active limiter buckets:
+  - `authLimiter`
+  - `defaultApiLimiter`
+  - `dashboardLimiter`
+  - `pumpfunMetaLimiter`
+  - `catalogWriteLimiter`
+  - `catalogReadLimiter`
+- Current defaults:
+  - `authLimiter`: `10 / 15min / IP`
+  - `defaultApiLimiter`: `180 / 15min / user+IP`
+  - `dashboardLimiter`: `360 / 15min / user+IP`
+  - `pumpfunMetaLimiter`: `220 / 15min / user+IP`
+  - `catalogWriteLimiter`: `60 / 15min / user+IP`
+  - `catalogReadLimiter`: `120 / 15min / user+IP`
 - Current conclusion:
   - the active frontend is no longer wasting requests on `meteora/batch`
-  - remaining `429` pressure comes mainly from dashboard polling plus per-token PumpFun metadata fetches
+  - rate limiting is no longer one global bucket for the whole API
+  - remaining pressure points are still mainly dashboard polling plus per-token PumpFun metadata fetches
+
+### Monitored alert trigger model
+- `VOL` and `MCAP` monitored alerts are computed on the frontend from monitored state deltas
+- Current monitored alert evaluation runs during dashboard-driven rebuilds, not only socket patch merges
+- This matters because the monitored table is now backend-driven and no longer relies on Dex socket updates as the primary refresh path
+
+### Old Token Surge rule
+- Old Surge no longer fires immediately on bot start just because a token is already hot
+- The current rule is session-based:
+  - if `PCHANGE 1H` or `PCHANGE 6H` crosses its threshold during the session, it alerts
+  - if the token already started above threshold, it only alerts after rising an additional `+50` percentage points above the session baseline
+- This prevents noisy “instant boot alerts” while still allowing genuinely stronger continuation moves to alert later in the same session
 
 ### Manual token reload stability
 - manual tokens are now expected to survive `F5` from local per-account frontend storage
 - backend tracking is no longer required for the manual bar itself
 
 ## Known Open Issues / Review Targets
-- Revisit general API rate limiting versus real production polling.
 - Consider deduplicating/caching PumpFun metadata fetches more aggressively if `429` persists.
+- Keep watching `dex_unavailable` behavior until Birdeye or another stronger market-data source is introduced.
 
 ## Documentation Policy Going Forward
 - This file is the primary state-of-the-world document.

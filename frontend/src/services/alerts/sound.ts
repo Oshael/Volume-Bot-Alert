@@ -48,6 +48,15 @@ const MIGRATE_PATTERN: ToneStep[] = [
 
 let audioContext: AudioContext | null = null;
 
+const SOUND_KIND_CONFIG_KEY: Record<AlertEntry['kind'], string> = {
+  'monitored-vol': 'sound-vol-enabled',
+  'monitored-mcap': 'sound-mcap-enabled',
+  hvnc: 'sound-hvnc-enabled',
+  'old-surge': 'sound-old-surge-enabled',
+  'pumpfun-vol': 'sound-pumpfun-vol-enabled',
+  'pumpfun-hvnc': 'sound-pumpfun-hvnc-enabled',
+};
+
 function clampVolume(value: number) {
   if (!Number.isFinite(value)) {
     return DEFAULT_ALERT_SOUND_VOLUME;
@@ -143,8 +152,13 @@ function resolveAlertSoundSlot(alert: AlertEntry): CustomSoundSlot {
   return 'normal';
 }
 
-export async function playAlertSound(alert: AlertEntry, options?: { enabled?: boolean; volume?: number; scope?: string }) {
+export async function playAlertSound(alert: AlertEntry, options?: { enabled?: boolean; volume?: number; scope?: string; configs?: Record<string, string | number> }) {
   if (options?.enabled === false) {
+    return;
+  }
+
+  const configKey = SOUND_KIND_CONFIG_KEY[alert.kind];
+  if (configKey && String(options?.configs?.[configKey] ?? 'on') === 'off') {
     return;
   }
 

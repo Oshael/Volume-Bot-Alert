@@ -64,6 +64,7 @@ function syncAudioSideEffects(state: AppState) {
       enabled: state.ui.soundEnabled,
       volume: state.ui.soundVolume,
       scope: state.session.email || state.session.username || 'anonymous',
+      configs: state.data.configs,
     });
   }
 
@@ -210,5 +211,4 @@ window.setInterval(() => {
 }, 250);
 
 void controller.init();
-
 

@@ -13,6 +13,24 @@ const CONFIG_FIELDS: Array<{ key: string; label: string; type?: 'number' | 'text
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
 ];
 
+const ALERT_TOGGLE_FIELDS = [
+  { key: 'alert-vol-enabled', label: 'VOL' },
+  { key: 'alert-mcap-enabled', label: 'MCAP' },
+  { key: 'alert-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
+  { key: 'alert-old-surge-enabled', label: 'SURGE' },
+  { key: 'alert-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
+  { key: 'alert-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
+] as const;
+
+const SOUND_TOGGLE_FIELDS = [
+  { key: 'sound-vol-enabled', label: 'VOL' },
+  { key: 'sound-mcap-enabled', label: 'MCAP' },
+  { key: 'sound-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
+  { key: 'sound-old-surge-enabled', label: 'SURGE' },
+  { key: 'sound-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
+  { key: 'sound-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
+] as const;
+
 export function renderLegacyShell(state: AppState, controller: AppController) {
   const wrapper = document.createElement('section');
   wrapper.className = 'legacy-shell';
@@ -81,6 +99,9 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
         <option value="off" ${state.ui.soundEnabled ? '' : 'selected'}>Disabled</option>
       </select>
     </div>
+    ${renderOldSurgeThresholdMenu(state)}
+    ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
+    ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
     <div class="legacy-sound-row">
       <div class="config-item config-item-sound config-item-sound-volume">
         <label>Sound volume: ${Math.round(state.ui.soundVolume * 100)}%</label>
@@ -116,18 +137,86 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
     controller.setSoundVolume(value / 100);
   });
 
+  bindConfigToggleMenus(section, controller);
   bindSoundUploadStrip(section, state);
   return section;
 }
 
+function isConfigEnabled(state: AppState, key: string) {
+  return String(state.data.configs[key] ?? 'on') !== 'off';
+}
+
+function renderOldSurgeThresholdMenu(state: AppState) {
+  const value1h = Number(state.data.configs['old-alert-1h-threshold'] ?? 100);
+  const value6h = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
+  return `
+    <div class="config-item config-item-menu">
+      <label>Surge threshold</label>
+      <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="old-surge-threshold">${Math.round(value1h)}% / ${Math.round(value6h)}%</button>
+        <div class="sort-menu-dropdown config-menu-dropdown config-threshold-dropdown">
+          <div class="config-threshold-grid">
+            <div class="config-threshold-field">
+              <span>1H</span>
+              <input type="number" min="0" name="old-alert-1h-threshold" value="${Math.round(value1h)}" />
+            </div>
+            <div class="config-threshold-field">
+              <span>6H</span>
+              <input type="number" min="0" name="old-alert-6h-threshold" value="${Math.round(value6h)}" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderConfigToggleMenu(
+  state: AppState,
+  label: string,
+  summaryLabel: string,
+  fields: ReadonlyArray<{ key: string; label: string }>,
+) {
+  const enabledCount = fields.filter((field) => isConfigEnabled(state, field.key)).length;
+  return `
+    <div class="config-item config-item-menu">
+      <label>${label}</label>
+      <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="${label.toLowerCase().replace(/\s+/g, '-')}">${enabledCount}/${fields.length} on</button>
+        <div class="sort-menu-dropdown config-menu-dropdown">
+          <div class="config-menu-summary">${summaryLabel}</div>
+          <div class="config-toggle-list">
+            ${fields.map((field) => {
+              const enabled = isConfigEnabled(state, field.key);
+              return `
+                <button
+                  type="button"
+                  class="config-toggle-item ${enabled ? 'active' : ''}"
+                  data-config-toggle-key="${field.key}"
+                  data-config-toggle-next="${enabled ? 'off' : 'on'}"
+                >
+                  <span>${field.label}</span>
+                  <span class="config-toggle-state">${enabled ? 'ON' : 'OFF'}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderSoundUploadStrip(state: AppState) {
   const scope = state.session.email || state.session.username || 'anonymous';
+  const old1hThreshold = Number(state.data.configs['old-alert-1h-threshold'] ?? 100);
+  const old6hThreshold = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
   const slots: Array<{ slot: CustomSoundSlot; title: string; sub: string; dot: string }> = [
     { slot: 'normal', title: 'Sound Level Normal', sub: '(+50%) ? MP3/WAV/OGG', dot: 'sound-dot normal' },
     { slot: 'critical', title: 'Sound Level Critical', sub: '(+100%) ? MP3/WAV/OGG', dot: 'sound-dot critical' },
     { slot: 'mega', title: 'Sound Level Mega', sub: '(+200%) ? MP3/WAV/OGG', dot: 'sound-dot mega' },
-    { slot: 'old1h', title: 'Old Token Alert ? 1H', sub: '(+100%) ? MP3/WAV/OGG', dot: 'sound-dot old1h' },
-    { slot: 'old6h', title: 'Old Token Alert ? 6H', sub: '(+150%) ? MP3/WAV/OGG', dot: 'sound-dot old6h' },
+    { slot: 'old1h', title: 'Old Token Alert ? 1H', sub: `(+${Math.round(old1hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old1h' },
+    { slot: 'old6h', title: 'Old Token Alert ? 6H', sub: `(+${Math.round(old6hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old6h' },
   ];
 
   return `
@@ -172,6 +261,23 @@ function bindSoundUploadStrip(section: HTMLElement, state: AppState) {
         if (label) label.textContent = file.name;
       };
       reader.readAsDataURL(file);
+    });
+  });
+}
+
+function bindConfigToggleMenus(section: HTMLElement, controller: AppController) {
+  section.querySelectorAll<HTMLButtonElement>('[data-config-toggle-key]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.configToggleKey;
+      const nextValue = button.dataset.configToggleNext;
+      if (!key || !nextValue) return;
+
+      const wrap = button.closest<HTMLElement>('[data-sort-wrap]');
+      if (wrap) {
+        wrap.classList.remove('open');
+      }
+
+      void controller.saveMonitoringConfig({ [key]: nextValue });
     });
   });
 }
@@ -265,6 +371,8 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
     'min-mcap': 10000,
     'max-mcap': 0,
     'hvnc-min-vol': 300000,
+    'old-alert-1h-threshold': 100,
+    'old-alert-6h-threshold': 150,
   };
   return String(defaults[key] ?? 0);
 }

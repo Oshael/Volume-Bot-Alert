@@ -36,9 +36,8 @@ const PUMP_GC_LOW_MCAP_TIME_MS = 8 * 60 * 1000;
 const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
-const OLD_ALERT_1H_PCT = 100;
-const OLD_ALERT_6H_PCT = 150;
 const OLD_SURGE_SESSION_DELTA_PCT = 50;
+const REPEAT_LOCAL_ALERT_STEP_PCT = 15;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 10 * 1000;
 
@@ -134,6 +133,37 @@ export function createAppController(): AppController {
     const value = state.data.configs[key];
     const num = Number(value);
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function isConfigEnabled(key: string, fallback = true) {
+    return String(state.data.configs[key] ?? (fallback ? 'on' : 'off')) !== 'off';
+  }
+
+  function getOldAlert1hThreshold() {
+    return getConfigNumber('old-alert-1h-threshold', 100);
+  }
+
+  function getOldAlert6hThreshold() {
+    return getConfigNumber('old-alert-6h-threshold', 150);
+  }
+
+  function isAlertKindEnabled(kind: AlertEntry['kind']) {
+    switch (kind) {
+      case 'monitored-vol':
+        return isConfigEnabled('alert-vol-enabled');
+      case 'monitored-mcap':
+        return isConfigEnabled('alert-mcap-enabled');
+      case 'hvnc':
+        return isConfigEnabled('alert-hvnc-enabled');
+      case 'old-surge':
+        return isConfigEnabled('alert-old-surge-enabled');
+      case 'pumpfun-vol':
+        return isConfigEnabled('alert-pumpfun-vol-enabled');
+      case 'pumpfun-hvnc':
+        return isConfigEnabled('alert-pumpfun-hvnc-enabled');
+      default:
+        return true;
+    }
   }
 
   function getStorageScope() {
@@ -474,7 +504,7 @@ export function createAppController(): AppController {
     const ageMs = token.createdAt ? Date.now() - token.createdAt : Number.POSITIVE_INFINITY;
     const symbol = token.symbol || token.mint.slice(0, 6);
 
-    if (!token._hvncPumpFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && vol5m >= hvncMinVol) {
+    if (isAlertKindEnabled('pumpfun-hvnc') && !token._hvncPumpFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && vol5m >= hvncMinVol) {
       token._hvncPumpFired = true;
       pushAlert({
         id: `${token.mint}-${Date.now()}-pump-hvnc`,
@@ -500,7 +530,7 @@ export function createAppController(): AppController {
       return;
     }
 
-    if (vol5m >= minVol && !token._alertFired) {
+    if (isAlertKindEnabled('pumpfun-vol') && vol5m >= minVol && !token._alertFired) {
       token._alertFired = true;
       pushAlert({
         id: `${token.mint}-${Date.now()}-pump-vol`,
@@ -840,7 +870,7 @@ export function createAppController(): AppController {
   }
 
   function pushAlert(entry: AlertEntry) {
-    if (isBlocked(entry.address)) {
+    if (isBlocked(entry.address) || !isAlertKindEnabled(entry.kind)) {
       return;
     }
     state.data.alerts = [entry, ...state.data.alerts].slice(0, 50);
@@ -858,7 +888,7 @@ export function createAppController(): AppController {
     const ageMs = token.createdAt ? now - token.createdAt : Number.POSITIVE_INFINITY;
     const hvncMinVol = getConfigNumber('hvnc-min-vol', 300000);
 
-    if (!token._hvncFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && (token.volume24h ?? 0) >= hvncMinVol) {
+    if (isAlertKindEnabled('hvnc') && !token._hvncFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && (token.volume24h ?? 0) >= hvncMinVol) {
       token._hvncFired = true;
       pushAlert({
         id: `${token.address}-${now}-hvnc`,
@@ -890,9 +920,11 @@ export function createAppController(): AppController {
     const isOldRouted = state.data.recentTokens.some((item) => item.address === token.address)
       || state.data.oldWeekTokens.some((item) => item.address === token.address);
 
-    if (!token._oldSurgeFired && isOldRouted) {
+    if (isAlertKindEnabled('old-surge') && !token._oldSurgeFired && isOldRouted) {
       const pc1h = token.priceChange1h ?? null;
       const pc6h = token.priceChange6h ?? null;
+      const oldAlert1hPct = getOldAlert1hThreshold();
+      const oldAlert6hPct = getOldAlert6hThreshold();
       let pct = 0;
       let surgeWindow: '1H' | '6H' | null = null;
       const base1h = token._oldSurgeSessionBase1h;
@@ -905,10 +937,10 @@ export function createAppController(): AppController {
         token._oldSurgeSessionBase6h = pc6h;
       }
 
-      const crossed6h = base6h != null && base6h < OLD_ALERT_6H_PCT && pc6h != null && pc6h >= OLD_ALERT_6H_PCT;
-      const rose50AfterHot6h = base6h != null && base6h >= OLD_ALERT_6H_PCT && pc6h != null && pc6h >= base6h + OLD_SURGE_SESSION_DELTA_PCT;
-      const crossed1h = base1h != null && base1h < OLD_ALERT_1H_PCT && pc1h != null && pc1h >= OLD_ALERT_1H_PCT;
-      const rose50AfterHot1h = base1h != null && base1h >= OLD_ALERT_1H_PCT && pc1h != null && pc1h >= base1h + OLD_SURGE_SESSION_DELTA_PCT;
+      const crossed6h = base6h != null && base6h < oldAlert6hPct && pc6h != null && pc6h >= oldAlert6hPct;
+      const rose50AfterHot6h = base6h != null && base6h >= oldAlert6hPct && pc6h != null && pc6h >= base6h + OLD_SURGE_SESSION_DELTA_PCT;
+      const crossed1h = base1h != null && base1h < oldAlert1hPct && pc1h != null && pc1h >= oldAlert1hPct;
+      const rose50AfterHot1h = base1h != null && base1h >= oldAlert1hPct && pc1h != null && pc1h >= base1h + OLD_SURGE_SESSION_DELTA_PCT;
 
       if (crossed6h || rose50AfterHot6h) {
         pct = pc6h;
@@ -969,10 +1001,17 @@ export function createAppController(): AppController {
     const symbol = token.symbol || token.label || token.address.slice(0, 8);
     const mcapDeclining = previousMcap != null && previousMcap > 0 && currentMcap > 0 && currentMcap < previousMcap;
     let alert: AlertEntry | null = null;
+    let firedKind: 'vol' | 'mcap' | null = null;
 
     if (previousVol != null && previousVol > 0) {
       const volChange = (currentVol - previousVol) / previousVol;
-      if (volChange >= threshold && passesAlertFilters(token) && !mcapDeclining) {
+      const volPct = volChange * 100;
+      const volEligible = isAlertKindEnabled('monitored-vol') && volChange >= threshold && passesAlertFilters(token) && !mcapDeclining;
+      if (!volEligible) {
+        token._volAlertAboveThreshold = false;
+      }
+      const canRepeatVol = token._lastVolAlertPct != null && volPct >= token._lastVolAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
+      if (volEligible && (!token._volAlertAboveThreshold || canRepeatVol)) {
         alert = {
           id: `${token.address}-${now}-vol`,
           kind: 'monitored-vol',
@@ -993,15 +1032,22 @@ export function createAppController(): AppController {
           volume24h: token.volume24h ?? null,
           prevMcap: previousMcap,
           mcap: token.mcap ?? null,
-          pct: volChange * 100,
+          pct: volPct,
           label: 'VOL',
         };
+        firedKind = 'vol';
       }
     }
 
     if (!alert && mcapThreshold > 0 && previousMcap != null && previousMcap > 0) {
       const mcapChange = (currentMcap - previousMcap) / previousMcap;
-      if (mcapChange >= mcapThreshold && passesAlertFilters(token)) {
+      const mcapPct = mcapChange * 100;
+      const mcapEligible = isAlertKindEnabled('monitored-mcap') && mcapChange >= mcapThreshold && passesAlertFilters(token);
+      if (!mcapEligible) {
+        token._mcapAlertAboveThreshold = false;
+      }
+      const canRepeatMcap = token._lastMcapAlertPct != null && mcapPct >= token._lastMcapAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
+      if (mcapEligible && (!token._mcapAlertAboveThreshold || canRepeatMcap)) {
         alert = {
           id: `${token.address}-${now}-mcap`,
           kind: 'monitored-mcap',
@@ -1022,14 +1068,22 @@ export function createAppController(): AppController {
           volume24h: token.volume24h ?? null,
           prevMcap: previousMcap,
           mcap: token.mcap ?? null,
-          pct: mcapChange * 100,
+          pct: mcapPct,
           label: 'MCAP',
         };
+        firedKind = 'mcap';
       }
     }
 
     if (alert) {
       token.lastAlertAt = now;
+      if (firedKind === 'vol') {
+        token._volAlertAboveThreshold = true;
+        token._lastVolAlertPct = alert.pct;
+      } else if (firedKind === 'mcap') {
+        token._mcapAlertAboveThreshold = true;
+        token._lastMcapAlertPct = alert.pct;
+      }
       pushAlert(alert);
       setNotice(`Local monitored alert: ${symbol}`);
     }
@@ -1075,6 +1129,10 @@ export function createAppController(): AppController {
         _oldSurgeFired: existingItem?._oldSurgeFired ?? base._oldSurgeFired,
         _oldSurgeSessionBase1h: existingItem?._oldSurgeSessionBase1h ?? base._oldSurgeSessionBase1h ?? null,
         _oldSurgeSessionBase6h: existingItem?._oldSurgeSessionBase6h ?? base._oldSurgeSessionBase6h ?? null,
+        _volAlertAboveThreshold: existingItem?._volAlertAboveThreshold ?? base._volAlertAboveThreshold ?? false,
+        _mcapAlertAboveThreshold: existingItem?._mcapAlertAboveThreshold ?? base._mcapAlertAboveThreshold ?? false,
+        _lastVolAlertPct: existingItem?._lastVolAlertPct ?? base._lastVolAlertPct ?? null,
+        _lastMcapAlertPct: existingItem?._lastMcapAlertPct ?? base._lastMcapAlertPct ?? null,
       };
     }
 
@@ -1945,11 +2003,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
-
-
-
-
 
 
 
