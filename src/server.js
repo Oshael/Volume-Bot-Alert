@@ -4,7 +4,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const config = require('../config');
-const { generalLimiter } = require('./middleware/rate-limit');
+const { defaultApiLimiter } = require('./middleware/rate-limit');
 const Session = require('./models/session');
 const LoginAttempt = require('./models/login-attempt');
 
@@ -65,7 +65,6 @@ app.options('*', cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
-app.use(generalLimiter);
 
 // Trust proxy (for rate limiting behind reverse proxy / Nginx)
 app.set('trust proxy', 1);
@@ -95,10 +94,10 @@ if (config.nodeEnv === 'development') {
 // ---- Routes ----
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
-app.use('/api/invites', inviteRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/config', require('./routes/config'));
-app.use('/api/bootstrap', bootstrapRoutes);
+app.use('/api/invites', defaultApiLimiter, inviteRoutes);
+app.use('/api/admin', defaultApiLimiter, adminRoutes);
+app.use('/api/config', defaultApiLimiter, require('./routes/config'));
+app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 

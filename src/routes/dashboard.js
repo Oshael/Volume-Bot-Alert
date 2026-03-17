@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
+const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
@@ -114,7 +115,7 @@ function buildMarketBaseline(latestRows) {
   };
 }
 
-router.get('/monitored', async (req, res) => {
+router.get('/monitored', dashboardLimiter, async (req, res) => {
   try {
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, req.query?.minMcap);
     const addresses = tokens.map((item) => item.address);

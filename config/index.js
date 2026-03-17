@@ -77,6 +77,31 @@ module.exports = {
     max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
   },
 
+  defaultApiRateLimit: {
+    windowMs: parseInt(process.env.DEFAULT_API_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.DEFAULT_API_RATE_LIMIT_MAX_REQUESTS || '180', 10),
+  },
+
+  dashboardRateLimit: {
+    windowMs: parseInt(process.env.DASHBOARD_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.DASHBOARD_RATE_LIMIT_MAX_REQUESTS || '360', 10),
+  },
+
+  pumpfunMetaRateLimit: {
+    windowMs: parseInt(process.env.PUMPFUN_META_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.PUMPFUN_META_RATE_LIMIT_MAX_REQUESTS || '220', 10),
+  },
+
+  catalogWriteRateLimit: {
+    windowMs: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_MAX_REQUESTS || '60', 10),
+  },
+
+  catalogReadRateLimit: {
+    windowMs: parseInt(process.env.CATALOG_READ_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.CATALOG_READ_RATE_LIMIT_MAX_REQUESTS || '120', 10),
+  },
+
   authRateLimit: {
     windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || '10', 10),

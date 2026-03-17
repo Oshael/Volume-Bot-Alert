@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
+const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
@@ -17,7 +18,7 @@ const promoteRetryState = new Map();
 
 router.use(authenticate);
 
-router.get('/eligible', async (req, res) => {
+router.get('/eligible', catalogReadLimiter, async (req, res) => {
   try {
     const tokens = await tokenCatalog.listEligibleVisible(req.query?.limit, req.query?.minMcap);
     res.json({
@@ -40,7 +41,7 @@ router.get('/eligible', async (req, res) => {
   }
 });
 
-router.post('/manual-track', async (req, res) => {
+router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
   try {
     const address = String(req.body?.address || '').trim();
     if (!isValidAddress(address)) {
@@ -371,7 +372,7 @@ async function buildValidatedPromotion(user, body = {}) {
   };
 }
 
-router.get('/history/:address', async (req, res) => {
+router.get('/history/:address', catalogReadLimiter, async (req, res) => {
   try {
     const address = String(req.params?.address || '').trim();
     if (!isValidAddress(address)) {
@@ -395,7 +396,7 @@ router.get('/history/:address', async (req, res) => {
   }
 });
 
-router.post('/meteora/batch', async (req, res) => {
+router.post('/meteora/batch', catalogReadLimiter, async (req, res) => {
   try {
     const addresses = [...new Set((req.body?.addresses || []).map((value) => String(value || '').trim()).filter(Boolean))];
     if (addresses.length === 0) {
@@ -427,7 +428,7 @@ router.post('/meteora/batch', async (req, res) => {
   }
 });
 
-router.get('/meteora/:address/history', async (req, res) => {
+router.get('/meteora/:address/history', catalogReadLimiter, async (req, res) => {
   try {
     const address = String(req.params?.address || '').trim();
     if (!isValidAddress(address)) {
@@ -452,7 +453,7 @@ router.get('/meteora/:address/history', async (req, res) => {
   }
 });
 
-router.get('/pumpfun/:mint/meta', async (req, res) => {
+router.get('/pumpfun/:mint/meta', pumpfunMetaLimiter, async (req, res) => {
   try {
     const mint = String(req.params?.mint || '').trim();
     const metadataUri = String(req.query?.uri || '').trim() || null;
@@ -477,7 +478,7 @@ router.get('/pumpfun/:mint/meta', async (req, res) => {
   }
 });
 
-router.post('/promote', async (req, res) => {
+router.post('/promote', catalogWriteLimiter, async (req, res) => {
   try {
     const validation = await buildValidatedPromotion(req.user, req.body);
     if (validation.status !== 200) {
@@ -496,7 +497,7 @@ router.post('/promote', async (req, res) => {
   }
 });
 
-router.post('/migrated', async (req, res) => {
+router.post('/migrated', catalogWriteLimiter, async (req, res) => {
   try {
     const tokenInput = buildCatalogTokenPayload(req.body, 'pumpfun-migrated');
     const address = String(tokenInput.address || '').trim();
