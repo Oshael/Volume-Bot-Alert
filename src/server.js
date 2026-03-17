@@ -22,6 +22,7 @@ const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
 const marketSnapshotWorker = require('./services/market-snapshot-worker');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
+const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 
 const app = express();
 const server = http.createServer(app);
@@ -109,6 +110,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     catalogWorker: catalogWorker.getStatus(),
     marketSnapshotWorker: marketSnapshotWorker.getStatus(),
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
+    dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
   });
 });
 
@@ -140,6 +142,7 @@ setInterval(async () => {
 socketHub.init(server);
 catalogWorker.start();
 meteoraSnapshotWorker.start();
+dexDiscoveryWorker.start();
 
 // ---- Start ----
 server.listen(config.port, () => {
