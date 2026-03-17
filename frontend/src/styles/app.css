@@ -3264,13 +3264,18 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alert-row.normal {
-  border-color: var(--green);
-  background: rgba(0, 255, 136, 0.06);
+  border-color: #2ea8ff;
+  background: rgba(46, 168, 255, 0.08);
 }
 
 .alert-row.critical {
   border-color: var(--yellow);
   background: rgba(255, 204, 0, 0.05);
+}
+
+.alert-row.recent-surge {
+  border-color: var(--green);
+  background: rgba(0, 255, 136, 0.08);
 }
 
 .alert-row.mega,
@@ -3348,7 +3353,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-pct-v68 {
   font-size: 15px;
-  color: var(--green);
+  color: #2ea8ff;
 }
 
 .alert-pct-v68 span {
@@ -3358,6 +3363,10 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-pct-v68.critical {
   color: var(--yellow);
+}
+
+.alert-pct-v68.recent-surge {
+  color: var(--green);
 }
 
 .alert-pct-v68.mega,
@@ -3374,13 +3383,22 @@ TEMP_LEGACY_BAR_TITLE {
   color: #ff6b00;
 }
 
+.alert-badge-v68.recent-surge {
+  color: var(--green);
+}
+
 .alert-badge-v68 .alert-badge-sub,
 .alert-badge-v68.old-surge .alert-badge-sub,
+.alert-badge-v68.recent-surge .alert-badge-sub,
 .alert-badge-v68.mega .alert-badge-sub {
   display: block;
   margin-top: 2px;
   font-size: 11px;
   color: #ffaa00;
+}
+
+.alert-badge-v68.recent-surge .alert-badge-sub {
+  color: #8bffbf;
 }
 
 .alert-flow-v68,

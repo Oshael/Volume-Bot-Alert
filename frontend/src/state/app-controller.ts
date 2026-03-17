@@ -26,6 +26,7 @@ import {
 import { bindSocketLifecycle, disconnectSocket, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
+const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HVNC_MAX_AGE_MS = 30 * 60 * 1000;
 const PUMP_WINDOW_MS = 5 * 60 * 1000;
@@ -928,7 +929,7 @@ export function createAppController(): AppController {
     const isOldRouted = state.data.recentTokens.some((item) => item.address === token.address)
       || state.data.oldWeekTokens.some((item) => item.address === token.address);
 
-    if (isAlertKindEnabled('old-surge') && !token._oldSurgeFired && isOldRouted) {
+    if (isAlertKindEnabled('old-surge') && !token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
       const pc1h = token.priceChange1h ?? null;
       const pc6h = token.priceChange6h ?? null;
       const oldAlert1hPct = getOldAlert1hThreshold();
@@ -2019,7 +2020,6 @@ export function createAppController(): AppController {
     },
   };
 }
-
 
 
 
