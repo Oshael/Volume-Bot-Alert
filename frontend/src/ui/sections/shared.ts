@@ -1,5 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState, ManualTokenEntry, MeteoraEntry, RemovalLogEntry } from '../../state/app-state';
+import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -157,9 +158,17 @@ export function bindPagedBucketControls(section: ParentNode, controller: AppCont
 
 export function renderFlash(state: AppState) {
   if (!state.ui.error && !state.ui.notice) return '';
-  const toneClass = state.ui.error ? 'flash error' : 'flash notice';
   const message = state.ui.error ?? state.ui.notice ?? '';
-  return `<div class="${toneClass}"><span>${message}</span><button type="button" class="flash-dismiss" data-action="dismiss-flash">Close</button></div>`;
+  const flashKind = getAuthFeedbackKind(state, message);
+  const shouldPulse = Boolean(
+    state.ui.error
+    && state.ui.loginErrorCount > 1
+    && state.ui.error.includes('Incorrect email or password'),
+  );
+  const toneClass = `${state.ui.error ? 'flash error' : 'flash notice'} flash-${flashKind}${shouldPulse ? ' flash-pulse' : ''}`;
+  const badge = getAuthFlashBadge(flashKind);
+  const liveRole = state.ui.error ? 'alert' : 'status';
+  return `<div class="${toneClass}" role="${liveRole}" aria-live="polite"><span class="flash-copy">${badge ? `<strong class="flash-badge">${badge}</strong>` : ''}<span>${message}</span></span><button type="button" class="flash-dismiss" data-action="dismiss-flash">Close</button></div>`;
 }
 
 export function renderLogSummary(title: string, entries: RemovalLogEntry[], clearAction: string, tone: 'recent' | 'old-week') {

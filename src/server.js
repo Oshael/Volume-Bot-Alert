@@ -25,7 +25,9 @@ const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 
 const app = express();
-const server = http.createServer(app);
+let server = null;
+let cleanupInterval = null;
+let bootstrapped = false;
 
 // ---- Security middlewares ----
 app.use(helmet());
@@ -125,58 +127,81 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// ---- Periodic cleanup ----
-setInterval(async () => {
-  try {
-    const sessions = await Session.cleanup();
-    const attempts = await LoginAttempt.cleanup();
-    if (sessions > 0 || attempts > 0) {
-      console.log(`???? Cleanup: ${sessions} expired sessions, ${attempts} old login attempts`);
-    }
-  } catch (err) {
-    console.error('Cleanup error:', err.message);
+function bootstrapRuntime(httpServer) {
+  if (bootstrapped) {
+    return;
   }
-}, 3600000); // every hour
 
-// ---- Initialize Socket.io ----
-socketHub.init(server);
-catalogWorker.start();
-meteoraSnapshotWorker.start();
-dexDiscoveryWorker.start();
+  cleanupInterval = setInterval(async () => {
+    try {
+      const sessions = await Session.cleanup();
+      const attempts = await LoginAttempt.cleanup();
+      if (sessions > 0 || attempts > 0) {
+        console.log(`???? Cleanup: ${sessions} expired sessions, ${attempts} old login attempts`);
+      }
+    } catch (err) {
+      console.error('Cleanup error:', err.message);
+    }
+  }, 3600000);
 
-// ---- Start ----
-server.listen(config.port, () => {
-  console.log('');
-  console.log(`???? Volume Alert Server running on port ${config.port}`);
-  console.log(`   Environment: ${config.nodeEnv}`);
-  console.log(`   CORS origins: ${config.corsOrigins.join(', ')}`);
-  console.log('');
-  console.log('   Endpoints:');
-  console.log('   GET  /api/health           ??? Server status');
-  console.log('   POST /api/auth/register    ??? Register (requires invite)');
-  console.log('   POST /api/auth/login       ??? Login');
-  console.log('   POST /api/auth/logout      ??? Logout');
-  console.log('   POST /api/auth/logout-all  ??? Logout everywhere');
-  console.log('   GET  /api/auth/me          ??? Current user');
-  console.log('   POST /api/auth/change-password ??? Change password');
-  console.log('   POST /api/invites          ??? Create invite');
-  console.log('   GET  /api/invites          ??? List my invites');
-  console.log('   GET  /api/invites/validate/:code ??? Validate invite');
-  console.log('   DELETE /api/invites/:id     ??? Revoke invite');
-  console.log('   --- Admin ---');
-  console.log('   GET  /api/admin/stats       ??? Dashboard summary');
-  console.log('   GET  /api/admin/users       ??? List all users');
-  console.log('   GET  /api/admin/users/online ??? Online users');
-  console.log('   PATCH /api/admin/users/:id  ??? Update user');
-  console.log('   DELETE /api/admin/users/:id/sessions ??? Force logout');
-  console.log('   GET  /api/admin/invites     ??? List all invites');
-  console.log('   POST /api/admin/invites     ??? Create invite');
-  console.log('   DELETE /api/admin/invites/:id ??? Revoke invite');
-  console.log('   GET  /api/admin/logs        ??? Login attempts');
-  console.log('   GET  /api/admin/ws-status   ??? WebSocket hub status');
-  console.log('   --- WebSocket ---');
-  console.log('   Socket.io on /            ??? Real-time data (JWT auth)');
-  console.log('');
-});
+  socketHub.init(httpServer);
 
-module.exports = { app, server }; // export for testing
+  if (config.nodeEnv !== 'test') {
+    catalogWorker.start();
+    meteoraSnapshotWorker.start();
+    dexDiscoveryWorker.start();
+  }
+
+  bootstrapped = true;
+}
+
+function startServer(port = config.port) {
+  if (server?.listening) {
+    return server;
+  }
+
+  server = http.createServer(app);
+  bootstrapRuntime(server);
+
+  server.listen(port, () => {
+    console.log('');
+    console.log(`???? Volume Alert Server running on port ${port}`);
+    console.log(`   Environment: ${config.nodeEnv}`);
+    console.log(`   CORS origins: ${config.corsOrigins.join(', ')}`);
+    console.log('');
+    console.log('   Endpoints:');
+    console.log('   GET  /api/health           ??? Server status');
+    console.log('   POST /api/auth/register    ??? Register (requires invite)');
+    console.log('   POST /api/auth/login       ??? Login');
+    console.log('   POST /api/auth/logout      ??? Logout');
+    console.log('   POST /api/auth/logout-all  ??? Logout everywhere');
+    console.log('   GET  /api/auth/me          ??? Current user');
+    console.log('   POST /api/auth/change-password ??? Change password');
+    console.log('   POST /api/invites          ??? Create invite');
+    console.log('   GET  /api/invites          ??? List my invites');
+    console.log('   GET  /api/invites/validate/:code ??? Validate invite');
+    console.log('   DELETE /api/invites/:id     ??? Revoke invite');
+    console.log('   --- Admin ---');
+    console.log('   GET  /api/admin/stats       ??? Dashboard summary');
+    console.log('   GET  /api/admin/users       ??? List all users');
+    console.log('   GET  /api/admin/users/online ??? Online users');
+    console.log('   PATCH /api/admin/users/:id  ??? Update user');
+    console.log('   DELETE /api/admin/users/:id/sessions ??? Force logout');
+    console.log('   GET  /api/admin/invites     ??? List all invites');
+    console.log('   POST /api/admin/invites     ??? Create invite');
+    console.log('   DELETE /api/admin/invites/:id ??? Revoke invite');
+    console.log('   GET  /api/admin/logs        ??? Login attempts');
+    console.log('   GET  /api/admin/ws-status   ??? WebSocket hub status');
+    console.log('   --- WebSocket ---');
+    console.log('   Socket.io on /            ??? Real-time data (JWT auth)');
+    console.log('');
+  });
+
+  return server;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { app, startServer, get server() { return server; } };

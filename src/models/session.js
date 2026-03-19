@@ -1,13 +1,18 @@
 const crypto = require('crypto');
 const { query } = require('./db');
 
+function getExecutor(db) {
+  return db && typeof db.query === 'function' ? db : { query };
+}
+
 const Session = {
   /**
    * Create a session record. Stores a hash of the JWT (not the JWT itself).
    */
-  async create({ userId, token, ipAddress, userAgent, expiresAt }) {
+  async create({ userId, token, ipAddress, userAgent, expiresAt }, db) {
+    const executor = getExecutor(db);
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const { rows } = await query(
+    const { rows } = await executor.query(
       `INSERT INTO sessions (user_id, token_hash, ip_address, user_agent, expires_at)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,

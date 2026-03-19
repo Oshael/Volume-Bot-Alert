@@ -10,7 +10,6 @@ export interface SessionUser {
 
 export interface LoginResponse {
   message: string;
-  token: string;
   user: SessionUser;
 }
 
@@ -19,6 +18,11 @@ export interface RegisterInput {
   email: string;
   password: string;
   inviteCode: string;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
 }
 
 export function fetchCurrentSession(token?: string | null) {
@@ -38,6 +42,14 @@ export function register(input: RegisterInput) {
     method: 'POST',
     body: JSON.stringify(input),
     token: null,
+  });
+}
+
+export function changePassword(input: ChangePasswordInput, token?: string | null) {
+  return apiFetch<{ message: string }>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify(input),
+    token,
   });
 }
 

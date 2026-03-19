@@ -3,9 +3,8 @@ import { resolveApiBase } from '../api/base';
 
 let socket: Socket | null = null;
 
-export function connectSocket(token: string): Socket {
+export function connectSocket(): Socket {
   if (socket) {
-    socket.auth = { token };
     if (!socket.connected) {
       socket.connect();
     }
@@ -14,14 +13,13 @@ export function connectSocket(token: string): Socket {
 
   socket = io(resolveApiBase(), {
     transports: ['websocket'],
-    auth: { token },
+    withCredentials: true,
   });
 
   return socket;
 }
 
 export function bindSocketLifecycle(options: {
-  token: string;
   onRevoked: (reason: string) => void;
   onStatus?: (message: string) => void;
   onDexTokenData?: (payload: { address: string; data: unknown }) => void;
@@ -31,7 +29,7 @@ export function bindSocketLifecycle(options: {
   onPumpMigrate?: (payload: Record<string, unknown>) => void;
   onSolPrice?: (payload: { price?: number }) => void;
 }) {
-  const current = connectSocket(options.token);
+  const current = connectSocket();
 
   current.off('connect');
   current.off('disconnect');

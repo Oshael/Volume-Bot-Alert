@@ -17,26 +17,13 @@ const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 let pendingState: AppState | null = null;
 let latestState: AppState | null = null;
+let lastObservedSessionStatus: AppState['session']['status'] | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
 let listInteractionDepth = 0;
 
 declare global {
   interface Window {
-    __botDebug?: {
-      controller: typeof controller;
-      getState: () => AppState | null;
-      snapshot: () => {
-        manualCount: number;
-        monitoredCount: number;
-        recentCount: number;
-        oldWeekCount: number;
-        manualAddresses: string[];
-        dexPatchCount?: number;
-        lastDexPatchAddress?: string | null;
-        lastDexPatchAt?: number | null;
-      } | null;
-    };
   }
 }
 function isEditingInteractiveField() {
@@ -169,8 +156,16 @@ root.addEventListener('focusout', () => {
 });
 
 controller.subscribe((state) => {
+  const previousSessionStatus = lastObservedSessionStatus;
   latestState = state;
+  lastObservedSessionStatus = state.session.status;
   syncAudioSideEffects(state);
+
+  if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {
+    renderAppShell(root, state, controller);
+    pendingState = null;
+    return;
+  }
 
   if (isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
     pendingState = state;
@@ -181,28 +176,6 @@ controller.subscribe((state) => {
   pendingState = null;
 });
 
-window.__botDebug = {
-  controller,
-  getState: () => latestState,
-  snapshot: () => {
-    if (!latestState) {
-      return null;
-    }
-
-    const debug = (window as Window & { __botDexDebug?: { patchCount: number; lastAddress: string | null; lastAt: number | null } }).__botDexDebug;
-    return {
-      manualCount: latestState.data.manualTokens.length,
-      monitoredCount: latestState.data.monitoredTokens.length,
-      recentCount: latestState.data.recentTokens.length,
-      oldWeekCount: latestState.data.oldWeekTokens.length,
-      manualAddresses: latestState.data.manualTokens.map((item) => item.address),
-      dexPatchCount: debug?.patchCount ?? 0,
-      lastDexPatchAddress: debug?.lastAddress ?? null,
-      lastDexPatchAt: debug?.lastAt ?? null,
-    };
-  },
-};
-
 window.setInterval(() => {
   if (!latestState) {
     return;
@@ -211,4 +184,3 @@ window.setInterval(() => {
 }, 250);
 
 void controller.init();
-

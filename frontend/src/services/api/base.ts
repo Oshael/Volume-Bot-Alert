@@ -1,5 +1,3 @@
-﻿import { getAuthToken } from '../../utils/auth-storage';
-
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
   || 'https://volume-alert-server-production.up.railway.app';
 
@@ -28,30 +26,36 @@ export interface ApiFetchOptions extends RequestInit {
 }
 
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
-  const token = init?.token ?? getAuthToken();
   const headers = new Headers(init?.headers || {});
 
   if (!headers.has('Content-Type') && init?.body) {
     headers.set('Content-Type', 'application/json');
   }
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
+  let response: Response;
+  try {
+    response = await fetch(`${resolveApiBase()}${path}`, {
+      ...init,
+      cache: 'no-store',
+      credentials: 'include',
+      headers,
+    });
+  } catch (error) {
+    const message = error instanceof Error && error.message
+      ? `Network error: ${error.message}`
+      : 'Network error: unable to reach API';
+    throw new Error(message);
   }
-
-  const response = await fetch(`${resolveApiBase()}${path}`, {
-    ...init,
-    cache: 'no-store',
-    credentials: 'include',
-    headers,
-  });
 
   if (!response.ok) {
     let message = `API request failed: ${response.status}`;
     try {
-      const body = await response.json() as { error?: string };
+      const body = await response.json() as { error?: string; retryAfterSeconds?: number };
       if (body?.error) {
         message = body.error;
+      }
+      if (body?.retryAfterSeconds) {
+        message = `${message} Try again in ${body.retryAfterSeconds}s.`;
       }
     } catch (_) {
       // Keep fallback message.

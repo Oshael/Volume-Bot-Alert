@@ -85,7 +85,6 @@ export function renderManualTokenEntryForm(state: AppState, controller: AppContr
 
   const submitManual = () => {
     const value = String(input?.value || '').trim();
-    console.info('[manual:form] submit-attempt', { value });
     const active = document.activeElement;
     if (active instanceof HTMLElement) {
       active.blur();

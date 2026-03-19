@@ -8,10 +8,46 @@ const LoginAttempt = require('../models/login-attempt');
 const socketHub = require('../services/socket-hub');
 const { authenticate } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rate-limit');
+const { getClient } = require('../models/db');
 
 const router = express.Router();
 
+function setAuthCookie(res, token, expiresAt) {
+  res.cookie(config.authCookie.name, token, {
+    httpOnly: true,
+    secure: config.authCookie.secure,
+    sameSite: config.authCookie.sameSite,
+    domain: config.authCookie.domain,
+    path: '/',
+    expires: expiresAt,
+  });
+}
+
+function clearAuthCookie(res) {
+  res.clearCookie(config.authCookie.name, {
+    httpOnly: true,
+    secure: config.authCookie.secure,
+    sameSite: config.authCookie.sameSite,
+    domain: config.authCookie.domain,
+    path: '/',
+  });
+}
+
+function buildAuthResponse(message, user, token) {
+  const payload = {
+    message,
+    user: { id: user.id, username: user.username, email: user.email, role: user.role },
+  };
+
+  if (config.nodeEnv === 'test') {
+    payload.token = token;
+  }
+
+  return payload;
+}
+
 router.post('/register', authLimiter, async (req, res) => {
+  let client;
   try {
     const { username, email, password, inviteCode } = req.body;
 
@@ -24,10 +60,16 @@ router.post('/register', authLimiter, async (req, res) => {
       return res.status(400).json({ error: validation.reason });
     }
 
-    const invite = await Invite.consume(inviteCode);
-    if (!invite) {
-      return res.status(400).json({ error: 'Invite code is no longer valid' });
+    client = await getClient();
+    await client.query('BEGIN');
+
+    const lockedInvite = await Invite.lockValid(inviteCode, client);
+    if (!lockedInvite.valid) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: lockedInvite.reason });
     }
+
+    const invite = lockedInvite.invite;
 
     const user = await User.create({
       username,
@@ -35,7 +77,7 @@ router.post('/register', authLimiter, async (req, res) => {
       password,
       invitedBy: invite.created_by,
       inviteCode: invite.code,
-    });
+    }, client);
 
     const token = jwt.sign(
       { userId: user.id, role: user.role },
@@ -52,21 +94,27 @@ router.post('/register', authLimiter, async (req, res) => {
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
       expiresAt,
-    });
+    }, client);
 
-    await User.updateLastLogin(user.id);
+    await User.updateLastLogin(user.id, client);
+    await Invite.incrementUse(invite.id, client);
+    await client.query('COMMIT');
 
-    res.status(201).json({
-      message: 'Account created successfully',
-      user: { id: user.id, username: user.username, email: user.email, role: user.role },
-      token,
-    });
+    setAuthCookie(res, token, expiresAt);
+    res.status(201).json(buildAuthResponse('Account created successfully', user, token));
   } catch (err) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {}
+    }
     if (err.status) {
       return res.status(err.status).json({ error: err.message });
     }
     console.error('Register error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client?.release();
   }
 });
 
@@ -124,11 +172,8 @@ router.post('/login', authLimiter, async (req, res) => {
 
     await User.updateLastLogin(user.id);
 
-    res.json({
-      message: 'Login successful',
-      user: { id: user.id, username: user.username, email: user.email, role: user.role },
-      token,
-    });
+    setAuthCookie(res, token, expiresAt);
+    res.json(buildAuthResponse('Login successful', user, token));
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -139,6 +184,7 @@ router.post('/logout', authenticate, async (req, res) => {
   try {
     await Session.revoke(req.token);
     socketHub.revokeUserSockets(req.user.id, 'logout');
+    clearAuthCookie(res);
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
     console.error('Logout error:', err);
@@ -150,6 +196,7 @@ router.post('/logout-all', authenticate, async (req, res) => {
   try {
     const count = await Session.revokeAllForUser(req.user.id);
     socketHub.revokeUserSockets(req.user.id, 'logout_all');
+    clearAuthCookie(res);
     res.json({ message: `Logged out from ${count} session(s)` });
   } catch (err) {
     console.error('Logout-all error:', err);
@@ -186,6 +233,7 @@ router.post('/change-password', authenticate, async (req, res) => {
     await Session.revokeAllForUser(req.user.id);
     socketHub.revokeUserSockets(req.user.id, 'password_changed');
 
+    clearAuthCookie(res);
     res.json({ message: 'Password changed. Please login again.' });
   } catch (err) {
     console.error('Change password error:', err);

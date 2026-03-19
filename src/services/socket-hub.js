@@ -18,6 +18,7 @@
  */
 
 const { Server } = require('socket.io');
+const cookie = require('cookie');
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const Session = require('../models/session');
@@ -228,7 +229,10 @@ function init(httpServer) {
   });
 
   io.use(async (socket, next) => {
-    const token = socket.handshake.auth?.token;
+    const authToken = socket.handshake.auth?.token;
+    const parsedCookies = cookie.parse(socket.handshake.headers?.cookie || '');
+    const cookieToken = parsedCookies[config.authCookie.name];
+    const token = authToken || cookieToken;
     if (!token) {
       return next(new Error('Authentication required'));
     }

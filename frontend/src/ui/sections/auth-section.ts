@@ -9,7 +9,7 @@ export function renderAuthSection(state: AppState, controller: AppController) {
   section.innerHTML = `
     <div class="card-topline"><span class="section-tag">AUTH</span><span class="count-pill">${isAuthenticated ? 'LIVE' : 'LOGIN'}</span></div>
     <h2>Session Flow</h2>
-    <p>Token is stored locally, restore uses <code>/api/auth/me</code>, socket auth uses the same token, and logout paths keep the backend session model intact.</p>
+    <p>Session auth uses an HttpOnly cookie, restore uses <code>/api/auth/me</code>, and realtime auth follows the same backend session model.</p>
     ${renderFlash(state)}
     ${isAuthenticated ? renderAuthenticatedBody(state) : renderLoginBody(state)}
   `;
@@ -37,7 +37,7 @@ function renderAuthenticatedBody(state: AppState) {
       <div class="summary-row"><span>Username</span><strong>${state.session.username ?? '-'}</strong></div>
       <div class="summary-row"><span>Email</span><strong>${state.session.email ?? '-'}</strong></div>
       <div class="summary-row"><span>Role</span><strong>${state.session.role ?? '-'}</strong></div>
-      <div class="summary-row"><span>Token</span><strong>${state.session.token ? 'present' : 'missing'}</strong></div>
+      <div class="summary-row"><span>Session</span><strong>${state.session.token ? 'active' : 'missing'}</strong></div>
     </div>
     <div class="button-row">
       <button type="button" class="action-button" data-action="reload-config">Reload Config</button>

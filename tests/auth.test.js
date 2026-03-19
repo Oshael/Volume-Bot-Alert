@@ -79,8 +79,8 @@ describe('Volume Alert Server — Etapa 1', () => {
     await pool.query('ALTER TABLE invites ALTER COLUMN created_by DROP NOT NULL').catch(() => {});
 
     // Start server
-    const app = require('../src/server');
-    server = app.listen(3099);
+    const { startServer } = require('../src/server');
+    server = startServer(3099);
 
     // Wait for server to be ready
     await new Promise(r => setTimeout(r, 500));
@@ -194,6 +194,56 @@ describe('Volume Alert Server — Etapa 1', () => {
         body: { username: 'new_user', email: 'admin@test.com', password: 'password123', inviteCode },
       });
       assert.equal(res.status, 409);
+    });
+
+    it('Does not consume invite when registration fails with duplicate username', async () => {
+      const { query } = require('../src/models/db');
+      const code = 'DUPENAME000001';
+      await query(
+        `INSERT INTO invites (code, created_by, max_uses, expires_at)
+         VALUES ($1, NULL, 1, NOW() + INTERVAL '24 hours')`,
+        [code]
+      );
+
+      const before = await query('SELECT use_count FROM invites WHERE code = $1', [code]);
+      assert.equal(before.rows[0].use_count, 0);
+
+      const res = await request('POST', '/api/auth/register', {
+        body: { username: 'admin_user', email: 'dup-user@test.com', password: 'password123', inviteCode: code },
+      });
+      assert.equal(res.status, 409);
+
+      const after = await query('SELECT use_count FROM invites WHERE code = $1', [code]);
+      assert.equal(after.rows[0].use_count, 0);
+
+      const validate = await request('GET', `/api/invites/validate/${code}`);
+      assert.equal(validate.status, 200);
+      assert.equal(validate.body.valid, true);
+    });
+
+    it('Does not consume invite when registration fails with duplicate email', async () => {
+      const { query } = require('../src/models/db');
+      const code = 'DUPEMAIL000001';
+      await query(
+        `INSERT INTO invites (code, created_by, max_uses, expires_at)
+         VALUES ($1, NULL, 1, NOW() + INTERVAL '24 hours')`,
+        [code]
+      );
+
+      const before = await query('SELECT use_count FROM invites WHERE code = $1', [code]);
+      assert.equal(before.rows[0].use_count, 0);
+
+      const res = await request('POST', '/api/auth/register', {
+        body: { username: 'dup_mail_user', email: 'admin@test.com', password: 'password123', inviteCode: code },
+      });
+      assert.equal(res.status, 409);
+
+      const after = await query('SELECT use_count FROM invites WHERE code = $1', [code]);
+      assert.equal(after.rows[0].use_count, 0);
+
+      const validate = await request('GET', `/api/invites/validate/${code}`);
+      assert.equal(validate.status, 200);
+      assert.equal(validate.body.valid, true);
     });
   });
 

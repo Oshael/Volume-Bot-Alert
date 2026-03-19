@@ -1,7 +1,35 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
+import {
+  getAuthExtensionCounts,
+  getAuthExtensionDefinitions,
+  getAuthExtensionFields,
+  getAuthSupportHeading,
+  getAuthSurfaceMode,
+} from './auth-extensions';
+import { getAuthFeedbackKind, getAuthSupportCopy, shouldClearAuthFeedbackOnEdit } from './auth-feedback';
+import {
+  adjustCaretAfterEmailSanitize,
+  clampLoginPasswordValue,
+  LOGIN_EMAIL_MAX_LENGTH,
+  LOGIN_PASSWORD_MAX_LENGTH,
+  sanitizeLoginEmailValue,
+} from './login-form-utils';
 import { renderFlash } from './shared';
+
+const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
+const REGISTER_TRANSIENT_NOTICES = new Set([
+  'Creating account...',
+  'Account created. Workspace synced.',
+]);
+const LOGIN_RELEVANT_NOTICES = new Set([
+  'No saved session. Sign in to continue.',
+  'Restoring session...',
+  'Signing in...',
+  'Login successful. Workspace synced.',
+  'Session restored. Workspace synced.',
+]);
 
 const CONFIG_FIELDS: Array<{ key: string; label: string; type?: 'number' | 'text'; min?: number; placeholder?: string }> = [
   { key: 'threshold', label: 'Alert when 5m volume rises (%)', min: 1 },
@@ -49,32 +77,536 @@ export function renderLegacyShell(state: AppState, controller: AppController) {
 }
 
 function renderLegacyLogin(state: AppState, controller: AppController) {
+  const authError = state.ui.error ?? '';
+  const authFeedbackMessage = state.ui.error ?? state.ui.notice ?? '';
+  const authFeedbackKind = authFeedbackMessage ? getAuthFeedbackKind(state, authFeedbackMessage) : 'idle';
+  const authSurfaceMode = getAuthSurfaceMode(state);
+  const hasCredentialError = authFeedbackKind === 'credentials';
+  const hasValidationError = authFeedbackKind === 'validation';
+  const hasAuthError = Boolean(state.ui.error);
   const section = document.createElement('section');
+  const showInlineRegisterFeedback = state.ui.authPanel === 'register';
+  const loginFlash = renderLoginFlash(state);
   section.className = 'legacy-login-shell';
   section.innerHTML = `
-    <div class="legacy-login-box">
-      <h2><span class="legacy-login-dot"></span> VOLUME ALERT BOT</h2>
-      <div class="legacy-login-sub">Solana  Real-time Monitor</div>
-      ${renderFlash(state)}
-      <form class="legacy-login-form" data-role="login-form">
-        <label>Email</label>
-        <input name="email" type="email" placeholder="testeuser5@example.com" autocomplete="username" required ${state.ui.busy ? 'disabled' : ''} />
-        <label>Password</label>
-        <input name="password" type="password" placeholder="SenhaForte123!" autocomplete="current-password" required ${state.ui.busy ? 'disabled' : ''} />
-        <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'LOGIN...' : 'LOGIN'}</button>
-      </form>
+    <div class="legacy-login-box" data-auth-surface="login" data-auth-kind="${authFeedbackKind}" data-auth-mode="${authSurfaceMode}" aria-busy="${state.ui.busy ? 'true' : 'false'}">
+      ${renderLoginHeader()}
+      <div class="legacy-login-feedback" data-auth-slot="feedback" id="login-auth-feedback">${showInlineRegisterFeedback ? '' : loginFlash}</div>
+      ${renderLoginForm(state, { hasCredentialError, hasValidationError, hasAuthError })}
+      <div class="legacy-login-support" data-auth-slot="support" data-auth-kind="${authFeedbackKind}">
+        ${renderLoginSupport(authFeedbackKind)}
+        ${renderLoginExtensionRegion()}
+      </div>
     </div>
+    ${state.ui.authPanel === 'register' ? renderRegisterModal(state) : ''}
+    ${state.ui.authPanel === 'invite-assistance' ? renderInviteAssistanceModal(state) : ''}
+    ${state.ui.authPanel === 'password-reset' ? renderPasswordResetModal() : ''}
   `;
 
-  section.querySelector<HTMLFormElement>('form[data-role="login-form"]')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
+  const form = section.querySelector<HTMLFormElement>('form[data-role="login-form"]');
+  const submitLoginForm = () => {
+    if (!form || controller.state.ui.busy) {
+      return;
+    }
     const data = new FormData(form);
+    syncImmediateLoginBusyState(form);
     void controller.login(String(data.get('email') || '').trim(), String(data.get('password') || ''));
+  };
+  form?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitLoginForm();
   });
 
-  section.querySelector<HTMLButtonElement>('[data-action="dismiss-flash"]')?.addEventListener('click', () => controller.clearNotice());
+  form?.querySelector<HTMLButtonElement>('[data-action="toggle-password-visibility"]')?.addEventListener('click', (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const passwordInput = form.querySelector<HTMLInputElement>('input[name="password"]');
+    if (!passwordInput) {
+      return;
+    }
+
+    const selectionStart = passwordInput.selectionStart;
+    const selectionEnd = passwordInput.selectionEnd;
+    const visible = passwordInput.type === 'password';
+    passwordInput.type = visible ? 'text' : 'password';
+    button.textContent = visible ? 'Hide' : 'Show';
+    button.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+    passwordInput.focus();
+    if (selectionStart !== null && selectionEnd !== null) {
+      window.requestAnimationFrame(() => {
+        passwordInput.focus();
+        passwordInput.setSelectionRange(selectionStart, selectionEnd);
+      });
+    }
+  });
+  form?.querySelector<HTMLButtonElement>('[data-action="toggle-password-visibility"]')?.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+  });
+
+  const passwordInput = form?.querySelector<HTMLInputElement>('input[name="password"]');
+  const emailInput = form?.querySelector<HTMLInputElement>('input[name="email"]');
+  const capsLockHint = form?.querySelector<HTMLElement>('#login-capslock');
+  const sanitizeEmailInput = () => {
+    if (!emailInput) {
+      return;
+    }
+    const rawValue = emailInput.value;
+    const nextValue = sanitizeLoginEmailValue(rawValue);
+    if (nextValue === rawValue) {
+      return;
+    }
+    const caret = emailInput.selectionStart;
+    emailInput.value = nextValue;
+    const nextCaret = adjustCaretAfterEmailSanitize(rawValue, caret);
+    emailInput.setSelectionRange(nextCaret, nextCaret);
+  };
+  const clampPasswordInput = () => {
+    if (!passwordInput) {
+      return;
+    }
+    const nextValue = clampLoginPasswordValue(passwordInput.value);
+    if (nextValue !== passwordInput.value) {
+      const caret = Math.min(passwordInput.selectionStart ?? nextValue.length, nextValue.length);
+      passwordInput.value = nextValue;
+      passwordInput.setSelectionRange(caret, caret);
+    }
+  };
+  const syncCapsLock = (event: KeyboardEvent) => {
+    if (!capsLockHint) {
+      return;
+    }
+    capsLockHint.textContent = event.getModifierState('CapsLock') ? 'Caps Lock is on' : '';
+  };
+  passwordInput?.addEventListener('keydown', syncCapsLock);
+  passwordInput?.addEventListener('keyup', syncCapsLock);
+  passwordInput?.addEventListener('blur', () => {
+    if (capsLockHint) {
+      capsLockHint.textContent = '';
+    }
+  });
+  passwordInput?.addEventListener('focus', (event) => {
+    const keyboardEvent = event as FocusEvent & { getModifierState?: (key: string) => boolean };
+    if (capsLockHint && keyboardEvent.getModifierState?.('CapsLock')) {
+      capsLockHint.textContent = 'Caps Lock is on';
+    }
+  });
+
+  const clearErrorOnEdit = () => {
+    if (shouldClearAuthFeedbackOnEdit(state.ui.error, state.ui.notice)) {
+      controller.clearNotice();
+    }
+  };
+  const submitOnEnter = (event: KeyboardEvent) => {
+    const isSubmitKey = event.key === 'Enter'
+      || event.key === 'Return'
+      || event.code === 'Enter'
+      || event.code === 'NumpadEnter'
+      || event.keyCode === 13;
+    if (!isSubmitKey || event.shiftKey || event.isComposing || controller.state.ui.busy) {
+      return;
+    }
+    event.preventDefault();
+    submitLoginForm();
+  };
+  emailInput?.addEventListener('input', clearErrorOnEdit);
+  passwordInput?.addEventListener('input', clearErrorOnEdit);
+  passwordInput?.addEventListener('input', clampPasswordInput);
+  form?.addEventListener('keydown', submitOnEnter);
+  emailInput?.addEventListener('paste', () => {
+    window.requestAnimationFrame(() => {
+      sanitizeEmailInput();
+    });
+  });
+  emailInput?.addEventListener('keydown', (event) => {
+    if (event.key === ' ') {
+      event.preventDefault();
+    }
+  });
+  emailInput?.addEventListener('blur', () => {
+    sanitizeEmailInput();
+  });
+  emailInput?.addEventListener('input', sanitizeEmailInput);
+
+  section.querySelector<HTMLButtonElement>('[data-action="dismiss-flash"]')?.addEventListener('click', () => {
+    if (state.ui.error) controller.clearError();
+    else controller.clearNotice();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-register-panel"]')?.addEventListener('click', () => {
+    controller.openAuthPanel('register');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-invite-assistance-panel"]')?.addEventListener('click', () => {
+    controller.openAuthPanel('invite-assistance');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-password-reset-panel"]')?.addEventListener('click', () => {
+    controller.openAuthPanel('password-reset');
+  });
+  bindRegisterPanel(section, controller, state);
+  bindInviteAssistancePanel(section, controller, state);
+  bindPasswordResetPanel(section, controller);
   return section;
+}
+
+function renderLoginFlash(state: AppState) {
+  const message = state.ui.error ?? state.ui.notice ?? '';
+  if (!message) {
+    return '';
+  }
+
+  const isLoginError = (
+    message === 'Email is required.'
+    || message === 'Enter a valid email address.'
+    || message === 'Password is required.'
+    || message === 'Incorrect email or password. Check your credentials and try again.'
+    || message.includes('Incorrect email or password')
+    || message.includes('temporarily locked')
+    || message.includes('deactivated')
+    || message.includes('saved session is no longer valid')
+    || message.includes('Unable to reach the server')
+    || message.includes('You are using the old password')
+  );
+
+  const isLoginNotice = LOGIN_RELEVANT_NOTICES.has(message);
+  if (!isLoginError && !isLoginNotice) {
+    return '';
+  }
+
+  return renderFlash({
+    ...state,
+    ui: {
+      ...state.ui,
+      error: isLoginError ? state.ui.error : null,
+      notice: isLoginNotice ? state.ui.notice : null,
+    },
+  });
+}
+
+function syncImmediateLoginBusyState(form: HTMLFormElement) {
+  form.dataset.busy = 'true';
+
+  for (const field of form.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button')) {
+    field.disabled = true;
+  }
+
+  const submitCopy = form.querySelector<HTMLElement>('.legacy-login-submit-copy');
+  if (submitCopy) {
+    submitCopy.textContent = 'SIGNING IN...';
+  }
+
+  const submitButton = form.querySelector<HTMLElement>('.legacy-login-submit');
+  if (submitButton) {
+    submitButton.classList.add('is-busy');
+  }
+}
+
+function renderLoginHeader() {
+  return `
+    <div class="legacy-login-head" data-auth-slot="header">
+      <div class="legacy-login-brand-block">
+        <span class="legacy-login-dot"></span>
+        <div class="legacy-login-brand-copy">
+          <h2 class="legacy-login-title"><span class="legacy-login-brand">MoonWire</span></h2>
+          <div class="legacy-login-product">Volume Bot Tracker</div>
+          <div class="legacy-login-sub">Solana Real-time Monitor</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLoginForm(state: AppState, options: { hasCredentialError: boolean; hasValidationError: boolean; hasAuthError: boolean }) {
+  const { hasCredentialError, hasValidationError, hasAuthError } = options;
+  const emailFieldClass = hasCredentialError || state.ui.error === 'Email is required.' || state.ui.error === 'Enter a valid email address.'
+    ? `field-error ${hasValidationError && !hasCredentialError ? 'field-error-soft' : ''}`.trim()
+    : '';
+  const passwordFieldClass = hasCredentialError || state.ui.error === 'Password is required.'
+    ? `field-error ${hasValidationError && !hasCredentialError ? 'field-error-soft' : ''}`.trim()
+    : '';
+  const isRestoring = state.ui.busy && state.session.status === 'loading';
+  const submitLabel = isRestoring ? 'RESTORING SESSION...' : state.ui.busy ? 'SIGNING IN...' : 'LOGIN';
+  return `
+    <form class="legacy-login-form" data-role="login-form" data-auth-slot="form" data-busy="${state.ui.busy ? 'true' : 'false'}" aria-busy="${state.ui.busy ? 'true' : 'false'}" novalidate>
+      <label for="login-email">Email</label>
+      <input id="login-email" class="${emailFieldClass}" name="email" type="email" inputmode="email" enterkeyhint="next" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" placeholder="testeuser5@example.com" autocomplete="username" required aria-invalid="${hasAuthError ? 'true' : 'false'}" aria-describedby="login-help login-auth-feedback" ${state.ui.busy ? 'disabled' : ''} />
+      <label for="login-password">Password</label>
+      <div class="legacy-password-wrap">
+        <input id="login-password" class="${passwordFieldClass}" name="password" type="password" enterkeyhint="go" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" placeholder="SenhaForte123!" autocomplete="current-password" required aria-invalid="${hasAuthError ? 'true' : 'false'}" aria-describedby="login-help login-capslock login-auth-feedback" ${state.ui.busy ? 'disabled' : ''} />
+        <button type="button" class="legacy-password-toggle" data-action="toggle-password-visibility" aria-controls="login-password" aria-label="Show password" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+      </div>
+      <div class="legacy-login-capslock" id="login-capslock" aria-live="polite"></div>
+      <div class="legacy-login-inline-actions">
+        <button type="button" class="legacy-login-inline-action" data-action="open-register-panel" ${state.ui.busy ? 'disabled' : ''}>Create Account</button>
+        <span class="legacy-login-inline-separator" aria-hidden="true">|</span>
+        <button type="button" class="legacy-login-inline-action" data-action="open-password-reset-panel" ${state.ui.busy ? 'disabled' : ''}>Forgot Password</button>
+      </div>
+      <div class="legacy-login-help" id="login-help">Secure sign-in restores your MoonWire workspace and monitoring preferences.</div>
+      <button type="submit" class="legacy-btn legacy-btn-primary legacy-login-submit ${state.ui.busy ? 'is-busy' : ''}" ${state.ui.busy ? 'disabled' : ''}>
+        <span class="legacy-login-submit-copy">${submitLabel}</span>
+      </button>
+    </form>
+  `;
+}
+
+function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackKind> | 'idle') {
+  const supportKind = authFeedbackKind === 'idle' ? 'notice' : authFeedbackKind;
+  const supportHeading = getAuthSupportHeading(authFeedbackKind);
+  if (authFeedbackKind === 'idle') {
+    return `
+      <div class="legacy-login-recovery">
+        <div class="legacy-login-recovery-tag">${supportHeading}</div>
+        <div class="legacy-login-recovery-copy">${getAuthSupportCopy('notice')}</div>
+        <div class="legacy-login-support-actions">
+          <button type="button" class="legacy-login-support-action" data-action="open-invite-assistance-panel">Access help</button>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="legacy-login-recovery" data-auth-support-kind="${supportKind}">
+      <div class="legacy-login-recovery-tag">${supportHeading}</div>
+      <div class="legacy-login-recovery-copy">${getAuthSupportCopy(authFeedbackKind)}</div>
+      <div class="legacy-login-support-actions">
+        <button type="button" class="legacy-login-support-action" data-action="open-invite-assistance-panel">Access help</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderRegisterFlash(state: AppState) {
+  const message = state.ui.error ?? state.ui.notice ?? '';
+  if (!message) {
+    return '';
+  }
+
+  const isRegisterError = (
+    message === 'Username is required.'
+    || message === 'Username must be at least 3 characters.'
+    || message === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
+    || message === 'Username already taken'
+    || message === 'Email is required.'
+    || message === 'Enter a valid email address.'
+    || message === 'Email already registered'
+    || message === 'Invalid email format'
+    || message === 'Password is required.'
+    || message === 'Password must be at least 8 characters.'
+    || message === 'Password must be 8-128 characters.'
+    || message === 'Invite code is required.'
+    || message.includes('Invite')
+    || message.includes('invite')
+    || message.includes('registered')
+    || message.includes('Internal server error')
+    || message.includes('Unable to reach the server')
+  );
+
+  const isRegisterNotice = REGISTER_TRANSIENT_NOTICES.has(message);
+  if (!isRegisterError && !isRegisterNotice) {
+    return '';
+  }
+
+  return renderFlash({
+    ...state,
+    ui: {
+      ...state.ui,
+      error: isRegisterError ? state.ui.error : null,
+      notice: isRegisterNotice ? state.ui.notice : null,
+    },
+  });
+}
+
+function renderRegisterModal(state: AppState) {
+  const usernameError = state.ui.error === 'Username is required.'
+    || state.ui.error === 'Username must be at least 3 characters.'
+    || state.ui.error === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
+    || state.ui.error === 'Username already taken';
+  const emailError = state.ui.error === 'Email is required.'
+    || state.ui.error === 'Enter a valid email address.'
+    || state.ui.error === 'Email already registered'
+    || state.ui.error === 'Invalid email format';
+  const passwordError = state.ui.error === 'Password is required.'
+    || state.ui.error === 'Password must be at least 8 characters.'
+    || state.ui.error === 'Password must be 8-128 characters.';
+  const inviteError = state.ui.error === 'Invite code is required.'
+    || state.ui.error?.includes('Invite')
+    || state.ui.error?.includes('invite');
+
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="register">
+      <div class="legacy-auth-modal-backdrop" data-action="close-register-panel"></div>
+      <div class="legacy-auth-panel" data-auth-panel="register" role="dialog" aria-modal="true" aria-labelledby="register-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="register-title">Create Account</strong>
+            <span>Use a valid invite code to create your MoonWire account and load your workspace.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-register-panel">Close</button>
+        </div>
+        <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderRegisterFlash(state)}</div>
+        <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="register-form" novalidate>
+          <label>
+            <span>Username</span>
+            <input name="username" type="text" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" class="${usernameError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+          <label>
+            <span>Email</span>
+            <input name="registerEmail" type="email" inputmode="email" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false" class="${emailError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+          <label>
+            <span>Password</span>
+            <div class="legacy-password-wrap">
+              <input name="registerPassword" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" class="${passwordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+              <button type="button" class="legacy-password-toggle" data-action="toggle-register-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+            </div>
+          </label>
+          <label>
+            <span>Invite code</span>
+            <input name="inviteCode" type="text" maxlength="64" autocapitalize="characters" spellcheck="false" class="${inviteError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+          <div class="legacy-auth-panel-note" data-role="register-invite-status">Invite code is required for account creation.</div>
+          <div class="legacy-auth-panel-actions">
+            <button type="button" class="legacy-userbar-link" data-action="close-register-panel" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'CREATING...' : 'CREATE ACCOUNT'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderInviteAssistanceModal(_state: AppState) {
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="invite-assistance">
+      <div class="legacy-auth-modal-backdrop" data-action="close-invite-assistance-panel"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-assistance" data-auth-panel="invite-assistance" role="dialog" aria-modal="true" aria-labelledby="invite-assistance-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="invite-assistance-title">Access Help</strong>
+            <span>Validate an invite code and check what to do if access is blocked, expired, or missing.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-invite-assistance-panel">Close</button>
+        </div>
+        <div class="legacy-assistance-grid">
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">Need a new invite?</div>
+            <div class="legacy-assistance-card-copy">Ask an administrator for a fresh invite if your code expired, was revoked, or reached max uses.</div>
+          </div>
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">Account blocked?</div>
+            <div class="legacy-assistance-card-copy">If the account is deactivated or locked out for too long, contact an administrator to review access.</div>
+          </div>
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">Before contacting support</div>
+            <div class="legacy-assistance-card-copy">Keep your email and invite code ready. That gives the admin enough context to resolve access faster.</div>
+          </div>
+        </div>
+        <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="invite-assistance-form" novalidate>
+          <label>
+            <span>Invite code</span>
+            <input name="assistanceInviteCode" type="text" maxlength="64" autocapitalize="characters" spellcheck="false" />
+          </label>
+          <div class="legacy-auth-panel-note" data-role="invite-assistance-status">
+            Paste an invite code to check whether it is still valid.
+          </div>
+          <div class="legacy-auth-panel-note legacy-auth-panel-note-secondary" data-role="invite-assistance-summary">
+            ${INVITE_SECURITY_WARNING}
+          </div>
+          <div class="legacy-auth-panel-actions">
+            <button type="button" class="legacy-userbar-link" data-action="close-invite-assistance-panel">Close</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderPasswordResetModal() {
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="password-reset">
+      <div class="legacy-auth-modal-backdrop" data-action="close-password-reset-panel"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-assistance" data-auth-panel="password-reset" role="dialog" aria-modal="true" aria-labelledby="password-reset-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="password-reset-title">Forgot Password</strong>
+            <span>Self-serve password reset is not enabled yet. Use the official support path only.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-password-reset-panel">Close</button>
+        </div>
+        <div class="legacy-assistance-grid">
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">OFFICIAL RECOVERY ONLY</div>
+            <div class="legacy-assistance-card-copy">If you lost access to your password, open a ticket in the official server. Do not trust password help in DMs.</div>
+          </div>
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">WHAT TO PREPARE</div>
+            <div class="legacy-assistance-card-copy">Be ready to share the account email and a short description of the problem through the official ticket flow only.</div>
+          </div>
+        </div>
+        <div class="legacy-auth-panel-note legacy-auth-panel-note-secondary">
+          ${INVITE_SECURITY_WARNING}
+        </div>
+        <div class="legacy-auth-panel-actions">
+          <button type="button" class="legacy-userbar-link" data-action="close-password-reset-panel">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLoginExtensionRegion() {
+  const extensionDefs = getAuthExtensionDefinitions();
+  const extensionCounts = getAuthExtensionCounts();
+  return `
+    <div
+      class="legacy-login-extension-region"
+      data-auth-slot="extensions"
+      data-auth-extension-count="${extensionCounts.total}"
+      data-auth-extension-enabled-count="${extensionCounts.enabled}"
+      data-auth-extension-backend-ready-count="${extensionCounts.backendReady}"
+      data-auth-extension-ui-ready-count="${extensionCounts.uiReady}"
+      hidden
+      aria-hidden="true"
+    >
+      ${extensionDefs.map((item) => `
+        <div
+          class="legacy-login-extension-item"
+          data-auth-extension="${item.key}"
+          data-auth-extension-enabled="${item.enabled ? 'true' : 'false'}"
+          data-auth-extension-backend-ready="${item.backendReady ? 'true' : 'false'}"
+          data-auth-extension-ui-ready="${item.uiReady ? 'true' : 'false'}"
+          data-auth-extension-route="${item.route ?? ''}"
+          data-auth-extension-priority="${item.priority}"
+        >
+          <span class="legacy-login-extension-label">${item.label}</span>
+          <span class="legacy-login-extension-description">${item.description}</span>
+          ${renderLoginExtensionDraft(item.key)}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields>[0]) {
+  const fields = getAuthExtensionFields(key);
+  return `
+    <form
+      class="legacy-login-extension-draft"
+      data-auth-extension-draft="${key}"
+      data-auth-extension-field-count="${fields.length}"
+      hidden
+      aria-hidden="true"
+    >
+      ${fields.map((field) => `
+        <label class="legacy-login-extension-field" data-auth-extension-field="${field.name}">
+          <span>${field.label}</span>
+          <input
+            name="${field.name}"
+            type="${field.type}"
+            ${field.inputMode ? `inputmode="${field.inputMode}"` : ''}
+            ${field.autocomplete ? `autocomplete="${field.autocomplete}"` : ''}
+            ${field.required ? 'required' : ''}
+            disabled
+          />
+        </label>
+      `).join('')}
+    </form>
+  `;
 }
 
 function renderLegacyConfig(state: AppState, controller: AppController) {
@@ -86,11 +618,12 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
       <div class="legacy-user-menu" data-user-menu>
         <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu">${state.session.username ?? state.session.email ?? 'User'}</button>
         <div class="legacy-user-dropdown">
-          <button type="button" class="legacy-user-dd-item">Profile (Soon)</button>
+          <button type="button" class="legacy-user-dd-item" data-action="open-change-password">Change Password</button>
           <button type="button" class="legacy-user-dd-item">Preferences (Soon)</button>
         </div>
       </div>
     </div>
+    ${state.ui.authPanel === 'change-password' ? renderChangePasswordModal(state) : ''}
     ${CONFIG_FIELDS.map((field) => renderConfigField(state, field)).join('')}
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
@@ -123,7 +656,11 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
     controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
   });
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
-  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item').forEach((button) => {
+  section.querySelector<HTMLButtonElement>('[data-action="open-change-password"]')?.addEventListener('click', () => {
+    controller.openAuthPanel('change-password');
+    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+  });
+  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-change-password"])').forEach((button) => {
     button.addEventListener('click', () => {
       section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
     });
@@ -139,7 +676,328 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
 
   bindConfigToggleMenus(section, controller);
   bindSoundUploadStrip(section, state);
+  bindChangePasswordPanel(section, controller, state);
   return section;
+}
+
+function renderChangePasswordModal(state: AppState) {
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="change-password">
+      <div class="legacy-auth-modal-backdrop" data-action="close-change-password"></div>
+      <div class="legacy-auth-panel" data-auth-panel="change-password" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="change-password-title">Change Password</strong>
+            <span>Update your account password. You will need to sign in again after the change.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-change-password">Close</button>
+        </div>
+        <form class="legacy-auth-panel-form" data-role="change-password-form">
+          <label>
+            <span>Current password</span>
+            <div class="legacy-password-wrap">
+              <input name="currentPassword" type="password" autocomplete="current-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" ${state.ui.busy ? 'disabled' : ''} required />
+              <button type="button" class="legacy-password-toggle" data-action="toggle-current-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+            </div>
+          </label>
+          <label>
+            <span>New password</span>
+            <div class="legacy-password-wrap">
+              <input name="newPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" ${state.ui.busy ? 'disabled' : ''} required />
+              <button type="button" class="legacy-password-toggle" data-action="toggle-new-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+            </div>
+          </label>
+          <div class="legacy-auth-panel-actions">
+            <button type="button" class="legacy-userbar-link" data-action="close-change-password" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'UPDATING...' : 'UPDATE PASSWORD'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function bindChangePasswordPanel(section: ParentNode, controller: AppController, state: AppState) {
+  const form = section.querySelector<HTMLFormElement>('form[data-role="change-password-form"]');
+  const closePanel = () => controller.closeAuthPanel();
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-change-password"]').forEach((button) => {
+    button.addEventListener('click', closePanel);
+  });
+
+  const toggleVisibility = (inputName: 'currentPassword' | 'newPassword', action: 'toggle-current-password-visibility' | 'toggle-new-password-visibility') => {
+    form?.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.addEventListener('click', (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      const input = form.querySelector<HTMLInputElement>(`input[name="${inputName}"]`);
+      if (!input) {
+        return;
+      }
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      const visible = input.type === 'password';
+      input.type = visible ? 'text' : 'password';
+      button.textContent = visible ? 'Hide' : 'Show';
+      input.focus();
+      if (start !== null && end !== null) {
+        window.requestAnimationFrame(() => {
+          input.focus();
+          input.setSelectionRange(start, end);
+        });
+      }
+    });
+    form?.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+  };
+
+  toggleVisibility('currentPassword', 'toggle-current-password-visibility');
+  toggleVisibility('newPassword', 'toggle-new-password-visibility');
+
+  form?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (state.ui.busy) {
+      return;
+    }
+    const data = new FormData(form);
+    void controller.changePassword(
+      String(data.get('currentPassword') || ''),
+      String(data.get('newPassword') || ''),
+    );
+  });
+}
+
+function bindRegisterPanel(section: ParentNode, controller: AppController, state: AppState) {
+  const form = section.querySelector<HTMLFormElement>('form[data-role="register-form"]');
+  if (!form) {
+    return;
+  }
+
+  const closePanel = () => controller.closeAuthPanel();
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-register-panel"]').forEach((button) => {
+    button.addEventListener('click', closePanel);
+  });
+  section.querySelectorAll<HTMLButtonElement>('.legacy-auth-panel-feedback [data-action="dismiss-flash"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (state.ui.error) controller.clearError();
+      else controller.clearNotice();
+    });
+  });
+
+  const usernameInput = form.querySelector<HTMLInputElement>('input[name="username"]');
+  const emailInput = form.querySelector<HTMLInputElement>('input[name="registerEmail"]');
+  const passwordInput = form.querySelector<HTMLInputElement>('input[name="registerPassword"]');
+  const inviteInput = form.querySelector<HTMLInputElement>('input[name="inviteCode"]');
+  const inviteStatus = form.querySelector<HTMLElement>('[data-role="register-invite-status"]');
+  const toggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-register-password-visibility"]');
+
+  const setInviteStatus = (message: string, mode: 'idle' | 'ok' | 'error' = 'idle') => {
+    if (!inviteStatus) {
+      return;
+    }
+    inviteStatus.textContent = message;
+    inviteStatus.dataset.state = mode;
+  };
+
+  const clearFeedbackOnEdit = () => {
+    if (shouldClearAuthFeedbackOnEdit(state.ui.error, state.ui.notice)) {
+      controller.clearError();
+      controller.clearNotice();
+    }
+  };
+
+  const sanitizeRegisterEmailInput = () => {
+    if (!emailInput) {
+      return;
+    }
+    const rawValue = emailInput.value;
+    const nextValue = sanitizeLoginEmailValue(rawValue);
+    if (nextValue === rawValue) {
+      return;
+    }
+    const caret = emailInput.selectionStart;
+    emailInput.value = nextValue;
+    const nextCaret = adjustCaretAfterEmailSanitize(rawValue, caret);
+    emailInput.setSelectionRange(nextCaret, nextCaret);
+  };
+
+  const clampRegisterPassword = () => {
+    if (!passwordInput) {
+      return;
+    }
+    const nextValue = clampLoginPasswordValue(passwordInput.value);
+    if (nextValue !== passwordInput.value) {
+      const caret = Math.min(passwordInput.selectionStart ?? nextValue.length, nextValue.length);
+      passwordInput.value = nextValue;
+      passwordInput.setSelectionRange(caret, caret);
+    }
+  };
+
+  toggle?.addEventListener('click', () => {
+    if (!passwordInput) {
+      return;
+    }
+    const selectionStart = passwordInput.selectionStart;
+    const selectionEnd = passwordInput.selectionEnd;
+    const visible = passwordInput.type === 'password';
+    passwordInput.type = visible ? 'text' : 'password';
+    toggle.textContent = visible ? 'Hide' : 'Show';
+    passwordInput.focus();
+    if (selectionStart !== null && selectionEnd !== null) {
+      window.requestAnimationFrame(() => {
+        passwordInput.focus();
+        passwordInput.setSelectionRange(selectionStart, selectionEnd);
+      });
+    }
+  });
+  toggle?.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+  });
+
+  usernameInput?.addEventListener('input', clearFeedbackOnEdit);
+  emailInput?.addEventListener('input', () => {
+    clearFeedbackOnEdit();
+    sanitizeRegisterEmailInput();
+  });
+  emailInput?.addEventListener('paste', () => {
+    window.requestAnimationFrame(sanitizeRegisterEmailInput);
+  });
+  passwordInput?.addEventListener('input', () => {
+    clearFeedbackOnEdit();
+    clampRegisterPassword();
+  });
+  inviteInput?.addEventListener('input', () => {
+    clearFeedbackOnEdit();
+    setInviteStatus('Invite code is required for account creation.', 'idle');
+  });
+
+  inviteInput?.addEventListener('blur', () => {
+    const code = String(inviteInput.value || '').trim();
+    inviteInput.value = code;
+    if (!code || state.ui.busy) {
+      return;
+    }
+    setInviteStatus('Checking invite code...', 'idle');
+    void controller.validateInvite(code)
+      .then((result) => {
+        if (inviteInput.value.trim() !== code) {
+          return;
+        }
+        if (result.valid) {
+          setInviteStatus('Invite code looks valid.', 'ok');
+          return;
+        }
+        setInviteStatus(result.reason || 'Invite code is not valid.', 'error');
+      })
+      .catch(() => {
+        setInviteStatus('Unable to validate invite code right now.', 'error');
+      });
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (state.ui.busy) {
+      return;
+    }
+    const data = new FormData(form);
+    void controller.register({
+      username: String(data.get('username') || ''),
+      email: String(data.get('registerEmail') || ''),
+      password: String(data.get('registerPassword') || ''),
+      inviteCode: String(data.get('inviteCode') || ''),
+    });
+  });
+}
+
+function bindInviteAssistancePanel(section: ParentNode, controller: AppController, state: AppState) {
+  const form = section.querySelector<HTMLFormElement>('form[data-role="invite-assistance-form"]');
+  if (!form) {
+    return;
+  }
+
+  const closePanel = () => controller.closeAuthPanel();
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-invite-assistance-panel"]').forEach((button) => {
+    button.addEventListener('click', closePanel);
+  });
+
+  const inviteInput = form.querySelector<HTMLInputElement>('input[name="assistanceInviteCode"]');
+  const status = form.querySelector<HTMLElement>('[data-role="invite-assistance-status"]');
+  const summary = form.querySelector<HTMLElement>('[data-role="invite-assistance-summary"]');
+
+  const setStatus = (message: string, mode: 'idle' | 'ok' | 'error') => {
+    if (!status) {
+      return;
+    }
+    status.textContent = message;
+    status.dataset.state = mode;
+  };
+
+  const setSummary = (message: string) => {
+    if (summary) {
+      summary.textContent = message;
+    }
+  };
+
+  const validateInvite = () => {
+    const code = String(inviteInput?.value || '').trim();
+    if (!inviteInput) {
+      return;
+    }
+    inviteInput.value = code;
+    if (!code || state.ui.busy) {
+      setStatus('Paste an invite code to check whether it is still valid.', 'idle');
+      setSummary(INVITE_SECURITY_WARNING);
+      return;
+    }
+
+    setStatus('Checking invite code...', 'idle');
+    void controller.validateInvite(code)
+      .then((result) => {
+        if (inviteInput.value.trim() !== code) {
+          return;
+        }
+        if (result.valid) {
+          setStatus('Invite code is valid and ready to use.', 'ok');
+          setSummary(INVITE_SECURITY_WARNING);
+          return;
+        }
+
+        const reason = result.reason || 'Invite code is not valid.';
+        setStatus(reason, 'error');
+        if (reason.includes('expired')) {
+          setSummary(INVITE_SECURITY_WARNING);
+          return;
+        }
+        if (reason.includes('revoked')) {
+          setSummary(INVITE_SECURITY_WARNING);
+          return;
+        }
+        if (reason.includes('max uses')) {
+          setSummary(INVITE_SECURITY_WARNING);
+          return;
+        }
+        if (reason.includes('not found')) {
+          setSummary(INVITE_SECURITY_WARNING);
+          return;
+        }
+        setSummary(INVITE_SECURITY_WARNING);
+      })
+      .catch(() => {
+        setStatus('Unable to validate invite code right now.', 'error');
+        setSummary(INVITE_SECURITY_WARNING);
+      });
+  };
+
+  inviteInput?.addEventListener('input', () => {
+    setStatus('Paste an invite code to check whether it is still valid.', 'idle');
+    setSummary(INVITE_SECURITY_WARNING);
+  });
+  inviteInput?.addEventListener('blur', validateInvite);
+}
+
+function bindPasswordResetPanel(section: ParentNode, controller: AppController) {
+  const closePanel = () => controller.closeAuthPanel();
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-password-reset-panel"]').forEach((button) => {
+    button.addEventListener('click', closePanel);
+  });
 }
 
 function isConfigEnabled(state: AppState, key: string) {
@@ -299,13 +1157,6 @@ async function submitLegacyConfig(section: HTMLElement, controller: AppControlle
     }
     payload[key] = input.value;
   }
-
-  console.info('[config-debug-ui]', {
-    stage: 'submitLegacyConfig',
-    minVolInputValue: (section.querySelector('input[name="min-vol"]') as HTMLInputElement | null)?.value ?? null,
-    payloadMinVol: payload['min-vol'],
-    payload,
-  });
 
   await controller.saveMonitoringConfig(payload);
 }

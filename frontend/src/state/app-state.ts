@@ -224,6 +224,8 @@ export interface AppState {
     busy: boolean;
     error: string | null;
     notice: string | null;
+    loginErrorCount: number;
+    authPanel: 'none' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset';
     recentPage: number;
     oldWeekPage: number;
     recentPerPage: number;
@@ -306,6 +308,8 @@ export function createAppState(): AppState {
       busy: false,
       error: null,
       notice: null,
+      loginErrorCount: 0,
+      authPanel: 'none',
       recentPage: 0,
       oldWeekPage: 0,
       recentPerPage: 30,

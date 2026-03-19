@@ -1,5 +1,14 @@
 import { createAppState, type AddressItem, type AlertEntry, type AppState, type ManualTokenEntry, type MeteoraEntry, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
-import { fetchCurrentSession, login, logout, logoutAll, type SessionUser } from '../services/api/auth';
+import {
+  changePassword as changePasswordRequest,
+  fetchCurrentSession,
+  login,
+  logout,
+  logoutAll,
+  register as registerRequest,
+  type RegisterInput,
+  type SessionUser,
+} from '../services/api/auth';
 import {
   addManualToken as addManualTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
@@ -12,7 +21,7 @@ import {
 } from '../services/api/config';
 import { normalizeManualDexPayload } from '../services/dex/normalize';
 import { fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
-import { clearAuthToken, getAuthToken, setAuthToken } from '../utils/auth-storage';
+import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
   loadDismissedOldWeek,
@@ -25,6 +34,26 @@ import {
   saveRecentRemovalLog,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
+import {
+  normalizeInviteCode,
+  validateChangePasswordInput,
+  validateLoginCredentials,
+  validateRegisterInput,
+} from './auth-flow-utils';
+import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
+import {
+  findPreviousPasswordMatch,
+  formatPasswordChangedDate,
+  rememberPreviousPassword,
+} from '../utils/password-history';
+
+const AUTH_NOTICE_NO_SESSION = 'No saved session. Sign in to continue.';
+const AUTH_NOTICE_RESTORING = 'Restoring session...';
+const AUTH_NOTICE_SIGNING_IN = 'Signing in...';
+const AUTH_NOTICE_SESSION_RESTORED = 'Session restored. Workspace synced.';
+const AUTH_NOTICE_LOGIN_SUCCESS = 'Login successful. Workspace synced.';
+const COOKIE_SESSION_MARKER = '__cookie_session__';
+const AUTH_ERROR_COOKIE_BLOCKED = 'Login succeeded, but the secure session cookie was not accepted. Check browser cookie/privacy settings and try again.';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
@@ -48,6 +77,11 @@ export interface AppController {
   state: AppState;
   init(): Promise<void>;
   login(email: string, password: string): Promise<void>;
+  register(input: RegisterInput): Promise<void>;
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  validateInvite(code: string): Promise<InviteValidationResponse>;
+  openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset'): void;
+  closeAuthPanel(): void;
   logout(): Promise<void>;
   logoutAll(): Promise<void>;
   reloadConfig(): Promise<void>;
@@ -77,13 +111,16 @@ export interface AppController {
   startMonitoring(): void;
   stopMonitoring(): void;
   clearNotice(): void;
+  clearError(): void;
   subscribe(listener: (state: AppState) => void): () => void;
 }
 
 export function createAppController(): AppController {
   const state = createAppState();
+  clearLegacyAuthToken();
   const listeners = new Set<(state: AppState) => void>();
   hydrateSoundSettings();
+  let authSubmitInFlight = false;
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
@@ -92,19 +129,8 @@ export function createAppController(): AppController {
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
 
-  function writeConfigDebug(stage: string, extra: Record<string, unknown> = {}) {
-    const debugWindow = window as Window & {
-      __botConfigDebug?: Array<Record<string, unknown>>;
-    };
-    const entry = {
-      stage,
-      ts: new Date().toISOString(),
-      sessionEmail: state.session.email,
-      minVol: state.data.configs['min-vol'],
-      ...extra,
-    };
-    debugWindow.__botConfigDebug = [...(debugWindow.__botConfigDebug || []).slice(-39), entry];
-    console.info('[config-debug]', entry);
+  function writeConfigDebug(_stage: string, _extra: Record<string, unknown> = {}) {
+    return;
   }
 
   function emit() {
@@ -123,6 +149,54 @@ export function createAppController(): AppController {
 
   function setNotice(notice: string | null) {
     state.ui.notice = notice;
+  }
+
+  function normalizeAuthError(error: unknown, mode: 'login' | 'restore') {
+    const raw = error instanceof Error ? error.message : '';
+
+    if (!raw) {
+      return mode === 'login' ? 'Unable to sign in right now. Please try again.' : 'Unable to restore your session. Please login again.';
+    }
+
+    if (raw.includes('Invalid email or password')) {
+      return 'Incorrect email or password. Check your credentials and try again.';
+    }
+    if (raw.includes('Account is deactivated')) {
+      return 'This account is deactivated. Contact an administrator if you need access restored.';
+    }
+    if (
+      raw.includes('Too many failed attempts')
+      || raw.includes('Too many authentication attempts')
+    ) {
+      const retryMatch = raw.match(/Try again in\s+(\d+)s\.?/i);
+      if (retryMatch) {
+        const seconds = Number(retryMatch[1]);
+        const minutes = Math.max(1, Math.ceil(seconds / 60));
+        return `Login temporarily locked. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+      }
+      return 'Login temporarily locked. Try again in a few minutes.';
+    }
+    if (
+      raw.includes('Token expired')
+      || raw.includes('Invalid token')
+      || raw.includes('Session revoked')
+      || raw.includes('Authentication required')
+      || raw.includes('User not found')
+    ) {
+      return 'Your saved session is no longer valid. Please login again.';
+    }
+    if (raw.includes('Network error:')) {
+      return 'Unable to reach the server. Check your connection or API availability and try again.';
+    }
+    if (raw.includes('Internal server error')) {
+      return 'The server could not complete authentication right now. Please try again shortly.';
+    }
+
+    return raw;
+  }
+
+  function isCredentialError(message: string | null) {
+    return Boolean(message && message.includes('Incorrect email or password'));
   }
 
   function sortAddresses(items: AddressItem[]) {
@@ -1185,13 +1259,6 @@ export function createAppController(): AppController {
     state.data.recentTokens = [];
     state.data.oldWeekTokens = [];
     state.bars.manual = manualTokens.length;
-    console.info('[tracked:rebuild]', {
-      manualCount: manualTokens.length,
-      monitoredCount: monitoredMap.size,
-      eligibleCatalogCount: monitoredDashboardTokens.length,
-      payloadTokenCount: payload.tokens.length,
-      payloadTokens: payload.tokens.map((item) => item.address),
-    });
     deriveAgeBuckets();
     if (state.runtime.mode === 'active' && alertCandidates.size > 0) {
       for (const token of state.data.monitoredTokens) {
@@ -1289,15 +1356,13 @@ export function createAppController(): AppController {
     state.runtime.uptimeLabel = '0m';
   }
 
-  function connectRealtime(token: string) {
+  function connectRealtime() {
     bindSocketLifecycle({
-      token,
       onStatus(message) {
         state.ui.notice = message;
         emit();
       },
       onRevoked(reason) {
-        clearAuthToken();
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
@@ -1376,15 +1441,15 @@ export function createAppController(): AppController {
     });
   }
 
-  function applySession(user: SessionUser, token: string) {
+  function applySession(user: SessionUser) {
     state.session.status = 'authenticated';
-    state.session.token = token;
+    state.session.token = COOKIE_SESSION_MARKER;
     state.session.username = user.username;
     state.session.email = user.email;
     state.session.role = user.role;
     hydrateBarStorage();
     hydrateSoundSettings();
-    connectRealtime(token);
+    connectRealtime();
   }
 
   function clearSession() {
@@ -1434,6 +1499,7 @@ export function createAppController(): AppController {
     state.bars.oldWeek = 0;
     state.bars.blocklist = 0;
     state.panels.monitored = 0;
+    state.ui.authPanel = 'none';
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
     state.ui.recentPerPage = 30;
@@ -1531,6 +1597,25 @@ export function createAppController(): AppController {
     clearNotice() {
       state.ui.notice = null;
       state.ui.error = null;
+      emit();
+    },
+    clearError() {
+      if (!state.ui.error) {
+        return;
+      }
+      state.ui.error = null;
+      state.ui.loginErrorCount = 0;
+      emit();
+    },
+    openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset') {
+      state.ui.authPanel = panel;
+      emit();
+    },
+    closeAuthPanel() {
+      if (state.ui.authPanel === 'none') {
+        return;
+      }
+      state.ui.authPanel = 'none';
       emit();
     },
     removePumpToken(mint: string) {
@@ -1677,57 +1762,170 @@ export function createAppController(): AppController {
     async init() {
       setBusy(true);
       setError(null);
-      setNotice('Restoring session...');
+      setNotice(AUTH_NOTICE_RESTORING);
       emit();
 
-      const token = getAuthToken();
-      if (!token) {
-        clearSession();
-        stopMonitoringTimers();
-        setBusy(false);
-        setNotice('No saved session. Login required.');
-        emit();
-        return;
-      }
-
       try {
-        const session = await fetchCurrentSession(token);
-        applySession(session.user, token);
-        await reloadConfigInternal(token);
-        setNotice('Session restored from /api/auth/me and /api/config.');
+        const session = await fetchCurrentSession();
+        applySession(session.user);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        setNotice(AUTH_NOTICE_SESSION_RESTORED);
       } catch (error) {
-        clearAuthToken();
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
-        setError(error instanceof Error ? error.message : 'Failed to restore session');
+        state.ui.loginErrorCount = 0;
+        const message = normalizeAuthError(error, 'restore');
+        if (message.includes('no longer valid') || message.includes('Unable to restore')) {
+          setNotice(AUTH_NOTICE_NO_SESSION);
+          setError(null);
+        } else {
+          setError(message);
+        }
       } finally {
         setBusy(false);
         emit();
       }
     },
     async login(email: string, password: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validateLoginCredentials(email, password);
+      if (!validated.ok) {
+        setError(validated.message);
+        state.ui.loginErrorCount = 0;
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
       setBusy(true);
       setError(null);
-      setNotice('Logging in...');
+      setNotice(AUTH_NOTICE_SIGNING_IN);
       emit();
 
       try {
-        const result = await login(email, password);
-        setAuthToken(result.token);
-        applySession(result.user, result.token);
-        await reloadConfigInternal(result.token);
-        setNotice(result.message);
+        await login(validated.email, validated.password);
+        const session = await fetchCurrentSession();
+        applySession(session.user);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        state.ui.loginErrorCount = 0;
+        setNotice(AUTH_NOTICE_LOGIN_SUCCESS);
       } catch (error) {
-        clearAuthToken();
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
-        setError(error instanceof Error ? error.message : 'Login failed');
+        const raw = error instanceof Error ? error.message : '';
+        if (raw.includes('Authentication required')) {
+          setError(AUTH_ERROR_COOKIE_BLOCKED);
+          authSubmitInFlight = false;
+          setBusy(false);
+          emit();
+          return;
+        }
+        let message = normalizeAuthError(error, 'login');
+        if (message.includes('Incorrect email or password')) {
+          const previousPasswordMatch = await findPreviousPasswordMatch(validated.email, validated.password);
+          if (previousPasswordMatch) {
+            const changedAt = formatPasswordChangedDate(previousPasswordMatch.changedAt);
+            message = changedAt
+              ? `You are using the old password changed on ${changedAt}.`
+              : 'You are using the old password from a previous change.';
+          }
+        }
+        state.ui.loginErrorCount = isCredentialError(message)
+          ? state.ui.loginErrorCount + 1
+          : 0;
+        setError(message);
       } finally {
+        authSubmitInFlight = false;
         setBusy(false);
         emit();
       }
+    },
+    async register(input: RegisterInput) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validateRegisterInput(input);
+      if (!validated.ok) {
+        setError(validated.message);
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Creating account...');
+      emit();
+
+      try {
+        await registerRequest(validated.input);
+        const session = await fetchCurrentSession();
+        applySession(session.user);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        setNotice('Account created. Workspace synced.');
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : '';
+        if (raw.includes('Authentication required')) {
+          setError(AUTH_ERROR_COOKIE_BLOCKED);
+        } else {
+          setError(normalizeAuthError(error, 'login'));
+        }
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async changePassword(currentPassword: string, newPassword: string) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validateChangePasswordInput({ currentPassword, newPassword });
+      if (!validated.ok) {
+        setError(validated.message);
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Changing password...');
+      emit();
+
+      try {
+        const sessionEmail = state.session.email;
+        const result = await changePasswordRequest(validated.input, token);
+        if (sessionEmail) {
+          await rememberPreviousPassword(sessionEmail, validated.input.currentPassword, new Date());
+        }
+        disconnectSocket();
+        stopMonitoringTimers();
+        clearSession();
+        setNotice(result.message || 'Password changed. Please sign in again.');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Change-password failed');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async validateInvite(code: string) {
+      return validateInviteCode(normalizeInviteCode(code));
     },
     async logout() {
       const token = state.session.token;
@@ -1743,7 +1941,6 @@ export function createAppController(): AppController {
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Logout failed');
       } finally {
-        clearAuthToken();
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
@@ -1767,7 +1964,6 @@ export function createAppController(): AppController {
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Logout-all failed');
       } finally {
-        clearAuthToken();
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
@@ -1861,12 +2057,6 @@ export function createAppController(): AppController {
       setBusy(true);
       setError(null);
       setNotice('Adding manual token...');
-      console.info('[manual:add] start', {
-        address: normalizedAddress,
-        label: label ?? null,
-        beforeManualCount: state.data.manualTokens.length,
-        beforeMonitoredCount: state.data.monitoredTokens.length,
-      });
 
       const existingManual = state.data.manualTokens.find((item) => item.address === normalizedAddress);
       const existingTracked = state.data.monitoredTokens.find((item) => item.address === normalizedAddress);
@@ -1890,12 +2080,6 @@ export function createAppController(): AppController {
       state.bars.manual = state.data.manualTokens.length;
       refreshMonitoredPanelCounts();
       deriveAgeBuckets();
-      console.info('[manual:add] local-state-applied', {
-        address: normalizedAddress,
-        afterManualCount: state.data.manualTokens.length,
-        afterMonitoredCount: state.data.monitoredTokens.length,
-        manualAddresses: state.data.manualTokens.map((item) => item.address),
-      });
       emit();
 
       try {
@@ -1907,14 +2091,8 @@ export function createAppController(): AppController {
         }
         await trackManualToken(normalizedAddress, token);
         await reloadConfigInternal(token);
-
-        console.info('[manual:add] backend-sync-ok', {
-          address: normalizedAddress,
-          syncedManualCount: state.data.manualTokens.length,
-        });
         setNotice('Token added');
       } catch (error) {
-        console.error('[manual:add] backend-sync-failed', error);
         setError(error instanceof Error ? error.message : 'Failed to persist manual token');
         setNotice('Token added locally, but backend sync failed.');
       } finally {

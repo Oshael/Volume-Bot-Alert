@@ -2,11 +2,15 @@ const bcrypt = require('bcrypt');
 const { query } = require('./db');
 const config = require('../../config');
 
+function getExecutor(db) {
+  return db && typeof db.query === 'function' ? db : { query };
+}
+
 const User = {
   /**
    * Create a new user. Returns the created user (without password_hash).
    */
-  async create({ username, email, password, invitedBy = null, inviteCode = null }) {
+  async create({ username, email, password, invitedBy = null, inviteCode = null }, db) {
     // Validate input lengths
     if (!username || username.length < 3 || username.length > 32) {
       throw Object.assign(new Error('Username must be 3–32 characters'), { status: 400 });
@@ -22,10 +26,11 @@ const User = {
       throw Object.assign(new Error('Username can only contain letters, numbers, and underscores'), { status: 400 });
     }
 
+    const executor = getExecutor(db);
     const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
 
     try {
-      const { rows } = await query(
+      const { rows } = await executor.query(
         `INSERT INTO users (username, email, password_hash, invited_by, invite_code)
          VALUES ($1, LOWER($2), $3, $4, $5)
          RETURNING id, username, email, role, is_active, created_at`,
@@ -77,8 +82,9 @@ const User = {
   /**
    * Update last_login timestamp.
    */
-  async updateLastLogin(id) {
-    await query('UPDATE users SET last_login = NOW() WHERE id = $1', [id]);
+  async updateLastLogin(id, db) {
+    const executor = getExecutor(db);
+    await executor.query('UPDATE users SET last_login = NOW() WHERE id = $1', [id]);
   },
 
   /**

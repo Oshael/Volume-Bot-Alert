@@ -74,8 +74,8 @@ describe('Admin Panel — Etapa 2', () => {
     );
 
     // Start server
-    const app = require('../src/server');
-    server = app.listen(3098);
+    const { startServer } = require('../src/server');
+    server = startServer(3098);
     await new Promise(r => setTimeout(r, 500));
 
     // Register admin

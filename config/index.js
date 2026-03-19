@@ -70,6 +70,17 @@ module.exports = {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
 
+  authCookie: {
+    name: process.env.AUTH_COOKIE_NAME || 'volume_alert_session',
+    domain: process.env.AUTH_COOKIE_DOMAIN || undefined,
+    secure: parseBoolean(
+      process.env.AUTH_COOKIE_SECURE,
+      (process.env.NODE_ENV || 'development') === 'production'
+    ),
+    sameSite: process.env.AUTH_COOKIE_SAMESITE
+      || (((process.env.NODE_ENV || 'development') === 'production') ? 'none' : 'lax'),
+  },
+
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
 
   rateLimit: {
