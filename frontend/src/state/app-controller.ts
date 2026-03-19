@@ -403,6 +403,9 @@ export function createAppController(): AppController {
     if (exists) {
       return current.filter((item) => !(item.mode === next.mode && item.window === next.window));
     }
+    if (next.mode === 'mcap' || next.mode === 'age') {
+      return [next, ...current.filter((item) => item.mode !== next.mode)];
+    }
     return [next, ...current];
   }
 
