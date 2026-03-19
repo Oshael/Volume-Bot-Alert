@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-17` after the final backend-backed manual-token restore fix.
+Last reviewed against code on `2026-03-19` after the auth/account UI expansion, `HttpOnly` cookie migration, backend invite-consume fix, PumpFun row-dismiss/session fixes, and frontend XSS/CSP hardening.
 
 ## High-Level Product Shape
 
@@ -32,6 +32,13 @@ The UI is centered around:
 - `Old Tokens 1 Week+`
 - `PumpFun`
 - `Alerts`
+
+The auth/account surface now also includes:
+- `Login`
+- `Create Account`
+- `Change Password`
+- `Forgot Password`
+- `Access Help`
 
 ## Main Directories
 
@@ -80,6 +87,10 @@ Responsibilities:
 - routed-bar derivation
 - PumpFun UI state
 - manual token local persistence
+- auth modal state
+- auth form validation and focus recovery
+- cookie-session bootstrap / revocation handling
+- frontend-side auth hardening for render surfaces
 
 ### Backend server
 File:
@@ -92,6 +103,9 @@ Responsibilities:
 - worker startup
 - Socket.io hub startup
 - admin worker status endpoint
+- cookie-backed auth/session transport
+- trusted-origin checks for mutating cookie-authenticated requests
+- backend CSP via `helmet`
 
 ### Backend workers
 
@@ -209,6 +223,13 @@ Endpoints:
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `POST /api/auth/logout-all`
+- `POST /api/auth/change-password`
+- `POST /api/auth/register`
+
+Current transport:
+- backend-issued `HttpOnly` cookie
+- frontend uses `credentials: include`
+- frontend no longer depends on browser-readable token storage for the live auth flow
 
 ### User configs
 - backend
@@ -253,12 +274,11 @@ Reasons:
 
 ## Session Boot Flow
 
-1. frontend restores auth token from storage
-2. frontend calls `GET /api/auth/me`
-3. frontend loads:
+1. frontend attempts cookie-backed restore with `GET /api/auth/me`
+2. frontend loads:
    - `GET /api/config`
    - `GET /api/dashboard/monitored`
-4. frontend rebuilds tracked state from:
+3. frontend rebuilds tracked state from:
    - backend monitored payload
    - backend manual tokens for that account
    - blocklist
@@ -268,6 +288,168 @@ Important:
 - the session restoring does not auto-start monitoring
 - the user still needs to click `START MONITORING`
 - manual-token restore is intentionally independent of dashboard success; `GET /api/config` alone is sufficient to recover the per-user manual list
+- legacy frontend auth token storage was removed from the live session path
+
+## Login / Account Surface
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/ui/app-shell.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/state/app-state.ts`
+- `frontend/src/ui/sections/auth-feedback.ts`
+- `frontend/src/ui/sections/login-form-utils.ts`
+- `frontend/src/ui/sections/auth-extensions.ts`
+
+Current login behavior:
+- login is the entry point into the backend-owned session model
+- success path:
+  - `POST /api/auth/login`
+  - `GET /api/auth/me`
+  - `GET /api/config`
+  - `GET /api/dashboard/monitored`
+- restore path:
+  - `GET /api/auth/me`
+  - same config/bootstrap hydration path
+
+Current login UX features:
+- `MoonWire` branding with `Volume Bot Tracker`
+- specific auth-state messaging instead of generic loading
+- preserved form values across rerenders
+- Enter/Return submit handling
+- double-submit guard
+- password `Show / Hide`
+- caret preservation on password visibility toggle
+- caps-lock hint
+- validation/focus recovery on the correct field after failed submit
+- old-password warning after local password-change history match
+- separated support actions:
+  - `Create Account`
+  - `Forgot Password`
+  - `Access Help`
+
+Current login/help layout rules:
+- `Create Account` and `Forgot Password` live under the password field
+- `Access Help` stays in the support block
+- auth modals are centered overlays with backdrop blur
+
+## Create Account
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/ui/app-shell.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/state/auth-flow-utils.ts`
+- `frontend/src/services/api/auth.ts`
+- `frontend/src/services/api/invites.ts`
+
+Behavior:
+- account creation is invite-gated
+- modal flow collects:
+  - `username`
+  - `email`
+  - `password`
+  - `invite code`
+- invite can be validated before submit
+- submit path:
+  - `POST /api/auth/register`
+  - `GET /api/auth/me`
+  - `GET /api/config`
+  - `GET /api/dashboard/monitored`
+
+UX rules:
+- register-specific errors stay inside the register modal
+- register errors do not leak into the base login flash
+- field focus returns to the relevant field on failure
+- values stay preserved on failed submit
+
+Backend rule added in this session:
+- invite usage is consumed only on successful registration
+- duplicate `username` / duplicate `email` failures do not burn the invite
+
+## Change Password
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/ui/app-shell.ts`
+- `frontend/src/state/app-controller.ts`
+- `src/routes/auth.js`
+
+Behavior:
+- available from the authenticated user menu
+- opens as a centered modal
+- requires:
+  - current password
+  - new password
+- submit path:
+  - `POST /api/auth/change-password`
+- on success:
+  - backend revokes all sessions for the account
+  - frontend clears current session
+  - user is returned to login
+
+UX rules:
+- change-password errors are isolated to the modal
+- dashboard/global bot flash does not show change-password errors
+- wrong current password shows inline feedback in the modal
+- focus returns to `Current password` on incorrect current password
+- `Show / Hide` uses the minimal text-only style preferred in the current UI
+
+Security behavior:
+- changing password revokes other sessions too
+- login with the old password fails after the change
+
+## Forgot Password
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/state/app-state.ts`
+
+Current status:
+- real self-serve email reset is not implemented yet
+- current modal is an honest support/recovery surface, not a fake reset form
+
+Current purpose:
+- explain the official recovery path
+- warn against DM-based scams
+- avoid pretending that automated email reset already exists
+
+## Access Help
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/ui/app-shell.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/services/api/invites.ts`
+
+Behavior:
+- support modal focused on invite/account-access guidance
+- current functional action is invite validation
+- email field was removed because it was not functionally used
+
+Current content:
+- invite checker
+- admin/support guidance
+- strong anti-scam warning
+
+Typography:
+- login/auth surface now uses `Saira` as the current auth UI font direction
+
+## Logout / Logout All
+
+Files:
+- `src/routes/auth.js`
+- `src/models/session.js`
+- `frontend/src/state/app-controller.ts`
+
+Behavior:
+- `Logout` revokes current session only
+- `Logout All` revokes all sessions for the authenticated account only
+- `Logout All` does not affect other users on the server
+
+Important operational note:
+- session counts can be higher than expected because server-side sessions can accumulate from prior logins, tabs, browsers, and devices
 
 ## Monitored Tokens
 
@@ -455,8 +637,9 @@ Behavior:
 
 Panel rules:
 - sorted/live-updated in frontend
-- `X` removes only from the panel
-- removed token can return on new trades
+- `X` removes from the live panel for the current session
+- removed token is added to a session-level dismissed PumpFun set
+- dismissed PumpFun rows do not immediately reappear on new trades during the same session
 - stopped bot ignores PumpFun live updates
 
 Pump GC rules:
@@ -700,6 +883,8 @@ Reason for this split:
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `POST /api/auth/logout-all`
+- `POST /api/auth/change-password`
+- `POST /api/auth/register`
 
 ### Config
 - `GET /api/config`
@@ -737,6 +922,58 @@ Admin status endpoint currently exposes:
 - Dex reevaluation can still produce many `dex_unavailable` results
 - PumpFun metadata route can still pressure rate limiting in bursts
 - discovery is restored through Dex feeds again, but underlying Dex availability remains a dependency
+- real email-backed password reset is not implemented yet
+- the frontend is materially harder to exploit via XSS than before, but still uses a UI architecture that relies heavily on HTML-string rendering
+- the current CSP is pragmatic and intentionally compatible with:
+  - Google Fonts
+  - Fontshare
+  - external HTTPS token images
+  - local websocket/API development
+  This means it is stronger than before, but not maximalist
+
+## Security Hardening State
+
+Files:
+- `frontend/src/ui/sections/html-safety.ts`
+- `frontend/src/ui/sections/shared.ts`
+- `frontend/src/ui/sections/monitored-section.ts`
+- `frontend/src/ui/sections/alerts-section.ts`
+- `frontend/src/ui/sections/pumpfun-section.ts`
+- `frontend/src/ui/sections/pumpfun-toasts.ts`
+- `frontend/src/ui/sections/starred-section.ts`
+- `frontend/src/ui/sections/blocklist-section.ts`
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/ui/app-shell.ts`
+- `src/middleware/auth.js`
+- `src/server.js`
+- `frontend/index.html`
+
+What was hardened:
+- broad `escapeHtml(...)` coverage for text inserted into HTML strings
+- URL sanitization via:
+  - `sanitizeHttpUrl(...)`
+  - `sanitizeOptionalHttpUrl(...)`
+- safer handling of external image/profile/dex links
+- safer selector interpolation using `CSS.escape(...)` in dynamic selector paths
+- trusted-origin requirement for mutating cookie-authenticated requests
+- CSP added in both frontend and backend layers
+
+Current honest assessment:
+- auth/session security is materially stronger than the pre-cookie implementation
+- frontend XSS risk has been reduced from obvious/high-risk territory into a much more controlled state
+- remaining XSS risk is mostly structural and tied to the continued use of HTML-string rendering in the UI architecture
+
+## Password Reset / Real Email Next Step
+
+The current implementation is intentionally not pretending email-reset already exists.
+
+To add real password-reset email flow, the next required blocks are:
+- email provider integration
+- reset-token persistence
+- reset request endpoint
+- reset confirm endpoint
+- UI for request + confirm flow
+- rate limit + token expiry + session revocation after reset
 
 ## Practical Review Checklist
 
