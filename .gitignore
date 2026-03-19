@@ -3,3 +3,5 @@ node_modules/
 *.log
 .DS_Store
 frontend/dist/
+Volume-Bot-Alert.git.backup/
+cookies.txt
