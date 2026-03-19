@@ -209,6 +209,7 @@ export interface AppState {
     oldWeekTokens: ManualTokenEntry[];
     dismissedRecent: string[];
     dismissedOldWeek: string[];
+    dismissedPump: string[];
     recentRemovalLog: RemovalLogEntry[];
     oldWeekRemovalLog: RemovalLogEntry[];
     blocklist: AddressItem[];
@@ -293,6 +294,7 @@ export function createAppState(): AppState {
       oldWeekTokens: [],
       dismissedRecent: [],
       dismissedOldWeek: [],
+      dismissedPump: [],
       recentRemovalLog: [],
       oldWeekRemovalLog: [],
       blocklist: [],

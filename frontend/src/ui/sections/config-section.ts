@@ -1,11 +1,13 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
+import { escapeHtml } from './html-safety';
 
 export function renderConfigSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'surface-card action-card';
+  const syncedLabel = escapeHtml(state.configSummary.loaded ? 'SYNCED' : 'EMPTY');
   section.innerHTML = `
-    <div class="card-topline"><span class="section-tag">CONFIG</span><span class="count-pill">${state.configSummary.loaded ? 'SYNCED' : 'EMPTY'}</span></div>
+    <div class="card-topline"><span class="section-tag">CONFIG</span><span class="count-pill">${syncedLabel}</span></div>
     <h2>Config Hydration</h2>
     <p>The new frontend is consuming the account-scoped payload from <code>/api/config</code>, together with the global eligible catalog feed and the bar MCAP ranges used for age routing.</p>
     <div class="summary-grid">

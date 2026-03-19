@@ -1,6 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, fmtAge, fmtMoney, fmtPct, renderTradeTerminalMenu } from './shared';
+import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const RECENT_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -25,30 +26,34 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
 }
 
 function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean) {
-  const dexUrl = alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`;
+  const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
   const symbol = alert.symbol;
-  const avatar = alert.imageUrl
-    ? `<img src="${alert.imageUrl}" alt="${symbol}" class="alert-avatar" />`
-    : `<div class="alert-avatar-placeholder">${symbol.slice(0, 2).toUpperCase()}</div>`;
+  const safeAddress = escapeHtml(alert.address);
+  const safeSymbol = escapeHtml(symbol);
+  const safeName = escapeHtml(alert.name || '');
+  const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
+  const avatar = imageUrl
+    ? `<img src="${imageUrl}" alt="${safeSymbol}" class="alert-avatar" />`
+    : `<div class="alert-avatar-placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
   const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
   const topClass = getAlertToneClass(alert);
   const titleBlock = renderAlertHeadline(alert, topClass);
   const flowLine = renderAlertFlowLine(alert);
   const statsLine = renderAlertStatsLine(alert);
-  const profileLink = alert.twitterUrl
-    ? `<a href="${alert.twitterUrl}" target="_blank" rel="noreferrer" class="alert-inline-link">X Perfil</a>`
+  const profileLink = sanitizeOptionalHttpUrl(alert.twitterUrl)
+    ? `<a href="${sanitizeHttpUrl(alert.twitterUrl)}" target="_blank" rel="noreferrer" class="alert-inline-link">X Perfil</a>`
     : '<span class="alert-inline-link disabled">X Perfil</span>';
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
 
   return `
-    <article class="alert-row ${topClass} ${isStarred ? 'token-starred starred-card' : ''}" data-hover-key="alert:${alert.id}">
+    <article class="alert-row ${topClass} ${isStarred ? 'token-starred starred-card' : ''}" data-hover-key="alert:${escapeHtml(alert.id)}">
       <div class="alert-grid">
         <div class="alert-body-v68">
           <div class="alert-main-v68">
             ${avatar}
             <div class="alert-copy-block">
               <div class="alert-top-v68">
-                <span class="alert-token-v68">${symbol} <span class="alert-token-name">${alert.name || ''}</span></span>
+                <span class="alert-token-v68">${safeSymbol} <span class="alert-token-name">${safeName}</span></span>
                 ${titleBlock}
               </div>
               <div class="alert-flow-v68">${flowLine}</div>
@@ -58,18 +63,18 @@ function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean) {
           <div class="alert-links-v68">
             <a href="${dexUrl}" target="_blank" rel="noreferrer" class="alert-inline-link">Dex Screener</a>
             <span>/</span>
-            <a href="${xSearch}" target="_blank" rel="noreferrer" class="alert-inline-link">X Buscar $${symbol}</a>
+            <a href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" class="alert-inline-link">X Buscar $${safeSymbol}</a>
             <span>/</span>
             ${profileLink}
           </div>
           <div class="alert-actions-v68">
-            <button type="button" class="alert-action-button copy-button" data-action="copy-address" data-address="${alert.address}">Copiar CA</button>
+            <button type="button" class="alert-action-button copy-button" data-action="copy-address" data-address="${safeAddress}">Copiar CA</button>
             ${renderTradeTerminalMenu(alert.address, alert.mintAddress, alert.pairAddress)}
-            <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${alert.address}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
-            <button type="button" class="alert-action-button danger" data-action="block-token" data-address="${alert.address}" data-label="${symbol}" ${busy ? 'disabled' : ''}>Block</button>
+            <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
+            <button type="button" class="alert-action-button danger" data-action="block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''}>Block</button>
           </div>
         </div>
-        <div class="alert-time-v68">${timeLabel}</div>
+        <div class="alert-time-v68">${escapeHtml(timeLabel)}</div>
       </div>
     </article>
   `;
@@ -79,12 +84,12 @@ function renderAlertHeadline(alert: AlertEntry, toneClass: string) {
   if (alert.isOldSurge) {
     const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
     const surgeTitle = tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
-    return `<span class="alert-badge-v68 ${toneClass}">\u{1F525} ${surgeTitle}<br><span class="alert-badge-sub">${fmtPct(alert.pct)} ${alert.label || 'PCHANGE'}</span></span>`;
+    return `<span class="alert-badge-v68 ${toneClass}">\u{1F525} ${escapeHtml(surgeTitle)}<br><span class="alert-badge-sub">${escapeHtml(fmtPct(alert.pct))} ${escapeHtml(alert.label || 'PCHANGE')}</span></span>`;
   }
   if (alert.isHvnc) {
-    return `<span class="alert-badge-v68 mega">\u{1F6A8} High Volume New Coin<br><span class="alert-badge-sub">${fmtMoney(alert.volume24h)} total vol</span></span>`;
+    return `<span class="alert-badge-v68 mega">\u{1F6A8} High Volume New Coin<br><span class="alert-badge-sub">${escapeHtml(fmtMoney(alert.volume24h))} total vol</span></span>`;
   }
-  return `<span class="alert-pct-v68 ${toneClass}">${fmtPct(alert.pct)} <span>${alert.label || 'VOL'}</span></span>`;
+  return `<span class="alert-pct-v68 ${toneClass}">${escapeHtml(fmtPct(alert.pct))} <span>${escapeHtml(alert.label || 'VOL')}</span></span>`;
 }
 
 function renderAlertFlowLine(alert: AlertEntry) {

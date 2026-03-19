@@ -1040,11 +1040,13 @@ a {
 
 .legacy-user-menu {
   position: relative;
+  padding-bottom: 8px;
+  margin-bottom: -8px;
 }
 
 .legacy-user-dropdown {
   position: absolute;
-  top: calc(100% + 8px);
+  top: 100%;
   right: 0;
   min-width: 180px;
   display: none;
@@ -1057,7 +1059,9 @@ a {
   z-index: 40;
 }
 
-.legacy-user-menu.open .legacy-user-dropdown {
+.legacy-user-menu.open .legacy-user-dropdown,
+.legacy-user-menu:hover .legacy-user-dropdown,
+.legacy-user-menu:focus-within .legacy-user-dropdown {
   display: flex;
 }
 

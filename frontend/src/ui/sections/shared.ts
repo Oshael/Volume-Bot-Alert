@@ -1,6 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState, ManualTokenEntry, MeteoraEntry, RemovalLogEntry } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
+import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -90,7 +91,7 @@ export function renderTradeTerminalMenu(address: string, mintAddress?: string | 
     <div class="trade-wrap" data-trade-wrap>
       <button type="button" class="action-glyph trade-btn" title="Open in trading terminal">&#128279;</button>
       <div class="trade-dd" data-trade-menu>
-        ${links.map((link) => `<a class="trade-link ${link.cls}" href="${link.href}" target="_blank" rel="noreferrer">${link.label}</a>`).join('')}
+        ${links.map((link) => `<a class="trade-link ${link.cls}" href="${sanitizeHttpUrl(link.href)}" target="_blank" rel="noreferrer">${escapeHtml(link.label)}</a>`).join('')}
       </div>
     </div>
   `;
@@ -168,17 +169,18 @@ export function renderFlash(state: AppState) {
   const toneClass = `${state.ui.error ? 'flash error' : 'flash notice'} flash-${flashKind}${shouldPulse ? ' flash-pulse' : ''}`;
   const badge = getAuthFlashBadge(flashKind);
   const liveRole = state.ui.error ? 'alert' : 'status';
-  return `<div class="${toneClass}" role="${liveRole}" aria-live="polite"><span class="flash-copy">${badge ? `<strong class="flash-badge">${badge}</strong>` : ''}<span>${message}</span></span><button type="button" class="flash-dismiss" data-action="dismiss-flash">Close</button></div>`;
+  return `<div class="${toneClass}" role="${liveRole}" aria-live="polite"><span class="flash-copy">${badge ? `<strong class="flash-badge">${escapeHtml(badge)}</strong>` : ''}<span>${escapeHtml(message)}</span></span><button type="button" class="flash-dismiss" data-action="dismiss-flash">Close</button></div>`;
 }
 
 export function renderLogSummary(title: string, entries: RemovalLogEntry[], clearAction: string, tone: 'recent' | 'old-week') {
   if (entries.length === 0) return '';
+  const safeTitle = escapeHtml(title);
   return `
     <div class="log-hover ${tone}" data-log-hover>
       <button type="button" class="legacy-removal-badge" data-log-hover-toggle>${entries.length} removed</button>
       <div class="log-hover-panel ${tone}">
         <div class="log-hover-head">
-          <span>${title}</span>
+          <span>${safeTitle}</span>
           <button type="button" class="action-button small" data-action="${clearAction}">Clear All</button>
         </div>
         <div class="removal-log-list">${entries.slice(0, 8).map((entry) => renderRemovalLogEntry(entry)).join('')}</div>
@@ -284,32 +286,36 @@ function renderTokenTableShell(options: {
 
 function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
-  const dexUrl = item.pairUrl || `https://dexscreener.com/solana/${item.address}`;
+  const safeAddress = escapeHtml(item.address);
+  const safeSymbol = escapeHtml(symbol);
+  const safeName = escapeHtml(item.name || item.label || item.address);
+  const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
   const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
+  const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   const mcapDelta = item.mcapDelta ?? (item.prevMcap && item.prevMcap > 0 && item.mcap != null ? ((item.mcap - item.prevMcap) / item.prevMcap) * 100 : null);
   const actionButton = mode === 'manual'
-    ? `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${item.address}" ${busy ? 'disabled' : ''}>X</button>`
-    : `<button type="button" class="inline-icon danger" data-action="${mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week'}" data-address="${item.address}" ${busy ? 'disabled' : ''}>X</button>`;
+    ? `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`
+    : `<button type="button" class="inline-icon danger" data-action="${mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week'}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
 
   return `
-    <tr class="${isStarred ? 'token-starred' : ''}" data-hover-key="${mode}:${item.address}">
+    <tr class="${isStarred ? 'token-starred' : ''}" data-hover-key="${mode}:${safeAddress}">
       <td class="rank-col">#${rank}</td>
       <td>
         <div class="token-cell">
           ${renderAvatar(item, symbol)}
           <div class="token-main">
             <div class="token-line">
-              <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${symbol}</a>
+              <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
               <div class="token-actions-inline">
-                <a class="action-glyph x-search" href="${xSearch}" target="_blank" rel="noreferrer" title="Search ticker on X">X</a>
-                ${item.twitterUrl ? `<a class="action-glyph x-profile" href="${item.twitterUrl}" target="_blank" rel="noreferrer" title="X profile">&#128100;</a>` : `<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>`}
-                <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${item.address}" title="Copy contract">&#10697;</button>
+                <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search ticker on X">X</a>
+                ${twitterUrl ? `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="X profile">&#128100;</a>` : `<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>`}
+                <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress)}
-                <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${item.address}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
+                <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
               </div>
             </div>
-            <div class="token-subline">${item.name || item.label || item.address}</div>
+            <div class="token-subline">${safeName}</div>
           </div>
         </div>
       </td>
@@ -374,11 +380,11 @@ function getMeteoraTvlChange(entry: MeteoraEntry, windowMs: number) {
 
 function renderMeteoraDelta(label: string, value: number | null) {
   if (value == null || !Number.isFinite(value)) {
-    return `<div class="meteora-tip-line"><span>${label}</span><span class="muted">-</span></div>`;
+    return `<div class="meteora-tip-line"><span>${escapeHtml(label)}</span><span class="muted">-</span></div>`;
   }
 
   const cls = value >= 0 ? 'pct-pos' : 'pct-neg';
-  return `<div class="meteora-tip-line"><span>${label}</span><span class="${cls}">${value >= 0 ? '+' : ''}${value.toFixed(1)}%</span></div>`;
+  return `<div class="meteora-tip-line"><span>${escapeHtml(label)}</span><span class="${cls}">${value >= 0 ? '+' : ''}${value.toFixed(1)}%</span></div>`;
 }
 
 function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, minPool: number) {
@@ -389,7 +395,7 @@ function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, min
   const ch1h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_1H);
   const ch6h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_6H);
   const ch24h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_24H);
-  const poolLabel = (entry.poolCount || 0) > 1 ? `${entry.poolCount} pools` : '1 pool';
+  const poolLabel = escapeHtml((entry.poolCount || 0) > 1 ? `${entry.poolCount} pools` : '1 pool');
 
   return `
     <div class="met-tip-wrap">
@@ -407,10 +413,12 @@ function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, min
 function renderRemovalLogEntry(entry: RemovalLogEntry) {
   const mcap = fmtMoney(entry.mcap);
   const droppedTo = extractDroppedMcap(entry.reason) ?? mcap;
-  const avatar = entry.imageUrl ? `<img src="${entry.imageUrl}" alt="${entry.symbol}" class="log-entry-avatar" />` : `<div class="log-entry-avatar placeholder">${entry.symbol.slice(0, 2).toUpperCase()}</div>`;
+  const safeSymbol = escapeHtml(entry.symbol);
+  const imageUrl = sanitizeOptionalHttpUrl(entry.imageUrl);
+  const avatar = imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="log-entry-avatar" />` : `<div class="log-entry-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
   return `
     <article class="log-entry-card">
-      <div class="log-entry-head">${avatar}<div><div class="log-entry-title">${entry.symbol} <span>MCAP ${mcap}</span></div><div class="log-entry-body">MCAP dropped to ${droppedTo} - below min $120K</div><div class="log-entry-time">${fmtLogDate(entry.ts)}</div></div></div>
+      <div class="log-entry-head">${avatar}<div><div class="log-entry-title">${safeSymbol} <span>MCAP ${escapeHtml(mcap)}</span></div><div class="log-entry-body">MCAP dropped to ${escapeHtml(droppedTo)} - below min $120K</div><div class="log-entry-time">${escapeHtml(fmtLogDate(entry.ts))}</div></div></div>
     </article>
   `;
 }
@@ -430,7 +438,9 @@ function fmtLogDate(ts: number) {
 }
 
 function renderAvatar(item: ManualTokenEntry, symbol: string) {
-  return item.imageUrl ? `<img src="${item.imageUrl}" alt="${symbol}" class="token-avatar" />` : `<div class="token-avatar placeholder">${symbol.slice(0, 2).toUpperCase()}</div>`;
+  const safeSymbol = escapeHtml(symbol);
+  const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
+  return imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="token-avatar" />` : `<div class="token-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
 }
 
 function renderPctSpan(value?: number | null) {

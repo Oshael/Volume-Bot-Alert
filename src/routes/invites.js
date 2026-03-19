@@ -1,6 +1,6 @@
 const express = require('express');
 const Invite = require('../models/invite');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -10,7 +10,7 @@ const router = express.Router();
  * Regular users create with defaults.
  * Body (optional): { maxUses, expiryHours }
  */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
     const opts = {};
     // Only admins can customize invite parameters
@@ -73,7 +73,7 @@ router.get('/validate/:code', async (req, res) => {
  * DELETE /api/invites/:id
  * Revoke an invite. Users can revoke their own, admins can revoke any.
  */
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
     let result;
     if (req.user.role === 'admin') {

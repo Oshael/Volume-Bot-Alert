@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
@@ -17,6 +17,7 @@ const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
 const promoteRetryState = new Map();
 
 router.use(authenticate);
+router.use(requireTrustedOrigin);
 
 router.get('/eligible', catalogReadLimiter, async (req, res) => {
   try {

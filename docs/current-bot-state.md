@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-18` after auth hardening via `HttpOnly` cookie sessions, removal of frontend token/debug exposure, validated login/create-account flow after the cookie migration, and confirmed backend-backed manual-token restore across devices.
+Last reviewed against code on `2026-03-19` after auth hardening via `HttpOnly` cookie sessions, removal of frontend token/debug exposure, validated login/create-account flow after the cookie migration, broad frontend XSS hardening, and a pragmatic CSP rollout on both frontend and backend.
 
 ## Current Runtime Shape
 
@@ -222,6 +222,37 @@ Current UX gaps in login:
 - missing important form UX states such as password visibility toggle, stronger loading states, and clearer field-level guidance
 - insufficient recovery/help affordances for auth problems
 - visual hierarchy is still very close to a raw form instead of a deliberate product entry screen
+
+### Auth and security hardening checkpoint
+- Session auth is now cookie-backed with `HttpOnly` cookies instead of browser-readable auth token storage.
+- Frontend debug/token exposure that could leak session state in the console was removed.
+- Cookie-authenticated mutating requests now require trusted `Origin` / `Referer` on the backend.
+- Frontend render surfaces that interpolate token metadata, account copy, auth messages, links, and config values now broadly use:
+  - `escapeHtml(...)`
+  - `sanitizeHttpUrl(...)`
+  - `sanitizeOptionalHttpUrl(...)`
+- Selector interpolation that could be destabilized by unescaped dynamic values is also being reduced, including `CSS.escape(...)` for dynamic selectors in UI state wiring.
+- A pragmatic CSP is now active:
+  - frontend `meta http-equiv="Content-Security-Policy"` in `frontend/index.html`
+  - backend `helmet({ contentSecurityPolicy: ... })` in `src/server.js`
+- CSP currently allows only the sources required for the app to function:
+  - self-hosted scripts
+  - Google Fonts / Fontshare styles
+  - HTTPS images
+  - local/dev and production API + websocket connections
+  - `data:` / `blob:` where needed for custom audio and browser-managed assets
+
+Current honest security assessment:
+- Auth/session security is materially stronger than before.
+- The frontend is significantly harder to exploit via straightforward XSS than it was before the hardening pass.
+- Risk is reduced, but not eliminated:
+  - remaining risk is mostly structural due to the UI architecture still relying on HTML-string rendering in many places
+  - the next line of defense after the current hardening is continued render-surface review and future reduction of `innerHTML`-heavy patterns where practical
+
+Current security priority order:
+1. Finish practical XSS hardening and keep CSP stable.
+2. Only then move into real email-backed password reset.
+3. After password reset, revisit 2FA / secondary verification.
 
 What a good login screen for this bot must communicate:
 - this is the authenticated entry point to the Solana monitoring workspace
@@ -449,6 +480,20 @@ Current login implementation progress:
   - login works again once the local test-account password matches the DB state
   - a quick create-account flow was manually validated as working
   - the temporary local login confusion came from a password changed during auth-test runs, not from the cookie migration itself
+- current auth/security implementation strategy from this point:
+  1. security hardening first
+     - audit and reduce XSS exposure from frontend HTML rendering
+     - add central escaping/safe URL handling for token-driven UI
+     - review CSRF posture now that auth is cookie-based
+     - only after that, move into real email-backed recovery flows
+  2. password reset with real email delivery
+     - choose provider
+     - add reset-token generation/validation
+     - add backend endpoints and frontend screens
+  3. 2FA / secondary verification
+  4. lower-priority auth polish
+     - final support/recovery wording pass
+     - optional flash/icon treatment pass
 
 ### Manual tokens
 - Must remain visible in `Manual Tokens`

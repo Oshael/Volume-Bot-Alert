@@ -43,12 +43,55 @@ function authenticate(req, res, next) {
 
       req.user = user;
       req.token = token;
+      req.authSource = bearerToken ? 'bearer' : 'cookie';
       next();
     } catch (dbErr) {
       console.error('Auth middleware DB error:', dbErr.message);
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+}
+
+function requireTrustedOrigin(req, res, next) {
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return next();
+  }
+
+  if (config.nodeEnv === 'test') {
+    return next();
+  }
+
+  if (req.authSource && req.authSource !== 'cookie') {
+    return next();
+  }
+
+  const origin = req.get('origin');
+  const referer = req.get('referer');
+  const candidate = origin || referer;
+
+  if (!candidate) {
+    return res.status(403).json({ error: 'Trusted origin required' });
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    const normalizedOrigin = parsed.origin.replace(/\/+$/, '');
+    const allowed = new Set(config.corsOrigins.map((value) => value.replace(/\/+$/, '')));
+
+    if (allowed.has(normalizedOrigin)) {
+      return next();
+    }
+
+    const requestOrigin = `${req.protocol}://${req.get('host')}`.replace(/\/+$/, '');
+    if (normalizedOrigin === requestOrigin) {
+      return next();
+    }
+  } catch (_) {
+    return res.status(403).json({ error: 'Trusted origin required' });
+  }
+
+  return res.status(403).json({ error: 'Trusted origin required' });
 }
 
 /**
@@ -61,4 +104,4 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-module.exports = { authenticate, requireAdmin };
+module.exports = { authenticate, requireAdmin, requireTrustedOrigin };

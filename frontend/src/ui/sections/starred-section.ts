@@ -1,6 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState, ManualTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, renderTokenCard } from './shared';
+import { escapeHtml } from './html-safety';
 
 export function renderStarredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -22,14 +23,17 @@ export function renderStarredSection(state: AppState, controller: AppController)
       });
     }
 
+    const safeAddress = escapeHtml(address);
+    const shortAddress = escapeHtml(address.slice(0, 8));
+
     return `
       <article class="token-card starred-card">
         <div class="token-card-head">
-          <div class="token-head-left"><div class="token-avatar placeholder">ST</div><div><strong>${address.slice(0, 8)}</strong><span>${address}</span></div></div>
-          <button type="button" class="action-button small starred-button" data-action="toggle-star" data-address="${address}" ${state.ui.busy ? 'disabled' : ''}>STARRED</button>
+          <div class="token-head-left"><div class="token-avatar placeholder">ST</div><div><strong>${shortAddress}</strong><span>${safeAddress}</span></div></div>
+          <button type="button" class="action-button small starred-button" data-action="toggle-star" data-address="${safeAddress}" ${state.ui.busy ? 'disabled' : ''}>STARRED</button>
         </div>
         <div class="button-row compact tag-row"><div class="metric-chip alert-chip highlight">STARRED</div><div class="metric-chip">Address-only</div></div>
-        <div class="button-row compact"><button type="button" class="action-button small" data-action="copy-address" data-address="${address}">Copy CA</button><button type="button" class="action-button danger small" data-action="block-token" data-address="${address}" data-label="${address.slice(0, 8)}" ${state.ui.busy ? 'disabled' : ''}>Block</button></div>
+        <div class="button-row compact"><button type="button" class="action-button small" data-action="copy-address" data-address="${safeAddress}">Copy CA</button><button type="button" class="action-button danger small" data-action="block-token" data-address="${safeAddress}" data-label="${shortAddress}" ${state.ui.busy ? 'disabled' : ''}>Block</button></div>
       </article>
     `;
   }).join('');

@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middleware/auth');
 const User = require('../models/user');
 const Invite = require('../models/invite');
 const Session = require('../models/session');
@@ -11,6 +11,7 @@ const router = express.Router();
 // All admin routes require authentication + admin role
 router.use(authenticate);
 router.use(requireAdmin);
+router.use(requireTrustedOrigin);
 
 // ============================================================
 // USERS

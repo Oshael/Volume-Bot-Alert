@@ -16,6 +16,9 @@ Status legend:
 - Login/session restore after hard refresh (`F5`) in the integrated frontend: `validated`
 - Cookie-backed auth/session flow after removing frontend token storage: `validated`
 - Login/create-account flow after the `HttpOnly` cookie migration: `validated`
+- Frontend XSS hardening pass across auth/token/pump/alerts/config surfaces: `validated`
+- Pragmatic CSP rollout without breaking login/fonts/images/socket flow: `validated`
+- Security hardening before real password-reset/email rollout: `validated`
 - Config persistence per account: `validated`
 - Manual token persistence per account: `validated`
 - Bootstrap baseline persists across reload after cold-start import: `validated`

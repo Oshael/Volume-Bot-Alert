@@ -1,6 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
 import { renderFlash } from './shared';
+import { escapeHtml } from './html-safety';
 
 export function renderAuthSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -32,12 +33,13 @@ export function renderAuthSection(state: AppState, controller: AppController) {
 }
 
 function renderAuthenticatedBody(state: AppState) {
+  const sessionStatus = escapeHtml(state.session.status === 'authenticated' ? 'active' : 'missing');
   return `
     <div class="auth-summary">
-      <div class="summary-row"><span>Username</span><strong>${state.session.username ?? '-'}</strong></div>
-      <div class="summary-row"><span>Email</span><strong>${state.session.email ?? '-'}</strong></div>
-      <div class="summary-row"><span>Role</span><strong>${state.session.role ?? '-'}</strong></div>
-      <div class="summary-row"><span>Session</span><strong>${state.session.token ? 'active' : 'missing'}</strong></div>
+      <div class="summary-row"><span>Username</span><strong>${escapeHtml(state.session.username ?? '-')}</strong></div>
+      <div class="summary-row"><span>Email</span><strong>${escapeHtml(state.session.email ?? '-')}</strong></div>
+      <div class="summary-row"><span>Role</span><strong>${escapeHtml(state.session.role ?? '-')}</strong></div>
+      <div class="summary-row"><span>Session</span><strong>${sessionStatus}</strong></div>
     </div>
     <div class="button-row">
       <button type="button" class="action-button" data-action="reload-config">Reload Config</button>

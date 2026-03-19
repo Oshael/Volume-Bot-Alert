@@ -30,7 +30,43 @@ let cleanupInterval = null;
 let bootstrapped = false;
 
 // ---- Security middlewares ----
-app.use(helmet());
+const cspDirectives = {
+  defaultSrc: ["'self'"],
+  baseUri: ["'self'"],
+  objectSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  frameSrc: ["'none'"],
+  formAction: ["'self'"],
+  scriptSrc: ["'self'"],
+  styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://api.fontshare.com'],
+  fontSrc: ["'self'", 'data:', 'https:'],
+  imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+  mediaSrc: ["'self'", 'data:', 'blob:'],
+  connectSrc: [
+    "'self'",
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'ws://localhost:3000',
+    'ws://127.0.0.1:3000',
+    'ws://localhost:5173',
+    'ws://127.0.0.1:5173',
+    'https://volume-alert-server-production.up.railway.app',
+    'wss://volume-alert-server-production.up.railway.app',
+  ],
+  workerSrc: ["'self'", 'blob:'],
+  manifestSrc: ["'self'"],
+};
+
+if (config.nodeEnv === 'production') {
+  cspDirectives.upgradeInsecureRequests = [];
+}
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: cspDirectives,
+  },
+}));
 const allowedCorsOrigins = new Set(config.corsOrigins);
 function isAllowedOrigin(origin) {
   if (!origin) return true;

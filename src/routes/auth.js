@@ -6,7 +6,7 @@ const Invite = require('../models/invite');
 const Session = require('../models/session');
 const LoginAttempt = require('../models/login-attempt');
 const socketHub = require('../services/socket-hub');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rate-limit');
 const { getClient } = require('../models/db');
 
@@ -180,7 +180,7 @@ router.post('/login', authLimiter, async (req, res) => {
   }
 });
 
-router.post('/logout', authenticate, async (req, res) => {
+router.post('/logout', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
     await Session.revoke(req.token);
     socketHub.revokeUserSockets(req.user.id, 'logout');
@@ -192,7 +192,7 @@ router.post('/logout', authenticate, async (req, res) => {
   }
 });
 
-router.post('/logout-all', authenticate, async (req, res) => {
+router.post('/logout-all', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
     const count = await Session.revokeAllForUser(req.user.id);
     socketHub.revokeUserSockets(req.user.id, 'logout_all');
@@ -208,7 +208,7 @@ router.get('/me', authenticate, async (req, res) => {
   res.json({ user: req.user });
 });
 
-router.post('/change-password', authenticate, async (req, res) => {
+router.post('/change-password', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 

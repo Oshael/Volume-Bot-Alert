@@ -2,6 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import type { AppState, ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
 import { bindCopyButtons, bindMonitoredSortControls, bindTokenActions, fmtAge, fmtMoney, fmtPct, renderTradeTerminalMenu } from './shared';
+import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -77,21 +78,25 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
 
 function renderMonitoredRow(item: AppState['data']['monitoredTokens'][number], busy: boolean, isStarred: boolean) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
-  const dexUrl = item.pairUrl || `https://dexscreener.com/solana/${item.address}`;
+  const safeAddress = escapeHtml(item.address);
+  const safeSymbol = escapeHtml(symbol);
+  const safeSubtitle = escapeHtml(item.name || item.label || '');
+  const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
   const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const avatar = item.imageUrl ? `<img src="${item.imageUrl}" alt="${symbol}" class="tok-avatar" />` : `<div class="tok-avatar-placeholder">${symbol.slice(0, 2).toUpperCase()}</div>`;
+  const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
+  const avatar = imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="tok-avatar" />` : `<div class="tok-avatar-placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
   const volDelta = item.prevVolume5m && item.prevVolume5m > 0 && item.volume5m != null ? ((item.volume5m - item.prevVolume5m) / item.prevVolume5m) * 100 : null;
 
   return `
-    <article class="token-row monitored-token-row monitored-token-row-v68 ${isStarred ? 'token-starred' : ''}" data-hover-key="monitored:${item.address}">
+    <article class="token-row monitored-token-row monitored-token-row-v68 ${isStarred ? 'token-starred' : ''}" data-hover-key="monitored:${safeAddress}">
       ${avatar}
       <div class="panel-row-main monitored-row-main">
         <div class="panel-row-title monitored-title-line">
-          <span class="token-name">${symbol}</span>
-          <span class="token-addr">${item.name || item.label || ''}</span>
+          <span class="token-name">${safeSymbol}</span>
+          <span class="token-addr">${safeSubtitle}</span>
           <a href="${dexUrl}" target="_blank" rel="noreferrer" class="inline-link">/ DEX</a>
-          <a href="${xSearch}" target="_blank" rel="noreferrer" class="inline-link">X</a>
+          <a href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" class="inline-link">X</a>
         </div>
         <div class="panel-row-meta monitored-meta-line">
           <span><span class="meta-label">MCAP</span> <span class="meta-value">${fmtMoney(item.mcap)}</span></span>
@@ -101,10 +106,10 @@ function renderMonitoredRow(item: AppState['data']['monitoredTokens'][number], b
           <span><span class="meta-label">VOL 24H</span> <span class="meta-value">${fmtMoney(item.volume24h)}</span></span>
         </div>
         <div class="panel-row-actions monitored-actions-line">
-          <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${item.address}" title="Copy contract">&#10697;</button>
+          <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
           ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress)}
-          <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${item.address}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
-          <button type="button" class="action-glyph danger-glyph" data-action="block-token" data-address="${item.address}" data-label="${symbol}" ${busy ? 'disabled' : ''} title="Block token">&#8855;</button>
+          <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
+          <button type="button" class="action-glyph danger-glyph" data-action="block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Block token">&#8855;</button>
         </div>
       </div>
       <div class="panel-row-side monitored-side-v68">

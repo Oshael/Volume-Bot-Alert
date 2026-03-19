@@ -16,12 +16,17 @@ import {
   LOGIN_PASSWORD_MAX_LENGTH,
   sanitizeLoginEmailValue,
 } from './login-form-utils';
+import { escapeHtml } from './html-safety';
 import { renderFlash } from './shared';
 
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
 const REGISTER_TRANSIENT_NOTICES = new Set([
   'Creating account...',
   'Account created. Workspace synced.',
+]);
+const CHANGE_PASSWORD_TRANSIENT_NOTICES = new Set([
+  'Changing password...',
+  'Password changed. Please login again.',
 ]);
 const LOGIN_RELEVANT_NOTICES = new Set([
   'No saved session. Sign in to continue.',
@@ -347,12 +352,13 @@ function renderLoginForm(state: AppState, options: { hasCredentialError: boolean
 
 function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackKind> | 'idle') {
   const supportKind = authFeedbackKind === 'idle' ? 'notice' : authFeedbackKind;
-  const supportHeading = getAuthSupportHeading(authFeedbackKind);
+  const supportHeading = escapeHtml(getAuthSupportHeading(authFeedbackKind));
+  const supportCopy = escapeHtml(getAuthSupportCopy(authFeedbackKind === 'idle' ? 'notice' : authFeedbackKind));
   if (authFeedbackKind === 'idle') {
     return `
       <div class="legacy-login-recovery">
         <div class="legacy-login-recovery-tag">${supportHeading}</div>
-        <div class="legacy-login-recovery-copy">${getAuthSupportCopy('notice')}</div>
+        <div class="legacy-login-recovery-copy">${supportCopy}</div>
         <div class="legacy-login-support-actions">
           <button type="button" class="legacy-login-support-action" data-action="open-invite-assistance-panel">Access help</button>
         </div>
@@ -362,7 +368,7 @@ function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackK
   return `
     <div class="legacy-login-recovery" data-auth-support-kind="${supportKind}">
       <div class="legacy-login-recovery-tag">${supportHeading}</div>
-      <div class="legacy-login-recovery-copy">${getAuthSupportCopy(authFeedbackKind)}</div>
+      <div class="legacy-login-recovery-copy">${supportCopy}</div>
       <div class="legacy-login-support-actions">
         <button type="button" class="legacy-login-support-action" data-action="open-invite-assistance-panel">Access help</button>
       </div>
@@ -409,6 +415,85 @@ function renderRegisterFlash(state: AppState) {
       notice: isRegisterNotice ? state.ui.notice : null,
     },
   });
+}
+
+function renderChangePasswordFlash(state: AppState) {
+  const message = state.ui.error ?? state.ui.notice ?? '';
+  if (!message) {
+    return '';
+  }
+
+  const isChangePasswordError = (
+    message === 'Current password is required.'
+    || message === 'New password is required.'
+    || message === 'New password must be at least 8 characters.'
+    || message === 'New password must be different from the current password.'
+    || message === 'Current password is incorrect'
+    || message.includes('Change-password failed')
+    || message.includes('Internal server error')
+    || message.includes('Unable to reach the server')
+  );
+
+  const isChangePasswordNotice = (
+    message === 'Changing password...'
+    || message === 'Password changed. Please login again.'
+  );
+
+  if (!isChangePasswordError && !isChangePasswordNotice) {
+    return '';
+  }
+
+  return renderFlash({
+    ...state,
+    ui: {
+      ...state.ui,
+      error: isChangePasswordError ? state.ui.error : null,
+      notice: isChangePasswordNotice ? state.ui.notice : null,
+    },
+  });
+}
+
+function renderDashboardFlash(state: AppState) {
+  const message = state.ui.error ?? state.ui.notice ?? '';
+  if (!message) {
+    return '';
+  }
+
+  const isLoginOnlyMessage = LOGIN_RELEVANT_NOTICES.has(message)
+    || message === 'Incorrect email or password. Check your credentials and try again.'
+    || message === 'Email is required.'
+    || message === 'Enter a valid email address.'
+    || message === 'Password is required.'
+    || message.includes('old password changed on');
+  const isRegisterOnlyMessage = (
+    message === 'Username is required.'
+    || message === 'Username must be at least 3 characters.'
+    || message === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
+    || message === 'Username already taken'
+    || message === 'Email already registered'
+    || message === 'Invalid email format'
+    || message === 'Password must be 8-128 characters.'
+    || message === 'Invite code is required.'
+    || REGISTER_TRANSIENT_NOTICES.has(message)
+    || message.includes('Invite')
+    || message.includes('invite')
+    || message.includes('registered')
+  );
+  const isChangePasswordOnlyMessage = (
+    message === 'Current password is required.'
+    || message === 'New password is required.'
+    || message === 'New password must be at least 8 characters.'
+    || message === 'New password must be different from the current password.'
+    || message === 'Current password is incorrect'
+    || message.includes('Change-password failed')
+    || CHANGE_PASSWORD_TRANSIENT_NOTICES.has(message)
+  );
+
+  if (isLoginOnlyMessage || isRegisterOnlyMessage || isChangePasswordOnlyMessage) {
+    return '';
+  }
+
+  return renderFlash(state);
 }
 
 function renderRegisterModal(state: AppState) {
@@ -566,15 +651,15 @@ function renderLoginExtensionRegion() {
       ${extensionDefs.map((item) => `
         <div
           class="legacy-login-extension-item"
-          data-auth-extension="${item.key}"
+          data-auth-extension="${escapeHtml(item.key)}"
           data-auth-extension-enabled="${item.enabled ? 'true' : 'false'}"
           data-auth-extension-backend-ready="${item.backendReady ? 'true' : 'false'}"
           data-auth-extension-ui-ready="${item.uiReady ? 'true' : 'false'}"
-          data-auth-extension-route="${item.route ?? ''}"
-          data-auth-extension-priority="${item.priority}"
+          data-auth-extension-route="${escapeHtml(item.route ?? '')}"
+          data-auth-extension-priority="${escapeHtml(item.priority)}"
         >
-          <span class="legacy-login-extension-label">${item.label}</span>
-          <span class="legacy-login-extension-description">${item.description}</span>
+          <span class="legacy-login-extension-label">${escapeHtml(item.label)}</span>
+          <span class="legacy-login-extension-description">${escapeHtml(item.description)}</span>
           ${renderLoginExtensionDraft(item.key)}
         </div>
       `).join('')}
@@ -593,13 +678,13 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
       aria-hidden="true"
     >
       ${fields.map((field) => `
-        <label class="legacy-login-extension-field" data-auth-extension-field="${field.name}">
-          <span>${field.label}</span>
+        <label class="legacy-login-extension-field" data-auth-extension-field="${escapeHtml(field.name)}">
+          <span>${escapeHtml(field.label)}</span>
           <input
-            name="${field.name}"
-            type="${field.type}"
-            ${field.inputMode ? `inputmode="${field.inputMode}"` : ''}
-            ${field.autocomplete ? `autocomplete="${field.autocomplete}"` : ''}
+            name="${escapeHtml(field.name)}"
+            type="${escapeHtml(field.type)}"
+            ${field.inputMode ? `inputmode="${escapeHtml(field.inputMode)}"` : ''}
+            ${field.autocomplete ? `autocomplete="${escapeHtml(field.autocomplete)}"` : ''}
             ${field.required ? 'required' : ''}
             disabled
           />
@@ -610,13 +695,14 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
 }
 
 function renderLegacyConfig(state: AppState, controller: AppController) {
+  const userMenuLabel = escapeHtml(state.session.username ?? state.session.email ?? 'User');
   const section = document.createElement('section');
   section.className = 'config-grid legacy-config-grid';
   section.innerHTML = `
     <div class="legacy-userbar">
       <button type="button" class="legacy-userbar-link logout-link" data-action="logout">Log Out</button>
       <div class="legacy-user-menu" data-user-menu>
-        <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu">${state.session.username ?? state.session.email ?? 'User'}</button>
+        <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu">${userMenuLabel}</button>
         <div class="legacy-user-dropdown">
           <button type="button" class="legacy-user-dd-item" data-action="open-change-password">Change Password</button>
           <button type="button" class="legacy-user-dd-item">Preferences (Soon)</button>
@@ -681,6 +767,11 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
 }
 
 function renderChangePasswordModal(state: AppState) {
+  const currentPasswordError = state.ui.error === 'Current password is required.'
+    || state.ui.error === 'Current password is incorrect';
+  const newPasswordError = state.ui.error === 'New password is required.'
+    || state.ui.error === 'New password must be at least 8 characters.'
+    || state.ui.error === 'New password must be different from the current password.';
   return `
     <div class="legacy-auth-modal" data-auth-modal="change-password">
       <div class="legacy-auth-modal-backdrop" data-action="close-change-password"></div>
@@ -692,18 +783,19 @@ function renderChangePasswordModal(state: AppState) {
           </div>
           <button type="button" class="legacy-userbar-link" data-action="close-change-password">Close</button>
         </div>
+        <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderChangePasswordFlash(state)}</div>
         <form class="legacy-auth-panel-form" data-role="change-password-form">
           <label>
             <span>Current password</span>
             <div class="legacy-password-wrap">
-              <input name="currentPassword" type="password" autocomplete="current-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" ${state.ui.busy ? 'disabled' : ''} required />
+              <input name="currentPassword" type="password" autocomplete="current-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${currentPasswordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
               <button type="button" class="legacy-password-toggle" data-action="toggle-current-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
             </div>
           </label>
           <label>
             <span>New password</span>
             <div class="legacy-password-wrap">
-              <input name="newPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" ${state.ui.busy ? 'disabled' : ''} required />
+              <input name="newPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${newPasswordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
               <button type="button" class="legacy-password-toggle" data-action="toggle-new-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
             </div>
           </label>
@@ -722,6 +814,12 @@ function bindChangePasswordPanel(section: ParentNode, controller: AppController,
   const closePanel = () => controller.closeAuthPanel();
   section.querySelectorAll<HTMLButtonElement>('[data-action="close-change-password"]').forEach((button) => {
     button.addEventListener('click', closePanel);
+  });
+  section.querySelectorAll<HTMLButtonElement>('.legacy-auth-panel-feedback [data-action="dismiss-flash"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (state.ui.error) controller.clearError();
+      else controller.clearNotice();
+    });
   });
 
   const toggleVisibility = (inputName: 'currentPassword' | 'newPassword', action: 'toggle-current-password-visibility' | 'toggle-new-password-visibility') => {
@@ -751,6 +849,22 @@ function bindChangePasswordPanel(section: ParentNode, controller: AppController,
 
   toggleVisibility('currentPassword', 'toggle-current-password-visibility');
   toggleVisibility('newPassword', 'toggle-new-password-visibility');
+
+  const clearFeedbackOnEdit = () => {
+    if (state.ui.error === 'Current password is required.'
+      || state.ui.error === 'Current password is incorrect'
+      || state.ui.error === 'New password is required.'
+      || state.ui.error === 'New password must be at least 8 characters.'
+      || state.ui.error === 'New password must be different from the current password.'
+      || state.ui.notice === 'Changing password...') {
+      controller.clearError();
+      controller.clearNotice();
+    }
+  };
+
+  form?.querySelectorAll<HTMLInputElement>('input[name="currentPassword"], input[name="newPassword"]').forEach((input) => {
+    input.addEventListener('input', clearFeedbackOnEdit);
+  });
 
   form?.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -1036,13 +1150,16 @@ function renderConfigToggleMenu(
   fields: ReadonlyArray<{ key: string; label: string }>,
 ) {
   const enabledCount = fields.filter((field) => isConfigEnabled(state, field.key)).length;
+  const safeLabel = escapeHtml(label);
+  const safeSummaryLabel = escapeHtml(summaryLabel);
+  const safeToggleKey = escapeHtml(label.toLowerCase().replace(/\s+/g, '-'));
   return `
     <div class="config-item config-item-menu">
-      <label>${label}</label>
+      <label>${safeLabel}</label>
       <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
-        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="${label.toLowerCase().replace(/\s+/g, '-')}">${enabledCount}/${fields.length} on</button>
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="${safeToggleKey}">${enabledCount}/${fields.length} on</button>
         <div class="sort-menu-dropdown config-menu-dropdown">
-          <div class="config-menu-summary">${summaryLabel}</div>
+          <div class="config-menu-summary">${safeSummaryLabel}</div>
           <div class="config-toggle-list">
             ${fields.map((field) => {
               const enabled = isConfigEnabled(state, field.key);
@@ -1050,10 +1167,10 @@ function renderConfigToggleMenu(
                 <button
                   type="button"
                   class="config-toggle-item ${enabled ? 'active' : ''}"
-                  data-config-toggle-key="${field.key}"
+                  data-config-toggle-key="${escapeHtml(field.key)}"
                   data-config-toggle-next="${enabled ? 'off' : 'on'}"
                 >
-                  <span>${field.label}</span>
+                  <span>${escapeHtml(field.label)}</span>
                   <span class="config-toggle-state">${enabled ? 'ON' : 'OFF'}</span>
                 </button>
               `;
@@ -1083,15 +1200,15 @@ function renderSoundUploadStrip(state: AppState) {
         const asset = loadCustomSoundAsset(scope, slot);
         return `
           <div class="legacy-sound-item">
-            <div class="legacy-sound-head"><span class="${dot}"></span><span>${title}</span></div>
-            <div class="legacy-sound-sub">${sub}</div>
+            <div class="legacy-sound-head"><span class="${dot}"></span><span>${escapeHtml(title)}</span></div>
+            <div class="legacy-sound-sub">${escapeHtml(sub)}</div>
             <div class="legacy-sound-picker">
               <label class="legacy-file-btn">
                 Escolher arquivo
-                <input type="file" accept="audio/*" data-sound-slot="${slot}" />
+                <input type="file" accept="audio/*" data-sound-slot="${escapeHtml(slot)}" />
               </label>
             </div>
-            <div class="legacy-sound-meta">${asset?.name || 'Default (tone)'}</div>
+            <div class="legacy-sound-meta">${escapeHtml(asset?.name || 'Default (tone)')}</div>
           </div>
         `;
       }).join('')}
@@ -1166,7 +1283,7 @@ function renderLegacyActions(state: AppState, controller: AppController) {
   section.className = 'btn-row legacy-action-row';
   const isRunning = state.runtime.mode === 'active';
   section.innerHTML = `
-    ${renderFlash(state)}
+    ${renderDashboardFlash(state)}
     <div class="legacy-button-strip">
       <button type="button" class="legacy-btn btn-start ${isRunning ? 'running' : ''}" data-action="toggle-monitoring">${isRunning ? '&#9632; STOP' : '&#9654; START MONITORING'}</button>
     </div>
@@ -1189,14 +1306,19 @@ function renderConfigField(state: AppState, field: { key: string; label: string;
   const resolved = value == null || value === ''
     ? defaultConfigValue(field.key, type)
     : String(value);
+  const safeLabel = escapeHtml(field.label);
+  const safeType = escapeHtml(type);
+  const safeKey = escapeHtml(field.key);
+  const safeResolved = escapeHtml(resolved);
+  const safePlaceholder = field.placeholder ? escapeHtml(field.placeholder) : null;
 
   if (field.key === 'chain') {
     const current = resolved || 'solana';
     return `
       <div class="config-item">
-        <label>${field.label}</label>
+        <label>${safeLabel}</label>
         <select name="chain">
-          ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${chain}" ${current === chain ? 'selected' : ''}>${capitalize(chain)}</option>`).join('')}
+          ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${escapeHtml(chain)}" ${current === chain ? 'selected' : ''}>${escapeHtml(capitalize(chain))}</option>`).join('')}
         </select>
       </div>
     `;
@@ -1204,8 +1326,8 @@ function renderConfigField(state: AppState, field: { key: string; label: string;
 
   return `
     <div class="config-item">
-      <label>${field.label}</label>
-      <input type="${type}" name="${field.key}" value="${resolved}" ${field.min != null ? `min="${field.min}"` : ''} ${field.placeholder ? `placeholder="${field.placeholder}"` : ''}>
+      <label>${safeLabel}</label>
+      <input type="${safeType}" name="${safeKey}" value="${safeResolved}" ${field.min != null ? `min="${field.min}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
     </div>
   `;
 }

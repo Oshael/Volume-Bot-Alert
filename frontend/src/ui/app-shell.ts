@@ -140,7 +140,7 @@ function applyHoverState(root: HTMLElement) {
     el.classList.remove('forced-hover');
   }
   if (!currentHoverKey) return;
-  const hovered = root.querySelector<HTMLElement>(`[data-hover-key="${currentHoverKey}"]`);
+  const hovered = root.querySelector<HTMLElement>(`[data-hover-key="${CSS.escape(currentHoverKey)}"]`);
   if (hovered) hovered.classList.add('forced-hover');
 }
 
@@ -423,6 +423,12 @@ function applyChangePasswordFocus(root: HTMLElement, state: AppState) {
 
   if (state.ui.error === 'Current password is required.') {
     currentPassword?.focus();
+    currentPassword?.select();
+    return;
+  }
+  if (state.ui.error === 'Current password is incorrect') {
+    currentPassword?.focus();
+    currentPassword?.select();
     return;
   }
   if (
@@ -431,6 +437,7 @@ function applyChangePasswordFocus(root: HTMLElement, state: AppState) {
     || state.ui.error === 'New password must be different from the current password.'
   ) {
     newPassword?.focus();
+    newPassword?.select();
     return;
   }
 

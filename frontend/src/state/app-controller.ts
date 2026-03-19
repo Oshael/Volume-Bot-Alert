@@ -408,7 +408,7 @@ export function createAppController(): AppController {
     const maxAgeMin = getPumpConfigNumber('pump-max-age-min', 0);
     const now = Date.now();
     return state.data.pumpTokens.filter((item) => {
-      if (item._migrated || isBlocked(item.mint)) {
+      if (item._migrated || isBlocked(item.mint) || state.data.dismissedPump.includes(item.mint)) {
         return false;
       }
       const vol5m = getPumpVolume5mTotal(item);
@@ -665,7 +665,7 @@ export function createAppController(): AppController {
 
   function createOrUpdatePumpToken(raw: Record<string, unknown>, mode: 'new' | 'trade') {
     const mint = String(raw.mint || '').trim();
-    if (!mint || isBlocked(mint)) {
+    if (!mint || isBlocked(mint) || state.data.dismissedPump.includes(mint)) {
       return;
     }
 
@@ -1483,6 +1483,7 @@ export function createAppController(): AppController {
       oldWeekTokens: [],
       dismissedRecent: [],
       dismissedOldWeek: [],
+      dismissedPump: [],
       recentRemovalLog: [],
       oldWeekRemovalLog: [],
       blocklist: [],
@@ -1619,9 +1620,13 @@ export function createAppController(): AppController {
       emit();
     },
     removePumpToken(mint: string) {
-      state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint ? { ...item, hidden: true } : item);
+      if (!state.data.dismissedPump.includes(mint)) {
+        state.data.dismissedPump = [...state.data.dismissedPump, mint];
+      }
+      state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== mint);
+      unsubscribePumpMint(mint);
       refreshPumpPanelCounts();
-      setNotice('PumpFun token removed from panel. It may reappear on new trades.');
+      setNotice('PumpFun token removed from the live panel for this session.');
       emit();
     },
     dismissRecentToken(address: string) {

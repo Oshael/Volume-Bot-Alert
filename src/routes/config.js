@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const db = require('../models/db');
 const userConfig = require('../models/user-config');
 const userToken = require('../models/user-token');
@@ -10,6 +10,7 @@ const tokenCatalog = require('../models/token-catalog');
 
 // All config routes require authentication
 router.use(authenticate);
+router.use(requireTrustedOrigin);
 
 // ── Limites ────────────────────────────────────────────────────────
 const MAX_TOKENS = 200;      // máx tokens manuais por user
