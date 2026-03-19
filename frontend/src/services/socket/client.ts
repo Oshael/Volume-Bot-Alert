@@ -22,7 +22,6 @@ export function connectSocket(): Socket {
 export function bindSocketLifecycle(options: {
   onRevoked: (reason: string) => void;
   onStatus?: (message: string) => void;
-  onDexTokenData?: (payload: { address: string; data: unknown }) => void;
   onPumpStatus?: (payload: { connected?: boolean }) => void;
   onPumpNewToken?: (payload: Record<string, unknown>) => void;
   onPumpTrade?: (payload: Record<string, unknown>) => void;
@@ -35,7 +34,6 @@ export function bindSocketLifecycle(options: {
   current.off('disconnect');
   current.off('connect_error');
   current.off('auth:revoked');
-  current.off('dex:tokenData');
   current.off('pump:status');
   current.off('pump:newToken');
   current.off('pump:trade');
@@ -56,10 +54,6 @@ export function bindSocketLifecycle(options: {
 
   current.on('auth:revoked', (payload?: { reason?: string }) => {
     options.onRevoked(payload?.reason || 'session_revoked');
-  });
-
-  current.on('dex:tokenData', (payload: { address: string; data: unknown }) => {
-    options.onDexTokenData?.(payload);
   });
 
   current.on('pump:status', (payload: { connected?: boolean }) => {
@@ -83,11 +77,6 @@ export function bindSocketLifecycle(options: {
   });
 
   return current;
-}
-
-export function requestDexToken(address: string) {
-  if (!socket) return;
-  socket.emit('dex:subscribe', { address });
 }
 
 export function subscribePumpMint(mint: string) {

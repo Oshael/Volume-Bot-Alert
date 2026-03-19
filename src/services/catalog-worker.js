@@ -11,6 +11,7 @@ const NORMAL_RECHECK_MS = 60 * 1000;
 const NORMAL_BOOST_6H_RECHECK_MS = 40 * 1000;
 const NORMAL_BOOST_1H_RECHECK_MS = 20 * 1000;
 const HIGH_RECHECK_MS = 10 * 1000;
+const HIGH_LOW_VOL_RECHECK_MS = 40 * 1000;
 const ERROR_RECHECK_MS = 5 * 60 * 1000;
 const MANUAL_BOOTSTRAP_RECHECK_MS = 5 * 1000;
 
@@ -107,6 +108,10 @@ function derivePrioritySnapshot(bestPair) {
     };
   }
 
+  const nextHighMs = (vol6h || 0) < 30000
+    ? HIGH_LOW_VOL_RECHECK_MS
+    : HIGH_RECHECK_MS;
+
   return {
     marketCap,
     vol5m,
@@ -117,7 +122,7 @@ function derivePrioritySnapshot(bestPair) {
     pchange6h,
     pchange24h,
     monitorPriority: 'high',
-    nextEvaluationAt: new Date(Date.now() + HIGH_RECHECK_MS),
+    nextEvaluationAt: new Date(Date.now() + nextHighMs),
     eligibleForMonitoring: true,
     eligibilityState: 'dex-high',
     suppressedReason: null,

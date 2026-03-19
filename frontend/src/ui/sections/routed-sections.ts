@@ -7,18 +7,23 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   section.className = 'legacy-token-bar recent-bar';
   const min = fmtConfig(state, 'old-mcap-min', 120000);
   const max = fmtConfig(state, 'old-mcap-max', 1000000);
-  const recentVolActive = state.ui.recentSort === 'vol' ? 'active' : '';
-  const recentMcapActive = state.ui.recentSort === 'mcap' ? 'active' : '';
-  const recentPchangeActive = state.ui.recentSort === 'pchange' ? 'active' : '';
-  const recentAgeActive = state.ui.recentSort === 'age' ? 'active' : '';
-  const recentVol1h = state.ui.recentSort === 'vol' && state.ui.recentSortWindow === '1h' ? 'active' : '';
-  const recentVol6h = state.ui.recentSort === 'vol' && state.ui.recentSortWindow === '6h' ? 'active' : '';
-  const recentVol24h = state.ui.recentSort === 'vol' && state.ui.recentSortWindow === '24h' ? 'active' : '';
-  const recentPchange1h = state.ui.recentSort === 'pchange' && state.ui.recentSortWindow === '1h' ? 'active' : '';
-  const recentPchange6h = state.ui.recentSort === 'pchange' && state.ui.recentSortWindow === '6h' ? 'active' : '';
-  const recentPchange24h = state.ui.recentSort === 'pchange' && state.ui.recentSortWindow === '24h' ? 'active' : '';
-  const recentAgeNewest = state.ui.recentSort === 'age' && state.ui.recentSortWindow === 'newest' ? 'active' : '';
-  const recentAgeOldest = state.ui.recentSort === 'age' && state.ui.recentSortWindow === 'oldest' ? 'active' : '';
+  const recentSorts = state.ui.recentSorts;
+  const hasRecentMode = (mode: string) => recentSorts.some((item) => item.mode === mode);
+  const hasRecentCriterion = (mode: string, window: string) => recentSorts.some((item) => item.mode === mode && item.window === window);
+  const recentVolActive = hasRecentMode('vol') ? 'active' : '';
+  const recentMcapActive = hasRecentMode('mcap') ? 'active' : '';
+  const recentPchangeActive = hasRecentMode('pchange') ? 'active' : '';
+  const recentAgeActive = hasRecentMode('age') ? 'active' : '';
+  const recentVol1h = hasRecentCriterion('vol', '1h') ? 'active' : '';
+  const recentVol6h = hasRecentCriterion('vol', '6h') ? 'active' : '';
+  const recentVol24h = hasRecentCriterion('vol', '24h') ? 'active' : '';
+  const recentMcapHighest = hasRecentCriterion('mcap', 'highest') ? 'active' : '';
+  const recentMcapLowest = hasRecentCriterion('mcap', 'lowest') ? 'active' : '';
+  const recentPchange1h = hasRecentCriterion('pchange', '1h') ? 'active' : '';
+  const recentPchange6h = hasRecentCriterion('pchange', '6h') ? 'active' : '';
+  const recentPchange24h = hasRecentCriterion('pchange', '24h') ? 'active' : '';
+  const recentAgeNewest = hasRecentCriterion('age', 'newest') ? 'active' : '';
+  const recentAgeOldest = hasRecentCriterion('age', 'oldest') ? 'active' : '';
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -39,7 +44,13 @@ export function renderRecentSection(state: AppState, controller: AppController) 
               <button type="button" class="sort-menu-item ${recentVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
             </div>
           </div>
-          <button type="button" class="old-filter-btn ${recentMcapActive}" data-sort-mode="mcap">MCAP</button>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${recentMcapActive}" data-sort-toggle="mcap">MCAP</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${recentMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
+              <button type="button" class="sort-menu-item ${recentMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
+            </div>
+          </div>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${recentPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
             <div class="sort-menu-dropdown">
@@ -66,8 +77,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       state.ui.recentPage,
       state.ui.recentPerPage,
       state.data.starredTokens,
-      state.ui.recentSort,
-      state.ui.recentSortWindow,
+      state.ui.recentSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
     )}
@@ -95,18 +105,23 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   section.className = 'legacy-token-bar old-week-bar';
   const min = fmtConfig(state, 'old-week-mcap-min', 120000);
   const max = fmtConfig(state, 'old-week-mcap-max', 5000000);
-  const oldWeekVolActive = state.ui.oldWeekSort === 'vol' ? 'active' : '';
-  const oldWeekMcapActive = state.ui.oldWeekSort === 'mcap' ? 'active' : '';
-  const oldWeekPchangeActive = state.ui.oldWeekSort === 'pchange' ? 'active' : '';
-  const oldWeekAgeActive = state.ui.oldWeekSort === 'age' ? 'active' : '';
-  const oldWeekVol1h = state.ui.oldWeekSort === 'vol' && state.ui.oldWeekSortWindow === '1h' ? 'active' : '';
-  const oldWeekVol6h = state.ui.oldWeekSort === 'vol' && state.ui.oldWeekSortWindow === '6h' ? 'active' : '';
-  const oldWeekVol24h = state.ui.oldWeekSort === 'vol' && state.ui.oldWeekSortWindow === '24h' ? 'active' : '';
-  const oldWeekPchange1h = state.ui.oldWeekSort === 'pchange' && state.ui.oldWeekSortWindow === '1h' ? 'active' : '';
-  const oldWeekPchange6h = state.ui.oldWeekSort === 'pchange' && state.ui.oldWeekSortWindow === '6h' ? 'active' : '';
-  const oldWeekPchange24h = state.ui.oldWeekSort === 'pchange' && state.ui.oldWeekSortWindow === '24h' ? 'active' : '';
-  const oldWeekAgeNewest = state.ui.oldWeekSort === 'age' && state.ui.oldWeekSortWindow === 'newest' ? 'active' : '';
-  const oldWeekAgeOldest = state.ui.oldWeekSort === 'age' && state.ui.oldWeekSortWindow === 'oldest' ? 'active' : '';
+  const oldWeekSorts = state.ui.oldWeekSorts;
+  const hasOldWeekMode = (mode: string) => oldWeekSorts.some((item) => item.mode === mode);
+  const hasOldWeekCriterion = (mode: string, window: string) => oldWeekSorts.some((item) => item.mode === mode && item.window === window);
+  const oldWeekVolActive = hasOldWeekMode('vol') ? 'active' : '';
+  const oldWeekMcapActive = hasOldWeekMode('mcap') ? 'active' : '';
+  const oldWeekPchangeActive = hasOldWeekMode('pchange') ? 'active' : '';
+  const oldWeekAgeActive = hasOldWeekMode('age') ? 'active' : '';
+  const oldWeekVol1h = hasOldWeekCriterion('vol', '1h') ? 'active' : '';
+  const oldWeekVol6h = hasOldWeekCriterion('vol', '6h') ? 'active' : '';
+  const oldWeekVol24h = hasOldWeekCriterion('vol', '24h') ? 'active' : '';
+  const oldWeekMcapHighest = hasOldWeekCriterion('mcap', 'highest') ? 'active' : '';
+  const oldWeekMcapLowest = hasOldWeekCriterion('mcap', 'lowest') ? 'active' : '';
+  const oldWeekPchange1h = hasOldWeekCriterion('pchange', '1h') ? 'active' : '';
+  const oldWeekPchange6h = hasOldWeekCriterion('pchange', '6h') ? 'active' : '';
+  const oldWeekPchange24h = hasOldWeekCriterion('pchange', '24h') ? 'active' : '';
+  const oldWeekAgeNewest = hasOldWeekCriterion('age', 'newest') ? 'active' : '';
+  const oldWeekAgeOldest = hasOldWeekCriterion('age', 'oldest') ? 'active' : '';
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -127,7 +142,13 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
               <button type="button" class="sort-menu-item ${oldWeekVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
             </div>
           </div>
-          <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-mode="mcap">MCAP</button>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-toggle="mcap">MCAP</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${oldWeekMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
+              <button type="button" class="sort-menu-item ${oldWeekMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
+            </div>
+          </div>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${oldWeekPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
             <div class="sort-menu-dropdown">
@@ -154,8 +175,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       state.ui.oldWeekPage,
       state.ui.oldWeekPerPage,
       state.data.starredTokens,
-      state.ui.oldWeekSort,
-      state.ui.oldWeekSortWindow,
+      state.ui.oldWeekSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
     )}

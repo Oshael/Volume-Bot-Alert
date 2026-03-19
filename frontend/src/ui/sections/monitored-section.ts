@@ -7,21 +7,24 @@ import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-saf
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'panel legacy-panel';
-  const monitoredVolActive = state.ui.monitoredSort === 'vol' ? 'active' : '';
-  const monitoredMcapActive = state.ui.monitoredSort === 'mcap' ? 'active' : '';
-  const monitoredAgeActive = state.ui.monitoredSort === 'age' ? 'active' : '';
-  const monitoredVol5m = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '5m' ? 'active' : '';
-  const monitoredVol1h = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '1h' ? 'active' : '';
-  const monitoredVol6h = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '6h' ? 'active' : '';
-  const monitoredVol24h = state.ui.monitoredSort === 'vol' && state.ui.monitoredSortWindow === '24h' ? 'active' : '';
-  const monitoredAgeNewest = state.ui.monitoredSort === 'age' && state.ui.monitoredSortWindow === 'newest' ? 'active' : '';
-  const monitoredAgeOldest = state.ui.monitoredSort === 'age' && state.ui.monitoredSortWindow === 'oldest' ? 'active' : '';
+  const sorts = state.ui.monitoredSorts;
+  const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
+  const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
+  const monitoredVolActive = hasMode('vol') ? 'active' : '';
+  const monitoredMcapActive = hasMode('mcap') ? 'active' : '';
+  const monitoredAgeActive = hasMode('age') ? 'active' : '';
+  const monitoredVol5m = hasCriterion('vol', '5m') ? 'active' : '';
+  const monitoredVol1h = hasCriterion('vol', '1h') ? 'active' : '';
+  const monitoredVol6h = hasCriterion('vol', '6h') ? 'active' : '';
+  const monitoredVol24h = hasCriterion('vol', '24h') ? 'active' : '';
+  const monitoredMcapHighest = hasCriterion('mcap', 'highest') ? 'active' : '';
+  const monitoredMcapLowest = hasCriterion('mcap', 'lowest') ? 'active' : '';
+  const monitoredAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
+  const monitoredAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
   const tracked = [...state.data.monitoredTokens]
     .filter((item) => item._userManual || !((item.mcap ?? 0) > 0 && (item.mcap ?? 0) < 30000))
     .sort((a, b) => {
-      const mode = state.ui.monitoredSort;
-      const window = state.ui.monitoredSortWindow;
-      const metric = (entry: ManualTokenEntry) => {
+      const metric = (entry: ManualTokenEntry, mode: string, window: string) => {
         if (mode === 'age') return entry.createdAt || 0;
         if (mode === 'mcap') return entry.mcap || 0;
         if (window === '1h') return entry.volume1h || 0;
@@ -29,13 +32,16 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
         if (window === '24h') return entry.volume24h || 0;
         return entry.volume5m || 0;
       };
-      if (mode === 'age' && window === 'oldest') {
-        const delta = metric(a) - metric(b);
+      for (const criterion of sorts) {
+        const aMetric = metric(a, criterion.mode, criterion.window);
+        const bMetric = metric(b, criterion.mode, criterion.window);
+        const delta = ((criterion.mode === 'age' && criterion.window === 'oldest') || (criterion.mode === 'mcap' && criterion.window === 'lowest'))
+          ? aMetric - bMetric
+          : bMetric - aMetric;
         if (delta !== 0) return delta;
-        return (b.mcap || 0) - (a.mcap || 0);
       }
-      const delta = metric(b) - metric(a);
-      if (delta !== 0) return delta;
+      const createdDelta = (b.createdAt || 0) - (a.createdAt || 0);
+      if (createdDelta !== 0) return createdDelta;
       return (b.mcap || 0) - (a.mcap || 0);
     });
   section.innerHTML = `
@@ -53,7 +59,13 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
               <button type="button" class="sort-menu-item ${monitoredVol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
             </div>
           </div>
-          <button type="button" class="old-filter-btn ${monitoredMcapActive}" data-monitored-sort-mode="mcap">MCAP</button>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${monitoredMcapActive}" data-sort-toggle="monitored-mcap">MCAP</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${monitoredMcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
+              <button type="button" class="sort-menu-item ${monitoredMcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
+            </div>
+          </div>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${monitoredAgeActive}" data-sort-toggle="monitored-age">AGE</button>
             <div class="sort-menu-dropdown">

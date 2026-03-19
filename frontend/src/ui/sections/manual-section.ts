@@ -6,18 +6,23 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const section = document.createElement('section');
   section.id = 'manual-tokens-section';
   section.className = 'legacy-token-bar manual-bar';
-  const manualVolActive = state.ui.manualSort === 'vol' ? 'active' : '';
-  const manualMcapActive = state.ui.manualSort === 'mcap' ? 'active' : '';
-  const manualPchangeActive = state.ui.manualSort === 'pchange' ? 'active' : '';
-  const manualAgeActive = state.ui.manualSort === 'age' ? 'active' : '';
-  const manualVol1h = state.ui.manualSort === 'vol' && state.ui.manualSortWindow === '1h' ? 'active' : '';
-  const manualVol6h = state.ui.manualSort === 'vol' && state.ui.manualSortWindow === '6h' ? 'active' : '';
-  const manualVol24h = state.ui.manualSort === 'vol' && state.ui.manualSortWindow === '24h' ? 'active' : '';
-  const manualPchange1h = state.ui.manualSort === 'pchange' && state.ui.manualSortWindow === '1h' ? 'active' : '';
-  const manualPchange6h = state.ui.manualSort === 'pchange' && state.ui.manualSortWindow === '6h' ? 'active' : '';
-  const manualPchange24h = state.ui.manualSort === 'pchange' && state.ui.manualSortWindow === '24h' ? 'active' : '';
-  const manualAgeNewest = state.ui.manualSort === 'age' && state.ui.manualSortWindow === 'newest' ? 'active' : '';
-  const manualAgeOldest = state.ui.manualSort === 'age' && state.ui.manualSortWindow === 'oldest' ? 'active' : '';
+  const sorts = state.ui.manualSorts;
+  const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
+  const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
+  const manualVolActive = hasMode('vol') ? 'active' : '';
+  const manualMcapActive = hasMode('mcap') ? 'active' : '';
+  const manualPchangeActive = hasMode('pchange') ? 'active' : '';
+  const manualAgeActive = hasMode('age') ? 'active' : '';
+  const manualVol1h = hasCriterion('vol', '1h') ? 'active' : '';
+  const manualVol6h = hasCriterion('vol', '6h') ? 'active' : '';
+  const manualVol24h = hasCriterion('vol', '24h') ? 'active' : '';
+  const manualMcapHighest = hasCriterion('mcap', 'highest') ? 'active' : '';
+  const manualMcapLowest = hasCriterion('mcap', 'lowest') ? 'active' : '';
+  const manualPchange1h = hasCriterion('pchange', '1h') ? 'active' : '';
+  const manualPchange6h = hasCriterion('pchange', '6h') ? 'active' : '';
+  const manualPchange24h = hasCriterion('pchange', '24h') ? 'active' : '';
+  const manualAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
+  const manualAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
   section.innerHTML = `
     <div class="legacy-bar-head">
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
@@ -32,7 +37,13 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
               <button type="button" class="sort-menu-item ${manualVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
             </div>
           </div>
-          <button type="button" class="old-filter-btn ${manualMcapActive}" data-sort-mode="mcap">MCAP</button>
+          <div class="sort-menu-wrap" data-sort-wrap>
+            <button type="button" class="old-filter-btn ${manualMcapActive}" data-sort-toggle="mcap">MCAP</button>
+            <div class="sort-menu-dropdown">
+              <button type="button" class="sort-menu-item ${manualMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
+              <button type="button" class="sort-menu-item ${manualMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
+            </div>
+          </div>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${manualPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
             <div class="sort-menu-dropdown">
@@ -56,8 +67,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       state.data.manualTokens,
       state.ui.busy,
       state.data.starredTokens,
-      state.ui.manualSort,
-      state.ui.manualSortWindow,
+      state.ui.manualSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
     )}

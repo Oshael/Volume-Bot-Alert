@@ -397,38 +397,6 @@ router.get('/history/:address', catalogReadLimiter, async (req, res) => {
   }
 });
 
-router.post('/meteora/batch', catalogReadLimiter, async (req, res) => {
-  try {
-    const addresses = [...new Set((req.body?.addresses || []).map((value) => String(value || '').trim()).filter(Boolean))];
-    if (addresses.length === 0) {
-      return res.json({ items: [], count: 0 });
-    }
-    if (addresses.length > 400) {
-      return res.status(400).json({ error: 'Too many addresses requested' });
-    }
-    if (addresses.some((address) => !isValidAddress(address))) {
-      return res.status(400).json({ error: 'Invalid token address' });
-    }
-
-    const historyRows = await tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 });
-    const grouped = new Map();
-    for (const row of historyRows) {
-      const current = grouped.get(row.token_address) || [];
-      current.push(row);
-      grouped.set(row.token_address, current);
-    }
-
-    const items = addresses.map((address) => buildMeteoraSummary(address, grouped.get(address) || []));
-    res.json({
-      items,
-      count: items.length,
-    });
-  } catch (err) {
-    console.error('POST /catalog/meteora/batch error:', err.message);
-    res.status(500).json({ error: 'Failed to load Meteora batch data' });
-  }
-});
-
 router.get('/meteora/:address/history', catalogReadLimiter, async (req, res) => {
   try {
     const address = String(req.params?.address || '').trim();

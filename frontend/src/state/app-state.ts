@@ -72,6 +72,20 @@ export interface ManualTokenEntry {
   _lastAlertKind?: AlertEntry['kind'] | null;
 }
 
+export type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
+export type BucketSortWindow = '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
+export interface BucketSortCriterion {
+  mode: BucketSortMode;
+  window: BucketSortWindow;
+}
+
+export type MonitoredSortMode = 'vol' | 'mcap' | 'age';
+export type MonitoredSortWindow = '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
+export interface MonitoredSortCriterion {
+  mode: MonitoredSortMode;
+  window: MonitoredSortWindow;
+}
+
 export interface PumpVolumePoint {
   usd: number;
   ts: number;
@@ -231,14 +245,10 @@ export interface AppState {
     oldWeekPage: number;
     recentPerPage: number;
     oldWeekPerPage: number;
-    manualSort: 'vol' | 'mcap' | 'pchange' | 'age';
-    manualSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
-    recentSort: 'vol' | 'mcap' | 'pchange' | 'age';
-    recentSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
-    oldWeekSort: 'vol' | 'mcap' | 'pchange' | 'age';
-    oldWeekSortWindow: '1h' | '6h' | '24h' | 'newest' | 'oldest';
-    monitoredSort: 'vol' | 'mcap' | 'age';
-    monitoredSortWindow: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest';
+    manualSorts: BucketSortCriterion[];
+    recentSorts: BucketSortCriterion[];
+    oldWeekSorts: BucketSortCriterion[];
+    monitoredSorts: MonitoredSortCriterion[];
     soundEnabled: boolean;
     soundVolume: number;
   };
@@ -316,14 +326,10 @@ export function createAppState(): AppState {
       oldWeekPage: 0,
       recentPerPage: 30,
       oldWeekPerPage: 30,
-      manualSort: 'mcap',
-      manualSortWindow: '24h',
-      recentSort: 'vol',
-      recentSortWindow: '24h',
-      oldWeekSort: 'vol',
-      oldWeekSortWindow: '24h',
-      monitoredSort: 'vol',
-      monitoredSortWindow: '5m',
+      manualSorts: [{ mode: 'mcap', window: 'highest' }],
+      recentSorts: [{ mode: 'vol', window: '24h' }],
+      oldWeekSorts: [{ mode: 'vol', window: '24h' }],
+      monitoredSorts: [{ mode: 'vol', window: '5m' }],
       soundEnabled: true,
       soundVolume: 0.05,
     },

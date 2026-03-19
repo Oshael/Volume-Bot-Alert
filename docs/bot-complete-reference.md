@@ -161,15 +161,12 @@ Discovery feeds:
 Current source used in catalog:
 - `dexscreener-discovery`
 
-#### Market snapshot worker
-File:
-- `src/services/market-snapshot-worker.js`
+#### Market snapshots
+Primary file:
+- `src/services/catalog-worker.js`
 
 Role:
-- inserts market snapshots for eligible tokens
-
-Cadence:
-- every `60s`
+- inserts market snapshots during normal catalog reevaluation
 
 #### Meteora snapshot worker
 File:
@@ -834,7 +831,6 @@ If no valid pair exists:
 A token can enter `token_catalog` from:
 - manual track
 - Dex discovery worker
-- `dex:subscribe` socket path
 - PumpFun migrate path
 - config-related upserts for some user overlays
 
@@ -913,7 +909,6 @@ Reason for this split:
 Admin status endpoint currently exposes:
 - socket hub status
 - catalog worker status
-- market snapshot worker status
 - Meteora snapshot worker status
 - Dex discovery worker status
 

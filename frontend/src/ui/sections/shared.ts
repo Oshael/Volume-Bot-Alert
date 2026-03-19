@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, ManualTokenEntry, MeteoraEntry, RemovalLogEntry } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, RemovalLogEntry } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
@@ -119,8 +119,8 @@ export function bindBucketSortControls(section: ParentNode, controller: AppContr
 export function bindMonitoredSortControls(section: ParentNode, controller: AppController) {
   section.querySelectorAll<HTMLButtonElement>('[data-monitored-sort-mode]').forEach((button) => {
     button.addEventListener('click', () => {
-      const mode = button.dataset.monitoredSortMode as 'vol' | 'mcap' | 'age' | undefined;
-      const window = button.dataset.monitoredSortWindow as '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest' | undefined;
+      const mode = button.dataset.monitoredSortMode as MonitoredSortMode | undefined;
+      const window = button.dataset.monitoredSortWindow as MonitoredSortWindow | undefined;
       if (!mode) return;
 
       const wrap = button.closest<HTMLElement>('[data-sort-wrap]');
@@ -189,9 +189,6 @@ export function renderLogSummary(title: string, entries: RemovalLogEntry[], clea
   `;
 }
 
-type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
-type BucketSortWindow = '1h' | '6h' | '24h' | 'newest' | 'oldest';
-
 function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
   if (mode === 'age') return item.createdAt || 0;
   if (mode === 'mcap') return item.mcap || 0;
@@ -205,28 +202,39 @@ function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: B
   return item.volume24h || 0;
 }
 
-function sortBucketTokens(tokens: ManualTokenEntry[], mode: BucketSortMode, window: BucketSortWindow) {
+function compareBucketCriterion(a: ManualTokenEntry, b: ManualTokenEntry, criterion: BucketSortCriterion) {
+  const aMetric = getBucketMetric(a, criterion.mode, criterion.window);
+  const bMetric = getBucketMetric(b, criterion.mode, criterion.window);
+  if ((criterion.mode === 'age' && criterion.window === 'oldest') || (criterion.mode === 'mcap' && criterion.window === 'lowest')) {
+    return aMetric - bMetric;
+  }
+  return bMetric - aMetric;
+}
+
+function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSortCriterion[]) {
   return [...tokens].sort((a, b) => {
-    const delta = mode === 'age' && window === 'oldest'
-      ? getBucketMetric(a, mode, window) - getBucketMetric(b, mode, window)
-      : getBucketMetric(b, mode, window) - getBucketMetric(a, mode, window);
-    if (delta !== 0) return delta;
+    for (const criterion of criteria) {
+      const delta = compareBucketCriterion(a, b, criterion);
+      if (delta !== 0) return delta;
+    }
+    const createdDelta = (b.createdAt || 0) - (a.createdAt || 0);
+    if (createdDelta !== 0) return createdDelta;
     return (b.mcap || 0) - (a.mcap || 0);
   });
 }
 
-export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortMode: BucketSortMode = 'mcap', sortWindow: BucketSortWindow = '24h', meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
+export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens loaded for this account yet.</p>';
   const starredSet = new Set(starredTokens);
-  const sorted = sortBucketTokens(tokens, sortMode, sortWindow);
+  const sorted = sortBucketTokens(tokens, sortCriteria);
   return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool });
 }
 
-export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortMode: BucketSortMode = 'vol', sortWindow: BucketSortWindow = '24h', meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
+export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
   if (tokens.length === 0) return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
 
   const starredSet = new Set(starredTokens);
-  const sorted = sortBucketTokens(tokens, sortMode, sortWindow);
+  const sorted = sortBucketTokens(tokens, sortCriteria);
   const safePerPage = Math.max(10, Math.floor(perPage) || 30);
   const totalPages = Math.max(1, Math.ceil(sorted.length / safePerPage));
   const safePage = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);

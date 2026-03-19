@@ -89,7 +89,7 @@ Last reviewed against code on `2026-03-19` after auth hardening via `HttpOnly` c
 - Source of truth: backend-persisted snapshots
 - Collection is done by backend worker
 - Frontend reads persisted summaries from `GET /api/dashboard/monitored`
-- The legacy batch route still exists on backend, but the active frontend no longer polls `POST /api/catalog/meteora/batch`
+- The active frontend no longer uses the old batch-style Meteora read path
 
 ## Active Data Flows
 
@@ -120,7 +120,7 @@ Important:
     - MCAP baseline from `token_market_snapshots`
     - latest Meteora summary from `token_meteora_snapshots`
 - Current intended effect:
-  - frontend no longer depends on `dex:subscribe` as the main monitored refresh mechanism
+  - frontend no longer depends on per-token Dex socket fetches as the main monitored refresh mechanism
   - frontend refresh should read backend-prepared state instead of causing Dex fetches itself
 
 Current caution:
@@ -586,7 +586,7 @@ Current limitation:
   - `catalogWriteLimiter`: `60 / 15min / user+IP`
   - `catalogReadLimiter`: `120 / 15min / user+IP`
 - Current conclusion:
-  - the active frontend is no longer wasting requests on `meteora/batch`
+  - the active frontend is no longer wasting requests on the old batch-style Meteora path
   - rate limiting is no longer one global bucket for the whole API
   - remaining pressure points are still mainly dashboard polling plus per-token PumpFun metadata fetches
 

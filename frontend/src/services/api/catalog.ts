@@ -128,14 +128,3 @@ export function fetchPumpfunTokenMeta(mint: string, token?: string | null, metad
     imageUrl?: string | null;
   }>(`/api/catalog/pumpfun/${encodeURIComponent(mint)}/meta${suffix}`, { token });
 }
-
-export function fetchMeteoraBatch(addresses: string[], token?: string | null) {
-  return apiFetch<{
-    items: MeteoraBatchItem[];
-    count: number;
-  }>('/api/catalog/meteora/batch', {
-    method: 'POST',
-    body: JSON.stringify({ addresses }),
-    token,
-  }).then((response) => response.items || []);
-}

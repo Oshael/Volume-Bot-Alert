@@ -1,4 +1,4 @@
-import { createAppState, type AddressItem, type AlertEntry, type AppState, type ManualTokenEntry, type MeteoraEntry, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
+import { createAppState, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   fetchCurrentSession,
@@ -19,7 +19,6 @@ import {
   syncConfig,
   type ConfigPayload,
 } from '../services/api/config';
-import { normalizeManualDexPayload } from '../services/dex/normalize';
 import { fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -101,10 +100,10 @@ export interface AppController {
   setOldWeekPage(page: number): void;
   setRecentPerPage(perPage: number): void;
   setOldWeekPerPage(perPage: number): void;
-  setManualSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
-  setRecentSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
-  setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
-  setMonitoredSort(mode: 'vol' | 'mcap' | 'age', window?: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest'): void;
+  setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
+  setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
+  setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
+  setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
   toggleStarredToken(address: string): Promise<void>;
@@ -382,6 +381,49 @@ export function createAppController(): AppController {
 
   function normalizeMonitoredVolWindow(window: string | undefined): '5m' | '1h' | '6h' | '24h' {
     return window === '1h' || window === '6h' || window === '24h' ? window : '5m';
+  }
+
+  function normalizeMcapWindow(window: string | undefined): 'highest' | 'lowest' {
+    return window === 'lowest' ? 'lowest' : 'highest';
+  }
+
+  function getDefaultBucketSorts(scope: 'manual' | 'recent' | 'old-week'): BucketSortCriterion[] {
+    if (scope === 'manual') {
+      return [{ mode: 'mcap', window: 'highest' }];
+    }
+    return [{ mode: 'vol', window: '24h' }];
+  }
+
+  function getDefaultMonitoredSorts(): MonitoredSortCriterion[] {
+    return [{ mode: 'vol', window: '5m' }];
+  }
+
+  function toggleSortCriterion<T extends { mode: string; window: string }>(current: T[], next: T): T[] {
+    const exists = current.some((item) => item.mode === next.mode && item.window === next.window);
+    if (exists) {
+      return current.filter((item) => !(item.mode === next.mode && item.window === next.window));
+    }
+    return [next, ...current];
+  }
+
+  function normalizeBucketCriterion(mode: BucketSortMode, window?: BucketSortWindow): BucketSortCriterion {
+    if (mode === 'age') {
+      return { mode, window: normalizeBucketAgeWindow(window) };
+    }
+    if (mode === 'mcap') {
+      return { mode, window: normalizeMcapWindow(window) };
+    }
+    return { mode, window: normalizeBucketMetricWindow(window) };
+  }
+
+  function normalizeMonitoredCriterion(mode: MonitoredSortMode, window?: MonitoredSortWindow): MonitoredSortCriterion {
+    if (mode === 'age') {
+      return { mode, window: normalizeBucketAgeWindow(window) };
+    }
+    if (mode === 'mcap') {
+      return { mode, window: normalizeMcapWindow(window) };
+    }
+    return { mode, window: normalizeMonitoredVolWindow(window) };
   }
 
   function getPumpConfigNumber(key: string, fallback: number) {
@@ -1270,35 +1312,6 @@ export function createAppController(): AppController {
     refreshMonitoredPanelCounts();
   }
 
-  function mergeTrackedTokenPatch(address: string, patch: Partial<ManualTokenEntry>) {
-    if (isBlocked(address)) {
-      return;
-    }
-
-    let nextEntry: ManualTokenEntry | null = null;
-
-    state.data.monitoredTokens = state.data.monitoredTokens.map((item) => {
-      if (item.address !== address) return item;
-
-      nextEntry = {
-        ...item,
-        ...patch,
-        prevVolume5m: item.volume5m ?? item.prevVolume5m ?? null,
-        prevMcap: item.mcap ?? item.prevMcap ?? null,
-        deadCycles: patch.volume5m === 0 ? (item.deadCycles ?? 0) + 1 : 0,
-      };
-      maybeFireSpecialAlerts(nextEntry);
-      maybeFireLocalAlert(nextEntry);
-      return nextEntry;
-    });
-
-    if (nextEntry) {
-      state.data.manualTokens = state.data.manualTokens.map((item) => (item.address === address ? { ...nextEntry! } : item));
-      sweepMinMcapRemove();
-      deriveAgeBuckets();
-    }
-  }
-
   async function refreshMonitoredDashboard() {
     const token = state.session.token;
     if (!token || monitoredRefreshInFlight) {
@@ -1367,25 +1380,6 @@ export function createAppController(): AppController {
         stopMonitoringTimers();
         clearSession();
         setError(`Session revoked by server: ${reason}`);
-        emit();
-      },
-      onDexTokenData(payload) {
-        if (state.runtime.mode !== 'active') {
-          return;
-        }
-        const debugWindow = window as Window & { __botDexDebug?: { patchCount: number; lastAddress: string | null; lastAt: number | null } };
-        const currentDebug = debugWindow.__botDexDebug ?? { patchCount: 0, lastAddress: null, lastAt: null };
-        debugWindow.__botDexDebug = {
-          patchCount: currentDebug.patchCount + 1,
-          lastAddress: payload.address,
-          lastAt: Date.now(),
-        };
-
-        const patch = normalizeManualDexPayload(payload.address, payload.data ?? payload);
-        if (!patch) {
-          return;
-        }
-        mergeTrackedTokenPatch(payload.address, patch);
         emit();
       },
       onPumpStatus(payload) {
@@ -1505,14 +1499,10 @@ export function createAppController(): AppController {
     state.ui.oldWeekPage = 0;
     state.ui.recentPerPage = 30;
     state.ui.oldWeekPerPage = 30;
-    state.ui.manualSort = 'mcap';
-    state.ui.manualSortWindow = '24h';
-    state.ui.recentSort = 'vol';
-    state.ui.recentSortWindow = '24h';
-    state.ui.oldWeekSort = 'vol';
-    state.ui.oldWeekSortWindow = '24h';
-    state.ui.monitoredSort = 'vol';
-    state.ui.monitoredSortWindow = '5m';
+    state.ui.manualSorts = getDefaultBucketSorts('manual');
+    state.ui.recentSorts = getDefaultBucketSorts('recent');
+    state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
+    state.ui.monitoredSorts = getDefaultMonitoredSorts();
     hydrateSoundSettings();
   }
 
@@ -1697,40 +1687,32 @@ export function createAppController(): AppController {
       void persistUiConfigs({ 'old-week-per-page': state.ui.oldWeekPerPage });
       emit();
     },
-    setManualSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest') {
-      state.ui.manualSort = mode;
-      if (mode === 'age') {
-        state.ui.manualSortWindow = normalizeBucketAgeWindow(window);
-      } else if (mode !== 'mcap') {
-        state.ui.manualSortWindow = normalizeBucketMetricWindow(window);
-      }
+    setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
+      state.ui.manualSorts = toggleSortCriterion(
+        state.ui.manualSorts,
+        normalizeBucketCriterion(mode, window),
+      );
       emit();
     },
-    setRecentSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest') {
-      state.ui.recentSort = mode;
-      if (mode === 'age') {
-        state.ui.recentSortWindow = normalizeBucketAgeWindow(window);
-      } else if (mode !== 'mcap') {
-        state.ui.recentSortWindow = normalizeBucketMetricWindow(window);
-      }
+    setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
+      state.ui.recentSorts = toggleSortCriterion(
+        state.ui.recentSorts,
+        normalizeBucketCriterion(mode, window),
+      );
       emit();
     },
-    setOldWeekSort(mode: 'vol' | 'mcap' | 'pchange' | 'age', window?: '1h' | '6h' | '24h' | 'newest' | 'oldest') {
-      state.ui.oldWeekSort = mode;
-      if (mode === 'age') {
-        state.ui.oldWeekSortWindow = normalizeBucketAgeWindow(window);
-      } else if (mode !== 'mcap') {
-        state.ui.oldWeekSortWindow = normalizeBucketMetricWindow(window);
-      }
+    setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow) {
+      state.ui.oldWeekSorts = toggleSortCriterion(
+        state.ui.oldWeekSorts,
+        normalizeBucketCriterion(mode, window),
+      );
       emit();
     },
-    setMonitoredSort(mode: 'vol' | 'mcap' | 'age', window?: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest') {
-      state.ui.monitoredSort = mode;
-      if (mode === 'age') {
-        state.ui.monitoredSortWindow = normalizeBucketAgeWindow(window);
-      } else if (mode === 'vol') {
-        state.ui.monitoredSortWindow = normalizeMonitoredVolWindow(window);
-      }
+    setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow) {
+      state.ui.monitoredSorts = toggleSortCriterion(
+        state.ui.monitoredSorts,
+        normalizeMonitoredCriterion(mode, window),
+      );
       emit();
     },
     setSoundEnabled(enabled: boolean) {

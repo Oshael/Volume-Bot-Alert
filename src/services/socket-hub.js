@@ -1,6 +1,6 @@
 /**
  * Socket.io Hub
- * Authenticates clients via JWT, distributes real-time data.
+ * Authenticates clients via the backend session token, distributes real-time data.
  *
  * Events sent to clients:
  * - pump:newToken     - new token created on PumpFun
@@ -8,11 +8,9 @@
  * - pump:migrate      - token migrated to DEX
  * - pump:status       - PumpFun connection status
  * - sol:price         - SOL/USD price update
- * - dex:tokenData     - DexScreener data for requested token
  * - auth:revoked      - session revoked; client must logout
  *
  * Events received from clients:
- * - dex:subscribe     - { address } - request DexScreener data for a token
  * - pump:subscribe    - { mint }    - subscribe to a specific PumpFun token
  * - pump:unsubscribe  - { mint }    - unsubscribe from a PumpFun token
  */
@@ -25,7 +23,6 @@ const Session = require('../models/session');
 const User = require('../models/user');
 const solPrice = require('./sol-price');
 const pumpfun = require('./pumpfun-ws');
-const dexscreener = require('./dexscreener');
 const tokenCatalog = require('../models/token-catalog');
 
 let io = null;
@@ -50,31 +47,6 @@ function queueCatalogUpsert(token, source = 'unknown') {
       const address = token?.address || token?.mint || 'unknown';
       console.error(`[TokenCatalog] Failed to upsert ${source} token ${address}:`, err.message);
     });
-}
-
-function buildCatalogTokenFromDex(address, data) {
-  const bestPair = dexscreener.getBestPair(data, 'solana');
-  if (!bestPair) return null;
-
-  const twitterUrl = bestPair.info?.socials?.find((item) => item.type === 'twitter')?.url || null;
-
-  return {
-    address,
-    chain: bestPair.chainId || 'solana',
-    symbol: bestPair.baseToken?.symbol || null,
-    name: bestPair.baseToken?.name || null,
-    mcap: bestPair.marketCap || null,
-    price: bestPair.priceUsd || null,
-    priceChange1h: bestPair?.priceChange?.h1 ?? null,
-    priceChange6h: bestPair?.priceChange?.h6 ?? null,
-    priceChange24h: bestPair?.priceChange?.h24 ?? null,
-    tokenCreatedAt: bestPair?.pairCreatedAt ?? null,
-    pairAddress: bestPair.pairAddress || null,
-    pairUrl: bestPair.url || null,
-    imageUrl: bestPair.info?.imageUrl || null,
-    twitterUrl,
-    isActiveMonitorCandidate: true,
-  };
 }
 
 function buildCatalogTokenFromPump(msg) {
@@ -264,26 +236,6 @@ function init(httpServer) {
 
     socket.emit('sol:price', { price: solPrice.getPrice() });
     socket.emit('pump:status', pumpfun.getStatus());
-
-    socket.on('dex:subscribe', async (data) => {
-      if (!data?.address || typeof data.address !== 'string') return;
-
-      const address = data.address.replace(/[^a-zA-Z0-9]/g, '');
-      if (address.length < 20 || address.length > 64) return;
-
-      try {
-        const result = await dexscreener.getTokenPairs(address);
-        if (result) {
-          socket.emit('dex:tokenData', { address, data: result });
-          const catalogToken = buildCatalogTokenFromDex(address, result);
-          if (catalogToken) {
-            queueCatalogUpsert(catalogToken, 'dexscreener');
-          }
-        }
-      } catch (err) {
-        console.error(`[Socket.io] DexScreener error for ${address}:`, err.message);
-      }
-    });
 
     socket.on('pump:subscribe', (data) => {
       const mint = sanitizeMint(data?.mint);

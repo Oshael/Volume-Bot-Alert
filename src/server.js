@@ -20,7 +20,6 @@ const dashboardRoutes = require('./routes/dashboard');
 // Services
 const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
-const marketSnapshotWorker = require('./services/market-snapshot-worker');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 
@@ -148,7 +147,6 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
   res.json({
     ...socketHub.getStatus(),
     catalogWorker: catalogWorker.getStatus(),
-    marketSnapshotWorker: marketSnapshotWorker.getStatus(),
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
   });
@@ -231,7 +229,7 @@ function startServer(port = config.port) {
     console.log('   GET  /api/admin/logs        ??? Login attempts');
     console.log('   GET  /api/admin/ws-status   ??? WebSocket hub status');
     console.log('   --- WebSocket ---');
-    console.log('   Socket.io on /            ??? Real-time data (JWT auth)');
+    console.log('   Socket.io on /            ??? Real-time data (cookie session auth)');
     console.log('');
   });
 
