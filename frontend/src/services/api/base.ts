@@ -13,12 +13,7 @@ export function resolveApiBase(locationLike: Location = window.location): string
   if (isLocal) {
     return 'http://localhost:3000';
   }
-
-  if (host.endsWith('.vercel.app')) {
-    return PROD_API_BASE;
-  }
-
-  return locationLike.origin.replace(/\/+$/, '');
+  return PROD_API_BASE;
 }
 
 export interface ApiFetchOptions extends RequestInit {
