@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-19` after the auth/account UI expansion, `HttpOnly` cookie migration, backend invite-consume fix, PumpFun row-dismiss/session fixes, and frontend XSS/CSP hardening.
+Last reviewed against code on `2026-03-20` after real email auth delivery, login email OTP, password-reset/verification rollout, and auth modal interaction fixes.
 
 ## High-Level Product Shape
 
@@ -303,14 +303,23 @@ Files:
 
 Current login behavior:
 - login is the entry point into the backend-owned session model
-- success path:
+- current successful path:
   - `POST /api/auth/login`
+  - backend verifies email/password
+  - backend sends login OTP to the verified account email
+  - `POST /api/auth/login-otp/verify`
   - `GET /api/auth/me`
   - `GET /api/config`
   - `GET /api/dashboard/monitored`
 - restore path:
   - `GET /api/auth/me`
   - same config/bootstrap hydration path
+
+Login access rules:
+- unverified accounts cannot sign in
+- login session/cookie is created only after OTP verification succeeds
+- login OTP is email-based and currently uses a `6`-digit code
+- login OTP supports resend
 
 Current login UX features:
 - `TrendScope` branding with `Volume Bot Tracker`
@@ -323,6 +332,8 @@ Current login UX features:
 - caps-lock hint
 - validation/focus recovery on the correct field after failed submit
 - old-password warning after local password-change history match
+- email OTP modal to finish sign-in
+- auth modals now use focus trapping so `Tab` stays inside the active modal
 - separated support actions:
   - `Create Account`
   - `Forgot Password`
@@ -349,19 +360,25 @@ Behavior:
   - `username`
   - `email`
   - `password`
+  - `confirm password`
   - `invite code`
 - invite can be validated before submit
 - submit path:
   - `POST /api/auth/register`
-  - `GET /api/auth/me`
-  - `GET /api/config`
-  - `GET /api/dashboard/monitored`
+  - account is created as `is_email_verified = false`
+  - backend attempts to send verification email
+  - frontend opens the post-register verification notice modal
+
+Current auth rule:
+- registration does not auto-login the user
+- account access stays blocked until email verification succeeds
 
 UX rules:
 - register-specific errors stay inside the register modal
 - register errors do not leak into the base login flash
 - field focus returns to the relevant field on failure
 - values stay preserved on failed submit
+- password requires confirmation before submit
 
 Backend rule added in this session:
 - invite usage is consumed only on successful registration
@@ -381,12 +398,15 @@ Behavior:
 - requires:
   - current password
   - new password
+  - confirm new password
 - submit path:
   - `POST /api/auth/change-password`
 - on success:
   - backend revokes all sessions for the account
   - frontend clears current session
   - user is returned to login
+  - frontend shows a password-changed success modal
+  - backend sends a password-changed notification email
 
 UX rules:
 - change-password errors are isolated to the modal
@@ -394,6 +414,8 @@ UX rules:
 - wrong current password shows inline feedback in the modal
 - focus returns to `Current password` on incorrect current password
 - `Show / Hide` uses the minimal text-only style preferred in the current UI
+- `Tab` is trapped inside the modal
+- config inputs behind the modal no longer react to modal field blur/change events
 
 Security behavior:
 - changing password revokes other sessions too
@@ -405,15 +427,60 @@ Files:
 - `frontend/src/ui/sections/layout-sections.ts`
 - `frontend/src/state/app-controller.ts`
 - `frontend/src/state/app-state.ts`
+- `frontend/src/services/api/auth.ts`
+- `src/routes/auth.js`
+- `src/services/auth-email.js`
+- `src/models/password-reset-token.js`
 
 Current status:
-- real self-serve email reset is not implemented yet
-- current modal is an honest support/recovery surface, not a fake reset form
+- real self-serve password reset is implemented
 
-Current purpose:
-- explain the official recovery path
-- warn against DM-based scams
-- avoid pretending that automated email reset already exists
+Behavior:
+- request path:
+  - `POST /api/auth/password-reset/request`
+  - generic response to avoid leaking whether the account exists
+- confirm path:
+  - link lands on frontend reset modal via query params
+  - user sets:
+    - new password
+    - confirm new password
+  - `POST /api/auth/password-reset/confirm`
+- success path:
+  - backend revokes all sessions for the account
+  - frontend clears the current session state
+  - user returns to login with success messaging
+  - backend sends a password-changed notification email
+
+Current rules:
+- reset email is only useful for active verified accounts
+- reset token is single-use
+- reset token expires
+- reset modal keeps focus trapped while open
+
+## Email Verification
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/services/api/auth.ts`
+- `src/routes/auth.js`
+- `src/services/auth-email.js`
+- `src/models/email-verification-token.js`
+
+Behavior:
+- verification email is sent after successful registration when email delivery is enabled
+- unverified accounts cannot log in
+- confirm path:
+  - verification link lands on frontend via query params
+  - frontend calls `POST /api/auth/verify-email/confirm`
+  - success opens an `Email Verified` success modal
+- resend path exists via:
+  - `POST /api/auth/verify-email/request`
+
+UI rules:
+- post-register flow shows an informational `Check Your Email` modal
+- that post-register modal is not the same as the manual resend form
+- closing the informational modal ends the flow instead of falling through to the resend form
 
 ## Access Help
 
@@ -471,10 +538,21 @@ Current sorting:
     - `6H`
     - `24H`
 - `MCAP`
+  - hover dropdown:
+    - `HIGHEST`
+    - `LOWEST`
 - `AGE`
   - hover dropdown:
     - `NEWEST`
     - `OLDEST`
+
+Sorting rules:
+- multiple sort criteria can stay active at the same time
+- the most recently toggled criterion has highest priority
+- `MCAP` is exclusive within its own group:
+  - `HIGHEST` or `LOWEST`
+- `AGE` is exclusive within its own group:
+  - `NEWEST` or `OLDEST`
 
 Important:
 - this panel is now backend-driven
@@ -503,7 +581,9 @@ Rules:
 Table features:
 - rank column `#`
 - sort by `VOL`, `MCAP`, `PCHANGE`, `AGE`
+- supports multiple active sort criteria at once
 - `AGE` supports `NEWEST` and `OLDEST`
+- `MCAP` supports `HIGHEST` and `LOWEST`
 
 ## Recent Tokens
 
@@ -530,6 +610,15 @@ Age sort options:
 - `NEWEST`
 - `OLDEST`
 
+MCAP sort options:
+- `HIGHEST`
+- `LOWEST`
+
+Sorting rules:
+- multiple criteria can be active at the same time
+- `AGE` remains exclusive inside its own group
+- `MCAP` remains exclusive inside its own group
+
 ## Old Tokens 1 Week+
 
 File:
@@ -553,6 +642,15 @@ Sorting:
 Age sort options:
 - `NEWEST`
 - `OLDEST`
+
+MCAP sort options:
+- `HIGHEST`
+- `LOWEST`
+
+Sorting rules:
+- multiple criteria can be active at the same time
+- `AGE` remains exclusive inside its own group
+- `MCAP` remains exclusive inside its own group
 
 ## Routed Bar Removal Logs
 

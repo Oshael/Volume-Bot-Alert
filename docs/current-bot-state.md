@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-19` after auth hardening via `HttpOnly` cookie sessions, removal of frontend token/debug exposure, validated login/create-account flow after the cookie migration, broad frontend XSS hardening, and a pragmatic CSP rollout on both frontend and backend.
+Last reviewed against code on `2026-03-20` after real email delivery, email verification, password reset, login email OTP, and auth-modal interaction stabilization.
 
 ## Current Runtime Shape
 
@@ -44,10 +44,16 @@ Last reviewed against code on `2026-03-19` after auth hardening via `HttpOnly` c
 - Source of truth: backend
 - Main endpoints:
   - `POST /api/auth/login`
+  - `POST /api/auth/login-otp/verify`
+  - `POST /api/auth/login-otp/resend`
   - `GET /api/auth/me`
   - `POST /api/auth/logout`
   - `POST /api/auth/logout-all`
   - `POST /api/auth/change-password`
+  - `POST /api/auth/verify-email/request`
+  - `POST /api/auth/verify-email/confirm`
+  - `POST /api/auth/password-reset/request`
+  - `POST /api/auth/password-reset/confirm`
 - Current session transport:
   - backend-issued `HttpOnly` cookie
   - frontend requests use `credentials: include`
@@ -109,6 +115,12 @@ Important:
 - The bot does not auto-start monitoring on login/session restore.
 - Start/stop is manual in the current UI.
 - legacy frontend token storage was removed from the live auth flow
+
+Current login rule:
+- login is now two-step for verified accounts:
+  - password check
+  - email OTP verify
+- authenticated session/cookie is only created after OTP success
 
 ### 2. Monitored Tokens
 - Frontend refresh interval: `10s`
@@ -471,11 +483,8 @@ Current login implementation progress:
 - several auth-modal font experiments were tested (`Inter`, `Satoshi`, `Saira`) before settling on `Saira` as the default direction for the login/auth surfaces
 
 #### Still pending in the login roadmap
-- decide whether the recovery path / support affordance is now complete enough in its current modal form or still needs another product pass
+- decide whether the recovery/support affordance is already complete enough in its current modal form or still needs another product pass
 - evaluate whether the current field-error styling is the final direction or still too visually strong
-- future auth work still not implemented:
-  - password reset / forgot-password flow
-  - 2FA or secondary verification
 - decide whether login notices/flash states should gain small iconography or remain text+badge only
 - session restore after hard refresh (`F5`) was re-tested and is now considered resolved in the integrated frontend
 - continue validating that each login UX refinement preserves the current backend-owned auth/session model and does not imply unsupported frontend-only behavior
@@ -483,56 +492,32 @@ Current login implementation progress:
   - login works again once the local test-account password matches the DB state
   - a quick create-account flow was manually validated as working
   - the temporary local login confusion came from a password changed during auth-test runs, not from the cookie migration itself
-- current auth/security implementation strategy from this point:
-  1. security hardening first
-     - audit and reduce XSS exposure from frontend HTML rendering
-     - add central escaping/safe URL handling for token-driven UI
-     - review CSRF posture now that auth is cookie-based
-     - only after that, move into real email-backed recovery flows
-  2. password reset with real email delivery
-     - choose provider
-     - add reset-token generation/validation
-     - add backend endpoints and frontend screens
-  3. 2FA / secondary verification
-  4. lower-priority auth polish
+- current auth/security implementation status from this point:
+  1. real email verification is implemented
+  2. real password reset is implemented
+  3. secondary verification is implemented as email OTP on login
+  4. lower-priority auth polish remains open
      - final support/recovery wording pass
      - optional flash/icon treatment pass
 
 #### Next auth/security preparation plan
-1. Real password reset
-   - production email provider chosen for the first rollout: `Resend`
-   - define reset-token storage, expiry, consume-once behavior, and revocation semantics
-   - add backend endpoints for:
-     - request reset
-     - validate/reset token
-     - consume token and set new password
-   - add frontend screens for:
-     - request reset
-     - reset form
-     - success / invalid / expired states
-   - keep all user-facing responses neutral enough to avoid account enumeration
-   - align reset completion with the current backend-owned session model:
-     - revoke old sessions after password change/reset
-     - clear active cookie session
-     - force next login with the new password
-
-2. 2FA / secondary verification
-   - start only after the real password-reset flow is stable
-   - decide whether the first version is TOTP, email OTP, or another secondary verification step
-   - define enrollment, backup/recovery, and disable/reset flows before implementation
-   - ensure the login/auth UI can absorb the extra verification step without a full redesign
-
-3. Session policy review
+1. Session policy review
    - re-evaluate session expiration and cleanup cadence
    - review how many historical sessions a single account is allowed to accumulate
    - keep `logout-all` behavior as the reference point for expected session invalidation
    - decide whether older inactive sessions should be capped, pruned faster, or surfaced more clearly in admin tooling
+   - review whether OTP challenge cleanup should also be tightened beyond the current flow-based cleanup
 
-4. Final security pass
+2. Final security pass
    - continue reducing older render surfaces that still rely heavily on HTML-string rendering
    - prioritize the most sensitive auth/account/config surfaces first
    - preserve the current CSP and cookie-auth posture while reducing structural XSS risk
    - only after the auth roadmap is stable, consider broader `innerHTML` reduction in lower-risk UI areas
+
+3. Stronger secondary verification follow-up
+   - current secondary verification is email OTP
+   - if stronger account protection is needed later, the next upgrade path is TOTP + backup codes
+   - keep this as a later hardening step, not the immediate next priority
 
 #### Email infrastructure checkpoint
 - Chosen provider for the first real email rollout: `Resend`
@@ -551,10 +536,13 @@ Current login implementation progress:
     - password reset
 - Current backend auth/email status:
   - registration now attempts to send an email-verification link when email delivery is enabled
+  - unverified accounts cannot log in
   - authenticated users can request verification-email resend
   - verification confirm route is in place and consumes single-use tokens
   - password-reset request + confirm routes are in place
   - password reset now revokes all active sessions after success
+  - login now sends an email OTP before session creation
+  - login OTP resend + verify routes are in place
 
 ### Manual tokens
 - Must remain visible in `Manual Tokens`

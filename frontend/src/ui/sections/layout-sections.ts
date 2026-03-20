@@ -1102,7 +1102,9 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
     controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
   });
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
-  section.querySelector<HTMLButtonElement>('[data-action="open-change-password"]')?.addEventListener('click', () => {
+  section.querySelector<HTMLButtonElement>('[data-action="open-change-password"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     controller.openAuthPanel('change-password');
     section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
   });
@@ -1816,18 +1818,63 @@ function bindSoundUploadStrip(section: HTMLElement, state: AppState) {
 }
 
 function bindConfigToggleMenus(section: HTMLElement, controller: AppController) {
-  section.querySelectorAll<HTMLButtonElement>('[data-config-toggle-key]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const key = button.dataset.configToggleKey;
-      const nextValue = button.dataset.configToggleNext;
-      if (!key || !nextValue) return;
+  const persistWrapDraft = (wrap: HTMLElement) => {
+    if (wrap.dataset.configDirty !== 'true') {
+      return;
+    }
 
-      const wrap = button.closest<HTMLElement>('[data-sort-wrap]');
-      if (wrap) {
-        wrap.classList.remove('open');
+    const payload: Record<string, string> = {};
+    wrap.querySelectorAll<HTMLButtonElement>('[data-config-toggle-key]').forEach((button) => {
+      const key = button.dataset.configToggleKey;
+      if (!key) {
+        return;
+      }
+      payload[key] = button.classList.contains('active') ? 'on' : 'off';
+    });
+
+    wrap.dataset.configDirty = 'false';
+    if (Object.keys(payload).length > 0) {
+      void controller.saveMonitoringConfig(payload);
+    }
+  };
+
+  const updateWrapSummary = (wrap: HTMLElement) => {
+    const toggleButton = wrap.querySelector<HTMLButtonElement>('.config-menu-button');
+    const items = wrap.querySelectorAll<HTMLButtonElement>('[data-config-toggle-key]');
+    if (!toggleButton || items.length === 0) {
+      return;
+    }
+    const enabledCount = [...items].filter((item) => item.classList.contains('active')).length;
+    toggleButton.textContent = `${enabledCount}/${items.length} on`;
+  };
+
+  section.querySelectorAll<HTMLElement>('.config-menu-wrap').forEach((wrap) => {
+    const observer = new MutationObserver(() => {
+      if (!wrap.classList.contains('open')) {
+        persistWrapDraft(wrap);
+      }
+    });
+    observer.observe(wrap, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  section.querySelectorAll<HTMLButtonElement>('[data-config-toggle-key]').forEach((button) => {
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const wrap = button.closest<HTMLElement>('.config-menu-wrap');
+      if (!wrap) {
+        return;
       }
 
-      void controller.saveMonitoringConfig({ [key]: nextValue });
+      const isActive = button.classList.contains('active');
+      button.classList.toggle('active', !isActive);
+      button.dataset.configToggleNext = isActive ? 'on' : 'off';
+      const stateLabel = button.querySelector<HTMLElement>('.config-toggle-state');
+      if (stateLabel) {
+        stateLabel.textContent = isActive ? 'OFF' : 'ON';
+      }
+      wrap.dataset.configDirty = 'true';
+      updateWrapSummary(wrap);
     });
   });
 }

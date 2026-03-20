@@ -1059,9 +1059,7 @@ a {
   z-index: 40;
 }
 
-.legacy-user-menu.open .legacy-user-dropdown,
-.legacy-user-menu:hover .legacy-user-dropdown,
-.legacy-user-menu:focus-within .legacy-user-dropdown {
+.legacy-user-menu.open .legacy-user-dropdown {
   display: flex;
 }
 
@@ -2265,8 +2263,9 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  width: 100%;
   min-height: 28px;
-  padding: 5px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
@@ -2276,6 +2275,11 @@ TEMP_LEGACY_BAR_TITLE {
   letter-spacing: 0.8px;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.config-toggle-item:hover {
+  border-color: rgba(0, 212, 255, 0.28);
+  color: var(--text);
 }
 
 .config-toggle-item.active {
