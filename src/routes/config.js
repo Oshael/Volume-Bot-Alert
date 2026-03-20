@@ -81,10 +81,12 @@ async function upsertCatalogItemsAndSchedule(items, source) {
  */
 router.get('/', async (req, res) => {
   try {
-    const configs = await userConfig.getAll(req.user.id);
-    const tokens = await userToken.getAll(req.user.id);
-    const blocklist = await userBlocklist.getAll(req.user.id);
-    const starredTokens = await userStarredToken.getAll(req.user.id);
+    const [configs, tokens, blocklist, starredTokens] = await Promise.all([
+      userConfig.getAll(req.user.id),
+      userToken.getAll(req.user.id),
+      userBlocklist.getAll(req.user.id),
+      userStarredToken.getAll(req.user.id),
+    ]);
 
     res.json({
       configs,
@@ -276,9 +278,7 @@ router.patch('/', async (req, res) => {
     }
 
     await userConfig.setMultiple(req.user.id, validation.configs);
-
-    const updated = await userConfig.getAll(req.user.id);
-    res.json({ message: 'Config updated', configs: updated });
+    res.json({ message: 'Config updated', configs: validation.configs });
   } catch (err) {
     console.error('PATCH /config error:', err.message);
     res.status(500).json({ error: 'Failed to update configs' });
