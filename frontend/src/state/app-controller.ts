@@ -1602,21 +1602,30 @@ export function createAppController(): AppController {
   }
 
   async function reloadConfigInternal(token: string) {
-    const payload = await fetchConfig(token);
-    let monitoredDashboardTokens: DashboardMonitoredToken[] = [];
+    const [payload, monitoredDashboardTokensResult] = await Promise.allSettled([
+      fetchConfig(token),
+      fetchDashboardMonitored(token),
+    ]);
 
-    try {
-      monitoredDashboardTokens = await fetchDashboardMonitored(token);
-    } catch (error) {
+    if (payload.status !== 'fulfilled') {
+      throw payload.reason;
+    }
+
+    let monitoredDashboardTokens: DashboardMonitoredToken[] = [];
+    if (monitoredDashboardTokensResult.status === 'fulfilled') {
+      monitoredDashboardTokens = monitoredDashboardTokensResult.value;
+    } else {
       writeConfigDebug('reloadConfigInternal:dashboard-failed', {
-        error: error instanceof Error ? error.message : 'unknown_dashboard_error',
+        error: monitoredDashboardTokensResult.reason instanceof Error
+          ? monitoredDashboardTokensResult.reason.message
+          : 'unknown_dashboard_error',
       });
     }
 
     writeConfigDebug('reloadConfigInternal:fetched', {
-      fetchedMinVol: payload.configs?.['min-vol'],
+      fetchedMinVol: payload.value.configs?.['min-vol'],
     });
-    applyConfig(payload, monitoredDashboardTokens);
+    applyConfig(payload.value, monitoredDashboardTokens);
   }
 
   async function handleAuthRouteIntent() {

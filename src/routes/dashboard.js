@@ -119,8 +119,10 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
   try {
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, req.query?.minMcap);
     const addresses = tokens.map((item) => item.address);
-    const historyRows = await tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 });
-    const marketRows = await tokenMarketSnapshot.listLatestByAddresses(addresses, 60);
+    const [historyRows, marketRows] = await Promise.all([
+      tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 }),
+      tokenMarketSnapshot.listLatestByAddresses(addresses, 60),
+    ]);
     const meteoraByAddress = new Map();
     const marketByAddress = new Map();
 
