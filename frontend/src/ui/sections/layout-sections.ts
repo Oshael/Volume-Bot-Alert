@@ -1514,9 +1514,8 @@ function bindInviteAssistancePanel(section: ParentNode, controller: AppControlle
 function bindEmailVerificationPanel(section: ParentNode, controller: AppController, state: AppState) {
   bindFocusTrap(section.querySelector<HTMLElement>('[data-auth-panel="email-verification"]'));
   const closePanel = () => {
-    controller.clearNotice();
-    controller.clearError();
     controller.closeAuthPanel();
+    controller.clearNotice();
   };
   section.querySelectorAll<HTMLButtonElement>('[data-action="close-email-verification-panel"]').forEach((button) => {
     button.addEventListener('click', closePanel);
