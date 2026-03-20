@@ -142,9 +142,6 @@ export function createAppController(): AppController {
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
-  let monitoringConfigPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  let monitoringConfigPersistRevision = 0;
-  let pendingMonitoringConfigs: Record<string, string | number> = {};
 
   function writeConfigDebug(_stage: string, _extra: Record<string, unknown> = {}) {
     return;
@@ -354,42 +351,6 @@ export function createAppController(): AppController {
       starredPersistTimer = null;
       void persistStarredTokens(snapshot, revision);
     }, 120);
-  }
-
-  function queueMonitoringConfigPersist() {
-    const token = state.session.token;
-    if (!token || Object.keys(pendingMonitoringConfigs).length === 0) {
-      return;
-    }
-
-    monitoringConfigPersistRevision += 1;
-    const revision = monitoringConfigPersistRevision;
-
-    if (monitoringConfigPersistTimer) {
-      clearTimeout(monitoringConfigPersistTimer);
-    }
-
-    monitoringConfigPersistTimer = setTimeout(() => {
-      monitoringConfigPersistTimer = null;
-      const snapshot = { ...pendingMonitoringConfigs };
-      pendingMonitoringConfigs = {};
-
-      void patchConfig(snapshot, token)
-        .then((result) => {
-          if (revision !== monitoringConfigPersistRevision) {
-            return;
-          }
-          state.data.configs = { ...state.data.configs, ...result.configs };
-        })
-        .catch((error) => {
-          if (revision !== monitoringConfigPersistRevision) {
-            return;
-          }
-          pendingMonitoringConfigs = { ...snapshot, ...pendingMonitoringConfigs };
-          setError(error instanceof Error ? error.message : 'Failed to save config');
-          emit();
-        });
-    }, 180);
   }
 
   function applyUiPreferencesFromConfigs() {
@@ -2325,7 +2286,8 @@ export function createAppController(): AppController {
       }
     },
     async saveMonitoringConfig(configs: Record<string, number | string>) {
-      if (!state.session.token) {
+      const token = state.session.token;
+      if (!token) {
         setError('No authenticated session');
         emit();
         return;
@@ -2334,13 +2296,12 @@ export function createAppController(): AppController {
       setError(null);
 
       try {
-        state.data.configs = { ...state.data.configs, ...configs };
+        const patchResult = await patchConfig(configs, token);
+        state.data.configs = { ...state.data.configs, ...patchResult.configs };
         applyUiPreferencesFromConfigs();
         persistSoundSettings();
         sweepMinMcapRemove();
         deriveAgeBuckets();
-        pendingMonitoringConfigs = { ...pendingMonitoringConfigs, ...configs };
-        queueMonitoringConfigPersist();
         emit();
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to save config');
