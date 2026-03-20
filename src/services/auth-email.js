@@ -116,6 +116,41 @@ function buildPasswordChangedEmail({ username, loginUrl }) {
   };
 }
 
+function buildLoginOtpEmail({ username, code, expiresMinutes }) {
+  const safeName = String(username || 'there').trim() || 'there';
+  const safeCode = String(code || '').trim();
+  const text = [
+    `Hi ${safeName},`,
+    '',
+    'Use this TrendScope verification code to finish signing in:',
+    safeCode,
+    '',
+    `This code expires in ${expiresMinutes} minute(s).`,
+    'If this was not you, you can ignore this email and reset your password if needed.',
+  ].join('\n');
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#f4f4f4;background:#101314;padding:24px;">
+      <div style="max-width:560px;margin:0 auto;background:#171b1d;border:1px solid #2a3136;border-radius:14px;padding:24px;">
+        <h2 style="margin:0 0 12px;color:#ffffff;">TrendScope sign-in verification</h2>
+        <p style="margin:0 0 12px;">Hi ${safeName},</p>
+        <p style="margin:0 0 12px;">Use this code to finish signing in:</p>
+        <div style="margin:0 0 18px;padding:14px 16px;background:#101314;border:1px solid #2a3136;border-radius:12px;font-size:28px;letter-spacing:8px;font-weight:700;text-align:center;color:#ffffff;">
+          ${safeCode}
+        </div>
+        <p style="margin:0 0 10px;">This code expires in ${expiresMinutes} minute(s).</p>
+        <p style="margin:0;color:#b8c0c4;">If this was not you, ignore this email and reset your password if needed.</p>
+      </div>
+    </div>
+  `.trim();
+
+  return {
+    subject: 'Your TrendScope verification code',
+    text,
+    html,
+  };
+}
+
 async function sendPasswordResetEmail({ to, username, token, expiresMinutes = 30 }) {
   const resetUrl = buildUrl('/', { mode: 'reset-password', token });
   const payload = buildPasswordResetEmail({ username, resetUrl, expiresMinutes });
@@ -146,13 +181,24 @@ async function sendPasswordChangedEmail({ to, username }) {
   });
 }
 
+async function sendLoginOtpEmail({ to, username, code, expiresMinutes = 10 }) {
+  const payload = buildLoginOtpEmail({ username, code, expiresMinutes });
+  return emailService.sendEmail({
+    to,
+    ...payload,
+    tags: [{ name: 'flow', value: 'login-otp' }],
+  });
+}
+
 module.exports = {
   getAppBaseUrl,
   buildUrl,
   buildPasswordResetEmail,
   buildEmailVerificationEmail,
   buildPasswordChangedEmail,
+  buildLoginOtpEmail,
   sendPasswordResetEmail,
   sendEmailVerificationEmail,
   sendPasswordChangedEmail,
+  sendLoginOtpEmail,
 };

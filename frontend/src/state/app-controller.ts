@@ -2,6 +2,7 @@ import { createAppState, type AddressItem, type AlertEntry, type AppState, type 
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
+  resendLoginOtp as resendLoginOtpRequest,
   confirmPasswordReset as confirmPasswordResetRequest,
   fetchCurrentSession,
   login,
@@ -12,6 +13,7 @@ import {
   register as registerRequest,
   type RegisterInput,
   type SessionUser,
+  verifyLoginOtp as verifyLoginOtpRequest,
 } from '../services/api/auth';
 import {
   addManualToken as addManualTokenRequest,
@@ -41,6 +43,7 @@ import {
   normalizeInviteCode,
   validateChangePasswordInput,
   validateLoginCredentials,
+  validateLoginOtpInput,
   validatePasswordResetConfirmInput,
   validatePasswordResetRequestInput,
   validateRegisterInput,
@@ -82,13 +85,15 @@ export interface AppController {
   state: AppState;
   init(): Promise<void>;
   login(email: string, password: string): Promise<void>;
+  verifyLoginOtp(code: string): Promise<void>;
+  resendLoginOtp(): Promise<void>;
   register(input: RegisterInput): Promise<void>;
   changePassword(currentPassword: string, newPassword: string, confirmNewPassword: string): Promise<void>;
   requestEmailVerification(email?: string): Promise<void>;
   requestPasswordReset(email: string): Promise<void>;
   confirmPasswordReset(newPassword: string, confirmNewPassword: string): Promise<void>;
   validateInvite(code: string): Promise<InviteValidationResponse>;
-  openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success'): void;
+  openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp'): void;
   closeAuthPanel(): void;
   logout(): Promise<void>;
   logoutAll(): Promise<void>;
@@ -1528,6 +1533,8 @@ export function createAppController(): AppController {
     state.ui.authPanel = 'none';
     state.ui.pendingVerificationEmail = null;
     state.ui.pendingPasswordResetToken = null;
+    state.ui.pendingLoginOtpChallengeToken = null;
+    state.ui.pendingLoginOtpEmailHint = null;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
     state.ui.recentPerPage = 30;
@@ -1683,7 +1690,7 @@ export function createAppController(): AppController {
       state.ui.loginErrorCount = 0;
       emit();
     },
-    openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success') {
+    openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp') {
       if (panel === 'change-password') {
         monitoringPausedForAuthPanel = state.runtime.mode === 'active';
         if (monitoringPausedForAuthPanel) {
@@ -1705,6 +1712,8 @@ export function createAppController(): AppController {
       state.ui.authPanel = 'none';
       state.ui.pendingVerificationEmail = null;
       state.ui.pendingPasswordResetToken = null;
+      state.ui.pendingLoginOtpChallengeToken = null;
+      state.ui.pendingLoginOtpEmailHint = null;
       monitoringPausedForAuthPanel = false;
       if (shouldResumeMonitoring) {
         startMonitoringTimers();
@@ -1898,7 +1907,18 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        await login(validated.email, validated.password);
+        const result = await login(validated.email, validated.password);
+        if (result.otpRequired && result.challengeToken) {
+          disconnectSocket();
+          stopMonitoringTimers();
+          clearSession();
+          state.ui.pendingLoginOtpChallengeToken = result.challengeToken;
+          state.ui.pendingLoginOtpEmailHint = result.otpEmailHint || validated.email;
+          state.ui.authPanel = 'email-otp';
+          state.ui.loginErrorCount = 0;
+          setNotice(result.message || 'Verification code sent. Check your email to finish signing in.');
+          return;
+        }
         const session = await fetchCurrentSession();
         applySession(session.user);
         await reloadConfigInternal(COOKIE_SESSION_MARKER);
@@ -1930,6 +1950,78 @@ export function createAppController(): AppController {
           ? state.ui.loginErrorCount + 1
           : 0;
         setError(message);
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async verifyLoginOtp(code: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validateLoginOtpInput({
+        challengeToken: state.ui.pendingLoginOtpChallengeToken || '',
+        code,
+      });
+      if (!validated.ok) {
+        setError(validated.message);
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Verifying code...');
+      emit();
+
+      try {
+        const result = await verifyLoginOtpRequest(validated.input);
+        if (!result.user) {
+          throw new Error('OTP verification succeeded without session payload');
+        }
+        state.ui.pendingLoginOtpChallengeToken = null;
+        state.ui.pendingLoginOtpEmailHint = null;
+        state.ui.authPanel = 'none';
+        applySession(result.user);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        state.ui.loginErrorCount = 0;
+        setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'OTP verification failed');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async resendLoginOtp() {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const challengeToken = String(state.ui.pendingLoginOtpChallengeToken || '').trim();
+      if (!challengeToken) {
+        setError('Verification challenge is missing. Please sign in again.');
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Sending verification code...');
+      emit();
+
+      try {
+        const result = await resendLoginOtpRequest(challengeToken);
+        state.ui.pendingLoginOtpChallengeToken = result.challengeToken || challengeToken;
+        state.ui.pendingLoginOtpEmailHint = result.otpEmailHint || state.ui.pendingLoginOtpEmailHint;
+        setNotice(result.message || 'A new verification code has been sent.');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to resend verification code');
       } finally {
         authSubmitInFlight = false;
         setBusy(false);

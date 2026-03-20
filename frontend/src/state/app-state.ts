@@ -242,9 +242,11 @@ export interface AppState {
     error: string | null;
     notice: string | null;
     loginErrorCount: number;
-    authPanel: 'none' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success';
+    authPanel: 'none' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp';
     pendingVerificationEmail: string | null;
     pendingPasswordResetToken: string | null;
+    pendingLoginOtpChallengeToken: string | null;
+    pendingLoginOtpEmailHint: string | null;
     recentPage: number;
     oldWeekPage: number;
     recentPerPage: number;
@@ -330,6 +332,8 @@ export function createAppState(): AppState {
       authPanel: 'none',
       pendingVerificationEmail: null,
       pendingPasswordResetToken: null,
+      pendingLoginOtpChallengeToken: null,
+      pendingLoginOtpEmailHint: null,
       recentPage: 0,
       oldWeekPage: 0,
       recentPerPage: 30,

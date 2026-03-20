@@ -123,6 +123,11 @@ module.exports = {
     max: parseInt(process.env.AUTH_EMAIL_RATE_LIMIT_MAX_REQUESTS || '6', 10),
   },
 
+  authOtpRateLimit: {
+    windowMs: parseInt(process.env.AUTH_OTP_RATE_LIMIT_WINDOW_MS || '900000', 10),
+    max: parseInt(process.env.AUTH_OTP_RATE_LIMIT_MAX_REQUESTS || '12', 10),
+  },
+
   invite: {
     expiryHours: parseInt(process.env.INVITE_EXPIRY_HOURS || '72', 10),
     maxUses: parseInt(process.env.INVITE_MAX_USES || '1', 10),
@@ -136,6 +141,9 @@ module.exports = {
     appBaseUrl: (process.env.APP_BASE_URL || '').trim(),
     verificationExpiresMinutes: parseInt(process.env.EMAIL_VERIFICATION_EXPIRES_MINUTES || '60', 10),
     passwordResetExpiresMinutes: parseInt(process.env.PASSWORD_RESET_EXPIRES_MINUTES || '30', 10),
+    loginOtpExpiresMinutes: parseInt(process.env.LOGIN_OTP_EXPIRES_MINUTES || '10', 10),
+    loginOtpLength: parseInt(process.env.LOGIN_OTP_LENGTH || '6', 10),
+    loginOtpMaxAttempts: parseInt(process.env.LOGIN_OTP_MAX_ATTEMPTS || '5', 10),
     resend: {
       apiKey: (process.env.RESEND_API_KEY || '').trim(),
     },

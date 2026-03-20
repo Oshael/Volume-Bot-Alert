@@ -66,9 +66,17 @@ const authEmailLimiter = buildLimiter({
   skipSuccessfulRequests: false,
 });
 
+const authOtpLimiter = buildLimiter({
+  ...config.authOtpRateLimit,
+  message: 'Too many verification attempts, please try again later',
+  keyGenerator: ipKeyGenerator,
+  skipSuccessfulRequests: false,
+});
+
 module.exports = {
   authLimiter,
   authEmailLimiter,
+  authOtpLimiter,
   defaultApiLimiter,
   dashboardLimiter,
   pumpfunMetaLimiter,

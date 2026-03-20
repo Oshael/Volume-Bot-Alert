@@ -12,10 +12,13 @@ export interface SessionUser {
 
 export interface LoginResponse {
   message: string;
-  user: SessionUser;
+  user?: SessionUser;
   emailVerificationRequired?: boolean;
   verificationEmailSent?: boolean;
   verificationEmailError?: string | null;
+  otpRequired?: boolean;
+  challengeToken?: string;
+  otpEmailHint?: string;
 }
 
 export interface RegisterInput {
@@ -49,6 +52,11 @@ export interface PasswordResetConfirmInput {
   token: string;
   newPassword: string;
   confirmNewPassword: string;
+}
+
+export interface LoginOtpVerifyInput {
+  challengeToken: string;
+  code: string;
 }
 
 export function fetchCurrentSession(token?: string | null) {
@@ -119,6 +127,22 @@ export function requestPasswordReset(input: PasswordResetRequestInput) {
 
 export function confirmPasswordReset(input: PasswordResetConfirmInput) {
   return apiFetch<{ message: string }>('/api/auth/password-reset/confirm', {
+    method: 'POST',
+    body: JSON.stringify(input),
+    token: null,
+  });
+}
+
+export function resendLoginOtp(challengeToken: string) {
+  return apiFetch<{ message: string; challengeToken: string; otpEmailHint?: string }>('/api/auth/login-otp/resend', {
+    method: 'POST',
+    body: JSON.stringify({ challengeToken }),
+    token: null,
+  });
+}
+
+export function verifyLoginOtp(input: LoginOtpVerifyInput) {
+  return apiFetch<LoginResponse>('/api/auth/login-otp/verify', {
     method: 'POST',
     body: JSON.stringify(input),
     token: null,

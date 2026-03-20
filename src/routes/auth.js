@@ -7,10 +7,11 @@ const Session = require('../models/session');
 const LoginAttempt = require('../models/login-attempt');
 const EmailVerificationToken = require('../models/email-verification-token');
 const PasswordResetToken = require('../models/password-reset-token');
+const LoginEmailOtpChallenge = require('../models/login-email-otp-challenge');
 const socketHub = require('../services/socket-hub');
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
-const { sendEmailVerificationEmail, sendPasswordResetEmail, sendPasswordChangedEmail } = require('../services/auth-email');
-const { authLimiter, authEmailLimiter } = require('../middleware/rate-limit');
+const { sendEmailVerificationEmail, sendPasswordResetEmail, sendPasswordChangedEmail, sendLoginOtpEmail } = require('../services/auth-email');
+const { authLimiter, authEmailLimiter, authOtpLimiter } = require('../middleware/rate-limit');
 const { getClient } = require('../models/db');
 
 const router = express.Router();
@@ -61,6 +62,41 @@ function buildAuthResponse(message, user, token) {
   return payload;
 }
 
+function maskEmail(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  const [localPart = '', domain = ''] = normalized.split('@');
+  if (!localPart || !domain) {
+    return normalized;
+  }
+  const visibleLocal = localPart.length <= 2
+    ? `${localPart[0] || ''}*`
+    : `${localPart.slice(0, 2)}${'*'.repeat(Math.max(2, localPart.length - 2))}`;
+  return `${visibleLocal}@${domain}`;
+}
+
+async function createAuthenticatedSession({ user, ipAddress, userAgent, res }) {
+  const token = jwt.sign(
+    { userId: user.id, role: user.role },
+    config.jwt.secret,
+    { expiresIn: config.jwt.expiresIn }
+  );
+
+  const decoded = jwt.decode(token);
+  const expiresAt = new Date(decoded.exp * 1000);
+
+  await Session.create({
+    userId: user.id,
+    token,
+    ipAddress,
+    userAgent,
+    expiresAt,
+  });
+
+  await User.updateLastLogin(user.id);
+  setAuthCookie(res, token, expiresAt);
+  return buildAuthResponse('Login successful', user, token);
+}
+
 async function issueEmailVerification({ user, ipAddress, userAgent }) {
   const expiresMinutes = Math.max(5, parseInt(config.email.verificationExpiresMinutes || 60, 10));
   const expiresAt = new Date(Date.now() + (expiresMinutes * 60 * 1000));
@@ -107,6 +143,33 @@ async function issuePasswordReset({ user, ipAddress, userAgent }) {
   });
 
   return {
+    expiresAt,
+    expiresMinutes,
+    delivery,
+  };
+}
+
+async function issueLoginOtp({ user, ipAddress, userAgent }) {
+  const expiresMinutes = Math.max(3, parseInt(config.email.loginOtpExpiresMinutes || 10, 10));
+  const expiresAt = new Date(Date.now() + (expiresMinutes * 60 * 1000));
+
+  await LoginEmailOtpChallenge.revokeAllForUser(user.id);
+  const { challengeToken, code } = await LoginEmailOtpChallenge.create({
+    userId: user.id,
+    expiresAt,
+    requestedIp: ipAddress,
+    userAgent,
+  });
+
+  const delivery = await sendLoginOtpEmail({
+    to: user.email,
+    username: user.username,
+    code,
+    expiresMinutes,
+  });
+
+  return {
+    challengeToken,
     expiresAt,
     expiresMinutes,
     delivery,
@@ -226,31 +289,113 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Email not verified. Check your inbox or resend verification before signing in.' });
     }
 
+    if (!config.email.enabled) {
+      return res.status(503).json({ error: 'Email delivery is not configured' });
+    }
+
     await LoginAttempt.record({ email, ipAddress: req.ip, success: true, userAgent: req.get('user-agent') });
-
-    const token = jwt.sign(
-      { userId: user.id, role: user.role },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn }
-    );
-
-    const decoded = jwt.decode(token);
-    const expiresAt = new Date(decoded.exp * 1000);
-
-    await Session.create({
-      userId: user.id,
-      token,
+    clearAuthCookie(res);
+    const otp = await issueLoginOtp({
+      user,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
-      expiresAt,
     });
 
-    await User.updateLastLogin(user.id);
-
-    setAuthCookie(res, token, expiresAt);
-    res.json(buildAuthResponse('Login successful', user, token));
+    res.json({
+      message: 'Verification code sent. Check your email to finish signing in.',
+      otpRequired: true,
+      challengeToken: otp.challengeToken,
+      otpEmailHint: maskEmail(user.email),
+    });
   } catch (err) {
     console.error('Login error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/login-otp/resend', authOtpLimiter, async (req, res) => {
+  try {
+    if (!config.email.enabled) {
+      return res.status(503).json({ error: 'Email delivery is not configured' });
+    }
+
+    const challengeToken = String(req.body?.challengeToken || '').trim();
+    if (!challengeToken) {
+      return res.status(400).json({ error: 'Verification challenge is required' });
+    }
+
+    const challenge = await LoginEmailOtpChallenge.findPendingByChallengeToken(challengeToken);
+    if (!challenge || challenge.consumed_at || new Date(challenge.expires_at).getTime() <= Date.now()) {
+      return res.status(400).json({ error: 'Verification challenge is invalid or expired. Please sign in again.' });
+    }
+
+    const user = await User.findById(challenge.user_id);
+    if (!user || !user.is_active || !user.is_email_verified) {
+      return res.status(400).json({ error: 'Verification challenge is invalid or expired. Please sign in again.' });
+    }
+
+    const nextChallenge = await issueLoginOtp({
+      user,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({
+      message: 'A new verification code has been sent.',
+      challengeToken: nextChallenge.challengeToken,
+      otpEmailHint: maskEmail(user.email),
+    });
+  } catch (err) {
+    console.error('Login OTP resend error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/login-otp/verify', authOtpLimiter, async (req, res) => {
+  try {
+    const challengeToken = String(req.body?.challengeToken || '').trim();
+    const code = String(req.body?.code || '').trim();
+
+    if (!challengeToken || !code) {
+      return res.status(400).json({ error: 'Verification challenge and code are required' });
+    }
+
+    const challenge = await LoginEmailOtpChallenge.findValidByChallengeToken(challengeToken);
+    if (!challenge) {
+      return res.status(400).json({ error: 'Verification code is invalid or expired. Please sign in again.' });
+    }
+
+    const user = await User.findById(challenge.user_id);
+    if (!user || !user.is_active || !user.is_email_verified) {
+      return res.status(400).json({ error: 'Verification code is invalid or expired. Please sign in again.' });
+    }
+
+    if (!LoginEmailOtpChallenge.verifyCode(challenge, code)) {
+      const attempts = await LoginEmailOtpChallenge.incrementAttempt(challenge.id);
+      const maxAttempts = Math.max(1, Number(config.email.loginOtpMaxAttempts || 5));
+      if (attempts >= maxAttempts) {
+        await LoginEmailOtpChallenge.revokeAllForUser(user.id);
+        return res.status(400).json({ error: 'Too many invalid verification attempts. Please sign in again.' });
+      }
+      return res.status(401).json({ error: 'Verification code is incorrect. Please try again.' });
+    }
+
+    const consumed = await LoginEmailOtpChallenge.consume(challenge.id);
+    if (!consumed) {
+      return res.status(400).json({ error: 'Verification code is invalid or expired. Please sign in again.' });
+    }
+
+    await LoginEmailOtpChallenge.revokeAllForUser(user.id);
+    const payload = await createAuthenticatedSession({
+      user,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      res,
+    });
+
+    res.json(payload);
+  } catch (err) {
+    console.error('Login OTP verify error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

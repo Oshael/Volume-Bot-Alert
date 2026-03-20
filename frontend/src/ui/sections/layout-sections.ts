@@ -36,6 +36,10 @@ const PASSWORD_RESET_TRANSIENT_NOTICES = new Set([
   'Set a new password to finish the reset.',
   'Resetting password...',
 ]);
+const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
+  'Sending verification code...',
+  'Verifying code...',
+]);
 const LOGIN_RELEVANT_NOTICES = new Set([
   'No saved session. Sign in to continue.',
   'Restoring session...',
@@ -186,6 +190,7 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
     ${state.ui.authPanel === 'password-change-success' ? renderPasswordChangeSuccessModal() : ''}
     ${state.ui.authPanel === 'invite-assistance' ? renderInviteAssistanceModal(state) : ''}
     ${state.ui.authPanel === 'password-reset' ? renderPasswordResetModal(state) : ''}
+    ${state.ui.authPanel === 'email-otp' ? renderEmailOtpModal(state) : ''}
   `;
 
   const form = section.querySelector<HTMLFormElement>('form[data-role="login-form"]');
@@ -329,6 +334,7 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
   });
   bindRegisterPanel(section, controller, state);
   bindEmailVerificationPanel(section, controller, state);
+  bindEmailOtpPanel(section, controller, state);
   bindEmailVerifiedSuccessPanel(section, controller);
   bindPasswordChangeSuccessPanel(section, controller);
   bindInviteAssistancePanel(section, controller, state);
@@ -572,6 +578,41 @@ function renderPasswordResetFlash(state: AppState) {
       ...state.ui,
       error: isPasswordResetError ? state.ui.error : null,
       notice: isPasswordResetNotice ? state.ui.notice : null,
+    },
+  });
+}
+
+function renderLoginOtpFlash(state: AppState) {
+  const message = state.ui.error ?? state.ui.notice ?? '';
+  if (!message) {
+    return '';
+  }
+
+  const isLoginOtpError = (
+    message === 'Verification challenge is missing. Please sign in again.'
+    || message === 'Verification code is required.'
+    || message === 'Enter the 6-digit verification code.'
+    || message.includes('Verification code is incorrect')
+    || message.includes('Verification code is invalid or expired')
+    || message.includes('Too many invalid verification attempts')
+    || message.includes('Unable to reach the server')
+    || message.includes('Internal server error')
+  );
+
+  const isLoginOtpNotice = LOGIN_OTP_TRANSIENT_NOTICES.has(message)
+    || message.includes('Verification code sent')
+    || message.includes('A new verification code has been sent');
+
+  if (!isLoginOtpError && !isLoginOtpNotice) {
+    return '';
+  }
+
+  return renderFlash({
+    ...state,
+    ui: {
+      ...state.ui,
+      error: isLoginOtpError ? state.ui.error : null,
+      notice: isLoginOtpNotice ? state.ui.notice : null,
     },
   });
 }
@@ -905,6 +946,51 @@ function renderPasswordResetModal(state: AppState) {
   `;
 }
 
+function renderEmailOtpModal(state: AppState) {
+  const codeError = state.ui.error === 'Verification code is required.'
+    || state.ui.error === 'Enter the 6-digit verification code.'
+    || state.ui.error?.includes('Verification code is incorrect')
+    || state.ui.error?.includes('Verification code is invalid or expired')
+    || state.ui.error?.includes('Too many invalid verification attempts')
+    || state.ui.error === 'Verification challenge is missing. Please sign in again.';
+
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="email-otp">
+      <div class="legacy-auth-modal-backdrop" data-action="close-email-otp-panel"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-assistance" data-auth-panel="email-otp" role="dialog" aria-modal="true" aria-labelledby="email-otp-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="email-otp-title">Check Your Email</strong>
+            <span>Enter the 6-digit verification code to finish signing in.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-email-otp-panel">Close</button>
+        </div>
+        <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderLoginOtpFlash(state)}</div>
+        <div class="legacy-assistance-grid">
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">CODE SENT</div>
+            <div class="legacy-assistance-card-copy">We sent a verification code to <strong>${escapeHtml(state.ui.pendingLoginOtpEmailHint || '')}</strong>.</div>
+          </div>
+          <div class="legacy-assistance-card">
+            <div class="legacy-assistance-card-title">NEXT STEP</div>
+            <div class="legacy-assistance-card-copy">Enter the code below. The sign-in only finishes after this secondary verification.</div>
+          </div>
+        </div>
+        <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="email-otp-form" novalidate>
+          <label>
+            <span>Verification code</span>
+            <input name="emailOtpCode" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="6" class="${codeError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+          <div class="legacy-auth-panel-actions">
+            <button type="button" class="legacy-userbar-link" data-action="resend-email-otp" ${state.ui.busy ? 'disabled' : ''}>Resend Code</button>
+            <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'VERIFYING...' : 'VERIFY CODE'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 function renderLoginExtensionRegion() {
   const extensionDefs = getAuthExtensionDefinitions();
   const extensionCounts = getAuthExtensionCounts();
@@ -1002,6 +1088,9 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
   `;
 
   section.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
+    if (input.closest('[data-auth-modal]')) {
+      return;
+    }
     const name = input.name;
     if (name === 'sound-mode' || name === 'sound-volume') {
       return;
@@ -1062,21 +1151,21 @@ function renderChangePasswordModal(state: AppState) {
             <span>Current password</span>
             <div class="legacy-password-wrap">
               <input name="currentPassword" type="password" autocomplete="current-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${currentPasswordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-              <button type="button" class="legacy-password-toggle" data-action="toggle-current-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+              <button type="button" class="legacy-password-toggle" data-action="toggle-current-password-visibility" tabindex="-1" ${state.ui.busy ? 'disabled' : ''}>Show</button>
             </div>
           </label>
           <label>
             <span>New password</span>
             <div class="legacy-password-wrap">
               <input name="newPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${newPasswordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-              <button type="button" class="legacy-password-toggle" data-action="toggle-new-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+              <button type="button" class="legacy-password-toggle" data-action="toggle-new-password-visibility" tabindex="-1" ${state.ui.busy ? 'disabled' : ''}>Show</button>
             </div>
           </label>
           <label>
             <span>Confirm new password</span>
             <div class="legacy-password-wrap">
               <input name="confirmNewPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${confirmNewPasswordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-              <button type="button" class="legacy-password-toggle" data-action="toggle-confirm-new-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
+              <button type="button" class="legacy-password-toggle" data-action="toggle-confirm-new-password-visibility" tabindex="-1" ${state.ui.busy ? 'disabled' : ''}>Show</button>
             </div>
           </label>
           <div class="legacy-auth-panel-actions">
@@ -1467,6 +1556,54 @@ function bindEmailVerifiedSuccessPanel(section: ParentNode, controller: AppContr
   const closePanel = () => controller.closeAuthPanel();
   section.querySelectorAll<HTMLButtonElement>('[data-action="close-email-verified-success"]').forEach((button) => {
     button.addEventListener('click', closePanel);
+  });
+}
+
+function bindEmailOtpPanel(section: ParentNode, controller: AppController, state: AppState) {
+  bindFocusTrap(section.querySelector<HTMLElement>('[data-auth-panel="email-otp"]'));
+  const closePanel = () => controller.closeAuthPanel();
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-email-otp-panel"]').forEach((button) => {
+    button.addEventListener('click', closePanel);
+  });
+  section.querySelectorAll<HTMLButtonElement>('.legacy-auth-panel-feedback [data-action="dismiss-flash"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (state.ui.error) controller.clearError();
+      else controller.clearNotice();
+    });
+  });
+
+  const form = section.querySelector<HTMLFormElement>('form[data-role="email-otp-form"]');
+  const codeInput = form?.querySelector<HTMLInputElement>('input[name="emailOtpCode"]');
+  codeInput?.addEventListener('input', () => {
+    const digitsOnly = String(codeInput.value || '').replace(/\D+/g, '').slice(0, 6);
+    if (digitsOnly !== codeInput.value) {
+      codeInput.value = digitsOnly;
+    }
+    if (
+      state.ui.error === 'Verification code is required.'
+      || state.ui.error === 'Enter the 6-digit verification code.'
+      || state.ui.error?.includes('Verification code is incorrect')
+      || state.ui.error?.includes('Verification code is invalid or expired')
+      || state.ui.error?.includes('Too many invalid verification attempts')
+      || state.ui.notice === 'Sending verification code...'
+      || state.ui.notice === 'Verifying code...'
+    ) {
+      controller.clearError();
+      controller.clearNotice();
+    }
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="resend-email-otp"]')?.addEventListener('click', () => {
+    void controller.resendLoginOtp();
+  });
+
+  form?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (state.ui.busy) {
+      return;
+    }
+    const data = new FormData(form);
+    void controller.verifyLoginOtp(String(data.get('emailOtpCode') || ''));
   });
 }
 

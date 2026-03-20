@@ -19,6 +19,7 @@ let pendingState: AppState | null = null;
 let latestState: AppState | null = null;
 let lastObservedSessionStatus: AppState['session']['status'] | null = null;
 let lastObservedAuthPanel: AppState['ui']['authPanel'] | null = null;
+let lastObservedAuthModalKey: string | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
 let listInteractionDepth = 0;
@@ -95,6 +96,26 @@ function isSortMenuOpen() {
   return Boolean(root.querySelector('[data-sort-wrap].open'));
 }
 
+function getAuthModalRenderKey(state: AppState) {
+  if (state.ui.authPanel === 'none') {
+    return null;
+  }
+
+  return JSON.stringify({
+    panel: state.ui.authPanel,
+    busy: state.ui.busy,
+    error: state.ui.error,
+    notice: state.ui.notice,
+    pendingVerificationEmail: state.ui.pendingVerificationEmail,
+    pendingPasswordResetToken: state.ui.pendingPasswordResetToken,
+    pendingLoginOtpChallengeToken: state.ui.pendingLoginOtpChallengeToken,
+    pendingLoginOtpEmailHint: state.ui.pendingLoginOtpEmailHint,
+    sessionStatus: state.session.status,
+    sessionEmail: state.session.email,
+    sessionUsername: state.session.username,
+  });
+}
+
 function flushPendingRender() {
   if (!pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
     return;
@@ -159,9 +180,11 @@ root.addEventListener('focusout', () => {
 controller.subscribe((state) => {
   const previousSessionStatus = lastObservedSessionStatus;
   const previousAuthPanel = lastObservedAuthPanel;
+  const previousAuthModalKey = lastObservedAuthModalKey;
   latestState = state;
   lastObservedSessionStatus = state.session.status;
   lastObservedAuthPanel = state.ui.authPanel;
+  lastObservedAuthModalKey = getAuthModalRenderKey(state);
   syncAudioSideEffects(state);
 
   if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {
@@ -172,6 +195,14 @@ controller.subscribe((state) => {
 
   if (previousAuthPanel !== state.ui.authPanel && state.ui.authPanel !== 'none') {
     renderAppShell(root, state, controller);
+    pendingState = null;
+    return;
+  }
+
+  if (state.ui.authPanel !== 'none') {
+    if (previousAuthModalKey !== lastObservedAuthModalKey) {
+      renderAppShell(root, state, controller);
+    }
     pendingState = null;
     return;
   }

@@ -1,4 +1,4 @@
-import type { ChangePasswordInput, PasswordResetConfirmInput, PasswordResetRequestInput, RegisterInput } from '../services/api/auth';
+import type { ChangePasswordInput, LoginOtpVerifyInput, PasswordResetConfirmInput, PasswordResetRequestInput, RegisterInput } from '../services/api/auth';
 import { clampLoginPasswordValue, isValidLoginEmail, trimLoginEmailValue } from '../ui/sections/login-form-utils';
 
 export function validateLoginCredentials(email: string, password: string) {
@@ -159,4 +159,27 @@ export function validatePasswordResetConfirmInput(input: PasswordResetConfirmInp
 
 export function normalizeInviteCode(input: string) {
   return String(input || '').trim();
+}
+
+export function validateLoginOtpInput(input: LoginOtpVerifyInput) {
+  const challengeToken = String(input.challengeToken || '').trim();
+  const code = String(input.code || '').replace(/\s+/g, '');
+
+  if (!challengeToken) {
+    return { ok: false as const, message: 'Verification challenge is missing. Please sign in again.' };
+  }
+  if (!code) {
+    return { ok: false as const, message: 'Verification code is required.' };
+  }
+  if (!/^\d{6}$/.test(code)) {
+    return { ok: false as const, message: 'Enter the 6-digit verification code.' };
+  }
+
+  return {
+    ok: true as const,
+    input: {
+      challengeToken,
+      code,
+    },
+  };
 }

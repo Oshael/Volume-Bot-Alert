@@ -35,9 +35,6 @@ type ChangePasswordDraft = {
   currentVisible: boolean;
   newVisible: boolean;
   confirmVisible: boolean;
-  focusedName: 'currentPassword' | 'newPassword' | 'confirmNewPassword' | null;
-  selectionStart: number | null;
-  selectionEnd: number | null;
 };
 
 type RegisterDraft = {
@@ -66,6 +63,10 @@ type EmailVerificationDraft = {
   email: string;
 };
 
+type EmailOtpDraft = {
+  code: string;
+};
+
 export function renderAppShell(root: HTMLElement, state: AppState, controller: AppController) {
   const configDraft = captureConfigDraft(root);
   const panelScrollDraft = capturePanelScrollDraft(root);
@@ -73,6 +74,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const changePasswordDraft = captureChangePasswordDraft(root);
   const registerDraft = captureRegisterDraft(root);
   const emailVerificationDraft = captureEmailVerificationDraft(root);
+  const emailOtpDraft = captureEmailOtpDraft(root);
   const inviteAssistanceDraft = captureInviteAssistanceDraft(root);
   const passwordResetDraft = capturePasswordResetDraft(root);
   root.innerHTML = '';
@@ -105,11 +107,13 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   applyLoginDraft(root, loginDraft, state);
   applyLoginFocus(root, state);
   applyChangePasswordDraft(root, changePasswordDraft);
-  applyChangePasswordFocus(root, state);
+  applyChangePasswordFocus(root, state, changePasswordDraft);
   applyRegisterDraft(root, registerDraft);
   applyRegisterFocus(root, state);
   applyEmailVerificationDraft(root, emailVerificationDraft, state);
   applyEmailVerificationFocus(root, state);
+  applyEmailOtpDraft(root, emailOtpDraft);
+  applyEmailOtpFocus(root, state);
   applyInviteAssistanceDraft(root, inviteAssistanceDraft);
   applyInviteAssistanceFocus(root, state);
   applyPasswordResetDraft(root, passwordResetDraft);
@@ -393,11 +397,6 @@ function captureChangePasswordDraft(root: HTMLElement): ChangePasswordDraft | nu
   const newPassword = form.querySelector<HTMLInputElement>('input[name="newPassword"]');
   const confirmNewPassword = form.querySelector<HTMLInputElement>('input[name="confirmNewPassword"]');
 
-  const active = document.activeElement as HTMLInputElement | null;
-  const focusedInput = active && form.contains(active) && active.name
-    ? (active.name as 'currentPassword' | 'newPassword' | 'confirmNewPassword')
-    : null;
-
   return {
     currentPassword: currentPassword?.value ?? '',
     newPassword: newPassword?.value ?? '',
@@ -405,9 +404,6 @@ function captureChangePasswordDraft(root: HTMLElement): ChangePasswordDraft | nu
     currentVisible: currentPassword?.type === 'text',
     newVisible: newPassword?.type === 'text',
     confirmVisible: confirmNewPassword?.type === 'text',
-    focusedName: focusedInput,
-    selectionStart: focusedInput ? active?.selectionStart ?? null : null,
-    selectionEnd: focusedInput ? active?.selectionEnd ?? null : null,
   };
 }
 
@@ -452,19 +448,9 @@ function applyChangePasswordDraft(root: HTMLElement, draft: ChangePasswordDraft 
   if (confirmToggle && confirmNewPassword) {
     confirmToggle.textContent = confirmNewPassword.type === 'text' ? 'Hide' : 'Show';
   }
-
-  if (draft.focusedName) {
-    const focusedInput = form.querySelector<HTMLInputElement>(`input[name="${draft.focusedName}"]`);
-    if (focusedInput) {
-      focusedInput.focus();
-      if (draft.selectionStart !== null && draft.selectionEnd !== null) {
-        focusedInput.setSelectionRange(draft.selectionStart, draft.selectionEnd);
-      }
-    }
-  }
 }
 
-function applyChangePasswordFocus(root: HTMLElement, state: AppState) {
+function applyChangePasswordFocus(root: HTMLElement, state: AppState, draft: ChangePasswordDraft | null) {
   if (state.ui.authPanel !== 'change-password' || state.ui.busy) {
     return;
   }
@@ -475,6 +461,17 @@ function applyChangePasswordFocus(root: HTMLElement, state: AppState) {
   const active = document.activeElement;
 
   if (active instanceof HTMLElement && form?.contains(active)) {
+    return;
+  }
+
+  if (
+    draft
+    && (
+      draft.currentPassword.length > 0
+      || draft.newPassword.length > 0
+      || draft.confirmNewPassword.length > 0
+    )
+  ) {
     return;
   }
 
@@ -507,8 +504,6 @@ function applyChangePasswordFocus(root: HTMLElement, state: AppState) {
     confirmNewPassword?.select();
     return;
   }
-
-  currentPassword?.focus();
 }
 
 function captureRegisterDraft(root: HTMLElement): RegisterDraft | null {
@@ -532,6 +527,46 @@ function captureRegisterDraft(root: HTMLElement): RegisterDraft | null {
     passwordVisible: password?.type === 'text',
     confirmVisible: confirmPassword?.type === 'text',
   };
+}
+
+function captureEmailOtpDraft(root: HTMLElement): EmailOtpDraft | null {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="email-otp-form"]');
+  if (!form) {
+    return null;
+  }
+
+  const code = form.querySelector<HTMLInputElement>('input[name="emailOtpCode"]');
+  return {
+    code: code?.value ?? '',
+  };
+}
+
+function applyEmailOtpDraft(root: HTMLElement, draft: EmailOtpDraft | null) {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="email-otp-form"]');
+  if (!form || !draft) {
+    return;
+  }
+
+  const code = form.querySelector<HTMLInputElement>('input[name="emailOtpCode"]');
+  if (code) {
+    code.value = draft.code;
+  }
+}
+
+function applyEmailOtpFocus(root: HTMLElement, state: AppState) {
+  if (state.ui.authPanel !== 'email-otp' || state.ui.busy) {
+    return;
+  }
+
+  const form = root.querySelector<HTMLFormElement>('form[data-role="email-otp-form"]');
+  const codeInput = form?.querySelector<HTMLInputElement>('input[name="emailOtpCode"]');
+  const active = document.activeElement;
+
+  if (active instanceof HTMLElement && form?.contains(active)) {
+    return;
+  }
+
+  codeInput?.focus();
 }
 
 function applyRegisterDraft(root: HTMLElement, draft: RegisterDraft | null) {

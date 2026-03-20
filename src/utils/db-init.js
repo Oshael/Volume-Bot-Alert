@@ -128,6 +128,24 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires ON password_reset_tokens(expires_at);
+
+-- Login email OTP challenges
+CREATE TABLE IF NOT EXISTS login_email_otp_challenges (
+  id                SERIAL PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  challenge_hash    VARCHAR(255) NOT NULL,
+  code_hash         VARCHAR(255) NOT NULL,
+  expires_at        TIMESTAMPTZ NOT NULL,
+  consumed_at       TIMESTAMPTZ,
+  attempt_count     INTEGER NOT NULL DEFAULT 0,
+  requested_ip      VARCHAR(45),
+  user_agent        TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_email_otp_challenges_user ON login_email_otp_challenges(user_id);
+CREATE INDEX IF NOT EXISTS idx_login_email_otp_challenges_hash ON login_email_otp_challenges(challenge_hash);
+CREATE INDEX IF NOT EXISTS idx_login_email_otp_challenges_expires ON login_email_otp_challenges(expires_at);
 `;
 
 async function init() {
