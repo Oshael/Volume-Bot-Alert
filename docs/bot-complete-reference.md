@@ -128,7 +128,10 @@ Priority bands:
 - `dormant`: no useful Dex state / no MCAP
 
 Priority recheck timings:
-- `high`: `10s`
+- `high`:
+  - default: `10s`
+  - if `6h volume < 30k`: `40s`
+  - if `6h volume < 15k`: `60s`
 - `normal`: `60s`
 - `normal` boosted by price change:
   - `6h >= 200` can reduce to `40s`
@@ -310,7 +313,7 @@ Current login behavior:
   - same config/bootstrap hydration path
 
 Current login UX features:
-- `MoonWire` branding with `Volume Bot Tracker`
+- `TrendScope` branding with `Volume Bot Tracker`
 - specific auth-state messaging instead of generic loading
 - preserved form values across rerenders
 - Enter/Return submit handling
@@ -960,15 +963,21 @@ Current honest assessment:
 
 ## Password Reset / Real Email Next Step
 
-The current implementation is intentionally not pretending email-reset already exists.
+The backend now has the first real-email auth foundation in place.
 
-To add real password-reset email flow, the next required blocks are:
-- email provider integration
-- reset-token persistence
-- reset request endpoint
-- reset confirm endpoint
-- UI for request + confirm flow
-- rate limit + token expiry + session revocation after reset
+Current status:
+- provider selected for the first rollout: `Resend`
+- provider-specific send logic lives behind a backend service layer so auth routes stay provider-agnostic
+- registration attempts to send an email-verification link when email delivery is enabled
+- `POST /api/auth/verify-email/request` exists for authenticated resend
+- `POST /api/auth/verify-email/confirm` exists and consumes single-use verification tokens
+- `POST /api/auth/password-reset/request` exists with a generic anti-enumeration response
+- `POST /api/auth/password-reset/confirm` exists and revokes all sessions after a successful reset
+
+Still pending for the full user-facing rollout:
+- UI for email verification and password-reset request/confirm flows
+- clearer account-state messaging in the frontend
+- follow-up security layer after reset: 2FA / secondary verification
 
 ## Practical Review Checklist
 

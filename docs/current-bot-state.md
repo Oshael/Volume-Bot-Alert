@@ -161,7 +161,10 @@ Current caution:
   - `low`: `< 30k`
   - `dormant`: missing/no useful Dex state
 - Priority timing:
-  - `high`: `10s`
+  - `high`:
+    - default: `10s`
+    - if `6h volume < 30k`: `40s`
+    - if `6h volume < 15k`: `60s`
   - `normal`: `60s`
   - `normal` boosted by `PCHANGE`
   - `low`: `3m`
@@ -334,7 +337,7 @@ Current login implementation progress:
 
 #### Completed in current phase
 - branding was updated in the login shell to the current product naming:
-  - `MoonWire`
+  - `TrendScope`
   - `Volume Bot Tracker`
 - top-of-screen redundancy was reduced:
   - duplicated status chip in the top-right was removed
@@ -494,6 +497,64 @@ Current login implementation progress:
   4. lower-priority auth polish
      - final support/recovery wording pass
      - optional flash/icon treatment pass
+
+#### Next auth/security preparation plan
+1. Real password reset
+   - production email provider chosen for the first rollout: `Resend`
+   - define reset-token storage, expiry, consume-once behavior, and revocation semantics
+   - add backend endpoints for:
+     - request reset
+     - validate/reset token
+     - consume token and set new password
+   - add frontend screens for:
+     - request reset
+     - reset form
+     - success / invalid / expired states
+   - keep all user-facing responses neutral enough to avoid account enumeration
+   - align reset completion with the current backend-owned session model:
+     - revoke old sessions after password change/reset
+     - clear active cookie session
+     - force next login with the new password
+
+2. 2FA / secondary verification
+   - start only after the real password-reset flow is stable
+   - decide whether the first version is TOTP, email OTP, or another secondary verification step
+   - define enrollment, backup/recovery, and disable/reset flows before implementation
+   - ensure the login/auth UI can absorb the extra verification step without a full redesign
+
+3. Session policy review
+   - re-evaluate session expiration and cleanup cadence
+   - review how many historical sessions a single account is allowed to accumulate
+   - keep `logout-all` behavior as the reference point for expected session invalidation
+   - decide whether older inactive sessions should be capped, pruned faster, or surfaced more clearly in admin tooling
+
+4. Final security pass
+   - continue reducing older render surfaces that still rely heavily on HTML-string rendering
+   - prioritize the most sensitive auth/account/config surfaces first
+   - preserve the current CSP and cookie-auth posture while reducing structural XSS risk
+   - only after the auth roadmap is stable, consider broader `innerHTML` reduction in lower-risk UI areas
+
+#### Email infrastructure checkpoint
+- Chosen provider for the first real email rollout: `Resend`
+- Email sending should remain behind a backend service layer instead of being wired directly inside auth routes
+- Current prepared config/env surface:
+  - `EMAIL_ENABLED`
+  - `EMAIL_PROVIDER`
+  - `EMAIL_FROM`
+  - `EMAIL_REPLY_TO`
+  - `APP_BASE_URL`
+  - `RESEND_API_KEY`
+- Current prepared backend service direction:
+  - generic email send service
+  - auth-specific email helpers for:
+    - email verification
+    - password reset
+- Current backend auth/email status:
+  - registration now attempts to send an email-verification link when email delivery is enabled
+  - authenticated users can request verification-email resend
+  - verification confirm route is in place and consumes single-use tokens
+  - password-reset request + confirm routes are in place
+  - password reset now revokes all active sessions after success
 
 ### Manual tokens
 - Must remain visible in `Manual Tokens`

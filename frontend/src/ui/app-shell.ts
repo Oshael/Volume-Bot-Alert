@@ -31,20 +31,39 @@ type LoginDraft = {
 type ChangePasswordDraft = {
   currentPassword: string;
   newPassword: string;
+  confirmNewPassword: string;
   currentVisible: boolean;
   newVisible: boolean;
+  confirmVisible: boolean;
+  focusedName: 'currentPassword' | 'newPassword' | 'confirmNewPassword' | null;
+  selectionStart: number | null;
+  selectionEnd: number | null;
 };
 
 type RegisterDraft = {
   username: string;
   email: string;
   password: string;
+  confirmPassword: string;
   inviteCode: string;
   passwordVisible: boolean;
+  confirmVisible: boolean;
 };
 
 type InviteAssistanceDraft = {
   inviteCode: string;
+};
+
+type PasswordResetDraft = {
+  email: string;
+  newPassword: string;
+  confirmNewPassword: string;
+  passwordVisible: boolean;
+  confirmVisible: boolean;
+};
+
+type EmailVerificationDraft = {
+  email: string;
 };
 
 export function renderAppShell(root: HTMLElement, state: AppState, controller: AppController) {
@@ -53,7 +72,9 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const loginDraft = captureLoginDraft(root);
   const changePasswordDraft = captureChangePasswordDraft(root);
   const registerDraft = captureRegisterDraft(root);
+  const emailVerificationDraft = captureEmailVerificationDraft(root);
   const inviteAssistanceDraft = captureInviteAssistanceDraft(root);
+  const passwordResetDraft = capturePasswordResetDraft(root);
   root.innerHTML = '';
 
   const shell = document.createElement('div');
@@ -87,8 +108,12 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   applyChangePasswordFocus(root, state);
   applyRegisterDraft(root, registerDraft);
   applyRegisterFocus(root, state);
+  applyEmailVerificationDraft(root, emailVerificationDraft, state);
+  applyEmailVerificationFocus(root, state);
   applyInviteAssistanceDraft(root, inviteAssistanceDraft);
   applyInviteAssistanceFocus(root, state);
+  applyPasswordResetDraft(root, passwordResetDraft);
+  applyPasswordResetFocus(root, state);
   applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
   wireHoverPersistence(root);
@@ -366,12 +391,23 @@ function captureChangePasswordDraft(root: HTMLElement): ChangePasswordDraft | nu
 
   const currentPassword = form.querySelector<HTMLInputElement>('input[name="currentPassword"]');
   const newPassword = form.querySelector<HTMLInputElement>('input[name="newPassword"]');
+  const confirmNewPassword = form.querySelector<HTMLInputElement>('input[name="confirmNewPassword"]');
+
+  const active = document.activeElement as HTMLInputElement | null;
+  const focusedInput = active && form.contains(active) && active.name
+    ? (active.name as 'currentPassword' | 'newPassword' | 'confirmNewPassword')
+    : null;
 
   return {
     currentPassword: currentPassword?.value ?? '',
     newPassword: newPassword?.value ?? '',
+    confirmNewPassword: confirmNewPassword?.value ?? '',
     currentVisible: currentPassword?.type === 'text',
     newVisible: newPassword?.type === 'text',
+    confirmVisible: confirmNewPassword?.type === 'text',
+    focusedName: focusedInput,
+    selectionStart: focusedInput ? active?.selectionStart ?? null : null,
+    selectionEnd: focusedInput ? active?.selectionEnd ?? null : null,
   };
 }
 
@@ -383,8 +419,10 @@ function applyChangePasswordDraft(root: HTMLElement, draft: ChangePasswordDraft 
 
   const currentPassword = form.querySelector<HTMLInputElement>('input[name="currentPassword"]');
   const newPassword = form.querySelector<HTMLInputElement>('input[name="newPassword"]');
+  const confirmNewPassword = form.querySelector<HTMLInputElement>('input[name="confirmNewPassword"]');
   const currentToggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-current-password-visibility"]');
   const newToggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-new-password-visibility"]');
+  const confirmToggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-confirm-new-password-visibility"]');
 
   if (currentPassword) {
     currentPassword.value = draft.currentPassword;
@@ -398,12 +436,31 @@ function applyChangePasswordDraft(root: HTMLElement, draft: ChangePasswordDraft 
       newPassword.type = 'text';
     }
   }
+  if (confirmNewPassword) {
+    confirmNewPassword.value = draft.confirmNewPassword;
+    if (draft.confirmVisible) {
+      confirmNewPassword.type = 'text';
+    }
+  }
 
   if (currentToggle && currentPassword) {
     currentToggle.textContent = currentPassword.type === 'text' ? 'Hide' : 'Show';
   }
   if (newToggle && newPassword) {
     newToggle.textContent = newPassword.type === 'text' ? 'Hide' : 'Show';
+  }
+  if (confirmToggle && confirmNewPassword) {
+    confirmToggle.textContent = confirmNewPassword.type === 'text' ? 'Hide' : 'Show';
+  }
+
+  if (draft.focusedName) {
+    const focusedInput = form.querySelector<HTMLInputElement>(`input[name="${draft.focusedName}"]`);
+    if (focusedInput) {
+      focusedInput.focus();
+      if (draft.selectionStart !== null && draft.selectionEnd !== null) {
+        focusedInput.setSelectionRange(draft.selectionStart, draft.selectionEnd);
+      }
+    }
   }
 }
 
@@ -441,6 +498,16 @@ function applyChangePasswordFocus(root: HTMLElement, state: AppState) {
     return;
   }
 
+  if (
+    state.ui.error === 'Please confirm the new password.'
+    || state.ui.error === 'The new passwords do not match. Please check them and try again.'
+  ) {
+    const confirmNewPassword = form?.querySelector<HTMLInputElement>('input[name="confirmNewPassword"]');
+    confirmNewPassword?.focus();
+    confirmNewPassword?.select();
+    return;
+  }
+
   currentPassword?.focus();
 }
 
@@ -453,14 +520,17 @@ function captureRegisterDraft(root: HTMLElement): RegisterDraft | null {
   const username = form.querySelector<HTMLInputElement>('input[name="username"]');
   const email = form.querySelector<HTMLInputElement>('input[name="registerEmail"]');
   const password = form.querySelector<HTMLInputElement>('input[name="registerPassword"]');
+  const confirmPassword = form.querySelector<HTMLInputElement>('input[name="registerConfirmPassword"]');
   const inviteCode = form.querySelector<HTMLInputElement>('input[name="inviteCode"]');
 
   return {
     username: username?.value ?? '',
     email: email?.value ?? '',
     password: password?.value ?? '',
+    confirmPassword: confirmPassword?.value ?? '',
     inviteCode: inviteCode?.value ?? '',
     passwordVisible: password?.type === 'text',
+    confirmVisible: confirmPassword?.type === 'text',
   };
 }
 
@@ -473,8 +543,10 @@ function applyRegisterDraft(root: HTMLElement, draft: RegisterDraft | null) {
   const username = form.querySelector<HTMLInputElement>('input[name="username"]');
   const email = form.querySelector<HTMLInputElement>('input[name="registerEmail"]');
   const password = form.querySelector<HTMLInputElement>('input[name="registerPassword"]');
+  const confirmPassword = form.querySelector<HTMLInputElement>('input[name="registerConfirmPassword"]');
   const inviteCode = form.querySelector<HTMLInputElement>('input[name="inviteCode"]');
   const toggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-register-password-visibility"]');
+  const confirmToggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-register-confirm-password-visibility"]');
 
   if (username) username.value = draft.username;
   if (email) email.value = draft.email;
@@ -485,9 +557,18 @@ function applyRegisterDraft(root: HTMLElement, draft: RegisterDraft | null) {
       password.type = 'text';
     }
   }
+  if (confirmPassword) {
+    confirmPassword.value = draft.confirmPassword;
+    if (draft.confirmVisible) {
+      confirmPassword.type = 'text';
+    }
+  }
 
   if (toggle && password) {
     toggle.textContent = password.type === 'text' ? 'Hide' : 'Show';
+  }
+  if (confirmToggle && confirmPassword) {
+    confirmToggle.textContent = confirmPassword.type === 'text' ? 'Hide' : 'Show';
   }
 }
 
@@ -569,6 +650,46 @@ function captureInviteAssistanceDraft(root: HTMLElement): InviteAssistanceDraft 
   };
 }
 
+function captureEmailVerificationDraft(root: HTMLElement): EmailVerificationDraft | null {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="email-verification-form"]');
+  if (!form) {
+    return null;
+  }
+
+  const email = form.querySelector<HTMLInputElement>('input[name="verificationEmail"]');
+  return {
+    email: email?.value ?? '',
+  };
+}
+
+function applyEmailVerificationDraft(root: HTMLElement, draft: EmailVerificationDraft | null, state: AppState) {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="email-verification-form"]');
+  if (!form) {
+    return;
+  }
+
+  const email = form.querySelector<HTMLInputElement>('input[name="verificationEmail"]');
+  if (email) {
+    email.value = draft?.email || state.ui.pendingVerificationEmail || '';
+  }
+}
+
+function applyEmailVerificationFocus(root: HTMLElement, state: AppState) {
+  if (state.ui.authPanel !== 'email-verification' || state.ui.busy) {
+    return;
+  }
+
+  const form = root.querySelector<HTMLFormElement>('form[data-role="email-verification-form"]');
+  const email = form?.querySelector<HTMLInputElement>('input[name="verificationEmail"]');
+  const active = document.activeElement;
+
+  if (active instanceof HTMLElement && form?.contains(active)) {
+    return;
+  }
+
+  email?.focus();
+}
+
 function applyInviteAssistanceDraft(root: HTMLElement, draft: InviteAssistanceDraft | null) {
   const form = root.querySelector<HTMLFormElement>('form[data-role="invite-assistance-form"]');
   if (!form || !draft) {
@@ -594,6 +715,83 @@ function applyInviteAssistanceFocus(root: HTMLElement, state: AppState) {
   }
 
   inviteCode?.focus();
+}
+
+function capturePasswordResetDraft(root: HTMLElement): PasswordResetDraft | null {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="password-reset-form"]');
+  if (!form) {
+    return null;
+  }
+
+  const email = form.querySelector<HTMLInputElement>('input[name="resetEmail"]');
+  const newPassword = form.querySelector<HTMLInputElement>('input[name="resetNewPassword"]');
+  const confirmNewPassword = form.querySelector<HTMLInputElement>('input[name="resetConfirmNewPassword"]');
+
+  return {
+    email: email?.value ?? '',
+    newPassword: newPassword?.value ?? '',
+    confirmNewPassword: confirmNewPassword?.value ?? '',
+    passwordVisible: newPassword?.type === 'text',
+    confirmVisible: confirmNewPassword?.type === 'text',
+  };
+}
+
+function applyPasswordResetDraft(root: HTMLElement, draft: PasswordResetDraft | null) {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="password-reset-form"]');
+  if (!form || !draft) {
+    return;
+  }
+
+  const email = form.querySelector<HTMLInputElement>('input[name="resetEmail"]');
+  const newPassword = form.querySelector<HTMLInputElement>('input[name="resetNewPassword"]');
+  const confirmNewPassword = form.querySelector<HTMLInputElement>('input[name="resetConfirmNewPassword"]');
+  const toggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-reset-password-visibility"]');
+  const confirmToggle = form.querySelector<HTMLButtonElement>('[data-action="toggle-reset-confirm-password-visibility"]');
+
+  if (email) {
+    email.value = draft.email;
+  }
+  if (newPassword) {
+    newPassword.value = draft.newPassword;
+    if (draft.passwordVisible) {
+      newPassword.type = 'text';
+    }
+  }
+  if (confirmNewPassword) {
+    confirmNewPassword.value = draft.confirmNewPassword;
+    if (draft.confirmVisible) {
+      confirmNewPassword.type = 'text';
+    }
+  }
+
+  if (toggle && newPassword) {
+    toggle.textContent = newPassword.type === 'text' ? 'Hide' : 'Show';
+  }
+  if (confirmToggle && confirmNewPassword) {
+    confirmToggle.textContent = confirmNewPassword.type === 'text' ? 'Hide' : 'Show';
+  }
+}
+
+function applyPasswordResetFocus(root: HTMLElement, state: AppState) {
+  if (state.ui.authPanel !== 'password-reset' || state.ui.busy) {
+    return;
+  }
+
+  const form = root.querySelector<HTMLFormElement>('form[data-role="password-reset-form"]');
+  const email = form?.querySelector<HTMLInputElement>('input[name="resetEmail"]');
+  const newPassword = form?.querySelector<HTMLInputElement>('input[name="resetNewPassword"]');
+  const active = document.activeElement;
+
+  if (active instanceof HTMLElement && form?.contains(active)) {
+    return;
+  }
+
+  if (state.ui.pendingPasswordResetToken) {
+    newPassword?.focus();
+    return;
+  }
+
+  email?.focus();
 }
 
 function captureConfigDraft(root: HTMLElement): ConfigDraft | null {

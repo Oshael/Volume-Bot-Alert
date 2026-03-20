@@ -5,12 +5,27 @@ const User = require('../models/user');
 const Invite = require('../models/invite');
 const Session = require('../models/session');
 const LoginAttempt = require('../models/login-attempt');
+const EmailVerificationToken = require('../models/email-verification-token');
+const PasswordResetToken = require('../models/password-reset-token');
 const socketHub = require('../services/socket-hub');
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
-const { authLimiter } = require('../middleware/rate-limit');
+const { sendEmailVerificationEmail, sendPasswordResetEmail, sendPasswordChangedEmail } = require('../services/auth-email');
+const { authLimiter, authEmailLimiter } = require('../middleware/rate-limit');
 const { getClient } = require('../models/db');
 
 const router = express.Router();
+
+function serializeUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+    isActive: Boolean(user.is_active),
+    isEmailVerified: Boolean(user.is_email_verified),
+    emailVerifiedAt: user.email_verified_at || null,
+  };
+}
 
 function setAuthCookie(res, token, expiresAt) {
   res.cookie(config.authCookie.name, token, {
@@ -36,7 +51,7 @@ function clearAuthCookie(res) {
 function buildAuthResponse(message, user, token) {
   const payload = {
     message,
-    user: { id: user.id, username: user.username, email: user.email, role: user.role },
+    user: serializeUser(user),
   };
 
   if (config.nodeEnv === 'test') {
@@ -44,6 +59,58 @@ function buildAuthResponse(message, user, token) {
   }
 
   return payload;
+}
+
+async function issueEmailVerification({ user, ipAddress, userAgent }) {
+  const expiresMinutes = Math.max(5, parseInt(config.email.verificationExpiresMinutes || 60, 10));
+  const expiresAt = new Date(Date.now() + (expiresMinutes * 60 * 1000));
+
+  await EmailVerificationToken.revokeAllForUser(user.id);
+  const { token } = await EmailVerificationToken.create({
+    userId: user.id,
+    expiresAt,
+    requestedIp: ipAddress,
+    userAgent,
+  });
+
+  const delivery = await sendEmailVerificationEmail({
+    to: user.email,
+    username: user.username,
+    token,
+    expiresMinutes,
+  });
+
+  return {
+    expiresAt,
+    expiresMinutes,
+    delivery,
+  };
+}
+
+async function issuePasswordReset({ user, ipAddress, userAgent }) {
+  const expiresMinutes = Math.max(5, parseInt(config.email.passwordResetExpiresMinutes || 30, 10));
+  const expiresAt = new Date(Date.now() + (expiresMinutes * 60 * 1000));
+
+  await PasswordResetToken.revokeAllForUser(user.id);
+  const { token } = await PasswordResetToken.create({
+    userId: user.id,
+    expiresAt,
+    requestedIp: ipAddress,
+    userAgent,
+  });
+
+  const delivery = await sendPasswordResetEmail({
+    to: user.email,
+    username: user.username,
+    token,
+    expiresMinutes,
+  });
+
+  return {
+    expiresAt,
+    expiresMinutes,
+    delivery,
+  };
 }
 
 router.post('/register', authLimiter, async (req, res) => {
@@ -79,29 +146,32 @@ router.post('/register', authLimiter, async (req, res) => {
       inviteCode: invite.code,
     }, client);
 
-    const token = jwt.sign(
-      { userId: user.id, role: user.role },
-      config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn }
-    );
-
-    const decoded = jwt.decode(token);
-    const expiresAt = new Date(decoded.exp * 1000);
-
-    await Session.create({
-      userId: user.id,
-      token,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      expiresAt,
-    }, client);
-
-    await User.updateLastLogin(user.id, client);
     await Invite.incrementUse(invite.id, client);
     await client.query('COMMIT');
 
-    setAuthCookie(res, token, expiresAt);
-    res.status(201).json(buildAuthResponse('Account created successfully', user, token));
+    let verificationEmailSent = false;
+    let verificationEmailError = null;
+    if (config.email.enabled) {
+      try {
+        await issueEmailVerification({
+          user,
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent'),
+        });
+        verificationEmailSent = true;
+      } catch (emailErr) {
+        verificationEmailError = 'Verification email could not be sent';
+        console.error('Verification email send error after register:', emailErr);
+      }
+    }
+
+    clearAuthCookie(res);
+    res.status(201).json({
+      ...buildAuthResponse('Account created successfully', user, null),
+      emailVerificationRequired: !user.is_email_verified,
+      verificationEmailSent,
+      verificationEmailError,
+    });
   } catch (err) {
     if (client) {
       try {
@@ -149,6 +219,11 @@ router.post('/login', authLimiter, async (req, res) => {
     if (!user.is_active) {
       await LoginAttempt.record({ email, ipAddress: req.ip, success: false, userAgent: req.get('user-agent') });
       return res.status(403).json({ error: 'Account is deactivated' });
+    }
+
+    if (!user.is_email_verified) {
+      await LoginAttempt.record({ email, ipAddress: req.ip, success: false, userAgent: req.get('user-agent') });
+      return res.status(403).json({ error: 'Email not verified. Check your inbox or resend verification before signing in.' });
     }
 
     await LoginAttempt.record({ email, ipAddress: req.ip, success: true, userAgent: req.get('user-agent') });
@@ -205,7 +280,175 @@ router.post('/logout-all', authenticate, requireTrustedOrigin, async (req, res) 
 });
 
 router.get('/me', authenticate, async (req, res) => {
-  res.json({ user: req.user });
+  res.json({ user: serializeUser(req.user) });
+});
+
+router.post('/verify-email/request', authEmailLimiter, async (req, res) => {
+  try {
+    if (!config.email.enabled) {
+      return res.status(503).json({ error: 'Email delivery is not configured' });
+    }
+
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const genericResponse = {
+      message: 'If an eligible account exists for that email, a verification link has been sent',
+      alreadyVerified: false,
+    };
+
+    const user = await User.findByEmail(email);
+    if (!user || !user.is_active) {
+      return res.json(genericResponse);
+    }
+    if (user.is_email_verified) {
+      return res.json({
+        message: 'Email is already verified',
+        alreadyVerified: true,
+      });
+    }
+
+    await issueEmailVerification({
+      user,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json(genericResponse);
+  } catch (err) {
+    console.error('Verify-email request error:', err);
+    res.status(500).json({
+      error: config.nodeEnv === 'development'
+        ? (err.message || 'Internal server error')
+        : 'Internal server error',
+    });
+  }
+});
+
+router.post('/verify-email/confirm', authEmailLimiter, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token is required' });
+    }
+
+    const verification = await EmailVerificationToken.findValidByToken(token);
+    if (!verification) {
+      return res.status(400).json({ error: 'Verification token is invalid or expired' });
+    }
+
+    const consumed = await EmailVerificationToken.consume(verification.id);
+    if (!consumed) {
+      return res.status(400).json({ error: 'Verification token is invalid or already used' });
+    }
+
+    const user = await User.markEmailVerified(verification.user_id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      message: 'Email verified successfully',
+      user: serializeUser(user),
+    });
+  } catch (err) {
+    console.error('Verify-email confirm error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/password-reset/request', authEmailLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (!config.email.enabled) {
+      return res.status(503).json({ error: 'Email delivery is not configured' });
+    }
+
+    const genericResponse = {
+      message: 'If an eligible account exists for that email, a password reset link has been sent',
+    };
+
+    const user = await User.findByEmail(email);
+    if (!user || !user.is_active || !user.is_email_verified) {
+      return res.json(genericResponse);
+    }
+
+    try {
+      await issuePasswordReset({
+        user,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+      });
+    } catch (emailErr) {
+      console.error('Password reset email send error:', emailErr);
+    }
+
+    return res.json(genericResponse);
+  } catch (err) {
+    console.error('Password-reset request error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/password-reset/confirm', authEmailLimiter, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const newPassword = String(req.body?.newPassword || '');
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Reset token and new password are required' });
+    }
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      return res.status(400).json({ error: 'New password must be 8–128 characters' });
+    }
+
+    const resetToken = await PasswordResetToken.findValidByToken(token);
+    if (!resetToken) {
+      return res.status(400).json({ error: 'Reset token is invalid or expired' });
+    }
+
+    const consumed = await PasswordResetToken.consume(resetToken.id);
+    if (!consumed) {
+      return res.status(400).json({ error: 'Reset token is invalid or already used' });
+    }
+
+    const user = await User.findById(resetToken.user_id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const bcrypt = require('bcrypt');
+    const newHash = await bcrypt.hash(newPassword, config.bcryptRounds);
+    const { query: dbQuery } = require('../models/db');
+    await dbQuery('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]);
+
+    if (config.email.enabled) {
+      try {
+        await sendPasswordChangedEmail({
+          to: user.email,
+          username: user.username,
+        });
+      } catch (emailErr) {
+        console.error('Password changed email send error after reset:', emailErr);
+      }
+    }
+
+    await PasswordResetToken.revokeAllForUser(user.id);
+    await Session.revokeAllForUser(user.id);
+    socketHub.revokeUserSockets(user.id, 'password_reset');
+
+    clearAuthCookie(res);
+    return res.json({ message: 'Password reset successful. Please login again.' });
+  } catch (err) {
+    console.error('Password-reset confirm error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.post('/change-password', authenticate, requireTrustedOrigin, async (req, res) => {
@@ -229,6 +472,17 @@ router.post('/change-password', authenticate, requireTrustedOrigin, async (req, 
     const newHash = await bcrypt.hash(newPassword, config.bcryptRounds);
     const { query: dbQuery } = require('../models/db');
     await dbQuery('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.user.id]);
+
+    if (config.email.enabled) {
+      try {
+        await sendPasswordChangedEmail({
+          to: req.user.email,
+          username: req.user.username,
+        });
+      } catch (emailErr) {
+        console.error('Password changed email send error:', emailErr);
+      }
+    }
 
     await Session.revokeAllForUser(req.user.id);
     socketHub.revokeUserSockets(req.user.id, 'password_changed');

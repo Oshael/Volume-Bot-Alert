@@ -18,6 +18,7 @@ const playedPumpToastIds = new Set<string>();
 let pendingState: AppState | null = null;
 let latestState: AppState | null = null;
 let lastObservedSessionStatus: AppState['session']['status'] | null = null;
+let lastObservedAuthPanel: AppState['ui']['authPanel'] | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
 let listInteractionDepth = 0;
@@ -157,11 +158,19 @@ root.addEventListener('focusout', () => {
 
 controller.subscribe((state) => {
   const previousSessionStatus = lastObservedSessionStatus;
+  const previousAuthPanel = lastObservedAuthPanel;
   latestState = state;
   lastObservedSessionStatus = state.session.status;
+  lastObservedAuthPanel = state.ui.authPanel;
   syncAudioSideEffects(state);
 
   if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {
+    renderAppShell(root, state, controller);
+    pendingState = null;
+    return;
+  }
+
+  if (previousAuthPanel !== state.ui.authPanel && state.ui.authPanel !== 'none') {
     renderAppShell(root, state, controller);
     pendingState = null;
     return;

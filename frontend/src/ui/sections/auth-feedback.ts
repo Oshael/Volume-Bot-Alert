@@ -16,6 +16,10 @@ export const AUTH_TRANSIENT_NOTICES = new Set([
   'Signing in...',
   'Restoring session...',
   'Creating account...',
+  'Sending verification email...',
+  'Sending password reset email...',
+  'Resetting password...',
+  'Verifying email...',
   'Login successful. Workspace synced.',
   'Session restored. Workspace synced.',
   'Account created. Workspace synced.',
@@ -28,11 +32,16 @@ export function getAuthFeedbackKind(state: Pick<AppState, 'ui'>, message: string
       || message === 'Enter a valid email address.'
       || message === 'Password is required.'
       || message === 'Password is too long.'
+      || message === 'Reset link is missing or invalid.'
+      || message === 'New password is required.'
+      || message === 'New password must be at least 8 characters.'
+      || message === 'New password must be 8-128 characters.'
     ) {
       return 'validation';
     }
     if (message.includes('Incorrect email or password')) return 'credentials';
     if (message.includes('deactivated')) return 'account';
+    if (message.includes('not verified')) return 'account';
     if (message.includes('temporarily locked')) return 'lockout';
     if (message.includes('Unable to reach the server')) return 'network';
     if (message.includes('saved session is no longer valid')) return 'session';

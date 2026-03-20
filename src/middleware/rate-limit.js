@@ -59,8 +59,16 @@ const authLimiter = buildLimiter({
   skipSuccessfulRequests: false,
 });
 
+const authEmailLimiter = buildLimiter({
+  ...config.authEmailRateLimit,
+  message: 'Too many auth email requests, please try again later',
+  keyGenerator: userScopedKeyGenerator,
+  skipSuccessfulRequests: false,
+});
+
 module.exports = {
   authLimiter,
+  authEmailLimiter,
   defaultApiLimiter,
   dashboardLimiter,
   pumpfunMetaLimiter,

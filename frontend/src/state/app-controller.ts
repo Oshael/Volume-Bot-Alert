@@ -1,10 +1,14 @@
 import { createAppState, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
+  confirmEmailVerification as confirmEmailVerificationRequest,
+  confirmPasswordReset as confirmPasswordResetRequest,
   fetchCurrentSession,
   login,
   logout,
   logoutAll,
+  requestEmailVerification as requestEmailVerificationRequest,
+  requestPasswordReset as requestPasswordResetRequest,
   register as registerRequest,
   type RegisterInput,
   type SessionUser,
@@ -37,6 +41,8 @@ import {
   normalizeInviteCode,
   validateChangePasswordInput,
   validateLoginCredentials,
+  validatePasswordResetConfirmInput,
+  validatePasswordResetRequestInput,
   validateRegisterInput,
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
@@ -77,9 +83,12 @@ export interface AppController {
   init(): Promise<void>;
   login(email: string, password: string): Promise<void>;
   register(input: RegisterInput): Promise<void>;
-  changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  changePassword(currentPassword: string, newPassword: string, confirmNewPassword: string): Promise<void>;
+  requestEmailVerification(email?: string): Promise<void>;
+  requestPasswordReset(email: string): Promise<void>;
+  confirmPasswordReset(newPassword: string, confirmNewPassword: string): Promise<void>;
   validateInvite(code: string): Promise<InviteValidationResponse>;
-  openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset'): void;
+  openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success'): void;
   closeAuthPanel(): void;
   logout(): Promise<void>;
   logoutAll(): Promise<void>;
@@ -123,6 +132,7 @@ export function createAppController(): AppController {
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
+  let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -150,6 +160,17 @@ export function createAppController(): AppController {
     state.ui.notice = notice;
   }
 
+  function clearAuthUrl() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const pathname = window.location.pathname || '/';
+    const search = new URLSearchParams(window.location.search);
+    if (pathname === '/auth/verify-email' || pathname === '/auth/reset-password' || search.has('mode') || search.has('token')) {
+      window.history.replaceState({}, document.title, '/');
+    }
+  }
+
   function normalizeAuthError(error: unknown, mode: 'login' | 'restore') {
     const raw = error instanceof Error ? error.message : '';
 
@@ -162,6 +183,9 @@ export function createAppController(): AppController {
     }
     if (raw.includes('Account is deactivated')) {
       return 'This account is deactivated. Contact an administrator if you need access restored.';
+    }
+    if (raw.includes('Email not verified')) {
+      return 'Your email is not verified yet. Check your inbox or request a new verification email.';
     }
     if (
       raw.includes('Too many failed attempts')
@@ -1444,6 +1468,8 @@ export function createAppController(): AppController {
     state.session.username = user.username;
     state.session.email = user.email;
     state.session.role = user.role;
+    state.session.isEmailVerified = Boolean(user.isEmailVerified);
+    state.session.emailVerifiedAt = user.emailVerifiedAt ?? null;
     hydrateBarStorage();
     hydrateSoundSettings();
     connectRealtime();
@@ -1455,6 +1481,8 @@ export function createAppController(): AppController {
     state.session.username = null;
     state.session.email = null;
     state.session.role = null;
+    state.session.isEmailVerified = false;
+    state.session.emailVerifiedAt = null;
     state.runtime.cycle = 0;
     state.runtime.alerts = 0;
     state.panels.alerts = 0;
@@ -1498,6 +1526,8 @@ export function createAppController(): AppController {
     state.bars.blocklist = 0;
     state.panels.monitored = 0;
     state.ui.authPanel = 'none';
+    state.ui.pendingVerificationEmail = null;
+    state.ui.pendingPasswordResetToken = null;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
     state.ui.recentPerPage = 30;
@@ -1581,6 +1611,58 @@ export function createAppController(): AppController {
     applyConfig(payload, monitoredDashboardTokens);
   }
 
+  async function handleAuthRouteIntent() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const pathname = window.location.pathname || '/';
+    const search = new URLSearchParams(window.location.search);
+    const token = String(search.get('token') || '').trim();
+    const mode = String(search.get('mode') || '').trim();
+    const wantsVerify = pathname === '/auth/verify-email' || mode === 'verify-email';
+    const wantsReset = pathname === '/auth/reset-password' || mode === 'reset-password';
+
+    if (wantsVerify) {
+      if (!token) {
+        setError('Verification link is missing or invalid.');
+        clearAuthUrl();
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Verifying email...');
+      emit();
+
+      try {
+        const result = await confirmEmailVerificationRequest(token);
+        if (state.session.status === 'authenticated') {
+          applySession(result.user);
+        }
+        state.ui.authPanel = 'email-verified-success';
+        setNotice(result.message || 'Email verified successfully.');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Email verification failed');
+      } finally {
+        clearAuthUrl();
+        setBusy(false);
+        emit();
+      }
+
+      return;
+    }
+
+    if (wantsReset) {
+      state.ui.pendingPasswordResetToken = token || null;
+      state.ui.authPanel = 'password-reset';
+      setError(token ? null : 'Reset link is missing or invalid.');
+      setNotice(token ? 'Set a new password to finish the reset.' : null);
+      clearAuthUrl();
+      emit();
+    }
+  }
+
   return {
     state,
     subscribe(listener) {
@@ -1601,7 +1683,15 @@ export function createAppController(): AppController {
       state.ui.loginErrorCount = 0;
       emit();
     },
-    openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset') {
+    openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success') {
+      if (panel === 'change-password') {
+        monitoringPausedForAuthPanel = state.runtime.mode === 'active';
+        if (monitoringPausedForAuthPanel) {
+          stopMonitoringTimers();
+        }
+        state.ui.error = null;
+        state.ui.notice = null;
+      }
       state.ui.authPanel = panel;
       emit();
     },
@@ -1609,7 +1699,16 @@ export function createAppController(): AppController {
       if (state.ui.authPanel === 'none') {
         return;
       }
+      const shouldResumeMonitoring = state.ui.authPanel === 'change-password'
+        && monitoringPausedForAuthPanel
+        && state.session.status === 'authenticated';
       state.ui.authPanel = 'none';
+      state.ui.pendingVerificationEmail = null;
+      state.ui.pendingPasswordResetToken = null;
+      monitoringPausedForAuthPanel = false;
+      if (shouldResumeMonitoring) {
+        startMonitoringTimers();
+      }
       emit();
     },
     removePumpToken(mint: string) {
@@ -1776,6 +1875,8 @@ export function createAppController(): AppController {
         setBusy(false);
         emit();
       }
+
+      await handleAuthRouteIntent();
     },
     async login(email: string, password: string) {
       if (authSubmitInFlight) {
@@ -1854,11 +1955,17 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        await registerRequest(validated.input);
-        const session = await fetchCurrentSession();
-        applySession(session.user);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER);
-        setNotice('Account created. Workspace synced.');
+        const result = await registerRequest(validated.input);
+        disconnectSocket();
+        stopMonitoringTimers();
+        clearSession();
+        state.ui.pendingVerificationEmail = validated.input.email;
+        state.ui.authPanel = 'email-verification';
+        setNotice(result.verificationEmailError
+          ? 'Account created, but the verification email could not be sent. Fix email delivery and resend.'
+          : result.emailVerificationRequired
+            ? 'Account created. Check your inbox to verify your email.'
+            : 'Account created. Workspace synced.');
       } catch (error) {
         const raw = error instanceof Error ? error.message : '';
         if (raw.includes('Authentication required')) {
@@ -1872,7 +1979,103 @@ export function createAppController(): AppController {
         emit();
       }
     },
-    async changePassword(currentPassword: string, newPassword: string) {
+    async requestEmailVerification(email?: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validatePasswordResetRequestInput({ email: String(email || state.session.email || '') });
+      if (!validated.ok) {
+        setError(validated.message);
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Sending verification email...');
+      emit();
+
+      try {
+        const result = await requestEmailVerificationRequest(validated.input, state.session.token);
+        setNotice(result.message || 'Verification email sent.');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to send verification email');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async requestPasswordReset(email: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validatePasswordResetRequestInput({ email });
+      if (!validated.ok) {
+        setError(validated.message);
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Sending password reset email...');
+      emit();
+
+      try {
+        const result = await requestPasswordResetRequest(validated.input);
+        setNotice(result.message || 'Password reset email sent.');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Password reset request failed');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async confirmPasswordReset(newPassword: string, confirmNewPassword: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const validated = validatePasswordResetConfirmInput({
+        token: state.ui.pendingPasswordResetToken || '',
+        newPassword,
+        confirmNewPassword,
+      });
+      if (!validated.ok) {
+        setError(validated.message);
+        emit();
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Resetting password...');
+      emit();
+
+      try {
+        const result = await confirmPasswordResetRequest(validated.input);
+        disconnectSocket();
+        stopMonitoringTimers();
+        clearSession();
+        state.ui.authPanel = 'none';
+        state.ui.pendingPasswordResetToken = null;
+        setNotice(result.message || 'Password reset successful. Please login again.');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Password reset failed');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async changePassword(currentPassword: string, newPassword: string, confirmNewPassword: string) {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -1883,7 +2086,7 @@ export function createAppController(): AppController {
         return;
       }
 
-      const validated = validateChangePasswordInput({ currentPassword, newPassword });
+      const validated = validateChangePasswordInput({ currentPassword, newPassword, confirmNewPassword });
       if (!validated.ok) {
         setError(validated.message);
         emit();
@@ -1905,7 +2108,8 @@ export function createAppController(): AppController {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
-        setNotice(result.message || 'Password changed. Please sign in again.');
+        state.ui.authPanel = 'password-change-success';
+        setNotice(result.message || 'Password changed successfully. Please login again with your new password.');
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Change-password failed');
       } finally {

@@ -1504,7 +1504,7 @@ button,
   grid-template-columns: 1fr;
   display: grid;
   gap: 14px;
-  padding: 30px;
+  padding: 0 30px 30px;
   border-radius: 22px;
   border: 1px solid rgba(66, 101, 150, 0.35);
   background:
@@ -1522,20 +1522,30 @@ button,
 
 .legacy-login-head {
   display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 16px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  margin-bottom: -72px;
 }
 
 .legacy-login-brand-block {
   display: flex;
-  align-items: flex-start;
-  gap: 18px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  margin-left: -34px;
 }
 
 .legacy-login-brand-copy {
   display: grid;
   gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-top: 0;
+  position: relative;
+  left: -44px;
+  top: -5px;
 }
 
 .legacy-login-box h2 {
@@ -1550,41 +1560,81 @@ button,
 }
 
 .legacy-login-title {
+  min-width: 0;
   row-gap: 4px;
 }
 
 .legacy-login-brand {
-  font-size: clamp(2rem, 4vw, 3rem);
+  display: block;
+  max-width: 100%;
+  font-size: clamp(1.7rem, 3.75vw, 2.9rem);
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   line-height: 0.95;
+  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .legacy-login-product {
   display: block;
   color: #b8c9de;
   font-family: "Space Mono", monospace;
-  font-size: 0.95rem;
+  font-size: 16px;
   font-weight: 400;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.1em;
   line-height: 1.1;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.legacy-login-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 10px var(--cyan);
+.legacy-login-logo {
+  flex: 0 0 auto;
+  width: 225px;
+  height: 225px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 14px rgba(0, 212, 255, 0.24));
+}
+
+.legacy-login-logo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+@media (max-width: 720px) {
+  .legacy-login-head {
+    margin-bottom: -20px;
+  }
+
+  .legacy-login-brand-block {
+    margin-left: -10px;
+    gap: 2px;
+  }
+
+  .legacy-login-brand-copy {
+    padding-top: 10px;
+  }
+
+  .legacy-login-logo {
+    width: 112px;
+    height: 112px;
+  }
+
+  .legacy-login-brand {
+    white-space: normal;
+  }
 }
 
 .legacy-login-sub {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 1.5px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .legacy-login-form {

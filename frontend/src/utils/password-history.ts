@@ -1,4 +1,4 @@
-const PASSWORD_HISTORY_KEY = 'moonwire_password_history';
+const PASSWORD_HISTORY_KEY = 'trendscope_password_history';
 
 type StoredPasswordHistoryEntry = {
   email: string;

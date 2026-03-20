@@ -33,7 +33,7 @@ const User = {
       const { rows } = await executor.query(
         `INSERT INTO users (username, email, password_hash, invited_by, invite_code)
          VALUES ($1, LOWER($2), $3, $4, $5)
-         RETURNING id, username, email, role, is_active, created_at`,
+         RETURNING id, username, email, role, is_active, is_email_verified, email_verified_at, created_at`,
         [username, email, passwordHash, invitedBy, inviteCode]
       );
       return rows[0];
@@ -66,7 +66,20 @@ const User = {
    */
   async findById(id) {
     const { rows } = await query(
-      'SELECT id, username, email, role, is_active, created_at, last_login FROM users WHERE id = $1',
+      'SELECT id, username, email, role, is_active, is_email_verified, email_verified_at, created_at, last_login FROM users WHERE id = $1',
+      [id]
+    );
+    return rows[0] || null;
+  },
+
+  async markEmailVerified(id, db) {
+    const executor = getExecutor(db);
+    const { rows } = await executor.query(
+      `UPDATE users
+       SET is_email_verified = true,
+           email_verified_at = COALESCE(email_verified_at, NOW())
+       WHERE id = $1
+       RETURNING id, username, email, role, is_active, is_email_verified, email_verified_at, created_at, last_login`,
       [id]
     );
     return rows[0] || null;

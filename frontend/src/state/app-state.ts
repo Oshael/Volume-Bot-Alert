@@ -176,6 +176,8 @@ export interface SessionState {
   username: string | null;
   email: string | null;
   role: string | null;
+  isEmailVerified: boolean;
+  emailVerifiedAt: string | null;
 }
 
 export interface ConfigSummary {
@@ -240,7 +242,9 @@ export interface AppState {
     error: string | null;
     notice: string | null;
     loginErrorCount: number;
-    authPanel: 'none' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset';
+    authPanel: 'none' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success';
+    pendingVerificationEmail: string | null;
+    pendingPasswordResetToken: string | null;
     recentPage: number;
     oldWeekPage: number;
     recentPerPage: number;
@@ -262,6 +266,8 @@ export function createAppState(): AppState {
       username: null,
       email: null,
       role: null,
+      isEmailVerified: false,
+      emailVerifiedAt: null,
     },
     runtime: {
       mode: 'stopped',
@@ -322,6 +328,8 @@ export function createAppState(): AppState {
       notice: null,
       loginErrorCount: 0,
       authPanel: 'none',
+      pendingVerificationEmail: null,
+      pendingPasswordResetToken: null,
       recentPage: 0,
       oldWeekPage: 0,
       recentPerPage: 30,

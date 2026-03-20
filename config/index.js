@@ -118,9 +118,27 @@ module.exports = {
     max: parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || '10', 10),
   },
 
+  authEmailRateLimit: {
+    windowMs: parseInt(process.env.AUTH_EMAIL_RATE_LIMIT_WINDOW_MS || '3600000', 10),
+    max: parseInt(process.env.AUTH_EMAIL_RATE_LIMIT_MAX_REQUESTS || '6', 10),
+  },
+
   invite: {
     expiryHours: parseInt(process.env.INVITE_EXPIRY_HOURS || '72', 10),
     maxUses: parseInt(process.env.INVITE_MAX_USES || '1', 10),
+  },
+
+  email: {
+    enabled: parseBoolean(process.env.EMAIL_ENABLED, false),
+    provider: (process.env.EMAIL_PROVIDER || 'resend').trim().toLowerCase(),
+    from: (process.env.EMAIL_FROM || '').trim(),
+    replyTo: (process.env.EMAIL_REPLY_TO || '').trim() || null,
+    appBaseUrl: (process.env.APP_BASE_URL || '').trim(),
+    verificationExpiresMinutes: parseInt(process.env.EMAIL_VERIFICATION_EXPIRES_MINUTES || '60', 10),
+    passwordResetExpiresMinutes: parseInt(process.env.PASSWORD_RESET_EXPIRES_MINUTES || '30', 10),
+    resend: {
+      apiKey: (process.env.RESEND_API_KEY || '').trim(),
+    },
   },
 
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:3000')
