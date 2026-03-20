@@ -1601,31 +1601,33 @@ export function createAppController(): AppController {
     refreshPumpPanelCounts();
   }
 
-  async function reloadConfigInternal(token: string) {
-    const [payload, monitoredDashboardTokensResult] = await Promise.allSettled([
-      fetchConfig(token),
-      fetchDashboardMonitored(token),
-    ]);
-
-    if (payload.status !== 'fulfilled') {
-      throw payload.reason;
-    }
-
-    let monitoredDashboardTokens: DashboardMonitoredToken[] = [];
-    if (monitoredDashboardTokensResult.status === 'fulfilled') {
-      monitoredDashboardTokens = monitoredDashboardTokensResult.value;
-    } else {
+  async function hydrateDashboardMonitoredInternal(token: string, manualTokens: AddressItem[]) {
+    try {
+      const monitoredDashboardTokens = await fetchDashboardMonitored(token);
+      applyMonitoredDashboard(monitoredDashboardTokens, manualTokens);
+      emit();
+    } catch (error) {
       writeConfigDebug('reloadConfigInternal:dashboard-failed', {
-        error: monitoredDashboardTokensResult.reason instanceof Error
-          ? monitoredDashboardTokensResult.reason.message
-          : 'unknown_dashboard_error',
+        error: error instanceof Error ? error.message : 'unknown_dashboard_error',
       });
     }
+  }
+
+  async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
+    const payload = await fetchConfig(token);
 
     writeConfigDebug('reloadConfigInternal:fetched', {
-      fetchedMinVol: payload.value.configs?.['min-vol'],
+      fetchedMinVol: payload.configs?.['min-vol'],
     });
-    applyConfig(payload.value, monitoredDashboardTokens);
+
+    applyConfig(payload, []);
+
+    if (options?.deferDashboard) {
+      void hydrateDashboardMonitoredInternal(token, payload.tokens);
+      return;
+    }
+
+    await hydrateDashboardMonitoredInternal(token, payload.tokens);
   }
 
   async function handleAuthRouteIntent() {
@@ -1876,7 +1878,7 @@ export function createAppController(): AppController {
       try {
         const session = await fetchCurrentSession();
         applySession(session.user);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         setNotice(AUTH_NOTICE_SESSION_RESTORED);
       } catch (error) {
         disconnectSocket();
@@ -1931,7 +1933,7 @@ export function createAppController(): AppController {
         }
         const session = await fetchCurrentSession();
         applySession(session.user);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         state.ui.loginErrorCount = 0;
         setNotice(AUTH_NOTICE_LOGIN_SUCCESS);
       } catch (error) {
@@ -1996,7 +1998,7 @@ export function createAppController(): AppController {
         state.ui.pendingLoginOtpEmailHint = null;
         state.ui.authPanel = 'none';
         applySession(result.user);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER);
+        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         state.ui.loginErrorCount = 0;
         setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
       } catch (error) {
