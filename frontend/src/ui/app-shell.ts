@@ -67,6 +67,10 @@ type EmailOtpDraft = {
   code: string;
 };
 
+type UserMenuDraft = {
+  open: boolean;
+};
+
 export function renderAppShell(root: HTMLElement, state: AppState, controller: AppController) {
   const configDraft = captureConfigDraft(root);
   const panelScrollDraft = capturePanelScrollDraft(root);
@@ -77,6 +81,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const emailOtpDraft = captureEmailOtpDraft(root);
   const inviteAssistanceDraft = captureInviteAssistanceDraft(root);
   const passwordResetDraft = capturePasswordResetDraft(root);
+  const userMenuDraft = captureUserMenuDraft(root);
   root.innerHTML = '';
 
   const shell = document.createElement('div');
@@ -118,6 +123,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   applyInviteAssistanceFocus(root, state);
   applyPasswordResetDraft(root, passwordResetDraft);
   applyPasswordResetFocus(root, state);
+  applyUserMenuDraft(root, userMenuDraft);
   applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
   wireHoverPersistence(root);
@@ -126,6 +132,25 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   wireLogHovers(root);
   wireUserMenus(root);
   applyHoverState(root);
+}
+
+function captureUserMenuDraft(root: HTMLElement): UserMenuDraft | null {
+  const menu = root.querySelector<HTMLElement>('[data-user-menu]');
+  if (!menu) {
+    return null;
+  }
+
+  return {
+    open: menu.classList.contains('open'),
+  };
+}
+
+function applyUserMenuDraft(root: HTMLElement, draft: UserMenuDraft | null) {
+  if (!draft?.open) {
+    return;
+  }
+
+  root.querySelector<HTMLElement>('[data-user-menu]')?.classList.add('open');
 }
 
 

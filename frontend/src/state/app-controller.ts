@@ -2307,16 +2307,11 @@ export function createAppController(): AppController {
           outgoingMinVol: configs['min-vol'],
           responseMinVol: patchResult.configs?.['min-vol'],
         });
-        await reloadConfigInternal(token);
-        writeConfigDebug('saveMonitoringConfig:after-reload', {
-          reloadedMinVol: state.data.configs['min-vol'],
-        });
+        state.data.configs = { ...state.data.configs, ...patchResult.configs };
+        applyUiPreferencesFromConfigs();
+        persistSoundSettings();
         sweepMinMcapRemove();
         deriveAgeBuckets();
-        if (monitoringInterval) {
-          stopMonitoringTimers();
-          startMonitoringTimers();
-        }
         setNotice('Monitoring config updated.');
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to save config');

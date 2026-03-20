@@ -1700,7 +1700,15 @@ function renderOldSurgeThresholdMenu(state: AppState) {
   const value6h = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
   return `
     <div class="config-item config-item-menu">
-      <label>Surge threshold</label>
+      <label>
+        <span>Surge threshold</span>
+        <span class="config-help-hover" tabindex="0" aria-label="What is Surge alert?">
+          <span class="config-help-trigger">?</span>
+          <span class="config-help-panel">
+            Surge is the alert for older routed tokens. It fires when a token in the routed old-token buckets reaches the configured 1H or 6H price-change threshold during the current session.
+          </span>
+        </span>
+      </label>
       <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
         <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="old-surge-threshold">${Math.round(value1h)}% / ${Math.round(value6h)}%</button>
         <div class="sort-menu-dropdown config-menu-dropdown config-threshold-dropdown">
@@ -1767,8 +1775,8 @@ function renderSoundUploadStrip(state: AppState) {
     { slot: 'normal', title: 'Sound Level Normal', sub: '(+50%) ? MP3/WAV/OGG', dot: 'sound-dot normal' },
     { slot: 'critical', title: 'Sound Level Critical', sub: '(+100%) ? MP3/WAV/OGG', dot: 'sound-dot critical' },
     { slot: 'mega', title: 'Sound Level Mega', sub: '(+200%) ? MP3/WAV/OGG', dot: 'sound-dot mega' },
-    { slot: 'old1h', title: 'Old Token Alert ? 1H', sub: `(+${Math.round(old1hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old1h' },
-    { slot: 'old6h', title: 'Old Token Alert ? 6H', sub: `(+${Math.round(old6hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old6h' },
+    { slot: 'old1h', title: 'Surge Alert ? 1H', sub: `(+${Math.round(old1hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old1h' },
+    { slot: 'old6h', title: 'Surge Alert ? 6H', sub: `(+${Math.round(old6hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old6h' },
   ];
 
   return `
