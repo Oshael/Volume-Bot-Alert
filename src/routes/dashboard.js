@@ -8,7 +8,6 @@ const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const { attachResponsePerfHeaders, logRequestPerf, nowMs } = require('../utils/perf-metrics');
 
 const MONITORED_MIN_MCAP = 30000;
-const MCAP_DELTA_WINDOW_MS = 5 * 60 * 1000;
 const METEORA_DELTA_1H_MS = 60 * 60 * 1000;
 const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
 const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
@@ -85,27 +84,9 @@ function buildMeteoraSummary(address, historyRows) {
   };
 }
 
-function buildMarketBaseline(latestRows) {
-  const validRows = latestRows.filter((row) => row?.mcap != null && Number.isFinite(Number(row.mcap)));
-  const current = validRows[0] || null;
-  const currentTs = toDateOrNull(current?.ts)?.getTime() || null;
-  const targetTs = currentTs == null ? null : currentTs - MCAP_DELTA_WINDOW_MS;
-  let previous = null;
-
-  if (targetTs != null) {
-    previous = validRows.find((row) => {
-      if (row === current) return false;
-      const rowTs = toDateOrNull(row.ts)?.getTime();
-      return rowTs != null && rowTs <= targetTs;
-    }) || null;
-  }
-
-  if (!previous && validRows.length > 1) {
-    previous = validRows[validRows.length - 1];
-  }
-
-  const currentMcap = current?.mcap == null ? null : Number(current.mcap);
-  const previousMcap = previous?.mcap == null ? null : Number(previous.mcap);
+function buildMarketBaseline(baselineRow) {
+  const currentMcap = baselineRow?.current_mcap == null ? null : Number(baselineRow.current_mcap);
+  const previousMcap = baselineRow?.baseline_mcap == null ? null : Number(baselineRow.baseline_mcap);
   const mcapDelta = currentMcap != null && previousMcap != null && previousMcap > 0
     ? ((currentMcap - previousMcap) / previousMcap) * 100
     : null;
@@ -124,13 +105,13 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const catalogMs = nowMs() - catalogStartedAt;
     const addresses = tokens.map((item) => item.address);
     const enrichStartedAt = nowMs();
-    const [historyRows, marketRows] = await Promise.all([
+    const [historyRows, marketBaselineRows] = await Promise.all([
       tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 }),
-      tokenMarketSnapshot.listLatestByAddresses(addresses, 60),
+      tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5),
     ]);
     const enrichMs = nowMs() - enrichStartedAt;
     const meteoraByAddress = new Map();
-    const marketByAddress = new Map();
+    const marketBaselineByAddress = new Map();
 
     for (const row of historyRows) {
       const current = meteoraByAddress.get(row.token_address) || [];
@@ -138,10 +119,8 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       meteoraByAddress.set(row.token_address, current);
     }
 
-    for (const row of marketRows) {
-      const current = marketByAddress.get(row.token_address) || [];
-      current.push(row);
-      marketByAddress.set(row.token_address, current);
+    for (const row of marketBaselineRows) {
+      marketBaselineByAddress.set(row.token_address, row);
     }
 
     const responsePayload = {
@@ -150,7 +129,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       minMcap: Number.isFinite(Number(req.query?.minMcap)) ? Number(req.query.minMcap) : MONITORED_MIN_MCAP,
       count: tokens.length,
       tokens: tokens.map((item) => {
-        const marketBaseline = buildMarketBaseline(marketByAddress.get(item.address) || []);
+        const marketBaseline = buildMarketBaseline(marketBaselineByAddress.get(item.address) || null);
         return {
         address: item.address,
         symbol: item.symbol || null,
@@ -192,7 +171,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       tokenCount: tokens.length,
       addressCount: addresses.length,
       meteoraRows: historyRows.length,
-      marketRows: marketRows.length,
+      marketRows: marketBaselineRows.length,
       responseBytes,
     });
     res.json(responsePayload);

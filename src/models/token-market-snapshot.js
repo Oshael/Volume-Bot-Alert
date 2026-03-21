@@ -122,9 +122,65 @@ async function listLatestByAddresses(addresses, limitPerAddress = 2) {
   return rows;
 }
 
+async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const safeWindowMinutes = Math.max(1, Math.min(Number(windowMinutes) || 5, 60));
+  const { rows } = await db.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (token_address)
+         token_address,
+         ts AS current_ts,
+         mcap AS current_mcap
+       FROM token_market_snapshots
+       WHERE token_address = ANY($1::varchar[])
+       ORDER BY token_address, ts DESC
+     )
+     SELECT
+       latest.token_address,
+       latest.current_ts,
+       latest.current_mcap,
+       COALESCE(target.ts, fallback.ts) AS baseline_ts,
+       COALESCE(target.mcap, fallback.mcap) AS baseline_mcap
+     FROM latest
+     LEFT JOIN LATERAL (
+       SELECT ts, mcap
+       FROM token_market_snapshots
+       WHERE token_address = latest.token_address
+         AND mcap IS NOT NULL
+         AND ts <= latest.current_ts - ($2::int * INTERVAL '1 minute')
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS target ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT ts, mcap
+       FROM token_market_snapshots
+       WHERE token_address = latest.token_address
+         AND mcap IS NOT NULL
+         AND ts < latest.current_ts
+       ORDER BY ts ASC
+       LIMIT 1
+     ) AS fallback ON TRUE
+     ORDER BY latest.token_address ASC`,
+    [unique, safeWindowMinutes]
+  );
+
+  return rows;
+}
+
 module.exports = {
   insertSnapshot,
   listRecentByAddress,
   listHistoryByAddress,
   listLatestByAddresses,
+  listCurrentAndBaselineByAddresses,
 };
