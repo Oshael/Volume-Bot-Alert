@@ -114,9 +114,99 @@ async function listHistoryByAddresses(addresses, options = {}) {
   return rows;
 }
 
+async function listLatestSummaryByAddresses(addresses) {
+  const normalized = normalizeAddressList(addresses);
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  const { rows } = await db.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (token_address)
+         token_address,
+         ts AS current_ts,
+         total_tvl AS current_tvl,
+         best_pool_address,
+         pool_count
+       FROM token_meteora_snapshots
+       WHERE token_address = ANY($1::varchar[])
+       ORDER BY token_address, ts DESC
+     )
+     SELECT
+       latest.token_address,
+       latest.current_ts,
+       latest.current_tvl,
+       latest.best_pool_address,
+       latest.pool_count,
+       COALESCE(before_1h.total_tvl, after_1h.total_tvl) AS baseline_tvl_1h,
+       COALESCE(before_6h.total_tvl, after_6h.total_tvl) AS baseline_tvl_6h,
+       COALESCE(before_24h.total_tvl, after_24h.total_tvl) AS baseline_tvl_24h
+     FROM latest
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND ts <= latest.current_ts - INTERVAL '1 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_1h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND ts > latest.current_ts - INTERVAL '1 hour'
+       ORDER BY ts ASC
+       LIMIT 1
+     ) AS after_1h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND ts <= latest.current_ts - INTERVAL '6 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_6h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND ts > latest.current_ts - INTERVAL '6 hour'
+       ORDER BY ts ASC
+       LIMIT 1
+     ) AS after_6h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND ts <= latest.current_ts - INTERVAL '24 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_24h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND ts > latest.current_ts - INTERVAL '24 hour'
+       ORDER BY ts ASC
+       LIMIT 1
+     ) AS after_24h ON TRUE
+     ORDER BY latest.token_address ASC`,
+    [normalized]
+  );
+
+  return rows;
+}
+
 module.exports = {
   insertSnapshot,
   getLatestByAddresses,
   listHistoryByAddress,
   listHistoryByAddresses,
+  listLatestSummaryByAddresses,
 };

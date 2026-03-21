@@ -8,55 +8,22 @@ const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const { attachResponsePerfHeaders, logRequestPerf, nowMs } = require('../utils/perf-metrics');
 
 const MONITORED_MIN_MCAP = 30000;
-const METEORA_DELTA_1H_MS = 60 * 60 * 1000;
-const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
-const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
 
 router.use(authenticate);
 
-function toDateOrNull(value) {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
-function computeMeteoraDelta(history, latestTvl, windowMs) {
-  if (!Array.isArray(history) || history.length < 2 || !(latestTvl > 0)) {
+function computePctChange(currentValue, baselineValue) {
+  const current = Number(currentValue);
+  const baseline = Number(baselineValue);
+  if (!Number.isFinite(current) || !Number.isFinite(baseline) || !(current > 0) || !(baseline > 0)) {
     return null;
   }
 
-  const now = Date.now();
-  const targetTs = now - windowMs;
-  let baseline = null;
-
-  for (const point of history) {
-    const pointTs = toDateOrNull(point.ts)?.getTime();
-    const tvl = Number(point.total_tvl);
-    if (!Number.isFinite(pointTs) || !(tvl > 0)) {
-      continue;
-    }
-
-    if (pointTs <= targetTs) {
-      baseline = { ts: pointTs, tvl };
-    } else if (!baseline) {
-      baseline = { ts: pointTs, tvl };
-      break;
-    } else {
-      break;
-    }
-  }
-
-  if (!baseline || !(baseline.tvl > 0)) {
-    return null;
-  }
-
-  const pct = ((latestTvl - baseline.tvl) / baseline.tvl) * 100;
+  const pct = ((current - baseline) / baseline) * 100;
   return Math.abs(pct) < 0.01 ? null : pct;
 }
 
-function buildMeteoraSummary(address, historyRows) {
-  const latest = historyRows[historyRows.length - 1] || null;
-  if (!latest) {
+function buildMeteoraSummary(address, summaryRow) {
+  if (!summaryRow) {
     return {
       address,
       tvl: null,
@@ -70,16 +37,16 @@ function buildMeteoraSummary(address, historyRows) {
     };
   }
 
-  const latestTvl = Number(latest.total_tvl);
+  const latestTvl = Number(summaryRow.current_tvl);
   return {
     address,
     tvl: Number.isFinite(latestTvl) ? latestTvl : null,
-    poolAddress: latest.best_pool_address || null,
-    poolCount: Number(latest.pool_count) || 0,
-    lastSnapshotAt: latest.ts || null,
-    change1h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_1H_MS),
-    change6h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_6H_MS),
-    change24h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_24H_MS),
+    poolAddress: summaryRow.best_pool_address || null,
+    poolCount: Number(summaryRow.pool_count) || 0,
+    lastSnapshotAt: summaryRow.current_ts || null,
+    change1h: computePctChange(summaryRow.current_tvl, summaryRow.baseline_tvl_1h),
+    change6h: computePctChange(summaryRow.current_tvl, summaryRow.baseline_tvl_6h),
+    change24h: computePctChange(summaryRow.current_tvl, summaryRow.baseline_tvl_24h),
     noPool: false,
   };
 }
@@ -105,18 +72,16 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const catalogMs = nowMs() - catalogStartedAt;
     const addresses = tokens.map((item) => item.address);
     const enrichStartedAt = nowMs();
-    const [historyRows, marketBaselineRows] = await Promise.all([
-      tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 }),
+    const [meteoraSummaryRows, marketBaselineRows] = await Promise.all([
+      tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses),
       tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5),
     ]);
     const enrichMs = nowMs() - enrichStartedAt;
     const meteoraByAddress = new Map();
     const marketBaselineByAddress = new Map();
 
-    for (const row of historyRows) {
-      const current = meteoraByAddress.get(row.token_address) || [];
-      current.push(row);
-      meteoraByAddress.set(row.token_address, current);
+    for (const row of meteoraSummaryRows) {
+      meteoraByAddress.set(row.token_address, row);
     }
 
     for (const row of marketBaselineRows) {
@@ -154,7 +119,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
         mcapDelta: marketBaseline.mcapDelta,
         lastSeenAt: item.last_seen_at || null,
         lastEvaluatedAt: item.last_evaluated_at || null,
-        meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || []),
+        meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
       };
       }),
     };
@@ -170,7 +135,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       enrichMs,
       tokenCount: tokens.length,
       addressCount: addresses.length,
-      meteoraRows: historyRows.length,
+      meteoraRows: meteoraSummaryRows.length,
       marketRows: marketBaselineRows.length,
       responseBytes,
     });
