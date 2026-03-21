@@ -71,12 +71,13 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, req.query?.minMcap);
     const catalogMs = nowMs() - catalogStartedAt;
     const addresses = tokens.map((item) => item.address);
-    const enrichStartedAt = nowMs();
-    const [meteoraSummaryRows, marketBaselineRows] = await Promise.all([
-      tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses),
-      tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5),
-    ]);
-    const enrichMs = nowMs() - enrichStartedAt;
+    const meteoraStartedAt = nowMs();
+    const meteoraSummaryRows = await tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses);
+    const meteoraMs = nowMs() - meteoraStartedAt;
+    const marketStartedAt = nowMs();
+    const marketBaselineRows = await tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5);
+    const marketMs = nowMs() - marketStartedAt;
+    const enrichMs = meteoraMs + marketMs;
     const meteoraByAddress = new Map();
     const marketBaselineByAddress = new Map();
 
@@ -128,11 +129,15 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       total: totalMs,
       catalog: catalogMs,
       enrich: enrichMs,
+      meteora: meteoraMs,
+      market: marketMs,
     });
     logRequestPerf(req, 'dashboard.monitored', {
       totalMs,
       catalogMs,
       enrichMs,
+      meteoraMs,
+      marketMs,
       tokenCount: tokens.length,
       addressCount: addresses.length,
       meteoraRows: meteoraSummaryRows.length,
