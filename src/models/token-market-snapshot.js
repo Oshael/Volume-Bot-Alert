@@ -136,41 +136,46 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
 
   const safeWindowMinutes = Math.max(1, Math.min(Number(windowMinutes) || 5, 60));
   const { rows } = await db.query(
-    `WITH latest AS (
-       SELECT DISTINCT ON (token_address)
-         token_address,
+    `WITH requested AS (
+       SELECT UNNEST($1::varchar[]) AS token_address
+     )
+     SELECT
+       requested.token_address,
+       current_row.current_ts,
+       current_row.current_mcap,
+       COALESCE(target.ts, fallback.ts) AS baseline_ts,
+       COALESCE(target.mcap, fallback.mcap) AS baseline_mcap
+     FROM requested
+     LEFT JOIN LATERAL (
+       SELECT
          ts AS current_ts,
          mcap AS current_mcap
        FROM token_market_snapshots
-       WHERE token_address = ANY($1::varchar[])
-       ORDER BY token_address, ts DESC
-     )
-     SELECT
-       latest.token_address,
-       latest.current_ts,
-       latest.current_mcap,
-       COALESCE(target.ts, fallback.ts) AS baseline_ts,
-       COALESCE(target.mcap, fallback.mcap) AS baseline_mcap
-     FROM latest
+       WHERE token_address = requested.token_address
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS current_row ON TRUE
      LEFT JOIN LATERAL (
        SELECT ts, mcap
        FROM token_market_snapshots
-       WHERE token_address = latest.token_address
+       WHERE token_address = requested.token_address
          AND mcap IS NOT NULL
-         AND ts <= latest.current_ts - ($2::int * INTERVAL '1 minute')
+         AND current_row.current_ts IS NOT NULL
+         AND ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
        ORDER BY ts DESC
        LIMIT 1
      ) AS target ON TRUE
      LEFT JOIN LATERAL (
        SELECT ts, mcap
        FROM token_market_snapshots
-       WHERE token_address = latest.token_address
+       WHERE token_address = requested.token_address
          AND mcap IS NOT NULL
-         AND ts < latest.current_ts
+         AND current_row.current_ts IS NOT NULL
+         AND ts < current_row.current_ts
        ORDER BY ts ASC
        LIMIT 1
-     ) AS fallback ON TRUE
-     ORDER BY latest.token_address ASC`,
+     ) AS fallback ON target.ts IS NULL
+     ORDER BY requested.token_address ASC`,
     [unique, safeWindowMinutes]
   );
 
