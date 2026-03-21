@@ -5,6 +5,7 @@ const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const { attachResponsePerfHeaders, logRequestPerf, nowMs } = require('../utils/perf-metrics');
 
 const MONITORED_MIN_MCAP = 30000;
 const MCAP_DELTA_WINDOW_MS = 5 * 60 * 1000;
@@ -116,13 +117,18 @@ function buildMarketBaseline(latestRows) {
 }
 
 router.get('/monitored', dashboardLimiter, async (req, res) => {
+  const startedAt = nowMs();
   try {
+    const catalogStartedAt = nowMs();
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, req.query?.minMcap);
+    const catalogMs = nowMs() - catalogStartedAt;
     const addresses = tokens.map((item) => item.address);
+    const enrichStartedAt = nowMs();
     const [historyRows, marketRows] = await Promise.all([
       tokenMeteoraSnapshot.listHistoryByAddresses(addresses, { hours: 30 }),
       tokenMarketSnapshot.listLatestByAddresses(addresses, 60),
     ]);
+    const enrichMs = nowMs() - enrichStartedAt;
     const meteoraByAddress = new Map();
     const marketByAddress = new Map();
 
@@ -138,7 +144,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       marketByAddress.set(row.token_address, current);
     }
 
-    res.json({
+    const responsePayload = {
       generatedAt: new Date().toISOString(),
       source: 'token_catalog',
       minMcap: Number.isFinite(Number(req.query?.minMcap)) ? Number(req.query.minMcap) : MONITORED_MIN_MCAP,
@@ -172,7 +178,24 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
         meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || []),
       };
       }),
+    };
+    const totalMs = nowMs() - startedAt;
+    const { responseBytes } = attachResponsePerfHeaders(res, 'dashboard.monitored', responsePayload, {
+      total: totalMs,
+      catalog: catalogMs,
+      enrich: enrichMs,
     });
+    logRequestPerf(req, 'dashboard.monitored', {
+      totalMs,
+      catalogMs,
+      enrichMs,
+      tokenCount: tokens.length,
+      addressCount: addresses.length,
+      meteoraRows: historyRows.length,
+      marketRows: marketRows.length,
+      responseBytes,
+    });
+    res.json(responsePayload);
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored dashboard' });

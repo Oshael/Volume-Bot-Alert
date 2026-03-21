@@ -62,6 +62,12 @@ module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   forceHttps: parseBoolean(process.env.FORCE_HTTPS, false),
+  performanceMetrics: {
+    enabled: parseBoolean(
+      process.env.PERF_METRICS_ENABLED,
+      (process.env.NODE_ENV || 'development') === 'development'
+    ),
+  },
 
   db,
 

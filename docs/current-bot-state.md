@@ -75,6 +75,28 @@ Last reviewed against code on `2026-03-20` after real email delivery, email veri
   - `GET /api/dashboard/monitored`
 - This is the endpoint the frontend currently uses for the shared monitored set.
 
+### Working currently
+- Current active focus is performance/latency, not auth feature expansion.
+- The main user-facing problem right now is not scroll/render lag.
+- The current problem is slow data arrival for:
+  - monitored tokens
+  - user config bootstrap
+  - user config save/apply
+- Current leading suspect remains the bootstrap + dashboard/config data path, especially:
+  - `GET /api/dashboard/monitored`
+  - `GET /api/config`
+  - `PATCH /api/config`
+- Recent safe performance changes already applied:
+  - frontend bootstrap now applies `GET /api/config` first and lets monitored hydration complete in the background
+  - frontend `reloadConfigInternal()` no longer waits serially on config then dashboard
+  - backend `GET /api/dashboard/monitored` now fetches Meteora history and market snapshot rows in parallel
+  - backend `GET /api/config` now fetches user-scoped config/tokens/blocklist/starred in parallel
+  - backend `PATCH /api/config` no longer does an unnecessary full `getAll()` reread after every save
+- Important current conclusion:
+  - the UI itself is generally visually smooth
+  - the lag is still data-latency / backend-path / bootstrap related
+  - next work should stay focused on measuring and shrinking monitored/config payload cost before broader UI refactors
+
 ### Recent / Old Week bars
 - Source of truth: frontend-derived from tracked token state
 - Why still frontend-owned:
@@ -500,21 +522,33 @@ Current login implementation progress:
      - final support/recovery wording pass
      - optional flash/icon treatment pass
 
-#### Next auth/security preparation plan
-1. Session policy review
+#### Next active path
+1. Performance investigation and latency reduction
+   - measure real response time for:
+     - `GET /api/dashboard/monitored`
+     - `GET /api/config`
+     - `PATCH /api/config`
+   - determine whether the main remaining bottleneck is:
+     - SQL / snapshot read volume
+     - payload size
+     - frontend bootstrap sequencing
+   - if needed, reduce bootstrap payload cost before adding more features
+   - likely next target is trimming or staging `dashboard/monitored` hydration further if production still feels slow
+
+2. Session policy review
    - re-evaluate session expiration and cleanup cadence
    - review how many historical sessions a single account is allowed to accumulate
    - keep `logout-all` behavior as the reference point for expected session invalidation
    - decide whether older inactive sessions should be capped, pruned faster, or surfaced more clearly in admin tooling
    - review whether OTP challenge cleanup should also be tightened beyond the current flow-based cleanup
 
-2. Final security pass
+3. Final security pass
    - continue reducing older render surfaces that still rely heavily on HTML-string rendering
    - prioritize the most sensitive auth/account/config surfaces first
    - preserve the current CSP and cookie-auth posture while reducing structural XSS risk
    - only after the auth roadmap is stable, consider broader `innerHTML` reduction in lower-risk UI areas
 
-3. Stronger secondary verification follow-up
+4. Stronger secondary verification follow-up
    - current secondary verification is email OTP
    - if stronger account protection is needed later, the next upgrade path is TOTP + backup codes
    - keep this as a later hardening step, not the immediate next priority

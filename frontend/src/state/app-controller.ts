@@ -143,8 +143,66 @@ export function createAppController(): AppController {
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
 
-  function writeConfigDebug(_stage: string, _extra: Record<string, unknown> = {}) {
-    return;
+  function isPerfMetricsEnabled() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const queryValue = params.get('perf');
+    if (queryValue === '1') return true;
+    if (queryValue === '0') return false;
+
+    try {
+      const stored = window.localStorage.getItem('perf-metrics');
+      if (stored === 'on') return true;
+      if (stored === 'off') return false;
+    } catch (_) {
+      // Ignore storage access issues.
+    }
+
+    return import.meta.env.DEV || import.meta.env.VITE_PERF_METRICS === '1';
+  }
+
+  function getHeapUsedMb() {
+    if (typeof performance === 'undefined') {
+      return null;
+    }
+    const heapBytes = (performance as Performance & {
+      memory?: { usedJSHeapSize?: number };
+    }).memory?.usedJSHeapSize;
+    return typeof heapBytes === 'number' ? Number((heapBytes / (1024 * 1024)).toFixed(1)) : null;
+  }
+
+  function getPerfStateSummary() {
+    return {
+      heapUsedMb: getHeapUsedMb(),
+      runtimeMode: state.runtime.mode,
+      monitored: state.data.monitoredTokens.length,
+      manual: state.data.manualTokens.length,
+      recent: state.data.recentTokens.length,
+      oldWeek: state.data.oldWeekTokens.length,
+      eligibleCatalog: state.data.eligibleCatalogTokens.length,
+      blocklist: state.data.blocklist.length,
+      starred: state.data.starredTokens.length,
+      meteoraTracked: Object.keys(state.data.meteoraByAddress).length,
+      alerts: state.data.alerts.length,
+      pumpTokens: state.data.pumpTokens.length,
+      pumpMigrations: state.data.recentPumpMigrations.length,
+      pumpToasts: state.data.pumpToasts.length,
+    };
+  }
+
+  function writeConfigDebug(stage: string, extra: Record<string, unknown> = {}) {
+    if (!isPerfMetricsEnabled()) {
+      return;
+    }
+
+    console.log('[Perf][Frontend]', stage, {
+      ts: new Date().toISOString(),
+      ...getPerfStateSummary(),
+      ...extra,
+    });
   }
 
   function emit() {
@@ -1352,11 +1410,20 @@ export function createAppController(): AppController {
     }
 
     monitoredRefreshInFlight = true;
+    const startedAt = performance.now();
     try {
       const monitoredDashboardTokens = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboardTokens);
+      writeConfigDebug('refreshMonitoredDashboard:success', {
+        fetchMs: Number((performance.now() - startedAt).toFixed(1)),
+        monitoredDashboardTokens: monitoredDashboardTokens.length,
+      });
       emit();
     } catch (error) {
+      writeConfigDebug('refreshMonitoredDashboard:error', {
+        fetchMs: Number((performance.now() - startedAt).toFixed(1)),
+        error: error instanceof Error ? error.message : 'unknown_refresh_error',
+      });
       setError(error instanceof Error ? error.message : 'Failed to refresh monitored dashboard');
       emit();
     } finally {
@@ -1574,6 +1641,10 @@ export function createAppController(): AppController {
     state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
     state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
     rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+    writeConfigDebug('applyMonitoredDashboard', {
+      monitoredDashboardTokens: monitoredDashboardTokens.length,
+      manualTokensOverride: manualTokensOverride?.length ?? null,
+    });
   }
 
   function applyConfig(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
@@ -1614,10 +1685,16 @@ export function createAppController(): AppController {
   }
 
   async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
+    const startedAt = performance.now();
     const payload = await fetchConfig(token);
 
     writeConfigDebug('reloadConfigInternal:fetched', {
+      fetchMs: Number((performance.now() - startedAt).toFixed(1)),
       fetchedMinVol: payload.configs?.['min-vol'],
+      configKeys: Object.keys(payload.configs || {}).length,
+      manualTokens: payload.tokens.length,
+      blocklist: payload.blocklist.length,
+      starredTokens: payload.starredTokens.length,
     });
 
     applyConfig(payload, []);

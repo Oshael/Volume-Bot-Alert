@@ -7,6 +7,7 @@ const userToken = require('../models/user-token');
 const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
+const { attachResponsePerfHeaders, estimateJsonBytes, logRequestPerf, nowMs } = require('../utils/perf-metrics');
 
 // All config routes require authentication
 router.use(authenticate);
@@ -80,6 +81,7 @@ async function upsertCatalogItemsAndSchedule(items, source) {
  * Retorna todas as configs do user (com defaults preenchidos).
  */
 router.get('/', async (req, res) => {
+  const startedAt = nowMs();
   try {
     const [configs, tokens, blocklist, starredTokens] = await Promise.all([
       userConfig.getAll(req.user.id),
@@ -88,12 +90,25 @@ router.get('/', async (req, res) => {
       userStarredToken.getAll(req.user.id),
     ]);
 
-    res.json({
+    const responsePayload = {
       configs,
       tokens,
       blocklist,
       starredTokens,
+    };
+    const totalMs = nowMs() - startedAt;
+    const { responseBytes } = attachResponsePerfHeaders(res, 'config.get', responsePayload, {
+      total: totalMs,
     });
+    logRequestPerf(req, 'config.get', {
+      totalMs,
+      configCount: Object.keys(configs || {}).length,
+      tokenCount: tokens.length,
+      blocklistCount: blocklist.length,
+      starredCount: starredTokens.length,
+      responseBytes,
+    });
+    res.json(responsePayload);
   } catch (err) {
     console.error('GET /config error:', err.message);
     res.status(500).json({ error: 'Failed to load configs' });
@@ -106,6 +121,7 @@ router.get('/', async (req, res) => {
  * Body: { configs: {...}, tokens: [...], blocklist: [...] }
  */
 router.put('/', async (req, res) => {
+  const startedAt = nowMs();
   try {
     const { configs, tokens, blocklist, starredTokens } = req.body;
     let validatedConfigs = null;
@@ -173,6 +189,7 @@ router.put('/', async (req, res) => {
       }
     }
 
+    const writeStartedAt = nowMs();
     const client = await db.getClient();
     try {
       await client.query('BEGIN');
@@ -230,21 +247,47 @@ router.put('/', async (req, res) => {
     } finally {
       client.release();
     }
+    const dbWriteMs = nowMs() - writeStartedAt;
 
+    const catalogSyncStartedAt = nowMs();
     await Promise.all([
       upsertCatalogItemsAndSchedule(normalizedTokens, 'user-manual'),
       upsertCatalogItems(normalizedBlocklist, 'blocklist'),
       upsertCatalogItems(normalizedStarred, 'starred'),
     ]);
+    const catalogSyncMs = nowMs() - catalogSyncStartedAt;
 
+    const rereadStartedAt = nowMs();
     const result = {
       configs: await userConfig.getAll(req.user.id),
       tokens: await userToken.getAll(req.user.id),
       blocklist: await userBlocklist.getAll(req.user.id),
       starredTokens: await userStarredToken.getAll(req.user.id),
     };
+    const rereadMs = nowMs() - rereadStartedAt;
 
-    res.json({ message: 'Config synced', ...result });
+    const responsePayload = { message: 'Config synced', ...result };
+    const totalMs = nowMs() - startedAt;
+    const requestBytes = estimateJsonBytes(req.body || {});
+    const { responseBytes } = attachResponsePerfHeaders(res, 'config.put', responsePayload, {
+      total: totalMs,
+      write: dbWriteMs,
+      catalog: catalogSyncMs,
+      reread: rereadMs,
+    });
+    logRequestPerf(req, 'config.put', {
+      totalMs,
+      dbWriteMs,
+      catalogSyncMs,
+      rereadMs,
+      requestBytes,
+      responseBytes,
+      configCount: Object.keys(result.configs || {}).length,
+      tokenCount: result.tokens.length,
+      blocklistCount: result.blocklist.length,
+      starredCount: result.starredTokens.length,
+    });
+    res.json(responsePayload);
   } catch (err) {
     console.error('PUT /config error:', err.message);
     res.status(500).json({ error: 'Failed to sync configs' });
@@ -257,6 +300,7 @@ router.put('/', async (req, res) => {
  * Body: { configs: {...} }
  */
 router.patch('/', async (req, res) => {
+  const startedAt = nowMs();
   try {
     const { configs } = req.body;
 
@@ -278,7 +322,19 @@ router.patch('/', async (req, res) => {
     }
 
     await userConfig.setMultiple(req.user.id, validation.configs);
-    res.json({ message: 'Config updated', configs: validation.configs });
+    const responsePayload = { message: 'Config updated', configs: validation.configs };
+    const totalMs = nowMs() - startedAt;
+    const requestBytes = estimateJsonBytes(req.body || {});
+    const { responseBytes } = attachResponsePerfHeaders(res, 'config.patch', responsePayload, {
+      total: totalMs,
+    });
+    logRequestPerf(req, 'config.patch', {
+      totalMs,
+      requestBytes,
+      responseBytes,
+      changedKeys: Object.keys(validation.configs).length,
+    });
+    res.json(responsePayload);
   } catch (err) {
     console.error('PATCH /config error:', err.message);
     res.status(500).json({ error: 'Failed to update configs' });
