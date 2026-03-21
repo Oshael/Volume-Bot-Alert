@@ -173,6 +173,159 @@ The next concrete implementation pass should start with:
 - identifying the largest contributors inside `GET /api/dashboard/monitored`
 - identifying which frontend state collections are growing or being recreated most aggressively
 
+## Experiment Results
+
+### Phase 1 Baseline Findings
+
+The first measurement pass confirmed that the main bottleneck was backend enrichment work in:
+- `GET /api/dashboard/monitored`
+
+Initial measured behavior:
+- `GET /api/config`
+  - healthy
+  - low latency
+  - small payload
+- `GET /api/dashboard/monitored`
+  - very slow before optimization
+  - roughly multi-second response time
+  - `catalogMs` was small
+  - `enrichMs` dominated request time
+
+Initial measured snapshot load patterns:
+- `meteoraRows`
+  - roughly ~27k rows per request
+- `marketRows`
+  - roughly ~15k rows per request
+- response payload
+  - around ~266-277 KB
+
+Important conclusion from baseline:
+- the main problem was not frontend render lag alone
+- the strongest confirmed server-side bottleneck was monitored enrichment
+
+### Backend Optimization Results
+
+#### 1. Market snapshot read reduction
+
+What changed:
+- stopped loading up to 60 raw market snapshots per token for dashboard refresh
+- replaced that with a targeted current + baseline read
+
+Result:
+- `marketRows` fell from roughly ~15k to roughly the token count
+
+#### 2. Meteora snapshot read reduction
+
+What changed:
+- stopped loading raw 30h Meteora history per token for each monitored refresh
+- replaced that with a summarized read that still preserves:
+  - latest TVL
+  - pool info
+  - `1h`
+  - `6h`
+  - `24h` deltas
+
+Result:
+- `meteoraRows` fell from roughly ~27k to roughly the number of tokens with snapshots
+
+#### 3. Query timing split
+
+What changed:
+- added separate timing metrics for:
+  - `meteoraMs`
+  - `marketMs`
+
+What this revealed:
+- after row-count reduction, the dominant remaining bottleneck was `marketMs`
+- `marketMs` was still in the ~2.7s range before query rewrite
+- `meteoraMs` was much lower by comparison
+
+#### 4. Market query rewrite
+
+What changed:
+- rewrote the market baseline query to use a more targeted address-driven lookup strategy
+
+Measured result after rewrite:
+- `totalMs`
+  - dropped from roughly ~2.5-3.1s to roughly ~138-200ms
+- `marketMs`
+  - dropped from roughly ~2.7-2.9s to roughly ~10-21ms
+- `meteoraMs`
+  - landed around ~109-166ms
+
+Important conclusion:
+- this solved the main backend bottleneck for monitored dashboard refresh
+
+## Current Status
+
+### Keep
+
+These changes should remain:
+- market baseline query optimization
+- Meteora summary query optimization
+- reduced market snapshot workload for dashboard refresh
+- reduced Meteora snapshot workload for dashboard refresh
+- backend monitored endpoint now operating around ~150ms instead of multi-seconds
+
+### Temporary Instrumentation
+
+These items are still useful for validation, but should be removed after performance work stabilizes:
+- backend `[Perf]` request logs
+- response perf headers:
+  - `Server-Timing`
+  - `X-Perf-Label`
+  - `X-Perf-Response-Bytes`
+- frontend `[Perf][Frontend]` logs
+- `?perf=1`-driven frontend measurement mode
+- `PERF_METRICS_ENABLED`
+
+### In Progress
+
+Current active focus:
+- frontend memory / session-long RAM behavior
+
+Why:
+- backend hot path is now dramatically faster
+- the browser tab still appears too heavy over long sessions
+- current suspicion is frontend churn / browser-side overhead rather than the old backend bottleneck
+
+## Frontend Follow-Up Focus
+
+### Confirmed frontend pressure points
+
+Areas under active suspicion:
+- full app-shell rerender path on frequent `emit()`
+- repeated tracked-state reconstruction on monitored refresh
+- long-lived collections that may retain stale data
+- session-long browser overhead from continuous updates
+
+### First frontend cuts already applied
+
+Changes already made:
+- coalesced `emit()` calls into a frame-friendly flush path
+- reduced uptime refresh frequency from 1s to 30s
+- pruned stale `meteoraByAddress` entries
+
+These changes should remain if validation looks good.
+
+### Next frontend target
+
+The next likely high-impact frontend target is:
+- reducing full `rebuildTrackedState()` churn on each monitored refresh
+
+## Next Steps
+
+1. Test the current frontend with the backend improvements already in place.
+2. Measure browser RAM behavior again with less instrumentation overhead.
+3. Confirm whether frontend memory growth is materially improved after:
+   - coalesced emits
+   - slower uptime refresh
+   - stale Meteora pruning
+4. If the tab is still too heavy, optimize:
+   - monitored refresh merge strategy
+   - full state rebuild behavior
+   - high-frequency render triggers
+
 ## Success Criteria
 
 We should consider this effort successful when:

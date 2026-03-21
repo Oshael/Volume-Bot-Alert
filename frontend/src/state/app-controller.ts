@@ -75,6 +75,7 @@ const PUMP_GC_LOW_MCAP_TIME_MS = 8 * 60 * 1000;
 const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
+const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
 const OLD_SURGE_SESSION_DELTA_PCT = 50;
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 2 * 60 * 1000;
@@ -142,6 +143,8 @@ export function createAppController(): AppController {
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
+  let emitScheduled = false;
+  let emitTimer: ReturnType<typeof setTimeout> | null = null;
 
   function isPerfMetricsEnabled() {
     if (typeof window === 'undefined') {
@@ -205,10 +208,35 @@ export function createAppController(): AppController {
     });
   }
 
-  function emit() {
+  function flushEmit() {
+    emitScheduled = false;
+    if (emitTimer) {
+      clearTimeout(emitTimer);
+      emitTimer = null;
+    }
     for (const listener of listeners) {
       listener(state);
     }
+  }
+
+  function emit() {
+    if (emitScheduled) {
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      flushEmit();
+      return;
+    }
+
+    emitScheduled = true;
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => flushEmit());
+      emitTimer = window.setTimeout(() => flushEmit(), 50);
+      return;
+    }
+
+    emitTimer = window.setTimeout(() => flushEmit(), 0);
   }
 
   function setBusy(busy: boolean) {
@@ -1454,7 +1482,7 @@ export function createAppController(): AppController {
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
       emit();
-    }, 1000);
+    }, UPTIME_REFRESH_INTERVAL_MS);
   }
 
   function stopMonitoringTimers() {
@@ -1621,11 +1649,20 @@ export function createAppController(): AppController {
       blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
       starredTokens: state.data.starredTokens.map((address) => ({ address })),
     };
+    const activeAddresses = new Set(monitoredDashboardTokens.map((item) => item.address));
+    for (const item of manualPayload.tokens) {
+      activeAddresses.add(item.address);
+    }
+    for (const address of Object.keys(state.data.meteoraByAddress)) {
+      if (!activeAddresses.has(address)) {
+        delete state.data.meteoraByAddress[address];
+      }
+    }
 
     for (const item of monitoredDashboardTokens) {
       if (!item?.address || !item.meteora) continue;
       state.data.meteoraByAddress[item.address] = {
-        ...(state.data.meteoraByAddress[item.address] || { history: [] }),
+        ...(state.data.meteoraByAddress[item.address] || {}),
         tvl: Number(item.meteora.tvl) || 0,
         poolAddress: item.meteora.poolAddress || null,
         poolCount: Number(item.meteora.poolCount) || 0,
