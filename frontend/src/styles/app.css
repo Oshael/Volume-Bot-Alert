@@ -2711,9 +2711,11 @@ TEMP_LEGACY_BAR_TITLE {
   justify-content: initial;
   align-items: center;
   gap: 8px;
-  padding-top: 4px;
-  padding-bottom: 6px;
-  margin-top: -6px;
+  padding: 0 14px 8px;
+  margin-top: -8px;
+  border-bottom: 0;
+  background: transparent;
+  z-index: 0;
 }
 
 .monitored-pagination-bar .bucket-footer-actions {
