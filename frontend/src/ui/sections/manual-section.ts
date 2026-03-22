@@ -1,6 +1,7 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
+import { escapeHtml } from './html-safety';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -23,10 +24,23 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const manualPchange24h = hasCriterion('pchange', '24h') ? 'active' : '';
   const manualAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
   const manualAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
+  const searchQuery = String(state.ui.manualSearchQuery || '').trim().toLowerCase();
+  const filteredManualTokens = searchQuery
+    ? state.data.manualTokens.filter((item) => {
+      const symbol = String(item.symbol || item.label || '').toLowerCase();
+      const name = String(item.name || '').toLowerCase();
+      const address = String(item.address || '').toLowerCase();
+      return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
+    })
+    : state.data.manualTokens;
   section.innerHTML = `
     <div class="legacy-bar-head">
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
       <div class="legacy-bar-controls">
+        <div class="compact-search ${searchQuery ? 'has-query' : ''}">
+          <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
+          <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${searchQuery ? escapeHtml(state.ui.manualSearchQuery || '') : ''}" data-action="manual-search" data-search-input="manual">
+        </div>
         <div class="sort-pill-group">
           <span class="filter-label">SORT</span>
           <div class="sort-menu-wrap" data-sort-wrap>
@@ -64,7 +78,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       </div>
     </div>
     ${renderManualTokenTable(
-      state.data.manualTokens,
+      filteredManualTokens,
       state.ui.busy,
       state.data.starredTokens,
       state.ui.manualSorts,
@@ -73,6 +87,12 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
     )}
   `;
 
+  section.querySelector<HTMLButtonElement>('[data-action="manual-search-focus"]')?.addEventListener('click', () => {
+    section.querySelector<HTMLInputElement>('[data-action="manual-search"]')?.focus();
+  });
+  section.querySelector<HTMLInputElement>('[data-action="manual-search"]')?.addEventListener('input', (event) => {
+    controller.setManualSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindBucketSortControls(section, controller, 'manual');

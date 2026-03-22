@@ -45,60 +45,85 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
       return (b.mcap || 0) - (a.mcap || 0);
     });
   const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
-  const totalPages = Math.max(1, Math.ceil(tracked.length / safePerPage));
-  const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
-  const pageStart = safePage * safePerPage;
-  const pageItems = tracked.slice(pageStart, pageStart + safePerPage);
+  const searchQuery = String(state.ui.monitoredSearchQuery || '').trim().toLowerCase();
+  const filteredTracked = searchQuery
+    ? tracked.filter((item) => {
+      const symbol = String(item.symbol || item.label || '').toLowerCase();
+      const name = String(item.name || '').toLowerCase();
+      const address = String(item.address || '').toLowerCase();
+      return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
+    })
+    : tracked;
+  const filteredTotalPages = Math.max(1, Math.ceil(filteredTracked.length / safePerPage));
+  const filteredSafePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), filteredTotalPages - 1);
+  const filteredPageStart = filteredSafePage * safePerPage;
+  const pageItems = filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage);
   section.innerHTML = `
     <div class="panel-header monitored-panel-header">
-      <span>MONITORED TOKENS</span>
+      <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
       <div class="panel-header-controls monitored-header-controls">
-        <span class="panel-header-label">SORT BY</span>
-        <div class="sort-pill-group monitored-sort-group">
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${monitoredVolActive}" data-sort-toggle="monitored-vol">VOL</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${monitoredVol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
-              <button type="button" class="sort-menu-item ${monitoredVol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
-              <button type="button" class="sort-menu-item ${monitoredVol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
-              <button type="button" class="sort-menu-item ${monitoredVol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
+        <div class="monitored-header-top">
+          <span class="panel-header-label">SORT BY</span>
+          <div class="sort-pill-group monitored-sort-group">
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${monitoredVolActive}" data-sort-toggle="monitored-vol">VOL</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${monitoredVol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
+                <button type="button" class="sort-menu-item ${monitoredVol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
+                <button type="button" class="sort-menu-item ${monitoredVol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
+                <button type="button" class="sort-menu-item ${monitoredVol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
+              </div>
+            </div>
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${monitoredMcapActive}" data-sort-toggle="monitored-mcap">MCAP</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${monitoredMcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
+                <button type="button" class="sort-menu-item ${monitoredMcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
+              </div>
+            </div>
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${monitoredAgeActive}" data-sort-toggle="monitored-age">AGE</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${monitoredAgeNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
+                <button type="button" class="sort-menu-item ${monitoredAgeOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
+              </div>
             </div>
           </div>
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${monitoredMcapActive}" data-sort-toggle="monitored-mcap">MCAP</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${monitoredMcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
-              <button type="button" class="sort-menu-item ${monitoredMcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
-            </div>
-          </div>
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${monitoredAgeActive}" data-sort-toggle="monitored-age">AGE</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${monitoredAgeNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
-              <button type="button" class="sort-menu-item ${monitoredAgeOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
-            </div>
-          </div>
+          <span class="monitored-token-pill-wrap">
+            <span class="panel-header-label">TOKENS</span>
+            <span class="count monitored-token-count-pill">${filteredTracked.length}</span>
+          </span>
         </div>
-        <span class="monitored-token-pill-wrap">
-          <span class="panel-header-label">TOKENS</span>
-          <span class="count monitored-token-count-pill">${tracked.length}</span>
-        </span>
-        <div class="monitored-inline-pagination">
-          <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" value="${safePerPage}" /></label>
-          <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="monitored-page-jump" value="${safePage + 1}" /></label>
-          <span class="bucket-page-total">${totalPages}</span>
-          <div class="button-row compact bucket-footer-actions">
-            <button type="button" class="action-button small" data-action="monitored-prev" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
-            <button type="button" class="action-button small" data-action="monitored-next" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        <div class="monitored-header-bottom">
+          <div class="monitored-inline-pagination">
+            <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query' : ''}">
+              <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search monitored tokens">&#128269;</button>
+              <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${escapeHtml(state.ui.monitoredSearchQuery || '')}" data-action="monitored-search" data-search-input="monitored">
+            </div>
+            <div class="monitored-inline-controls">
+              <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" value="${safePerPage}" /></label>
+              <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${filteredTotalPages}" step="1" data-action="monitored-page-jump" value="${filteredSafePage + 1}" /></label>
+              <span class="bucket-page-total">${filteredTotalPages}</span>
+              <div class="button-row compact bucket-footer-actions">
+                <button type="button" class="action-button small" data-action="monitored-prev" ${filteredSafePage === 0 ? 'disabled' : ''}>Prev</button>
+                <button type="button" class="action-button small" data-action="monitored-next" ${filteredSafePage >= filteredTotalPages - 1 ? 'disabled' : ''}>Next</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-    <div class="monitored-list">${tracked.length ? pageItems.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address))).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">Add tokens or load trending</div></div>'}</div>
+    <div class="monitored-list">${filteredTracked.length ? pageItems.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address))).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">No monitored tokens match the current search.</div></div>'}</div>
   `;
 
   section.append(renderManualTokenEntryForm(state, controller));
 
+  section.querySelector<HTMLButtonElement>('[data-action="monitored-search-focus"]')?.addEventListener('click', () => {
+    section.querySelector<HTMLInputElement>('[data-action="monitored-search"]')?.focus();
+  });
+  section.querySelector<HTMLInputElement>('[data-action="monitored-search"]')?.addEventListener('input', (event) => {
+    controller.setMonitoredSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindMonitoredSortControls(section, controller);

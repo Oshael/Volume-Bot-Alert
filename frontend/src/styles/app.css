@@ -2157,6 +2157,22 @@ TEMP_LEGACY_BAR_TITLE {
 .legacy-bar-title.recent { color: #00cc66; }
 .legacy-bar-title.old-week { color: #ff8c00; }
 
+.recent-live-emoji.live {
+  display: inline-block;
+  animation: recent-live-blink 1.15s ease-in-out infinite;
+}
+
+@keyframes recent-live-blink {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 0 rgba(0, 255, 136, 0));
+  }
+  50% {
+    opacity: 0.35;
+    filter: drop-shadow(0 0 10px rgba(0, 255, 136, 0.55));
+  }
+}
+
 .legacy-removal-badge,
 .legacy-bar-note,
 .filter-label,
@@ -2692,11 +2708,38 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: flex-start;
 }
 
+.monitored-panel-title {
+  display: inline-block;
+  max-width: 168px;
+  line-height: 1.55;
+  white-space: normal;
+}
+
 .monitored-header-controls {
-  justify-content: flex-end;
-  row-gap: 8px;
-  max-width: calc(100% - 120px);
-  margin-right: 18px;
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  width: calc(100% - 140px);
+  max-width: none;
+  margin-left: -36px;
+  margin-right: 0;
+}
+
+.monitored-header-top,
+.monitored-header-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.monitored-header-top {
+  margin-left: 47px;
+}
+
+.monitored-header-bottom {
+  margin-left: -35px;
 }
 
 .monitored-token-pill-wrap {
@@ -2707,11 +2750,16 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-token-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
   min-height: 24px;
-  padding: 0 8px !important;
+  padding: 0 10px !important;
   border-radius: 999px;
   font-size: 10px !important;
   line-height: 1;
+  text-align: center;
 }
 
 .panel-header-label {
@@ -2732,11 +2780,33 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-inline-pagination {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-left: 0;
   flex-wrap: nowrap;
+}
+
+.monitored-inline-pagination .compact-search-fixed {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+}
+
+.monitored-inline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 46px;
+  transition: margin-left 0.16s ease;
+}
+
+.monitored-inline-pagination:has(.compact-search-fixed.has-query) .monitored-inline-controls,
+.monitored-inline-pagination:has(.compact-search-fixed:focus-within) .monitored-inline-controls {
+  margin-left: 160px;
 }
 
 .monitored-inline-pagination .bucket-footer-actions {
@@ -2797,6 +2867,89 @@ TEMP_LEGACY_BAR_TITLE {
 
 .panel-search {
   width: 120px;
+}
+
+.compact-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 34px;
+  min-width: 34px;
+  height: 30px;
+  border: 1px solid rgba(34, 48, 74, 0.95);
+  border-radius: 8px;
+  background: rgba(8, 11, 16, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  overflow: visible;
+}
+
+.compact-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.compact-search-toggle:hover,
+.compact-search:focus-within .compact-search-toggle,
+.compact-search.has-query .compact-search-toggle {
+  color: var(--text);
+}
+
+.compact-search-input {
+  position: absolute;
+  left: 32px;
+  top: 50%;
+  width: 0;
+  height: 28px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  outline: none;
+  font-size: 10px;
+  line-height: 28px;
+  transform: translateY(-50%);
+  transition: width 0.16s ease, opacity 0.16s ease, padding 0.16s ease;
+}
+
+.compact-search.has-query .compact-search-input,
+.compact-search:focus-within .compact-search-input {
+  width: 112px;
+  padding: 0 8px 0 2px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.compact-search-input::placeholder {
+  color: var(--muted);
+}
+
+.compact-search.has-query,
+.compact-search:focus-within {
+  width: 148px;
+  min-width: 148px;
+}
+
+.compact-search-fixed {
+  flex: 0 0 34px;
+}
+
+.compact-search-fixed.has-query,
+.compact-search-fixed:focus-within {
+  z-index: 4;
 }
 
 .sort-tabs {

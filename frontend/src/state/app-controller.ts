@@ -12,6 +12,7 @@ import {
   requestPasswordReset as requestPasswordResetRequest,
   register as registerRequest,
   type RegisterInput,
+  type AuthEmailDebug,
   type SessionUser,
   verifyLoginOtp as verifyLoginOtpRequest,
 } from '../services/api/auth';
@@ -112,6 +113,10 @@ export interface AppController {
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
   setAlertSearchQuery(query: string): void;
+  setMonitoredSearchQuery(query: string): void;
+  setManualSearchQuery(query: string): void;
+  setRecentSearchQuery(query: string): void;
+  setOldWeekSearchQuery(query: string): void;
   setMonitoredPage(page: number): void;
   setRecentPage(page: number): void;
   setOldWeekPage(page: number): void;
@@ -252,6 +257,22 @@ export function createAppController(): AppController {
 
   function setNotice(notice: string | null) {
     state.ui.notice = notice;
+  }
+
+  function appendEmailDebugNotice(notice: string, emailDebug?: AuthEmailDebug | null) {
+    if (!emailDebug) {
+      return notice;
+    }
+
+    if (emailDebug.otpCode) {
+      return `${notice} Local dev code: ${emailDebug.otpCode}.`;
+    }
+
+    if (emailDebug.actionUrl) {
+      return `${notice} Local dev link: ${emailDebug.actionUrl}`;
+    }
+
+    return notice;
   }
 
   function clearAuthUrl() {
@@ -1694,6 +1715,10 @@ export function createAppController(): AppController {
     state.ui.pendingLoginOtpChallengeToken = null;
     state.ui.pendingLoginOtpEmailHint = null;
     state.ui.alertSearchQuery = '';
+    state.ui.monitoredSearchQuery = '';
+    state.ui.manualSearchQuery = '';
+    state.ui.recentSearchQuery = '';
+    state.ui.oldWeekSearchQuery = '';
     state.ui.monitoredPage = 0;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
@@ -1979,6 +2004,25 @@ export function createAppController(): AppController {
       state.ui.alertSearchQuery = String(query || '');
       emit();
     },
+    setMonitoredSearchQuery(query: string) {
+      state.ui.monitoredSearchQuery = String(query || '');
+      state.ui.monitoredPage = 0;
+      emit();
+    },
+    setManualSearchQuery(query: string) {
+      state.ui.manualSearchQuery = String(query || '');
+      emit();
+    },
+    setRecentSearchQuery(query: string) {
+      state.ui.recentSearchQuery = String(query || '');
+      state.ui.recentPage = 0;
+      emit();
+    },
+    setOldWeekSearchQuery(query: string) {
+      state.ui.oldWeekSearchQuery = String(query || '');
+      state.ui.oldWeekPage = 0;
+      emit();
+    },
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       emit();
@@ -2130,7 +2174,10 @@ export function createAppController(): AppController {
           state.ui.pendingLoginOtpEmailHint = result.otpEmailHint || validated.email;
           state.ui.authPanel = 'email-otp';
           state.ui.loginErrorCount = 0;
-          setNotice(result.message || 'Verification code sent. Check your email to finish signing in.');
+          setNotice(appendEmailDebugNotice(
+            result.message || 'Verification code sent. Check your email to finish signing in.',
+            result.emailDebug,
+          ));
           return;
         }
         const session = await fetchCurrentSession();
@@ -2233,7 +2280,10 @@ export function createAppController(): AppController {
         const result = await resendLoginOtpRequest(challengeToken);
         state.ui.pendingLoginOtpChallengeToken = result.challengeToken || challengeToken;
         state.ui.pendingLoginOtpEmailHint = result.otpEmailHint || state.ui.pendingLoginOtpEmailHint;
-        setNotice(result.message || 'A new verification code has been sent.');
+        setNotice(appendEmailDebugNotice(
+          result.message || 'A new verification code has been sent.',
+          result.emailDebug,
+        ));
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to resend verification code');
       } finally {
@@ -2267,11 +2317,14 @@ export function createAppController(): AppController {
         clearSession();
         state.ui.pendingVerificationEmail = validated.input.email;
         state.ui.authPanel = 'email-verification';
-        setNotice(result.verificationEmailError
-          ? 'Account created, but the verification email could not be sent. Fix email delivery and resend.'
-          : result.emailVerificationRequired
-            ? 'Account created. Check your inbox to verify your email.'
-            : 'Account created. Workspace synced.');
+        setNotice(appendEmailDebugNotice(
+          result.verificationEmailError
+            ? 'Account created, but the verification email could not be sent. Fix email delivery and resend.'
+            : result.emailVerificationRequired
+              ? 'Account created. Check your inbox to verify your email.'
+              : 'Account created. Workspace synced.',
+          result.emailDebug,
+        ));
       } catch (error) {
         const raw = error instanceof Error ? error.message : '';
         if (raw.includes('Authentication required')) {
@@ -2305,7 +2358,10 @@ export function createAppController(): AppController {
 
       try {
         const result = await requestEmailVerificationRequest(validated.input, state.session.token);
-        setNotice(result.message || 'Verification email sent.');
+        setNotice(appendEmailDebugNotice(
+          result.message || 'Verification email sent.',
+          result.emailDebug,
+        ));
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to send verification email');
       } finally {
@@ -2334,7 +2390,10 @@ export function createAppController(): AppController {
 
       try {
         const result = await requestPasswordResetRequest(validated.input);
-        setNotice(result.message || 'Password reset email sent.');
+        setNotice(appendEmailDebugNotice(
+          result.message || 'Password reset email sent.',
+          result.emailDebug,
+        ));
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Password reset request failed');
       } finally {

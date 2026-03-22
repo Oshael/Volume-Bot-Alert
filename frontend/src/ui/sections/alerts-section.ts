@@ -22,7 +22,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
       <div style="display:flex;align-items:center;gap:6px">
-        <input class="panel-search" type="text" placeholder="Search ticker..." value="${escapeHtml(state.ui.alertSearchQuery || '')}" data-action="alerts-search">
+        <input class="panel-search" type="text" placeholder="Search ticker..." value="${escapeHtml(state.ui.alertSearchQuery || '')}" data-action="alerts-search" data-search-input="alerts">
         <span class="count">${filteredAlerts.length}</span>
       </div>
     </div>

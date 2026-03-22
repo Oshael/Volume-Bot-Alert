@@ -250,6 +250,10 @@ export interface AppState {
     pendingLoginOtpChallengeToken: string | null;
     pendingLoginOtpEmailHint: string | null;
     alertSearchQuery: string;
+    monitoredSearchQuery: string;
+    manualSearchQuery: string;
+    recentSearchQuery: string;
+    oldWeekSearchQuery: string;
     monitoredPage: number;
     recentPage: number;
     oldWeekPage: number;
@@ -342,6 +346,10 @@ export function createAppState(): AppState {
       pendingLoginOtpChallengeToken: null,
       pendingLoginOtpEmailHint: null,
       alertSearchQuery: '',
+      monitoredSearchQuery: '',
+      manualSearchQuery: '',
+      recentSearchQuery: '',
+      oldWeekSearchQuery: '',
       monitoredPage: 0,
       recentPage: 0,
       oldWeekPage: 0,

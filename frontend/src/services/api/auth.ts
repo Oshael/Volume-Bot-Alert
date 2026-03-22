@@ -10,6 +10,15 @@ export interface SessionUser {
   emailVerifiedAt?: string | null;
 }
 
+export interface AuthEmailDebug {
+  mode: 'captured' | 'mirrored';
+  provider?: string | null;
+  flow?: string | null;
+  actionUrl?: string | null;
+  otpCode?: string | null;
+  expiresMinutes?: number | null;
+}
+
 export interface LoginResponse {
   message: string;
   user?: SessionUser;
@@ -19,6 +28,7 @@ export interface LoginResponse {
   otpRequired?: boolean;
   challengeToken?: string;
   otpEmailHint?: string;
+  emailDebug?: AuthEmailDebug | null;
 }
 
 export interface RegisterInput {
@@ -102,7 +112,7 @@ export function logoutAll(token?: string | null) {
 }
 
 export function requestEmailVerification(input: VerifyEmailRequestInput, token?: string | null) {
-  return apiFetch<{ message: string; alreadyVerified: boolean }>('/api/auth/verify-email/request', {
+  return apiFetch<{ message: string; alreadyVerified: boolean; emailDebug?: AuthEmailDebug | null }>('/api/auth/verify-email/request', {
     method: 'POST',
     body: JSON.stringify(input),
     token,
@@ -118,7 +128,7 @@ export function confirmEmailVerification(tokenValue: string) {
 }
 
 export function requestPasswordReset(input: PasswordResetRequestInput) {
-  return apiFetch<{ message: string }>('/api/auth/password-reset/request', {
+  return apiFetch<{ message: string; emailDebug?: AuthEmailDebug | null }>('/api/auth/password-reset/request', {
     method: 'POST',
     body: JSON.stringify(input),
     token: null,
@@ -134,7 +144,7 @@ export function confirmPasswordReset(input: PasswordResetConfirmInput) {
 }
 
 export function resendLoginOtp(challengeToken: string) {
-  return apiFetch<{ message: string; challengeToken: string; otpEmailHint?: string }>('/api/auth/login-otp/resend', {
+  return apiFetch<{ message: string; challengeToken: string; otpEmailHint?: string; emailDebug?: AuthEmailDebug | null }>('/api/auth/login-otp/resend', {
     method: 'POST',
     body: JSON.stringify({ challengeToken }),
     token: null,

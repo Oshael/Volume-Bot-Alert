@@ -1,6 +1,7 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderLogSummary, renderPagedAgeBucketList } from './shared';
+import { escapeHtml } from './html-safety';
 
 export function renderRecentSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -24,13 +25,26 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const recentPchange24h = hasRecentCriterion('pchange', '24h') ? 'active' : '';
   const recentAgeNewest = hasRecentCriterion('age', 'newest') ? 'active' : '';
   const recentAgeOldest = hasRecentCriterion('age', 'oldest') ? 'active' : '';
+  const recentSearchQuery = String(state.ui.recentSearchQuery || '').trim().toLowerCase();
+  const filteredRecentTokens = recentSearchQuery
+    ? state.data.recentTokens.filter((item) => {
+      const symbol = String(item.symbol || item.label || '').toLowerCase();
+      const name = String(item.name || '').toLowerCase();
+      const address = String(item.address || '').toLowerCase();
+      return symbol.includes(recentSearchQuery) || name.includes(recentSearchQuery) || address.includes(recentSearchQuery);
+    })
+    : state.data.recentTokens;
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
-        <span class="legacy-bar-title recent">\u{1F7E2} RECENT TOKENS</span>
+        <span class="legacy-bar-title recent"><span class="recent-live-emoji ${state.runtime.mode === 'active' ? 'live' : ''}">\u{1F7E2}</span> RECENT TOKENS</span>
         ${renderLogSummary('Recent Removal Log', state.data.recentRemovalLog, 'clear-recent-log', 'recent')}
       </div>
       <div class="legacy-bar-controls">
+        <div class="compact-search ${recentSearchQuery ? 'has-query' : ''}">
+          <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
+          <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${recentSearchQuery ? escapeHtml(state.ui.recentSearchQuery || '') : ''}" data-action="recent-search" data-search-input="recent">
+        </div>
         <label class="legacy-mini-field">MCAP MIN <input type="number" name="old-mcap-min" value="${min}"></label>
         <label class="legacy-mini-field">MCAP MAX <input type="number" name="old-mcap-max" value="${max}"></label>
         <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="recent-per-page" value="${state.ui.recentPerPage}" /></label>
@@ -71,7 +85,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       </div>
     </div>
     ${renderPagedAgeBucketList(
-      state.data.recentTokens,
+      filteredRecentTokens,
       state.ui.busy,
       'recent',
       state.ui.recentPage,
@@ -82,6 +96,12 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       Number(state.data.configs['meteora-min-pool']) || 5000,
     )}
   `;
+  section.querySelector<HTMLButtonElement>('[data-action="recent-search-focus"]')?.addEventListener('click', () => {
+    section.querySelector<HTMLInputElement>('[data-action="recent-search"]')?.focus();
+  });
+  section.querySelector<HTMLInputElement>('[data-action="recent-search"]')?.addEventListener('input', (event) => {
+    controller.setRecentSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindPagedBucketControls(section, controller, 'recent');
@@ -122,6 +142,15 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const oldWeekPchange24h = hasOldWeekCriterion('pchange', '24h') ? 'active' : '';
   const oldWeekAgeNewest = hasOldWeekCriterion('age', 'newest') ? 'active' : '';
   const oldWeekAgeOldest = hasOldWeekCriterion('age', 'oldest') ? 'active' : '';
+  const oldWeekSearchQuery = String(state.ui.oldWeekSearchQuery || '').trim().toLowerCase();
+  const filteredOldWeekTokens = oldWeekSearchQuery
+    ? state.data.oldWeekTokens.filter((item) => {
+      const symbol = String(item.symbol || item.label || '').toLowerCase();
+      const name = String(item.name || '').toLowerCase();
+      const address = String(item.address || '').toLowerCase();
+      return symbol.includes(oldWeekSearchQuery) || name.includes(oldWeekSearchQuery) || address.includes(oldWeekSearchQuery);
+    })
+    : state.data.oldWeekTokens;
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -129,6 +158,10 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         ${renderLogSummary('Old Week Removal Log', state.data.oldWeekRemovalLog, 'clear-old-week-log', 'old-week')}
       </div>
       <div class="legacy-bar-controls">
+        <div class="compact-search ${oldWeekSearchQuery ? 'has-query' : ''}">
+          <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
+          <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${oldWeekSearchQuery ? escapeHtml(state.ui.oldWeekSearchQuery || '') : ''}" data-action="old-week-search" data-search-input="old-week">
+        </div>
         <label class="legacy-mini-field">MCAP MIN <input type="number" name="old-week-mcap-min" value="${min}"></label>
         <label class="legacy-mini-field">MCAP MAX <input type="number" name="old-week-mcap-max" value="${max}"></label>
         <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="old-week-per-page" value="${state.ui.oldWeekPerPage}" /></label>
@@ -169,7 +202,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       </div>
     </div>
     ${renderPagedAgeBucketList(
-      state.data.oldWeekTokens,
+      filteredOldWeekTokens,
       state.ui.busy,
       'old-week',
       state.ui.oldWeekPage,
@@ -180,6 +213,12 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       Number(state.data.configs['meteora-min-pool']) || 5000,
     )}
   `;
+  section.querySelector<HTMLButtonElement>('[data-action="old-week-search-focus"]')?.addEventListener('click', () => {
+    section.querySelector<HTMLInputElement>('[data-action="old-week-search"]')?.focus();
+  });
+  section.querySelector<HTMLInputElement>('[data-action="old-week-search"]')?.addEventListener('input', (event) => {
+    controller.setOldWeekSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindPagedBucketControls(section, controller, 'old-week');

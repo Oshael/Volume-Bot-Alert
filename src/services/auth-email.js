@@ -158,6 +158,11 @@ async function sendPasswordResetEmail({ to, username, token, expiresMinutes = 30
     to,
     ...payload,
     tags: [{ name: 'flow', value: 'password-reset' }],
+    debug: {
+      flow: 'password-reset',
+      actionUrl: resetUrl,
+      expiresMinutes,
+    },
   });
 }
 
@@ -168,6 +173,11 @@ async function sendEmailVerificationEmail({ to, username, token, expiresMinutes 
     to,
     ...payload,
     tags: [{ name: 'flow', value: 'email-verification' }],
+    debug: {
+      flow: 'email-verification',
+      actionUrl: verificationUrl,
+      expiresMinutes,
+    },
   });
 }
 
@@ -187,6 +197,11 @@ async function sendLoginOtpEmail({ to, username, code, expiresMinutes = 10 }) {
     to,
     ...payload,
     tags: [{ name: 'flow', value: 'login-otp' }],
+    debug: {
+      flow: 'login-otp',
+      otpCode: code,
+      expiresMinutes,
+    },
   });
 }
 

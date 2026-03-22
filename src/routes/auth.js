@@ -13,6 +13,7 @@ const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { sendEmailVerificationEmail, sendPasswordResetEmail, sendPasswordChangedEmail, sendLoginOtpEmail } = require('../services/auth-email');
 const { authLimiter, authEmailLimiter, authOtpLimiter } = require('../middleware/rate-limit');
 const { getClient } = require('../models/db');
+const emailService = require('../services/email-service');
 
 const router = express.Router();
 
@@ -72,6 +73,26 @@ function maskEmail(email) {
     ? `${localPart[0] || ''}*`
     : `${localPart.slice(0, 2)}${'*'.repeat(Math.max(2, localPart.length - 2))}`;
   return `${visibleLocal}@${domain}`;
+}
+
+function buildEmailDebug(delivery) {
+  if (!emailService.shouldExposeEmailDebug()) {
+    return null;
+  }
+
+  const debug = delivery?.debug;
+  if (!debug) {
+    return null;
+  }
+
+  return {
+    mode: delivery.provider === 'local-dev' ? 'captured' : 'mirrored',
+    provider: delivery.provider || null,
+    flow: debug.flow || null,
+    actionUrl: debug.actionUrl || null,
+    otpCode: debug.otpCode || null,
+    expiresMinutes: debug.expiresMinutes ?? null,
+  };
 }
 
 async function createAuthenticatedSession({ user, ipAddress, userAgent, res }) {
@@ -214,13 +235,15 @@ router.post('/register', authLimiter, async (req, res) => {
 
     let verificationEmailSent = false;
     let verificationEmailError = null;
+    let emailDebug = null;
     if (config.email.enabled) {
       try {
-        await issueEmailVerification({
+        const verification = await issueEmailVerification({
           user,
           ipAddress: req.ip,
           userAgent: req.get('user-agent'),
         });
+        emailDebug = buildEmailDebug(verification.delivery);
         verificationEmailSent = true;
       } catch (emailErr) {
         verificationEmailError = 'Verification email could not be sent';
@@ -234,6 +257,7 @@ router.post('/register', authLimiter, async (req, res) => {
       emailVerificationRequired: !user.is_email_verified,
       verificationEmailSent,
       verificationEmailError,
+      emailDebug,
     });
   } catch (err) {
     if (client) {
@@ -306,6 +330,7 @@ router.post('/login', authLimiter, async (req, res) => {
       otpRequired: true,
       challengeToken: otp.challengeToken,
       otpEmailHint: maskEmail(user.email),
+      emailDebug: buildEmailDebug(otp.delivery),
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -344,6 +369,7 @@ router.post('/login-otp/resend', authOtpLimiter, async (req, res) => {
       message: 'A new verification code has been sent.',
       challengeToken: nextChallenge.challengeToken,
       otpEmailHint: maskEmail(user.email),
+      emailDebug: buildEmailDebug(nextChallenge.delivery),
     });
   } catch (err) {
     console.error('Login OTP resend error:', err);
@@ -455,13 +481,16 @@ router.post('/verify-email/request', authEmailLimiter, async (req, res) => {
       });
     }
 
-    await issueEmailVerification({
+    const verification = await issueEmailVerification({
       user,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
 
-    res.json(genericResponse);
+    res.json({
+      ...genericResponse,
+      emailDebug: buildEmailDebug(verification.delivery),
+    });
   } catch (err) {
     console.error('Verify-email request error:', err);
     res.status(500).json({
@@ -525,10 +554,14 @@ router.post('/password-reset/request', authEmailLimiter, async (req, res) => {
     }
 
     try {
-      await issuePasswordReset({
+      const reset = await issuePasswordReset({
         user,
         ipAddress: req.ip,
         userAgent: req.get('user-agent'),
+      });
+      return res.json({
+        ...genericResponse,
+        emailDebug: buildEmailDebug(reset.delivery),
       });
     } catch (emailErr) {
       console.error('Password reset email send error:', emailErr);

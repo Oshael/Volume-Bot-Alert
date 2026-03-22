@@ -71,8 +71,8 @@ type UserMenuDraft = {
   open: boolean;
 };
 
-type AlertsSearchDraft = {
-  focused: boolean;
+type SearchInputDraft = {
+  key: string;
   selectionStart: number | null;
   selectionEnd: number | null;
 };
@@ -88,7 +88,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const inviteAssistanceDraft = captureInviteAssistanceDraft(root);
   const passwordResetDraft = capturePasswordResetDraft(root);
   const userMenuDraft = captureUserMenuDraft(root);
-  const alertsSearchDraft = captureAlertsSearchDraft(root);
+  const searchInputDraft = captureSearchInputDraft(root);
   root.innerHTML = '';
 
   const shell = document.createElement('div');
@@ -131,7 +131,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   applyPasswordResetDraft(root, passwordResetDraft);
   applyPasswordResetFocus(root, state);
   applyUserMenuDraft(root, userMenuDraft);
-  applyAlertsSearchDraft(root, alertsSearchDraft);
+  applySearchInputDraft(root, searchInputDraft);
   applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
   wireHoverPersistence(root);
@@ -161,26 +161,32 @@ function applyUserMenuDraft(root: HTMLElement, draft: UserMenuDraft | null) {
   root.querySelector<HTMLElement>('[data-user-menu]')?.classList.add('open');
 }
 
-function captureAlertsSearchDraft(root: HTMLElement): AlertsSearchDraft | null {
-  const input = root.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
-  if (!input) {
+function captureSearchInputDraft(root: HTMLElement): SearchInputDraft | null {
+  const input = document.activeElement instanceof HTMLInputElement
+    ? document.activeElement
+    : null;
+  if (!input || !root.contains(input)) {
     return null;
   }
 
-  const focused = document.activeElement === input;
+  const key = input.dataset.searchInput;
+  if (!key) {
+    return null;
+  }
+
   return {
-    focused,
-    selectionStart: focused ? input.selectionStart : null,
-    selectionEnd: focused ? input.selectionEnd : null,
+    key,
+    selectionStart: input.selectionStart,
+    selectionEnd: input.selectionEnd,
   };
 }
 
-function applyAlertsSearchDraft(root: HTMLElement, draft: AlertsSearchDraft | null) {
-  if (!draft?.focused) {
+function applySearchInputDraft(root: HTMLElement, draft: SearchInputDraft | null) {
+  if (!draft?.key) {
     return;
   }
 
-  const input = root.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
+  const input = root.querySelector<HTMLInputElement>(`[data-search-input="${CSS.escape(draft.key)}"]`);
   if (!input) {
     return;
   }

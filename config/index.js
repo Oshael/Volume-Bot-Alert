@@ -153,6 +153,20 @@ module.exports = {
     resend: {
       apiKey: (process.env.RESEND_API_KEY || '').trim(),
     },
+    development: {
+      capture: parseBoolean(
+        process.env.EMAIL_DEV_CAPTURE,
+        (process.env.NODE_ENV || 'development') === 'development'
+      ),
+      fallbackOnFailure: parseBoolean(
+        process.env.EMAIL_DEV_FALLBACK_ON_FAILURE,
+        (process.env.NODE_ENV || 'development') === 'development'
+      ),
+      exposeDebug: parseBoolean(
+        process.env.EMAIL_DEV_EXPOSE_DEBUG,
+        (process.env.NODE_ENV || 'development') === 'development'
+      ),
+    },
   },
 
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:3000')
