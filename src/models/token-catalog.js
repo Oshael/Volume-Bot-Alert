@@ -112,13 +112,20 @@ async function listRecent(limit = 100) {
 }
 
 async function listDueForEvaluation(limit = 25) {
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 200));
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 5000));
   const { rows } = await db.query(
     `SELECT *
      FROM token_catalog
      WHERE is_active_monitor_candidate = TRUE
        AND next_evaluation_at <= NOW()
-     ORDER BY next_evaluation_at ASC,
+     ORDER BY CASE COALESCE(monitor_priority, 'dormant')
+                WHEN 'high' THEN 0
+                WHEN 'normal' THEN 1
+                WHEN 'low' THEN 2
+                ELSE 3
+              END ASC,
+              next_evaluation_at ASC,
+              COALESCE(last_mcap, 0) DESC,
               COALESCE(last_vol_24h, last_vol_6h, last_vol_1h, last_vol_5m, 0) DESC,
               last_seen_at DESC
      LIMIT $1`,

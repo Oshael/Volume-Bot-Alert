@@ -3,8 +3,14 @@ const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const dexscreener = require('./dexscreener');
 
 const LOOP_INTERVAL_MS = 5000;
-const BATCH_LIMIT = 60;
-const CONCURRENCY = 8;
+const DEX_REQUEST_BUDGET_PER_MINUTE = 300;
+const DEX_TOKENS_PER_REQUEST = 30;
+const MAX_TOKEN_BUDGET_PER_CYCLE = Math.max(
+  DEX_TOKENS_PER_REQUEST,
+  Math.floor((DEX_REQUEST_BUDGET_PER_MINUTE * LOOP_INTERVAL_MS) / 60000) * DEX_TOKENS_PER_REQUEST
+);
+const CONCURRENCY = 24;
+const DEX_BATCH_LIMIT = DEX_TOKENS_PER_REQUEST;
 const DORMANT_RECHECK_MS = 30 * 60 * 1000;
 const LOW_NEAR_RECHECK_MS = 3 * 60 * 1000;
 const LOW_DUST_RECHECK_MS = 10 * 60 * 1000;
@@ -24,6 +30,9 @@ let status = {
   running: false,
   lastRunAt: null,
   lastProcessed: 0,
+  lastDueCount: 0,
+  lastTokenBudget: MAX_TOKEN_BUDGET_PER_CYCLE,
+  lastDexRequestBudget: Math.floor(MAX_TOKEN_BUDGET_PER_CYCLE / DEX_TOKENS_PER_REQUEST),
   totalProcessed: 0,
   totalEligible: 0,
   totalIneligible: 0,
@@ -162,6 +171,10 @@ async function evaluateToken(token) {
   const data = await dexscreener.getTokenPairs(token.address, {
     priority: getDexPriorityHint(token),
   });
+  return evaluateTokenWithData(token, data);
+}
+
+async function evaluateTokenWithData(token, data) {
   if (!data) {
     const retryMs = shouldFastRetryManualBootstrap(token)
       ? MANUAL_BOOTSTRAP_RECHECK_MS
@@ -269,30 +282,42 @@ function getDexPriorityHint(token) {
 async function runOnce() {
   if (!running) return;
 
-  const due = await tokenCatalog.listDueForEvaluation(BATCH_LIMIT);
+  const due = await tokenCatalog.listDueForEvaluation(MAX_TOKEN_BUDGET_PER_CYCLE);
   status.lastRunAt = new Date().toISOString();
   status.lastProcessed = due.length;
+  status.lastDueCount = due.length;
   status.totalProcessed += due.length;
 
-  for (let index = 0; index < due.length; index += CONCURRENCY) {
-    const batch = due.slice(index, index + CONCURRENCY);
-    await Promise.all(batch.map(async (token) => {
-      try {
-        await evaluateToken(token);
-      } catch (err) {
-        status.totalErrors++;
-        await tokenCatalog.applyEvaluationResult(token.address, {
-          eligibilityState: 'evaluation-error',
-          eligibleForMonitoring: false,
-          suppressedReason: 'evaluation_error',
-          monitorPriority: 'dormant',
-          nextEvaluationAt: new Date(Date.now() + ERROR_RECHECK_MS),
-          lastEvaluationError: err.message,
-          evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
-        });
-        console.error(`[CatalogWorker] Failed to evaluate ${token.address}:`, err.message);
-      }
-    }));
+  for (let index = 0; index < due.length; index += DEX_BATCH_LIMIT) {
+    const fetchBatch = due.slice(index, index + DEX_BATCH_LIMIT);
+    const priorityByAddress = new Map(
+      fetchBatch.map((token) => [token.address, getDexPriorityHint(token)])
+    );
+    const dataByAddress = await dexscreener.batchGetTokens(
+      fetchBatch.map((token) => token.address),
+      { chain: 'solana', priorityByAddress }
+    );
+
+    for (let processIndex = 0; processIndex < fetchBatch.length; processIndex += CONCURRENCY) {
+      const processBatch = fetchBatch.slice(processIndex, processIndex + CONCURRENCY);
+      await Promise.all(processBatch.map(async (token) => {
+        try {
+          await evaluateTokenWithData(token, dataByAddress.get(token.address) || null);
+        } catch (err) {
+          status.totalErrors++;
+          await tokenCatalog.applyEvaluationResult(token.address, {
+            eligibilityState: 'evaluation-error',
+            eligibleForMonitoring: false,
+            suppressedReason: 'evaluation_error',
+            monitorPriority: 'dormant',
+            nextEvaluationAt: new Date(Date.now() + ERROR_RECHECK_MS),
+            lastEvaluationError: err.message,
+            evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
+          });
+          console.error(`[CatalogWorker] Failed to evaluate ${token.address}:`, err.message);
+        }
+      }));
+    }
   }
 }
 
