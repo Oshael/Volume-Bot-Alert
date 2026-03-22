@@ -2717,20 +2717,39 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-inline-pagination {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .monitored-inline-pagination .bucket-footer-actions {
   margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .monitored-inline-pagination .action-button.small {
-  min-height: 28px;
-  padding: 0 8px;
-  border-radius: 8px;
-  font-size: 11px;
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.monitored-inline-pagination .legacy-mini-field {
+  gap: 3px;
+}
+
+.monitored-inline-pagination .legacy-mini-field input {
+  width: 72px;
+  min-height: 22px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+.monitored-token-count {
+  white-space: nowrap;
 }
 
 .panel-toolbar {
@@ -3191,14 +3210,14 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 46px;
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.04);
+  min-width: 72px;
+  min-height: 22px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
   color: #f3f7f5;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 700;
   text-align: center;
 }
