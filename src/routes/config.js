@@ -72,6 +72,20 @@ async function upsertCatalogItemsAndSchedule(items, source) {
   }
 }
 
+function stripRestrictedConfigKeys(configs, user) {
+  if (!configs || typeof configs !== 'object') {
+    return configs;
+  }
+
+  if (user?.role === 'admin') {
+    return configs;
+  }
+
+  const next = { ...configs };
+  delete next.chain;
+  return next;
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  CONFIGS (thresholds, intervals, etc.)
 // ══════════════════════════════════════════════════════════════════
@@ -123,7 +137,8 @@ router.get('/', async (req, res) => {
 router.put('/', async (req, res) => {
   const startedAt = nowMs();
   try {
-    const { configs, tokens, blocklist, starredTokens } = req.body;
+    const { tokens, blocklist, starredTokens } = req.body;
+    const configs = stripRestrictedConfigKeys(req.body?.configs, req.user);
     let validatedConfigs = null;
     let normalizedTokens = null;
     let normalizedBlocklist = null;
@@ -302,7 +317,7 @@ router.put('/', async (req, res) => {
 router.patch('/', async (req, res) => {
   const startedAt = nowMs();
   try {
-    const { configs } = req.body;
+    const configs = stripRestrictedConfigKeys(req.body?.configs, req.user);
 
     if (!configs || typeof configs !== 'object' || Object.keys(configs).length === 0) {
       return res.status(400).json({ error: 'configs object is required' });

@@ -1053,6 +1053,7 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
 
 function renderLegacyConfig(state: AppState, controller: AppController) {
   const userMenuLabel = escapeHtml(state.session.username ?? state.session.email ?? 'User');
+  const visibleConfigFields = CONFIG_FIELDS.filter((field) => field.key !== 'chain' || state.session.role === 'admin');
   const section = document.createElement('section');
   section.className = 'config-grid legacy-config-grid';
   section.innerHTML = `
@@ -1067,7 +1068,7 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
       </div>
     </div>
     ${state.ui.authPanel === 'change-password' ? renderChangePasswordModal(state) : ''}
-    ${CONFIG_FIELDS.map((field) => renderConfigField(state, field)).join('')}
+    ${visibleConfigFields.map((field) => renderConfigField(state, field)).join('')}
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
       <select name="sound-mode">

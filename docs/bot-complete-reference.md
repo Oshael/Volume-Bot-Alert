@@ -680,6 +680,7 @@ Table features:
 - `AGE` supports `NEWEST` and `OLDEST`
 - `MCAP` supports `HIGHEST` and `LOWEST`
 - compact local search by symbol, name, or contract/address
+- supports a compact `starred only` toggle using the same small-square visual language as the search control
 
 ## Recent Tokens
 
@@ -696,6 +697,7 @@ Rules:
 - supports local dismiss
 - has local removal log
 - supports compact local search by symbol, name, or contract/address
+- supports a compact `starred only` toggle
 - shows a green live-status emoji with a slower breathing pulse while the bot is active
 
 Sorting:
@@ -731,6 +733,7 @@ Rules:
 - supports local dismiss
 - has local removal log
 - supports compact local search by symbol, name, or contract/address
+- supports a compact `starred only` toggle
 
 Sorting:
 - `VOL`
@@ -878,7 +881,7 @@ Rules:
   - re-fires only if it drops back below threshold and crosses again
   - or if it advances another `+40` percentage points beyond the previous VOL alert
 - cross-alert rule:
-  - if the same token has already fired another alert type in the last `2m`, this alert is suppressed
+  - if the same token has already fired another alert type in the last `5m`, this alert is suppressed
 
 ### Monitored MCAP alert
 Rules:
@@ -891,7 +894,7 @@ Rules:
   - re-fires only if it drops back below threshold and crosses again
   - or if it advances another `+40` percentage points beyond the previous MCAP alert
 - cross-alert rule:
-  - if the same token has already fired another alert type in the last `2m`, this alert is suppressed
+  - if the same token has already fired another alert type in the last `5m`, this alert is suppressed
 
 ### HVNC
 Meaning:
@@ -1118,7 +1121,6 @@ Admin status endpoint currently exposes:
 - Dex reevaluation can still produce many `dex_unavailable` results
 - PumpFun metadata route can still pressure rate limiting in bursts
 - discovery is restored through Dex feeds again, but underlying Dex availability remains a dependency
-- real email-backed password reset is not implemented yet
 - the frontend is materially harder to exploit via XSS than before, but still uses a UI architecture that relies heavily on HTML-string rendering
 - the current CSP is pragmatic and intentionally compatible with:
   - Google Fonts
@@ -1159,9 +1161,9 @@ Current honest assessment:
 - frontend XSS risk has been reduced from obvious/high-risk territory into a much more controlled state
 - remaining XSS risk is mostly structural and tied to the continued use of HTML-string rendering in the UI architecture
 
-## Password Reset / Real Email Next Step
+## Password Reset / Real Email State
 
-The backend now has the first real-email auth foundation in place.
+The backend auth/email foundation is now implemented.
 
 Current status:
 - provider selected for the first rollout: `Resend`
@@ -1171,11 +1173,16 @@ Current status:
 - `POST /api/auth/verify-email/confirm` exists and consumes single-use verification tokens
 - `POST /api/auth/password-reset/request` exists with a generic anti-enumeration response
 - `POST /api/auth/password-reset/confirm` exists and revokes all sessions after a successful reset
+- real email verification is implemented
+- real password reset is implemented
+- secondary verification is implemented as email OTP on login
 
-Still pending for the full user-facing rollout:
-- UI for email verification and password-reset request/confirm flows
-- clearer account-state messaging in the frontend
-- follow-up security layer after reset: 2FA / secondary verification
+Still pending / follow-up:
+- lower-priority auth polish in the frontend
+- clearer account-state / support messaging where useful
+- later stronger secondary verification if needed:
+  - TOTP
+  - backup codes
 
 ## Practical Review Checklist
 

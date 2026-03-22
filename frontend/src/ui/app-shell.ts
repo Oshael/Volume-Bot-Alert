@@ -214,7 +214,11 @@ function wireHoverPersistence(root: HTMLElement) {
   root.addEventListener('mouseover', (event) => {
     const target = event.target as HTMLElement | null;
     const row = target?.closest<HTMLElement>('[data-hover-key]');
-    currentHoverKey = row?.dataset.hoverKey ?? null;
+    const nextHoverKey = row?.dataset.hoverKey ?? null;
+    if (nextHoverKey === currentHoverKey) {
+      return;
+    }
+    currentHoverKey = nextHoverKey;
     applyHoverState(root);
   });
 
@@ -230,6 +234,14 @@ function wireHoverPersistence(root: HTMLElement) {
       currentHoverKey = null;
       applyHoverState(root);
     }
+  });
+
+  root.addEventListener('pointerleave', () => {
+    if (!currentHoverKey) {
+      return;
+    }
+    currentHoverKey = null;
+    applyHoverState(root);
   });
 }
 
