@@ -29,15 +29,15 @@ function setCacheEntry(address, data, ttlMs) {
 function getTokenCacheTtl(priorityHint) {
   switch (String(priorityHint || '').trim().toLowerCase()) {
     case 'high-hot':
-      return 5 * 1000;
+      return 2 * 1000;
     case 'high-warm':
-      return 5 * 1000;
+      return 3 * 1000;
     case 'high-cold':
       return 5 * 1000;
     case 'normal':
-      return 5 * 1000;
+      return 4 * 1000;
     case 'low-near':
-      return 20 * 1000;
+      return 15 * 1000;
     case 'low-dust':
       return 10 * 60 * 1000;
     case 'dormant':

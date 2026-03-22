@@ -118,11 +118,20 @@ async function listDueForEvaluation(limit = 25) {
      FROM token_catalog
      WHERE is_active_monitor_candidate = TRUE
        AND next_evaluation_at <= NOW()
-     ORDER BY CASE COALESCE(monitor_priority, 'dormant')
-                WHEN 'high' THEN 0
-                WHEN 'normal' THEN 1
-                WHEN 'low' THEN 2
-                ELSE 3
+     ORDER BY CASE
+                WHEN COALESCE(monitor_priority, 'dormant') = 'high'
+                  AND COALESCE(last_mcap, 0) >= 100000
+                  AND COALESCE(last_vol_6h, 0) >= 30000 THEN 0
+                WHEN COALESCE(monitor_priority, 'dormant') = 'high'
+                  AND COALESCE(last_mcap, 0) >= 100000
+                  AND COALESCE(last_vol_6h, 0) >= 15000 THEN 1
+                WHEN COALESCE(monitor_priority, 'dormant') = 'high'
+                  AND COALESCE(last_mcap, 0) >= 100000 THEN 2
+                WHEN COALESCE(monitor_priority, 'dormant') = 'normal' THEN 3
+                WHEN COALESCE(monitor_priority, 'dormant') = 'low'
+                  AND COALESCE(last_mcap, 0) >= 15000 THEN 4
+                WHEN COALESCE(monitor_priority, 'dormant') = 'low' THEN 5
+                ELSE 6
               END ASC,
               next_evaluation_at ASC,
               COALESCE(last_mcap, 0) DESC,
