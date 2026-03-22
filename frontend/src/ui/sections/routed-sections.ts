@@ -26,14 +26,18 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const recentAgeNewest = hasRecentCriterion('age', 'newest') ? 'active' : '';
   const recentAgeOldest = hasRecentCriterion('age', 'oldest') ? 'active' : '';
   const recentSearchQuery = String(state.ui.recentSearchQuery || '').trim().toLowerCase();
-  const filteredRecentTokens = recentSearchQuery
-    ? state.data.recentTokens.filter((item) => {
+  const filteredRecentTokens = state.data.recentTokens.filter((item) => {
+    if (state.ui.recentStarredOnly && !state.data.starredTokens.includes(item.address)) {
+      return false;
+    }
+    if (!recentSearchQuery) {
+      return true;
+    }
       const symbol = String(item.symbol || item.label || '').toLowerCase();
       const name = String(item.name || '').toLowerCase();
       const address = String(item.address || '').toLowerCase();
       return symbol.includes(recentSearchQuery) || name.includes(recentSearchQuery) || address.includes(recentSearchQuery);
-    })
-    : state.data.recentTokens;
+    });
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -45,6 +49,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
           <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${recentSearchQuery ? escapeHtml(state.ui.recentSearchQuery || '') : ''}" data-action="recent-search" data-search-input="recent">
         </div>
+        <button type="button" class="compact-icon-toggle ${state.ui.recentStarredOnly ? 'active' : ''}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         <label class="legacy-mini-field">MCAP MIN <input type="number" name="old-mcap-min" value="${min}"></label>
         <label class="legacy-mini-field">MCAP MAX <input type="number" name="old-mcap-max" value="${max}"></label>
         <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="recent-per-page" value="${state.ui.recentPerPage}" /></label>
@@ -102,6 +107,9 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   section.querySelector<HTMLInputElement>('[data-action="recent-search"]')?.addEventListener('input', (event) => {
     controller.setRecentSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
+  section.querySelector<HTMLButtonElement>('[data-action="recent-starred-only"]')?.addEventListener('click', () => {
+    controller.setRecentStarredOnly(!state.ui.recentStarredOnly);
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindPagedBucketControls(section, controller, 'recent');
@@ -143,14 +151,18 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const oldWeekAgeNewest = hasOldWeekCriterion('age', 'newest') ? 'active' : '';
   const oldWeekAgeOldest = hasOldWeekCriterion('age', 'oldest') ? 'active' : '';
   const oldWeekSearchQuery = String(state.ui.oldWeekSearchQuery || '').trim().toLowerCase();
-  const filteredOldWeekTokens = oldWeekSearchQuery
-    ? state.data.oldWeekTokens.filter((item) => {
+  const filteredOldWeekTokens = state.data.oldWeekTokens.filter((item) => {
+    if (state.ui.oldWeekStarredOnly && !state.data.starredTokens.includes(item.address)) {
+      return false;
+    }
+    if (!oldWeekSearchQuery) {
+      return true;
+    }
       const symbol = String(item.symbol || item.label || '').toLowerCase();
       const name = String(item.name || '').toLowerCase();
       const address = String(item.address || '').toLowerCase();
       return symbol.includes(oldWeekSearchQuery) || name.includes(oldWeekSearchQuery) || address.includes(oldWeekSearchQuery);
-    })
-    : state.data.oldWeekTokens;
+    });
   section.innerHTML = `
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
@@ -162,6 +174,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
           <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${oldWeekSearchQuery ? escapeHtml(state.ui.oldWeekSearchQuery || '') : ''}" data-action="old-week-search" data-search-input="old-week">
         </div>
+        <button type="button" class="compact-icon-toggle ${state.ui.oldWeekStarredOnly ? 'active' : ''}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         <label class="legacy-mini-field">MCAP MIN <input type="number" name="old-week-mcap-min" value="${min}"></label>
         <label class="legacy-mini-field">MCAP MAX <input type="number" name="old-week-mcap-max" value="${max}"></label>
         <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="old-week-per-page" value="${state.ui.oldWeekPerPage}" /></label>
@@ -218,6 +231,9 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   });
   section.querySelector<HTMLInputElement>('[data-action="old-week-search"]')?.addEventListener('input', (event) => {
     controller.setOldWeekSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="old-week-starred-only"]')?.addEventListener('click', () => {
+    controller.setOldWeekStarredOnly(!state.ui.oldWeekStarredOnly);
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);

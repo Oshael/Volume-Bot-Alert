@@ -610,6 +610,12 @@ Main behavior:
 - frontend rebuilds monitored token state from that payload
 - backend payload includes `generatedAt`
 - frontend shows a freshness label in the panel header based on that backend timestamp
+- the panel supports compact local search by:
+  - symbol
+  - name
+  - contract/address
+- the `TOKENS` pill reflects the filtered monitored count
+- only the visible page of cards is rendered, but the full monitored set still stays in memory for alert logic and routed-bar derivation
 
 Current sorting:
 - `VOL`
@@ -642,6 +648,10 @@ Important:
   - catalog worker reevaluation cadence
   - dashboard poll cadence
   - backend `generatedAt` payload timing
+- the monitored header is intentionally split into two independently positioned rows:
+  - top row for sorting + filtered token count
+  - bottom row for compact search + page controls
+- opening the monitored compact search only pushes the bottom row
 
 ## Manual Tokens
 
@@ -669,6 +679,7 @@ Table features:
 - supports multiple active sort criteria at once
 - `AGE` supports `NEWEST` and `OLDEST`
 - `MCAP` supports `HIGHEST` and `LOWEST`
+- compact local search by symbol, name, or contract/address
 
 ## Recent Tokens
 
@@ -684,6 +695,8 @@ Rules:
 - excludes `_userManual` tokens from routed discovery bars
 - supports local dismiss
 - has local removal log
+- supports compact local search by symbol, name, or contract/address
+- shows a green live-status emoji with a slower breathing pulse while the bot is active
 
 Sorting:
 - `VOL`
@@ -717,6 +730,7 @@ Rules:
 - derived from tracked token state
 - supports local dismiss
 - has local removal log
+- supports compact local search by symbol, name, or contract/address
 
 Sorting:
 - `VOL`
@@ -848,6 +862,7 @@ Main alert types:
 - `old-surge`
 - `pumpfun-vol`
 - `pumpfun-hvnc`
+- the panel also supports local text search by symbol, name, or contract/address
 
 ### Monitored VOL alert
 Rules:

@@ -79,7 +79,7 @@ const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
 const OLD_SURGE_SESSION_DELTA_PCT = 50;
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
-const CROSS_ALERT_BLOCK_MS = 2 * 60 * 1000;
+const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 
@@ -117,6 +117,9 @@ export interface AppController {
   setManualSearchQuery(query: string): void;
   setRecentSearchQuery(query: string): void;
   setOldWeekSearchQuery(query: string): void;
+  setManualStarredOnly(enabled: boolean): void;
+  setRecentStarredOnly(enabled: boolean): void;
+  setOldWeekStarredOnly(enabled: boolean): void;
   setMonitoredPage(page: number): void;
   setRecentPage(page: number): void;
   setOldWeekPage(page: number): void;
@@ -1719,6 +1722,9 @@ export function createAppController(): AppController {
     state.ui.manualSearchQuery = '';
     state.ui.recentSearchQuery = '';
     state.ui.oldWeekSearchQuery = '';
+    state.ui.manualStarredOnly = false;
+    state.ui.recentStarredOnly = false;
+    state.ui.oldWeekStarredOnly = false;
     state.ui.monitoredPage = 0;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
@@ -2020,6 +2026,20 @@ export function createAppController(): AppController {
     },
     setOldWeekSearchQuery(query: string) {
       state.ui.oldWeekSearchQuery = String(query || '');
+      state.ui.oldWeekPage = 0;
+      emit();
+    },
+    setManualStarredOnly(enabled: boolean) {
+      state.ui.manualStarredOnly = Boolean(enabled);
+      emit();
+    },
+    setRecentStarredOnly(enabled: boolean) {
+      state.ui.recentStarredOnly = Boolean(enabled);
+      state.ui.recentPage = 0;
+      emit();
+    },
+    setOldWeekStarredOnly(enabled: boolean) {
+      state.ui.oldWeekStarredOnly = Boolean(enabled);
       state.ui.oldWeekPage = 0;
       emit();
     },

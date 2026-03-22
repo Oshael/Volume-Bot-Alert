@@ -254,6 +254,9 @@ export interface AppState {
     manualSearchQuery: string;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
+    manualStarredOnly: boolean;
+    recentStarredOnly: boolean;
+    oldWeekStarredOnly: boolean;
     monitoredPage: number;
     recentPage: number;
     oldWeekPage: number;
@@ -350,6 +353,9 @@ export function createAppState(): AppState {
       manualSearchQuery: '',
       recentSearchQuery: '',
       oldWeekSearchQuery: '',
+      manualStarredOnly: false,
+      recentStarredOnly: false,
+      oldWeekStarredOnly: false,
       monitoredPage: 0,
       recentPage: 0,
       oldWeekPage: 0,

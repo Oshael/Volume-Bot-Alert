@@ -25,14 +25,18 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const manualAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
   const manualAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
   const searchQuery = String(state.ui.manualSearchQuery || '').trim().toLowerCase();
-  const filteredManualTokens = searchQuery
-    ? state.data.manualTokens.filter((item) => {
+  const filteredManualTokens = state.data.manualTokens.filter((item) => {
+    if (state.ui.manualStarredOnly && !state.data.starredTokens.includes(item.address)) {
+      return false;
+    }
+    if (!searchQuery) {
+      return true;
+    }
       const symbol = String(item.symbol || item.label || '').toLowerCase();
       const name = String(item.name || '').toLowerCase();
       const address = String(item.address || '').toLowerCase();
       return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
-    })
-    : state.data.manualTokens;
+    });
   section.innerHTML = `
     <div class="legacy-bar-head">
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
@@ -41,6 +45,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${searchQuery ? escapeHtml(state.ui.manualSearchQuery || '') : ''}" data-action="manual-search" data-search-input="manual">
         </div>
+        <button type="button" class="compact-icon-toggle ${state.ui.manualStarredOnly ? 'active' : ''}" data-action="manual-starred-only" aria-label="Show only starred manual tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         <div class="sort-pill-group">
           <span class="filter-label">SORT</span>
           <div class="sort-menu-wrap" data-sort-wrap>
@@ -92,6 +97,9 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   });
   section.querySelector<HTMLInputElement>('[data-action="manual-search"]')?.addEventListener('input', (event) => {
     controller.setManualSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="manual-starred-only"]')?.addEventListener('click', () => {
+    controller.setManualStarredOnly(!state.ui.manualStarredOnly);
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);

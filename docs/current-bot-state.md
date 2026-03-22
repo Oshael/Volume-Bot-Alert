@@ -152,10 +152,20 @@ Current monitored UI behavior:
 - backend payload now includes `generatedAt`
 - frontend shows freshness text in the panel header using that timestamp
 - `Monitored Tokens` now paginates the rendered cards
+- `Monitored Tokens` now supports compact local search by:
+  - symbol
+  - name
+  - contract/address
+- the monitored `TOKENS` pill reflects the filtered result count
 - pagination does not change alert logic:
   - the full monitored set still stays in frontend state
   - only the visible page is rendered
   - hidden pages still receive fresh data through the monitored payload
+- the monitored header now behaves as two tuned rows:
+  - title isolated on the left
+  - sort controls + token count on the top row
+  - per-page/page/jump + compact search on the bottom row
+  - opening the compact search only pushes the bottom row, not the title/top-row controls
 
 ### 3. Manual Tokens
 - Current source of truth:
@@ -181,6 +191,8 @@ Current monitored UI behavior:
   - `_userManual` is the protection flag for `min-mcap-remove`
   - restoring manual tokens must not depend on dashboard success; `GET /api/config` alone is enough to restore the list across browsers/devices
   - tracked-state rebuild now consumes `payload.tokens` from `GET /api/config` directly, which fixed the previous reload/device-sync bug
+- Current UI additions:
+  - `Manual Tokens` now supports compact local search by symbol, name, and contract/address
 
 ### 4. Catalog worker
 - Worker: `src/services/catalog-worker.js`
@@ -620,6 +632,10 @@ Current login implementation progress:
 - Monitored alert evaluation now runs both on:
   - live patch merges
   - `GET /api/dashboard/monitored` rebuilds
+- the `Alerts` panel now supports local text search by:
+  - symbol
+  - name
+  - contract/address
 
 ## Persistence Model
 
@@ -660,11 +676,17 @@ Current limitation:
   - `MCAP`
   - `PCHANGE`
   - `AGE`
+- `Manual Tokens`, `Recent Tokens`, and `Old Tokens 1 Week+` now also support compact local search by:
+  - symbol
+  - name
+  - contract/address
+- search inputs preserve typing/focus through rerenders so the user can continue typing while live state refreshes
 - `AGE` currently supports two directions in the UI:
   - `NEWEST`
   - `OLDEST`
 - `Manual Tokens` now has the same `#` ranking column as Recent/Old
 - The duplicate footer-level `Per Page` control was removed from Recent/Old; the active `Per Page` control is the header one
+- `Recent Tokens` now shows a green live indicator with a slower “breathing” pulse while the bot is active
 
 ### Rate limiting reality
 - Backend rate limiting is now split by route behavior through `src/middleware/rate-limit.js`
