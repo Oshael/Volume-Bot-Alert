@@ -133,6 +133,27 @@ export function bindMonitoredSortControls(section: ParentNode, controller: AppCo
   });
 }
 
+export function bindPagedMonitoredControls(section: ParentNode, controller: AppController) {
+  section.querySelector<HTMLButtonElement>('[data-action="monitored-prev"]')?.addEventListener('click', () => {
+    controller.setMonitoredPage(controller.state.ui.monitoredPage - 1);
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="monitored-next"]')?.addEventListener('click', () => {
+    controller.setMonitoredPage(controller.state.ui.monitoredPage + 1);
+  });
+
+  section.querySelector<HTMLInputElement>('[data-action="monitored-per-page"]')?.addEventListener('change', (event) => {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    controller.setMonitoredPerPage(value);
+  });
+
+  section.querySelector<HTMLInputElement>('[data-action="monitored-page-jump"]')?.addEventListener('change', (event) => {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    if (!Number.isFinite(value)) return;
+    controller.setMonitoredPage(value - 1);
+  });
+}
+
 export function bindPagedBucketControls(section: ParentNode, controller: AppController, mode: 'recent' | 'old-week') {
   const prevAction = mode === 'recent' ? 'recent-prev' : 'old-week-prev';
   const nextAction = mode === 'recent' ? 'recent-next' : 'old-week-next';

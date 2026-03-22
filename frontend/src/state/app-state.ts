@@ -249,8 +249,10 @@ export interface AppState {
     pendingPasswordResetToken: string | null;
     pendingLoginOtpChallengeToken: string | null;
     pendingLoginOtpEmailHint: string | null;
+    monitoredPage: number;
     recentPage: number;
     oldWeekPage: number;
+    monitoredPerPage: number;
     recentPerPage: number;
     oldWeekPerPage: number;
     manualSorts: BucketSortCriterion[];
@@ -338,8 +340,10 @@ export function createAppState(): AppState {
       pendingPasswordResetToken: null,
       pendingLoginOtpChallengeToken: null,
       pendingLoginOtpEmailHint: null,
+      monitoredPage: 0,
       recentPage: 0,
       oldWeekPage: 0,
+      monitoredPerPage: 30,
       recentPerPage: 30,
       oldWeekPerPage: 30,
       manualSorts: [{ mode: 'mcap', window: 'highest' }],

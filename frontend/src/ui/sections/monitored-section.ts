@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState, ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
-import { bindCopyButtons, bindMonitoredSortControls, bindTokenActions, fmtAge, fmtMoney, fmtPct, renderTradeTerminalMenu } from './shared';
+import { bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, fmtAge, fmtMoney, fmtPct, renderTradeTerminalMenu } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
@@ -44,6 +44,11 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
       if (createdDelta !== 0) return createdDelta;
       return (b.mcap || 0) - (a.mcap || 0);
     });
+  const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
+  const totalPages = Math.max(1, Math.ceil(tracked.length / safePerPage));
+  const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
+  const pageStart = safePage * safePerPage;
+  const pageItems = tracked.slice(pageStart, pageStart + safePerPage);
   section.innerHTML = `
     <div class="panel-header">
       <span>MONITORED TOKENS</span>
@@ -78,7 +83,16 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
         <span class="count">${tracked.length}</span>
       </div>
     </div>
-    <div class="monitored-list">${tracked.length ? tracked.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address))).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">Add tokens or load trending</div></div>'}</div>
+    <div class="panel-subheader monitored-pagination-bar">
+      <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" value="${safePerPage}" /></label>
+      <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="monitored-page-jump" value="${safePage + 1}" /></label>
+      <span class="panel-header-label">/ ${totalPages}</span>
+      <div class="button-row compact bucket-footer-actions">
+        <button type="button" class="action-button small" data-action="monitored-prev" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
+        <button type="button" class="action-button small" data-action="monitored-next" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+      </div>
+    </div>
+    <div class="monitored-list">${tracked.length ? pageItems.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address))).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">Add tokens or load trending</div></div>'}</div>
   `;
 
   section.append(renderManualTokenEntryForm(state, controller));
@@ -86,6 +100,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindMonitoredSortControls(section, controller);
+  bindPagedMonitoredControls(section, controller);
   return section;
 }
 

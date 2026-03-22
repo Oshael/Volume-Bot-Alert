@@ -111,8 +111,10 @@ export interface AppController {
   clearOldWeekRemovalLog(): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
+  setMonitoredPage(page: number): void;
   setRecentPage(page: number): void;
   setOldWeekPage(page: number): void;
+  setMonitoredPerPage(perPage: number): void;
   setRecentPerPage(perPage: number): void;
   setOldWeekPerPage(perPage: number): void;
   setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
@@ -440,6 +442,7 @@ export function createAppController(): AppController {
   }
 
   function applyUiPreferencesFromConfigs() {
+    state.ui.monitoredPerPage = Math.max(10, Math.floor(getConfigNumber('monitored-per-page', state.ui.monitoredPerPage || 30)));
     state.ui.recentPerPage = Math.max(10, Math.floor(getConfigNumber('old-per-page', state.ui.recentPerPage || 30)));
     state.ui.oldWeekPerPage = Math.max(10, Math.floor(getConfigNumber('old-week-per-page', state.ui.oldWeekPerPage || 30)));
     state.ui.soundEnabled = String(state.data.configs['sound-mode'] ?? 'on') !== 'off';
@@ -482,9 +485,11 @@ export function createAppController(): AppController {
   }
 
   function refreshMonitoredPanelCounts() {
-    state.panels.monitored = state.data.monitoredTokens.filter(isVisibleMonitoredToken).length;
+    const visibleCount = getVisibleMonitoredTokens().length;
+    state.panels.monitored = visibleCount;
     state.panels.alerts = state.data.alerts.length;
     state.runtime.alerts = state.data.alerts.length;
+    syncMonitoredPagination();
   }
 
   function normalizeBucketMetricWindow(window: string | undefined): '1h' | '6h' | '24h' {
@@ -930,7 +935,16 @@ export function createAppController(): AppController {
     return Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
   }
 
+  function getVisibleMonitoredTokens() {
+    return state.data.monitoredTokens.filter(isVisibleMonitoredToken);
+  }
+
+  function syncMonitoredPagination() {
+    state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
+  }
+
   function syncRoutedPagination() {
+    syncMonitoredPagination();
     state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokens.length, state.ui.recentPerPage);
     state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokens.length, state.ui.oldWeekPerPage);
   }
@@ -1652,8 +1666,10 @@ export function createAppController(): AppController {
     state.ui.pendingPasswordResetToken = null;
     state.ui.pendingLoginOtpChallengeToken = null;
     state.ui.pendingLoginOtpEmailHint = null;
+    state.ui.monitoredPage = 0;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
+    state.ui.monitoredPerPage = 30;
     state.ui.recentPerPage = 30;
     state.ui.oldWeekPerPage = 30;
     state.ui.manualSorts = getDefaultBucketSorts('manual');
@@ -1931,12 +1947,23 @@ export function createAppController(): AppController {
       setNotice('Old Week dismissed set cleared.');
       emit();
     },
+    setMonitoredPage(page: number) {
+      state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
+      emit();
+    },
     setRecentPage(page: number) {
       state.ui.recentPage = clampPage(page, state.data.recentTokens.length, state.ui.recentPerPage);
       emit();
     },
     setOldWeekPage(page: number) {
       state.ui.oldWeekPage = clampPage(page, state.data.oldWeekTokens.length, state.ui.oldWeekPerPage);
+      emit();
+    },
+    setMonitoredPerPage(perPage: number) {
+      state.ui.monitoredPerPage = Math.max(10, Math.floor(perPage) || 30);
+      state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
+      state.data.configs['monitored-per-page'] = state.ui.monitoredPerPage;
+      void persistUiConfigs({ 'monitored-per-page': state.ui.monitoredPerPage });
       emit();
     },
     setRecentPerPage(perPage: number) {
