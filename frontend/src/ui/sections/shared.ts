@@ -292,7 +292,7 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
     <div class="bucket-footer">
       <div class="bucket-page-controls">
         <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" value="${safePage + 1}" /></label>
-        <span class="bucket-page-indicator">/ ${totalPages}</span>
+        <span class="bucket-page-total">${totalPages}</span>
       </div>
       <div class="button-row compact bucket-footer-actions">
         <button type="button" class="action-button small" data-action="${mode === 'recent' ? 'recent-prev' : 'old-week-prev'}" ${safePage === 0 ? 'disabled' : ''}>Prev</button>

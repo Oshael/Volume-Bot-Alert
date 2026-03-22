@@ -2706,8 +2706,11 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-pagination-bar {
-  justify-content: space-between;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  justify-content: initial;
+  align-items: center;
+  gap: 8px;
   padding-top: 4px;
   padding-bottom: 6px;
   margin-top: -6px;
@@ -2715,14 +2718,20 @@ TEMP_LEGACY_BAR_TITLE {
 
 .monitored-pagination-bar .bucket-footer-actions {
   margin-left: auto;
-  position: relative;
-  top: -2px;
+  justify-self: end;
+  position: static;
 }
 
 .monitored-pagination-bar .legacy-mini-field,
-.monitored-pagination-bar .panel-header-label {
-  position: relative;
-  top: -2px;
+.monitored-pagination-bar .bucket-page-total {
+  position: static;
+}
+
+.monitored-pagination-bar .action-button.small {
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 11px;
 }
 
 .panel-toolbar {
@@ -3176,18 +3185,22 @@ TEMP_LEGACY_BAR_TITLE {
 .bucket-page-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.bucket-page-indicator {
-  justify-self: center;
-  min-width: 72px;
-  padding: 10px 14px;
+.bucket-page-total {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  min-height: 34px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.04);
   color: #f3f7f5;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 700;
   text-align: center;
 }
 
@@ -3249,7 +3262,7 @@ TEMP_LEGACY_BAR_TITLE {
     grid-template-columns: 1fr;
   }
 
-  .bucket-page-indicator,
+  .bucket-page-total,
   .bucket-footer-actions {
     justify-self: start;
   }
@@ -3407,11 +3420,12 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 12px !important;
 }
 
-.manual-bar .bucket-page-indicator,
-.recent-bar .bucket-page-indicator,
-.old-week-bar .bucket-page-indicator {
+.manual-bar .bucket-page-total,
+.recent-bar .bucket-page-total,
+.old-week-bar .bucket-page-total {
   font-size: 12px !important;
-  padding: 11px 20px !important;
+  min-height: 32px !important;
+  padding: 0 16px !important;
 }
 
 
