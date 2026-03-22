@@ -79,8 +79,10 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
             </div>
           </div>
         </div>
-        <span class="panel-header-label">TOKENS</span>
-        <span class="count">${tracked.length}</span>
+        <span class="monitored-token-pill-wrap">
+          <span class="panel-header-label">TOKENS</span>
+          <span class="count monitored-token-count-pill">${tracked.length}</span>
+        </span>
         <div class="monitored-inline-pagination">
           <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" value="${safePerPage}" /></label>
           <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="monitored-page-jump" value="${safePage + 1}" /></label>
