@@ -75,6 +75,11 @@ export interface DashboardMonitoredToken {
   meteora?: MeteoraBatchItem | null;
 }
 
+export interface DashboardMonitoredPayload {
+  generatedAt?: string | null;
+  tokens: DashboardMonitoredToken[];
+}
+
 export interface MeteoraBatchItem {
   address: string;
   tvl?: number | null;
@@ -111,8 +116,11 @@ export function fetchEligibleCatalog(token?: string | null) {
 }
 
 export function fetchDashboardMonitored(token?: string | null) {
-  return apiFetch<{ tokens: DashboardMonitoredToken[] }>('/api/dashboard/monitored', { token })
-    .then((response) => response.tokens || []);
+  return apiFetch<DashboardMonitoredPayload>('/api/dashboard/monitored', { token })
+    .then((response) => ({
+      generatedAt: response.generatedAt ?? null,
+      tokens: response.tokens || [],
+    }));
 }
 
 export function fetchPumpfunTokenMeta(mint: string, token?: string | null, metadataUri?: string | null) {

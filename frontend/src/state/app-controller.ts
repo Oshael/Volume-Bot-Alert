@@ -80,7 +80,7 @@ const OLD_SURGE_SESSION_DELTA_PCT = 50;
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 2 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
-const MONITORED_REFRESH_INTERVAL_MS = 10 * 1000;
+const MONITORED_REFRESH_INTERVAL_MS = 5 * 1000;
 
 export interface AppController {
   state: AppState;
@@ -1085,6 +1085,22 @@ export function createAppController(): AppController {
     state.runtime.uptimeLabel = hours > 0 ? `${hours}h${String(minutes).padStart(2, '0')}m` : `${minutes}m`;
   }
 
+  function formatFreshnessLabel(timestamp: string | null) {
+    if (!timestamp) return '-';
+    const ageMs = Date.now() - new Date(timestamp).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0) return 'just now';
+    const ageSeconds = Math.max(0, Math.round(ageMs / 1000));
+    if (ageSeconds < 2) return 'just now';
+    if (ageSeconds < 60) return `${ageSeconds}s ago`;
+    const ageMinutes = Math.round(ageSeconds / 60);
+    return `${ageMinutes}m ago`;
+  }
+
+  function updateMonitoredFreshness(timestamp: string | null) {
+    state.runtime.monitoredUpdatedAt = timestamp;
+    state.runtime.monitoredFreshnessLabel = formatFreshnessLabel(timestamp);
+  }
+
   function passesAlertFilters(token: ManualTokenEntry) {
     const minVol = getConfigNumber('min-vol', 500);
     const minMcap = getConfigNumber('min-mcap', 10000);
@@ -1440,11 +1456,12 @@ export function createAppController(): AppController {
     monitoredRefreshInFlight = true;
     const startedAt = performance.now();
     try {
-      const monitoredDashboardTokens = await fetchDashboardMonitored(token);
-      applyMonitoredDashboard(monitoredDashboardTokens);
+      const monitoredDashboard = await fetchDashboardMonitored(token);
+      applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
       writeConfigDebug('refreshMonitoredDashboard:success', {
         fetchMs: Number((performance.now() - startedAt).toFixed(1)),
-        monitoredDashboardTokens: monitoredDashboardTokens.length,
+        monitoredDashboardTokens: monitoredDashboard.tokens.length,
+        monitoredGeneratedAt: monitoredDashboard.generatedAt ?? null,
       });
       emit();
     } catch (error) {
@@ -1464,6 +1481,7 @@ export function createAppController(): AppController {
     sweepMinMcapRemove();
     refreshMonitoredPanelCounts();
     computeUptimeLabel();
+    updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
     void refreshMonitoredDashboard();
     emit();
   }
@@ -1495,6 +1513,7 @@ export function createAppController(): AppController {
     startedAt = null;
     state.runtime.mode = 'stopped';
     state.runtime.uptimeLabel = '0m';
+    updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
   }
 
   function connectRealtime() {
@@ -1586,6 +1605,8 @@ export function createAppController(): AppController {
     state.session.emailVerifiedAt = null;
     state.runtime.cycle = 0;
     state.runtime.alerts = 0;
+    state.runtime.monitoredUpdatedAt = null;
+    state.runtime.monitoredFreshnessLabel = '-';
     state.panels.alerts = 0;
     state.panels.pumpfun = 0;
     state.configSummary = {
@@ -1642,7 +1663,11 @@ export function createAppController(): AppController {
     hydrateSoundSettings();
   }
 
-  function applyMonitoredDashboard(monitoredDashboardTokens: DashboardMonitoredToken[] = [], manualTokensOverride?: Array<{ address: string; label?: string | null }>) {
+  function applyMonitoredDashboard(
+    monitoredDashboardTokens: DashboardMonitoredToken[] = [],
+    manualTokensOverride?: Array<{ address: string; label?: string | null }>,
+    generatedAt?: string | null,
+  ) {
     const manualPayload: ConfigPayload = {
       configs: state.data.configs,
       tokens: (manualTokensOverride ?? state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null }))),
@@ -1677,10 +1702,14 @@ export function createAppController(): AppController {
 
     state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
     state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+    if (generatedAt !== undefined) {
+      updateMonitoredFreshness(generatedAt ?? null);
+    }
     rebuildTrackedState(manualPayload, monitoredDashboardTokens);
     writeConfigDebug('applyMonitoredDashboard', {
       monitoredDashboardTokens: monitoredDashboardTokens.length,
       manualTokensOverride: manualTokensOverride?.length ?? null,
+      monitoredGeneratedAt: generatedAt ?? null,
     });
   }
 
@@ -1711,8 +1740,8 @@ export function createAppController(): AppController {
 
   async function hydrateDashboardMonitoredInternal(token: string, manualTokens: AddressItem[]) {
     try {
-      const monitoredDashboardTokens = await fetchDashboardMonitored(token);
-      applyMonitoredDashboard(monitoredDashboardTokens, manualTokens);
+      const monitoredDashboard = await fetchDashboardMonitored(token);
+      applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
       emit();
     } catch (error) {
       writeConfigDebug('reloadConfigInternal:dashboard-failed', {

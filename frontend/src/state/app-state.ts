@@ -197,6 +197,8 @@ export interface AppState {
     alerts: number;
     timeouts: number;
     uptimeLabel: string;
+    monitoredUpdatedAt: string | null;
+    monitoredFreshnessLabel: string;
   };
   bars: {
     manual: number;
@@ -277,6 +279,8 @@ export function createAppState(): AppState {
       alerts: 0,
       timeouts: 0,
       uptimeLabel: '0m',
+      monitoredUpdatedAt: null,
+      monitoredFreshnessLabel: '-',
     },
     bars: {
       manual: 0,

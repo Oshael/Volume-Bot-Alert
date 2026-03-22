@@ -74,6 +74,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
             </div>
           </div>
         </div>
+        <span class="panel-header-label">UPDATED ${escapeHtml(state.runtime.monitoredFreshnessLabel || '-')}</span>
         <span class="count">${tracked.length}</span>
       </div>
     </div>
