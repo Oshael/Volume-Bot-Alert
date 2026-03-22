@@ -636,10 +636,15 @@ export function createAppController(): AppController {
     const now = Date.now();
     const removed = new Set<string>();
     let migratedBySilence = 0;
+    const removedByMigratedFlag: string[] = [];
+    const removedBySilenceMigration: string[] = [];
+    const removedByInactiveTooLong: string[] = [];
+    const removedByLowMcapTooLong: string[] = [];
 
     state.data.pumpTokens = state.data.pumpTokens.filter((token) => {
       if (token._migrated) {
         removed.add(token.mint);
+        removedByMigratedFlag.push(token.mint);
         return false;
       }
 
@@ -657,6 +662,7 @@ export function createAppController(): AppController {
         enqueuePumpToast(token);
         removed.add(token.mint);
         migratedBySilence += 1;
+        removedBySilenceMigration.push(token.mint);
         return false;
       }
 
@@ -669,8 +675,15 @@ export function createAppController(): AppController {
       }
 
       const lowMcapTooLong = Boolean(token._lowMcapSince && now - token._lowMcapSince >= PUMP_GC_LOW_MCAP_TIME_MS);
-      if (inactiveTooLong || lowMcapTooLong) {
+      if (inactiveTooLong) {
         removed.add(token.mint);
+        removedByInactiveTooLong.push(token.mint);
+        return false;
+      }
+
+      if (lowMcapTooLong) {
+        removed.add(token.mint);
+        removedByLowMcapTooLong.push(token.mint);
         return false;
       }
 
@@ -682,6 +695,19 @@ export function createAppController(): AppController {
     }
 
     if (removed.size > 0) {
+      console.info('[PumpGC] Removed tokens', {
+        totalRemoved: removed.size,
+        migratedFlag: removedByMigratedFlag.length,
+        silenceMigration: removedBySilenceMigration.length,
+        inactiveTooLong: removedByInactiveTooLong.length,
+        lowMcapTooLong: removedByLowMcapTooLong.length,
+        samples: {
+          migratedFlag: removedByMigratedFlag.slice(0, 5),
+          silenceMigration: removedBySilenceMigration.slice(0, 5),
+          inactiveTooLong: removedByInactiveTooLong.slice(0, 5),
+          lowMcapTooLong: removedByLowMcapTooLong.slice(0, 5),
+        },
+      });
       refreshPumpPanelCounts();
       setNotice(migratedBySilence > 0 ? `Pump detected ${migratedBySilence} migration(s) by silence and removed ${removed.size} token(s).` : `Pump GC removed ${removed.size} token(s).`);
     }

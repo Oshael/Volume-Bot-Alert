@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-20` after real email auth delivery, login email OTP, password-reset/verification rollout, and auth modal interaction fixes.
+Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch throughput migration, monitored refresh acceleration, and monitored UI freshness updates.
 
 ## High-Level Product Shape
 
@@ -22,7 +22,7 @@ The bot is a Solana monitoring app with:
 - authenticated multi-user frontend
 - Express backend
 - PostgreSQL persistence
-- backend workers for discovery, catalog evaluation, market snapshots, and Meteora snapshots
+- backend workers for discovery, catalog cleanup, catalog evaluation, market snapshots, and Meteora snapshots
 - realtime PumpFun socket feed
 
 The UI is centered around:
@@ -82,6 +82,7 @@ Responsibilities:
 - session restore
 - config load
 - monitored dashboard polling
+- monitored freshness label updates from backend payload timestamps
 - local token-state merge
 - alert decisions
 - routed-bar derivation
@@ -107,6 +108,15 @@ Responsibilities:
 - trusted-origin checks for mutating cookie-authenticated requests
 - backend CSP via `helmet`
 
+Admin worker status endpoint:
+- `GET /api/admin/ws-status`
+- requires authenticated admin session
+- returns socket hub status plus:
+  - `catalogWorker`
+  - `catalogCleanupWorker`
+  - `meteoraSnapshotWorker`
+  - `dexDiscoveryWorker`
+
 ### Backend workers
 
 #### Catalog worker
@@ -117,9 +127,23 @@ Role:
 - reevaluates tokens already in `token_catalog`
 - updates eligibility, priority, latest market stats
 - inserts market snapshots
+- consumes DexScreener in batch mode instead of one token per request
 
 Cadence:
-- scheduler loop every `5s`
+- scheduler loop every `2s`
+
+Dex throughput model:
+- target budget is `300 requests/minute`
+- each Dex batch request carries up to `30` token addresses
+- the worker uses the per-cycle token budget implied by that request budget instead of the old fixed small batch model
+- due rows are ordered with finer queue priority:
+  - `high-hot`
+  - `high-warm`
+  - `high-cold`
+  - `normal`
+  - `low-near`
+  - `low-dust`
+  - `dormant`
 
 Priority bands:
 - `high`: `>= 100k`
@@ -128,30 +152,70 @@ Priority bands:
 - `dormant`: no useful Dex state / no MCAP
 
 Priority recheck timings:
-- `high`:
-  - default: `10s`
-  - if `6h volume < 30k`: `40s`
-  - if `6h volume < 15k`: `60s`
-- `normal`: `60s`
+- `high-hot`:
+  - `mcap >= 100k`
+  - `6h volume >= 30k`
+  - `2s`
+- `high-warm`:
+  - `mcap >= 100k`
+  - `15k <= 6h volume < 30k`
+  - `3s`
+- `high-cold`:
+  - `mcap >= 100k`
+  - `6h volume < 15k`
+  - `5s`
+- `normal`: `4s`
 - `normal` boosted by price change:
-  - `6h >= 200` can reduce to `40s`
-  - `1h >= 150` can reduce to `20s`
-- `low`: `3m`
-- `dormant`: `8m`
+  - `6h >= 200` can reduce to `3s`
+  - `1h >= 150` can reduce to `3s`
+- `low-near` (`15k-30k`): `15s`
+- `low-dust` (`< 15k`): `10m`
+- `dormant`: `30m`
 
 Special handling:
 - `dex-unavailable` preserves the current eligibility/priority instead of immediately downgrading the token to `dex-missing`
 - new manual tokens retry quickly until first real classification
+- market reevaluation continues writing `token_market_snapshots`, which is what powers later MCAP delta calculations
+
+#### Catalog cleanup worker
+File:
+- `src/services/catalog-cleanup-worker.js`
+
+Role:
+- automatically reduces low-value catalog pressure before it turns into evaluation backlog
+- quarantines weak discovery tokens
+- soft archives stale or repeated low-signal tokens from other sources
+
+Cadence:
+- every `60m`
+
+Cleanup policy:
+- protected tokens are excluded:
+  - rows present in `user_tokens`
+  - rows present in `user_starred_tokens`
+  - rows present in `user_blocklist`
+  - any `token_catalog` row with `source = 'user-manual'`
+- `dexscreener-discovery` tokens below `15k` with no useful current eligibility and low/null `24h` volume go to `quarantine`
+- non-discovery tokens below `15k` that are stale `5d+` or stuck in repeated bad states can go to `soft archive`
+
+Operational effect:
+- `quarantine`
+  - keeps the record
+  - disables active monitoring behavior
+  - pushes reevaluation far into the future
+- `soft archive`
+  - keeps the record
+  - sets `is_active_monitor_candidate = FALSE`
+  - removes the token from the normal evaluation queue
 
 #### Dex discovery worker
 File:
 - `src/services/dex-discovery-worker.js`
 
 Role:
-- restores the old `loadTrending()` behavior on the backend
 - discovers new tokens from DexScreener feeds
 - inserts them into `token_catalog`
-- schedules immediate evaluation
+- schedules initial evaluation for new addresses only
 
 Cadence:
 - every `60s`
@@ -163,6 +227,11 @@ Discovery feeds:
 
 Current source used in catalog:
 - `dexscreener-discovery`
+
+Important current rule:
+- discovery is no longer a refresh path for known tokens
+- if the address already exists in `token_catalog`, the worker skips it entirely
+- freshness for existing catalog rows now comes from the catalog worker, not from repeated discovery re-entry
 
 #### Market snapshots
 Primary file:
@@ -188,12 +257,22 @@ File:
 - `src/services/dexscreener.js`
 
 Used for:
-- token pair lookup by address
+- batched token pair lookup by address set
 - discovery feeds for latest profiles and boosts
 
 Important current note:
-- reevaluation failures from Dex are expected to happen sometimes
-- current hardening tolerates this
+- the main catalog refresh path now uses `/tokens/v1/{chainId}/{tokenAddresses}`
+- each request can carry up to `30` addresses
+- per-token cache TTL follows worker priority hints:
+  - `high-hot`: `2s`
+  - `high-warm`: `3s`
+  - `high-cold`: `5s`
+  - `normal`: `4s`
+  - `low-near`: `15s`
+  - `low-dust`: `10m`
+  - `dormant`: `30m`
+- error cooldown is `60s`
+- discovery still uses the `latest/top` feeds, not the batch token endpoint
 
 ### PumpFun WebSocket
 File:
@@ -526,9 +605,11 @@ Files:
 - `src/routes/dashboard.js`
 
 Main behavior:
-- frontend polls `GET /api/dashboard/monitored` every `10s`
+- frontend polls `GET /api/dashboard/monitored` every `3s`
 - backend returns prepared catalog rows
 - frontend rebuilds monitored token state from that payload
+- backend payload includes `generatedAt`
+- frontend shows a freshness label in the panel header based on that backend timestamp
 
 Current sorting:
 - `VOL`
@@ -557,6 +638,10 @@ Sorting rules:
 Important:
 - this panel is now backend-driven
 - it is no longer primarily driven by direct Dex patches
+- practical freshness is now determined mainly by:
+  - catalog worker reevaluation cadence
+  - dashboard poll cadence
+  - backend `generatedAt` payload timing
 
 ## Manual Tokens
 

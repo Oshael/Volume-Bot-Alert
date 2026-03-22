@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-20` after real email delivery, email verification, password reset, login email OTP, and auth-modal interaction stabilization.
+Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch migration, monitored refresh acceleration, and monitored UI pagination/freshness updates.
 
 ## Current Runtime Shape
 
@@ -33,6 +33,7 @@ Last reviewed against code on `2026-03-20` after real email delivery, email veri
   - `src/routes/config.js`
   - `src/routes/catalog.js`
   - `src/routes/dashboard.js`
+  - `src/services/catalog-cleanup-worker.js`
   - `src/services/catalog-worker.js`
   - `src/services/dex-discovery-worker.js`
   - `src/services/meteora-snapshot-worker.js`
@@ -76,26 +77,16 @@ Last reviewed against code on `2026-03-20` after real email delivery, email veri
 - This is the endpoint the frontend currently uses for the shared monitored set.
 
 ### Working currently
-- Current active focus is performance/latency, not auth feature expansion.
-- The main user-facing problem right now is not scroll/render lag.
-- The current problem is slow data arrival for:
-  - monitored tokens
-  - user config bootstrap
-  - user config save/apply
-- Current leading suspect remains the bootstrap + dashboard/config data path, especially:
-  - `GET /api/dashboard/monitored`
-  - `GET /api/config`
-  - `PATCH /api/config`
-- Recent safe performance changes already applied:
-  - frontend bootstrap now applies `GET /api/config` first and lets monitored hydration complete in the background
-  - frontend `reloadConfigInternal()` no longer waits serially on config then dashboard
-  - backend `GET /api/dashboard/monitored` now fetches Meteora history and market snapshot rows in parallel
-  - backend `GET /api/config` now fetches user-scoped config/tokens/blocklist/starred in parallel
-  - backend `PATCH /api/config` no longer does an unnecessary full `getAll()` reread after every save
+- The main recent optimization pass was on catalog/API efficiency rather than auth.
+- The largest resolved issue was DexScreener overuse and delayed refresh for hot monitored tokens.
+- The current architecture now separates:
+  - discovery of new tokens
+  - catalog reevaluation of known tokens
+  - cleanup of stale/low-value catalog entries
 - Important current conclusion:
-  - the UI itself is generally visually smooth
-  - the lag is still data-latency / backend-path / bootstrap related
-  - next work should stay focused on measuring and shrinking monitored/config payload cost before broader UI refactors
+  - Dex `429` pressure dropped sharply after moving catalog refresh to Dex batch reads
+  - frontend render cost also dropped after paginating the `Monitored Tokens` panel
+  - current work has shifted from “stop Dex overload” to targeted behavior review and smaller follow-up optimizations
 
 ### Recent / Old Week bars
 - Source of truth: frontend-derived from tracked token state
@@ -145,7 +136,7 @@ Current login rule:
 - authenticated session/cookie is only created after OTP success
 
 ### 2. Monitored Tokens
-- Frontend refresh interval: `10s`
+- Frontend refresh interval: `3s`
 - Current flow:
   - frontend calls `GET /api/dashboard/monitored`
   - backend serves prepared monitored rows from `token_catalog`
@@ -157,9 +148,14 @@ Current login rule:
   - frontend no longer depends on per-token Dex socket fetches as the main monitored refresh mechanism
   - frontend refresh should read backend-prepared state instead of causing Dex fetches itself
 
-Current caution:
-- this `10s` polling cadence is still aggressive relative to the backend-wide rate limiter
-- in production, `429` can still happen when dashboard polling combines with other frontend API traffic
+Current monitored UI behavior:
+- backend payload now includes `generatedAt`
+- frontend shows freshness text in the panel header using that timestamp
+- `Monitored Tokens` now paginates the rendered cards
+- pagination does not change alert logic:
+  - the full monitored set still stays in frontend state
+  - only the visible page is rendered
+  - hidden pages still receive fresh data through the monitored payload
 
 ### 3. Manual Tokens
 - Current source of truth:
@@ -188,24 +184,40 @@ Current caution:
 
 ### 4. Catalog worker
 - Worker: `src/services/catalog-worker.js`
-- Poll loop: every `5s`
+- Poll loop: every `2s`
+- Dex strategy:
+  - uses `/tokens/v1/{chainId}/{tokenAddresses}`
+  - fetches up to `30` token addresses per request
+  - is budgeted around Dex's documented `300 req/min` token endpoint limit
 - Current priority bands:
   - `high`: `>= 100k`
   - `normal`: `30k-100k`
   - `low`: `< 30k`
   - `dormant`: missing/no useful Dex state
 - Priority timing:
-  - `high`:
-    - default: `10s`
-    - if `6h volume < 30k`: `40s`
-    - if `6h volume < 15k`: `60s`
-  - `normal`: `60s`
-  - `normal` boosted by `PCHANGE`
-  - `low`: `3m`
-  - `dormant`: `8m`
+  - `high-hot`: `2s`
+  - `high-warm`: `3s`
+  - `high-cold`: `5s`
+  - `normal`: `4s`
+  - `normal` boosted by `PCHANGE`: `3s`
+  - `low-near`: `15s`
+  - `low-dust`: `10m`
+  - `dormant`: `30m`
 - Important hardening already present:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
   - newly added manual tokens get `5s` retry cadence until first classification
+
+### 4a. Catalog cleanup worker
+- Worker: `src/services/catalog-cleanup-worker.js`
+- Poll loop: every `60m`
+- Purpose:
+  - quarantine weak discovery tokens
+  - soft archive stale/low-value tokens
+  - keep low-signal catalog entries from competing with hot monitored tokens
+- Current rule shape:
+  - protected user-linked tokens are excluded
+  - `dexscreener-discovery` weak tokens go to `quarantine`
+  - stale/repeated-bad-state low-value non-discovery tokens can go to `soft archive`
 
 ### 4b. Dex discovery worker
 - Worker: `src/services/dex-discovery-worker.js`
@@ -217,9 +229,11 @@ Current caution:
 - Current behavior:
   - collects Solana token addresses from those feeds
   - deduplicates them
-  - upserts them into `token_catalog` with source `dexscreener-discovery`
-  - schedules immediate evaluation in the normal catalog worker
-- This restored the old `loadTrending()`-style discovery behavior that had been missing from the backendized bot
+  - inserts new addresses into `token_catalog` with source `dexscreener-discovery`
+  - schedules initial evaluation for new tokens only
+- Important current rule:
+  - discovery no longer refreshes known catalog rows
+  - existing catalog addresses are skipped rather than re-upserted/re-scheduled
 
 ### 5. Meteora flow
 - Snapshot worker: `src/services/meteora-snapshot-worker.js`
@@ -235,7 +249,7 @@ Current caution:
   - `GET /api/catalog/pumpfun/:mint/meta`
 - This happens when incoming PumpFun tokens are missing image/meta in local state
 - These are individual per-mint requests, not socket messages
-- This route is one of the current contributors to frontend-triggered `429` alongside dashboard polling
+- This route remains an auxiliary traffic source, but the main Dex overload issue was addressed in the catalog worker rather than here
 
 ## Current UI/Behavior Contract
 

@@ -133,6 +133,27 @@ export function bindMonitoredSortControls(section: ParentNode, controller: AppCo
   });
 }
 
+function bindCommittedNumberInput(
+  input: HTMLInputElement | null | undefined,
+  onCommit: (value: number) => void,
+) {
+  if (!input) return;
+
+  const commit = () => {
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) return;
+    onCommit(value);
+  };
+
+  input.addEventListener('change', commit);
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    commit();
+  });
+}
+
 export function bindPagedMonitoredControls(section: ParentNode, controller: AppController) {
   section.querySelector<HTMLButtonElement>('[data-action="monitored-prev"]')?.addEventListener('click', () => {
     controller.setMonitoredPage(controller.state.ui.monitoredPage - 1);
@@ -142,14 +163,11 @@ export function bindPagedMonitoredControls(section: ParentNode, controller: AppC
     controller.setMonitoredPage(controller.state.ui.monitoredPage + 1);
   });
 
-  section.querySelector<HTMLInputElement>('[data-action="monitored-per-page"]')?.addEventListener('change', (event) => {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
+  bindCommittedNumberInput(section.querySelector<HTMLInputElement>('[data-action="monitored-per-page"]'), (value) => {
     controller.setMonitoredPerPage(value);
   });
 
-  section.querySelector<HTMLInputElement>('[data-action="monitored-page-jump"]')?.addEventListener('change', (event) => {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    if (!Number.isFinite(value)) return;
+  bindCommittedNumberInput(section.querySelector<HTMLInputElement>('[data-action="monitored-page-jump"]'), (value) => {
     controller.setMonitoredPage(value - 1);
   });
 }
@@ -158,6 +176,7 @@ export function bindPagedBucketControls(section: ParentNode, controller: AppCont
   const prevAction = mode === 'recent' ? 'recent-prev' : 'old-week-prev';
   const nextAction = mode === 'recent' ? 'recent-next' : 'old-week-next';
   const perPageAction = mode === 'recent' ? 'recent-per-page' : 'old-week-per-page';
+  const pageJumpAction = mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump';
 
   section.querySelector<HTMLButtonElement>(`[data-action="${prevAction}"]`)?.addEventListener('click', () => {
     if (mode === 'recent') controller.setRecentPage(controller.state.ui.recentPage - 1);
@@ -170,10 +189,16 @@ export function bindPagedBucketControls(section: ParentNode, controller: AppCont
   });
 
   section.querySelectorAll<HTMLInputElement>(`[data-action="${perPageAction}"]`).forEach((input) => {
-    input.addEventListener('change', (event) => {
-      const value = Number((event.currentTarget as HTMLInputElement).value);
+    bindCommittedNumberInput(input, (value) => {
       if (mode === 'recent') controller.setRecentPerPage(value);
       else controller.setOldWeekPerPage(value);
+    });
+  });
+
+  section.querySelectorAll<HTMLInputElement>(`[data-action="${pageJumpAction}"]`).forEach((input) => {
+    bindCommittedNumberInput(input, (value) => {
+      if (mode === 'recent') controller.setRecentPage(value - 1);
+      else controller.setOldWeekPage(value - 1);
     });
   });
 }
@@ -265,7 +290,10 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
   return `
     ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1 })}
     <div class="bucket-footer">
-      <div class="bucket-page-indicator">Page ${safePage + 1} / ${totalPages}</div>
+      <div class="bucket-page-controls">
+        <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" value="${safePage + 1}" /></label>
+        <span class="bucket-page-indicator">/ ${totalPages}</span>
+      </div>
       <div class="button-row compact bucket-footer-actions">
         <button type="button" class="action-button small" data-action="${mode === 'recent' ? 'recent-prev' : 'old-week-prev'}" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
         <button type="button" class="action-button small" data-action="${mode === 'recent' ? 'recent-next' : 'old-week-next'}" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
