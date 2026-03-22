@@ -1,7 +1,7 @@
 const DEXSCREENER_BASE = 'https://api.dexscreener.com';
 const REQUEST_TIMEOUT = 10000;
-const CACHE_TTL_MS = 40000;
-const ERROR_COOLDOWN_MS = 15000;
+const DEFAULT_CACHE_TTL_MS = 60000;
+const ERROR_COOLDOWN_MS = 60000;
 
 const tokenCache = new Map();
 const endpointCache = new Map();
@@ -25,7 +25,28 @@ function setCacheEntry(address, data, ttlMs) {
   });
 }
 
-async function fetchTokenPairsUncached(address) {
+function getTokenCacheTtl(priorityHint) {
+  switch (String(priorityHint || '').trim().toLowerCase()) {
+    case 'high-hot':
+      return 15 * 1000;
+    case 'high-warm':
+      return 30 * 1000;
+    case 'high-cold':
+      return 60 * 1000;
+    case 'normal':
+      return 60 * 1000;
+    case 'low-near':
+      return 3 * 60 * 1000;
+    case 'low-dust':
+      return 10 * 60 * 1000;
+    case 'dormant':
+      return 30 * 60 * 1000;
+    default:
+      return DEFAULT_CACHE_TTL_MS;
+  }
+}
+
+async function fetchTokenPairsUncached(address, priorityHint) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -41,7 +62,7 @@ async function fetchTokenPairsUncached(address) {
     }
 
     const data = await res.json();
-    setCacheEntry(address, data, CACHE_TTL_MS);
+    setCacheEntry(address, data, getTokenCacheTtl(priorityHint));
     return data;
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -123,7 +144,7 @@ async function getEndpointJson(path) {
   return request;
 }
 
-async function getTokenPairs(address) {
+async function getTokenPairs(address, options = {}) {
   const addr = String(address || '').trim();
   if (!addr) return null;
 
@@ -133,7 +154,7 @@ async function getTokenPairs(address) {
   const inFlight = inFlightRequests.get(addr);
   if (inFlight) return inFlight;
 
-  const request = fetchTokenPairsUncached(addr)
+  const request = fetchTokenPairsUncached(addr, options.priority)
     .finally(() => {
       inFlightRequests.delete(addr);
     });

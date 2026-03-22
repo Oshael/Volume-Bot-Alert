@@ -20,6 +20,7 @@ const dashboardRoutes = require('./routes/dashboard');
 // Services
 const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
+const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 
@@ -147,6 +148,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
   res.json({
     ...socketHub.getStatus(),
     catalogWorker: catalogWorker.getStatus(),
+    catalogCleanupWorker: catalogCleanupWorker.getStatus(),
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
   });
@@ -184,6 +186,7 @@ function bootstrapRuntime(httpServer) {
 
   if (config.nodeEnv !== 'test') {
     catalogWorker.start();
+    catalogCleanupWorker.start();
     meteoraSnapshotWorker.start();
     dexDiscoveryWorker.start();
   }

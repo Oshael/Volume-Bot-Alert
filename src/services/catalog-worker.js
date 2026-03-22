@@ -5,15 +5,17 @@ const dexscreener = require('./dexscreener');
 const LOOP_INTERVAL_MS = 5000;
 const BATCH_LIMIT = 60;
 const CONCURRENCY = 8;
-const DORMANT_RECHECK_MS = 8 * 60 * 1000;
-const LOW_RECHECK_MS = 3 * 60 * 1000;
+const DORMANT_RECHECK_MS = 30 * 60 * 1000;
+const LOW_NEAR_RECHECK_MS = 3 * 60 * 1000;
+const LOW_DUST_RECHECK_MS = 10 * 60 * 1000;
 const NORMAL_RECHECK_MS = 60 * 1000;
 const NORMAL_BOOST_6H_RECHECK_MS = 40 * 1000;
 const NORMAL_BOOST_1H_RECHECK_MS = 20 * 1000;
-const HIGH_RECHECK_MS = 10 * 1000;
+const HIGH_HOT_RECHECK_MS = 15 * 1000;
+const HIGH_WARM_RECHECK_MS = 30 * 1000;
 const HIGH_VERY_LOW_VOL_RECHECK_MS = 60 * 1000;
-const HIGH_LOW_VOL_RECHECK_MS = 40 * 1000;
-const ERROR_RECHECK_MS = 5 * 60 * 1000;
+const HIGH_LOW_VOL_RECHECK_MS = HIGH_WARM_RECHECK_MS;
+const ERROR_RECHECK_MS = 60 * 1000;
 const MANUAL_BOOTSTRAP_RECHECK_MS = 5 * 1000;
 
 let timer = null;
@@ -66,6 +68,10 @@ function derivePrioritySnapshot(bestPair) {
   }
 
   if (marketCap < 30000) {
+    const nextLowMs = marketCap >= 15000
+      ? LOW_NEAR_RECHECK_MS
+      : LOW_DUST_RECHECK_MS;
+
     return {
       marketCap,
       vol5m,
@@ -76,7 +82,7 @@ function derivePrioritySnapshot(bestPair) {
       pchange6h,
       pchange24h,
       monitorPriority: 'low',
-      nextEvaluationAt: new Date(Date.now() + LOW_RECHECK_MS),
+      nextEvaluationAt: new Date(Date.now() + nextLowMs),
       eligibleForMonitoring: true,
       eligibilityState: 'dex-low',
       suppressedReason: null,
@@ -109,7 +115,7 @@ function derivePrioritySnapshot(bestPair) {
     };
   }
 
-  let nextHighMs = HIGH_RECHECK_MS;
+  let nextHighMs = HIGH_HOT_RECHECK_MS;
   if ((vol6h || 0) < 15000) {
     nextHighMs = HIGH_VERY_LOW_VOL_RECHECK_MS;
   } else if ((vol6h || 0) < 30000) {
@@ -136,11 +142,11 @@ function derivePrioritySnapshot(bestPair) {
 function getRetryMsForPriority(priority) {
   switch (String(priority || '').trim().toLowerCase()) {
     case 'high':
-      return HIGH_RECHECK_MS;
+      return HIGH_HOT_RECHECK_MS;
     case 'normal':
       return NORMAL_RECHECK_MS;
     case 'low':
-      return LOW_RECHECK_MS;
+      return LOW_NEAR_RECHECK_MS;
     case 'dormant':
     default:
       return DORMANT_RECHECK_MS;
@@ -153,7 +159,9 @@ function shouldFastRetryManualBootstrap(token) {
 }
 
 async function evaluateToken(token) {
-  const data = await dexscreener.getTokenPairs(token.address);
+  const data = await dexscreener.getTokenPairs(token.address, {
+    priority: getDexPriorityHint(token),
+  });
   if (!data) {
     const retryMs = shouldFastRetryManualBootstrap(token)
       ? MANUAL_BOOTSTRAP_RECHECK_MS
@@ -230,6 +238,32 @@ async function evaluateToken(token) {
     priceChange24h: snapshot.pchange24h,
     tokenCreatedAt: toNumber(bestPair.pairCreatedAt),
   });
+}
+
+function getDexPriorityHint(token) {
+  const marketCap = Number(token?.last_mcap || 0);
+  const priority = String(token?.monitor_priority || '').trim().toLowerCase();
+  const vol6h = Number(token?.last_vol_6h || 0);
+
+  if (priority === 'high' || marketCap >= 100000) {
+    if (vol6h < 15000) return 'high-cold';
+    if (vol6h < 30000) return 'high-warm';
+    return 'high-hot';
+  }
+
+  if (priority === 'normal' || marketCap >= 30000) {
+    return 'normal';
+  }
+
+  if (marketCap >= 15000) {
+    return 'low-near';
+  }
+
+  if (marketCap > 0) {
+    return 'low-dust';
+  }
+
+  return 'dormant';
 }
 
 async function runOnce() {

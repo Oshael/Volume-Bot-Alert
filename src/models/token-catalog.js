@@ -116,7 +116,8 @@ async function listDueForEvaluation(limit = 25) {
   const { rows } = await db.query(
     `SELECT *
      FROM token_catalog
-     WHERE next_evaluation_at <= NOW()
+     WHERE is_active_monitor_candidate = TRUE
+       AND next_evaluation_at <= NOW()
      ORDER BY next_evaluation_at ASC,
               COALESCE(last_vol_24h, last_vol_6h, last_vol_1h, last_vol_5m, 0) DESC,
               last_seen_at DESC
@@ -305,6 +306,103 @@ async function applyEvaluationResult(address, result) {
   return rows[0] || null;
 }
 
+async function applyAutomatedCleanup(options = {}) {
+  const staleDays = Math.max(1, Number(options.staleDays) || 5);
+  const quarantineRecheckMs = Math.max(60 * 1000, Number(options.quarantineRecheckMs) || (6 * 60 * 60 * 1000));
+  const softArchiveRecheckMs = Math.max(60 * 1000, Number(options.softArchiveRecheckMs) || (30 * 24 * 60 * 60 * 1000));
+  const staleInterval = `${staleDays} days`;
+
+  const archiveQuery = `
+    WITH protected_addresses AS (
+      SELECT DISTINCT address FROM user_tokens
+      UNION
+      SELECT DISTINCT address FROM user_starred_tokens
+      UNION
+      SELECT DISTINCT address FROM user_blocklist
+      UNION
+      SELECT DISTINCT address FROM token_catalog WHERE source = 'user-manual'
+    )
+    UPDATE token_catalog tc
+    SET is_active_monitor_candidate = FALSE,
+        eligible_for_monitoring = FALSE,
+        monitor_priority = 'dormant',
+        suppressed_reason = 'cleanup_soft_archive',
+        next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
+    WHERE COALESCE(tc.last_mcap, 0) < 15000
+      AND tc.source <> 'dexscreener-discovery'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM protected_addresses pa
+        WHERE pa.address = tc.address
+      )
+      AND (
+        tc.eligible_for_monitoring = FALSE
+        OR tc.last_vol_24h IS NULL
+        OR tc.last_vol_24h < 1000
+        OR tc.last_seen_at < NOW() - $2::interval
+        OR tc.eligibility_state IN ('dex-missing', 'dex-known-no-mcap')
+        OR (tc.eligibility_state = 'evaluation-error' AND COALESCE(tc.evaluation_error_count, 0) >= 3)
+      )
+      AND (
+        tc.last_seen_at < NOW() - $2::interval
+        OR tc.eligibility_state IN ('dex-missing', 'dex-known-no-mcap')
+        OR (tc.eligibility_state = 'evaluation-error' AND COALESCE(tc.evaluation_error_count, 0) >= 3)
+      )
+    RETURNING tc.address, tc.source
+  `;
+
+  const quarantineQuery = `
+    WITH protected_addresses AS (
+      SELECT DISTINCT address FROM user_tokens
+      UNION
+      SELECT DISTINCT address FROM user_starred_tokens
+      UNION
+      SELECT DISTINCT address FROM user_blocklist
+      UNION
+      SELECT DISTINCT address FROM token_catalog WHERE source = 'user-manual'
+    )
+    UPDATE token_catalog tc
+    SET eligible_for_monitoring = FALSE,
+        monitor_priority = 'dormant',
+        suppressed_reason = 'cleanup_quarantine',
+        next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
+    WHERE tc.source = 'dexscreener-discovery'
+      AND tc.is_active_monitor_candidate = TRUE
+      AND COALESCE(tc.last_mcap, 0) < 15000
+      AND tc.eligible_for_monitoring = FALSE
+      AND (tc.last_vol_24h IS NULL OR tc.last_vol_24h < 1000)
+      AND NOT EXISTS (
+        SELECT 1
+        FROM protected_addresses pa
+        WHERE pa.address = tc.address
+      )
+    RETURNING tc.address, tc.source
+  `;
+
+  const [archiveResult, quarantineResult] = await Promise.all([
+    db.query(archiveQuery, [softArchiveRecheckMs, staleInterval]),
+    db.query(quarantineQuery, [quarantineRecheckMs]),
+  ]);
+
+  const archivedBySource = archiveResult.rows.reduce((acc, row) => {
+    acc[row.source] = (acc[row.source] || 0) + 1;
+    return acc;
+  }, {});
+
+  const quarantinedBySource = quarantineResult.rows.reduce((acc, row) => {
+    acc[row.source] = (acc[row.source] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    archived: archiveResult.rowCount,
+    quarantined: quarantineResult.rowCount,
+    archivedBySource,
+    quarantinedBySource,
+    staleDays,
+  };
+}
+
 module.exports = {
   upsertToken,
   getByAddress,
@@ -315,4 +413,5 @@ module.exports = {
   listDashboardMonitored,
   scheduleImmediateEvaluation,
   applyEvaluationResult,
+  applyAutomatedCleanup,
 };

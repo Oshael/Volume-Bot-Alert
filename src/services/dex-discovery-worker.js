@@ -18,6 +18,8 @@ let status = {
   totalProcessed: 0,
   totalUpserts: 0,
   totalNewAddresses: 0,
+  totalScheduled: 0,
+  totalSkippedExisting: 0,
   totalErrors: 0,
 };
 
@@ -31,6 +33,10 @@ function collectAddresses(items, limit) {
 
 async function upsertDiscoveredAddress(address) {
   const existing = await tokenCatalog.getByAddress(address);
+  if (existing) {
+    status.totalSkippedExisting += 1;
+    return;
+  }
 
   await tokenCatalog.upsertToken({
     address,
@@ -41,9 +47,8 @@ async function upsertDiscoveredAddress(address) {
   await tokenCatalog.scheduleImmediateEvaluation(address);
 
   status.totalUpserts += 1;
-  if (!existing) {
-    status.totalNewAddresses += 1;
-  }
+  status.totalNewAddresses += 1;
+  status.totalScheduled += 1;
 }
 
 async function runOnce() {
