@@ -2688,6 +2688,15 @@ TEMP_LEGACY_BAR_TITLE {
   flex-wrap: wrap;
 }
 
+.monitored-panel-header {
+  align-items: flex-start;
+}
+
+.monitored-header-controls {
+  justify-content: flex-end;
+  row-gap: 8px;
+}
+
 .panel-header-label {
   font-size: 9px;
   color: var(--muted);
@@ -2705,31 +2714,19 @@ TEMP_LEGACY_BAR_TITLE {
   z-index: 1;
 }
 
-.monitored-pagination-bar {
-  display: grid;
-  grid-template-columns: auto auto auto 1fr;
-  justify-content: initial;
+.monitored-inline-pagination {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 0 14px 8px;
-  margin-top: -8px;
-  border-bottom: 0;
-  background: transparent;
-  z-index: 0;
+  margin-left: 8px;
+  flex-wrap: wrap;
 }
 
-.monitored-pagination-bar .bucket-footer-actions {
-  margin-left: auto;
-  justify-self: end;
-  position: static;
+.monitored-inline-pagination .bucket-footer-actions {
+  margin-top: 0;
 }
 
-.monitored-pagination-bar .legacy-mini-field,
-.monitored-pagination-bar .bucket-page-total {
-  position: static;
-}
-
-.monitored-pagination-bar .action-button.small {
+.monitored-inline-pagination .action-button.small {
   min-height: 28px;
   padding: 0 8px;
   border-radius: 8px;

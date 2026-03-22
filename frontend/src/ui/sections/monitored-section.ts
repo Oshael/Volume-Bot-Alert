@@ -50,9 +50,9 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const pageStart = safePage * safePerPage;
   const pageItems = tracked.slice(pageStart, pageStart + safePerPage);
   section.innerHTML = `
-    <div class="panel-header">
+    <div class="panel-header monitored-panel-header">
       <span>MONITORED TOKENS</span>
-      <div class="panel-header-controls">
+      <div class="panel-header-controls monitored-header-controls">
         <span class="panel-header-label">SORT BY</span>
         <div class="sort-pill-group monitored-sort-group">
           <div class="sort-menu-wrap" data-sort-wrap>
@@ -81,15 +81,15 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
         </div>
         <span class="panel-header-label">UPDATED ${escapeHtml(state.runtime.monitoredFreshnessLabel || '-')}</span>
         <span class="count">${tracked.length}</span>
-      </div>
-    </div>
-    <div class="panel-subheader monitored-pagination-bar">
-      <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" value="${safePerPage}" /></label>
-      <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="monitored-page-jump" value="${safePage + 1}" /></label>
-      <span class="bucket-page-total">${totalPages}</span>
-      <div class="button-row compact bucket-footer-actions">
-        <button type="button" class="action-button small" data-action="monitored-prev" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
-        <button type="button" class="action-button small" data-action="monitored-next" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        <div class="monitored-inline-pagination">
+          <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" value="${safePerPage}" /></label>
+          <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="monitored-page-jump" value="${safePage + 1}" /></label>
+          <span class="bucket-page-total">${totalPages}</span>
+          <div class="button-row compact bucket-footer-actions">
+            <button type="button" class="action-button small" data-action="monitored-prev" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
+            <button type="button" class="action-button small" data-action="monitored-next" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="monitored-list">${tracked.length ? pageItems.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address))).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">Add tokens or load trending</div></div>'}</div>
