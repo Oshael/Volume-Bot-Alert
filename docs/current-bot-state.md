@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch migration, monitored refresh acceleration, and monitored UI pagination/freshness updates.
+Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch migration, monitored refresh acceleration, monitored UI pagination/freshness updates, admin backend blocking, and Meteora alert integration.
 
 ## Current Runtime Shape
 
@@ -69,12 +69,27 @@ Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch
   - `tokens`
   - `blocklist`
   - `starredTokens`
+- Important current config behavior:
+  - `chain` is now admin-only in the UI and protected on the backend
+  - normal users no longer see or mutate `chain`
+  - current default values for newly created accounts now include:
+    - `min-vol = 5000`
+    - `min-mcap = 30000`
+    - `old-mcap-max = 100000000`
+    - `old-week-mcap-max = 100000000`
+    - `old-alert-1h-threshold = 50`
+    - `old-alert-6h-threshold = 150`
+    - `meteora-alert-1h-threshold = 50`
 
 ### Global monitored baseline
 - Source of truth: backend catalog/dashboard state
 - Active endpoint for monitored hydration:
   - `GET /api/dashboard/monitored`
 - This is the endpoint the frontend currently uses for the shared monitored set.
+- Admin-only global suppression now also exists outside the per-user blocklist:
+  - `POST /api/catalog/admin-blocklist`
+  - `DELETE /api/catalog/admin-blocklist/:address`
+- This admin block is global/backend-owned rather than account-scoped.
 
 ### Working currently
 - The main recent optimization pass was on catalog/API efficiency rather than auth.
@@ -166,6 +181,10 @@ Current monitored UI behavior:
   - sort controls + token count on the top row
   - per-page/page/jump + compact search on the bottom row
   - opening the compact search only pushes the bottom row, not the title/top-row controls
+- current compact-search behavior:
+  - `Monitored` uses the stabilized dedicated behavior added earlier
+  - `Manual`, `Recent`, and `Old Week` now use click-to-open compact search that stays open while focused
+  - those compact searches no longer depend purely on transient hover/focus timing
 
 ### 3. Manual Tokens
 - Current source of truth:
@@ -193,6 +212,8 @@ Current monitored UI behavior:
   - tracked-state rebuild now consumes `payload.tokens` from `GET /api/config` directly, which fixed the previous reload/device-sync bug
 - Current UI additions:
   - `Manual Tokens` now supports compact local search by symbol, name, and contract/address
+  - `Manual Tokens`, `Recent`, and `Old Week` now also support a compact starred-only toggle
+  - these routed/manual table rows can expose an admin-only permanent backend block action when the logged-in user is admin
 
 ### 4. Catalog worker
 - Worker: `src/services/catalog-worker.js`
@@ -255,6 +276,17 @@ Current monitored UI behavior:
 - Active frontend read path:
   - embedded `meteora` payload inside `GET /api/dashboard/monitored`
 - Current read path is DB-backed, not upstream-fetch-backed
+- Current alert behavior on top of Meteora data:
+  - a dedicated `meteora-surge` alert now exists in frontend alert generation
+  - it uses the persisted `change1h` Meteora summary from the dashboard payload
+  - it is independently toggleable from normal surge alerts
+  - it is independently muteable in `Sound by alert type`
+  - it currently reuses the `old1h` sound slot/effect while keeping its own sound-enable key
+- Current anti-noise rule for Meteora alerting:
+  - requires `TVL current >= 10k`
+  - requires inferred `TVL baseline 1h >= 10k`
+  - requires `change1h >= meteora-alert-1h-threshold`
+  - default threshold is `50%`
 
 ### 6. PumpFun metadata enrichment
 - Frontend still resolves some PumpFun token images/metadata through:
@@ -264,6 +296,20 @@ Current monitored UI behavior:
 - This route remains an auxiliary traffic source, but the main Dex overload issue was addressed in the catalog worker rather than here
 
 ## Current UI/Behavior Contract
+
+### Admin-only global token block
+- Current intent:
+  - give the admin account a one-click permanent backend block for trash tokens
+  - make cleanup/global suppression faster than relying on per-user blocklist
+- Current behavior:
+  - admin-only buttons are exposed in the relevant token UIs
+  - blocked token is inserted into backend `admin_blocked_tokens`
+  - frontend removes it immediately from active lists after the request succeeds
+  - blocked token should not be revived by later catalog upserts
+  - manual-track now rejects admin-blocked addresses
+- This is distinct from the normal per-user blocklist:
+  - normal blocklist remains account-scoped
+  - admin block is global for all users
 
 ### Login screen roadmap
 - Current frontend login is still a minimal "raw login" shell:
