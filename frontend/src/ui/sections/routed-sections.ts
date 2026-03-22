@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderLogSummary, renderPagedAgeBucketList } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderLogSummary, renderPagedAgeBucketList } from './shared';
 import { escapeHtml } from './html-safety';
 
 export function renderRecentSection(state: AppState, controller: AppController) {
@@ -102,8 +102,9 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       state.session.role === 'admin',
     )}
   `;
-  section.querySelector<HTMLButtonElement>('[data-action="recent-search-focus"]')?.addEventListener('click', () => {
-    section.querySelector<HTMLInputElement>('[data-action="recent-search"]')?.focus();
+  bindCompactSearch(section, {
+    toggleAction: 'recent-search-focus',
+    inputAction: 'recent-search',
   });
   section.querySelector<HTMLInputElement>('[data-action="recent-search"]')?.addEventListener('input', (event) => {
     controller.setRecentSearchQuery((event.currentTarget as HTMLInputElement).value);
@@ -228,8 +229,9 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       state.session.role === 'admin',
     )}
   `;
-  section.querySelector<HTMLButtonElement>('[data-action="old-week-search-focus"]')?.addEventListener('click', () => {
-    section.querySelector<HTMLInputElement>('[data-action="old-week-search"]')?.focus();
+  bindCompactSearch(section, {
+    toggleAction: 'old-week-search-focus',
+    inputAction: 'old-week-search',
   });
   section.querySelector<HTMLInputElement>('[data-action="old-week-search"]')?.addEventListener('input', (event) => {
     controller.setOldWeekSearchQuery((event.currentTarget as HTMLInputElement).value);

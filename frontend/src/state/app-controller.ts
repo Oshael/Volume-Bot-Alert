@@ -82,6 +82,7 @@ const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
+const METEORA_ALERT_MIN_TVL = 10000;
 
 export interface AppController {
   state: AppState;
@@ -1212,6 +1213,21 @@ export function createAppController(): AppController {
     return true;
   }
 
+  function getMeteoraBaselineTvl1h(entry: MeteoraEntry | undefined) {
+    const currentTvl = Number(entry?.tvl) || 0;
+    const change1hPct = Number(entry?.change1h);
+    if (!(currentTvl > 0) || !Number.isFinite(change1hPct)) {
+      return null;
+    }
+
+    const ratio = 1 + (change1hPct / 100);
+    if (!(ratio > 0)) {
+      return null;
+    }
+
+    return currentTvl / ratio;
+  }
+
   function pushAlert(entry: AlertEntry) {
     if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
       return;
@@ -1235,6 +1251,8 @@ export function createAppController(): AppController {
     const hvncMinVol = getConfigNumber('hvnc-min-vol', 300000);
     const meteoraAlertThreshold1h = getConfigNumber('meteora-alert-1h-threshold', 50);
     const meteoraEntry = state.data.meteoraByAddress[token.address];
+    const meteoraCurrentTvl = Number(meteoraEntry?.tvl) || 0;
+    const meteoraBaselineTvl1h = getMeteoraBaselineTvl1h(meteoraEntry);
 
     if (isAlertKindEnabled('hvnc') && !token._hvncFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && (token.volume24h ?? 0) >= hvncMinVol) {
       token._hvncFired = true;
@@ -1339,7 +1357,8 @@ export function createAppController(): AppController {
       && meteoraAlertThreshold1h > 0
       && meteoraEntry
       && !meteoraEntry.noPool
-      && (meteoraEntry.tvl ?? 0) > 0
+      && meteoraCurrentTvl >= METEORA_ALERT_MIN_TVL
+      && (meteoraBaselineTvl1h ?? 0) >= METEORA_ALERT_MIN_TVL
       && (meteoraEntry.change1h ?? 0) >= meteoraAlertThreshold1h
     ) {
       token._meteoraSurgeFired = true;

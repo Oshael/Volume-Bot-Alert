@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
 import { escapeHtml } from './html-safety';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
@@ -93,8 +93,9 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
     )}
   `;
 
-  section.querySelector<HTMLButtonElement>('[data-action="manual-search-focus"]')?.addEventListener('click', () => {
-    section.querySelector<HTMLInputElement>('[data-action="manual-search"]')?.focus();
+  bindCompactSearch(section, {
+    toggleAction: 'manual-search-focus',
+    inputAction: 'manual-search',
   });
   section.querySelector<HTMLInputElement>('[data-action="manual-search"]')?.addEventListener('input', (event) => {
     controller.setManualSearchQuery((event.currentTarget as HTMLInputElement).value);

@@ -2965,6 +2965,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .compact-search.has-query .compact-search-input,
+.compact-search.open .compact-search-input,
 .compact-search:focus-within .compact-search-input {
   width: 112px;
   padding: 0 8px 0 2px;
@@ -2977,6 +2978,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .compact-search.has-query,
+.compact-search.open,
 .compact-search:focus-within {
   width: 148px;
   min-width: 148px;

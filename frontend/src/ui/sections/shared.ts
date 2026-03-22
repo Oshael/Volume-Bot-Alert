@@ -124,6 +124,44 @@ export function bindBucketSortControls(section: ParentNode, controller: AppContr
   });
 }
 
+export function bindCompactSearch(
+  section: ParentNode,
+  options: { toggleAction: string; inputAction: string },
+) {
+  const input = section.querySelector<HTMLInputElement>(`[data-action="${options.inputAction}"]`);
+  const toggle = section.querySelector<HTMLButtonElement>(`[data-action="${options.toggleAction}"]`);
+  const wrap = input?.closest<HTMLElement>('.compact-search');
+  if (!input || !toggle || !wrap) {
+    return;
+  }
+
+  const open = () => wrap.classList.add('open');
+  const closeIfEmpty = () => {
+    if (!String(input.value || '').trim()) {
+      wrap.classList.remove('open');
+    }
+  };
+
+  toggle.addEventListener('click', () => {
+    open();
+    input.focus();
+  });
+
+  input.addEventListener('focus', open);
+  input.addEventListener('blur', () => {
+    window.setTimeout(closeIfEmpty, 120);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    if (!String(input.value || '').trim()) {
+      wrap.classList.remove('open');
+    }
+    input.blur();
+  });
+}
+
 export function bindMonitoredSortControls(section: ParentNode, controller: AppController) {
   section.querySelectorAll<HTMLButtonElement>('[data-monitored-sort-mode]').forEach((button) => {
     button.addEventListener('click', () => {
