@@ -2695,6 +2695,8 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-header-controls {
   justify-content: flex-end;
   row-gap: 8px;
+  max-width: calc(100% - 120px);
+  margin-right: 18px;
 }
 
 .panel-header-label {

@@ -111,6 +111,7 @@ export interface AppController {
   clearOldWeekRemovalLog(): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
+  setAlertSearchQuery(query: string): void;
   setMonitoredPage(page: number): void;
   setRecentPage(page: number): void;
   setOldWeekPage(page: number): void;
@@ -1692,6 +1693,7 @@ export function createAppController(): AppController {
     state.ui.pendingPasswordResetToken = null;
     state.ui.pendingLoginOtpChallengeToken = null;
     state.ui.pendingLoginOtpEmailHint = null;
+    state.ui.alertSearchQuery = '';
     state.ui.monitoredPage = 0;
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
@@ -1971,6 +1973,10 @@ export function createAppController(): AppController {
       deriveAgeBuckets();
       persistBarStorage();
       setNotice('Old Week dismissed set cleared.');
+      emit();
+    },
+    setAlertSearchQuery(query: string) {
+      state.ui.alertSearchQuery = String(query || '');
       emit();
     },
     setMonitoredPage(page: number) {

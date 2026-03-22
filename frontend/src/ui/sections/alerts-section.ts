@@ -9,17 +9,29 @@ const RECENT_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export function renderAlertsSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'panel legacy-panel alerts-panel';
+  const searchQuery = String(state.ui.alertSearchQuery || '').trim().toLowerCase();
+  const filteredAlerts = searchQuery
+    ? state.data.alerts.filter((alert) => {
+      const symbol = String(alert.symbol || '').toLowerCase();
+      const name = String(alert.name || '').toLowerCase();
+      const address = String(alert.address || '').toLowerCase();
+      return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
+    })
+    : state.data.alerts;
   section.innerHTML = `
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
       <div style="display:flex;align-items:center;gap:6px">
-        <input class="panel-search" type="text" placeholder="Search ticker..." disabled>
-        <span class="count">${state.data.alerts.length}</span>
+        <input class="panel-search" type="text" placeholder="Search ticker..." value="${escapeHtml(state.ui.alertSearchQuery || '')}" data-action="alerts-search">
+        <span class="count">${filteredAlerts.length}</span>
       </div>
     </div>
-    <div class="alerts-list">${state.data.alerts.length ? state.data.alerts.map((alert) => renderAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address))).join('') : '<div class="empty-state"><div class="empty-text">Waiting for signals...</div></div>'}</div>
+    <div class="alerts-list">${filteredAlerts.length ? filteredAlerts.map((alert) => renderAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address))).join('') : '<div class="empty-state"><div class="empty-text">No alerts match the current search.</div></div>'}</div>
   `;
 
+  section.querySelector<HTMLInputElement>('[data-action="alerts-search"]')?.addEventListener('input', (event) => {
+    controller.setAlertSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   return section;

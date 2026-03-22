@@ -71,6 +71,12 @@ type UserMenuDraft = {
   open: boolean;
 };
 
+type AlertsSearchDraft = {
+  focused: boolean;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+};
+
 export function renderAppShell(root: HTMLElement, state: AppState, controller: AppController) {
   const configDraft = captureConfigDraft(root);
   const panelScrollDraft = capturePanelScrollDraft(root);
@@ -82,6 +88,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const inviteAssistanceDraft = captureInviteAssistanceDraft(root);
   const passwordResetDraft = capturePasswordResetDraft(root);
   const userMenuDraft = captureUserMenuDraft(root);
+  const alertsSearchDraft = captureAlertsSearchDraft(root);
   root.innerHTML = '';
 
   const shell = document.createElement('div');
@@ -124,6 +131,7 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   applyPasswordResetDraft(root, passwordResetDraft);
   applyPasswordResetFocus(root, state);
   applyUserMenuDraft(root, userMenuDraft);
+  applyAlertsSearchDraft(root, alertsSearchDraft);
   applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
   wireHoverPersistence(root);
@@ -151,6 +159,36 @@ function applyUserMenuDraft(root: HTMLElement, draft: UserMenuDraft | null) {
   }
 
   root.querySelector<HTMLElement>('[data-user-menu]')?.classList.add('open');
+}
+
+function captureAlertsSearchDraft(root: HTMLElement): AlertsSearchDraft | null {
+  const input = root.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
+  if (!input) {
+    return null;
+  }
+
+  const focused = document.activeElement === input;
+  return {
+    focused,
+    selectionStart: focused ? input.selectionStart : null,
+    selectionEnd: focused ? input.selectionEnd : null,
+  };
+}
+
+function applyAlertsSearchDraft(root: HTMLElement, draft: AlertsSearchDraft | null) {
+  if (!draft?.focused) {
+    return;
+  }
+
+  const input = root.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
+  if (!input) {
+    return;
+  }
+
+  input.focus();
+  if (draft.selectionStart != null && draft.selectionEnd != null) {
+    input.setSelectionRange(draft.selectionStart, draft.selectionEnd);
+  }
 }
 
 

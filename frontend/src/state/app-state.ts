@@ -249,6 +249,7 @@ export interface AppState {
     pendingPasswordResetToken: string | null;
     pendingLoginOtpChallengeToken: string | null;
     pendingLoginOtpEmailHint: string | null;
+    alertSearchQuery: string;
     monitoredPage: number;
     recentPage: number;
     oldWeekPage: number;
@@ -340,6 +341,7 @@ export function createAppState(): AppState {
       pendingPasswordResetToken: null,
       pendingLoginOtpChallengeToken: null,
       pendingLoginOtpEmailHint: null,
+      alertSearchQuery: '',
       monitoredPage: 0,
       recentPage: 0,
       oldWeekPage: 0,
