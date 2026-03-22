@@ -19,6 +19,14 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     });
   }
 
+  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="admin-block-token"]')) {
+    button.addEventListener('click', () => {
+      const address = button.dataset.address;
+      const label = button.dataset.label || null;
+      if (address) void controller.adminBlockToken(address, label);
+    });
+  }
+
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="dismiss-recent"]')) {
     button.addEventListener('click', () => {
       const address = button.dataset.address;
@@ -269,14 +277,14 @@ function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSortCriter
   });
 }
 
-export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
+export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens loaded for this account yet.</p>';
   const starredSet = new Set(starredTokens);
   const sorted = sortBucketTokens(tokens, sortCriteria);
-  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool });
+  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool, isAdmin });
 }
 
-export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000) {
+export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false) {
   if (tokens.length === 0) return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
 
   const starredSet = new Set(starredTokens);
@@ -288,7 +296,7 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
   const pageItems = sorted.slice(pageStart, pageStart + safePerPage);
 
   return `
-    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1 })}
+    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1, isAdmin })}
     <div class="bucket-footer">
       <div class="bucket-page-controls">
         <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" value="${safePage + 1}" /></label>
@@ -311,6 +319,7 @@ function renderTokenTableShell(options: {
   meteoraByAddress: Record<string, MeteoraEntry>;
   meteoraMinPool: number;
   startRank?: number;
+  isAdmin?: boolean;
 }) {
   return `
     <div class="token-table-wrap token-table-${options.tone}">
@@ -334,14 +343,14 @@ function renderTokenTableShell(options: {
           </tr>
         </thead>
         <tbody>
-          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), options.meteoraByAddress, options.meteoraMinPool, (options.startRank ?? 1) + index)).join('')}
+          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), options.meteoraByAddress, options.meteoraMinPool, (options.startRank ?? 1) + index, Boolean(options.isAdmin))).join('')}
         </tbody>
       </table>
     </div>
   `;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number) {
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -370,6 +379,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress)}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
+                ${isAdmin ? `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>` : ''}
               </div>
             </div>
             <div class="token-subline">${safeName}</div>
@@ -545,8 +555,8 @@ export function fmtConfig(state: AppState, key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean }) {
+export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean }) {
   const wrapper = document.createElement('div');
-  wrapper.innerHTML = renderManualTokenTable([item], busy, options.isStarred ? [item.address] : []);
+  wrapper.innerHTML = renderManualTokenTable([item], busy, options.isStarred ? [item.address] : [], [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin));
   return wrapper.innerHTML;
 }

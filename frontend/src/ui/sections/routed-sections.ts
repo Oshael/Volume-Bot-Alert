@@ -7,7 +7,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const section = document.createElement('section');
   section.className = 'legacy-token-bar recent-bar';
   const min = fmtConfig(state, 'old-mcap-min', 120000);
-  const max = fmtConfig(state, 'old-mcap-max', 1000000);
+  const max = fmtConfig(state, 'old-mcap-max', 100000000);
   const recentSorts = state.ui.recentSorts;
   const hasRecentMode = (mode: string) => recentSorts.some((item) => item.mode === mode);
   const hasRecentCriterion = (mode: string, window: string) => recentSorts.some((item) => item.mode === mode && item.window === window);
@@ -99,6 +99,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       state.ui.recentSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
+      state.session.role === 'admin',
     )}
   `;
   section.querySelector<HTMLButtonElement>('[data-action="recent-search-focus"]')?.addEventListener('click', () => {
@@ -120,7 +121,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       const maxInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-max"]');
       void controller.saveMonitoringConfig({
         'old-mcap-min': Number(minInput?.value || 120000),
-        'old-mcap-max': Number(maxInput?.value || 1000000),
+        'old-mcap-max': Number(maxInput?.value || 100000000),
       });
     });
   });
@@ -132,7 +133,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const section = document.createElement('section');
   section.className = 'legacy-token-bar old-week-bar';
   const min = fmtConfig(state, 'old-week-mcap-min', 120000);
-  const max = fmtConfig(state, 'old-week-mcap-max', 5000000);
+  const max = fmtConfig(state, 'old-week-mcap-max', 100000000);
   const oldWeekSorts = state.ui.oldWeekSorts;
   const hasOldWeekMode = (mode: string) => oldWeekSorts.some((item) => item.mode === mode);
   const hasOldWeekCriterion = (mode: string, window: string) => oldWeekSorts.some((item) => item.mode === mode && item.window === window);
@@ -224,6 +225,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       state.ui.oldWeekSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
+      state.session.role === 'admin',
     )}
   `;
   section.querySelector<HTMLButtonElement>('[data-action="old-week-search-focus"]')?.addEventListener('click', () => {
@@ -245,7 +247,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       const maxInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-max"]');
       void controller.saveMonitoringConfig({
         'old-week-mcap-min': Number(minInput?.value || 120000),
-        'old-week-mcap-max': Number(maxInput?.value || 5000000),
+        'old-week-mcap-max': Number(maxInput?.value || 100000000),
       });
     });
   });

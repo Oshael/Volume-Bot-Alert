@@ -121,9 +121,9 @@ const CONFIG_FIELDS: Array<{ key: string; label: string; type?: 'number' | 'text
   { key: 'threshold', label: 'Alert when 5m volume rises (%)', min: 1 },
   { key: 'mcap-threshold', label: 'Alert when MKT CAP rises (%) in 5m', min: 0, placeholder: '0 = disabled' },
   { key: 'min-vol', label: 'Min 5m volume to alert ($)', min: 0 },
-  { key: 'min-mcap', label: 'Min market cap to alert ($)', min: 0 },
+  { key: 'min-mcap', label: 'Min market cap to alert ($)', min: 30000 },
   { key: 'max-mcap', label: 'Max market cap to alert ($)', min: 0, placeholder: '0 = no limit' },
-  { key: 'chain', label: 'Chain', type: 'text' },
+  { key: 'meteora-alert-1h-threshold', label: 'Meteora pool alert 1h (%)', min: 0, placeholder: '0 = disabled' },
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
 ];
 
@@ -131,7 +131,9 @@ const ALERT_TOGGLE_FIELDS = [
   { key: 'alert-vol-enabled', label: 'VOL' },
   { key: 'alert-mcap-enabled', label: 'MCAP' },
   { key: 'alert-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
-  { key: 'alert-old-surge-enabled', label: 'SURGE' },
+  { key: 'alert-old-surge-1h-enabled', label: 'SURGE 1H' },
+  { key: 'alert-old-surge-6h-enabled', label: 'SURGE 6H' },
+  { key: 'alert-meteora-surge-enabled', label: 'METEORA 1H' },
   { key: 'alert-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
   { key: 'alert-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
 ] as const;
@@ -140,7 +142,9 @@ const SOUND_TOGGLE_FIELDS = [
   { key: 'sound-vol-enabled', label: 'VOL' },
   { key: 'sound-mcap-enabled', label: 'MCAP' },
   { key: 'sound-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
-  { key: 'sound-old-surge-enabled', label: 'SURGE' },
+  { key: 'sound-old-surge-1h-enabled', label: 'SURGE 1H' },
+  { key: 'sound-old-surge-6h-enabled', label: 'SURGE 6H' },
+  { key: 'sound-meteora-surge-enabled', label: 'METEORA 1H' },
   { key: 'sound-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
   { key: 'sound-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
 ] as const;
@@ -738,6 +742,8 @@ function renderEmailVerificationModal(state: AppState) {
       || state.ui.error?.includes('verification email could not be sent')
     )
   );
+  const emailSendFailed = Boolean(state.ui.error?.includes('verification email could not be sent'));
+  const hasLocalDevLink = Boolean(state.ui.notice?.includes('Local dev link:'));
   const emailError = state.ui.error === 'Email is required.'
     || state.ui.error === 'Enter a valid email address.';
   return `
@@ -751,16 +757,24 @@ function renderEmailVerificationModal(state: AppState) {
           </div>
           <button type="button" class="legacy-userbar-link" data-action="close-email-verification-panel">Close</button>
         </div>
-        ${isPostRegisterNotice ? '' : `<div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderPasswordResetFlash(state)}</div>`}
+        <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderPasswordResetFlash(state)}</div>
         ${isPostRegisterNotice ? `
           <div class="legacy-assistance-grid">
             <div class="legacy-assistance-card">
-              <div class="legacy-assistance-card-title">VERIFICATION SENT</div>
-              <div class="legacy-assistance-card-copy">We sent a confirmation email to <strong>${escapeHtml(state.ui.pendingVerificationEmail || '')}</strong>.</div>
+              <div class="legacy-assistance-card-title">${emailSendFailed ? 'DELIVERY ISSUE' : 'VERIFICATION SENT'}</div>
+              <div class="legacy-assistance-card-copy">${emailSendFailed
+                ? `We could not send a confirmation email to <strong>${escapeHtml(state.ui.pendingVerificationEmail || '')}</strong> just yet.`
+                : `We sent a confirmation email to <strong>${escapeHtml(state.ui.pendingVerificationEmail || '')}</strong>.`
+              }</div>
             </div>
             <div class="legacy-assistance-card">
               <div class="legacy-assistance-card-title">NEXT STEP</div>
-              <div class="legacy-assistance-card-copy">Open the email and confirm your address before trying to log in to the bot.</div>
+              <div class="legacy-assistance-card-copy">${hasLocalDevLink
+                ? 'Use the local dev verification link shown above to confirm your address on localhost.'
+                : emailSendFailed
+                  ? 'Try sending the verification link again after fixing email delivery.'
+                  : 'Open the email and confirm your address before trying to log in to the bot.'
+              }</div>
             </div>
           </div>
         ` : `
@@ -1053,7 +1067,6 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
 
 function renderLegacyConfig(state: AppState, controller: AppController) {
   const userMenuLabel = escapeHtml(state.session.username ?? state.session.email ?? 'User');
-  const visibleConfigFields = CONFIG_FIELDS.filter((field) => field.key !== 'chain' || state.session.role === 'admin');
   const section = document.createElement('section');
   section.className = 'config-grid legacy-config-grid';
   section.innerHTML = `
@@ -1068,7 +1081,7 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
       </div>
     </div>
     ${state.ui.authPanel === 'change-password' ? renderChangePasswordModal(state) : ''}
-    ${visibleConfigFields.map((field) => renderConfigField(state, field)).join('')}
+    ${CONFIG_FIELDS.map((field) => renderConfigField(state, field)).join('')}
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
       <select name="sound-mode">
@@ -1079,6 +1092,7 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
     ${renderOldSurgeThresholdMenu(state)}
     ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
     ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
+    ${state.session.role === 'admin' ? renderAdminChainField(state) : ''}
     <div class="legacy-sound-row">
       <div class="config-item config-item-sound config-item-sound-volume">
         <label>Sound volume: ${Math.round(state.ui.soundVolume * 100)}%</label>
@@ -1697,7 +1711,7 @@ function isConfigEnabled(state: AppState, key: string) {
 }
 
 function renderOldSurgeThresholdMenu(state: AppState) {
-  const value1h = Number(state.data.configs['old-alert-1h-threshold'] ?? 100);
+  const value1h = Number(state.data.configs['old-alert-1h-threshold'] ?? 50);
   const value6h = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
   return `
     <div class="config-item config-item-menu">
@@ -1770,14 +1784,14 @@ function renderConfigToggleMenu(
 
 function renderSoundUploadStrip(state: AppState) {
   const scope = state.session.email || state.session.username || 'anonymous';
-  const old1hThreshold = Number(state.data.configs['old-alert-1h-threshold'] ?? 100);
+  const old1hThreshold = Number(state.data.configs['old-alert-1h-threshold'] ?? 50);
   const old6hThreshold = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
   const slots: Array<{ slot: CustomSoundSlot; title: string; sub: string; dot: string }> = [
-    { slot: 'normal', title: 'Sound Level Normal', sub: '(+50%) ? MP3/WAV/OGG', dot: 'sound-dot normal' },
-    { slot: 'critical', title: 'Sound Level Critical', sub: '(+100%) ? MP3/WAV/OGG', dot: 'sound-dot critical' },
-    { slot: 'mega', title: 'Sound Level Mega', sub: '(+200%) ? MP3/WAV/OGG', dot: 'sound-dot mega' },
-    { slot: 'old1h', title: 'Surge Alert ? 1H', sub: `(+${Math.round(old1hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old1h' },
-    { slot: 'old6h', title: 'Surge Alert ? 6H', sub: `(+${Math.round(old6hThreshold)}%) ? MP3/WAV/OGG`, dot: 'sound-dot old6h' },
+    { slot: 'normal', title: 'Sound Level Normal', sub: '(+50%) / MP3/WAV/OGG', dot: 'sound-dot normal' },
+    { slot: 'critical', title: 'Sound Level Critical', sub: '(+100%) / MP3/WAV/OGG', dot: 'sound-dot critical' },
+    { slot: 'mega', title: 'Sound Level Mega', sub: '(+200%) / MP3/WAV/OGG', dot: 'sound-dot mega' },
+    { slot: 'old1h', title: 'Surge + MET Alert 1h', sub: `(+${Math.round(old1hThreshold)}%) / MP3/WAV/OGG`, dot: 'sound-dot old1h' },
+    { slot: 'old6h', title: 'Surge Alert 6h', sub: `(+${Math.round(old6hThreshold)}%) / MP3/WAV/OGG`, dot: 'sound-dot old6h' },
   ];
 
   return `
@@ -1943,22 +1957,22 @@ function renderConfigField(state: AppState, field: { key: string; label: string;
   const safeResolved = escapeHtml(resolved);
   const safePlaceholder = field.placeholder ? escapeHtml(field.placeholder) : null;
 
-  if (field.key === 'chain') {
-    const current = resolved || 'solana';
-    return `
-      <div class="config-item">
-        <label>${safeLabel}</label>
-        <select name="chain">
-          ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${escapeHtml(chain)}" ${current === chain ? 'selected' : ''}>${escapeHtml(capitalize(chain))}</option>`).join('')}
-        </select>
-      </div>
-    `;
-  }
-
   return `
     <div class="config-item">
       <label>${safeLabel}</label>
       <input type="${safeType}" name="${safeKey}" value="${safeResolved}" ${field.min != null ? `min="${field.min}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
+    </div>
+  `;
+}
+
+function renderAdminChainField(state: AppState) {
+  const current = String(state.data.configs.chain || 'solana').trim().toLowerCase() || 'solana';
+  return `
+    <div class="config-item">
+      <label>Chain</label>
+      <select name="chain">
+        ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${escapeHtml(chain)}" ${current === chain ? 'selected' : ''}>${escapeHtml(capitalize(chain))}</option>`).join('')}
+      </select>
     </div>
   `;
 }
@@ -1971,12 +1985,15 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
   const defaults: Record<string, number> = {
     threshold: 50,
     'mcap-threshold': 50,
-    'min-vol': 500,
-    'min-mcap': 10000,
+    'min-vol': 5000,
+    'min-mcap': 30000,
     'max-mcap': 0,
     'hvnc-min-vol': 300000,
-    'old-alert-1h-threshold': 100,
+    'old-alert-1h-threshold': 50,
     'old-alert-6h-threshold': 150,
+    'meteora-alert-1h-threshold': 50,
+    'old-mcap-max': 100000000,
+    'old-week-mcap-max': 100000000,
   };
   return String(defaults[key] ?? 0);
 }

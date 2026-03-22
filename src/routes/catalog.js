@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middleware/auth');
 const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
+const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
@@ -49,6 +50,10 @@ router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid token address' });
     }
 
+    if (await adminBlockedToken.hasAddress(address)) {
+      return res.status(403).json({ error: 'Token is permanently blocked by admin' });
+    }
+
     await tokenCatalog.upsertToken({
       address,
       chain: 'solana',
@@ -63,6 +68,69 @@ router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
   } catch (err) {
     console.error('POST /catalog/manual-track error:', err.message);
     res.status(500).json({ error: 'Failed to schedule manual token tracking' });
+  }
+});
+
+router.post('/admin-blocklist', catalogWriteLimiter, requireAdmin, async (req, res) => {
+  try {
+    const address = String(req.body?.address || '').trim();
+    const label = req.body?.label == null ? null : String(req.body.label).trim() || null;
+
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    await adminBlockedToken.add({
+      address,
+      label,
+      createdBy: req.user.id,
+    });
+
+    await tokenCatalog.upsertToken({
+      address,
+      chain: 'solana',
+      source: 'admin-blocked',
+      symbol: label,
+      isActiveMonitorCandidate: false,
+    });
+
+    await tokenCatalog.applyEvaluationResult(address, {
+      eligibilityState: 'admin-blocked',
+      eligibleForMonitoring: false,
+      suppressedReason: 'admin_blocked',
+      nextEvaluationAt: new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000)),
+      monitorPriority: 'dormant',
+      symbol: label,
+    });
+
+    res.status(201).json({
+      message: 'Token permanently blocked in backend catalog',
+      blocked: { address, label },
+    });
+  } catch (err) {
+    console.error('POST /catalog/admin-blocklist error:', err.message);
+    res.status(500).json({ error: 'Failed to permanently block token' });
+  }
+});
+
+router.delete('/admin-blocklist/:address', catalogWriteLimiter, requireAdmin, async (req, res) => {
+  try {
+    const address = String(req.params.address || '').trim();
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address' });
+    }
+
+    const removed = await adminBlockedToken.remove(address);
+    if (!removed) {
+      return res.status(404).json({ error: 'Token is not in the admin blocklist' });
+    }
+
+    await tokenCatalog.scheduleImmediateEvaluation(address).catch(() => null);
+
+    res.json({ message: 'Token removed from admin blocklist', address });
+  } catch (err) {
+    console.error('DELETE /catalog/admin-blocklist error:', err.message);
+    res.status(500).json({ error: 'Failed to remove token from admin blocklist' });
   }
 });
 

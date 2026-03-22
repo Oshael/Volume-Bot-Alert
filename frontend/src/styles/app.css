@@ -2972,13 +2972,6 @@ TEMP_LEGACY_BAR_TITLE {
   pointer-events: auto;
 }
 
-.legacy-bar-controls .compact-search:not(.compact-search-fixed):hover .compact-search-input {
-  width: 112px;
-  padding: 0 8px 0 2px;
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .compact-search-input::placeholder {
   color: var(--muted);
 }
@@ -2987,12 +2980,6 @@ TEMP_LEGACY_BAR_TITLE {
 .compact-search:focus-within {
   width: 148px;
   min-width: 148px;
-}
-
-.legacy-bar-controls .compact-search:not(.compact-search-fixed):hover {
-  width: 148px;
-  min-width: 148px;
-  z-index: 6;
 }
 
 .compact-search-fixed {
@@ -4332,6 +4319,11 @@ TEMP_LEGACY_BAR_TITLE {
   background: rgba(0, 255, 136, 0.08);
 }
 
+.alert-row.meteora-surge {
+  border-color: #b06aff;
+  background: rgba(176, 106, 255, 0.10);
+}
+
 .alert-row.mega,
 .alert-row.old-surge {
   border-color: #ff6b00;
@@ -4423,6 +4415,10 @@ TEMP_LEGACY_BAR_TITLE {
   color: var(--green);
 }
 
+.alert-pct-v68.meteora-surge {
+  color: #c89bff;
+}
+
 .alert-pct-v68.mega,
 .alert-pct-v68.old-surge {
   color: #ff6b00;
@@ -4441,9 +4437,14 @@ TEMP_LEGACY_BAR_TITLE {
   color: var(--green);
 }
 
+.alert-badge-v68.meteora-surge {
+  color: #d0a7ff;
+}
+
 .alert-badge-v68 .alert-badge-sub,
 .alert-badge-v68.old-surge .alert-badge-sub,
 .alert-badge-v68.recent-surge .alert-badge-sub,
+.alert-badge-v68.meteora-surge .alert-badge-sub,
 .alert-badge-v68.mega .alert-badge-sub {
   display: block;
   margin-top: 2px;
@@ -4453,6 +4454,10 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-badge-v68.recent-surge .alert-badge-sub {
   color: #8bffbf;
+}
+
+.alert-badge-v68.meteora-surge .alert-badge-sub {
+  color: #e3c8ff;
 }
 
 .alert-flow-v68,

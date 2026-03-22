@@ -20,6 +20,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
       return renderTokenCard(item, state.ui.busy, {
         mode: item._userManual ? 'manual' : state.data.recentTokens.some((tok) => tok.address === address) ? 'recent' : state.data.oldWeekTokens.some((tok) => tok.address === address) ? 'old-week' : 'monitored',
         isStarred: true,
+        isAdmin: state.session.role === 'admin',
       });
     }
 
@@ -33,7 +34,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
           <button type="button" class="action-button small starred-button" data-action="toggle-star" data-address="${safeAddress}" ${state.ui.busy ? 'disabled' : ''}>STARRED</button>
         </div>
         <div class="button-row compact tag-row"><div class="metric-chip alert-chip highlight">STARRED</div><div class="metric-chip">Address-only</div></div>
-        <div class="button-row compact"><button type="button" class="action-button small" data-action="copy-address" data-address="${safeAddress}">Copy CA</button><button type="button" class="action-button danger small" data-action="block-token" data-address="${safeAddress}" data-label="${shortAddress}" ${state.ui.busy ? 'disabled' : ''}>Block</button></div>
+        <div class="button-row compact"><button type="button" class="action-button small" data-action="copy-address" data-address="${safeAddress}">Copy CA</button><button type="button" class="action-button danger small" data-action="block-token" data-address="${safeAddress}" data-label="${shortAddress}" ${state.ui.busy ? 'disabled' : ''}>Block</button>${state.session.role === 'admin' ? `<button type="button" class="action-button danger small" data-action="admin-block-token" data-address="${safeAddress}" data-label="${shortAddress}" ${state.ui.busy ? 'disabled' : ''}>Admin Block</button>` : ''}</div>
       </article>
     `;
   }).join('');

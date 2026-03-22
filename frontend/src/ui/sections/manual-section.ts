@@ -89,6 +89,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       state.ui.manualSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
+      state.session.role === 'admin',
     )}
   `;
 

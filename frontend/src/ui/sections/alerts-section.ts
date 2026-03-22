@@ -26,7 +26,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
         <span class="count">${filteredAlerts.length}</span>
       </div>
     </div>
-    <div class="alerts-list">${filteredAlerts.length ? filteredAlerts.map((alert) => renderAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address))).join('') : '<div class="empty-state"><div class="empty-text">No alerts match the current search.</div></div>'}</div>
+    <div class="alerts-list">${filteredAlerts.length ? filteredAlerts.map((alert) => renderAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address), state.session.role === 'admin')).join('') : '<div class="empty-state"><div class="empty-text">No alerts match the current search.</div></div>'}</div>
   `;
 
   section.querySelector<HTMLInputElement>('[data-action="alerts-search"]')?.addEventListener('input', (event) => {
@@ -37,7 +37,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   return section;
 }
 
-function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean) {
+function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean) {
   const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
   const symbol = alert.symbol;
   const safeAddress = escapeHtml(alert.address);
@@ -84,6 +84,7 @@ function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean) {
             ${renderTradeTerminalMenu(alert.address, alert.mintAddress, alert.pairAddress)}
             <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
             <button type="button" class="alert-action-button danger" data-action="block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''}>Block</button>
+            ${isAdmin ? `<button type="button" class="alert-action-button danger" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''}>Admin Block</button>` : ''}
           </div>
         </div>
         <div class="alert-time-v68">${escapeHtml(timeLabel)}</div>
@@ -97,6 +98,9 @@ function renderAlertHeadline(alert: AlertEntry, toneClass: string) {
     const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
     const surgeTitle = tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
     return `<span class="alert-badge-v68 ${toneClass}">\u{1F525} ${escapeHtml(surgeTitle)}<br><span class="alert-badge-sub">${escapeHtml(fmtPct(alert.pct))} ${escapeHtml(alert.label || 'PCHANGE')}</span></span>`;
+  }
+  if (alert.kind === 'meteora-surge') {
+    return `<span class="alert-badge-v68 ${toneClass}">\u{1F30A} Meteora Alert 1h<br><span class="alert-badge-sub">${escapeHtml(fmtPct(alert.pct))} ${escapeHtml(alert.label || 'METEORA 1H')}</span></span>`;
   }
   if (alert.isHvnc) {
     return `<span class="alert-badge-v68 mega">\u{1F6A8} High Volume New Coin<br><span class="alert-badge-sub">${escapeHtml(fmtMoney(alert.volume24h))} total vol</span></span>`;
@@ -147,6 +151,9 @@ function getAlertToneClass(alert: AlertEntry) {
 
   if (alert.kind === 'pumpfun-hvnc') {
     return 'mega';
+  }
+  if (alert.kind === 'meteora-surge') {
+    return 'meteora-surge';
   }
 
   const pct = Math.abs(Number(alert.pct) || 0);

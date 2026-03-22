@@ -27,6 +27,11 @@ const ALERT_PATTERNS: Record<AlertEntry['kind'], ToneStep[]> = {
     { frequency: 523.25, durationMs: 130 },
     { frequency: 659.25, durationMs: 180 },
   ],
+  'meteora-surge': [
+    { frequency: 392, durationMs: 130 },
+    { frequency: 523.25, durationMs: 130 },
+    { frequency: 659.25, durationMs: 180 },
+  ],
   'pumpfun-vol': [
     { frequency: 349.23, durationMs: 110 },
     { frequency: 523.25, durationMs: 150 },
@@ -48,14 +53,22 @@ const MIGRATE_PATTERN: ToneStep[] = [
 
 let audioContext: AudioContext | null = null;
 
-const SOUND_KIND_CONFIG_KEY: Record<AlertEntry['kind'], string> = {
+const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-vol': 'sound-vol-enabled',
   'monitored-mcap': 'sound-mcap-enabled',
   hvnc: 'sound-hvnc-enabled',
-  'old-surge': 'sound-old-surge-enabled',
+  'meteora-surge': 'sound-meteora-surge-enabled',
   'pumpfun-vol': 'sound-pumpfun-vol-enabled',
   'pumpfun-hvnc': 'sound-pumpfun-hvnc-enabled',
 };
+
+function resolveAlertSoundConfigKey(alert: AlertEntry) {
+  if (alert.kind === 'old-surge') {
+    return alert.surgeWindow === '6H' ? 'sound-old-surge-6h-enabled' : 'sound-old-surge-1h-enabled';
+  }
+
+  return SOUND_KIND_CONFIG_KEY[alert.kind] || null;
+}
 
 function clampVolume(value: number) {
   if (!Number.isFinite(value)) {
@@ -141,7 +154,10 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
 
 function resolveAlertSoundSlot(alert: AlertEntry): CustomSoundSlot {
   if (alert.kind === 'old-surge') {
-    return (Number(alert.pct) || 0) >= 150 ? 'old6h' : 'old1h';
+    return alert.surgeWindow === '6H' ? 'old6h' : 'old1h';
+  }
+  if (alert.kind === 'meteora-surge') {
+    return 'old1h';
   }
   if (alert.kind === 'hvnc' || alert.kind === 'pumpfun-hvnc') {
     return 'mega';
@@ -157,7 +173,7 @@ export async function playAlertSound(alert: AlertEntry, options?: { enabled?: bo
     return;
   }
 
-  const configKey = SOUND_KIND_CONFIG_KEY[alert.kind];
+  const configKey = resolveAlertSoundConfigKey(alert);
   if (configKey && String(options?.configs?.[configKey] ?? 'on') === 'off') {
     return;
   }
@@ -175,7 +191,7 @@ export async function playAlertSound(alert: AlertEntry, options?: { enabled?: bo
 
   await playPattern(pattern, {
     volume: options?.volume,
-    triangle: alert.kind === 'old-surge',
+    triangle: alert.kind === 'old-surge' || alert.kind === 'meteora-surge',
   });
 }
 

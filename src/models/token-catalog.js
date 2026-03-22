@@ -1,4 +1,5 @@
 ﻿const db = require('./db');
+const adminBlockedToken = require('./admin-blocked-token');
 const { isValidAddress } = require('./user-token');
 
 function normalizeChain(chain) {
@@ -17,6 +18,7 @@ function toNullableText(value) {
 }
 
 async function upsertToken(token) {
+  await adminBlockedToken.ensureTable();
   const address = String(token.address || '').trim();
   if (!isValidAddress(address)) {
     throw new Error('Invalid token address format');
@@ -47,7 +49,15 @@ async function upsertToken(token) {
        last_token_created_at_ms,
        is_active_monitor_candidate
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+     VALUES (
+       $1, $2, $3, $4, $5,
+       $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+       CASE
+         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $17)
+           THEN FALSE
+         ELSE $16
+       END
+     )
      ON CONFLICT (address) DO UPDATE SET
        chain = EXCLUDED.chain,
        symbol = COALESCE(EXCLUDED.symbol, token_catalog.symbol),
@@ -64,7 +74,11 @@ async function upsertToken(token) {
        last_price_change_6h = COALESCE(EXCLUDED.last_price_change_6h, token_catalog.last_price_change_6h),
        last_price_change_24h = COALESCE(EXCLUDED.last_price_change_24h, token_catalog.last_price_change_24h),
        last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
-       is_active_monitor_candidate = EXCLUDED.is_active_monitor_candidate,
+       is_active_monitor_candidate = CASE
+         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = token_catalog.address)
+           THEN FALSE
+         ELSE EXCLUDED.is_active_monitor_candidate
+       END,
        metadata_updated_at = NOW()
      RETURNING *`,
     [
@@ -84,6 +98,7 @@ async function upsertToken(token) {
       lastPriceChange24h,
       lastTokenCreatedAtMs,
       isActiveMonitorCandidate,
+      address,
     ]
   );
 

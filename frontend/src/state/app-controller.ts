@@ -26,7 +26,7 @@ import {
   syncConfig,
   type ConfigPayload,
 } from '../services/api/config';
-import { fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -104,6 +104,7 @@ export interface AppController {
   addManualToken(address: string, label?: string | null): Promise<void>;
   removeManualToken(address: string): Promise<void>;
   addBlockedToken(address: string, label?: string | null): Promise<void>;
+  adminBlockToken(address: string, label?: string | null): Promise<void>;
   removeBlockedToken(address: string): Promise<void>;
   removePumpToken(mint: string): void;
   dismissRecentToken(address: string): void;
@@ -358,7 +359,7 @@ export function createAppController(): AppController {
   }
 
   function getOldAlert1hThreshold() {
-    return getConfigNumber('old-alert-1h-threshold', 100);
+    return getConfigNumber('old-alert-1h-threshold', 50);
   }
 
   function getOldAlert6hThreshold() {
@@ -373,8 +374,8 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-mcap-enabled');
       case 'hvnc':
         return isConfigEnabled('alert-hvnc-enabled');
-      case 'old-surge':
-        return isConfigEnabled('alert-old-surge-enabled');
+      case 'meteora-surge':
+        return isConfigEnabled('alert-meteora-surge-enabled');
       case 'pumpfun-vol':
         return isConfigEnabled('alert-pumpfun-vol-enabled');
       case 'pumpfun-hvnc':
@@ -382,6 +383,14 @@ export function createAppController(): AppController {
       default:
         return true;
     }
+  }
+
+  function isAlertEntryEnabled(entry: Pick<AlertEntry, 'kind' | 'surgeWindow'>) {
+    if (entry.kind === 'old-surge') {
+      return isConfigEnabled(entry.surgeWindow === '6H' ? 'alert-old-surge-6h-enabled' : 'alert-old-surge-1h-enabled');
+    }
+
+    return isAlertKindEnabled(entry.kind);
   }
 
   function isCrossAlertBlocked(token: ManualTokenEntry, now: number) {
@@ -498,6 +507,31 @@ export function createAppController(): AppController {
     state.data.alerts = state.data.alerts.filter((item) => item.address !== address);
     state.runtime.alerts = state.data.alerts.length;
     state.panels.alerts = state.data.alerts.length;
+  }
+
+  function removeTokenEverywhere(address: string, options: { removeFromStarred?: boolean } = {}) {
+    state.data.monitoredTokens = state.data.monitoredTokens.filter((item) => item.address !== address);
+    state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
+    state.data.recentTokens = state.data.recentTokens.filter((item) => item.address !== address);
+    state.data.oldWeekTokens = state.data.oldWeekTokens.filter((item) => item.address !== address);
+    state.data.eligibleCatalogTokens = state.data.eligibleCatalogTokens.filter((item) => item !== address);
+    state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== address && item.mintAddress !== address);
+    state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => item.mint !== address);
+    state.data.dismissedRecent = state.data.dismissedRecent.filter((item) => item !== address);
+    state.data.dismissedOldWeek = state.data.dismissedOldWeek.filter((item) => item !== address);
+    removeAlertsForAddress(address);
+
+    if (options.removeFromStarred && state.data.starredTokens.includes(address)) {
+      state.data.starredTokens = state.data.starredTokens.filter((item) => item !== address);
+      queueStarredTokensPersist();
+    }
+
+    state.configSummary.manualTokens = state.data.manualTokens.length;
+    state.bars.manual = state.data.manualTokens.length;
+    deriveAgeBuckets();
+    refreshMonitoredPanelCounts();
+    refreshPumpPanelCounts();
+    persistBarStorage();
   }
 
   function isVisibleMonitoredToken(item: ManualTokenEntry) {
@@ -1006,9 +1040,9 @@ export function createAppController(): AppController {
     const oldWeekDismissed = new Set(state.data.dismissedOldWeek);
 
     const recentMin = getConfigNumber('old-mcap-min', 120000);
-    const recentMax = getConfigNumber('old-mcap-max', 1000000);
+    const recentMax = getConfigNumber('old-mcap-max', 100000000);
     const oldWeekMin = getConfigNumber('old-week-mcap-min', 120000);
-    const oldWeekMax = getConfigNumber('old-week-mcap-max', 5000000);
+    const oldWeekMax = getConfigNumber('old-week-mcap-max', 100000000);
     const now = Date.now();
 
     const candidates = state.data.monitoredTokens.filter((item) => {
@@ -1167,8 +1201,8 @@ export function createAppController(): AppController {
   }
 
   function passesAlertFilters(token: ManualTokenEntry) {
-    const minVol = getConfigNumber('min-vol', 500);
-    const minMcap = getConfigNumber('min-mcap', 10000);
+    const minVol = getConfigNumber('min-vol', 5000);
+    const minMcap = getConfigNumber('min-mcap', 30000);
     const maxMcap = getConfigNumber('max-mcap', 0);
     const volume5m = token.volume5m ?? 0;
     const mcap = token.mcap ?? 0;
@@ -1179,7 +1213,7 @@ export function createAppController(): AppController {
   }
 
   function pushAlert(entry: AlertEntry) {
-    if (isBlocked(entry.address) || !isAlertKindEnabled(entry.kind)) {
+    if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
       return;
     }
     state.data.alerts = [entry, ...state.data.alerts].slice(0, 50);
@@ -1199,6 +1233,8 @@ export function createAppController(): AppController {
     const symbol = token.symbol || token.label || token.address.slice(0, 8);
     const ageMs = token.createdAt ? now - token.createdAt : Number.POSITIVE_INFINITY;
     const hvncMinVol = getConfigNumber('hvnc-min-vol', 300000);
+    const meteoraAlertThreshold1h = getConfigNumber('meteora-alert-1h-threshold', 50);
+    const meteoraEntry = state.data.meteoraByAddress[token.address];
 
     if (isAlertKindEnabled('hvnc') && !token._hvncFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && (token.volume24h ?? 0) >= hvncMinVol) {
       token._hvncFired = true;
@@ -1232,11 +1268,13 @@ export function createAppController(): AppController {
     const isOldRouted = state.data.recentTokens.some((item) => item.address === token.address)
       || state.data.oldWeekTokens.some((item) => item.address === token.address);
 
-    if (isAlertKindEnabled('old-surge') && !token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
+    if (!token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
       const pc1h = token.priceChange1h ?? null;
       const pc6h = token.priceChange6h ?? null;
       const oldAlert1hPct = getOldAlert1hThreshold();
       const oldAlert6hPct = getOldAlert6hThreshold();
+      const oldSurge1hEnabled = isConfigEnabled('alert-old-surge-1h-enabled');
+      const oldSurge6hEnabled = isConfigEnabled('alert-old-surge-6h-enabled');
       let pct = 0;
       let surgeWindow: '1H' | '6H' | null = null;
       const base1h = token._oldSurgeSessionBase1h;
@@ -1254,10 +1292,10 @@ export function createAppController(): AppController {
       const crossed1h = base1h != null && base1h < oldAlert1hPct && pc1h != null && pc1h >= oldAlert1hPct;
       const rose50AfterHot1h = base1h != null && base1h >= oldAlert1hPct && pc1h != null && pc1h >= base1h + OLD_SURGE_SESSION_DELTA_PCT;
 
-      if (crossed6h || rose50AfterHot6h) {
+      if (oldSurge6hEnabled && (crossed6h || rose50AfterHot6h)) {
         pct = pc6h;
         surgeWindow = '6H';
-      } else if (crossed1h || rose50AfterHot1h) {
+      } else if (oldSurge1hEnabled && (crossed1h || rose50AfterHot1h)) {
         pct = pc1h;
         surgeWindow = '1H';
       }
@@ -1288,10 +1326,49 @@ export function createAppController(): AppController {
           mcap: token.mcap ?? null,
           pct,
           label: surgeWindow ? `PCHANGE ${surgeWindow}` : 'PCHANGE',
+          surgeWindow,
           isOldSurge: true,
         });
-        setNotice(`Old token surge alert: ${symbol}`);
+        setNotice(`Old token surge alert ${surgeWindow || ''}: ${symbol}`.trim());
       }
+    }
+
+    if (
+      isAlertKindEnabled('meteora-surge')
+      && !token._meteoraSurgeFired
+      && meteoraAlertThreshold1h > 0
+      && meteoraEntry
+      && !meteoraEntry.noPool
+      && (meteoraEntry.tvl ?? 0) > 0
+      && (meteoraEntry.change1h ?? 0) >= meteoraAlertThreshold1h
+    ) {
+      token._meteoraSurgeFired = true;
+      token.lastAlertAt = now;
+      token._lastAlertKind = 'meteora-surge';
+      pushAlert({
+        id: `${token.address}-${now}-meteora-surge`,
+        kind: 'meteora-surge',
+        address: token.address,
+        symbol,
+        name: token.name || token.label || null,
+        pairUrl: token.pairUrl || null,
+        mintAddress: token.mintAddress || token.address,
+        pairAddress: token.pairAddress || null,
+        imageUrl: token.imageUrl || null,
+        twitterUrl: token.twitterUrl || null,
+        createdAt: now,
+        tokenCreatedAt: token.createdAt ?? null,
+        prevVolume5m: token.prevVolume5m ?? null,
+        volume5m: token.volume5m ?? null,
+        volume1h: token.volume1h ?? null,
+        volume6h: token.volume6h ?? null,
+        volume24h: token.volume24h ?? null,
+        prevMcap: token.prevMcap ?? null,
+        mcap: token.mcap ?? null,
+        pct: meteoraEntry.change1h ?? 0,
+        label: 'METEORA 1H',
+      });
+      setNotice(`Surge + Meteora Alert 1h: ${symbol}`);
     }
   }
 
@@ -1446,6 +1523,7 @@ export function createAppController(): AppController {
         deadCycles: existingItem?.deadCycles ?? base.deadCycles ?? 0,
         _hvncFired: existingItem?._hvncFired ?? base._hvncFired,
         _oldSurgeFired: existingItem?._oldSurgeFired ?? base._oldSurgeFired,
+        _meteoraSurgeFired: existingItem?._meteoraSurgeFired ?? base._meteoraSurgeFired,
         _oldSurgeSessionBase1h: existingItem?._oldSurgeSessionBase1h ?? base._oldSurgeSessionBase1h ?? null,
         _oldSurgeSessionBase6h: existingItem?._oldSurgeSessionBase6h ?? base._oldSurgeSessionBase6h ?? null,
         _volAlertAboveThreshold: existingItem?._volAlertAboveThreshold ?? base._volAlertAboveThreshold ?? false,
@@ -2711,14 +2789,42 @@ export function createAppController(): AppController {
           state.data.blocklist = sortAddresses([...state.data.blocklist, { address, label: label ?? null }]);
           state.bars.blocklist = state.data.blocklist.length;
         }
-        state.data.monitoredTokens = state.data.monitoredTokens.filter((item) => item.address !== address);
-        state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
-        removeAlertsForAddress(address);
+        removeTokenEverywhere(address);
         applyBlockedFilters();
         await reloadConfigInternal(token);
         setNotice(result.message);
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to block token');
+      } finally {
+        setBusy(false);
+        emit();
+      }
+    },
+    async adminBlockToken(address: string, label?: string | null) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      if (state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Permanently blocking token in backend...');
+      emit();
+
+      try {
+        const result = await adminBlockTokenRequest(address, label, token);
+        removeTokenEverywhere(address, { removeFromStarred: true });
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to permanently block token');
       } finally {
         setBusy(false);
         emit();

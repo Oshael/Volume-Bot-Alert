@@ -39,6 +39,14 @@ export function trackManualToken(address: string, token?: string | null) {
   });
 }
 
+export function adminBlockToken(address: string, label?: string | null, token?: string | null) {
+  return apiFetch<{ message: string; blocked: { address: string; label?: string | null } }>('/api/catalog/admin-blocklist', {
+    method: 'POST',
+    body: JSON.stringify({ address, label: label ?? null }),
+    token,
+  });
+}
+
 export interface EligibleCatalogToken {
   address: string;
   symbol?: string | null;

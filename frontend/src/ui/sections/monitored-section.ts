@@ -113,7 +113,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
         </div>
       </div>
     </div>
-    <div class="monitored-list">${filteredTracked.length ? pageItems.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address))).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">No monitored tokens match the current search.</div></div>'}</div>
+    <div class="monitored-list">${filteredTracked.length ? pageItems.map((item) => renderMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address), state.session.role === 'admin')).join('') : '<div class="empty-state"><div class="empty-icon">?</div><div class="empty-text">No monitored tokens match the current search.</div></div>'}</div>
   `;
 
   section.append(renderManualTokenEntryForm(state, controller));
@@ -131,7 +131,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   return section;
 }
 
-function renderMonitoredRow(item: AppState['data']['monitoredTokens'][number], busy: boolean, isStarred: boolean) {
+function renderMonitoredRow(item: AppState['data']['monitoredTokens'][number], busy: boolean, isStarred: boolean, isAdmin: boolean) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -165,6 +165,7 @@ function renderMonitoredRow(item: AppState['data']['monitoredTokens'][number], b
           ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress)}
           <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
           <button type="button" class="action-glyph danger-glyph" data-action="block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Block token">&#8855;</button>
+          ${isAdmin ? `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>` : ''}
         </div>
       </div>
       <div class="panel-row-side monitored-side-v68">
