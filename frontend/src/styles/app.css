@@ -2707,10 +2707,22 @@ TEMP_LEGACY_BAR_TITLE {
 
 .monitored-pagination-bar {
   justify-content: space-between;
+  align-items: flex-start;
+  padding-top: 4px;
+  padding-bottom: 6px;
+  margin-top: -6px;
 }
 
 .monitored-pagination-bar .bucket-footer-actions {
   margin-left: auto;
+  position: relative;
+  top: -2px;
+}
+
+.monitored-pagination-bar .legacy-mini-field,
+.monitored-pagination-bar .panel-header-label {
+  position: relative;
+  top: -2px;
 }
 
 .panel-toolbar {
