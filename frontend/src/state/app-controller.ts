@@ -72,6 +72,7 @@ const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HVNC_MAX_AGE_MS = 30 * 60 * 1000;
 const PUMP_WINDOW_MS = 5 * 60 * 1000;
+const PUMP_VOLUME_BUCKET_MS = 5 * 1000;
 const PUMP_GC_INTERVAL_MS = 30 * 1000;
 const PUMP_GC_INACTIVE_MS = 15 * 60 * 1000;
 const PUMP_GC_LOW_MCAP = 4000;
@@ -673,7 +674,47 @@ export function createAppController(): AppController {
   }
 
   function prunePumpTokenWindow(token: PumpTokenEntry, now: number) {
-    token.vol5m = (token.vol5m || []).filter((point) => now - point.ts <= PUMP_WINDOW_MS);
+    if (!Array.isArray(token.vol5m) || token.vol5m.length === 0) {
+      token.vol5m = [];
+      return;
+    }
+
+    const cutoff = now - PUMP_WINDOW_MS;
+    let keepFromIndex = 0;
+    while (keepFromIndex < token.vol5m.length && token.vol5m[keepFromIndex].ts < cutoff) {
+      keepFromIndex += 1;
+    }
+
+    if (keepFromIndex > 0) {
+      token.vol5m.splice(0, keepFromIndex);
+    }
+
+    const maxBuckets = Math.ceil(PUMP_WINDOW_MS / PUMP_VOLUME_BUCKET_MS) + 2;
+    if (token.vol5m.length > maxBuckets) {
+      token.vol5m.splice(0, token.vol5m.length - maxBuckets);
+    }
+  }
+
+  function appendPumpVolumeBucket(token: PumpTokenEntry, usdAmount: number, now: number) {
+    if (!(usdAmount > 0)) {
+      prunePumpTokenWindow(token, now);
+      return;
+    }
+
+    if (!Array.isArray(token.vol5m)) {
+      token.vol5m = [];
+    }
+
+    const bucketTs = Math.floor(now / PUMP_VOLUME_BUCKET_MS) * PUMP_VOLUME_BUCKET_MS;
+    const lastBucket = token.vol5m[token.vol5m.length - 1];
+
+    if (lastBucket && lastBucket.ts === bucketTs) {
+      lastBucket.usd += usdAmount;
+    } else {
+      token.vol5m.push({ ts: bucketTs, usd: usdAmount });
+    }
+
+    prunePumpTokenWindow(token, now);
   }
 
   function maybePersistPumpBondTarget(nextTarget: number) {
@@ -715,6 +756,8 @@ export function createAppController(): AppController {
     const removedByLowMcapTooLong: string[] = [];
 
     state.data.pumpTokens = state.data.pumpTokens.filter((token) => {
+      prunePumpTokenWindow(token, now);
+
       if (token._migrated) {
         removed.add(token.mint);
         removedByMigratedFlag.push(token.mint);
@@ -986,23 +1029,21 @@ export function createAppController(): AppController {
       const solAmount = Number(raw.solAmount);
       const usdAmount = Number.isFinite(solAmount) && solAmount > 0 && solPriceUsd > 0 ? solAmount * solPriceUsd : 0;
       if (usdAmount > 0) {
-        token.vol5m = [...(token.vol5m || []), { ts: now, usd: usdAmount }];
+        appendPumpVolumeBucket(token, usdAmount, now);
         token.volTotal = (token.volTotal || 0) + usdAmount;
+      } else {
+        prunePumpTokenWindow(token, now);
       }
-      prunePumpTokenWindow(token, now);
       token.lastTradeAt = now;
       token.hidden = false;
       subscribePumpMint(mint);
       maybeFirePumpAlert(token);
     }
 
-    if (existing) {
-      state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint ? token : item);
-    } else {
+    if (!existing) {
       state.data.pumpTokens = [...state.data.pumpTokens, token];
     }
 
-    state.data.pumpTokens.sort((a, b) => (b.mcap || 0) - (a.mcap || 0));
     refreshPumpPanelCounts();
 
     if (!token.imageUrl) {

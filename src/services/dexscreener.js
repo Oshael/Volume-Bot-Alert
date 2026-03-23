@@ -3,11 +3,36 @@ const REQUEST_TIMEOUT = 10000;
 const DEFAULT_CACHE_TTL_MS = 60000;
 const ERROR_COOLDOWN_MS = 60000;
 const TOKEN_BATCH_LIMIT = 30;
+const MAX_TOKEN_CACHE_ENTRIES = 1500;
+const MAX_ENDPOINT_CACHE_ENTRIES = 32;
 
 const tokenCache = new Map();
 const endpointCache = new Map();
 const inFlightRequests = new Map();
 const endpointInFlightRequests = new Map();
+
+function pruneCacheMap(cache, maxEntries) {
+  const now = Date.now();
+
+  for (const [key, entry] of cache.entries()) {
+    if (!entry || !Number.isFinite(entry.expiresAt) || entry.expiresAt <= now) {
+      cache.delete(key);
+    }
+  }
+
+  if (cache.size <= maxEntries) {
+    return;
+  }
+
+  const overflow = cache.size - maxEntries;
+  const removable = Array.from(cache.entries())
+    .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+    .slice(0, overflow);
+
+  for (const [key] of removable) {
+    cache.delete(key);
+  }
+}
 
 function getCacheEntry(address) {
   const entry = tokenCache.get(address);
@@ -24,6 +49,7 @@ function setCacheEntry(address, data, ttlMs) {
     data,
     expiresAt: Date.now() + ttlMs,
   });
+  pruneCacheMap(tokenCache, MAX_TOKEN_CACHE_ENTRIES);
 }
 
 function getTokenCacheTtl(priorityHint) {
@@ -185,6 +211,7 @@ function setEndpointCacheEntry(key, data, ttlMs) {
     data,
     expiresAt: Date.now() + ttlMs,
   });
+  pruneCacheMap(endpointCache, MAX_ENDPOINT_CACHE_ENTRIES);
 }
 
 async function fetchEndpointJsonUncached(path) {
@@ -222,6 +249,7 @@ async function getEndpointJson(path) {
   const key = String(path || '').trim();
   if (!key) return null;
 
+  pruneCacheMap(endpointCache, MAX_ENDPOINT_CACHE_ENTRIES);
   const cached = getEndpointCacheEntry(key);
   if (cached) return cached.data;
 
@@ -241,6 +269,7 @@ async function getTokenPairs(address, options = {}) {
   const addr = String(address || '').trim();
   if (!addr) return null;
 
+  pruneCacheMap(tokenCache, MAX_TOKEN_CACHE_ENTRIES);
   const cached = getCacheEntry(addr);
   if (cached) return cached.data;
 
@@ -263,6 +292,7 @@ async function batchGetTokens(addresses, delayMs = 100) {
   const results = new Map();
   const missing = [];
 
+  pruneCacheMap(tokenCache, MAX_TOKEN_CACHE_ENTRIES);
   for (const address of normalizedAddresses) {
     const cached = getCacheEntry(address);
     if (cached) {
@@ -307,6 +337,20 @@ function clearCache(address = null) {
   endpointInFlightRequests.clear();
 }
 
+function getCacheStats() {
+  pruneCacheMap(tokenCache, MAX_TOKEN_CACHE_ENTRIES);
+  pruneCacheMap(endpointCache, MAX_ENDPOINT_CACHE_ENTRIES);
+
+  return {
+    tokenCacheEntries: tokenCache.size,
+    tokenCacheLimit: MAX_TOKEN_CACHE_ENTRIES,
+    endpointCacheEntries: endpointCache.size,
+    endpointCacheLimit: MAX_ENDPOINT_CACHE_ENTRIES,
+    inFlightTokenRequests: inFlightRequests.size,
+    inFlightEndpointRequests: endpointInFlightRequests.size,
+  };
+}
+
 function getLatestTokenProfiles() {
   return getEndpointJson('/token-profiles/latest/v1');
 }
@@ -327,4 +371,5 @@ module.exports = {
   getTopTokenBoosts,
   getLatestTokenBoosts,
   clearCache,
+  getCacheStats,
 };

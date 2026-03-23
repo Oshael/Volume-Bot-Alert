@@ -334,11 +334,15 @@ function parseHistoryQuery(query = {}) {
 }
 
 function toHttpAssetUrl(url) {
-  return sanitizeAssetUrl(url);
+  return sanitizeAssetUrl(url, { allowHttp: true });
+}
+
+function toPumpfunMetadataUrl(url) {
+  return sanitizeAssetUrl(url, { allowHttp: true });
 }
 
 function buildMetadataGatewayUrls(uri) {
-  const normalized = toHttpAssetUrl(uri);
+  const normalized = toPumpfunMetadataUrl(uri);
   if (!normalized) return [];
 
   const urls = [normalized];
@@ -374,14 +378,23 @@ async function fetchJsonWithTimeout(url, timeoutMs = 5000) {
 }
 
 async function resolvePumpfunMetadata(mint, metadataUri) {
+  let bestSymbol = null;
+  let bestName = null;
+
   try {
     const pump = await fetchJsonWithTimeout(`https://frontend-api.pump.fun/coins/${mint}`);
     if (pump.ok && pump.body) {
-      return {
-        symbol: pump.body.symbol || null,
-        name: pump.body.name || null,
-        imageUrl: toHttpAssetUrl(pump.body.image_uri || pump.body.image || null),
-      };
+      bestSymbol = pump.body.symbol || bestSymbol;
+      bestName = pump.body.name || bestName;
+
+      const imageUrl = toHttpAssetUrl(pump.body.image_uri || pump.body.image || null);
+      if (imageUrl) {
+        return {
+          symbol: bestSymbol,
+          name: bestName,
+          imageUrl,
+        };
+      }
     }
   } catch (_) {
     // Fall through to URI/Dex fallbacks when PumpFun is unavailable upstream.
@@ -391,11 +404,13 @@ async function resolvePumpfunMetadata(mint, metadataUri) {
     try {
       const metadata = await fetchJsonWithTimeout(url);
       if (metadata.ok && metadata.body) {
+        bestSymbol = metadata.body.symbol || bestSymbol;
+        bestName = metadata.body.name || bestName;
         const imageUrl = toHttpAssetUrl(metadata.body.image || metadata.body.image_url || null);
         if (imageUrl) {
           return {
-            symbol: metadata.body.symbol || null,
-            name: metadata.body.name || null,
+            symbol: metadata.body.symbol || bestSymbol,
+            name: metadata.body.name || bestName,
             imageUrl,
           };
         }
@@ -409,10 +424,14 @@ async function resolvePumpfunMetadata(mint, metadataUri) {
     const dexData = await dexscreener.getTokenPairs(mint);
     const bestPair = dexscreener.getBestPair(dexData, 'solana');
     if (bestPair) {
+      const imageUrl = toHttpAssetUrl(bestPair.info?.imageUrl || bestPair.info?.header || bestPair.baseToken?.logoUri || null);
+      if (!imageUrl) {
+        return null;
+      }
       return {
-        symbol: bestPair.baseToken?.symbol || null,
-        name: bestPair.baseToken?.name || null,
-        imageUrl: toHttpAssetUrl(bestPair.info?.imageUrl || bestPair.info?.header || bestPair.baseToken?.logoUri || null),
+        symbol: bestPair.baseToken?.symbol || bestSymbol,
+        name: bestPair.baseToken?.name || bestName,
+        imageUrl,
       };
     }
   } catch (_) {
@@ -557,7 +576,7 @@ router.get('/pumpfun/:mint/meta', pumpfunMetaLimiter, async (req, res) => {
   try {
     const mint = String(req.params?.mint || '').trim();
     const rawMetadataUri = String(req.query?.uri || '').trim();
-    const metadataUri = rawMetadataUri ? sanitizeAssetUrl(rawMetadataUri) || null : null;
+    const metadataUri = rawMetadataUri ? toPumpfunMetadataUrl(rawMetadataUri) || null : null;
     if (!isValidAddress(mint)) {
       return res.status(400).json({ error: 'Invalid token address' });
     }

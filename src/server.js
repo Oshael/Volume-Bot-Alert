@@ -26,6 +26,7 @@ const catalogWorker = require('./services/catalog-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
+const dexscreener = require('./services/dexscreener');
 
 const app = express();
 let server = null;
@@ -154,6 +155,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     catalogCleanupWorker: catalogCleanupWorker.getStatus(),
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
+    dexscreener: dexscreener.getCacheStats(),
   });
 });
 
