@@ -651,6 +651,17 @@ Current limitation:
 - Consider deduplicating/caching PumpFun metadata fetches more aggressively if `429` persists.
 - Keep watching `dex_unavailable` behavior until Birdeye or another stronger market-data source is introduced.
 
+## VPS Migration Reminder
+- When migrating from Railway to a private VPS, treat public exposure hardening as a high-priority deployment task, not an optional cleanup item.
+- At minimum, the VPS migration should explicitly verify:
+  - only intended public ports are exposed
+  - backend is preferably bound behind a reverse proxy instead of being left broadly reachable on arbitrary ports
+  - HTTPS is enforced
+  - firewall / security-group rules are intentionally set, not left permissive by default
+  - admin access is protected beyond "normal login" when possible, such as IP allowlisting, VPN, or Tailscale
+  - production cookies, CORS/origin rules, and rate limiting are reviewed specifically for the new public-facing topology
+- Railway reduces some infra footguns by default; a raw VPS does not. Re-check public exposure assumptions before considering a VPS migration production-safe.
+
 ## Documentation Policy Going Forward
 - This file is the primary state-of-the-world document.
 - Keep older docs only when they still serve one of these purposes:

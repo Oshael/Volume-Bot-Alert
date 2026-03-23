@@ -184,7 +184,6 @@ export function bindCompactSearch(
     return;
   }
 
-  const doc = input.ownerDocument || document;
   const open = () => wrap.classList.add('open');
   const closeIfEmpty = () => {
     if (!String(input.value || '').trim()) {
@@ -202,6 +201,7 @@ export function bindCompactSearch(
   });
 
   input.addEventListener('focus', open);
+  input.addEventListener('blur', closeIfEmpty);
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') {
       return;
@@ -210,14 +210,6 @@ export function bindCompactSearch(
       wrap.classList.remove('open');
     }
     input.blur();
-  });
-
-  doc.addEventListener('pointerdown', (event) => {
-    const target = event.target as Node | null;
-    if (target && wrap.contains(target)) {
-      return;
-    }
-    closeIfEmpty();
   });
 }
 

@@ -1139,6 +1139,23 @@ Admin status endpoint currently exposes:
   - local websocket/API development
   This means it is stronger than before, but not maximalist
 
+## VPS Migration Reminder
+
+If the bot moves from Railway to a private VPS, public-exposure hardening becomes a first-class deployment task.
+
+At minimum, the VPS deployment should be reviewed for:
+- only intended public ports exposed
+- backend placed behind a reverse proxy instead of being left broadly reachable on arbitrary ports
+- HTTPS enforcement
+- intentional firewall / security-group rules
+- stronger admin-access controls when practical:
+  - IP allowlisting
+  - VPN
+  - Tailscale
+- production cookie/origin/rate-limit settings revalidated for the new topology
+
+Railway currently removes some infra footguns by default. A raw VPS does not.
+
 ## Security Hardening State
 
 Files:
