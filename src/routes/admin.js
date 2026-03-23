@@ -5,8 +5,67 @@ const Invite = require('../models/invite');
 const Session = require('../models/session');
 const LoginAttempt = require('../models/login-attempt');
 const { query } = require('../models/db');
+const socketHub = require('../services/socket-hub');
 
 const router = express.Router();
+
+function parseInviteCreateOptions(body = {}) {
+  const opts = {};
+  const hasMaxUses = body.maxUses !== undefined && body.maxUses !== null && String(body.maxUses).trim() !== '';
+  const hasExpiryHours = body.expiryHours !== undefined && body.expiryHours !== null && String(body.expiryHours).trim() !== '';
+
+  if (hasMaxUses) {
+    const parsed = Number.parseInt(body.maxUses, 10);
+    if (!Number.isInteger(parsed)) {
+      return { ok: false, error: 'maxUses must be an integer' };
+    }
+    opts.maxUses = parsed;
+  }
+
+  if (hasExpiryHours) {
+    const parsed = Number.parseInt(body.expiryHours, 10);
+    if (!Number.isInteger(parsed)) {
+      return { ok: false, error: 'expiryHours must be an integer' };
+    }
+    opts.expiryHours = parsed;
+  }
+
+  return { ok: true, opts };
+}
+
+function parsePositiveId(value) {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseLogsLimit(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return 50;
+  }
+
+  const parsed = Number.parseInt(String(value).trim(), 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return null;
+  }
+
+  return Math.min(parsed, 200);
+}
+
+function parseOptionalBooleanQuery(value) {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'true') {
+    return { ok: true, value: true };
+  }
+  if (normalized === 'false') {
+    return { ok: true, value: false };
+  }
+
+  return { ok: false, error: 'success must be true or false' };
+}
 
 // All admin routes require authentication + admin role
 router.use(authenticate);
@@ -68,8 +127,8 @@ router.get('/users/online', async (req, res) => {
  */
 router.patch('/users/:id', async (req, res) => {
   try {
-    const targetId = parseInt(req.params.id);
-    if (isNaN(targetId)) {
+    const targetId = parsePositiveId(req.params.id);
+    if (!targetId) {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
@@ -119,6 +178,7 @@ router.patch('/users/:id', async (req, res) => {
     // If user was deactivated, revoke all their sessions
     if (req.body.is_active === false) {
       const revokedCount = await Session.revokeAllForUser(targetId);
+      socketHub.revokeUserSockets(targetId, 'admin_deactivated');
       return res.json({
         message: `User ${rows[0].username} deactivated, ${revokedCount} session(s) revoked`,
         user: rows[0],
@@ -138,8 +198,8 @@ router.patch('/users/:id', async (req, res) => {
  */
 router.delete('/users/:id/sessions', async (req, res) => {
   try {
-    const targetId = parseInt(req.params.id);
-    if (isNaN(targetId)) {
+    const targetId = parsePositiveId(req.params.id);
+    if (!targetId) {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
@@ -149,6 +209,7 @@ router.delete('/users/:id/sessions', async (req, res) => {
     }
 
     const count = await Session.revokeAllForUser(targetId);
+    socketHub.revokeUserSockets(targetId, 'admin_revoked');
     res.json({ message: `Revoked ${count} session(s) for ${target.username}` });
   } catch (err) {
     console.error('Admin revoke sessions error:', err);
@@ -181,11 +242,12 @@ router.get('/invites', async (req, res) => {
  */
 router.post('/invites', async (req, res) => {
   try {
-    const opts = {};
-    if (req.body.maxUses) opts.maxUses = Math.min(parseInt(req.body.maxUses) || 1, 100);
-    if (req.body.expiryHours) opts.expiryHours = Math.min(parseInt(req.body.expiryHours) || 72, 720);
+    const parsed = parseInviteCreateOptions(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
 
-    const invite = await Invite.create(req.user.id, opts);
+    const invite = await Invite.create(req.user.id, parsed.opts);
     res.status(201).json({ invite });
   } catch (err) {
     console.error('Admin create invite error:', err);
@@ -199,9 +261,14 @@ router.post('/invites', async (req, res) => {
  */
 router.delete('/invites/:id', async (req, res) => {
   try {
+    const inviteId = parsePositiveId(req.params.id);
+    if (!inviteId) {
+      return res.status(400).json({ error: 'Invalid invite ID' });
+    }
+
     const { rows } = await query(
       'UPDATE invites SET is_revoked = true WHERE id = $1 RETURNING id, code, is_revoked',
-      [req.params.id]
+      [inviteId]
     );
     if (!rows[0]) {
       return res.status(404).json({ error: 'Invite not found' });
@@ -223,7 +290,16 @@ router.delete('/invites/:id', async (req, res) => {
  */
 router.get('/logs', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const limit = parseLogsLimit(req.query.limit);
+    if (limit == null) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+
+    const parsedSuccess = parseOptionalBooleanQuery(req.query.success);
+    if (!parsedSuccess.ok) {
+      return res.status(400).json({ error: parsedSuccess.error });
+    }
+
     let sql = `SELECT id, email, ip_address, success, user_agent, created_at
                FROM login_attempts`;
     const conditions = [];
@@ -232,11 +308,11 @@ router.get('/logs', async (req, res) => {
 
     if (req.query.email) {
       conditions.push(`email = LOWER($${paramIndex++})`);
-      values.push(req.query.email);
+      values.push(String(req.query.email).trim().toLowerCase().slice(0, 254));
     }
-    if (req.query.success !== undefined) {
+    if (parsedSuccess.value !== undefined) {
       conditions.push(`success = $${paramIndex++}`);
-      values.push(req.query.success === 'true');
+      values.push(parsedSuccess.value);
     }
 
     if (conditions.length > 0) {

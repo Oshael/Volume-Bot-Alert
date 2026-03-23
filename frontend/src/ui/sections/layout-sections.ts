@@ -196,6 +196,7 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
     ${state.ui.authPanel === 'password-reset' ? renderPasswordResetModal(state) : ''}
     ${state.ui.authPanel === 'email-otp' ? renderEmailOtpModal(state) : ''}
   `;
+  hydrateAuthSensitiveText(section, state);
 
   const form = section.querySelector<HTMLFormElement>('form[data-role="login-form"]');
   const submitLoginForm = () => {
@@ -344,6 +345,17 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
   bindInviteAssistancePanel(section, controller, state);
   bindPasswordResetPanel(section, controller, state);
   return section;
+}
+
+function setTextContentIfPresent(root: ParentNode, selector: string, value: string) {
+  root.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+    element.textContent = value;
+  });
+}
+
+function hydrateAuthSensitiveText(section: HTMLElement, state: AppState) {
+  setTextContentIfPresent(section, '[data-auth-text="pending-verification-email"]', state.ui.pendingVerificationEmail || '');
+  setTextContentIfPresent(section, '[data-auth-text="pending-login-otp-email"]', state.ui.pendingLoginOtpEmailHint || '');
 }
 
 function renderLoginFlash(state: AppState) {
@@ -763,9 +775,9 @@ function renderEmailVerificationModal(state: AppState) {
             <div class="legacy-assistance-card">
               <div class="legacy-assistance-card-title">${emailSendFailed ? 'DELIVERY ISSUE' : 'VERIFICATION SENT'}</div>
               <div class="legacy-assistance-card-copy">${emailSendFailed
-                ? `We could not send a confirmation email to <strong>${escapeHtml(state.ui.pendingVerificationEmail || '')}</strong> just yet.`
-                : `We sent a confirmation email to <strong>${escapeHtml(state.ui.pendingVerificationEmail || '')}</strong>.`
-              }</div>
+                ? 'We could not send a confirmation email to '
+                : 'We sent a confirmation email to '
+              }<strong data-auth-text="pending-verification-email"></strong>${emailSendFailed ? ' just yet.' : '.'}</div>
             </div>
             <div class="legacy-assistance-card">
               <div class="legacy-assistance-card-title">NEXT STEP</div>
@@ -983,7 +995,7 @@ function renderEmailOtpModal(state: AppState) {
         <div class="legacy-assistance-grid">
           <div class="legacy-assistance-card">
             <div class="legacy-assistance-card-title">CODE SENT</div>
-            <div class="legacy-assistance-card-copy">We sent a verification code to <strong>${escapeHtml(state.ui.pendingLoginOtpEmailHint || '')}</strong>.</div>
+            <div class="legacy-assistance-card-copy">We sent a verification code to <strong data-auth-text="pending-login-otp-email"></strong>.</div>
           </div>
           <div class="legacy-assistance-card">
             <div class="legacy-assistance-card-title">NEXT STEP</div>
@@ -1066,14 +1078,13 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
 }
 
 function renderLegacyConfig(state: AppState, controller: AppController) {
-  const userMenuLabel = escapeHtml(state.session.username ?? state.session.email ?? 'User');
   const section = document.createElement('section');
   section.className = 'config-grid legacy-config-grid';
   section.innerHTML = `
     <div class="legacy-userbar">
       <button type="button" class="legacy-userbar-link logout-link" data-action="logout">Log Out</button>
       <div class="legacy-user-menu" data-user-menu>
-        <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu">${userMenuLabel}</button>
+        <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu" data-role="user-menu-label"></button>
         <div class="legacy-user-dropdown">
           <button type="button" class="legacy-user-dd-item" data-action="open-change-password">Change Password</button>
           <button type="button" class="legacy-user-dd-item">Preferences (Soon)</button>
@@ -1085,8 +1096,8 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
       <select name="sound-mode">
-        <option value="on" ${state.ui.soundEnabled ? 'selected' : ''}>Enabled</option>
-        <option value="off" ${state.ui.soundEnabled ? '' : 'selected'}>Disabled</option>
+        <option value="on">Enabled</option>
+        <option value="off">Disabled</option>
       </select>
     </div>
     ${renderOldSurgeThresholdMenu(state)}
@@ -1096,11 +1107,14 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
     <div class="legacy-sound-row">
       <div class="config-item config-item-sound config-item-sound-volume">
         <label>Sound volume: ${Math.round(state.ui.soundVolume * 100)}%</label>
-        <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" value="${Math.round(state.ui.soundVolume * 100)}" />
+        <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" />
       </div>
       ${renderSoundUploadStrip(state)}
     </div>
   `;
+  const userMenuLabel = state.session.username ?? state.session.email ?? 'User';
+  section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
+  hydrateLegacyConfigValues(section, state);
 
   section.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
     if (input.closest('[data-auth-modal]')) {
@@ -1730,11 +1744,11 @@ function renderOldSurgeThresholdMenu(state: AppState) {
           <div class="config-threshold-grid">
             <div class="config-threshold-field">
               <span>1H</span>
-              <input type="number" min="0" name="old-alert-1h-threshold" value="${Math.round(value1h)}" />
+              <input type="number" min="0" name="old-alert-1h-threshold" />
             </div>
             <div class="config-threshold-field">
               <span>6H</span>
-              <input type="number" min="0" name="old-alert-6h-threshold" value="${Math.round(value6h)}" />
+              <input type="number" min="0" name="old-alert-6h-threshold" />
             </div>
           </div>
         </div>
@@ -1945,36 +1959,74 @@ function renderLegacyActions(state: AppState, controller: AppController) {
   return section;
 }
 
-function renderConfigField(state: AppState, field: { key: string; label: string; type?: 'number' | 'text'; min?: number; placeholder?: string }) {
-  const value = state.data.configs[field.key];
+function renderConfigField(_state: AppState, field: { key: string; label: string; type?: 'number' | 'text'; min?: number; placeholder?: string }) {
   const type = field.type ?? 'number';
-  const resolved = value == null || value === ''
-    ? defaultConfigValue(field.key, type)
-    : String(value);
   const safeLabel = escapeHtml(field.label);
   const safeType = escapeHtml(type);
   const safeKey = escapeHtml(field.key);
-  const safeResolved = escapeHtml(resolved);
   const safePlaceholder = field.placeholder ? escapeHtml(field.placeholder) : null;
 
   return `
     <div class="config-item">
       <label>${safeLabel}</label>
-      <input type="${safeType}" name="${safeKey}" value="${safeResolved}" ${field.min != null ? `min="${field.min}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
+      <input type="${safeType}" name="${safeKey}" ${field.min != null ? `min="${field.min}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
     </div>
   `;
 }
 
-function renderAdminChainField(state: AppState) {
-  const current = String(state.data.configs.chain || 'solana').trim().toLowerCase() || 'solana';
+function renderAdminChainField(_state: AppState) {
   return `
     <div class="config-item">
       <label>Chain</label>
       <select name="chain">
-        ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${escapeHtml(chain)}" ${current === chain ? 'selected' : ''}>${escapeHtml(capitalize(chain))}</option>`).join('')}
+        ${['solana', 'ethereum', 'bsc', 'base'].map((chain) => `<option value="${escapeHtml(chain)}">${escapeHtml(capitalize(chain))}</option>`).join('')}
       </select>
     </div>
   `;
+}
+
+function resolveConfigInputValue(state: AppState, field: { key: string; type?: 'number' | 'text' }) {
+  const type = field.type ?? 'number';
+  const value = state.data.configs[field.key];
+  if (value == null || value === '') {
+    return String(defaultConfigValue(field.key, type));
+  }
+  return String(value);
+}
+
+function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
+  for (const field of CONFIG_FIELDS) {
+    const input = section.querySelector<HTMLInputElement>(`input[name="${CSS.escape(field.key)}"]`);
+    if (!input) {
+      continue;
+    }
+    input.value = resolveConfigInputValue(state, field);
+  }
+
+  const soundMode = section.querySelector<HTMLSelectElement>('select[name="sound-mode"]');
+  if (soundMode) {
+    soundMode.value = state.ui.soundEnabled ? 'on' : 'off';
+  }
+
+  const soundVolume = section.querySelector<HTMLInputElement>('input[name="sound-volume"]');
+  if (soundVolume) {
+    soundVolume.value = String(Math.round(state.ui.soundVolume * 100));
+  }
+
+  const oldAlert1h = section.querySelector<HTMLInputElement>('input[name="old-alert-1h-threshold"]');
+  if (oldAlert1h) {
+    oldAlert1h.value = String(Math.round(Number(state.data.configs['old-alert-1h-threshold'] ?? 50)));
+  }
+
+  const oldAlert6h = section.querySelector<HTMLInputElement>('input[name="old-alert-6h-threshold"]');
+  if (oldAlert6h) {
+    oldAlert6h.value = String(Math.round(Number(state.data.configs['old-alert-6h-threshold'] ?? 150)));
+  }
+
+  const chainSelect = section.querySelector<HTMLSelectElement>('select[name="chain"]');
+  if (chainSelect) {
+    chainSelect.value = String(state.data.configs.chain || 'solana').trim().toLowerCase() || 'solana';
+  }
 }
 
 function defaultConfigValue(key: string, type: 'number' | 'text') {

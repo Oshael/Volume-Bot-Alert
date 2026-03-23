@@ -43,6 +43,7 @@ function authenticate(req, res, next) {
 
       req.user = user;
       req.token = token;
+      req.sessionId = Session.getSessionIdentity(token, decoded);
       req.authSource = bearerToken ? 'bearer' : 'cookie';
       next();
     } catch (dbErr) {

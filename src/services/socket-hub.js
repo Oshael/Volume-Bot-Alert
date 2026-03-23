@@ -31,7 +31,8 @@ let solPriceTimer = null;
 const SOL_PRICE_BROADCAST_INTERVAL = 30000;
 const socketSubscriptions = new Map();
 const mintSubscribers = new Map();
-const userSockets = new Map();
+const sessionSockets = new Map();
+const userSessions = new Map();
 
 function sanitizeMint(rawMint) {
   if (typeof rawMint !== 'string') return null;
@@ -78,25 +79,48 @@ function ensureSocketSubscriptions(socket) {
   return subscriptions;
 }
 
-function trackUserSocket(socket) {
+function trackSessionSocket(socket) {
+  const sessionId = socket.sessionId;
   const userId = socket.user?.id;
-  if (!userId) return;
-  let sockets = userSockets.get(userId);
-  if (!sockets) {
-    sockets = new Set();
-    userSockets.set(userId, sockets);
+  if (!sessionId || !userId) return;
+
+  let socketsForSession = sessionSockets.get(sessionId);
+  if (!socketsForSession) {
+    socketsForSession = new Set();
+    sessionSockets.set(sessionId, socketsForSession);
   }
-  sockets.add(socket.id);
+  socketsForSession.add(socket.id);
+
+  let sessionsForUser = userSessions.get(userId);
+  if (!sessionsForUser) {
+    sessionsForUser = new Set();
+    userSessions.set(userId, sessionsForUser);
+  }
+  sessionsForUser.add(sessionId);
 }
 
-function untrackUserSocket(socket) {
+function untrackSessionSocket(socket) {
+  const sessionId = socket.sessionId;
   const userId = socket.user?.id;
-  if (!userId) return;
-  const sockets = userSockets.get(userId);
-  if (!sockets) return;
-  sockets.delete(socket.id);
-  if (sockets.size === 0) {
-    userSockets.delete(userId);
+  if (!sessionId || !userId) return;
+
+  const sockets = sessionSockets.get(sessionId);
+  if (sockets) {
+    sockets.delete(socket.id);
+    if (sockets.size === 0) {
+      sessionSockets.delete(sessionId);
+    }
+  }
+
+  if (sessionSockets.has(sessionId)) {
+    return;
+  }
+
+  const sessions = userSessions.get(userId);
+  if (!sessions) return;
+  sessions.delete(sessionId);
+  if (sessions.size === 0) {
+    userSessions.delete(userId);
   }
 }
 
@@ -170,12 +194,9 @@ function cleanupSocketSubscriptions(socket) {
   }
 }
 
-function revokeUserSockets(userId, reason = 'session_revoked') {
-  if (!io) return 0;
-  const sockets = userSockets.get(userId);
-  if (!sockets || sockets.size === 0) return 0;
+function emitAndDisconnectSockets(socketIds, reason) {
+  if (!io || socketIds.size === 0) return 0;
 
-  const socketIds = Array.from(sockets);
   for (const socketId of socketIds) {
     const socket = io.sockets.sockets.get(socketId);
     if (!socket) continue;
@@ -187,7 +208,32 @@ function revokeUserSockets(userId, reason = 'session_revoked') {
     }, 25);
   }
 
-  return socketIds.length;
+  return socketIds.size;
+}
+
+function revokeSessionSockets(sessionId, reason = 'session_revoked') {
+  if (!io) return 0;
+  const sockets = sessionSockets.get(sessionId);
+  if (!sockets || sockets.size === 0) return 0;
+
+  return emitAndDisconnectSockets(new Set(sockets), reason);
+}
+
+function revokeUserSockets(userId, reason = 'session_revoked') {
+  if (!io) return 0;
+  const sessions = userSessions.get(userId);
+  if (!sessions || sessions.size === 0) return 0;
+
+  const socketIds = new Set();
+  for (const sessionId of Array.from(sessions)) {
+    const sockets = sessionSockets.get(sessionId);
+    if (!sockets) continue;
+    for (const socketId of sockets) {
+      socketIds.add(socketId);
+    }
+  }
+
+  return emitAndDisconnectSockets(socketIds, reason);
 }
 
 function init(httpServer) {
@@ -204,7 +250,7 @@ function init(httpServer) {
     const authToken = socket.handshake.auth?.token;
     const parsedCookies = cookie.parse(socket.handshake.headers?.cookie || '');
     const cookieToken = parsedCookies[config.authCookie.name];
-    const token = authToken || cookieToken;
+    const token = cookieToken || (config.nodeEnv === 'test' ? authToken : null);
     if (!token) {
       return next(new Error('Authentication required'));
     }
@@ -223,6 +269,7 @@ function init(httpServer) {
 
       socket.user = user;
       socket.token = token;
+      socket.sessionId = Session.getSessionIdentity(token, decoded);
       next();
     } catch (err) {
       return next(new Error('Invalid token'));
@@ -232,7 +279,7 @@ function init(httpServer) {
   io.on('connection', (socket) => {
     console.log(`[Socket.io] ${socket.user.username} connected (${socket.id})`);
     ensureSocketSubscriptions(socket);
-    trackUserSocket(socket);
+    trackSessionSocket(socket);
 
     socket.emit('sol:price', { price: solPrice.getPrice() });
     socket.emit('pump:status', pumpfun.getStatus());
@@ -251,7 +298,7 @@ function init(httpServer) {
 
     socket.on('disconnect', (reason) => {
       cleanupSocketSubscriptions(socket);
-      untrackUserSocket(socket);
+      untrackSessionSocket(socket);
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
   });
@@ -309,7 +356,8 @@ function stop() {
   pumpfun.stop();
   socketSubscriptions.clear();
   mintSubscribers.clear();
-  userSockets.clear();
+  sessionSockets.clear();
+  userSessions.clear();
   if (io) {
     io.close();
     io = null;
@@ -320,7 +368,8 @@ function getStatus() {
   return {
     clients: io ? io.engine.clientsCount : 0,
     trackedPumpSubscriptions: mintSubscribers.size,
-    trackedAuthenticatedUsers: userSockets.size,
+    trackedAuthenticatedUsers: userSessions.size,
+    trackedAuthenticatedSessions: sessionSockets.size,
     pumpfun: pumpfun.getStatus(),
     solPrice: solPrice.getStatus(),
   };
@@ -330,4 +379,4 @@ function getIO() {
   return io;
 }
 
-module.exports = { init, stop, getStatus, getIO, revokeUserSockets };
+module.exports = { init, stop, getStatus, getIO, revokeSessionSockets, revokeUserSockets };

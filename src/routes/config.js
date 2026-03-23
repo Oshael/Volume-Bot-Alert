@@ -8,6 +8,7 @@ const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
 const { attachResponsePerfHeaders, estimateJsonBytes, logRequestPerf, nowMs } = require('../utils/perf-metrics');
+const { normalizeText } = require('../utils/url-safety');
 
 // All config routes require authentication
 router.use(authenticate);
@@ -19,7 +20,8 @@ const MAX_BLOCKLIST = 500;   // máx blocklist por user
 const MAX_STARRED = 500;     // max favorites per user
 
 function normalizeAddressItems(items) {
-  return items
+  const deduped = new Map();
+  items
     .map((item) => {
       if (typeof item === 'string') {
         return { address: item.trim(), label: null };
@@ -31,10 +33,19 @@ function normalizeAddressItems(items) {
 
       return {
         address: String(item.address || '').trim(),
-        label: item.label == null ? null : String(item.label).trim() || null,
+        label: normalizeText(item.label, 128),
       };
     })
-    .filter((item) => item.address);
+    .filter((item) => item.address)
+    .forEach((item) => {
+      const current = deduped.get(item.address);
+      deduped.set(item.address, {
+        address: item.address,
+        label: current?.label || item.label || null,
+      });
+    });
+
+  return [...deduped.values()];
 }
 
 async function upsertCatalogItems(items, source) {
@@ -377,6 +388,7 @@ router.post('/tokens', async (req, res) => {
     if (!userToken.isValidAddress(addr)) {
       return res.status(400).json({ error: 'Invalid token address format' });
     }
+    const normalizedLabel = normalizeText(label, 128);
 
     // Check limit
     const currentCount = await userToken.count(req.user.id);
@@ -386,7 +398,7 @@ router.post('/tokens', async (req, res) => {
       });
     }
 
-    const result = await userToken.add(req.user.id, addr, label || null);
+    const result = await userToken.add(req.user.id, addr, normalizedLabel);
     if (!result) {
       return res.status(409).json({ error: 'Token already added' });
     }
@@ -416,6 +428,9 @@ router.post('/tokens', async (req, res) => {
 router.delete('/tokens/:address', async (req, res) => {
   try {
     const { address } = req.params;
+    if (!userToken.isValidAddress(String(address || '').trim())) {
+      return res.status(400).json({ error: 'Invalid token address format' });
+    }
     const removed = await userToken.remove(req.user.id, address);
 
     if (!removed) {
@@ -450,6 +465,7 @@ router.post('/blocklist', async (req, res) => {
     if (!userToken.isValidAddress(addr)) {
       return res.status(400).json({ error: 'Invalid token address format' });
     }
+    const normalizedLabel = normalizeText(label, 128);
 
     const currentList = await userBlocklist.getAll(req.user.id);
     if (currentList.length >= MAX_BLOCKLIST) {
@@ -458,7 +474,7 @@ router.post('/blocklist', async (req, res) => {
       });
     }
 
-    const result = await userBlocklist.add(req.user.id, addr, label || null);
+    const result = await userBlocklist.add(req.user.id, addr, normalizedLabel);
     if (!result) {
       return res.status(409).json({ error: 'Token already blocked' });
     }
@@ -487,6 +503,9 @@ router.post('/blocklist', async (req, res) => {
 router.delete('/blocklist/:address', async (req, res) => {
   try {
     const { address } = req.params;
+    if (!userToken.isValidAddress(String(address || '').trim())) {
+      return res.status(400).json({ error: 'Invalid token address format' });
+    }
     const removed = await userBlocklist.remove(req.user.id, address);
 
     if (!removed) {

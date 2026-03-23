@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch throughput migration, monitored refresh acceleration, and monitored UI freshness updates.
+Last reviewed against code on `2026-03-23` after auth/session hardening, OTP/token cleanup, broader frontend render-surface hardening, admin/catalog validation tightening, and PumpFun terminal-link corrections.
 
 ## High-Level Product Shape
 
@@ -309,6 +309,8 @@ Current transport:
 - backend-issued `HttpOnly` cookie
 - frontend uses `credentials: include`
 - frontend no longer depends on browser-readable token storage for the live auth flow
+- each successful login now gets a unique backend session identity
+- server-side session revocation and live socket revocation are aligned around the same per-session semantics
 
 ### User configs
 - backend
@@ -593,6 +595,9 @@ Behavior:
 - `Logout` revokes current session only
 - `Logout All` revokes all sessions for the authenticated account only
 - `Logout All` does not affect other users on the server
+- live socket disconnect behavior now matches those HTTP semantics:
+  - `Logout` drops only the current session socket
+  - `Logout All`, password change, password reset, and admin revoke/deactivate drop all live sockets for that account
 
 Important operational note:
 - session counts can be higher than expected because server-side sessions can accumulate from prior logins, tabs, browsers, and devices
@@ -762,11 +767,11 @@ Files:
 
 Behavior:
 - Recent and Old Week each have a removal log badge
-- hover still works
-- click now locks the panel open
-- clicking outside closes it
+- opens on click only
+- `Close`, outside click, or `Esc` closes it
+- the panel now shows up to `20` latest removed tokens with symbol, short address, timestamp, `Copy CA`, and `DEX`
 
-This prevents the old issue where the hover panel disappeared before the user could move the cursor into it.
+This prevents the old issue where the panel disappeared before the user could inspect which tokens left monitoring.
 
 ## Starred Tokens
 
@@ -799,7 +804,12 @@ Files:
 
 Current link behavior:
 - Axiom:
-  - uses `terminalAddress`
+  - default path uses `tokenAddress`
+  - PumpFun pre-bond rows override Axiom to prefer:
+    - `bondingCurveKey`
+    - fallback `pairAddress`
+    - fallback `mintAddress`
+    - fallback token address
 - Photon:
   - uses `tokenAddress`
 - BullX:
@@ -1121,7 +1131,7 @@ Admin status endpoint currently exposes:
 - Dex reevaluation can still produce many `dex_unavailable` results
 - PumpFun metadata route can still pressure rate limiting in bursts
 - discovery is restored through Dex feeds again, but underlying Dex availability remains a dependency
-- the frontend is materially harder to exploit via XSS than before, but still uses a UI architecture that relies heavily on HTML-string rendering
+- the highest-risk auth/account/config/list render surfaces have been hardened, but lower-traffic UI helpers still use HTML-string-heavy patterns in places
 - the current CSP is pragmatic and intentionally compatible with:
   - Google Fonts
   - Fontshare
@@ -1133,6 +1143,9 @@ Admin status endpoint currently exposes:
 
 Files:
 - `frontend/src/ui/sections/html-safety.ts`
+- `frontend/src/services/api/base.ts`
+- `frontend/src/state/auth-flow-utils.ts`
+- `frontend/src/state/app-controller.ts`
 - `frontend/src/ui/sections/shared.ts`
 - `frontend/src/ui/sections/monitored-section.ts`
 - `frontend/src/ui/sections/alerts-section.ts`
@@ -1143,7 +1156,17 @@ Files:
 - `frontend/src/ui/sections/layout-sections.ts`
 - `frontend/src/ui/app-shell.ts`
 - `src/middleware/auth.js`
+- `src/models/session.js`
+- `src/models/login-email-otp-challenge.js`
+- `src/models/token-catalog.js`
 - `src/server.js`
+- `src/routes/auth.js`
+- `src/routes/admin.js`
+- `src/routes/catalog.js`
+- `src/routes/config.js`
+- `src/routes/dashboard.js`
+- `src/routes/invites.js`
+- `src/utils/url-safety.js`
 - `frontend/index.html`
 
 What was hardened:
@@ -1151,15 +1174,25 @@ What was hardened:
 - URL sanitization via:
   - `sanitizeHttpUrl(...)`
   - `sanitizeOptionalHttpUrl(...)`
+- backend-side URL / asset sanitization via `src/utils/url-safety.js`
 - safer handling of external image/profile/dex links
 - safer selector interpolation using `CSS.escape(...)` in dynamic selector paths
 - trusted-origin requirement for mutating cookie-authenticated requests
 - CSP added in both frontend and backend layers
+- frontend auth-flow token normalization for verify/reset/OTP challenge inputs
+- stricter `?api=` override rules so auth/config flows do not point at arbitrary backends by query string
+- backend auth routes reject malformed OTP challenge, verify-email, and password-reset tokens early
+- login OTP generation now uses cryptographically secure randomness
+- cleanup scheduler now removes expired OTP challenges, email verification tokens, and password reset tokens
+- session JWTs now carry unique per-login identity and session revocation is tracked per login
+- socket auth is cookie-first in live environments instead of keeping a general-purpose token handshake path
+- PumpFun metadata lookups reject private/local asset URIs
+- admin/logs now validates `limit` and `success` explicitly instead of relying on implicit coercion
 
 Current honest assessment:
 - auth/session security is materially stronger than the pre-cookie implementation
 - frontend XSS risk has been reduced from obvious/high-risk territory into a much more controlled state
-- remaining XSS risk is mostly structural and tied to the continued use of HTML-string rendering in the UI architecture
+- remaining XSS risk is now mostly structural and concentrated in lower-traffic helpers rather than the previously most-exposed auth/account/config/list surfaces
 
 ## Password Reset / Real Email State
 
@@ -1176,6 +1209,7 @@ Current status:
 - real email verification is implemented
 - real password reset is implemented
 - secondary verification is implemented as email OTP on login
+- the backend resend path exists, but the manual resend email-verification entry is not currently a primary visible login action in the frontend
 
 Still pending / follow-up:
 - lower-priority auth polish in the frontend

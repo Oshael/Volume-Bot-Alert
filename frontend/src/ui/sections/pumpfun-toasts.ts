@@ -1,6 +1,6 @@
 import type { AppState, PumpToastEntry } from '../../state/app-state';
 import { fmtAge, fmtMoney } from './shared';
-import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
+import { sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderPumpToasts(state: AppState) {
   const container = document.createElement('div');
@@ -33,19 +33,48 @@ export function renderPumpToasts(state: AppState) {
 function renderPumpToast(toast: PumpToastEntry) {
   const article = document.createElement('article');
   article.className = 'pump-toast';
-  const safeMint = escapeHtml(toast.mint);
-  const safeSymbol = escapeHtml(toast.symbol);
   const imageUrl = sanitizeOptionalHttpUrl(toast.imageUrl);
-  article.innerHTML = `
-    <div class="pump-toast-head">
-      ${imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="pump-toast-img" />` : `<div class="pump-toast-placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`}
-      <div class="pump-toast-body">
-        <div class="pump-toast-label">TOKEN MIGRATED</div>
-        <div class="pump-toast-ticker">${safeSymbol}</div>
-        <div class="pump-toast-meta">AGE <span>${toast.createdAt ? fmtAge(toast.createdAt) : '-'}</span>&nbsp;&nbsp;VOL <span>${fmtMoney(toast.vol5m)}</span>&nbsp;&nbsp;MCAP <span>${fmtMoney(toast.mcap)}</span></div>
-      </div>
-      <button type="button" class="action-button small" data-action="copy-address" data-address="${safeMint}">Copy CA</button>
-    </div>
-  `;
+  const head = document.createElement('div');
+  head.className = 'pump-toast-head';
+
+  if (imageUrl) {
+    const img = document.createElement('img');
+    img.src = imageUrl;
+    img.alt = toast.symbol;
+    img.className = 'pump-toast-img';
+    head.append(img);
+  } else {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'pump-toast-placeholder';
+    placeholder.textContent = toast.symbol.slice(0, 2).toUpperCase();
+    head.append(placeholder);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'pump-toast-body';
+
+  const label = document.createElement('div');
+  label.className = 'pump-toast-label';
+  label.textContent = 'TOKEN MIGRATED';
+
+  const ticker = document.createElement('div');
+  ticker.className = 'pump-toast-ticker';
+  ticker.textContent = toast.symbol;
+
+  const meta = document.createElement('div');
+  meta.className = 'pump-toast-meta';
+  meta.textContent = `AGE ${toast.createdAt ? fmtAge(toast.createdAt) : '-'}  VOL ${fmtMoney(toast.vol5m)}  MCAP ${fmtMoney(toast.mcap)}`;
+
+  body.append(label, ticker, meta);
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'action-button small';
+  copyButton.dataset.action = 'copy-address';
+  copyButton.dataset.address = toast.mint;
+  copyButton.textContent = 'Copy CA';
+
+  head.append(body, copyButton);
+  article.append(head);
   return article;
 }

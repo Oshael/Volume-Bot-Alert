@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState } from '../../state/app-state';
-import { bindCopyButtons, bindTokenActions, fmtAge, fmtMoney, fmtPct, renderTradeTerminalMenu } from './shared';
-import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
+import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const RECENT_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -22,14 +22,35 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
       <div style="display:flex;align-items:center;gap:6px">
-        <input class="panel-search" type="text" placeholder="Search ticker..." value="${escapeHtml(state.ui.alertSearchQuery || '')}" data-action="alerts-search" data-search-input="alerts">
+        <input class="panel-search" type="text" placeholder="Search ticker..." data-action="alerts-search" data-search-input="alerts">
         <span class="count">${filteredAlerts.length}</span>
       </div>
     </div>
-    <div class="alerts-list">${filteredAlerts.length ? filteredAlerts.map((alert) => renderAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address), state.session.role === 'admin')).join('') : '<div class="empty-state"><div class="empty-text">No alerts match the current search.</div></div>'}</div>
+    <div class="alerts-list"></div>
   `;
 
-  section.querySelector<HTMLInputElement>('[data-action="alerts-search"]')?.addEventListener('input', (event) => {
+  const alertsList = section.querySelector<HTMLElement>('.alerts-list');
+  if (alertsList) {
+    if (filteredAlerts.length) {
+      for (const alert of filteredAlerts) {
+        alertsList.append(buildAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address), state.session.role === 'admin'));
+      }
+    } else {
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      const emptyText = document.createElement('div');
+      emptyText.className = 'empty-text';
+      emptyText.textContent = 'No alerts match the current search.';
+      emptyState.append(emptyText);
+      alertsList.append(emptyState);
+    }
+  }
+
+  const searchInput = section.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
+  if (searchInput) {
+    searchInput.value = state.ui.alertSearchQuery || '';
+  }
+  searchInput?.addEventListener('input', (event) => {
     controller.setAlertSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
   bindTokenActions(section, controller);
@@ -37,78 +58,134 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   return section;
 }
 
-function renderAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean) {
+function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean) {
   const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
-  const symbol = alert.symbol;
-  const safeAddress = escapeHtml(alert.address);
-  const safeSymbol = escapeHtml(symbol);
-  const safeName = escapeHtml(alert.name || '');
+  const symbol = String(alert.symbol || '');
+  const safeName = String(alert.name || '');
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
-  const avatar = imageUrl
-    ? `<img src="${imageUrl}" alt="${safeSymbol}" class="alert-avatar" />`
-    : `<div class="alert-avatar-placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
   const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
   const topClass = getAlertToneClass(alert);
-  const titleBlock = renderAlertHeadline(alert, topClass);
-  const flowLine = renderAlertFlowLine(alert);
-  const statsLine = renderAlertStatsLine(alert);
-  const profileLink = sanitizeOptionalHttpUrl(alert.twitterUrl)
-    ? `<a href="${sanitizeHttpUrl(alert.twitterUrl)}" target="_blank" rel="noreferrer" class="alert-inline-link">X Perfil</a>`
-    : '<span class="alert-inline-link disabled">X Perfil</span>';
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
+  const article = document.createElement('article');
+  article.className = `alert-row ${topClass}${isStarred ? ' token-starred starred-card' : ''}`;
+  article.dataset.hoverKey = `alert:${alert.id}`;
 
-  return `
-    <article class="alert-row ${topClass} ${isStarred ? 'token-starred starred-card' : ''}" data-hover-key="alert:${escapeHtml(alert.id)}">
-      <div class="alert-grid">
-        <div class="alert-body-v68">
-          <div class="alert-main-v68">
-            ${avatar}
-            <div class="alert-copy-block">
-              <div class="alert-top-v68">
-                <span class="alert-token-v68">${safeSymbol} <span class="alert-token-name">${safeName}</span></span>
-                ${titleBlock}
-              </div>
-              <div class="alert-flow-v68">${flowLine}</div>
-            </div>
-          </div>
-          <div class="alert-stats-v68">${statsLine}</div>
-          <div class="alert-links-v68">
-            <a href="${dexUrl}" target="_blank" rel="noreferrer" class="alert-inline-link">Dex Screener</a>
-            <span>/</span>
-            <a href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" class="alert-inline-link">X Buscar $${safeSymbol}</a>
-            <span>/</span>
-            ${profileLink}
-          </div>
-          <div class="alert-actions-v68">
-            <button type="button" class="alert-action-button copy-button" data-action="copy-address" data-address="${safeAddress}">Copiar CA</button>
-            ${renderTradeTerminalMenu(alert.address, alert.mintAddress, alert.pairAddress)}
-            <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
-            <button type="button" class="alert-action-button danger" data-action="block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''}>Block</button>
-            ${isAdmin ? `<button type="button" class="alert-action-button danger" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''}>Admin Block</button>` : ''}
-          </div>
-        </div>
-        <div class="alert-time-v68">${escapeHtml(timeLabel)}</div>
-      </div>
-    </article>
-  `;
+  const grid = document.createElement('div');
+  grid.className = 'alert-grid';
+  const body = document.createElement('div');
+  body.className = 'alert-body-v68';
+  const time = document.createElement('div');
+  time.className = 'alert-time-v68';
+  time.textContent = timeLabel;
+
+  const main = document.createElement('div');
+  main.className = 'alert-main-v68';
+  main.append(buildAlertAvatar(symbol, imageUrl));
+
+  const copyBlock = document.createElement('div');
+  copyBlock.className = 'alert-copy-block';
+
+  const top = document.createElement('div');
+  top.className = 'alert-top-v68';
+  const tokenLine = document.createElement('span');
+  tokenLine.className = 'alert-token-v68';
+  tokenLine.append(symbol);
+  const tokenName = document.createElement('span');
+  tokenName.className = 'alert-token-name';
+  tokenName.textContent = safeName;
+  tokenLine.append(' ', tokenName);
+  top.append(tokenLine, buildAlertHeadline(alert, topClass));
+
+  const flowLine = document.createElement('div');
+  flowLine.className = 'alert-flow-v68';
+  appendAlertFlowLine(flowLine, alert);
+
+  copyBlock.append(top, flowLine);
+  main.append(copyBlock);
+
+  const statsLine = document.createElement('div');
+  statsLine.className = 'alert-stats-v68';
+  appendAlertStatsLine(statsLine, alert);
+
+  const links = document.createElement('div');
+  links.className = 'alert-links-v68';
+  links.append(
+    buildInlineLink('Dex Screener', dexUrl),
+    buildTextSeparator(),
+    buildInlineLink(`X Buscar $${symbol}`, sanitizeHttpUrl(xSearch)),
+    buildTextSeparator(),
+    buildProfileLink(alert.twitterUrl),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'alert-actions-v68';
+  actions.append(
+    buildActionButton('Copiar CA', 'alert-action-button copy-button', 'copy-address', alert.address),
+    buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress),
+    buildStarButton(alert.address, isStarred, busy, 'Star token'),
+    buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy),
+  );
+
+  if (isAdmin) {
+    actions.append(buildActionButton('Admin Block', 'alert-action-button danger', 'admin-block-token', alert.address, symbol, busy));
+  }
+
+  body.append(main, statsLine, links, actions);
+  grid.append(body, time);
+  article.append(grid);
+  return article;
 }
 
-function renderAlertHeadline(alert: AlertEntry, toneClass: string) {
+function buildAlertAvatar(symbol: string, imageUrl: string | null) {
+  if (imageUrl) {
+    const image = document.createElement('img');
+    image.src = imageUrl;
+    image.alt = symbol;
+    image.className = 'alert-avatar';
+    return image;
+  }
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'alert-avatar-placeholder';
+  placeholder.textContent = symbol.slice(0, 2).toUpperCase();
+  return placeholder;
+}
+
+function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
+  const badge = document.createElement('span');
   if (alert.isOldSurge) {
     const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
     const surgeTitle = tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
-    return `<span class="alert-badge-v68 ${toneClass}">\u{1F525} ${escapeHtml(surgeTitle)}<br><span class="alert-badge-sub">${escapeHtml(fmtPct(alert.pct))} ${escapeHtml(alert.label || 'PCHANGE')}</span></span>`;
+    badge.className = `alert-badge-v68 ${toneClass}`;
+    badge.append(`🔥 ${surgeTitle}`, document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'PCHANGE')));
+    return badge;
   }
   if (alert.kind === 'meteora-surge') {
-    return `<span class="alert-badge-v68 ${toneClass}">\u{1F30A} Meteora Alert 1h<br><span class="alert-badge-sub">${escapeHtml(fmtPct(alert.pct))} ${escapeHtml(alert.label || 'METEORA 1H')}</span></span>`;
+    badge.className = `alert-badge-v68 ${toneClass}`;
+    badge.append('🌊 Meteora Alert 1h', document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'METEORA 1H')));
+    return badge;
   }
   if (alert.isHvnc) {
-    return `<span class="alert-badge-v68 mega">\u{1F6A8} High Volume New Coin<br><span class="alert-badge-sub">${escapeHtml(fmtMoney(alert.volume24h))} total vol</span></span>`;
+    badge.className = 'alert-badge-v68 mega';
+    badge.append('🚨 High Volume New Coin', document.createElement('br'), buildAlertBadgeSub(fmtMoney(alert.volume24h), 'total vol'));
+    return badge;
   }
-  return `<span class="alert-pct-v68 ${toneClass}">${escapeHtml(fmtPct(alert.pct))} <span>${escapeHtml(alert.label || 'VOL')}</span></span>`;
+  badge.className = `alert-pct-v68 ${toneClass}`;
+  badge.append(`${fmtPct(alert.pct)} `);
+  const label = document.createElement('span');
+  label.textContent = String(alert.label || 'VOL');
+  badge.append(label);
+  return badge;
 }
 
-function renderAlertFlowLine(alert: AlertEntry) {
+function buildAlertBadgeSub(primary: string, secondary: string) {
+  const sub = document.createElement('span');
+  sub.className = 'alert-badge-sub';
+  sub.textContent = `${primary} ${secondary}`;
+  return sub;
+}
+
+function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   const currentVol = fmtMoney(alert.volume5m);
   const currentMcap = fmtMoney(alert.mcap);
   const prevVol = alert.prevVolume5m != null ? fmtMoney(alert.prevVolume5m) : null;
@@ -116,26 +193,121 @@ function renderAlertFlowLine(alert: AlertEntry) {
   const mcapTone = alert.prevMcap != null && alert.mcap != null && alert.mcap < alert.prevMcap ? 'down' : 'up';
 
   if (alert.isOldSurge) {
-    return `<span><span class="label">MCAP</span> <span class="value up">${currentMcap}</span></span><span><span class="label">AGE</span> <span class="value white">${alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-'}</span></span>`;
+    container.append(
+      buildMetricPair('MCAP', currentMcap, 'up'),
+      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+    );
+    return;
   }
 
-  const volHtml = prevVol
-    ? `<span><span class="label">VOL 5M</span> ${prevVol} \u2192 <span class="value up">${currentVol}</span></span>`
-    : `<span><span class="label">VOL 5M</span> <span class="value up">${currentVol}</span></span>`;
-  const mcapHtml = prevMcap
-    ? `<span><span class="label">MCAP</span> ${prevMcap} \u2192 <span class="value ${mcapTone}">${currentMcap}</span></span>`
-    : `<span><span class="label">MCAP</span> <span class="value ${mcapTone}">${currentMcap}</span></span>`;
-  return `${volHtml}<span class="flow-gap"></span>${mcapHtml}`;
+  container.append(
+    prevVol
+      ? buildFlowTransition('VOL 5M', prevVol, currentVol, 'up')
+      : buildMetricPair('VOL 5M', currentVol, 'up'),
+  );
+  const gap = document.createElement('span');
+  gap.className = 'flow-gap';
+  container.append(gap);
+  container.append(
+    prevMcap
+      ? buildFlowTransition('MCAP', prevMcap, currentMcap, mcapTone)
+      : buildMetricPair('MCAP', currentMcap, mcapTone),
+  );
 }
 
-function renderAlertStatsLine(alert: AlertEntry) {
-  return [
-    `<span><span class="label">MCAP</span> <span class="value up current-mcap">${fmtMoney(alert.mcap)}</span></span>`,
-    `<span><span class="label">AGE</span> <span class="value white">${alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-'}</span></span>`,
-    `<span><span class="label">1H</span> <span class="value white">${fmtMoney(alert.volume1h)}</span></span>`,
-    `<span><span class="label">6H</span> <span class="value white">${fmtMoney(alert.volume6h)}</span></span>`,
-    `<span><span class="label">24H</span> <span class="value white">${fmtMoney(alert.volume24h)}</span></span>`,
-  ].join('');
+function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
+  container.append(
+    buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up current-mcap'),
+    buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+    buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
+    buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
+    buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
+  );
+}
+
+function buildMetricPair(label: string, value: string, toneClass: string) {
+  const wrapper = document.createElement('span');
+  const labelEl = document.createElement('span');
+  labelEl.className = 'label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('span');
+  valueEl.className = `value ${toneClass}`.trim();
+  valueEl.textContent = value;
+  wrapper.append(labelEl, ' ', valueEl);
+  return wrapper;
+}
+
+function buildFlowTransition(label: string, previous: string, next: string, toneClass: string) {
+  const wrapper = document.createElement('span');
+  const labelEl = document.createElement('span');
+  labelEl.className = 'label';
+  labelEl.textContent = label;
+  wrapper.append(labelEl, ` ${previous} → `);
+  const valueEl = document.createElement('span');
+  valueEl.className = `value ${toneClass}`.trim();
+  valueEl.textContent = next;
+  wrapper.append(valueEl);
+  return wrapper;
+}
+
+function buildInlineLink(label: string, href: string) {
+  const link = document.createElement('a');
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.className = 'alert-inline-link';
+  link.textContent = label;
+  return link;
+}
+
+function buildProfileLink(url: string | null | undefined) {
+  const safeUrl = sanitizeOptionalHttpUrl(url);
+  if (!safeUrl) {
+    const disabled = document.createElement('span');
+    disabled.className = 'alert-inline-link disabled';
+    disabled.textContent = 'X Perfil';
+    return disabled;
+  }
+  return buildInlineLink('X Perfil', sanitizeHttpUrl(safeUrl));
+}
+
+function buildTextSeparator() {
+  const separator = document.createElement('span');
+  separator.textContent = '/';
+  return separator;
+}
+
+function buildActionButton(
+  label: string,
+  className: string,
+  action: string,
+  address: string,
+  dataLabel?: string | null,
+  disabled = false,
+) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.dataset.action = action;
+  button.dataset.address = address;
+  if (dataLabel) {
+    button.dataset.label = dataLabel;
+  }
+  button.disabled = disabled;
+  button.textContent = label;
+  return button;
+}
+
+function buildStarButton(address: string, isStarred: boolean, disabled: boolean, title: string) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `action-glyph starred-button${isStarred ? ' active' : ''}`;
+  button.dataset.action = 'toggle-star';
+  button.dataset.address = address;
+  button.disabled = disabled;
+  button.title = title;
+  button.textContent = isStarred ? '★' : '☆';
+  return button;
 }
 
 function getAlertToneClass(alert: AlertEntry) {

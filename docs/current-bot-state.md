@@ -311,26 +311,40 @@ Current monitored UI behavior:
   - normal blocklist remains account-scoped
   - admin block is global for all users
 
-### Login screen roadmap
-- Current frontend login is still a minimal "raw login" shell:
-  - product title + subtitle
-  - flash/error area
-  - email field
-  - password field
-  - submit button
-- This is functionally enough to call `POST /api/auth/login`, but it does not yet represent the full auth/session architecture already present in the backend and controller.
-- For this bot, login is not just credential submit:
-  - it starts the session bootstrap
-  - it leads into `GET /api/auth/me`
-  - it then hydrates account config from `GET /api/config`
-  - it then hydrates monitored state from `GET /api/dashboard/monitored`
+### Login and account surface
+- The frontend login is no longer just a raw credential form.
+- It now reflects the current backend-owned auth model and includes:
+  - explicit auth-state feedback
+  - client-side login validation
+  - password show/hide
+  - caps-lock hint
+  - focus recovery after failed submit
+  - `Create Account`
+  - `Forgot Password`
+  - `Access Help`
+  - email-verification flow
+  - password-reset flow
+  - email-OTP verification modal
+  - authenticated `Change Password`
+- Current login/bootstrap path:
+  1. `POST /api/auth/login`
+  2. backend verifies email/password
+  3. backend sends email OTP
+  4. `POST /api/auth/login-otp/verify`
+  5. backend creates the cookie-backed session
+  6. frontend restores session with `GET /api/auth/me`
+  7. frontend hydrates account/config/dashboard state
 
-Current UX gaps in login:
-- generic error handling still collapses too many cases into broad messages such as fetch/login failure
-- login shell does not clearly communicate session restore, active validation, or next-step bootstrap behavior
-- missing important form UX states such as password visibility toggle, stronger loading states, and clearer field-level guidance
-- insufficient recovery/help affordances for auth problems
-- visual hierarchy is still very close to a raw form instead of a deliberate product entry screen
+Current login/account implementation status:
+- login, registration, email verification, password reset, and change password are implemented
+- session restore after hard refresh is working in the integrated frontend
+- the live auth flow is cookie-backed and no longer depends on browser-readable token storage
+- auth UX is materially more complete than the older "raw login shell" state
+
+Current login/account follow-up:
+- keep refining support/recovery wording and auth-state messaging
+- keep validating that frontend UX changes do not drift from the backend-owned session model
+- avoid reintroducing frontend-readable session state as part of convenience UX work
 
 ### Auth and security hardening checkpoint
 - Session auth is now cookie-backed with `HttpOnly` cookies instead of browser-readable auth token storage.
@@ -354,248 +368,70 @@ Current UX gaps in login:
 Current honest security assessment:
 - Auth/session security is materially stronger than before.
 - The frontend is significantly harder to exploit via straightforward XSS than it was before the hardening pass.
+- Recent backend hardening completed:
+  - each login now gets a unique session identity
+  - socket revocation is tracked per session instead of only per user
+  - periodic cleanup now includes login OTP challenges, email verification tokens, and password reset tokens
+  - backend auth routes now reject malformed OTP challenge tokens, verification tokens, and reset tokens earlier instead of carrying obviously invalid input deeper into auth flows
+  - websocket auth now follows the documented cookie-first session model in live environments instead of keeping a general-purpose token handshake path
+- Recent frontend render-surface hardening completed:
+  - auth/account UI text for session identity and email-verification / login-OTP hints was moved off direct HTML-string interpolation and into DOM text hydration
+  - blocklist chips are now built as DOM nodes instead of interpolated HTML strings
+  - manual, monitored, recent, and old-week search inputs now restore the typed query through DOM input values instead of HTML attribute interpolation
+  - primary config-grid values now hydrate through DOM input/select state instead of being embedded directly into HTML `value` / `selected` attributes
+  - alerts search, PumpFun controls, starred address-only cards, PumpFun toasts, and star toggles all reduced reliance on inline HTML mutation / interpolation further
+  - live rows in `ALERTS`, `MONITORED TOKENS`, and `PUMPFUN - LIVE` now build their external-data-heavy card content through DOM nodes instead of row-level HTML-string interpolation
+  - the PumpFun migration strip now hydrates through DOM chips instead of string-joined HTML
+- Recent backend validation hardening completed:
+  - `GET /api/admin/logs` now validates `limit` explicitly as a positive integer and rejects malformed `success` query values instead of relying on implicit coercion
+  - admin user-target routes now use the same positive-ID parsing contract already used elsewhere in the admin surface
 - Risk is reduced, but not eliminated:
-  - remaining risk is mostly structural due to the UI architecture still relying on HTML-string rendering in many places
-  - the next line of defense after the current hardening is continued render-surface review and future reduction of `innerHTML`-heavy patterns where practical
+  - remaining risk is now mostly deeper structural / architectural, not the previously most-exposed auth/account/config/list surfaces
+  - the next line of defense after the current hardening is targeted defense-in-depth on lower-traffic render helpers, operational limits, and observability
 
 Current security priority order:
-1. Finish practical XSS hardening and keep CSP stable.
-2. Only then move into real email-backed password reset.
-3. After password reset, revisit 2FA / secondary verification.
+1. Session policy follow-up
+   - unique per-login session identity is now in place
+   - HTTP and socket revocation semantics are now aligned for:
+     - `Logout` on the current session
+     - `Logout All` on the full account
+     - admin revoke/deactivate on live sockets
+   - remaining follow-up is mainly policy tuning:
+     - session expiration
+     - cleanup cadence
+     - how many historical sessions one account may accumulate
 
-What a good login screen for this bot must communicate:
-- this is the authenticated entry point to the Solana monitoring workspace
-- session is backend-owned and validated by `/api/auth/me`
-- login success leads to config/account/bootstrap loading
-- session restore on returning users is expected behavior
-- logout and logout-all are part of the same backend session model
+2. Defense-in-depth render follow-up
+   - the highest-risk auth/account/config/list surfaces have already received the main hardening pass
+   - remaining work is selective cleanup of lower-traffic HTML-string helpers where the safety win justifies the churn
+   - preserve the current CSP and cookie-auth posture while keeping `escapeHtml(...)`, URL sanitization, and `CSS.escape(...)` as the baseline floor
 
-Planned login requirements:
+3. Auth regression coverage recovery
+   - test entrypoint and live cookie + OTP coverage are back in place
+   - keep extending coverage for:
+     - login OTP verify/resend edge cases
+     - cookie-backed session restore
+     - password reset / password change revocation behavior
+     - admin session revocation paths
+     - malformed auth token / challenge inputs at backend boundaries
 
-#### 1. Status clarity
-- clearly show the auth phase:
-  - restoring session
-  - logging in
-  - login success
-  - session revoked
-  - login required
-- avoid generic loading language when the app knows the exact phase
-
-#### 2. Useful error handling
-- distinguish these cases in UI copy:
-  - invalid email/password
-  - deactivated account
-  - auth rate-limit / temporary lockout
-  - backend unavailable
-  - network failure / fetch failure
-- if backend returns retry timing for lockout, the UI should expose that clearly
-
-#### 3. Better form usability
-- preserve the email value after failed submit
-- support Enter submit cleanly
-- disable form controls while request is in flight
-- add password show/hide toggle
-- improve focus/error/disabled states on fields
-- keep labels explicit and accessible
-
-#### 4. Product context and trust
-- keep strong branding:
-  - product name
-  - short monitor-specific subtitle
-- add a short description of what happens after login
-- reinforce that the user is entering the monitoring dashboard/workspace, not a generic admin panel
-
-#### 5. Session awareness
-- communicate that session can be restored on return
-- communicate server-side revocation more clearly when it happens
-- align login messaging with the real backend session model already used by socket auth and logout-all
-
-#### 6. Recovery path
-- reserve space for future recovery/support actions:
-  - forgot password
-  - access problem/help text
-  - invite/account assistance if needed
-- even if those flows are not implemented yet, the layout should leave room for them
-
-#### 7. Visible security without clutter
-- keep auth messaging calm and product-grade
-- avoid exposing sensitive details
-- keep neutral invalid-credential responses
-- prepare the screen structure so future additions like password change / invite / 2FA do not require a redesign from zero
-
-#### 8. Visual hierarchy and consistency
-- preserve the current visual language of the bot
-- strengthen hierarchy between:
-  - brand header
-  - explanatory copy
-  - status/error feedback
-  - form fields
-  - primary CTA
-- the goal is not only "prettier login", but a login that explains the app state clearly
-
-Implementation strategy for this login work:
-- deliver in parts to avoid losing track
-- prefer incremental changes over a full rewrite at once
-- keep `docs/current-bot-state.md` as the running checkpoint for login UX scope
-- validate each step against the existing backend auth/session flow before moving to the next
-
-Current login implementation progress:
-
-#### Completed in current phase
-- branding was updated in the login shell to the current product naming:
-  - `TrendScope`
-  - `Volume Bot Tracker`
-- top-of-screen redundancy was reduced:
-  - duplicated status chip in the top-right was removed
-  - duplicate explanatory copy block above the form was removed
-- form usability was improved:
-  - email value persists across rerenders and failed login attempts
-  - password field supports show/hide
-  - password show/hide now preserves caret/selection position
-  - submit/loading state is clearer
-  - repeated invalid-credential attempts trigger a subtle flash pulse
-  - invalid-credential responses also visually mark the email/password fields
-  - password field shows a `Caps Lock is on` hint
-  - login ignores duplicate submits while auth is already in flight
-  - keyboard submit via Enter/Return now triggers the same login flow as mouse click
-  - email input trims surrounding spaces on blur
-  - error feedback clears automatically when the user starts editing again
-  - login now focuses the most useful field automatically:
-    - email on first open / email-format problems / generic credential failure
-    - password on password-required errors
-- auth error handling is more specific in the frontend controller:
-  - invalid credentials
-  - deactivated account
-  - temporarily locked login
-  - revoked/expired/invalid session
-  - network/server auth failure
-- lockout messaging was refined:
-  - retry timing is displayed in minutes instead of raw seconds
-  - the lockout flash no longer uses the `WAIT` badge
-- flash feedback now has clearer semantic states:
-  - `login required`
-  - `session`
-  - `credentials`
-  - `lockout`
-  - `network`
-  - `success`
-- login accessibility/semantics were improved without adding UI clutter:
-  - flash uses `role="alert"` or `role="status"`
-  - fields use `aria-invalid`
-  - fields reference the current auth feedback with `aria-describedby`
-  - email field uses `inputmode="email"`, `autocapitalize="none"`, and `spellcheck="false"`
-  - password-toggle control uses `aria-controls`
-- auth feedback/state classification was centralized in frontend helpers instead of being spread as raw string checks across multiple render points
-- login shell structure was modularized into explicit slots:
-  - header
-  - feedback
-  - form
-  - support
-- lightweight client-side login validation now blocks obvious invalid submits before backend roundtrip:
-  - empty email
-  - malformed email
-  - empty password
-- auth extension groundwork is no longer only hidden structure:
-  - the frontend now has real auth-panel state for modal flows
-  - auth helper/state/controller wiring is in place for registration, password change, and invite validation
-- `Change Password` is now a real authenticated frontend flow:
-  - opened from the user menu
-  - rendered as a centered modal with backdrop blur
-  - uses `POST /api/auth/change-password`
-  - preserves field drafts across rerenders
-  - preserves caret/selection during password show/hide
-  - logs the user out after success so the new password must be used on the next sign-in
-- local old-password detection was added for the current browser/device:
-  - after a successful password change, the previous password is remembered locally as a hash
-  - if the same email later tries to log in with that old password, the login flash explains that it is an old password and includes the changed date in `MM/DD/YYYY`
-- invite-based registration is now a real frontend flow instead of only a reserved slot:
-  - `Create account with invite` opens a centered registration modal
-  - registration uses the existing backend `POST /api/auth/register`
-  - fields are:
-    - username
-    - email
-    - password
-    - invite code
-  - frontend validation now mirrors backend constraints more closely:
-    - username must be `3-32` chars
-    - username may only use letters, numbers, and underscores
-    - password must be `8-128` chars
-  - invite codes are validated on blur through the existing public endpoint before submit
-  - registration errors stay inside the registration modal instead of dropping the user back to the base login shell
-  - registration preserves already-entered values on rerender/error
-  - registration now focuses/selects the most relevant field automatically on error:
-    - username for username conflicts/validation
-    - email for email conflicts/validation
-    - password for password validation
-    - invite code for invite issues
-- invite/account assistance is now a visible support flow instead of only helper copy:
-  - `Access help` opens a dedicated modal from the login support area
-  - the modal gives guidance for:
-    - expired invite
-    - revoked invite
-    - invite max-uses reached
-    - account blocked / deactivated scenarios
-  - the modal now acts as an invite-code checker only
-  - the support warning inside that modal was rewritten as a stronger anti-scam / anti-DM message
-  - the help modal has its own typography treatment and compact layout separate from the main login shell
-- a first explicit `Forgot Password` path now exists in the login UI:
-  - it does not fake a reset flow that the backend does not support yet
-  - it opens a dedicated modal that explains the official support-only recovery path
-  - it reinforces the anti-DM / official-ticket guidance instead of pretending self-serve reset exists
-- login support/action hierarchy was reorganized:
-  - `Create Account` and `Forgot Password` were moved directly under the password field
-  - `Access Help` remains in the support block as the dedicated support affordance
-  - `Create Account` label was simplified from `Create account with invite` to `Create Account`
-- auth feedback isolation was refined so each surface only shows relevant messages:
-  - registration modal no longer inherits generic login notices such as `No saved session`
-  - base login flash no longer inherits registration-only errors such as invite-validation failures
-- auth/session transport was hardened:
-  - auth no longer exposes a readable session token through frontend debug globals
-  - unnecessary auth/config debug logs were removed from the browser console
-  - live auth now relies on backend-issued `HttpOnly` cookies instead of frontend-managed JWT storage
-  - socket auth was aligned to the same cookie-backed session model
-- login typography and visual language were revised:
-  - `Saira` is now the intended default type direction for the login/auth interface
-  - login screen, support block, and auth modals were aligned around that direction
-  - auth titles were moved toward stronger white/bold treatment while body/support copy remains lighter
-  - the login password `Show` control was reduced to plain clickable text to match the auth modal style
-  - the inline `Create Account | Forgot Password` row was centered under the password field
-  - spacing between login labels and fields was tightened and then selectively rebalanced for `Password`
-- backend invite consumption for registration was corrected:
-  - invite codes are no longer burned before the user record is successfully created
-  - `/api/auth/register` now uses a DB transaction
-  - the invite row is locked first
-  - user creation, session creation, last-login update, and invite-use increment happen in one transaction
-  - if registration fails, the transaction rolls back and the invite remains usable until success, revocation, or expiry
-
-#### Explicitly reverted during iteration
-- temporary inline recovery action buttons inside the form were tested and then removed because they added too much visual weight for the current layout
-- softer alternate field-error color for local validation was tested and then removed; the current UI keeps one consistent error color
-- dismissing feedback with `Esc` was tested and then removed because it felt unnecessary for this screen
-- the `Access Help` modal originally included an email field, but it was removed because it did not have a real functional role yet and made the checker more cluttered
-- the `Change Password` modal originally used boxed `Show/Hide` toggles, but those were replaced with plain clickable text because the lighter treatment fit the modal better
-- several auth-modal font experiments were tested (`Inter`, `Satoshi`, `Saira`) before settling on `Saira` as the default direction for the login/auth surfaces
-
-#### Still pending in the login roadmap
-- decide whether the recovery/support affordance is already complete enough in its current modal form or still needs another product pass
-- evaluate whether the current field-error styling is the final direction or still too visually strong
-- decide whether login notices/flash states should gain small iconography or remain text+badge only
-- session restore after hard refresh (`F5`) was re-tested and is now considered resolved in the integrated frontend
-- continue validating that each login UX refinement preserves the current backend-owned auth/session model and does not imply unsupported frontend-only behavior
-- latest manual validation after the cookie migration:
-  - login works again once the local test-account password matches the DB state
-  - a quick create-account flow was manually validated as working
-  - the temporary local login confusion came from a password changed during auth-test runs, not from the cookie migration itself
-- current auth/security implementation status from this point:
-  1. real email verification is implemented
-  2. real password reset is implemented
-  3. secondary verification is implemented as email OTP on login
-  4. lower-priority auth polish remains open
-     - final support/recovery wording pass
-     - optional flash/icon treatment pass
+4. Stronger secondary verification follow-up
+   - current secondary verification is email OTP
+   - if stronger account protection is needed later, the next upgrade path is TOTP + backup codes
+   - keep this as a later hardening step, not the immediate next priority
 
 #### Next active path
-1. Performance investigation and latency reduction
+1. Session policy and cleanup review
+   - verify the current expiration and retention behavior against real usage
+   - keep `logout-all` and forced admin revoke as the reference contract for full-account invalidation
+   - watch for any operational need to cap concurrent or historical sessions harder
+
+2. Defense-in-depth hardening
+   - review lower-traffic render helpers and backend edges that still rely on older patterns
+   - prioritize changes that improve safety without changing alerting, catalog, routing, or operator workflow
+   - keep operational visibility, rate/retention controls, and abuse resistance as the main next levers
+
+3. Performance investigation and latency reduction
    - measure real response time for:
      - `GET /api/dashboard/monitored`
      - `GET /api/config`
@@ -607,23 +443,9 @@ Current login implementation progress:
    - if needed, reduce bootstrap payload cost before adding more features
    - likely next target is trimming or staging `dashboard/monitored` hydration further if production still feels slow
 
-2. Session policy review
-   - re-evaluate session expiration and cleanup cadence
-   - review how many historical sessions a single account is allowed to accumulate
-   - keep `logout-all` behavior as the reference point for expected session invalidation
-   - decide whether older inactive sessions should be capped, pruned faster, or surfaced more clearly in admin tooling
-   - review whether OTP challenge cleanup should also be tightened beyond the current flow-based cleanup
-
-3. Final security pass
-   - continue reducing older render surfaces that still rely heavily on HTML-string rendering
-   - prioritize the most sensitive auth/account/config surfaces first
-   - preserve the current CSP and cookie-auth posture while reducing structural XSS risk
-   - only after the auth roadmap is stable, consider broader `innerHTML` reduction in lower-risk UI areas
-
 4. Stronger secondary verification follow-up
-   - current secondary verification is email OTP
-   - if stronger account protection is needed later, the next upgrade path is TOTP + backup codes
-   - keep this as a later hardening step, not the immediate next priority
+   - if the account-risk model grows, evaluate TOTP + backup codes after the render-surface pass
+   - keep email OTP as the current secondary gate until then
 
 #### Email infrastructure checkpoint
 - Chosen provider for the first real email rollout: `Resend`

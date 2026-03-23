@@ -315,9 +315,19 @@ function wireLogHovers(root: HTMLElement) {
   if (logHoverWired) return;
   logHoverWired = true;
 
+  const syncLogHoverToggles = () => {
+    for (const wrap of root.querySelectorAll<HTMLElement>('[data-log-hover]')) {
+      const toggle = wrap.querySelector<HTMLElement>('[data-log-hover-toggle]');
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', wrap.classList.contains('open') ? 'true' : 'false');
+      }
+    }
+  };
+
   root.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     const toggle = target?.closest<HTMLElement>('[data-log-hover-toggle]');
+    const closeButton = target?.closest<HTMLElement>('[data-log-hover-close]');
     const wrap = target?.closest<HTMLElement>('[data-log-hover]');
 
     for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
@@ -327,6 +337,14 @@ function wireLogHovers(root: HTMLElement) {
     if (toggle && wrap) {
       event.preventDefault();
       wrap.classList.toggle('open');
+      syncLogHoverToggles();
+      return;
+    }
+
+    if (closeButton && wrap) {
+      event.preventDefault();
+      wrap.classList.remove('open');
+      syncLogHoverToggles();
       return;
     }
 
@@ -334,6 +352,21 @@ function wireLogHovers(root: HTMLElement) {
       for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
         openWrap.classList.remove('open');
       }
+      syncLogHoverToggles();
+    }
+  });
+
+  root.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    let changed = false;
+    for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
+      openWrap.classList.remove('open');
+      changed = true;
+    }
+    if (changed) {
+      syncLogHoverToggles();
     }
   });
 }

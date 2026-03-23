@@ -1,7 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import type { AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
-import { escapeHtml } from './html-safety';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -43,7 +42,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       <div class="legacy-bar-controls">
         <div class="compact-search ${searchQuery ? 'has-query' : ''}">
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
-          <input class="compact-search-input" type="text" placeholder="ticker / ca" value="${searchQuery ? escapeHtml(state.ui.manualSearchQuery || '') : ''}" data-action="manual-search" data-search-input="manual">
+          <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="manual-search" data-search-input="manual">
         </div>
         <button type="button" class="compact-icon-toggle ${state.ui.manualStarredOnly ? 'active' : ''}" data-action="manual-starred-only" aria-label="Show only starred manual tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         <div class="sort-pill-group">
@@ -97,7 +96,11 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
     toggleAction: 'manual-search-focus',
     inputAction: 'manual-search',
   });
-  section.querySelector<HTMLInputElement>('[data-action="manual-search"]')?.addEventListener('input', (event) => {
+  const searchInput = section.querySelector<HTMLInputElement>('[data-action="manual-search"]');
+  if (searchInput) {
+    searchInput.value = state.ui.manualSearchQuery || '';
+  }
+  searchInput?.addEventListener('input', (event) => {
     controller.setManualSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
   section.querySelector<HTMLButtonElement>('[data-action="manual-starred-only"]')?.addEventListener('click', () => {

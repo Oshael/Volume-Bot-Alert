@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const User = require('../models/user');
@@ -16,6 +17,45 @@ const { getClient } = require('../models/db');
 const emailService = require('../services/email-service');
 
 const router = express.Router();
+const EMAIL_MAX_LENGTH = 254;
+const INVITE_CODE_MAX_LENGTH = 64;
+const LOGIN_OTP_CHALLENGE_TOKEN_LENGTH = 48;
+const EMAIL_ACTION_TOKEN_LENGTH = 64;
+
+function normalizeTrimmedText(value, maxLength) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (!Number.isInteger(maxLength) || maxLength <= 0) {
+    return text;
+  }
+  return text.slice(0, maxLength);
+}
+
+function normalizeEmailInput(value) {
+  return normalizeTrimmedText(value, EMAIL_MAX_LENGTH).toLowerCase();
+}
+
+function normalizeInviteCodeInput(value) {
+  return normalizeTrimmedText(value, INVITE_CODE_MAX_LENGTH).toUpperCase();
+}
+
+function hasExactHexLength(value, length) {
+  return typeof value === 'string'
+    && new RegExp(`^[a-f0-9]{${length}}$`, 'i').test(value);
+}
+
+function getLoginOtpLength() {
+  const parsed = Number.parseInt(config.email.loginOtpLength, 10);
+  if (!Number.isInteger(parsed)) {
+    return 6;
+  }
+  return Math.max(4, parsed);
+}
+
+function isValidLoginOtpCode(code) {
+  return typeof code === 'string'
+    && new RegExp(`^\\d{${getLoginOtpLength()}}$`).test(code);
+}
 
 function serializeUser(user) {
   return {
@@ -96,8 +136,9 @@ function buildEmailDebug(delivery) {
 }
 
 async function createAuthenticatedSession({ user, ipAddress, userAgent, res }) {
+  const sessionId = crypto.randomUUID();
   const token = jwt.sign(
-    { userId: user.id, role: user.role },
+    { userId: user.id, role: user.role, jti: sessionId },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn }
   );
@@ -200,7 +241,10 @@ async function issueLoginOtp({ user, ipAddress, userAgent }) {
 router.post('/register', authLimiter, async (req, res) => {
   let client;
   try {
-    const { username, email, password, inviteCode } = req.body;
+    const username = normalizeTrimmedText(req.body?.username, 64);
+    const email = normalizeEmailInput(req.body?.email);
+    const password = String(req.body?.password || '');
+    const inviteCode = normalizeInviteCodeInput(req.body?.inviteCode);
 
     if (!username || !email || !password || !inviteCode) {
       return res.status(400).json({ error: 'All fields are required: username, email, password, inviteCode' });
@@ -277,7 +321,8 @@ router.post('/register', authLimiter, async (req, res) => {
 
 router.post('/login', authLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeEmailInput(req.body?.email);
+    const password = String(req.body?.password || '');
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -344,9 +389,12 @@ router.post('/login-otp/resend', authOtpLimiter, async (req, res) => {
       return res.status(503).json({ error: 'Email delivery is not configured' });
     }
 
-    const challengeToken = String(req.body?.challengeToken || '').trim();
+    const challengeToken = normalizeTrimmedText(req.body?.challengeToken, LOGIN_OTP_CHALLENGE_TOKEN_LENGTH);
     if (!challengeToken) {
       return res.status(400).json({ error: 'Verification challenge is required' });
+    }
+    if (!hasExactHexLength(challengeToken, LOGIN_OTP_CHALLENGE_TOKEN_LENGTH)) {
+      return res.status(400).json({ error: 'Verification challenge is invalid or expired. Please sign in again.' });
     }
 
     const challenge = await LoginEmailOtpChallenge.findPendingByChallengeToken(challengeToken);
@@ -379,11 +427,17 @@ router.post('/login-otp/resend', authOtpLimiter, async (req, res) => {
 
 router.post('/login-otp/verify', authOtpLimiter, async (req, res) => {
   try {
-    const challengeToken = String(req.body?.challengeToken || '').trim();
-    const code = String(req.body?.code || '').trim();
+    const challengeToken = normalizeTrimmedText(req.body?.challengeToken, LOGIN_OTP_CHALLENGE_TOKEN_LENGTH);
+    const code = normalizeTrimmedText(req.body?.code, 32);
 
     if (!challengeToken || !code) {
       return res.status(400).json({ error: 'Verification challenge and code are required' });
+    }
+    if (!hasExactHexLength(challengeToken, LOGIN_OTP_CHALLENGE_TOKEN_LENGTH)) {
+      return res.status(400).json({ error: 'Verification code is invalid or expired. Please sign in again.' });
+    }
+    if (!isValidLoginOtpCode(code)) {
+      return res.status(401).json({ error: 'Verification code is incorrect. Please try again.' });
     }
 
     const challenge = await LoginEmailOtpChallenge.findValidByChallengeToken(challengeToken);
@@ -429,7 +483,7 @@ router.post('/login-otp/verify', authOtpLimiter, async (req, res) => {
 router.post('/logout', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
     await Session.revoke(req.token);
-    socketHub.revokeUserSockets(req.user.id, 'logout');
+    socketHub.revokeSessionSockets(req.sessionId, 'logout');
     clearAuthCookie(res);
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
@@ -460,7 +514,7 @@ router.post('/verify-email/request', authEmailLimiter, async (req, res) => {
       return res.status(503).json({ error: 'Email delivery is not configured' });
     }
 
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = normalizeEmailInput(req.body?.email);
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
     }
@@ -503,9 +557,12 @@ router.post('/verify-email/request', authEmailLimiter, async (req, res) => {
 
 router.post('/verify-email/confirm', authEmailLimiter, async (req, res) => {
   try {
-    const token = String(req.body?.token || '').trim();
+    const token = normalizeTrimmedText(req.body?.token, EMAIL_ACTION_TOKEN_LENGTH);
     if (!token) {
       return res.status(400).json({ error: 'Verification token is required' });
+    }
+    if (!hasExactHexLength(token, EMAIL_ACTION_TOKEN_LENGTH)) {
+      return res.status(400).json({ error: 'Verification token is invalid or expired' });
     }
 
     const verification = await EmailVerificationToken.findValidByToken(token);
@@ -535,7 +592,7 @@ router.post('/verify-email/confirm', authEmailLimiter, async (req, res) => {
 
 router.post('/password-reset/request', authEmailLimiter, async (req, res) => {
   try {
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = normalizeEmailInput(req.body?.email);
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
     }
@@ -576,11 +633,14 @@ router.post('/password-reset/request', authEmailLimiter, async (req, res) => {
 
 router.post('/password-reset/confirm', authEmailLimiter, async (req, res) => {
   try {
-    const token = String(req.body?.token || '').trim();
+    const token = normalizeTrimmedText(req.body?.token, EMAIL_ACTION_TOKEN_LENGTH);
     const newPassword = String(req.body?.newPassword || '');
 
     if (!token || !newPassword) {
       return res.status(400).json({ error: 'Reset token and new password are required' });
+    }
+    if (!hasExactHexLength(token, EMAIL_ACTION_TOKEN_LENGTH)) {
+      return res.status(400).json({ error: 'Reset token is invalid or expired' });
     }
     if (newPassword.length < 8 || newPassword.length > 128) {
       return res.status(400).json({ error: 'New password must be 8–128 characters' });

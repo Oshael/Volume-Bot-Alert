@@ -4,6 +4,35 @@ const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middlew
 
 const router = express.Router();
 
+function parseInviteCreateOptions(body = {}) {
+  const opts = {};
+  const hasMaxUses = body.maxUses !== undefined && body.maxUses !== null && String(body.maxUses).trim() !== '';
+  const hasExpiryHours = body.expiryHours !== undefined && body.expiryHours !== null && String(body.expiryHours).trim() !== '';
+
+  if (hasMaxUses) {
+    const parsed = Number.parseInt(body.maxUses, 10);
+    if (!Number.isInteger(parsed)) {
+      return { ok: false, error: 'maxUses must be an integer' };
+    }
+    opts.maxUses = parsed;
+  }
+
+  if (hasExpiryHours) {
+    const parsed = Number.parseInt(body.expiryHours, 10);
+    if (!Number.isInteger(parsed)) {
+      return { ok: false, error: 'expiryHours must be an integer' };
+    }
+    opts.expiryHours = parsed;
+  }
+
+  return { ok: true, opts };
+}
+
+function parseInviteId(value) {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 /**
  * POST /api/invites
  * Create a new invite. Admins can set custom maxUses/expiryHours.
@@ -15,8 +44,11 @@ router.post('/', authenticate, requireTrustedOrigin, async (req, res) => {
     const opts = {};
     // Only admins can customize invite parameters
     if (req.user.role === 'admin') {
-      if (req.body.maxUses) opts.maxUses = Math.min(parseInt(req.body.maxUses) || 1, 100);
-      if (req.body.expiryHours) opts.expiryHours = Math.min(parseInt(req.body.expiryHours) || 72, 720); // max 30 days
+      const parsed = parseInviteCreateOptions(req.body);
+      if (!parsed.ok) {
+        return res.status(400).json({ error: parsed.error });
+      }
+      Object.assign(opts, parsed.opts);
     }
 
     const invite = await Invite.create(req.user.id, opts);
@@ -75,17 +107,22 @@ router.get('/validate/:code', async (req, res) => {
  */
 router.delete('/:id', authenticate, requireTrustedOrigin, async (req, res) => {
   try {
+    const inviteId = parseInviteId(req.params.id);
+    if (!inviteId) {
+      return res.status(400).json({ error: 'Invalid invite ID' });
+    }
+
     let result;
     if (req.user.role === 'admin') {
       // Admin can revoke any invite by code or ID
       const { query } = require('../models/db');
       const { rows } = await query(
         'UPDATE invites SET is_revoked = true WHERE id = $1 RETURNING id, code, is_revoked',
-        [req.params.id]
+        [inviteId]
       );
       result = rows[0];
     } else {
-      result = await Invite.revoke(parseInt(req.params.id), req.user.id);
+      result = await Invite.revoke(inviteId, req.user.id);
     }
 
     if (!result) {

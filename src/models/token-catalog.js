@@ -1,20 +1,15 @@
 ﻿const db = require('./db');
 const adminBlockedToken = require('./admin-blocked-token');
 const { isValidAddress } = require('./user-token');
-
-function normalizeChain(chain) {
-  const value = String(chain || 'solana').trim().toLowerCase();
-  if (!value) return 'solana';
-  return value;
-}
+const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
 function normalizeSource(source) {
-  const value = String(source || 'unknown').trim().toLowerCase();
+  const value = String(normalizeText(source, 64) || 'unknown').trim().toLowerCase();
   return value || 'unknown';
 }
 
-function toNullableText(value) {
-  return value == null ? null : String(value).trim() || null;
+function toNullableText(value, maxLength = 256) {
+  return normalizeText(value, maxLength);
 }
 
 async function upsertToken(token) {
@@ -26,12 +21,12 @@ async function upsertToken(token) {
 
   const chain = normalizeChain(token.chain);
   const source = normalizeSource(token.source);
-  const symbol = toNullableText(token.symbol);
-  const name = toNullableText(token.name);
-  const lastPairAddress = toNullableText(token.pairAddress);
-  const lastPairUrl = toNullableText(token.pairUrl);
-  const lastImageUrl = toNullableText(token.imageUrl);
-  const lastTwitterUrl = toNullableText(token.twitterUrl);
+  const symbol = normalizeText(token.symbol, 64);
+  const name = normalizeText(token.name, 160);
+  const lastPairAddress = isValidAddress(String(token.pairAddress || '').trim()) ? String(token.pairAddress).trim() : null;
+  const lastPairUrl = sanitizeHttpUrl(token.pairUrl);
+  const lastImageUrl = sanitizeAssetUrl(token.imageUrl);
+  const lastTwitterUrl = sanitizeHttpUrl(token.twitterUrl);
   const isActiveMonitorCandidate = token.isActiveMonitorCandidate == null ? true : !!token.isActiveMonitorCandidate;
   const lastMcap = Number.isFinite(Number(token.mcap)) ? Number(token.mcap) : null;
   const lastPrice = Number.isFinite(Number(token.price)) ? Number(token.price) : null;
@@ -173,7 +168,7 @@ async function listEligibleForSnapshots(limit = 25) {
 
 async function listEligibleVisible(limit = 500, minMcap = 30000) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 5000));
-  const safeMinMcap = Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000;
+  const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
   const { rows } = await db.query(
     `SELECT
        address,
@@ -195,7 +190,7 @@ async function listEligibleVisible(limit = 500, minMcap = 30000) {
 
 async function listDashboardMonitored(limit = 500, minMcap = 30000) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 5000));
-  const safeMinMcap = Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000;
+  const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
   const { rows } = await db.query(
     `SELECT
        address,
@@ -254,15 +249,15 @@ async function applyEvaluationResult(address, result) {
   const nextEvaluationAt = result.nextEvaluationAt || new Date(Date.now() + 10 * 60 * 1000);
   const lastEvaluationError = toNullableText(result.lastEvaluationError);
   const errorCount = Number.isInteger(result.evaluationErrorCount) ? result.evaluationErrorCount : 0;
-  const symbol = toNullableText(result.symbol);
-  const name = toNullableText(result.name);
-  const pairAddress = toNullableText(result.pairAddress);
-  const pairUrl = toNullableText(result.pairUrl);
-  const imageUrl = toNullableText(result.imageUrl);
-  const twitterUrl = toNullableText(result.twitterUrl);
+  const symbol = toNullableText(result.symbol, 64);
+  const name = toNullableText(result.name, 160);
+  const pairAddress = isValidAddress(String(result.pairAddress || '').trim()) ? String(result.pairAddress).trim() : null;
+  const pairUrl = sanitizeHttpUrl(result.pairUrl);
+  const imageUrl = sanitizeAssetUrl(result.imageUrl);
+  const twitterUrl = sanitizeHttpUrl(result.twitterUrl);
   const lastMcap = Number.isFinite(Number(result.mcap)) ? Number(result.mcap) : null;
   const lastPrice = Number.isFinite(Number(result.price)) ? Number(result.price) : null;
-  const monitorPriority = toNullableText(result.monitorPriority) || 'dormant';
+  const monitorPriority = toNullableText(result.monitorPriority, 32) || 'dormant';
   const lastVol5m = Number.isFinite(Number(result.vol5m)) ? Number(result.vol5m) : null;
   const lastVol1h = Number.isFinite(Number(result.vol1h)) ? Number(result.vol1h) : null;
   const lastVol6h = Number.isFinite(Number(result.vol6h)) ? Number(result.vol6h) : null;

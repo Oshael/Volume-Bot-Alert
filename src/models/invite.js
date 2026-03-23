@@ -2,6 +2,26 @@ const { v4: uuidv4 } = require('uuid');
 const { query } = require('./db');
 const config = require('../../config');
 
+function normalizeInviteCode(code) {
+  return String(code || '').trim().toUpperCase();
+}
+
+function normalizeInviteMaxUses(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) {
+    return Math.max(1, Number.parseInt(config.invite.maxUses, 10) || 1);
+  }
+  return Math.max(1, Math.min(parsed, 100));
+}
+
+function normalizeInviteExpiryHours(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) {
+    return Math.max(1, Number.parseInt(config.invite.expiryHours, 10) || 72);
+  }
+  return Math.max(1, Math.min(parsed, 720));
+}
+
 function getExecutor(db) {
   return db && typeof db.query === 'function' ? db : { query };
 }
@@ -12,8 +32,8 @@ const Invite = {
    */
   async create(createdBy, { maxUses, expiryHours } = {}) {
     const code = uuidv4().replace(/-/g, '').slice(0, 16).toUpperCase();
-    const uses = maxUses || config.invite.maxUses;
-    const hours = expiryHours || config.invite.expiryHours;
+    const uses = normalizeInviteMaxUses(maxUses);
+    const hours = normalizeInviteExpiryHours(expiryHours);
 
     const { rows } = await query(
       `INSERT INTO invites (code, created_by, max_uses, expires_at)
@@ -30,6 +50,7 @@ const Invite = {
    * Atomically increments use_count to prevent race conditions.
    */
   async consume(code) {
+    const normalizedCode = normalizeInviteCode(code);
     const { rows } = await query(
       `UPDATE invites
        SET use_count = use_count + 1
@@ -38,7 +59,7 @@ const Invite = {
          AND expires_at > NOW()
          AND use_count < max_uses
        RETURNING id, code, created_by, max_uses, use_count, expires_at`,
-      [code]
+      [normalizedCode]
     );
     return rows[0] || null;
   },
@@ -47,11 +68,15 @@ const Invite = {
    * Check if an invite code is valid without consuming it.
    */
   async validate(code) {
+    const normalizedCode = normalizeInviteCode(code);
+    if (!normalizedCode || normalizedCode.length > 64) {
+      return { valid: false, reason: 'Invite code not found' };
+    }
     const { rows } = await query(
       `SELECT id, code, created_by, max_uses, use_count, expires_at, is_revoked
        FROM invites
        WHERE code = $1`,
-      [code]
+      [normalizedCode]
     );
     if (!rows[0]) return { valid: false, reason: 'Invite code not found' };
     const inv = rows[0];
@@ -66,12 +91,16 @@ const Invite = {
    */
   async lockValid(code, db) {
     const executor = getExecutor(db);
+    const normalizedCode = normalizeInviteCode(code);
+    if (!normalizedCode || normalizedCode.length > 64) {
+      return { valid: false, reason: 'Invite code not found' };
+    }
     const { rows } = await executor.query(
       `SELECT id, code, created_by, max_uses, use_count, expires_at, is_revoked
        FROM invites
        WHERE code = $1
        FOR UPDATE`,
-      [code]
+      [normalizedCode]
     );
     if (!rows[0]) return { valid: false, reason: 'Invite code not found' };
     const inv = rows[0];
@@ -113,9 +142,10 @@ const Invite = {
    * Revoke by code (admin).
    */
   async revokeByCode(code) {
+    const normalizedCode = normalizeInviteCode(code);
     const { rows } = await query(
       `UPDATE invites SET is_revoked = true WHERE code = $1 RETURNING id, code, is_revoked`,
-      [code]
+      [normalizedCode]
     );
     return rows[0] || null;
   },

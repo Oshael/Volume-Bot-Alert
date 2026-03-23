@@ -1,11 +1,65 @@
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
   || 'https://volume-alert-server-production.up.railway.app';
+const PROD_API_ORIGIN = new URL(PROD_API_BASE).origin.toLowerCase();
+
+function stripTrailingSlashes(value: string) {
+  return value.replace(/\/+$/, '');
+}
+
+function isLoopbackHost(hostname: string) {
+  const normalized = String(hostname || '').trim().toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1';
+}
+
+function getLocationOrigin(locationLike: Location) {
+  if (locationLike.origin) {
+    return locationLike.origin;
+  }
+  return `${locationLike.protocol}//${locationLike.host}`;
+}
+
+function resolveApiOverride(override: string, locationLike: Location) {
+  const raw = String(override || '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const currentOrigin = getLocationOrigin(locationLike);
+    const url = new URL(raw, currentOrigin);
+    const protocol = url.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      return null;
+    }
+
+    url.hash = '';
+    url.search = '';
+
+    const targetOrigin = url.origin.toLowerCase();
+    const isLocalPage = isLoopbackHost(locationLike.hostname);
+    const isAllowedLoopback = isLocalPage && isLoopbackHost(url.hostname);
+    if (
+      targetOrigin !== PROD_API_ORIGIN
+      && targetOrigin !== currentOrigin.toLowerCase()
+      && !isAllowedLoopback
+    ) {
+      return null;
+    }
+
+    return stripTrailingSlashes(url.toString());
+  } catch (_) {
+    return null;
+  }
+}
 
 export function resolveApiBase(locationLike: Location = window.location): string {
   const params = new URLSearchParams(locationLike.search);
   const override = params.get('api');
   if (override) {
-    return override.replace(/\/+$/, '');
+    const resolvedOverride = resolveApiOverride(override, locationLike);
+    if (resolvedOverride) {
+      return resolvedOverride;
+    }
   }
 
   const host = locationLike.hostname.toLowerCase();

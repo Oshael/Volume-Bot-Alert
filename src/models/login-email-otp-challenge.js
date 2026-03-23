@@ -10,11 +10,18 @@ function hashValue(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
+function normalizeCodeLength(rawLength) {
+  const parsedLength = Number.parseInt(rawLength, 10);
+  if (!Number.isInteger(parsedLength)) {
+    return 6;
+  }
+  return Math.max(4, parsedLength);
+}
+
 function randomCode(length = 6) {
-  const digits = '0123456789';
   let code = '';
   for (let index = 0; index < length; index += 1) {
-    code += digits[Math.floor(Math.random() * digits.length)];
+    code += crypto.randomInt(0, 10).toString();
   }
   return code;
 }
@@ -23,7 +30,7 @@ const LoginEmailOtpChallenge = {
   async create({ userId, expiresAt, requestedIp = null, userAgent = null }, db) {
     const executor = getExecutor(db);
     const challengeToken = crypto.randomBytes(24).toString('hex');
-    const codeLength = Math.max(4, Number(config.email.loginOtpLength || 6));
+    const codeLength = normalizeCodeLength(config.email.loginOtpLength);
     const code = randomCode(codeLength);
     const challengeHash = hashValue(challengeToken);
     const codeHash = hashValue(code);

@@ -9,6 +9,11 @@ const { attachResponsePerfHeaders, logRequestPerf, nowMs } = require('../utils/p
 
 const MONITORED_MIN_MCAP = 30000;
 
+function normalizeMinMcap(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
+}
+
 router.use(authenticate);
 
 function computePctChange(currentValue, baselineValue) {
@@ -67,8 +72,9 @@ function buildMarketBaseline(baselineRow) {
 router.get('/monitored', dashboardLimiter, async (req, res) => {
   const startedAt = nowMs();
   try {
+    const minMcap = normalizeMinMcap(req.query?.minMcap);
     const catalogStartedAt = nowMs();
-    const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, req.query?.minMcap);
+    const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
     const catalogMs = nowMs() - catalogStartedAt;
     const addresses = tokens.map((item) => item.address);
     const meteoraStartedAt = nowMs();
@@ -92,7 +98,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const responsePayload = {
       generatedAt: new Date().toISOString(),
       source: 'token_catalog',
-      minMcap: Number.isFinite(Number(req.query?.minMcap)) ? Number(req.query.minMcap) : MONITORED_MIN_MCAP,
+      minMcap,
       count: tokens.length,
       tokens: tokens.map((item) => {
         const marketBaseline = buildMarketBaseline(marketBaselineByAddress.get(item.address) || null);

@@ -1,3 +1,10 @@
+process.env.NODE_ENV = 'test';
+process.env.EMAIL_ENABLED = 'true';
+process.env.EMAIL_PROVIDER = 'local';
+process.env.EMAIL_FROM = 'tests@trendscope.local';
+process.env.APP_BASE_URL = 'http://localhost:5173';
+process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
+
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
@@ -17,6 +24,46 @@ const VALID_ADDR = 'So11111111111111111111111111111111111111112';
 
 const originalGetTokenPairs = dexscreener.getTokenPairs;
 const originalGetBestPair = dexscreener.getBestPair;
+
+function getQueryToken(actionUrl) {
+  assert.ok(actionUrl, 'Expected actionUrl in email debug payload');
+  const parsed = new URL(actionUrl);
+  const token = parsed.searchParams.get('token');
+  assert.ok(token, 'Expected token query param in actionUrl');
+  return token;
+}
+
+async function verifyEmailFromRegisterResponse(registerResponse) {
+  assert.equal(registerResponse.status, 201);
+  const verificationToken = getQueryToken(registerResponse.body.emailDebug?.actionUrl);
+  const verifyRes = await request(app)
+    .post('/api/auth/verify-email/confirm')
+    .send({ token: verificationToken });
+
+  assert.equal(verifyRes.status, 200);
+}
+
+async function completeLogin(email, password) {
+  const loginRes = await request(app)
+    .post('/api/auth/login')
+    .send({ email, password });
+
+  assert.equal(loginRes.status, 200);
+  assert.equal(loginRes.body.otpRequired, true);
+  assert.ok(loginRes.body.challengeToken);
+  assert.ok(loginRes.body.emailDebug?.otpCode);
+
+  const verifyRes = await request(app)
+    .post('/api/auth/login-otp/verify')
+    .send({
+      challengeToken: loginRes.body.challengeToken,
+      code: loginRes.body.emailDebug.otpCode,
+    });
+
+  assert.equal(verifyRes.status, 200);
+  assert.ok(verifyRes.body.token);
+  return verifyRes.body.token;
+}
 
 function buildPair(overrides = {}) {
   return {
@@ -43,13 +90,13 @@ describe('Catalog routes', () => {
   let mockDataAvailable;
 
   before(async () => {
-    const invite = await Invite.create(null, 2, 24);
+    const invite = await Invite.create(null, { maxUses: 2, expiryHours: 24 });
     const regRes = await request(app)
       .post('/api/auth/register')
       .send({ ...TEST_USER, inviteCode: invite.code });
 
-    assert.equal(regRes.status, 201);
-    token = regRes.body.token;
+    await verifyEmailFromRegisterResponse(regRes);
+    token = await completeLogin(TEST_USER.email, TEST_USER.password);
 
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
 
@@ -126,20 +173,37 @@ describe('Catalog routes', () => {
       });
 
     assert.equal(res.status, 202);
-    assert.match(res.body.error, /retry later/i);
-    assert.ok(res.body.retryAt);
+    assert.equal(res.body.reason, 'dex_unavailable');
+    assert.equal(typeof res.body.retryAt, 'number');
   });
 
-  it('rejects unsupported promotion sources', async () => {
+  it('rejects private metadata URI lookups for pumpfun metadata', async () => {
     const res = await request(app)
-      .post('/api/catalog/promote')
+      .get(`/api/catalog/pumpfun/${VALID_ADDR}/meta`)
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        address: VALID_ADDR,
-        source: 'recent-token',
-      });
+      .query({ uri: 'http://127.0.0.1:8787/private.json' });
 
     assert.equal(res.status, 400);
-    assert.match(res.body.error, /Unsupported promotion source/i);
+    assert.equal(res.body.error, 'Invalid metadata URI');
+  });
+
+  it('rejects malformed market history query params', async () => {
+    const res = await request(app)
+      .get(`/api/catalog/history/${VALID_ADDR}`)
+      .set('Authorization', `Bearer ${token}`)
+      .query({ hours: 'abc' });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'hours must be an integer');
+  });
+
+  it('rejects malformed meteora history query params', async () => {
+    const res = await request(app)
+      .get(`/api/catalog/meteora/${VALID_ADDR}/history`)
+      .set('Authorization', `Bearer ${token}`)
+      .query({ limit: '1.5' });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'limit must be an integer');
   });
 });

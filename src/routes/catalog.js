@@ -9,20 +9,28 @@ const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
 const { isValidAddress } = require('../models/user-token');
+const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
 const MONITORED_MIN_MCAP = 30000;
 const TRANSIENT_RETRY_MS = 40000;
 const METEORA_DELTA_1H_MS = 60 * 60 * 1000;
 const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
 const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
+const PROMOTE_RETRY_MAX_ENTRIES = 2000;
 const promoteRetryState = new Map();
+
+function normalizeMinMcap(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
+}
 
 router.use(authenticate);
 router.use(requireTrustedOrigin);
 
 router.get('/eligible', catalogReadLimiter, async (req, res) => {
   try {
-    const tokens = await tokenCatalog.listEligibleVisible(req.query?.limit, req.query?.minMcap);
+    const minMcap = normalizeMinMcap(req.query?.minMcap);
+    const tokens = await tokenCatalog.listEligibleVisible(req.query?.limit, minMcap);
     res.json({
       tokens: tokens.map((item) => ({
         address: item.address,
@@ -35,7 +43,7 @@ router.get('/eligible', catalogReadLimiter, async (req, res) => {
       })),
       count: tokens.length,
       source: 'token_catalog',
-      minMcap: Number.isFinite(Number(req.query?.minMcap)) ? Number(req.query.minMcap) : MONITORED_MIN_MCAP,
+      minMcap,
     });
   } catch (err) {
     console.error('GET /catalog/eligible error:', err.message);
@@ -74,7 +82,7 @@ router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
 router.post('/admin-blocklist', catalogWriteLimiter, requireAdmin, async (req, res) => {
   try {
     const address = String(req.body?.address || '').trim();
-    const label = req.body?.label == null ? null : String(req.body.label).trim() || null;
+    const label = normalizeText(req.body?.label, 128);
 
     if (!isValidAddress(address)) {
       return res.status(400).json({ error: 'Invalid token address' });
@@ -136,21 +144,21 @@ router.delete('/admin-blocklist/:address', catalogWriteLimiter, requireAdmin, as
 
 function buildCatalogTokenPayload(body = {}, fallbackSource = 'unknown') {
   return {
-    address: body.address || body.mint || null,
-    chain: body.chain || 'solana',
-    source: body.source || fallbackSource,
-    symbol: body.symbol || null,
-    name: body.name || null,
+    address: String(body.address || body.mint || '').trim() || null,
+    chain: normalizeChain(body.chain || 'solana'),
+    source: normalizeText(body.source || fallbackSource, 64) || fallbackSource,
+    symbol: normalizeText(body.symbol, 64),
+    name: normalizeText(body.name, 160),
     mcap: body.mcap || null,
     price: body.price || null,
     priceChange1h: body.priceChange1h ?? null,
     priceChange6h: body.priceChange6h ?? null,
     priceChange24h: body.priceChange24h ?? null,
     tokenCreatedAt: body.tokenCreatedAt ?? null,
-    pairAddress: body.pairAddress || null,
-    pairUrl: body.pairUrl || null,
-    imageUrl: body.imageUrl || null,
-    twitterUrl: body.twitterUrl || null,
+    pairAddress: isValidAddress(String(body.pairAddress || '').trim()) ? String(body.pairAddress).trim() : null,
+    pairUrl: sanitizeHttpUrl(body.pairUrl),
+    imageUrl: sanitizeAssetUrl(body.imageUrl),
+    twitterUrl: sanitizeHttpUrl(body.twitterUrl),
     isActiveMonitorCandidate: body.isActiveMonitorCandidate,
   };
 }
@@ -160,7 +168,7 @@ function normalizeSource(source) {
 }
 
 function extractTwitterUrl(pair) {
-  return pair?.info?.socials?.find((item) => item.type === 'twitter')?.url || null;
+  return sanitizeHttpUrl(pair?.info?.socials?.find((item) => item.type === 'twitter')?.url || null);
 }
 
 function toNumber(value) {
@@ -246,13 +254,33 @@ function getRetryKey(userId, address, source) {
   return `${userId}:${source}:${address}`;
 }
 
+function purgeTransientRetries() {
+  const now = Date.now();
+  for (const [key, value] of promoteRetryState.entries()) {
+    if (!value || !Number.isFinite(value.retryAt) || value.retryAt <= now) {
+      promoteRetryState.delete(key);
+    }
+  }
+
+  while (promoteRetryState.size > PROMOTE_RETRY_MAX_ENTRIES) {
+    const oldestKey = promoteRetryState.keys().next().value;
+    if (!oldestKey) break;
+    promoteRetryState.delete(oldestKey);
+  }
+}
+
 function setTransientRetry(userId, address, source, reason) {
+  purgeTransientRetries();
   const retryAt = Date.now() + TRANSIENT_RETRY_MS;
-  promoteRetryState.set(getRetryKey(userId, address, source), { retryAt, reason });
+  const key = getRetryKey(userId, address, source);
+  promoteRetryState.delete(key);
+  promoteRetryState.set(key, { retryAt, reason });
+  purgeTransientRetries();
   return retryAt;
 }
 
 function getTransientRetry(userId, address, source) {
+  purgeTransientRetries();
   const key = getRetryKey(userId, address, source);
   const current = promoteRetryState.get(key);
   if (!current) return null;
@@ -267,13 +295,46 @@ function clearTransientRetry(userId, address, source) {
   promoteRetryState.delete(getRetryKey(userId, address, source));
 }
 
-function toHttpAssetUrl(url) {
-  const value = String(url || '').trim();
-  if (!value) return null;
-  if (value.startsWith('ipfs://')) {
-    return `https://ipfs.io/ipfs/${value.slice('ipfs://'.length)}`;
+function parseOptionalIntegerQuery(value, name, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return { ok: true, value: null };
   }
-  return value;
+
+  const normalized = String(value).trim();
+  if (!/^-?\d+$/.test(normalized)) {
+    return { ok: false, error: `${name} must be an integer` };
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return { ok: false, error: `${name} must be between ${min} and ${max}` };
+  }
+
+  return { ok: true, value: parsed };
+}
+
+function parseHistoryQuery(query = {}) {
+  const limit = parseOptionalIntegerQuery(query.limit, 'limit', { min: 1, max: 1000 });
+  if (!limit.ok) return limit;
+
+  const hours = parseOptionalIntegerQuery(query.hours, 'hours', { min: 1, max: 24 * 30 });
+  if (!hours.ok) return hours;
+
+  const days = parseOptionalIntegerQuery(query.days, 'days', { min: 1, max: 30 });
+  if (!days.ok) return days;
+
+  return {
+    ok: true,
+    options: {
+      limit: limit.value,
+      hours: hours.value,
+      days: days.value,
+    },
+  };
+}
+
+function toHttpAssetUrl(url) {
+  return sanitizeAssetUrl(url);
 }
 
 function buildMetadataGatewayUrls(uri) {
@@ -369,7 +430,7 @@ async function buildValidatedPromotion(user, body = {}) {
   }
 
   const source = normalizeSource(requested.source);
-  const chain = String(requested.chain || 'solana').trim().toLowerCase();
+  const chain = normalizeChain(requested.chain || 'solana');
 
   if (source !== 'monitored-token') {
     return { status: 400, error: 'Unsupported promotion source' };
@@ -448,11 +509,12 @@ router.get('/history/:address', catalogReadLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid token address' });
     }
 
-    const snapshots = await tokenMarketSnapshot.listHistoryByAddress(address, {
-      limit: req.query?.limit,
-      hours: req.query?.hours,
-      days: req.query?.days,
-    });
+    const parsedQuery = parseHistoryQuery(req.query);
+    if (!parsedQuery.ok) {
+      return res.status(400).json({ error: parsedQuery.error });
+    }
+
+    const snapshots = await tokenMarketSnapshot.listHistoryByAddress(address, parsedQuery.options);
 
     res.json({
       address,
@@ -472,11 +534,12 @@ router.get('/meteora/:address/history', catalogReadLimiter, async (req, res) => 
       return res.status(400).json({ error: 'Invalid token address' });
     }
 
-    const snapshots = await tokenMeteoraSnapshot.listHistoryByAddress(address, {
-      limit: req.query?.limit,
-      hours: req.query?.hours,
-      days: req.query?.days,
-    });
+    const parsedQuery = parseHistoryQuery(req.query);
+    if (!parsedQuery.ok) {
+      return res.status(400).json({ error: parsedQuery.error });
+    }
+
+    const snapshots = await tokenMeteoraSnapshot.listHistoryByAddress(address, parsedQuery.options);
 
     res.json({
       address,
@@ -493,9 +556,13 @@ router.get('/meteora/:address/history', catalogReadLimiter, async (req, res) => 
 router.get('/pumpfun/:mint/meta', pumpfunMetaLimiter, async (req, res) => {
   try {
     const mint = String(req.params?.mint || '').trim();
-    const metadataUri = String(req.query?.uri || '').trim() || null;
+    const rawMetadataUri = String(req.query?.uri || '').trim();
+    const metadataUri = rawMetadataUri ? sanitizeAssetUrl(rawMetadataUri) || null : null;
     if (!isValidAddress(mint)) {
       return res.status(400).json({ error: 'Invalid token address' });
+    }
+    if (rawMetadataUri && !metadataUri) {
+      return res.status(400).json({ error: 'Invalid metadata URI' });
     }
 
     const payload = await resolvePumpfunMetadata(mint, metadataUri);

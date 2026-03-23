@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test tests/",
+    "test": "node --test --test-force-exit tests/admin.test.js && node --test --test-force-exit tests/auth.test.js && node --test --test-force-exit tests/catalog.test.js",
     "db:init": "node src/utils/db-init.js",
     "invite:create": "node src/utils/create-invite.js"
   },

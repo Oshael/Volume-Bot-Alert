@@ -42,6 +42,8 @@ import {
 import { bindSocketLifecycle, disconnectSocket, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
 import {
   normalizeInviteCode,
+  normalizeAuthRouteToken,
+  normalizeLoginOtpChallengeToken,
   validateChangePasswordInput,
   validateLoginCredentials,
   validateLoginOtpInput,
@@ -50,6 +52,7 @@ import {
   validateRegisterInput,
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
+import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   findPreviousPasswordMatch,
   formatPasswordChangedDate,
@@ -269,12 +272,22 @@ export function createAppController(): AppController {
       return notice;
     }
 
-    if (emailDebug.otpCode) {
-      return `${notice} Local dev code: ${emailDebug.otpCode}.`;
+    const safeOtpCode = String(emailDebug.otpCode || '').replace(/\s+/g, '');
+    if (/^\d{4,8}$/.test(safeOtpCode)) {
+      return `${notice} Local dev code: ${safeOtpCode}.`;
     }
 
-    if (emailDebug.actionUrl) {
-      return `${notice} Local dev link: ${emailDebug.actionUrl}`;
+    const safeActionUrl = String(emailDebug.actionUrl || '').trim();
+    if (safeActionUrl) {
+      try {
+        const url = new URL(safeActionUrl);
+        if (url.protocol === 'http:' || url.protocol === 'https:') {
+          url.hash = '';
+          return `${notice} Local dev link: ${url.toString()}`;
+        }
+      } catch (_) {
+        // Ignore invalid debug URL payloads.
+      }
     }
 
     return notice;
@@ -1952,8 +1965,11 @@ export function createAppController(): AppController {
 
     const pathname = window.location.pathname || '/';
     const search = new URLSearchParams(window.location.search);
-    const token = String(search.get('token') || '').trim();
-    const mode = String(search.get('mode') || '').trim();
+    const token = normalizeAuthRouteToken(String(search.get('token') || ''));
+    const rawMode = String(search.get('mode') || '').trim().toLowerCase();
+    const mode = rawMode === 'verify-email' || rawMode === 'reset-password'
+      ? rawMode
+      : '';
     const wantsVerify = pathname === '/auth/verify-email' || mode === 'verify-email';
     const wantsReset = pathname === '/auth/reset-password' || mode === 'reset-password';
 
@@ -2283,12 +2299,16 @@ export function createAppController(): AppController {
 
       try {
         const result = await login(validated.email, validated.password);
-        if (result.otpRequired && result.challengeToken) {
+        const challengeToken = normalizeLoginOtpChallengeToken(String(result.challengeToken || ''));
+        if (result.otpRequired) {
+          if (!challengeToken) {
+            throw new Error('Verification challenge is missing. Please sign in again.');
+          }
           disconnectSocket();
           stopMonitoringTimers();
           clearSession();
-          state.ui.pendingLoginOtpChallengeToken = result.challengeToken;
-          state.ui.pendingLoginOtpEmailHint = result.otpEmailHint || validated.email;
+          state.ui.pendingLoginOtpChallengeToken = challengeToken;
+          state.ui.pendingLoginOtpEmailHint = trimLoginEmailValue(result.otpEmailHint || validated.email);
           state.ui.authPanel = 'email-otp';
           state.ui.loginErrorCount = 0;
           setNotice(appendEmailDebugNotice(
@@ -2395,8 +2415,8 @@ export function createAppController(): AppController {
 
       try {
         const result = await resendLoginOtpRequest(challengeToken);
-        state.ui.pendingLoginOtpChallengeToken = result.challengeToken || challengeToken;
-        state.ui.pendingLoginOtpEmailHint = result.otpEmailHint || state.ui.pendingLoginOtpEmailHint;
+        state.ui.pendingLoginOtpChallengeToken = normalizeLoginOtpChallengeToken(String(result.challengeToken || '')) || challengeToken;
+        state.ui.pendingLoginOtpEmailHint = trimLoginEmailValue(result.otpEmailHint || state.ui.pendingLoginOtpEmailHint || '') || state.ui.pendingLoginOtpEmailHint;
         setNotice(appendEmailDebugNotice(
           result.message || 'A new verification code has been sent.',
           result.emailDebug,
@@ -2432,7 +2452,7 @@ export function createAppController(): AppController {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
-        state.ui.pendingVerificationEmail = validated.input.email;
+        state.ui.pendingVerificationEmail = trimLoginEmailValue(validated.input.email);
         state.ui.authPanel = 'email-verification';
         setNotice(appendEmailDebugNotice(
           result.verificationEmailError

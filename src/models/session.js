@@ -5,13 +5,25 @@ function getExecutor(db) {
   return db && typeof db.query === 'function' ? db : { query };
 }
 
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function getSessionIdentity(token, decoded = null) {
+  const jti = typeof decoded?.jti === 'string' ? decoded.jti.trim() : '';
+  return jti || hashToken(token);
+}
+
 const Session = {
+  hashToken,
+  getSessionIdentity,
+
   /**
    * Create a session record. Stores a hash of the JWT (not the JWT itself).
    */
   async create({ userId, token, ipAddress, userAgent, expiresAt }, db) {
     const executor = getExecutor(db);
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const tokenHash = hashToken(token);
     const { rows } = await executor.query(
       `INSERT INTO sessions (user_id, token_hash, ip_address, user_agent, expires_at)
        VALUES ($1, $2, $3, $4, $5)
@@ -25,7 +37,7 @@ const Session = {
    * Check if a session is still valid (not revoked/expired).
    */
   async isValid(token) {
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const tokenHash = hashToken(token);
     const { rows } = await query(
       `SELECT id FROM sessions WHERE token_hash = $1 AND expires_at > NOW()`,
       [tokenHash]
@@ -37,7 +49,7 @@ const Session = {
    * Revoke a specific session (logout).
    */
   async revoke(token) {
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const tokenHash = hashToken(token);
     await query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash]);
   },
 

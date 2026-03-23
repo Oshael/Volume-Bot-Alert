@@ -1,6 +1,31 @@
 import type { ChangePasswordInput, LoginOtpVerifyInput, PasswordResetConfirmInput, PasswordResetRequestInput, RegisterInput } from '../services/api/auth';
 import { clampLoginPasswordValue, isValidLoginEmail, trimLoginEmailValue } from '../ui/sections/login-form-utils';
 
+const HEX_TOKEN_PATTERN = /^[a-f0-9]+$/i;
+
+function normalizeHexToken(value: string, minLength: number, maxLength: number) {
+  const token = String(value || '').trim();
+  if (!token || token.length < minLength || token.length > maxLength) {
+    return '';
+  }
+  if (!HEX_TOKEN_PATTERN.test(token)) {
+    return '';
+  }
+  return token.toLowerCase();
+}
+
+export function normalizeAuthRouteToken(value: string) {
+  return normalizeHexToken(value, 32, 128);
+}
+
+export function normalizePasswordResetToken(value: string) {
+  return normalizeHexToken(value, 32, 128);
+}
+
+export function normalizeLoginOtpChallengeToken(value: string) {
+  return normalizeHexToken(value, 32, 96);
+}
+
 export function validateLoginCredentials(email: string, password: string) {
   const normalizedEmail = trimLoginEmailValue(email);
   const normalizedPassword = clampLoginPasswordValue(password);
@@ -128,7 +153,7 @@ export function validatePasswordResetRequestInput(input: PasswordResetRequestInp
 }
 
 export function validatePasswordResetConfirmInput(input: PasswordResetConfirmInput) {
-  const token = String(input.token || '').trim();
+  const token = normalizePasswordResetToken(input.token || '');
   const newPassword = clampLoginPasswordValue(input.newPassword || '');
   const confirmNewPassword = clampLoginPasswordValue(input.confirmNewPassword || '');
 
@@ -162,7 +187,7 @@ export function normalizeInviteCode(input: string) {
 }
 
 export function validateLoginOtpInput(input: LoginOtpVerifyInput) {
-  const challengeToken = String(input.challengeToken || '').trim();
+  const challengeToken = normalizeLoginOtpChallengeToken(input.challengeToken || '');
   const code = String(input.code || '').replace(/\s+/g, '');
 
   if (!challengeToken) {

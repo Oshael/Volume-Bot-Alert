@@ -7,6 +7,9 @@ const config = require('../config');
 const { defaultApiLimiter } = require('./middleware/rate-limit');
 const Session = require('./models/session');
 const LoginAttempt = require('./models/login-attempt');
+const EmailVerificationToken = require('./models/email-verification-token');
+const PasswordResetToken = require('./models/password-reset-token');
+const LoginEmailOtpChallenge = require('./models/login-email-otp-challenge');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -174,17 +177,22 @@ function bootstrapRuntime(httpServer) {
     try {
       const sessions = await Session.cleanup();
       const attempts = await LoginAttempt.cleanup();
-      if (sessions > 0 || attempts > 0) {
-        console.log(`???? Cleanup: ${sessions} expired sessions, ${attempts} old login attempts`);
+      const loginOtps = await LoginEmailOtpChallenge.cleanup();
+      const emailVerifications = await EmailVerificationToken.cleanupExpired();
+      const passwordResets = await PasswordResetToken.cleanupExpired();
+
+      if (sessions > 0 || attempts > 0 || loginOtps > 0 || emailVerifications > 0 || passwordResets > 0) {
+        console.log(
+          `???? Cleanup: ${sessions} expired sessions, ${attempts} old login attempts, ${loginOtps} OTP challenges, ${emailVerifications} email verification tokens, ${passwordResets} password reset tokens`
+        );
       }
     } catch (err) {
       console.error('Cleanup error:', err.message);
     }
   }, 3600000);
 
-  socketHub.init(httpServer);
-
   if (config.nodeEnv !== 'test') {
+    socketHub.init(httpServer);
     catalogWorker.start();
     catalogCleanupWorker.start();
     meteoraSnapshotWorker.start();

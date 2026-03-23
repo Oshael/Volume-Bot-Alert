@@ -52,7 +52,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
 
       for (const starButton of root.querySelectorAll<HTMLButtonElement>(selector)) {
         starButton.classList.toggle('active', willBeStarred);
-        starButton.innerHTML = willBeStarred ? '&#9733;' : '&#9734;';
+        starButton.textContent = willBeStarred ? '★' : '☆';
 
         const tokenRow = starButton.closest('.token-starred, tr, article, .token-row, .alert-row');
         if (tokenRow instanceof HTMLElement) {
@@ -84,16 +84,13 @@ export function bindCopyButtons(section: ParentNode) {
   }
 }
 
-export function renderTradeTerminalMenu(address: string, mintAddress?: string | null, pairAddress?: string | null) {
-  const tokenAddress = mintAddress || address;
-  const terminalAddress = pairAddress || mintAddress || address;
-  const links = [
-    { label: 'Axiom', href: `https://axiom.trade/meme/${terminalAddress}?chain=sol`, cls: 'axiom' },
-    { label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon' },
-    { label: 'BullX', href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx' },
-    { label: 'GMGN', href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn' },
-    { label: 'Padre', href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre' },
-  ];
+export function renderTradeTerminalMenu(
+  address: string,
+  mintAddress?: string | null,
+  pairAddress?: string | null,
+  options?: { axiomAddress?: string | null },
+) {
+  const links = getTradeTerminalLinks(address, mintAddress, pairAddress, options);
 
   return `
     <div class="trade-wrap" data-trade-wrap>
@@ -103,6 +100,58 @@ export function renderTradeTerminalMenu(address: string, mintAddress?: string | 
       </div>
     </div>
   `;
+}
+
+export function buildTradeTerminalMenuElement(
+  address: string,
+  mintAddress?: string | null,
+  pairAddress?: string | null,
+  options?: { axiomAddress?: string | null },
+) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'trade-wrap';
+  wrapper.dataset.tradeWrap = '';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'action-glyph trade-btn';
+  button.title = 'Open in trading terminal';
+  button.textContent = '🔗';
+
+  const menu = document.createElement('div');
+  menu.className = 'trade-dd';
+  menu.dataset.tradeMenu = '';
+
+  for (const link of getTradeTerminalLinks(address, mintAddress, pairAddress, options)) {
+    const anchor = document.createElement('a');
+    anchor.className = `trade-link ${link.cls}`;
+    anchor.href = sanitizeHttpUrl(link.href);
+    anchor.target = '_blank';
+    anchor.rel = 'noreferrer';
+    anchor.textContent = link.label;
+    menu.append(anchor);
+  }
+
+  wrapper.append(button, menu);
+  return wrapper;
+}
+
+function getTradeTerminalLinks(
+  address: string,
+  mintAddress?: string | null,
+  pairAddress?: string | null,
+  options?: { axiomAddress?: string | null },
+) {
+  const tokenAddress = mintAddress || address;
+  const terminalAddress = pairAddress || mintAddress || address;
+  const axiomAddress = options?.axiomAddress || tokenAddress;
+  return [
+    { label: 'Axiom', href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom' },
+    { label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon' },
+    { label: 'BullX', href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx' },
+    { label: 'GMGN', href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn' },
+    { label: 'Padre', href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre' },
+  ];
 }
 
 export function bindBucketSortControls(section: ParentNode, controller: AppController, mode: 'manual' | 'recent' | 'old-week') {
@@ -277,15 +326,22 @@ export function renderFlash(state: AppState) {
 export function renderLogSummary(title: string, entries: RemovalLogEntry[], clearAction: string, tone: 'recent' | 'old-week') {
   if (entries.length === 0) return '';
   const safeTitle = escapeHtml(title);
+  const visibleEntries = entries.slice(0, 20);
   return `
     <div class="log-hover ${tone}" data-log-hover>
-      <button type="button" class="legacy-removal-badge" data-log-hover-toggle>${entries.length} removed</button>
+      <button type="button" class="legacy-removal-badge" data-log-hover-toggle aria-expanded="false" aria-haspopup="dialog">${entries.length} removed</button>
       <div class="log-hover-panel ${tone}">
         <div class="log-hover-head">
-          <span>${safeTitle}</span>
-          <button type="button" class="action-button small" data-action="${clearAction}">Clear All</button>
+          <div class="log-hover-title-wrap">
+            <span>${safeTitle}</span>
+            <small>${visibleEntries.length} latest token${visibleEntries.length === 1 ? '' : 's'}</small>
+          </div>
+          <div class="log-hover-actions">
+            <button type="button" class="action-button small" data-action="${clearAction}">Clear All</button>
+            <button type="button" class="action-button small" data-log-hover-close>Close</button>
+          </div>
         </div>
-        <div class="removal-log-list">${entries.slice(0, 8).map((entry) => renderRemovalLogEntry(entry)).join('')}</div>
+        <div class="removal-log-list">${visibleEntries.map((entry) => renderRemovalLogEntry(entry)).join('')}</div>
       </div>
     </div>
   `;
@@ -347,7 +403,7 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
     ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1, isAdmin })}
     <div class="bucket-footer">
       <div class="bucket-page-controls">
-        <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" value="${safePage + 1}" /></label>
+        <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" /></label>
         <span class="bucket-page-total">${totalPages}</span>
       </div>
       <div class="button-row compact bucket-footer-actions">
@@ -529,11 +585,28 @@ function renderRemovalLogEntry(entry: RemovalLogEntry) {
   const mcap = fmtMoney(entry.mcap);
   const droppedTo = extractDroppedMcap(entry.reason) ?? mcap;
   const safeSymbol = escapeHtml(entry.symbol);
+  const safeAddress = escapeHtml(entry.address);
+  const safeShortAddress = escapeHtml(`${entry.address.slice(0, 6)}...${entry.address.slice(-4)}`);
   const imageUrl = sanitizeOptionalHttpUrl(entry.imageUrl);
   const avatar = imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="log-entry-avatar" />` : `<div class="log-entry-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
+  const dexUrl = sanitizeHttpUrl(entry.pairUrl || `https://dexscreener.com/solana/${entry.address}`);
   return `
     <article class="log-entry-card">
-      <div class="log-entry-head">${avatar}<div><div class="log-entry-title">${safeSymbol} <span>MCAP ${escapeHtml(mcap)}</span></div><div class="log-entry-body">MCAP dropped to ${escapeHtml(droppedTo)} - below min $120K</div><div class="log-entry-time">${escapeHtml(fmtLogDate(entry.ts))}</div></div></div>
+      <div class="log-entry-head">
+        ${avatar}
+        <div class="log-entry-copy">
+          <div class="log-entry-title">${safeSymbol} <span>MCAP ${escapeHtml(mcap)}</span></div>
+          <div class="log-entry-address">${safeShortAddress}</div>
+          <div class="log-entry-body">MCAP dropped to ${escapeHtml(droppedTo)} - below min $120K</div>
+          <div class="log-entry-meta-row">
+            <div class="log-entry-time">${escapeHtml(fmtLogDate(entry.ts))}</div>
+            <div class="log-entry-actions">
+              <button type="button" class="action-button small" data-action="copy-address" data-address="${safeAddress}">Copy CA</button>
+              <a class="action-button small" href="${dexUrl}" target="_blank" rel="noreferrer">DEX</a>
+            </div>
+          </div>
+        </div>
+      </div>
     </article>
   `;
 }
