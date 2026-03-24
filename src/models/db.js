@@ -2,7 +2,7 @@ const { Pool } = require('pg');
 const config = require('../../config');
 
 const poolConfig = {
-  max: 20,
+  max: config.db.poolMax,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 };
@@ -32,8 +32,9 @@ async function query(text, params) {
   const start = Date.now();
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
-  if (duration > 1000) {
-    console.warn(`Slow query (${duration}ms):`, text.slice(0, 80));
+  if (config.db.logSlowQueries && duration > config.db.slowQueryLogMs) {
+    const compactSql = String(text || '').replace(/\s+/g, ' ').trim();
+    console.warn(`Slow query (${duration}ms):`, compactSql.slice(0, 140));
   }
   return res;
 }

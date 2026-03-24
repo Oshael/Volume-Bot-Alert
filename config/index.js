@@ -41,6 +41,7 @@ function getDbConfig() {
 }
 
 const db = getDbConfig();
+const nodeEnv = process.env.NODE_ENV || 'development';
 
 const missing = [];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.startsWith('CHANGE_ME')) {
@@ -60,7 +61,7 @@ if (missing.length > 0) {
 
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   forceHttps: parseBoolean(process.env.FORCE_HTTPS, false),
   performanceMetrics: {
     enabled: parseBoolean(
@@ -69,7 +70,15 @@ module.exports = {
     ),
   },
 
-  db,
+  db: {
+    ...db,
+    poolMax: parseInt(process.env.DB_POOL_MAX || '20', 10),
+    slowQueryLogMs: parseInt(
+      process.env.DB_SLOW_QUERY_LOG_MS || (nodeEnv === 'production' ? '2500' : '1000'),
+      10
+    ),
+    logSlowQueries: parseBoolean(process.env.DB_LOG_SLOW_QUERIES, true),
+  },
 
   jwt: {
     secret: process.env.JWT_SECRET,
@@ -107,6 +116,10 @@ module.exports = {
   pumpfunMetaRateLimit: {
     windowMs: parseInt(process.env.PUMPFUN_META_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.PUMPFUN_META_RATE_LIMIT_MAX_REQUESTS || '220', 10),
+  },
+
+  catalogWorker: {
+    concurrency: Math.max(1, Math.min(parseInt(process.env.CATALOG_WORKER_CONCURRENCY || '24', 10), 48)),
   },
 
   catalogWriteRateLimit: {

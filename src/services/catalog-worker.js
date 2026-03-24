@@ -1,6 +1,7 @@
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const dexscreener = require('./dexscreener');
+const config = require('../../config');
 
 const LOOP_INTERVAL_MS = 2000;
 const DEX_REQUEST_BUDGET_PER_MINUTE = 300;
@@ -9,7 +10,7 @@ const MAX_TOKEN_BUDGET_PER_CYCLE = Math.max(
   DEX_TOKENS_PER_REQUEST,
   Math.floor((DEX_REQUEST_BUDGET_PER_MINUTE * LOOP_INTERVAL_MS) / 60000) * DEX_TOKENS_PER_REQUEST
 );
-const CONCURRENCY = 24;
+const CONCURRENCY = config.catalogWorker.concurrency;
 const DEX_BATCH_LIMIT = DEX_TOKENS_PER_REQUEST;
 const DORMANT_RECHECK_MS = 30 * 60 * 1000;
 const LOW_NEAR_RECHECK_MS = 15 * 1000;
