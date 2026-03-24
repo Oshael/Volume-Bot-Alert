@@ -62,8 +62,8 @@ function getRangeLimitPct(mcap) {
     return null;
   }
   if (value < 1_000_000) return 50;
-  if (value < 5_000_000) return 35;
-  return 20;
+  if (value < 5_000_000) return 40;
+  return 25;
 }
 
 function getDriftLimitPct(mcap) {
@@ -72,8 +72,8 @@ function getDriftLimitPct(mcap) {
     return null;
   }
   if (value < 1_000_000) return 20;
-  if (value < 5_000_000) return 12;
-  return 8;
+  if (value < 5_000_000) return 14;
+  return 10;
 }
 
 function getMinimumWindowHoursForMcap(mcap) {
@@ -113,8 +113,38 @@ function getMcapRankingBonus(mcap) {
   if (value >= 150_000 && value <= 500_000) return 18;
   if (value < 150_000) return 12;
   if (value <= 1_000_000) return 10;
-  if (value <= 5_000_000) return 4;
-  return 0;
+  if (value <= 5_000_000) return 8;
+  return 5;
+}
+
+function getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h) {
+  const value = Number(currentMcap);
+  if (!Number.isFinite(value) || value < 1_000_000) {
+    return 0;
+  }
+
+  let bonus = 0;
+  const range = Number(rangePct);
+  const drift = Number(driftPct);
+  const vol1 = Number(vol1h);
+  const vol24 = Number(vol24h);
+
+  if (Number.isFinite(range)) {
+    if (value < 5_000_000 && range <= 20) bonus += 4;
+    else if (value >= 5_000_000 && range <= 12) bonus += 5;
+  }
+
+  if (Number.isFinite(drift)) {
+    if (value < 5_000_000 && drift <= 6) bonus += 2;
+    else if (value >= 5_000_000 && drift <= 4) bonus += 3;
+  }
+
+  if (Number.isFinite(vol1) && Number.isFinite(vol24)) {
+    if (vol1 >= 5000) bonus += 2;
+    if (vol24 >= 100000) bonus += 2;
+  }
+
+  return bonus;
 }
 
 function getAgeRankingBonus(ageHours) {
@@ -198,6 +228,7 @@ function scoreLateralizedCandidate(row, options = {}) {
     + turnoverScore
     + centerBonus
     + getMcapRankingBonus(currentMcap)
+    + getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h)
     + getAgeRankingBonus(ageHours);
 
   const currentPositionPct = centerPosition * 100;
@@ -650,6 +681,7 @@ module.exports = {
     getAgeRankingBonus,
     getBucketDate,
     getDriftLimitPct,
+    getHighCapQualityBonus,
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
     getRangeLimitPct,

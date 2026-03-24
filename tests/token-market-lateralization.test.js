@@ -6,8 +6,8 @@ const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 describe('token market lateralization helpers', () => {
   it('uses wider range limits for lower-cap candidates', () => {
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(120000), 50);
-    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(2000000), 35);
-    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(8000000), 20);
+    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(2000000), 40);
+    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(8000000), 25);
   });
 
   it('gives a stronger ranking bonus to the 150k-500k mcap band', () => {
@@ -15,6 +15,11 @@ describe('token market lateralization helpers', () => {
       tokenMarketBucket1m.__private.getMcapRankingBonus(250000)
       > tokenMarketBucket1m.__private.getMcapRankingBonus(6000000)
     );
+  });
+
+  it('gives large caps more room on drift limits', () => {
+    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(2000000), 14);
+    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(8000000), 10);
   });
 
   it('requires longer minimum windows for larger market caps', () => {
@@ -118,5 +123,12 @@ describe('token market lateralization helpers', () => {
 
     assert.ok(value != null);
     assert.ok(value > 1.9 && value < 2.1);
+  });
+
+  it('adds a quality bonus for compressed and liquid high caps', () => {
+    const strong = tokenMarketBucket1m.__private.getHighCapQualityBonus(2500000, 18, 5, 8000, 120000);
+    const weak = tokenMarketBucket1m.__private.getHighCapQualityBonus(2500000, 32, 12, 1200, 20000);
+
+    assert.ok(strong > weak);
   });
 });
