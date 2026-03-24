@@ -2,11 +2,14 @@ const db = require('./db');
 const { isValidAddress } = require('./user-token');
 
 const DEFAULT_LATERALIZATION_MIN_MCAP = 90_000;
+const DEFAULT_LATERALIZATION_MIN_VOL_1H = 1_000;
 const DEFAULT_LATERALIZATION_MIN_VOL_24H = 10_000;
 const DEFAULT_LATERALIZATION_HOURS = 6;
 const DEFAULT_LATERALIZATION_LIMIT = 50;
 const DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO = 0.7;
 const DEFAULT_LATERALIZATION_MIN_BUCKETS = 20;
+const DEFAULT_LATERALIZATION_MIN_POSITION_PCT = 15;
+const DEFAULT_LATERALIZATION_MAX_POSITION_PCT = 85;
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -38,7 +41,7 @@ function getRangeLimitPct(mcap) {
   if (!Number.isFinite(value) || value < DEFAULT_LATERALIZATION_MIN_MCAP) {
     return null;
   }
-  if (value < 1_000_000) return 60;
+  if (value < 1_000_000) return 50;
   if (value < 5_000_000) return 35;
   return 20;
 }
@@ -89,26 +92,29 @@ function getMcapRankingBonus(mcap) {
 function getAgeRankingBonus(ageHours) {
   const value = Number(ageHours);
   if (!Number.isFinite(value) || value < 0) return 0;
-  if (value < 2) return -8;
-  if (value < 6) return 4;
-  if (value <= (24 * 7)) return 12;
-  if (value <= (24 * 30)) return 6;
-  return -4;
+  if (value < 2) return -10;
+  if (value < 12) return 10;
+  if (value <= (24 * 5)) return 16;
+  if (value <= (24 * 14)) return 8;
+  if (value <= (24 * 30)) return 0;
+  return -8;
 }
 
 function scoreLateralizedCandidate(row, options = {}) {
   const nowMs = Number(options.nowMs) || Date.now();
   const windowHours = Math.max(1, Number(options.hours) || DEFAULT_LATERALIZATION_HOURS);
-  const currentMcap = Number(row.last_mcap);
+  const currentMcap = Number(row.last_mcap_window ?? row.last_mcap);
   const maxHighMcap = Number(row.max_high_mcap);
   const minLowMcap = Number(row.min_low_mcap);
   const avgCloseMcap = Number(row.avg_close_mcap);
   const firstMcap = Number(row.first_mcap);
   const lastMcapWindow = Number(row.last_mcap_window);
   const stddevMcap = Number(row.close_mcap_stddev);
+  const vol1h = Number(row.last_vol_1h);
   const vol24h = Number(row.last_vol_24h);
   const bucketCount = Number(row.bucket_count) || 0;
   const sampleCount = Number(row.sample_count) || 0;
+  const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
 
   const rangeLimitPct = getRangeLimitPct(currentMcap);
   const driftLimitPct = getDriftLimitPct(currentMcap);
@@ -130,7 +136,10 @@ function scoreLateralizedCandidate(row, options = {}) {
   const coverageRatio = expectedBucketCount > 0 ? bucketCount / expectedBucketCount : 0;
   const minCoverageRatio = Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO;
   const minBuckets = Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS);
+  const minVol1h = Math.max(0, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
+  const minPositionPct = Number(options.minPositionPct) || DEFAULT_LATERALIZATION_MIN_POSITION_PCT;
+  const maxPositionPct = Number(options.maxPositionPct) || DEFAULT_LATERALIZATION_MAX_POSITION_PCT;
 
   const rangeSpan = Number.isFinite(maxHighMcap) && Number.isFinite(minLowMcap)
     ? (maxHighMcap - minLowMcap)
@@ -163,8 +172,15 @@ function scoreLateralizedCandidate(row, options = {}) {
     + getMcapRankingBonus(currentMcap)
     + getAgeRankingBonus(ageHours);
 
+  const currentPositionPct = centerPosition * 100;
+  const passesPosition = Number.isFinite(currentPositionPct)
+    && currentPositionPct >= minPositionPct
+    && currentPositionPct <= maxPositionPct;
+
   const passes = (
-    rangeLimitPct != null
+    Number.isFinite(currentMcap)
+    && currentMcap >= minMcap
+    && rangeLimitPct != null
     && driftLimitPct != null
     && rangePct != null
     && driftPct != null
@@ -172,7 +188,9 @@ function scoreLateralizedCandidate(row, options = {}) {
     && driftPct <= driftLimitPct
     && coverageRatio >= minCoverageRatio
     && bucketCount >= minBuckets
+    && vol1h >= minVol1h
     && vol24h >= minVol24h
+    && passesPosition
   );
 
   return {
@@ -187,9 +205,10 @@ function scoreLateralizedCandidate(row, options = {}) {
     ageHours: roundMetric(ageHours, 2),
     expectedBucketCount,
     coverageRatio: roundMetric(coverageRatio, 4),
-    currentPositionPct: roundMetric(centerPosition * 100, 2),
+    currentPositionPct: roundMetric(currentPositionPct, 2),
     bucketCount,
     sampleCount,
+    passesPosition,
   };
 }
 
@@ -404,6 +423,7 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
 async function listLateralizedCandidates(options = {}) {
   const hours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_LATERALIZATION_HOURS, 48));
   const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
+  const minVol1h = Math.max(0, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
   const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_LATERALIZATION_LIMIT, 200));
 
@@ -422,7 +442,7 @@ async function listLateralizedCandidates(options = {}) {
        FROM token_catalog
        WHERE eligible_for_monitoring = TRUE
          AND is_active_monitor_candidate = TRUE
-         AND COALESCE(last_mcap, 0) >= $1
+         AND COALESCE(last_vol_1h, 0) >= $1
          AND COALESCE(last_vol_24h, 0) >= $2
      ),
      windowed AS (
@@ -497,18 +517,26 @@ async function listLateralizedCandidates(options = {}) {
        ON first_points.token_address = aggregated.token_address
      LEFT JOIN last_points
        ON last_points.token_address = aggregated.token_address`,
-    [minMcap, minVol24h, hours]
+    [minVol1h, minVol24h, hours]
   );
 
   return rows
     .map((row) => {
-      const metrics = scoreLateralizedCandidate(row, options);
+      const effectiveMcap = row.last_mcap_window == null ? row.last_mcap : row.last_mcap_window;
+      const metrics = scoreLateralizedCandidate(row, {
+        ...options,
+        minMcap,
+        minVol1h,
+        minVol24h,
+      });
       return {
         address: row.token_address,
         symbol: row.symbol || null,
         name: row.name || null,
         monitorPriority: row.monitor_priority || 'dormant',
-        mcap: row.last_mcap == null ? null : Number(row.last_mcap),
+        mcap: effectiveMcap == null ? null : Number(effectiveMcap),
+        catalogMcap: row.last_mcap == null ? null : Number(row.last_mcap),
+        windowMcap: row.last_mcap_window == null ? null : Number(row.last_mcap_window),
         volume1h: row.last_vol_1h == null ? null : Number(row.last_vol_1h),
         volume6h: row.last_vol_6h == null ? null : Number(row.last_vol_6h),
         volume24h: row.last_vol_24h == null ? null : Number(row.last_vol_24h),
@@ -528,14 +556,17 @@ async function listLateralizedCandidates(options = {}) {
         ageHours: metrics.ageHours,
         currentPositionPct: metrics.currentPositionPct,
         reasons: {
+          passesMcap: effectiveMcap != null && Number(effectiveMcap) >= minMcap,
           passesRange: metrics.rangePct != null && metrics.rangeLimitPct != null && metrics.rangePct <= metrics.rangeLimitPct,
           passesDrift: metrics.driftPct != null && metrics.driftLimitPct != null && metrics.driftPct <= metrics.driftLimitPct,
           passesCoverage: metrics.coverageRatio != null && metrics.coverageRatio >= (Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO),
+          passesVolume1h: row.last_vol_1h != null && Number(row.last_vol_1h) >= minVol1h,
           passesLiquidity: row.last_vol_24h != null && Number(row.last_vol_24h) >= minVol24h,
+          passesPosition: metrics.passesPosition,
         },
       };
     })
-    .filter((item) => item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesLiquidity && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
+    .filter((item) => item.reasons.passesMcap && item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesVolume1h && item.reasons.passesLiquidity && item.reasons.passesPosition && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if ((a.rangePct ?? Number.POSITIVE_INFINITY) !== (b.rangePct ?? Number.POSITIVE_INFINITY)) {

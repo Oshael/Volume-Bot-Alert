@@ -5,7 +5,7 @@ const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 
 describe('token market lateralization helpers', () => {
   it('uses wider range limits for lower-cap candidates', () => {
-    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(120000), 60);
+    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(120000), 50);
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(2000000), 35);
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(8000000), 20);
   });
@@ -26,12 +26,15 @@ describe('token market lateralization helpers', () => {
       first_mcap: 232000,
       last_mcap_window: 238000,
       close_mcap_stddev: 4000,
+      last_vol_1h: 12000,
       last_vol_24h: 95000,
       bucket_count: 330,
       sample_count: 1100,
       last_token_created_at_ms: Date.now() - (10 * 60 * 60 * 1000),
     }, {
       hours: 6,
+      minMcap: 90000,
+      minVol1h: 1000,
       minCoverageRatio: 0.7,
       minBuckets: 20,
       minVol24h: 10000,
@@ -40,5 +43,67 @@ describe('token market lateralization helpers', () => {
 
     assert.equal(scored.passes, true);
     assert.ok((scored.score || 0) > 50);
+  });
+
+  it('rejects candidates with low 1h volume even if 24h liquidity is healthy', () => {
+    const scored = tokenMarketBucket1m.__private.scoreLateralizedCandidate({
+      last_mcap: 240000,
+      max_high_mcap: 250000,
+      min_low_mcap: 220000,
+      avg_close_mcap: 236000,
+      first_mcap: 232000,
+      last_mcap_window: 238000,
+      close_mcap_stddev: 4000,
+      last_vol_1h: 400,
+      last_vol_24h: 95000,
+      bucket_count: 330,
+      sample_count: 1100,
+      last_token_created_at_ms: Date.now() - (48 * 60 * 60 * 1000),
+    }, {
+      hours: 6,
+      minMcap: 90000,
+      minVol1h: 1000,
+      minCoverageRatio: 0.7,
+      minBuckets: 20,
+      minVol24h: 10000,
+      nowMs: Date.now(),
+    });
+
+    assert.equal(scored.passes, false);
+  });
+
+  it('rejects candidates sitting too close to the edge of the range', () => {
+    const scored = tokenMarketBucket1m.__private.scoreLateralizedCandidate({
+      last_mcap: 240000,
+      max_high_mcap: 250000,
+      min_low_mcap: 220000,
+      avg_close_mcap: 236000,
+      first_mcap: 232000,
+      last_mcap_window: 221000,
+      close_mcap_stddev: 4000,
+      last_vol_1h: 12000,
+      last_vol_24h: 95000,
+      bucket_count: 330,
+      sample_count: 1100,
+      last_token_created_at_ms: Date.now() - (48 * 60 * 60 * 1000),
+    }, {
+      hours: 6,
+      minMcap: 90000,
+      minVol1h: 1000,
+      minCoverageRatio: 0.7,
+      minBuckets: 20,
+      minVol24h: 10000,
+      nowMs: Date.now(),
+    });
+
+    assert.equal(scored.passes, false);
+    assert.equal(scored.passesPosition, false);
+  });
+
+  it('prefers fresh-but-not-brand-new candidates over older ones', () => {
+    const fresh = tokenMarketBucket1m.__private.getAgeRankingBonus(72);
+    const old = tokenMarketBucket1m.__private.getAgeRankingBonus(24 * 40);
+
+    assert.ok(fresh > old);
   });
 });
