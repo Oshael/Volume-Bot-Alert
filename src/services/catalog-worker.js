@@ -36,6 +36,7 @@ let status = {
   lastBacklogCount: 0,
   lastRunDurationMs: 0,
   lastLoopOverrunMs: 0,
+  lastScheduledDelayMs: LOOP_INTERVAL_MS,
   lastTokenBudget: MAX_TOKEN_BUDGET_PER_CYCLE,
   lastDexRequestBudget: Math.floor(MAX_TOKEN_BUDGET_PER_CYCLE / DEX_TOKENS_PER_REQUEST),
   lastDexBatchCount: 0,
@@ -86,6 +87,18 @@ function formatPriorityCounts(counts = {}) {
   return ['high', 'normal', 'low', 'dormant', 'other']
     .map((key) => `${key}:${Number(counts[key]) || 0}`)
     .join(',');
+}
+
+function normalizeDelayMs(value, fallback = LOOP_INTERVAL_MS) {
+  const delayMs = Number(value);
+  if (!Number.isFinite(delayMs)) {
+    return fallback;
+  }
+  return Math.max(0, Math.round(delayMs));
+}
+
+function computeNextDelayMs(runDurationMs) {
+  return normalizeDelayMs(LOOP_INTERVAL_MS - normalizeDelayMs(runDurationMs));
 }
 
 function extractTwitterUrl(pair) {
@@ -391,23 +404,29 @@ async function runOnce() {
   status.lastCompletedAt = new Date(cycleFinishedAt).toISOString();
   status.lastRunDurationMs = cycleFinishedAt - cycleStartedAt;
   status.lastLoopOverrunMs = Math.max(0, status.lastRunDurationMs - LOOP_INTERVAL_MS);
+  const nextDelayMs = computeNextDelayMs(status.lastRunDurationMs);
 
   if (status.lastBacklogCount > 0 || status.lastRunDurationMs > LOOP_INTERVAL_MS) {
     console.warn(
-      `[CatalogWorker] cycleMs=${status.lastRunDurationMs} dueSelected=${due.length} totalDue=${totalDueCount} backlog=${status.lastBacklogCount} dexBatches=${status.lastDexBatchCount} processBatches=${status.lastProcessBatchCount} maxOverdueMs=${status.lastMaxOverdueMs} selectedByPriority=${formatPriorityCounts(processedByPriority)} backlogByPriority=${formatPriorityCounts(backlogByPriority)}`
+      `[CatalogWorker] cycleMs=${status.lastRunDurationMs} dueSelected=${due.length} totalDue=${totalDueCount} backlog=${status.lastBacklogCount} dexBatches=${status.lastDexBatchCount} processBatches=${status.lastProcessBatchCount} maxOverdueMs=${status.lastMaxOverdueMs} nextDelayMs=${nextDelayMs} selectedByPriority=${formatPriorityCounts(processedByPriority)} backlogByPriority=${formatPriorityCounts(backlogByPriority)}`
     );
   }
+
+  return nextDelayMs;
 }
 
-function schedule() {
+function schedule(delayMs = LOOP_INTERVAL_MS) {
   if (!running) return;
+  const appliedDelayMs = normalizeDelayMs(delayMs);
+  status.lastScheduledDelayMs = appliedDelayMs;
   timer = setTimeout(async () => {
+    let nextDelayMs = LOOP_INTERVAL_MS;
     try {
-      await runOnce();
+      nextDelayMs = await runOnce();
     } finally {
-      schedule();
+      schedule(nextDelayMs);
     }
-  }, LOOP_INTERVAL_MS);
+  }, appliedDelayMs);
 }
 
 function start() {
@@ -431,4 +450,13 @@ function getStatus() {
   return { ...status };
 }
 
-module.exports = { start, stop, getStatus, runOnce };
+module.exports = {
+  start,
+  stop,
+  getStatus,
+  runOnce,
+  __private: {
+    computeNextDelayMs,
+    normalizeDelayMs,
+  },
+};

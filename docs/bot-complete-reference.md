@@ -131,6 +131,9 @@ Role:
 
 Cadence:
 - scheduler loop every `2s`
+- non-overlapping scheduler uses drift compensation:
+  - if a cycle finishes early, the next wait is shortened to preserve the target cadence
+  - if a cycle overruns, the next cycle is scheduled immediately
 
 Dex throughput model:
 - target budget is `300 requests/minute`
