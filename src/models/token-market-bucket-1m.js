@@ -473,11 +473,12 @@ async function listLateralizedCandidates(options = {}) {
          last_vol_24h,
          last_token_created_at_ms,
          monitor_priority
-       FROM token_catalog
-       WHERE eligible_for_monitoring = TRUE
-         AND is_active_monitor_candidate = TRUE
-         AND COALESCE(last_vol_1h, 0) >= $1
-         AND COALESCE(last_vol_24h, 0) >= $2
+     FROM token_catalog
+     WHERE eligible_for_monitoring = TRUE
+       AND is_active_monitor_candidate = TRUE
+       AND COALESCE(last_vol_1h, 0) >= $1
+       AND COALESCE(last_vol_24h, 0) >= $2
+    )
      SELECT
        c.address AS token_address,
        c.symbol,
