@@ -17,6 +17,12 @@ describe('token market lateralization helpers', () => {
     );
   });
 
+  it('requires longer minimum windows for larger market caps', () => {
+    assert.equal(tokenMarketBucket1m.__private.getMinimumWindowHoursForMcap(250000), 16);
+    assert.equal(tokenMarketBucket1m.__private.getMinimumWindowHoursForMcap(1000000), 32);
+    assert.equal(tokenMarketBucket1m.__private.getMinimumWindowHoursForMcap(7500000), 32);
+  });
+
   it('scores a compressed, covered candidate as a passing lateralization candidate', () => {
     const scored = tokenMarketBucket1m.__private.scoreLateralizedCandidate({
       last_mcap: 240000,
@@ -105,5 +111,12 @@ describe('token market lateralization helpers', () => {
     const old = tokenMarketBucket1m.__private.getAgeRankingBonus(24 * 40);
 
     assert.ok(fresh > old);
+  });
+
+  it('computes sample stddev for close-mcap series', () => {
+    const value = tokenMarketBucket1m.__private.computeSampleStddev([10, 12, 14]);
+
+    assert.ok(value != null);
+    assert.ok(value > 1.9 && value < 2.1);
   });
 });

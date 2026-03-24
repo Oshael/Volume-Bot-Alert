@@ -590,6 +590,11 @@ router.get('/lateralized', catalogReadLimiter, async (req, res) => {
 
     res.json({
       hours,
+      requestedHours: hours,
+      windowPolicy: {
+        sub1mMinHours: 16,
+        gte1mMinHours: 32,
+      },
       minMcap,
       minVol24h,
       count: candidates.length,
