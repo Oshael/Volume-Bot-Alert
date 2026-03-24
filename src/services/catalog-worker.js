@@ -406,15 +406,7 @@ async function runOnce() {
   status.lastCompletedAt = new Date(cycleFinishedAt).toISOString();
   status.lastRunDurationMs = cycleFinishedAt - cycleStartedAt;
   status.lastLoopOverrunMs = Math.max(0, status.lastRunDurationMs - LOOP_INTERVAL_MS);
-  const nextDelayMs = computeNextDelayMs(status.lastRunDurationMs);
-
-  if (status.lastBacklogCount > 0 || status.lastRunDurationMs > LOOP_INTERVAL_MS) {
-    console.warn(
-      `[CatalogWorker] cycleMs=${status.lastRunDurationMs} dueSelected=${due.length} totalDue=${totalDueCount} backlog=${status.lastBacklogCount} dexBatches=${status.lastDexBatchCount} processBatches=${status.lastProcessBatchCount} maxOverdueMs=${status.lastMaxOverdueMs} nextDelayMs=${nextDelayMs} selectedByPriority=${formatPriorityCounts(processedByPriority)} backlogByPriority=${formatPriorityCounts(backlogByPriority)}`
-    );
-  }
-
-  return nextDelayMs;
+  return computeNextDelayMs(status.lastRunDurationMs);
 }
 
 function schedule(delayMs = LOOP_INTERVAL_MS) {
