@@ -4,7 +4,7 @@ const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middlew
 const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
-const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
@@ -333,6 +333,30 @@ function parseHistoryQuery(query = {}) {
   };
 }
 
+function parseLateralizedQuery(query = {}) {
+  const limit = parseOptionalIntegerQuery(query.limit, 'limit', { min: 1, max: 200 });
+  if (!limit.ok) return limit;
+
+  const hours = parseOptionalIntegerQuery(query.hours, 'hours', { min: 1, max: 48 });
+  if (!hours.ok) return hours;
+
+  const minMcap = parseOptionalIntegerQuery(query.minMcap, 'minMcap', { min: 90000, max: 1000000000 });
+  if (!minMcap.ok) return minMcap;
+
+  const minVol24h = parseOptionalIntegerQuery(query.minVol24h, 'minVol24h', { min: 0, max: 1000000000 });
+  if (!minVol24h.ok) return minVol24h;
+
+  return {
+    ok: true,
+    options: {
+      limit: limit.value,
+      hours: hours.value,
+      minMcap: minMcap.value,
+      minVol24h: minVol24h.value,
+    },
+  };
+}
+
 function toHttpAssetUrl(url) {
   return sanitizeAssetUrl(url, { allowHttp: true });
 }
@@ -533,7 +557,7 @@ router.get('/history/:address', catalogReadLimiter, async (req, res) => {
       return res.status(400).json({ error: parsedQuery.error });
     }
 
-    const snapshots = await tokenMarketSnapshot.listHistoryByAddress(address, parsedQuery.options);
+    const snapshots = await tokenMarketBucket1m.listHistoryByAddress(address, parsedQuery.options);
 
     res.json({
       address,
@@ -543,6 +567,37 @@ router.get('/history/:address', catalogReadLimiter, async (req, res) => {
   } catch (err) {
     console.error('GET /catalog/history/:address error:', err.message);
     res.status(500).json({ error: 'Failed to load token history' });
+  }
+});
+
+router.get('/lateralized', catalogReadLimiter, async (req, res) => {
+  try {
+    const parsedQuery = parseLateralizedQuery(req.query);
+    if (!parsedQuery.ok) {
+      return res.status(400).json({ error: parsedQuery.error });
+    }
+
+    const hours = parsedQuery.options.hours || 6;
+    const minMcap = parsedQuery.options.minMcap || 90000;
+    const minVol24h = parsedQuery.options.minVol24h || 10000;
+    const limit = parsedQuery.options.limit || 50;
+    const candidates = await tokenMarketBucket1m.listLateralizedCandidates({
+      hours,
+      minMcap,
+      minVol24h,
+      limit,
+    });
+
+    res.json({
+      hours,
+      minMcap,
+      minVol24h,
+      count: candidates.length,
+      candidates,
+    });
+  } catch (err) {
+    console.error('GET /catalog/lateralized error:', err.message);
+    res.status(500).json({ error: 'Failed to load lateralized candidates' });
   }
 });
 

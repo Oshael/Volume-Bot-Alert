@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
 
@@ -68,13 +69,19 @@ function buildMarketBaseline(baselineRow) {
   };
 }
 
+function selectPreferredMarketBaseline(primaryRow, fallbackRow) {
+  if (primaryRow?.baseline_mcap != null) {
+    return primaryRow;
+  }
+  return fallbackRow || primaryRow || null;
+}
+
 router.get('/monitored', dashboardLimiter, async (req, res) => {
   try {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
     const addresses = tokens.map((item) => item.address);
     const meteoraSummaryRows = await tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses);
-    const marketBaselineRows = await tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5);
     const meteoraByAddress = new Map();
     const marketBaselineByAddress = new Map();
 
@@ -82,8 +89,31 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       meteoraByAddress.set(row.token_address, row);
     }
 
-    for (const row of marketBaselineRows) {
+    const bucketBaselineRows = await tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5);
+    const bucketBaselineByAddress = new Map();
+    for (const row of bucketBaselineRows) {
+      bucketBaselineByAddress.set(row.token_address, row);
+    }
+
+    const addressesMissingBucketBaseline = addresses.filter((address) => {
+      const row = bucketBaselineByAddress.get(address);
+      return !row || row.baseline_mcap == null;
+    });
+
+    const [primaryMarketBaselineRows, fallbackMarketBaselineRows] = await Promise.all([
+      Promise.resolve(bucketBaselineRows),
+      addressesMissingBucketBaseline.length > 0
+        ? tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addressesMissingBucketBaseline, 5)
+        : Promise.resolve([]),
+    ]);
+
+    for (const row of primaryMarketBaselineRows) {
       marketBaselineByAddress.set(row.token_address, row);
+    }
+
+    for (const row of fallbackMarketBaselineRows) {
+      const existing = marketBaselineByAddress.get(row.token_address) || null;
+      marketBaselineByAddress.set(row.token_address, selectPreferredMarketBaseline(existing, row));
     }
 
     const responsePayload = {
@@ -127,5 +157,9 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     res.status(500).json({ error: 'Failed to load monitored dashboard' });
   }
 });
+
+router.__private = {
+  selectPreferredMarketBaseline,
+};
 
 module.exports = router;

@@ -1,5 +1,5 @@
 const tokenCatalog = require('../models/token-catalog');
-const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const dexscreener = require('./dexscreener');
 
 const LOOP_INTERVAL_MS = 2000;
@@ -303,7 +303,7 @@ async function evaluateTokenWithData(token, data) {
     tokenCreatedAt: toNumber(bestPair.pairCreatedAt),
   });
 
-  await tokenMarketSnapshot.insertSnapshot({
+  const marketSnapshotPayload = {
     tokenAddress: token.address,
     mcap: marketCap,
     price: bestPair.priceUsd || null,
@@ -312,7 +312,9 @@ async function evaluateTokenWithData(token, data) {
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
     source: 'dexscreener',
-  });
+  };
+
+  await tokenMarketBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
 
   return updatedToken;
 }

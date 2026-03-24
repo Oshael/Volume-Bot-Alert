@@ -206,4 +206,14 @@ describe('Catalog routes', () => {
     assert.equal(res.status, 400);
     assert.equal(res.body.error, 'limit must be an integer');
   });
+
+  it('rejects malformed lateralized query params', async () => {
+    const res = await request(app)
+      .get('/api/catalog/lateralized')
+      .set('Authorization', `Bearer ${token}`)
+      .query({ hours: 'abc' });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'hours must be an integer');
+  });
 });

@@ -1,4 +1,5 @@
 const tokenCatalog = require('../models/token-catalog');
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 
@@ -17,6 +18,7 @@ let status = {
   lastSummary: null,
   totalArchived: 0,
   totalQuarantined: 0,
+  totalDeletedMarketBuckets1m: 0,
   totalDeletedMarketSnapshots: 0,
   totalDeletedMeteoraSnapshots: 0,
   totalErrors: 0,
@@ -34,16 +36,19 @@ async function runOnce() {
       softArchiveRecheckMs: SOFT_ARCHIVE_RECHECK_MS,
     });
     const archivedAddresses = Array.isArray(summary.archivedAddresses) ? summary.archivedAddresses : [];
+    let deletedMarketBuckets1m = 0;
     let deletedMarketSnapshots = 0;
     let deletedMeteoraSnapshots = 0;
 
     if (archivedAddresses.length > 0) {
-      [deletedMarketSnapshots, deletedMeteoraSnapshots] = await Promise.all([
+      [deletedMarketBuckets1m, deletedMarketSnapshots, deletedMeteoraSnapshots] = await Promise.all([
+        tokenMarketBucket1m.deleteByAddresses(archivedAddresses),
         tokenMarketSnapshot.deleteByAddresses(archivedAddresses),
         tokenMeteoraSnapshot.deleteByAddresses(archivedAddresses),
       ]);
     }
 
+    summary.deletedMarketBuckets1m = deletedMarketBuckets1m;
     summary.deletedMarketSnapshots = deletedMarketSnapshots;
     summary.deletedMeteoraSnapshots = deletedMeteoraSnapshots;
 
@@ -51,12 +56,13 @@ async function runOnce() {
     status.quarantined = summary.quarantined;
     status.totalArchived += summary.archived;
     status.totalQuarantined += summary.quarantined;
+    status.totalDeletedMarketBuckets1m += deletedMarketBuckets1m;
     status.totalDeletedMarketSnapshots += deletedMarketSnapshots;
     status.totalDeletedMeteoraSnapshots += deletedMeteoraSnapshots;
     status.lastSummary = summary;
 
     console.log(
-      `[CatalogCleanupWorker] Archived=${summary.archived} Quarantined=${summary.quarantined} deletedMarketSnapshots=${deletedMarketSnapshots} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} staleDays=${summary.staleDays}`
+      `[CatalogCleanupWorker] Archived=${summary.archived} Quarantined=${summary.quarantined} deletedMarketBuckets1m=${deletedMarketBuckets1m} deletedMarketSnapshots=${deletedMarketSnapshots} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} staleDays=${summary.staleDays}`
     );
   } catch (err) {
     status.totalErrors += 1;
