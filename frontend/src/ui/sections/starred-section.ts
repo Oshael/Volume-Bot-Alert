@@ -1,17 +1,13 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, ManualTokenEntry } from '../../state/app-state';
+import { getTrackedToken, type AppState } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, renderTokenCard } from './shared';
 
 export function renderStarredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'surface-card action-card';
-
-  const knownByAddress = new Map<string, ManualTokenEntry>();
-  for (const item of [...state.data.manualTokens, ...state.data.monitoredTokens, ...state.data.recentTokens, ...state.data.oldWeekTokens]) {
-    if (!knownByAddress.has(item.address)) {
-      knownByAddress.set(item.address, item);
-    }
-  }
+  const manualAddressSet = new Set(state.data.manualTokenAddresses);
+  const recentAddressSet = new Set(state.data.recentTokenAddresses);
+  const oldWeekAddressSet = new Set(state.data.oldWeekTokenAddresses);
 
   section.innerHTML = `
     <div class="card-topline"><span class="section-tag">STARRED</span><span class="count-pill">${state.data.starredTokens.length}</span></div>
@@ -23,11 +19,11 @@ export function renderStarredSection(state: AppState, controller: AppController)
   const grid = section.querySelector<HTMLElement>('.token-card-grid');
   if (grid) {
     for (const address of state.data.starredTokens) {
-      const item = knownByAddress.get(address);
+      const item = getTrackedToken(state, address);
       if (item) {
         const wrapper = document.createElement('div');
         wrapper.innerHTML = renderTokenCard(item, state.ui.busy, {
-          mode: item._userManual ? 'manual' : state.data.recentTokens.some((tok) => tok.address === address) ? 'recent' : state.data.oldWeekTokens.some((tok) => tok.address === address) ? 'old-week' : 'monitored',
+          mode: manualAddressSet.has(address) || item._userManual ? 'manual' : recentAddressSet.has(address) ? 'recent' : oldWeekAddressSet.has(address) ? 'old-week' : 'monitored',
           isStarred: true,
           isAdmin: state.session.role === 'admin',
         });

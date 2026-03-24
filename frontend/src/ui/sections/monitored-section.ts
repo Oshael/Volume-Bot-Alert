@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, ManualTokenEntry } from '../../state/app-state';
+import { getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
 import { bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
@@ -21,7 +21,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const monitoredMcapLowest = hasCriterion('mcap', 'lowest') ? 'active' : '';
   const monitoredAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
   const monitoredAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
-  const tracked = [...state.data.monitoredTokens]
+  const tracked = [...getMonitoredTokens(state)]
     .filter((item) => item._userManual || !((item.mcap ?? 0) > 0 && (item.mcap ?? 0) < 30000))
     .sort((a, b) => {
       const metric = (entry: ManualTokenEntry, mode: string, window: string) => {
@@ -163,7 +163,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   return section;
 }
 
-function buildMonitoredRow(item: AppState['data']['monitoredTokens'][number], busy: boolean, isStarred: boolean, isAdmin: boolean) {
+function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);

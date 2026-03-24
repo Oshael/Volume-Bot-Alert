@@ -1,4 +1,6 @@
 const tokenCatalog = require('../models/token-catalog');
+const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 
 const LOOP_INTERVAL_MS = 60 * 60 * 1000;
 const STALE_DAYS = 5;
@@ -15,6 +17,8 @@ let status = {
   lastSummary: null,
   totalArchived: 0,
   totalQuarantined: 0,
+  totalDeletedMarketSnapshots: 0,
+  totalDeletedMeteoraSnapshots: 0,
   totalErrors: 0,
 };
 
@@ -29,15 +33,30 @@ async function runOnce() {
       quarantineRecheckMs: QUARANTINE_RECHECK_MS,
       softArchiveRecheckMs: SOFT_ARCHIVE_RECHECK_MS,
     });
+    const archivedAddresses = Array.isArray(summary.archivedAddresses) ? summary.archivedAddresses : [];
+    let deletedMarketSnapshots = 0;
+    let deletedMeteoraSnapshots = 0;
+
+    if (archivedAddresses.length > 0) {
+      [deletedMarketSnapshots, deletedMeteoraSnapshots] = await Promise.all([
+        tokenMarketSnapshot.deleteByAddresses(archivedAddresses),
+        tokenMeteoraSnapshot.deleteByAddresses(archivedAddresses),
+      ]);
+    }
+
+    summary.deletedMarketSnapshots = deletedMarketSnapshots;
+    summary.deletedMeteoraSnapshots = deletedMeteoraSnapshots;
 
     status.archived = summary.archived;
     status.quarantined = summary.quarantined;
     status.totalArchived += summary.archived;
     status.totalQuarantined += summary.quarantined;
+    status.totalDeletedMarketSnapshots += deletedMarketSnapshots;
+    status.totalDeletedMeteoraSnapshots += deletedMeteoraSnapshots;
     status.lastSummary = summary;
 
     console.log(
-      `[CatalogCleanupWorker] Archived=${summary.archived} Quarantined=${summary.quarantined} staleDays=${summary.staleDays}`
+      `[CatalogCleanupWorker] Archived=${summary.archived} Quarantined=${summary.quarantined} deletedMarketSnapshots=${deletedMarketSnapshots} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} staleDays=${summary.staleDays}`
     );
   } catch (err) {
     status.totalErrors += 1;

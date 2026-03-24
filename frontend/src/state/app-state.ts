@@ -223,10 +223,11 @@ export interface AppState {
   configSummary: ConfigSummary;
   data: {
     configs: Record<string, string | number>;
-    monitoredTokens: ManualTokenEntry[];
-    manualTokens: ManualTokenEntry[];
-    recentTokens: ManualTokenEntry[];
-    oldWeekTokens: ManualTokenEntry[];
+    trackedTokensByAddress: Record<string, ManualTokenEntry>;
+    monitoredTokenAddresses: string[];
+    manualTokenAddresses: string[];
+    recentTokenAddresses: string[];
+    oldWeekTokenAddresses: string[];
     dismissedRecent: string[];
     dismissedOldWeek: string[];
     dismissedPump: string[];
@@ -322,10 +323,11 @@ export function createAppState(): AppState {
     },
     data: {
       configs: {},
-      monitoredTokens: [],
-      manualTokens: [],
-      recentTokens: [],
-      oldWeekTokens: [],
+      trackedTokensByAddress: {},
+      monitoredTokenAddresses: [],
+      manualTokenAddresses: [],
+      recentTokenAddresses: [],
+      oldWeekTokenAddresses: [],
       dismissedRecent: [],
       dismissedOldWeek: [],
       dismissedPump: [],
@@ -390,4 +392,32 @@ export function getStatusMetrics(state: AppState): StatusMetric[] {
       tone: state.runtime.timeouts > 0 ? 'warn' : 'neutral',
     },
   ];
+}
+
+export function getTrackedToken(state: AppState, address: string) {
+  return state.data.trackedTokensByAddress[String(address || '').trim()] || null;
+}
+
+export function getManualTokens(state: AppState) {
+  return state.data.manualTokenAddresses
+    .map((address) => getTrackedToken(state, address))
+    .filter((item): item is ManualTokenEntry => Boolean(item));
+}
+
+export function getMonitoredTokens(state: AppState) {
+  return state.data.monitoredTokenAddresses
+    .map((address) => getTrackedToken(state, address))
+    .filter((item): item is ManualTokenEntry => Boolean(item));
+}
+
+export function getRecentTokens(state: AppState) {
+  return state.data.recentTokenAddresses
+    .map((address) => getTrackedToken(state, address))
+    .filter((item): item is ManualTokenEntry => Boolean(item));
+}
+
+export function getOldWeekTokens(state: AppState) {
+  return state.data.oldWeekTokenAddresses
+    .map((address) => getTrackedToken(state, address))
+    .filter((item): item is ManualTokenEntry => Boolean(item));
 }

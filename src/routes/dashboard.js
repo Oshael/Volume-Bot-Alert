@@ -5,7 +5,6 @@ const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const tokenMarketSnapshot = require('../models/token-market-snapshot');
-const { attachResponsePerfHeaders, logRequestPerf, nowMs } = require('../utils/perf-metrics');
 
 const MONITORED_MIN_MCAP = 30000;
 
@@ -70,20 +69,12 @@ function buildMarketBaseline(baselineRow) {
 }
 
 router.get('/monitored', dashboardLimiter, async (req, res) => {
-  const startedAt = nowMs();
   try {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
-    const catalogStartedAt = nowMs();
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
-    const catalogMs = nowMs() - catalogStartedAt;
     const addresses = tokens.map((item) => item.address);
-    const meteoraStartedAt = nowMs();
     const meteoraSummaryRows = await tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses);
-    const meteoraMs = nowMs() - meteoraStartedAt;
-    const marketStartedAt = nowMs();
     const marketBaselineRows = await tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5);
-    const marketMs = nowMs() - marketStartedAt;
-    const enrichMs = meteoraMs + marketMs;
     const meteoraByAddress = new Map();
     const marketBaselineByAddress = new Map();
 
@@ -130,26 +121,6 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       };
       }),
     };
-    const totalMs = nowMs() - startedAt;
-    const { responseBytes } = attachResponsePerfHeaders(res, 'dashboard.monitored', responsePayload, {
-      total: totalMs,
-      catalog: catalogMs,
-      enrich: enrichMs,
-      meteora: meteoraMs,
-      market: marketMs,
-    });
-    logRequestPerf(req, 'dashboard.monitored', {
-      totalMs,
-      catalogMs,
-      enrichMs,
-      meteoraMs,
-      marketMs,
-      tokenCount: tokens.length,
-      addressCount: addresses.length,
-      meteoraRows: meteoraSummaryRows.length,
-      marketRows: marketBaselineRows.length,
-      responseBytes,
-    });
     res.json(responsePayload);
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);

@@ -144,7 +144,7 @@ function getTradeTerminalLinks(
 ) {
   const tokenAddress = mintAddress || address;
   const terminalAddress = pairAddress || mintAddress || address;
-  const axiomAddress = options?.axiomAddress || tokenAddress;
+  const axiomAddress = options?.axiomAddress || pairAddress || tokenAddress;
   return [
     { label: 'Axiom', href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom' },
     { label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon' },

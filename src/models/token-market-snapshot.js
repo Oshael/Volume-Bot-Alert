@@ -182,10 +182,32 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   return rows;
 }
 
+async function deleteByAddresses(addresses) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return 0;
+  }
+
+  const result = await db.query(
+    `DELETE FROM token_market_snapshots
+     WHERE token_address = ANY($1::varchar[])`,
+    [unique]
+  );
+
+  return result.rowCount || 0;
+}
+
 module.exports = {
   insertSnapshot,
   listRecentByAddress,
   listHistoryByAddress,
   listLatestByAddresses,
   listCurrentAndBaselineByAddresses,
+  deleteByAddresses,
 };

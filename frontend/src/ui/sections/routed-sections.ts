@@ -1,5 +1,5 @@
 ﻿import type { AppController } from '../../state/app-controller';
-import type { AppState } from '../../state/app-state';
+import { getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderLogSummary, renderPagedAgeBucketList } from './shared';
 
 export function renderRecentSection(state: AppState, controller: AppController) {
@@ -25,7 +25,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const recentAgeNewest = hasRecentCriterion('age', 'newest') ? 'active' : '';
   const recentAgeOldest = hasRecentCriterion('age', 'oldest') ? 'active' : '';
   const recentSearchQuery = String(state.ui.recentSearchQuery || '').trim().toLowerCase();
-  const filteredRecentTokens = state.data.recentTokens.filter((item) => {
+  const filteredRecentTokens = getRecentTokens(state).filter((item) => {
     if (state.ui.recentStarredOnly && !state.data.starredTokens.includes(item.address)) {
       return false;
     }
@@ -175,7 +175,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const oldWeekAgeNewest = hasOldWeekCriterion('age', 'newest') ? 'active' : '';
   const oldWeekAgeOldest = hasOldWeekCriterion('age', 'oldest') ? 'active' : '';
   const oldWeekSearchQuery = String(state.ui.oldWeekSearchQuery || '').trim().toLowerCase();
-  const filteredOldWeekTokens = state.data.oldWeekTokens.filter((item) => {
+  const filteredOldWeekTokens = getOldWeekTokens(state).filter((item) => {
     if (state.ui.oldWeekStarredOnly && !state.data.starredTokens.includes(item.address)) {
       return false;
     }

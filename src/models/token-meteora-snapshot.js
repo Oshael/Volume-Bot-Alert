@@ -203,10 +203,26 @@ async function listLatestSummaryByAddresses(addresses) {
   return rows;
 }
 
+async function deleteByAddresses(addresses) {
+  const normalized = normalizeAddressList(addresses);
+  if (normalized.length === 0) {
+    return 0;
+  }
+
+  const result = await db.query(
+    `DELETE FROM token_meteora_snapshots
+     WHERE token_address = ANY($1::varchar[])`,
+    [normalized]
+  );
+
+  return result.rowCount || 0;
+}
+
 module.exports = {
   insertSnapshot,
   getLatestByAddresses,
   listHistoryByAddress,
   listHistoryByAddresses,
   listLatestSummaryByAddresses,
+  deleteByAddresses,
 };

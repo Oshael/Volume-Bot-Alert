@@ -1,4 +1,4 @@
-import { createAppState, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -87,6 +87,7 @@ const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const METEORA_ALERT_MIN_TVL = 10000;
+const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 
 export interface AppController {
   state: AppState;
@@ -162,67 +163,65 @@ export function createAppController(): AppController {
   let starredPersistRevision = 0;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
+  let nextColdFieldRefreshAt = 0;
 
-  function isPerfMetricsEnabled() {
-    if (typeof window === 'undefined') {
+  function normalizeDiffValue(value: unknown) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    return value;
+  }
+
+  function hasCriticalColdFieldGap(token: ManualTokenEntry | undefined) {
+    if (!token) {
+      return true;
+    }
+
+    const hasCreatedAt = typeof token.createdAt === 'number' && token.createdAt > 0;
+    return !token.symbol || !token.pairUrl || !hasCreatedAt;
+  }
+
+  function replaceTrackedTokenReferences(address: string, nextToken: ManualTokenEntry) {
+    state.data.trackedTokensByAddress[address] = nextToken;
+  }
+
+  function refreshTrackedTokenStore() {
+    const activeAddresses = new Set(state.data.monitoredTokenAddresses);
+    for (const address of Object.keys(state.data.trackedTokensByAddress)) {
+      if (!activeAddresses.has(address)) {
+        delete state.data.trackedTokensByAddress[address];
+      }
+    }
+  }
+
+  function areTrackedTokensEquivalent(existingItem: ManualTokenEntry | undefined, nextItem: ManualTokenEntry | undefined) {
+    if (!existingItem || !nextItem) {
       return false;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const queryValue = params.get('perf');
-    if (queryValue === '1') return true;
-    if (queryValue === '0') return false;
+    const keys = new Set([
+      ...Object.keys(existingItem),
+      ...Object.keys(nextItem),
+    ]);
 
-    try {
-      const stored = window.localStorage.getItem('perf-metrics');
-      if (stored === 'on') return true;
-      if (stored === 'off') return false;
-    } catch (_) {
-      // Ignore storage access issues.
+    for (const key of keys) {
+      const existingValue = normalizeDiffValue((existingItem as unknown as Record<string, unknown>)[key]);
+      const nextValue = normalizeDiffValue((nextItem as unknown as Record<string, unknown>)[key]);
+      if (existingValue !== nextValue) {
+        return false;
+      }
     }
 
-    return import.meta.env.DEV || import.meta.env.VITE_PERF_METRICS === '1';
-  }
-
-  function getHeapUsedMb() {
-    if (typeof performance === 'undefined') {
-      return null;
-    }
-    const heapBytes = (performance as Performance & {
-      memory?: { usedJSHeapSize?: number };
-    }).memory?.usedJSHeapSize;
-    return typeof heapBytes === 'number' ? Number((heapBytes / (1024 * 1024)).toFixed(1)) : null;
-  }
-
-  function getPerfStateSummary() {
-    return {
-      heapUsedMb: getHeapUsedMb(),
-      runtimeMode: state.runtime.mode,
-      monitored: state.data.monitoredTokens.length,
-      manual: state.data.manualTokens.length,
-      recent: state.data.recentTokens.length,
-      oldWeek: state.data.oldWeekTokens.length,
-      eligibleCatalog: state.data.eligibleCatalogTokens.length,
-      blocklist: state.data.blocklist.length,
-      starred: state.data.starredTokens.length,
-      meteoraTracked: Object.keys(state.data.meteoraByAddress).length,
-      alerts: state.data.alerts.length,
-      pumpTokens: state.data.pumpTokens.length,
-      pumpMigrations: state.data.recentPumpMigrations.length,
-      pumpToasts: state.data.pumpToasts.length,
-    };
-  }
-
-  function writeConfigDebug(stage: string, extra: Record<string, unknown> = {}) {
-    if (!isPerfMetricsEnabled()) {
-      return;
-    }
-
-    console.log('[Perf][Frontend]', stage, {
-      ts: new Date().toISOString(),
-      ...getPerfStateSummary(),
-      ...extra,
-    });
+    return true;
   }
 
   function flushEmit() {
@@ -436,10 +435,8 @@ export function createAppController(): AppController {
     }
 
     try {
-      writeConfigDebug('persistUiConfigs:before-patch', { configs });
       const result = await patchConfig(configs, token);
       state.data.configs = { ...state.data.configs, ...result.configs };
-      writeConfigDebug('persistUiConfigs:after-patch', { configs: result.configs });
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to persist UI config');
       emit();
@@ -460,10 +457,6 @@ export function createAppController(): AppController {
       if (revision == starredPersistRevision) {
         state.data.configs = result.configs || {};
         applyUiPreferencesFromConfigs();
-        writeConfigDebug('persistStarredTokens:after-sync', {
-          starredCount: result.starredTokens.length,
-          syncedMinVol: result.configs?.['min-vol'],
-        });
         state.data.starredTokens = result.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
         emit();
       }
@@ -525,10 +518,11 @@ export function createAppController(): AppController {
   }
 
   function removeTokenEverywhere(address: string, options: { removeFromStarred?: boolean } = {}) {
-    state.data.monitoredTokens = state.data.monitoredTokens.filter((item) => item.address !== address);
-    state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
-    state.data.recentTokens = state.data.recentTokens.filter((item) => item.address !== address);
-    state.data.oldWeekTokens = state.data.oldWeekTokens.filter((item) => item.address !== address);
+    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => item !== address);
+    state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
+    state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
+    state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
+    delete state.data.trackedTokensByAddress[address];
     state.data.eligibleCatalogTokens = state.data.eligibleCatalogTokens.filter((item) => item !== address);
     state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== address && item.mintAddress !== address);
     state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => item.mint !== address);
@@ -541,9 +535,10 @@ export function createAppController(): AppController {
       queueStarredTokensPersist();
     }
 
-    state.configSummary.manualTokens = state.data.manualTokens.length;
-    state.bars.manual = state.data.manualTokens.length;
+    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+    state.bars.manual = state.data.manualTokenAddresses.length;
     deriveAgeBuckets();
+    refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
     refreshPumpPanelCounts();
     persistBarStorage();
@@ -1076,7 +1071,7 @@ export function createAppController(): AppController {
   }
 
   function getVisibleMonitoredTokens() {
-    return state.data.monitoredTokens.filter(isVisibleMonitoredToken);
+    return getMonitoredTokens(state).filter(isVisibleMonitoredToken);
   }
 
   function syncMonitoredPagination() {
@@ -1085,12 +1080,12 @@ export function createAppController(): AppController {
 
   function syncRoutedPagination() {
     syncMonitoredPagination();
-    state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokens.length, state.ui.recentPerPage);
-    state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokens.length, state.ui.oldWeekPerPage);
+    state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
+    state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
   }
   function deriveAgeBuckets() {
-    const previousRecent = new Map(state.data.recentTokens.map((item) => [item.address, item]));
-    const previousOldWeek = new Map(state.data.oldWeekTokens.map((item) => [item.address, item]));
+    const previousRecent = new Map(getRecentTokens(state).map((item) => [item.address, item]));
+    const previousOldWeek = new Map(getOldWeekTokens(state).map((item) => [item.address, item]));
     const recentDismissed = new Set(state.data.dismissedRecent);
     const oldWeekDismissed = new Set(state.data.dismissedOldWeek);
 
@@ -1100,7 +1095,7 @@ export function createAppController(): AppController {
     const oldWeekMax = getConfigNumber('old-week-mcap-max', 100000000);
     const now = Date.now();
 
-    const candidates = state.data.monitoredTokens.filter((item) => {
+    const candidates = getMonitoredTokens(state).filter((item) => {
       if (item._userManual || isBlocked(item.address)) {
         return false;
       }
@@ -1165,8 +1160,9 @@ export function createAppController(): AppController {
       logRemoval('oldWeek', token, reason);
     }
 
-    state.data.recentTokens = nextRecent;
-    state.data.oldWeekTokens = nextOldWeek;
+    state.data.recentTokenAddresses = nextRecent.map((item) => item.address);
+    state.data.oldWeekTokenAddresses = nextOldWeek.map((item) => item.address);
+    refreshTrackedTokenStore();
     state.bars.recent = nextRecent.length;
     state.bars.oldWeek = nextOldWeek.length;
     syncRoutedPagination();
@@ -1180,16 +1176,17 @@ export function createAppController(): AppController {
       return;
     }
 
-    state.data.monitoredTokens = state.data.monitoredTokens.filter((item) => !blocked.has(item.address));
-    state.data.manualTokens = state.data.manualTokens.filter((item) => !blocked.has(item.address));
-    state.data.recentTokens = state.data.recentTokens.filter((item) => !blocked.has(item.address));
-    state.data.oldWeekTokens = state.data.oldWeekTokens.filter((item) => !blocked.has(item.address));
+    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => !blocked.has(item));
+    state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => !blocked.has(item));
+    state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => !blocked.has(item));
+    state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => !blocked.has(item));
+    refreshTrackedTokenStore();
     state.data.pumpTokens = state.data.pumpTokens.filter((item) => !blocked.has(item.mint));
     state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => !blocked.has(item.mint));
     state.data.alerts = state.data.alerts.filter((item) => !blocked.has(item.address));
     state.data.dismissedRecent = state.data.dismissedRecent.filter((address) => !blocked.has(address));
     state.data.dismissedOldWeek = state.data.dismissedOldWeek.filter((address) => !blocked.has(address));
-    state.bars.manual = state.data.manualTokens.length;
+    state.bars.manual = state.data.manualTokenAddresses.length;
     deriveAgeBuckets();
     refreshMonitoredPanelCounts();
     refreshPumpPanelCounts();
@@ -1204,7 +1201,11 @@ export function createAppController(): AppController {
     }
 
     const removed: string[] = [];
-    state.data.monitoredTokens = state.data.monitoredTokens.filter((item) => {
+    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((address) => {
+      const item = state.data.trackedTokensByAddress[address];
+      if (!item) {
+        return false;
+      }
       if (item._userManual) {
         return true;
       }
@@ -1218,8 +1219,12 @@ export function createAppController(): AppController {
       return keep;
     });
 
-    state.data.manualTokens = state.data.manualTokens.filter((item) => item._userManual || state.data.monitoredTokens.some((tok) => tok.address === item.address));
-    state.bars.manual = state.data.manualTokens.length;
+    state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((address) => {
+      const tracked = state.data.trackedTokensByAddress[address];
+      return Boolean(tracked?._userManual) || state.data.monitoredTokenAddresses.includes(address);
+    });
+    refreshTrackedTokenStore();
+    state.bars.manual = state.data.manualTokenAddresses.length;
     deriveAgeBuckets();
 
     if (removed.length > 0) {
@@ -1337,8 +1342,8 @@ export function createAppController(): AppController {
       setNotice(`HVNC alert: ${symbol}`);
     }
 
-    const isOldRouted = state.data.recentTokens.some((item) => item.address === token.address)
-      || state.data.oldWeekTokens.some((item) => item.address === token.address);
+    const isOldRouted = state.data.recentTokenAddresses.includes(token.address)
+      || state.data.oldWeekTokenAddresses.includes(token.address);
 
     if (!token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
       const pc1h = token.priceChange1h ?? null;
@@ -1558,28 +1563,56 @@ export function createAppController(): AppController {
     }
   }
   function rebuildTrackedState(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
-    const existing = new Map(state.data.monitoredTokens.map((item) => [item.address, item]));
+    const existing = new Map(
+      Object.entries(state.data.trackedTokensByAddress).length > 0
+        ? Object.entries(state.data.trackedTokensByAddress)
+        : getMonitoredTokens(state).map((item) => [item.address, item]),
+    );
     const blockedSet = new Set(payload.blocklist.map((item) => item.address));
     const dashboardByAddress = new Map(monitoredDashboardTokens.map((item) => [item.address, item]));
+    const nextTrackedStore: Record<string, ManualTokenEntry> = {};
+    const now = Date.now();
+    const coldRefreshDue = monitoredDashboardTokens.length > 0 && now >= nextColdFieldRefreshAt;
+    let reusedManualCount = 0;
+    let newManualCount = 0;
+    let reusedDashboardCount = 0;
+    let newDashboardCount = 0;
 
     function mergeDashboardFields(
       existingItem: ManualTokenEntry | undefined,
       dashboardItem: DashboardMonitoredToken | undefined,
       base: ManualTokenEntry,
     ) {
+      const criticalColdFieldGap = hasCriticalColdFieldGap(existingItem);
+      const shouldApplyColdFields = Boolean(dashboardItem) && (!existingItem || criticalColdFieldGap || coldRefreshDue);
+
       const nextMcap = dashboardItem?.mcap ?? existingItem?.mcap ?? base.mcap ?? null;
       const nextVolume5m = dashboardItem?.volume5m ?? existingItem?.volume5m ?? base.volume5m ?? null;
 
       return {
         ...base,
         mintAddress: existingItem?.mintAddress ?? dashboardItem?.address ?? base.address,
-        pairAddress: dashboardItem?.pairAddress ?? existingItem?.pairAddress ?? base.pairAddress ?? null,
-        pairUrl: dashboardItem?.pairUrl ?? existingItem?.pairUrl ?? base.pairUrl ?? null,
-        imageUrl: dashboardItem?.imageUrl ?? existingItem?.imageUrl ?? base.imageUrl ?? null,
-        twitterUrl: dashboardItem?.twitterUrl ?? existingItem?.twitterUrl ?? base.twitterUrl ?? null,
-        symbol: dashboardItem?.symbol ?? existingItem?.symbol ?? base.symbol ?? null,
-        name: dashboardItem?.name ?? existingItem?.name ?? base.name ?? null,
-        createdAt: dashboardItem?.tokenCreatedAt ?? existingItem?.createdAt ?? base.createdAt ?? null,
+        pairAddress: shouldApplyColdFields
+          ? dashboardItem?.pairAddress ?? existingItem?.pairAddress ?? base.pairAddress ?? null
+          : existingItem?.pairAddress ?? base.pairAddress ?? null,
+        pairUrl: shouldApplyColdFields
+          ? dashboardItem?.pairUrl ?? existingItem?.pairUrl ?? base.pairUrl ?? null
+          : existingItem?.pairUrl ?? base.pairUrl ?? null,
+        imageUrl: shouldApplyColdFields
+          ? dashboardItem?.imageUrl ?? existingItem?.imageUrl ?? base.imageUrl ?? null
+          : existingItem?.imageUrl ?? base.imageUrl ?? null,
+        twitterUrl: shouldApplyColdFields
+          ? dashboardItem?.twitterUrl ?? existingItem?.twitterUrl ?? base.twitterUrl ?? null
+          : existingItem?.twitterUrl ?? base.twitterUrl ?? null,
+        symbol: shouldApplyColdFields
+          ? dashboardItem?.symbol ?? existingItem?.symbol ?? base.symbol ?? null
+          : existingItem?.symbol ?? base.symbol ?? null,
+        name: shouldApplyColdFields
+          ? dashboardItem?.name ?? existingItem?.name ?? base.name ?? null
+          : existingItem?.name ?? base.name ?? null,
+        createdAt: shouldApplyColdFields
+          ? dashboardItem?.tokenCreatedAt ?? existingItem?.createdAt ?? base.createdAt ?? null
+          : existingItem?.createdAt ?? base.createdAt ?? null,
         mcap: nextMcap,
         priceUsd: dashboardItem?.priceUsd ?? existingItem?.priceUsd ?? base.priceUsd ?? null,
         volume5m: nextVolume5m,
@@ -1616,14 +1649,22 @@ export function createAppController(): AppController {
         const dashboardItem = dashboardByAddress.get(item.address);
         if (existingItem) {
           alertCandidates.add(item.address);
+          reusedManualCount += 1;
+        } else {
+          newManualCount += 1;
         }
-        return mergeDashboardFields(existingItem, dashboardItem, {
+        const mergedItem = mergeDashboardFields(existingItem, dashboardItem, {
           ...existingItem,
           address: item.address,
           label: item.label ?? null,
           manual: true,
           _userManual: true,
         });
+        const nextItem = areTrackedTokensEquivalent(existingItem, mergedItem)
+          ? existingItem as ManualTokenEntry
+          : mergedItem;
+        nextTrackedStore[item.address] = nextItem;
+        return nextItem;
       });
 
     const monitoredMap = new Map<string, ManualTokenEntry>();
@@ -1638,23 +1679,35 @@ export function createAppController(): AppController {
       const existingItem = existing.get(item.address);
       if (existingItem) {
         alertCandidates.add(item.address);
+        reusedDashboardCount += 1;
+      } else {
+        newDashboardCount += 1;
       }
-      monitoredMap.set(item.address, mergeDashboardFields(existingItem, item, {
+      const mergedItem = mergeDashboardFields(existingItem, item, {
         ...existingItem,
         address: item.address,
         label: existingItem?.label ?? item.symbol ?? 'Eligible',
         manual: false,
         _userManual: false,
-      }));
+      });
+      const nextItem = areTrackedTokensEquivalent(existingItem, mergedItem)
+        ? existingItem as ManualTokenEntry
+        : mergedItem;
+      nextTrackedStore[item.address] = nextItem;
+      monitoredMap.set(item.address, nextItem);
     }
-    state.data.manualTokens = manualTokens;
-    state.data.monitoredTokens = [...monitoredMap.values()];
-    state.data.recentTokens = [];
-    state.data.oldWeekTokens = [];
-    state.bars.manual = manualTokens.length;
+    if (coldRefreshDue) {
+      nextColdFieldRefreshAt = now + COLD_FIELD_RECHECK_MS;
+    }
+    state.data.trackedTokensByAddress = nextTrackedStore;
+    state.data.manualTokenAddresses = manualTokens.map((item) => item.address);
+    state.data.monitoredTokenAddresses = [...monitoredMap.keys()];
+    state.data.recentTokenAddresses = [];
+    state.data.oldWeekTokenAddresses = [];
+    state.bars.manual = state.data.manualTokenAddresses.length;
     deriveAgeBuckets();
     if (state.runtime.mode === 'active' && alertCandidates.size > 0) {
-      for (const token of state.data.monitoredTokens) {
+      for (const token of getMonitoredTokens(state)) {
         if (!alertCandidates.has(token.address)) continue;
         maybeFireSpecialAlerts(token);
         maybeFireLocalAlert(token);
@@ -1670,21 +1723,11 @@ export function createAppController(): AppController {
     }
 
     monitoredRefreshInFlight = true;
-    const startedAt = performance.now();
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
-      writeConfigDebug('refreshMonitoredDashboard:success', {
-        fetchMs: Number((performance.now() - startedAt).toFixed(1)),
-        monitoredDashboardTokens: monitoredDashboard.tokens.length,
-        monitoredGeneratedAt: monitoredDashboard.generatedAt ?? null,
-      });
       emit();
     } catch (error) {
-      writeConfigDebug('refreshMonitoredDashboard:error', {
-        fetchMs: Number((performance.now() - startedAt).toFixed(1)),
-        error: error instanceof Error ? error.message : 'unknown_refresh_error',
-      });
       setError(error instanceof Error ? error.message : 'Failed to refresh monitored dashboard');
       emit();
     } finally {
@@ -1812,6 +1855,7 @@ export function createAppController(): AppController {
   }
 
   function clearSession() {
+    nextColdFieldRefreshAt = 0;
     state.session.status = 'anonymous';
     state.session.token = null;
     state.session.username = null;
@@ -1840,10 +1884,11 @@ export function createAppController(): AppController {
     state.pumpfun.bondTargetMcap = 35000;
     state.data = {
       configs: {},
-      monitoredTokens: [],
-      manualTokens: [],
-      recentTokens: [],
-      oldWeekTokens: [],
+      trackedTokensByAddress: {},
+      monitoredTokenAddresses: [],
+      manualTokenAddresses: [],
+      recentTokenAddresses: [],
+      oldWeekTokenAddresses: [],
       dismissedRecent: [],
       dismissedOldWeek: [],
       dismissedPump: [],
@@ -1896,7 +1941,7 @@ export function createAppController(): AppController {
   ) {
     const manualPayload: ConfigPayload = {
       configs: state.data.configs,
-      tokens: (manualTokensOverride ?? state.data.manualTokens.map((item) => ({ address: item.address, label: item.label ?? null }))),
+      tokens: (manualTokensOverride ?? getManualTokens(state).map((item) => ({ address: item.address, label: item.label ?? null }))),
       blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
       starredTokens: state.data.starredTokens.map((address) => ({ address })),
     };
@@ -1932,11 +1977,6 @@ export function createAppController(): AppController {
       updateMonitoredFreshness(generatedAt ?? null);
     }
     rebuildTrackedState(manualPayload, monitoredDashboardTokens);
-    writeConfigDebug('applyMonitoredDashboard', {
-      monitoredDashboardTokens: monitoredDashboardTokens.length,
-      manualTokensOverride: manualTokensOverride?.length ?? null,
-      monitoredGeneratedAt: generatedAt ?? null,
-    });
   }
 
   function applyConfig(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
@@ -1949,10 +1989,6 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: monitoredDashboardTokens.length,
     };
     state.data.configs = payload.configs || {};
-    writeConfigDebug('applyConfig', {
-      loadedMinVol: payload.configs?.['min-vol'],
-      configKeys: Object.keys(payload.configs || {}),
-    });
     state.pumpfun.bondTargetMcap = getConfigNumber('pump-bond-mcap', state.pumpfun.bondTargetMcap || 35000);
     applyUiPreferencesFromConfigs();
     persistSoundSettings();
@@ -1970,24 +2006,11 @@ export function createAppController(): AppController {
       applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
       emit();
     } catch (error) {
-      writeConfigDebug('reloadConfigInternal:dashboard-failed', {
-        error: error instanceof Error ? error.message : 'unknown_dashboard_error',
-      });
     }
   }
 
   async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
-    const startedAt = performance.now();
     const payload = await fetchConfig(token);
-
-    writeConfigDebug('reloadConfigInternal:fetched', {
-      fetchMs: Number((performance.now() - startedAt).toFixed(1)),
-      fetchedMinVol: payload.configs?.['min-vol'],
-      configKeys: Object.keys(payload.configs || {}).length,
-      manualTokens: payload.tokens.length,
-      blocklist: payload.blocklist.length,
-      starredTokens: payload.starredTokens.length,
-    });
 
     applyConfig(payload, []);
 
@@ -2117,8 +2140,8 @@ export function createAppController(): AppController {
     dismissRecentToken(address: string) {
       if (!state.data.dismissedRecent.includes(address)) {
         state.data.dismissedRecent = [...state.data.dismissedRecent, address];
-        state.data.recentTokens = state.data.recentTokens.filter((item) => item.address !== address);
-        state.bars.recent = state.data.recentTokens.length;
+        state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
+        state.bars.recent = state.data.recentTokenAddresses.length;
         syncRoutedPagination();
         persistBarStorage();
         setNotice('Recent token dismissed.');
@@ -2128,8 +2151,8 @@ export function createAppController(): AppController {
     dismissOldWeekToken(address: string) {
       if (!state.data.dismissedOldWeek.includes(address)) {
         state.data.dismissedOldWeek = [...state.data.dismissedOldWeek, address];
-        state.data.oldWeekTokens = state.data.oldWeekTokens.filter((item) => item.address !== address);
-        state.bars.oldWeek = state.data.oldWeekTokens.length;
+        state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
+        state.bars.oldWeek = state.data.oldWeekTokenAddresses.length;
         syncRoutedPagination();
         persistBarStorage();
         setNotice('Old Week token dismissed.');
@@ -2202,11 +2225,11 @@ export function createAppController(): AppController {
       emit();
     },
     setRecentPage(page: number) {
-      state.ui.recentPage = clampPage(page, state.data.recentTokens.length, state.ui.recentPerPage);
+      state.ui.recentPage = clampPage(page, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
       emit();
     },
     setOldWeekPage(page: number) {
-      state.ui.oldWeekPage = clampPage(page, state.data.oldWeekTokens.length, state.ui.oldWeekPerPage);
+      state.ui.oldWeekPage = clampPage(page, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
       emit();
     },
     setMonitoredPerPage(perPage: number) {
@@ -2218,14 +2241,14 @@ export function createAppController(): AppController {
     },
     setRecentPerPage(perPage: number) {
       state.ui.recentPerPage = Math.max(10, Math.floor(perPage) || 30);
-      state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokens.length, state.ui.recentPerPage);
+      state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
       state.data.configs['old-per-page'] = state.ui.recentPerPage;
       void persistUiConfigs({ 'old-per-page': state.ui.recentPerPage });
       emit();
     },
     setOldWeekPerPage(perPage: number) {
       state.ui.oldWeekPerPage = Math.max(10, Math.floor(perPage) || 30);
-      state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokens.length, state.ui.oldWeekPerPage);
+      state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
       state.data.configs['old-week-per-page'] = state.ui.oldWeekPerPage;
       void persistUiConfigs({ 'old-week-per-page': state.ui.oldWeekPerPage });
       emit();
@@ -2777,26 +2800,31 @@ export function createAppController(): AppController {
       setError(null);
       setNotice('Adding manual token...');
 
-      const existingManual = state.data.manualTokens.find((item) => item.address === normalizedAddress);
-      const existingTracked = state.data.monitoredTokens.find((item) => item.address === normalizedAddress);
-      const nextManual: ManualTokenEntry = {
-        ...(existingTracked || existingManual || {}),
+      const existingTracked = state.data.trackedTokensByAddress[normalizedAddress]
+        || getMonitoredTokens(state).find((item) => item.address === normalizedAddress)
+        || getManualTokens(state).find((item) => item.address === normalizedAddress);
+      const nextManualDraft: ManualTokenEntry = {
+        ...(existingTracked || {}),
         address: normalizedAddress,
-        label: label ?? existingTracked?.label ?? existingManual?.label ?? null,
+        label: label ?? existingTracked?.label ?? null,
         manual: true,
         _userManual: true,
       };
+      const nextManual = areTrackedTokensEquivalent(existingTracked, nextManualDraft)
+        ? existingTracked as ManualTokenEntry
+        : nextManualDraft;
 
-      state.data.manualTokens = state.data.manualTokens.some((item) => item.address === normalizedAddress)
-        ? state.data.manualTokens.map((item) => item.address === normalizedAddress ? { ...item, ...nextManual } : item)
-        : [...state.data.manualTokens, nextManual];
+      state.data.trackedTokensByAddress[normalizedAddress] = nextManual;
+      state.data.manualTokenAddresses = state.data.manualTokenAddresses.includes(normalizedAddress)
+        ? state.data.manualTokenAddresses
+        : [...state.data.manualTokenAddresses, normalizedAddress];
 
-      state.data.monitoredTokens = state.data.monitoredTokens.some((item) => item.address === normalizedAddress)
-        ? state.data.monitoredTokens.map((item) => item.address === normalizedAddress ? { ...item, ...nextManual } : item)
-        : [...state.data.monitoredTokens, nextManual];
+      state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.includes(normalizedAddress)
+        ? state.data.monitoredTokenAddresses
+        : [...state.data.monitoredTokenAddresses, normalizedAddress];
 
-      state.configSummary.manualTokens = state.data.manualTokens.length;
-      state.bars.manual = state.data.manualTokens.length;
+      state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+      state.bars.manual = state.data.manualTokenAddresses.length;
       refreshMonitoredPanelCounts();
       deriveAgeBuckets();
       emit();
@@ -2804,9 +2832,14 @@ export function createAppController(): AppController {
       try {
         const result = await addManualTokenRequest(normalizedAddress, label ?? null, token);
         if (result?.token) {
-          state.data.manualTokens = state.data.manualTokens.map((item) => item.address === normalizedAddress
-            ? { ...item, label: result.token.label ?? item.label ?? null }
-            : item);
+          const currentTracked = state.data.trackedTokensByAddress[normalizedAddress];
+          if (currentTracked) {
+            const syncedTracked = {
+              ...currentTracked,
+              label: result.token.label ?? currentTracked.label ?? null,
+            };
+            replaceTrackedTokenReferences(normalizedAddress, syncedTracked);
+          }
         }
         await trackManualToken(normalizedAddress, token);
         await reloadConfigInternal(token);
@@ -2833,10 +2866,17 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        state.data.manualTokens = state.data.manualTokens.filter((item) => item.address !== address);
-        state.data.monitoredTokens = state.data.monitoredTokens.map((item) => item.address === address ? { ...item, manual: false, _userManual: false } : item);
-        state.configSummary.manualTokens = state.data.manualTokens.length;
-        state.bars.manual = state.data.manualTokens.length;
+        state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
+        const currentTracked = state.data.trackedTokensByAddress[address];
+        if (currentTracked) {
+          replaceTrackedTokenReferences(address, {
+            ...currentTracked,
+            manual: false,
+            _userManual: false,
+          });
+        }
+        state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+        state.bars.manual = state.data.manualTokenAddresses.length;
         deriveAgeBuckets();
         refreshMonitoredPanelCounts();
         emit();

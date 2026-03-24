@@ -29,15 +29,64 @@ let running = false;
 let status = {
   running: false,
   lastRunAt: null,
+  lastCompletedAt: null,
   lastProcessed: 0,
   lastDueCount: 0,
+  lastTotalDueCount: 0,
+  lastBacklogCount: 0,
+  lastRunDurationMs: 0,
+  lastLoopOverrunMs: 0,
   lastTokenBudget: MAX_TOKEN_BUDGET_PER_CYCLE,
   lastDexRequestBudget: Math.floor(MAX_TOKEN_BUDGET_PER_CYCLE / DEX_TOKENS_PER_REQUEST),
+  lastDexBatchCount: 0,
+  lastProcessBatchCount: 0,
+  lastDueByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
+  lastBacklogByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
+  lastMaxOverdueMs: 0,
+  lastMaxOverdueMsByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   totalProcessed: 0,
   totalEligible: 0,
   totalIneligible: 0,
   totalErrors: 0,
 };
+
+function emptyPriorityCounts() {
+  return { high: 0, normal: 0, low: 0, dormant: 0, other: 0 };
+}
+
+function normalizePriorityBucket(priority) {
+  const value = String(priority || '').trim().toLowerCase();
+  if (value === 'high' || value === 'normal' || value === 'low' || value === 'dormant') {
+    return value;
+  }
+  return 'other';
+}
+
+function summarizePriorityCounts(tokens) {
+  const counts = emptyPriorityCounts();
+
+  for (const token of Array.isArray(tokens) ? tokens : []) {
+    counts[normalizePriorityBucket(token?.monitor_priority)] += 1;
+  }
+
+  return counts;
+}
+
+function subtractPriorityCounts(totalCounts = {}, processedCounts = {}) {
+  const result = emptyPriorityCounts();
+
+  for (const key of Object.keys(result)) {
+    result[key] = Math.max(0, (Number(totalCounts[key]) || 0) - (Number(processedCounts[key]) || 0));
+  }
+
+  return result;
+}
+
+function formatPriorityCounts(counts = {}) {
+  return ['high', 'normal', 'low', 'dormant', 'other']
+    .map((key) => `${key}:${Number(counts[key]) || 0}`)
+    .join(',');
+}
 
 function extractTwitterUrl(pair) {
   return pair?.info?.socials?.find((item) => item.type === 'twitter')?.url || null;
@@ -215,18 +264,7 @@ async function evaluateTokenWithData(token, data) {
   if (isEligible) status.totalEligible++;
   else status.totalIneligible++;
 
-  await tokenMarketSnapshot.insertSnapshot({
-    tokenAddress: token.address,
-    mcap: marketCap,
-    price: bestPair.priceUsd || null,
-    vol5m: snapshot.vol5m,
-    vol1h: snapshot.vol1h,
-    vol6h: snapshot.vol6h,
-    vol24h: snapshot.vol24h,
-    source: 'dexscreener',
-  });
-
-  return tokenCatalog.applyEvaluationResult(token.address, {
+  const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
     eligibilityState: snapshot.eligibilityState,
     eligibleForMonitoring: snapshot.eligibleForMonitoring,
     suppressedReason: snapshot.suppressedReason,
@@ -251,6 +289,19 @@ async function evaluateTokenWithData(token, data) {
     priceChange24h: snapshot.pchange24h,
     tokenCreatedAt: toNumber(bestPair.pairCreatedAt),
   });
+
+  await tokenMarketSnapshot.insertSnapshot({
+    tokenAddress: token.address,
+    mcap: marketCap,
+    price: bestPair.priceUsd || null,
+    vol5m: snapshot.vol5m,
+    vol1h: snapshot.vol1h,
+    vol6h: snapshot.vol6h,
+    vol24h: snapshot.vol24h,
+    source: 'dexscreener',
+  });
+
+  return updatedToken;
 }
 
 function getDexPriorityHint(token) {
@@ -282,10 +333,25 @@ function getDexPriorityHint(token) {
 async function runOnce() {
   if (!running) return;
 
+  const cycleStartedAt = Date.now();
+  const dueSummaryPromise = tokenCatalog.countDueForEvaluationSummary();
   const due = await tokenCatalog.listDueForEvaluation(MAX_TOKEN_BUDGET_PER_CYCLE);
-  status.lastRunAt = new Date().toISOString();
+  const dueSummary = await dueSummaryPromise;
+  const processedByPriority = summarizePriorityCounts(due);
+  const backlogByPriority = subtractPriorityCounts(dueSummary.byPriority, processedByPriority);
+  const totalDueCount = Number(dueSummary.total) || 0;
+
+  status.lastRunAt = new Date(cycleStartedAt).toISOString();
   status.lastProcessed = due.length;
   status.lastDueCount = due.length;
+  status.lastTotalDueCount = totalDueCount;
+  status.lastBacklogCount = Math.max(0, totalDueCount - due.length);
+  status.lastDueByPriority = processedByPriority;
+  status.lastBacklogByPriority = backlogByPriority;
+  status.lastMaxOverdueMs = Number(dueSummary.maxOverdueMs) || 0;
+  status.lastMaxOverdueMsByPriority = dueSummary.maxOverdueMsByPriority || emptyPriorityCounts();
+  status.lastDexBatchCount = Math.ceil(due.length / DEX_BATCH_LIMIT);
+  status.lastProcessBatchCount = 0;
   status.totalProcessed += due.length;
 
   for (let index = 0; index < due.length; index += DEX_BATCH_LIMIT) {
@@ -299,6 +365,7 @@ async function runOnce() {
     );
 
     for (let processIndex = 0; processIndex < fetchBatch.length; processIndex += CONCURRENCY) {
+      status.lastProcessBatchCount += 1;
       const processBatch = fetchBatch.slice(processIndex, processIndex + CONCURRENCY);
       await Promise.all(processBatch.map(async (token) => {
         try {
@@ -318,6 +385,17 @@ async function runOnce() {
         }
       }));
     }
+  }
+
+  const cycleFinishedAt = Date.now();
+  status.lastCompletedAt = new Date(cycleFinishedAt).toISOString();
+  status.lastRunDurationMs = cycleFinishedAt - cycleStartedAt;
+  status.lastLoopOverrunMs = Math.max(0, status.lastRunDurationMs - LOOP_INTERVAL_MS);
+
+  if (status.lastBacklogCount > 0 || status.lastRunDurationMs > LOOP_INTERVAL_MS) {
+    console.warn(
+      `[CatalogWorker] cycleMs=${status.lastRunDurationMs} dueSelected=${due.length} totalDue=${totalDueCount} backlog=${status.lastBacklogCount} dexBatches=${status.lastDexBatchCount} processBatches=${status.lastProcessBatchCount} maxOverdueMs=${status.lastMaxOverdueMs} selectedByPriority=${formatPriorityCounts(processedByPriority)} backlogByPriority=${formatPriorityCounts(backlogByPriority)}`
+    );
   }
 }
 

@@ -1,5 +1,5 @@
 ﻿import type { AppController } from '../../state/app-controller';
-import type { AppState } from '../../state/app-state';
+import { getManualTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
@@ -24,7 +24,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const manualAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
   const manualAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
   const searchQuery = String(state.ui.manualSearchQuery || '').trim().toLowerCase();
-  const filteredManualTokens = state.data.manualTokens.filter((item) => {
+  const filteredManualTokens = getManualTokens(state).filter((item) => {
     if (state.ui.manualStarredOnly && !state.data.starredTokens.includes(item.address)) {
       return false;
     }

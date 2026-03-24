@@ -153,6 +153,58 @@ async function listDueForEvaluation(limit = 25) {
   return rows;
 }
 
+async function countDueForEvaluationSummary() {
+  const { rows } = await db.query(
+    `SELECT
+       COALESCE(monitor_priority, 'dormant') AS priority,
+       COUNT(*)::int AS count,
+       COALESCE(MAX((EXTRACT(EPOCH FROM (NOW() - next_evaluation_at)) * 1000)::bigint), 0)::bigint AS max_overdue_ms
+     FROM token_catalog
+     WHERE is_active_monitor_candidate = TRUE
+       AND next_evaluation_at <= NOW()
+     GROUP BY COALESCE(monitor_priority, 'dormant')`
+  );
+
+  const byPriority = {
+    high: 0,
+    normal: 0,
+    low: 0,
+    dormant: 0,
+    other: 0,
+  };
+  const maxOverdueMsByPriority = {
+    high: 0,
+    normal: 0,
+    low: 0,
+    dormant: 0,
+    other: 0,
+  };
+
+  let total = 0;
+  let maxOverdueMs = 0;
+
+  for (const row of rows) {
+    const rawPriority = String(row.priority || '').trim().toLowerCase();
+    const priority = Object.prototype.hasOwnProperty.call(byPriority, rawPriority)
+      ? rawPriority
+      : 'other';
+    const count = Number(row.count) || 0;
+    const overdueMs = Number(row.max_overdue_ms) || 0;
+
+    byPriority[priority] += count;
+    maxOverdueMsByPriority[priority] = Math.max(maxOverdueMsByPriority[priority], overdueMs);
+    total += count;
+    maxOverdueMs = Math.max(maxOverdueMs, overdueMs);
+  }
+
+  return {
+    total,
+    byPriority,
+    maxOverdueMs,
+    maxOverdueMsByPriority,
+  };
+}
+
 async function listEligibleForSnapshots(limit = 25) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 200));
   const { rows } = await db.query(
@@ -356,6 +408,7 @@ async function applyAutomatedCleanup(options = {}) {
         next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
     WHERE COALESCE(tc.last_mcap, 0) < 15000
       AND tc.source <> 'dexscreener-discovery'
+      AND COALESCE(tc.suppressed_reason, '') <> 'cleanup_soft_archive'
       AND NOT EXISTS (
         SELECT 1
         FROM protected_addresses pa
@@ -414,6 +467,7 @@ async function applyAutomatedCleanup(options = {}) {
     acc[row.source] = (acc[row.source] || 0) + 1;
     return acc;
   }, {});
+  const archivedAddresses = archiveResult.rows.map((row) => row.address).filter(Boolean);
 
   const quarantinedBySource = quarantineResult.rows.reduce((acc, row) => {
     acc[row.source] = (acc[row.source] || 0) + 1;
@@ -423,6 +477,7 @@ async function applyAutomatedCleanup(options = {}) {
   return {
     archived: archiveResult.rowCount,
     quarantined: quarantineResult.rowCount,
+    archivedAddresses,
     archivedBySource,
     quarantinedBySource,
     staleDays,
@@ -434,6 +489,7 @@ module.exports = {
   getByAddress,
   listRecent,
   listDueForEvaluation,
+  countDueForEvaluationSummary,
   listEligibleForSnapshots,
   listEligibleVisible,
   listDashboardMonitored,
