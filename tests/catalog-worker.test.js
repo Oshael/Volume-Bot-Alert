@@ -16,4 +16,10 @@ describe('catalog worker drift compensation', () => {
     assert.equal(catalogWorker.__private.normalizeDelayMs(-125), 0);
     assert.equal(catalogWorker.__private.normalizeDelayMs(Number.NaN), 2000);
   });
+
+  it('adds bounded jitter to low-priority delays', () => {
+    assert.equal(catalogWorker.__private.addPriorityJitter(15000, 3000, 0), 15000);
+    assert.equal(catalogWorker.__private.addPriorityJitter(15000, 3000, 1), 18000);
+    assert.equal(catalogWorker.__private.addPriorityJitter(15000, 3000, 0.5), 16500);
+  });
 });

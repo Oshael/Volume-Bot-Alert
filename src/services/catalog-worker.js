@@ -24,6 +24,9 @@ const HIGH_VERY_LOW_VOL_RECHECK_MS = 5 * 1000;
 const HIGH_LOW_VOL_RECHECK_MS = HIGH_WARM_RECHECK_MS;
 const ERROR_RECHECK_MS = 60 * 1000;
 const MANUAL_BOOTSTRAP_RECHECK_MS = 5 * 1000;
+const LOW_NEAR_JITTER_MS = 3 * 1000;
+const LOW_DUST_JITTER_MS = 60 * 1000;
+const DORMANT_JITTER_MS = 2 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -102,6 +105,20 @@ function computeNextDelayMs(runDurationMs) {
   return normalizeDelayMs(LOOP_INTERVAL_MS - normalizeDelayMs(runDurationMs));
 }
 
+function addPriorityJitter(baseDelayMs, jitterMs, randomValue = Math.random()) {
+  const safeBaseDelayMs = normalizeDelayMs(baseDelayMs, 0);
+  const safeJitterMs = normalizeDelayMs(jitterMs, 0);
+  if (safeJitterMs <= 0) {
+    return safeBaseDelayMs;
+  }
+
+  const clampedRandom = Number.isFinite(randomValue)
+    ? Math.max(0, Math.min(1, randomValue))
+    : 0;
+
+  return safeBaseDelayMs + Math.round(clampedRandom * safeJitterMs);
+}
+
 function extractTwitterUrl(pair) {
   return pair?.info?.socials?.find((item) => item.type === 'twitter')?.url || null;
 }
@@ -132,7 +149,7 @@ function derivePrioritySnapshot(bestPair) {
       pchange6h,
       pchange24h,
       monitorPriority: 'dormant',
-      nextEvaluationAt: new Date(Date.now() + DORMANT_RECHECK_MS),
+      nextEvaluationAt: new Date(Date.now() + addPriorityJitter(DORMANT_RECHECK_MS, DORMANT_JITTER_MS)),
       eligibleForMonitoring: false,
       eligibilityState: 'dex-known-no-mcap',
       suppressedReason: 'mcap_unavailable',
@@ -141,8 +158,8 @@ function derivePrioritySnapshot(bestPair) {
 
   if (marketCap < 30000) {
     const nextLowMs = marketCap >= 15000
-      ? LOW_NEAR_RECHECK_MS
-      : LOW_DUST_RECHECK_MS;
+      ? addPriorityJitter(LOW_NEAR_RECHECK_MS, LOW_NEAR_JITTER_MS)
+      : addPriorityJitter(LOW_DUST_RECHECK_MS, LOW_DUST_JITTER_MS);
 
     return {
       marketCap,
@@ -451,6 +468,7 @@ module.exports = {
   getStatus,
   runOnce,
   __private: {
+    addPriorityJitter,
     computeNextDelayMs,
     normalizeDelayMs,
   },
