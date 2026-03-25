@@ -6,7 +6,9 @@ const DEFAULT_LATERALIZATION_MIN_VOL_1H = 1_000;
 const DEFAULT_LATERALIZATION_MIN_VOL_24H = 10_000;
 const DEFAULT_LATERALIZATION_HOURS = 6;
 const DEFAULT_LATERALIZATION_LIMIT = 50;
-const DEFAULT_LATERALIZATION_CANDIDATE_POOL_LIMIT = 200;
+const DEFAULT_LATERALIZATION_SUB_1M_CANDIDATE_POOL_LIMIT = 120;
+const DEFAULT_LATERALIZATION_1M_TO_5M_CANDIDATE_POOL_LIMIT = 50;
+const DEFAULT_LATERALIZATION_5M_PLUS_CANDIDATE_POOL_LIMIT = 30;
 const DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO = 0.7;
 const DEFAULT_LATERALIZATION_MIN_BUCKETS = 20;
 const DEFAULT_LATERALIZATION_MIN_POSITION_PCT = 15;
@@ -83,6 +85,29 @@ function getMinimumWindowHoursForMcap(mcap) {
     return DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS;
   }
   return DEFAULT_LATERALIZATION_GTE_1M_MIN_HOURS;
+}
+
+function getCandidatePoolBand(mcap) {
+  const value = Number(mcap);
+  if (!Number.isFinite(value) || value < 1_000_000) {
+    return 'sub_1m';
+  }
+  if (value < 5_000_000) {
+    return 'm1_to_5m';
+  }
+  return 'm5_plus';
+}
+
+function getCandidatePoolBandLimit(band) {
+  switch (String(band || '').trim().toLowerCase()) {
+    case 'm1_to_5m':
+      return DEFAULT_LATERALIZATION_1M_TO_5M_CANDIDATE_POOL_LIMIT;
+    case 'm5_plus':
+      return DEFAULT_LATERALIZATION_5M_PLUS_CANDIDATE_POOL_LIMIT;
+    case 'sub_1m':
+    default:
+      return DEFAULT_LATERALIZATION_SUB_1M_CANDIDATE_POOL_LIMIT;
+  }
 }
 
 function computeExpectedBucketCount(windowHours, createdAtMs, nowMs = Date.now()) {
@@ -486,7 +511,6 @@ async function listLateralizedCandidates(options = {}) {
   const minVol1h = Math.max(0, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
   const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_LATERALIZATION_LIMIT, 200));
-  const candidatePoolLimit = Math.max(limit, Math.min(Number(options.candidatePoolLimit) || DEFAULT_LATERALIZATION_CANDIDATE_POOL_LIMIT, 1000));
   const maxLookbackHours = Math.max(
     requestedHours,
     DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS,
@@ -495,7 +519,42 @@ async function listLateralizedCandidates(options = {}) {
   const nowMs = Number(options.nowMs) || Date.now();
 
   const { rows } = await db.query(
-    `WITH catalog_candidates AS (
+    `WITH ranked_candidates AS (
+       SELECT
+         address,
+         symbol,
+         name,
+         last_mcap,
+         last_vol_1h,
+         last_vol_6h,
+         last_vol_24h,
+         last_token_created_at_ms,
+         monitor_priority,
+         CASE
+           WHEN COALESCE(last_mcap, 0) < 1000000 THEN 'sub_1m'
+           WHEN COALESCE(last_mcap, 0) < 5000000 THEN 'm1_to_5m'
+           ELSE 'm5_plus'
+         END AS mcap_band,
+         ROW_NUMBER() OVER (
+           PARTITION BY CASE
+             WHEN COALESCE(last_mcap, 0) < 1000000 THEN 'sub_1m'
+             WHEN COALESCE(last_mcap, 0) < 5000000 THEN 'm1_to_5m'
+             ELSE 'm5_plus'
+           END
+           ORDER BY
+             COALESCE(last_vol_24h, 0) DESC,
+             COALESCE(last_vol_1h, 0) DESC,
+             COALESCE(last_mcap, 0) DESC,
+             last_seen_at DESC
+         ) AS band_rank
+       FROM token_catalog
+       WHERE eligible_for_monitoring = TRUE
+         AND is_active_monitor_candidate = TRUE
+         AND COALESCE(last_mcap, 0) >= $3
+         AND COALESCE(last_vol_1h, 0) >= $1
+         AND COALESCE(last_vol_24h, 0) >= $2
+     ),
+     catalog_candidates AS (
        SELECT
          address,
          symbol,
@@ -507,18 +566,14 @@ async function listLateralizedCandidates(options = {}) {
          last_token_created_at_ms,
          monitor_priority
        FROM token_catalog
-       WHERE eligible_for_monitoring = TRUE
-         AND is_active_monitor_candidate = TRUE
-         AND COALESCE(last_mcap, 0) >= $3
-         AND COALESCE(last_vol_1h, 0) >= $1
-         AND COALESCE(last_vol_24h, 0) >= $2
-       ORDER BY
-         COALESCE(last_vol_24h, 0) DESC,
-         COALESCE(last_vol_1h, 0) DESC,
-         COALESCE(last_mcap, 0) DESC,
-         last_seen_at DESC
-       LIMIT $4
-    )
+       INNER JOIN ranked_candidates ranked
+         ON ranked.address = token_catalog.address
+       WHERE ranked.band_rank <= CASE ranked.mcap_band
+         WHEN 'sub_1m' THEN $4
+         WHEN 'm1_to_5m' THEN $5
+         ELSE $6
+       END
+     )
      SELECT
        c.address AS token_address,
        c.symbol,
@@ -538,9 +593,17 @@ async function listLateralizedCandidates(options = {}) {
      FROM catalog_candidates c
      INNER JOIN token_market_buckets_1m b
        ON b.token_address = c.address
-     WHERE b.bucket_ts >= NOW() - ($5::int * INTERVAL '1 hour')
+     WHERE b.bucket_ts >= NOW() - ($7::int * INTERVAL '1 hour')
      ORDER BY c.address ASC, b.bucket_ts ASC`,
-    [minVol1h, minVol24h, minMcap, candidatePoolLimit, maxLookbackHours]
+    [
+      minVol1h,
+      minVol24h,
+      minMcap,
+      getCandidatePoolBandLimit('sub_1m'),
+      getCandidatePoolBandLimit('m1_to_5m'),
+      getCandidatePoolBandLimit('m5_plus'),
+      maxLookbackHours,
+    ]
   );
 
   const grouped = new Map();
@@ -691,6 +754,8 @@ module.exports = {
     getBucketDate,
     getDriftLimitPct,
     getHighCapQualityBonus,
+    getCandidatePoolBand,
+    getCandidatePoolBandLimit,
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
     getRangeLimitPct,
