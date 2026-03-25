@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch migration, monitored refresh acceleration, monitored UI pagination/freshness updates, admin backend blocking, and Meteora alert integration.
+Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, and low-dust cleanup recalibration.
 
 ## Current Runtime Shape
 
@@ -38,6 +38,11 @@ Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch
   - `src/services/dex-discovery-worker.js`
   - `src/services/meteora-snapshot-worker.js`
   - `src/services/socket-hub.js`
+- Important deployment caveat:
+  - one Railway backend service normally means one instance
+  - if the backend is ever scaled to multiple replicas, or a second process points to the same production DB, every process will start its own workers
+  - that would duplicate `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` work against the same DB/upstreams
+  - horizontal scale of the full backend is therefore not recommended without worker coordination, leader election, or process separation
 
 ## Source Of Truth By Area
 
@@ -86,22 +91,25 @@ Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch
 - Active endpoint for monitored hydration:
   - `GET /api/dashboard/monitored`
 - This is the endpoint the frontend currently uses for the shared monitored set.
+- Current frontend state contract:
+  - canonical token store is `trackedTokensByAddress`
+  - `Monitored` now keeps `monitoredTokenAddresses`
+  - `Manual`, `Recent`, and `Old Week` also resolve from the same tracked store instead of keeping independent full-token copies
 - Admin-only global suppression now also exists outside the per-user blocklist:
   - `POST /api/catalog/admin-blocklist`
   - `DELETE /api/catalog/admin-blocklist/:address`
 - This admin block is global/backend-owned rather than account-scoped.
 
 ### Working currently
-- The main recent optimization pass was on catalog/API efficiency rather than auth.
-- The largest resolved issue was DexScreener overuse and delayed refresh for hot monitored tokens.
-- The current architecture now separates:
+- The current architecture separates:
   - discovery of new tokens
   - catalog reevaluation of known tokens
   - cleanup of stale/low-value catalog entries
 - Important current conclusion:
-  - Dex `429` pressure dropped sharply after moving catalog refresh to Dex batch reads
-  - frontend render cost also dropped after paginating the `Monitored Tokens` panel
-  - current work has shifted from “stop Dex overload” to targeted behavior review and smaller follow-up optimizations
+  - Dex batch reads remain the main refresh path for monitored state
+  - the remaining production risk was upstream `429` storms and synchronized recovery
+  - current code now uses a staged Dex throttle/recovery model instead of returning directly from outage to full traffic
+  - frontend render cost remains lower after monitored pagination and search improvements
 
 ### Recent / Old Week bars
 - Source of truth: frontend-derived from tracked token state
@@ -124,6 +132,15 @@ Last reviewed against code on `2026-03-22` after catalog sanitization, Dex batch
 - Collection is done by backend worker
 - Frontend reads persisted summaries from `GET /api/dashboard/monitored`
 - The active frontend no longer uses the old batch-style Meteora read path
+
+### Market history / MCAP baselines
+- Source of truth: backend-persisted `token_market_buckets_1m`
+- Primary model:
+  - `src/models/token-market-bucket-1m.js`
+- Important current note:
+  - raw `token_market_snapshots` is now legacy/fallback data, not the primary time-series store
+  - the catalog worker no longer writes fresh `token_market_snapshots`
+  - historical snapshots may still exist in older environments and can still be used as temporary fallback where explicitly coded
 
 ## Active Data Flows
 
@@ -157,11 +174,34 @@ Current login rule:
   - backend serves prepared monitored rows from `token_catalog`
   - backend enriches rows with:
     - latest market values persisted in catalog
-    - MCAP baseline from `token_market_snapshots`
+    - MCAP baseline primarily from `token_market_buckets_1m`
+    - legacy fallback baseline from `token_market_snapshots` only when the bucket baseline is missing
     - latest Meteora summary from `token_meteora_snapshots`
 - Current intended effect:
   - frontend no longer depends on per-token Dex socket fetches as the main monitored refresh mechanism
   - frontend refresh should read backend-prepared state instead of causing Dex fetches itself
+- Current frontend state model:
+  - `trackedTokensByAddress` is the source of truth for token objects
+  - `Monitored`, `Manual`, `Recent`, `Old Week`, and `Starred` resolve those tokens by address
+  - repeated refresh rows are not replaced when the effective token data is unchanged
+- Current monitored field-refresh model:
+  - hot fields refresh every dashboard poll:
+    - `mcap`
+    - `priceUsd`
+    - `volume5m/1h/6h/24h`
+    - `priceChange1h/6h/24h`
+    - `prevMcap`
+    - `prevVolume5m`
+    - `mcapDelta`
+  - cold fields are only reapplied when missing/critical or on the slower recheck window:
+    - `symbol`
+    - `name`
+    - `imageUrl`
+    - `pairAddress`
+    - `pairUrl`
+    - `twitterUrl`
+    - `createdAt`
+  - current cold-field recheck window is `10m`
 
 Current monitored UI behavior:
 - backend payload now includes `generatedAt`
@@ -173,7 +213,7 @@ Current monitored UI behavior:
   - contract/address
 - the monitored `TOKENS` pill reflects the filtered result count
 - pagination does not change alert logic:
-  - the full monitored set still stays in frontend state
+  - the full monitored address set still stays in frontend state
   - only the visible page is rendered
   - hidden pages still receive fresh data through the monitored payload
 - the monitored header now behaves as two tuned rows:
@@ -238,11 +278,63 @@ Current monitored UI behavior:
   - `dormant`: `30m`
 - Important hardening already present:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
-  - newly added manual tokens get `5s` retry cadence until first classification
+  - newly added manual tokens get `5s` retry cadence until first classification in normal mode
+- Current write order inside token evaluation:
+  - `token_catalog` is updated first
+  - `token_market_buckets_1m` is upserted immediately after in the same evaluation
+  - fresh raw `token_market_snapshots` are no longer written by the worker
+  - this keeps current monitored values fresh while using minute-bucket history instead of near-real-time raw snapshot persistence
+- Current Dex throttle behavior:
+  - global cooldown only activates on the `10th` consecutive Dex `429`
+  - cooldown keeps batch size at `30` but raises batch delay to `400ms`
+  - cooldown processes only `high` and `user-manual`
+  - staged recovery then runs:
+    - `5` cycles: `high` + `manual`, delay `500ms`
+    - `5` cycles: add `normal`, delay `350ms`
+    - `5` cycles: add `low-near`, delay `200ms`
+    - `5` cycles: add `low-dust`, delay `150ms`
+    - then return to normal `100ms`
+- Current Dex-unavailable retry timings during throttle:
+  - `high`: `15s`
+  - `normal`: `2m`
+  - `low-near`: `3m`
+  - `low-dust`: `2m`
+  - manual bootstrap: `15s`
+- Current runtime instrumentation:
+  - worker status now exposes:
+    - `lastRunDurationMs`
+    - `lastLoopOverrunMs`
+    - `lastScheduledDelayMs`
+    - `lastTotalDueCount`
+    - `lastBacklogCount`
+    - `lastDueByPriority`
+    - `lastBacklogByPriority`
+    - `lastMaxOverdueMs`
+    - `lastMaxOverdueMsByPriority`
+    - `lastDexBatchCount`
+    - `lastProcessBatchCount`
+    - `lastRateLimitActive`
+    - `lastRateLimitBackoffRemainingMs`
+    - `lastRateLimitFilteredCount`
+    - `lastThrottleMode`
+    - `lastRecoveryPhase`
+    - `lastThrottleBatchDelayMs`
+  - these are available through `GET /api/admin/ws-status`
+  - scheduler now compensates for drift without overlap:
+    - if the cycle finishes under `2s`, the next wait is reduced
+    - if the cycle overruns `2s`, the next cycle is scheduled immediately
+  - low-priority reevaluation is now jittered to reduce synchronized cohorts:
+    - `low-near`: up to `+3s`
+    - `low-dust`: up to `+60s`
+    - `dormant`: up to `+120s`
+    - `high` and `normal` still remain unjittered
 
 ### 4a. Catalog cleanup worker
 - Worker: `src/services/catalog-cleanup-worker.js`
-- Poll loop: every `60m`
+- Poll loops:
+  - `quarantine`: every `15m`
+  - `soft archive`: every `48h`
+  - the soft-archive timer anchor is persisted in DB under `catalog_cleanup_soft_archive_last_run_at`, so restarts do not reset the `48h` wait
 - Purpose:
   - quarantine weak discovery tokens
   - soft archive stale/low-value tokens
@@ -250,7 +342,16 @@ Current monitored UI behavior:
 - Current rule shape:
   - protected user-linked tokens are excluded
   - `dexscreener-discovery` weak tokens go to `quarantine`
-  - stale/repeated-bad-state low-value non-discovery tokens can go to `soft archive`
+  - tokens already marked `cleanup_quarantine` do not go to `soft archive` in the same pass
+  - soft archive now applies to low-dust tokens from all sources, including `dexscreener-discovery` and `pumpfun-migrated`
+  - `quarantine` stays frequent and independent from archive cadence
+  - soft archive runs every `2d`
+  - each soft-archive run archives at most `400` addresses
+  - archive order is oldest captured first using `first_seen_at ASC`, then `last_seen_at ASC`
+  - `soft archive` now also deletes persisted `token_market_buckets_1m` rows and Meteora snapshots for the archived addresses
+  - legacy market snapshots may still exist in older environments, but fresh runtime market history is now the `1m` bucket store
+  - legacy `token_market_snapshots` are also deleted for archived addresses
+  - `quarantine` still does not delete history
 
 ### 4b. Dex discovery worker
 - Worker: `src/services/dex-discovery-worker.js`
@@ -267,6 +368,9 @@ Current monitored UI behavior:
 - Important current rule:
   - discovery no longer refreshes known catalog rows
   - existing catalog addresses are skipped rather than re-upserted/re-scheduled
+  - exception: rows in `cleanup_soft_archive` are reactivated if they reappear in Dex discovery
+  - reactivated rows return as `dexscreener-discovery`, clear the archive suppression, and are scheduled for immediate reevaluation
+  - discovery is paused while Dex throttle mode is active, including staged recovery
 
 ### 5. Meteora flow
 - Snapshot worker: `src/services/meteora-snapshot-worker.js`
@@ -294,6 +398,64 @@ Current monitored UI behavior:
 - This happens when incoming PumpFun tokens are missing image/meta in local state
 - These are individual per-mint requests, not socket messages
 - This route remains an auxiliary traffic source, but the main Dex overload issue was addressed in the catalog worker rather than here
+- Current metadata/image behavior:
+  - PumpFun image resolution is more tolerant for this route than the broader hardened URL path
+  - if PumpFun returns no usable image, the backend now continues to metadata/fallback sources instead of aborting early
+  - this restored missing PumpFun token images without undoing the broader SSRF protections
+- Current operational note:
+  - this route is separately rate-limited and can still produce frontend-visible `429` if a screen resolves too many PumpFun images in a short burst
+  - this is distinct from DexScreener rate pressure and should not be confused with the catalog worker's Dex usage
+
+## Current Market History / Finder Contract
+
+### `GET /api/catalog/history/:address`
+- This route now reads from `token_market_buckets_1m`, not fresh raw `token_market_snapshots`
+- Response shape still returns `snapshots` for compatibility, but each item is a `1m` bucket row:
+  - `ts`
+  - `mcap` / `price` as the bucket close
+  - `open/high/low/close` fields
+  - `sampleCount`
+  - `source`
+
+### `GET /api/catalog/lateralized`
+- Current state: on-demand analytical route
+- It is not precomputed by a worker yet
+- Frontend/operator use right now is request-driven calibration rather than reading a cached table
+- Current intended production direction:
+  - likely move to a periodic backend job later
+  - frontend would then read precomputed rows rather than running the full finder on every request
+- Current route contract:
+  - returns `requestedHours`, `windowPolicy`, `count`, and `candidates`
+  - each candidate includes:
+    - `mcap`, `catalogMcap`, `windowMcap`
+    - `volume1h/6h/24h`
+    - `rangePct`, `driftPct`, `coverageRatio`
+    - `windowHoursUsed`, `minimumWindowHours`
+    - liquidity/ranking diagnostics such as `liquidityPenalty`
+
+### Current lateralization-finder rule shape
+- Windowing:
+  - `< 1M`: minimum `16h`
+  - `>= 1M`: minimum `32h`
+- Current range / drift bands:
+  - `90k - <1M`: `range <= 50%`, `drift <= 20%`
+  - `1M - <4M`: `range <= 50%`, `drift <= 16%`
+  - `4M+`: `range <= 25%`, `drift <= 14%`
+- Current position rule:
+  - token must sit between `15%` and `85%` of its window range
+- Current liquidity rules:
+  - `vol24h` remains a hard filter
+  - recent-liquidity dead-zone filter removes only tokens with:
+    - `vol1h < 100`
+    - and `vol6h < 1.5k`
+  - low `vol1h` otherwise acts through ranking penalties rather than automatic exclusion
+  - strong recent liquidity (`vol1h >= 1k` and `vol6h >= 20k`) gets a positive score bonus
+- Current age / bid-zone bias:
+  - newer `90k-180k` tokens get a modest ranking bonus
+  - stale low caps (`>= 30d` old and `< 150k`) get a strong penalty
+- Current candidate-pool guardrail:
+  - sub-`1M`, `1M-4M`, and `4M+` use separate pre-pool limits before bucket expansion
+  - this is a pragmatic latency guardrail for the on-demand route, not a final “never inspect beyond this” product rule
 
 ## Current UI/Behavior Contract
 
@@ -390,23 +552,12 @@ Current honest security assessment:
   - the next line of defense after the current hardening is targeted defense-in-depth on lower-traffic render helpers, operational limits, and observability
 
 Current security priority order:
-1. Session policy follow-up
-   - unique per-login session identity is now in place
-   - HTTP and socket revocation semantics are now aligned for:
-     - `Logout` on the current session
-     - `Logout All` on the full account
-     - admin revoke/deactivate on live sockets
-   - remaining follow-up is mainly policy tuning:
-     - session expiration
-     - cleanup cadence
-     - how many historical sessions one account may accumulate
-
-2. Defense-in-depth render follow-up
+1. Defense-in-depth render follow-up
    - the highest-risk auth/account/config/list surfaces have already received the main hardening pass
    - remaining work is selective cleanup of lower-traffic HTML-string helpers where the safety win justifies the churn
    - preserve the current CSP and cookie-auth posture while keeping `escapeHtml(...)`, URL sanitization, and `CSS.escape(...)` as the baseline floor
 
-3. Auth regression coverage recovery
+2. Auth regression coverage recovery
    - test entrypoint and live cookie + OTP coverage are back in place
    - keep extending coverage for:
      - login OTP verify/resend edge cases
@@ -415,23 +566,18 @@ Current security priority order:
      - admin session revocation paths
      - malformed auth token / challenge inputs at backend boundaries
 
-4. Stronger secondary verification follow-up
+3. Stronger secondary verification follow-up
    - current secondary verification is email OTP
    - if stronger account protection is needed later, the next upgrade path is TOTP + backup codes
    - keep this as a later hardening step, not the immediate next priority
 
 #### Next active path
-1. Session policy and cleanup review
-   - verify the current expiration and retention behavior against real usage
-   - keep `logout-all` and forced admin revoke as the reference contract for full-account invalidation
-   - watch for any operational need to cap concurrent or historical sessions harder
-
-2. Defense-in-depth hardening
+1. Defense-in-depth hardening
    - review lower-traffic render helpers and backend edges that still rely on older patterns
    - prioritize changes that improve safety without changing alerting, catalog, routing, or operator workflow
    - keep operational visibility, rate/retention controls, and abuse resistance as the main next levers
 
-3. Performance investigation and latency reduction
+2. Performance investigation and latency reduction
    - measure real response time for:
      - `GET /api/dashboard/monitored`
      - `GET /api/config`
@@ -443,7 +589,7 @@ Current security priority order:
    - if needed, reduce bootstrap payload cost before adding more features
    - likely next target is trimming or staging `dashboard/monitored` hydration further if production still feels slow
 
-4. Stronger secondary verification follow-up
+3. Stronger secondary verification follow-up
    - if the account-risk model grows, evaluate TOTP + backup codes after the render-surface pass
    - keep email OTP as the current secondary gate until then
 
@@ -491,6 +637,10 @@ Current security priority order:
 - `X` removes a row from the panel only
 - Token may reappear on new trades
 - Pump live updates are ignored while the bot is stopped
+
+### Trade terminal links
+- `Axiom` now prefers `pairAddress` for monitored/routed/manual token rows when available
+- `PUMPLIVE` still preserves its custom Axion/Axiom-address override path instead of using the generic monitored fallback order
 
 ### Alerts
 - Standard monitored `VOL` and `MCAP` alerts share cooldown
@@ -586,7 +736,7 @@ Current limitation:
   - or they advance at least `+40` percentage points beyond the last alert of that same type
 - The old behavior where near-identical monitored alerts could re-fire after cooldown is no longer intended
 - Tokens now also have a cross-alert block:
-  - if a token fires one alert type, other alert types for that same token are blocked for `2m`
+  - if a token fires one alert type, other alert types for that same token are blocked for `5m`
   - `Surge` is evaluated before local `VOL/MCAP`, so it wins when both would qualify in the same cycle
 
 ### Old Token Surge rule
@@ -648,8 +798,10 @@ Current limitation:
 - this behavior has now been validated after fixing the rebuild path that previously ignored backend `payload.tokens` during reload
 
 ## Known Open Issues / Review Targets
-- Consider deduplicating/caching PumpFun metadata fetches more aggressively if `429` persists.
-- Keep watching `dex_unavailable` behavior until Birdeye or another stronger market-data source is introduced.
+- No confirmed high-priority regression is open at this moment.
+- Current active watchpoint:
+  - monitor catalog-worker backlog/overrun metrics in production-like runtime
+  - if `high` or `normal` backlog appears persistently, treat that as the next performance/debug target for monitored freshness
 
 ## VPS Migration Reminder
 - When migrating from Railway to a private VPS, treat public exposure hardening as a high-priority deployment task, not an optional cleanup item.

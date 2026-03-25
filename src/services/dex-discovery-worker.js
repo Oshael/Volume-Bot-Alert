@@ -20,6 +20,7 @@ let status = {
   totalProcessed: 0,
   totalUpserts: 0,
   totalNewAddresses: 0,
+  totalReactivatedArchived: 0,
   totalScheduled: 0,
   totalSkippedExisting: 0,
   totalRateLimitSkips: 0,
@@ -37,6 +38,17 @@ function collectAddresses(items, limit) {
 async function upsertDiscoveredAddress(address) {
   const existing = await tokenCatalog.getByAddress(address);
   if (existing) {
+    if (String(existing.suppressed_reason || '').trim().toLowerCase() === 'cleanup_soft_archive') {
+      const reactivated = await tokenCatalog.reactivateSoftArchivedToken(address, {
+        source: DISCOVERY_SOURCE,
+      });
+      if (reactivated) {
+        status.totalReactivatedArchived += 1;
+        status.totalScheduled += 1;
+        return;
+      }
+    }
+
     status.totalSkippedExisting += 1;
     return;
   }
@@ -133,4 +145,32 @@ function getStatus() {
   return { ...status };
 }
 
-module.exports = { start, stop, getStatus, runOnce };
+function resetStatus() {
+  status = {
+    running: false,
+    lastRunAt: null,
+    lastProcessed: 0,
+    lastSkippedReason: null,
+    lastRateLimitBackoffRemainingMs: 0,
+    totalProcessed: 0,
+    totalUpserts: 0,
+    totalNewAddresses: 0,
+    totalReactivatedArchived: 0,
+    totalScheduled: 0,
+    totalSkippedExisting: 0,
+    totalRateLimitSkips: 0,
+    totalErrors: 0,
+  };
+}
+
+module.exports = {
+  start,
+  stop,
+  getStatus,
+  runOnce,
+  __private: {
+    collectAddresses,
+    upsertDiscoveredAddress,
+    resetStatus,
+  },
+};

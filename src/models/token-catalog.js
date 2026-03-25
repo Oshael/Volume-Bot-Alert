@@ -293,6 +293,37 @@ async function scheduleImmediateEvaluation(address) {
   return rows[0] || null;
 }
 
+async function reactivateSoftArchivedToken(address, options = {}) {
+  await adminBlockedToken.ensureTable();
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    throw new Error('Invalid token address format');
+  }
+
+  const source = normalizeSource(options.source || 'dexscreener-discovery');
+  const { rows } = await db.query(
+    `UPDATE token_catalog
+     SET source = $2,
+         is_active_monitor_candidate = TRUE,
+         eligible_for_monitoring = FALSE,
+         suppressed_reason = NULL,
+         next_evaluation_at = NOW(),
+         last_seen_at = NOW(),
+         metadata_updated_at = NOW()
+     WHERE address = $1
+       AND suppressed_reason = 'cleanup_soft_archive'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM admin_blocked_tokens ab
+         WHERE ab.address = token_catalog.address
+       )
+     RETURNING *`,
+    [addr, source]
+  );
+
+  return rows[0] || null;
+}
+
 async function applyEvaluationResult(address, result) {
   const addr = String(address || '').trim();
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
@@ -384,12 +415,8 @@ async function applyEvaluationResult(address, result) {
   return rows[0] || null;
 }
 
-async function applyAutomatedCleanup(options = {}) {
-  const staleDays = Math.max(1, Number(options.staleDays) || 2);
-  const archiveLimit = Math.max(1, Math.min(Number(options.archiveLimit) || 400, 5000));
+async function applyQuarantineCleanup(options = {}) {
   const quarantineRecheckMs = Math.max(60 * 1000, Number(options.quarantineRecheckMs) || (6 * 60 * 60 * 1000));
-  const softArchiveRecheckMs = Math.max(60 * 1000, Number(options.softArchiveRecheckMs) || (30 * 24 * 60 * 60 * 1000));
-  const staleInterval = `${staleDays} days`;
 
   const quarantineQuery = `
     WITH protected_addresses AS (
@@ -419,6 +446,23 @@ async function applyAutomatedCleanup(options = {}) {
     RETURNING tc.address, tc.source
   `;
 
+  const quarantineResult = await db.query(quarantineQuery, [quarantineRecheckMs]);
+
+  const quarantinedBySource = quarantineResult.rows.reduce((acc, row) => {
+    acc[row.source] = (acc[row.source] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    quarantined: quarantineResult.rowCount,
+    quarantinedBySource,
+  };
+}
+
+async function applySoftArchiveCleanup(options = {}) {
+  const archiveLimit = Math.max(1, Math.min(Number(options.archiveLimit) || 400, 5000));
+  const softArchiveRecheckMs = Math.max(60 * 1000, Number(options.softArchiveRecheckMs) || (30 * 24 * 60 * 60 * 1000));
+
   const archiveQuery = `
     WITH protected_addresses AS (
       SELECT DISTINCT address FROM user_tokens
@@ -447,23 +491,22 @@ async function applyAutomatedCleanup(options = {}) {
           OR tc.eligibility_state IN ('dex-missing', 'dex-known-no-mcap')
           OR (tc.eligibility_state = 'evaluation-error' AND COALESCE(tc.evaluation_error_count, 0) >= 3)
         )
-        AND COALESCE(tc.last_seen_at, tc.first_seen_at) < NOW() - $2::interval
       ORDER BY tc.first_seen_at ASC, tc.last_seen_at ASC, tc.address ASC
-      LIMIT $3
+      LIMIT $2
     )
     UPDATE token_catalog tc
     SET is_active_monitor_candidate = FALSE,
         eligible_for_monitoring = FALSE,
         monitor_priority = 'dormant',
         suppressed_reason = 'cleanup_soft_archive',
-        next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
+        next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond'),
+        metadata_updated_at = NOW()
     FROM candidate_addresses ca
     WHERE tc.address = ca.address
     RETURNING tc.address, tc.source
   `;
 
-  const quarantineResult = await db.query(quarantineQuery, [quarantineRecheckMs]);
-  const archiveResult = await db.query(archiveQuery, [softArchiveRecheckMs, staleInterval, archiveLimit]);
+  const archiveResult = await db.query(archiveQuery, [softArchiveRecheckMs, archiveLimit]);
 
   const archivedBySource = archiveResult.rows.reduce((acc, row) => {
     acc[row.source] = (acc[row.source] || 0) + 1;
@@ -471,19 +514,27 @@ async function applyAutomatedCleanup(options = {}) {
   }, {});
   const archivedAddresses = archiveResult.rows.map((row) => row.address).filter(Boolean);
 
-  const quarantinedBySource = quarantineResult.rows.reduce((acc, row) => {
-    acc[row.source] = (acc[row.source] || 0) + 1;
-    return acc;
-  }, {});
-
   return {
     archived: archiveResult.rowCount,
-    quarantined: quarantineResult.rowCount,
     archivedAddresses,
     archivedBySource,
-    quarantinedBySource,
     archiveLimit,
-    staleDays,
+  };
+}
+
+async function applyAutomatedCleanup(options = {}) {
+  const [quarantineSummary, archiveSummary] = await Promise.all([
+    applyQuarantineCleanup(options),
+    applySoftArchiveCleanup(options),
+  ]);
+
+  return {
+    archived: archiveSummary.archived,
+    quarantined: quarantineSummary.quarantined,
+    archivedAddresses: archiveSummary.archivedAddresses,
+    archivedBySource: archiveSummary.archivedBySource,
+    quarantinedBySource: quarantineSummary.quarantinedBySource,
+    archiveLimit: archiveSummary.archiveLimit,
   };
 }
 
@@ -497,6 +548,9 @@ module.exports = {
   listEligibleVisible,
   listDashboardMonitored,
   scheduleImmediateEvaluation,
+  reactivateSoftArchivedToken,
   applyEvaluationResult,
+  applyQuarantineCleanup,
+  applySoftArchiveCleanup,
   applyAutomatedCleanup,
 };

@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-23` after auth/session hardening, OTP/token cleanup, broader frontend render-surface hardening, admin/catalog validation tightening, and PumpFun terminal-link corrections.
+Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, and low-dust cleanup recalibration.
 
 ## High-Level Product Shape
 
@@ -108,6 +108,12 @@ Responsibilities:
 - trusted-origin checks for mutating cookie-authenticated requests
 - backend CSP via `helmet`
 
+Deployment caveat:
+- one Railway backend service normally means one instance
+- if the backend is ever scaled to multiple replicas, or another process uses the same production DB, each process will start the full worker set
+- that duplicates `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` execution against the same DB/upstreams
+- do not horizontally scale the full backend without worker coordination, leader election, or separating web and worker processes
+
 Admin worker status endpoint:
 - `GET /api/admin/ws-status`
 - requires authenticated admin session
@@ -126,7 +132,7 @@ File:
 Role:
 - reevaluates tokens already in `token_catalog`
 - updates eligibility, priority, latest market stats
-- inserts market snapshots
+- inserts `1m` market-bucket snapshots
 - consumes DexScreener in batch mode instead of one token per request
 
 Cadence:
@@ -175,10 +181,32 @@ Priority recheck timings:
 - `low-dust` (`< 15k`): `10m`
 - `dormant`: `30m`
 
+Throttle / outage handling:
+- Dex batch size remains `30`
+- normal batch delay is `100ms`
+- a global Dex throttle only activates after `10` consecutive upstream `429` responses
+- cooldown phase:
+  - only `high` + `user-manual`
+  - batch delay `400ms`
+- staged recovery after cooldown:
+  - phase `high-manual`: `5` cycles, delay `500ms`
+  - phase `normal`: `5` cycles, delay `350ms`
+  - phase `low-near`: `5` cycles, delay `200ms`
+  - phase `low-dust`: `5` cycles, delay `150ms`
+  - then returns to normal scheduling
+
+Dex-unavailable retry timings during throttle:
+- `high`: `15s`
+- `normal`: `2m`
+- `low-near`: `3m`
+- `low-dust`: `2m`
+- new manual bootstrap: `15s`
+
 Special handling:
 - `dex-unavailable` preserves the current eligibility/priority instead of immediately downgrading the token to `dex-missing`
 - new manual tokens retry quickly until first real classification
-- market reevaluation continues writing `token_market_snapshots`, which is what powers later MCAP delta calculations
+- market reevaluation writes `token_market_buckets_1m`
+- fresh raw `token_market_snapshots` are no longer written by the catalog worker
 
 #### Catalog cleanup worker
 File:
@@ -187,10 +215,12 @@ File:
 Role:
 - automatically reduces low-value catalog pressure before it turns into evaluation backlog
 - quarantines weak discovery tokens
-- soft archives stale or repeated low-signal tokens from other sources
+- soft archives stale or repeated low-signal low-dust tokens across catalog sources
 
 Cadence:
-- every `60m`
+- `quarantine`: every `15m`
+- `soft archive`: every `48h`
+- the soft-archive schedule anchor is persisted in DB under `catalog_cleanup_soft_archive_last_run_at`, so process restarts do not restart the `48h` countdown
 
 Cleanup policy:
 - protected tokens are excluded:
@@ -199,7 +229,12 @@ Cleanup policy:
   - rows present in `user_blocklist`
   - any `token_catalog` row with `source = 'user-manual'`
 - `dexscreener-discovery` tokens below `15k` with no useful current eligibility and low/null `24h` volume go to `quarantine`
-- non-discovery tokens below `15k` that are stale `5d+` or stuck in repeated bad states can go to `soft archive`
+- tokens already in `cleanup_quarantine` are not soft-archived in the same pass
+- soft archive now applies to low-dust tokens from all sources, including `dexscreener-discovery` and `pumpfun-migrated`
+- `quarantine` remains frequent and independent from archive cadence
+- soft archive runs every `2d`
+- each soft-archive pass archives at most `400` addresses
+- archive candidates are ordered by `first_seen_at ASC`, then `last_seen_at ASC`
 
 Operational effect:
 - `quarantine`
@@ -210,6 +245,9 @@ Operational effect:
   - keeps the record
   - sets `is_active_monitor_candidate = FALSE`
   - removes the token from the normal evaluation queue
+  - deletes persisted `token_market_buckets_1m`
+  - deletes legacy `token_market_snapshots`
+  - deletes `token_meteora_snapshots` for archived addresses
 
 #### Dex discovery worker
 File:
@@ -234,14 +272,17 @@ Current source used in catalog:
 Important current rule:
 - discovery is no longer a refresh path for known tokens
 - if the address already exists in `token_catalog`, the worker skips it entirely
+- exception: addresses currently marked `cleanup_soft_archive` are reactivated if they reappear in Dex discovery
+- reactivation changes the row back to source `dexscreener-discovery`, clears the archive suppression, and schedules immediate reevaluation
 - freshness for existing catalog rows now comes from the catalog worker, not from repeated discovery re-entry
+- discovery is paused while DexScreener throttle mode is active, including staged recovery
 
 #### Market snapshots
 Primary file:
 - `src/services/catalog-worker.js`
 
 Role:
-- inserts market snapshots during normal catalog reevaluation
+- inserts `token_market_buckets_1m` snapshots during normal catalog reevaluation
 
 #### Meteora snapshot worker
 File:
@@ -271,11 +312,15 @@ Important current note:
   - `high-warm`: `3s`
   - `high-cold`: `5s`
   - `normal`: `4s`
-  - `low-near`: `15s`
-  - `low-dust`: `10m`
-  - `dormant`: `30m`
+- `low-near`: `15s`
+- `low-dust`: `10m`
+- `dormant`: `30m`
 - error cooldown is `60s`
 - discovery still uses the `latest/top` feeds, not the batch token endpoint
+- consecutive `429` responses are tracked globally inside the Dex integration
+- the global cooldown only activates on the `10th` consecutive `429`
+- once activated, batch delay rises to `400ms` and the catalog worker enters staged recovery instead of returning immediately to full traffic
+- worker/admin status now exposes the Dex throttle state, remaining cooldown, recovery phase, and effective batch delay
 
 ### PumpFun WebSocket
 File:
