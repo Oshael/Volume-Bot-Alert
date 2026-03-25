@@ -567,9 +567,9 @@ async function listLateralizedCandidates(options = {}) {
          ranked.monitor_priority
        FROM ranked_candidates ranked
        WHERE ranked.band_rank <= CASE ranked.mcap_band
-         WHEN 'sub_1m' THEN $4
-         WHEN 'm1_to_5m' THEN $5
-         ELSE $6
+         WHEN 'sub_1m' THEN $4::bigint
+         WHEN 'm1_to_5m' THEN $5::bigint
+         ELSE $6::bigint
        END
      )
      SELECT
