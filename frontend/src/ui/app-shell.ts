@@ -4,6 +4,7 @@ import { renderAlertsSection } from './sections/alerts-section';
 import { renderBlocklistSection } from './sections/blocklist-section';
 import { renderLegacyShell } from './sections/layout-sections';
 import { renderManualTokensSection } from './sections/manual-section';
+import { renderLateralizedSection } from './sections/lateralized-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { renderPumpfunSection } from './sections/pumpfun-section';
 import { renderPumpToasts } from './sections/pumpfun-toasts';
@@ -18,6 +19,7 @@ type ConfigDraft = {
 
 type PanelScrollDraft = {
   monitored: number;
+  lateralized: number;
   pumpfun: number;
   alerts: number;
 };
@@ -107,8 +109,14 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
 
     const panels = document.createElement('div');
     panels.className = 'legacy-panels';
-    panels.append(
+    const monitoredStack = document.createElement('div');
+    monitoredStack.className = 'panel-stack monitored-stack';
+    monitoredStack.append(
       renderMonitoredSection(state, controller),
+      renderLateralizedSection(state, controller),
+    );
+    panels.append(
+      monitoredStack,
       renderPumpfunSection(state, controller),
       renderAlertsSection(state, controller),
     );
@@ -401,6 +409,7 @@ function wireUserMenus(root: HTMLElement) {
 function capturePanelScrollDraft(root: HTMLElement): PanelScrollDraft {
   return {
     monitored: root.querySelector<HTMLElement>('.monitored-list')?.scrollTop ?? 0,
+    lateralized: root.querySelector<HTMLElement>('.lateralized-list')?.scrollTop ?? 0,
     pumpfun: root.querySelector<HTMLElement>('.pump-list')?.scrollTop ?? 0,
     alerts: root.querySelector<HTMLElement>('.alerts-list')?.scrollTop ?? 0,
   };
@@ -408,10 +417,12 @@ function capturePanelScrollDraft(root: HTMLElement): PanelScrollDraft {
 
 function applyPanelScrollDraft(root: HTMLElement, draft: PanelScrollDraft) {
   const monitored = root.querySelector<HTMLElement>('.monitored-list');
+  const lateralized = root.querySelector<HTMLElement>('.lateralized-list');
   const pumpfun = root.querySelector<HTMLElement>('.pump-list');
   const alerts = root.querySelector<HTMLElement>('.alerts-list');
 
   if (monitored) monitored.scrollTop = draft.monitored;
+  if (lateralized) lateralized.scrollTop = draft.lateralized;
   if (pumpfun) pumpfun.scrollTop = draft.pumpfun;
   if (alerts) alerts.scrollTop = draft.alerts;
 }

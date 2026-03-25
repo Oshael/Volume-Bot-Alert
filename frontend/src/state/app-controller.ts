@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -26,7 +26,7 @@ import {
   syncConfig,
   type ConfigPayload,
 } from '../services/api/config';
-import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -86,6 +86,8 @@ const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
+const LATERALIZED_REFRESH_INTERVAL_MS = 60 * 1000;
+const LATERALIZED_PANEL_LIMIT = 24;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 
@@ -158,12 +160,14 @@ export function createAppController(): AppController {
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
+  let lateralizedRefreshInFlight = false;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let nextColdFieldRefreshAt = 0;
+  let nextLateralizedRefreshAt = 0;
 
   function normalizeDiffValue(value: unknown) {
     if (value === undefined || value === null) {
@@ -556,6 +560,7 @@ export function createAppController(): AppController {
   function refreshMonitoredPanelCounts() {
     const visibleCount = getVisibleMonitoredTokens().length;
     state.panels.monitored = visibleCount;
+    state.panels.lateralized = state.data.lateralizedTokens.length;
     state.panels.alerts = state.data.alerts.length;
     state.runtime.alerts = state.data.alerts.length;
     syncMonitoredPagination();
@@ -1260,6 +1265,73 @@ export function createAppController(): AppController {
     state.runtime.monitoredFreshnessLabel = formatFreshnessLabel(timestamp);
   }
 
+  function updateLateralizedFreshness(timestamp: string | null) {
+    state.runtime.lateralizedUpdatedAt = timestamp;
+    state.runtime.lateralizedFreshnessLabel = formatFreshnessLabel(timestamp);
+  }
+
+  async function refreshLateralizedTokens(options?: { force?: boolean }) {
+    const token = state.session.token;
+    if (!token || lateralizedRefreshInFlight) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!options?.force && nextLateralizedRefreshAt > now) {
+      return;
+    }
+
+    lateralizedRefreshInFlight = true;
+    try {
+      const payload = await fetchLateralizedCandidates(token, { limit: LATERALIZED_PANEL_LIMIT });
+      state.data.lateralizedTokens = (payload.candidates || []).map((item) => ({
+        address: item.address,
+        symbol: item.symbol ?? null,
+        name: item.name ?? null,
+        monitorPriority: item.monitorPriority ?? null,
+        mcap: item.mcap ?? null,
+        catalogMcap: item.catalogMcap ?? null,
+        windowMcap: item.windowMcap ?? null,
+        volume1h: item.volume1h ?? null,
+        volume6h: item.volume6h ?? null,
+        volume24h: item.volume24h ?? null,
+        rangePct: item.rangePct ?? null,
+        rangeLimitPct: item.rangeLimitPct ?? null,
+        driftPct: item.driftPct ?? null,
+        driftLimitPct: item.driftLimitPct ?? null,
+        coverageRatio: item.coverageRatio ?? null,
+        bucketCount: item.bucketCount ?? 0,
+        sampleCount: item.sampleCount ?? 0,
+        expectedBucketCount: item.expectedBucketCount ?? 0,
+        ageHours: item.ageHours ?? null,
+        currentPositionPct: item.currentPositionPct ?? null,
+        requestedHours: item.requestedHours ?? undefined,
+        minimumWindowHours: item.minimumWindowHours ?? 0,
+        windowHoursUsed: item.windowHoursUsed ?? 0,
+        score: item.score ?? null,
+      }));
+      updateLateralizedFreshness(payload.generatedAt ?? null);
+      state.panels.lateralized = state.data.lateralizedTokens.length;
+      emit();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (
+        message.includes('No completed lateralization run available')
+        || message.includes('Failed to load lateralized candidates')
+        || message.includes('API request failed:')
+      ) {
+        state.data.lateralizedTokens = [];
+        updateLateralizedFreshness(null);
+        state.panels.lateralized = 0;
+        emit();
+        return;
+      }
+    } finally {
+      nextLateralizedRefreshAt = Date.now() + LATERALIZED_REFRESH_INTERVAL_MS;
+      lateralizedRefreshInFlight = false;
+    }
+  }
+
   function passesAlertFilters(token: ManualTokenEntry) {
     const minVol = getConfigNumber('min-vol', 5000);
     const minMcap = getConfigNumber('min-mcap', 30000);
@@ -1742,6 +1814,7 @@ export function createAppController(): AppController {
     computeUptimeLabel();
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
     void refreshMonitoredDashboard();
+    void refreshLateralizedTokens();
     emit();
   }
 
@@ -1867,7 +1940,10 @@ export function createAppController(): AppController {
     state.runtime.alerts = 0;
     state.runtime.monitoredUpdatedAt = null;
     state.runtime.monitoredFreshnessLabel = '-';
+    state.runtime.lateralizedUpdatedAt = null;
+    state.runtime.lateralizedFreshnessLabel = '-';
     state.panels.alerts = 0;
+    state.panels.lateralized = 0;
     state.panels.pumpfun = 0;
     state.configSummary = {
       loaded: false,
@@ -1898,6 +1974,7 @@ export function createAppController(): AppController {
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
+      lateralizedTokens: [],
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -1908,6 +1985,7 @@ export function createAppController(): AppController {
     state.bars.oldWeek = 0;
     state.bars.blocklist = 0;
     state.panels.monitored = 0;
+    state.panels.lateralized = 0;
     state.ui.authPanel = 'none';
     state.ui.pendingVerificationEmail = null;
     state.ui.pendingPasswordResetToken = null;
@@ -2004,6 +2082,7 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
+      void refreshLateralizedTokens({ force: true });
       emit();
     } catch (error) {
     }

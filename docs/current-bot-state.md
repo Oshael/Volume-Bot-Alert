@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, and low-dust cleanup recalibration.
+Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, low-dust cleanup recalibration, and lateralization precompute/frontend panel integration.
 
 ## Current Runtime Shape
 
@@ -36,6 +36,7 @@ Last reviewed against code on `2026-03-25` after DexScreener throttle hardening,
   - `src/services/catalog-cleanup-worker.js`
   - `src/services/catalog-worker.js`
   - `src/services/dex-discovery-worker.js`
+  - `src/services/lateralization-worker.js`
   - `src/services/meteora-snapshot-worker.js`
   - `src/services/socket-hub.js`
 - Important deployment caveat:
@@ -99,6 +100,26 @@ Last reviewed against code on `2026-03-25` after DexScreener throttle hardening,
   - `POST /api/catalog/admin-blocklist`
   - `DELETE /api/catalog/admin-blocklist/:address`
 - This admin block is global/backend-owned rather than account-scoped.
+
+### Lateralization Coins
+- Source of truth: backend-precomputed lateralization runs
+- Persisted tables:
+  - `lateralization_runs`
+  - `lateralization_results`
+- Main endpoint:
+  - `GET /api/catalog/lateralized`
+- Main worker:
+  - `src/services/lateralization-worker.js`
+- Current behavior:
+  - frontend reads the latest completed persisted run instead of triggering the finder on every request
+  - the panel is rendered directly below `Monitored Tokens`
+  - current row info is intentionally compact:
+    - `#rank`
+    - symbol/name
+    - `MCAP`
+    - `AGE`
+    - `VOL 1H`
+    - `VOL 24H`
 
 ### Working currently
 - The current architecture separates:
@@ -225,6 +246,20 @@ Current monitored UI behavior:
   - `Monitored` uses the stabilized dedicated behavior added earlier
   - `Manual`, `Recent`, and `Old Week` now use click-to-open compact search that stays open while focused
   - those compact searches no longer depend purely on transient hover/focus timing
+
+### 2a. Lateralization Coins
+- Frontend refresh interval: `60s`
+- Current flow:
+  - frontend calls `GET /api/catalog/lateralized`
+  - backend returns rows from the latest completed `lateralization_runs` / `lateralization_results` pair
+  - normal panel reads no longer execute the full finder inline
+- Current intended effect:
+  - lateralization ranking cost is shifted to the backend worker cadence
+  - panel reads stay stable and cheap relative to the previous on-demand route shape
+- Current UI behavior:
+  - the panel sits directly below `Monitored Tokens`
+  - header shows freshness text from backend `generatedAt`
+  - rows are intentionally thin and ranked, not large cards
 
 ### 3. Manual Tokens
 - Current source of truth:
@@ -418,14 +453,20 @@ Current monitored UI behavior:
   - `source`
 
 ### `GET /api/catalog/lateralized`
-- Current state: on-demand analytical route
-- It is not precomputed by a worker yet
-- Frontend/operator use right now is request-driven calibration rather than reading a cached table
-- Current intended production direction:
-  - likely move to a periodic backend job later
-  - frontend would then read precomputed rows rather than running the full finder on every request
+- Current state: precomputed read route
+- The route now reads the latest completed persisted run for the requested parameter set
+- Precompute is done by `src/services/lateralization-worker.js`
+- Worker behavior:
+  - one run on backend boot
+  - periodic recompute every `20m`
+- If no completed run exists yet for that parameter set, the route returns `404`
 - Current route contract:
-  - returns `requestedHours`, `windowPolicy`, `count`, and `candidates`
+  - returns `generatedAt`, `runId`, `requestedHours`, `count`, and `candidates`
+  - also returns run metadata:
+    - `candidateCount`
+    - `resultCount`
+    - `minMcap`
+    - `minVol24h`
   - each candidate includes:
     - `mcap`, `catalogMcap`, `windowMcap`
     - `volume1h/6h/24h`
@@ -455,7 +496,7 @@ Current monitored UI behavior:
   - stale low caps (`>= 30d` old and `< 150k`) get a strong penalty
 - Current candidate-pool guardrail:
   - sub-`1M`, `1M-4M`, and `4M+` use separate pre-pool limits before bucket expansion
-  - this is a pragmatic latency guardrail for the on-demand route, not a final “never inspect beyond this” product rule
+  - this is now mainly a compute/persistence guardrail for the worker output, not a request-time latency guardrail
 
 ## Current UI/Behavior Contract
 

@@ -111,6 +111,33 @@ export interface MeteoraEntry {
   history?: MeteoraTvlPoint[];
 }
 
+export interface LateralizedTokenEntry {
+  address: string;
+  symbol?: string | null;
+  name?: string | null;
+  monitorPriority?: string | null;
+  mcap?: number | null;
+  catalogMcap?: number | null;
+  windowMcap?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
+  volume24h?: number | null;
+  rangePct?: number | null;
+  rangeLimitPct?: number | null;
+  driftPct?: number | null;
+  driftLimitPct?: number | null;
+  coverageRatio?: number | null;
+  bucketCount?: number;
+  sampleCount?: number;
+  expectedBucketCount?: number;
+  ageHours?: number | null;
+  currentPositionPct?: number | null;
+  requestedHours?: number;
+  minimumWindowHours?: number;
+  windowHoursUsed?: number;
+  score?: number | null;
+}
+
 export interface PumpTokenEntry {
   mint: string;
   mintAddress?: string | null;
@@ -201,6 +228,8 @@ export interface AppState {
     uptimeLabel: string;
     monitoredUpdatedAt: string | null;
     monitoredFreshnessLabel: string;
+    lateralizedUpdatedAt: string | null;
+    lateralizedFreshnessLabel: string;
   };
   bars: {
     manual: number;
@@ -210,6 +239,7 @@ export interface AppState {
   };
   panels: {
     monitored: number;
+    lateralized: number;
     pumpfun: number;
     alerts: number;
   };
@@ -237,6 +267,7 @@ export interface AppState {
     starredTokens: string[];
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
+    lateralizedTokens: LateralizedTokenEntry[];
     alerts: AlertEntry[];
     pumpTokens: PumpTokenEntry[];
     recentPumpMigrations: PumpMigrationEntry[];
@@ -294,6 +325,8 @@ export function createAppState(): AppState {
       uptimeLabel: '0m',
       monitoredUpdatedAt: null,
       monitoredFreshnessLabel: '-',
+      lateralizedUpdatedAt: null,
+      lateralizedFreshnessLabel: '-',
     },
     bars: {
       manual: 0,
@@ -303,6 +336,7 @@ export function createAppState(): AppState {
     },
     panels: {
       monitored: 0,
+      lateralized: 0,
       pumpfun: 0,
       alerts: 0,
     },
@@ -337,6 +371,7 @@ export function createAppState(): AppState {
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
+      lateralizedTokens: [],
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],

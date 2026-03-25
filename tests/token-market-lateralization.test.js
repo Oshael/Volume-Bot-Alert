@@ -89,7 +89,7 @@ describe('token market lateralization helpers', () => {
     });
 
     assert.equal(scored.passes, true);
-    assert.equal(scored.liquidityPenalty, -1);
+    assert.equal(scored.liquidityPenalty, -4);
   });
 
   it('rejects candidates sitting too close to the edge of the range', () => {
@@ -145,8 +145,10 @@ describe('token market lateralization helpers', () => {
   it('applies stronger 1h-volume penalties to very thin candidates', () => {
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(100, 200), -12);
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(150, 6000), -12);
-    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 400), -4);
-    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 4000), -1);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 400), -7);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 4000), -4);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 4000, { ageHours: 24 * 20 }), -6);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 4000, { ageHours: 24 * 40 }), -8);
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(1200, 1200), 0);
   });
 

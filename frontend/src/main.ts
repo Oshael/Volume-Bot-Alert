@@ -139,7 +139,7 @@ root.addEventListener('pointerdown', (event) => {
 
 root.addEventListener('pointerover', (event) => {
   const target = event.target as HTMLElement | null;
-  const list = target?.closest('.token-table-wrap, .monitored-list, .pump-list, .alerts-list');
+  const list = target?.closest('.token-table-wrap, .monitored-list, .lateralized-list, .pump-list, .alerts-list');
   if (!list) {
     return;
   }
@@ -154,7 +154,7 @@ root.addEventListener('pointerover', (event) => {
 
 root.addEventListener('pointerout', (event) => {
   const target = event.target as HTMLElement | null;
-  const list = target?.closest('.token-table-wrap, .monitored-list, .pump-list, .alerts-list');
+  const list = target?.closest('.token-table-wrap, .monitored-list, .lateralized-list, .pump-list, .alerts-list');
   if (!list) {
     return;
   }

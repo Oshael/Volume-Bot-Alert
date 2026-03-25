@@ -5,6 +5,7 @@ const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require(
 const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const tokenMarketLateralizationRun = require('../models/token-market-lateralization-run');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
@@ -577,28 +578,38 @@ router.get('/lateralized', catalogReadLimiter, async (req, res) => {
       return res.status(400).json({ error: parsedQuery.error });
     }
 
-    const hours = parsedQuery.options.hours || 6;
+    const requestedHours = parsedQuery.options.hours || 6;
     const minMcap = parsedQuery.options.minMcap || 90000;
     const minVol24h = parsedQuery.options.minVol24h || 10000;
     const limit = parsedQuery.options.limit || 50;
-    const candidates = await tokenMarketBucket1m.listLateralizedCandidates({
-      hours,
+    const run = await tokenMarketLateralizationRun.getLatestCompletedRunWithResults({
+      requestedHours,
       minMcap,
       minVol24h,
+    }, {
       limit,
     });
+    if (!run) {
+      return res.status(404).json({
+        error: 'No completed lateralization run available for the requested parameters',
+      });
+    }
 
     res.json({
-      hours,
-      requestedHours: hours,
+      generatedAt: run.completedAt,
+      runId: run.id,
+      hours: run.requestedHours,
+      requestedHours: run.requestedHours,
       windowPolicy: {
         sub1mMinHours: 16,
         gte1mMinHours: 32,
       },
-      minMcap,
-      minVol24h,
-      count: candidates.length,
-      candidates,
+      minMcap: run.minMcap,
+      minVol24h: run.minVol24h,
+      count: run.candidates.length,
+      candidateCount: run.candidateCount,
+      resultCount: run.resultCount,
+      candidates: run.candidates,
     });
   } catch (err) {
     console.error('GET /catalog/lateralized error:', err.message);

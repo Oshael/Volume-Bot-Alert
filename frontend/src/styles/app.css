@@ -2657,6 +2657,13 @@ TEMP_LEGACY_BAR_TITLE {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 16px;
   margin-bottom: 12px;
+  align-items: start;
+}
+
+.panel-stack {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
 }
 
 .panel,
@@ -3019,6 +3026,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-list,
+.lateralized-list,
 .alerts-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -3028,11 +3036,13 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-list::-webkit-scrollbar,
+.lateralized-list::-webkit-scrollbar,
 .alerts-list::-webkit-scrollbar {
   width: 4px;
 }
 
 .monitored-list::-webkit-scrollbar-thumb,
+.lateralized-list::-webkit-scrollbar-thumb,
 .alerts-list::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
@@ -4275,6 +4285,112 @@ TEMP_LEGACY_BAR_TITLE {
   grid-template-columns: 36px minmax(0, 1fr) 78px;
   gap: 12px !important;
   padding: 12px 12px !important;
+}
+
+.lateralized-panel {
+  height: 320px;
+}
+
+.lateralized-panel .panel-header {
+  align-items: center;
+}
+
+.lateralized-header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lateralized-freshness {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.lateralized-list {
+  padding: 6px 8px;
+}
+
+.lateralized-token-row {
+  display: grid;
+  grid-template-columns: 34px 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+}
+
+.lateralized-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 212, 255, 0.18);
+  color: var(--cyan);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lateralized-token-row .tok-avatar,
+.lateralized-token-row .tok-avatar-placeholder {
+  width: 34px;
+  height: 34px;
+}
+
+.lateralized-row-main {
+  min-width: 0;
+}
+
+.lateralized-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.lateralized-title-line .token-name {
+  font-size: 13px;
+}
+
+.lateralized-title-line .token-addr {
+  font-size: 10px;
+}
+
+.lateralized-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+  color: #fff !important;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.lateralized-meta-line .meta-label {
+  color: var(--muted);
+}
+
+.lateralized-meta-line .meta-value {
+  color: #fff;
+}
+
+.lateralized-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+}
+
+.lateralized-inline-actions .action-glyph {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
 }
 
 .monitored-row-main .panel-row-title {

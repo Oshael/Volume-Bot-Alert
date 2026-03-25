@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, and low-dust cleanup recalibration.
+Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, low-dust cleanup recalibration, and lateralization precompute/frontend panel integration.
 
 ## High-Level Product Shape
 
@@ -22,11 +22,12 @@ The bot is a Solana monitoring app with:
 - authenticated multi-user frontend
 - Express backend
 - PostgreSQL persistence
-- backend workers for discovery, catalog cleanup, catalog evaluation, market snapshots, and Meteora snapshots
+- backend workers for discovery, catalog cleanup, catalog evaluation, minute-bucket market history, Meteora snapshots, and lateralization precompute
 - realtime PumpFun socket feed
 
 The UI is centered around:
 - `Monitored Tokens`
+- `Lateralization Coins`
 - `Manual Tokens`
 - `Recent Tokens`
 - `Old Tokens 1 Week+`
@@ -122,6 +123,7 @@ Admin worker status endpoint:
   - `catalogCleanupWorker`
   - `meteoraSnapshotWorker`
   - `dexDiscoveryWorker`
+  - `lateralizationWorker`
 
 ### Backend workers
 
@@ -293,6 +295,27 @@ Role:
 
 Cadence:
 - every `30s`
+
+#### Lateralization worker
+File:
+- `src/services/lateralization-worker.js`
+
+Role:
+- periodically computes and persists ranked lateralization candidates
+- stores run metadata in `lateralization_runs`
+- stores ranked output rows in `lateralization_results`
+- shifts lateralization cost out of request time and into worker cadence
+
+Cadence:
+- one run on backend boot
+- every `20m` after that
+
+Read path:
+- `GET /api/catalog/lateralized` now reads the latest completed persisted run
+- normal panel reads do not execute the finder inline anymore
+
+Manual trigger:
+- `POST /api/admin/lateralization/runs`
 
 ## Data Sources
 
@@ -706,6 +729,37 @@ Important:
   - bottom row for compact search + page controls
 - opening the monitored compact search only pushes the bottom row
 
+## Lateralization Coins
+
+Files:
+- `frontend/src/ui/sections/lateralized-section.ts`
+- `frontend/src/state/app-controller.ts`
+- `src/routes/catalog.js`
+- `src/services/lateralization-worker.js`
+- `src/models/token-market-lateralization-run.js`
+
+Main behavior:
+- frontend polls `GET /api/catalog/lateralized` every `60s`
+- backend returns rows from the latest completed persisted lateralization run
+- backend payload includes `generatedAt`
+- frontend shows a freshness label in the panel header based on that timestamp
+- the panel is rendered directly below `Monitored Tokens`
+- rows are intentionally thin and ranked instead of using large cards
+
+Current row surface:
+- `#rank`
+- symbol + name
+- actions aligned with the monitored visual language
+- `MCAP`
+- `AGE`
+- `VOL 1H`
+- `VOL 24H`
+
+Important:
+- this panel is read-only from the frontend point of view
+- ranking is backend-owned and precomputed
+- `BOX` / `DRIFT` still exist in backend results, but they are no longer foreground UI metrics in the panel
+
 ## Manual Tokens
 
 Files:
@@ -1055,15 +1109,15 @@ Persistence:
 Backend file:
 - `src/routes/dashboard.js`
 
-Related model:
-- `src/models/token-market-snapshot.js`
+Related models:
+- `src/models/token-market-bucket-1m.js`
+- legacy fallback: `src/models/token-market-snapshot.js`
 
 Current behavior:
-- backend reads a wider snapshot window
-- filters to valid MCAP rows
-- uses newest valid row as current
-- looks for a valid baseline around `~5m` back
-- if none is available, uses the oldest valid row in the fetched window
+- backend reads the primary baseline from `token_market_buckets_1m`
+- it uses the newest valid bucket row as current
+- it looks for a valid baseline around `~5m` back
+- if the bucket baseline is missing, it can still fall back to legacy `token_market_snapshots`
 
 If no valid pair exists:
 - `mcapDelta` remains `null`
@@ -1078,8 +1132,10 @@ If no valid pair exists:
 - blocklist
 - starred tokens
 - token catalog
-- market snapshots
+- market bucket history
+- legacy market snapshots
 - Meteora snapshots
+- lateralization runs/results
 
 ### Browser-local and account-scoped
 - dismissed Recent set

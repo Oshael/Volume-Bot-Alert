@@ -176,13 +176,24 @@ function getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h) 
 function getLiquidityRankingAdjustment(vol1h, vol6h, options = {}) {
   const value1h = Number(vol1h);
   const value6h = Number(vol6h);
+  const ageHours = Number(options.ageHours);
   const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
 
   let penalty = 0;
   if (!Number.isFinite(value1h) || value1h < 200) {
     penalty = -12;
+  } else if (value1h < 500) {
+    penalty = -7;
   } else if (value1h < neutralThreshold) {
     penalty = -4;
+  }
+
+  if (penalty < 0 && Number.isFinite(ageHours)) {
+    if (ageHours >= (24 * 30) && value1h < 500) {
+      penalty -= 4;
+    } else if (ageHours >= (24 * 14) && value1h < 500) {
+      penalty -= 2;
+    }
   }
 
   if (penalty < 0 && Number.isFinite(value6h)) {
@@ -281,7 +292,10 @@ function scoreLateralizedCandidate(row, options = {}) {
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
   const minPositionPct = Number(options.minPositionPct) || DEFAULT_LATERALIZATION_MIN_POSITION_PCT;
   const maxPositionPct = Number(options.maxPositionPct) || DEFAULT_LATERALIZATION_MAX_POSITION_PCT;
-  const liquidityPenalty = getLiquidityRankingAdjustment(vol1h, vol6h, { neutralThreshold: minVol1h });
+  const liquidityPenalty = getLiquidityRankingAdjustment(vol1h, vol6h, {
+    neutralThreshold: minVol1h,
+    ageHours,
+  });
   const passesRecentLiquidity = passesDeadLiquidityFilter(vol1h, vol6h);
 
   const rangeSpan = Number.isFinite(maxHighMcap) && Number.isFinite(minLowMcap)
@@ -571,12 +585,11 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   return rows;
 }
 
-async function listLateralizedCandidates(options = {}) {
+async function computeLateralizedCandidates(options = {}) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_LATERALIZATION_HOURS, 48));
   const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
   const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
-  const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_LATERALIZATION_LIMIT, 200));
   const maxLookbackHours = Math.max(
     requestedHours,
     DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS,
@@ -804,11 +817,17 @@ async function listLateralizedCandidates(options = {}) {
         return (a.rangePct ?? Number.POSITIVE_INFINITY) - (b.rangePct ?? Number.POSITIVE_INFINITY);
       }
       return (b.coverageRatio ?? 0) - (a.coverageRatio ?? 0);
-    })
-    .slice(0, limit);
+    });
+}
+
+async function listLateralizedCandidates(options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_LATERALIZATION_LIMIT, 200));
+  const candidates = await computeLateralizedCandidates(options);
+  return candidates.slice(0, limit);
 }
 
 module.exports = {
+  computeLateralizedCandidates,
   upsertSnapshotBucket,
   listHistoryByAddress,
   deleteByAddresses,
