@@ -73,6 +73,7 @@ describe('token market lateralization helpers', () => {
       last_mcap_window: 238000,
       close_mcap_stddev: 4000,
       last_vol_1h: 400,
+      last_vol_6h: 4000,
       last_vol_24h: 95000,
       bucket_count: 330,
       sample_count: 1100,
@@ -88,7 +89,7 @@ describe('token market lateralization helpers', () => {
     });
 
     assert.equal(scored.passes, true);
-    assert.equal(scored.volume1hPenalty, -4);
+    assert.equal(scored.liquidityPenalty, -1);
   });
 
   it('rejects candidates sitting too close to the edge of the range', () => {
@@ -101,6 +102,7 @@ describe('token market lateralization helpers', () => {
       last_mcap_window: 221000,
       close_mcap_stddev: 4000,
       last_vol_1h: 12000,
+      last_vol_6h: 24000,
       last_vol_24h: 95000,
       bucket_count: 330,
       sample_count: 1100,
@@ -141,8 +143,15 @@ describe('token market lateralization helpers', () => {
   });
 
   it('applies stronger 1h-volume penalties to very thin candidates', () => {
-    assert.equal(tokenMarketBucket1m.__private.getVolume1hRankingPenalty(100), -12);
-    assert.equal(tokenMarketBucket1m.__private.getVolume1hRankingPenalty(400), -4);
-    assert.equal(tokenMarketBucket1m.__private.getVolume1hRankingPenalty(1200), 0);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(100, 200), -12);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 400), -4);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 4000), -1);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(1200, 1200), 0);
+  });
+
+  it('rejects only the really dead recent-liquidity profile', () => {
+    assert.equal(tokenMarketBucket1m.__private.passesDeadLiquidityFilter(90, 1400), false);
+    assert.equal(tokenMarketBucket1m.__private.passesDeadLiquidityFilter(90, 2000), true);
+    assert.equal(tokenMarketBucket1m.__private.passesDeadLiquidityFilter(300, 600), true);
   });
 });

@@ -173,17 +173,33 @@ function getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h) 
   return bonus;
 }
 
-function getVolume1hRankingPenalty(vol1h, options = {}) {
-  const value = Number(vol1h);
+function getLiquidityRankingAdjustment(vol1h, vol6h, options = {}) {
+  const value1h = Number(vol1h);
+  const value6h = Number(vol6h);
   const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
 
-  if (!Number.isFinite(value) || value < 250) {
-    return -12;
+  let penalty = 0;
+  if (!Number.isFinite(value1h) || value1h < 250) {
+    penalty = -12;
+  } else if (value1h < neutralThreshold) {
+    penalty = -4;
   }
-  if (value < neutralThreshold) {
-    return -4;
+
+  if (penalty < 0 && Number.isFinite(value6h)) {
+    if (value6h >= 10_000) {
+      penalty += 6;
+    } else if (value6h >= 3_000) {
+      penalty += 3;
+    }
   }
-  return 0;
+
+  return Math.min(0, penalty);
+}
+
+function passesDeadLiquidityFilter(vol1h, vol6h) {
+  const value1h = Number(vol1h);
+  const value6h = Number(vol6h);
+  return !(value1h < 100 && value6h < 1_500);
 }
 
 function getAgeRankingBonus(ageHours) {
@@ -208,6 +224,7 @@ function scoreLateralizedCandidate(row, options = {}) {
   const lastMcapWindow = Number(row.last_mcap_window);
   const stddevMcap = Number(row.close_mcap_stddev);
   const vol1h = Number(row.last_vol_1h);
+  const vol6h = Number(row.last_vol_6h);
   const vol24h = Number(row.last_vol_24h);
   const bucketCount = Number(row.bucket_count) || 0;
   const sampleCount = Number(row.sample_count) || 0;
@@ -237,7 +254,8 @@ function scoreLateralizedCandidate(row, options = {}) {
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
   const minPositionPct = Number(options.minPositionPct) || DEFAULT_LATERALIZATION_MIN_POSITION_PCT;
   const maxPositionPct = Number(options.maxPositionPct) || DEFAULT_LATERALIZATION_MAX_POSITION_PCT;
-  const volume1hPenalty = getVolume1hRankingPenalty(vol1h, { neutralThreshold: minVol1h });
+  const liquidityPenalty = getLiquidityRankingAdjustment(vol1h, vol6h, { neutralThreshold: minVol1h });
+  const passesRecentLiquidity = passesDeadLiquidityFilter(vol1h, vol6h);
 
   const rangeSpan = Number.isFinite(maxHighMcap) && Number.isFinite(minLowMcap)
     ? (maxHighMcap - minLowMcap)
@@ -269,7 +287,7 @@ function scoreLateralizedCandidate(row, options = {}) {
     + centerBonus
     + getMcapRankingBonus(currentMcap)
     + getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h)
-    + volume1hPenalty
+    + liquidityPenalty
     + getAgeRankingBonus(ageHours);
 
   const currentPositionPct = centerPosition * 100;
@@ -288,6 +306,7 @@ function scoreLateralizedCandidate(row, options = {}) {
     && driftPct <= driftLimitPct
     && coverageRatio >= minCoverageRatio
     && bucketCount >= minBuckets
+    && passesRecentLiquidity
     && vol24h >= minVol24h
     && passesPosition
   );
@@ -308,7 +327,9 @@ function scoreLateralizedCandidate(row, options = {}) {
     bucketCount,
     sampleCount,
     passesPosition,
-    volume1hPenalty,
+    passesRecentLiquidity,
+    liquidityPenalty,
+    volume1hPenalty: liquidityPenalty,
   };
 }
 
@@ -687,6 +708,7 @@ async function listLateralizedCandidates(options = {}) {
         close_mcap_stddev: computeSampleStddev(closeValues),
         last_vol_1h: candidate.volume1h,
         last_vol_24h: candidate.volume24h,
+        last_vol_6h: candidate.volume6h,
         bucket_count: scopedBuckets.length,
         sample_count: scopedBuckets.reduce((sum, bucket) => sum + bucket.sampleCount, 0),
         last_token_created_at_ms: candidate.lastTokenCreatedAtMs,
@@ -714,6 +736,7 @@ async function listLateralizedCandidates(options = {}) {
         firstBucketAt: scopedBuckets[0]?.bucketTs || null,
         lastBucketAt: scopedBuckets[scopedBuckets.length - 1]?.bucketTs || null,
         score: metrics.score,
+        liquidityPenalty: metrics.liquidityPenalty,
         rangePct: metrics.rangePct,
         rangeLimitPct: metrics.rangeLimitPct,
         driftPct: metrics.driftPct,
@@ -735,6 +758,8 @@ async function listLateralizedCandidates(options = {}) {
           passesRange: metrics.rangePct != null && metrics.rangeLimitPct != null && metrics.rangePct <= metrics.rangeLimitPct,
           passesDrift: metrics.driftPct != null && metrics.driftLimitPct != null && metrics.driftPct <= metrics.driftLimitPct,
           passesCoverage: metrics.coverageRatio != null && metrics.coverageRatio >= (Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO),
+          passesRecentLiquidity: metrics.passesRecentLiquidity,
+          liquidityPenalty: metrics.liquidityPenalty,
           volume1hPenalty: metrics.volume1hPenalty,
           passesLiquidity: candidate.volume24h != null && Number(candidate.volume24h) >= minVol24h,
           passesPosition: metrics.passesPosition,
@@ -742,7 +767,7 @@ async function listLateralizedCandidates(options = {}) {
       };
     })
     .filter(Boolean)
-    .filter((item) => item.reasons.passesMcap && item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesLiquidity && item.reasons.passesPosition && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
+    .filter((item) => item.reasons.passesMcap && item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesRecentLiquidity && item.reasons.passesLiquidity && item.reasons.passesPosition && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if ((a.rangePct ?? Number.POSITIVE_INFINITY) !== (b.rangePct ?? Number.POSITIVE_INFINITY)) {
@@ -771,7 +796,8 @@ module.exports = {
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
     getRangeLimitPct,
-    getVolume1hRankingPenalty,
+    getLiquidityRankingAdjustment,
+    passesDeadLiquidityFilter,
     computeSampleStddev,
     scoreLateralizedCandidate,
   },
