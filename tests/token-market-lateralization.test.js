@@ -144,6 +144,7 @@ describe('token market lateralization helpers', () => {
 
   it('applies stronger 1h-volume penalties to very thin candidates', () => {
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(100, 200), -12);
+    assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(150, 6000), -12);
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 400), -4);
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(400, 4000), -1);
     assert.equal(tokenMarketBucket1m.__private.getLiquidityRankingAdjustment(1200, 1200), 0);
@@ -153,5 +154,21 @@ describe('token market lateralization helpers', () => {
     assert.equal(tokenMarketBucket1m.__private.passesDeadLiquidityFilter(90, 1400), false);
     assert.equal(tokenMarketBucket1m.__private.passesDeadLiquidityFilter(90, 2000), true);
     assert.equal(tokenMarketBucket1m.__private.passesDeadLiquidityFilter(300, 600), true);
+  });
+
+  it('penalizes stale sub-150k tokens after one month', () => {
+    assert.equal(tokenMarketBucket1m.__private.getStaleLowCapPenalty(24 * 31, 140000), -10);
+    assert.equal(tokenMarketBucket1m.__private.getStaleLowCapPenalty(24 * 31, 180000), 0);
+  });
+
+  it('rewards active coins with strong 1h and 6h volume', () => {
+    assert.equal(tokenMarketBucket1m.__private.getActiveLiquidityBonus(1200, 25000), 6);
+    assert.equal(tokenMarketBucket1m.__private.getActiveLiquidityBonus(900, 25000), 0);
+  });
+
+  it('adds a modest bid-zone bonus for newer 90k-180k candidates', () => {
+    assert.equal(tokenMarketBucket1m.__private.getEarlyBidZoneBonus(24 * 10, 120000), 5);
+    assert.equal(tokenMarketBucket1m.__private.getEarlyBidZoneBonus(24 * 20, 120000), 0);
+    assert.equal(tokenMarketBucket1m.__private.getEarlyBidZoneBonus(24 * 10, 220000), 0);
   });
 });

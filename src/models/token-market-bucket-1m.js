@@ -179,13 +179,16 @@ function getLiquidityRankingAdjustment(vol1h, vol6h, options = {}) {
   const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
 
   let penalty = 0;
-  if (!Number.isFinite(value1h) || value1h < 250) {
+  if (!Number.isFinite(value1h) || value1h < 200) {
     penalty = -12;
   } else if (value1h < neutralThreshold) {
     penalty = -4;
   }
 
   if (penalty < 0 && Number.isFinite(value6h)) {
+    if (penalty <= -12 && value1h < 200) {
+      return penalty;
+    }
     if (value6h >= 10_000) {
       penalty += 6;
     } else if (value6h >= 3_000) {
@@ -211,6 +214,30 @@ function getAgeRankingBonus(ageHours) {
   if (value <= (24 * 14)) return 8;
   if (value <= (24 * 30)) return 0;
   return -8;
+}
+
+function getStaleLowCapPenalty(ageHours, currentMcap) {
+  const age = Number(ageHours);
+  const mcap = Number(currentMcap);
+  if (!Number.isFinite(age) || !Number.isFinite(mcap)) return 0;
+  if (age >= (24 * 30) && mcap < 150_000) return -10;
+  return 0;
+}
+
+function getActiveLiquidityBonus(vol1h, vol6h) {
+  const value1h = Number(vol1h);
+  const value6h = Number(vol6h);
+  if (!Number.isFinite(value1h) || !Number.isFinite(value6h)) return 0;
+  if (value1h >= 1_000 && value6h >= 20_000) return 6;
+  return 0;
+}
+
+function getEarlyBidZoneBonus(ageHours, currentMcap) {
+  const age = Number(ageHours);
+  const mcap = Number(currentMcap);
+  if (!Number.isFinite(age) || !Number.isFinite(mcap)) return 0;
+  if (age <= (24 * 14) && mcap >= 90_000 && mcap <= 180_000) return 5;
+  return 0;
 }
 
 function scoreLateralizedCandidate(row, options = {}) {
@@ -287,6 +314,9 @@ function scoreLateralizedCandidate(row, options = {}) {
     + centerBonus
     + getMcapRankingBonus(currentMcap)
     + getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h)
+    + getActiveLiquidityBonus(vol1h, vol6h)
+    + getEarlyBidZoneBonus(ageHours, currentMcap)
+    + getStaleLowCapPenalty(ageHours, currentMcap)
     + liquidityPenalty
     + getAgeRankingBonus(ageHours);
 
@@ -791,11 +821,14 @@ module.exports = {
     getBucketDate,
     getDriftLimitPct,
     getHighCapQualityBonus,
+    getActiveLiquidityBonus,
     getCandidatePoolBand,
     getCandidatePoolBandLimit,
+    getEarlyBidZoneBonus,
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
     getRangeLimitPct,
+    getStaleLowCapPenalty,
     getLiquidityRankingAdjustment,
     passesDeadLiquidityFilter,
     computeSampleStddev,
