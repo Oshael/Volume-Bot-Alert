@@ -556,18 +556,16 @@ async function listLateralizedCandidates(options = {}) {
      ),
      catalog_candidates AS (
        SELECT
-         token_catalog.address,
-         token_catalog.symbol,
-         token_catalog.name,
-         token_catalog.last_mcap,
-         token_catalog.last_vol_1h,
-         token_catalog.last_vol_6h,
-         token_catalog.last_vol_24h,
-         token_catalog.last_token_created_at_ms,
-         token_catalog.monitor_priority
-       FROM token_catalog
-       INNER JOIN ranked_candidates ranked
-         ON ranked.address = token_catalog.address
+         ranked.address,
+         ranked.symbol,
+         ranked.name,
+         ranked.last_mcap,
+         ranked.last_vol_1h,
+         ranked.last_vol_6h,
+         ranked.last_vol_24h,
+         ranked.last_token_created_at_ms,
+         ranked.monitor_priority
+       FROM ranked_candidates ranked
        WHERE ranked.band_rank <= CASE ranked.mcap_band
          WHEN 'sub_1m' THEN $4
          WHEN 'm1_to_5m' THEN $5
