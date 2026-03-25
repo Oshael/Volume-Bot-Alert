@@ -6,7 +6,7 @@ const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 describe('token market lateralization helpers', () => {
   it('uses wider range limits for lower-cap candidates', () => {
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(120000), 50);
-    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(2000000), 40);
+    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(2000000), 50);
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(8000000), 25);
   });
 
@@ -18,8 +18,8 @@ describe('token market lateralization helpers', () => {
   });
 
   it('gives large caps more room on drift limits', () => {
-    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(2000000), 14);
-    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(8000000), 10);
+    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(2000000), 16);
+    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(8000000), 14);
   });
 
   it('requires longer minimum windows for larger market caps', () => {
@@ -56,7 +56,7 @@ describe('token market lateralization helpers', () => {
     assert.ok((scored.score || 0) > 50);
   });
 
-  it('rejects candidates with low 1h volume even if 24h liquidity is healthy', () => {
+  it('penalizes low 1h volume instead of rejecting the candidate outright', () => {
     const scored = tokenMarketBucket1m.__private.scoreLateralizedCandidate({
       last_mcap: 240000,
       max_high_mcap: 250000,
@@ -80,7 +80,8 @@ describe('token market lateralization helpers', () => {
       nowMs: Date.now(),
     });
 
-    assert.equal(scored.passes, false);
+    assert.equal(scored.passes, true);
+    assert.equal(scored.volume1hPenalty, -4);
   });
 
   it('rejects candidates sitting too close to the edge of the range', () => {
@@ -130,5 +131,11 @@ describe('token market lateralization helpers', () => {
     const weak = tokenMarketBucket1m.__private.getHighCapQualityBonus(2500000, 32, 12, 1200, 20000);
 
     assert.ok(strong > weak);
+  });
+
+  it('applies stronger 1h-volume penalties to very thin candidates', () => {
+    assert.equal(tokenMarketBucket1m.__private.getVolume1hRankingPenalty(100), -12);
+    assert.equal(tokenMarketBucket1m.__private.getVolume1hRankingPenalty(400), -4);
+    assert.equal(tokenMarketBucket1m.__private.getVolume1hRankingPenalty(1200), 0);
   });
 });

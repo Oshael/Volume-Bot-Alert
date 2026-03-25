@@ -65,7 +65,7 @@ function getRangeLimitPct(mcap) {
     return null;
   }
   if (value < 1_000_000) return 50;
-  if (value < 5_000_000) return 40;
+  if (value < 5_000_000) return 50;
   return 25;
 }
 
@@ -75,8 +75,8 @@ function getDriftLimitPct(mcap) {
     return null;
   }
   if (value < 1_000_000) return 20;
-  if (value < 5_000_000) return 14;
-  return 10;
+  if (value < 5_000_000) return 16;
+  return 14;
 }
 
 function getMinimumWindowHoursForMcap(mcap) {
@@ -173,6 +173,19 @@ function getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h) 
   return bonus;
 }
 
+function getVolume1hRankingPenalty(vol1h, options = {}) {
+  const value = Number(vol1h);
+  const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
+
+  if (!Number.isFinite(value) || value < 250) {
+    return -12;
+  }
+  if (value < neutralThreshold) {
+    return -4;
+  }
+  return 0;
+}
+
 function getAgeRankingBonus(ageHours) {
   const value = Number(ageHours);
   if (!Number.isFinite(value) || value < 0) return 0;
@@ -220,10 +233,11 @@ function scoreLateralizedCandidate(row, options = {}) {
   const coverageRatio = expectedBucketCount > 0 ? bucketCount / expectedBucketCount : 0;
   const minCoverageRatio = Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO;
   const minBuckets = Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS);
-  const minVol1h = Math.max(0, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
+  const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
   const minPositionPct = Number(options.minPositionPct) || DEFAULT_LATERALIZATION_MIN_POSITION_PCT;
   const maxPositionPct = Number(options.maxPositionPct) || DEFAULT_LATERALIZATION_MAX_POSITION_PCT;
+  const volume1hPenalty = getVolume1hRankingPenalty(vol1h, { neutralThreshold: minVol1h });
 
   const rangeSpan = Number.isFinite(maxHighMcap) && Number.isFinite(minLowMcap)
     ? (maxHighMcap - minLowMcap)
@@ -255,6 +269,7 @@ function scoreLateralizedCandidate(row, options = {}) {
     + centerBonus
     + getMcapRankingBonus(currentMcap)
     + getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h)
+    + volume1hPenalty
     + getAgeRankingBonus(ageHours);
 
   const currentPositionPct = centerPosition * 100;
@@ -273,7 +288,6 @@ function scoreLateralizedCandidate(row, options = {}) {
     && driftPct <= driftLimitPct
     && coverageRatio >= minCoverageRatio
     && bucketCount >= minBuckets
-    && vol1h >= minVol1h
     && vol24h >= minVol24h
     && passesPosition
   );
@@ -294,6 +308,7 @@ function scoreLateralizedCandidate(row, options = {}) {
     bucketCount,
     sampleCount,
     passesPosition,
+    volume1hPenalty,
   };
 }
 
@@ -508,7 +523,7 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
 async function listLateralizedCandidates(options = {}) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_LATERALIZATION_HOURS, 48));
   const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
-  const minVol1h = Math.max(0, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
+  const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
   const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_LATERALIZATION_LIMIT, 200));
   const maxLookbackHours = Math.max(
@@ -550,8 +565,7 @@ async function listLateralizedCandidates(options = {}) {
        FROM token_catalog
        WHERE eligible_for_monitoring = TRUE
          AND is_active_monitor_candidate = TRUE
-         AND COALESCE(last_mcap, 0) >= $3
-         AND COALESCE(last_vol_1h, 0) >= $1
+         AND COALESCE(last_mcap, 0) >= $1
          AND COALESCE(last_vol_24h, 0) >= $2
      ),
      catalog_candidates AS (
@@ -567,9 +581,9 @@ async function listLateralizedCandidates(options = {}) {
          ranked.monitor_priority
        FROM ranked_candidates ranked
        WHERE ranked.band_rank <= CASE ranked.mcap_band
-         WHEN 'sub_1m' THEN $4::bigint
-         WHEN 'm1_to_5m' THEN $5::bigint
-         ELSE $6::bigint
+         WHEN 'sub_1m' THEN $3::bigint
+         WHEN 'm1_to_5m' THEN $4::bigint
+         ELSE $5::bigint
        END
      )
      SELECT
@@ -591,12 +605,11 @@ async function listLateralizedCandidates(options = {}) {
      FROM catalog_candidates c
      INNER JOIN token_market_buckets_1m b
        ON b.token_address = c.address
-     WHERE b.bucket_ts >= NOW() - ($7::int * INTERVAL '1 hour')
+     WHERE b.bucket_ts >= NOW() - ($6::int * INTERVAL '1 hour')
      ORDER BY c.address ASC, b.bucket_ts ASC`,
     [
-      minVol1h,
-      minVol24h,
       minMcap,
+      minVol24h,
       getCandidatePoolBandLimit('sub_1m'),
       getCandidatePoolBandLimit('m1_to_5m'),
       getCandidatePoolBandLimit('m5_plus'),
@@ -713,6 +726,7 @@ async function listLateralizedCandidates(options = {}) {
         expectedBucketCount: metrics.expectedBucketCount,
         ageHours: metrics.ageHours,
         currentPositionPct: metrics.currentPositionPct,
+        volume1hPenalty: metrics.volume1hPenalty,
         requestedHours,
         minimumWindowHours,
         windowHoursUsed: effectiveWindowHours,
@@ -721,14 +735,14 @@ async function listLateralizedCandidates(options = {}) {
           passesRange: metrics.rangePct != null && metrics.rangeLimitPct != null && metrics.rangePct <= metrics.rangeLimitPct,
           passesDrift: metrics.driftPct != null && metrics.driftLimitPct != null && metrics.driftPct <= metrics.driftLimitPct,
           passesCoverage: metrics.coverageRatio != null && metrics.coverageRatio >= (Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO),
-          passesVolume1h: candidate.volume1h != null && Number(candidate.volume1h) >= minVol1h,
+          volume1hPenalty: metrics.volume1hPenalty,
           passesLiquidity: candidate.volume24h != null && Number(candidate.volume24h) >= minVol24h,
           passesPosition: metrics.passesPosition,
         },
       };
     })
     .filter(Boolean)
-    .filter((item) => item.reasons.passesMcap && item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesVolume1h && item.reasons.passesLiquidity && item.reasons.passesPosition && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
+    .filter((item) => item.reasons.passesMcap && item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesLiquidity && item.reasons.passesPosition && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if ((a.rangePct ?? Number.POSITIVE_INFINITY) !== (b.rangePct ?? Number.POSITIVE_INFINITY)) {
@@ -757,6 +771,7 @@ module.exports = {
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
     getRangeLimitPct,
+    getVolume1hRankingPenalty,
     computeSampleStddev,
     scoreLateralizedCandidate,
   },
