@@ -4,7 +4,8 @@ const tokenMarketSnapshot = require('../models/token-market-snapshot');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 
 const LOOP_INTERVAL_MS = 60 * 60 * 1000;
-const STALE_DAYS = 5;
+const STALE_DAYS = 2;
+const ARCHIVE_LIMIT = 400;
 const QUARANTINE_RECHECK_MS = 6 * 60 * 60 * 1000;
 const SOFT_ARCHIVE_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -32,6 +33,7 @@ async function runOnce() {
   try {
     const summary = await tokenCatalog.applyAutomatedCleanup({
       staleDays: STALE_DAYS,
+      archiveLimit: ARCHIVE_LIMIT,
       quarantineRecheckMs: QUARANTINE_RECHECK_MS,
       softArchiveRecheckMs: SOFT_ARCHIVE_RECHECK_MS,
     });
@@ -62,7 +64,7 @@ async function runOnce() {
     status.lastSummary = summary;
 
     console.log(
-      `[CatalogCleanupWorker] Archived=${summary.archived} Quarantined=${summary.quarantined} deletedMarketBuckets1m=${deletedMarketBuckets1m} deletedMarketSnapshots=${deletedMarketSnapshots} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} staleDays=${summary.staleDays}`
+      `[CatalogCleanupWorker] Archived=${summary.archived} Quarantined=${summary.quarantined} deletedMarketBuckets1m=${deletedMarketBuckets1m} deletedMarketSnapshots=${deletedMarketSnapshots} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} staleDays=${summary.staleDays} archiveLimit=${summary.archiveLimit}`
     );
   } catch (err) {
     status.totalErrors += 1;

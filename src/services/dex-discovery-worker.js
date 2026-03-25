@@ -15,11 +15,14 @@ let status = {
   running: false,
   lastRunAt: null,
   lastProcessed: 0,
+  lastSkippedReason: null,
+  lastRateLimitBackoffRemainingMs: 0,
   totalProcessed: 0,
   totalUpserts: 0,
   totalNewAddresses: 0,
   totalScheduled: 0,
   totalSkippedExisting: 0,
+  totalRateLimitSkips: 0,
   totalErrors: 0,
 };
 
@@ -57,6 +60,17 @@ async function runOnce() {
   status.lastRunAt = new Date().toISOString();
 
   try {
+    const throttleState = dexscreener.getThrottleState();
+    if (throttleState.pauseDiscovery) {
+      status.lastProcessed = 0;
+      status.lastSkippedReason = `dexscreener-throttle:${throttleState.mode}${throttleState.recoveryPhase ? `:${throttleState.recoveryPhase}` : ''}`;
+      status.lastRateLimitBackoffRemainingMs = Number(throttleState.backoffRemainingMs) || 0;
+      status.totalRateLimitSkips += 1;
+      return;
+    }
+
+    status.lastSkippedReason = null;
+    status.lastRateLimitBackoffRemainingMs = 0;
     const [profiles, boostsTop, boostsLatest] = await Promise.all([
       dexscreener.getLatestTokenProfiles(),
       dexscreener.getTopTokenBoosts(),

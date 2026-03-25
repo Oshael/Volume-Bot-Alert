@@ -5,11 +5,36 @@ const ERROR_COOLDOWN_MS = 60000;
 const TOKEN_BATCH_LIMIT = 30;
 const MAX_TOKEN_CACHE_ENTRIES = 1500;
 const MAX_ENDPOINT_CACHE_ENTRIES = 32;
+const DEFAULT_BATCH_DELAY_MS = 100;
+const RATE_LIMIT_BASE_BACKOFF_MS = 5000;
+const RATE_LIMIT_MAX_BACKOFF_MS = 10 * 60 * 1000;
+const RATE_LIMIT_JITTER_RATIO = 0.25;
+const RATE_LIMIT_ACTIVATION_THRESHOLD = 10;
+const COOLDOWN_BATCH_DELAY_MS = 400;
+const RECOVERY_PHASES = [
+  { name: 'high-manual', cycles: 5, batchDelayMs: 500 },
+  { name: 'normal', cycles: 5, batchDelayMs: 350 },
+  { name: 'low-near', cycles: 5, batchDelayMs: 200 },
+  { name: 'low-dust', cycles: 5, batchDelayMs: 150 },
+];
 
 const tokenCache = new Map();
 const endpointCache = new Map();
 const inFlightRequests = new Map();
 const endpointInFlightRequests = new Map();
+const rateLimitState = {
+  consecutive429s: 0,
+  backoffUntil: 0,
+  last429At: null,
+  lastBackoffMs: 0,
+  lastRetryAfterMs: null,
+  lastContext: null,
+  recoveryPhaseIndex: -1,
+  recoveryCyclesRemaining: 0,
+  recoveryCycleCounter: 0,
+  lastCooldownStartedAt: null,
+  lastRecoveryStartedAt: null,
+};
 
 function pruneCacheMap(cache, maxEntries) {
   const now = Date.now();
@@ -73,7 +98,288 @@ function getTokenCacheTtl(priorityHint) {
   }
 }
 
+function clampRateLimitBackoffMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return RATE_LIMIT_BASE_BACKOFF_MS;
+  }
+  return Math.min(RATE_LIMIT_MAX_BACKOFF_MS, Math.max(1000, Math.round(parsed)));
+}
+
+function parseRetryAfterMs(value, now = Date.now()) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return clampRateLimitBackoffMs(seconds * 1000);
+  }
+
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) {
+    return null;
+  }
+
+  return clampRateLimitBackoffMs(at - now);
+}
+
+function addRateLimitJitter(baseMs, randomValue = Math.random()) {
+  const safeBaseMs = clampRateLimitBackoffMs(baseMs);
+  const clampedRandom = Number.isFinite(randomValue)
+    ? Math.max(0, Math.min(1, randomValue))
+    : 0;
+  const amplitudeMs = Math.round(safeBaseMs * RATE_LIMIT_JITTER_RATIO);
+  return clampRateLimitBackoffMs(safeBaseMs + Math.round(amplitudeMs * clampedRandom));
+}
+
+function computeRateLimitBackoffMs(retryAfterMs, consecutive429s, randomValue = Math.random()) {
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return clampRateLimitBackoffMs(retryAfterMs);
+  }
+
+  const exponent = Math.max(0, Math.min(7, Math.trunc(Number(consecutive429s) || 0) - 1));
+  const baseMs = RATE_LIMIT_BASE_BACKOFF_MS * (2 ** exponent);
+  return addRateLimitJitter(baseMs, randomValue);
+}
+
+function getRateLimitBackoffRemainingMs(now = Date.now()) {
+  return Math.max(0, (Number(rateLimitState.backoffUntil) || 0) - now);
+}
+
+function isRateLimitBackoffActive(now = Date.now()) {
+  return getRateLimitBackoffRemainingMs(now) > 0;
+}
+
+function getRecoveryPhase() {
+  if (!Number.isInteger(rateLimitState.recoveryPhaseIndex) || rateLimitState.recoveryPhaseIndex < 0) {
+    return null;
+  }
+
+  return RECOVERY_PHASES[rateLimitState.recoveryPhaseIndex] || null;
+}
+
+function isRecoveryActive(now = Date.now()) {
+  maybePromoteCooldownToRecovery(now);
+  return Boolean(getRecoveryPhase());
+}
+
+function isThrottleModeActive(now = Date.now()) {
+  return isRateLimitBackoffActive(now) || isRecoveryActive(now);
+}
+
+function getRateLimitCooldownCacheTtlMs(now = Date.now()) {
+  const remainingMs = getRateLimitBackoffRemainingMs(now);
+  if (remainingMs > 0) {
+    return clampRateLimitBackoffMs(remainingMs);
+  }
+  return ERROR_COOLDOWN_MS;
+}
+
+function startRecovery(now = Date.now()) {
+  if (!RECOVERY_PHASES.length) {
+    rateLimitState.recoveryPhaseIndex = -1;
+    rateLimitState.recoveryCyclesRemaining = 0;
+    rateLimitState.recoveryCycleCounter = 0;
+    rateLimitState.lastRecoveryStartedAt = null;
+    return;
+  }
+
+  rateLimitState.recoveryPhaseIndex = 0;
+  rateLimitState.recoveryCyclesRemaining = RECOVERY_PHASES[0].cycles;
+  rateLimitState.recoveryCycleCounter = 0;
+  rateLimitState.lastRecoveryStartedAt = new Date(now).toISOString();
+}
+
+function clearRecoveryState() {
+  rateLimitState.recoveryPhaseIndex = -1;
+  rateLimitState.recoveryCyclesRemaining = 0;
+  rateLimitState.recoveryCycleCounter = 0;
+  rateLimitState.lastRecoveryStartedAt = null;
+}
+
+function maybePromoteCooldownToRecovery(now = Date.now()) {
+  if (isRateLimitBackoffActive(now)) {
+    return;
+  }
+
+  if ((Number(rateLimitState.backoffUntil) || 0) > 0) {
+    rateLimitState.backoffUntil = 0;
+    rateLimitState.lastBackoffMs = 0;
+    rateLimitState.lastRetryAfterMs = null;
+    if (!getRecoveryPhase()) {
+      startRecovery(now);
+    }
+  }
+}
+
+function completeRecoveryCycle(now = Date.now()) {
+  maybePromoteCooldownToRecovery(now);
+  const phase = getRecoveryPhase();
+  if (!phase) {
+    return null;
+  }
+
+  rateLimitState.recoveryCycleCounter += 1;
+  rateLimitState.recoveryCyclesRemaining = Math.max(0, rateLimitState.recoveryCyclesRemaining - 1);
+
+  if (rateLimitState.recoveryCyclesRemaining > 0) {
+    return getRecoveryPhase();
+  }
+
+  const nextPhaseIndex = rateLimitState.recoveryPhaseIndex + 1;
+  if (nextPhaseIndex >= RECOVERY_PHASES.length) {
+    clearRecoveryState();
+    return null;
+  }
+
+  rateLimitState.recoveryPhaseIndex = nextPhaseIndex;
+  rateLimitState.recoveryCyclesRemaining = RECOVERY_PHASES[nextPhaseIndex].cycles;
+  return getRecoveryPhase();
+}
+
+function getThrottleState(now = Date.now()) {
+  maybePromoteCooldownToRecovery(now);
+  const recoveryPhase = getRecoveryPhase();
+
+  if (isRateLimitBackoffActive(now)) {
+    return {
+      mode: 'cooldown',
+      batchDelayMs: COOLDOWN_BATCH_DELAY_MS,
+      backoffRemainingMs: getRateLimitBackoffRemainingMs(now),
+      consecutive429s: rateLimitState.consecutive429s,
+      recoveryPhase: null,
+      pauseDiscovery: true,
+    };
+  }
+
+  if (recoveryPhase) {
+    return {
+      mode: 'recovery',
+      batchDelayMs: recoveryPhase.batchDelayMs,
+      backoffRemainingMs: 0,
+      consecutive429s: rateLimitState.consecutive429s,
+      recoveryPhase: recoveryPhase.name,
+      recoveryCyclesRemaining: rateLimitState.recoveryCyclesRemaining,
+      recoveryCycleCounter: rateLimitState.recoveryCycleCounter,
+      pauseDiscovery: true,
+    };
+  }
+
+  return {
+    mode: 'normal',
+    batchDelayMs: DEFAULT_BATCH_DELAY_MS,
+    backoffRemainingMs: 0,
+    consecutive429s: rateLimitState.consecutive429s,
+    recoveryPhase: null,
+    recoveryCyclesRemaining: 0,
+    recoveryCycleCounter: rateLimitState.recoveryCycleCounter,
+    pauseDiscovery: false,
+  };
+}
+
+function noteRateLimit(response, context) {
+  const retryAfterMs = parseRetryAfterMs(response?.headers?.get('retry-after'));
+  const consecutive429s = rateLimitState.consecutive429s + 1;
+  const now = Date.now();
+  const shouldActivateCooldown = consecutive429s >= RATE_LIMIT_ACTIVATION_THRESHOLD;
+  const backoffMs = shouldActivateCooldown
+    ? computeRateLimitBackoffMs(retryAfterMs, consecutive429s)
+    : 0;
+  const backoffUntil = shouldActivateCooldown ? now + backoffMs : 0;
+
+  rateLimitState.consecutive429s = consecutive429s;
+  rateLimitState.last429At = new Date(now).toISOString();
+  rateLimitState.lastBackoffMs = backoffMs;
+  rateLimitState.lastRetryAfterMs = retryAfterMs;
+  rateLimitState.lastContext = context || null;
+  if (shouldActivateCooldown) {
+    rateLimitState.backoffUntil = Math.max(Number(rateLimitState.backoffUntil) || 0, backoffUntil);
+    rateLimitState.lastCooldownStartedAt = new Date(now).toISOString();
+    clearRecoveryState();
+  }
+
+  const retryAfterLabel = retryAfterMs != null ? ` retry-after=${retryAfterMs}ms` : '';
+  if (shouldActivateCooldown) {
+    console.warn(`[DexScreener] 429 on ${context}; cooldown activated after ${consecutive429s} consecutive 429s for ${backoffMs}ms.${retryAfterLabel}`);
+  } else {
+    console.warn(`[DexScreener] 429 on ${context}; consecutive429s=${consecutive429s}/${RATE_LIMIT_ACTIVATION_THRESHOLD}.${retryAfterLabel}`);
+  }
+  return {
+    activatedCooldown: shouldActivateCooldown,
+    backoffMs,
+    retryAfterMs,
+    consecutive429s,
+  };
+}
+
+function noteSuccessfulResponse() {
+  if (isRateLimitBackoffActive()) {
+    return;
+  }
+
+  rateLimitState.consecutive429s = 0;
+}
+
+function getRateLimitState() {
+  const throttleState = getThrottleState();
+  return {
+    active: isRateLimitBackoffActive(),
+    mode: throttleState.mode,
+    throttleActive: throttleState.mode !== 'normal',
+    backoffRemainingMs: throttleState.backoffRemainingMs,
+    consecutive429s: rateLimitState.consecutive429s,
+    last429At: rateLimitState.last429At,
+    lastBackoffMs: rateLimitState.lastBackoffMs,
+    lastRetryAfterMs: rateLimitState.lastRetryAfterMs,
+    lastContext: rateLimitState.lastContext,
+    activationThreshold: RATE_LIMIT_ACTIVATION_THRESHOLD,
+    recoveryPhase: throttleState.recoveryPhase,
+    recoveryCyclesRemaining: throttleState.recoveryCyclesRemaining || 0,
+    recoveryCycleCounter: throttleState.recoveryCycleCounter || 0,
+    batchDelayMs: throttleState.batchDelayMs,
+    pauseDiscovery: throttleState.pauseDiscovery,
+    lastCooldownStartedAt: rateLimitState.lastCooldownStartedAt,
+    lastRecoveryStartedAt: rateLimitState.lastRecoveryStartedAt,
+  };
+}
+
+function resetRateLimitState() {
+  rateLimitState.consecutive429s = 0;
+  rateLimitState.backoffUntil = 0;
+  rateLimitState.last429At = null;
+  rateLimitState.lastBackoffMs = 0;
+  rateLimitState.lastRetryAfterMs = null;
+  rateLimitState.lastContext = null;
+  rateLimitState.recoveryPhaseIndex = -1;
+  rateLimitState.recoveryCyclesRemaining = 0;
+  rateLimitState.recoveryCycleCounter = 0;
+  rateLimitState.lastCooldownStartedAt = null;
+  rateLimitState.lastRecoveryStartedAt = null;
+}
+
+function resolveBatchOptions(delayOrOptions = DEFAULT_BATCH_DELAY_MS) {
+  const options = typeof delayOrOptions === 'object' && delayOrOptions !== null
+    ? { ...delayOrOptions }
+    : {};
+  const rawDelayMs = typeof delayOrOptions === 'number'
+    ? delayOrOptions
+    : options.delayMs;
+  const delayMs = Number.isFinite(Number(rawDelayMs))
+    ? Math.max(0, Math.round(Number(rawDelayMs)))
+    : DEFAULT_BATCH_DELAY_MS;
+
+  delete options.delayMs;
+
+  return { options, delayMs };
+}
+
 async function fetchTokenPairsUncached(address, priorityHint) {
+  if (isRateLimitBackoffActive()) {
+    setCacheEntry(address, null, getRateLimitCooldownCacheTtlMs());
+    return null;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -82,6 +388,12 @@ async function fetchTokenPairsUncached(address, priorityHint) {
       signal: controller.signal,
     });
 
+    if (res.status === 429) {
+      const rateLimitResult = noteRateLimit(res, `token ${address}`);
+      setCacheEntry(address, null, Math.max(ERROR_COOLDOWN_MS, rateLimitResult.backoffMs || 0));
+      return null;
+    }
+
     if (!res.ok) {
       console.error(`[DexScreener] Error ${res.status} for ${address}`);
       setCacheEntry(address, null, ERROR_COOLDOWN_MS);
@@ -89,6 +401,7 @@ async function fetchTokenPairsUncached(address, priorityHint) {
     }
 
     const data = await res.json();
+    noteSuccessfulResponse();
     setCacheEntry(address, data, getTokenCacheTtl(priorityHint));
     return data;
   } catch (err) {
@@ -151,6 +464,15 @@ async function fetchTokenPairsBatchUncached(addresses, options = {}) {
     const chunk = normalizedAddresses.slice(index, index + TOKEN_BATCH_LIMIT);
     if (chunk.length === 0) continue;
 
+    if (isRateLimitBackoffActive()) {
+      const ttlMs = getRateLimitCooldownCacheTtlMs();
+      for (const address of chunk) {
+        setCacheEntry(address, null, ttlMs);
+        results.set(address, null);
+      }
+      continue;
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -159,6 +481,16 @@ async function fetchTokenPairsBatchUncached(addresses, options = {}) {
       const res = await fetch(`${DEXSCREENER_BASE}/tokens/v1/${encodeURIComponent(chain)}/${joinedAddresses}`, {
         signal: controller.signal,
       });
+
+      if (res.status === 429) {
+        const rateLimitResult = noteRateLimit(res, `batch ${chunk.length} tokens on ${chain}`);
+        const ttlMs = Math.max(ERROR_COOLDOWN_MS, rateLimitResult.backoffMs || 0);
+        for (const address of chunk) {
+          setCacheEntry(address, null, ttlMs);
+          results.set(address, null);
+        }
+        continue;
+      }
 
       if (!res.ok) {
         console.error(`[DexScreener] Error ${res.status} for batch ${chunk.length} tokens on ${chain}`);
@@ -170,6 +502,7 @@ async function fetchTokenPairsBatchUncached(addresses, options = {}) {
       }
 
       const pairs = await res.json();
+      noteSuccessfulResponse();
       const groupedPairs = groupPairsByAddress(pairs, chunk);
 
       for (const address of chunk) {
@@ -215,6 +548,11 @@ function setEndpointCacheEntry(key, data, ttlMs) {
 }
 
 async function fetchEndpointJsonUncached(path) {
+  if (isRateLimitBackoffActive()) {
+    setEndpointCacheEntry(path, null, getRateLimitCooldownCacheTtlMs());
+    return null;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -223,6 +561,12 @@ async function fetchEndpointJsonUncached(path) {
       signal: controller.signal,
     });
 
+    if (res.status === 429) {
+      const rateLimitResult = noteRateLimit(res, path);
+      setEndpointCacheEntry(path, null, Math.max(ERROR_COOLDOWN_MS, rateLimitResult.backoffMs || 0));
+      return null;
+    }
+
     if (!res.ok) {
       console.error(`[DexScreener] Error ${res.status} for ${path}`);
       setEndpointCacheEntry(path, null, ERROR_COOLDOWN_MS);
@@ -230,6 +574,7 @@ async function fetchEndpointJsonUncached(path) {
     }
 
     const data = await res.json();
+    noteSuccessfulResponse();
     setEndpointCacheEntry(path, data, DEFAULT_CACHE_TTL_MS);
     return data;
   } catch (err) {
@@ -285,9 +630,8 @@ async function getTokenPairs(address, options = {}) {
   return request;
 }
 
-async function batchGetTokens(addresses, delayMs = 100) {
-  const options = typeof delayMs === 'object' && delayMs !== null ? delayMs : {};
-  const maybeDelayMs = typeof delayMs === 'number' ? delayMs : 0;
+async function batchGetTokens(addresses, delayOrOptions = DEFAULT_BATCH_DELAY_MS) {
+  const { options, delayMs } = resolveBatchOptions(delayOrOptions);
   const normalizedAddresses = [...new Set((addresses || []).map((address) => normalizeAddress(address)).filter(Boolean))];
   const results = new Map();
   const missing = [];
@@ -309,8 +653,8 @@ async function batchGetTokens(addresses, delayMs = 100) {
     }
   }
 
-  if (maybeDelayMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, maybeDelayMs));
+  if (missing.length > 0 && delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   return results;
@@ -348,6 +692,7 @@ function getCacheStats() {
     endpointCacheLimit: MAX_ENDPOINT_CACHE_ENTRIES,
     inFlightTokenRequests: inFlightRequests.size,
     inFlightEndpointRequests: endpointInFlightRequests.size,
+    rateLimit: getRateLimitState(),
   };
 }
 
@@ -370,6 +715,22 @@ module.exports = {
   getLatestTokenProfiles,
   getTopTokenBoosts,
   getLatestTokenBoosts,
+  completeRecoveryCycle,
+  getThrottleState,
+  isRateLimitBackoffActive,
+  getRateLimitState,
   clearCache,
   getCacheStats,
+  __private: {
+    addRateLimitJitter,
+    completeRecoveryCycle,
+    computeRateLimitBackoffMs,
+    getThrottleState,
+    isRecoveryActive,
+    noteRateLimit,
+    noteSuccessfulResponse,
+    parseRetryAfterMs,
+    resetRateLimitState,
+    resolveBatchOptions,
+  },
 };

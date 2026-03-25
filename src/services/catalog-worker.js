@@ -24,6 +24,14 @@ const HIGH_VERY_LOW_VOL_RECHECK_MS = 5 * 1000;
 const HIGH_LOW_VOL_RECHECK_MS = HIGH_WARM_RECHECK_MS;
 const ERROR_RECHECK_MS = 60 * 1000;
 const MANUAL_BOOTSTRAP_RECHECK_MS = 5 * 1000;
+const RATE_LIMIT_HIGH_RECHECK_MS = 15 * 1000;
+const RATE_LIMIT_NORMAL_RECHECK_MS = 2 * 60 * 1000;
+const RATE_LIMIT_LOW_NEAR_RECHECK_MS = 3 * 60 * 1000;
+const RATE_LIMIT_LOW_DUST_RECHECK_MS = 2 * 60 * 1000;
+const RATE_LIMIT_MANUAL_RECHECK_MS = 15 * 1000;
+const DEX_BATCH_DELAY_MS = 100;
+const THROTTLE_LIST_LIMIT_MULTIPLIER = 8;
+const THROTTLE_LIST_LIMIT_CAP = 2500;
 const LOW_NEAR_JITTER_MS = 3 * 1000;
 const LOW_DUST_JITTER_MS = 60 * 1000;
 const DORMANT_JITTER_MS = 2 * 60 * 1000;
@@ -45,6 +53,12 @@ let status = {
   lastDexRequestBudget: Math.floor(MAX_TOKEN_BUDGET_PER_CYCLE / DEX_TOKENS_PER_REQUEST),
   lastDexBatchCount: 0,
   lastProcessBatchCount: 0,
+  lastRateLimitActive: false,
+  lastRateLimitBackoffRemainingMs: 0,
+  lastRateLimitFilteredCount: 0,
+  lastThrottleMode: 'normal',
+  lastRecoveryPhase: null,
+  lastThrottleBatchDelayMs: DEX_BATCH_DELAY_MS,
   lastDueByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   lastBacklogByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   lastMaxOverdueMs: 0,
@@ -247,6 +261,124 @@ function shouldFastRetryManualBootstrap(token) {
     && !token?.last_eligible_at;
 }
 
+function getRateLimitedRetryMs(token) {
+  const marketCap = Number(token?.last_mcap || 0);
+  const priority = String(token?.monitor_priority || '').trim().toLowerCase();
+
+  if (shouldFastRetryManualBootstrap(token)) {
+    return RATE_LIMIT_MANUAL_RECHECK_MS;
+  }
+
+  if (priority === 'high' || marketCap >= 100000) {
+    return RATE_LIMIT_HIGH_RECHECK_MS;
+  }
+
+  if (priority === 'normal' || marketCap >= 30000) {
+    return RATE_LIMIT_NORMAL_RECHECK_MS;
+  }
+
+  if (marketCap >= 15000) {
+    return RATE_LIMIT_LOW_NEAR_RECHECK_MS;
+  }
+
+  if (marketCap > 0) {
+    return RATE_LIMIT_LOW_DUST_RECHECK_MS;
+  }
+
+  return DORMANT_RECHECK_MS;
+}
+
+function getDexUnavailableRetryMs(token, options = {}) {
+  const throttleMode = options.throttleMode
+    || dexscreener.getThrottleState().mode;
+  if (throttleMode !== 'normal') {
+    return getRateLimitedRetryMs(token);
+  }
+
+  if (shouldFastRetryManualBootstrap(token)) {
+    return MANUAL_BOOTSTRAP_RECHECK_MS;
+  }
+
+  return getRetryMsForPriority(token.monitor_priority);
+}
+
+function getThrottleTokenBucket(token) {
+  const source = String(token?.source || '').trim().toLowerCase();
+  const priority = String(token?.monitor_priority || '').trim().toLowerCase();
+  const marketCap = Number(token?.last_mcap || 0);
+
+  if (source === 'user-manual') return 'manual';
+  if (priority === 'high' || marketCap >= 100000) return 'high';
+  if (priority === 'normal' || marketCap >= 30000) return 'normal';
+  if (marketCap >= 15000) return 'low-near';
+  if (marketCap > 0) return 'low-dust';
+  return 'other';
+}
+
+function isTokenAllowedByThrottle(token, throttleState = { mode: 'normal' }) {
+  const bucket = getThrottleTokenBucket(token);
+  const mode = String(throttleState?.mode || 'normal').trim().toLowerCase();
+  const phase = String(throttleState?.recoveryPhase || '').trim().toLowerCase();
+
+  if (mode === 'normal') {
+    return true;
+  }
+
+  if (bucket === 'manual') {
+    return true;
+  }
+
+  if (mode === 'cooldown') {
+    return bucket === 'high';
+  }
+
+  if (phase === 'high-manual') {
+    return bucket === 'high';
+  }
+
+  if (phase === 'normal') {
+    return bucket === 'high' || bucket === 'normal';
+  }
+
+  if (phase === 'low-near') {
+    return bucket === 'high' || bucket === 'normal' || bucket === 'low-near';
+  }
+
+  if (phase === 'low-dust') {
+    return bucket === 'high' || bucket === 'normal' || bucket === 'low-near' || bucket === 'low-dust';
+  }
+
+  return bucket === 'high';
+}
+
+function getThrottleTokenRank(token, throttleState = { mode: 'normal' }) {
+  const bucket = getThrottleTokenBucket(token);
+  const phase = String(throttleState?.recoveryPhase || '').trim().toLowerCase();
+
+  if (bucket === 'manual') return 0;
+  if (bucket === 'high') return 1;
+  if (bucket === 'normal') return 2;
+  if (bucket === 'low-near') return 3;
+  if (bucket === 'low-dust') return phase === 'low-dust' ? 4 : 5;
+  return 6;
+}
+
+function prioritizeTokensForThrottle(tokens, throttleState = { mode: 'normal' }, limit = MAX_TOKEN_BUDGET_PER_CYCLE) {
+  const safeLimit = Math.max(1, Number(limit) || MAX_TOKEN_BUDGET_PER_CYCLE);
+  return [...(Array.isArray(tokens) ? tokens : [])]
+    .filter((token) => isTokenAllowedByThrottle(token, throttleState))
+    .sort((a, b) => {
+      const rankDelta = getThrottleTokenRank(a, throttleState) - getThrottleTokenRank(b, throttleState);
+      if (rankDelta !== 0) return rankDelta;
+
+      const nextEvalDelta = new Date(a?.next_evaluation_at || 0).getTime() - new Date(b?.next_evaluation_at || 0).getTime();
+      if (nextEvalDelta !== 0) return nextEvalDelta;
+
+      return Number(b?.last_mcap || 0) - Number(a?.last_mcap || 0);
+    })
+    .slice(0, safeLimit);
+}
+
 async function evaluateToken(token) {
   const data = await dexscreener.getTokenPairs(token.address, {
     priority: getDexPriorityHint(token),
@@ -256,9 +388,7 @@ async function evaluateToken(token) {
 
 async function evaluateTokenWithData(token, data) {
   if (!data) {
-    const retryMs = shouldFastRetryManualBootstrap(token)
-      ? MANUAL_BOOTSTRAP_RECHECK_MS
-      : getRetryMsForPriority(token.monitor_priority);
+    const retryMs = getDexUnavailableRetryMs(token);
     return tokenCatalog.applyEvaluationResult(token.address, {
       eligibilityState: 'dex-unavailable',
       eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
@@ -367,8 +497,19 @@ async function runOnce() {
   if (!running) return;
 
   const cycleStartedAt = Date.now();
+  const throttleState = dexscreener.getThrottleState();
+  const throttleActive = throttleState.mode !== 'normal';
   const dueSummaryPromise = tokenCatalog.countDueForEvaluationSummary();
-  const due = await tokenCatalog.listDueForEvaluation(MAX_TOKEN_BUDGET_PER_CYCLE);
+  const throttleListLimit = Math.max(
+    MAX_TOKEN_BUDGET_PER_CYCLE,
+    Math.min(THROTTLE_LIST_LIMIT_CAP, MAX_TOKEN_BUDGET_PER_CYCLE * THROTTLE_LIST_LIMIT_MULTIPLIER)
+  );
+  const listedDue = await tokenCatalog.listDueForEvaluation(
+    throttleActive ? throttleListLimit : MAX_TOKEN_BUDGET_PER_CYCLE
+  );
+  const due = throttleActive
+    ? prioritizeTokensForThrottle(listedDue, throttleState, MAX_TOKEN_BUDGET_PER_CYCLE)
+    : listedDue;
   const dueSummary = await dueSummaryPromise;
   const processedByPriority = summarizePriorityCounts(due);
   const backlogByPriority = subtractPriorityCounts(dueSummary.byPriority, processedByPriority);
@@ -379,6 +520,12 @@ async function runOnce() {
   status.lastDueCount = due.length;
   status.lastTotalDueCount = totalDueCount;
   status.lastBacklogCount = Math.max(0, totalDueCount - due.length);
+  status.lastRateLimitActive = throttleState.mode === 'cooldown';
+  status.lastRateLimitBackoffRemainingMs = Number(throttleState.backoffRemainingMs) || 0;
+  status.lastRateLimitFilteredCount = Math.max(0, listedDue.length - due.length);
+  status.lastThrottleMode = throttleState.mode || 'normal';
+  status.lastRecoveryPhase = throttleState.recoveryPhase || null;
+  status.lastThrottleBatchDelayMs = Number(throttleState.batchDelayMs) || DEX_BATCH_DELAY_MS;
   status.lastDueByPriority = processedByPriority;
   status.lastBacklogByPriority = backlogByPriority;
   status.lastMaxOverdueMs = Number(dueSummary.maxOverdueMs) || 0;
@@ -394,7 +541,7 @@ async function runOnce() {
     );
     const dataByAddress = await dexscreener.batchGetTokens(
       fetchBatch.map((token) => token.address),
-      { chain: 'solana', priorityByAddress }
+      { chain: 'solana', priorityByAddress, delayMs: throttleState.batchDelayMs || DEX_BATCH_DELAY_MS }
     );
 
     for (let processIndex = 0; processIndex < fetchBatch.length; processIndex += CONCURRENCY) {
@@ -421,6 +568,9 @@ async function runOnce() {
   }
 
   const cycleFinishedAt = Date.now();
+  if (throttleState.mode === 'recovery') {
+    dexscreener.completeRecoveryCycle(cycleFinishedAt);
+  }
   status.lastCompletedAt = new Date(cycleFinishedAt).toISOString();
   status.lastRunDurationMs = cycleFinishedAt - cycleStartedAt;
   status.lastLoopOverrunMs = Math.max(0, status.lastRunDurationMs - LOOP_INTERVAL_MS);
@@ -470,6 +620,12 @@ module.exports = {
   __private: {
     addPriorityJitter,
     computeNextDelayMs,
+    getDexUnavailableRetryMs,
+    getRateLimitedRetryMs,
+    getThrottleTokenBucket,
+    getThrottleTokenRank,
+    isTokenAllowedByThrottle,
     normalizeDelayMs,
+    prioritizeTokensForThrottle,
   },
 };

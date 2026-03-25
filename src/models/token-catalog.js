@@ -385,50 +385,11 @@ async function applyEvaluationResult(address, result) {
 }
 
 async function applyAutomatedCleanup(options = {}) {
-  const staleDays = Math.max(1, Number(options.staleDays) || 5);
+  const staleDays = Math.max(1, Number(options.staleDays) || 2);
+  const archiveLimit = Math.max(1, Math.min(Number(options.archiveLimit) || 400, 5000));
   const quarantineRecheckMs = Math.max(60 * 1000, Number(options.quarantineRecheckMs) || (6 * 60 * 60 * 1000));
   const softArchiveRecheckMs = Math.max(60 * 1000, Number(options.softArchiveRecheckMs) || (30 * 24 * 60 * 60 * 1000));
   const staleInterval = `${staleDays} days`;
-
-  const archiveQuery = `
-    WITH protected_addresses AS (
-      SELECT DISTINCT address FROM user_tokens
-      UNION
-      SELECT DISTINCT address FROM user_starred_tokens
-      UNION
-      SELECT DISTINCT address FROM user_blocklist
-      UNION
-      SELECT DISTINCT address FROM token_catalog WHERE source = 'user-manual'
-    )
-    UPDATE token_catalog tc
-    SET is_active_monitor_candidate = FALSE,
-        eligible_for_monitoring = FALSE,
-        monitor_priority = 'dormant',
-        suppressed_reason = 'cleanup_soft_archive',
-        next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
-    WHERE COALESCE(tc.last_mcap, 0) < 15000
-      AND tc.source <> 'dexscreener-discovery'
-      AND COALESCE(tc.suppressed_reason, '') <> 'cleanup_soft_archive'
-      AND NOT EXISTS (
-        SELECT 1
-        FROM protected_addresses pa
-        WHERE pa.address = tc.address
-      )
-      AND (
-        tc.eligible_for_monitoring = FALSE
-        OR tc.last_vol_24h IS NULL
-        OR tc.last_vol_24h < 1000
-        OR tc.last_seen_at < NOW() - $2::interval
-        OR tc.eligibility_state IN ('dex-missing', 'dex-known-no-mcap')
-        OR (tc.eligibility_state = 'evaluation-error' AND COALESCE(tc.evaluation_error_count, 0) >= 3)
-      )
-      AND (
-        tc.last_seen_at < NOW() - $2::interval
-        OR tc.eligibility_state IN ('dex-missing', 'dex-known-no-mcap')
-        OR (tc.eligibility_state = 'evaluation-error' AND COALESCE(tc.evaluation_error_count, 0) >= 3)
-      )
-    RETURNING tc.address, tc.source
-  `;
 
   const quarantineQuery = `
     WITH protected_addresses AS (
@@ -458,10 +419,51 @@ async function applyAutomatedCleanup(options = {}) {
     RETURNING tc.address, tc.source
   `;
 
-  const [archiveResult, quarantineResult] = await Promise.all([
-    db.query(archiveQuery, [softArchiveRecheckMs, staleInterval]),
-    db.query(quarantineQuery, [quarantineRecheckMs]),
-  ]);
+  const archiveQuery = `
+    WITH protected_addresses AS (
+      SELECT DISTINCT address FROM user_tokens
+      UNION
+      SELECT DISTINCT address FROM user_starred_tokens
+      UNION
+      SELECT DISTINCT address FROM user_blocklist
+      UNION
+      SELECT DISTINCT address FROM token_catalog WHERE source = 'user-manual'
+    ),
+    candidate_addresses AS (
+      SELECT tc.address
+      FROM token_catalog tc
+      WHERE COALESCE(tc.last_mcap, 0) > 0
+        AND COALESCE(tc.last_mcap, 0) < 15000
+        AND COALESCE(tc.suppressed_reason, '') NOT IN ('cleanup_soft_archive', 'cleanup_quarantine')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM protected_addresses pa
+          WHERE pa.address = tc.address
+        )
+        AND (
+          tc.eligible_for_monitoring = FALSE
+          OR tc.last_vol_24h IS NULL
+          OR tc.last_vol_24h < 1000
+          OR tc.eligibility_state IN ('dex-missing', 'dex-known-no-mcap')
+          OR (tc.eligibility_state = 'evaluation-error' AND COALESCE(tc.evaluation_error_count, 0) >= 3)
+        )
+        AND COALESCE(tc.last_seen_at, tc.first_seen_at) < NOW() - $2::interval
+      ORDER BY tc.first_seen_at ASC, tc.last_seen_at ASC, tc.address ASC
+      LIMIT $3
+    )
+    UPDATE token_catalog tc
+    SET is_active_monitor_candidate = FALSE,
+        eligible_for_monitoring = FALSE,
+        monitor_priority = 'dormant',
+        suppressed_reason = 'cleanup_soft_archive',
+        next_evaluation_at = NOW() + ($1 * INTERVAL '1 millisecond')
+    FROM candidate_addresses ca
+    WHERE tc.address = ca.address
+    RETURNING tc.address, tc.source
+  `;
+
+  const quarantineResult = await db.query(quarantineQuery, [quarantineRecheckMs]);
+  const archiveResult = await db.query(archiveQuery, [softArchiveRecheckMs, staleInterval, archiveLimit]);
 
   const archivedBySource = archiveResult.rows.reduce((acc, row) => {
     acc[row.source] = (acc[row.source] || 0) + 1;
@@ -480,6 +482,7 @@ async function applyAutomatedCleanup(options = {}) {
     archivedAddresses,
     archivedBySource,
     quarantinedBySource,
+    archiveLimit,
     staleDays,
   };
 }
