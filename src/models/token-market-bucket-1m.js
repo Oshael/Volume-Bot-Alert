@@ -7,7 +7,7 @@ const DEFAULT_LATERALIZATION_MIN_VOL_24H = 10_000;
 const DEFAULT_LATERALIZATION_HOURS = 6;
 const DEFAULT_LATERALIZATION_LIMIT = 50;
 const DEFAULT_LATERALIZATION_SUB_1M_CANDIDATE_POOL_LIMIT = 120;
-const DEFAULT_LATERALIZATION_1M_TO_5M_CANDIDATE_POOL_LIMIT = 50;
+const DEFAULT_LATERALIZATION_1M_TO_4M_CANDIDATE_POOL_LIMIT = 50;
 const DEFAULT_LATERALIZATION_5M_PLUS_CANDIDATE_POOL_LIMIT = 30;
 const DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO = 0.7;
 const DEFAULT_LATERALIZATION_MIN_BUCKETS = 20;
@@ -65,7 +65,7 @@ function getRangeLimitPct(mcap) {
     return null;
   }
   if (value < 1_000_000) return 50;
-  if (value < 5_000_000) return 50;
+  if (value < 4_000_000) return 50;
   return 25;
 }
 
@@ -75,7 +75,7 @@ function getDriftLimitPct(mcap) {
     return null;
   }
   if (value < 1_000_000) return 20;
-  if (value < 5_000_000) return 16;
+  if (value < 4_000_000) return 16;
   return 14;
 }
 
@@ -92,17 +92,17 @@ function getCandidatePoolBand(mcap) {
   if (!Number.isFinite(value) || value < 1_000_000) {
     return 'sub_1m';
   }
-  if (value < 5_000_000) {
-    return 'm1_to_5m';
+  if (value < 4_000_000) {
+    return 'm1_to_4m';
   }
-  return 'm5_plus';
+  return 'm4_plus';
 }
 
 function getCandidatePoolBandLimit(band) {
   switch (String(band || '').trim().toLowerCase()) {
-    case 'm1_to_5m':
-      return DEFAULT_LATERALIZATION_1M_TO_5M_CANDIDATE_POOL_LIMIT;
-    case 'm5_plus':
+    case 'm1_to_4m':
+      return DEFAULT_LATERALIZATION_1M_TO_4M_CANDIDATE_POOL_LIMIT;
+    case 'm4_plus':
       return DEFAULT_LATERALIZATION_5M_PLUS_CANDIDATE_POOL_LIMIT;
     case 'sub_1m':
     default:
@@ -139,7 +139,7 @@ function getMcapRankingBonus(mcap) {
   if (value >= 150_000 && value <= 500_000) return 18;
   if (value < 150_000) return 12;
   if (value <= 1_000_000) return 10;
-  if (value <= 5_000_000) return 8;
+  if (value <= 4_000_000) return 8;
   return 5;
 }
 
@@ -156,13 +156,13 @@ function getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h) 
   const vol24 = Number(vol24h);
 
   if (Number.isFinite(range)) {
-    if (value < 5_000_000 && range <= 20) bonus += 4;
-    else if (value >= 5_000_000 && range <= 12) bonus += 5;
+    if (value < 4_000_000 && range <= 20) bonus += 4;
+    else if (value >= 4_000_000 && range <= 12) bonus += 5;
   }
 
   if (Number.isFinite(drift)) {
-    if (value < 5_000_000 && drift <= 6) bonus += 2;
-    else if (value >= 5_000_000 && drift <= 4) bonus += 3;
+    if (value < 4_000_000 && drift <= 6) bonus += 2;
+    else if (value >= 4_000_000 && drift <= 4) bonus += 3;
   }
 
   if (Number.isFinite(vol1) && Number.isFinite(vol24)) {
@@ -547,14 +547,14 @@ async function listLateralizedCandidates(options = {}) {
          monitor_priority,
          CASE
            WHEN COALESCE(last_mcap, 0) < 1000000 THEN 'sub_1m'
-           WHEN COALESCE(last_mcap, 0) < 5000000 THEN 'm1_to_5m'
-           ELSE 'm5_plus'
+           WHEN COALESCE(last_mcap, 0) < 4000000 THEN 'm1_to_4m'
+           ELSE 'm4_plus'
          END AS mcap_band,
          ROW_NUMBER() OVER (
            PARTITION BY CASE
              WHEN COALESCE(last_mcap, 0) < 1000000 THEN 'sub_1m'
-             WHEN COALESCE(last_mcap, 0) < 5000000 THEN 'm1_to_5m'
-             ELSE 'm5_plus'
+             WHEN COALESCE(last_mcap, 0) < 4000000 THEN 'm1_to_4m'
+             ELSE 'm4_plus'
            END
            ORDER BY
              COALESCE(last_vol_24h, 0) DESC,
@@ -582,7 +582,7 @@ async function listLateralizedCandidates(options = {}) {
        FROM ranked_candidates ranked
        WHERE ranked.band_rank <= CASE ranked.mcap_band
          WHEN 'sub_1m' THEN $3::bigint
-         WHEN 'm1_to_5m' THEN $4::bigint
+         WHEN 'm1_to_4m' THEN $4::bigint
          ELSE $5::bigint
        END
      )
@@ -611,8 +611,8 @@ async function listLateralizedCandidates(options = {}) {
       minMcap,
       minVol24h,
       getCandidatePoolBandLimit('sub_1m'),
-      getCandidatePoolBandLimit('m1_to_5m'),
-      getCandidatePoolBandLimit('m5_plus'),
+      getCandidatePoolBandLimit('m1_to_4m'),
+      getCandidatePoolBandLimit('m4_plus'),
       maxLookbackHours,
     ]
   );

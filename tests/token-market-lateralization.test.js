@@ -7,6 +7,7 @@ describe('token market lateralization helpers', () => {
   it('uses wider range limits for lower-cap candidates', () => {
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(120000), 50);
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(2000000), 50);
+    assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(4500000), 25);
     assert.equal(tokenMarketBucket1m.__private.getRangeLimitPct(8000000), 25);
   });
 
@@ -19,6 +20,7 @@ describe('token market lateralization helpers', () => {
 
   it('gives large caps more room on drift limits', () => {
     assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(2000000), 16);
+    assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(4500000), 14);
     assert.equal(tokenMarketBucket1m.__private.getDriftLimitPct(8000000), 14);
   });
 
@@ -26,6 +28,11 @@ describe('token market lateralization helpers', () => {
     assert.equal(tokenMarketBucket1m.__private.getMinimumWindowHoursForMcap(250000), 16);
     assert.equal(tokenMarketBucket1m.__private.getMinimumWindowHoursForMcap(1000000), 32);
     assert.equal(tokenMarketBucket1m.__private.getMinimumWindowHoursForMcap(7500000), 32);
+  });
+
+  it('switches the candidate-pool band at 4m market cap', () => {
+    assert.equal(tokenMarketBucket1m.__private.getCandidatePoolBand(2500000), 'm1_to_4m');
+    assert.equal(tokenMarketBucket1m.__private.getCandidatePoolBand(4500000), 'm4_plus');
   });
 
   it('scores a compressed, covered candidate as a passing lateralization candidate', () => {
