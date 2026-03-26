@@ -107,7 +107,7 @@ export interface AppController {
   requestPasswordReset(email: string): Promise<void>;
   confirmPasswordReset(newPassword: string, confirmNewPassword: string): Promise<void>;
   validateInvite(code: string): Promise<InviteValidationResponse>;
-  openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp'): void;
+  openAuthPanel(panel: 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp'): void;
   closeAuthPanel(): void;
   logout(): Promise<void>;
   logoutAll(): Promise<void>;
@@ -2421,7 +2421,7 @@ export function createAppController(): AppController {
       state.ui.loginErrorCount = 0;
       emit();
     },
-    openAuthPanel(panel: 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp') {
+    openAuthPanel(panel: 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp') {
       if (panel === 'change-password') {
         monitoringPausedForAuthPanel = state.runtime.mode === 'active';
         if (monitoringPausedForAuthPanel) {

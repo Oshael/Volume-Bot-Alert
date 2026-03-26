@@ -282,7 +282,7 @@ export interface AppState {
     error: string | null;
     notice: string | null;
     loginErrorCount: number;
-    authPanel: 'none' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp';
+    authPanel: 'none' | 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp';
     pendingVerificationEmail: string | null;
     pendingPasswordResetToken: string | null;
     pendingLoginOtpChallengeToken: string | null;
