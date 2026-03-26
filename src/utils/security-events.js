@@ -1,6 +1,25 @@
 const MAX_RECENT_EVENTS = 50;
 const eventCounts = new Map();
 const recentEvents = [];
+const throttledConsoleEvents = new Map();
+
+function getThrottleWindowMs(payload) {
+  if (payload.event === 'rate_limit_exceeded' && payload.limiter === 'pumpfun-meta') {
+    return 60000;
+  }
+  return 0;
+}
+
+function getThrottleKey(payload) {
+  if (payload.event === 'rate_limit_exceeded') {
+    return [
+      payload.event,
+      payload.limiter || 'unknown',
+      payload.key || payload.userId || payload.ip || 'unknown',
+    ].join('|');
+  }
+  return null;
+}
 
 function sanitizeDetailValue(value) {
   if (value == null) return null;
@@ -27,6 +46,30 @@ function logSecurityEvent(event, details = {}) {
   recentEvents.unshift(payload);
   if (recentEvents.length > MAX_RECENT_EVENTS) {
     recentEvents.length = MAX_RECENT_EVENTS;
+  }
+
+  const throttleKey = getThrottleKey(payload);
+  const throttleWindowMs = getThrottleWindowMs(payload);
+  if (throttleKey && throttleWindowMs > 0) {
+    const now = Date.now();
+    const previous = throttledConsoleEvents.get(throttleKey);
+    if (previous && now - previous.lastLoggedAt < throttleWindowMs) {
+      previous.suppressedCount += 1;
+      previous.lastSeenAt = now;
+      throttledConsoleEvents.set(throttleKey, previous);
+      return;
+    }
+
+    const suppressedSinceLastLog = previous?.suppressedCount || 0;
+    throttledConsoleEvents.set(throttleKey, {
+      lastLoggedAt: now,
+      lastSeenAt: now,
+      suppressedCount: 0,
+    });
+
+    if (suppressedSinceLastLog > 0) {
+      payload.suppressedSinceLastLog = suppressedSinceLastLog;
+    }
   }
 
   console.warn(`[Security] ${JSON.stringify(payload)}`);

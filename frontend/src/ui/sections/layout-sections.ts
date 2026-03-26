@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState } from '../../state/app-state';
+import { getTrackedToken, type AppState } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -16,7 +16,7 @@ import {
   LOGIN_PASSWORD_MAX_LENGTH,
   sanitizeLoginEmailValue,
 } from './login-form-utils';
-import { escapeHtml } from './html-safety';
+import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { renderFlash } from './shared';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
@@ -158,12 +158,157 @@ export function renderLegacyShell(state: AppState, controller: AppController) {
     return wrapper;
   }
 
-  wrapper.append(
-    renderLegacyConfig(state, controller),
-    renderLegacyActions(state, controller),
-  );
+  wrapper.append(renderLegacyActions(state, controller));
 
   return wrapper;
+}
+
+export function renderWorkspaceHeader(state: AppState, controller: AppController) {
+  const section = document.createElement('section');
+  section.className = 'legacy-topbar workspace-topbar';
+  section.innerHTML = `
+    <div class="workspace-topbar-inner">
+      <div class="workspace-brand">
+        <img class="workspace-brand-mark" src="${SITE_LOGO_URL}" alt="TrendScope logo" />
+        <div class="workspace-brand-copy">
+          <strong class="workspace-brand-title">TrendScope</strong>
+          <span class="workspace-brand-sub">Volume Bot Tracker</span>
+        </div>
+        <button type="button" class="legacy-btn btn-start workspace-monitor-btn ${state.runtime.mode === 'active' ? 'running' : ''}" data-action="toggle-monitoring">
+          ${state.runtime.mode === 'active' ? '&#9632; Stop' : '&#9654; Start'}
+        </button>
+      </div>
+      <div class="workspace-userbar">
+        <div class="legacy-user-menu workspace-user-menu" data-user-menu>
+          <button type="button" class="workspace-user-trigger" data-action="toggle-user-menu" aria-label="Open user menu">
+            <span class="workspace-user-avatar" data-role="user-avatar"></span>
+            <span class="workspace-user-meta">
+              <span class="workspace-user-name" data-role="user-menu-label"></span>
+              <span class="workspace-user-caption">Workspace</span>
+            </span>
+          </button>
+          <div class="legacy-user-dropdown workspace-user-dropdown">
+            <button type="button" class="legacy-user-dd-item" data-action="open-bot-settings"><span class="workspace-menu-icon workspace-menu-icon-gear">⚙</span><span>Settings</span></button>
+            <button type="button" class="legacy-user-dd-item" data-action="open-blocked-tokens"><span class="workspace-menu-icon workspace-menu-icon-danger">✖</span><span class="workspace-menu-label">Blocked Tokens</span></button>
+            <button type="button" class="legacy-user-dd-item" data-action="open-change-password"><span class="workspace-menu-icon">🔐</span><span class="workspace-menu-label">Change Password</span></button>
+            <button type="button" class="legacy-user-dd-item workspace-user-dd-item-danger" data-action="logout"><span class="workspace-menu-icon workspace-menu-icon-danger">⏻</span><span>Logout</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const userMenuLabel = state.session.username ?? state.session.email ?? 'User';
+  const avatarLabel = (state.session.username ?? state.session.email ?? 'U').trim().charAt(0).toUpperCase() || 'U';
+  section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
+  section.querySelector<HTMLElement>('[data-role="user-avatar"]')!.textContent = avatarLabel;
+
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-monitoring"]')?.addEventListener('click', () => {
+    if (state.runtime.mode === 'active') {
+      controller.stopMonitoring();
+      return;
+    }
+    controller.startMonitoring();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
+  section.querySelector<HTMLButtonElement>('[data-action="open-bot-settings"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    controller.openAuthPanel('bot-settings');
+    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-blocked-tokens"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    controller.openAuthPanel('blocked-tokens');
+    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-change-password"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    controller.openAuthPanel('change-password');
+    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+  });
+  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-change-password"]):not([data-action="open-bot-settings"]):not([data-action="open-blocked-tokens"]):not([data-action="logout"])').forEach((button) => {
+    button.addEventListener('click', () => {
+      section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+    });
+  });
+
+  return section;
+}
+
+export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
+  if (state.ui.authPanel !== 'bot-settings'
+    && state.ui.authPanel !== 'blocked-tokens'
+    && state.ui.authPanel !== 'change-password') {
+    return null;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'workspace-profile-overlay-root';
+  if (state.ui.authPanel === 'bot-settings') {
+    overlay.innerHTML = renderBotSettingsModal(state);
+    bindBotSettingsPanel(overlay, controller, state);
+    bindWorkspaceProfileOverlay(overlay, controller);
+    return overlay;
+  }
+
+  if (state.ui.authPanel === 'blocked-tokens') {
+    overlay.innerHTML = renderBlockedTokensModal(state);
+    bindBlockedTokensPanel(overlay, controller);
+    bindWorkspaceProfileOverlay(overlay, controller);
+    return overlay;
+  }
+
+  overlay.innerHTML = renderChangePasswordModal(state);
+  bindChangePasswordPanel(overlay, controller, state);
+  bindWorkspaceProfileOverlay(overlay, controller);
+  return overlay;
+}
+
+function bindWorkspaceProfileOverlay(section: ParentNode, controller: AppController) {
+  const closeSelector = '[data-action="close-bot-settings"], [data-action="close-blocked-tokens"], [data-action="close-change-password"]';
+  const overlay = section instanceof HTMLElement ? section : null;
+  if (!overlay || overlay.dataset.overlayCloseBound === 'true') {
+    return;
+  }
+
+  overlay.dataset.overlayCloseBound = 'true';
+
+  const closeOverlay = () => {
+    overlay.remove();
+    document.body.classList.remove('profile-modal-open');
+    controller.closeAuthPanel();
+  };
+
+  const closePanel = (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest(closeSelector)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    closeOverlay();
+  };
+
+  overlay.addEventListener('pointerdown', closePanel);
+  overlay.addEventListener('click', closePanel);
+  overlay.querySelectorAll<HTMLElement>('.legacy-auth-modal-backdrop').forEach((backdrop) => {
+    backdrop.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeOverlay();
+    });
+  });
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    closeOverlay();
+  });
 }
 
 function renderLegacyLogin(state: AppState, controller: AppController) {
@@ -1077,21 +1222,28 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
   `;
 }
 
-function renderLegacyConfig(state: AppState, controller: AppController) {
-  const section = document.createElement('section');
-  section.className = 'config-grid legacy-config-grid';
-  section.innerHTML = `
-    <div class="legacy-userbar">
-      <button type="button" class="legacy-userbar-link logout-link" data-action="logout">Log Out</button>
-      <div class="legacy-user-menu" data-user-menu>
-        <button type="button" class="legacy-userbar-link user-link" data-action="toggle-user-menu" data-role="user-menu-label"></button>
-        <div class="legacy-user-dropdown">
-          <button type="button" class="legacy-user-dd-item" data-action="open-change-password">Change Password</button>
-          <button type="button" class="legacy-user-dd-item">Preferences (Soon)</button>
+function renderBotSettingsModal(state: AppState) {
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="bot-settings">
+      <div class="legacy-auth-modal-backdrop" data-action="close-bot-settings"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-settings" data-auth-panel="bot-settings" role="dialog" aria-modal="true" aria-labelledby="bot-settings-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="bot-settings-title">Bot Settings</strong>
+            <span>Adjust alerts, thresholds, sound behavior, and operator preferences for your workspace.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-bot-settings">Close</button>
+        </div>
+        <div class="legacy-config-grid legacy-config-grid-modal">
+          ${renderBotSettingsFields(state)}
         </div>
       </div>
     </div>
-    ${state.ui.authPanel === 'change-password' ? renderChangePasswordModal(state) : ''}
+  `;
+}
+
+function renderBotSettingsFields(state: AppState) {
+  return `
     ${CONFIG_FIELDS.map((field) => renderConfigField(state, field)).join('')}
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
@@ -1112,49 +1264,49 @@ function renderLegacyConfig(state: AppState, controller: AppController) {
       ${renderSoundUploadStrip(state)}
     </div>
   `;
-  const userMenuLabel = state.session.username ?? state.session.email ?? 'User';
-  section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
-  hydrateLegacyConfigValues(section, state);
+}
 
-  section.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
-    if (input.closest('[data-auth-modal]')) {
-      return;
-    }
-    const name = input.name;
-    if (name === 'sound-mode' || name === 'sound-volume') {
-      return;
-    }
-    input.addEventListener('change', () => void submitLegacyConfig(section, controller));
-  });
+function renderBlockedTokensModal(state: AppState) {
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="blocked-tokens">
+      <div class="legacy-auth-modal-backdrop" data-action="close-blocked-tokens"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-blocklist" data-auth-panel="blocked-tokens" role="dialog" aria-modal="true" aria-labelledby="blocked-tokens-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="blocked-tokens-title">Blocked Tokens</strong>
+            <span>Tokens hidden from your workspace and alert flow.</span>
+          </div>
+          <button type="button" class="legacy-userbar-link" data-action="close-blocked-tokens">Close</button>
+        </div>
+        <div class="blocked-tokens-modal-list">
+          ${state.data.blocklist.length === 0 ? `
+            <div class="blocked-token-empty">No blocked tokens right now.</div>
+          ` : state.data.blocklist.map((item) => `
+            <div class="blocked-token-row">
+              <div class="blocked-token-main">
+                ${renderBlockedTokenAvatar(state, item.address, item.label || item.address.slice(0, 8))}
+                <div class="blocked-token-copy">
+                  <strong>${escapeHtml(item.label || item.address.slice(0, 8))}</strong>
+                  <span>${escapeHtml(item.address)}</span>
+                </div>
+              </div>
+              <button type="button" class="legacy-user-dd-item blocked-token-unblock" data-action="remove-blocked" data-address="${escapeHtml(item.address)}">Unblock</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
 
-  section.querySelector<HTMLSelectElement>('select[name="sound-mode"]')?.addEventListener('change', (event) => {
-    controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
-  });
-  section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
-  section.querySelector<HTMLButtonElement>('[data-action="open-change-password"]')?.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    controller.openAuthPanel('change-password');
-    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
-  });
-  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-change-password"])').forEach((button) => {
-    button.addEventListener('click', () => {
-      section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
-    });
-  });
-
-  const volumeInput = section.querySelector<HTMLInputElement>('input[name="sound-volume"]');
-  const volumeLabel = volumeInput?.closest('.config-item')?.querySelector('label');
-  volumeInput?.addEventListener('input', (event) => {
-    const value = Number((event.currentTarget as HTMLInputElement).value || '0');
-    if (volumeLabel) volumeLabel.textContent = `Sound volume: ${value}%`;
-    controller.setSoundVolume(value / 100);
-  });
-
-  bindConfigToggleMenus(section, controller);
-  bindSoundUploadStrip(section, state);
-  bindChangePasswordPanel(section, controller, state);
-  return section;
+function renderBlockedTokenAvatar(state: AppState, address: string, fallbackLabel: string) {
+  const tracked = getTrackedToken(state, address);
+  const imageUrl = sanitizeOptionalHttpUrl(tracked?.imageUrl);
+  const safeLabel = escapeHtml(String(fallbackLabel || '').trim() || address.slice(0, 8));
+  if (imageUrl) {
+    return `<img src="${imageUrl}" alt="${safeLabel}" class="blocked-token-avatar" />`;
+  }
+  return `<div class="blocked-token-avatar blocked-token-avatar-placeholder">${safeLabel.slice(0, 2).toUpperCase()}</div>`;
 }
 
 function renderChangePasswordModal(state: AppState) {
@@ -1279,6 +1431,76 @@ function bindChangePasswordPanel(section: ParentNode, controller: AppController,
       String(data.get('newPassword') || ''),
       String(data.get('confirmNewPassword') || ''),
     );
+  });
+}
+
+function bindBotSettingsPanel(section: ParentNode, controller: AppController, state: AppState) {
+  const configSection = section.querySelector<HTMLElement>('.legacy-config-grid-modal');
+  const panel = section.querySelector<HTMLElement>('[data-auth-panel="bot-settings"]');
+  if (!configSection || !panel) {
+    return;
+  }
+
+  bindFocusTrap(panel);
+  hydrateLegacyConfigValues(configSection, state);
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-bot-settings"]').forEach((button) => {
+    button.addEventListener('click', () => controller.closeAuthPanel());
+  });
+
+  configSection.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
+    const name = input.name;
+    if (name === 'sound-mode' || name === 'sound-volume') {
+      return;
+    }
+    input.addEventListener('change', () => void submitLegacyConfig(configSection, controller));
+  });
+
+  configSection.querySelector<HTMLSelectElement>('select[name="sound-mode"]')?.addEventListener('change', (event) => {
+    controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
+  });
+
+  const volumeInput = configSection.querySelector<HTMLInputElement>('input[name="sound-volume"]');
+  const volumeLabel = volumeInput?.closest('.config-item')?.querySelector('label');
+  volumeInput?.addEventListener('input', (event) => {
+    const value = Number((event.currentTarget as HTMLInputElement).value || '0');
+    if (volumeLabel) volumeLabel.textContent = `Sound volume: ${value}%`;
+    controller.setSoundVolume(value / 100);
+  });
+
+  bindConfigToggleMenus(configSection, controller);
+  bindSoundUploadStrip(configSection, state);
+
+  configSection.querySelectorAll<HTMLElement>('.config-toggle-list-scroll').forEach((list) => {
+    if (list.dataset.wheelBound === 'true') {
+      return;
+    }
+    list.dataset.wheelBound = 'true';
+    list.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      list.scrollTop += event.deltaY;
+    }, { passive: false });
+  });
+}
+
+function bindBlockedTokensPanel(section: ParentNode, controller: AppController) {
+  const panel = section.querySelector<HTMLElement>('[data-auth-panel="blocked-tokens"]');
+  if (!panel) {
+    return;
+  }
+
+  bindFocusTrap(panel);
+  section.querySelectorAll<HTMLButtonElement>('[data-action="close-blocked-tokens"]').forEach((button) => {
+    button.addEventListener('click', () => controller.closeAuthPanel());
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="remove-blocked"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const address = button.dataset.address;
+      if (address) {
+        void controller.removeBlockedToken(address);
+      }
+    });
   });
 }
 
@@ -1767,14 +1989,21 @@ function renderConfigToggleMenu(
   const safeLabel = escapeHtml(label);
   const safeSummaryLabel = escapeHtml(summaryLabel);
   const safeToggleKey = escapeHtml(label.toLowerCase().replace(/\s+/g, '-'));
+  const isSoundAlertTypeMenu = safeToggleKey === 'sound-by-alert-type';
+  const listClass = safeToggleKey === 'sound-by-alert-type'
+    ? 'config-toggle-list config-toggle-list-scroll'
+    : 'config-toggle-list';
+  const dropdownClass = isSoundAlertTypeMenu
+    ? 'sort-menu-dropdown config-menu-dropdown config-menu-dropdown-scroll'
+    : 'sort-menu-dropdown config-menu-dropdown';
   return `
     <div class="config-item config-item-menu">
       <label>${safeLabel}</label>
       <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
         <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="${safeToggleKey}">${enabledCount}/${fields.length} on</button>
-        <div class="sort-menu-dropdown config-menu-dropdown">
+        <div class="${dropdownClass}">
           <div class="config-menu-summary">${safeSummaryLabel}</div>
-          <div class="config-toggle-list">
+          <div class="${listClass}">
             ${fields.map((field) => {
               const enabled = isConfigEnabled(state, field.key);
               return `
@@ -1940,21 +2169,10 @@ async function submitLegacyConfig(section: HTMLElement, controller: AppControlle
 function renderLegacyActions(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'btn-row legacy-action-row';
-  const isRunning = state.runtime.mode === 'active';
   section.innerHTML = `
     ${renderDashboardFlash(state)}
-    <div class="legacy-button-strip">
-      <button type="button" class="legacy-btn btn-start ${isRunning ? 'running' : ''}" data-action="toggle-monitoring">${isRunning ? '&#9632; STOP' : '&#9654; START MONITORING'}</button>
-    </div>
   `;
 
-  section.querySelector<HTMLButtonElement>('[data-action="toggle-monitoring"]')?.addEventListener('click', () => {
-    if (isRunning) {
-      controller.stopMonitoring();
-      return;
-    }
-    controller.startMonitoring();
-  });
   section.querySelector<HTMLButtonElement>('[data-action="dismiss-flash"]')?.addEventListener('click', () => controller.clearNotice());
   return section;
 }

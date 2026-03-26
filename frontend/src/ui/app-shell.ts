@@ -1,8 +1,7 @@
 import type { AppController } from '../state/app-controller';
 import type { AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
-import { renderBlocklistSection } from './sections/blocklist-section';
-import { renderLegacyShell } from './sections/layout-sections';
+import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderManualTokensSection } from './sections/manual-section';
 import { renderLateralizedSection } from './sections/lateralized-section';
 import { renderMonitoredSection } from './sections/monitored-section';
@@ -93,14 +92,15 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const searchInputDraft = captureSearchInputDraft(root);
   root.innerHTML = '';
 
+  if (state.session.status === 'authenticated') {
+    root.append(renderWorkspaceHeader(state, controller));
+  }
+
   const shell = document.createElement('div');
   shell.className = 'app-shell';
   shell.append(renderPumpToasts(state), renderLegacyShell(state, controller));
 
   if (state.session.status === 'authenticated') {
-    if (state.data.blocklist.length > 0) {
-      shell.append(renderBlocklistSection(state, controller));
-    }
     shell.append(
       renderOldWeekSection(state, controller),
       renderRecentSection(state, controller),
@@ -124,6 +124,13 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   }
 
   root.append(shell);
+  if (state.session.status === 'authenticated') {
+    const profileOverlay = renderWorkspaceProfileOverlay(state, controller);
+    if (profileOverlay) {
+      root.append(profileOverlay);
+    }
+  }
+  syncProfileModalScrollLock(state);
   applyLoginDraft(root, loginDraft, state);
   applyLoginFocus(root, state);
   applyChangePasswordDraft(root, changePasswordDraft);
@@ -147,7 +154,15 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   wireSortMenus(root);
   wireLogHovers(root);
   wireUserMenus(root);
+  wireProfileModals(root, controller);
   applyHoverState(root);
+}
+
+function syncProfileModalScrollLock(state: AppState) {
+  const shouldLock = state.ui.authPanel === 'bot-settings'
+    || state.ui.authPanel === 'blocked-tokens'
+    || state.ui.authPanel === 'change-password';
+  document.body.classList.toggle('profile-modal-open', shouldLock);
 }
 
 function captureUserMenuDraft(root: HTMLElement): UserMenuDraft | null {
@@ -214,6 +229,7 @@ let tradeWired = false;
 let sortMenusWired = false;
 let userMenusWired = false;
 let logHoverWired = false;
+let profileModalWired = false;
 
 function wireHoverPersistence(root: HTMLElement) {
   if (hoverWired) return;
@@ -403,6 +419,39 @@ function wireUserMenus(root: HTMLElement) {
         openMenu.classList.remove('open');
       }
     }
+  });
+}
+
+function wireProfileModals(root: HTMLElement, controller: AppController) {
+  if (profileModalWired) return;
+  profileModalWired = true;
+
+  const closeSelector = '[data-action="close-bot-settings"], [data-action="close-blocked-tokens"], [data-action="close-change-password"]';
+
+  root.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const closeButton = target?.closest<HTMLElement>(closeSelector);
+    const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
+    if (!closeButton && !backdrop) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    controller.closeAuthPanel();
+  });
+
+  root.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    const hasProfileModal = root.querySelector('[data-auth-modal="bot-settings"], [data-auth-modal="blocked-tokens"], [data-auth-modal="change-password"]');
+    if (!hasProfileModal) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    controller.closeAuthPanel();
   });
 }
 
