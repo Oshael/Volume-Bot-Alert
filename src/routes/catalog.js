@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const config = require('../../config');
 const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middleware/auth');
 const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
@@ -10,6 +11,7 @@ const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
 const { isValidAddress } = require('../models/user-token');
+const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
 const MONITORED_MIN_MCAP = 30000;
@@ -19,6 +21,9 @@ const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
 const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
 const PROMOTE_RETRY_MAX_ENTRIES = 2000;
 const promoteRetryState = new Map();
+const pumpfunMetaCache = new Map();
+const pumpfunMetaInFlight = new Map();
+const PUMPFUN_META_CACHE_LIMIT = 500;
 
 function normalizeMinMcap(value) {
   const parsed = Number(value);
@@ -366,6 +371,126 @@ function toPumpfunMetadataUrl(url) {
   return sanitizeAssetUrl(url, { allowHttp: true });
 }
 
+function getPumpfunMetaCacheKey(mint, metadataUri) {
+  return `${String(mint || '').trim()}|${String(metadataUri || '').trim()}`;
+}
+
+function prunePumpfunMetaCache() {
+  const now = Date.now();
+
+  for (const [key, entry] of pumpfunMetaCache.entries()) {
+    if (!entry || !Number.isFinite(entry.expiresAt) || entry.expiresAt <= now) {
+      pumpfunMetaCache.delete(key);
+    }
+  }
+
+  if (pumpfunMetaCache.size <= PUMPFUN_META_CACHE_LIMIT) {
+    return;
+  }
+
+  const overflow = pumpfunMetaCache.size - PUMPFUN_META_CACHE_LIMIT;
+  const removable = Array.from(pumpfunMetaCache.entries())
+    .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+    .slice(0, overflow);
+
+  for (const [key] of removable) {
+    pumpfunMetaCache.delete(key);
+  }
+}
+
+function getCachedPumpfunMeta(mint, metadataUri) {
+  prunePumpfunMetaCache();
+  const entry = pumpfunMetaCache.get(getPumpfunMetaCacheKey(mint, metadataUri));
+  if (!entry) return null;
+  if (Date.now() >= entry.expiresAt) {
+    pumpfunMetaCache.delete(getPumpfunMetaCacheKey(mint, metadataUri));
+    return null;
+  }
+  return entry;
+}
+
+function setCachedPumpfunMeta(mint, metadataUri, status, payload, ttlMs) {
+  pumpfunMetaCache.set(getPumpfunMetaCacheKey(mint, metadataUri), {
+    status,
+    payload,
+    expiresAt: Date.now() + Math.max(1000, Number(ttlMs) || 1000),
+  });
+  prunePumpfunMetaCache();
+}
+
+async function resolvePumpfunMetadataCached(mint, metadataUri) {
+  const cacheKey = getPumpfunMetaCacheKey(mint, metadataUri);
+  const cached = getCachedPumpfunMeta(mint, metadataUri);
+  if (cached) {
+    return {
+      status: cached.status,
+      payload: {
+        ...cached.payload,
+        cached: true,
+      },
+    };
+  }
+
+  const existingRequest = pumpfunMetaInFlight.get(cacheKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = (async () => {
+    const payload = await resolvePumpfunMetadata(mint, metadataUri);
+    if (!payload?.imageUrl) {
+      const missPayload = { error: 'PumpFun metadata unavailable', mint, cached: false };
+      setCachedPumpfunMeta(
+        mint,
+        metadataUri,
+        404,
+        missPayload,
+        Math.min(60000, Number(config.security?.pumpfunMetaCacheMs) || 60000)
+      );
+      return { status: 404, payload: missPayload };
+    }
+
+    const responsePayload = {
+      mint,
+      symbol: payload?.symbol || null,
+      name: payload?.name || null,
+      imageUrl: payload.imageUrl || null,
+      cached: false,
+    };
+    setCachedPumpfunMeta(
+      mint,
+      metadataUri,
+      200,
+      responsePayload,
+      Number(config.security?.pumpfunMetaCacheMs) || 300000
+    );
+    return { status: 200, payload: responsePayload };
+  })()
+    .catch((err) => {
+      const failurePayload = { error: 'Failed to load PumpFun metadata', mint, cached: false };
+      setCachedPumpfunMeta(
+        mint,
+        metadataUri,
+        503,
+        failurePayload,
+        Number(config.security?.pumpfunMetaFailureCooldownMs) || 15000
+      );
+      logSecurityEvent('pumpfun_meta_failure_cooldown', {
+        mint,
+        metadataUri: metadataUri || null,
+        cooldownMs: Number(config.security?.pumpfunMetaFailureCooldownMs) || 15000,
+        error: err.message,
+      });
+      throw err;
+    })
+    .finally(() => {
+      pumpfunMetaInFlight.delete(cacheKey);
+    });
+
+  pumpfunMetaInFlight.set(cacheKey, request);
+  return request;
+}
+
 function buildMetadataGatewayUrls(uri) {
   const normalized = toPumpfunMetadataUrl(uri);
   if (!normalized) return [];
@@ -655,17 +780,8 @@ router.get('/pumpfun/:mint/meta', pumpfunMetaLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid metadata URI' });
     }
 
-    const payload = await resolvePumpfunMetadata(mint, metadataUri);
-    if (!payload?.imageUrl) {
-      return res.status(404).json({ error: 'PumpFun metadata unavailable' });
-    }
-
-    res.json({
-      mint,
-      symbol: payload?.symbol || null,
-      name: payload?.name || null,
-      imageUrl: payload.imageUrl || null,
-    });
+    const result = await resolvePumpfunMetadataCached(mint, metadataUri);
+    res.status(result.status).json(result.payload);
   } catch (err) {
     console.error('GET /catalog/pumpfun/:mint/meta error:', err.message);
     res.status(500).json({ error: 'Failed to load PumpFun metadata' });

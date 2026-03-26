@@ -24,6 +24,8 @@ const User = require('../models/user');
 const solPrice = require('./sol-price');
 const pumpfun = require('./pumpfun-ws');
 const tokenCatalog = require('../models/token-catalog');
+const { getSocketClientIp, isAllowedOrigin } = require('../utils/request-security');
+const { logSecurityEvent } = require('../utils/security-events');
 
 let io = null;
 let solPriceTimer = null;
@@ -33,6 +35,8 @@ const socketSubscriptions = new Map();
 const mintSubscribers = new Map();
 const sessionSockets = new Map();
 const userSessions = new Map();
+const ipSockets = new Map();
+const socketActionState = new Map();
 
 function sanitizeMint(rawMint) {
   if (typeof rawMint !== 'string') return null;
@@ -79,9 +83,42 @@ function ensureSocketSubscriptions(socket) {
   return subscriptions;
 }
 
+function noteSocketAction(socket, action) {
+  const windowMs = Math.max(1000, Number(config.security?.socket?.actionWindowMs) || 10000);
+  const maxActions = Math.max(1, Number(config.security?.socket?.maxActionsPerWindow) || 30);
+  const now = Date.now();
+  const current = socketActionState.get(socket.id);
+
+  if (!current || (now - current.windowStartedAt) >= windowMs) {
+    socketActionState.set(socket.id, {
+      windowStartedAt: now,
+      count: 1,
+    });
+    return true;
+  }
+
+  current.count += 1;
+  if (current.count > maxActions) {
+    logSecurityEvent('socket_action_rate_exceeded', {
+      socketId: socket.id,
+      userId: socket.user?.id,
+      sessionId: socket.sessionId,
+      ip: socket.clientIp,
+      action,
+      count: current.count,
+      limit: maxActions,
+      windowMs,
+    });
+    return false;
+  }
+
+  return true;
+}
+
 function trackSessionSocket(socket) {
   const sessionId = socket.sessionId;
   const userId = socket.user?.id;
+  const ip = socket.clientIp;
   if (!sessionId || !userId) return;
 
   let socketsForSession = sessionSockets.get(sessionId);
@@ -97,11 +134,21 @@ function trackSessionSocket(socket) {
     userSessions.set(userId, sessionsForUser);
   }
   sessionsForUser.add(sessionId);
+
+  if (!ip) return;
+
+  let socketsForIp = ipSockets.get(ip);
+  if (!socketsForIp) {
+    socketsForIp = new Set();
+    ipSockets.set(ip, socketsForIp);
+  }
+  socketsForIp.add(socket.id);
 }
 
 function untrackSessionSocket(socket) {
   const sessionId = socket.sessionId;
   const userId = socket.user?.id;
+  const ip = socket.clientIp;
   if (!sessionId || !userId) return;
 
   const sockets = sessionSockets.get(sessionId);
@@ -109,6 +156,16 @@ function untrackSessionSocket(socket) {
     sockets.delete(socket.id);
     if (sockets.size === 0) {
       sessionSockets.delete(sessionId);
+    }
+  }
+
+  if (ip) {
+    const socketsForIp = ipSockets.get(ip);
+    if (socketsForIp) {
+      socketsForIp.delete(socket.id);
+      if (socketsForIp.size === 0) {
+        ipSockets.delete(ip);
+      }
     }
   }
 
@@ -127,6 +184,20 @@ function untrackSessionSocket(socket) {
 function subscribeSocketToMint(socket, mint) {
   const socketMints = ensureSocketSubscriptions(socket);
   if (socketMints.has(mint)) return false;
+
+  const maxSubscriptionsPerSocket = Math.max(1, Number(config.security?.socket?.maxSubscriptionsPerSocket) || 80);
+  if (socketMints.size >= maxSubscriptionsPerSocket) {
+    logSecurityEvent('socket_subscription_limit_reached', {
+      socketId: socket.id,
+      userId: socket.user?.id,
+      sessionId: socket.sessionId,
+      ip: socket.clientIp,
+      currentSubscriptions: socketMints.size,
+      attemptedMint: mint,
+      limit: maxSubscriptionsPerSocket,
+    });
+    return false;
+  }
 
   socketMints.add(mint);
 
@@ -239,14 +310,26 @@ function revokeUserSockets(userId, reason = 'session_revoked') {
 function init(httpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: config.corsOrigins,
+      origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
       credentials: true,
     },
     pingInterval: 25000,
     pingTimeout: 20000,
+    maxHttpBufferSize: Math.max(1024, Number(config.security?.socket?.maxHttpBufferSize) || 16384),
   });
 
   io.use(async (socket, next) => {
+    const origin = socket.handshake.headers?.origin || null;
+    const clientIp = getSocketClientIp(socket);
+
+    if (!isAllowedOrigin(origin)) {
+      logSecurityEvent('socket_origin_rejected', {
+        origin,
+        ip: clientIp,
+      });
+      return next(new Error('Origin not allowed'));
+    }
+
     const authToken = socket.handshake.auth?.token;
     const parsedCookies = cookie.parse(socket.handshake.headers?.cookie || '');
     const cookieToken = parsedCookies[config.authCookie.name];
@@ -267,9 +350,37 @@ function init(httpServer) {
         return next(new Error('User not found or deactivated'));
       }
 
+      const sessionId = Session.getSessionIdentity(token, decoded);
+      const maxConnectionsPerIp = Math.max(1, Number(config.security?.socket?.maxConnectionsPerIp) || 12);
+      const maxSocketsPerSession = Math.max(1, Number(config.security?.socket?.maxSocketsPerSession) || 4);
+      const activeSocketsForIp = clientIp ? ipSockets.get(clientIp) : null;
+      const activeSocketsForSession = sessionSockets.get(sessionId);
+
+      if (clientIp && activeSocketsForIp && activeSocketsForIp.size >= maxConnectionsPerIp) {
+        logSecurityEvent('socket_connection_limit_per_ip', {
+          ip: clientIp,
+          userId: user.id,
+          activeConnections: activeSocketsForIp.size,
+          limit: maxConnectionsPerIp,
+        });
+        return next(new Error('Too many active socket connections'));
+      }
+
+      if (activeSocketsForSession && activeSocketsForSession.size >= maxSocketsPerSession) {
+        logSecurityEvent('socket_connection_limit_per_session', {
+          ip: clientIp,
+          userId: user.id,
+          sessionId,
+          activeConnections: activeSocketsForSession.size,
+          limit: maxSocketsPerSession,
+        });
+        return next(new Error('Too many active sockets for this session'));
+      }
+
       socket.user = user;
       socket.token = token;
-      socket.sessionId = Session.getSessionIdentity(token, decoded);
+      socket.sessionId = sessionId;
+      socket.clientIp = clientIp;
       next();
     } catch (err) {
       return next(new Error('Invalid token'));
@@ -285,12 +396,14 @@ function init(httpServer) {
     socket.emit('pump:status', pumpfun.getStatus());
 
     socket.on('pump:subscribe', (data) => {
+      if (!noteSocketAction(socket, 'pump:subscribe')) return;
       const mint = sanitizeMint(data?.mint);
       if (!mint) return;
       subscribeSocketToMint(socket, mint);
     });
 
     socket.on('pump:unsubscribe', (data) => {
+      if (!noteSocketAction(socket, 'pump:unsubscribe')) return;
       const mint = sanitizeMint(data?.mint);
       if (!mint) return;
       unsubscribeSocketFromMint(socket, mint);
@@ -299,6 +412,7 @@ function init(httpServer) {
     socket.on('disconnect', (reason) => {
       cleanupSocketSubscriptions(socket);
       untrackSessionSocket(socket);
+      socketActionState.delete(socket.id);
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
   });
@@ -358,6 +472,8 @@ function stop() {
   mintSubscribers.clear();
   sessionSockets.clear();
   userSessions.clear();
+  ipSockets.clear();
+  socketActionState.clear();
   if (io) {
     io.close();
     io = null;
@@ -370,6 +486,8 @@ function getStatus() {
     trackedPumpSubscriptions: mintSubscribers.size,
     trackedAuthenticatedUsers: userSessions.size,
     trackedAuthenticatedSessions: sessionSockets.size,
+    trackedClientIps: ipSockets.size,
+    trackedSocketActionWindows: socketActionState.size,
     pumpfun: pumpfun.getStatus(),
     solPrice: solPrice.getStatus(),
   };

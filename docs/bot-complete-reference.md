@@ -16,6 +16,55 @@ Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
 Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, low-dust cleanup recalibration, and lateralization precompute/frontend panel integration.
 
+## Test Environment And Database Safety
+
+This project has an important operational trap that is now explicitly documented because the tests are destructive against the selected database.
+
+Code-backed behavior:
+- the automated test files force `NODE_ENV=test` themselves:
+  - `tests/catalog.test.js`
+  - `tests/admin.test.js`
+  - `tests/auth.test.js`
+- test setup resets data in the target database rather than using a read-only strategy
+- `config/index.js` now contains a guard rail for test DB selection
+
+Current config resolution rules in `config/index.js`:
+- test mode prefers `.env.test` when present
+- test mode prefers explicit test-only DB variables over normal runtime DB variables:
+  - `DATABASE_URL_TEST`
+  - `POSTGRES_URL_TEST`
+  - `DB_HOST_TEST`
+  - `DB_PORT_TEST`
+  - `DB_NAME_TEST`
+  - `DB_USER_TEST`
+  - `DB_PASSWORD_TEST`
+- test mode records whether explicit test config was used via `db.explicitTestConfig`
+
+Guard rail behavior:
+- abort if `NODE_ENV=test` resolves to a DB host that does not look local
+- abort if the selected DB name does not clearly look like a test DB
+- abort if test mode is still using `.env` without explicit `*_TEST` database variables
+- allow bypass only with `ALLOW_UNSAFE_TEST_DATABASE=true`
+
+Operational rules that must be followed:
+- never use the normal `.env` DB for automated tests
+- never point automated tests at Railway or any production/shared database
+- never point automated tests at a local snapshot/import that is not clearly isolated as a test DB
+- keep `.env` for normal runtime and `.env.test` for automated tests; do not replace one with the other
+- in `.env.test`, do not mix normal DB variables with test DB variables
+- use a clearly isolated local DB name such as `volume_alert_test`
+- treat names like `volume_alert_railway_snapshot` as unsafe for tests even if they are local
+
+Recommended verification command before `npm test`:
+```bash
+node -e "process.env.NODE_ENV='test'; const config=require('./config'); console.log(config.db)"
+```
+
+What this avoids:
+- starting the backend locally while still targeting a remote DB
+- assuming `localhost` app ports imply a local DB target
+- accidentally deleting production or snapshot data because the wrong env source won precedence
+
 ## High-Level Product Shape
 
 The bot is a Solana monitoring app with:

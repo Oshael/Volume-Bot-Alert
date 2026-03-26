@@ -1,13 +1,68 @@
+const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
+const nodeEnv = process.env.NODE_ENV || 'development';
+const defaultEnvPath = path.resolve(__dirname, '../.env');
+const testEnvPath = path.resolve(__dirname, '../.env.test');
+const resolvedEnvPath = nodeEnv === 'test' && fs.existsSync(testEnvPath)
+  ? testEnvPath
+  : defaultEnvPath;
+
+require('dotenv').config({ path: resolvedEnvPath });
 
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   return value === 'true' || value === '1';
 }
 
-function getDbConfig() {
-  const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+function getEnv(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return '';
+}
+
+function isLocalTestHost(host) {
+  const normalized = String(host || '').trim().toLowerCase();
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '[::1]';
+}
+
+function looksLikeTestDatabaseName(name) {
+  const normalized = String(name || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === 'test'
+    || normalized.includes('_test')
+    || normalized.includes('-test')
+    || normalized.startsWith('test_')
+    || normalized.startsWith('test-')
+    || normalized.includes('testing');
+}
+
+function getDbConfig(runtimeEnv) {
+  const isTestEnv = runtimeEnv === 'test';
+  const hasTestSpecificUrl = Boolean(getEnv('DATABASE_URL_TEST', 'POSTGRES_URL_TEST'));
+  const hasTestSpecificParts = Boolean(getEnv(
+    'DB_HOST_TEST',
+    'PGHOST_TEST',
+    'DB_PORT_TEST',
+    'PGPORT_TEST',
+    'DB_NAME_TEST',
+    'PGDATABASE_TEST',
+    'DB_USER_TEST',
+    'PGUSER_TEST',
+    'DB_PASSWORD_TEST',
+    'PGPASSWORD_TEST'
+  ));
+  const preferTestSpecificVars = isTestEnv && (hasTestSpecificUrl || hasTestSpecificParts);
+  const connectionString = preferTestSpecificVars
+    ? getEnv('DATABASE_URL_TEST', 'POSTGRES_URL_TEST')
+    : getEnv('DATABASE_URL', 'POSTGRES_URL');
   let parsed = null;
 
   if (connectionString) {
@@ -18,15 +73,40 @@ function getDbConfig() {
     }
   }
 
-  const host = process.env.DB_HOST || process.env.PGHOST || parsed?.hostname || '';
-  const port = parseInt(process.env.DB_PORT || process.env.PGPORT || parsed?.port || '5432', 10);
-  const database = process.env.DB_NAME || process.env.PGDATABASE || (parsed?.pathname ? parsed.pathname.replace(/^\//, '') : '') || '';
-  const user = process.env.DB_USER || process.env.PGUSER || (parsed?.username ? decodeURIComponent(parsed.username) : '') || '';
-  const password = process.env.DB_PASSWORD || process.env.PGPASSWORD || (parsed?.password ? decodeURIComponent(parsed.password) : '') || '';
+  const host = preferTestSpecificVars
+    ? getEnv('DB_HOST_TEST', 'PGHOST_TEST') || parsed?.hostname || ''
+    : getEnv('DB_HOST', 'PGHOST') || parsed?.hostname || '';
+  const port = parseInt(
+    (preferTestSpecificVars
+      ? getEnv('DB_PORT_TEST', 'PGPORT_TEST')
+      : getEnv('DB_PORT', 'PGPORT'))
+      || parsed?.port
+      || '5432',
+    10
+  );
+  const database = preferTestSpecificVars
+    ? getEnv('DB_NAME_TEST', 'PGDATABASE_TEST') || (parsed?.pathname ? parsed.pathname.replace(/^\//, '') : '') || ''
+    : getEnv('DB_NAME', 'PGDATABASE') || (parsed?.pathname ? parsed.pathname.replace(/^\//, '') : '') || '';
+  const user = preferTestSpecificVars
+    ? getEnv('DB_USER_TEST', 'PGUSER_TEST') || (parsed?.username ? decodeURIComponent(parsed.username) : '') || ''
+    : getEnv('DB_USER', 'PGUSER') || (parsed?.username ? decodeURIComponent(parsed.username) : '') || '';
+  const password = preferTestSpecificVars
+    ? getEnv('DB_PASSWORD_TEST', 'PGPASSWORD_TEST') || (parsed?.password ? decodeURIComponent(parsed.password) : '') || ''
+    : getEnv('DB_PASSWORD', 'PGPASSWORD') || (parsed?.password ? decodeURIComponent(parsed.password) : '') || '';
 
   // Useful for managed Postgres providers in production.
-  const ssl = parseBoolean(process.env.DB_SSL, false) || process.env.PGSSLMODE === 'require';
-  const sslRejectUnauthorized = parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, false);
+  const ssl = parseBoolean(
+    preferTestSpecificVars ? getEnv('DB_SSL_TEST') : getEnv('DB_SSL'),
+    false
+  ) || (preferTestSpecificVars ? getEnv('PGSSLMODE_TEST') : getEnv('PGSSLMODE')) === 'require';
+  const sslRejectUnauthorized = parseBoolean(
+    preferTestSpecificVars
+      ? getEnv('DB_SSL_REJECT_UNAUTHORIZED_TEST')
+      : getEnv('DB_SSL_REJECT_UNAUTHORIZED'),
+    false
+  );
+
+  const explicitTestConfig = isTestEnv && preferTestSpecificVars;
 
   return {
     host,
@@ -37,11 +117,40 @@ function getDbConfig() {
     connectionString,
     ssl,
     sslRejectUnauthorized,
+    explicitTestConfig,
   };
 }
 
-const db = getDbConfig();
-const nodeEnv = process.env.NODE_ENV || 'development';
+function validateTestDbTarget(dbConfig) {
+  if (nodeEnv !== 'test') {
+    return [];
+  }
+
+  const errors = [];
+  const safeHost = isLocalTestHost(dbConfig.host);
+  const safeDatabase = looksLikeTestDatabaseName(dbConfig.database);
+  const allowUnsafe = parseBoolean(process.env.ALLOW_UNSAFE_TEST_DATABASE, false);
+
+  if (allowUnsafe) {
+    return errors;
+  }
+
+  if (!safeHost) {
+    errors.push(`Test database host must be local. Current host: ${dbConfig.host || '(empty)'}`);
+  }
+
+  if (!safeDatabase) {
+    errors.push(`Test database name must clearly be a test DB. Current database: ${dbConfig.database || '(empty)'}`);
+  }
+
+  if (!dbConfig.explicitTestConfig && resolvedEnvPath === defaultEnvPath) {
+    errors.push('NODE_ENV=test is using .env without explicit *_TEST database variables. Use .env.test or DATABASE_URL_TEST / DB_*_TEST.');
+  }
+
+  return errors;
+}
+
+const db = getDbConfig(nodeEnv);
 
 const missing = [];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.startsWith('CHANGE_ME')) {
@@ -53,6 +162,8 @@ const hasDbUrl = !!db.connectionString;
 if (!hasDbParts && !hasDbUrl) {
   missing.push('DB connection (set DB_* / PG* vars or DATABASE_URL)');
 }
+
+missing.push(...validateTestDbTarget(db));
 
 if (missing.length > 0) {
   console.error(`Missing required env configuration: ${missing.join(', ')}`);
@@ -106,6 +217,11 @@ module.exports = {
   defaultApiRateLimit: {
     windowMs: parseInt(process.env.DEFAULT_API_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.DEFAULT_API_RATE_LIMIT_MAX_REQUESTS || '180', 10),
+  },
+
+  healthRateLimit: {
+    windowMs: parseInt(process.env.HEALTH_RATE_LIMIT_WINDOW_MS || '60000', 10),
+    max: parseInt(process.env.HEALTH_RATE_LIMIT_MAX_REQUESTS || '30', 10),
   },
 
   dashboardRateLimit: {
@@ -179,6 +295,23 @@ module.exports = {
         process.env.EMAIL_DEV_EXPOSE_DEBUG,
         (process.env.NODE_ENV || 'development') === 'development'
       ),
+    },
+  },
+
+  security: {
+    requestTimeoutMs: parseInt(process.env.REQUEST_TIMEOUT_MS || '15000', 10),
+    headersTimeoutMs: parseInt(process.env.HEADERS_TIMEOUT_MS || '20000', 10),
+    keepAliveTimeoutMs: parseInt(process.env.KEEP_ALIVE_TIMEOUT_MS || '5000', 10),
+    healthCacheMs: parseInt(process.env.HEALTH_CACHE_MS || '5000', 10),
+    pumpfunMetaCacheMs: parseInt(process.env.PUMPFUN_META_CACHE_MS || '300000', 10),
+    pumpfunMetaFailureCooldownMs: parseInt(process.env.PUMPFUN_META_FAILURE_COOLDOWN_MS || '15000', 10),
+    socket: {
+      maxConnectionsPerIp: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_IP || '12', 10),
+      maxSocketsPerSession: parseInt(process.env.SOCKET_MAX_SOCKETS_PER_SESSION || '4', 10),
+      maxSubscriptionsPerSocket: parseInt(process.env.SOCKET_MAX_SUBSCRIPTIONS_PER_SOCKET || '250', 10),
+      maxHttpBufferSize: parseInt(process.env.SOCKET_MAX_HTTP_BUFFER_SIZE || '16384', 10),
+      actionWindowMs: parseInt(process.env.SOCKET_ACTION_WINDOW_MS || '10000', 10),
+      maxActionsPerWindow: parseInt(process.env.SOCKET_MAX_ACTIONS_PER_WINDOW || '180', 10),
     },
   },
 

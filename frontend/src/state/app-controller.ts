@@ -2143,6 +2143,7 @@ export function createAppController(): AppController {
         reportPumpMigration(token);
         enqueuePumpToast(token);
         state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== mint);
+        unsubscribePumpMint(mint);
         refreshPumpPanelCounts();
         setNotice(`PumpFun migration: ${token.symbol || mint.slice(0, 6)}`);
         emit();

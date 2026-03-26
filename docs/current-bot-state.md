@@ -10,6 +10,56 @@ For the full technical/behavior reference, see:
 
 Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, low-dust cleanup recalibration, and lateralization precompute/frontend panel integration.
 
+## Test Database Safety
+
+This repository now treats automated tests as a destructive operation against the selected database.
+
+Current code facts:
+- the test files force `NODE_ENV=test` internally:
+  - `tests/catalog.test.js`
+  - `tests/admin.test.js`
+  - `tests/auth.test.js`
+- test setup deletes and recreates data in the target DB
+- config loading now prefers `.env.test` in test mode and supports explicit test-only DB variables in `config/index.js`:
+  - `DATABASE_URL_TEST`
+  - `POSTGRES_URL_TEST`
+  - `DB_HOST_TEST`
+  - `DB_PORT_TEST`
+  - `DB_NAME_TEST`
+  - `DB_USER_TEST`
+  - `DB_PASSWORD_TEST`
+
+Mandatory operational rules:
+- never run `npm test` against the normal `.env` database
+- never point tests at Railway, production, or a local production snapshot DB
+- `.env` and `.env.test` must coexist; `.env.test` must not replace `.env`
+- `.env.test` should use only `*_TEST` DB variables for the database target
+- the test DB must be local and clearly named as a test DB, for example:
+  - `volume_alert_test`
+  - `my_feature_test`
+- names such as `volume_alert_railway_snapshot` are intentionally treated as unsafe for tests
+
+Current guard rail behavior in `config/index.js`:
+- in `NODE_ENV=test`, the app aborts if the selected DB does not look local and clearly test-only
+- it also aborts if test mode falls back to `.env` without explicit `*_TEST` database variables
+- the only bypass is `ALLOW_UNSAFE_TEST_DATABASE=true`, which should be used only for deliberate one-off recovery/debug work
+
+Recommended verification before any test run:
+```bash
+node -e "process.env.NODE_ENV='test'; const config=require('./config'); console.log(config.db)"
+```
+
+Safe workflow:
+1. keep normal runtime config in `.env`
+2. keep automated test config in `.env.test`
+3. point `.env.test` to a local DB cloned specifically for tests
+4. run `npm test` only after confirming the resolved DB is the intended test DB
+
+Important:
+- the fact that the backend starts on `localhost` does not prove the DB is local
+- app port and DB target are independent concerns
+- the DB target is determined only by the resolved environment variables/config
+
 ## Current Runtime Shape
 
 ### Frontend

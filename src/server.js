@@ -4,7 +4,9 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const config = require('../config');
-const { defaultApiLimiter } = require('./middleware/rate-limit');
+const { defaultApiLimiter, healthLimiter } = require('./middleware/rate-limit');
+const { isAllowedOrigin } = require('./utils/request-security');
+const { getSecurityEventStats } = require('./utils/security-events');
 const Session = require('./models/session');
 const LoginAttempt = require('./models/login-attempt');
 const EmailVerificationToken = require('./models/email-verification-token');
@@ -74,29 +76,6 @@ app.use(helmet({
     directives: cspDirectives,
   },
 }));
-const allowedCorsOrigins = new Set(config.corsOrigins);
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  if (allowedCorsOrigins.has(origin)) return true;
-
-  try {
-    const parsed = new URL(origin);
-    const hostname = parsed.hostname.toLowerCase();
-
-    if (config.nodeEnv === 'development') {
-      const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
-      if (origin === 'null' || isLocalHost) return true;
-    }
-
-    // Accept Vercel aliases/preview deployments for the frontend project.
-    if (hostname === 'volume-bot-alert-frontend.vercel.app') return true;
-    if (hostname.endsWith('.vercel.app') && hostname.startsWith('volume-bot-alert-frontend-')) return true;
-  } catch (_) {
-    // Ignore malformed origins and deny below.
-  }
-
-  return false;
-}
 app.use(cors({
   origin: (origin, callback) => {
     return callback(null, isAllowedOrigin(origin));
@@ -138,7 +117,7 @@ if (config.nodeEnv === 'development') {
 }
 
 // ---- Routes ----
-app.use('/api/health', healthRoutes);
+app.use('/api/health', healthLimiter, healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/invites', defaultApiLimiter, inviteRoutes);
 app.use('/api/admin', defaultApiLimiter, adminRoutes);
@@ -152,6 +131,7 @@ const { authenticate, requireAdmin } = require('./middleware/auth');
 app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
   res.json({
     ...socketHub.getStatus(),
+    security: getSecurityEventStats(),
     catalogWorker: catalogWorker.getStatus(),
     catalogCleanupWorker: catalogCleanupWorker.getStatus(),
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
@@ -213,6 +193,9 @@ function startServer(port = config.port) {
   }
 
   server = http.createServer(app);
+  server.requestTimeout = Math.max(1000, Number(config.security?.requestTimeoutMs) || 15000);
+  server.headersTimeout = Math.max(server.requestTimeout + 1000, Number(config.security?.headersTimeoutMs) || 20000);
+  server.keepAliveTimeout = Math.max(1000, Number(config.security?.keepAliveTimeoutMs) || 5000);
   bootstrapRuntime(server);
 
   server.listen(port, () => {

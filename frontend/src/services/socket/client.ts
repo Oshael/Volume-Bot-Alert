@@ -2,6 +2,11 @@ import { io, type Socket } from 'socket.io-client';
 import { resolveApiBase } from '../api/base';
 
 let socket: Socket | null = null;
+const desiredPumpSubscriptions = new Set<string>();
+
+function normalizeMint(value: string) {
+  return String(value || '').trim();
+}
 
 export function connectSocket(): Socket {
   if (socket) {
@@ -41,6 +46,9 @@ export function bindSocketLifecycle(options: {
   current.off('sol:price');
 
   current.on('connect', () => {
+    for (const mint of desiredPumpSubscriptions) {
+      current.emit('pump:subscribe', { mint });
+    }
     options.onStatus?.('Socket connected.');
   });
 
@@ -80,13 +88,20 @@ export function bindSocketLifecycle(options: {
 }
 
 export function subscribePumpMint(mint: string) {
+  const normalizedMint = normalizeMint(mint);
+  if (!normalizedMint) return;
+  if (desiredPumpSubscriptions.has(normalizedMint)) return;
+  desiredPumpSubscriptions.add(normalizedMint);
   if (!socket) return;
-  socket.emit('pump:subscribe', { mint });
+  socket.emit('pump:subscribe', { mint: normalizedMint });
 }
 
 export function unsubscribePumpMint(mint: string) {
-  if (!socket) return;
-  socket.emit('pump:unsubscribe', { mint });
+  const normalizedMint = normalizeMint(mint);
+  if (!normalizedMint) return;
+  const hadSubscription = desiredPumpSubscriptions.delete(normalizedMint);
+  if (!socket || !hadSubscription) return;
+  socket.emit('pump:unsubscribe', { mint: normalizedMint });
 }
 
 export function getSocket(): Socket | null {

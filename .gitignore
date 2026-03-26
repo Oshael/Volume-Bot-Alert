@@ -1,6 +1,9 @@
 node_modules/
 .env
+.env.test
 *.log
+*.dump
+*.sql
 .DS_Store
 frontend/dist/
 Volume-Bot-Alert.git.backup/
