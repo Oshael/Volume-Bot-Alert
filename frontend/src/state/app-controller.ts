@@ -94,6 +94,7 @@ const LATERALIZED_REFRESH_INTERVAL_MS = 60 * 1000;
 const LATERALIZED_PANEL_LIMIT = 24;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
+const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 
 export interface AppController {
   state: AppState;
@@ -177,6 +178,7 @@ export function createAppController(): AppController {
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
+  const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
 
   function normalizeDiffValue(value: unknown) {
     if (value === undefined || value === null) {
@@ -1597,8 +1599,41 @@ export function createAppController(): AppController {
     return currentTvl / ratio;
   }
 
+  function roundAlertMetric(value: number | null | undefined) {
+    if (value == null || !Number.isFinite(value)) {
+      return 'na';
+    }
+    return String(Math.round(value * 100) / 100);
+  }
+
+  function shouldSuppressDuplicateAlert(entry: AlertEntry) {
+    if (entry.kind !== 'monitored-mcap') {
+      return false;
+    }
+
+    const dedupeKey = `${entry.kind}:${entry.address}`;
+    const fingerprint = [
+      roundAlertMetric(entry.pct),
+      roundAlertMetric(entry.prevMcap ?? null),
+      roundAlertMetric(entry.mcap ?? null),
+    ].join('|');
+    const now = Date.now();
+    const previous = recentAlertFingerprints.get(dedupeKey);
+
+    recentAlertFingerprints.set(dedupeKey, { ts: now, fingerprint });
+
+    if (!previous) {
+      return false;
+    }
+
+    return previous.fingerprint === fingerprint && now - previous.ts < ALERT_DEDUPE_WINDOW_MS;
+  }
+
   function pushAlert(entry: AlertEntry) {
     if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
+      return;
+    }
+    if (shouldSuppressDuplicateAlert(entry)) {
       return;
     }
     state.data.alerts = [entry, ...state.data.alerts].slice(0, 50);
@@ -2165,6 +2200,7 @@ export function createAppController(): AppController {
   }
 
   function clearSession() {
+    recentAlertFingerprints.clear();
     nextColdFieldRefreshAt = 0;
     state.session.status = 'anonymous';
     state.session.token = null;

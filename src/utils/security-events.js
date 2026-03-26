@@ -7,6 +7,9 @@ function getThrottleWindowMs(payload) {
   if (payload.event === 'rate_limit_exceeded' && payload.limiter === 'pumpfun-meta') {
     return 60000;
   }
+  if (payload.event === 'socket_subscription_limit_reached') {
+    return 60000;
+  }
   return 0;
 }
 
@@ -16,6 +19,13 @@ function getThrottleKey(payload) {
       payload.event,
       payload.limiter || 'unknown',
       payload.key || payload.userId || payload.ip || 'unknown',
+    ].join('|');
+  }
+  if (payload.event === 'socket_subscription_limit_reached') {
+    return [
+      payload.event,
+      payload.socketId || payload.sessionId || payload.userId || payload.ip || 'unknown',
+      payload.limit || 'unknown',
     ].join('|');
   }
   return null;
