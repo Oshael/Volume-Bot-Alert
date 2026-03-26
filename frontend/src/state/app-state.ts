@@ -72,6 +72,8 @@ export interface ManualTokenEntry {
   _lastVolAlertPct?: number | null;
   _lastMcapAlertPct?: number | null;
   _lastAlertKind?: AlertEntry['kind'] | null;
+  _isRecentRouted?: boolean;
+  _isOldWeekRouted?: boolean;
 }
 
 export type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
@@ -185,6 +187,8 @@ export interface PumpToastEntry {
   mcap?: number | null;
   vol5m?: number | null;
 }
+
+export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'pumpfun';
 
 export type StatusMode = 'stopped' | 'active' | 'syncing';
 
@@ -303,6 +307,7 @@ export interface AppState {
     monitoredSorts: MonitoredSortCriterion[];
     soundEnabled: boolean;
     soundVolume: number;
+    collapsed: Record<CollapsibleSectionKey, boolean>;
   };
 }
 
@@ -407,6 +412,14 @@ export function createAppState(): AppState {
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
       soundEnabled: true,
       soundVolume: 0.05,
+      collapsed: {
+        manual: false,
+        recent: false,
+        oldWeek: false,
+        monitored: false,
+        lateralized: false,
+        pumpfun: false,
+      },
     },
   };
 }

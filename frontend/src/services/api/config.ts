@@ -5,8 +5,40 @@ export interface AddressItem {
   label?: string | null;
 }
 
+export interface BucketSortCriterionPayload {
+  mode: 'vol' | 'mcap' | 'pchange' | 'age';
+  window: '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
+}
+
+export interface MonitoredSortCriterionPayload {
+  mode: 'vol' | 'mcap' | 'age';
+  window: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
+}
+
+export interface UiPrefsPayload {
+  collapsed: {
+    manual: boolean;
+    recent: boolean;
+    oldWeek: boolean;
+    monitored: boolean;
+    lateralized: boolean;
+    pumpfun: boolean;
+  };
+  manualStarredOnly: boolean;
+  recentStarredOnly: boolean;
+  oldWeekStarredOnly: boolean;
+  monitoredPerPage: number;
+  recentPerPage: number;
+  oldWeekPerPage: number;
+  manualSorts: BucketSortCriterionPayload[];
+  recentSorts: BucketSortCriterionPayload[];
+  oldWeekSorts: BucketSortCriterionPayload[];
+  monitoredSorts: MonitoredSortCriterionPayload[];
+}
+
 export interface ConfigPayload {
   configs: Record<string, string | number>;
+  uiPrefs: UiPrefsPayload;
   tokens: AddressItem[];
   blocklist: AddressItem[];
   starredTokens: Array<{ address: string }>;
@@ -30,6 +62,17 @@ export function patchConfig(
   return apiFetch<{ message: string; configs: Record<string, string | number> }>('/api/config', {
     method: 'PATCH',
     body: JSON.stringify({ configs }),
+    token,
+  });
+}
+
+export function patchUiPrefs(
+  uiPrefs: Partial<UiPrefsPayload>,
+  token?: string | null,
+) {
+  return apiFetch<{ message: string; uiPrefs: UiPrefsPayload }>('/api/config/ui-prefs', {
+    method: 'PATCH',
+    body: JSON.stringify({ uiPrefs }),
     token,
   });
 }

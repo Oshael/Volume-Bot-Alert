@@ -5,25 +5,47 @@ import { sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderPumpfunSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
-  section.className = 'panel legacy-panel pump-panel';
+  const isCollapsed = state.ui.collapsed.pumpfun;
+  section.className = `panel legacy-panel pump-panel${isCollapsed ? ' panel-collapsed' : ''}`;
   const visibleTokens = getVisiblePumpTokens(state);
-  section.innerHTML = `
-    <div class="panel-header" style="border-color:rgba(176,106,255,0.2)">
-      <span style="color:var(--pump-color)">&#9889; PUMPFUN - LIVE</span>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:9px;color:var(--muted)">ENTRY ($)</span>
-        <input class="panel-mini-input" name="pump-entry-vol" type="number">
-        <span style="font-size:9px;color:var(--muted)">ALERT ($)</span>
-        <input class="panel-mini-input" name="pump-min-vol" type="number">
-        <span class="count" style="background:rgba(176,106,255,0.15);color:var(--pump-color)">${visibleTokens.length}</span>
+  if (isCollapsed) {
+    section.innerHTML = `
+      <div class="panel-header" style="border-color:rgba(176,106,255,0.2)">
+        <span style="color:var(--pump-color)">&#9889; PUMPFUN - LIVE</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="count" style="background:rgba(176,106,255,0.15);color:var(--pump-color)">${visibleTokens.length}</span>
+          <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="pumpfun" aria-label="Expand pumpfun panel"><span class="compact-icon-glyph">+</span></button>
+        </div>
       </div>
-    </div>
-    <div class="panel-toolbar panel-toolbar-between">
-      <div class="panel-status">${state.pumpfun.connected ? 'Connected via server' : state.pumpfun.statusLabel}</div>
-    </div>
-    <div class="pump-list"></div>
-    <div class="pump-migration-footer"></div>
-  `;
+    `;
+  } else {
+    section.innerHTML = `
+      <div class="panel-header" style="border-color:rgba(176,106,255,0.2)">
+        <span style="color:var(--pump-color)">&#9889; PUMPFUN - LIVE</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="pumpfun" aria-label="Collapse pumpfun panel"><span class="compact-icon-glyph">−</span></button>
+          <span style="font-size:9px;color:var(--muted)">ENTRY ($)</span>
+          <input class="panel-mini-input" name="pump-entry-vol" type="number">
+          <span style="font-size:9px;color:var(--muted)">ALERT ($)</span>
+          <input class="panel-mini-input" name="pump-min-vol" type="number">
+          <span class="count" style="background:rgba(176,106,255,0.15);color:var(--pump-color)">${visibleTokens.length}</span>
+        </div>
+      </div>
+      <div class="panel-toolbar panel-toolbar-between">
+        <div class="panel-status">${state.pumpfun.connected ? 'Connected via server' : state.pumpfun.statusLabel}</div>
+      </div>
+      <div class="pump-list"></div>
+      <div class="pump-migration-footer"></div>
+    `;
+  }
+
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('pumpfun');
+  });
+
+  if (isCollapsed) {
+    return section;
+  }
 
   const pumpList = section.querySelector<HTMLElement>('.pump-list');
   if (pumpList) {

@@ -72,6 +72,7 @@ Last reviewed against code on `2026-03-25` after DexScreener throttle hardening,
   - `GET /api/config`
 - Returned user-scoped data:
   - `configs`
+  - `uiPrefs`
   - `tokens`
   - `blocklist`
   - `starredTokens`
@@ -138,6 +139,12 @@ Last reviewed against code on `2026-03-25` after DexScreener throttle hardening,
   - MCAP windows are per-user
   - dismiss state is per-user
   - removal logs are local/account-scoped
+- Current routed/elegibility behavior:
+  - token-level routed eligibility (`_isRecentRouted`, `_isOldWeekRouted`) is maintained in the tracked-token pipeline even when the bars are collapsed
+  - `Recent` / `Old Week` list derivation is now paused while the corresponding bar is collapsed
+  - reopening either bar rebuilds its visible list immediately from the current tracked token state
+- This is why `old-surge` still works while those bars are minimized:
+  - alert eligibility no longer depends on the rendered routed lists
 
 ### PumpFun live stream
 - Source of truth: backend socket stream for live events
@@ -695,12 +702,17 @@ Current security priority order:
   - symbol
   - name
   - contract/address
+- alerts are now restored from browser-local storage per account scope
+- users can clear:
+  - all alerts at once via `Clean All`
+  - a single alert card via the card-level `×` button
 
 ## Persistence Model
 
 ### Backend-persisted per account
 - auth/session state
 - user configs
+- user UI prefs
 - manual tokens
 - blocklist
 - starred tokens
@@ -710,7 +722,8 @@ Current security priority order:
 - dismissed Old Week set
 - Recent removal log
 - Old Week removal log
-- sound UI preferences
+- alert cards
+- custom sound assets
 
 ## Important Current Implementation Notes
 
@@ -746,6 +759,10 @@ Current limitation:
 - `Manual Tokens` now has the same `#` ranking column as Recent/Old
 - The duplicate footer-level `Per Page` control was removed from Recent/Old; the active `Per Page` control is the header one
 - `Recent Tokens` now shows a green live indicator with a slower “breathing” pulse while the bot is active
+- current persistence split:
+  - `MCAP` min/max filters remain backend-persisted user configs
+  - collapse state, sort state, starred-only toggles, and per-page controls are backend-persisted in `user_ui_prefs`
+  - free-text search inputs remain browser-local UI state only
 
 ### Rate limiting reality
 - Backend rate limiting is now split by route behavior through `src/middleware/rate-limit.js`
@@ -790,6 +807,9 @@ Current limitation:
   - tokens younger than `2d` do not qualify for Surge at all
   - tokens from `2d` to `7d` can show as `Recent Token Surge`
   - tokens older than `7d` show as `Old Token Surge`
+- The same `old-surge` engine covers both routed buckets:
+  - `Recent Token Surge`
+  - `Old Token Surge`
 - Current visual contract:
   - `Recent Token Surge` is green
   - `Old Token Surge` is orange
@@ -810,6 +830,9 @@ Current limitation:
     - the same per-type families above, but for sound playback only
 - These toggles are backend-persisted user configs
 - `Sound Alert` remains the master on/off switch, while `Sound By Alert Type` is the per-kind gate
+- current sound persistence split:
+  - sound enable/disable and volume are backend-persisted user configs
+  - custom uploaded sound files remain browser-local and account-scoped
 
 ### Starred-token sync
 - Toggling a star now updates immediately across every visible surface rendering that same address

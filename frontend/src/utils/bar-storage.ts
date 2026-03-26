@@ -1,9 +1,10 @@
-import type { RemovalLogEntry } from '../state/app-state';
+import type { AlertEntry, RemovalLogEntry } from '../state/app-state';
 
 const RECENT_DISMISSED_KEY = 'recent_dismissed';
 const OLD_WEEK_DISMISSED_KEY = 'old_week_dismissed';
 const RECENT_REMOVAL_LOG_KEY = 'recent_removal_log';
 const OLD_WEEK_REMOVAL_LOG_KEY = 'old_week_removal_log';
+const ALERTS_KEY = 'alerts';
 const LOG_EXPIRY_MS = 8 * 60 * 60 * 1000;
 
 function scopedKey(scope: string, key: string) {
@@ -83,3 +84,19 @@ export function saveOldWeekRemovalLog(scope: string, entries: RemovalLogEntry[])
   writeJson(scope, OLD_WEEK_REMOVAL_LOG_KEY, pruneLog(entries));
 }
 
+function pruneAlerts(entries: AlertEntry[]) {
+  return entries
+    .filter((entry) => entry && typeof entry.id === 'string' && entry.id.trim())
+    .slice(0, 50);
+}
+
+export function loadAlerts(scope: string) {
+  const entries = readJson<AlertEntry[]>(scope, ALERTS_KEY, []);
+  const pruned = pruneAlerts(entries);
+  writeJson(scope, ALERTS_KEY, pruned);
+  return pruned;
+}
+
+export function saveAlerts(scope: string, entries: AlertEntry[]) {
+  writeJson(scope, ALERTS_KEY, pruneAlerts(entries));
+}

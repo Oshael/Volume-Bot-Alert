@@ -2146,6 +2146,14 @@ button,
   flex-wrap: wrap;
 }
 
+.legacy-bar-head-collapsed {
+  flex-wrap: nowrap;
+}
+
+.legacy-bar-collapse-controls {
+  justify-content: flex-end;
+}
+
 TEMP_LEGACY_BAR_TITLE {
   font-size: 10px;
   text-transform: uppercase;
@@ -2678,6 +2686,11 @@ TEMP_LEGACY_BAR_TITLE {
   height: 620px;
 }
 
+.panel.panel-collapsed,
+.legacy-panel.panel-collapsed {
+  height: auto;
+}
+
 .pump-panel {
   border-color: rgba(176, 106, 255, 0.3);
 }
@@ -2720,6 +2733,7 @@ TEMP_LEGACY_BAR_TITLE {
   max-width: 168px;
   line-height: 1.55;
   white-space: normal;
+  color: #cad7eb;
 }
 
 .monitored-header-controls {
@@ -2746,7 +2760,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-header-bottom {
-  margin-left: -35px;
+  margin-left: -52px;
 }
 
 .monitored-token-pill-wrap {
@@ -2795,9 +2809,14 @@ TEMP_LEGACY_BAR_TITLE {
   flex-wrap: nowrap;
 }
 
+.monitored-inline-collapse {
+  flex: 0 0 30px;
+  margin-left: 14px;
+}
+
 .monitored-inline-pagination .compact-search-fixed {
   position: absolute;
-  left: 0;
+  left: 52px;
   top: 50%;
   transform: translateY(-50%);
   margin: 0;
@@ -2807,13 +2826,13 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 46px;
+  margin-left: 48px;
   transition: margin-left 0.16s ease;
 }
 
 .monitored-inline-pagination:has(.compact-search-fixed.has-query) .monitored-inline-controls,
 .monitored-inline-pagination:has(.compact-search-fixed:focus-within) .monitored-inline-controls {
-  margin-left: 160px;
+  margin-left: 192px;
 }
 
 .monitored-inline-pagination .bucket-footer-actions {
@@ -2949,6 +2968,17 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 18px;
   line-height: 1;
   transform: translateY(-1px);
+}
+
+.section-collapse-toggle {
+  font-size: 14px;
+}
+
+.panel-collapse-toggle {
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
 }
 
 .compact-search-input {
@@ -4291,6 +4321,10 @@ TEMP_LEGACY_BAR_TITLE {
   height: 320px;
 }
 
+.lateralized-panel.panel-collapsed {
+  height: auto;
+}
+
 .lateralized-panel .panel-header {
   align-items: center;
 }
@@ -4457,6 +4491,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alerts-panel .panel-header > span {
   font-weight: 800;
+  color: #ffd54a;
 }
 
 .alerts-list {
@@ -4544,6 +4579,12 @@ TEMP_LEGACY_BAR_TITLE {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+}
+
+.alert-top-side {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .alert-token-v68 {
@@ -4714,6 +4755,28 @@ TEMP_LEGACY_BAR_TITLE {
   color: #ff6b6b;
   border-color: rgba(255, 60, 95, 0.35);
   background: rgba(50, 10, 18, 0.55);
+}
+
+.alert-dismiss-button {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 14, 20, 0.55);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.alert-dismiss-button:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .alert-time-v68 {

@@ -5,7 +5,8 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderLateralizedSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
-  section.className = 'panel legacy-panel lateralized-panel';
+  const isCollapsed = state.ui.collapsed.lateralized;
+  section.className = `panel legacy-panel lateralized-panel${isCollapsed ? ' panel-collapsed' : ''}`;
   const freshness = state.runtime.lateralizedFreshnessLabel !== '-'
     ? `SCAN ${state.runtime.lateralizedFreshnessLabel}`
     : 'SCAN pending';
@@ -16,10 +17,19 @@ export function renderLateralizedSection(state: AppState, controller: AppControl
       <div class="lateralized-header-meta">
         <span class="lateralized-freshness">${freshness}</span>
         <span class="count">${state.data.lateralizedTokens.length}</span>
+        <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="lateralized" aria-label="${isCollapsed ? 'Expand lateralization panel' : 'Collapse lateralization panel'}"><span class="compact-icon-glyph">${isCollapsed ? '+' : '−'}</span></button>
       </div>
     </div>
-    <div class="lateralized-list"></div>
+    ${isCollapsed ? '' : '<div class="lateralized-list"></div>'}
   `;
+
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('lateralized');
+  });
+
+  if (isCollapsed) {
+    return section;
+  }
 
   const list = section.querySelector<HTMLElement>('.lateralized-list');
   if (list) {

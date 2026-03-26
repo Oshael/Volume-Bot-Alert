@@ -6,7 +6,8 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
-  section.className = 'panel legacy-panel';
+  const isCollapsed = state.ui.collapsed.monitored;
+  section.className = `panel legacy-panel${isCollapsed ? ' panel-collapsed' : ''}`;
   const sorts = state.ui.monitoredSorts;
   const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
   const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
@@ -58,6 +59,26 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const filteredSafePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), filteredTotalPages - 1);
   const filteredPageStart = filteredSafePage * safePerPage;
   const pageItems = filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage);
+  if (isCollapsed) {
+    section.innerHTML = `
+      <div class="panel-header monitored-panel-header">
+        <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
+        <div class="panel-header-controls monitored-header-controls">
+          <div class="monitored-header-top">
+            <span class="monitored-token-pill-wrap">
+              <span class="panel-header-label">TOKENS</span>
+              <span class="count monitored-token-count-pill">${filteredTracked.length}</span>
+            </span>
+            <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Expand monitored tokens"><span class="compact-icon-glyph">+</span></button>
+          </div>
+        </div>
+      </div>
+    `;
+    section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+      controller.toggleSectionCollapsed('monitored');
+    });
+    return section;
+  }
   section.innerHTML = `
     <div class="panel-header monitored-panel-header">
       <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
@@ -96,6 +117,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
         </div>
         <div class="monitored-header-bottom">
           <div class="monitored-inline-pagination">
+            <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle monitored-inline-collapse" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
             <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query' : ''}">
               <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search monitored tokens">&#128269;</button>
               <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
@@ -153,6 +175,9 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   if (pageJumpInput) {
     pageJumpInput.value = String(filteredSafePage + 1);
   }
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('monitored');
+  });
   searchInput?.addEventListener('input', (event) => {
     controller.setMonitoredSearchQuery((event.currentTarget as HTMLInputElement).value);
   });

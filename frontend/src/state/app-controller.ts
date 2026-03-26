@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -21,19 +21,23 @@ import {
   addBlockedToken as addBlockedTokenRequest,
   fetchConfig,
   patchConfig,
+  patchUiPrefs,
   removeManualToken as removeManualTokenRequest,
   removeBlockedToken as removeBlockedTokenRequest,
   syncConfig,
   type ConfigPayload,
+  type UiPrefsPayload,
 } from '../services/api/config';
 import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
+  loadAlerts,
   loadDismissedOldWeek,
   loadDismissedRecent,
   loadOldWeekRemovalLog,
   loadRecentRemovalLog,
+  saveAlerts,
   saveDismissedOldWeek,
   saveDismissedRecent,
   saveOldWeekRemovalLog,
@@ -117,10 +121,13 @@ export interface AppController {
   removePumpToken(mint: string): void;
   dismissRecentToken(address: string): void;
   dismissOldWeekToken(address: string): void;
+  clearAllAlerts(): void;
+  removeAlert(id: string): void;
   clearRecentRemovalLog(): void;
   clearOldWeekRemovalLog(): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
+  toggleSectionCollapsed(section: CollapsibleSectionKey): void;
   setAlertSearchQuery(query: string): void;
   setMonitoredSearchQuery(query: string): void;
   setManualSearchQuery(query: string): void;
@@ -164,6 +171,8 @@ export function createAppController(): AppController {
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
+  let uiPrefsPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let uiPrefsPersistRevision = 0;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let nextColdFieldRefreshAt = 0;
@@ -366,6 +375,115 @@ export function createAppController(): AppController {
   function clampUiVolume(value: number) {
     return Math.min(1, Math.max(0, Number.isFinite(value) ? value : state.ui.soundVolume));
   }
+
+  function getDefaultCollapsedSections() {
+    return {
+      manual: false,
+      recent: false,
+      oldWeek: false,
+      monitored: false,
+      lateralized: false,
+      pumpfun: false,
+    };
+  }
+
+  function normalizeUiPerPage(value: unknown, fallback: number) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return Math.max(10, Math.floor(fallback) || 30);
+    }
+    return Math.min(500, Math.max(10, Math.floor(num)));
+  }
+
+  function normalizeBucketSorts(
+    input: unknown,
+    scope: 'manual' | 'recent' | 'old-week',
+  ): BucketSortCriterion[] {
+    const defaults = getDefaultBucketSorts(scope);
+    if (!Array.isArray(input)) {
+      return defaults;
+    }
+
+    const next: BucketSortCriterion[] = [];
+    const seen = new Set<string>();
+
+    for (const item of input) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        continue;
+      }
+
+      const mode = String((item as { mode?: unknown }).mode || '').trim();
+      const window = String((item as { window?: unknown }).window || '').trim();
+      if (mode !== 'vol' && mode !== 'mcap' && mode !== 'pchange' && mode !== 'age') {
+        continue;
+      }
+
+      const normalized = normalizeBucketCriterion(mode as BucketSortMode, window as BucketSortWindow);
+      const key = `${normalized.mode}:${normalized.window}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      next.push(normalized);
+    }
+
+    return next;
+  }
+
+  function normalizeMonitoredSorts(input: unknown): MonitoredSortCriterion[] {
+    const defaults = getDefaultMonitoredSorts();
+    if (!Array.isArray(input)) {
+      return defaults;
+    }
+
+    const next: MonitoredSortCriterion[] = [];
+    const seen = new Set<string>();
+
+    for (const item of input) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        continue;
+      }
+
+      const mode = String((item as { mode?: unknown }).mode || '').trim();
+      const window = String((item as { window?: unknown }).window || '').trim();
+      if (mode !== 'vol' && mode !== 'mcap' && mode !== 'age') {
+        continue;
+      }
+
+      const normalized = normalizeMonitoredCriterion(mode as MonitoredSortMode, window as MonitoredSortWindow);
+      const key = `${normalized.mode}:${normalized.window}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      next.push(normalized);
+    }
+
+    return next;
+  }
+
+  function buildUiPrefsPayload(): UiPrefsPayload {
+    return {
+      collapsed: {
+        manual: Boolean(state.ui.collapsed.manual),
+        recent: Boolean(state.ui.collapsed.recent),
+        oldWeek: Boolean(state.ui.collapsed.oldWeek),
+        monitored: Boolean(state.ui.collapsed.monitored),
+        lateralized: Boolean(state.ui.collapsed.lateralized),
+        pumpfun: Boolean(state.ui.collapsed.pumpfun),
+      },
+      manualStarredOnly: Boolean(state.ui.manualStarredOnly),
+      recentStarredOnly: Boolean(state.ui.recentStarredOnly),
+      oldWeekStarredOnly: Boolean(state.ui.oldWeekStarredOnly),
+      monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
+      recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, 30),
+      oldWeekPerPage: normalizeUiPerPage(state.ui.oldWeekPerPage, 30),
+      manualSorts: [...state.ui.manualSorts],
+      recentSorts: [...state.ui.recentSorts],
+      oldWeekSorts: [...state.ui.oldWeekSorts],
+      monitoredSorts: [...state.ui.monitoredSorts],
+    };
+  }
   function getConfigNumber(key: string, fallback: number) {
     const value = state.data.configs[key];
     const num = Number(value);
@@ -432,6 +550,26 @@ export function createAppController(): AppController {
     });
   }
 
+  async function persistUiPrefs(snapshot: UiPrefsPayload, revision: number) {
+    const token = state.session.token;
+    if (!token) {
+      return;
+    }
+
+    try {
+      const result = await patchUiPrefs(snapshot, token);
+      if (revision === uiPrefsPersistRevision) {
+        applyUiPreferences(result.uiPrefs);
+        emit();
+      }
+    } catch (error) {
+      if (revision === uiPrefsPersistRevision) {
+        setError(error instanceof Error ? error.message : 'Failed to persist UI preferences');
+        emit();
+      }
+    }
+  }
+
   async function persistUiConfigs(configs: Record<string, string | number>) {
     const token = state.session.token;
     if (!token) {
@@ -487,13 +625,58 @@ export function createAppController(): AppController {
     }, 120);
   }
 
+  function queueUiPrefsPersist() {
+    uiPrefsPersistRevision += 1;
+    const revision = uiPrefsPersistRevision;
+    const snapshot = buildUiPrefsPayload();
+
+    if (uiPrefsPersistTimer) {
+      clearTimeout(uiPrefsPersistTimer);
+    }
+
+    uiPrefsPersistTimer = setTimeout(() => {
+      uiPrefsPersistTimer = null;
+      void persistUiPrefs(snapshot, revision);
+    }, 120);
+  }
+
+  function applyUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
+    const defaults = getDefaultCollapsedSections();
+    const collapsed = uiPrefs?.collapsed || defaults;
+    state.ui.collapsed = {
+      ...defaults,
+      manual: Boolean(collapsed.manual),
+      recent: Boolean(collapsed.recent),
+      oldWeek: Boolean(collapsed.oldWeek),
+      monitored: Boolean(collapsed.monitored),
+      lateralized: Boolean(collapsed.lateralized),
+      pumpfun: Boolean(collapsed.pumpfun),
+    };
+
+    state.ui.manualStarredOnly = Boolean(uiPrefs?.manualStarredOnly);
+    state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
+    state.ui.oldWeekStarredOnly = Boolean(uiPrefs?.oldWeekStarredOnly);
+
+    state.ui.monitoredPerPage = normalizeUiPerPage(uiPrefs?.monitoredPerPage, 30);
+    state.ui.recentPerPage = normalizeUiPerPage(
+      uiPrefs?.recentPerPage,
+      getConfigNumber('old-per-page', state.ui.recentPerPage || 30),
+    );
+    state.ui.oldWeekPerPage = normalizeUiPerPage(
+      uiPrefs?.oldWeekPerPage,
+      getConfigNumber('old-week-per-page', state.ui.oldWeekPerPage || 30),
+    );
+
+    state.ui.manualSorts = normalizeBucketSorts(uiPrefs?.manualSorts, 'manual');
+    state.ui.recentSorts = normalizeBucketSorts(uiPrefs?.recentSorts, 'recent');
+    state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
+    state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
+    syncRoutedPagination();
+  }
+
   function applyUiPreferencesFromConfigs() {
-    state.ui.monitoredPerPage = Math.max(10, Math.floor(getConfigNumber('monitored-per-page', state.ui.monitoredPerPage || 30)));
-    state.ui.recentPerPage = Math.max(10, Math.floor(getConfigNumber('old-per-page', state.ui.recentPerPage || 30)));
-    state.ui.oldWeekPerPage = Math.max(10, Math.floor(getConfigNumber('old-week-per-page', state.ui.oldWeekPerPage || 30)));
     state.ui.soundEnabled = String(state.data.configs['sound-mode'] ?? 'on') !== 'off';
     state.ui.soundVolume = clampUiVolume(getConfigNumber('sound-volume', Math.round(state.ui.soundVolume * 100)) / 100);
-    syncRoutedPagination();
   }
   function persistBarStorage() {
     const scope = getStorageScope();
@@ -501,6 +684,7 @@ export function createAppController(): AppController {
     saveDismissedOldWeek(scope, state.data.dismissedOldWeek);
     saveRecentRemovalLog(scope, state.data.recentRemovalLog);
     saveOldWeekRemovalLog(scope, state.data.oldWeekRemovalLog);
+    saveAlerts(scope, state.data.alerts);
   }
 
   function hydrateBarStorage() {
@@ -509,16 +693,24 @@ export function createAppController(): AppController {
     state.data.dismissedOldWeek = loadDismissedOldWeek(scope);
     state.data.recentRemovalLog = loadRecentRemovalLog(scope);
     state.data.oldWeekRemovalLog = loadOldWeekRemovalLog(scope);
+    state.data.alerts = loadAlerts(scope);
+    state.runtime.alerts = state.data.alerts.length;
+    state.panels.alerts = state.data.alerts.length;
   }
 
   function isBlocked(address: string) {
     return state.data.blocklist.some((item) => item.address === address);
   }
 
-  function removeAlertsForAddress(address: string) {
-    state.data.alerts = state.data.alerts.filter((item) => item.address !== address);
+  function syncAlertState() {
     state.runtime.alerts = state.data.alerts.length;
     state.panels.alerts = state.data.alerts.length;
+    persistBarStorage();
+  }
+
+  function removeAlertsForAddress(address: string) {
+    state.data.alerts = state.data.alerts.filter((item) => item.address !== address);
+    syncAlertState();
   }
 
   function removeTokenEverywhere(address: string, options: { removeFromStarred?: boolean } = {}) {
@@ -1075,6 +1267,68 @@ export function createAppController(): AppController {
     return Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
   }
 
+  function getRoutedEligibilityContext(now = Date.now()) {
+    return {
+      now,
+      recentMin: getConfigNumber('old-mcap-min', 120000),
+      recentMax: getConfigNumber('old-mcap-max', 100000000),
+      oldWeekMin: getConfigNumber('old-week-mcap-min', 120000),
+      oldWeekMax: getConfigNumber('old-week-mcap-max', 100000000),
+      recentDismissed: new Set(state.data.dismissedRecent),
+      oldWeekDismissed: new Set(state.data.dismissedOldWeek),
+    };
+  }
+
+  function isRecentEligible(
+    token: ManualTokenEntry,
+    context: ReturnType<typeof getRoutedEligibilityContext>,
+    options: { preserveWithoutMcap?: boolean } = {},
+  ) {
+    if (token._userManual || isBlocked(token.address) || context.recentDismissed.has(token.address)) {
+      return false;
+    }
+    if (!(typeof token.createdAt === 'number' && token.createdAt > 0)) {
+      return false;
+    }
+
+    const age = context.now - token.createdAt;
+    if (!(age >= 0 && age < OLD_WEEK_MIN_AGE_MS)) {
+      return false;
+    }
+
+    const mcap = token.mcap ?? 0;
+    if (mcap <= 0) {
+      return Boolean(options.preserveWithoutMcap);
+    }
+
+    return mcap >= context.recentMin && (context.recentMax <= 0 || mcap <= context.recentMax);
+  }
+
+  function isOldWeekEligible(
+    token: ManualTokenEntry,
+    context: ReturnType<typeof getRoutedEligibilityContext>,
+    options: { preserveWithoutMcap?: boolean } = {},
+  ) {
+    if (token._userManual || isBlocked(token.address) || context.oldWeekDismissed.has(token.address)) {
+      return false;
+    }
+    if (!(typeof token.createdAt === 'number' && token.createdAt > 0)) {
+      return false;
+    }
+
+    const age = context.now - token.createdAt;
+    if (age < OLD_WEEK_MIN_AGE_MS) {
+      return false;
+    }
+
+    const mcap = token.mcap ?? 0;
+    if (mcap <= 0) {
+      return Boolean(options.preserveWithoutMcap);
+    }
+
+    return mcap >= context.oldWeekMin && (context.oldWeekMax <= 0 || mcap <= context.oldWeekMax);
+  }
+
   function getVisibleMonitoredTokens() {
     return getMonitoredTokens(state).filter(isVisibleMonitoredToken);
   }
@@ -1088,88 +1342,72 @@ export function createAppController(): AppController {
     state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
     state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
   }
-  function deriveAgeBuckets() {
-    const previousRecent = new Map(getRecentTokens(state).map((item) => [item.address, item]));
-    const previousOldWeek = new Map(getOldWeekTokens(state).map((item) => [item.address, item]));
-    const recentDismissed = new Set(state.data.dismissedRecent);
-    const oldWeekDismissed = new Set(state.data.dismissedOldWeek);
+  function shouldDeriveRecentList(options?: { forceRecentList?: boolean }) {
+    return Boolean(options?.forceRecentList) || !state.ui.collapsed.recent;
+  }
 
-    const recentMin = getConfigNumber('old-mcap-min', 120000);
-    const recentMax = getConfigNumber('old-mcap-max', 100000000);
-    const oldWeekMin = getConfigNumber('old-week-mcap-min', 120000);
-    const oldWeekMax = getConfigNumber('old-week-mcap-max', 100000000);
-    const now = Date.now();
+  function shouldDeriveOldWeekList(options?: { forceOldWeekList?: boolean }) {
+    return Boolean(options?.forceOldWeekList) || !state.ui.collapsed.oldWeek;
+  }
 
-    const candidates = getMonitoredTokens(state).filter((item) => {
-      if (item._userManual || isBlocked(item.address)) {
-        return false;
+  function deriveAgeBuckets(options?: { forceRecentList?: boolean; forceOldWeekList?: boolean }) {
+    const context = getRoutedEligibilityContext();
+    const now = context.now;
+    const deriveRecentList = shouldDeriveRecentList(options);
+    const deriveOldWeekList = shouldDeriveOldWeekList(options);
+    const nextRecentAddresses: string[] = [];
+    const nextOldWeekAddresses: string[] = [];
+
+    for (const item of getMonitoredTokens(state)) {
+      const wasRecent = Boolean(item._isRecentRouted);
+      const wasOldWeek = Boolean(item._isOldWeekRouted);
+      const nextRecent = isRecentEligible(item, context, {
+        preserveWithoutMcap: wasRecent,
+      });
+      const nextOldWeek = isOldWeekEligible(item, context, {
+        preserveWithoutMcap: wasOldWeek,
+      });
+
+      item._isRecentRouted = nextRecent;
+      item._isOldWeekRouted = nextOldWeek;
+
+      if (nextRecent && deriveRecentList) {
+        nextRecentAddresses.push(item.address);
       }
-      return typeof item.createdAt === 'number' && item.createdAt > 0;
-    });
-
-    const nextRecent = candidates.filter((item) => {
-      if (recentDismissed.has(item.address)) return false;
-      const age = now - (item.createdAt || 0);
-      if (!(age >= 0 && age < OLD_WEEK_MIN_AGE_MS)) {
-        return false;
-      }
-
-      const mcap = item.mcap ?? 0;
-      if (mcap <= 0) {
-        return previousRecent.has(item.address);
-      }
-
-      return mcap >= recentMin && (recentMax <= 0 || mcap <= recentMax);
-    });
-
-    const recentAddresses = new Set(nextRecent.map((item) => item.address));
-    const nextOldWeek = candidates.filter((item) => {
-      if (oldWeekDismissed.has(item.address)) return false;
-      const age = now - (item.createdAt || 0);
-      if (age < OLD_WEEK_MIN_AGE_MS || recentAddresses.has(item.address)) {
-        return false;
+      if (nextOldWeek && deriveOldWeekList) {
+        nextOldWeekAddresses.push(item.address);
       }
 
-      const mcap = item.mcap ?? 0;
-      if (mcap <= 0) {
-        return previousOldWeek.has(item.address);
+      if (!nextRecent && wasRecent && !context.recentDismissed.has(item.address)) {
+        const age = now - (item.createdAt || 0);
+        const mcap = item.mcap ?? 0;
+        const reason = age >= OLD_WEEK_MIN_AGE_MS
+          ? 'aged into Old Tokens 1 Week+'
+          : age < 0
+            ? 'age not yet valid for Recent'
+            : mcap > 0 && (mcap < context.recentMin || (context.recentMax > 0 && mcap > context.recentMax))
+              ? 'MCAP out of Recent range'
+              : 'left Recent routing';
+        logRemoval('recent', item, reason);
       }
 
-      return mcap >= oldWeekMin && (oldWeekMax <= 0 || mcap <= oldWeekMax);
-    });
-
-    for (const [address, token] of previousRecent) {
-      if (recentAddresses.has(address) || recentDismissed.has(address)) continue;
-      const age = now - (token.createdAt || 0);
-      const mcap = token.mcap ?? 0;
-      const reason = age >= OLD_WEEK_MIN_AGE_MS
-        ? 'aged into Old Tokens 1 Week+'
-        : age < 0
-          ? 'age not yet valid for Recent'
-          : mcap > 0 && (mcap < recentMin || (recentMax > 0 && mcap > recentMax))
-            ? 'MCAP out of Recent range'
-            : 'left Recent routing';
-      logRemoval('recent', token, reason);
+      if (!nextOldWeek && wasOldWeek && !context.oldWeekDismissed.has(item.address)) {
+        const mcap = item.mcap ?? 0;
+        const age = now - (item.createdAt || 0);
+        const reason = age < OLD_WEEK_MIN_AGE_MS
+          ? 'age no longer in Old Week bucket'
+          : mcap > 0 && (mcap < context.oldWeekMin || (context.oldWeekMax > 0 && mcap > context.oldWeekMax))
+            ? 'MCAP out of Old Week range'
+            : 'left Old Week routing';
+        logRemoval('oldWeek', item, reason);
+      }
     }
 
-    const oldWeekAddresses = new Set(nextOldWeek.map((item) => item.address));
-    for (const [address, token] of previousOldWeek) {
-      if (oldWeekAddresses.has(address) || oldWeekDismissed.has(address)) continue;
-      const mcap = token.mcap ?? 0;
-      const age = now - (token.createdAt || 0);
-      const reason = age < OLD_WEEK_MIN_AGE_MS
-        ? 'age no longer in Old Week bucket'
-        : mcap > 0 && (mcap < oldWeekMin || (oldWeekMax > 0 && mcap > oldWeekMax))
-          ? 'MCAP out of Old Week range'
-          : 'left Old Week routing';
-      logRemoval('oldWeek', token, reason);
-    }
-
-    state.data.recentTokenAddresses = nextRecent.map((item) => item.address);
-    state.data.oldWeekTokenAddresses = nextOldWeek.map((item) => item.address);
+    state.data.recentTokenAddresses = deriveRecentList ? nextRecentAddresses : [];
+    state.data.oldWeekTokenAddresses = deriveOldWeekList ? nextOldWeekAddresses : [];
     refreshTrackedTokenStore();
-    state.bars.recent = nextRecent.length;
-    state.bars.oldWeek = nextOldWeek.length;
+    state.bars.recent = getMonitoredTokens(state).filter((item) => item._isRecentRouted).length;
+    state.bars.oldWeek = getMonitoredTokens(state).filter((item) => item._isOldWeekRouted).length;
     syncRoutedPagination();
   }
   function applyBlockedFilters() {
@@ -1364,8 +1602,7 @@ export function createAppController(): AppController {
       return;
     }
     state.data.alerts = [entry, ...state.data.alerts].slice(0, 50);
-    state.runtime.alerts = state.data.alerts.length;
-    state.panels.alerts = state.data.alerts.length;
+    syncAlertState();
   }
 
   function maybeFireSpecialAlerts(token: ManualTokenEntry) {
@@ -1414,8 +1651,7 @@ export function createAppController(): AppController {
       setNotice(`HVNC alert: ${symbol}`);
     }
 
-    const isOldRouted = state.data.recentTokenAddresses.includes(token.address)
-      || state.data.oldWeekTokenAddresses.includes(token.address);
+    const isOldRouted = Boolean(token._isRecentRouted || token._isOldWeekRouted);
 
     if (!token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
       const pc1h = token.priceChange1h ?? null;
@@ -2009,7 +2245,12 @@ export function createAppController(): AppController {
     state.ui.recentSorts = getDefaultBucketSorts('recent');
     state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
     state.ui.monitoredSorts = getDefaultMonitoredSorts();
+    if (uiPrefsPersistTimer) {
+      clearTimeout(uiPrefsPersistTimer);
+      uiPrefsPersistTimer = null;
+    }
     hydrateSoundSettings();
+    state.ui.collapsed = getDefaultCollapsedSections();
   }
 
   function applyMonitoredDashboard(
@@ -2019,6 +2260,7 @@ export function createAppController(): AppController {
   ) {
     const manualPayload: ConfigPayload = {
       configs: state.data.configs,
+      uiPrefs: buildUiPrefsPayload(),
       tokens: (manualTokensOverride ?? getManualTokens(state).map((item) => ({ address: item.address, label: item.label ?? null }))),
       blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
       starredTokens: state.data.starredTokens.map((address) => ({ address })),
@@ -2069,10 +2311,12 @@ export function createAppController(): AppController {
     state.data.configs = payload.configs || {};
     state.pumpfun.bondTargetMcap = getConfigNumber('pump-bond-mcap', state.pumpfun.bondTargetMcap || 35000);
     applyUiPreferencesFromConfigs();
+    applyUiPreferences(payload.uiPrefs);
     persistSoundSettings();
     state.data.blocklist = sortAddresses(payload.blocklist);
     state.data.starredTokens = payload.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
     state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
+    syncAlertState();
     state.bars.blocklist = payload.blocklist.length;
     applyMonitoredDashboard(monitoredDashboardTokens, payload.tokens);
     refreshPumpPanelCounts();
@@ -2238,6 +2482,24 @@ export function createAppController(): AppController {
         emit();
       }
     },
+    clearAllAlerts() {
+      if (state.data.alerts.length === 0) {
+        return;
+      }
+      state.data.alerts = [];
+      syncAlertState();
+      setNotice('All alerts cleared.');
+      emit();
+    },
+    removeAlert(id: string) {
+      const nextAlerts = state.data.alerts.filter((item) => item.id !== id);
+      if (nextAlerts.length === state.data.alerts.length) {
+        return;
+      }
+      state.data.alerts = nextAlerts;
+      syncAlertState();
+      emit();
+    },
     clearRecentRemovalLog() {
       state.data.recentRemovalLog = [];
       persistBarStorage();
@@ -2260,6 +2522,16 @@ export function createAppController(): AppController {
       deriveAgeBuckets();
       persistBarStorage();
       setNotice('Old Week dismissed set cleared.');
+      emit();
+    },
+    toggleSectionCollapsed(section: CollapsibleSectionKey) {
+      state.ui.collapsed[section] = !state.ui.collapsed[section];
+      if (section === 'recent') {
+        deriveAgeBuckets({ forceRecentList: !state.ui.collapsed.recent });
+      } else if (section === 'oldWeek') {
+        deriveAgeBuckets({ forceOldWeekList: !state.ui.collapsed.oldWeek });
+      }
+      queueUiPrefsPersist();
       emit();
     },
     setAlertSearchQuery(query: string) {
@@ -2287,16 +2559,19 @@ export function createAppController(): AppController {
     },
     setManualStarredOnly(enabled: boolean) {
       state.ui.manualStarredOnly = Boolean(enabled);
+      queueUiPrefsPersist();
       emit();
     },
     setRecentStarredOnly(enabled: boolean) {
       state.ui.recentStarredOnly = Boolean(enabled);
       state.ui.recentPage = 0;
+      queueUiPrefsPersist();
       emit();
     },
     setOldWeekStarredOnly(enabled: boolean) {
       state.ui.oldWeekStarredOnly = Boolean(enabled);
       state.ui.oldWeekPage = 0;
+      queueUiPrefsPersist();
       emit();
     },
     setMonitoredPage(page: number) {
@@ -2312,24 +2587,21 @@ export function createAppController(): AppController {
       emit();
     },
     setMonitoredPerPage(perPage: number) {
-      state.ui.monitoredPerPage = Math.max(10, Math.floor(perPage) || 30);
+      state.ui.monitoredPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
-      state.data.configs['monitored-per-page'] = state.ui.monitoredPerPage;
-      void persistUiConfigs({ 'monitored-per-page': state.ui.monitoredPerPage });
+      queueUiPrefsPersist();
       emit();
     },
     setRecentPerPage(perPage: number) {
-      state.ui.recentPerPage = Math.max(10, Math.floor(perPage) || 30);
+      state.ui.recentPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
-      state.data.configs['old-per-page'] = state.ui.recentPerPage;
-      void persistUiConfigs({ 'old-per-page': state.ui.recentPerPage });
+      queueUiPrefsPersist();
       emit();
     },
     setOldWeekPerPage(perPage: number) {
-      state.ui.oldWeekPerPage = Math.max(10, Math.floor(perPage) || 30);
+      state.ui.oldWeekPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
-      state.data.configs['old-week-per-page'] = state.ui.oldWeekPerPage;
-      void persistUiConfigs({ 'old-week-per-page': state.ui.oldWeekPerPage });
+      queueUiPrefsPersist();
       emit();
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
@@ -2337,6 +2609,7 @@ export function createAppController(): AppController {
         state.ui.manualSorts,
         normalizeBucketCriterion(mode, window),
       );
+      queueUiPrefsPersist();
       emit();
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
@@ -2344,6 +2617,7 @@ export function createAppController(): AppController {
         state.ui.recentSorts,
         normalizeBucketCriterion(mode, window),
       );
+      queueUiPrefsPersist();
       emit();
     },
     setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow) {
@@ -2351,6 +2625,7 @@ export function createAppController(): AppController {
         state.ui.oldWeekSorts,
         normalizeBucketCriterion(mode, window),
       );
+      queueUiPrefsPersist();
       emit();
     },
     setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow) {
@@ -2358,6 +2633,7 @@ export function createAppController(): AppController {
         state.ui.monitoredSorts,
         normalizeMonitoredCriterion(mode, window),
       );
+      queueUiPrefsPersist();
       emit();
     },
     setSoundEnabled(enabled: boolean) {

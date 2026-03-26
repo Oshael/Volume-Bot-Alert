@@ -181,10 +181,18 @@ controller.subscribe((state) => {
   const previousSessionStatus = lastObservedSessionStatus;
   const previousAuthPanel = lastObservedAuthPanel;
   const previousAuthModalKey = lastObservedAuthModalKey;
+  const sessionJustBecameAuthenticated = previousSessionStatus !== 'authenticated' && state.session.status === 'authenticated';
   latestState = state;
   lastObservedSessionStatus = state.session.status;
   lastObservedAuthPanel = state.ui.authPanel;
   lastObservedAuthModalKey = getAuthModalRenderKey(state);
+
+  if (sessionJustBecameAuthenticated) {
+    for (const alert of state.data.alerts) {
+      playedAlertIds.add(alert.id);
+    }
+  }
+
   syncAudioSideEffects(state);
 
   if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {

@@ -68,6 +68,13 @@ const TABLES = `
 
   CREATE INDEX IF NOT EXISTS idx_user_bootstrap_tokens_user
     ON user_bootstrap_tokens(user_id);
+
+  -- user_ui_prefs: preferências de interface por user
+  CREATE TABLE IF NOT EXISTS user_ui_prefs (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    prefs_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+  );
 `;
 
 async function init() {
@@ -79,6 +86,7 @@ async function init() {
     console.log('   - user_blocklist');
     console.log('   - user_starred_tokens');
     console.log('   - user_bootstrap_tokens');
+    console.log('   - user_ui_prefs');
   } catch (err) {
     console.error('❌ Failed to create tables:', err.message);
     process.exit(1);

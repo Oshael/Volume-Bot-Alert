@@ -6,6 +6,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const section = document.createElement('section');
   section.id = 'manual-tokens-section';
   section.className = 'legacy-token-bar manual-bar';
+  const isCollapsed = state.ui.collapsed.manual;
   const sorts = state.ui.manualSorts;
   const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
   const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
@@ -36,10 +37,28 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       const address = String(item.address || '').toLowerCase();
       return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
     });
+  if (isCollapsed) {
+    section.innerHTML = `
+      <div class="legacy-bar-head legacy-bar-head-collapsed">
+        <div class="legacy-bar-title-wrap">
+          <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
+        </div>
+        <div class="legacy-bar-controls legacy-bar-collapse-controls">
+          <span class="count-pill">${getManualTokens(state).length}</span>
+          <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="manual" aria-label="Expand manual tokens"><span class="compact-icon-glyph">+</span></button>
+        </div>
+      </div>
+    `;
+    section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+      controller.toggleSectionCollapsed('manual');
+    });
+    return section;
+  }
   section.innerHTML = `
     <div class="legacy-bar-head">
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
       <div class="legacy-bar-controls">
+        <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="manual" aria-label="Collapse manual tokens"><span class="compact-icon-glyph">−</span></button>
         <div class="compact-search ${searchQuery ? 'has-query' : ''}">
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="manual-search" data-search-input="manual">
@@ -105,6 +124,9 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   });
   section.querySelector<HTMLButtonElement>('[data-action="manual-starred-only"]')?.addEventListener('click', () => {
     controller.setManualStarredOnly(!state.ui.manualStarredOnly);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('manual');
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);

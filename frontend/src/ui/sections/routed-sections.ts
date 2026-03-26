@@ -5,6 +5,7 @@ import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBu
 export function renderRecentSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-token-bar recent-bar';
+  const isCollapsed = state.ui.collapsed.recent;
   const min = fmtConfig(state, 'old-mcap-min', 120000);
   const max = fmtConfig(state, 'old-mcap-max', 100000000);
   const recentSorts = state.ui.recentSorts;
@@ -37,6 +38,23 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       const address = String(item.address || '').toLowerCase();
       return symbol.includes(recentSearchQuery) || name.includes(recentSearchQuery) || address.includes(recentSearchQuery);
     });
+  if (isCollapsed) {
+    section.innerHTML = `
+      <div class="legacy-bar-head legacy-bar-head-collapsed">
+        <div class="legacy-bar-title-wrap">
+          <span class="legacy-bar-title recent"><span class="recent-live-emoji ${state.runtime.mode === 'active' ? 'live' : ''}">\u{1F7E2}</span> RECENT TOKENS</span>
+        </div>
+        <div class="legacy-bar-controls legacy-bar-collapse-controls">
+          <span class="count-pill">${state.bars.recent}</span>
+          <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="recent" aria-label="Expand recent tokens"><span class="compact-icon-glyph">+</span></button>
+        </div>
+      </div>
+    `;
+    section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+      controller.toggleSectionCollapsed('recent');
+    });
+    return section;
+  }
   const safeRecentPerPage = Math.max(10, Math.floor(state.ui.recentPerPage) || 30);
   const recentTotalPages = Math.max(1, Math.ceil(filteredRecentTokens.length / safeRecentPerPage));
   const safeRecentPage = Math.min(Math.max(0, Math.floor(state.ui.recentPage) || 0), recentTotalPages - 1);
@@ -47,6 +65,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         ${renderLogSummary('Recent Removal Log', state.data.recentRemovalLog, 'clear-recent-log', 'recent')}
       </div>
       <div class="legacy-bar-controls">
+        <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="recent" aria-label="Collapse recent tokens"><span class="compact-icon-glyph">−</span></button>
         <div class="compact-search ${recentSearchQuery ? 'has-query' : ''}">
           <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="recent-search" data-search-input="recent">
@@ -134,6 +153,9 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   section.querySelector<HTMLButtonElement>('[data-action="recent-starred-only"]')?.addEventListener('click', () => {
     controller.setRecentStarredOnly(!state.ui.recentStarredOnly);
   });
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('recent');
+  });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindPagedBucketControls(section, controller, 'recent');
@@ -155,6 +177,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
 export function renderOldWeekSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-token-bar old-week-bar';
+  const isCollapsed = state.ui.collapsed.oldWeek;
   const min = fmtConfig(state, 'old-week-mcap-min', 120000);
   const max = fmtConfig(state, 'old-week-mcap-max', 100000000);
   const oldWeekSorts = state.ui.oldWeekSorts;
@@ -187,6 +210,23 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       const address = String(item.address || '').toLowerCase();
       return symbol.includes(oldWeekSearchQuery) || name.includes(oldWeekSearchQuery) || address.includes(oldWeekSearchQuery);
     });
+  if (isCollapsed) {
+    section.innerHTML = `
+      <div class="legacy-bar-head legacy-bar-head-collapsed">
+        <div class="legacy-bar-title-wrap">
+          <span class="legacy-bar-title old-week">\u{1F4C5} OLD TOKENS 1 WEEK+</span>
+        </div>
+        <div class="legacy-bar-controls legacy-bar-collapse-controls">
+          <span class="count-pill">${state.bars.oldWeek}</span>
+          <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="oldWeek" aria-label="Expand old tokens"><span class="compact-icon-glyph">+</span></button>
+        </div>
+      </div>
+    `;
+    section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+      controller.toggleSectionCollapsed('oldWeek');
+    });
+    return section;
+  }
   const safeOldWeekPerPage = Math.max(10, Math.floor(state.ui.oldWeekPerPage) || 30);
   const oldWeekTotalPages = Math.max(1, Math.ceil(filteredOldWeekTokens.length / safeOldWeekPerPage));
   const safeOldWeekPage = Math.min(Math.max(0, Math.floor(state.ui.oldWeekPage) || 0), oldWeekTotalPages - 1);
@@ -197,6 +237,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         ${renderLogSummary('Old Week Removal Log', state.data.oldWeekRemovalLog, 'clear-old-week-log', 'old-week')}
       </div>
       <div class="legacy-bar-controls">
+        <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="oldWeek" aria-label="Collapse old tokens"><span class="compact-icon-glyph">−</span></button>
         <div class="compact-search ${oldWeekSearchQuery ? 'has-query' : ''}">
           <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="old-week-search" data-search-input="old-week">
@@ -283,6 +324,9 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   });
   section.querySelector<HTMLButtonElement>('[data-action="old-week-starred-only"]')?.addEventListener('click', () => {
     controller.setOldWeekStarredOnly(!state.ui.oldWeekStarredOnly);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('oldWeek');
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);

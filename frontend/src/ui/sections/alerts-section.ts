@@ -22,6 +22,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
       <div style="display:flex;align-items:center;gap:6px">
+        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
         <input class="panel-search" type="text" placeholder="Search ticker..." data-action="alerts-search" data-search-input="alerts">
         <span class="count">${filteredAlerts.length}</span>
       </div>
@@ -52,6 +53,17 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   }
   searchInput?.addEventListener('input', (event) => {
     controller.setAlertSearchQuery((event.currentTarget as HTMLInputElement).value);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="alerts-clear-all"]')?.addEventListener('click', () => {
+    controller.clearAllAlerts();
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="remove-alert"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const alertId = button.dataset.alertId;
+      if (alertId) {
+        controller.removeAlert(alertId);
+      }
+    });
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
@@ -94,7 +106,10 @@ function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isA
   tokenName.className = 'alert-token-name';
   tokenName.textContent = safeName;
   tokenLine.append(' ', tokenName);
-  top.append(tokenLine, buildAlertHeadline(alert, topClass));
+  const topSide = document.createElement('div');
+  topSide.className = 'alert-top-side';
+  topSide.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id));
+  top.append(tokenLine, topSide);
 
   const flowLine = document.createElement('div');
   flowLine.className = 'alert-flow-v68';
@@ -295,6 +310,17 @@ function buildActionButton(
   }
   button.disabled = disabled;
   button.textContent = label;
+  return button;
+}
+
+function buildAlertDismissButton(alertId: string) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'alert-dismiss-button';
+  button.dataset.action = 'remove-alert';
+  button.dataset.alertId = alertId;
+  button.setAttribute('aria-label', 'Remove alert');
+  button.textContent = '×';
   return button;
 }
 

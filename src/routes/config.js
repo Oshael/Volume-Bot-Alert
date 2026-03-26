@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const db = require('../models/db');
 const userConfig = require('../models/user-config');
+const userUiPref = require('../models/user-ui-pref');
 const userToken = require('../models/user-token');
 const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
@@ -106,8 +107,9 @@ function stripRestrictedConfigKeys(configs, user) {
  */
 router.get('/', async (req, res) => {
   try {
-    const [configs, tokens, blocklist, starredTokens] = await Promise.all([
+    const [configs, uiPrefs, tokens, blocklist, starredTokens] = await Promise.all([
       userConfig.getAll(req.user.id),
+      userUiPref.getAll(req.user.id),
       userToken.getAll(req.user.id),
       userBlocklist.getAll(req.user.id),
       userStarredToken.getAll(req.user.id),
@@ -115,6 +117,7 @@ router.get('/', async (req, res) => {
 
     const responsePayload = {
       configs,
+      uiPrefs,
       tokens,
       blocklist,
       starredTokens,
@@ -264,6 +267,7 @@ router.put('/', async (req, res) => {
     ]);
     const result = {
       configs: await userConfig.getAll(req.user.id),
+      uiPrefs: await userUiPref.getAll(req.user.id),
       tokens: await userToken.getAll(req.user.id),
       blocklist: await userBlocklist.getAll(req.user.id),
       starredTokens: await userStarredToken.getAll(req.user.id),
@@ -309,6 +313,30 @@ router.patch('/', async (req, res) => {
   } catch (err) {
     console.error('PATCH /config error:', err.message);
     res.status(500).json({ error: 'Failed to update configs' });
+  }
+});
+
+router.patch('/ui-prefs', async (req, res) => {
+  try {
+    const uiPrefs = req.body?.uiPrefs;
+
+    if (!uiPrefs || typeof uiPrefs !== 'object' || Array.isArray(uiPrefs) || Object.keys(uiPrefs).length === 0) {
+      return res.status(400).json({ error: 'uiPrefs object is required' });
+    }
+
+    const validation = userUiPref.validatePatch(uiPrefs);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'Invalid UI preference values',
+        details: validation.errors,
+      });
+    }
+
+    const nextUiPrefs = await userUiPref.patch(req.user.id, validation.prefs);
+    res.json({ message: 'UI preferences updated', uiPrefs: nextUiPrefs });
+  } catch (err) {
+    console.error('PATCH /config/ui-prefs error:', err.message);
+    res.status(500).json({ error: 'Failed to update UI preferences' });
   }
 });
 

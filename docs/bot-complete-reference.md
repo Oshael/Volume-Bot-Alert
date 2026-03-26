@@ -82,6 +82,7 @@ File:
 Responsibilities:
 - session restore
 - config load
+- UI-pref load / sync
 - monitored dashboard polling
 - monitored freshness label updates from backend payload timestamps
 - local token-state merge
@@ -728,6 +729,9 @@ Important:
   - top row for sorting + filtered token count
   - bottom row for compact search + page controls
 - opening the monitored compact search only pushes the bottom row
+- this panel can now also be collapsed
+  - collapse currently affects the UI/render surface only
+  - monitored refresh and alert logic continue while collapsed
 
 ## Lateralization Coins
 
@@ -759,18 +763,22 @@ Important:
 - this panel is read-only from the frontend point of view
 - ranking is backend-owned and precomputed
 - `BOX` / `DRIFT` still exist in backend results, but they are no longer foreground UI metrics in the panel
+- the panel can be collapsed
+  - collapse currently affects the UI/render surface only
+  - backend polling still continues while collapsed
 
 ## Manual Tokens
 
 Files:
 - `frontend/src/ui/sections/manual-section.ts`
-- `frontend/src/utils/manual-storage.ts`
+- `frontend/src/state/app-controller.ts`
+- `src/routes/config.js`
 - `src/routes/catalog.js`
 
 Behavior:
 - user adds token by address
-- frontend stores the manual list locally per account
-- frontend calls `POST /api/catalog/manual-track`
+- frontend calls backend config/catalog flows
+- backend persists the manual list per account
 - backend upserts the token into `token_catalog`
 - backend schedules immediate evaluation
 
@@ -788,6 +796,8 @@ Table features:
 - `MCAP` supports `HIGHEST` and `LOWEST`
 - compact local search by symbol, name, or contract/address
 - supports a compact `starred only` toggle using the same small-square visual language as the search control
+- panel can be collapsed
+  - collapse currently affects the UI/render surface only
 
 ## Recent Tokens
 
@@ -806,6 +816,16 @@ Rules:
 - supports compact local search by symbol, name, or contract/address
 - supports a compact `starred only` toggle
 - shows a green live-status emoji with a slower breathing pulse while the bot is active
+- routed eligibility is now maintained on the token itself via:
+  - `_isRecentRouted`
+  - `_isOldWeekRouted`
+- this means:
+  - collapse can pause visible Recent-list derivation
+  - `old-surge` still remains correct while the bar is collapsed
+- when `Recent Tokens` is collapsed:
+  - body/render is removed
+  - list derivation is paused
+  - reopening forces an immediate rebuild from the current tracked token state
 
 Sorting:
 - `VOL`
@@ -841,6 +861,10 @@ Rules:
 - has local removal log
 - supports compact local search by symbol, name, or contract/address
 - supports a compact `starred only` toggle
+- when `Old Tokens 1 Week+` is collapsed:
+  - body/render is removed
+  - list derivation is paused
+  - reopening forces an immediate rebuild from the current tracked token state
 
 Sorting:
 - `VOL`
@@ -975,9 +999,14 @@ Main alert types:
 - `monitored-mcap`
 - `hvnc`
 - `old-surge`
+- `meteora-surge`
 - `pumpfun-vol`
 - `pumpfun-hvnc`
 - the panel also supports local text search by symbol, name, or contract/address
+- alerts are restored from browser-local storage per account scope
+- alerts can be removed:
+  - all at once via `Clean All`
+  - individually via the card-level `×`
 
 ### Monitored VOL alert
 Rules:
@@ -1022,7 +1051,7 @@ Rules:
 - only evaluated for routed Recent / Old Week tokens
 - only evaluated for tokens aged at least `2d`
 - thresholds:
-  - `1H >= user-configured threshold` default `100%`
+  - `1H >= user-configured threshold` default `50%`
   - `6H >= user-configured threshold` default `150%`
 
 Current session-baseline logic:
@@ -1037,7 +1066,10 @@ Badge label in alert card:
 
 Priority / conflict rule:
 - `Surge` is evaluated before local `VOL/MCAP`
-- if `Surge` fires, local monitored alerts for that token are blocked by the shared `2m` cross-alert window
+- if `Surge` fires, local monitored alerts for that token are blocked by the shared `5m` cross-alert window
+- the same `old-surge` engine covers both routed buckets:
+  - Recent-routed tokens surface as `RECENT TOKEN SURGE`
+  - Old-Week-routed tokens surface as `OLD TOKEN SURGE`
 
 ### PumpFun alerts
 Rules:
@@ -1063,6 +1095,9 @@ Behavior:
 - fallback synthesized patterns still exist
 - sound respects enable/disable and volume UI settings
 - sound now also respects per-alert-type toggles stored in user config
+- persistence split:
+  - sound enable/disable and volume are backend-persisted user config
+  - uploaded custom sound assets remain browser-local and account-scoped
 
 ## Alert Color Semantics
 
@@ -1128,6 +1163,7 @@ If no valid pair exists:
 - users
 - sessions
 - configs
+- user UI prefs
 - manual tokens
 - blocklist
 - starred tokens
@@ -1142,7 +1178,47 @@ If no valid pair exists:
 - dismissed Old Week set
 - Recent removal log
 - Old Week removal log
-- sound preferences/assets
+- alerts
+- custom sound assets
+
+### User UI prefs
+
+Backend file:
+- `src/models/user-ui-pref.js`
+
+Table:
+- `user_ui_prefs`
+
+Route surface:
+- `GET /api/config`
+  - now returns `uiPrefs` alongside `configs`, `tokens`, `blocklist`, and `starredTokens`
+- `PATCH /api/config/ui-prefs`
+
+Current cross-browser-synced UI state:
+- collapsed sections:
+  - `manual`
+  - `recent`
+  - `oldWeek`
+  - `monitored`
+  - `lateralized`
+  - `pumpfun`
+- `starred only` toggles:
+  - manual
+  - recent
+  - old week
+- per-page controls:
+  - monitored
+  - recent
+  - old week
+- sort state:
+  - manual
+  - recent
+  - old week
+  - monitored
+
+Intentionally not included there:
+- free-text search inputs
+- alert cards
 
 ## Catalog Entry Paths
 
