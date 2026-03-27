@@ -1,10 +1,8 @@
 import './styles/app.css';
 import { playAlertSound, playMigrateSound } from './services/alerts/sound';
-import { getDesiredPumpSubscriptionCount } from './services/socket/client';
 import type { AppState } from './state/app-state';
-import { createAppController } from './state/app-controller';
+import { createAppController, type AppRenderRegion } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
-import { createDebugMemoryCollector } from './utils/debug-memory';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 
@@ -15,10 +13,12 @@ if (!rootElement) {
 const root: HTMLDivElement = rootElement;
 
 const controller = createAppController();
-const memoryCollector = createDebugMemoryCollector();
 const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 let pendingState: AppState | null = null;
+let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
+let hiddenPendingState: AppState | null = null;
+let hiddenDirtyRegions: Set<AppRenderRegion> | null = null;
 let latestState: AppState | null = null;
 let lastObservedSessionStatus: AppState['session']['status'] | null = null;
 let lastObservedAuthPanel: AppState['ui']['authPanel'] | null = null;
@@ -26,6 +26,8 @@ let lastObservedAuthModalKey: string | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
 let listInteractionDepth = 0;
+let restoreRenderQueued = false;
+let isDocumentHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 declare global {
   interface Window {
@@ -119,40 +121,74 @@ function getAuthModalRenderKey(state: AppState) {
   });
 }
 
+function mergeDirtyRegions(target: Set<AppRenderRegion> | null, next: ReadonlySet<AppRenderRegion>) {
+  if (next.has('all')) {
+    return new Set<AppRenderRegion>(['all']);
+  }
+
+  const merged = target ? new Set(target) : new Set<AppRenderRegion>();
+  if (merged.has('all')) {
+    return merged;
+  }
+
+  for (const region of next) {
+    merged.add(region);
+  }
+
+  return merged;
+}
+
 function flushPendingRender() {
-  if (!pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
+  if (isDocumentHidden || !pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
     return;
   }
 
-  performRender(pendingState);
+  performRender(pendingState, pendingDirtyRegions ?? new Set<AppRenderRegion>(['all']));
   pendingState = null;
+  pendingDirtyRegions = null;
 }
 
-function updateDebugMemoryMetrics(state: AppState) {
-  if (!memoryCollector.isEnabled()) {
+function scheduleRestoreRender() {
+  if (restoreRenderQueued || isDocumentHidden) {
     return;
   }
 
-  const debug = controller.getDebugStats();
-  memoryCollector.updateMetrics({
-    sessionStatus: state.session.status,
-    runtimeMode: state.runtime.mode,
-    trackedTokens: Object.keys(state.data.trackedTokensByAddress).length,
-    monitoredTokenAddresses: state.data.monitoredTokenAddresses.length,
-    manualTokenAddresses: state.data.manualTokenAddresses.length,
-    pumpTokens: state.data.pumpTokens.length,
-    recentPumpMigrations: state.data.recentPumpMigrations.length,
-    alerts: state.data.alerts.length,
-    recentAlertFingerprints: debug.recentAlertFingerprints,
-    desiredPumpSubscriptions: getDesiredPumpSubscriptionCount(),
-    emitCount: debug.emitCount,
-  });
+  restoreRenderQueued = true;
+  const flushRestore = () => {
+    restoreRenderQueued = false;
+
+    if (isDocumentHidden) {
+      return;
+    }
+
+    const nextState = hiddenPendingState ?? pendingState ?? latestState;
+    const nextDirtyRegions = mergeDirtyRegions(
+      mergeDirtyRegions(hiddenDirtyRegions, pendingDirtyRegions ?? new Set<AppRenderRegion>()),
+      new Set<AppRenderRegion>(),
+    ) ?? new Set<AppRenderRegion>(['all']);
+
+    hiddenPendingState = null;
+    hiddenDirtyRegions = null;
+    pendingState = null;
+    pendingDirtyRegions = null;
+
+    if (!nextState) {
+      return;
+    }
+
+    performRender(nextState, nextDirtyRegions.size > 0 ? nextDirtyRegions : new Set<AppRenderRegion>(['all']));
+  };
+
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => flushRestore());
+    return;
+  }
+
+  window.setTimeout(() => flushRestore(), 0);
 }
 
-function performRender(state: AppState) {
-  const startedAt = performance.now();
-  renderAppShell(root, state, controller);
-  memoryCollector.noteRender(performance.now() - startedAt);
+function performRender(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion> = new Set<AppRenderRegion>(['all'])) {
+  renderAppShell(root, state, controller, dirtyRegions);
 }
 
 root.addEventListener('pointerdown', (event) => {
@@ -207,7 +243,7 @@ root.addEventListener('focusout', () => {
   window.setTimeout(() => flushPendingRender(), 0);
 });
 
-controller.subscribe((state) => {
+controller.subscribe((state, dirtyRegions) => {
   const previousSessionStatus = lastObservedSessionStatus;
   const previousAuthPanel = lastObservedAuthPanel;
   const previousAuthModalKey = lastObservedAuthModalKey;
@@ -224,39 +260,63 @@ controller.subscribe((state) => {
   }
 
   syncAudioSideEffects(state);
-  updateDebugMemoryMetrics(state);
+
+  if (isDocumentHidden) {
+    hiddenPendingState = state;
+    hiddenDirtyRegions = mergeDirtyRegions(hiddenDirtyRegions, dirtyRegions);
+    pendingState = null;
+    pendingDirtyRegions = null;
+    return;
+  }
 
   if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {
-    performRender(state);
+    performRender(state, dirtyRegions);
     pendingState = null;
+    pendingDirtyRegions = null;
     return;
   }
 
   if (previousAuthPanel !== state.ui.authPanel && state.ui.authPanel !== 'none') {
-    performRender(state);
+    performRender(state, dirtyRegions);
     pendingState = null;
+    pendingDirtyRegions = null;
     return;
   }
 
   if (state.ui.authPanel !== 'none') {
     if (previousAuthModalKey !== lastObservedAuthModalKey) {
-      performRender(state);
+      performRender(state, dirtyRegions);
     }
     pendingState = null;
+    pendingDirtyRegions = null;
     return;
   }
 
   if (isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
     pendingState = state;
+    pendingDirtyRegions = mergeDirtyRegions(pendingDirtyRegions, dirtyRegions);
     return;
   }
 
-  performRender(state);
+  performRender(state, dirtyRegions);
   pendingState = null;
+  pendingDirtyRegions = null;
+});
+
+document.addEventListener('visibilitychange', () => {
+  isDocumentHidden = document.visibilityState === 'hidden';
+  if (isDocumentHidden) {
+    return;
+  }
+
+  interactionLockUntil = 0;
+  listInteractionDepth = 0;
+  suppressNextFocusFlush = false;
+  scheduleRestoreRender();
 });
 
 window.setInterval(() => {
-  if (!latestState) {
+  if (!latestState || isDocumentHidden) {
     return;
   }
   flushPendingRender();

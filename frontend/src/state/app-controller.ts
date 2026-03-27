@@ -154,17 +154,27 @@ export interface AppController {
   stopMonitoring(): void;
   clearNotice(): void;
   clearError(): void;
-  getDebugStats(): {
-    emitCount: number;
-    recentAlertFingerprints: number;
-  };
-  subscribe(listener: (state: AppState) => void): () => void;
+  subscribe(listener: (state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) => void): () => void;
 }
+
+export type AppRenderRegion =
+  | 'all'
+  | 'header'
+  | 'toasts'
+  | 'legacy'
+  | 'manual'
+  | 'recent'
+  | 'old-week'
+  | 'monitored'
+  | 'lateralized'
+  | 'pumpfun'
+  | 'alerts'
+  | 'overlay';
 
 export function createAppController(): AppController {
   const state = createAppState();
   clearLegacyAuthToken();
-  const listeners = new Set<(state: AppState) => void>();
+  const listeners = new Set<(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) => void>();
   hydrateSoundSettings();
   let authSubmitInFlight = false;
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
@@ -180,10 +190,34 @@ export function createAppController(): AppController {
   let uiPrefsPersistRevision = 0;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
-  let debugEmitCount = 0;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
+  const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
+  const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
+    manual: 'manual',
+    recent: 'recent',
+    oldWeek: 'old-week',
+    monitored: 'monitored',
+    lateralized: 'lateralized',
+    pumpfun: 'pumpfun',
+  };
+
+  function queueDirtyRegions(regions: AppRenderRegion[]) {
+    if (regions.length === 0 || regions.includes('all')) {
+      pendingDirtyRegions.clear();
+      pendingDirtyRegions.add('all');
+      return;
+    }
+
+    if (pendingDirtyRegions.has('all')) {
+      return;
+    }
+
+    for (const region of regions) {
+      pendingDirtyRegions.add(region);
+    }
+  }
 
   function normalizeDiffValue(value: unknown) {
     if (value === undefined || value === null) {
@@ -250,13 +284,15 @@ export function createAppController(): AppController {
       clearTimeout(emitTimer);
       emitTimer = null;
     }
+    const dirtyRegions = new Set(pendingDirtyRegions);
+    pendingDirtyRegions.clear();
     for (const listener of listeners) {
-      listener(state);
+      listener(state, dirtyRegions);
     }
   }
 
-  function emit() {
-    debugEmitCount += 1;
+  function emit(...regions: AppRenderRegion[]) {
+    queueDirtyRegions(regions);
     if (emitScheduled) {
       return;
     }
@@ -1558,7 +1594,7 @@ export function createAppController(): AppController {
       }));
       updateLateralizedFreshness(payload.generatedAt ?? null);
       state.panels.lateralized = state.data.lateralizedTokens.length;
-      emit();
+      emit('lateralized');
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (
@@ -1569,7 +1605,7 @@ export function createAppController(): AppController {
         state.data.lateralizedTokens = [];
         updateLateralizedFreshness(null);
         state.panels.lateralized = 0;
-        emit();
+        emit('lateralized');
         return;
       }
     } finally {
@@ -2075,10 +2111,10 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
-      emit();
+      emit('monitored', 'manual', 'recent', 'old-week', 'alerts', 'lateralized');
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to refresh monitored dashboard');
-      emit();
+      emit('legacy', 'overlay');
     } finally {
       monitoredRefreshInFlight = false;
     }
@@ -2092,7 +2128,7 @@ export function createAppController(): AppController {
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
     void refreshMonitoredDashboard();
     void refreshLateralizedTokens();
-    emit();
+    emit('header', 'recent');
   }
 
   function startMonitoringTimers() {
@@ -2104,11 +2140,11 @@ export function createAppController(): AppController {
     monitoringInterval = setInterval(runMonitoringCycle, MONITORED_REFRESH_INTERVAL_MS);
     pumpGcInterval = setInterval(() => {
       runPumpGarbageCollection();
-      emit();
+      emit('pumpfun', 'toasts', 'legacy', 'overlay');
     }, PUMP_GC_INTERVAL_MS);
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
-      emit();
+      emit('header');
     }, UPTIME_REFRESH_INTERVAL_MS);
   }
 
@@ -2129,19 +2165,19 @@ export function createAppController(): AppController {
     bindSocketLifecycle({
       onStatus(message) {
         state.ui.notice = message;
-        emit();
+        emit('legacy', 'overlay');
       },
       onRevoked(reason) {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
         setError(`Session revoked by server: ${reason}`);
-        emit();
+        emit('all');
       },
       onPumpStatus(payload) {
         state.pumpfun.connected = Boolean(payload.connected);
         state.pumpfun.statusLabel = state.pumpfun.connected ? 'connected' : 'disconnected';
-        emit();
+        emit('pumpfun');
       },
       onSolPrice(payload) {
         if (state.runtime.mode !== 'active') {
@@ -2151,7 +2187,7 @@ export function createAppController(): AppController {
         if (Number.isFinite(price) && price > 0) {
           state.pumpfun.solPriceUsd = price;
         }
-        emit();
+        emit('pumpfun');
       },
       onPumpNewToken(payload) {
         if (state.runtime.mode !== 'active') {
@@ -2162,14 +2198,14 @@ export function createAppController(): AppController {
         if (mint) {
           subscribePumpMint(mint);
         }
-        emit();
+        emit('pumpfun');
       },
       onPumpTrade(payload) {
         if (state.runtime.mode !== 'active') {
           return;
         }
         createOrUpdatePumpToken(payload, 'trade');
-        emit();
+        emit('pumpfun');
       },
       onPumpMigrate(payload) {
         if (state.runtime.mode !== 'active') {
@@ -2187,7 +2223,7 @@ export function createAppController(): AppController {
         unsubscribePumpMint(mint);
         refreshPumpPanelCounts();
         setNotice(`PumpFun migration: ${token.symbol || mint.slice(0, 6)}`);
-        emit();
+        emit('pumpfun', 'toasts', 'legacy', 'overlay');
       },
     });
   }
@@ -2370,7 +2406,7 @@ export function createAppController(): AppController {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
       void refreshLateralizedTokens({ force: true });
-      emit();
+      emit('monitored', 'manual', 'recent', 'old-week', 'alerts', 'lateralized');
     } catch (error) {
     }
   }
@@ -2445,21 +2481,15 @@ export function createAppController(): AppController {
 
   return {
     state,
-    getDebugStats() {
-      return {
-        emitCount: debugEmitCount,
-        recentAlertFingerprints: recentAlertFingerprints.size,
-      };
-    },
     subscribe(listener) {
       listeners.add(listener);
-      listener(state);
+      listener(state, new Set<AppRenderRegion>(['all']));
       return () => listeners.delete(listener);
     },
     clearNotice() {
       state.ui.notice = null;
       state.ui.error = null;
-      emit();
+      emit('legacy', 'overlay');
     },
     clearError() {
       if (!state.ui.error) {
@@ -2467,7 +2497,7 @@ export function createAppController(): AppController {
       }
       state.ui.error = null;
       state.ui.loginErrorCount = 0;
-      emit();
+      emit('legacy', 'overlay');
     },
     openAuthPanel(panel: 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp') {
       if (panel === 'change-password') {
@@ -2479,7 +2509,7 @@ export function createAppController(): AppController {
         state.ui.notice = null;
       }
       state.ui.authPanel = panel;
-      emit();
+      emit('all');
     },
     closeAuthPanel() {
       if (state.ui.authPanel === 'none') {
@@ -2497,7 +2527,7 @@ export function createAppController(): AppController {
       if (shouldResumeMonitoring) {
         startMonitoringTimers();
       }
-      emit();
+      emit('all');
     },
     removePumpToken(mint: string) {
       if (!state.data.dismissedPump.includes(mint)) {
@@ -2507,7 +2537,7 @@ export function createAppController(): AppController {
       unsubscribePumpMint(mint);
       refreshPumpPanelCounts();
       setNotice('PumpFun token removed from the live panel for this session.');
-      emit();
+      emit('pumpfun', 'legacy', 'overlay');
     },
     dismissRecentToken(address: string) {
       if (!state.data.dismissedRecent.includes(address)) {
@@ -2517,7 +2547,7 @@ export function createAppController(): AppController {
         syncRoutedPagination();
         persistBarStorage();
         setNotice('Recent token dismissed.');
-        emit();
+        emit('recent', 'legacy', 'overlay');
       }
     },
     dismissOldWeekToken(address: string) {
@@ -2528,7 +2558,7 @@ export function createAppController(): AppController {
         syncRoutedPagination();
         persistBarStorage();
         setNotice('Old Week token dismissed.');
-        emit();
+        emit('old-week', 'legacy', 'overlay');
       }
     },
     clearAllAlerts() {
@@ -2538,7 +2568,7 @@ export function createAppController(): AppController {
       state.data.alerts = [];
       syncAlertState();
       setNotice('All alerts cleared.');
-      emit();
+      emit('alerts', 'legacy', 'overlay');
     },
     removeAlert(id: string) {
       const nextAlerts = state.data.alerts.filter((item) => item.id !== id);
@@ -2547,31 +2577,31 @@ export function createAppController(): AppController {
       }
       state.data.alerts = nextAlerts;
       syncAlertState();
-      emit();
+      emit('alerts');
     },
     clearRecentRemovalLog() {
       state.data.recentRemovalLog = [];
       persistBarStorage();
-      emit();
+      emit('recent');
     },
     clearOldWeekRemovalLog() {
       state.data.oldWeekRemovalLog = [];
       persistBarStorage();
-      emit();
+      emit('old-week');
     },
     clearDismissedRecent() {
       state.data.dismissedRecent = [];
       deriveAgeBuckets();
       persistBarStorage();
       setNotice('Recent dismissed set cleared.');
-      emit();
+      emit('recent', 'legacy', 'overlay');
     },
     clearDismissedOldWeek() {
       state.data.dismissedOldWeek = [];
       deriveAgeBuckets();
       persistBarStorage();
       setNotice('Old Week dismissed set cleared.');
-      emit();
+      emit('old-week', 'legacy', 'overlay');
     },
     toggleSectionCollapsed(section: CollapsibleSectionKey) {
       state.ui.collapsed[section] = !state.ui.collapsed[section];
@@ -2581,77 +2611,77 @@ export function createAppController(): AppController {
         deriveAgeBuckets({ forceOldWeekList: !state.ui.collapsed.oldWeek });
       }
       queueUiPrefsPersist();
-      emit();
+      emit(COLLAPSIBLE_SECTION_TO_RENDER_REGION[section]);
     },
     setAlertSearchQuery(query: string) {
       state.ui.alertSearchQuery = String(query || '');
-      emit();
+      emit('alerts');
     },
     setMonitoredSearchQuery(query: string) {
       state.ui.monitoredSearchQuery = String(query || '');
       state.ui.monitoredPage = 0;
-      emit();
+      emit('monitored');
     },
     setManualSearchQuery(query: string) {
       state.ui.manualSearchQuery = String(query || '');
-      emit();
+      emit('manual');
     },
     setRecentSearchQuery(query: string) {
       state.ui.recentSearchQuery = String(query || '');
       state.ui.recentPage = 0;
-      emit();
+      emit('recent');
     },
     setOldWeekSearchQuery(query: string) {
       state.ui.oldWeekSearchQuery = String(query || '');
       state.ui.oldWeekPage = 0;
-      emit();
+      emit('old-week');
     },
     setManualStarredOnly(enabled: boolean) {
       state.ui.manualStarredOnly = Boolean(enabled);
       queueUiPrefsPersist();
-      emit();
+      emit('manual');
     },
     setRecentStarredOnly(enabled: boolean) {
       state.ui.recentStarredOnly = Boolean(enabled);
       state.ui.recentPage = 0;
       queueUiPrefsPersist();
-      emit();
+      emit('recent');
     },
     setOldWeekStarredOnly(enabled: boolean) {
       state.ui.oldWeekStarredOnly = Boolean(enabled);
       state.ui.oldWeekPage = 0;
       queueUiPrefsPersist();
-      emit();
+      emit('old-week');
     },
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
-      emit();
+      emit('monitored');
     },
     setRecentPage(page: number) {
       state.ui.recentPage = clampPage(page, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
-      emit();
+      emit('recent');
     },
     setOldWeekPage(page: number) {
       state.ui.oldWeekPage = clampPage(page, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
-      emit();
+      emit('old-week');
     },
     setMonitoredPerPage(perPage: number) {
       state.ui.monitoredPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       queueUiPrefsPersist();
-      emit();
+      emit('monitored');
     },
     setRecentPerPage(perPage: number) {
       state.ui.recentPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
       queueUiPrefsPersist();
-      emit();
+      emit('recent');
     },
     setOldWeekPerPage(perPage: number) {
       state.ui.oldWeekPerPage = normalizeUiPerPage(perPage, 30);
       state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
       queueUiPrefsPersist();
-      emit();
+      emit('old-week');
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.manualSorts = toggleSortCriterion(
@@ -2659,7 +2689,7 @@ export function createAppController(): AppController {
         normalizeBucketCriterion(mode, window),
       );
       queueUiPrefsPersist();
-      emit();
+      emit('manual');
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.recentSorts = toggleSortCriterion(
@@ -2667,7 +2697,7 @@ export function createAppController(): AppController {
         normalizeBucketCriterion(mode, window),
       );
       queueUiPrefsPersist();
-      emit();
+      emit('recent');
     },
     setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.oldWeekSorts = toggleSortCriterion(
@@ -2675,7 +2705,7 @@ export function createAppController(): AppController {
         normalizeBucketCriterion(mode, window),
       );
       queueUiPrefsPersist();
-      emit();
+      emit('old-week');
     },
     setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow) {
       state.ui.monitoredSorts = toggleSortCriterion(
@@ -2683,21 +2713,21 @@ export function createAppController(): AppController {
         normalizeMonitoredCriterion(mode, window),
       );
       queueUiPrefsPersist();
-      emit();
+      emit('monitored');
     },
     setSoundEnabled(enabled: boolean) {
       state.ui.soundEnabled = enabled;
       state.data.configs['sound-mode'] = enabled ? 'on' : 'off';
       persistSoundSettings();
       void persistUiConfigs({ 'sound-mode': enabled ? 'on' : 'off' });
-      emit();
+      emit('overlay');
     },
     async toggleStarredToken(address: string) {
       const wasStarred = state.data.starredTokens.includes(address);
       state.data.starredTokens = wasStarred
         ? state.data.starredTokens.filter((item) => item !== address)
         : [...state.data.starredTokens, address].sort((a, b) => a.localeCompare(b));
-      emit();
+      emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'alerts');
       queueStarredTokensPersist();
     },
     setSoundVolume(volume: number) {
@@ -2706,15 +2736,15 @@ export function createAppController(): AppController {
       state.data.configs['sound-volume'] = Math.round(nextVolume * 100);
       persistSoundSettings();
       void persistUiConfigs({ 'sound-volume': Math.round(nextVolume * 100) });
-      emit();
+      emit('overlay');
     },
     startMonitoring() {
       startMonitoringTimers();
-      emit();
+      emit('header', 'recent');
     },
     stopMonitoring() {
       stopMonitoringTimers();
-      emit();
+      emit('header', 'recent');
     },
     async init() {
       setBusy(true);

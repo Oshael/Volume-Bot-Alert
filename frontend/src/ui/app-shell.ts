@@ -1,5 +1,5 @@
-import type { AppController } from '../state/app-controller';
-import type { AppState } from '../state/app-state';
+import type { AppController, AppRenderRegion } from '../state/app-controller';
+import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderManualTokensSection } from './sections/manual-section';
@@ -78,7 +78,44 @@ type SearchInputDraft = {
   selectionEnd: number | null;
 };
 
-export function renderAppShell(root: HTMLElement, state: AppState, controller: AppController) {
+type AppRenderFrame = {
+  frame: HTMLElement;
+  headerSlot: HTMLElement;
+  shell: HTMLElement;
+  toastsSlot: HTMLElement;
+  legacySlot: HTMLElement;
+  oldWeekSlot: HTMLElement;
+  recentSlot: HTMLElement;
+  manualSlot: HTMLElement;
+  panels: HTMLElement;
+  monitoredSlot: HTMLElement;
+  lateralizedSlot: HTMLElement;
+  pumpfunSlot: HTMLElement;
+  alertsSlot: HTMLElement;
+  overlaySlot: HTMLElement;
+};
+
+const APP_RENDER_FRAME_SELECTOR = '[data-app-render-frame]';
+const APP_HEADER_SLOT_SELECTOR = '[data-app-render-slot="header"]';
+const APP_SHELL_SELECTOR = '[data-app-render-slot="shell"]';
+const APP_TOASTS_SLOT_SELECTOR = '[data-app-render-slot="toasts"]';
+const APP_LEGACY_SLOT_SELECTOR = '[data-app-render-slot="legacy"]';
+const APP_OLD_WEEK_SLOT_SELECTOR = '[data-app-render-slot="old-week"]';
+const APP_RECENT_SLOT_SELECTOR = '[data-app-render-slot="recent"]';
+const APP_MANUAL_SLOT_SELECTOR = '[data-app-render-slot="manual"]';
+const APP_PANELS_SELECTOR = '[data-app-render-slot="panels"]';
+const APP_MONITORED_SLOT_SELECTOR = '[data-app-render-slot="monitored"]';
+const APP_LATERALIZED_SLOT_SELECTOR = '[data-app-render-slot="lateralized"]';
+const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
+const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
+const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
+
+export function renderAppShell(
+  root: HTMLElement,
+  state: AppState,
+  controller: AppController,
+  dirtyRegions: ReadonlySet<AppRenderRegion> = new Set<AppRenderRegion>(['all']),
+) {
   const configDraft = captureConfigDraft(root);
   const panelScrollDraft = capturePanelScrollDraft(root);
   const loginDraft = captureLoginDraft(root);
@@ -90,46 +127,51 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   const passwordResetDraft = capturePasswordResetDraft(root);
   const userMenuDraft = captureUserMenuDraft(root);
   const searchInputDraft = captureSearchInputDraft(root);
-  root.innerHTML = '';
+  const renderFrame = ensureAppRenderFrame(root);
+
+  updateRegionSlot(renderFrame.headerSlot, 'header', dirtyRegions, getHeaderRenderKey(state), () => (
+    state.session.status === 'authenticated'
+      ? [renderWorkspaceHeader(state, controller)]
+      : []
+  ));
+
+  updateRegionSlot(renderFrame.toastsSlot, 'toasts', dirtyRegions, getToastsRenderKey(state), () => [renderPumpToasts(state)]);
+  updateRegionSlot(renderFrame.legacySlot, 'legacy', dirtyRegions, getLegacyRenderKey(state), () => [renderLegacyShell(state, controller)]);
 
   if (state.session.status === 'authenticated') {
-    root.append(renderWorkspaceHeader(state, controller));
+    renderFrame.oldWeekSlot.hidden = false;
+    renderFrame.recentSlot.hidden = false;
+    renderFrame.manualSlot.hidden = false;
+    renderFrame.panels.hidden = false;
+
+    updateRegionSlot(renderFrame.oldWeekSlot, 'old-week', dirtyRegions, getOldWeekRenderKey(state), () => [renderOldWeekSection(state, controller)]);
+    updateRegionSlot(renderFrame.recentSlot, 'recent', dirtyRegions, getRecentRenderKey(state), () => [renderRecentSection(state, controller)]);
+    updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
+    updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
+    updateRegionSlot(renderFrame.lateralizedSlot, 'lateralized', dirtyRegions, getLateralizedRenderKey(state), () => [renderLateralizedSection(state, controller)]);
+    updateRegionSlot(renderFrame.pumpfunSlot, 'pumpfun', dirtyRegions, getPumpfunRenderKey(state), () => [renderPumpfunSection(state, controller)]);
+    updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
+  } else {
+    renderFrame.oldWeekSlot.hidden = true;
+    renderFrame.recentSlot.hidden = true;
+    renderFrame.manualSlot.hidden = true;
+    renderFrame.panels.hidden = true;
+
+    updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
+    updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
+    updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
+    renderFrame.monitoredSlot.replaceChildren();
+    renderFrame.lateralizedSlot.replaceChildren();
+    renderFrame.pumpfunSlot.replaceChildren();
+    renderFrame.alertsSlot.replaceChildren();
   }
 
-  const shell = document.createElement('div');
-  shell.className = 'app-shell';
-  shell.append(renderPumpToasts(state), renderLegacyShell(state, controller));
-
-  if (state.session.status === 'authenticated') {
-    shell.append(
-      renderOldWeekSection(state, controller),
-      renderRecentSection(state, controller),
-      renderManualTokensSection(state, controller),
-    );
-
-    const panels = document.createElement('div');
-    panels.className = 'legacy-panels';
-    const monitoredStack = document.createElement('div');
-    monitoredStack.className = 'panel-stack monitored-stack';
-    monitoredStack.append(
-      renderMonitoredSection(state, controller),
-      renderLateralizedSection(state, controller),
-    );
-    panels.append(
-      monitoredStack,
-      renderPumpfunSection(state, controller),
-      renderAlertsSection(state, controller),
-    );
-    shell.append(panels);
-  }
-
-  root.append(shell);
-  if (state.session.status === 'authenticated') {
-    const profileOverlay = renderWorkspaceProfileOverlay(state, controller);
-    if (profileOverlay) {
-      root.append(profileOverlay);
-    }
-  }
+  updateRegionSlot(renderFrame.overlaySlot, 'overlay', dirtyRegions, getOverlayRenderKey(state), () => {
+    const profileOverlay = state.session.status === 'authenticated'
+      ? renderWorkspaceProfileOverlay(state, controller)
+      : null;
+    return profileOverlay ? [profileOverlay] : [];
+  });
   syncProfileModalScrollLock(state);
   applyLoginDraft(root, loginDraft, state);
   applyLoginFocus(root, state);
@@ -156,6 +198,394 @@ export function renderAppShell(root: HTMLElement, state: AppState, controller: A
   wireUserMenus(root);
   wireProfileModals(root, controller);
   applyHoverState(root);
+}
+
+function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
+  const existingFrame = root.querySelector<HTMLElement>(APP_RENDER_FRAME_SELECTOR);
+  const existingHeaderSlot = existingFrame?.querySelector<HTMLElement>(APP_HEADER_SLOT_SELECTOR);
+  const existingShell = existingFrame?.querySelector<HTMLElement>(APP_SHELL_SELECTOR);
+  const existingToastsSlot = existingFrame?.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR);
+  const existingLegacySlot = existingFrame?.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR);
+  const existingOldWeekSlot = existingFrame?.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR);
+  const existingRecentSlot = existingFrame?.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR);
+  const existingManualSlot = existingFrame?.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR);
+  const existingPanels = existingFrame?.querySelector<HTMLElement>(APP_PANELS_SELECTOR);
+  const existingMonitoredSlot = existingFrame?.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR);
+  const existingLateralizedSlot = existingFrame?.querySelector<HTMLElement>(APP_LATERALIZED_SLOT_SELECTOR);
+  const existingPumpfunSlot = existingFrame?.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR);
+  const existingAlertsSlot = existingFrame?.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR);
+  const existingOverlaySlot = existingFrame?.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR);
+
+  if (
+    existingFrame
+    && existingHeaderSlot
+    && existingShell
+    && existingToastsSlot
+    && existingLegacySlot
+    && existingOldWeekSlot
+    && existingRecentSlot
+    && existingManualSlot
+    && existingPanels
+    && existingMonitoredSlot
+    && existingLateralizedSlot
+    && existingPumpfunSlot
+    && existingAlertsSlot
+    && existingOverlaySlot
+  ) {
+    return {
+      frame: existingFrame,
+      headerSlot: existingHeaderSlot,
+      shell: existingShell,
+      toastsSlot: existingToastsSlot,
+      legacySlot: existingLegacySlot,
+      oldWeekSlot: existingOldWeekSlot,
+      recentSlot: existingRecentSlot,
+      manualSlot: existingManualSlot,
+      panels: existingPanels,
+      monitoredSlot: existingMonitoredSlot,
+      lateralizedSlot: existingLateralizedSlot,
+      pumpfunSlot: existingPumpfunSlot,
+      alertsSlot: existingAlertsSlot,
+      overlaySlot: existingOverlaySlot,
+    };
+  }
+
+  const frame = document.createElement('div');
+  frame.dataset.appRenderFrame = 'true';
+
+  const headerSlot = document.createElement('div');
+  headerSlot.dataset.appRenderSlot = 'header';
+
+  const shell = document.createElement('div');
+  shell.dataset.appRenderSlot = 'shell';
+  shell.className = 'app-shell';
+
+  const toastsSlot = document.createElement('div');
+  toastsSlot.dataset.appRenderSlot = 'toasts';
+
+  const legacySlot = document.createElement('div');
+  legacySlot.dataset.appRenderSlot = 'legacy';
+
+  const oldWeekSlot = document.createElement('div');
+  oldWeekSlot.dataset.appRenderSlot = 'old-week';
+
+  const recentSlot = document.createElement('div');
+  recentSlot.dataset.appRenderSlot = 'recent';
+
+  const manualSlot = document.createElement('div');
+  manualSlot.dataset.appRenderSlot = 'manual';
+
+  const panels = document.createElement('div');
+  panels.dataset.appRenderSlot = 'panels';
+  panels.className = 'legacy-panels';
+
+  const monitoredStack = document.createElement('div');
+  monitoredStack.className = 'panel-stack monitored-stack';
+
+  const monitoredSlot = document.createElement('div');
+  monitoredSlot.dataset.appRenderSlot = 'monitored';
+
+  const lateralizedSlot = document.createElement('div');
+  lateralizedSlot.dataset.appRenderSlot = 'lateralized';
+
+  const pumpfunSlot = document.createElement('div');
+  pumpfunSlot.dataset.appRenderSlot = 'pumpfun';
+
+  const alertsSlot = document.createElement('div');
+  alertsSlot.dataset.appRenderSlot = 'alerts';
+
+  monitoredStack.append(monitoredSlot, lateralizedSlot);
+  panels.append(monitoredStack, pumpfunSlot, alertsSlot);
+  shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, manualSlot, panels);
+
+  const overlaySlot = document.createElement('div');
+  overlaySlot.dataset.appRenderSlot = 'overlay';
+
+  frame.append(headerSlot, shell, overlaySlot);
+  root.replaceChildren(frame);
+
+  return {
+    frame,
+    headerSlot,
+    shell,
+    toastsSlot,
+    legacySlot,
+    oldWeekSlot,
+    recentSlot,
+    manualSlot,
+    panels,
+    monitoredSlot,
+    lateralizedSlot,
+    pumpfunSlot,
+    alertsSlot,
+    overlaySlot,
+  };
+}
+
+function updateRenderSlot(slot: HTMLElement, nextKey: string, build: () => Node[]) {
+  if (slot.dataset.renderKey === nextKey) {
+    return;
+  }
+
+  slot.dataset.renderKey = nextKey;
+  slot.replaceChildren(...build());
+}
+
+function shouldRefreshRegion(slot: HTMLElement, region: AppRenderRegion, dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  if (!slot.dataset.renderKey) {
+    return true;
+  }
+
+  if (dirtyRegions.has('all')) {
+    return true;
+  }
+
+  return dirtyRegions.has(region);
+}
+
+function updateRegionSlot(
+  slot: HTMLElement,
+  region: AppRenderRegion,
+  dirtyRegions: ReadonlySet<AppRenderRegion>,
+  nextKey: string,
+  build: () => Node[],
+) {
+  if (!shouldRefreshRegion(slot, region, dirtyRegions)) {
+    return;
+  }
+
+  updateRenderSlot(slot, nextKey, build);
+}
+
+function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
+  return values.map((value) => value == null ? '' : String(value)).join('~');
+}
+
+function serializeTrackedTokenForView(token: ReturnType<typeof getMonitoredTokens>[number]) {
+  return serializePrimitiveList([
+    token.address,
+    token.symbol,
+    token.name,
+    token.label,
+    token.createdAt,
+    token.mcap,
+    token.volume5m,
+    token.volume1h,
+    token.volume6h,
+    token.volume24h,
+    token.priceChange1h,
+    token.priceChange6h,
+    token.priceChange24h,
+    token.prevVolume5m,
+    token.prevMcap,
+    token.pairUrl,
+    token.imageUrl,
+    token.twitterUrl,
+    token._isRecentRouted,
+    token._isOldWeekRouted,
+  ]);
+}
+
+function getHeaderRenderKey(state: AppState) {
+  return serializePrimitiveList([
+    state.session.status,
+    state.session.username,
+    state.session.email,
+    state.runtime.mode,
+  ]);
+}
+
+function getToastsRenderKey(state: AppState) {
+  return [
+    state.data.pumpToasts.length,
+    ...state.data.pumpToasts.map((toast) => serializePrimitiveList([
+      toast.id,
+      toast.mint,
+      toast.symbol,
+      toast.createdAt,
+      toast.migratedAt,
+      toast.mcap,
+      toast.vol5m,
+    ])),
+  ].join('|');
+}
+
+function getLegacyRenderKey(state: AppState) {
+  return JSON.stringify({
+    sessionStatus: state.session.status,
+    busy: state.ui.busy,
+    authPanel: state.ui.authPanel,
+    error: state.ui.error,
+    notice: state.ui.notice,
+    pendingVerificationEmail: state.ui.pendingVerificationEmail,
+    pendingPasswordResetToken: state.ui.pendingPasswordResetToken,
+    pendingLoginOtpChallengeToken: state.ui.pendingLoginOtpChallengeToken,
+    pendingLoginOtpEmailHint: state.ui.pendingLoginOtpEmailHint,
+  });
+}
+
+function getMonitoredRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.monitored,
+    busy: state.ui.busy,
+    role: state.session.role,
+    search: state.ui.monitoredSearchQuery,
+    page: state.ui.monitoredPage,
+    perPage: state.ui.monitoredPerPage,
+    sorts: state.ui.monitoredSorts,
+    starred: state.data.starredTokens,
+    tokens: getMonitoredTokens(state).map(serializeTrackedTokenForView),
+  });
+}
+
+function getManualRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.manual,
+    busy: state.ui.busy,
+    role: state.session.role,
+    search: state.ui.manualSearchQuery,
+    starredOnly: state.ui.manualStarredOnly,
+    sorts: state.ui.manualSorts,
+    starred: state.data.starredTokens,
+    meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
+    tokens: getManualTokens(state).map(serializeTrackedTokenForView),
+  });
+}
+
+function getRecentRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.recent,
+    busy: state.ui.busy,
+    role: state.session.role,
+    runtimeMode: state.runtime.mode,
+    search: state.ui.recentSearchQuery,
+    starredOnly: state.ui.recentStarredOnly,
+    page: state.ui.recentPage,
+    perPage: state.ui.recentPerPage,
+    sorts: state.ui.recentSorts,
+    barsRecent: state.bars.recent,
+    oldMcapMin: state.data.configs['old-mcap-min'],
+    oldMcapMax: state.data.configs['old-mcap-max'],
+    log: state.data.recentRemovalLog.map((entry) => serializePrimitiveList([entry.address, entry.reason, entry.ts])),
+    starred: state.data.starredTokens,
+    tokens: getRecentTokens(state).map(serializeTrackedTokenForView),
+  });
+}
+
+function getOldWeekRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.oldWeek,
+    busy: state.ui.busy,
+    role: state.session.role,
+    search: state.ui.oldWeekSearchQuery,
+    starredOnly: state.ui.oldWeekStarredOnly,
+    page: state.ui.oldWeekPage,
+    perPage: state.ui.oldWeekPerPage,
+    sorts: state.ui.oldWeekSorts,
+    barsOldWeek: state.bars.oldWeek,
+    oldWeekMcapMin: state.data.configs['old-week-mcap-min'],
+    oldWeekMcapMax: state.data.configs['old-week-mcap-max'],
+    log: state.data.oldWeekRemovalLog.map((entry) => serializePrimitiveList([entry.address, entry.reason, entry.ts])),
+    starred: state.data.starredTokens,
+    tokens: getOldWeekTokens(state).map(serializeTrackedTokenForView),
+  });
+}
+
+function getLateralizedRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.lateralized,
+    busy: state.ui.busy,
+    role: state.session.role,
+    freshness: state.runtime.lateralizedFreshnessLabel,
+    starred: state.data.starredTokens,
+    tracked: state.data.lateralizedTokens.map((item) => serializePrimitiveList([
+      item.address,
+      item.symbol,
+      item.name,
+      item.mcap,
+      item.volume1h,
+      item.volume24h,
+      item.ageHours,
+      item.score,
+      state.data.trackedTokensByAddress[item.address]?.symbol,
+      state.data.trackedTokensByAddress[item.address]?.name,
+      state.data.trackedTokensByAddress[item.address]?.imageUrl,
+      state.data.trackedTokensByAddress[item.address]?.pairUrl,
+    ])),
+  });
+}
+
+function getPumpfunRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.pumpfun,
+    busy: state.ui.busy,
+    role: state.session.role,
+    statusLabel: state.pumpfun.statusLabel,
+    connected: state.pumpfun.connected,
+    configs: {
+      pumpEntryVol: state.data.configs['pump-entry-vol'],
+      pumpMinVol: state.data.configs['pump-min-vol'],
+    },
+    migrations: state.data.recentPumpMigrations.map((item) => serializePrimitiveList([
+      item.mint,
+      item.symbol,
+      item.createdAt,
+      item.migratedAt,
+      item.mcap,
+      item.vol5m,
+    ])),
+    tokens: state.data.pumpTokens.map((token) => serializePrimitiveList([
+      token.mint,
+      token.symbol,
+      token.createdAt,
+      token.lastTradeAt,
+      token.mcap,
+      token.volTotal,
+      token.hidden,
+      token._migrated,
+      token.vol5m?.length ?? 0,
+    ])),
+  });
+}
+
+function getAlertsRenderKey(state: AppState) {
+  return JSON.stringify({
+    busy: state.ui.busy,
+    role: state.session.role,
+    search: state.ui.alertSearchQuery,
+    starred: state.data.starredTokens,
+    alerts: state.data.alerts.map((alert) => serializePrimitiveList([
+      alert.id,
+      alert.kind,
+      alert.address,
+      alert.symbol,
+      alert.name,
+      alert.createdAt,
+      alert.volume5m,
+      alert.volume1h,
+      alert.volume6h,
+      alert.volume24h,
+      alert.prevMcap,
+      alert.mcap,
+      alert.pct,
+      alert.label,
+      alert.isHvnc,
+      alert.isOldSurge,
+    ])),
+  });
+}
+
+function getOverlayRenderKey(state: AppState) {
+  return JSON.stringify({
+    sessionStatus: state.session.status,
+    authPanel: state.ui.authPanel,
+    busy: state.ui.busy,
+    error: state.ui.error,
+    notice: state.ui.notice,
+    role: state.session.role,
+    configs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
+    blocklist: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
+  });
 }
 
 function syncProfileModalScrollLock(state: AppState) {
