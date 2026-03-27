@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState } from '../../state/app-state';
-import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
@@ -23,7 +23,10 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
       <span>\u{1F514} ALERTS</span>
       <div style="display:flex;align-items:center;gap:6px">
         <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
-        <input class="panel-search" type="text" placeholder="Search ticker..." data-action="alerts-search" data-search-input="alerts">
+        <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query' : ''}">
+          <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
+          <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
+        </div>
         <span class="count">${filteredAlerts.length}</span>
       </div>
     </div>
@@ -51,6 +54,10 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   if (searchInput) {
     searchInput.value = state.ui.alertSearchQuery || '';
   }
+  bindCompactSearch(section, {
+    toggleAction: 'alerts-search-focus',
+    inputAction: 'alerts-search',
+  });
   searchInput?.addEventListener('input', (event) => {
     controller.setAlertSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
