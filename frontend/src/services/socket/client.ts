@@ -108,6 +108,10 @@ export function getSocket(): Socket | null {
   return socket;
 }
 
+export function getDesiredPumpSubscriptionCount() {
+  return desiredPumpSubscriptions.size;
+}
+
 export function disconnectSocket() {
   socket?.disconnect();
 }

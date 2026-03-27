@@ -154,6 +154,10 @@ export interface AppController {
   stopMonitoring(): void;
   clearNotice(): void;
   clearError(): void;
+  getDebugStats(): {
+    emitCount: number;
+    recentAlertFingerprints: number;
+  };
   subscribe(listener: (state: AppState) => void): () => void;
 }
 
@@ -176,6 +180,7 @@ export function createAppController(): AppController {
   let uiPrefsPersistRevision = 0;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
+  let debugEmitCount = 0;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
@@ -251,6 +256,7 @@ export function createAppController(): AppController {
   }
 
   function emit() {
+    debugEmitCount += 1;
     if (emitScheduled) {
       return;
     }
@@ -2439,6 +2445,12 @@ export function createAppController(): AppController {
 
   return {
     state,
+    getDebugStats() {
+      return {
+        emitCount: debugEmitCount,
+        recentAlertFingerprints: recentAlertFingerprints.size,
+      };
+    },
     subscribe(listener) {
       listeners.add(listener);
       listener(state);

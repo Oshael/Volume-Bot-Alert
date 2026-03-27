@@ -1,8 +1,10 @@
 import './styles/app.css';
 import { playAlertSound, playMigrateSound } from './services/alerts/sound';
+import { getDesiredPumpSubscriptionCount } from './services/socket/client';
 import type { AppState } from './state/app-state';
 import { createAppController } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
+import { createDebugMemoryCollector } from './utils/debug-memory';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 
@@ -13,6 +15,7 @@ if (!rootElement) {
 const root: HTMLDivElement = rootElement;
 
 const controller = createAppController();
+const memoryCollector = createDebugMemoryCollector();
 const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 let pendingState: AppState | null = null;
@@ -121,8 +124,35 @@ function flushPendingRender() {
     return;
   }
 
-  renderAppShell(root, pendingState, controller);
+  performRender(pendingState);
   pendingState = null;
+}
+
+function updateDebugMemoryMetrics(state: AppState) {
+  if (!memoryCollector.isEnabled()) {
+    return;
+  }
+
+  const debug = controller.getDebugStats();
+  memoryCollector.updateMetrics({
+    sessionStatus: state.session.status,
+    runtimeMode: state.runtime.mode,
+    trackedTokens: Object.keys(state.data.trackedTokensByAddress).length,
+    monitoredTokenAddresses: state.data.monitoredTokenAddresses.length,
+    manualTokenAddresses: state.data.manualTokenAddresses.length,
+    pumpTokens: state.data.pumpTokens.length,
+    recentPumpMigrations: state.data.recentPumpMigrations.length,
+    alerts: state.data.alerts.length,
+    recentAlertFingerprints: debug.recentAlertFingerprints,
+    desiredPumpSubscriptions: getDesiredPumpSubscriptionCount(),
+    emitCount: debug.emitCount,
+  });
+}
+
+function performRender(state: AppState) {
+  const startedAt = performance.now();
+  renderAppShell(root, state, controller);
+  memoryCollector.noteRender(performance.now() - startedAt);
 }
 
 root.addEventListener('pointerdown', (event) => {
@@ -194,22 +224,23 @@ controller.subscribe((state) => {
   }
 
   syncAudioSideEffects(state);
+  updateDebugMemoryMetrics(state);
 
   if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {
-    renderAppShell(root, state, controller);
+    performRender(state);
     pendingState = null;
     return;
   }
 
   if (previousAuthPanel !== state.ui.authPanel && state.ui.authPanel !== 'none') {
-    renderAppShell(root, state, controller);
+    performRender(state);
     pendingState = null;
     return;
   }
 
   if (state.ui.authPanel !== 'none') {
     if (previousAuthModalKey !== lastObservedAuthModalKey) {
-      renderAppShell(root, state, controller);
+      performRender(state);
     }
     pendingState = null;
     return;
@@ -220,7 +251,7 @@ controller.subscribe((state) => {
     return;
   }
 
-  renderAppShell(root, state, controller);
+  performRender(state);
   pendingState = null;
 });
 
