@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import { getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
-import { bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
@@ -160,8 +160,9 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
 
   section.append(renderManualTokenEntryForm(state, controller));
 
-  section.querySelector<HTMLButtonElement>('[data-action="monitored-search-focus"]')?.addEventListener('click', () => {
-    section.querySelector<HTMLInputElement>('[data-action="monitored-search"]')?.focus();
+  bindCompactSearch(section, {
+    toggleAction: 'monitored-search-focus',
+    inputAction: 'monitored-search',
   });
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="monitored-search"]');
   if (searchInput) {

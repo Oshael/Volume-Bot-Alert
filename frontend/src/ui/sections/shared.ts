@@ -203,13 +203,18 @@ export function bindCompactSearch(
   input.addEventListener('focus', open);
   input.addEventListener('blur', closeIfEmpty);
   input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      input.blur();
       return;
     }
-    if (!String(input.value || '').trim()) {
-      wrap.classList.remove('open');
+
+    if (event.key === 'Escape') {
+      if (!String(input.value || '').trim()) {
+        wrap.classList.remove('open');
+      }
+      input.blur();
     }
-    input.blur();
   });
 }
 
