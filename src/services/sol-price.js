@@ -8,6 +8,8 @@ const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&
 const REQUEST_TIMEOUT_MS = 10000;
 const BASE_INTERVAL_MS = 60 * 1000;
 const MAX_BACKOFF_MS = 30 * 60 * 1000;
+const MIN_429_BACKOFF_MS = 5 * 60 * 1000;
+const LOG_THROTTLE_MS = 60 * 1000;
 
 let solPrice = 0;
 let lastFetch = 0;
@@ -16,6 +18,9 @@ let running = false;
 let nextFetchAt = 0;
 let consecutive429s = 0;
 let lastError = null;
+let fetchInFlight = false;
+let last429LogAt = 0;
+let suppressed429Logs = 0;
 
 function clampDelayMs(value, fallback = BASE_INTERVAL_MS) {
   const parsed = Number(value);
@@ -52,15 +57,42 @@ function computeBackoffMs(retryAfterMs) {
   return clampDelayMs(BASE_INTERVAL_MS * (2 ** exponent));
 }
 
-function scheduleNextFetch(delayMs = BASE_INTERVAL_MS) {
+function logRateLimitBackoff(backoffMs) {
+  const now = Date.now();
+  if ((now - last429LogAt) < LOG_THROTTLE_MS) {
+    suppressed429Logs += 1;
+    return;
+  }
+
+  const suffix = suppressed429Logs > 0
+    ? ` (suppressed ${suppressed429Logs} similar logs)`
+    : '';
+  suppressed429Logs = 0;
+  last429LogAt = now;
+  console.warn(`[SOL Price] CoinGecko 429; backing off for ${Math.round(backoffMs / 1000)}s${suffix}`);
+}
+
+function scheduleNextFetch(delayMs = BASE_INTERVAL_MS, options = {}) {
   if (!running) return;
+  const { keepLongerExisting = false } = options;
+
+  const safeDelayMs = clampDelayMs(delayMs);
+  const candidateNextFetchAt = Date.now() + safeDelayMs;
+  if (
+    keepLongerExisting
+    && fetchTimer
+    && Number.isFinite(nextFetchAt)
+    && nextFetchAt > candidateNextFetchAt
+  ) {
+    return;
+  }
+
   if (fetchTimer) {
     clearTimeout(fetchTimer);
     fetchTimer = null;
   }
 
-  const safeDelayMs = clampDelayMs(delayMs);
-  nextFetchAt = Date.now() + safeDelayMs;
+  nextFetchAt = candidateNextFetchAt;
   fetchTimer = setTimeout(() => {
     fetchTimer = null;
     void fetchSolPrice();
@@ -68,6 +100,17 @@ function scheduleNextFetch(delayMs = BASE_INTERVAL_MS) {
 }
 
 async function fetchSolPrice() {
+  if (!running || fetchInFlight) {
+    return;
+  }
+
+  const now = Date.now();
+  if (Number.isFinite(nextFetchAt) && nextFetchAt > now) {
+    scheduleNextFetch(nextFetchAt - now, { keepLongerExisting: true });
+    return;
+  }
+
+  fetchInFlight = true;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -84,9 +127,10 @@ async function fetchSolPrice() {
       consecutive429s += 1;
       lastError = 'rate_limited';
       const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after'));
-      const backoffMs = computeBackoffMs(retryAfterMs);
-      console.warn(`[SOL Price] CoinGecko 429; backing off for ${Math.round(backoffMs / 1000)}s`);
-      scheduleNextFetch(backoffMs);
+      const computedBackoffMs = computeBackoffMs(retryAfterMs);
+      const backoffMs = Math.max(MIN_429_BACKOFF_MS, computedBackoffMs);
+      logRateLimitBackoff(backoffMs);
+      scheduleNextFetch(backoffMs, { keepLongerExisting: true });
       return;
     }
 
@@ -113,6 +157,7 @@ async function fetchSolPrice() {
     scheduleNextFetch(BASE_INTERVAL_MS);
   } finally {
     clearTimeout(timeout);
+    fetchInFlight = false;
   }
 }
 
