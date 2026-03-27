@@ -87,7 +87,7 @@ export function saveOldWeekRemovalLog(scope: string, entries: RemovalLogEntry[])
 function pruneAlerts(entries: AlertEntry[]) {
   return entries
     .filter((entry) => entry && typeof entry.id === 'string' && entry.id.trim())
-    .slice(0, 50);
+    .slice(0, 100);
 }
 
 export function loadAlerts(scope: string) {

@@ -1636,7 +1636,7 @@ export function createAppController(): AppController {
     if (shouldSuppressDuplicateAlert(entry)) {
       return;
     }
-    state.data.alerts = [entry, ...state.data.alerts].slice(0, 50);
+    state.data.alerts = [entry, ...state.data.alerts].slice(0, 100);
     syncAlertState();
   }
 
