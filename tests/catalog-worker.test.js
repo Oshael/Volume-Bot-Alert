@@ -37,6 +37,53 @@ describe('catalog worker drift compensation', () => {
     assert.equal(lowDustRetryMs, 2 * 60 * 1000);
   });
 
+  it('keeps migrated low-dust tokens on the low-near path during migration grace', () => {
+    const token = {
+      source: 'pumpfun-migrated',
+      monitor_priority: 'low',
+      last_mcap: 9000,
+      migration_grace_until: new Date(Date.now() + catalogWorker.__private.MIGRATION_GRACE_FLOOR_MS).toISOString(),
+    };
+
+    assert.equal(catalogWorker.__private.isMigrationGraceActive(token), true);
+    assert.equal(catalogWorker.__private.isLowDustProtectedByMigrationGrace(token, 9000), true);
+    assert.equal(catalogWorker.__private.getThrottleTokenBucket(token), 'low-near');
+    assert.equal(catalogWorker.__private.getDexPriorityHint(token), 'low-near');
+    assert.equal(catalogWorker.__private.getRateLimitedRetryMs(token), 3 * 60 * 1000);
+  });
+
+  it('returns migrated low-dust tokens to normal low-dust handling after grace expires', () => {
+    const token = {
+      source: 'pumpfun-migrated',
+      monitor_priority: 'low',
+      last_mcap: 9000,
+      migration_grace_until: new Date(Date.now() - 1000).toISOString(),
+    };
+
+    assert.equal(catalogWorker.__private.isMigrationGraceActive(token), false);
+    assert.equal(catalogWorker.__private.isLowDustProtectedByMigrationGrace(token, 9000), false);
+    assert.equal(catalogWorker.__private.getThrottleTokenBucket(token), 'low-dust');
+    assert.equal(catalogWorker.__private.getDexPriorityHint(token), 'low-dust');
+    assert.equal(catalogWorker.__private.getRateLimitedRetryMs(token), 2 * 60 * 1000);
+  });
+
+  it('uses low-near cadence for migrated low-dust snapshots during grace', () => {
+    const now = Date.now();
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 9000,
+      volume: {},
+      priceChange: {},
+    }, {
+      source: 'pumpfun-migrated',
+      migration_grace_until: new Date(now + catalogWorker.__private.MIGRATION_GRACE_FLOOR_MS).toISOString(),
+    });
+
+    const nextMs = snapshot.nextEvaluationAt.getTime() - now;
+    assert.equal(snapshot.monitorPriority, 'low');
+    assert.equal(snapshot.eligibleForMonitoring, true);
+    assert.ok(nextMs >= 15000 && nextMs <= 18050, `expected low-near cadence, got ${nextMs}ms`);
+  });
+
   it('keeps only high and manual tokens during cooldown', () => {
     const ordered = catalogWorker.__private.prioritizeTokensForThrottle([
       { address: 'A', source: 'dexscreener-discovery', monitor_priority: 'normal', last_mcap: 60000, next_evaluation_at: '2026-03-25T12:00:00.000Z' },

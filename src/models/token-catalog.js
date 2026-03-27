@@ -12,6 +12,12 @@ function toNullableText(value, maxLength = 256) {
   return normalizeText(value, maxLength);
 }
 
+function toDateOrNull(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
 async function upsertToken(token) {
   await adminBlockedToken.ensureTable();
   const address = String(token.address || '').trim();
@@ -34,6 +40,9 @@ async function upsertToken(token) {
   const lastPriceChange6h = Number.isFinite(Number(token.priceChange6h)) ? Number(token.priceChange6h) : null;
   const lastPriceChange24h = Number.isFinite(Number(token.priceChange24h)) ? Number(token.priceChange24h) : null;
   const lastTokenCreatedAtMs = Number.isFinite(Number(token.tokenCreatedAt)) ? Math.trunc(Number(token.tokenCreatedAt)) : null;
+  const migrationGraceUntil = source === 'pumpfun-migrated'
+    ? toDateOrNull(token.migrationGraceUntil) || new Date(Date.now() + (10 * 60 * 1000))
+    : null;
 
   const { rows } = await db.query(
     `INSERT INTO token_catalog (
@@ -41,16 +50,16 @@ async function upsertToken(token) {
        last_mcap, last_price, last_pair_address, last_pair_url,
        last_image_url, last_twitter_url,
        last_price_change_1h, last_price_change_6h, last_price_change_24h,
-       last_token_created_at_ms,
+       last_token_created_at_ms, migration_grace_until,
        is_active_monitor_candidate
      )
      VALUES (
        $1, $2, $3, $4, $5,
-       $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+       $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
        CASE
-         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $17)
+         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $18)
            THEN FALSE
-         ELSE $16
+         ELSE $17
        END
      )
      ON CONFLICT (address) DO UPDATE SET
@@ -69,10 +78,24 @@ async function upsertToken(token) {
        last_price_change_6h = COALESCE(EXCLUDED.last_price_change_6h, token_catalog.last_price_change_6h),
        last_price_change_24h = COALESCE(EXCLUDED.last_price_change_24h, token_catalog.last_price_change_24h),
        last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
+       migration_grace_until = CASE
+         WHEN EXCLUDED.source = 'pumpfun-migrated' THEN
+           CASE
+             WHEN token_catalog.migration_grace_until IS NULL OR token_catalog.migration_grace_until < NOW()
+               THEN EXCLUDED.migration_grace_until
+             ELSE token_catalog.migration_grace_until
+           END
+         ELSE token_catalog.migration_grace_until
+       END,
        is_active_monitor_candidate = CASE
          WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = token_catalog.address)
            THEN FALSE
          ELSE EXCLUDED.is_active_monitor_candidate
+       END,
+       next_evaluation_at = CASE
+         WHEN EXCLUDED.source = 'pumpfun-migrated'
+           THEN LEAST(token_catalog.next_evaluation_at, NOW())
+         ELSE token_catalog.next_evaluation_at
        END,
        metadata_updated_at = NOW()
      RETURNING *`,
@@ -92,6 +115,7 @@ async function upsertToken(token) {
       lastPriceChange6h,
       lastPriceChange24h,
       lastTokenCreatedAtMs,
+      migrationGraceUntil,
       isActiveMonitorCandidate,
       address,
     ]

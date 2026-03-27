@@ -35,6 +35,7 @@ const THROTTLE_LIST_LIMIT_CAP = 2500;
 const LOW_NEAR_JITTER_MS = 3 * 1000;
 const LOW_DUST_JITTER_MS = 60 * 1000;
 const DORMANT_JITTER_MS = 2 * 60 * 1000;
+const MIGRATION_GRACE_FLOOR_MS = 10 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -142,7 +143,26 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
-function derivePrioritySnapshot(bestPair) {
+function getGraceUntilMs(value) {
+  if (!value) return 0;
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.getTime() : 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isMigrationGraceActive(token, now = Date.now()) {
+  if (!token) return false;
+  return getGraceUntilMs(token.migration_grace_until) > now;
+}
+
+function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) {
+  return marketCap > 0 && marketCap < 15000 && isMigrationGraceActive(token, now);
+}
+
+function derivePrioritySnapshot(bestPair, token = null) {
   const marketCap = Number(bestPair?.marketCap || bestPair?.fdv || 0);
   const vol5m = toNumber(bestPair?.volume?.m5);
   const vol1h = toNumber(bestPair?.volume?.h1);
@@ -151,6 +171,7 @@ function derivePrioritySnapshot(bestPair) {
   const pchange1h = toNumber(bestPair?.priceChange?.h1);
   const pchange6h = toNumber(bestPair?.priceChange?.h6);
   const pchange24h = toNumber(bestPair?.priceChange?.h24);
+  const now = Date.now();
 
   if (!(marketCap > 0)) {
     return {
@@ -171,7 +192,7 @@ function derivePrioritySnapshot(bestPair) {
   }
 
   if (marketCap < 30000) {
-    const nextLowMs = marketCap >= 15000
+    const nextLowMs = marketCap >= 15000 || isLowDustProtectedByMigrationGrace(token, marketCap, now)
       ? addPriorityJitter(LOW_NEAR_RECHECK_MS, LOW_NEAR_JITTER_MS)
       : addPriorityJitter(LOW_DUST_RECHECK_MS, LOW_DUST_JITTER_MS);
 
@@ -185,7 +206,7 @@ function derivePrioritySnapshot(bestPair) {
       pchange6h,
       pchange24h,
       monitorPriority: 'low',
-      nextEvaluationAt: new Date(Date.now() + nextLowMs),
+      nextEvaluationAt: new Date(now + nextLowMs),
       eligibleForMonitoring: true,
       eligibilityState: 'dex-low',
       suppressedReason: null,
@@ -264,6 +285,7 @@ function shouldFastRetryManualBootstrap(token) {
 function getRateLimitedRetryMs(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const priority = String(token?.monitor_priority || '').trim().toLowerCase();
+  const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
   if (shouldFastRetryManualBootstrap(token)) {
     return RATE_LIMIT_MANUAL_RECHECK_MS;
@@ -277,7 +299,7 @@ function getRateLimitedRetryMs(token) {
     return RATE_LIMIT_NORMAL_RECHECK_MS;
   }
 
-  if (marketCap >= 15000) {
+  if (marketCap >= 15000 || lowDustProtected) {
     return RATE_LIMIT_LOW_NEAR_RECHECK_MS;
   }
 
@@ -306,11 +328,12 @@ function getThrottleTokenBucket(token) {
   const source = String(token?.source || '').trim().toLowerCase();
   const priority = String(token?.monitor_priority || '').trim().toLowerCase();
   const marketCap = Number(token?.last_mcap || 0);
+  const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
   if (source === 'user-manual') return 'manual';
   if (priority === 'high' || marketCap >= 100000) return 'high';
   if (priority === 'normal' || marketCap >= 30000) return 'normal';
-  if (marketCap >= 15000) return 'low-near';
+  if (marketCap >= 15000 || lowDustProtected) return 'low-near';
   if (marketCap > 0) return 'low-dust';
   return 'other';
 }
@@ -418,7 +441,7 @@ async function evaluateTokenWithData(token, data) {
     });
   }
 
-  const snapshot = derivePrioritySnapshot(bestPair);
+  const snapshot = derivePrioritySnapshot(bestPair, token);
   const marketCap = snapshot.marketCap;
   const isEligible = snapshot.eligibleForMonitoring;
 
@@ -471,6 +494,7 @@ function getDexPriorityHint(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const priority = String(token?.monitor_priority || '').trim().toLowerCase();
   const vol6h = Number(token?.last_vol_6h || 0);
+  const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
   if (priority === 'high' || marketCap >= 100000) {
     if (vol6h < 15000) return 'high-cold';
@@ -482,7 +506,7 @@ function getDexPriorityHint(token) {
     return 'normal';
   }
 
-  if (marketCap >= 15000) {
+  if (marketCap >= 15000 || lowDustProtected) {
     return 'low-near';
   }
 
@@ -620,10 +644,16 @@ module.exports = {
   __private: {
     addPriorityJitter,
     computeNextDelayMs,
+    derivePrioritySnapshot,
     getDexUnavailableRetryMs,
+    getDexPriorityHint,
+    getGraceUntilMs,
+    isLowDustProtectedByMigrationGrace,
+    isMigrationGraceActive,
     getRateLimitedRetryMs,
     getThrottleTokenBucket,
     getThrottleTokenRank,
+    MIGRATION_GRACE_FLOOR_MS,
     isTokenAllowedByThrottle,
     normalizeDelayMs,
     prioritizeTokensForThrottle,
