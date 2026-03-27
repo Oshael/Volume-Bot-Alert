@@ -38,6 +38,17 @@ function getQueryToken(actionUrl) {
   return token;
 }
 
+function getCookieAttribute(cookieValue, attributeName) {
+  const prefix = `${String(attributeName || '').trim().toLowerCase()}=`;
+  for (const part of String(cookieValue || '').split(';')) {
+    const trimmed = part.trim();
+    if (trimmed.toLowerCase().startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return null;
+}
+
 async function verifyEmailFromRegisterResponse(registerResponse) {
   assert.equal(registerResponse.status, 201);
   assert.equal(registerResponse.body.emailVerificationRequired, true);
@@ -90,6 +101,7 @@ describe('Volume Alert Server auth flow', () => {
     process.env.NODE_ENV = 'test';
     process.env.PORT = '3099';
     process.env.TEST_PORT = '3099';
+    process.env.AUTH_SESSION_EXPIRES_IN = '365d';
     process.env.AUTH_RATE_LIMIT_MAX_REQUESTS = '50';
     process.env.EMAIL_ENABLED = 'true';
     process.env.EMAIL_PROVIDER = 'local';
@@ -271,6 +283,24 @@ describe('Volume Alert Server auth flow', () => {
       const auth = await completeLogin('admin@test.com', 'adminpass123');
       assert.equal(auth.loginResponse.body.token, undefined);
       adminToken = auth.token;
+    });
+
+    it('issues a persistent auth cookie on completed login', async () => {
+      const auth = await completeLogin('admin@test.com', 'adminpass123');
+      const setCookie = auth.verifyResponse.headers['set-cookie'];
+      assert.ok(Array.isArray(setCookie) && setCookie.length > 0, 'expected auth cookie');
+      const authCookie = setCookie.find((value) => value.startsWith('volume_alert_session='));
+      assert.ok(authCookie, 'expected volume_alert_session cookie');
+
+      const expiresValue = getCookieAttribute(authCookie, 'Expires');
+      assert.ok(expiresValue, 'expected persistent Expires attribute');
+
+      const expiresAt = new Date(expiresValue);
+      assert.ok(Number.isFinite(expiresAt.getTime()), 'expected valid cookie expiry date');
+      assert.ok(
+        expiresAt.getTime() - Date.now() > (300 * 24 * 60 * 60 * 1000),
+        `expected long-lived cookie, got expiry ${expiresAt.toISOString()}`
+      );
     });
 
     it('fails with wrong password', async () => {
