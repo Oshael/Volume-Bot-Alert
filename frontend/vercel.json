@@ -1,0 +1,28 @@
+{
+  "rewrites": [
+    {
+      "source": "/alerts",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/alerts/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/monitor",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/monitor/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/workspace/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}
