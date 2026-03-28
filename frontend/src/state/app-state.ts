@@ -189,6 +189,7 @@ export interface PumpToastEntry {
 }
 
 export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'pumpfun';
+export type WorkspaceView = 'live' | 'history';
 
 export type StatusMode = 'stopped' | 'active' | 'syncing';
 
@@ -308,6 +309,7 @@ export interface AppState {
     soundEnabled: boolean;
     soundVolume: number;
     collapsed: Record<CollapsibleSectionKey, boolean>;
+    workspace: WorkspaceView;
   };
 }
 
@@ -420,6 +422,7 @@ export function createAppState(): AppState {
         lateralized: false,
         pumpfun: false,
       },
+      workspace: 'live',
     },
   };
 }

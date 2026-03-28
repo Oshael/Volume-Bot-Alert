@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -28,7 +28,7 @@ import {
   type ConfigPayload,
   type UiPrefsPayload,
 } from '../services/api/config';
-import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -95,7 +95,52 @@ const LATERALIZED_PANEL_LIMIT = 24;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
+const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
+const HISTORY_SYNC_HEARTBEAT_MS = 2000;
+const HISTORY_SYNC_PEER_TTL_MS = 6000;
 
+type HistorySyncPresenceMessage = {
+  type: 'presence';
+  tabId: string;
+  workspace: WorkspaceView;
+  authenticated: boolean;
+  monitoringActive: boolean;
+  ts: number;
+};
+
+type HistorySyncClosingMessage = {
+  type: 'closing';
+  tabId: string;
+  ts: number;
+};
+
+type HistorySyncMonitoredSnapshotMessage = {
+  type: 'monitored-snapshot';
+  tabId: string;
+  generatedAt: string | null;
+  tokens: DashboardMonitoredToken[];
+  ts: number;
+};
+
+type HistorySyncLateralizedSnapshotMessage = {
+  type: 'lateralized-snapshot';
+  tabId: string;
+  payload: LateralizedPayload;
+  ts: number;
+};
+
+type HistorySyncMessage =
+  | HistorySyncPresenceMessage
+  | HistorySyncClosingMessage
+  | HistorySyncMonitoredSnapshotMessage
+  | HistorySyncLateralizedSnapshotMessage;
+
+type HistoryPeerState = {
+  workspace: WorkspaceView;
+  authenticated: boolean;
+  monitoringActive: boolean;
+  seenAt: number;
+};
 export interface AppController {
   state: AppState;
   init(): Promise<void>;
@@ -150,6 +195,8 @@ export interface AppController {
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
   toggleStarredToken(address: string): Promise<void>;
+  setWorkspace(workspace: WorkspaceView): void;
+  syncWorkspaceFromLocation(): void;
   startMonitoring(): void;
   stopMonitoring(): void;
   clearNotice(): void;
@@ -171,8 +218,36 @@ export type AppRenderRegion =
   | 'alerts'
   | 'overlay';
 
+function isAuthRoutePath(pathname: string) {
+  return pathname === '/auth/verify-email' || pathname === '/auth/reset-password';
+}
+
+function normalizeWorkspace(value: string | null | undefined): WorkspaceView {
+  return value === 'history' ? 'history' : 'live';
+}
+
+function getWorkspacePath(workspace: WorkspaceView) {
+  return workspace === 'history' ? '/monitor' : '/alerts';
+}
+
+function resolveWorkspaceFromPath(pathname: string | null | undefined): WorkspaceView {
+  const value = String(pathname || '').trim().toLowerCase();
+  if (
+    value === '/monitor'
+    || value.startsWith('/monitor/')
+    || value === '/workspace/history'
+    || value.startsWith('/workspace/history/')
+  ) {
+    return 'history';
+  }
+  return 'live';
+}
+
 export function createAppController(): AppController {
   const state = createAppState();
+  if (typeof window !== 'undefined' && !isAuthRoutePath(window.location.pathname || '/')) {
+    state.ui.workspace = resolveWorkspaceFromPath(window.location.pathname);
+  }
   clearLegacyAuthToken();
   const listeners = new Set<(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) => void>();
   hydrateSoundSettings();
@@ -192,6 +267,15 @@ export function createAppController(): AppController {
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
+  let suppressSocketStatusNoticeUntil = 0;
+  const historySyncTabId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `history-tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let historySyncChannel: BroadcastChannel | null = null;
+  let historySyncHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let historySyncLifecycleBound = false;
+  let historySyncLeaderTabId: string | null = null;
+  const historySyncPeers = new Map<string, HistoryPeerState>();
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
   const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
   const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
@@ -235,6 +319,63 @@ export function createAppController(): AppController {
     return value;
   }
 
+  function isLiveWorkspace() {
+    return state.ui.workspace === 'live';
+  }
+
+  function isHistoryWorkspace() {
+    return state.ui.workspace === 'history';
+  }
+
+  function shouldRunFrontendAlerts() {
+    return isLiveWorkspace();
+  }
+
+  function shouldRunPumpfunRuntime() {
+    return isLiveWorkspace();
+  }
+
+  function shouldRunLateralizedRuntime() {
+    return isHistoryWorkspace();
+  }
+
+  function isAuthenticatedSession() {
+    return state.session.status === 'authenticated';
+  }
+
+  function isActiveHistorySyncCandidate() {
+    return isAuthenticatedSession()
+      && isHistoryWorkspace()
+      && state.runtime.mode === 'active';
+  }
+
+  function shouldUseHistorySyncChannel() {
+    return typeof BroadcastChannel !== 'undefined';
+  }
+
+  function isHistorySyncLeader() {
+    if (!isHistoryWorkspace()) {
+      return true;
+    }
+    if (!shouldUseHistorySyncChannel()) {
+      return true;
+    }
+    return historySyncLeaderTabId === null || historySyncLeaderTabId === historySyncTabId;
+  }
+
+  function shouldRunLocalMonitoringPolling() {
+    if (state.runtime.mode !== 'active') {
+      return false;
+    }
+    if (isLiveWorkspace()) {
+      return true;
+    }
+    if (isHistoryWorkspace()) {
+      return isHistorySyncLeader();
+    }
+    return true;
+  }
+
   function hasCriticalColdFieldGap(token: ManualTokenEntry | undefined) {
     if (!token) {
       return true;
@@ -276,6 +417,103 @@ export function createAppController(): AppController {
     }
 
     return true;
+  }
+
+  function ensureHistorySyncChannel() {
+    if (historySyncChannel || !shouldUseHistorySyncChannel() || typeof window === 'undefined') {
+      return;
+    }
+
+    historySyncChannel = new BroadcastChannel(HISTORY_SYNC_CHANNEL_NAME);
+    historySyncChannel.addEventListener('message', (event: MessageEvent<HistorySyncMessage>) => {
+      handleHistorySyncMessage(event.data);
+    });
+
+    if (!historySyncLifecycleBound) {
+      historySyncLifecycleBound = true;
+      window.addEventListener('pagehide', () => {
+        postHistorySyncMessage({
+          type: 'closing',
+          tabId: historySyncTabId,
+          ts: Date.now(),
+        });
+        historySyncChannel?.close();
+        historySyncChannel = null;
+      });
+    }
+  }
+
+  function postHistorySyncMessage(message: HistorySyncMessage) {
+    ensureHistorySyncChannel();
+    historySyncChannel?.postMessage(message);
+  }
+
+  function pruneHistorySyncPeers(now = Date.now()) {
+    for (const [tabId, peer] of historySyncPeers) {
+      if ((now - peer.seenAt) > HISTORY_SYNC_PEER_TTL_MS) {
+        historySyncPeers.delete(tabId);
+      }
+    }
+  }
+
+  function recomputeHistorySyncLeader(options?: { runImmediatelyOnGain?: boolean }) {
+    const previousLeader = historySyncLeaderTabId;
+    pruneHistorySyncPeers();
+
+    const candidates = [historySyncTabId]
+      .filter(() => isActiveHistorySyncCandidate());
+
+    for (const [tabId, peer] of historySyncPeers) {
+      if (peer.authenticated && peer.monitoringActive && peer.workspace === 'history') {
+        candidates.push(tabId);
+      }
+    }
+
+    historySyncLeaderTabId = candidates.length > 0
+      ? candidates.sort((a, b) => a.localeCompare(b))[0] || null
+      : null;
+
+    if (state.runtime.mode === 'active' && isHistoryWorkspace() && previousLeader !== historySyncLeaderTabId) {
+      syncMonitoringPolling({ runImmediately: Boolean(options?.runImmediatelyOnGain) && historySyncLeaderTabId === historySyncTabId });
+    }
+  }
+
+  function broadcastHistoryPresence() {
+    if (!shouldUseHistorySyncChannel()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'presence',
+      tabId: historySyncTabId,
+      workspace: state.ui.workspace,
+      authenticated: isAuthenticatedSession(),
+      monitoringActive: state.runtime.mode === 'active',
+      ts: Date.now(),
+    });
+  }
+
+  function startHistorySyncHeartbeat() {
+    if (!shouldUseHistorySyncChannel() || historySyncHeartbeatTimer) {
+      return;
+    }
+
+    ensureHistorySyncChannel();
+    historySyncHeartbeatTimer = setInterval(() => {
+      broadcastHistoryPresence();
+      recomputeHistorySyncLeader();
+    }, HISTORY_SYNC_HEARTBEAT_MS);
+  }
+
+  function syncHistorySyncState(options?: { runImmediatelyOnGain?: boolean }) {
+    if (!shouldUseHistorySyncChannel()) {
+      return;
+    }
+
+    ensureHistorySyncChannel();
+    startHistorySyncHeartbeat();
+    broadcastHistoryPresence();
+    recomputeHistorySyncLeader(options);
   }
 
   function flushEmit() {
@@ -359,6 +597,63 @@ export function createAppController(): AppController {
     if (pathname === '/auth/verify-email' || pathname === '/auth/reset-password' || search.has('mode') || search.has('token')) {
       window.history.replaceState({}, document.title, '/');
     }
+  }
+
+  function emitWorkspaceChange() {
+    emit('all');
+  }
+
+  function syncWorkspaceFromLocationInternal(options?: { canonicalize?: boolean }) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const pathname = window.location.pathname || '/';
+    if (isAuthRoutePath(pathname)) {
+      return;
+    }
+
+    const nextWorkspace = resolveWorkspaceFromPath(pathname);
+    const changed = state.ui.workspace !== nextWorkspace;
+    state.ui.workspace = nextWorkspace;
+
+    if (options?.canonicalize) {
+      const canonicalPath = getWorkspacePath(nextWorkspace);
+      if (pathname !== canonicalPath) {
+        window.history.replaceState({}, document.title, canonicalPath);
+      }
+    }
+
+    syncWorkspaceCapabilities();
+    if (changed) {
+      refreshWorkspaceSnapshot();
+    }
+
+    if (changed) {
+      emitWorkspaceChange();
+    }
+  }
+
+  function navigateToWorkspace(workspace: WorkspaceView) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextWorkspace = normalizeWorkspace(workspace);
+    const nextPath = getWorkspacePath(nextWorkspace);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, document.title, nextPath);
+    }
+
+    if (state.ui.workspace !== nextWorkspace) {
+      state.ui.workspace = nextWorkspace;
+      syncWorkspaceCapabilities();
+      refreshWorkspaceSnapshot();
+      emitWorkspaceChange();
+      return;
+    }
+
+    syncWorkspaceCapabilities();
   }
 
   function normalizeAuthError(error: unknown, mode: 'login' | 'restore') {
@@ -782,6 +1077,17 @@ export function createAppController(): AppController {
     refreshMonitoredPanelCounts();
     refreshPumpPanelCounts();
     persistBarStorage();
+  }
+
+  function clearPumpWorkspaceState() {
+    state.pumpfun.connected = false;
+    state.pumpfun.statusLabel = 'disconnected';
+    state.pumpfun.solPriceUsd = null;
+    state.pumpfun.migrationCount = 0;
+    state.data.pumpTokens = [];
+    state.data.recentPumpMigrations = [];
+    state.data.pumpToasts = [];
+    refreshPumpPanelCounts();
   }
 
   function isVisibleMonitoredToken(item: ManualTokenEntry) {
@@ -1552,7 +1858,32 @@ export function createAppController(): AppController {
     state.runtime.lateralizedFreshnessLabel = formatFreshnessLabel(timestamp);
   }
 
+  function startPumpGcTimer() {
+    if (pumpGcInterval || !shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
+      return;
+    }
+
+    pumpGcInterval = setInterval(() => {
+      runPumpGarbageCollection();
+      emit('pumpfun', 'toasts', 'legacy', 'overlay');
+    }, PUMP_GC_INTERVAL_MS);
+  }
+
+  function stopPumpGcTimer() {
+    if (pumpGcInterval) {
+      clearInterval(pumpGcInterval);
+      pumpGcInterval = null;
+    }
+  }
+
   async function refreshLateralizedTokens(options?: { force?: boolean }) {
+    if (!shouldRunLateralizedRuntime()) {
+      state.data.lateralizedTokens = [];
+      state.panels.lateralized = 0;
+      updateLateralizedFreshness(null);
+      return;
+    }
+
     const token = state.session.token;
     if (!token || lateralizedRefreshInFlight) {
       return;
@@ -1566,35 +1897,10 @@ export function createAppController(): AppController {
     lateralizedRefreshInFlight = true;
     try {
       const payload = await fetchLateralizedCandidates(token, { limit: LATERALIZED_PANEL_LIMIT });
-      state.data.lateralizedTokens = (payload.candidates || []).map((item) => ({
-        address: item.address,
-        symbol: item.symbol ?? null,
-        name: item.name ?? null,
-        monitorPriority: item.monitorPriority ?? null,
-        mcap: item.mcap ?? null,
-        catalogMcap: item.catalogMcap ?? null,
-        windowMcap: item.windowMcap ?? null,
-        volume1h: item.volume1h ?? null,
-        volume6h: item.volume6h ?? null,
-        volume24h: item.volume24h ?? null,
-        rangePct: item.rangePct ?? null,
-        rangeLimitPct: item.rangeLimitPct ?? null,
-        driftPct: item.driftPct ?? null,
-        driftLimitPct: item.driftLimitPct ?? null,
-        coverageRatio: item.coverageRatio ?? null,
-        bucketCount: item.bucketCount ?? 0,
-        sampleCount: item.sampleCount ?? 0,
-        expectedBucketCount: item.expectedBucketCount ?? 0,
-        ageHours: item.ageHours ?? null,
-        currentPositionPct: item.currentPositionPct ?? null,
-        requestedHours: item.requestedHours ?? undefined,
-        minimumWindowHours: item.minimumWindowHours ?? 0,
-        windowHoursUsed: item.windowHoursUsed ?? 0,
-        score: item.score ?? null,
-      }));
-      updateLateralizedFreshness(payload.generatedAt ?? null);
-      state.panels.lateralized = state.data.lateralizedTokens.length;
-      emit('lateralized');
+      applyLateralizedPayload(payload);
+      if (isHistoryWorkspace() && isHistorySyncLeader()) {
+        broadcastHistoryLateralizedSnapshot(payload);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (
@@ -2091,7 +2397,7 @@ export function createAppController(): AppController {
     state.data.oldWeekTokenAddresses = [];
     state.bars.manual = state.data.manualTokenAddresses.length;
     deriveAgeBuckets();
-    if (state.runtime.mode === 'active' && alertCandidates.size > 0) {
+    if (state.runtime.mode === 'active' && shouldRunFrontendAlerts() && alertCandidates.size > 0) {
       for (const token of getMonitoredTokens(state)) {
         if (!alertCandidates.has(token.address)) continue;
         maybeFireSpecialAlerts(token);
@@ -2099,6 +2405,106 @@ export function createAppController(): AppController {
       }
     }
     refreshMonitoredPanelCounts();
+  }
+
+  function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
+    applyMonitoredDashboard(tokens, undefined, generatedAt ?? null);
+    emit('recent', 'old-week', 'header');
+  }
+
+  function applyLateralizedPayload(payload: LateralizedPayload) {
+    state.data.lateralizedTokens = (payload.candidates || []).map((item) => ({
+      address: item.address,
+      symbol: item.symbol ?? null,
+      name: item.name ?? null,
+      monitorPriority: item.monitorPriority ?? null,
+      mcap: item.mcap ?? null,
+      catalogMcap: item.catalogMcap ?? null,
+      windowMcap: item.windowMcap ?? null,
+      volume1h: item.volume1h ?? null,
+      volume6h: item.volume6h ?? null,
+      volume24h: item.volume24h ?? null,
+      rangePct: item.rangePct ?? null,
+      rangeLimitPct: item.rangeLimitPct ?? null,
+      driftPct: item.driftPct ?? null,
+      driftLimitPct: item.driftLimitPct ?? null,
+      coverageRatio: item.coverageRatio ?? null,
+      bucketCount: item.bucketCount ?? 0,
+      sampleCount: item.sampleCount ?? 0,
+      expectedBucketCount: item.expectedBucketCount ?? 0,
+      ageHours: item.ageHours ?? null,
+      currentPositionPct: item.currentPositionPct ?? null,
+      requestedHours: item.requestedHours ?? undefined,
+      minimumWindowHours: item.minimumWindowHours ?? 0,
+      windowHoursUsed: item.windowHoursUsed ?? 0,
+      score: item.score ?? null,
+    }));
+    updateLateralizedFreshness(payload.generatedAt ?? null);
+    state.panels.lateralized = state.data.lateralizedTokens.length;
+    emit('lateralized');
+  }
+
+  function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
+    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'monitored-snapshot',
+      tabId: historySyncTabId,
+      generatedAt: generatedAt ?? null,
+      tokens,
+      ts: Date.now(),
+    });
+  }
+
+  function broadcastHistoryLateralizedSnapshot(payload: LateralizedPayload) {
+    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'lateralized-snapshot',
+      tabId: historySyncTabId,
+      payload,
+      ts: Date.now(),
+    });
+  }
+
+  function handleHistorySyncMessage(message: HistorySyncMessage | undefined) {
+    if (!message || message.tabId === historySyncTabId) {
+      return;
+    }
+
+    if (message.type === 'presence') {
+      historySyncPeers.set(message.tabId, {
+        workspace: normalizeWorkspace(message.workspace),
+        authenticated: Boolean(message.authenticated),
+        monitoringActive: Boolean(message.monitoringActive),
+        seenAt: Number(message.ts) || Date.now(),
+      });
+      recomputeHistorySyncLeader({ runImmediatelyOnGain: true });
+      return;
+    }
+
+    if (message.type === 'closing') {
+      historySyncPeers.delete(message.tabId);
+      recomputeHistorySyncLeader({ runImmediatelyOnGain: true });
+      return;
+    }
+
+    if (!isActiveHistorySyncCandidate() || isHistorySyncLeader()) {
+      return;
+    }
+
+    if (message.type === 'monitored-snapshot') {
+      applyHistoryMonitoredSnapshot(message.tokens || [], message.generatedAt ?? null);
+      return;
+    }
+
+    if (message.type === 'lateralized-snapshot') {
+      applyLateralizedPayload(message.payload);
+    }
   }
 
   async function refreshMonitoredDashboard() {
@@ -2111,7 +2517,16 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
-      emit('monitored', 'manual', 'recent', 'old-week', 'alerts', 'lateralized');
+      if (isHistoryWorkspace() && isHistorySyncLeader()) {
+        broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
+      }
+      if (isLiveWorkspace()) {
+        emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
+      } else if (isHistoryWorkspace()) {
+        emit('recent', 'old-week', 'lateralized', 'header');
+      } else {
+        emit('recent', 'old-week', 'header');
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to refresh monitored dashboard');
       emit('legacy', 'overlay');
@@ -2127,21 +2542,49 @@ export function createAppController(): AppController {
     computeUptimeLabel();
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
     void refreshMonitoredDashboard();
-    void refreshLateralizedTokens();
-    emit('header', 'recent');
+    if (shouldRunLateralizedRuntime()) {
+      void refreshLateralizedTokens();
+      emit('header', 'recent', 'old-week', 'lateralized');
+      return;
+    }
+    if (isLiveWorkspace()) {
+      emit('header', 'recent');
+      return;
+    }
+    emit('header', 'recent', 'old-week');
+  }
+
+  function syncMonitoringPolling(options?: { runImmediately?: boolean }) {
+    const shouldRun = shouldRunLocalMonitoringPolling();
+    if (!shouldRun) {
+      if (monitoringInterval) {
+        clearInterval(monitoringInterval);
+        monitoringInterval = null;
+      }
+      return;
+    }
+
+    if (monitoringInterval) {
+      if (options?.runImmediately) {
+        runMonitoringCycle();
+      }
+      return;
+    }
+
+    if (options?.runImmediately) {
+      runMonitoringCycle();
+    }
+    monitoringInterval = setInterval(runMonitoringCycle, MONITORED_REFRESH_INTERVAL_MS);
   }
 
   function startMonitoringTimers() {
-    if (monitoringInterval) return;
+    if (state.runtime.mode === 'active') return;
     state.runtime.mode = 'active';
     startedAt = Date.now();
     computeUptimeLabel();
-    runMonitoringCycle();
-    monitoringInterval = setInterval(runMonitoringCycle, MONITORED_REFRESH_INTERVAL_MS);
-    pumpGcInterval = setInterval(() => {
-      runPumpGarbageCollection();
-      emit('pumpfun', 'toasts', 'legacy', 'overlay');
-    }, PUMP_GC_INTERVAL_MS);
+    syncHistorySyncState({ runImmediatelyOnGain: true });
+    syncMonitoringPolling({ runImmediately: true });
+    startPumpGcTimer();
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
       emit('header');
@@ -2151,19 +2594,22 @@ export function createAppController(): AppController {
   function stopMonitoringTimers() {
     if (monitoringInterval) clearInterval(monitoringInterval);
     if (uptimeInterval) clearInterval(uptimeInterval);
-    if (pumpGcInterval) clearInterval(pumpGcInterval);
+    stopPumpGcTimer();
     monitoringInterval = null;
     uptimeInterval = null;
-    pumpGcInterval = null;
     startedAt = null;
     state.runtime.mode = 'stopped';
     state.runtime.uptimeLabel = '0m';
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
+    syncHistorySyncState();
   }
 
   function connectRealtime() {
     bindSocketLifecycle({
       onStatus(message) {
+        if (Date.now() < suppressSocketStatusNoticeUntil && message.startsWith('Socket disconnected:')) {
+          return;
+        }
         state.ui.notice = message;
         emit('legacy', 'overlay');
       },
@@ -2175,12 +2621,15 @@ export function createAppController(): AppController {
         emit('all');
       },
       onPumpStatus(payload) {
+        if (!shouldRunPumpfunRuntime()) {
+          return;
+        }
         state.pumpfun.connected = Boolean(payload.connected);
         state.pumpfun.statusLabel = state.pumpfun.connected ? 'connected' : 'disconnected';
         emit('pumpfun');
       },
       onSolPrice(payload) {
-        if (state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
           return;
         }
         const price = Number(payload.price);
@@ -2190,7 +2639,7 @@ export function createAppController(): AppController {
         emit('pumpfun');
       },
       onPumpNewToken(payload) {
-        if (state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
           return;
         }
         createOrUpdatePumpToken(payload, 'new');
@@ -2201,14 +2650,14 @@ export function createAppController(): AppController {
         emit('pumpfun');
       },
       onPumpTrade(payload) {
-        if (state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
           return;
         }
         createOrUpdatePumpToken(payload, 'trade');
         emit('pumpfun');
       },
       onPumpMigrate(payload) {
-        if (state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
           return;
         }
         const mint = String(payload.mint || '').trim();
@@ -2228,6 +2677,46 @@ export function createAppController(): AppController {
     });
   }
 
+  function syncWorkspaceCapabilities() {
+    if (state.session.status !== 'authenticated') {
+      syncHistorySyncState();
+      return;
+    }
+
+    if (shouldRunPumpfunRuntime()) {
+      connectRealtime();
+      startPumpGcTimer();
+    } else {
+      suppressSocketStatusNoticeUntil = Date.now() + 2000;
+      disconnectSocket();
+      stopPumpGcTimer();
+      clearPumpWorkspaceState();
+      emit('pumpfun', 'toasts', 'legacy', 'overlay');
+    }
+
+    if (!shouldRunLateralizedRuntime()) {
+      state.data.lateralizedTokens = [];
+      state.panels.lateralized = 0;
+      updateLateralizedFreshness(null);
+    } else {
+      void refreshLateralizedTokens({ force: true });
+    }
+
+    syncHistorySyncState({ runImmediatelyOnGain: true });
+    syncMonitoringPolling();
+  }
+
+  function refreshWorkspaceSnapshot() {
+    if (state.session.status !== 'authenticated') {
+      return;
+    }
+
+    void refreshMonitoredDashboard();
+    if (shouldRunLateralizedRuntime()) {
+      void refreshLateralizedTokens({ force: true });
+    }
+  }
+
   function applySession(user: SessionUser) {
     state.session.status = 'authenticated';
     state.session.token = COOKIE_SESSION_MARKER;
@@ -2238,7 +2727,8 @@ export function createAppController(): AppController {
     state.session.emailVerifiedAt = user.emailVerifiedAt ?? null;
     hydrateBarStorage();
     hydrateSoundSettings();
-    connectRealtime();
+    syncWorkspaceCapabilities();
+    syncHistorySyncState({ runImmediatelyOnGain: true });
   }
 
   function clearSession() {
@@ -2330,6 +2820,9 @@ export function createAppController(): AppController {
     }
     hydrateSoundSettings();
     state.ui.collapsed = getDefaultCollapsedSections();
+    historySyncPeers.clear();
+    historySyncLeaderTabId = null;
+    syncHistorySyncState();
   }
 
   function applyMonitoredDashboard(
@@ -2405,8 +2898,14 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
-      void refreshLateralizedTokens({ force: true });
-      emit('monitored', 'manual', 'recent', 'old-week', 'alerts', 'lateralized');
+      if (isLiveWorkspace()) {
+        emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
+      } else if (isHistoryWorkspace()) {
+        void refreshLateralizedTokens({ force: true });
+        emit('recent', 'old-week', 'lateralized', 'header');
+      } else {
+        emit('recent', 'old-week', 'header');
+      }
     } catch (error) {
     }
   }
@@ -2738,13 +3237,19 @@ export function createAppController(): AppController {
       void persistUiConfigs({ 'sound-volume': Math.round(nextVolume * 100) });
       emit('overlay');
     },
+    setWorkspace(workspace: WorkspaceView) {
+      navigateToWorkspace(workspace);
+    },
+    syncWorkspaceFromLocation() {
+      syncWorkspaceFromLocationInternal();
+    },
     startMonitoring() {
       startMonitoringTimers();
-      emit('header', 'recent');
+      emit('header', 'recent', 'old-week');
     },
     stopMonitoring() {
       stopMonitoringTimers();
-      emit('header', 'recent');
+      emit('header', 'recent', 'old-week');
     },
     async init() {
       setBusy(true);
@@ -2775,6 +3280,9 @@ export function createAppController(): AppController {
       }
 
       await handleAuthRouteIntent();
+      syncWorkspaceFromLocationInternal({
+        canonicalize: state.session.status === 'authenticated',
+      });
     },
     async login(email: string, password: string) {
       if (authSubmitInFlight) {
@@ -2818,6 +3326,7 @@ export function createAppController(): AppController {
         const session = await fetchCurrentSession();
         applySession(session.user);
         await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+        syncWorkspaceFromLocationInternal({ canonicalize: true });
         state.ui.loginErrorCount = 0;
         setNotice(AUTH_NOTICE_LOGIN_SUCCESS);
       } catch (error) {
@@ -2883,6 +3392,7 @@ export function createAppController(): AppController {
         state.ui.authPanel = 'none';
         applySession(result.user);
         await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+        syncWorkspaceFromLocationInternal({ canonicalize: true });
         state.ui.loginErrorCount = 0;
         setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
       } catch (error) {

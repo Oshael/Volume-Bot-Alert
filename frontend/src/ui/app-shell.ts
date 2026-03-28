@@ -128,6 +128,9 @@ export function renderAppShell(
   const userMenuDraft = captureUserMenuDraft(root);
   const searchInputDraft = captureSearchInputDraft(root);
   const renderFrame = ensureAppRenderFrame(root);
+  const isLiveWorkspace = state.ui.workspace === 'live';
+  const isHistoryWorkspace = state.ui.workspace === 'history';
+  renderFrame.panels.dataset.workspace = state.ui.workspace;
 
   updateRegionSlot(renderFrame.headerSlot, 'header', dirtyRegions, getHeaderRenderKey(state), () => (
     state.session.status === 'authenticated'
@@ -135,22 +138,50 @@ export function renderAppShell(
       : []
   ));
 
-  updateRegionSlot(renderFrame.toastsSlot, 'toasts', dirtyRegions, getToastsRenderKey(state), () => [renderPumpToasts(state)]);
+  renderFrame.toastsSlot.hidden = !isLiveWorkspace;
+  if (isLiveWorkspace) {
+    updateRegionSlot(renderFrame.toastsSlot, 'toasts', dirtyRegions, getToastsRenderKey(state), () => [renderPumpToasts(state)]);
+  } else {
+    updateRenderSlot(renderFrame.toastsSlot, 'hidden', () => []);
+  }
   updateRegionSlot(renderFrame.legacySlot, 'legacy', dirtyRegions, getLegacyRenderKey(state), () => [renderLegacyShell(state, controller)]);
 
   if (state.session.status === 'authenticated') {
-    renderFrame.oldWeekSlot.hidden = false;
-    renderFrame.recentSlot.hidden = false;
-    renderFrame.manualSlot.hidden = false;
+    renderFrame.oldWeekSlot.hidden = !isHistoryWorkspace;
+    renderFrame.recentSlot.hidden = !isHistoryWorkspace;
+    renderFrame.manualSlot.hidden = !isLiveWorkspace;
     renderFrame.panels.hidden = false;
 
-    updateRegionSlot(renderFrame.oldWeekSlot, 'old-week', dirtyRegions, getOldWeekRenderKey(state), () => [renderOldWeekSection(state, controller)]);
-    updateRegionSlot(renderFrame.recentSlot, 'recent', dirtyRegions, getRecentRenderKey(state), () => [renderRecentSection(state, controller)]);
-    updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
-    updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
-    updateRegionSlot(renderFrame.lateralizedSlot, 'lateralized', dirtyRegions, getLateralizedRenderKey(state), () => [renderLateralizedSection(state, controller)]);
-    updateRegionSlot(renderFrame.pumpfunSlot, 'pumpfun', dirtyRegions, getPumpfunRenderKey(state), () => [renderPumpfunSection(state, controller)]);
-    updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
+    if (isHistoryWorkspace) {
+      updateRegionSlot(renderFrame.oldWeekSlot, 'old-week', dirtyRegions, getOldWeekRenderKey(state), () => [renderOldWeekSection(state, controller)]);
+      updateRegionSlot(renderFrame.recentSlot, 'recent', dirtyRegions, getRecentRenderKey(state), () => [renderRecentSection(state, controller)]);
+    } else {
+      updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
+      updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
+    }
+
+    if (isLiveWorkspace) {
+      updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
+      updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
+      updateRegionSlot(renderFrame.pumpfunSlot, 'pumpfun', dirtyRegions, getPumpfunRenderKey(state), () => [renderPumpfunSection(state, controller)]);
+      updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
+    } else {
+      updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
+      updateRenderSlot(renderFrame.monitoredSlot, 'hidden', () => []);
+      updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
+      updateRenderSlot(renderFrame.alertsSlot, 'hidden', () => []);
+    }
+
+    renderFrame.monitoredSlot.hidden = !isLiveWorkspace;
+    renderFrame.pumpfunSlot.hidden = !isLiveWorkspace;
+    renderFrame.alertsSlot.hidden = !isLiveWorkspace;
+    renderFrame.lateralizedSlot.hidden = !isHistoryWorkspace;
+
+    if (isHistoryWorkspace) {
+      updateRegionSlot(renderFrame.lateralizedSlot, 'lateralized', dirtyRegions, getLateralizedRenderKey(state), () => [renderLateralizedSection(state, controller)]);
+    } else {
+      updateRenderSlot(renderFrame.lateralizedSlot, 'hidden', () => []);
+    }
   } else {
     renderFrame.oldWeekSlot.hidden = true;
     renderFrame.recentSlot.hidden = true;
@@ -392,6 +423,7 @@ function getHeaderRenderKey(state: AppState) {
     state.session.username,
     state.session.email,
     state.runtime.mode,
+    state.ui.workspace,
   ]);
 }
 

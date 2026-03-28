@@ -166,6 +166,9 @@ export function renderLegacyShell(state: AppState, controller: AppController) {
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-topbar workspace-topbar';
+  const isLiveWorkspace = state.ui.workspace === 'live';
+  const isHistoryWorkspace = state.ui.workspace === 'history';
+  const workspaceCaption = isHistoryWorkspace ? 'Monitor Workspace' : 'Alerts Workspace';
   section.innerHTML = `
     <div class="workspace-topbar-inner">
       <div class="workspace-brand">
@@ -178,13 +181,17 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
           ${state.runtime.mode === 'active' ? '&#9632; Stop' : '&#9654; Start'}
         </button>
       </div>
+      <div class="workspace-route-nav" aria-label="Workspace navigation">
+        <button type="button" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</button>
+        <button type="button" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">MONITOR</button>
+      </div>
       <div class="workspace-userbar">
         <div class="legacy-user-menu workspace-user-menu" data-user-menu>
           <button type="button" class="workspace-user-trigger" data-action="toggle-user-menu" aria-label="Open user menu">
             <span class="workspace-user-avatar" data-role="user-avatar"></span>
             <span class="workspace-user-meta">
               <span class="workspace-user-name" data-role="user-menu-label"></span>
-              <span class="workspace-user-caption">Workspace</span>
+              <span class="workspace-user-caption">${workspaceCaption}</span>
             </span>
           </button>
           <div class="legacy-user-dropdown workspace-user-dropdown">
@@ -209,6 +216,12 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
       return;
     }
     controller.startMonitoring();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-workspace-live"]')?.addEventListener('click', () => {
+    controller.setWorkspace('live');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-workspace-history"]')?.addEventListener('click', () => {
+    controller.setWorkspace('history');
   });
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
   section.querySelector<HTMLButtonElement>('[data-action="open-bot-settings"]')?.addEventListener('pointerdown', (event) => {

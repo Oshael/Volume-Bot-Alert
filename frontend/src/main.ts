@@ -315,6 +315,10 @@ document.addEventListener('visibilitychange', () => {
   scheduleRestoreRender();
 });
 
+window.addEventListener('popstate', () => {
+  controller.syncWorkspaceFromLocation();
+});
+
 window.setInterval(() => {
   if (!latestState || isDocumentHidden) {
     return;
