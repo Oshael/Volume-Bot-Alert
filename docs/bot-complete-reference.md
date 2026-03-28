@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, low-dust cleanup recalibration, and lateralization precompute/frontend panel integration.
+Last reviewed against code on `2026-03-28` after the frontend render-pipeline refactor, the `/alerts` + `/monitor` workspace split, moving lateralization into `MONITOR`, and `BroadcastChannel` monitor-tab polling coordination.
 
 ## Test Environment And Database Safety
 
@@ -74,14 +74,16 @@ The bot is a Solana monitoring app with:
 - backend workers for discovery, catalog cleanup, catalog evaluation, minute-bucket market history, Meteora snapshots, and lateralization precompute
 - realtime PumpFun socket feed
 
-The UI is centered around:
-- `Monitored Tokens`
-- `Lateralization Coins`
-- `Manual Tokens`
-- `Recent Tokens`
-- `Old Tokens 1 Week+`
-- `PumpFun`
-- `Alerts`
+The UI is now centered around two authenticated workspaces:
+- `/alerts`
+  - `Monitored Tokens`
+  - `Manual Tokens`
+  - `PumpFun`
+  - `Alerts`
+- `/monitor`
+  - `Recent Tokens`
+  - `Old Tokens 1 Week+`
+  - `Lateralization Coins`
 
 The auth/account surface now also includes:
 - `Login`
@@ -132,12 +134,14 @@ Responsibilities:
 - session restore
 - config load
 - UI-pref load / sync
+- workspace routing / URL sync
 - monitored dashboard polling
 - monitored freshness label updates from backend payload timestamps
 - local token-state merge
 - alert decisions
 - routed-bar derivation
 - PumpFun UI state
+- monitor-tab `BroadcastChannel` coordination
 - manual token local persistence
 - auth modal state
 - auth form validation and focus recovery
@@ -232,6 +236,13 @@ Priority recheck timings:
 - `low-near` (`15k-30k`): `15s`
 - `low-dust` (`< 15k`): `10m`
 - `dormant`: `30m`
+
+Migrated-token grace:
+- `pumpfun-migrated` catalog rows now persist `migration_grace_until`
+- for the first `10m` after migration, the worker does not let those tokens fall into the `low-dust` cadence
+- if Dex sees a freshly migrated token below `15k` during that window, it still uses the `low-near` floor (`15s`)
+- if it moves into `30k+` or `100k+`, it follows the normal `normal` / `high-*` cadence immediately
+- after the grace expires, normal `<15k` / `15k-30k` / `30k+` rules apply again
 
 Throttle / outage handling:
 - Dex batch size remains `30`
@@ -460,6 +471,11 @@ Important:
 Endpoint:
 - `GET /api/dashboard/monitored`
 
+Workspace placement:
+- consumed by both `/alerts` and `/monitor`
+- `/alerts` uses it for monitored/manual/live-alert behavior
+- `/monitor` uses it for routed/history surfaces only
+
 ### Recent / Old Week bars
 - frontend-derived from monitored token state
 
@@ -470,9 +486,15 @@ Reasons:
 
 ### Alerts
 - frontend-owned behavior
+- only active in `/alerts`
 
 ### PumpFun live state
 - backend socket feed + frontend session state
+- only mounted in `/alerts`
+
+### Lateralization panel
+- backend-precomputed
+- mounted in `/monitor`
 
 ## Session Boot Flow
 
@@ -491,6 +513,55 @@ Important:
 - the user still needs to click `START MONITORING`
 - manual-token restore is intentionally independent of dashboard success; `GET /api/config` alone is sufficient to recover the per-user manual list
 - legacy frontend auth token storage was removed from the live session path
+- cookie-session expiry now defaults to `AUTH_SESSION_EXPIRES_IN || JWT_EXPIRES_IN || 30d`, so normal browser restarts preserve login until the session is revoked or expires
+- non-auth routes now canonicalize into the authenticated workspace URLs:
+  - `/alerts`
+  - `/monitor`
+
+## Workspace Split And Tab Coordination
+
+Files:
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/state/app-state.ts`
+- `frontend/src/ui/app-shell.ts`
+- `frontend/src/ui/sections/layout-sections.ts`
+
+High-level behavior:
+- `live` is still the internal state name for the `/alerts` workspace
+- `history` is still the internal state name for the `/monitor` workspace
+- the header exposes those workspaces as:
+  - `ALERTS`
+  - `MONITOR`
+
+`/alerts` responsibilities:
+- mounts:
+  - monitored
+  - manual
+  - PumpFun
+  - alerts
+- keeps frontend alert evaluation active
+- keeps PumpFun runtime active
+- does not mount `Recent`, `Old Week`, or `Lateralization`
+
+`/monitor` responsibilities:
+- mounts:
+  - `Recent Tokens`
+  - `Old Tokens 1 Week+`
+  - `Lateralization Coins`
+- still consumes live monitored dashboard state
+- does not run:
+  - frontend alerts
+  - PumpFun runtime
+  - PumpFun GC/toast behavior
+
+Multi-tab coordination:
+- `/monitor` tabs now coordinate with `BroadcastChannel`
+- one active `/monitor` tab becomes leader
+- only the leader continues the repeating polling loop for:
+  - `GET /api/dashboard/monitored`
+  - `GET /api/catalog/lateralized`
+- follower monitor tabs receive monitored/lateralized snapshots from the leader
+- this dedupe currently does **not** apply to `/alerts`, because alerts are still frontend-owned and per-tab
 
 ## Login / Account Surface
 
@@ -522,6 +593,7 @@ Login access rules:
 - login session/cookie is created only after OTP verification succeeds
 - login OTP is email-based and currently uses a `6`-digit code
 - login OTP supports resend
+- successful sessions are now long-lived by default rather than browser-session-only, while still remaining backend-revocable
 
 Current login UX features:
 - `TrendScope` branding with `Volume Bot Tracker`
@@ -740,8 +812,10 @@ Main behavior:
   - symbol
   - name
   - contract/address
+- the shared compact-search interaction now supports `Enter/Return` to blur/commit the current query
 - the `TOKENS` pill reflects the filtered monitored count
 - only the visible page of cards is rendered, but the full monitored set still stays in memory for alert logic and routed-bar derivation
+- this panel is mounted only in `/alerts`
 
 Current sorting:
 - `VOL`
@@ -781,6 +855,17 @@ Important:
 - this panel can now also be collapsed
   - collapse currently affects the UI/render surface only
   - monitored refresh and alert logic continue while collapsed
+- current card-link behavior:
+  - the white token symbol itself is now the Dex Screener link
+  - the action row contains the X-search button and, when present, the Dex-provided social/community X URL
+  - the X-search button searches `contract OR $ticker`
+  - the social/community button changes only by URL pattern:
+    - `👥` for `x.com/i/communities/...`
+    - `👤` otherwise
+- current `VOL 5M` card-delta behavior:
+  - the large `VOL 5M` number remains the live catalog `volume5m`
+  - the small delta below it now uses backend-provided `prevVolume5mCanonical`
+  - this is visual-only and does not change the monitored alert engine
 
 ## Lateralization Coins
 
@@ -796,7 +881,7 @@ Main behavior:
 - backend returns rows from the latest completed persisted lateralization run
 - backend payload includes `generatedAt`
 - frontend shows a freshness label in the panel header based on that timestamp
-- the panel is rendered directly below `Monitored Tokens`
+- the panel is rendered in `/monitor` alongside `Recent Tokens` and `Old Tokens 1 Week+`
 - rows are intentionally thin and ranked instead of using large cards
 
 Current row surface:
@@ -815,6 +900,8 @@ Important:
 - the panel can be collapsed
   - collapse currently affects the UI/render surface only
   - backend polling still continues while collapsed
+- in `/monitor`, lateralization is also part of the `BroadcastChannel`-shared polling path between tabs
+- the X-search button in this panel also now searches `contract OR $ticker`
 
 ## Manual Tokens
 
@@ -844,6 +931,7 @@ Table features:
 - `AGE` supports `NEWEST` and `OLDEST`
 - `MCAP` supports `HIGHEST` and `LOWEST`
 - compact local search by symbol, name, or contract/address
+- the compact-search input supports `Enter/Return` to blur/commit the current query
 - supports a compact `starred only` toggle using the same small-square visual language as the search control
 - panel can be collapsed
   - collapse currently affects the UI/render surface only
@@ -856,6 +944,7 @@ File:
 Definition:
 - age between `1d` and `7d`
 - inside the Recent MCAP window configured by user
+- mounted in `/monitor`
 
 Rules:
 - derived from tracked token state
@@ -863,6 +952,7 @@ Rules:
 - supports local dismiss
 - has local removal log
 - supports compact local search by symbol, name, or contract/address
+- the compact-search input supports `Enter/Return` to blur/commit the current query
 - supports a compact `starred only` toggle
 - shows a green live-status emoji with a slower breathing pulse while the bot is active
 - routed eligibility is now maintained on the token itself via:
@@ -903,12 +993,14 @@ File:
 Definition:
 - age `>= 7d`
 - inside the Old Week MCAP window configured by user
+- mounted in `/monitor`
 
 Rules:
 - derived from tracked token state
 - supports local dismiss
 - has local removal log
 - supports compact local search by symbol, name, or contract/address
+- the compact-search input supports `Enter/Return` to blur/commit the current query
 - supports a compact `starred only` toggle
 - when `Old Tokens 1 Week+` is collapsed:
   - body/render is removed
@@ -1022,6 +1114,7 @@ Behavior:
 
 Panel rules:
 - sorted/live-updated in frontend
+- mounted only in `/alerts`
 - `X` removes from the live panel for the current session
 - removed token is added to a session-level dismissed PumpFun set
 - dismissed PumpFun rows do not immediately reappear on new trades during the same session
@@ -1052,10 +1145,18 @@ Main alert types:
 - `pumpfun-vol`
 - `pumpfun-hvnc`
 - the panel also supports local text search by symbol, name, or contract/address
+- the alerts search now uses the same compact-search behavior as the other lupa inputs and supports `Enter/Return` to blur/commit
 - alerts are restored from browser-local storage per account scope
+- runtime state and browser-local persistence now keep the most recent `100` alert cards
+- alerts are evaluated only in `/alerts`
 - alerts can be removed:
   - all at once via `Clean All`
   - individually via the card-level `×`
+- current links-row behavior:
+  - `X Buscar CA /` opens X search using `contract OR $ticker`
+  - the social link now renders only the emoji:
+    - `👥` for X community URLs
+    - `👤` otherwise
 
 ### Monitored VOL alert
 Rules:
@@ -1072,6 +1173,11 @@ Rules:
   - or if it advances another `+40` percentage points beyond the previous VOL alert
 - cross-alert rule:
   - if the same token has already fired another alert type in the last `5m`, this alert is suppressed
+- semantic split:
+  - the alert engine still uses `prevVolume5m` as its frontend session-local previous observed `volume5m`
+  - the `Monitored` card visual delta no longer uses that field
+  - the card now uses backend-provided `prevVolume5mCanonical` instead
+  - this was done specifically to improve visual coherence without changing alert behavior
 
 ### Monitored MCAP alert
 Rules:

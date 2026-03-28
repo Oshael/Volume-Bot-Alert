@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-25` after DexScreener throttle hardening, staged catalog recovery, discovery pause during upstream pressure, low-dust cleanup recalibration, and lateralization precompute/frontend panel integration.
+Last reviewed against code on `2026-03-28` after the frontend render-pipeline refactor, the `/alerts` + `/monitor` workspace split, moving lateralization into `MONITOR`, and `BroadcastChannel` monitor-tab polling coordination.
 
 ## Test Database Safety
 
@@ -72,6 +72,16 @@ Important:
   - `frontend/src/state/app-controller.ts`
   - `frontend/src/state/app-state.ts`
   - `frontend/src/ui/sections/`
+- Current authenticated UI shape:
+  - `/alerts`
+    - `Monitored Tokens`
+    - `Manual Tokens`
+    - `PumpFun`
+    - `Alerts`
+  - `/monitor`
+    - `Recent Tokens`
+    - `Old Tokens 1 Week+`
+    - `Lateralization Coins`
 
 ### Backend
 - Active backend lives in `src/`
@@ -115,6 +125,7 @@ Important:
   - backend-issued `HttpOnly` cookie
   - frontend requests use `credentials: include`
   - frontend no longer depends on browser-readable auth token storage
+  - session-cookie expiry now defaults to a persistent window (`AUTH_SESSION_EXPIRES_IN || JWT_EXPIRES_IN || 30d`), so browser restarts do not log the user out unless the session is revoked or expires
 
 ### User config and user overlays
 - Source of truth: backend
@@ -163,7 +174,7 @@ Important:
   - `src/services/lateralization-worker.js`
 - Current behavior:
   - frontend reads the latest completed persisted run instead of triggering the finder on every request
-  - the panel is rendered directly below `Monitored Tokens`
+  - the panel is now mounted in the `/monitor` workspace alongside `Recent Tokens` and `Old Tokens 1 Week+`
   - current row info is intentionally compact:
     - `#rank`
     - symbol/name
@@ -181,7 +192,7 @@ Important:
   - Dex batch reads remain the main refresh path for monitored state
   - the remaining production risk was upstream `429` storms and synchronized recovery
   - current code now uses a staged Dex throttle/recovery model instead of returning directly from outage to full traffic
-  - frontend render cost remains lower after monitored pagination and search improvements
+  - frontend render cost remains materially lower after the render-pipeline refactor that stopped rebuilding the entire app shell on each update
 
 ### Recent / Old Week bars
 - Source of truth: frontend-derived from tracked token state
@@ -195,6 +206,8 @@ Important:
   - reopening either bar rebuilds its visible list immediately from the current tracked token state
 - This is why `old-surge` still works while those bars are minimized:
   - alert eligibility no longer depends on the rendered routed lists
+- Current workspace placement:
+  - `Recent Tokens` and `Old Tokens 1 Week+` now live in `/monitor`, not the main `/alerts` workspace
 
 ### PumpFun live stream
 - Source of truth: backend socket stream for live events
@@ -212,13 +225,16 @@ Important:
 - The active frontend no longer uses the old batch-style Meteora read path
 
 ### Market history / MCAP baselines
-- Source of truth: backend-persisted `token_market_buckets_1m`
+- Source of truth:
+  - backend-persisted `token_market_buckets_1m` for the primary MCAP baseline path
+  - backend-persisted `token_market_snapshots` for the canonical visual `VOL 5M` baseline used by `Monitored`
 - Primary model:
   - `src/models/token-market-bucket-1m.js`
 - Important current note:
-  - raw `token_market_snapshots` is now legacy/fallback data, not the primary time-series store
-  - the catalog worker no longer writes fresh `token_market_snapshots`
-  - historical snapshots may still exist in older environments and can still be used as temporary fallback where explicitly coded
+  - `token_market_buckets_1m` remains the main pre-aggregated market-history path
+  - the catalog worker now also writes fresh `token_market_snapshots` again
+  - that snapshot table is currently used to provide a canonical `VOL 5M` visual baseline to the `Monitored` cards
+  - this snapshot path does not change the monitored alert engine
 
 ## Active Data Flows
 
@@ -269,6 +285,7 @@ Current login rule:
     - `volume5m/1h/6h/24h`
     - `priceChange1h/6h/24h`
     - `prevMcap`
+    - `prevVolume5mCanonical`
     - `prevVolume5m`
     - `mcapDelta`
   - cold fields are only reapplied when missing/critical or on the slower recheck window:
@@ -282,6 +299,7 @@ Current login rule:
   - current cold-field recheck window is `10m`
 
 Current monitored UI behavior:
+- this panel now lives in the `/alerts` workspace
 - backend payload now includes `generatedAt`
 - frontend shows freshness text in the panel header using that timestamp
 - `Monitored Tokens` now paginates the rendered cards
@@ -301,8 +319,22 @@ Current monitored UI behavior:
   - opening the compact search only pushes the bottom row, not the title/top-row controls
 - current compact-search behavior:
   - `Monitored` uses the stabilized dedicated behavior added earlier
-  - `Manual`, `Recent`, and `Old Week` now use click-to-open compact search that stays open while focused
+  - `Manual`, `Recent`, `Old Week`, and `Alerts` now use click-to-open compact search that stays open while focused
   - those compact searches no longer depend purely on transient hover/focus timing
+  - compact searches now support `Enter/Return` to blur/commit the current query without clicking outside the input
+- current card-link behavior:
+  - the white token symbol itself now opens Dex Screener
+  - the action row now contains:
+    - `X` search
+    - a social/community X button when Dex provided a social URL
+  - the `X` search button searches `contract OR $ticker`
+  - the social/community button uses URL shape only:
+    - `👥` for `x.com/i/communities/...`
+    - `👤` otherwise
+- current `VOL 5M` card-delta behavior:
+  - the main `VOL 5M` number is still the live `5m` volume from catalog/Dex
+  - the small delta below it now uses backend-provided `prevVolume5mCanonical`
+  - this is visual-only and separate from the monitored alert baseline
 
 ### 2a. Lateralization Coins
 - Frontend refresh interval: `60s`
@@ -314,7 +346,7 @@ Current monitored UI behavior:
   - lateralization ranking cost is shifted to the backend worker cadence
   - panel reads stay stable and cheap relative to the previous on-demand route shape
 - Current UI behavior:
-  - the panel sits directly below `Monitored Tokens`
+  - the panel now sits in the `/monitor` workspace as the larger analysis card beside the routed-history surfaces
   - header shows freshness text from backend `generatedAt`
   - rows are intentionally thin and ranked, not large cards
 
@@ -371,6 +403,9 @@ Current monitored UI behavior:
 - Important hardening already present:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
   - newly added manual tokens get `5s` retry cadence until first classification in normal mode
+  - `pumpfun-migrated` tokens now persist `migration_grace_until`
+  - during the first `10m` after migration, they cannot fall into the `low-dust` cadence even if Dex sees them below `15k`
+  - while inside that grace, `<15k` migrated tokens still use at least the `low-near` cadence floor (`15s`), while `30k+` and `100k+` continue following the normal higher-priority buckets
 - Current write order inside token evaluation:
   - `token_catalog` is updated first
   - `token_market_buckets_1m` is upserted immediately after in the same evaluation
@@ -597,7 +632,7 @@ Current monitored UI behavior:
 
 Current login/account implementation status:
 - login, registration, email verification, password reset, and change password are implemented
-- session restore after hard refresh is working in the integrated frontend
+- session restore after hard refresh, browser close, and normal browser restart is working in the integrated frontend while the cookie session remains valid
 - the live auth flow is cookie-backed and no longer depends on browser-readable token storage
 - auth UX is materially more complete than the older "raw login shell" state
 
@@ -735,6 +770,7 @@ Current security priority order:
 - `X` removes a row from the panel only
 - Token may reappear on new trades
 - Pump live updates are ignored while the bot is stopped
+- PumpFun runtime is now restricted to `/alerts`; `/monitor` does not mount or keep the PumpFun live workspace active
 
 ### Trade terminal links
 - `Axiom` now prefers `pairAddress` for monitored/routed/manual token rows when available
@@ -752,10 +788,20 @@ Current security priority order:
   - symbol
   - name
   - contract/address
+- the alerts search now uses the same compact-search interaction model as the other lupas, including `Enter/Return` to commit by blurring the input
 - alerts are now restored from browser-local storage per account scope
+- alerts history is currently capped at the most recent `100` entries in runtime state and browser-local storage
 - users can clear:
   - all alerts at once via `Clean All`
   - a single alert card via the card-level `×` button
+- current workspace/runtime rule:
+  - alerts are evaluated only inside `/alerts`
+  - `/monitor` still receives live dashboard data but does not run frontend alert evaluation
+- current alert-link behavior:
+  - `X Buscar CA /` opens X search using `contract OR $ticker`
+  - the separate social link now renders only the emoji:
+    - `👥` for X community URLs
+    - `👤` for normal X profile URLs
 
 ## Persistence Model
 
@@ -775,12 +821,45 @@ Current security priority order:
 - alert cards
 - custom sound assets
 
+## Workspace Split And Multi-Tab Behavior
+
+### `/alerts`
+- owns the high-churn live runtime:
+  - `Monitored Tokens`
+  - `Manual Tokens`
+  - `PumpFun`
+  - `Alerts`
+- keeps the frontend-owned alert pipeline active
+- does not mount `Recent`, `Old Week`, or `Lateralization`
+
+### `/monitor`
+- is the lighter dashboard-analysis workspace
+- mounts:
+  - `Recent Tokens`
+  - `Old Tokens 1 Week+`
+  - `Lateralization Coins`
+- still consumes `GET /api/dashboard/monitored` so routed/history surfaces stay current
+- does not run:
+  - frontend alerts
+  - PumpFun runtime
+  - PumpFun GC
+
+### Multi-tab coordination
+- monitor tabs now use `BroadcastChannel` leader election
+- only one active `/monitor` tab keeps the continuous polling loop for:
+  - `GET /api/dashboard/monitored`
+  - `GET /api/catalog/lateralized`
+- follower `/monitor` tabs receive monitored/lateralized snapshots from the leader instead of duplicating that polling
+- this coordination currently applies only to `/monitor`
+- `/alerts` still runs independently per tab because alerts are still frontend-owned behavior
+
 ## Important Current Implementation Notes
 
 ### `D` column / MCAP delta
 - `GET /api/dashboard/monitored` currently exposes:
   - `prevMcap`
   - `mcapDelta`
+  - `prevVolume5mCanonical`
 - Backend implementation today:
   - route requests a larger recent snapshot window per token
   - it filters to snapshots with valid `mcap`
@@ -791,6 +870,8 @@ Current security priority order:
 Current limitation:
 - if there is no pair of valid snapshots in the fetched window, `mcapDelta` still remains `null`
 - this is acceptable fallback behavior for now
+- for `Monitored` `VOL 5M`, the route now also exposes `prevVolume5mCanonical`
+- if the backend does not yet have enough market snapshots for that token, the visual delta still shows `-`
 
 ### Routed/manual table sorting
 - `Manual Tokens`, `Recent Tokens`, and `Old Tokens 1 Week+` all support:
@@ -846,6 +927,10 @@ Current limitation:
 - Tokens now also have a cross-alert block:
   - if a token fires one alert type, other alert types for that same token are blocked for `5m`
   - `Surge` is evaluated before local `VOL/MCAP`, so it wins when both would qualify in the same cycle
+- semantic note:
+  - the alert engine still uses `prevVolume5m` as the session-local previous observed `volume5m`
+  - the newer `prevVolume5mCanonical` field is visual-only for the `Monitored` cards
+  - the visual cleanup of the monitored `VOL 5M` delta therefore did not change alert behavior
 
 ### Old Token Surge rule
 - Old Surge no longer fires immediately on bot start just because a token is already hot
