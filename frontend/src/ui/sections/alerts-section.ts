@@ -292,11 +292,15 @@ function buildProfileLink(url: string | null | undefined) {
   const safeUrl = sanitizeOptionalHttpUrl(url);
   if (!safeUrl) {
     const disabled = document.createElement('span');
-    disabled.className = 'alert-inline-link disabled';
+    disabled.className = 'alert-inline-link alert-inline-link-social alert-inline-link-social-profile disabled';
     disabled.textContent = '👤';
     return disabled;
   }
-  return buildInlineLink(isXCommunityUrl(safeUrl) ? '👥' : '👤', sanitizeHttpUrl(safeUrl));
+  const isCommunity = isXCommunityUrl(safeUrl);
+  const link = buildInlineLink(isCommunity ? '👥' : '👤', sanitizeHttpUrl(safeUrl));
+  link.classList.add('alert-inline-link-social');
+  link.classList.add(isCommunity ? 'alert-inline-link-social-community' : 'alert-inline-link-social-profile');
+  return link;
 }
 
 function buildTextSeparator() {

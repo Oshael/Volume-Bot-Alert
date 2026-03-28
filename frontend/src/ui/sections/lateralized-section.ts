@@ -114,8 +114,6 @@ function buildLateralizedRow(
     actions.append(buildGlyphButton('☠', 'action-glyph danger-glyph', 'admin-block-token', item.address, symbol, busy, 'Admin block permanently'));
   }
 
-  titleLine.append(actions);
-
   const metaLine = document.createElement('div');
   metaLine.className = 'lateralized-meta-line';
   metaLine.append(
@@ -125,7 +123,20 @@ function buildLateralizedRow(
     buildMetaMetric('VOL 24H', fmtMoney(volume24h)),
   );
 
-  main.append(titleLine, metaLine);
+  const leftStack = document.createElement('div');
+  leftStack.className = 'lateralized-left-stack';
+  leftStack.append(titleLine, metaLine, actions);
+
+  const statsRail = document.createElement('div');
+  statsRail.className = 'lateralized-stats-rail';
+  statsRail.append(
+    buildRailMetric('SCORE', formatScore(item.score)),
+    buildRailMetric('RANGE', formatPlainPct(item.rangePct)),
+    buildRailMetric('DRIFT', formatPlainPct(item.driftPct)),
+    buildRailMetric('COVER', formatCoveragePct(item.coverageRatio)),
+  );
+
+  main.append(leftStack, statsRail);
   article.append(main);
   return article;
 }
@@ -164,6 +175,19 @@ function buildMetaMetric(label: string, value: string) {
   valueEl.className = 'meta-value';
   valueEl.textContent = value;
   wrapper.append(labelEl, ' ', valueEl);
+  return wrapper;
+}
+
+function buildRailMetric(label: string, value: string) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'lateralized-rail-metric';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'rail-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('span');
+  valueEl.className = 'rail-value';
+  valueEl.textContent = value;
+  wrapper.append(labelEl, valueEl);
   return wrapper;
 }
 
@@ -208,6 +232,22 @@ function formatPlainPct(value?: number | null) {
     return '-';
   }
   return `${num.toFixed(1)}%`;
+}
+
+function formatCoveragePct(value?: number | null) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return '-';
+  }
+  return `${(num * 100).toFixed(0)}%`;
+}
+
+function formatScore(value?: number | null) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return '-';
+  }
+  return num >= 100 ? Math.round(num).toString() : num.toFixed(1);
 }
 
 function formatHours(value?: number | null) {

@@ -4782,11 +4782,13 @@ TEMP_LEGACY_BAR_TITLE {
 
 .vol5m-label {
   font-size: 11px;
+  color: #fff;
 }
 
 .monitored-main-metric {
   margin-top: 4px;
   font-size: 18px;
+  color: #fff !important;
 }
 
 .monitored-side-v68 .panel-side-delta {
@@ -4859,22 +4861,35 @@ TEMP_LEGACY_BAR_TITLE {
 
 .lateralized-row-main {
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 20px;
+  align-items: center;
 }
 
 .lateralized-title-line {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
+  overflow: hidden;
 }
 
 .lateralized-title-line .token-name {
   font-size: 13px;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .lateralized-title-line .token-addr {
   font-size: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lateralized-meta-line {
@@ -4885,6 +4900,10 @@ TEMP_LEGACY_BAR_TITLE {
   color: #fff !important;
   font-size: 10px;
   line-height: 1.35;
+}
+
+.lateralized-left-stack {
+  min-width: 0;
 }
 
 .lateralized-meta-line .meta-label {
@@ -4899,7 +4918,8 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 2px;
+  margin-top: 7px;
+  flex-wrap: wrap;
 }
 
 .lateralized-inline-actions .action-glyph {
@@ -4908,6 +4928,49 @@ TEMP_LEGACY_BAR_TITLE {
   min-width: 20px;
   min-height: 20px;
   padding: 0;
+}
+
+.lateralized-stats-rail {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.lateralized-rail-metric {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  min-width: 0;
+}
+
+.lateralized-rail-metric .rail-label {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lateralized-rail-metric .rail-value {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .lateralized-row-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .lateralized-stats-rail {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .lateralized-rail-metric {
+    justify-items: start;
+  }
 }
 
 .monitored-row-main .panel-row-title {
@@ -5229,6 +5292,18 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-inline-link {
   color: var(--cyan);
   text-decoration: none;
+}
+
+.alert-inline-link-social {
+  line-height: 1;
+}
+
+.alert-inline-link-social-profile {
+  font-size: 12px;
+}
+
+.alert-inline-link-social-community {
+  font-size: 14px;
 }
 
 .alert-inline-link.disabled {
