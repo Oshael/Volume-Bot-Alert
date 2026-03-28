@@ -457,8 +457,9 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
   const safeSymbol = escapeHtml(symbol);
   const safeName = escapeHtml(item.name || item.label || item.address);
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
-  const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
+  const xSearch = buildXSearchUrl(symbol, item.address);
   const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
+  const twitterMeta = getXDestinationMeta(twitterUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   const mcapDelta = item.mcapDelta ?? (item.prevMcap && item.prevMcap > 0 && item.mcap != null ? ((item.mcap - item.prevMcap) / item.prevMcap) * 100 : null);
   const actionButton = mode === 'manual'
@@ -475,8 +476,8 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
             <div class="token-line">
               <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
               <div class="token-actions-inline">
-                <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search ticker on X">X</a>
-                ${twitterUrl ? `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="X profile">&#128100;</a>` : `<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>`}
+                <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
+                ${twitterUrl ? `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="${escapeHtml(twitterMeta.title)}">${twitterMeta.icon}</a>` : `<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>`}
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress)}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
@@ -501,6 +502,31 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
       <td class="action-col">${actionButton}</td>
     </tr>
   `;
+}
+
+function buildXSearchUrl(symbol: string, address: string) {
+  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
+    .filter(Boolean);
+  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
+}
+
+function isXCommunityUrl(url: string | null | undefined) {
+  const value = String(url || '').trim().toLowerCase();
+  return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
+}
+
+function getXDestinationMeta(url: string | null | undefined) {
+  if (isXCommunityUrl(url)) {
+    return {
+      title: 'X community',
+      icon: '&#128101;',
+    };
+  }
+
+  return {
+    title: 'X profile',
+    icon: '&#128100;',
+  };
 }
 
 const METEORA_TVL_HISTORY_1H = 3600000;

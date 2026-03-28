@@ -143,33 +143,36 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
        requested.token_address,
        current_row.current_ts,
        current_row.current_mcap,
+       current_row.current_vol_5m,
        COALESCE(target.ts, fallback.ts) AS baseline_ts,
-       COALESCE(target.mcap, fallback.mcap) AS baseline_mcap
+       COALESCE(target.mcap, fallback.mcap) AS baseline_mcap,
+       COALESCE(target.vol_5m, fallback.vol_5m) AS baseline_vol_5m
      FROM requested
      LEFT JOIN LATERAL (
        SELECT
          ts AS current_ts,
-         mcap AS current_mcap
+         mcap AS current_mcap,
+         vol_5m AS current_vol_5m
        FROM token_market_snapshots
        WHERE token_address = requested.token_address
        ORDER BY ts DESC
        LIMIT 1
      ) AS current_row ON TRUE
      LEFT JOIN LATERAL (
-       SELECT ts, mcap
+       SELECT ts, mcap, vol_5m
        FROM token_market_snapshots
        WHERE token_address = requested.token_address
-         AND mcap IS NOT NULL
+         AND (mcap IS NOT NULL OR vol_5m IS NOT NULL)
          AND current_row.current_ts IS NOT NULL
          AND ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
        ORDER BY ts DESC
        LIMIT 1
      ) AS target ON TRUE
      LEFT JOIN LATERAL (
-       SELECT ts, mcap
+       SELECT ts, mcap, vol_5m
        FROM token_market_snapshots
        WHERE token_address = requested.token_address
-         AND mcap IS NOT NULL
+         AND (mcap IS NOT NULL OR vol_5m IS NOT NULL)
          AND current_row.current_ts IS NOT NULL
          AND ts < current_row.current_ts
        ORDER BY ts ASC

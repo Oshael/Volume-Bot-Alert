@@ -82,7 +82,7 @@ function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isA
   const symbol = String(alert.symbol || '');
   const safeName = String(alert.name || '');
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
-  const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
+  const xSearch = buildXSearchUrl(symbol, alert.address);
   const topClass = getAlertToneClass(alert);
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
   const article = document.createElement('article');
@@ -134,7 +134,7 @@ function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isA
   links.append(
     buildInlineLink('Dex Screener', dexUrl),
     buildTextSeparator(),
-    buildInlineLink(`X Buscar $${symbol}`, sanitizeHttpUrl(xSearch)),
+    buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(xSearch)),
     buildTextSeparator(),
     buildProfileLink(alert.twitterUrl),
   );
@@ -205,6 +205,12 @@ function buildAlertBadgeSub(primary: string, secondary: string) {
   sub.className = 'alert-badge-sub';
   sub.textContent = `${primary} ${secondary}`;
   return sub;
+}
+
+function buildXSearchUrl(symbol: string, address: string) {
+  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
+    .filter(Boolean);
+  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
 function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
@@ -287,10 +293,10 @@ function buildProfileLink(url: string | null | undefined) {
   if (!safeUrl) {
     const disabled = document.createElement('span');
     disabled.className = 'alert-inline-link disabled';
-    disabled.textContent = 'X Perfil';
+    disabled.textContent = '👤';
     return disabled;
   }
-  return buildInlineLink('X Perfil', sanitizeHttpUrl(safeUrl));
+  return buildInlineLink(isXCommunityUrl(safeUrl) ? '👥' : '👤', sanitizeHttpUrl(safeUrl));
 }
 
 function buildTextSeparator() {
@@ -341,6 +347,11 @@ function buildStarButton(address: string, isStarred: boolean, disabled: boolean,
   button.title = title;
   button.textContent = isStarred ? '★' : '☆';
   return button;
+}
+
+function isXCommunityUrl(url: string | null | undefined) {
+  const value = String(url || '').trim().toLowerCase();
+  return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
 }
 
 function getAlertToneClass(alert: AlertEntry) {

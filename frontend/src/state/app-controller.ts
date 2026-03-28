@@ -2316,6 +2316,7 @@ export function createAppController(): AppController {
         mcapDelta: dashboardItem?.mcapDelta ?? existingItem?.mcapDelta ?? base.mcapDelta ?? null,
         prevMcap: dashboardItem?.prevMcap ?? existingItem?.prevMcap ?? base.prevMcap ?? null,
         prevVolume5m: existingItem?.volume5m != null ? existingItem.volume5m : existingItem?.prevVolume5m ?? base.prevVolume5m ?? null,
+        prevVolume5mCanonical: dashboardItem?.prevVolume5mCanonical ?? existingItem?.prevVolume5mCanonical ?? base.prevVolume5mCanonical ?? null,
         lastAlertAt: existingItem?.lastAlertAt ?? base.lastAlertAt ?? null,
         deadCycles: existingItem?.deadCycles ?? base.deadCycles ?? 0,
         _hvncFired: existingItem?._hvncFired ?? base._hvncFired,

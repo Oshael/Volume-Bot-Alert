@@ -78,6 +78,7 @@ export interface DashboardMonitoredToken {
   tokenCreatedAt?: number | null;
   prevMcap?: number | null;
   mcapDelta?: number | null;
+  prevVolume5mCanonical?: number | null;
   lastSeenAt?: string | null;
   lastEvaluatedAt?: string | null;
   meteora?: MeteoraBatchItem | null;

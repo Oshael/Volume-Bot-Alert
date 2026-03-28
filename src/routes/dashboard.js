@@ -59,6 +59,7 @@ function buildMeteoraSummary(address, summaryRow) {
 function buildMarketBaseline(baselineRow) {
   const currentMcap = baselineRow?.current_mcap == null ? null : Number(baselineRow.current_mcap);
   const previousMcap = baselineRow?.baseline_mcap == null ? null : Number(baselineRow.baseline_mcap);
+  const previousVolume5m = baselineRow?.baseline_vol_5m == null ? null : Number(baselineRow.baseline_vol_5m);
   const mcapDelta = currentMcap != null && previousMcap != null && previousMcap > 0
     ? ((currentMcap - previousMcap) / previousMcap) * 100
     : null;
@@ -66,14 +67,27 @@ function buildMarketBaseline(baselineRow) {
   return {
     prevMcap: Number.isFinite(previousMcap) ? previousMcap : null,
     mcapDelta: Number.isFinite(mcapDelta) ? mcapDelta : null,
+    prevVolume5mCanonical: Number.isFinite(previousVolume5m) ? previousVolume5m : null,
   };
 }
 
 function selectPreferredMarketBaseline(primaryRow, fallbackRow) {
-  if (primaryRow?.baseline_mcap != null) {
-    return primaryRow;
+  if (!primaryRow && !fallbackRow) {
+    return null;
   }
-  return fallbackRow || primaryRow || null;
+
+  const primaryHasMcapBaseline = primaryRow?.baseline_mcap != null;
+  const mcapRow = primaryHasMcapBaseline ? primaryRow : (fallbackRow || primaryRow || null);
+
+  return {
+    token_address: mcapRow?.token_address ?? primaryRow?.token_address ?? fallbackRow?.token_address ?? null,
+    current_ts: mcapRow?.current_ts ?? primaryRow?.current_ts ?? fallbackRow?.current_ts ?? null,
+    current_mcap: mcapRow?.current_mcap ?? primaryRow?.current_mcap ?? fallbackRow?.current_mcap ?? null,
+    baseline_ts: mcapRow?.baseline_ts ?? primaryRow?.baseline_ts ?? fallbackRow?.baseline_ts ?? null,
+    baseline_mcap: mcapRow?.baseline_mcap ?? null,
+    current_vol_5m: primaryRow?.current_vol_5m ?? fallbackRow?.current_vol_5m ?? null,
+    baseline_vol_5m: primaryRow?.baseline_vol_5m ?? fallbackRow?.baseline_vol_5m ?? null,
+  };
 }
 
 router.get('/monitored', dashboardLimiter, async (req, res) => {
@@ -89,22 +103,9 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       meteoraByAddress.set(row.token_address, row);
     }
 
-    const bucketBaselineRows = await tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5);
-    const bucketBaselineByAddress = new Map();
-    for (const row of bucketBaselineRows) {
-      bucketBaselineByAddress.set(row.token_address, row);
-    }
-
-    const addressesMissingBucketBaseline = addresses.filter((address) => {
-      const row = bucketBaselineByAddress.get(address);
-      return !row || row.baseline_mcap == null;
-    });
-
     const [primaryMarketBaselineRows, fallbackMarketBaselineRows] = await Promise.all([
-      Promise.resolve(bucketBaselineRows),
-      addressesMissingBucketBaseline.length > 0
-        ? tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addressesMissingBucketBaseline, 5)
-        : Promise.resolve([]),
+      tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+      tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5),
     ]);
 
     for (const row of primaryMarketBaselineRows) {
@@ -145,6 +146,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
         tokenCreatedAt: item.last_token_created_at_ms == null ? null : Number(item.last_token_created_at_ms),
         prevMcap: marketBaseline.prevMcap,
         mcapDelta: marketBaseline.mcapDelta,
+        prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
         lastSeenAt: item.last_seen_at || null,
         lastEvaluatedAt: item.last_evaluated_at || null,
         meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),

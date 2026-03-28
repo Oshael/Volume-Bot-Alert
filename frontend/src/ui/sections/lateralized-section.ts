@@ -65,7 +65,7 @@ function buildLateralizedRow(
   const symbol = tracked?.symbol || item.symbol || item.address.slice(0, 6);
   const subtitle = String(tracked?.name || item.name || '');
   const pairUrl = sanitizeHttpUrl(tracked?.pairUrl || `https://dexscreener.com/solana/${item.address}`);
-  const xSearchUrl = sanitizeHttpUrl(`https://x.com/search?q=%24${encodeURIComponent(symbol)}`);
+  const xSearchUrl = sanitizeHttpUrl(buildXSearchUrl(symbol, item.address));
   const imageUrl = sanitizeOptionalHttpUrl(tracked?.imageUrl);
   const volume1h = item.volume1h ?? tracked?.volume1h ?? null;
   const volume24h = item.volume24h ?? tracked?.volume24h ?? null;
@@ -216,6 +216,12 @@ function formatHours(value?: number | null) {
     return '-';
   }
   return `${Math.round(num)}H`;
+}
+
+function buildXSearchUrl(symbol: string, address: string) {
+  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
+    .filter(Boolean);
+  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
 function formatLateralizedAge(ageHours?: number | null, createdAt?: number | null) {

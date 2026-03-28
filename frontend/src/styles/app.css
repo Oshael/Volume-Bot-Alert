@@ -1141,6 +1141,10 @@ a {
   text-transform: uppercase;
 }
 
+.workspace-flash-row {
+  margin-top: 10px;
+}
+
 .workspace-user-dropdown {
   top: calc(100% + 10px);
   min-width: 230px;
@@ -4541,7 +4545,7 @@ TEMP_LEGACY_BAR_TITLE {
   font-weight: 700;
 }
 
-.panel-side-delta.up { color: var(--text); }
+.panel-side-delta.up { color: #25d98b; }
 .panel-side-delta.down { color: var(--red); }
 
 .pump-list {
@@ -4907,22 +4911,27 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-row-main .panel-row-title {
-  margin-bottom: 6px;
+  margin-bottom: 3px;
   gap: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .monitored-meta-line {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 3px;
+  gap: 10px;
+  margin-top: 1px;
   font-size: 11px !important;
-  line-height: 1.45;
+  line-height: 1.2;
   color: #fff !important;
 }
 
 .monitored-actions-line {
-  margin-top: 8px;
+  margin-top: 5px;
   gap: 6px;
 }
 
@@ -4935,13 +4944,32 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-main-metric {
-  margin-top: 4px;
+  margin-top: 2px;
   font-size: 18px;
 }
 
 .monitored-side-v68 .panel-side-delta {
-  margin-top: 8px;
+  margin-top: 4px;
   font-size: 12px;
+}
+
+.monitored-title-line .token-name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.monitored-title-line .token-addr {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitored-title-line .inline-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .monitored-meta-line .meta-label {

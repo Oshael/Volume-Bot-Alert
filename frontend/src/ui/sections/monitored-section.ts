@@ -193,10 +193,15 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
-  const xSearch = `https://x.com/search?q=%24${encodeURIComponent(symbol)}`;
+  const xSearch = buildXSearchUrl(symbol, item.address);
+  const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
+  const twitterMeta = getXDestinationMeta(twitterUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
-  const volDelta = item.prevVolume5m && item.prevVolume5m > 0 && item.volume5m != null ? ((item.volume5m - item.prevVolume5m) / item.prevVolume5m) * 100 : null;
+  const volDeltaBaseline = item.prevVolume5mCanonical ?? null;
+  const volDelta = volDeltaBaseline && volDeltaBaseline > 0 && item.volume5m != null
+    ? ((item.volume5m - volDeltaBaseline) / volDeltaBaseline) * 100
+    : null;
   const article = document.createElement('article');
   article.className = `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}`;
   article.dataset.hoverKey = `monitored:${item.address}`;
@@ -208,18 +213,16 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
 
   const titleLine = document.createElement('div');
   titleLine.className = 'panel-row-title monitored-title-line';
-  const tokenName = document.createElement('span');
+  const tokenName = document.createElement('a');
   tokenName.className = 'token-name';
+  tokenName.href = dexUrl;
+  tokenName.target = '_blank';
+  tokenName.rel = 'noreferrer';
   tokenName.textContent = symbol;
   const tokenAddr = document.createElement('span');
   tokenAddr.className = 'token-addr';
   tokenAddr.textContent = subtitle;
-  titleLine.append(
-    tokenName,
-    tokenAddr,
-    buildInlineLink('/ DEX', dexUrl),
-    buildInlineLink('X', sanitizeHttpUrl(xSearch)),
-  );
+  titleLine.append(tokenName, tokenAddr);
 
   const metaLine = document.createElement('div');
   metaLine.className = 'panel-row-meta monitored-meta-line';
@@ -233,6 +236,10 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
 
   const actions = document.createElement('div');
   actions.className = 'panel-row-actions monitored-actions-line';
+  actions.append(buildInlineActionLink('X', sanitizeHttpUrl(xSearch), 'x-search', 'Search contract or ticker on X'));
+  if (twitterUrl) {
+    actions.append(buildInlineActionLink(twitterMeta.icon, twitterUrl, 'x-profile', twitterMeta.title));
+  }
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
     buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress),
@@ -278,13 +285,27 @@ function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {
   return placeholder;
 }
 
-function buildInlineLink(label: string, href: string) {
+function buildInlineLink(label: string, href: string, title?: string) {
   const link = document.createElement('a');
   link.href = href;
   link.target = '_blank';
   link.rel = 'noreferrer';
   link.className = 'inline-link';
   link.textContent = label;
+  if (title) {
+    link.title = title;
+  }
+  return link;
+}
+
+function buildInlineActionLink(label: string, href: string, className: string, title: string) {
+  const link = document.createElement('a');
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.className = `action-glyph ${className}`;
+  link.textContent = label;
+  link.title = title;
   return link;
 }
 
@@ -298,6 +319,31 @@ function buildMetaMetric(label: string, value: string) {
   valueEl.textContent = value;
   wrapper.append(labelEl, ' ', valueEl);
   return wrapper;
+}
+
+function buildXSearchUrl(symbol: string, address: string) {
+  const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
+    .filter(Boolean);
+  return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
+}
+
+function isXCommunityUrl(url: string | null | undefined) {
+  const value = String(url || '').trim().toLowerCase();
+  return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
+}
+
+function getXDestinationMeta(url: string | null | undefined) {
+  if (isXCommunityUrl(url)) {
+    return {
+      title: 'X community',
+      icon: '👥',
+    };
+  }
+
+  return {
+    title: 'X profile',
+    icon: '👤',
+  };
 }
 
 function buildGlyphButton(

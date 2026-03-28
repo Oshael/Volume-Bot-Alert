@@ -59,6 +59,7 @@ export interface ManualTokenEntry {
   priceChange24h?: number | null;
   mcapDelta?: number | null;
   prevVolume5m?: number | null;
+  prevVolume5mCanonical?: number | null;
   prevMcap?: number | null;
   lastAlertAt?: number | null;
   deadCycles?: number;

@@ -168,7 +168,6 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.className = 'legacy-topbar workspace-topbar';
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
-  const workspaceCaption = isHistoryWorkspace ? 'Monitor Workspace' : 'Alerts Workspace';
   section.innerHTML = `
     <div class="workspace-topbar-inner">
       <div class="workspace-brand">
@@ -191,7 +190,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
             <span class="workspace-user-avatar" data-role="user-avatar"></span>
             <span class="workspace-user-meta">
               <span class="workspace-user-name" data-role="user-menu-label"></span>
-              <span class="workspace-user-caption">${workspaceCaption}</span>
+              <span class="workspace-user-caption">Workspace</span>
             </span>
           </button>
           <div class="legacy-user-dropdown workspace-user-dropdown">
@@ -2181,7 +2180,7 @@ async function submitLegacyConfig(section: HTMLElement, controller: AppControlle
 
 function renderLegacyActions(state: AppState, controller: AppController) {
   const section = document.createElement('section');
-  section.className = 'btn-row legacy-action-row';
+  section.className = 'btn-row legacy-action-row workspace-flash-row';
   section.innerHTML = `
     ${renderDashboardFlash(state)}
   `;
