@@ -179,22 +179,59 @@ function buildPumpRow(token: PumpTokenEntry, busy: boolean, state: AppState) {
 }
 
 function buildPumpMigrationStrip(entries: PumpMigrationEntry[]) {
+  const shell = document.createElement('div');
+  shell.className = 'pump-migration-shell';
+
+  const header = document.createElement('div');
+  header.className = 'pump-migration-header';
+
+  const title = document.createElement('span');
+  title.className = 'pump-migration-title';
+  title.textContent = 'Recent Migrations';
+
+  const count = document.createElement('span');
+  count.className = 'pump-migration-count';
+  count.textContent = String(entries.length);
+
+  header.append(title, count);
+  shell.append(header);
+
   if (entries.length === 0) {
     const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state compact';
+    emptyState.className = 'empty-state compact pump-migration-empty';
     emptyState.textContent = 'No PumpFun migrations captured in this session yet.';
-    return emptyState;
+    shell.append(emptyState);
+    return shell;
   }
 
   const strip = document.createElement('div');
   strip.className = 'pump-migration-strip';
-  for (const entry of entries.slice(0, 3)) {
+  for (const entry of entries.slice(0, 6)) {
     const chip = document.createElement('div');
-    chip.className = 'panel-chip';
-    chip.textContent = `${entry.symbol} ${fmtMoney(entry.mcap)}`;
+    chip.className = 'pump-migration-chip';
+
+    const top = document.createElement('div');
+    top.className = 'pump-migration-chip-top';
+
+    const symbol = document.createElement('span');
+    symbol.className = 'pump-migration-chip-symbol';
+    symbol.textContent = entry.symbol || entry.mint.slice(0, 6);
+
+    const age = document.createElement('span');
+    age.className = 'pump-migration-chip-age';
+    age.textContent = fmtAge(entry.migratedAt);
+
+    top.append(symbol, age);
+
+    const meta = document.createElement('div');
+    meta.className = 'pump-migration-chip-meta';
+    meta.textContent = `${fmtMoney(entry.mcap)} / ${fmtMoney(entry.vol5m)}`;
+
+    chip.append(top, meta);
     strip.append(chip);
   }
-  return strip;
+  shell.append(strip);
+  return shell;
 }
 
 function getPumpVolume5m(token: PumpTokenEntry) {
