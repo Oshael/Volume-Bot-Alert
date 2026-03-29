@@ -363,6 +363,34 @@ function parseLateralizedQuery(query = {}) {
   };
 }
 
+function parseBidZoneQuery(query = {}) {
+  const limit = parseOptionalIntegerQuery(query.limit, 'limit', { min: 1, max: 200 });
+  if (!limit.ok) return limit;
+
+  const hours = parseOptionalIntegerQuery(query.hours, 'hours', { min: 1, max: 48 });
+  if (!hours.ok) return hours;
+
+  const minMcap = parseOptionalIntegerQuery(query.minMcap, 'minMcap', { min: 90000, max: 1000000000 });
+  if (!minMcap.ok) return minMcap;
+
+  const minVol1h = parseOptionalIntegerQuery(query.minVol1h, 'minVol1h', { min: 250, max: 1000000000 });
+  if (!minVol1h.ok) return minVol1h;
+
+  const minVol24h = parseOptionalIntegerQuery(query.minVol24h, 'minVol24h', { min: 0, max: 1000000000 });
+  if (!minVol24h.ok) return minVol24h;
+
+  return {
+    ok: true,
+    options: {
+      limit: limit.value,
+      hours: hours.value,
+      minMcap: minMcap.value,
+      minVol1h: minVol1h.value,
+      minVol24h: minVol24h.value,
+    },
+  };
+}
+
 function toHttpAssetUrl(url) {
   return sanitizeAssetUrl(url, { allowHttp: true });
 }
@@ -739,6 +767,38 @@ router.get('/lateralized', catalogReadLimiter, async (req, res) => {
   } catch (err) {
     console.error('GET /catalog/lateralized error:', err.message);
     res.status(500).json({ error: 'Failed to load lateralized candidates' });
+  }
+});
+
+router.get('/bid-zone', catalogReadLimiter, async (req, res) => {
+  try {
+    const parsedQuery = parseBidZoneQuery(req.query);
+    if (!parsedQuery.ok) {
+      return res.status(400).json({ error: parsedQuery.error });
+    }
+
+    const options = {
+      ...parsedQuery.options,
+      hours: parsedQuery.options.hours || 48,
+      minMcap: parsedQuery.options.minMcap || 90000,
+      minVol1h: parsedQuery.options.minVol1h || 1000,
+      minVol24h: parsedQuery.options.minVol24h || 10000,
+    };
+    const candidates = await tokenMarketBucket1m.listBidZoneCandidates(options);
+    const generatedAt = new Date().toISOString();
+
+    res.json({
+      generatedAt,
+      requestedHours: options.hours,
+      minMcap: options.minMcap,
+      minVol1h: options.minVol1h,
+      minVol24h: options.minVol24h,
+      count: candidates.length,
+      candidates,
+    });
+  } catch (err) {
+    console.error('GET /catalog/bid-zone error:', err.message);
+    res.status(500).json({ error: 'Failed to load bid-zone candidates' });
   }
 });
 

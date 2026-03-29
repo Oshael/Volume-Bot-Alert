@@ -141,6 +141,36 @@ export interface LateralizedTokenEntry {
   score?: number | null;
 }
 
+export interface BidZoneTokenEntry {
+  address: string;
+  symbol?: string | null;
+  name?: string | null;
+  monitorPriority?: string | null;
+  mcap?: number | null;
+  catalogMcap?: number | null;
+  windowMcap?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
+  volume24h?: number | null;
+  supportLevelMcap?: number | null;
+  resistanceLevelMcap?: number | null;
+  robustRangePct?: number | null;
+  recentRangePct?: number | null;
+  closeDriftPct?: number | null;
+  supportDistancePct?: number | null;
+  resistanceDistancePct?: number | null;
+  supportTouchClusters?: number;
+  coverageRatio?: number | null;
+  bucketCount?: number;
+  sampleCount?: number;
+  expectedBucketCount?: number;
+  ageHours?: number | null;
+  requestedHours?: number;
+  minimumWindowHours?: number;
+  windowHoursUsed?: number;
+  score?: number | null;
+}
+
 export interface PumpTokenEntry {
   mint: string;
   mintAddress?: string | null;
@@ -189,7 +219,7 @@ export interface PumpToastEntry {
   vol5m?: number | null;
 }
 
-export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'pumpfun';
+export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
 
 export type StatusMode = 'stopped' | 'active' | 'syncing';
@@ -236,6 +266,8 @@ export interface AppState {
     monitoredFreshnessLabel: string;
     lateralizedUpdatedAt: string | null;
     lateralizedFreshnessLabel: string;
+    bidZoneUpdatedAt: string | null;
+    bidZoneFreshnessLabel: string;
   };
   bars: {
     manual: number;
@@ -246,6 +278,7 @@ export interface AppState {
   panels: {
     monitored: number;
     lateralized: number;
+    bidZone: number;
     pumpfun: number;
     alerts: number;
   };
@@ -274,6 +307,7 @@ export interface AppState {
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
     lateralizedTokens: LateralizedTokenEntry[];
+    bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
     pumpTokens: PumpTokenEntry[];
     recentPumpMigrations: PumpMigrationEntry[];
@@ -335,6 +369,8 @@ export function createAppState(): AppState {
       monitoredFreshnessLabel: '-',
       lateralizedUpdatedAt: null,
       lateralizedFreshnessLabel: '-',
+      bidZoneUpdatedAt: null,
+      bidZoneFreshnessLabel: '-',
     },
     bars: {
       manual: 0,
@@ -345,6 +381,7 @@ export function createAppState(): AppState {
     panels: {
       monitored: 0,
       lateralized: 0,
+      bidZone: 0,
       pumpfun: 0,
       alerts: 0,
     },
@@ -380,6 +417,7 @@ export function createAppState(): AppState {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       lateralizedTokens: [],
+      bidZoneTokens: [],
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -421,6 +459,7 @@ export function createAppState(): AppState {
         oldWeek: false,
         monitored: false,
         lateralized: false,
+        bidZone: false,
         pumpfun: false,
       },
       workspace: 'live',

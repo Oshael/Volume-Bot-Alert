@@ -116,6 +116,36 @@ export interface LateralizedCandidate {
   score?: number | null;
 }
 
+export interface BidZoneCandidate {
+  address: string;
+  symbol?: string | null;
+  name?: string | null;
+  monitorPriority?: string | null;
+  mcap?: number | null;
+  catalogMcap?: number | null;
+  windowMcap?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
+  volume24h?: number | null;
+  supportLevelMcap?: number | null;
+  resistanceLevelMcap?: number | null;
+  robustRangePct?: number | null;
+  recentRangePct?: number | null;
+  closeDriftPct?: number | null;
+  supportDistancePct?: number | null;
+  resistanceDistancePct?: number | null;
+  supportTouchClusters?: number;
+  coverageRatio?: number | null;
+  bucketCount?: number;
+  sampleCount?: number;
+  expectedBucketCount?: number;
+  ageHours?: number | null;
+  requestedHours?: number;
+  minimumWindowHours?: number;
+  windowHoursUsed?: number;
+  score?: number | null;
+}
+
 export interface LateralizedPayload {
   generatedAt?: string | null;
   runId?: number;
@@ -124,6 +154,16 @@ export interface LateralizedPayload {
   candidateCount?: number;
   resultCount?: number;
   candidates: LateralizedCandidate[];
+}
+
+export interface BidZonePayload {
+  generatedAt?: string | null;
+  requestedHours?: number;
+  minMcap?: number;
+  minVol1h?: number;
+  minVol24h?: number;
+  count: number;
+  candidates: BidZoneCandidate[];
 }
 
 export interface MeteoraBatchItem {
@@ -183,6 +223,24 @@ export function fetchLateralizedCandidates(token?: string | null, options?: { li
       count: Number(response.count) || 0,
       candidateCount: response.candidateCount,
       resultCount: response.resultCount,
+      candidates: response.candidates || [],
+    }));
+}
+
+export function fetchBidZoneCandidates(token?: string | null, options?: { limit?: number }) {
+  const params = new URLSearchParams();
+  if (options?.limit) {
+    params.set('limit', String(options.limit));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return apiFetch<BidZonePayload>(`/api/catalog/bid-zone${suffix}`, { token })
+    .then((response) => ({
+      generatedAt: response.generatedAt ?? null,
+      requestedHours: response.requestedHours,
+      minMcap: response.minMcap,
+      minVol1h: response.minVol1h,
+      minVol24h: response.minVol24h,
+      count: Number(response.count) || 0,
       candidates: response.candidates || [],
     }));
 }

@@ -22,6 +22,7 @@ export interface UiPrefsPayload {
     oldWeek: boolean;
     monitored: boolean;
     lateralized: boolean;
+    bidZone: boolean;
     pumpfun: boolean;
   };
   manualStarredOnly: boolean;

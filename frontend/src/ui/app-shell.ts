@@ -2,6 +2,7 @@ import type { AppController, AppRenderRegion } from '../state/app-controller';
 import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
+import { renderBidZoneSection } from './sections/bid-zone-section';
 import { renderManualTokensSection } from './sections/manual-section';
 import { renderLateralizedSection } from './sections/lateralized-section';
 import { renderMonitoredSection } from './sections/monitored-section';
@@ -19,6 +20,7 @@ type ConfigDraft = {
 type PanelScrollDraft = {
   monitored: number;
   lateralized: number;
+  bidZone: number;
   pumpfun: number;
   alerts: number;
 };
@@ -90,6 +92,7 @@ type AppRenderFrame = {
   panels: HTMLElement;
   monitoredSlot: HTMLElement;
   lateralizedSlot: HTMLElement;
+  bidZoneSlot: HTMLElement;
   pumpfunSlot: HTMLElement;
   alertsSlot: HTMLElement;
   overlaySlot: HTMLElement;
@@ -106,6 +109,7 @@ const APP_MANUAL_SLOT_SELECTOR = '[data-app-render-slot="manual"]';
 const APP_PANELS_SELECTOR = '[data-app-render-slot="panels"]';
 const APP_MONITORED_SLOT_SELECTOR = '[data-app-render-slot="monitored"]';
 const APP_LATERALIZED_SLOT_SELECTOR = '[data-app-render-slot="lateralized"]';
+const APP_BID_ZONE_SLOT_SELECTOR = '[data-app-render-slot="bid-zone"]';
 const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
 const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
 const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
@@ -176,11 +180,14 @@ export function renderAppShell(
     renderFrame.pumpfunSlot.hidden = !isLiveWorkspace;
     renderFrame.alertsSlot.hidden = !isLiveWorkspace;
     renderFrame.lateralizedSlot.hidden = !isHistoryWorkspace;
+    renderFrame.bidZoneSlot.hidden = !isHistoryWorkspace;
 
     if (isHistoryWorkspace) {
       updateRegionSlot(renderFrame.lateralizedSlot, 'lateralized', dirtyRegions, getLateralizedRenderKey(state), () => [renderLateralizedSection(state, controller)]);
+      updateRegionSlot(renderFrame.bidZoneSlot, 'bid-zone', dirtyRegions, getBidZoneRenderKey(state), () => [renderBidZoneSection(state, controller)]);
     } else {
       updateRenderSlot(renderFrame.lateralizedSlot, 'hidden', () => []);
+      updateRenderSlot(renderFrame.bidZoneSlot, 'hidden', () => []);
     }
   } else {
     renderFrame.oldWeekSlot.hidden = true;
@@ -193,6 +200,7 @@ export function renderAppShell(
     updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
     renderFrame.monitoredSlot.replaceChildren();
     renderFrame.lateralizedSlot.replaceChildren();
+    renderFrame.bidZoneSlot.replaceChildren();
     renderFrame.pumpfunSlot.replaceChildren();
     renderFrame.alertsSlot.replaceChildren();
   }
@@ -243,6 +251,7 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
   const existingPanels = existingFrame?.querySelector<HTMLElement>(APP_PANELS_SELECTOR);
   const existingMonitoredSlot = existingFrame?.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR);
   const existingLateralizedSlot = existingFrame?.querySelector<HTMLElement>(APP_LATERALIZED_SLOT_SELECTOR);
+  const existingBidZoneSlot = existingFrame?.querySelector<HTMLElement>(APP_BID_ZONE_SLOT_SELECTOR);
   const existingPumpfunSlot = existingFrame?.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR);
   const existingAlertsSlot = existingFrame?.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR);
   const existingOverlaySlot = existingFrame?.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR);
@@ -259,6 +268,7 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
     && existingPanels
     && existingMonitoredSlot
     && existingLateralizedSlot
+    && existingBidZoneSlot
     && existingPumpfunSlot
     && existingAlertsSlot
     && existingOverlaySlot
@@ -275,6 +285,7 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
       panels: existingPanels,
       monitoredSlot: existingMonitoredSlot,
       lateralizedSlot: existingLateralizedSlot,
+      bidZoneSlot: existingBidZoneSlot,
       pumpfunSlot: existingPumpfunSlot,
       alertsSlot: existingAlertsSlot,
       overlaySlot: existingOverlaySlot,
@@ -319,13 +330,16 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
   const lateralizedSlot = document.createElement('div');
   lateralizedSlot.dataset.appRenderSlot = 'lateralized';
 
+  const bidZoneSlot = document.createElement('div');
+  bidZoneSlot.dataset.appRenderSlot = 'bid-zone';
+
   const pumpfunSlot = document.createElement('div');
   pumpfunSlot.dataset.appRenderSlot = 'pumpfun';
 
   const alertsSlot = document.createElement('div');
   alertsSlot.dataset.appRenderSlot = 'alerts';
 
-  monitoredStack.append(monitoredSlot, lateralizedSlot);
+  monitoredStack.append(monitoredSlot, lateralizedSlot, bidZoneSlot);
   panels.append(monitoredStack, pumpfunSlot, alertsSlot);
   shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, manualSlot, panels);
 
@@ -347,6 +361,7 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
     panels,
     monitoredSlot,
     lateralizedSlot,
+    bidZoneSlot,
     pumpfunSlot,
     alertsSlot,
     overlaySlot,
@@ -539,6 +554,34 @@ function getLateralizedRenderKey(state: AppState) {
       item.volume24h,
       item.ageHours,
       item.score,
+      state.data.trackedTokensByAddress[item.address]?.symbol,
+      state.data.trackedTokensByAddress[item.address]?.name,
+      state.data.trackedTokensByAddress[item.address]?.imageUrl,
+      state.data.trackedTokensByAddress[item.address]?.pairUrl,
+    ])),
+  });
+}
+
+function getBidZoneRenderKey(state: AppState) {
+  return JSON.stringify({
+    collapsed: state.ui.collapsed.bidZone,
+    busy: state.ui.busy,
+    role: state.session.role,
+    freshness: state.runtime.bidZoneFreshnessLabel,
+    starred: state.data.starredTokens,
+    tracked: state.data.bidZoneTokens.map((item) => serializePrimitiveList([
+      item.address,
+      item.symbol,
+      item.name,
+      item.mcap,
+      item.volume1h,
+      item.volume24h,
+      item.ageHours,
+      item.score,
+      item.supportDistancePct,
+      item.supportTouchClusters,
+      item.recentRangePct,
+      item.closeDriftPct,
       state.data.trackedTokensByAddress[item.address]?.symbol,
       state.data.trackedTokensByAddress[item.address]?.name,
       state.data.trackedTokensByAddress[item.address]?.imageUrl,
@@ -921,6 +964,7 @@ function capturePanelScrollDraft(root: HTMLElement): PanelScrollDraft {
   return {
     monitored: root.querySelector<HTMLElement>('.monitored-list')?.scrollTop ?? 0,
     lateralized: root.querySelector<HTMLElement>('.lateralized-list')?.scrollTop ?? 0,
+    bidZone: root.querySelector<HTMLElement>('.bid-zone-list')?.scrollTop ?? 0,
     pumpfun: root.querySelector<HTMLElement>('.pump-list')?.scrollTop ?? 0,
     alerts: root.querySelector<HTMLElement>('.alerts-list')?.scrollTop ?? 0,
   };
@@ -929,11 +973,13 @@ function capturePanelScrollDraft(root: HTMLElement): PanelScrollDraft {
 function applyPanelScrollDraft(root: HTMLElement, draft: PanelScrollDraft) {
   const monitored = root.querySelector<HTMLElement>('.monitored-list');
   const lateralized = root.querySelector<HTMLElement>('.lateralized-list');
+  const bidZone = root.querySelector<HTMLElement>('.bid-zone-list');
   const pumpfun = root.querySelector<HTMLElement>('.pump-list');
   const alerts = root.querySelector<HTMLElement>('.alerts-list');
 
   if (monitored) monitored.scrollTop = draft.monitored;
   if (lateralized) lateralized.scrollTop = draft.lateralized;
+  if (bidZone) bidZone.scrollTop = draft.bidZone;
   if (pumpfun) pumpfun.scrollTop = draft.pumpfun;
   if (alerts) alerts.scrollTop = draft.alerts;
 }

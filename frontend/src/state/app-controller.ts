@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BidZoneTokenEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -28,7 +28,7 @@ import {
   type ConfigPayload,
   type UiPrefsPayload,
 } from '../services/api/config';
-import { adminBlockToken as adminBlockTokenRequest, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type BidZonePayload, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -92,6 +92,8 @@ const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const LATERALIZED_REFRESH_INTERVAL_MS = 60 * 1000;
 const LATERALIZED_PANEL_LIMIT = 24;
+const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
+const BID_ZONE_PANEL_LIMIT = 24;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
@@ -129,11 +131,19 @@ type HistorySyncLateralizedSnapshotMessage = {
   ts: number;
 };
 
+type HistorySyncBidZoneSnapshotMessage = {
+  type: 'bid-zone-snapshot';
+  tabId: string;
+  payload: BidZonePayload;
+  ts: number;
+};
+
 type HistorySyncMessage =
   | HistorySyncPresenceMessage
   | HistorySyncClosingMessage
   | HistorySyncMonitoredSnapshotMessage
-  | HistorySyncLateralizedSnapshotMessage;
+  | HistorySyncLateralizedSnapshotMessage
+  | HistorySyncBidZoneSnapshotMessage;
 
 type HistoryPeerState = {
   workspace: WorkspaceView;
@@ -214,6 +224,7 @@ export type AppRenderRegion =
   | 'old-week'
   | 'monitored'
   | 'lateralized'
+  | 'bid-zone'
   | 'pumpfun'
   | 'alerts'
   | 'overlay';
@@ -258,6 +269,7 @@ export function createAppController(): AppController {
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
   let lateralizedRefreshInFlight = false;
+  let bidZoneRefreshInFlight = false;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -267,6 +279,7 @@ export function createAppController(): AppController {
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
+  let nextBidZoneRefreshAt = 0;
   let suppressSocketStatusNoticeUntil = 0;
   const historySyncTabId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -284,6 +297,7 @@ export function createAppController(): AppController {
     oldWeek: 'old-week',
     monitored: 'monitored',
     lateralized: 'lateralized',
+    bidZone: 'bid-zone',
     pumpfun: 'pumpfun',
   };
 
@@ -722,6 +736,7 @@ export function createAppController(): AppController {
       oldWeek: false,
       monitored: false,
       lateralized: false,
+      bidZone: false,
       pumpfun: false,
     };
   }
@@ -809,6 +824,7 @@ export function createAppController(): AppController {
         oldWeek: Boolean(state.ui.collapsed.oldWeek),
         monitored: Boolean(state.ui.collapsed.monitored),
         lateralized: Boolean(state.ui.collapsed.lateralized),
+        bidZone: Boolean(state.ui.collapsed.bidZone),
         pumpfun: Boolean(state.ui.collapsed.pumpfun),
       },
       manualStarredOnly: Boolean(state.ui.manualStarredOnly),
@@ -989,6 +1005,7 @@ export function createAppController(): AppController {
       oldWeek: Boolean(collapsed.oldWeek),
       monitored: Boolean(collapsed.monitored),
       lateralized: Boolean(collapsed.lateralized),
+      bidZone: Boolean(collapsed.bidZone),
       pumpfun: Boolean(collapsed.pumpfun),
     };
 
@@ -1103,6 +1120,7 @@ export function createAppController(): AppController {
     const visibleCount = getVisibleMonitoredTokens().length;
     state.panels.monitored = visibleCount;
     state.panels.lateralized = state.data.lateralizedTokens.length;
+    state.panels.bidZone = state.data.bidZoneTokens.length;
     state.panels.alerts = state.data.alerts.length;
     state.runtime.alerts = state.data.alerts.length;
     syncMonitoredPagination();
@@ -1858,6 +1876,11 @@ export function createAppController(): AppController {
     state.runtime.lateralizedFreshnessLabel = formatFreshnessLabel(timestamp);
   }
 
+  function updateBidZoneFreshness(timestamp: string | null) {
+    state.runtime.bidZoneUpdatedAt = timestamp;
+    state.runtime.bidZoneFreshnessLabel = formatFreshnessLabel(timestamp);
+  }
+
   function startPumpGcTimer() {
     if (pumpGcInterval || !shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
       return;
@@ -1917,6 +1940,49 @@ export function createAppController(): AppController {
     } finally {
       nextLateralizedRefreshAt = Date.now() + LATERALIZED_REFRESH_INTERVAL_MS;
       lateralizedRefreshInFlight = false;
+    }
+  }
+
+  async function refreshBidZoneTokens(options?: { force?: boolean }) {
+    if (!shouldRunLateralizedRuntime()) {
+      state.data.bidZoneTokens = [];
+      state.panels.bidZone = 0;
+      updateBidZoneFreshness(null);
+      return;
+    }
+
+    const token = state.session.token;
+    if (!token || bidZoneRefreshInFlight) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!options?.force && nextBidZoneRefreshAt > now) {
+      return;
+    }
+
+    bidZoneRefreshInFlight = true;
+    try {
+      const payload = await fetchBidZoneCandidates(token, { limit: BID_ZONE_PANEL_LIMIT });
+      applyBidZonePayload(payload);
+      if (isHistoryWorkspace() && isHistorySyncLeader()) {
+        broadcastHistoryBidZoneSnapshot(payload);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (
+        message.includes('Failed to load bid-zone candidates')
+        || message.includes('API request failed:')
+      ) {
+        state.data.bidZoneTokens = [];
+        updateBidZoneFreshness(null);
+        state.panels.bidZone = 0;
+        emit('bid-zone');
+        return;
+      }
+    } finally {
+      nextBidZoneRefreshAt = Date.now() + BID_ZONE_REFRESH_INTERVAL_MS;
+      bidZoneRefreshInFlight = false;
     }
   }
 
@@ -2410,7 +2476,7 @@ export function createAppController(): AppController {
 
   function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
     applyMonitoredDashboard(tokens, undefined, generatedAt ?? null);
-    emit('recent', 'old-week', 'header');
+    emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
   }
 
   function applyLateralizedPayload(payload: LateralizedPayload) {
@@ -2445,6 +2511,41 @@ export function createAppController(): AppController {
     emit('lateralized');
   }
 
+  function applyBidZonePayload(payload: BidZonePayload) {
+    state.data.bidZoneTokens = (payload.candidates || []).map((item): BidZoneTokenEntry => ({
+      address: item.address,
+      symbol: item.symbol ?? null,
+      name: item.name ?? null,
+      monitorPriority: item.monitorPriority ?? null,
+      mcap: item.mcap ?? null,
+      catalogMcap: item.catalogMcap ?? null,
+      windowMcap: item.windowMcap ?? null,
+      volume1h: item.volume1h ?? null,
+      volume6h: item.volume6h ?? null,
+      volume24h: item.volume24h ?? null,
+      supportLevelMcap: item.supportLevelMcap ?? null,
+      resistanceLevelMcap: item.resistanceLevelMcap ?? null,
+      robustRangePct: item.robustRangePct ?? null,
+      recentRangePct: item.recentRangePct ?? null,
+      closeDriftPct: item.closeDriftPct ?? null,
+      supportDistancePct: item.supportDistancePct ?? null,
+      resistanceDistancePct: item.resistanceDistancePct ?? null,
+      supportTouchClusters: item.supportTouchClusters ?? 0,
+      coverageRatio: item.coverageRatio ?? null,
+      bucketCount: item.bucketCount ?? 0,
+      sampleCount: item.sampleCount ?? 0,
+      expectedBucketCount: item.expectedBucketCount ?? 0,
+      ageHours: item.ageHours ?? null,
+      requestedHours: item.requestedHours ?? undefined,
+      minimumWindowHours: item.minimumWindowHours ?? 0,
+      windowHoursUsed: item.windowHoursUsed ?? 0,
+      score: item.score ?? null,
+    }));
+    updateBidZoneFreshness(payload.generatedAt ?? null);
+    state.panels.bidZone = state.data.bidZoneTokens.length;
+    emit('bid-zone');
+  }
+
   function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
     if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
       return;
@@ -2466,6 +2567,19 @@ export function createAppController(): AppController {
 
     postHistorySyncMessage({
       type: 'lateralized-snapshot',
+      tabId: historySyncTabId,
+      payload,
+      ts: Date.now(),
+    });
+  }
+
+  function broadcastHistoryBidZoneSnapshot(payload: BidZonePayload) {
+    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'bid-zone-snapshot',
       tabId: historySyncTabId,
       payload,
       ts: Date.now(),
@@ -2505,6 +2619,11 @@ export function createAppController(): AppController {
 
     if (message.type === 'lateralized-snapshot') {
       applyLateralizedPayload(message.payload);
+      return;
+    }
+
+    if (message.type === 'bid-zone-snapshot') {
+      applyBidZonePayload(message.payload);
     }
   }
 
@@ -2524,7 +2643,7 @@ export function createAppController(): AppController {
       if (isLiveWorkspace()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
       } else if (isHistoryWorkspace()) {
-        emit('recent', 'old-week', 'lateralized', 'header');
+        emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
       } else {
         emit('recent', 'old-week', 'header');
       }
@@ -2545,7 +2664,8 @@ export function createAppController(): AppController {
     void refreshMonitoredDashboard();
     if (shouldRunLateralizedRuntime()) {
       void refreshLateralizedTokens();
-      emit('header', 'recent', 'old-week', 'lateralized');
+      void refreshBidZoneTokens();
+      emit('header', 'recent', 'old-week', 'lateralized', 'bid-zone');
       return;
     }
     if (isLiveWorkspace()) {
@@ -2699,8 +2819,12 @@ export function createAppController(): AppController {
       state.data.lateralizedTokens = [];
       state.panels.lateralized = 0;
       updateLateralizedFreshness(null);
+      state.data.bidZoneTokens = [];
+      state.panels.bidZone = 0;
+      updateBidZoneFreshness(null);
     } else {
       void refreshLateralizedTokens({ force: true });
+      void refreshBidZoneTokens({ force: true });
     }
 
     syncHistorySyncState({ runImmediatelyOnGain: true });
@@ -2715,6 +2839,7 @@ export function createAppController(): AppController {
     void refreshMonitoredDashboard();
     if (shouldRunLateralizedRuntime()) {
       void refreshLateralizedTokens({ force: true });
+      void refreshBidZoneTokens({ force: true });
     }
   }
 
@@ -2748,8 +2873,11 @@ export function createAppController(): AppController {
     state.runtime.monitoredFreshnessLabel = '-';
     state.runtime.lateralizedUpdatedAt = null;
     state.runtime.lateralizedFreshnessLabel = '-';
+    state.runtime.bidZoneUpdatedAt = null;
+    state.runtime.bidZoneFreshnessLabel = '-';
     state.panels.alerts = 0;
     state.panels.lateralized = 0;
+    state.panels.bidZone = 0;
     state.panels.pumpfun = 0;
     state.configSummary = {
       loaded: false,
@@ -2781,6 +2909,7 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       lateralizedTokens: [],
+      bidZoneTokens: [],
       alerts: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -2792,6 +2921,7 @@ export function createAppController(): AppController {
     state.bars.blocklist = 0;
     state.panels.monitored = 0;
     state.panels.lateralized = 0;
+    state.panels.bidZone = 0;
     state.ui.authPanel = 'none';
     state.ui.pendingVerificationEmail = null;
     state.ui.pendingPasswordResetToken = null;
@@ -2903,7 +3033,8 @@ export function createAppController(): AppController {
         emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
       } else if (isHistoryWorkspace()) {
         void refreshLateralizedTokens({ force: true });
-        emit('recent', 'old-week', 'lateralized', 'header');
+        void refreshBidZoneTokens({ force: true });
+        emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
       } else {
         emit('recent', 'old-week', 'header');
       }
@@ -3227,7 +3358,7 @@ export function createAppController(): AppController {
       state.data.starredTokens = wasStarred
         ? state.data.starredTokens.filter((item) => item !== address)
         : [...state.data.starredTokens, address].sort((a, b) => a.localeCompare(b));
-      emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'alerts');
+      emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'alerts');
       queueStarredTokensPersist();
     },
     setSoundVolume(volume: number) {
