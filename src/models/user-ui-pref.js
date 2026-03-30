@@ -1,6 +1,6 @@
 const db = require('./db');
 
-const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'lateralized', 'pumpfun'];
+const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'lateralized', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
 const MONITORED_SORT_MODES = ['vol', 'mcap', 'age'];
 
@@ -11,6 +11,7 @@ const DEFAULT_UI_PREFS = {
     oldWeek: false,
     monitored: false,
     lateralized: false,
+    bidZone: false,
     pumpfun: false,
   },
   manualStarredOnly: false,
@@ -156,6 +157,7 @@ function normalizePrefs(raw) {
     oldWeek: Boolean(collapsed.oldWeek),
     monitored: Boolean(collapsed.monitored),
     lateralized: Boolean(collapsed.lateralized),
+    bidZone: Boolean(collapsed.bidZone),
     pumpfun: Boolean(collapsed.pumpfun),
   };
 
