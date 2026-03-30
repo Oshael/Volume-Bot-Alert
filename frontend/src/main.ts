@@ -269,7 +269,10 @@ controller.subscribe((state, dirtyRegions) => {
     return;
   }
 
-  if (previousSessionStatus !== state.session.status && state.session.status === 'authenticated') {
+  if (
+    previousSessionStatus !== state.session.status
+    && (state.session.status === 'authenticated' || state.session.status === 'pre_access')
+  ) {
     performRender(state, dirtyRegions);
     pendingState = null;
     pendingDirtyRegions = null;

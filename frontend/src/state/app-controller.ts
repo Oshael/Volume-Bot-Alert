@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type BidZoneTokenEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -28,6 +28,9 @@ import {
   type ConfigPayload,
   type UiPrefsPayload,
 } from '../services/api/config';
+import { fetchAccountAccess, type AccountAccessPayload } from '../services/api/account';
+import { createBillingOrder, fetchBillingState, type BillingStatePayload } from '../services/api/billing';
+import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload, type PreAccessMePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type BidZonePayload, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -163,8 +166,12 @@ export interface AppController {
   requestPasswordReset(email: string): Promise<void>;
   confirmPasswordReset(newPassword: string, confirmNewPassword: string): Promise<void>;
   validateInvite(code: string): Promise<InviteValidationResponse>;
-  openAuthPanel(panel: 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp'): void;
+  openAuthPanel(panel: Exclude<AuthPanel, 'none'>): void;
   closeAuthPanel(): void;
+  refreshBilling(): Promise<void>;
+  startBillingCheckout(planKey: string): Promise<void>;
+  startPreAccessCheckout(planKey: string): Promise<void>;
+  completePreAccess(): Promise<void>;
   logout(): Promise<void>;
   logoutAll(): Promise<void>;
   reloadConfig(): Promise<void>;
@@ -233,6 +240,36 @@ function isAuthRoutePath(pathname: string) {
   return pathname === '/auth/verify-email' || pathname === '/auth/reset-password';
 }
 
+function hasAuthRouteIntent(locationLike: Location | null | undefined) {
+  if (!locationLike) {
+    return false;
+  }
+
+  const pathname = String(locationLike.pathname || '/');
+  if (isAuthRoutePath(pathname)) {
+    return true;
+  }
+
+  const search = new URLSearchParams(locationLike.search || '');
+  const rawMode = String(search.get('mode') || '').trim().toLowerCase();
+  return rawMode === 'verify-email' || rawMode === 'reset-password';
+}
+
+function isPreAccessRoutePath(pathname: string | null | undefined) {
+  const value = String(pathname || '').trim().toLowerCase();
+  return value === '/access' || value.startsWith('/access/');
+}
+
+function getBillingCheckoutIntent(locationLike: Location | null | undefined) {
+  if (!locationLike) {
+    return null;
+  }
+
+  const search = new URLSearchParams(locationLike.search || '');
+  const status = String(search.get('billing') || '').trim().toLowerCase();
+  return status === 'success' ? 'success' : null;
+}
+
 function normalizeWorkspace(value: string | null | undefined): WorkspaceView {
   return value === 'history' ? 'history' : 'live';
 }
@@ -256,7 +293,7 @@ function resolveWorkspaceFromPath(pathname: string | null | undefined): Workspac
 
 export function createAppController(): AppController {
   const state = createAppState();
-  if (typeof window !== 'undefined' && !isAuthRoutePath(window.location.pathname || '/')) {
+  if (typeof window !== 'undefined' && !isAuthRoutePath(window.location.pathname || '/') && !isPreAccessRoutePath(window.location.pathname || '/')) {
     state.ui.workspace = resolveWorkspaceFromPath(window.location.pathname);
   }
   clearLegacyAuthToken();
@@ -277,6 +314,7 @@ export function createAppController(): AppController {
   let uiPrefsPersistRevision = 0;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
+  let preAccessPollingTimer: ReturnType<typeof setTimeout> | null = null;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
   let nextBidZoneRefreshAt = 0;
@@ -301,6 +339,18 @@ export function createAppController(): AppController {
     pumpfun: 'pumpfun',
   };
 
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      if (state.session.status !== 'authenticated' || state.ui.authPanel !== 'user-settings') {
+        return;
+      }
+
+      void refreshUserSettingsState(COOKIE_SESSION_MARKER)
+        .then(() => emit('overlay', 'header'))
+        .catch(() => emit('overlay', 'header'));
+    });
+  }
+
   function queueDirtyRegions(regions: AppRenderRegion[]) {
     if (regions.length === 0 || regions.includes('all')) {
       pendingDirtyRegions.clear();
@@ -314,6 +364,13 @@ export function createAppController(): AppController {
 
     for (const region of regions) {
       pendingDirtyRegions.add(region);
+    }
+  }
+
+  function stopPreAccessPolling() {
+    if (preAccessPollingTimer) {
+      clearTimeout(preAccessPollingTimer);
+      preAccessPollingTimer = null;
     }
   }
 
@@ -613,6 +670,32 @@ export function createAppController(): AppController {
     }
   }
 
+  function clearBillingCheckoutUrl() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('billing') && !url.searchParams.has('billingOrderId')) {
+      return;
+    }
+
+    url.searchParams.delete('billing');
+    url.searchParams.delete('billingOrderId');
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl || '/');
+  }
+
+  function navigateToPreAccess(path = '/access') {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const nextPath = isPreAccessRoutePath(path) ? path : '/access';
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, document.title, nextPath);
+    }
+  }
+
   function emitWorkspaceChange() {
     emit('all');
   }
@@ -623,7 +706,7 @@ export function createAppController(): AppController {
     }
 
     const pathname = window.location.pathname || '/';
-    if (isAuthRoutePath(pathname)) {
+    if (isAuthRoutePath(pathname) || isPreAccessRoutePath(pathname)) {
       return;
     }
 
@@ -682,6 +765,15 @@ export function createAppController(): AppController {
     }
     if (raw.includes('Account is deactivated')) {
       return 'This account is deactivated. Contact an administrator if you need access restored.';
+    }
+    if (raw.includes('Access expired')) {
+      return 'Your access has expired. Contact an administrator or renew your access to continue.';
+    }
+    if (raw.includes('Access revoked')) {
+      return 'This account was blocked from product access by an administrator or internal access policy. Contact an administrator if you believe this is a mistake.';
+    }
+    if (raw.includes('Access inactive')) {
+      return 'Your account does not currently have product access. Contact an administrator.';
     }
     if (raw.includes('Email not verified')) {
       return 'Your email is not verified yet. Check your inbox or request a new verification email.';
@@ -2738,7 +2830,15 @@ export function createAppController(): AppController {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
-        setError(`Session revoked by server: ${reason}`);
+        if (reason === 'access_expired') {
+          setError('Your access has expired. Contact an administrator or renew your access to continue.');
+        } else if (reason === 'access_revoked') {
+          setError('Your access was revoked. Contact an administrator if you believe this is a mistake.');
+        } else if (reason === 'access_inactive') {
+          setError('Your account does not currently have product access. Contact an administrator.');
+        } else {
+          setError(`Session revoked by server: ${reason}`);
+        }
         emit('all');
       },
       onPumpStatus(payload) {
@@ -2857,7 +2957,89 @@ export function createAppController(): AppController {
     syncHistorySyncState({ runImmediatelyOnGain: true });
   }
 
+  function applyPreAccessSession(user: SessionUser) {
+    state.session.status = 'pre_access';
+    state.session.token = null;
+    state.session.username = user.username;
+    state.session.email = user.email;
+    state.session.role = user.role;
+    state.session.isEmailVerified = Boolean(user.isEmailVerified);
+    state.session.emailVerifiedAt = user.emailVerifiedAt ?? null;
+    state.preAccess.loaded = true;
+    stopMonitoringTimers();
+    disconnectSocket();
+  }
+
+  function applyAccountAccess(access: AccountAccessPayload | null) {
+    state.session.accessStatus = access?.accessStatus ?? null;
+    state.session.accessGrantedAt = access?.accessGrantedAt ?? null;
+    state.session.accessExpiresAt = access?.accessExpiresAt ?? null;
+    state.session.accessSource = access?.accessSource ?? null;
+    state.session.accessUpdatedAt = access?.accessUpdatedAt ?? null;
+    state.session.accessIsExpired = Boolean(access?.isExpired);
+    state.session.accessHasProductAccess = Boolean(access?.hasProductAccess);
+    state.session.accessDaysRemaining = access?.daysRemaining ?? null;
+  }
+
+  function applyBillingStateSnapshot(snapshot: BillingStatePayload | null) {
+    state.billing.loaded = Boolean(snapshot);
+    state.billing.enabled = Boolean(snapshot?.enabled);
+    state.billing.provider = snapshot?.provider ?? null;
+    state.billing.providerReady = Boolean(snapshot?.providerReady);
+    state.billing.providerMocked = Boolean(snapshot?.providerMocked);
+    state.billing.plans = (snapshot?.plans ?? []) as BillingPlanEntry[];
+    state.billing.orders = (snapshot?.orders ?? []) as BillingOrderEntry[];
+    state.billing.error = null;
+  }
+
+  function applyPreAccessBillingStateSnapshot(snapshot: PreAccessBillingStatePayload | null) {
+    applyBillingStateSnapshot(snapshot as BillingStatePayload | null);
+  }
+
+  async function refreshAccountAccessState(token: string) {
+    try {
+      applyAccountAccess(await fetchAccountAccess(token));
+    } catch {
+      applyAccountAccess(null);
+    }
+  }
+
+  async function refreshBillingState(token: string) {
+    try {
+      applyBillingStateSnapshot(await fetchBillingState(token));
+    } catch (error) {
+      state.billing.loaded = false;
+      state.billing.enabled = false;
+      state.billing.provider = null;
+      state.billing.providerReady = false;
+      state.billing.providerMocked = false;
+      state.billing.plans = [];
+      state.billing.orders = [];
+      state.billing.error = error instanceof Error ? error.message : 'Unable to load billing';
+    }
+  }
+
+  async function refreshPreAccessState() {
+    const [preAccess, billing] = await Promise.all([
+      fetchPreAccessMe(),
+      fetchPreAccessBillingState(),
+    ]);
+
+    applyPreAccessSession(preAccess.user);
+    applyAccountAccess(preAccess.access);
+    applyPreAccessBillingStateSnapshot(billing);
+    state.preAccess.loaded = true;
+  }
+
+  async function refreshUserSettingsState(token: string) {
+    await Promise.all([
+      refreshAccountAccessState(token),
+      refreshBillingState(token),
+    ]);
+  }
+
   function clearSession() {
+    stopPreAccessPolling();
     recentAlertFingerprints.clear();
     nextColdFieldRefreshAt = 0;
     state.session.status = 'anonymous';
@@ -2867,6 +3049,25 @@ export function createAppController(): AppController {
     state.session.role = null;
     state.session.isEmailVerified = false;
     state.session.emailVerifiedAt = null;
+    state.session.accessStatus = null;
+    state.session.accessGrantedAt = null;
+    state.session.accessExpiresAt = null;
+    state.session.accessSource = null;
+    state.session.accessUpdatedAt = null;
+    state.session.accessIsExpired = false;
+    state.session.accessHasProductAccess = false;
+    state.session.accessDaysRemaining = null;
+    state.billing.loaded = false;
+    state.billing.enabled = false;
+    state.billing.provider = null;
+    state.billing.providerReady = false;
+    state.billing.providerMocked = false;
+    state.billing.plans = [];
+    state.billing.orders = [];
+    state.billing.pendingPlanKey = null;
+    state.billing.error = null;
+    state.preAccess.loaded = false;
+    state.preAccess.awaitingConfirmation = false;
     state.runtime.cycle = 0;
     state.runtime.alerts = 0;
     state.runtime.monitoredUpdatedAt = null;
@@ -2954,6 +3155,82 @@ export function createAppController(): AppController {
     historySyncPeers.clear();
     historySyncLeaderTabId = null;
     syncHistorySyncState();
+  }
+
+  async function completePreAccessFlow(options?: { automatic?: boolean }) {
+    if (state.session.status !== 'pre_access') {
+      return;
+    }
+    if (!state.session.accessHasProductAccess) {
+      if (!options?.automatic) {
+        setError('Payment confirmation still pending');
+        emit('legacy');
+      }
+      return;
+    }
+    if (authSubmitInFlight) {
+      return;
+    }
+
+    authSubmitInFlight = true;
+    setBusy(true);
+    setError(null);
+    setNotice(options?.automatic ? 'Payment confirmed. Entering bot...' : 'Entering bot...');
+    emit();
+
+    try {
+      const result = await completePreAccessSession();
+      stopPreAccessPolling();
+      state.preAccess.awaitingConfirmation = false;
+      applySession(result.user);
+      await refreshAccountAccessState(COOKIE_SESSION_MARKER);
+      await refreshBillingState(COOKIE_SESSION_MARKER);
+      navigateToWorkspace('live');
+      setNotice('Payment confirmed. Access granted.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to complete access activation');
+    } finally {
+      authSubmitInFlight = false;
+      setBusy(false);
+      emit();
+    }
+  }
+
+  async function maybeAutoCompletePreAccess(options?: { automatic?: boolean }) {
+    if (state.session.status !== 'pre_access' || !state.session.accessHasProductAccess) {
+      return false;
+    }
+
+    await completePreAccessFlow({ automatic: options?.automatic !== false });
+    return true;
+  }
+
+  function schedulePreAccessConfirmationPolling(attempt = 0) {
+    if (typeof window === 'undefined' || preAccessPollingTimer || state.session.status !== 'pre_access') {
+      return;
+    }
+
+    preAccessPollingTimer = window.setTimeout(async () => {
+      preAccessPollingTimer = null;
+      if (state.session.status !== 'pre_access') {
+        return;
+      }
+
+      try {
+        await refreshPreAccessState();
+        emit('legacy');
+
+        if (await maybeAutoCompletePreAccess({ automatic: true })) {
+          return;
+        }
+      } catch (_) {
+        emit('legacy');
+      }
+
+      if (attempt < 39 && state.preAccess.awaitingConfirmation) {
+        schedulePreAccessConfirmationPolling(attempt + 1);
+      }
+    }, 3000);
   }
 
   function applyMonitoredDashboard(
@@ -3084,11 +3361,31 @@ export function createAppController(): AppController {
 
       try {
         const result = await confirmEmailVerificationRequest(token);
+        if (result.requiresPreAccess) {
+          disconnectSocket();
+          stopMonitoringTimers();
+          clearSession();
+          applyPreAccessSession(result.user);
+          applyAccountAccess(result.access ?? null);
+          navigateToPreAccess(result.redirectPath || '/access');
+          try {
+            await refreshPreAccessState();
+            setNotice(result.message || 'Email verified successfully. Continue to access setup.');
+          } catch {
+            setError(AUTH_ERROR_COOKIE_BLOCKED);
+          }
+          emit('all');
+          flushEmit();
+          return;
+        }
+
         if (state.session.status === 'authenticated') {
           applySession(result.user);
         }
         state.ui.authPanel = 'email-verified-success';
         setNotice(result.message || 'Email verified successfully.');
+        emit('all');
+        flushEmit();
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Email verification failed');
       } finally {
@@ -3130,7 +3427,7 @@ export function createAppController(): AppController {
       state.ui.loginErrorCount = 0;
       emit('legacy', 'overlay');
     },
-    openAuthPanel(panel: 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp') {
+    openAuthPanel(panel: Exclude<AuthPanel, 'none'>) {
       if (panel === 'change-password') {
         monitoringPausedForAuthPanel = state.runtime.mode === 'active';
         if (monitoringPausedForAuthPanel) {
@@ -3141,6 +3438,11 @@ export function createAppController(): AppController {
       }
       state.ui.authPanel = panel;
       emit('all');
+      if (panel === 'user-settings' && state.session.status === 'authenticated') {
+        void refreshUserSettingsState(COOKIE_SESSION_MARKER)
+          .then(() => emit('overlay', 'header'))
+          .catch(() => emit('overlay', 'header'));
+      }
     },
     closeAuthPanel() {
       if (state.ui.authPanel === 'none') {
@@ -3159,6 +3461,102 @@ export function createAppController(): AppController {
         startMonitoringTimers();
       }
       emit('all');
+    },
+    async refreshBilling() {
+      if (state.session.status === 'authenticated') {
+        await refreshUserSettingsState(COOKIE_SESSION_MARKER);
+        emit('overlay', 'header');
+        return;
+      }
+
+      if (state.session.status === 'pre_access') {
+        await refreshPreAccessState();
+        if (await maybeAutoCompletePreAccess({ automatic: true })) {
+          return;
+        }
+        emit('legacy');
+      }
+    },
+    async startBillingCheckout(planKey: string) {
+      if (state.session.status !== 'authenticated') {
+        throw new Error('Authentication required');
+      }
+
+      const normalizedPlanKey = String(planKey || '').trim();
+      if (!normalizedPlanKey) {
+        throw new Error('Billing plan is required');
+      }
+
+      state.billing.pendingPlanKey = normalizedPlanKey;
+      state.billing.error = null;
+      emit('overlay');
+
+      const popup = typeof window !== 'undefined'
+        ? (state.billing.providerMocked
+          ? window.open('', '_blank')
+          : window.open('', '_blank', 'noopener'))
+        : null;
+
+      try {
+        const result = await createBillingOrder(normalizedPlanKey, COOKIE_SESSION_MARKER);
+        if (!result.checkoutUrl) {
+          throw new Error('MoonPay Commerce checkout URL was not returned');
+        }
+        await refreshBillingState(COOKIE_SESSION_MARKER);
+        if (popup) {
+          popup.location.href = result.checkoutUrl;
+        } else if (typeof window !== 'undefined') {
+          window.open(result.checkoutUrl, '_blank', 'noopener');
+        }
+        setNotice(
+          state.billing.providerMocked
+            ? 'Local billing checkout opened in a new tab. Complete the simulated payment there.'
+            : 'MoonPay Commerce checkout opened in a new tab.'
+        );
+      } catch (error) {
+        if (popup) {
+          popup.close();
+        }
+        state.billing.error = error instanceof Error ? error.message : 'Unable to start checkout';
+        throw error;
+      } finally {
+        state.billing.pendingPlanKey = null;
+        emit('overlay');
+      }
+    },
+    async startPreAccessCheckout(planKey: string) {
+      if (state.session.status !== 'pre_access') {
+        throw new Error('Pre-access authentication required');
+      }
+
+      const normalizedPlanKey = String(planKey || '').trim();
+      if (!normalizedPlanKey) {
+        throw new Error('Billing plan is required');
+      }
+
+      state.billing.pendingPlanKey = normalizedPlanKey;
+      state.billing.error = null;
+      emit('legacy');
+
+      try {
+        const result = await createPreAccessOrder(normalizedPlanKey);
+        if (!result.checkoutUrl) {
+          throw new Error('MoonPay checkout URL was not returned');
+        }
+        await refreshPreAccessState();
+        if (typeof window !== 'undefined') {
+          window.location.href = result.checkoutUrl;
+        }
+      } catch (error) {
+        state.billing.error = error instanceof Error ? error.message : 'Unable to start checkout';
+        throw error;
+      } finally {
+        state.billing.pendingPlanKey = null;
+        emit('legacy');
+      }
+    },
+    async completePreAccess() {
+      await completePreAccessFlow();
     },
     removePumpToken(mint: string) {
       if (!state.data.dismissedPump.includes(mint)) {
@@ -3384,6 +3782,19 @@ export function createAppController(): AppController {
       emit('header', 'recent', 'old-week');
     },
     async init() {
+      const billingCheckoutSucceeded = typeof window !== 'undefined'
+        && getBillingCheckoutIntent(window.location) === 'success';
+
+      if (typeof window !== 'undefined' && hasAuthRouteIntent(window.location)) {
+        setBusy(false);
+        setError(null);
+        setNotice(null);
+        emit();
+        await handleAuthRouteIntent();
+        syncWorkspaceFromLocationInternal({ canonicalize: false });
+        return;
+      }
+
       setBusy(true);
       setError(null);
       setNotice(AUTH_NOTICE_RESTORING);
@@ -3392,19 +3803,49 @@ export function createAppController(): AppController {
       try {
         const session = await fetchCurrentSession();
         applySession(session.user);
+        await refreshAccountAccessState(COOKIE_SESSION_MARKER);
+        await refreshBillingState(COOKIE_SESSION_MARKER);
+        if (billingCheckoutSucceeded) {
+          state.ui.authPanel = 'user-settings';
+          clearBillingCheckoutUrl();
+        }
         await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
-        setNotice(AUTH_NOTICE_SESSION_RESTORED);
+        setNotice(
+          billingCheckoutSucceeded
+            ? 'Billing checkout completed. Access and billing history were refreshed.'
+            : AUTH_NOTICE_SESSION_RESTORED
+        );
       } catch (error) {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
-        state.ui.loginErrorCount = 0;
-        const message = normalizeAuthError(error, 'restore');
-        if (message.includes('no longer valid') || message.includes('Unable to restore')) {
-          setNotice(AUTH_NOTICE_NO_SESSION);
+        try {
+          await refreshPreAccessState();
+          navigateToPreAccess();
           setError(null);
-        } else {
-          setError(message);
+          state.ui.loginErrorCount = 0;
+          if (billingCheckoutSucceeded) {
+            clearBillingCheckoutUrl();
+            state.preAccess.awaitingConfirmation = true;
+            setNotice('Waiting for payment confirmation...');
+            if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
+              schedulePreAccessConfirmationPolling();
+            }
+          } else {
+            state.preAccess.awaitingConfirmation = false;
+            if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
+              setNotice('Access payment required before entering the bot.');
+            }
+          }
+        } catch {
+          state.ui.loginErrorCount = 0;
+          const message = normalizeAuthError(error, 'restore');
+          if (message.includes('no longer valid') || message.includes('Unable to restore')) {
+            setNotice(AUTH_NOTICE_NO_SESSION);
+            setError(null);
+          } else {
+            setError(message);
+          }
         }
       } finally {
         setBusy(false);
@@ -3412,9 +3853,13 @@ export function createAppController(): AppController {
       }
 
       await handleAuthRouteIntent();
-      syncWorkspaceFromLocationInternal({
-        canonicalize: state.session.status === 'authenticated',
-      });
+      if (state.session.status === 'pre_access') {
+        navigateToPreAccess();
+      } else {
+        syncWorkspaceFromLocationInternal({
+          canonicalize: state.session.status === 'authenticated',
+        });
+      }
     },
     async login(email: string, password: string) {
       if (authSubmitInFlight) {
@@ -3457,6 +3902,8 @@ export function createAppController(): AppController {
         }
         const session = await fetchCurrentSession();
         applySession(session.user);
+        await refreshAccountAccessState(COOKIE_SESSION_MARKER);
+        await refreshBillingState(COOKIE_SESSION_MARKER);
         await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         syncWorkspaceFromLocationInternal({ canonicalize: true });
         state.ui.loginErrorCount = 0;
@@ -3522,11 +3969,22 @@ export function createAppController(): AppController {
         state.ui.pendingLoginOtpChallengeToken = null;
         state.ui.pendingLoginOtpEmailHint = null;
         state.ui.authPanel = 'none';
-        applySession(result.user);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
-        syncWorkspaceFromLocationInternal({ canonicalize: true });
-        state.ui.loginErrorCount = 0;
-        setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
+        if (result.requiresPreAccess) {
+          applyPreAccessSession(result.user);
+          applyAccountAccess(result.access ?? null);
+          await refreshPreAccessState();
+          navigateToPreAccess(result.redirectPath || '/access');
+          state.ui.loginErrorCount = 0;
+          setNotice(result.message || 'Access payment required before entering the bot.');
+        } else {
+          applySession(result.user);
+          await refreshAccountAccessState(COOKIE_SESSION_MARKER);
+          await refreshBillingState(COOKIE_SESSION_MARKER);
+          await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+          syncWorkspaceFromLocationInternal({ canonicalize: true });
+          state.ui.loginErrorCount = 0;
+          setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
+        }
       } catch (error) {
         setError(error instanceof Error ? error.message : 'OTP verification failed');
       } finally {
@@ -3771,7 +4229,9 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        if (token) {
+        if (state.session.status === 'pre_access') {
+          await logoutPreAccessSession();
+        } else if (token) {
           await logout(token);
         }
       } catch (error) {

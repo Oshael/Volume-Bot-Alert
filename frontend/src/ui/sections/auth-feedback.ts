@@ -41,6 +41,9 @@ export function getAuthFeedbackKind(state: Pick<AppState, 'ui'>, message: string
     }
     if (message.includes('Incorrect email or password')) return 'credentials';
     if (message.includes('deactivated')) return 'account';
+    if (message.includes('access has expired')) return 'account';
+    if (message.includes('access was revoked')) return 'account';
+    if (message.includes('does not currently have product access')) return 'account';
     if (message.includes('not verified')) return 'account';
     if (message.includes('temporarily locked')) return 'lockout';
     if (message.includes('Unable to reach the server')) return 'network';

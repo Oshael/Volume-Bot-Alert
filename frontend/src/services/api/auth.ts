@@ -1,4 +1,5 @@
 ﻿import { apiFetch } from './base';
+import type { AccountAccessPayload } from './account';
 
 export interface SessionUser {
   id: number;
@@ -22,12 +23,16 @@ export interface AuthEmailDebug {
 export interface LoginResponse {
   message: string;
   user?: SessionUser;
+  access?: AccountAccessPayload;
   emailVerificationRequired?: boolean;
   verificationEmailSent?: boolean;
   verificationEmailError?: string | null;
   otpRequired?: boolean;
   challengeToken?: string;
   otpEmailHint?: string;
+  requiresPreAccess?: boolean;
+  redirectPath?: string;
+  preAccessToken?: string;
   emailDebug?: AuthEmailDebug | null;
 }
 
@@ -48,6 +53,10 @@ export interface ChangePasswordInput {
 export interface VerifyEmailConfirmResponse {
   message: string;
   user: SessionUser;
+  access?: AccountAccessPayload;
+  requiresPreAccess?: boolean;
+  redirectPath?: string;
+  preAccessToken?: string;
 }
 
 export interface VerifyEmailRequestInput {

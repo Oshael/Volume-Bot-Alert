@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AppState } from '../state/app-state';
+import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -658,16 +658,28 @@ function getOverlayRenderKey(state: AppState) {
     error: state.ui.error,
     notice: state.ui.notice,
     role: state.session.role,
+    accessStatus: state.session.accessStatus,
+    accessExpiresAt: state.session.accessExpiresAt,
+    accessDaysRemaining: state.session.accessDaysRemaining,
+    accessSource: state.session.accessSource,
+    username: state.ui.authPanel === 'user-settings' ? state.session.username : null,
+    email: state.ui.authPanel === 'user-settings' ? state.session.email : null,
+    isEmailVerified: state.ui.authPanel === 'user-settings' ? state.session.isEmailVerified : null,
+    emailVerifiedAt: state.ui.authPanel === 'user-settings' ? state.session.emailVerifiedAt : null,
+    billingLoaded: state.ui.authPanel === 'user-settings' ? state.billing.loaded : null,
+    billingEnabled: state.ui.authPanel === 'user-settings' ? state.billing.enabled : null,
+    billingProviderReady: state.ui.authPanel === 'user-settings' ? state.billing.providerReady : null,
+    billingPlans: state.ui.authPanel === 'user-settings' ? state.billing.plans : null,
+    billingOrders: state.ui.authPanel === 'user-settings' ? state.billing.orders : null,
+    billingPendingPlanKey: state.ui.authPanel === 'user-settings' ? state.billing.pendingPlanKey : null,
+    billingError: state.ui.authPanel === 'user-settings' ? state.billing.error : null,
     configs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
     blocklist: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
   });
 }
 
 function syncProfileModalScrollLock(state: AppState) {
-  const shouldLock = state.ui.authPanel === 'bot-settings'
-    || state.ui.authPanel === 'blocked-tokens'
-    || state.ui.authPanel === 'change-password';
-  document.body.classList.toggle('profile-modal-open', shouldLock);
+  document.body.classList.toggle('profile-modal-open', isProfileAuthPanel(state.ui.authPanel));
 }
 
 function captureUserMenuDraft(root: HTMLElement): UserMenuDraft | null {
@@ -931,13 +943,14 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
   if (profileModalWired) return;
   profileModalWired = true;
 
-  const closeSelector = '[data-action="close-bot-settings"], [data-action="close-blocked-tokens"], [data-action="close-change-password"]';
+  const closeSelector = '[data-action="close-profile-modal"]';
 
   root.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
+    const profileModal = target?.closest<HTMLElement>('[data-auth-modal-scope="profile"]');
     const closeButton = target?.closest<HTMLElement>(closeSelector);
     const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
-    if (!closeButton && !backdrop) {
+    if (!profileModal || (!closeButton && !backdrop)) {
       return;
     }
 
@@ -950,7 +963,7 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
     if (event.key !== 'Escape') {
       return;
     }
-    const hasProfileModal = root.querySelector('[data-auth-modal="bot-settings"], [data-auth-modal="blocked-tokens"], [data-auth-modal="change-password"]');
+    const hasProfileModal = root.querySelector('[data-auth-modal-scope="profile"]');
     if (!hasProfileModal) {
       return;
     }

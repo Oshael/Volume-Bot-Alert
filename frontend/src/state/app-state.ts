@@ -221,8 +221,26 @@ export interface PumpToastEntry {
 
 export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
+export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'change-password';
+export type AuthPanel =
+  | 'none'
+  | ProfileAuthPanel
+  | 'register'
+  | 'invite-assistance'
+  | 'password-reset'
+  | 'email-verification'
+  | 'password-change-success'
+  | 'email-verified-success'
+  | 'email-otp';
 
 export type StatusMode = 'stopped' | 'active' | 'syncing';
+
+export function isProfileAuthPanel(panel: AuthPanel): panel is ProfileAuthPanel {
+  return panel === 'user-settings'
+    || panel === 'bot-settings'
+    || panel === 'blocked-tokens'
+    || panel === 'change-password';
+}
 
 export interface StatusMetric {
   label: string;
@@ -236,13 +254,53 @@ export interface AddressItem {
 }
 
 export interface SessionState {
-  status: 'loading' | 'anonymous' | 'authenticated';
+  status: 'loading' | 'anonymous' | 'authenticated' | 'pre_access';
   token: string | null;
   username: string | null;
   email: string | null;
   role: string | null;
   isEmailVerified: boolean;
   emailVerifiedAt: string | null;
+  accessStatus: 'inactive' | 'active' | 'grace' | 'revoked' | null;
+  accessGrantedAt: string | null;
+  accessExpiresAt: string | null;
+  accessSource: 'manual' | 'payment' | 'admin' | 'promo' | 'invite' | null;
+  accessUpdatedAt: string | null;
+  accessIsExpired: boolean;
+  accessHasProductAccess: boolean;
+  accessDaysRemaining: number | null;
+}
+
+export interface BillingPlanEntry {
+  key: string;
+  label: string;
+  description: string;
+  accessDays: number;
+  currencyCode: string;
+  amountMinor: number;
+  priceDisplay: string | null;
+  featured: boolean;
+  provider: string;
+  available: boolean;
+  availabilityReason: string | null;
+}
+
+export interface BillingOrderEntry {
+  id: number;
+  planKey: string;
+  planName: string;
+  accessDays: number;
+  provider: string;
+  providerChargeId: string | null;
+  providerCheckoutUrl: string | null;
+  providerStatus: string | null;
+  currencyCode: string;
+  currencyAmountMinor: number;
+  status: 'pending' | 'awaiting_payment' | 'paid' | 'failed' | 'expired' | 'cancelled';
+  paidAt: string | null;
+  lastError: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface ConfigSummary {
@@ -256,6 +314,21 @@ export interface ConfigSummary {
 
 export interface AppState {
   session: SessionState;
+  billing: {
+    loaded: boolean;
+    enabled: boolean;
+    provider: string | null;
+    providerReady: boolean;
+    providerMocked: boolean;
+    plans: BillingPlanEntry[];
+    orders: BillingOrderEntry[];
+    pendingPlanKey: string | null;
+    error: string | null;
+  };
+  preAccess: {
+    loaded: boolean;
+    awaitingConfirmation: boolean;
+  };
   runtime: {
     mode: StatusMode;
     cycle: number;
@@ -318,7 +391,7 @@ export interface AppState {
     error: string | null;
     notice: string | null;
     loginErrorCount: number;
-    authPanel: 'none' | 'bot-settings' | 'blocked-tokens' | 'change-password' | 'register' | 'invite-assistance' | 'password-reset' | 'email-verification' | 'password-change-success' | 'email-verified-success' | 'email-otp';
+    authPanel: AuthPanel;
     pendingVerificationEmail: string | null;
     pendingPasswordResetToken: string | null;
     pendingLoginOtpChallengeToken: string | null;
@@ -358,6 +431,29 @@ export function createAppState(): AppState {
       role: null,
       isEmailVerified: false,
       emailVerifiedAt: null,
+      accessStatus: null,
+      accessGrantedAt: null,
+      accessExpiresAt: null,
+      accessSource: null,
+      accessUpdatedAt: null,
+      accessIsExpired: false,
+      accessHasProductAccess: false,
+      accessDaysRemaining: null,
+    },
+    billing: {
+      loaded: false,
+      enabled: false,
+      provider: null,
+      providerReady: false,
+      providerMocked: false,
+      plans: [],
+      orders: [],
+      pendingPlanKey: null,
+      error: null,
+    },
+    preAccess: {
+      loaded: false,
+      awaitingConfirmation: false,
     },
     runtime: {
       mode: 'stopped',

@@ -53,6 +53,10 @@ function resolveApiOverride(override: string, locationLike: Location) {
 }
 
 export function resolveApiBase(locationLike: Location = window.location): string {
+  if (import.meta.env.DEV) {
+    return getLocationOrigin(locationLike);
+  }
+
   const params = new URLSearchParams(locationLike.search);
   const override = params.get('api');
   if (override) {
@@ -62,11 +66,6 @@ export function resolveApiBase(locationLike: Location = window.location): string
     }
   }
 
-  const host = locationLike.hostname.toLowerCase();
-  const isLocal = host === 'localhost' || host === '127.0.0.1';
-  if (isLocal) {
-    return 'http://localhost:3000';
-  }
   return PROD_API_BASE;
 }
 
