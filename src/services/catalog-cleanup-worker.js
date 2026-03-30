@@ -1,6 +1,6 @@
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
-const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const workerRuntimeState = require('../models/worker-runtime-state');
 
@@ -27,7 +27,7 @@ let status = {
   totalArchived: 0,
   totalQuarantined: 0,
   totalDeletedMarketBuckets1m: 0,
-  totalDeletedMarketSnapshots: 0,
+  totalDeletedMarketVolumeBuckets1m: 0,
   totalDeletedMeteoraSnapshots: 0,
   totalErrors: 0,
 };
@@ -86,25 +86,25 @@ async function runArchiveOnce() {
     });
     const archivedAddresses = Array.isArray(summary.archivedAddresses) ? summary.archivedAddresses : [];
     let deletedMarketBuckets1m = 0;
-    let deletedMarketSnapshots = 0;
+    let deletedMarketVolumeBuckets1m = 0;
     let deletedMeteoraSnapshots = 0;
 
     if (archivedAddresses.length > 0) {
-      [deletedMarketBuckets1m, deletedMarketSnapshots, deletedMeteoraSnapshots] = await Promise.all([
+      [deletedMarketBuckets1m, deletedMarketVolumeBuckets1m, deletedMeteoraSnapshots] = await Promise.all([
         tokenMarketBucket1m.deleteByAddresses(archivedAddresses),
-        tokenMarketSnapshot.deleteByAddresses(archivedAddresses),
+        tokenMarketVolumeBucket1m.deleteByAddresses(archivedAddresses),
         tokenMeteoraSnapshot.deleteByAddresses(archivedAddresses),
       ]);
     }
 
     summary.deletedMarketBuckets1m = deletedMarketBuckets1m;
-    summary.deletedMarketSnapshots = deletedMarketSnapshots;
+    summary.deletedMarketVolumeBuckets1m = deletedMarketVolumeBuckets1m;
     summary.deletedMeteoraSnapshots = deletedMeteoraSnapshots;
 
     status.archived = summary.archived;
     status.totalArchived += summary.archived;
     status.totalDeletedMarketBuckets1m += deletedMarketBuckets1m;
-    status.totalDeletedMarketSnapshots += deletedMarketSnapshots;
+    status.totalDeletedMarketVolumeBuckets1m += deletedMarketVolumeBuckets1m;
     status.totalDeletedMeteoraSnapshots += deletedMeteoraSnapshots;
     status.lastArchiveSummary = summary;
 
@@ -113,7 +113,7 @@ async function runArchiveOnce() {
     status.nextArchiveRunAt = new Date(startedAt.getTime() + ARCHIVE_LOOP_INTERVAL_MS).toISOString();
 
     console.log(
-      `[CatalogCleanupWorker] Archived=${summary.archived} deletedMarketBuckets1m=${deletedMarketBuckets1m} deletedMarketSnapshots=${deletedMarketSnapshots} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} archiveLimit=${summary.archiveLimit} loop=archive intervalMs=${ARCHIVE_LOOP_INTERVAL_MS}`
+      `[CatalogCleanupWorker] Archived=${summary.archived} deletedMarketBuckets1m=${deletedMarketBuckets1m} deletedMarketVolumeBuckets1m=${deletedMarketVolumeBuckets1m} deletedMeteoraSnapshots=${deletedMeteoraSnapshots} archiveLimit=${summary.archiveLimit} loop=archive intervalMs=${ARCHIVE_LOOP_INTERVAL_MS}`
     );
   } catch (err) {
     status.totalErrors += 1;

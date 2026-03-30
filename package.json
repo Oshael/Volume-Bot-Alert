@@ -10,6 +10,8 @@
     "db:init": "node src/utils/db-init.js",
     "db:schema-check": "node src/utils/check-runtime-schema.js",
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
+    "market-volume-buckets:backfill": "node src/utils/backfill-market-volume-buckets-1m.js",
+    "market-snapshots:drop": "node src/utils/drop-market-snapshots.js --confirm-drop",
     "invite:create": "node src/utils/create-invite.js",
     "lateralization:debug": "node src/utils/debug-lateralization.js"
   },

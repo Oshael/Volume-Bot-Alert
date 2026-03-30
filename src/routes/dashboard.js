@@ -4,8 +4,8 @@ const { authenticate } = require('../middleware/auth');
 const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
-const tokenMarketSnapshot = require('../models/token-market-snapshot');
 
 const MONITORED_MIN_MCAP = 30000;
 
@@ -56,10 +56,10 @@ function buildMeteoraSummary(address, summaryRow) {
   };
 }
 
-function buildMarketBaseline(baselineRow) {
-  const currentMcap = baselineRow?.current_mcap == null ? null : Number(baselineRow.current_mcap);
-  const previousMcap = baselineRow?.baseline_mcap == null ? null : Number(baselineRow.baseline_mcap);
-  const previousVolume5m = baselineRow?.baseline_vol_5m == null ? null : Number(baselineRow.baseline_vol_5m);
+function buildMarketBaseline(mcapBaselineRow, volumeBaselineRow) {
+  const currentMcap = mcapBaselineRow?.current_mcap == null ? null : Number(mcapBaselineRow.current_mcap);
+  const previousMcap = mcapBaselineRow?.baseline_mcap == null ? null : Number(mcapBaselineRow.baseline_mcap);
+  const previousVolume5m = volumeBaselineRow?.baseline_vol_5m == null ? null : Number(volumeBaselineRow.baseline_vol_5m);
   const mcapDelta = currentMcap != null && previousMcap != null && previousMcap > 0
     ? ((currentMcap - previousMcap) / previousMcap) * 100
     : null;
@@ -71,25 +71,6 @@ function buildMarketBaseline(baselineRow) {
   };
 }
 
-function selectPreferredMarketBaseline(primaryRow, fallbackRow) {
-  if (!primaryRow && !fallbackRow) {
-    return null;
-  }
-
-  const primaryHasMcapBaseline = primaryRow?.baseline_mcap != null;
-  const mcapRow = primaryHasMcapBaseline ? primaryRow : (fallbackRow || primaryRow || null);
-
-  return {
-    token_address: mcapRow?.token_address ?? primaryRow?.token_address ?? fallbackRow?.token_address ?? null,
-    current_ts: mcapRow?.current_ts ?? primaryRow?.current_ts ?? fallbackRow?.current_ts ?? null,
-    current_mcap: mcapRow?.current_mcap ?? primaryRow?.current_mcap ?? fallbackRow?.current_mcap ?? null,
-    baseline_ts: mcapRow?.baseline_ts ?? primaryRow?.baseline_ts ?? fallbackRow?.baseline_ts ?? null,
-    baseline_mcap: mcapRow?.baseline_mcap ?? null,
-    current_vol_5m: primaryRow?.current_vol_5m ?? fallbackRow?.current_vol_5m ?? null,
-    baseline_vol_5m: primaryRow?.baseline_vol_5m ?? fallbackRow?.baseline_vol_5m ?? null,
-  };
-}
-
 router.get('/monitored', dashboardLimiter, async (req, res) => {
   try {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
@@ -97,24 +78,24 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const addresses = tokens.map((item) => item.address);
     const meteoraSummaryRows = await tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses);
     const meteoraByAddress = new Map();
-    const marketBaselineByAddress = new Map();
+    const marketMcapBaselineByAddress = new Map();
+    const marketVolumeBaselineByAddress = new Map();
 
     for (const row of meteoraSummaryRows) {
       meteoraByAddress.set(row.token_address, row);
     }
 
-    const [primaryMarketBaselineRows, fallbackMarketBaselineRows] = await Promise.all([
+    const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
-      tokenMarketSnapshot.listCurrentAndBaselineByAddresses(addresses, 5),
+      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     ]);
 
     for (const row of primaryMarketBaselineRows) {
-      marketBaselineByAddress.set(row.token_address, row);
+      marketMcapBaselineByAddress.set(row.token_address, row);
     }
 
-    for (const row of fallbackMarketBaselineRows) {
-      const existing = marketBaselineByAddress.get(row.token_address) || null;
-      marketBaselineByAddress.set(row.token_address, selectPreferredMarketBaseline(existing, row));
+    for (const row of primaryVolumeBaselineRows) {
+      marketVolumeBaselineByAddress.set(row.token_address, row);
     }
 
     const responsePayload = {
@@ -123,34 +104,37 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       minMcap,
       count: tokens.length,
       tokens: tokens.map((item) => {
-        const marketBaseline = buildMarketBaseline(marketBaselineByAddress.get(item.address) || null);
+        const marketBaseline = buildMarketBaseline(
+          marketMcapBaselineByAddress.get(item.address) || null,
+          marketVolumeBaselineByAddress.get(item.address) || null
+        );
         return {
-        address: item.address,
-        symbol: item.symbol || null,
-        name: item.name || null,
-        pairAddress: item.last_pair_address || null,
-        pairUrl: item.last_pair_url || null,
-        imageUrl: item.last_image_url || null,
-        twitterUrl: item.last_twitter_url || null,
-        eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
-        monitorPriority: item.monitor_priority || 'dormant',
-        mcap: item.last_mcap == null ? null : Number(item.last_mcap),
-        priceUsd: item.last_price == null ? null : Number(item.last_price),
-        volume5m: item.last_vol_5m == null ? null : Number(item.last_vol_5m),
-        volume1h: item.last_vol_1h == null ? null : Number(item.last_vol_1h),
-        volume6h: item.last_vol_6h == null ? null : Number(item.last_vol_6h),
-        volume24h: item.last_vol_24h == null ? null : Number(item.last_vol_24h),
-        priceChange1h: item.last_price_change_1h == null ? null : Number(item.last_price_change_1h),
-        priceChange6h: item.last_price_change_6h == null ? null : Number(item.last_price_change_6h),
-        priceChange24h: item.last_price_change_24h == null ? null : Number(item.last_price_change_24h),
-        tokenCreatedAt: item.last_token_created_at_ms == null ? null : Number(item.last_token_created_at_ms),
-        prevMcap: marketBaseline.prevMcap,
-        mcapDelta: marketBaseline.mcapDelta,
-        prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
-        lastSeenAt: item.last_seen_at || null,
-        lastEvaluatedAt: item.last_evaluated_at || null,
-        meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
-      };
+          address: item.address,
+          symbol: item.symbol || null,
+          name: item.name || null,
+          pairAddress: item.last_pair_address || null,
+          pairUrl: item.last_pair_url || null,
+          imageUrl: item.last_image_url || null,
+          twitterUrl: item.last_twitter_url || null,
+          eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
+          monitorPriority: item.monitor_priority || 'dormant',
+          mcap: item.last_mcap == null ? null : Number(item.last_mcap),
+          priceUsd: item.last_price == null ? null : Number(item.last_price),
+          volume5m: item.last_vol_5m == null ? null : Number(item.last_vol_5m),
+          volume1h: item.last_vol_1h == null ? null : Number(item.last_vol_1h),
+          volume6h: item.last_vol_6h == null ? null : Number(item.last_vol_6h),
+          volume24h: item.last_vol_24h == null ? null : Number(item.last_vol_24h),
+          priceChange1h: item.last_price_change_1h == null ? null : Number(item.last_price_change_1h),
+          priceChange6h: item.last_price_change_6h == null ? null : Number(item.last_price_change_6h),
+          priceChange24h: item.last_price_change_24h == null ? null : Number(item.last_price_change_24h),
+          tokenCreatedAt: item.last_token_created_at_ms == null ? null : Number(item.last_token_created_at_ms),
+          prevMcap: marketBaseline.prevMcap,
+          mcapDelta: marketBaseline.mcapDelta,
+          prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
+          lastSeenAt: item.last_seen_at || null,
+          lastEvaluatedAt: item.last_evaluated_at || null,
+          meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
+        };
       }),
     };
     res.json(responsePayload);
@@ -161,7 +145,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
 });
 
 router.__private = {
-  selectPreferredMarketBaseline,
+  buildMarketBaseline,
 };
 
 module.exports = router;

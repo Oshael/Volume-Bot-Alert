@@ -1,6 +1,6 @@
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
-const tokenMarketSnapshot = require('../models/token-market-snapshot');
+const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
 const config = require('../../config');
 
@@ -487,7 +487,7 @@ async function evaluateTokenWithData(token, data) {
   };
 
   await tokenMarketBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
-  await tokenMarketSnapshot.insertSnapshot(marketSnapshotPayload);
+  await tokenMarketVolumeBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
 
   return updatedToken;
 }

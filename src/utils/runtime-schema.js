@@ -182,17 +182,6 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
-    key: 'stage7-market-snapshots',
-    name: 'Stage 7 market snapshot table',
-    repair: 'node src/utils/db-init-stage7.js',
-    tables: [
-      {
-        table: 'token_market_snapshots',
-        columns: ['id', 'token_address', 'ts', 'mcap', 'price', 'vol_5m', 'vol_1h', 'vol_6h', 'vol_24h', 'source'],
-      },
-    ],
-  },
-  {
     key: 'stage8-meteora-snapshots',
     name: 'Stage 8 Meteora snapshot table',
     repair: 'node src/utils/db-init-stage8.js',
@@ -303,6 +292,26 @@ const SCHEMA_GROUPS = [
           'first_bucket_at',
           'last_bucket_at',
           'diagnostics',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage17-market-volume-buckets',
+    name: 'Stage 17 market volume bucket table',
+    repair: 'node src/utils/db-init-stage17.js',
+    tables: [
+      {
+        table: 'token_market_volume_buckets_1m',
+        columns: [
+          'token_address',
+          'bucket_ts',
+          'close_vol_5m',
+          'close_vol_1h',
+          'close_vol_6h',
+          'close_vol_24h',
+          'sample_count',
+          'source',
         ],
       },
     ],
