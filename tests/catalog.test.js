@@ -84,13 +84,34 @@ function buildPair(overrides = {}) {
   };
 }
 
+async function ensureAccessSchema() {
+  const statements = [
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status VARCHAR(16) NOT NULL DEFAULT 'inactive'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_source VARCHAR(16) NOT NULL DEFAULT 'manual'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'inactive'`,
+    `ALTER TABLE users ALTER COLUMN access_granted_at SET DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_source SET DEFAULT 'manual'`,
+    `ALTER TABLE users ALTER COLUMN access_updated_at SET DEFAULT NOW()`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
+    `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
+  ];
+  for (const statement of statements) {
+    await db.query(statement);
+  }
+}
+
 describe('Catalog routes', () => {
   let token;
   let mockPair;
   let mockDataAvailable;
 
   before(async () => {
-    const invite = await Invite.create(null, { maxUses: 2, expiryHours: 24 });
+    await ensureAccessSchema();
+    const invite = await Invite.create(null, { maxUses: 2, expiryHours: 24, grantAccessDays: 30 });
     const regRes = await request(app)
       .post('/api/auth/register')
       .send({ ...TEST_USER, inviteCode: invite.code });

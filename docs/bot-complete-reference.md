@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-28` after the frontend render-pipeline refactor, the `/alerts` + `/monitor` workspace split, moving lateralization into `MONITOR`, and `BroadcastChannel` monitor-tab polling coordination.
+Last reviewed against code on `2026-03-29` after the dedicated `/access` pre-access purchase flow, inactive-by-default new accounts, special-invite timed access, and the post-verify auto-login into pre-access were integrated.
 
 ## Test Environment And Database Safety
 
@@ -84,6 +84,7 @@ The UI is now centered around two authenticated workspaces:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
   - `Lateralization Coins`
+  - `Bid Zone Coins`
 
 The auth/account surface now also includes:
 - `Login`
@@ -91,6 +92,7 @@ The auth/account surface now also includes:
 - `Change Password`
 - `Forgot Password`
 - `Access Help`
+- `Pre-Access /access`
 
 ## Main Directories
 
@@ -542,12 +544,14 @@ High-level behavior:
 - keeps frontend alert evaluation active
 - keeps PumpFun runtime active
 - does not mount `Recent`, `Old Week`, or `Lateralization`
+- does not mount `Bid Zone`
 
 `/monitor` responsibilities:
 - mounts:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
   - `Lateralization Coins`
+  - `Bid Zone Coins`
 - still consumes live monitored dashboard state
 - does not run:
   - frontend alerts
@@ -560,7 +564,8 @@ Multi-tab coordination:
 - only the leader continues the repeating polling loop for:
   - `GET /api/dashboard/monitored`
   - `GET /api/catalog/lateralized`
-- follower monitor tabs receive monitored/lateralized snapshots from the leader
+  - `GET /api/catalog/bid-zone`
+- follower monitor tabs receive monitored/lateralized/bid-zone snapshots from the leader
 - this dedupe currently does **not** apply to `/alerts`, because alerts are still frontend-owned and per-tab
 
 ## Login / Account Surface
@@ -576,17 +581,28 @@ Files:
 
 Current login behavior:
 - login is the entry point into the backend-owned session model
-- current successful path:
-  - `POST /api/auth/login`
-  - backend verifies email/password
-  - backend sends login OTP to the verified account email
-  - `POST /api/auth/login-otp/verify`
-  - `GET /api/auth/me`
-  - `GET /api/config`
-  - `GET /api/dashboard/monitored`
+- current successful paths:
+  - verification-link path:
+    - user confirms email via `POST /api/auth/verify-email/confirm`
+    - backend creates the dedicated pre-access session when access is not yet valid
+    - frontend routes directly into `/access`
+  - manual login path:
+    - `POST /api/auth/login`
+    - backend verifies email/password
+    - backend sends login OTP to the verified account email
+    - `POST /api/auth/login-otp/verify`
+    - backend branches by access state:
+      - valid access -> `GET /api/auth/me` + normal bot hydration
+      - `inactive` / expired -> pre-access session + `/access`
+      - `revoked` / deactivated -> blocked
 - restore path:
-  - `GET /api/auth/me`
-  - same config/bootstrap hydration path
+  - normal session:
+    - `GET /api/auth/me`
+    - same config/bootstrap hydration path
+  - pre-access session:
+    - `GET /api/pre-access/me`
+    - `GET /api/pre-access/plans`
+    - `GET /api/pre-access/orders`
 
 Login access rules:
 - unverified accounts cannot sign in
@@ -594,6 +610,10 @@ Login access rules:
 - login OTP is email-based and currently uses a `6`-digit code
 - login OTP supports resend
 - successful sessions are now long-lived by default rather than browser-session-only, while still remaining backend-revocable
+- new non-admin accounts now default to `inactive`
+- `access_status = inactive` and expired access route the user into `/access`
+- `access_status = revoked` and `is_active = false` are hard blocks
+- successful verify-email now skips the immediate OTP step and opens pre-access directly
 
 Current login UX features:
 - `TrendScope` branding with `Volume Bot Tracker`
@@ -607,6 +627,7 @@ Current login UX features:
 - validation/focus recovery on the correct field after failed submit
 - old-password warning after local password-change history match
 - email OTP modal to finish sign-in
+- dedicated pre-access landing and billing flow at `/access`
 - auth modals now use focus trapping so `Tab` stays inside the active modal
 - separated support actions:
   - `Create Account`
@@ -646,6 +667,7 @@ Behavior:
 Current auth rule:
 - registration does not auto-login the user
 - account access stays blocked until email verification succeeds
+- after successful verify-email, users without product access are auto-signed into the dedicated pre-access flow instead of being forced through immediate OTP
 
 UX rules:
 - register-specific errors stay inside the register modal
@@ -747,7 +769,8 @@ Behavior:
 - confirm path:
   - verification link lands on frontend via query params
   - frontend calls `POST /api/auth/verify-email/confirm`
-  - success opens an `Email Verified` success modal
+  - success creates the pre-access session when the account still lacks product access
+  - frontend routes to `/access`
 - resend path exists via:
   - `POST /api/auth/verify-email/request`
 
@@ -755,6 +778,45 @@ UI rules:
 - post-register flow shows an informational `Check Your Email` modal
 - that post-register modal is not the same as the manual resend form
 - closing the informational modal ends the flow instead of falling through to the resend form
+
+## Pre-Access Purchase Flow
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/state/app-state.ts`
+- `frontend/src/services/api/pre-access.ts`
+- `src/routes/pre-access.js`
+- `src/services/pre-access-session.js`
+- `src/routes/billing.js`
+- `src/services/billing-service.js`
+
+Behavior:
+- dedicated route family starts at `/access`
+- flow is isolated from the normal bot shell
+- available to:
+  - newly verified accounts without product access
+  - manually logged-in accounts whose access is `inactive` or expired
+- not available to:
+  - `revoked` accounts
+  - `is_active = false` accounts
+- user can:
+  - review account identity
+  - see bot/value proposition copy
+  - choose a plan
+  - create a billing order
+  - leave for MoonPay or local mock checkout
+  - return and wait for backend confirmation
+  - upgrade into the normal bot session after confirmed payment
+
+Current implementation notes:
+- local mock checkout is already integrated for development validation
+- webhook-confirmed access remains the backend source of truth
+- successful payment upgrades access and then upgrades the session into the normal bot session
+- `User Settings` billing still exists, but it is no longer the primary journey for no-access users
+- current sandbox/dev validation uses a single public tunnel on the frontend origin:
+  - `frontend/vite.config.ts` proxies `/api` and `/socket.io` to `localhost:3000`
+  - this allows provider redirect and MoonPay webhook calls to share the same public host during local testing
 
 ## Access Help
 
@@ -902,6 +964,52 @@ Important:
   - backend polling still continues while collapsed
 - in `/monitor`, lateralization is also part of the `BroadcastChannel`-shared polling path between tabs
 - the X-search button in this panel also now searches `contract OR $ticker`
+
+## Bid Zone Coins
+
+Files:
+- `frontend/src/ui/sections/bid-zone-section.ts`
+- `frontend/src/state/app-controller.ts`
+- `src/routes/catalog.js`
+- `src/models/token-market-bucket-1m.js`
+
+Main behavior:
+- frontend polls `GET /api/catalog/bid-zone` every `60s`
+- backend computes the ranking on demand from `token_market_buckets_1m`
+- backend payload includes `generatedAt`
+- frontend shows a freshness label in the panel header based on that timestamp
+- the panel is rendered in `/monitor` beside `Lateralization Coins`
+
+Current model intent:
+- this is intentionally **not** the same setup as `Lateralization`
+- the ranking is meant for support-defended accumulation / bid-area setups
+- support and resistance are based on close-derived quantile bands rather than raw min/max wick extremes
+- the score currently emphasizes:
+  - support distance
+  - support-touch clusters
+  - recent compression
+  - close drift
+  - coverage
+  - liquidity
+
+Current row surface:
+- `#rank`
+- symbol + name
+- actions aligned with the monitored/lateralized visual language
+- `MCAP`
+- `AGE`
+- `VOL 1H`
+- `VOL 24H`
+- rail metrics:
+  - `SCORE`
+  - `SUPPORT`
+  - `RANGE`
+  - `TOUCH`
+
+Important:
+- this list is not persisted into `lateralization_runs` / `lateralization_results`
+- it is a separate on-demand analysis surface so the two setup philosophies stay distinct
+- in `/monitor`, bid-zone is also part of the `BroadcastChannel`-shared polling path between tabs
 
 ## Manual Tokens
 

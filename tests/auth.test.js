@@ -1,6 +1,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
+const { io: createSocketClient } = require('../frontend/node_modules/socket.io-client');
 
 function request(method, path, { body, token } = {}) {
   return new Promise((resolve, reject) => {
@@ -53,6 +54,7 @@ async function verifyEmailFromRegisterResponse(registerResponse) {
   assert.equal(registerResponse.status, 201);
   assert.equal(registerResponse.body.emailVerificationRequired, true);
   assert.ok(registerResponse.body.emailDebug?.actionUrl);
+  assert.equal(new URL(registerResponse.body.emailDebug.actionUrl).pathname, '/auth/verify-email');
 
   const verificationToken = getQueryToken(registerResponse.body.emailDebug.actionUrl);
   const verifyResponse = await request('POST', '/api/auth/verify-email/confirm', {
@@ -60,7 +62,11 @@ async function verifyEmailFromRegisterResponse(registerResponse) {
   });
 
   assert.equal(verifyResponse.status, 200);
-  assert.equal(verifyResponse.body.message, 'Email verified successfully');
+  assert.equal(verifyResponse.body.requiresPreAccess, true);
+  assert.equal(verifyResponse.body.redirectPath, '/access');
+  assert.equal(verifyResponse.body.user.isEmailVerified, true);
+  assert.ok(verifyResponse.body.preAccessToken);
+  assert.match(String(verifyResponse.body.message || ''), /Email verified successfully/i);
   return verifyResponse;
 }
 
@@ -91,11 +97,91 @@ async function completeLogin(email, password) {
   };
 }
 
+async function startLogin(email, password) {
+  const loginResponse = await request('POST', '/api/auth/login', {
+    body: { email, password },
+  });
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(loginResponse.body.otpRequired, true);
+  assert.ok(loginResponse.body.challengeToken);
+  assert.ok(loginResponse.body.emailDebug?.otpCode);
+
+  return loginResponse;
+}
+
+async function verifyLoginOtp(challengeToken, code) {
+  return request('POST', '/api/auth/login-otp/verify', {
+    body: {
+      challengeToken,
+      code,
+    },
+  });
+}
+
+function connectSocket(url, token) {
+  return new Promise((resolve) => {
+    const client = createSocketClient(url, {
+      transports: ['websocket'],
+      auth: { token },
+      reconnection: false,
+      timeout: 2000,
+    });
+
+    const timer = setTimeout(() => {
+      try { client.close(); } catch {}
+      resolve({ connected: false, error: 'timeout' });
+    }, 2500);
+
+    client.on('connect', () => {
+      clearTimeout(timer);
+      resolve({ connected: true, client });
+    });
+
+    client.on('connect_error', (error) => {
+      clearTimeout(timer);
+      try { client.close(); } catch {}
+      resolve({ connected: false, error: error.message });
+    });
+  });
+}
+
+async function ensureAccessSchema(pool) {
+  const statements = [
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status VARCHAR(16) NOT NULL DEFAULT 'inactive'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_source VARCHAR(16) NOT NULL DEFAULT 'manual'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'inactive'`,
+    `ALTER TABLE users ALTER COLUMN access_granted_at SET DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_source SET DEFAULT 'manual'`,
+    `ALTER TABLE users ALTER COLUMN access_updated_at SET DEFAULT NOW()`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
+    `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
+  ];
+  for (const statement of statements) {
+    await pool.query(statement);
+  }
+}
+
 describe('Volume Alert Server auth flow', () => {
   let server;
   let adminToken;
   let userToken;
+  let preAccessToken;
   let inviteCode;
+  let socketHub;
+  let originalSolPriceStart;
+  let originalSolPriceStop;
+  let originalSolPriceGetPrice;
+  let originalSolPriceGetStatus;
+  let originalPumpStart;
+  let originalPumpStop;
+  let originalPumpGetStatus;
+  let originalPumpSubscribe;
+  let originalPumpUnsubscribe;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -111,6 +197,7 @@ describe('Volume Alert Server auth flow', () => {
 
     const { pool } = require('../src/models/db');
 
+    await ensureAccessSchema(pool);
     await pool.query('DELETE FROM sessions');
     await pool.query('DELETE FROM login_attempts');
     await pool.query('DELETE FROM users');
@@ -120,11 +207,47 @@ describe('Volume Alert Server auth flow', () => {
     const { startServer } = require('../src/server');
     server = startServer(3099);
     await new Promise((resolve) => setTimeout(resolve, 500));
+
+    socketHub = require('../src/services/socket-hub');
+    const solPrice = require('../src/services/sol-price');
+    const pumpfun = require('../src/services/pumpfun-ws');
+
+    originalSolPriceStart = solPrice.start;
+    originalSolPriceStop = solPrice.stop;
+    originalSolPriceGetPrice = solPrice.getPrice;
+    originalSolPriceGetStatus = solPrice.getStatus;
+    originalPumpStart = pumpfun.start;
+    originalPumpStop = pumpfun.stop;
+    originalPumpGetStatus = pumpfun.getStatus;
+    originalPumpSubscribe = pumpfun.subscribeToken;
+    originalPumpUnsubscribe = pumpfun.unsubscribeToken;
+
+    solPrice.start = () => {};
+    solPrice.stop = () => {};
+    solPrice.getPrice = () => 100;
+    solPrice.getStatus = () => ({ running: false });
+    pumpfun.start = () => {};
+    pumpfun.stop = () => {};
+    pumpfun.getStatus = () => ({ connected: false });
+    pumpfun.subscribeToken = () => {};
+    pumpfun.unsubscribeToken = () => {};
+
+    socketHub.init(server);
   });
 
   after(async () => {
-    const socketHub = require('../src/services/socket-hub');
     socketHub.stop();
+    const solPrice = require('../src/services/sol-price');
+    const pumpfun = require('../src/services/pumpfun-ws');
+    solPrice.start = originalSolPriceStart;
+    solPrice.stop = originalSolPriceStop;
+    solPrice.getPrice = originalSolPriceGetPrice;
+    solPrice.getStatus = originalSolPriceGetStatus;
+    pumpfun.start = originalPumpStart;
+    pumpfun.stop = originalPumpStop;
+    pumpfun.getStatus = originalPumpGetStatus;
+    pumpfun.subscribeToken = originalPumpSubscribe;
+    pumpfun.unsubscribeToken = originalPumpUnsubscribe;
     if (server) {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -146,8 +269,8 @@ describe('Volume Alert Server auth flow', () => {
       const { query } = require('../src/models/db');
       inviteCode = 'TESTBOOTSTRAP01';
       await query(
-        `INSERT INTO invites (code, created_by, max_uses, expires_at)
-         VALUES ($1, NULL, 5, NOW() + INTERVAL '24 hours')`,
+        `INSERT INTO invites (code, created_by, max_uses, grant_access_days, grant_access_source, expires_at)
+         VALUES ($1, NULL, 5, 30, 'invite', NOW() + INTERVAL '24 hours')`,
         [inviteCode]
       );
     });
@@ -239,8 +362,8 @@ describe('Volume Alert Server auth flow', () => {
       const { query } = require('../src/models/db');
       const code = 'DUPENAME000001';
       await query(
-        `INSERT INTO invites (code, created_by, max_uses, expires_at)
-         VALUES ($1, NULL, 1, NOW() + INTERVAL '24 hours')`,
+        `INSERT INTO invites (code, created_by, max_uses, grant_access_days, grant_access_source, expires_at)
+         VALUES ($1, NULL, 1, 30, 'invite', NOW() + INTERVAL '24 hours')`,
         [code]
       );
 
@@ -260,8 +383,8 @@ describe('Volume Alert Server auth flow', () => {
       const { query } = require('../src/models/db');
       const code = 'DUPEMAIL000001';
       await query(
-        `INSERT INTO invites (code, created_by, max_uses, expires_at)
-         VALUES ($1, NULL, 1, NOW() + INTERVAL '24 hours')`,
+        `INSERT INTO invites (code, created_by, max_uses, grant_access_days, grant_access_source, expires_at)
+         VALUES ($1, NULL, 1, 30, 'invite', NOW() + INTERVAL '24 hours')`,
         [code]
       );
 
@@ -298,7 +421,7 @@ describe('Volume Alert Server auth flow', () => {
       const expiresAt = new Date(expiresValue);
       assert.ok(Number.isFinite(expiresAt.getTime()), 'expected valid cookie expiry date');
       assert.ok(
-        expiresAt.getTime() - Date.now() > (300 * 24 * 60 * 60 * 1000),
+        expiresAt.getTime() - Date.now() > (25 * 24 * 60 * 60 * 1000),
         `expected long-lived cookie, got expiry ${expiresAt.toISOString()}`
       );
     });
@@ -514,6 +637,104 @@ describe('Volume Alert Server auth flow', () => {
     it('reactivates user for further tests', async () => {
       const { query } = require('../src/models/db');
       await query("UPDATE users SET is_active = true WHERE username = 'regular_user'");
+    });
+  });
+
+  describe('Access Control', () => {
+    it('returns account access snapshot for an authenticated user', async () => {
+      const login = await completeLogin('user@test.com', 'newpass456');
+      userToken = login.token;
+
+      const res = await request('GET', '/api/account/access', { token: userToken });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.accessStatus, 'active');
+      assert.equal(res.body.hasProductAccess, true);
+      assert.equal(res.body.isExpired, false);
+    });
+
+    it('expired access redirects login into the pre-access flow after OTP', async () => {
+      const { query } = require('../src/models/db');
+      await query(
+        `UPDATE users
+         SET access_status = 'active',
+             access_expires_at = NOW() - INTERVAL '1 hour',
+             access_source = 'admin',
+             access_updated_at = NOW()
+         WHERE username = 'regular_user'`
+      );
+
+      const login = await startLogin('user@test.com', 'newpass456');
+      const res = await verifyLoginOtp(login.body.challengeToken, login.body.emailDebug.otpCode);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.requiresPreAccess, true);
+      assert.equal(res.body.redirectPath, '/access');
+      assert.equal(res.body.message, 'Access payment required before entering the bot.');
+      assert.equal(res.body.access?.hasProductAccess, false);
+      assert.equal(res.body.access?.denialReason, 'Access expired');
+      assert.ok(res.body.preAccessToken);
+      preAccessToken = res.body.preAccessToken;
+    });
+
+    it('pre-access session exposes the restricted access state and blocks completion until paid', async () => {
+      const me = await request('GET', '/api/pre-access/me', { token: preAccessToken });
+      assert.equal(me.status, 200);
+      assert.equal(me.body.user.username, 'regular_user');
+      assert.equal(me.body.access.hasProductAccess, false);
+      assert.equal(me.body.access.denialReason, 'Access expired');
+
+      const complete = await request('POST', '/api/pre-access/complete', {
+        token: preAccessToken,
+        headers: {
+          origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(complete.status, 409);
+      assert.equal(complete.body.error, 'Payment confirmation still pending');
+    });
+
+    it('expired access can still read account access status with an existing session', async () => {
+      const res = await request('GET', '/api/account/access', { token: userToken });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.isExpired, true);
+      assert.equal(res.body.hasProductAccess, false);
+      assert.equal(res.body.denialReason, 'Access expired');
+    });
+
+    it('expired access is rejected by websocket auth', async () => {
+      const result = await connectSocket('http://127.0.0.1:3099', userToken);
+      assert.equal(result.connected, false);
+      assert.equal(result.error, 'Access expired');
+    });
+
+    it('restores access for further tests', async () => {
+      const { query } = require('../src/models/db');
+      await query(
+        `UPDATE users
+         SET access_status = 'active',
+             access_expires_at = NOW() + INTERVAL '30 days',
+             access_source = 'payment',
+             access_updated_at = NOW()
+         WHERE username = 'regular_user'`
+      );
+
+      const login = await startLogin('user@test.com', 'newpass456');
+      const otp = await verifyLoginOtp(login.body.challengeToken, login.body.emailDebug.otpCode);
+      assert.equal(otp.status, 200);
+      assert.equal(otp.body.requiresPreAccess, undefined);
+      assert.ok(otp.body.token);
+
+      const complete = await request('POST', '/api/pre-access/complete', {
+        token: preAccessToken,
+        headers: {
+          origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(complete.status, 200);
+      assert.ok(complete.body.token);
+      userToken = complete.body.token;
+
+      const me = await request('GET', '/api/auth/me', { token: userToken });
+      assert.equal(me.status, 200);
     });
   });
 

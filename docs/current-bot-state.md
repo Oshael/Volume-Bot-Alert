@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-28` after the frontend render-pipeline refactor, the `/alerts` + `/monitor` workspace split, moving lateralization into `MONITOR`, and `BroadcastChannel` monitor-tab polling coordination.
+Last reviewed against code on `2026-03-29` after the dedicated `/access` pre-access purchase flow, inactive-by-default new accounts, special-invite timed access, and the post-verify auto-login into pre-access were integrated.
 
 ## Test Database Safety
 
@@ -82,6 +82,7 @@ Important:
     - `Recent Tokens`
     - `Old Tokens 1 Week+`
     - `Lateralization Coins`
+    - `Bid Zone Coins`
 
 ### Backend
 - Active backend lives in `src/`
@@ -121,11 +122,24 @@ Important:
   - `POST /api/auth/verify-email/confirm`
   - `POST /api/auth/password-reset/request`
   - `POST /api/auth/password-reset/confirm`
+  - `GET /api/pre-access/me`
+  - `GET /api/pre-access/plans`
+  - `GET /api/pre-access/orders`
+  - `POST /api/pre-access/orders`
+  - `POST /api/pre-access/complete`
+  - `POST /api/pre-access/logout`
 - Current session transport:
   - backend-issued `HttpOnly` cookie
   - frontend requests use `credentials: include`
   - frontend no longer depends on browser-readable auth token storage
   - session-cookie expiry now defaults to a persistent window (`AUTH_SESSION_EXPIRES_IN || JWT_EXPIRES_IN || 30d`), so browser restarts do not log the user out unless the session is revoked or expires
+- Current access/session model:
+  - normal bot session and pre-access session are now separate auth states
+  - new non-admin accounts default to `inactive`
+  - `is_active = false` and `access_status = revoked` are hard blocks
+  - `access_status = inactive` and expired access route the user into `/access`
+  - successful email verification now creates the pre-access session directly instead of forcing OTP immediately after verify
+  - manual login after logout still uses email/password + email OTP
 
 ### User config and user overlays
 - Source of truth: backend
@@ -182,6 +196,24 @@ Important:
     - `AGE`
     - `VOL 1H`
     - `VOL 24H`
+
+### Bid Zone Coins
+- Source of truth: backend-computed on demand from `token_market_buckets_1m`
+- Main endpoint:
+  - `GET /api/catalog/bid-zone`
+- Current behavior:
+  - frontend reads a separate ranking in `/monitor`
+  - this ranking is intentionally not merged into `Lateralization Coins`
+  - it is designed to catch support-defended accumulation / bid-area setups that the more conservative lateralization model can reject
+- Current model shape:
+  - robust support / resistance bands are derived from close-based quantiles
+  - score emphasizes:
+    - distance to support
+    - support-touch clusters
+    - recent compression
+    - close drift
+    - coverage
+    - liquidity
 
 ### Working currently
 - The current architecture separates:
@@ -349,6 +381,19 @@ Current monitored UI behavior:
   - the panel now sits in the `/monitor` workspace as the larger analysis card beside the routed-history surfaces
   - header shows freshness text from backend `generatedAt`
   - rows are intentionally thin and ranked, not large cards
+
+### 2b. Bid Zone Coins
+- Frontend refresh interval: `60s`
+- Current flow:
+  - frontend calls `GET /api/catalog/bid-zone`
+  - backend computes the list on demand from `token_market_buckets_1m`
+  - backend payload includes `generatedAt`
+- Current intended effect:
+  - catch “support-bid / accumulation-zone” setups separately from the central-range lateralization model
+  - use more robust closes/quantiles instead of raw wick extremes as the main support reference
+- Current UI behavior:
+  - the panel sits beside `Lateralization Coins` inside `/monitor`
+  - rows reuse the same ranked compact visual language, but the rail metrics are support-oriented instead of lateralization-oriented
 
 ### 3. Manual Tokens
 - Current source of truth:
@@ -620,21 +665,38 @@ Current monitored UI behavior:
   - email-verification flow
   - password-reset flow
   - email-OTP verification modal
+  - dedicated pre-access `/access` flow
   - authenticated `Change Password`
-- Current login/bootstrap path:
-  1. `POST /api/auth/login`
-  2. backend verifies email/password
-  3. backend sends email OTP
-  4. `POST /api/auth/login-otp/verify`
-  5. backend creates the cookie-backed session
-  6. frontend restores session with `GET /api/auth/me`
-  7. frontend hydrates account/config/dashboard state
+- Current login/bootstrap paths:
+  1. registration + verify path:
+     - user registers with invite
+     - user confirms email from the verification link
+     - backend creates a pre-access session
+     - frontend routes directly to `/access`
+  2. manual login path:
+     - `POST /api/auth/login`
+     - backend verifies email/password
+     - backend sends email OTP
+     - `POST /api/auth/login-otp/verify`
+     - backend branches by access state:
+       - valid access -> normal bot session
+       - `inactive` / expired -> pre-access session
+       - `revoked` / deactivated -> blocked
+  3. normal session restore path:
+     - `GET /api/auth/me`
+     - normal config/dashboard hydration path
+  4. pre-access restore path:
+     - `GET /api/pre-access/me`
+     - billing/pre-access hydration path only
 
 Current login/account implementation status:
-- login, registration, email verification, password reset, and change password are implemented
+- login, registration, email verification, pre-access purchase flow, password reset, and change password are implemented
 - session restore after hard refresh, browser close, and normal browser restart is working in the integrated frontend while the cookie session remains valid
 - the live auth flow is cookie-backed and no longer depends on browser-readable token storage
 - auth UX is materially more complete than the older "raw login shell" state
+- current MoonPay sandbox/dev validation path uses the frontend dev server as the public origin:
+  - Vite now proxies `/api` and `/socket.io` to the backend in development
+  - a single public tunnel on the frontend origin can therefore serve both provider redirect and backend webhook paths during local sandbox testing
 
 Current login/account follow-up:
 - keep refining support/recovery wording and auth-state messaging
@@ -838,6 +900,7 @@ Current security priority order:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
   - `Lateralization Coins`
+  - `Bid Zone Coins`
 - still consumes `GET /api/dashboard/monitored` so routed/history surfaces stay current
 - does not run:
   - frontend alerts
@@ -849,7 +912,8 @@ Current security priority order:
 - only one active `/monitor` tab keeps the continuous polling loop for:
   - `GET /api/dashboard/monitored`
   - `GET /api/catalog/lateralized`
-- follower `/monitor` tabs receive monitored/lateralized snapshots from the leader instead of duplicating that polling
+  - `GET /api/catalog/bid-zone`
+- follower `/monitor` tabs receive monitored/lateralized/bid-zone snapshots from the leader instead of duplicating that polling
 - this coordination currently applies only to `/monitor`
 - `/alerts` still runs independently per tab because alerts are still frontend-owned behavior
 

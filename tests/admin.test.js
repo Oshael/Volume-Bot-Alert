@@ -74,6 +74,26 @@ async function completeLogin(email, password) {
   return verifyResponse.body.token;
 }
 
+async function ensureAccessSchema(pool) {
+  const statements = [
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status VARCHAR(16) NOT NULL DEFAULT 'inactive'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_source VARCHAR(16) NOT NULL DEFAULT 'manual'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'inactive'`,
+    `ALTER TABLE users ALTER COLUMN access_granted_at SET DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_source SET DEFAULT 'manual'`,
+    `ALTER TABLE users ALTER COLUMN access_updated_at SET DEFAULT NOW()`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
+    `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
+  ];
+  for (const statement of statements) {
+    await pool.query(statement);
+  }
+}
+
 describe('Admin panel auth and management', () => {
   let server;
   let adminToken;
@@ -93,6 +113,7 @@ describe('Admin panel auth and management', () => {
 
     const { pool } = require('../src/models/db');
 
+    await ensureAccessSchema(pool);
     await pool.query('DELETE FROM sessions');
     await pool.query('DELETE FROM login_attempts');
     await pool.query('DELETE FROM users');
@@ -100,8 +121,8 @@ describe('Admin panel auth and management', () => {
     await pool.query('ALTER TABLE invites ALTER COLUMN created_by DROP NOT NULL').catch(() => {});
 
     await pool.query(
-      `INSERT INTO invites (code, created_by, max_uses, expires_at)
-       VALUES ('ADMINTEST0001', NULL, 10, NOW() + INTERVAL '24 hours')`
+      `INSERT INTO invites (code, created_by, max_uses, grant_access_days, grant_access_source, expires_at)
+       VALUES ('ADMINTEST0001', NULL, 10, 30, 'invite', NOW() + INTERVAL '24 hours')`
     );
 
     const { startServer } = require('../src/server');
@@ -318,6 +339,73 @@ describe('Admin panel auth and management', () => {
       userToken = await completeLogin('user@test.com', 'userpass123');
       const res = await request('GET', '/api/auth/me', { token: userToken });
       assert.equal(res.status, 200);
+    });
+  });
+
+  describe('Admin Access Management', () => {
+    it('returns access snapshot for the authenticated user', async () => {
+      const res = await request('GET', '/api/account/access', { token: userToken });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.accessStatus, 'active');
+      assert.equal(res.body.hasProductAccess, true);
+    });
+
+    it('grants timed access to a user', async () => {
+      const res = await request('POST', `/api/admin/users/${userId}/access/grant`, {
+        token: adminToken,
+        body: { days: 7, source: 'admin' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.access.accessStatus, 'active');
+      assert.equal(res.body.access.daysRemaining, 7);
+      assert.equal(res.body.access.accessSource, 'admin');
+    });
+
+    it('extends from the current future expiry', async () => {
+      const before = await request('GET', '/api/account/access', { token: userToken });
+      assert.equal(before.status, 200);
+
+      const res = await request('POST', `/api/admin/users/${userId}/access/extend`, {
+        token: adminToken,
+        body: { days: 5, source: 'promo' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.access.accessStatus, 'active');
+      assert.equal(res.body.access.accessSource, 'promo');
+      assert.ok(res.body.access.daysRemaining >= (before.body.daysRemaining + 5) - 1);
+    });
+
+    it('revokes access and active sessions', async () => {
+      const res = await request('POST', `/api/admin/users/${userId}/access/revoke`, {
+        token: adminToken,
+        body: { source: 'admin' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.access.accessStatus, 'revoked');
+
+      const me = await request('GET', '/api/auth/me', { token: userToken });
+      assert.equal(me.status, 401);
+    });
+
+    it('revoked access blocks login', async () => {
+      const res = await request('POST', '/api/auth/login', {
+        body: { email: 'user@test.com', password: 'userpass123' },
+      });
+      assert.equal(res.status, 403);
+      assert.equal(res.body.error, 'Access revoked');
+    });
+
+    it('grants access again and restores login', async () => {
+      const res = await request('POST', `/api/admin/users/${userId}/access/grant`, {
+        token: adminToken,
+        body: { days: 14, source: 'admin' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.access.accessStatus, 'active');
+
+      userToken = await completeLogin('user@test.com', 'userpass123');
+      const me = await request('GET', '/api/auth/me', { token: userToken });
+      assert.equal(me.status, 200);
     });
   });
 
