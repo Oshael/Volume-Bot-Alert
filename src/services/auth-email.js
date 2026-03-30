@@ -152,7 +152,7 @@ function buildLoginOtpEmail({ username, code, expiresMinutes }) {
 }
 
 async function sendPasswordResetEmail({ to, username, token, expiresMinutes = 30 }) {
-  const resetUrl = buildUrl('/', { mode: 'reset-password', token });
+  const resetUrl = buildUrl('/auth/reset-password', { token });
   const payload = buildPasswordResetEmail({ username, resetUrl, expiresMinutes });
   return emailService.sendEmail({
     to,
@@ -167,7 +167,7 @@ async function sendPasswordResetEmail({ to, username, token, expiresMinutes = 30
 }
 
 async function sendEmailVerificationEmail({ to, username, token, expiresMinutes = 60 }) {
-  const verificationUrl = buildUrl('/', { mode: 'verify-email', token });
+  const verificationUrl = buildUrl('/auth/verify-email', { token });
   const payload = buildEmailVerificationEmail({ username, verificationUrl, expiresMinutes });
   return emailService.sendEmail({
     to,

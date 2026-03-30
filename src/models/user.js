@@ -66,7 +66,11 @@ const User = {
    */
   async findById(id) {
     const { rows } = await query(
-      'SELECT id, username, email, role, is_active, is_email_verified, email_verified_at, created_at, last_login FROM users WHERE id = $1',
+      `SELECT id, username, email, role, is_active, is_email_verified, email_verified_at,
+              access_status, access_granted_at, access_expires_at, access_source, access_updated_at,
+              created_at, last_login
+       FROM users
+       WHERE id = $1`,
       [id]
     );
     return rows[0] || null;
@@ -79,7 +83,9 @@ const User = {
        SET is_email_verified = true,
            email_verified_at = COALESCE(email_verified_at, NOW())
        WHERE id = $1
-       RETURNING id, username, email, role, is_active, is_email_verified, email_verified_at, created_at, last_login`,
+       RETURNING id, username, email, role, is_active, is_email_verified, email_verified_at,
+                 access_status, access_granted_at, access_expires_at, access_source, access_updated_at,
+                 created_at, last_login`,
       [id]
     );
     return rows[0] || null;

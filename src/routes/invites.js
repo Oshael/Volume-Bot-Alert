@@ -8,6 +8,7 @@ function parseInviteCreateOptions(body = {}) {
   const opts = {};
   const hasMaxUses = body.maxUses !== undefined && body.maxUses !== null && String(body.maxUses).trim() !== '';
   const hasExpiryHours = body.expiryHours !== undefined && body.expiryHours !== null && String(body.expiryHours).trim() !== '';
+  const hasGrantAccessDays = body.grantAccessDays !== undefined && body.grantAccessDays !== null && String(body.grantAccessDays).trim() !== '';
 
   if (hasMaxUses) {
     const parsed = Number.parseInt(body.maxUses, 10);
@@ -23,6 +24,14 @@ function parseInviteCreateOptions(body = {}) {
       return { ok: false, error: 'expiryHours must be an integer' };
     }
     opts.expiryHours = parsed;
+  }
+
+  if (hasGrantAccessDays) {
+    const parsed = Number.parseInt(body.grantAccessDays, 10);
+    if (!Number.isInteger(parsed)) {
+      return { ok: false, error: 'grantAccessDays must be an integer' };
+    }
+    opts.grantAccessDays = parsed;
   }
 
   return { ok: true, opts };

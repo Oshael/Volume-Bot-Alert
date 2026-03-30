@@ -15,6 +15,19 @@ function parseBoolean(value, fallback = false) {
   return value === 'true' || value === '1';
 }
 
+function parseJson(value, fallback) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
+}
+
 function getEnv(...names) {
   for (const name of names) {
     const value = process.env[name];
@@ -23,6 +36,71 @@ function getEnv(...names) {
     }
   }
   return '';
+}
+
+function normalizeBillingPlans(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const key = String(entry.key || '').trim();
+      const label = String(entry.label || '').trim();
+      const currencyCode = String(entry.currencyCode || entry.currency || '').trim().toUpperCase();
+      const providerPaylinkId = normalizeMoonpayPaylinkId(entry.providerPaylinkId || entry.paylinkId || '');
+      const accessDays = Number(entry.accessDays);
+      const amountMinor = Number(entry.amountMinor);
+
+      if (!key || !label || !currencyCode || !Number.isFinite(accessDays) || accessDays <= 0 || !Number.isFinite(amountMinor) || amountMinor <= 0) {
+        return null;
+      }
+
+      return {
+        key,
+        label,
+        description: String(entry.description || '').trim(),
+        currencyCode,
+        amountMinor: Math.round(amountMinor),
+        accessDays: Math.round(accessDays),
+        featured: parseBoolean(entry.featured, false),
+        providerPaylinkId,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeMoonpayPaylinkId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(raw);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    return segments[segments.length - 1] || raw;
+  } catch (_) {
+    return raw;
+  }
+}
+
+function normalizeMoonpayNetwork(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'test' || normalized === 'testnet' || normalized === 'sandbox' || normalized === 'dev' || normalized === 'development') {
+    return 'test';
+  }
+  return 'main';
+}
+
+function getDefaultMoonpayApiBaseUrl(network) {
+  return network === 'test'
+    ? 'https://api.dev.hel.io/v1'
+    : 'https://api.hel.io/v1';
 }
 
 function isLocalTestHost(host) {
@@ -207,6 +285,22 @@ module.exports = {
       || (((process.env.NODE_ENV || 'development') === 'production') ? 'none' : 'lax'),
   },
 
+  preAccessCookie: {
+    name: process.env.PRE_ACCESS_COOKIE_NAME || 'volume_alert_pre_access',
+    domain: process.env.AUTH_COOKIE_DOMAIN || undefined,
+    secure: parseBoolean(
+      process.env.AUTH_COOKIE_SECURE,
+      (process.env.NODE_ENV || 'development') === 'production'
+    ),
+    sameSite: process.env.AUTH_COOKIE_SAMESITE
+      || (((process.env.NODE_ENV || 'development') === 'production') ? 'none' : 'lax'),
+    expiresMinutes: parseInt(process.env.PRE_ACCESS_EXPIRES_MINUTES || '30', 10),
+    returnUrl: (
+      process.env.PRE_ACCESS_RETURN_URL
+      || ((process.env.APP_BASE_URL || '').trim().replace(/\/+$/, '') ? `${(process.env.APP_BASE_URL || '').trim().replace(/\/+$/, '')}/access` : '')
+    ).trim(),
+  },
+
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
 
   rateLimit: {
@@ -295,6 +389,26 @@ module.exports = {
         process.env.EMAIL_DEV_EXPOSE_DEBUG,
         (process.env.NODE_ENV || 'development') === 'development'
       ),
+    },
+  },
+
+  billing: {
+    enabled: parseBoolean(process.env.BILLING_ENABLED, false),
+    checkoutReturnUrl: (process.env.BILLING_CHECKOUT_RETURN_URL || process.env.APP_BASE_URL || '').trim(),
+    plans: normalizeBillingPlans(parseJson(process.env.BILLING_PLANS_JSON, [])),
+    moonpay: {
+      network: normalizeMoonpayNetwork(process.env.MOONPAY_COMMERCE_NETWORK || 'main'),
+      apiBaseUrl: (
+        process.env.MOONPAY_COMMERCE_API_BASE_URL
+        || getDefaultMoonpayApiBaseUrl(normalizeMoonpayNetwork(process.env.MOONPAY_COMMERCE_NETWORK || 'main'))
+      ).trim().replace(/\/+$/, ''),
+      apiKey: (process.env.MOONPAY_COMMERCE_API_KEY || '').trim(),
+      bearerToken: (process.env.MOONPAY_COMMERCE_BEARER_TOKEN || '').trim(),
+      webhookTokens: String(process.env.MOONPAY_COMMERCE_WEBHOOK_TOKENS || process.env.MOONPAY_COMMERCE_WEBHOOK_TOKEN || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+      mockMode: nodeEnv !== 'production' && parseBoolean(process.env.MOONPAY_COMMERCE_MOCK_MODE, false),
     },
   },
 

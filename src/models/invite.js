@@ -22,6 +22,19 @@ function normalizeInviteExpiryHours(value) {
   return Math.max(1, Math.min(parsed, 720));
 }
 
+function normalizeGrantAccessDays(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) {
+    return null;
+  }
+
+  return Math.max(1, Math.min(parsed, 365));
+}
+
 function getExecutor(db) {
   return db && typeof db.query === 'function' ? db : { query };
 }
@@ -30,16 +43,17 @@ const Invite = {
   /**
    * Create a new invite code.
    */
-  async create(createdBy, { maxUses, expiryHours } = {}) {
+  async create(createdBy, { maxUses, expiryHours, grantAccessDays } = {}) {
     const code = uuidv4().replace(/-/g, '').slice(0, 16).toUpperCase();
     const uses = normalizeInviteMaxUses(maxUses);
     const hours = normalizeInviteExpiryHours(expiryHours);
+    const grantDays = normalizeGrantAccessDays(grantAccessDays);
 
     const { rows } = await query(
-      `INSERT INTO invites (code, created_by, max_uses, expires_at)
-       VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour' * $4)
-       RETURNING id, code, created_by, max_uses, use_count, expires_at, created_at`,
-      [code, createdBy, uses, hours]
+      `INSERT INTO invites (code, created_by, max_uses, grant_access_days, grant_access_source, expires_at)
+       VALUES ($1, $2, $3, $4, 'invite', NOW() + INTERVAL '1 hour' * $5)
+       RETURNING id, code, created_by, max_uses, use_count, grant_access_days, grant_access_source, expires_at, created_at`,
+      [code, createdBy, uses, grantDays, hours]
     );
     return rows[0];
   },
@@ -73,7 +87,7 @@ const Invite = {
       return { valid: false, reason: 'Invite code not found' };
     }
     const { rows } = await query(
-      `SELECT id, code, created_by, max_uses, use_count, expires_at, is_revoked
+      `SELECT id, code, created_by, max_uses, use_count, grant_access_days, grant_access_source, expires_at, is_revoked
        FROM invites
        WHERE code = $1`,
       [normalizedCode]
@@ -96,7 +110,7 @@ const Invite = {
       return { valid: false, reason: 'Invite code not found' };
     }
     const { rows } = await executor.query(
-      `SELECT id, code, created_by, max_uses, use_count, expires_at, is_revoked
+      `SELECT id, code, created_by, max_uses, use_count, grant_access_days, grant_access_source, expires_at, is_revoked
        FROM invites
        WHERE code = $1
        FOR UPDATE`,
@@ -119,7 +133,7 @@ const Invite = {
       `UPDATE invites
        SET use_count = use_count + 1
        WHERE id = $1
-       RETURNING id, code, created_by, max_uses, use_count, expires_at`,
+       RETURNING id, code, created_by, max_uses, use_count, grant_access_days, grant_access_source, expires_at`,
       [id]
     );
     return rows[0] || null;
@@ -155,7 +169,7 @@ const Invite = {
    */
   async listByUser(userId) {
     const { rows } = await query(
-      `SELECT id, code, max_uses, use_count, expires_at, is_revoked, created_at
+      `SELECT id, code, max_uses, use_count, grant_access_days, grant_access_source, expires_at, is_revoked, created_at
        FROM invites WHERE created_by = $1 ORDER BY created_at DESC`,
       [userId]
     );

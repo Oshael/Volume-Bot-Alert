@@ -4,6 +4,7 @@ const User = require('../models/user');
 const Invite = require('../models/invite');
 const Session = require('../models/session');
 const LoginAttempt = require('../models/login-attempt');
+const userAccess = require('../models/user-access');
 const { query } = require('../models/db');
 const socketHub = require('../services/socket-hub');
 const lateralizationWorker = require('../services/lateralization-worker');
@@ -84,6 +85,19 @@ function parseOptionalIntegerField(value, name, { min, max }) {
   return { ok: true, value: parsed };
 }
 
+function parseAccessDays(value) {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3650 ? parsed : null;
+}
+
+function parseAccessSource(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return 'admin';
+  }
+  const normalized = String(value).trim().toLowerCase();
+  return userAccess.VALID_SOURCES.has(normalized) ? normalized : null;
+}
+
 // All admin routes require authentication + admin role
 router.use(authenticate);
 router.use(requireAdmin);
@@ -101,6 +115,7 @@ router.get('/users', async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT u.id, u.username, u.email, u.role, u.is_active,
+             u.access_status, u.access_expires_at, u.access_source, u.access_updated_at,
              u.invited_by, inv.username as invited_by_username,
              u.invite_code, u.created_at, u.last_login
       FROM users u
@@ -269,6 +284,102 @@ router.delete('/users/:id/sessions', async (req, res) => {
     res.json({ message: `Revoked ${count} session(s) for ${target.username}` });
   } catch (err) {
     console.error('Admin revoke sessions error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/users/:id/access/grant', async (req, res) => {
+  try {
+    const targetId = parsePositiveId(req.params.id);
+    if (!targetId) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    const days = parseAccessDays(req.body?.days);
+    if (!days) {
+      return res.status(400).json({ error: 'days must be an integer between 1 and 3650' });
+    }
+
+    const source = parseAccessSource(req.body?.source);
+    if (!source) {
+      return res.status(400).json({ error: 'source must be one of: manual, payment, admin, promo' });
+    }
+
+    const target = await User.findById(targetId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const access = await userAccess.grantForUser(targetId, { days, source });
+    res.json({
+      message: `Granted ${days} day(s) of access to ${target.username}`,
+      access,
+    });
+  } catch (err) {
+    console.error('Admin grant access error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/users/:id/access/extend', async (req, res) => {
+  try {
+    const targetId = parsePositiveId(req.params.id);
+    if (!targetId) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    const days = parseAccessDays(req.body?.days);
+    if (!days) {
+      return res.status(400).json({ error: 'days must be an integer between 1 and 3650' });
+    }
+
+    const source = parseAccessSource(req.body?.source);
+    if (!source) {
+      return res.status(400).json({ error: 'source must be one of: manual, payment, admin, promo' });
+    }
+
+    const target = await User.findById(targetId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const access = await userAccess.extendForUser(targetId, { days, source });
+    res.json({
+      message: `Extended ${target.username} by ${days} day(s)`,
+      access,
+    });
+  } catch (err) {
+    console.error('Admin extend access error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/users/:id/access/revoke', async (req, res) => {
+  try {
+    const targetId = parsePositiveId(req.params.id);
+    if (!targetId) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    const source = parseAccessSource(req.body?.source);
+    if (!source) {
+      return res.status(400).json({ error: 'source must be one of: manual, payment, admin, promo' });
+    }
+
+    const target = await User.findById(targetId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const access = await userAccess.revokeForUser(targetId, { source });
+    const revokedCount = await Session.revokeAllForUser(targetId);
+    socketHub.revokeUserSockets(targetId, 'access_revoked');
+    res.json({
+      message: `Revoked access for ${target.username} and removed ${revokedCount} session(s)`,
+      access,
+    });
+  } catch (err) {
+    console.error('Admin revoke access error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

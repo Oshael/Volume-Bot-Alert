@@ -7,6 +7,7 @@ const config = require('../config');
 const { defaultApiLimiter, healthLimiter } = require('./middleware/rate-limit');
 const { isAllowedOrigin } = require('./utils/request-security');
 const { getSecurityEventStats } = require('./utils/security-events');
+const { assertRuntimeSchema } = require('./utils/runtime-schema');
 const Session = require('./models/session');
 const LoginAttempt = require('./models/login-attempt');
 const EmailVerificationToken = require('./models/email-verification-token');
@@ -18,6 +19,9 @@ const authRoutes = require('./routes/auth');
 const inviteRoutes = require('./routes/invites');
 const healthRoutes = require('./routes/health');
 const adminRoutes = require('./routes/admin');
+const accountRoutes = require('./routes/account');
+const billingRoutes = require('./routes/billing');
+const preAccessRoutes = require('./routes/pre-access');
 const bootstrapRoutes = require('./routes/bootstrap');
 const catalogRoutes = require('./routes/catalog');
 const dashboardRoutes = require('./routes/dashboard');
@@ -35,6 +39,7 @@ const app = express();
 let server = null;
 let cleanupInterval = null;
 let bootstrapped = false;
+let startupInFlight = false;
 
 // ---- Security middlewares ----
 const cspDirectives = {
@@ -121,6 +126,9 @@ app.use('/api/health', healthLimiter, healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/invites', defaultApiLimiter, inviteRoutes);
 app.use('/api/admin', defaultApiLimiter, adminRoutes);
+app.use('/api/account', defaultApiLimiter, accountRoutes);
+app.use('/api/billing', defaultApiLimiter, billingRoutes);
+app.use('/api/pre-access', defaultApiLimiter, preAccessRoutes);
 app.use('/api/config', defaultApiLimiter, require('./routes/config'));
 app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
 app.use('/api/catalog', catalogRoutes);
@@ -188,7 +196,7 @@ function bootstrapRuntime(httpServer) {
 }
 
 function startServer(port = config.port) {
-  if (server?.listening) {
+  if (server?.listening || startupInFlight) {
     return server;
   }
 
@@ -196,41 +204,64 @@ function startServer(port = config.port) {
   server.requestTimeout = Math.max(1000, Number(config.security?.requestTimeoutMs) || 15000);
   server.headersTimeout = Math.max(server.requestTimeout + 1000, Number(config.security?.headersTimeoutMs) || 20000);
   server.keepAliveTimeout = Math.max(1000, Number(config.security?.keepAliveTimeoutMs) || 5000);
-  bootstrapRuntime(server);
+  startupInFlight = true;
 
-  server.listen(port, () => {
-    console.log('');
-    console.log(`???? Volume Alert Server running on port ${port}`);
-    console.log(`   Environment: ${config.nodeEnv}`);
-    console.log(`   CORS origins: ${config.corsOrigins.join(', ')}`);
-    console.log('');
-    console.log('   Endpoints:');
-    console.log('   GET  /api/health           ??? Server status');
-    console.log('   POST /api/auth/register    ??? Register (requires invite)');
-    console.log('   POST /api/auth/login       ??? Login');
-    console.log('   POST /api/auth/logout      ??? Logout');
-    console.log('   POST /api/auth/logout-all  ??? Logout everywhere');
-    console.log('   GET  /api/auth/me          ??? Current user');
-    console.log('   POST /api/auth/change-password ??? Change password');
-    console.log('   POST /api/invites          ??? Create invite');
-    console.log('   GET  /api/invites          ??? List my invites');
-    console.log('   GET  /api/invites/validate/:code ??? Validate invite');
-    console.log('   DELETE /api/invites/:id     ??? Revoke invite');
-    console.log('   --- Admin ---');
-    console.log('   GET  /api/admin/stats       ??? Dashboard summary');
-    console.log('   GET  /api/admin/users       ??? List all users');
-    console.log('   GET  /api/admin/users/online ??? Online users');
-    console.log('   PATCH /api/admin/users/:id  ??? Update user');
-    console.log('   DELETE /api/admin/users/:id/sessions ??? Force logout');
-    console.log('   GET  /api/admin/invites     ??? List all invites');
-    console.log('   POST /api/admin/invites     ??? Create invite');
-    console.log('   DELETE /api/admin/invites/:id ??? Revoke invite');
-    console.log('   GET  /api/admin/logs        ??? Login attempts');
-    console.log('   GET  /api/admin/ws-status   ??? WebSocket hub status');
-    console.log('   --- WebSocket ---');
-    console.log('   Socket.io on /            ??? Real-time data (cookie session auth)');
-    console.log('');
-  });
+  assertRuntimeSchema({ profile: config.nodeEnv === 'test' ? 'test' : 'runtime' })
+    .then(() => {
+      bootstrapRuntime(server);
+
+      server.listen(port, () => {
+        startupInFlight = false;
+        console.log('');
+        console.log(`???? Volume Alert Server running on port ${port}`);
+        console.log(`   Environment: ${config.nodeEnv}`);
+        console.log(`   CORS origins: ${config.corsOrigins.join(', ')}`);
+        console.log('');
+        console.log('   Endpoints:');
+        console.log('   GET  /api/health           ??? Server status');
+        console.log('   POST /api/auth/register    ??? Register (requires invite)');
+        console.log('   POST /api/auth/login       ??? Login');
+        console.log('   POST /api/auth/logout      ??? Logout');
+        console.log('   POST /api/auth/logout-all  ??? Logout everywhere');
+        console.log('   GET  /api/auth/me          ??? Current user');
+        console.log('   POST /api/auth/change-password ??? Change password');
+        console.log('   POST /api/invites          ??? Create invite');
+        console.log('   GET  /api/invites          ??? List my invites');
+        console.log('   GET  /api/invites/validate/:code ??? Validate invite');
+        console.log('   DELETE /api/invites/:id     ??? Revoke invite');
+        console.log('   --- Admin ---');
+        console.log('   GET  /api/admin/stats       ??? Dashboard summary');
+        console.log('   GET  /api/admin/users       ??? List all users');
+        console.log('   GET  /api/admin/users/online ??? Online users');
+        console.log('   PATCH /api/admin/users/:id  ??? Update user');
+        console.log('   DELETE /api/admin/users/:id/sessions ??? Force logout');
+        console.log('   GET  /api/admin/invites     ??? List all invites');
+        console.log('   POST /api/admin/invites     ??? Create invite');
+        console.log('   DELETE /api/admin/invites/:id ??? Revoke invite');
+        console.log('   GET  /api/admin/logs        ??? Login attempts');
+        console.log('   GET  /api/admin/ws-status   ??? WebSocket hub status');
+        console.log('   --- WebSocket ---');
+        console.log('   Socket.io on /            ??? Real-time data (cookie session auth)');
+        console.log('');
+      });
+    })
+    .catch((err) => {
+      startupInFlight = false;
+      console.error('');
+      console.error(err?.message || err);
+      console.error('');
+      try {
+        server?.close();
+      } catch (_) {}
+      server = null;
+
+      if (config.nodeEnv === 'test') {
+        setImmediate(() => { throw err; });
+        return;
+      }
+
+      process.exit(1);
+    });
 
   return server;
 }

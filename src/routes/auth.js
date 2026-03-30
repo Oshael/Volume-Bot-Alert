@@ -11,6 +11,9 @@ const PasswordResetToken = require('../models/password-reset-token');
 const LoginEmailOtpChallenge = require('../models/login-email-otp-challenge');
 const socketHub = require('../services/socket-hub');
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
+const userAccess = require('../models/user-access');
+const { serializeUser, clearAuthCookie, buildAuthResponse, createAuthenticatedSession } = require('../services/auth-session');
+const { clearPreAccessCookie, issuePreAccessFlow, isBillingRecoveryAccess, isHardBlockedAccess } = require('../services/pre-access-session');
 const { sendEmailVerificationEmail, sendPasswordResetEmail, sendPasswordChangedEmail, sendLoginOtpEmail } = require('../services/auth-email');
 const { authLimiter, authEmailLimiter, authOtpLimiter } = require('../middleware/rate-limit');
 const { getClient } = require('../models/db');
@@ -57,52 +60,6 @@ function isValidLoginOtpCode(code) {
     && new RegExp(`^\\d{${getLoginOtpLength()}}$`).test(code);
 }
 
-function serializeUser(user) {
-  return {
-    id: user.id,
-    username: user.username,
-    email: user.email,
-    role: user.role,
-    isActive: Boolean(user.is_active),
-    isEmailVerified: Boolean(user.is_email_verified),
-    emailVerifiedAt: user.email_verified_at || null,
-  };
-}
-
-function setAuthCookie(res, token, expiresAt) {
-  res.cookie(config.authCookie.name, token, {
-    httpOnly: true,
-    secure: config.authCookie.secure,
-    sameSite: config.authCookie.sameSite,
-    domain: config.authCookie.domain,
-    path: '/',
-    expires: expiresAt,
-  });
-}
-
-function clearAuthCookie(res) {
-  res.clearCookie(config.authCookie.name, {
-    httpOnly: true,
-    secure: config.authCookie.secure,
-    sameSite: config.authCookie.sameSite,
-    domain: config.authCookie.domain,
-    path: '/',
-  });
-}
-
-function buildAuthResponse(message, user, token) {
-  const payload = {
-    message,
-    user: serializeUser(user),
-  };
-
-  if (config.nodeEnv === 'test') {
-    payload.token = token;
-  }
-
-  return payload;
-}
-
 function maskEmail(email) {
   const normalized = String(email || '').trim().toLowerCase();
   const [localPart = '', domain = ''] = normalized.split('@');
@@ -133,30 +90,6 @@ function buildEmailDebug(delivery) {
     otpCode: debug.otpCode || null,
     expiresMinutes: debug.expiresMinutes ?? null,
   };
-}
-
-async function createAuthenticatedSession({ user, ipAddress, userAgent, res }) {
-  const sessionId = crypto.randomUUID();
-  const token = jwt.sign(
-    { userId: user.id, role: user.role, jti: sessionId },
-    config.jwt.secret,
-    { expiresIn: config.jwt.expiresIn }
-  );
-
-  const decoded = jwt.decode(token);
-  const expiresAt = new Date(decoded.exp * 1000);
-
-  await Session.create({
-    userId: user.id,
-    token,
-    ipAddress,
-    userAgent,
-    expiresAt,
-  });
-
-  await User.updateLastLogin(user.id);
-  setAuthCookie(res, token, expiresAt);
-  return buildAuthResponse('Login successful', user, token);
 }
 
 async function issueEmailVerification({ user, ipAddress, userAgent }) {
@@ -274,6 +207,13 @@ router.post('/register', authLimiter, async (req, res) => {
       inviteCode: invite.code,
     }, client);
 
+    if (Number.isInteger(invite.grant_access_days) && invite.grant_access_days > 0) {
+      await userAccess.grantForUserWithRunner(client, user.id, {
+        days: invite.grant_access_days,
+        source: invite.grant_access_source || 'invite',
+      });
+    }
+
     await Invite.incrementUse(invite.id, client);
     await client.query('COMMIT');
 
@@ -358,12 +298,19 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Email not verified. Check your inbox or resend verification before signing in.' });
     }
 
+    const access = userAccess.buildAccessSnapshot(user);
+    if (isHardBlockedAccess(access)) {
+      await LoginAttempt.record({ email, ipAddress: req.ip, success: false, userAgent: req.get('user-agent') });
+      return res.status(403).json({ error: access.denialReason || 'Access revoked' });
+    }
+
     if (!config.email.enabled) {
       return res.status(503).json({ error: 'Email delivery is not configured' });
     }
 
     await LoginAttempt.record({ email, ipAddress: req.ip, success: true, userAgent: req.get('user-agent') });
     clearAuthCookie(res);
+    clearPreAccessCookie(res);
     const otp = await issueLoginOtp({
       user,
       ipAddress: req.ip,
@@ -405,6 +352,11 @@ router.post('/login-otp/resend', authOtpLimiter, async (req, res) => {
     const user = await User.findById(challenge.user_id);
     if (!user || !user.is_active || !user.is_email_verified) {
       return res.status(400).json({ error: 'Verification challenge is invalid or expired. Please sign in again.' });
+    }
+
+    const access = userAccess.buildAccessSnapshot(user);
+    if (isHardBlockedAccess(access)) {
+      return res.status(403).json({ error: access.denialReason || 'Access revoked' });
     }
 
     const nextChallenge = await issueLoginOtp({
@@ -450,6 +402,12 @@ router.post('/login-otp/verify', authOtpLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Verification code is invalid or expired. Please sign in again.' });
     }
 
+    const access = userAccess.buildAccessSnapshot(user);
+    if (isHardBlockedAccess(access)) {
+      clearPreAccessCookie(res);
+      return res.status(403).json({ error: access.denialReason || 'Access revoked' });
+    }
+
     if (!LoginEmailOtpChallenge.verifyCode(challenge, code)) {
       const attempts = await LoginEmailOtpChallenge.incrementAttempt(challenge.id);
       const maxAttempts = Math.max(1, Number(config.email.loginOtpMaxAttempts || 5));
@@ -466,14 +424,27 @@ router.post('/login-otp/verify', authOtpLimiter, async (req, res) => {
     }
 
     await LoginEmailOtpChallenge.revokeAllForUser(user.id);
-    const payload = await createAuthenticatedSession({
-      user,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      res,
-    });
 
-    res.json(payload);
+    if (access.hasProductAccess) {
+      clearPreAccessCookie(res);
+      const payload = await createAuthenticatedSession({
+        user,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        res,
+      });
+      return res.json(payload);
+    }
+
+    if (isBillingRecoveryAccess(access)) {
+      clearAuthCookie(res);
+      return res.json({
+        ...issuePreAccessFlow({ user, res }),
+        access,
+      });
+    }
+
+    return res.status(403).json({ error: access.denialReason || 'Access inactive' });
   } catch (err) {
     console.error('Login OTP verify error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -580,9 +551,22 @@ router.post('/verify-email/confirm', authEmailLimiter, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({
-      message: 'Email verified successfully',
-      user: serializeUser(user),
+    clearAuthCookie(res);
+    clearPreAccessCookie(res);
+
+    if (!user.is_active) {
+      return res.status(403).json({ error: 'Account is deactivated' });
+    }
+
+    const access = userAccess.buildAccessSnapshot(user);
+    if (isHardBlockedAccess(access)) {
+      return res.status(403).json({ error: access.denialReason || 'Access revoked' });
+    }
+
+    return res.json({
+      ...issuePreAccessFlow({ user, res }),
+      message: 'Email verified successfully. Continue to access setup.',
+      access,
     });
   } catch (err) {
     console.error('Verify-email confirm error:', err);

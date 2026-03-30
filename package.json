@@ -8,8 +8,10 @@
     "dev": "node --watch src/server.js",
     "test": "node --test --test-force-exit tests/admin.test.js && node --test --test-force-exit tests/auth.test.js && node --test --test-force-exit tests/catalog.test.js",
     "db:init": "node src/utils/db-init.js",
+    "db:schema-check": "node src/utils/check-runtime-schema.js",
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
-    "invite:create": "node src/utils/create-invite.js"
+    "invite:create": "node src/utils/create-invite.js",
+    "lateralization:debug": "node src/utils/debug-lateralization.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

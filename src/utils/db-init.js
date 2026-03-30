@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS users (
   is_active     BOOLEAN NOT NULL DEFAULT true,
   is_email_verified BOOLEAN NOT NULL DEFAULT false,
   email_verified_at TIMESTAMPTZ,
+  access_status VARCHAR(16) NOT NULL DEFAULT 'inactive',
+  access_granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  access_expires_at TIMESTAMPTZ,
+  access_source VARCHAR(16) NOT NULL DEFAULT 'manual',
+  access_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   invited_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
   invite_code   VARCHAR(64),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -51,10 +56,21 @@ CREATE TABLE IF NOT EXISTS users (
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status VARCHAR(16) NOT NULL DEFAULT 'inactive';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_source VARCHAR(16) NOT NULL DEFAULT 'manual';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS access_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'inactive';
+ALTER TABLE users ALTER COLUMN access_granted_at SET DEFAULT NOW();
+ALTER TABLE users ALTER COLUMN access_source SET DEFAULT 'manual';
+ALTER TABLE users ALTER COLUMN access_updated_at SET DEFAULT NOW();
 
 -- Index for login lookups
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_access_status ON users(access_status);
+CREATE INDEX IF NOT EXISTS idx_users_access_expires_at ON users(access_expires_at);
 
 -- Invite codes table
 CREATE TABLE IF NOT EXISTS invites (
@@ -63,10 +79,16 @@ CREATE TABLE IF NOT EXISTS invites (
   created_by    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   max_uses      INTEGER NOT NULL DEFAULT 1,
   use_count     INTEGER NOT NULL DEFAULT 0,
+  grant_access_days INTEGER,
+  grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite',
   expires_at    TIMESTAMPTZ NOT NULL,
   is_revoked    BOOLEAN NOT NULL DEFAULT false,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite';
+ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite';
 
 CREATE INDEX IF NOT EXISTS idx_invites_code ON invites(code);
 
@@ -146,6 +168,57 @@ CREATE TABLE IF NOT EXISTS login_email_otp_challenges (
 CREATE INDEX IF NOT EXISTS idx_login_email_otp_challenges_user ON login_email_otp_challenges(user_id);
 CREATE INDEX IF NOT EXISTS idx_login_email_otp_challenges_hash ON login_email_otp_challenges(challenge_hash);
 CREATE INDEX IF NOT EXISTS idx_login_email_otp_challenges_expires ON login_email_otp_challenges(expires_at);
+
+-- Billing orders
+CREATE TABLE IF NOT EXISTS billing_orders (
+  id                      SERIAL PRIMARY KEY,
+  user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_key                VARCHAR(64) NOT NULL,
+  plan_name               VARCHAR(128) NOT NULL,
+  access_days             INTEGER NOT NULL,
+  provider                VARCHAR(32) NOT NULL,
+  provider_paylink_id     VARCHAR(128),
+  provider_charge_id      VARCHAR(128),
+  provider_charge_token   VARCHAR(128),
+  provider_checkout_url   TEXT,
+  provider_status         VARCHAR(32),
+  currency_code           VARCHAR(16) NOT NULL,
+  currency_amount_minor   BIGINT NOT NULL,
+  status                  VARCHAR(32) NOT NULL DEFAULT 'pending',
+  checkout_expires_at     TIMESTAMPTZ,
+  paid_at                 TIMESTAMPTZ,
+  last_error              TEXT,
+  metadata                JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_orders_user ON billing_orders(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_orders_status ON billing_orders(status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_orders_provider_charge_id
+  ON billing_orders(provider, provider_charge_id)
+  WHERE provider_charge_id IS NOT NULL;
+
+-- Billing webhook/events
+CREATE TABLE IF NOT EXISTS billing_events (
+  id                            SERIAL PRIMARY KEY,
+  order_id                      INTEGER REFERENCES billing_orders(id) ON DELETE SET NULL,
+  provider                      VARCHAR(32) NOT NULL,
+  event_type                    VARCHAR(64) NOT NULL,
+  provider_event_id             VARCHAR(128),
+  delivery_idempotency_key      VARCHAR(255),
+  transaction_idempotency_key   VARCHAR(255),
+  process_status                VARCHAR(32) NOT NULL DEFAULT 'received',
+  payload                       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at                  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_events_order ON billing_events(order_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_events_provider ON billing_events(provider, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_events_delivery_key
+  ON billing_events(provider, delivery_idempotency_key)
+  WHERE delivery_idempotency_key IS NOT NULL;
 `;
 
 async function init() {

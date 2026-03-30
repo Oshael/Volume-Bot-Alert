@@ -21,6 +21,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const Session = require('../models/session');
 const User = require('../models/user');
+const userAccess = require('../models/user-access');
 const solPrice = require('./sol-price');
 const pumpfun = require('./pumpfun-ws');
 const tokenCatalog = require('../models/token-catalog');
@@ -29,8 +30,10 @@ const { logSecurityEvent } = require('../utils/security-events');
 
 let io = null;
 let solPriceTimer = null;
+let accessSweepTimer = null;
 
 const SOL_PRICE_BROADCAST_INTERVAL = 30000;
+const ACCESS_SWEEP_INTERVAL = 60000;
 const socketSubscriptions = new Map();
 const mintSubscribers = new Map();
 const sessionSockets = new Map();
@@ -307,6 +310,29 @@ function revokeUserSockets(userId, reason = 'session_revoked') {
   return emitAndDisconnectSockets(socketIds, reason);
 }
 
+async function sweepAccessEligibility() {
+  if (!io || userSessions.size === 0) {
+    return;
+  }
+
+  for (const userId of Array.from(userSessions.keys())) {
+    try {
+      const user = await User.findById(userId);
+      if (!user || !user.is_active) {
+        revokeUserSockets(userId, 'account_deactivated');
+        continue;
+      }
+
+      const access = userAccess.buildAccessSnapshot(user);
+      if (!access.hasProductAccess) {
+        revokeUserSockets(userId, access.denialCode || 'access_inactive');
+      }
+    } catch (err) {
+      console.error('Socket access sweep error:', err.message);
+    }
+  }
+}
+
 function init(httpServer) {
   io = new Server(httpServer, {
     cors: {
@@ -348,6 +374,11 @@ function init(httpServer) {
       const user = await User.findById(decoded.userId);
       if (!user || !user.is_active) {
         return next(new Error('User not found or deactivated'));
+      }
+
+      const access = userAccess.buildAccessSnapshot(user);
+      if (!access.hasProductAccess) {
+        return next(new Error(access.denialReason || 'Access inactive'));
       }
 
       const sessionId = Session.getSessionIdentity(token, decoded);
@@ -431,6 +462,10 @@ function startServices() {
     }
   }, SOL_PRICE_BROADCAST_INTERVAL);
 
+  accessSweepTimer = setInterval(() => {
+    void sweepAccessEligibility();
+  }, ACCESS_SWEEP_INTERVAL);
+
   pumpfun.start((event) => {
     if (!io) return;
 
@@ -465,6 +500,10 @@ function stop() {
   if (solPriceTimer) {
     clearInterval(solPriceTimer);
     solPriceTimer = null;
+  }
+  if (accessSweepTimer) {
+    clearInterval(accessSweepTimer);
+    accessSweepTimer = null;
   }
   solPrice.stop();
   pumpfun.stop();
