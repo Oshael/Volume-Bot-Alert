@@ -3,14 +3,14 @@ const assert = require('node:assert/strict');
 const http = require('http');
 const { io: createSocketClient } = require('../frontend/node_modules/socket.io-client');
 
-function request(method, path, { body, token } = {}) {
+function request(method, path, { body, token, headers } = {}) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: '127.0.0.1',
       port: process.env.TEST_PORT || 3099,
       path,
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(headers || {}) },
     };
     if (token) options.headers.Authorization = `Bearer ${token}`;
 
@@ -48,6 +48,12 @@ function getCookieAttribute(cookieValue, attributeName) {
     }
   }
   return null;
+}
+
+function findSetCookie(headers, cookieName) {
+  const prefix = `${cookieName}=`;
+  const values = Array.isArray(headers?.['set-cookie']) ? headers['set-cookie'] : [];
+  return String(values.find((entry) => String(entry || '').startsWith(prefix)) || '').split(';')[0];
 }
 
 async function verifyEmailFromRegisterResponse(registerResponse) {
@@ -160,6 +166,19 @@ async function ensureAccessSchema(pool) {
     `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER`,
     `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
     `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
+    `CREATE TABLE IF NOT EXISTS user_social_identities (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider VARCHAR(32) NOT NULL,
+      provider_user_id VARCHAR(255) NOT NULL,
+      provider_email VARCHAR(255),
+      provider_email_verified BOOLEAN NOT NULL DEFAULT false,
+      provider_display_name VARCHAR(255),
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_login_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
   ];
   for (const statement of statements) {
     await pool.query(statement);
@@ -194,6 +213,10 @@ describe('Volume Alert Server auth flow', () => {
     process.env.EMAIL_FROM = 'tests@trendscope.local';
     process.env.APP_BASE_URL = 'http://localhost:5173';
     process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'google-test-client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'google-test-client-secret';
+    process.env.DISCORD_OAUTH_CLIENT_ID = 'discord-test-client-id';
+    process.env.DISCORD_OAUTH_CLIENT_SECRET = 'discord-test-client-secret';
 
     const { pool } = require('../src/models/db');
 
@@ -652,6 +675,468 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.body.isExpired, false);
     });
 
+    it('returns social identity provider status for an authenticated user', async () => {
+      const res = await request('GET', '/api/account/identities', { token: userToken });
+      assert.equal(res.status, 200);
+      assert.equal(Array.isArray(res.body.providers), true);
+      assert.deepEqual(
+        res.body.providers.map((entry) => ({
+          provider: entry.provider,
+          configured: entry.configured,
+          linked: entry.linked,
+        })),
+        [
+          { provider: 'google', configured: true, linked: false },
+          { provider: 'discord', configured: true, linked: false },
+        ]
+      );
+    });
+
+    it('returns linked provider details when an identity is already attached', async () => {
+      const { query } = require('../src/models/db');
+      await query(
+        `INSERT INTO user_social_identities (
+          user_id,
+          provider,
+          provider_user_id,
+          provider_email,
+          provider_email_verified,
+          provider_display_name
+        )
+        VALUES (
+          (SELECT id FROM users WHERE username = 'regular_user'),
+          'google',
+          'google-user-123',
+          'user@test.com',
+          true,
+          'Regular User Google'
+        )`
+      );
+
+      const res = await request('GET', '/api/account/identities', { token: userToken });
+      assert.equal(res.status, 200);
+      const google = res.body.providers.find((entry) => entry.provider === 'google');
+      const discord = res.body.providers.find((entry) => entry.provider === 'discord');
+      assert.equal(google?.linked, true);
+      assert.equal(google?.providerEmail, 'user@test.com');
+      assert.equal(google?.providerEmailVerified, true);
+      assert.equal(google?.providerDisplayName, 'Regular User Google');
+      assert.ok(google?.linkedAt);
+      assert.equal(discord?.linked, false);
+    });
+
+    it('returns linked identities from account-security for an authenticated session', async () => {
+      const res = await request('GET', '/api/account-security/identities', { token: userToken });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.scope, 'authenticated');
+      assert.equal(Array.isArray(res.body.providers), true);
+      const google = res.body.providers.find((entry) => entry.provider === 'google');
+      assert.equal(google?.linked, true);
+    });
+
+    it('starts Google linking and completes callback into the current account', async () => {
+      const login = await startLogin('user@test.com', 'newpass456');
+      const otp = await verifyLoginOtp(login.body.challengeToken, login.body.emailDebug.otpCode);
+      assert.equal(otp.status, 200);
+      const authCookie = String(otp.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_session=')) || '').split(';')[0];
+      assert.ok(authCookie);
+
+      const start = await request('GET', '/api/auth/social/google/start?returnTo=%2Fmonitor', {
+        headers: { Cookie: authCookie },
+      });
+      assert.equal(start.status, 302);
+      assert.match(String(start.headers.location || ''), /^https:\/\/accounts\.google\.com\//);
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      assert.ok(state);
+
+      const socialCookie = String(start.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_social_link=')) || '').split(';')[0];
+      assert.ok(socialCookie);
+
+      const originalFetch = global.fetch;
+      global.fetch = async (url) => {
+        const targetUrl = String(url || '');
+        if (targetUrl === 'https://oauth2.googleapis.com/token') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({ access_token: 'google-access-token' });
+            },
+          };
+        }
+
+        if (targetUrl === 'https://openidconnect.googleapis.com/v1/userinfo') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({
+                sub: 'google-user-999',
+                email: 'user@test.com',
+                email_verified: true,
+                name: 'Regular User Google',
+              });
+            },
+          };
+        }
+
+        throw new Error(`Unexpected fetch call in social linking test: ${targetUrl}`);
+      };
+
+      try {
+        const callback = await request('GET', `/api/auth/social/google/callback?code=test-google-code&state=${encodeURIComponent(state)}`, {
+          headers: {
+            Cookie: `${authCookie}; ${socialCookie}`,
+          },
+        });
+        assert.equal(callback.status, 200);
+        assert.match(String(callback.body || ''), /<script src="\/api\/auth\/social\/popup-bridge\.js" defer><\/script>/);
+        assert.match(String(callback.body || ''), /data-provider="google"/);
+        assert.match(String(callback.body || ''), /data-status="success"/);
+        assert.match(String(callback.body || ''), /\/monitor\?socialLink=success&amp;socialProvider=google/);
+      } finally {
+        global.fetch = originalFetch;
+      }
+
+      const identities = await request('GET', '/api/account/identities', { token: otp.body.token });
+      const google = identities.body.providers.find((entry) => entry.provider === 'google');
+      assert.equal(google?.linked, true);
+      assert.equal(google?.providerEmail, 'user@test.com');
+      assert.equal(google?.providerDisplayName, 'Regular User Google');
+    });
+
+    it('blocks linking when provider email belongs to a different existing account', async () => {
+      const login = await startLogin('user@test.com', 'newpass456');
+      const otp = await verifyLoginOtp(login.body.challengeToken, login.body.emailDebug.otpCode);
+      assert.equal(otp.status, 200);
+      const authCookie = String(otp.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_session=')) || '').split(';')[0];
+      assert.ok(authCookie);
+
+      const start = await request('GET', '/api/auth/social/discord/start?returnTo=%2Falerts', {
+        headers: { Cookie: authCookie },
+      });
+      assert.equal(start.status, 302);
+      assert.match(String(start.headers.location || ''), /^https:\/\/discord\.com\//);
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      assert.ok(state);
+
+      const socialCookie = String(start.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_social_link=')) || '').split(';')[0];
+      assert.ok(socialCookie);
+
+      const originalFetch = global.fetch;
+      global.fetch = async (url) => {
+        const targetUrl = String(url || '');
+        if (targetUrl === 'https://discord.com/api/oauth2/token') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({ access_token: 'discord-access-token' });
+            },
+          };
+        }
+
+        if (targetUrl === 'https://discord.com/api/users/@me') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({
+                id: 'discord-user-222',
+                email: 'admin@test.com',
+                verified: true,
+                username: 'discord-admin-clash',
+                global_name: 'Discord Clash',
+              });
+            },
+          };
+        }
+
+        throw new Error(`Unexpected fetch call in social linking conflict test: ${targetUrl}`);
+      };
+
+      try {
+        const callback = await request('GET', `/api/auth/social/discord/callback?code=test-discord-code&state=${encodeURIComponent(state)}`, {
+          headers: {
+            Cookie: `${authCookie}; ${socialCookie}`,
+          },
+        });
+        assert.equal(callback.status, 200);
+        assert.match(String(callback.body || ''), /<script src="\/api\/auth\/social\/popup-bridge\.js" defer><\/script>/);
+        assert.match(String(callback.body || ''), /data-provider="discord"/);
+        assert.match(String(callback.body || ''), /data-status="email_conflict"/);
+        assert.match(String(callback.body || ''), /\/alerts\?socialLink=email_conflict&amp;socialProvider=discord/);
+      } finally {
+        global.fetch = originalFetch;
+      }
+
+      const identities = await request('GET', '/api/account/identities', { token: otp.body.token });
+      const discord = identities.body.providers.find((entry) => entry.provider === 'discord');
+      assert.equal(discord?.linked, false);
+    });
+
+    it('signs in with Google without OTP when the identity is already linked', async () => {
+      const { query } = require('../src/models/db');
+      await query(
+        `DELETE FROM user_social_identities
+         WHERE user_id = (SELECT id FROM users WHERE username = 'regular_user')
+           AND provider = 'google'`
+      );
+      await query(
+        `INSERT INTO user_social_identities (
+          user_id,
+          provider,
+          provider_user_id,
+          provider_email,
+          provider_email_verified,
+          provider_display_name
+        )
+        VALUES (
+          (SELECT id FROM users WHERE username = 'regular_user'),
+          'google',
+          'google-login-user-123',
+          'user@test.com',
+          true,
+          'Regular User Google Login'
+        )`
+      );
+
+      const start = await request('GET', '/api/auth/social/google/login/start?returnTo=%2Fmonitor');
+      assert.equal(start.status, 302);
+      assert.match(String(start.headers.location || ''), /^https:\/\/accounts\.google\.com\//);
+      const startRedirect = new URL(String(start.headers.location));
+      const state = startRedirect.searchParams.get('state');
+      assert.ok(state);
+      assert.equal(startRedirect.searchParams.get('redirect_uri'), 'http://localhost:5173/api/auth/social/google/login/callback');
+
+      const socialCookie = String(start.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_social_login=')) || '').split(';')[0];
+      assert.ok(socialCookie);
+
+      const originalFetch = global.fetch;
+      global.fetch = async (url) => {
+        const targetUrl = String(url || '');
+        if (targetUrl === 'https://oauth2.googleapis.com/token') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({ access_token: 'google-login-access-token' });
+            },
+          };
+        }
+
+        if (targetUrl === 'https://openidconnect.googleapis.com/v1/userinfo') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({
+                sub: 'google-login-user-123',
+                email: 'user@test.com',
+                email_verified: true,
+                name: 'Regular User Google Login',
+              });
+            },
+          };
+        }
+
+        throw new Error(`Unexpected fetch call in social login test: ${targetUrl}`);
+      };
+
+      try {
+        const callback = await request('GET', `/api/auth/social/google/login/callback?code=test-google-login-code&state=${encodeURIComponent(state)}`, {
+          headers: {
+            Cookie: socialCookie,
+          },
+        });
+        assert.equal(callback.status, 302);
+        const redirect = new URL(String(callback.headers.location || ''));
+        assert.equal(redirect.pathname, '/monitor');
+        assert.equal(redirect.searchParams.get('socialLogin'), 'success');
+        assert.equal(redirect.searchParams.get('socialProvider'), 'google');
+
+        const authCookie = String(callback.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_session=')) || '').split(';')[0];
+        assert.ok(authCookie);
+
+        const me = await request('GET', '/api/auth/me', {
+          headers: {
+            Cookie: authCookie,
+          },
+        });
+        assert.equal(me.status, 200);
+        assert.equal(me.body.user.email, 'user@test.com');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('blocks social login when the provider identity is not linked to any account', async () => {
+      const { query } = require('../src/models/db');
+      await query(`DELETE FROM user_social_identities WHERE provider = 'discord' AND provider_user_id = 'discord-login-user-404'`);
+
+      const start = await request('GET', '/api/auth/social/discord/login/start?returnTo=%2Falerts');
+      assert.equal(start.status, 302);
+      assert.match(String(start.headers.location || ''), /^https:\/\/discord\.com\//);
+      const startRedirect = new URL(String(start.headers.location));
+      const state = startRedirect.searchParams.get('state');
+      assert.ok(state);
+      assert.equal(startRedirect.searchParams.get('redirect_uri'), 'http://localhost:5173/api/auth/social/discord/login/callback');
+
+      const socialCookie = String(start.headers['set-cookie']?.find((entry) => entry.startsWith('volume_alert_social_login=')) || '').split(';')[0];
+      assert.ok(socialCookie);
+
+      const originalFetch = global.fetch;
+      global.fetch = async (url) => {
+        const targetUrl = String(url || '');
+        if (targetUrl === 'https://discord.com/api/oauth2/token') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({ access_token: 'discord-login-access-token' });
+            },
+          };
+        }
+
+        if (targetUrl === 'https://discord.com/api/users/@me') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({
+                id: 'discord-login-user-404',
+                email: 'unlinked@test.com',
+                verified: true,
+                username: 'discord-unlinked',
+                global_name: 'Discord Unlinked',
+              });
+            },
+          };
+        }
+
+        throw new Error(`Unexpected fetch call in social login unlinked test: ${targetUrl}`);
+      };
+
+      try {
+        const callback = await request('GET', `/api/auth/social/discord/login/callback?code=test-discord-login-code&state=${encodeURIComponent(state)}`, {
+          headers: {
+            Cookie: socialCookie,
+          },
+        });
+        assert.equal(callback.status, 302);
+        const redirect = new URL(String(callback.headers.location || ''));
+        assert.equal(redirect.pathname, '/alerts');
+        assert.equal(redirect.searchParams.get('socialLogin'), 'not_linked');
+        assert.equal(redirect.searchParams.get('socialProvider'), 'discord');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('rejects unlink with the wrong current password and keeps the provider linked', async () => {
+      const { query } = require('../src/models/db');
+      await query(
+        `DELETE FROM user_social_identities
+         WHERE user_id = (SELECT id FROM users WHERE username = 'regular_user')
+           AND provider = 'discord'`
+      );
+      await query(
+        `INSERT INTO user_social_identities (
+          user_id,
+          provider,
+          provider_user_id,
+          provider_email,
+          provider_email_verified,
+          provider_display_name
+        )
+        VALUES (
+          (SELECT id FROM users WHERE username = 'regular_user'),
+          'discord',
+          'discord-unlink-user-123',
+          'user@test.com',
+          true,
+          'Regular User Discord Link'
+        )`
+      );
+
+      const unlink = await request('POST', '/api/account-security/identities/discord/unlink', {
+        token: userToken,
+        body: { currentPassword: 'definitely-wrong-password' },
+        headers: {
+          Origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(unlink.status, 401);
+      assert.equal(unlink.body.error, 'Current password is incorrect');
+
+      const identities = await request('GET', '/api/account-security/identities', { token: userToken });
+      const discord = identities.body.providers.find((entry) => entry.provider === 'discord');
+      assert.equal(discord?.linked, true);
+    });
+
+    it('unlinks a provider from account-security for an authenticated session', async () => {
+      const unlink = await request('POST', '/api/account-security/identities/discord/unlink', {
+        token: userToken,
+        body: { currentPassword: 'newpass456' },
+        headers: {
+          Origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(unlink.status, 200);
+      assert.match(String(unlink.body.message || ''), /Discord identity unlinked successfully/i);
+      const discord = unlink.body.providers.find((entry) => entry.provider === 'discord');
+      assert.equal(discord?.linked, false);
+      assert.equal(unlink.body.scope, 'authenticated');
+    });
+
+    it('rejects social login after authenticated unlink removed the provider identity', async () => {
+      const start = await request('GET', '/api/auth/social/discord/login/start?returnTo=%2Flogin');
+      assert.equal(start.status, 302);
+      const startRedirect = new URL(String(start.headers.location || ''));
+      const state = startRedirect.searchParams.get('state');
+      assert.ok(state);
+
+      const socialCookie = findSetCookie(start.headers, 'volume_alert_social_login');
+      assert.ok(socialCookie);
+
+      const originalFetch = global.fetch;
+      global.fetch = async (url) => {
+        const targetUrl = String(url || '');
+        if (targetUrl === 'https://discord.com/api/oauth2/token') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({ access_token: 'discord-unlink-login-access-token' });
+            },
+          };
+        }
+
+        if (targetUrl === 'https://discord.com/api/users/@me') {
+          return {
+            ok: true,
+            async text() {
+              return JSON.stringify({
+                id: 'discord-unlink-user-123',
+                email: 'user@test.com',
+                verified: true,
+                username: 'discord-unlinked-after-remove',
+                global_name: 'Discord Unlinked After Remove',
+              });
+            },
+          };
+        }
+
+        throw new Error(`Unexpected fetch call in social login after unlink test: ${targetUrl}`);
+      };
+
+      try {
+        const callback = await request('GET', `/api/auth/social/discord/login/callback?code=test-discord-unlink-code&state=${encodeURIComponent(state)}`, {
+          headers: {
+            Cookie: socialCookie,
+          },
+        });
+        assert.equal(callback.status, 302);
+        const redirect = new URL(String(callback.headers.location || ''));
+        assert.equal(redirect.pathname, '/login');
+        assert.equal(redirect.searchParams.get('socialLogin'), 'not_linked');
+        assert.equal(redirect.searchParams.get('socialProvider'), 'discord');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
     it('expired access redirects login into the pre-access flow after OTP', async () => {
       const { query } = require('../src/models/db');
       await query(
@@ -690,6 +1175,72 @@ describe('Volume Alert Server auth flow', () => {
       });
       assert.equal(complete.status, 409);
       assert.equal(complete.body.error, 'Payment confirmation still pending');
+    });
+
+    it('pre-access bearer sessions can read account-security identities', async () => {
+      const res = await request('GET', '/api/account-security/identities', { token: preAccessToken });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.scope, 'pre_access');
+      const google = res.body.providers.find((entry) => entry.provider === 'google');
+      assert.equal(google?.linked, true);
+    });
+
+    it('pre-access sessions can unlink a provider with the current password', async () => {
+      const unlink = await request('POST', '/api/account-security/identities/google/unlink', {
+        token: preAccessToken,
+        body: { currentPassword: 'newpass456' },
+        headers: {
+          Origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(unlink.status, 200);
+      assert.equal(unlink.body.scope, 'pre_access');
+      const google = unlink.body.providers.find((entry) => entry.provider === 'google');
+      assert.equal(google?.linked, false);
+    });
+
+    it('local login still works after pre-access unlink and remains in the billing-recovery flow', async () => {
+      const login = await startLogin('user@test.com', 'newpass456');
+      const res = await verifyLoginOtp(login.body.challengeToken, login.body.emailDebug.otpCode);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.requiresPreAccess, true);
+      assert.equal(res.body.redirectPath, '/access');
+      assert.ok(res.body.preAccessToken);
+    });
+
+    it('revoked access is blocked from account-security read and unlink', async () => {
+      const { query } = require('../src/models/db');
+      await query(
+        `UPDATE users
+         SET access_status = 'revoked',
+             access_expires_at = NULL,
+             access_source = 'admin',
+             access_updated_at = NOW()
+         WHERE username = 'regular_user'`
+      );
+
+      const read = await request('GET', '/api/account-security/identities', { token: userToken });
+      assert.equal(read.status, 403);
+      assert.equal(read.body.error, 'Access revoked');
+
+      const unlink = await request('POST', '/api/account-security/identities/google/unlink', {
+        token: userToken,
+        body: { currentPassword: 'newpass456' },
+        headers: {
+          Origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(unlink.status, 403);
+      assert.equal(unlink.body.error, 'Access revoked');
+
+      await query(
+        `UPDATE users
+         SET access_status = 'active',
+             access_expires_at = NOW() - INTERVAL '1 hour',
+             access_source = 'admin',
+             access_updated_at = NOW()
+         WHERE username = 'regular_user'`
+      );
     });
 
     it('expired access can still read account access status with an existing session', async () => {

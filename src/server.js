@@ -16,10 +16,12 @@ const LoginEmailOtpChallenge = require('./models/login-email-otp-challenge');
 
 // Routes
 const authRoutes = require('./routes/auth');
+const socialAuthRoutes = require('./routes/social-auth');
 const inviteRoutes = require('./routes/invites');
 const healthRoutes = require('./routes/health');
 const adminRoutes = require('./routes/admin');
 const accountRoutes = require('./routes/account');
+const accountSecurityRoutes = require('./routes/account-security');
 const billingRoutes = require('./routes/billing');
 const preAccessRoutes = require('./routes/pre-access');
 const bootstrapRoutes = require('./routes/bootstrap');
@@ -123,10 +125,12 @@ if (config.nodeEnv === 'development') {
 
 // ---- Routes ----
 app.use('/api/health', healthLimiter, healthRoutes);
+app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/invites', defaultApiLimiter, inviteRoutes);
 app.use('/api/admin', defaultApiLimiter, adminRoutes);
 app.use('/api/account', defaultApiLimiter, accountRoutes);
+app.use('/api/account-security', defaultApiLimiter, accountSecurityRoutes);
 app.use('/api/billing', defaultApiLimiter, billingRoutes);
 app.use('/api/pre-access', defaultApiLimiter, preAccessRoutes);
 app.use('/api/config', defaultApiLimiter, require('./routes/config'));

@@ -159,7 +159,7 @@ router.post('/mock-checkout/:orderId/complete', async (req, res) => {
   }
 });
 
-router.get('/plans', authenticateAllowExpiredAccess, async (req, res) => {
+router.get('/plans', async (req, res) => {
   try {
     res.json({
       enabled: Boolean(config.billing.enabled),

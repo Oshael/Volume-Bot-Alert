@@ -243,6 +243,16 @@ describe('Billing foundation', () => {
     assert.equal(res.body.plans[0].key, 'plan-7d');
   });
 
+  it('returns billing plans publicly without requiring authentication', async () => {
+    const res = await request('GET', '/api/billing/plans');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.enabled, true);
+    assert.equal(res.body.provider, 'moonpay_commerce');
+    assert.equal(res.body.providerReady, true);
+    assert.equal(res.body.plans.length, 1);
+    assert.equal(res.body.plans[0].key, 'plan-7d');
+  });
+
   it('creates a MoonPay billing order', async () => {
     const res = await request('POST', '/api/billing/orders', {
       token: userToken,
@@ -304,6 +314,15 @@ describe('Billing foundation', () => {
     assert.equal(accessResponse.body.accessStatus, 'active');
     assert.ok(accessResponse.body.accessExpiresAt);
     assert.ok(accessResponse.body.daysRemaining >= 7);
+  });
+
+  it('serves an internal receipt for paid billing orders', async () => {
+    const res = await request('GET', `/api/account-security/billing/orders/${lastOrderId}/receipt`, { token: userToken });
+    assert.equal(res.status, 200);
+    assert.match(String(res.body || ''), /TrendScope Payment Receipt/i);
+    assert.match(String(res.body || ''), /7 Days/);
+    assert.match(String(res.body || ''), /sig_test_1/);
+    assert.match(String(res.body || ''), /TS-/);
   });
 
   it('treats duplicate webhook delivery as idempotent', async () => {

@@ -10,6 +10,14 @@ export interface BillingStatePayload {
   orders: BillingOrderEntry[];
 }
 
+export interface PublicBillingPlansPayload {
+  enabled: boolean;
+  provider: string;
+  providerReady: boolean;
+  providerMocked: boolean;
+  plans: BillingPlanEntry[];
+}
+
 export interface CreateBillingOrderResponse {
   message: string;
   order: BillingOrderEntry;
@@ -18,6 +26,10 @@ export interface CreateBillingOrderResponse {
 
 export function fetchBillingState(token?: string | null) {
   return apiFetch<BillingStatePayload>('/api/billing/state', { token });
+}
+
+export function fetchPublicBillingPlans() {
+  return apiFetch<PublicBillingPlansPayload>('/api/billing/plans', { token: null });
 }
 
 export function createBillingOrder(planKey: string, token?: string | null) {
