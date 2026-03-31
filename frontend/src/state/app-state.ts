@@ -303,6 +303,18 @@ export interface BillingOrderEntry {
   updatedAt: string | null;
 }
 
+export interface LinkedIdentityEntry {
+  provider: 'google' | 'discord';
+  label: string;
+  configured: boolean;
+  linked: boolean;
+  providerEmail: string | null;
+  providerEmailVerified: boolean;
+  providerDisplayName: string | null;
+  linkedAt: string | null;
+  lastLoginAt: string | null;
+}
+
 export interface ConfigSummary {
   loaded: boolean;
   configCount: number;
@@ -323,6 +335,11 @@ export interface AppState {
     plans: BillingPlanEntry[];
     orders: BillingOrderEntry[];
     pendingPlanKey: string | null;
+    error: string | null;
+  };
+  identities: {
+    loaded: boolean;
+    providers: LinkedIdentityEntry[];
     error: string | null;
   };
   preAccess: {
@@ -392,6 +409,7 @@ export interface AppState {
     notice: string | null;
     loginErrorCount: number;
     authPanel: AuthPanel;
+    pendingIdentityUnlinkProvider: LinkedIdentityEntry['provider'] | null;
     pendingVerificationEmail: string | null;
     pendingPasswordResetToken: string | null;
     pendingLoginOtpChallengeToken: string | null;
@@ -449,6 +467,11 @@ export function createAppState(): AppState {
       plans: [],
       orders: [],
       pendingPlanKey: null,
+      error: null,
+    },
+    identities: {
+      loaded: false,
+      providers: [],
       error: null,
     },
     preAccess: {
@@ -525,6 +548,7 @@ export function createAppState(): AppState {
       notice: null,
       loginErrorCount: 0,
       authPanel: 'none',
+      pendingIdentityUnlinkProvider: null,
       pendingVerificationEmail: null,
       pendingPasswordResetToken: null,
       pendingLoginOtpChallengeToken: null,

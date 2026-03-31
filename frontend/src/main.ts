@@ -1,6 +1,6 @@
 import './styles/app.css';
 import { playAlertSound, playMigrateSound } from './services/alerts/sound';
-import type { AppState } from './state/app-state';
+import { isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
 
@@ -23,6 +23,7 @@ let latestState: AppState | null = null;
 let lastObservedSessionStatus: AppState['session']['status'] | null = null;
 let lastObservedAuthPanel: AppState['ui']['authPanel'] | null = null;
 let lastObservedAuthModalKey: string | null = null;
+let lastObservedRouteKey: string | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
 let listInteractionDepth = 0;
@@ -118,6 +119,22 @@ function getAuthModalRenderKey(state: AppState) {
     sessionStatus: state.session.status,
     sessionEmail: state.session.email,
     sessionUsername: state.session.username,
+    accessStatus: isProfileAuthPanel(state.ui.authPanel) ? state.session.accessStatus : null,
+    accessExpiresAt: isProfileAuthPanel(state.ui.authPanel) ? state.session.accessExpiresAt : null,
+    accessDaysRemaining: isProfileAuthPanel(state.ui.authPanel) ? state.session.accessDaysRemaining : null,
+    accessSource: isProfileAuthPanel(state.ui.authPanel) ? state.session.accessSource : null,
+    isEmailVerified: state.ui.authPanel === 'user-settings' ? state.session.isEmailVerified : null,
+    emailVerifiedAt: state.ui.authPanel === 'user-settings' ? state.session.emailVerifiedAt : null,
+    identityProviders: state.ui.authPanel === 'user-settings' ? state.identities.providers : null,
+    identityError: state.ui.authPanel === 'user-settings' ? state.identities.error : null,
+    pendingIdentityUnlinkProvider: state.ui.authPanel === 'user-settings' ? state.ui.pendingIdentityUnlinkProvider : null,
+    billingLoaded: state.ui.authPanel === 'user-settings' ? state.billing.loaded : null,
+    billingEnabled: state.ui.authPanel === 'user-settings' ? state.billing.enabled : null,
+    billingProviderReady: state.ui.authPanel === 'user-settings' ? state.billing.providerReady : null,
+    billingPlans: state.ui.authPanel === 'user-settings' ? state.billing.plans : null,
+    billingOrders: state.ui.authPanel === 'user-settings' ? state.billing.orders : null,
+    billingPendingPlanKey: state.ui.authPanel === 'user-settings' ? state.billing.pendingPlanKey : null,
+    billingError: state.ui.authPanel === 'user-settings' ? state.billing.error : null,
   });
 }
 
@@ -247,11 +264,16 @@ controller.subscribe((state, dirtyRegions) => {
   const previousSessionStatus = lastObservedSessionStatus;
   const previousAuthPanel = lastObservedAuthPanel;
   const previousAuthModalKey = lastObservedAuthModalKey;
+  const currentRouteKey = typeof window !== 'undefined'
+    ? `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`
+    : '/';
+  const previousRouteKey = lastObservedRouteKey;
   const sessionJustBecameAuthenticated = previousSessionStatus !== 'authenticated' && state.session.status === 'authenticated';
   latestState = state;
   lastObservedSessionStatus = state.session.status;
   lastObservedAuthPanel = state.ui.authPanel;
   lastObservedAuthModalKey = getAuthModalRenderKey(state);
+  lastObservedRouteKey = currentRouteKey;
 
   if (sessionJustBecameAuthenticated) {
     for (const alert of state.data.alerts) {
@@ -273,6 +295,13 @@ controller.subscribe((state, dirtyRegions) => {
     previousSessionStatus !== state.session.status
     && (state.session.status === 'authenticated' || state.session.status === 'pre_access')
   ) {
+    performRender(state, dirtyRegions);
+    pendingState = null;
+    pendingDirtyRegions = null;
+    return;
+  }
+
+  if (previousRouteKey !== currentRouteKey) {
     performRender(state, dirtyRegions);
     pendingState = null;
     pendingDirtyRegions = null;

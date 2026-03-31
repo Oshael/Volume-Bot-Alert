@@ -152,6 +152,7 @@ const SOUND_TOGGLE_FIELDS = [
 export function renderLegacyShell(state: AppState, controller: AppController) {
   const wrapper = document.createElement('section');
   wrapper.className = 'legacy-shell';
+  const pathname = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
 
   if (state.session.status === 'loading') {
     wrapper.append(renderLegacyBootstrap(state));
@@ -159,11 +160,24 @@ export function renderLegacyShell(state: AppState, controller: AppController) {
   }
 
   if (state.session.status === 'pre_access') {
+    if (pathname === '/account-security' || pathname.startsWith('/account-security/')) {
+      wrapper.append(renderAccountSecurityFlow(state, controller));
+      return wrapper;
+    }
     wrapper.append(renderPreAccessFlow(state, controller));
     return wrapper;
   }
 
+  if (state.session.status === 'authenticated' && (pathname === '/account-security' || pathname.startsWith('/account-security/'))) {
+    wrapper.append(renderAccountSecurityFlow(state, controller));
+    return wrapper;
+  }
+
   if (state.session.status !== 'authenticated') {
+    if (pathname === '/') {
+      wrapper.append(renderPublicLanding(state, controller));
+      return wrapper;
+    }
     wrapper.append(renderLegacyLogin(state, controller));
     return wrapper;
   }
@@ -171,6 +185,207 @@ export function renderLegacyShell(state: AppState, controller: AppController) {
   wrapper.append(renderLegacyActions(state, controller));
 
   return wrapper;
+}
+
+function renderAccountSecurityFlow(state: AppState, controller: AppController) {
+  const section = document.createElement('section');
+  const isPreAccess = state.session.status === 'pre_access';
+  const returnLabel = isPreAccess ? 'BACK TO ACCESS' : 'BACK TO BOT';
+
+  section.className = 'legacy-login-shell legacy-pre-access-shell legacy-account-security-shell';
+  section.innerHTML = `
+    <div class="legacy-pre-access-landing">
+      <div class="legacy-pre-access-topbar">
+        <div class="legacy-pre-access-brand">
+          <img class="workspace-brand-mark" src="${SITE_LOGO_URL}" alt="TrendScope logo" />
+          <div class="legacy-pre-access-brand-copy">
+            <strong>TrendScope</strong>
+            <span>Account Settings</span>
+          </div>
+        </div>
+        <div class="legacy-pre-access-topbar-actions">
+          <button type="button" class="legacy-userbar-link" data-action="return-from-account-security">${returnLabel}</button>
+          <button type="button" class="legacy-userbar-link" data-action="logout-account-security" ${state.ui.busy ? 'disabled' : ''}>LOGOUT</button>
+        </div>
+      </div>
+
+      <div class="legacy-pre-access-hero-shell legacy-account-security-hero-shell">
+        <div class="legacy-pre-access-hero-panel legacy-account-security-hero-panel">
+          <div class="legacy-pre-access-hero-copy legacy-account-security-hero-copy">
+            <span class="legacy-pre-access-eyebrow">Limited Security Surface</span>
+            <h1>Review linked login methods.</h1>
+            <p>This limited route exists so you can unlink social login methods and review checkout history even when you no longer have access to the live bot surface.</p>
+            ${state.ui.error ? `<div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.ui.error)}</div>` : ''}
+            ${state.ui.notice ? `<div class="legacy-auth-panel-note">${escapeHtml(state.ui.notice)}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <section class="legacy-pre-access-history-section">
+        <div class="legacy-user-settings-grid">
+          ${renderAccountAccessSummaryCard(state)}
+          ${renderUserLinkedIdentitiesCard(state, { allowConnectActions: false, allowUnlinkActions: true })}
+          ${renderAccountSecurityOrdersCard(state)}
+        </div>
+      </section>
+    </div>
+  `;
+
+  section.querySelector<HTMLButtonElement>('[data-action="return-from-account-security"]')?.addEventListener('click', () => {
+    if (isPreAccess) {
+      controller.goToPreAccess();
+      return;
+    }
+
+    controller.setWorkspace(state.ui.workspace);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="logout-account-security"]')?.addEventListener('click', () => {
+    void controller.logout();
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="resume-account-security-checkout"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const checkoutUrl = String(button.dataset.checkoutUrl || '').trim();
+      if (!checkoutUrl || typeof window === 'undefined') {
+        return;
+      }
+      window.location.href = checkoutUrl;
+    });
+  });
+  bindLinkedIdentityActions(section, controller);
+
+  return section;
+}
+
+function renderPublicLanding(state: AppState, controller: AppController) {
+  const section = document.createElement('section');
+  const billingUnavailableMessage = !state.billing.loaded
+    ? 'Loading access plans...'
+    : !state.billing.enabled
+      ? 'Billing is disabled in this environment.'
+      : !state.billing.providerReady
+        ? 'MoonPay Commerce credentials are not configured yet.'
+        : state.billing.plans.length === 0
+          ? 'No billing plans are configured yet.'
+          : null;
+  const recommendedPlanKey = state.billing.plans
+    .slice()
+    .sort((left, right) => (right.accessDays || 0) - (left.accessDays || 0))[0]?.key ?? null;
+  const shortestPlan = state.billing.plans
+    .slice()
+    .sort((left, right) => (left.accessDays || 0) - (right.accessDays || 0))[0] ?? null;
+
+  section.className = 'legacy-login-shell legacy-pre-access-shell legacy-public-shell';
+  section.innerHTML = `
+    <div class="legacy-pre-access-landing legacy-public-landing">
+      <div class="legacy-pre-access-topbar legacy-public-topbar">
+        <div class="legacy-pre-access-brand">
+          <img class="workspace-brand-mark" src="${SITE_LOGO_URL}" alt="TrendScope logo" />
+          <div class="legacy-pre-access-brand-copy">
+            <strong>TrendScope</strong>
+            <span>Volume Bot Access</span>
+          </div>
+        </div>
+        <div class="legacy-pre-access-topbar-actions legacy-public-topbar-actions">
+          <button type="button" class="legacy-userbar-link legacy-public-login-btn" data-action="open-login-page">Login</button>
+          <button type="button" class="legacy-btn legacy-btn-primary legacy-public-register-btn" data-action="open-register-page">Create Account</button>
+        </div>
+      </div>
+
+      <div class="legacy-pre-access-hero-shell legacy-public-hero-shell">
+        <div class="legacy-pre-access-hero-panel legacy-public-hero-panel">
+          <div class="legacy-pre-access-hero-copy legacy-public-hero-copy">
+            <span class="legacy-pre-access-eyebrow legacy-public-eyebrow">Solana Volume Tracking</span>
+            <h1>Catch <span class="legacy-public-hero-emphasis">volume spikes</span> before the crowd moves.</h1>
+            <p>TrendScope monitors fast Solana volume shifts, migration flow, and account-bound watchlists from one live workspace built for operators, not spectators.</p>
+            <div class="legacy-pre-access-hero-actions legacy-public-hero-actions">
+              <button type="button" class="legacy-pre-access-secondary-btn legacy-public-hero-secondary" data-action="focus-public-plans">VIEW PRICING</button>
+            </div>
+            ${state.ui.error && state.ui.error !== 'Authentication required' ? `<div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.ui.error)}</div>` : ''}
+            ${state.ui.notice && state.ui.notice !== 'No saved session. Sign in to continue.' ? `<div class="legacy-auth-panel-note">${escapeHtml(state.ui.notice)}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <section class="legacy-public-stats-section">
+        <div class="legacy-public-stat-grid">
+          ${renderPublicLandingStatTiles()}
+        </div>
+      </section>
+
+      <section class="legacy-pre-access-benefits legacy-public-features-section" data-role="benefits-section">
+        <div class="legacy-pre-access-section-head legacy-public-section-head">
+          <span class="legacy-pre-access-section-kicker">Inside The Bot</span>
+          <h2>What you get in the<br />workspace</h2>
+          <p>A tighter monitoring surface for spotting movement, filtering noise, and keeping operational context attached to the same account.</p>
+        </div>
+        <div class="legacy-pre-access-feature-grid legacy-public-feature-grid">
+          ${renderPublicLandingFeatureTiles()}
+        </div>
+      </section>
+
+      <section class="legacy-pre-access-plans-section legacy-public-pricing-section" data-role="public-billing-plans-card">
+        <div class="legacy-pre-access-section-head legacy-public-section-head">
+          <span class="legacy-pre-access-section-kicker">Choose Your Access</span>
+          <h2>Pick the plan that fits<br />your testing window</h2>
+          <p>Shorter plans are better for validating workflow and alerts. Longer plans reduce renewal friction once the setup is already part of your routine.</p>
+        </div>
+        ${state.billing.providerMocked ? `
+          <div class="legacy-auth-panel-note">Local billing mock mode is active in this environment.</div>
+        ` : ''}
+        ${state.billing.error ? `
+          <div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.billing.error)}</div>
+        ` : ''}
+        ${billingUnavailableMessage ? `
+          <div class="legacy-auth-panel-note">${escapeHtml(billingUnavailableMessage)}</div>
+        ` : `
+          <div class="legacy-billing-plan-grid legacy-public-pricing-grid">
+            ${state.billing.plans.map((plan) => {
+              const recommended = recommendedPlanKey === plan.key;
+              const dailyRate = formatBillingDailyRate(plan.amountMinor, plan.accessDays);
+              const shortestDailyRate = shortestPlan ? formatBillingDailyRate(shortestPlan.amountMinor, shortestPlan.accessDays) : null;
+              return `
+                <div class="legacy-billing-plan-card legacy-pre-access-plan-card legacy-public-pricing-card ${recommended ? 'featured recommended' : ''}">
+                  ${recommended ? `<span class="legacy-public-plan-floating-badge">Best value</span>` : ''}
+                  <div class="legacy-pre-access-plan-topline legacy-public-plan-topline">
+                    <span class="legacy-pre-access-plan-badge">Access plan</span>
+                    <span class="legacy-pre-access-plan-duration">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'}</span>
+                  </div>
+                  <div class="legacy-billing-plan-copy legacy-public-plan-copy">
+                    <strong>${escapeHtml(plan.label)}</strong>
+                    <span>${escapeHtml(plan.description || `${plan.accessDays} days of product access`)}</span>
+                  </div>
+                  <div class="legacy-public-plan-price-row">
+                    <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
+                    <strong class="legacy-billing-plan-price legacy-public-plan-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
+                  </div>
+                  <div class="legacy-billing-plan-meta legacy-public-plan-meta">${plan.available ? 'Account-bound checkout starts after login' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
+                  ${recommended && dailyRate && shortestDailyRate && shortestPlan && shortestPlan.key !== plan.key ? `
+                    <div class="legacy-public-plan-value-line">~${escapeHtml(dailyRate)} vs ${escapeHtml(shortestDailyRate)} on ${escapeHtml(shortestPlan.label.toLowerCase())}</div>
+                  ` : ''}
+                  <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+                    <button type="button" class="legacy-btn ${recommended ? 'legacy-btn-primary' : 'legacy-public-plan-ghost-btn'}" data-action="open-login-page">LOGIN TO BUY</button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `}
+        <div class="legacy-public-pricing-trust-line">Payment via USDC on Solana · Access activates after payment confirmation · No recurring charges</div>
+      </section>
+    </div>
+  `;
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="open-login-page"]').forEach((button) => {
+    button.addEventListener('click', () => controller.goToLogin());
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-register-page"]')?.addEventListener('click', () => {
+    controller.goToLogin('register');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="focus-public-plans"]')?.addEventListener('click', () => {
+    section.querySelector<HTMLElement>('[data-role="public-billing-plans-card"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  return section;
 }
 
 function renderLegacyBootstrap(state: AppState) {
@@ -205,20 +420,11 @@ function renderPreAccessFlow(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   const waiting = state.preAccess.awaitingConfirmation;
   const ready = state.session.accessHasProductAccess;
-  const heroTitle = ready
-    ? 'Access Confirmed. Enter The Bot.'
-    : waiting
-      ? 'Confirming Your Access'
-      : 'Unlock The Full Alert Stack';
-  const heroCopy = ready
-    ? 'Your payment has been confirmed. Continue into the bot and start using the live alert workflow.'
-    : waiting
-      ? 'The payment already came back from checkout. We are waiting for backend confirmation before opening the workspace.'
-      : 'Track live Solana volume spikes, monitor migration signals, keep your personal watchlists in sync, and review historical movement in one place.';
+  const shouldHideDefaultPreAccessNotice = state.ui.notice === 'Access payment required before entering the bot.';
 
   section.className = 'legacy-login-shell legacy-pre-access-shell';
   section.innerHTML = `
-    <div class="legacy-pre-access-landing">
+    <div class="legacy-pre-access-landing legacy-public-landing">
       <div class="legacy-pre-access-topbar">
         <div class="legacy-pre-access-brand">
           <img class="workspace-brand-mark" src="${SITE_LOGO_URL}" alt="TrendScope logo" />
@@ -229,51 +435,26 @@ function renderPreAccessFlow(state: AppState, controller: AppController) {
         </div>
         <div class="legacy-pre-access-topbar-actions">
           ${ready ? `<button type="button" class="legacy-btn legacy-btn-primary" data-action="complete-pre-access" ${state.ui.busy ? 'disabled' : ''}>ENTER BOT</button>` : ''}
-          <button type="button" class="legacy-userbar-link" data-action="logout-pre-access" ${state.ui.busy ? 'disabled' : ''}>LOGOUT</button>
+          <button type="button" class="legacy-userbar-link legacy-public-login-btn legacy-pre-access-topbar-btn" data-action="open-account-security">ACCOUNT SETTINGS</button>
+          <button type="button" class="legacy-btn legacy-public-register-btn legacy-pre-access-logout-btn" data-action="logout-pre-access" ${state.ui.busy ? 'disabled' : ''}>LOGOUT</button>
         </div>
       </div>
 
-      <div class="legacy-pre-access-hero-shell">
-        <div class="legacy-pre-access-hero-panel">
-          <div class="legacy-pre-access-hero-copy">
-            <span class="legacy-pre-access-eyebrow">${ready ? 'Payment Confirmed' : waiting ? 'Payment Processing' : 'Premium Access Required'}</span>
-            <h1>${escapeHtml(heroTitle)}</h1>
-            <p>${escapeHtml(heroCopy)}</p>
-            ${state.ui.error ? `<div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.ui.error)}</div>` : ''}
-            ${state.ui.notice ? `<div class="legacy-auth-panel-note">${escapeHtml(state.ui.notice)}</div>` : ''}
-            <div class="legacy-pre-access-hero-actions">
-              ${ready ? `<button type="button" class="legacy-btn legacy-btn-primary" data-action="complete-pre-access" ${state.ui.busy ? 'disabled' : ''}>ENTER BOT</button>` : `
-                <button type="button" class="legacy-btn legacy-btn-primary" data-action="focus-billing-plans">COMPARE PLANS</button>
-              `}
-              ${!ready ? `<button type="button" class="legacy-pre-access-secondary-btn" data-action="focus-benefits">WHAT YOU GET</button>` : ''}
-            </div>
-          </div>
-          ${renderPreAccessIdentityCard(state)}
-        </div>
-      </div>
+      ${state.ui.error ? `<div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.ui.error)}</div>` : ''}
+      ${state.ui.notice && !shouldHideDefaultPreAccessNotice ? `<div class="legacy-auth-panel-note">${escapeHtml(state.ui.notice)}</div>` : ''}
+      ${ready ? `
+        <div class="legacy-auth-panel-note">Payment confirmed for this account. You can enter the bot now.</div>
+      ` : waiting ? `
+        <div class="legacy-auth-panel-note">Payment returned from checkout. We are still waiting for backend confirmation before opening the bot.</div>
+      ` : ''}
 
-      <section class="legacy-pre-access-benefits" data-role="benefits-section">
-        <div class="legacy-pre-access-section-head">
-          <span class="legacy-pre-access-section-kicker">Inside The Bot</span>
-          <h2>Why this access exists</h2>
-          <p>The paid flow unlocks the live operational workspace instead of a generic dashboard. These are the pieces you are paying to use.</p>
-        </div>
-        <div class="legacy-pre-access-feature-grid">
-          ${renderPreAccessFeatureTiles()}
-        </div>
-      </section>
-
-      <section class="legacy-pre-access-plans-section">
-        <div class="legacy-pre-access-section-head">
+      <section class="legacy-pre-access-plans-section legacy-public-pricing-section">
+        <div class="legacy-pre-access-section-head legacy-public-section-head">
           <span class="legacy-pre-access-section-kicker">Choose Your Access</span>
-          <h2>Pick the plan that fits your testing window</h2>
-          <p>Shorter plans are better for validating workflow and alerts. Longer plans reduce renewal friction once the setup is already part of your routine.</p>
+          <h2>Pick the plan that fits<br />your testing window</h2>
+          <p>Choose the access window for this authenticated account and continue with the checkout flow below.</p>
         </div>
         ${renderPreAccessPlansCard(state)}
-      </section>
-
-      <section class="legacy-pre-access-history-section">
-        ${renderPreAccessOrdersCard(state)}
       </section>
     </div>
   `;
@@ -284,11 +465,8 @@ function renderPreAccessFlow(state: AppState, controller: AppController) {
   section.querySelector<HTMLButtonElement>('[data-action="logout-pre-access"]')?.addEventListener('click', () => {
     void controller.logout();
   });
-  section.querySelector<HTMLButtonElement>('[data-action="focus-billing-plans"]')?.addEventListener('click', () => {
-    section.querySelector<HTMLElement>('[data-role="billing-plans-card"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  section.querySelector<HTMLButtonElement>('[data-action="focus-benefits"]')?.addEventListener('click', () => {
-    section.querySelector<HTMLElement>('[data-role="benefits-section"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  section.querySelector<HTMLButtonElement>('[data-action="open-account-security"]')?.addEventListener('click', () => {
+    controller.goToAccountSecurity();
   });
   section.querySelectorAll<HTMLButtonElement>('[data-action="start-pre-access-checkout"]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -305,44 +483,120 @@ function renderPreAccessFlow(state: AppState, controller: AppController) {
       if (!checkoutUrl || typeof window === 'undefined') {
         return;
       }
-      window.location.href = checkoutUrl;
+      window.open(checkoutUrl, '_blank', 'noopener');
     });
   });
 
   return section;
 }
 
-function renderPreAccessFeatureTiles() {
-  const features = [
+function renderPublicLandingStatTiles() {
+  const stats = [
     {
-      title: 'Real-Time Volume Alerts',
-      body: 'Catch sudden market-cap and volume movement without manually scanning the market all day.',
+      value: '24/7',
+      label: 'Monitoring coverage',
+      detail: 'Built around a continuously running monitoring workspace.',
     },
     {
-      title: 'Historical Monitor View',
-      body: 'Review monitored tokens, past movement, and follow-up behavior after the initial signal.',
+      value: '2s',
+      label: 'Refresh cadence',
+      detail: 'The current monitored loop is tuned around a 2-second cycle, not a marketing-only latency claim.',
     },
     {
-      title: 'PumpFun Migration Signals',
-      body: 'Track migration-related movement and keep the fast-moving meme flow inside the same workspace.',
-    },
-    {
-      title: 'Personal Watchlists',
-      body: 'Keep your own manual token set, blocklist, and workspace preferences attached to the account.',
-    },
-    {
-      title: 'Meteora And Side Panels',
-      body: 'Use auxiliary panels and richer token context instead of making decisions from a single raw alert.',
-    },
-    {
-      title: 'Operational Workflow',
-      body: 'The product is meant to be used as a working bot console, not just a passive feed of notifications.',
+      value: 'USDC',
+      label: 'Billing rail',
+      detail: 'Access plans are configured around USDC billing in the current setup.',
     },
   ];
 
-  return features.map((feature, index) => `
-    <article class="legacy-pre-access-feature-card">
-      <span class="legacy-pre-access-feature-index">0${index + 1}</span>
+  return stats.map((stat) => `
+    <article class="legacy-public-stat-card">
+      <strong>${escapeHtml(stat.value)}</strong>
+      <span>${escapeHtml(stat.label)}</span>
+    </article>
+  `).join('');
+}
+
+function renderPublicFeatureIcon(icon: 'pulse' | 'history' | 'migration' | 'watchlist' | 'panels' | 'workflow') {
+  if (icon === 'history') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M13 3a9 9 0 1 0 8.95 10h-2.02A7 7 0 1 1 13 5V1l5 4-5 4V3Zm-1 5h2v5.2l3.4 2.04-1 1.64L12 14.2V8Z"/>
+      </svg>
+    `;
+  }
+  if (icon === 'migration') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M4 6h10l-2.3-2.29L13.11 2 18 6.89 13.11 12l-1.41-1.41L14 8H4V6Zm16 12H10l2.29 2.29L10.89 22 6 17.11 10.89 12l1.4 1.41L10 16h10v2Z"/>
+      </svg>
+    `;
+  }
+  if (icon === 'watchlist') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="m12 17.27 6.18 3.73-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27Z"/>
+      </svg>
+    `;
+  }
+  if (icon === 'panels') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M3 3h8v8H3V3Zm10 0h8v5h-8V3ZM3 13h5v8H3v-8Zm7 0h11v8H10v-8Z"/>
+      </svg>
+    `;
+  }
+  if (icon === 'workflow') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M5 4h14v4H5V4Zm0 6h14v4H5v-4Zm0 6h9v4H5v-4Zm11 0h3v4h-3v-4Z"/>
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="m3 17 4.5-4.5 3 3L17 9l4 4v5H3v-1Zm0-10h4v6H3V7Zm7-3h4v9h-4V4Zm7 5h4v4h-4V9Z"/>
+    </svg>
+  `;
+}
+
+function renderPublicLandingFeatureTiles() {
+  const features = [
+    {
+      icon: 'pulse' as const,
+      title: 'Real-Time Volume Alerts',
+      body: 'Surface sudden volume and market-cap movement without living inside manual scanners all day.',
+    },
+    {
+      icon: 'history' as const,
+      title: 'Historical Monitor View',
+      body: 'Review what happened after the first alert instead of trading off a single raw spike.',
+    },
+    {
+      icon: 'migration' as const,
+      title: 'PumpFun Migration Signals',
+      body: 'Keep migration-related movement in the same workspace when meme flow starts rotating fast.',
+    },
+    {
+      icon: 'watchlist' as const,
+      title: 'Personal Watchlists',
+      body: 'Attach manual lists, blocklists, and workspace preferences directly to the account.',
+    },
+    {
+      icon: 'panels' as const,
+      title: 'Meteora And Side Panels',
+      body: 'Use side panels and richer token context instead of making calls from one bare alert row.',
+    },
+    {
+      icon: 'workflow' as const,
+      title: 'Operational Workflow',
+      body: 'Built as an operator console with account-bound access, not just a passive notification feed.',
+    },
+  ];
+
+  return features.map((feature) => `
+    <article class="legacy-pre-access-feature-card legacy-public-feature-card">
+      <span class="legacy-public-feature-icon" aria-hidden="true">${renderPublicFeatureIcon(feature.icon)}</span>
       <strong>${escapeHtml(feature.title)}</strong>
       <p>${escapeHtml(feature.body)}</p>
     </article>
@@ -382,6 +636,53 @@ function renderPreAccessIdentityCard(state: AppState) {
         </div>
       </div>
     </aside>
+  `;
+}
+
+function renderAccountSecurityOrdersCard(state: AppState) {
+  const heading = state.session.status === 'pre_access'
+    ? 'Checkout History'
+    : 'Billing History';
+  const copy = state.session.status === 'pre_access'
+    ? 'Recent checkout attempts and confirmed payments for this account outside the bot workspace.'
+    : 'Recent billing orders and completed payments linked to this account.';
+
+  return `
+    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-pre-access-orders-card">
+      <div class="legacy-user-settings-card-head legacy-pre-access-card-head">
+        <strong>${escapeHtml(heading)}</strong>
+        <span>${escapeHtml(copy)}</span>
+      </div>
+      ${state.billing.orders.length === 0 ? `
+        <div class="legacy-auth-panel-note">No billing orders yet.</div>
+      ` : `
+        <div class="legacy-billing-order-list">
+          ${state.billing.orders.map((order) => `
+            <div class="legacy-billing-order-row">
+              <div class="legacy-billing-order-main">
+                <strong>${escapeHtml(order.planName)}</strong>
+                <span>${escapeHtml(formatBillingAmount(order.currencyCode, order.currencyAmountMinor))}</span>
+              </div>
+              <div class="legacy-billing-order-side">
+                <span>${escapeHtml(getBillingOrderStatusLabel(order.status))}</span>
+                <span>${escapeHtml(order.paidAt ? formatDateTime(order.paidAt) : formatDateTime(order.createdAt))}</span>
+                ${order.status === 'paid' ? `
+                  <a
+                    class="legacy-userbar-link"
+                    href="${escapeHtml(getBillingReceiptUrl(order.id))}"
+                    target="_blank"
+                    rel="noopener"
+                  >Receipt</a>
+                ` : ''}
+                ${order.providerCheckoutUrl && order.status !== 'paid' ? `
+                  <button type="button" class="legacy-userbar-link" data-action="resume-account-security-checkout" data-checkout-url="${escapeHtml(order.providerCheckoutUrl)}">Resume Checkout</button>
+                ` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    </div>
   `;
 }
 
@@ -481,25 +782,39 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
   overlay.className = 'workspace-profile-overlay-root';
   if (state.ui.authPanel === 'user-settings') {
     overlay.innerHTML = renderUserSettingsModal(state);
+    bindProfileModalCloseActions(overlay, controller);
     bindUserSettingsPanel(overlay, controller);
     return overlay;
   }
 
   if (state.ui.authPanel === 'bot-settings') {
     overlay.innerHTML = renderBotSettingsModal(state);
+    bindProfileModalCloseActions(overlay, controller);
     bindBotSettingsPanel(overlay, controller, state);
     return overlay;
   }
 
   if (state.ui.authPanel === 'blocked-tokens') {
     overlay.innerHTML = renderBlockedTokensModal(state);
+    bindProfileModalCloseActions(overlay, controller);
     bindBlockedTokensPanel(overlay, controller);
     return overlay;
   }
 
   overlay.innerHTML = renderChangePasswordModal(state);
+  bindProfileModalCloseActions(overlay, controller);
   bindChangePasswordPanel(overlay, controller, state);
   return overlay;
+}
+
+function bindProfileModalCloseActions(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLElement>('[data-action="close-profile-modal"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeAuthPanel();
+    });
+  });
 }
 
 function renderProfileModalShell(options: {
@@ -699,6 +1014,17 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
   section.querySelector<HTMLButtonElement>('[data-action="open-password-reset-panel"]')?.addEventListener('click', () => {
     controller.openAuthPanel('password-reset');
   });
+  section.querySelector<HTMLButtonElement>('[data-action="open-frontpage"]')?.addEventListener('click', () => {
+    controller.goToPublicLanding();
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="start-social-login"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const provider = String(button.dataset.provider || '').trim().toLowerCase();
+      if (provider === 'google' || provider === 'discord') {
+        controller.startSocialLogin(provider);
+      }
+    });
+  });
   bindRegisterPanel(section, controller, state);
   bindEmailVerificationPanel(section, controller, state);
   bindEmailOtpPanel(section, controller, state);
@@ -774,6 +1100,8 @@ function syncImmediateLoginBusyState(form: HTMLFormElement) {
 }
 
 function renderLoginHeader() {
+  const pathname = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
+  const showFrontpageLink = pathname === '/login';
   return `
     <div class="legacy-login-head" data-auth-slot="header">
       <div class="legacy-login-brand-block">
@@ -784,6 +1112,9 @@ function renderLoginHeader() {
           <h2 class="legacy-login-title"><span class="legacy-login-brand">TrendScope</span></h2>
           <div class="legacy-login-product">Volume Bot Tracker</div>
           <div class="legacy-login-sub">Solana Real-time Monitor</div>
+          ${showFrontpageLink ? `
+            <button type="button" class="legacy-login-inline-action" data-action="open-frontpage">Back To Frontpage</button>
+          ` : ''}
         </div>
       </div>
     </div>
@@ -816,6 +1147,13 @@ function renderLoginForm(state: AppState, options: { hasCredentialError: boolean
         <button type="button" class="legacy-login-inline-action" data-action="open-password-reset-panel" ${state.ui.busy ? 'disabled' : ''}>Forgot Password</button>
       </div>
       <div class="legacy-login-help" id="login-help">Secure sign-in restores your TrendScope workspace and monitoring preferences.</div>
+      <div class="legacy-login-social-block">
+        <div class="legacy-login-social-copy">Linked accounts only</div>
+        <div class="legacy-login-social-actions">
+          <button type="button" class="legacy-btn legacy-login-social-btn" data-action="start-social-login" data-provider="google" ${state.ui.busy ? 'disabled' : ''}>CONTINUE WITH GOOGLE</button>
+          <button type="button" class="legacy-btn legacy-login-social-btn" data-action="start-social-login" data-provider="discord" ${state.ui.busy ? 'disabled' : ''}>CONTINUE WITH DISCORD</button>
+        </div>
+      </div>
       <button type="submit" class="legacy-btn legacy-btn-primary legacy-login-submit ${state.ui.busy ? 'is-busy' : ''}" ${state.ui.busy ? 'disabled' : ''}>
         <span class="legacy-login-submit-copy">${submitLabel}</span>
       </button>
@@ -1127,7 +1465,7 @@ function renderEmailVerificationModal(state: AppState) {
         <div class="legacy-auth-panel-head">
           <div>
             <strong id="email-verification-title">${isPostRegisterNotice ? 'Check Your Email' : 'Verify Email'}</strong>
-            <span>${isPostRegisterNotice ? 'We sent a verification link to your registered email. Verify the account before using the bot.' : 'Request a fresh verification link for your account email.'}</span>
+            <span>${isPostRegisterNotice ? 'We sent a verification link to your registered email. Verify the account before entering the access setup flow.' : 'Request a fresh verification link for your account email.'}</span>
           </div>
           <button type="button" class="legacy-userbar-link" data-action="close-email-verification-panel">Close</button>
         </div>
@@ -1142,12 +1480,12 @@ function renderEmailVerificationModal(state: AppState) {
               }<strong data-auth-text="pending-verification-email"></strong>${emailSendFailed ? ' just yet.' : '.'}</div>
             </div>
             <div class="legacy-assistance-card">
-              <div class="legacy-assistance-card-title">NEXT STEP</div>
+              <div class="legacy-assistance-card-title">AFTER VERIFY</div>
               <div class="legacy-assistance-card-copy">${hasLocalDevLink
-                ? 'Use the local dev verification link shown above to confirm your address on localhost.'
+                ? 'Use the local dev verification link shown above. After confirmation, TrendScope will open the access setup flow with the plans and account-bound checkout.'
                 : emailSendFailed
                   ? 'Try sending the verification link again after fixing email delivery.'
-                  : 'Open the email and confirm your address before trying to log in to the bot.'
+                  : 'Open the email and confirm your address. After that, TrendScope will take you into the access setup flow instead of dropping you directly into the bot.'
               }</div>
             </div>
           </div>
@@ -1183,7 +1521,7 @@ function renderPasswordChangeSuccessModal() {
         <div class="legacy-assistance-grid">
           <div class="legacy-assistance-card">
             <div class="legacy-assistance-card-title">LOGIN REQUIRED</div>
-            <div class="legacy-assistance-card-copy">Sign in again using your new password to continue using the bot.</div>
+            <div class="legacy-assistance-card-copy">Sign in again from the login page using your new password to continue.</div>
           </div>
           <div class="legacy-assistance-card">
             <div class="legacy-assistance-card-title">SECURITY NOTICE</div>
@@ -1210,18 +1548,19 @@ function renderEmailVerifiedSuccessModal() {
         <div class="legacy-assistance-grid">
           <div class="legacy-assistance-card">
             <div class="legacy-assistance-card-title">SUCCESS</div>
-            <div class="legacy-assistance-card-copy">Your account is ready. You can now sign in normally on the front page.</div>
+            <div class="legacy-assistance-card-copy">Your email is verified. Continue from the login page or, if access setup is still required, follow the access flow that opens next.</div>
           </div>
         </div>
         <div class="legacy-auth-panel-actions">
-          <button type="button" class="legacy-btn legacy-btn-primary" data-action="close-email-verified-success">GO TO LOGIN</button>
+          <button type="button" class="legacy-btn legacy-btn-primary" data-action="close-email-verified-success">BACK TO LOGIN</button>
         </div>
       </div>
     </div>
   `;
 }
 
-function renderInviteAssistanceModal(_state: AppState) {
+function renderInviteAssistanceModal(state: AppState) {
+  const showAccountSecurityLink = state.session.status === 'pre_access' || state.session.status === 'authenticated';
   return `
     <div class="legacy-auth-modal" data-auth-modal="invite-assistance">
       <div class="legacy-auth-modal-backdrop" data-action="close-invite-assistance-panel"></div>
@@ -1246,6 +1585,12 @@ function renderInviteAssistanceModal(_state: AppState) {
             <div class="legacy-assistance-card-title">Before contacting support</div>
             <div class="legacy-assistance-card-copy">Keep your email and invite code ready. That gives the admin enough context to resolve access faster.</div>
           </div>
+          ${showAccountSecurityLink ? `
+            <div class="legacy-assistance-card">
+              <div class="legacy-assistance-card-title">Linked login methods?</div>
+              <div class="legacy-assistance-card-copy">Open Account Settings to inspect the Google and Discord identities attached to this account without entering the bot workspace.</div>
+            </div>
+          ` : ''}
         </div>
         <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="invite-assistance-form" novalidate>
           <label>
@@ -1259,6 +1604,7 @@ function renderInviteAssistanceModal(_state: AppState) {
             ${INVITE_SECURITY_WARNING}
           </div>
           <div class="legacy-auth-panel-actions">
+            ${showAccountSecurityLink ? `<button type="button" class="legacy-btn legacy-btn-primary" data-action="open-account-security-from-help">OPEN ACCOUNT SETTINGS</button>` : ''}
             <button type="button" class="legacy-userbar-link" data-action="close-invite-assistance-panel">Close</button>
           </div>
         </form>
@@ -1476,6 +1822,27 @@ function formatBillingAmount(currencyCode: string, amountMinor: number) {
   return `${String(currencyCode || '').trim().toUpperCase()} ${(amount / 100).toFixed(2)}`;
 }
 
+function formatBillingMajorAmount(amountMinor: number) {
+  const amount = Number(amountMinor);
+  if (!Number.isFinite(amount)) {
+    return '-';
+  }
+  return (amount / 100).toFixed(2);
+}
+
+function formatBillingDailyRate(amountMinor: number, accessDays: number) {
+  const amount = Number(amountMinor);
+  const days = Number(accessDays);
+  if (!Number.isFinite(amount) || !Number.isFinite(days) || days <= 0) {
+    return null;
+  }
+  return `$${(amount / 100 / days).toFixed(2)}/day`;
+}
+
+function getBillingReceiptUrl(orderId: number) {
+  return `/api/account-security/billing/orders/${encodeURIComponent(String(orderId))}/receipt`;
+}
+
 function getBillingOrderStatusLabel(status: AppState['billing']['orders'][number]['status']) {
   if (status === 'awaiting_payment') return 'Awaiting payment';
   if (status === 'paid') return 'Paid';
@@ -1495,66 +1862,155 @@ function getAccessStatusLabel(state: AppState) {
   return 'Active';
 }
 
-function renderAccessSummary(state: AppState) {
+function renderIdentityProviderMark(provider: 'google' | 'discord') {
+  if (provider === 'discord') {
+    return `
+      <svg viewBox="0 0 127.14 96.36" aria-hidden="true" focusable="false">
+        <path
+          fill="#eef4ff"
+          d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.27 8.14C2.75 33.35-1.71 57.94.52 82.18a105.73 105.73 0 0 0 32.17 16.18 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.84-5.18c.91-.66 1.79-1.34 2.64-2.04a75.55 75.55 0 0 0 64.32 0c.85.7 1.73 1.38 2.64 2.04a68.68 68.68 0 0 1-10.86 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.18c2.61-28.06-4.41-52.42-18.87-74.11ZM42.45 65.69C36.16 65.69 31 59.93 31 52.82s5.1-12.87 11.45-12.87c6.4 0 11.56 5.81 11.45 12.87 0 7.11-5.1 12.87-11.45 12.87Zm42.24 0c-6.29 0-11.45-5.76-11.45-12.87s5.1-12.87 11.45-12.87c6.4 0 11.56 5.81 11.45 12.87 0 7.11-5.05 12.87-11.45 12.87Z"
+        />
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="#4285F4" d="M21.6 12.23c0-.76-.07-1.49-.19-2.2H12v4.17h5.39a4.61 4.61 0 0 1-2 3.03v2.52h3.24c1.89-1.74 2.97-4.29 2.97-7.52Z"/>
+      <path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.61-2.45l-3.24-2.52c-.9.6-2.05.95-3.37.95-2.59 0-4.79-1.75-5.57-4.1H3.08v2.6A10 10 0 0 0 12 22Z"/>
+      <path fill="#FBBC05" d="M6.43 13.88A5.99 5.99 0 0 1 6.12 12c0-.65.11-1.28.31-1.88V7.52H3.08A10 10 0 0 0 2 12c0 1.61.38 3.14 1.08 4.48l3.35-2.6Z"/>
+      <path fill="#EA4335" d="M12 6.02c1.47 0 2.79.5 3.83 1.49l2.87-2.87C16.95 2.96 14.7 2 12 2a10 10 0 0 0-8.92 5.52l3.35 2.6c.78-2.35 2.98-4.1 5.57-4.1Z"/>
+    </svg>
+  `;
+}
+
+function renderAccountAccessSummaryCard(state: AppState) {
   const statusLabel = getAccessStatusLabel(state);
   const expiryLabel = formatAccessDate(state.session.accessExpiresAt);
   const sourceLabel = state.session.accessSource ? state.session.accessSource.toUpperCase() : '-';
   const remainingLabel = state.session.accessDaysRemaining == null
     ? 'Unlimited'
     : `${state.session.accessDaysRemaining} day${state.session.accessDaysRemaining === 1 ? '' : 's'}`;
+  const username = escapeHtml(state.session.username ?? '-');
+  const email = escapeHtml(state.session.email ?? '-');
+  const role = escapeHtml(formatUserRole(state.session.role));
+  const emailStatus = escapeHtml(formatEmailVerificationStatus(state));
+  const initialsSource = (state.session.username ?? state.session.email ?? 'U').trim();
+  const avatarText = escapeHtml((initialsSource.slice(0, 2) || 'U').toUpperCase());
 
   return `
-    <div class="auth-summary legacy-user-settings-card legacy-user-settings-access">
-      <div class="legacy-user-settings-card-head">
-        <strong>Access</strong>
-        <span>Current entitlement state for this account.</span>
+    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-user-identity-access-card">
+      <div class="legacy-account-access-topline">
+        <div class="legacy-account-access-main">
+          <div class="legacy-account-access-avatar">${avatarText}</div>
+          <div class="legacy-account-access-copy">
+            <div class="legacy-account-access-primary">
+              <strong>${username}</strong>
+              <span>${email}</span>
+            </div>
+            <div class="legacy-account-access-meta">
+              <span>${role}</span>
+              <span>${emailStatus}</span>
+            </div>
+          </div>
+        </div>
+        <div class="legacy-account-access-status">
+          <span class="legacy-account-access-status-badge">${escapeHtml(statusLabel)}</span>
+          <strong>${escapeHtml(remainingLabel)}</strong>
+        </div>
       </div>
-      <div class="summary-row">
-        <span>Access status</span>
-        <strong>${escapeHtml(statusLabel)}</strong>
-      </div>
-      <div class="summary-row">
-        <span>Expires at</span>
-        <strong>${escapeHtml(expiryLabel)}</strong>
-      </div>
-      <div class="summary-row">
-        <span>Days remaining</span>
-        <strong>${escapeHtml(remainingLabel)}</strong>
-      </div>
-      <div class="summary-row">
-        <span>Access source</span>
-        <strong>${escapeHtml(sourceLabel)}</strong>
-      </div>
-      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-        <button type="button" class="legacy-btn legacy-btn-primary" data-action="focus-billing-plans">OPEN BILLING</button>
+      <div class="legacy-account-access-divider"></div>
+      <div class="legacy-account-access-grid">
+        <div class="legacy-account-access-item">
+          <span>Expires</span>
+          <strong>${escapeHtml(expiryLabel)}</strong>
+        </div>
+        <div class="legacy-account-access-item legacy-account-access-item-inline">
+          <span>Access Source</span>
+          <div class="legacy-account-access-inline">
+            <strong>${escapeHtml(sourceLabel)}</strong>
+            <button type="button" class="legacy-btn legacy-btn-primary legacy-account-access-billing-btn" data-action="focus-billing-plans">OPEN BILLING</button>
+          </div>
+        </div>
       </div>
     </div>
   `;
 }
 
-function renderUserIdentitySummary(state: AppState) {
+function renderUserLinkedIdentitiesCard(
+  state: AppState,
+  options?: { allowConnectActions?: boolean; allowUnlinkActions?: boolean },
+) {
+  const allowConnectActions = options?.allowConnectActions !== false;
+  const allowUnlinkActions = options?.allowUnlinkActions === true;
+  const loadingMessage = !state.identities.loaded && !state.identities.error
+    ? 'Loading linked identity status...'
+    : null;
+
   return `
-    <div class="auth-summary legacy-user-settings-card">
+    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide">
       <div class="legacy-user-settings-card-head">
-        <strong>Account</strong>
-        <span>Identity and verification details for the signed-in user.</span>
+        <strong>Connected Identities</strong>
+        <span>Providers already attached to this account and available for linked-only sign-in.</span>
       </div>
-      <div class="summary-row">
-        <span>Username</span>
-        <strong>${escapeHtml(state.session.username ?? '-')}</strong>
-      </div>
-      <div class="summary-row">
-        <span>Email</span>
-        <strong>${escapeHtml(state.session.email ?? '-')}</strong>
-      </div>
-      <div class="summary-row">
-        <span>Role</span>
-        <strong>${escapeHtml(formatUserRole(state.session.role))}</strong>
-      </div>
-      <div class="summary-row">
-        <span>Email status</span>
-        <strong>${escapeHtml(formatEmailVerificationStatus(state))}</strong>
-      </div>
+      ${state.identities.error ? `
+        <div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.identities.error)}</div>
+      ` : ''}
+      ${loadingMessage ? `
+        <div class="legacy-auth-panel-note">${escapeHtml(loadingMessage)}</div>
+      ` : `
+        <div class="legacy-linked-identity-list">
+          ${state.identities.providers.map((provider) => `
+            <div class="legacy-linked-identity-row">
+              <div class="legacy-linked-identity-provider-mark">${renderIdentityProviderMark(provider.provider)}</div>
+              <div class="legacy-linked-identity-main">
+                <strong>${escapeHtml(provider.label)}</strong>
+                <span>${escapeHtml(provider.providerDisplayName || provider.providerEmail || (provider.configured ? 'Ready for linking' : 'Provider unavailable'))}</span>
+                <span class="legacy-linked-identity-meta">${escapeHtml(
+                  provider.linked
+                    ? `Linked ${formatDateTime(provider.linkedAt)}`
+                    : provider.configured
+                      ? 'Not linked yet'
+                      : 'Missing OAuth config'
+                )}</span>
+              </div>
+              <div class="legacy-linked-identity-side">
+                ${provider.linked || !allowConnectActions ? '' : `
+                  <button
+                    type="button"
+                    class="legacy-btn legacy-btn-primary legacy-linked-identity-connect"
+                    data-action="start-social-link"
+                    data-provider="${escapeHtml(provider.provider)}"
+                    ${provider.configured ? '' : 'disabled'}
+                  >CONNECT ${escapeHtml(provider.label.toUpperCase())}</button>
+                `}
+                ${!provider.linked || !allowUnlinkActions ? '' : `
+                  ${state.ui.pendingIdentityUnlinkProvider === provider.provider ? `
+                    <form class="legacy-auth-panel-form" data-role="unlink-social-identity-form" data-provider="${escapeHtml(provider.provider)}" novalidate>
+                      <label>
+                        <span>Current password</span>
+                        <input name="currentPassword" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
+                      </label>
+                      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+                        <button type="button" class="legacy-userbar-link" data-action="cancel-social-unlink" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+                        <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'UNLINKING...' : `UNLINK ${escapeHtml(provider.label.toUpperCase())}`}</button>
+                      </div>
+                    </form>
+                  ` : `
+                    <button
+                      type="button"
+                      class="legacy-userbar-link"
+                      data-action="open-social-unlink"
+                      data-provider="${escapeHtml(provider.provider)}"
+                      ${state.ui.busy ? 'disabled' : ''}
+                    >UNLINK ${escapeHtml(provider.label.toUpperCase())}</button>
+                  `}
+                `}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `}
     </div>
   `;
 }
@@ -1564,14 +2020,10 @@ function renderUserSecurityCard(state: AppState) {
     ? 'Login still requires the email verification code step.'
     : 'Verify the account email before using recovery and login features normally.';
   return `
-    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide">
-      <div class="legacy-user-settings-card-head">
+    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-security-inline-card">
+      <div class="legacy-security-inline-copy">
         <strong>Security</strong>
-        <span>Password changes revoke the current session and require a new login.</span>
-      </div>
-      <div class="summary-row">
-        <span>Login verification</span>
-        <strong>${escapeHtml(otpStatus)}</strong>
+        <span>${escapeHtml(otpStatus)}</span>
       </div>
       <div class="legacy-auth-panel-actions legacy-user-settings-actions">
         <button type="button" class="legacy-btn legacy-btn-primary" data-action="open-change-password-from-user-settings" ${state.ui.busy ? 'disabled' : ''}>CHANGE PASSWORD</button>
@@ -1613,13 +2065,14 @@ function renderBillingPlansCard(state: AppState) {
           ${state.billing.plans.map((plan) => {
             const pending = state.billing.pendingPlanKey === plan.key;
             return `
-              <div class="legacy-billing-plan-card ${plan.featured ? 'featured' : ''}">
+              <div class="legacy-billing-plan-card ${plan.featured ? 'featured' : ''} ${pending ? 'pending' : ''}">
                 <div class="legacy-billing-plan-copy">
                   <strong>${escapeHtml(plan.label)}</strong>
                   <span>${escapeHtml(plan.description || `${plan.accessDays} days of product access`)}</span>
                 </div>
                 <div class="legacy-billing-plan-price">${escapeHtml(plan.priceDisplay || formatBillingAmount(plan.currencyCode, plan.amountMinor))}</div>
                 <div class="legacy-billing-plan-meta">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'} access</div>
+                ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
                 ${plan.available ? '' : `<div class="legacy-auth-panel-note">${escapeHtml(plan.availabilityReason || 'Unavailable')}</div>`}
                 <div class="legacy-auth-panel-actions legacy-user-settings-actions">
                   <button
@@ -1628,7 +2081,7 @@ function renderBillingPlansCard(state: AppState) {
                     data-action="start-billing-checkout"
                     data-plan-key="${escapeHtml(plan.key)}"
                     ${!plan.available || pending ? 'disabled' : ''}
-                  >${pending ? 'OPENING...' : state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'PAY WITH MOONPAY'}</button>
+                  >${state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'PAY WITH MOONPAY'}</button>
                 </div>
               </div>
             `;
@@ -1641,7 +2094,7 @@ function renderBillingPlansCard(state: AppState) {
 
 function renderPreAccessPlansCard(state: AppState) {
   const billingUnavailableMessage = !state.billing.loaded
-    ? 'Loading billing options...'
+    ? 'Loading access plans...'
     : !state.billing.enabled
       ? 'Billing is disabled in this environment.'
       : !state.billing.providerReady
@@ -1649,61 +2102,66 @@ function renderPreAccessPlansCard(state: AppState) {
         : state.billing.plans.length === 0
           ? 'No billing plans are configured yet.'
           : null;
-  const billingHeading = state.billing.providerMocked
-    ? 'Choose a plan and continue in the local mock checkout to simulate the payment.'
-    : 'Choose a plan and continue in MoonPay Commerce to complete the payment.';
+  const recommendedPlanKey = state.billing.plans
+    .slice()
+    .sort((left, right) => (right.accessDays || 0) - (left.accessDays || 0))[0]?.key ?? null;
+  const shortestPlan = state.billing.plans
+    .slice()
+    .sort((left, right) => (left.accessDays || 0) - (right.accessDays || 0))[0] ?? null;
 
   return `
-    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-pre-access-plans-card" data-role="billing-plans-card">
-      <div class="legacy-user-settings-card-head legacy-pre-access-card-head">
-        <strong>Access Plans</strong>
-        <span>${escapeHtml(billingHeading)}</span>
-      </div>
-      ${state.billing.providerMocked ? `
-        <div class="legacy-auth-panel-note">Local billing mock mode is active. Checkout and payment confirmation are simulated on this machine.</div>
-      ` : ''}
-      ${state.billing.error ? `
-        <div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.billing.error)}</div>
-      ` : ''}
-      ${billingUnavailableMessage ? `
-        <div class="legacy-auth-panel-note">${escapeHtml(billingUnavailableMessage)}</div>
-      ` : `
-        <div class="legacy-billing-plan-grid">
-          ${state.billing.plans.map((plan) => {
-            const pending = state.billing.pendingPlanKey === plan.key;
-            const descriptor = plan.featured
-              ? 'Most balanced option'
-              : plan.accessDays >= 30
-                ? 'Longer runway with fewer renewals'
-                : 'Fastest way to validate the workflow';
-            return `
-              <div class="legacy-billing-plan-card legacy-pre-access-plan-card ${plan.featured ? 'featured' : ''}">
-                <div class="legacy-pre-access-plan-topline">
-                  <span class="legacy-pre-access-plan-badge ${plan.featured ? 'featured' : ''}">${plan.featured ? 'POPULAR' : 'ACCESS PLAN'}</span>
-                  <span class="legacy-pre-access-plan-duration">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'}</span>
-                </div>
-                <div class="legacy-billing-plan-copy">
-                  <strong>${escapeHtml(plan.label)}</strong>
-                  <span>${escapeHtml(plan.description || descriptor)}</span>
-                </div>
-                <div class="legacy-billing-plan-price">${escapeHtml(plan.priceDisplay || formatBillingAmount(plan.currencyCode, plan.amountMinor))}</div>
-                <div class="legacy-billing-plan-meta">${escapeHtml(descriptor)}</div>
-                ${plan.available ? '' : `<div class="legacy-auth-panel-note">${escapeHtml(plan.availabilityReason || 'Unavailable')}</div>`}
-                <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-                  <button
-                    type="button"
-                    class="legacy-btn legacy-btn-primary"
-                    data-action="start-pre-access-checkout"
-                    data-plan-key="${escapeHtml(plan.key)}"
-                    ${!plan.available || pending || state.session.accessHasProductAccess ? 'disabled' : ''}
-                  >${pending ? 'OPENING...' : state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'CONTINUE TO CHECKOUT'}</button>
-                </div>
+    ${state.billing.providerMocked ? `
+      <div class="legacy-auth-panel-note">Local billing mock mode is active. Checkout and payment confirmation are simulated on this machine.</div>
+    ` : ''}
+    ${state.billing.error ? `
+      <div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.billing.error)}</div>
+    ` : ''}
+    ${billingUnavailableMessage ? `
+      <div class="legacy-auth-panel-note">${escapeHtml(billingUnavailableMessage)}</div>
+    ` : `
+      <div class="legacy-billing-plan-grid legacy-public-pricing-grid" data-role="billing-plans-card">
+        ${state.billing.plans.map((plan) => {
+          const pending = state.billing.pendingPlanKey === plan.key;
+          const recommended = recommendedPlanKey === plan.key;
+          const descriptor = plan.description || (plan.accessDays >= 30 ? 'Monthly access' : 'Weekly access');
+          const dailyRate = formatBillingDailyRate(plan.amountMinor, plan.accessDays);
+          const shortestDailyRate = shortestPlan ? formatBillingDailyRate(shortestPlan.amountMinor, shortestPlan.accessDays) : null;
+
+          return `
+            <div class="legacy-billing-plan-card legacy-pre-access-plan-card legacy-public-pricing-card ${recommended ? 'featured recommended' : ''} ${pending ? 'pending' : ''}">
+              ${recommended ? `<span class="legacy-public-plan-floating-badge">Best value</span>` : ''}
+              <div class="legacy-pre-access-plan-topline legacy-public-plan-topline">
+                <span class="legacy-pre-access-plan-badge">Access plan</span>
+                <span class="legacy-pre-access-plan-duration">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'}</span>
               </div>
-            `;
-          }).join('')}
-        </div>
-      `}
-    </div>
+              <div class="legacy-billing-plan-copy legacy-public-plan-copy">
+                <strong>${escapeHtml(plan.label)}</strong>
+                <span>${escapeHtml(descriptor)}</span>
+              </div>
+              <div class="legacy-public-plan-price-row">
+                <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
+                <strong class="legacy-billing-plan-price legacy-public-plan-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
+              </div>
+              <div class="legacy-billing-plan-meta legacy-public-plan-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
+              ${recommended && dailyRate && shortestDailyRate && shortestPlan && shortestPlan.key !== plan.key ? `
+                <div class="legacy-public-plan-value-line">~${escapeHtml(dailyRate)} vs ${escapeHtml(shortestDailyRate)} on ${escapeHtml(shortestPlan.label.toLowerCase())}</div>
+              ` : ''}
+              ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
+              <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+                <button
+                  type="button"
+                  class="legacy-btn ${recommended ? 'legacy-btn-primary' : 'legacy-public-plan-ghost-btn'}"
+                  data-action="start-pre-access-checkout"
+                  data-plan-key="${escapeHtml(plan.key)}"
+                  ${!plan.available || pending || state.session.accessHasProductAccess ? 'disabled' : ''}
+                >${state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'CONTINUE TO CHECKOUT'}</button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `}
+    <div class="legacy-public-pricing-trust-line">Payment via USDC on Solana · Access activates after payment confirmation · No recurring charges</div>
   `;
 }
 
@@ -1722,10 +2180,19 @@ function renderBillingOrdersCard(state: AppState) {
             <div class="legacy-billing-order-row">
               <div class="legacy-billing-order-main">
                 <strong>${escapeHtml(order.planName)}</strong>
-                <span>${escapeHtml(getBillingOrderStatusLabel(order.status))} • ${escapeHtml(formatBillingAmount(order.currencyCode, order.currencyAmountMinor))}</span>
+                <span>${escapeHtml(formatBillingAmount(order.currencyCode, order.currencyAmountMinor))}</span>
               </div>
               <div class="legacy-billing-order-side">
+                <span>${escapeHtml(getBillingOrderStatusLabel(order.status))}</span>
                 <span>${escapeHtml(order.paidAt ? formatDateTime(order.paidAt) : formatDateTime(order.createdAt))}</span>
+                ${order.status === 'paid' ? `
+                  <a
+                    class="legacy-userbar-link"
+                    href="${escapeHtml(getBillingReceiptUrl(order.id))}"
+                    target="_blank"
+                    rel="noopener"
+                  >Receipt</a>
+                ` : ''}
                 ${order.providerCheckoutUrl && order.status !== 'paid' ? `
                   <button type="button" class="legacy-userbar-link" data-action="resume-billing-checkout" data-checkout-url="${escapeHtml(order.providerCheckoutUrl)}">Resume Checkout</button>
                 ` : ''}
@@ -1753,10 +2220,19 @@ function renderPreAccessOrdersCard(state: AppState) {
             <div class="legacy-billing-order-row">
               <div class="legacy-billing-order-main">
                 <strong>${escapeHtml(order.planName)}</strong>
-                <span>${escapeHtml(getBillingOrderStatusLabel(order.status))} • ${escapeHtml(formatBillingAmount(order.currencyCode, order.currencyAmountMinor))}</span>
+                <span>${escapeHtml(formatBillingAmount(order.currencyCode, order.currencyAmountMinor))}</span>
               </div>
               <div class="legacy-billing-order-side">
+                <span>${escapeHtml(getBillingOrderStatusLabel(order.status))}</span>
                 <span>${escapeHtml(order.paidAt ? formatDateTime(order.paidAt) : formatDateTime(order.createdAt))}</span>
+                ${order.status === 'paid' ? `
+                  <a
+                    class="legacy-userbar-link"
+                    href="${escapeHtml(getBillingReceiptUrl(order.id))}"
+                    target="_blank"
+                    rel="noopener"
+                  >Receipt</a>
+                ` : ''}
                 ${order.providerCheckoutUrl && order.status !== 'paid' ? `
                   <button type="button" class="legacy-userbar-link" data-action="resume-pre-access-checkout" data-checkout-url="${escapeHtml(order.providerCheckoutUrl)}">Resume Checkout</button>
                 ` : ''}
@@ -1778,9 +2254,9 @@ function renderUserSettingsModal(state: AppState) {
     panelClass: 'legacy-auth-panel-user-settings',
     content: `
       <div class="legacy-user-settings-grid">
-        ${renderUserIdentitySummary(state)}
-        ${renderAccessSummary(state)}
+        ${renderAccountAccessSummaryCard(state)}
         ${renderUserSecurityCard(state)}
+        ${renderUserLinkedIdentitiesCard(state, { allowUnlinkActions: true })}
         ${renderBillingPlansCard(state)}
         ${renderBillingOrdersCard(state)}
       </div>
@@ -1987,6 +2463,7 @@ function bindUserSettingsPanel(section: ParentNode, controller: AppController) {
   }
 
   bindFocusTrap(panel);
+  bindLinkedIdentityActions(section, controller);
   section.querySelector<HTMLButtonElement>('[data-action="focus-billing-plans"]')?.addEventListener('click', () => {
     section.querySelector<HTMLElement>('[data-role="billing-plans-card"]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
@@ -2009,6 +2486,55 @@ function bindUserSettingsPanel(section: ParentNode, controller: AppController) {
         return;
       }
       window.open(checkoutUrl, '_blank', 'noopener');
+    });
+  });
+}
+
+function bindLinkedIdentityActions(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLButtonElement>('[data-action="start-social-link"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const provider = button.dataset.provider;
+      if (provider !== 'google' && provider !== 'discord') {
+        return;
+      }
+      controller.startSocialLink(provider);
+    });
+  });
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="open-social-unlink"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const provider = button.dataset.provider;
+      if (provider !== 'google' && provider !== 'discord') {
+        return;
+      }
+      const providerLabel = provider === 'google' ? 'Google' : 'Discord';
+      const confirmed = window.confirm(
+        `Removing ${providerLabel} sign-in will disable future social login with that provider until you link it again from this authenticated session. Continue?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+      controller.openIdentityUnlink(provider);
+    });
+  });
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="cancel-social-unlink"]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.cancelIdentityUnlink();
+    });
+  });
+
+  section.querySelectorAll<HTMLFormElement>('form[data-role="unlink-social-identity-form"]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const provider = form.dataset.provider;
+      if (provider !== 'google' && provider !== 'discord') {
+        return;
+      }
+      const data = new FormData(form);
+      void controller.unlinkSocialIdentity(provider, String(data.get('currentPassword') || ''));
     });
   });
 }
@@ -2233,18 +2759,41 @@ function bindRegisterPanel(section: ParentNode, controller: AppController, state
       });
   });
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (state.ui.busy) {
       return;
     }
+
     const data = new FormData(form);
+    const inviteCode = String(data.get('inviteCode') || '').trim();
+    if (inviteInput) {
+      inviteInput.value = inviteCode;
+    }
+    if (!inviteCode) {
+      setInviteStatus('Invite code is required for account creation.', 'error');
+      return;
+    }
+
+    setInviteStatus('Checking invite code...', 'idle');
+    try {
+      const inviteValidation = await controller.validateInvite(inviteCode);
+      if (!inviteValidation.valid) {
+        setInviteStatus(inviteValidation.reason || 'Invite code is not valid.', 'error');
+        return;
+      }
+      setInviteStatus('Invite code looks valid.', 'ok');
+    } catch {
+      setInviteStatus('Unable to validate invite code right now.', 'error');
+      return;
+    }
+
     void controller.register({
       username: String(data.get('username') || ''),
       email: String(data.get('registerEmail') || ''),
       password: String(data.get('registerPassword') || ''),
       confirmPassword: String(data.get('registerConfirmPassword') || ''),
-      inviteCode: String(data.get('inviteCode') || ''),
+      inviteCode,
     });
   });
 }
@@ -2259,6 +2808,10 @@ function bindInviteAssistancePanel(section: ParentNode, controller: AppControlle
   const closePanel = () => controller.closeAuthPanel();
   section.querySelectorAll<HTMLButtonElement>('[data-action="close-invite-assistance-panel"]').forEach((button) => {
     button.addEventListener('click', closePanel);
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-account-security-from-help"]')?.addEventListener('click', () => {
+    closePanel();
+    controller.goToAccountSecurity();
   });
 
   const inviteInput = form.querySelector<HTMLInputElement>('input[name="assistanceInviteCode"]');

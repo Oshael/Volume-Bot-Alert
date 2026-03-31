@@ -25,6 +25,11 @@ type PanelScrollDraft = {
   alerts: number;
 };
 
+type ProfileModalScrollDraft = {
+  panel: string | null;
+  scrollTop: number;
+};
+
 type LoginDraft = {
   email: string;
   password: string;
@@ -122,6 +127,7 @@ export function renderAppShell(
 ) {
   const configDraft = captureConfigDraft(root);
   const panelScrollDraft = capturePanelScrollDraft(root);
+  const profileModalScrollDraft = captureProfileModalScrollDraft(root);
   const loginDraft = captureLoginDraft(root);
   const changePasswordDraft = captureChangePasswordDraft(root);
   const registerDraft = captureRegisterDraft(root);
@@ -134,10 +140,12 @@ export function renderAppShell(
   const renderFrame = ensureAppRenderFrame(root);
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
+  const pathname = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
+  const isAccountSecurityRoute = pathname === '/account-security' || pathname.startsWith('/account-security/');
   renderFrame.panels.dataset.workspace = state.ui.workspace;
 
   updateRegionSlot(renderFrame.headerSlot, 'header', dirtyRegions, getHeaderRenderKey(state), () => (
-    state.session.status === 'authenticated'
+    state.session.status === 'authenticated' && !isAccountSecurityRoute
       ? [renderWorkspaceHeader(state, controller)]
       : []
   ));
@@ -150,7 +158,7 @@ export function renderAppShell(
   }
   updateRegionSlot(renderFrame.legacySlot, 'legacy', dirtyRegions, getLegacyRenderKey(state), () => [renderLegacyShell(state, controller)]);
 
-  if (state.session.status === 'authenticated') {
+  if (state.session.status === 'authenticated' && !isAccountSecurityRoute) {
     renderFrame.oldWeekSlot.hidden = !isHistoryWorkspace;
     renderFrame.recentSlot.hidden = !isHistoryWorkspace;
     renderFrame.manualSlot.hidden = !isLiveWorkspace;
@@ -206,7 +214,7 @@ export function renderAppShell(
   }
 
   updateRegionSlot(renderFrame.overlaySlot, 'overlay', dirtyRegions, getOverlayRenderKey(state), () => {
-    const profileOverlay = state.session.status === 'authenticated'
+    const profileOverlay = state.session.status === 'authenticated' && !isAccountSecurityRoute
       ? renderWorkspaceProfileOverlay(state, controller)
       : null;
     return profileOverlay ? [profileOverlay] : [];
@@ -230,6 +238,7 @@ export function renderAppShell(
   applySearchInputDraft(root, searchInputDraft);
   applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
+  applyProfileModalScrollDraft(root, profileModalScrollDraft);
   wireHoverPersistence(root);
   wireTradeMenus(root);
   wireSortMenus(root);
@@ -458,7 +467,9 @@ function getToastsRenderKey(state: AppState) {
 }
 
 function getLegacyRenderKey(state: AppState) {
+  const pathname = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
   return JSON.stringify({
+    pathname,
     sessionStatus: state.session.status,
     busy: state.ui.busy,
     authPanel: state.ui.authPanel,
@@ -468,6 +479,19 @@ function getLegacyRenderKey(state: AppState) {
     pendingPasswordResetToken: state.ui.pendingPasswordResetToken,
     pendingLoginOtpChallengeToken: state.ui.pendingLoginOtpChallengeToken,
     pendingLoginOtpEmailHint: state.ui.pendingLoginOtpEmailHint,
+    billingLoaded: state.billing.loaded,
+    billingEnabled: state.billing.enabled,
+    billingProviderReady: state.billing.providerReady,
+    billingProviderMocked: state.billing.providerMocked,
+    billingPlans: state.billing.plans,
+    billingPendingPlanKey: state.billing.pendingPlanKey,
+    billingError: state.billing.error,
+    identitiesLoaded: state.identities.loaded,
+    identityProviders: state.identities.providers,
+    identityError: state.identities.error,
+    accessStatus: state.session.accessStatus,
+    accessExpiresAt: state.session.accessExpiresAt,
+    accessDaysRemaining: state.session.accessDaysRemaining,
   });
 }
 
@@ -666,6 +690,9 @@ function getOverlayRenderKey(state: AppState) {
     email: state.ui.authPanel === 'user-settings' ? state.session.email : null,
     isEmailVerified: state.ui.authPanel === 'user-settings' ? state.session.isEmailVerified : null,
     emailVerifiedAt: state.ui.authPanel === 'user-settings' ? state.session.emailVerifiedAt : null,
+    identityProviders: state.ui.authPanel === 'user-settings' ? state.identities.providers : null,
+    identityError: state.ui.authPanel === 'user-settings' ? state.identities.error : null,
+    pendingIdentityUnlinkProvider: state.ui.authPanel === 'user-settings' ? state.ui.pendingIdentityUnlinkProvider : null,
     billingLoaded: state.ui.authPanel === 'user-settings' ? state.billing.loaded : null,
     billingEnabled: state.ui.authPanel === 'user-settings' ? state.billing.enabled : null,
     billingProviderReady: state.ui.authPanel === 'user-settings' ? state.billing.providerReady : null,
@@ -995,6 +1022,32 @@ function applyPanelScrollDraft(root: HTMLElement, draft: PanelScrollDraft) {
   if (bidZone) bidZone.scrollTop = draft.bidZone;
   if (pumpfun) pumpfun.scrollTop = draft.pumpfun;
   if (alerts) alerts.scrollTop = draft.alerts;
+}
+
+function captureProfileModalScrollDraft(root: HTMLElement): ProfileModalScrollDraft | null {
+  const panel = root.querySelector<HTMLElement>('[data-auth-modal-scope="profile"] [data-auth-panel]');
+  if (!panel) {
+    return null;
+  }
+
+  return {
+    panel: panel.dataset.authPanel || null,
+    scrollTop: panel.scrollTop,
+  };
+}
+
+function applyProfileModalScrollDraft(root: HTMLElement, draft: ProfileModalScrollDraft | null) {
+  if (!draft || !draft.panel) {
+    return;
+  }
+
+  const selector = `[data-auth-modal-scope="profile"] [data-auth-panel="${draft.panel}"]`;
+  const panel = root.querySelector<HTMLElement>(selector);
+  if (!panel) {
+    return;
+  }
+
+  panel.scrollTop = draft.scrollTop;
 }
 
 function captureLoginDraft(root: HTMLElement): LoginDraft | null {

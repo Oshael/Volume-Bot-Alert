@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -28,8 +28,15 @@ import {
   type ConfigPayload,
   type UiPrefsPayload,
 } from '../services/api/config';
-import { fetchAccountAccess, type AccountAccessPayload } from '../services/api/account';
-import { createBillingOrder, fetchBillingState, type BillingStatePayload } from '../services/api/billing';
+import {
+  fetchAccountAccess,
+  fetchAccountIdentities,
+  fetchAccountSecurityIdentities,
+  unlinkAccountSecurityIdentity,
+  type AccountAccessPayload,
+  type AccountIdentitiesPayload,
+} from '../services/api/account';
+import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload, type PreAccessMePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type BidZonePayload, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
@@ -59,6 +66,7 @@ import {
   validateRegisterInput,
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
+import { resolveApiBase } from '../services/api/base';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   findPreviousPasswordMatch,
@@ -72,6 +80,11 @@ const AUTH_NOTICE_SIGNING_IN = 'Signing in...';
 const AUTH_NOTICE_SESSION_RESTORED = 'Session restored. Workspace synced.';
 const AUTH_NOTICE_LOGIN_SUCCESS = 'Login successful. Workspace synced.';
 const COOKIE_SESSION_MARKER = '__cookie_session__';
+const SOCIAL_LINK_RESULT_STORAGE_KEY = 'trend_scope_social_link_result';
+const SOCIAL_LINK_POPUP_WINDOW_NAME = 'trend_scope_social_link_popup';
+const SOCIAL_LINK_RESULT_MESSAGE_TYPE = 'trend_scope_social_link_result';
+const SOCIAL_LINK_SYNC_POLL_MS = 1000;
+const SOCIAL_LINK_SYNC_TIMEOUT_MS = 90_000;
 const AUTH_ERROR_COOKIE_BLOCKED = 'Login succeeded, but the secure session cookie was not accepted. Check browser cookie/privacy settings and try again.';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
@@ -168,7 +181,16 @@ export interface AppController {
   validateInvite(code: string): Promise<InviteValidationResponse>;
   openAuthPanel(panel: Exclude<AuthPanel, 'none'>): void;
   closeAuthPanel(): void;
+  goToLogin(panel?: 'register'): void;
+  goToPublicLanding(): void;
+  goToAccountSecurity(): void;
+  goToPreAccess(): void;
   refreshBilling(): Promise<void>;
+  startSocialLink(provider: 'google' | 'discord'): void;
+  startSocialLogin(provider: 'google' | 'discord'): void;
+  openIdentityUnlink(provider: 'google' | 'discord'): void;
+  cancelIdentityUnlink(): void;
+  unlinkSocialIdentity(provider: 'google' | 'discord', currentPassword: string): Promise<void>;
   startBillingCheckout(planKey: string): Promise<void>;
   startPreAccessCheckout(planKey: string): Promise<void>;
   completePreAccess(): Promise<void>;
@@ -240,6 +262,19 @@ function isAuthRoutePath(pathname: string) {
   return pathname === '/auth/verify-email' || pathname === '/auth/reset-password';
 }
 
+function isLoginRoutePath(pathname: string | null | undefined) {
+  return String(pathname || '').trim().toLowerCase() === '/login';
+}
+
+function isPublicLandingRoutePath(pathname: string | null | undefined) {
+  return String(pathname || '').trim().toLowerCase() === '/';
+}
+
+function isAccountSecurityRoutePath(pathname: string | null | undefined) {
+  const value = String(pathname || '').trim().toLowerCase();
+  return value === '/account-security' || value.startsWith('/account-security/');
+}
+
 function hasAuthRouteIntent(locationLike: Location | null | undefined) {
   if (!locationLike) {
     return false;
@@ -260,6 +295,16 @@ function isPreAccessRoutePath(pathname: string | null | undefined) {
   return value === '/access' || value.startsWith('/access/');
 }
 
+function getLoginPanelIntent(locationLike: Location | null | undefined) {
+  if (!locationLike || !isLoginRoutePath(locationLike.pathname)) {
+    return '';
+  }
+
+  const search = new URLSearchParams(locationLike.search || '');
+  const panel = String(search.get('panel') || '').trim().toLowerCase();
+  return panel === 'register' ? panel : '';
+}
+
 function getBillingCheckoutIntent(locationLike: Location | null | undefined) {
   if (!locationLike) {
     return null;
@@ -268,6 +313,50 @@ function getBillingCheckoutIntent(locationLike: Location | null | undefined) {
   const search = new URLSearchParams(locationLike.search || '');
   const status = String(search.get('billing') || '').trim().toLowerCase();
   return status === 'success' ? 'success' : null;
+}
+
+function getSocialLinkIntent(locationLike: Location | null | undefined) {
+  if (!locationLike) {
+    return null;
+  }
+
+  const search = new URLSearchParams(locationLike.search || '');
+  const status = String(search.get('socialLink') || '').trim().toLowerCase();
+  const provider = String(search.get('socialProvider') || '').trim().toLowerCase();
+  if (!status || !provider) {
+    return null;
+  }
+
+  if (provider !== 'google' && provider !== 'discord') {
+    return null;
+  }
+
+  return {
+    status,
+    provider: provider as 'google' | 'discord',
+  };
+}
+
+function getSocialLoginIntent(locationLike: Location | null | undefined) {
+  if (!locationLike) {
+    return null;
+  }
+
+  const search = new URLSearchParams(locationLike.search || '');
+  const status = String(search.get('socialLogin') || '').trim().toLowerCase();
+  const provider = String(search.get('socialProvider') || '').trim().toLowerCase();
+  if (!status || !provider) {
+    return null;
+  }
+
+  if (provider !== 'google' && provider !== 'discord') {
+    return null;
+  }
+
+  return {
+    status,
+    provider: provider as 'google' | 'discord',
+  };
 }
 
 function normalizeWorkspace(value: string | null | undefined): WorkspaceView {
@@ -315,6 +404,10 @@ export function createAppController(): AppController {
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let preAccessPollingTimer: ReturnType<typeof setTimeout> | null = null;
+  let socialLinkPopupWindow: Window | null = null;
+  let socialLinkSyncTimer: ReturnType<typeof setInterval> | null = null;
+  let socialLinkSyncStartedAt = 0;
+  let socialLinkPendingProvider: 'google' | 'discord' | null = null;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
   let nextBidZoneRefreshAt = 0;
@@ -339,7 +432,72 @@ export function createAppController(): AppController {
     pumpfun: 'pumpfun',
   };
 
+  function stopSocialLinkSync() {
+    if (socialLinkSyncTimer) {
+      clearInterval(socialLinkSyncTimer);
+      socialLinkSyncTimer = null;
+    }
+    socialLinkSyncStartedAt = 0;
+    socialLinkPendingProvider = null;
+  }
+
+  async function pollSocialLinkSync() {
+    const pendingProvider = socialLinkPendingProvider;
+    if (!pendingProvider || state.session.status !== 'authenticated') {
+      stopSocialLinkSync();
+      return;
+    }
+
+    try {
+      await refreshUserSettingsState(COOKIE_SESSION_MARKER);
+    } catch {
+      emit('overlay', 'header');
+    }
+
+    const linked = state.identities.providers.find((entry) => entry.provider === pendingProvider)?.linked;
+    if (linked) {
+      handleSocialLinkResult({
+        provider: pendingProvider,
+        status: 'success',
+      });
+      return;
+    }
+
+    const popupClosed = !socialLinkPopupWindow || socialLinkPopupWindow.closed;
+    const timedOut = socialLinkSyncStartedAt > 0 && (Date.now() - socialLinkSyncStartedAt) >= SOCIAL_LINK_SYNC_TIMEOUT_MS;
+    emit('overlay', 'header');
+
+    if (popupClosed || timedOut) {
+      stopSocialLinkSync();
+    }
+  }
+
+  function startSocialLinkSync(provider: 'google' | 'discord') {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    stopSocialLinkSync();
+    socialLinkPendingProvider = provider;
+    socialLinkSyncStartedAt = Date.now();
+    socialLinkSyncTimer = window.setInterval(() => {
+      void pollSocialLinkSync();
+    }, SOCIAL_LINK_SYNC_POLL_MS);
+    void pollSocialLinkSync();
+  }
+
   if (typeof window !== 'undefined') {
+    const getAllowedSocialLinkOrigins = () => {
+      const origins = new Set<string>();
+      origins.add(window.location.origin);
+      try {
+        origins.add(new URL(resolveApiBase(window.location)).origin);
+      } catch {
+        // Ignore malformed API base fallback and keep current origin only.
+      }
+      return origins;
+    };
+
     window.addEventListener('focus', () => {
       if (state.session.status !== 'authenticated' || state.ui.authPanel !== 'user-settings') {
         return;
@@ -349,6 +507,112 @@ export function createAppController(): AppController {
         .then(() => emit('overlay', 'header'))
         .catch(() => emit('overlay', 'header'));
     });
+
+    window.addEventListener('storage', (event) => {
+      if (event.key !== SOCIAL_LINK_RESULT_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(event.newValue) as { status?: string; provider?: string };
+      } catch {
+        return;
+      }
+
+      const provider = payload?.provider === 'discord' ? 'discord' : payload?.provider === 'google' ? 'google' : null;
+      const status = String(payload?.status || '').trim().toLowerCase();
+      if (state.session.status !== 'authenticated' || !provider || !status) {
+        return;
+      }
+      handleSocialLinkResult({
+        provider,
+        status,
+      });
+    });
+
+    window.addEventListener('message', (event) => {
+      if (!getAllowedSocialLinkOrigins().has(event.origin)) {
+        return;
+      }
+
+      const payload = event.data && typeof event.data === 'object'
+        ? event.data as { type?: string; status?: string; provider?: string }
+        : null;
+      if (!payload || payload.type !== SOCIAL_LINK_RESULT_MESSAGE_TYPE) {
+        return;
+      }
+
+      const provider = payload.provider === 'discord' ? 'discord' : payload.provider === 'google' ? 'google' : null;
+      const status = String(payload.status || '').trim().toLowerCase();
+      if (state.session.status !== 'authenticated' || !provider || !status) {
+        return;
+      }
+
+      handleSocialLinkResult({
+        provider,
+        status,
+      });
+    });
+  }
+
+  function handleSocialLinkResult(intent: { status: string; provider: 'google' | 'discord' }) {
+    stopSocialLinkSync();
+    if (socialLinkPopupWindow && !socialLinkPopupWindow.closed) {
+      try {
+        socialLinkPopupWindow.close();
+      } catch {
+        // Ignore popup close failures and keep the current tab in sync.
+      }
+    }
+    socialLinkPopupWindow = null;
+    state.ui.authPanel = 'user-settings';
+    state.ui.notice = null;
+    state.ui.error = null;
+
+    if (intent.status === 'success') {
+      setNotice(`${intent.provider === 'google' ? 'Google' : 'Discord'} linked successfully.`);
+    } else if (intent.status === 'identity_conflict') {
+      setError('That social identity is already linked to another account.');
+    } else if (intent.status === 'email_conflict') {
+      setError('The provider email matches a different existing account. Automatic merge is blocked.');
+    } else if (intent.status === 'provider_denied') {
+      setError('The social provider did not approve the linking request.');
+    } else if (intent.status === 'session_missing' || intent.status === 'session_mismatch') {
+      setError('Social linking must start and finish on the same app session and host. Retry the flow from the same tab.');
+    } else {
+      setError('Unable to complete social linking. Please try again.');
+    }
+
+    void refreshUserSettingsState(COOKIE_SESSION_MARKER)
+      .then(() => {
+        try {
+          window.localStorage.removeItem(SOCIAL_LINK_RESULT_STORAGE_KEY);
+        } catch {
+          // Ignore storage cleanup failures.
+        }
+        emit('overlay', 'header');
+      })
+      .catch(() => emit('overlay', 'header'));
+  }
+
+  function publishSocialLinkResult(intent: { status: string; provider: 'google' | 'discord' }) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        SOCIAL_LINK_RESULT_STORAGE_KEY,
+        JSON.stringify({
+          status: intent.status,
+          provider: intent.provider,
+          ts: Date.now(),
+        })
+      );
+    } catch {
+      // Ignore storage sync failures.
+    }
   }
 
   function queueDirtyRegions(regions: AppRenderRegion[]) {
@@ -666,8 +930,23 @@ export function createAppController(): AppController {
     const pathname = window.location.pathname || '/';
     const search = new URLSearchParams(window.location.search);
     if (pathname === '/auth/verify-email' || pathname === '/auth/reset-password' || search.has('mode') || search.has('token')) {
-      window.history.replaceState({}, document.title, '/');
+      window.history.replaceState({}, document.title, '/login');
     }
+  }
+
+  function clearLoginPanelUrl() {
+    if (typeof window === 'undefined' || !isLoginRoutePath(window.location.pathname)) {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('panel')) {
+      return;
+    }
+
+    url.searchParams.delete('panel');
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl || '/login');
   }
 
   function clearBillingCheckoutUrl() {
@@ -686,6 +965,38 @@ export function createAppController(): AppController {
     window.history.replaceState({}, document.title, nextUrl || '/');
   }
 
+  function clearSocialLinkUrl() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('socialLink') && !url.searchParams.has('socialProvider')) {
+      return;
+    }
+
+    url.searchParams.delete('socialLink');
+    url.searchParams.delete('socialProvider');
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl || '/');
+  }
+
+  function clearSocialLoginUrl() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('socialLogin') && !url.searchParams.has('socialProvider')) {
+      return;
+    }
+
+    url.searchParams.delete('socialLogin');
+    url.searchParams.delete('socialProvider');
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, document.title, nextUrl || '/');
+  }
+
   function navigateToPreAccess(path = '/access') {
     if (typeof window === 'undefined') {
       return;
@@ -694,6 +1005,81 @@ export function createAppController(): AppController {
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, document.title, nextPath);
     }
+  }
+
+  function navigateToLogin(panel?: 'register') {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL('/login', window.location.origin);
+    if (panel === 'register') {
+      url.searchParams.set('panel', 'register');
+    }
+
+    const nextPath = `${url.pathname}${url.search}${url.hash}`;
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextPath) {
+      window.history.pushState({}, document.title, nextPath);
+    }
+  }
+
+  function navigateToPublicLanding() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextPath = '/';
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextPath) {
+      window.history.pushState({}, document.title, nextPath);
+    }
+  }
+
+  function navigateToAccountSecurity() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextPath = '/account-security';
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextPath) {
+      window.history.pushState({}, document.title, nextPath);
+    }
+  }
+
+  function syncAnonymousRouteStateFromLocation() {
+    if (typeof window === 'undefined' || state.session.status !== 'anonymous') {
+      return;
+    }
+
+    const pathname = window.location.pathname || '/';
+    if (isPreAccessRoutePath(pathname)) {
+      navigateToLogin();
+      state.ui.authPanel = 'none';
+      return;
+    }
+
+    if (isAccountSecurityRoutePath(pathname)) {
+      navigateToLogin();
+      state.ui.authPanel = 'none';
+      return;
+    }
+
+    if (isPublicLandingRoutePath(pathname)) {
+      state.ui.authPanel = 'none';
+      return;
+    }
+
+    if (isLoginRoutePath(pathname) || isAuthRoutePath(pathname)) {
+      const loginPanelIntent = getLoginPanelIntent(window.location);
+      if (loginPanelIntent === 'register') {
+        state.ui.authPanel = 'register';
+      } else if (isLoginRoutePath(pathname) && state.ui.authPanel === 'register') {
+        state.ui.authPanel = 'none';
+      }
+      return;
+    }
+
+    navigateToLogin();
+    state.ui.authPanel = 'none';
   }
 
   function emitWorkspaceChange() {
@@ -738,7 +1124,8 @@ export function createAppController(): AppController {
 
     const nextWorkspace = normalizeWorkspace(workspace);
     const nextPath = getWorkspacePath(nextWorkspace);
-    if (window.location.pathname !== nextPath) {
+    const routeChanged = window.location.pathname !== nextPath;
+    if (routeChanged) {
       window.history.pushState({}, document.title, nextPath);
     }
 
@@ -751,6 +1138,9 @@ export function createAppController(): AppController {
     }
 
     syncWorkspaceCapabilities();
+    if (routeChanged) {
+      emitWorkspaceChange();
+    }
   }
 
   function normalizeAuthError(error: unknown, mode: 'login' | 'restore') {
@@ -2992,8 +3382,25 @@ export function createAppController(): AppController {
     state.billing.error = null;
   }
 
+  function applyPublicBillingPlansSnapshot(snapshot: PublicBillingPlansPayload | null) {
+    state.billing.loaded = Boolean(snapshot);
+    state.billing.enabled = Boolean(snapshot?.enabled);
+    state.billing.provider = snapshot?.provider ?? null;
+    state.billing.providerReady = Boolean(snapshot?.providerReady);
+    state.billing.providerMocked = Boolean(snapshot?.providerMocked);
+    state.billing.plans = (snapshot?.plans ?? []) as BillingPlanEntry[];
+    state.billing.orders = [];
+    state.billing.error = null;
+  }
+
   function applyPreAccessBillingStateSnapshot(snapshot: PreAccessBillingStatePayload | null) {
     applyBillingStateSnapshot(snapshot as BillingStatePayload | null);
+  }
+
+  function applyIdentityStateSnapshot(snapshot: AccountIdentitiesPayload | null) {
+    state.identities.loaded = Boolean(snapshot);
+    state.identities.providers = (snapshot?.providers ?? []) as LinkedIdentityEntry[];
+    state.identities.error = null;
   }
 
   async function refreshAccountAccessState(token: string) {
@@ -3019,15 +3426,82 @@ export function createAppController(): AppController {
     }
   }
 
+  async function refreshPublicBillingState() {
+    try {
+      applyPublicBillingPlansSnapshot(await fetchPublicBillingPlans());
+    } catch (error) {
+      state.billing.loaded = false;
+      state.billing.enabled = false;
+      state.billing.provider = null;
+      state.billing.providerReady = false;
+      state.billing.providerMocked = false;
+      state.billing.plans = [];
+      state.billing.orders = [];
+      state.billing.error = error instanceof Error ? error.message : 'Unable to load billing plans';
+    }
+  }
+
+  async function refreshIdentityState(token: string) {
+    try {
+      applyIdentityStateSnapshot(await fetchAccountIdentities(token));
+    } catch (error) {
+      state.identities.loaded = false;
+      state.identities.providers = [];
+      state.identities.error = error instanceof Error ? error.message : 'Unable to load linked identities';
+    }
+  }
+
+  async function refreshAccountSecurityIdentityState(token?: string | null) {
+    try {
+      applyIdentityStateSnapshot(await fetchAccountSecurityIdentities(token));
+    } catch (error) {
+      state.identities.loaded = false;
+      state.identities.providers = [];
+      state.identities.error = error instanceof Error ? error.message : 'Unable to load linked identities';
+    }
+  }
+
+  async function refreshPreAccessBillingOnlyState() {
+    try {
+      applyPreAccessBillingStateSnapshot(await fetchPreAccessBillingState());
+    } catch (error) {
+      state.billing.loaded = false;
+      state.billing.enabled = false;
+      state.billing.provider = null;
+      state.billing.providerReady = false;
+      state.billing.providerMocked = false;
+      state.billing.plans = [];
+      state.billing.orders = [];
+      state.billing.error = error instanceof Error ? error.message : 'Unable to load billing';
+    }
+  }
+
+  async function refreshAccountSecurityState() {
+    if (state.session.status === 'authenticated') {
+      await Promise.all([
+        refreshAccountSecurityIdentityState(COOKIE_SESSION_MARKER),
+        refreshBillingState(COOKIE_SESSION_MARKER),
+      ]);
+      return;
+    }
+
+    if (state.session.status === 'pre_access') {
+      await Promise.all([
+        refreshAccountSecurityIdentityState(),
+        refreshPreAccessBillingOnlyState(),
+      ]);
+    }
+  }
+
   async function refreshPreAccessState() {
     const [preAccess, billing] = await Promise.all([
       fetchPreAccessMe(),
-      fetchPreAccessBillingState(),
+      fetchPublicBillingPlans(),
     ]);
 
     applyPreAccessSession(preAccess.user);
     applyAccountAccess(preAccess.access);
-    applyPreAccessBillingStateSnapshot(billing);
+    applyPublicBillingPlansSnapshot(billing);
     state.preAccess.loaded = true;
   }
 
@@ -3035,10 +3509,12 @@ export function createAppController(): AppController {
     await Promise.all([
       refreshAccountAccessState(token),
       refreshBillingState(token),
+      refreshIdentityState(token),
     ]);
   }
 
   function clearSession() {
+    stopSocialLinkSync();
     stopPreAccessPolling();
     recentAlertFingerprints.clear();
     nextColdFieldRefreshAt = 0;
@@ -3066,6 +3542,9 @@ export function createAppController(): AppController {
     state.billing.orders = [];
     state.billing.pendingPlanKey = null;
     state.billing.error = null;
+    state.identities.loaded = false;
+    state.identities.providers = [];
+    state.identities.error = null;
     state.preAccess.loaded = false;
     state.preAccess.awaitingConfirmation = false;
     state.runtime.cycle = 0;
@@ -3124,6 +3603,7 @@ export function createAppController(): AppController {
     state.panels.lateralized = 0;
     state.panels.bidZone = 0;
     state.ui.authPanel = 'none';
+    state.ui.pendingIdentityUnlinkProvider = null;
     state.ui.pendingVerificationEmail = null;
     state.ui.pendingPasswordResetToken = null;
     state.ui.pendingLoginOtpChallengeToken = null;
@@ -3428,6 +3908,7 @@ export function createAppController(): AppController {
       emit('legacy', 'overlay');
     },
     openAuthPanel(panel: Exclude<AuthPanel, 'none'>) {
+      state.ui.pendingIdentityUnlinkProvider = null;
       if (panel === 'change-password') {
         monitoringPausedForAuthPanel = state.runtime.mode === 'active';
         if (monitoringPausedForAuthPanel) {
@@ -3437,6 +3918,9 @@ export function createAppController(): AppController {
         state.ui.notice = null;
       }
       state.ui.authPanel = panel;
+      if (panel === 'register' && typeof window !== 'undefined' && state.session.status === 'anonymous' && isLoginRoutePath(window.location.pathname)) {
+        navigateToLogin('register');
+      }
       emit('all');
       if (panel === 'user-settings' && state.session.status === 'authenticated') {
         void refreshUserSettingsState(COOKIE_SESSION_MARKER)
@@ -3452,13 +3936,48 @@ export function createAppController(): AppController {
         && monitoringPausedForAuthPanel
         && state.session.status === 'authenticated';
       state.ui.authPanel = 'none';
+      state.ui.pendingIdentityUnlinkProvider = null;
       state.ui.pendingVerificationEmail = null;
       state.ui.pendingPasswordResetToken = null;
       state.ui.pendingLoginOtpChallengeToken = null;
       state.ui.pendingLoginOtpEmailHint = null;
+      if (state.session.status === 'anonymous') {
+        clearLoginPanelUrl();
+      }
       monitoringPausedForAuthPanel = false;
       if (shouldResumeMonitoring) {
         startMonitoringTimers();
+      }
+      emit('all');
+    },
+    goToLogin(panel?: 'register') {
+      navigateToLogin(panel);
+      if (state.session.status === 'anonymous') {
+        syncAnonymousRouteStateFromLocation();
+      }
+      emit('all');
+    },
+    goToPublicLanding() {
+      navigateToPublicLanding();
+      if (state.session.status === 'anonymous' && !state.billing.loaded) {
+        void refreshPublicBillingState().then(() => emit('all')).catch(() => emit('all'));
+      }
+      emit('all');
+    },
+    goToAccountSecurity() {
+      navigateToAccountSecurity();
+      if (state.session.status === 'authenticated' || state.session.status === 'pre_access') {
+        void refreshAccountSecurityState().then(() => emit('all')).catch(() => emit('all'));
+      } else {
+        syncAnonymousRouteStateFromLocation();
+        emit('all');
+      }
+    },
+    goToPreAccess() {
+      navigateToPreAccess();
+      if (state.session.status === 'pre_access') {
+        void refreshPreAccessState().then(() => emit('all')).catch(() => emit('all'));
+        return;
       }
       emit('all');
     },
@@ -3476,6 +3995,96 @@ export function createAppController(): AppController {
         }
         emit('legacy');
       }
+    },
+    startSocialLink(provider: 'google' | 'discord') {
+      if (typeof window === 'undefined') {
+        return;
+      }
+
+      const normalizedProvider = provider === 'discord' ? 'discord' : 'google';
+      const currentPath = `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`;
+      const url = new URL(`/api/auth/social/${normalizedProvider}/start`, window.location.origin);
+      url.searchParams.set('returnTo', currentPath || '/alerts');
+      const popup = window.open(url.toString(), SOCIAL_LINK_POPUP_WINDOW_NAME, 'popup=yes,width=760,height=860');
+      if (!popup) {
+        stopSocialLinkSync();
+        socialLinkPopupWindow = null;
+        window.location.assign(url.toString());
+        return;
+      }
+      socialLinkPopupWindow = popup;
+      startSocialLinkSync(normalizedProvider);
+      try {
+        popup.focus();
+      } catch {
+        // Ignore popup focus failures.
+      }
+    },
+    openIdentityUnlink(provider: 'google' | 'discord') {
+      const normalizedProvider = provider === 'discord' ? 'discord' : 'google';
+      state.ui.pendingIdentityUnlinkProvider = normalizedProvider;
+      state.ui.error = null;
+      state.ui.notice = null;
+      emit('all');
+    },
+    cancelIdentityUnlink() {
+      if (!state.ui.pendingIdentityUnlinkProvider) {
+        return;
+      }
+      state.ui.pendingIdentityUnlinkProvider = null;
+      state.ui.error = null;
+      state.ui.notice = null;
+      emit('all');
+    },
+    async unlinkSocialIdentity(provider: 'google' | 'discord', currentPassword: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+
+      const normalizedProvider = provider === 'discord' ? 'discord' : 'google';
+      const password = String(currentPassword || '');
+      if (!password) {
+        setError('Current password is required to unlink a social login.');
+        emit('all');
+        return;
+      }
+
+      if (state.session.status !== 'authenticated' && state.session.status !== 'pre_access') {
+        setError('Account security authentication required');
+        emit('all');
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice(`Removing ${normalizedProvider === 'google' ? 'Google' : 'Discord'} sign-in from this account...`);
+      emit('all');
+
+      try {
+        const token = state.session.status === 'authenticated' ? COOKIE_SESSION_MARKER : null;
+        const snapshot = await unlinkAccountSecurityIdentity(normalizedProvider, password, token);
+        applyIdentityStateSnapshot(snapshot);
+        state.ui.pendingIdentityUnlinkProvider = null;
+        setNotice(snapshot.message || `${normalizedProvider === 'google' ? 'Google' : 'Discord'} sign-in removed.`);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Unable to unlink social identity');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit('all');
+      }
+    },
+    startSocialLogin(provider: 'google' | 'discord') {
+      if (typeof window === 'undefined') {
+        return;
+      }
+
+      const normalizedProvider = provider === 'discord' ? 'discord' : 'google';
+      const currentPath = `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`;
+      const url = new URL(`/api/auth/social/${normalizedProvider}/login/start`, window.location.origin);
+      url.searchParams.set('returnTo', currentPath || '/alerts');
+      window.location.assign(url.toString());
     },
     async startBillingCheckout(planKey: string) {
       if (state.session.status !== 'authenticated') {
@@ -3545,7 +4154,7 @@ export function createAppController(): AppController {
         }
         await refreshPreAccessState();
         if (typeof window !== 'undefined') {
-          window.location.href = result.checkoutUrl;
+          window.open(result.checkoutUrl, '_blank', 'noopener');
         }
       } catch (error) {
         state.billing.error = error instanceof Error ? error.message : 'Unable to start checkout';
@@ -3771,6 +4380,19 @@ export function createAppController(): AppController {
       navigateToWorkspace(workspace);
     },
     syncWorkspaceFromLocation() {
+      if (state.session.status === 'anonymous') {
+        syncAnonymousRouteStateFromLocation();
+        if (typeof window !== 'undefined' && isPublicLandingRoutePath(window.location.pathname) && !state.billing.loaded) {
+          void refreshPublicBillingState().then(() => emit('all')).catch(() => emit('all'));
+          return;
+        }
+        emit('all');
+        return;
+      }
+      if (typeof window !== 'undefined' && isAccountSecurityRoutePath(window.location.pathname)) {
+        void refreshAccountSecurityState().then(() => emit('all')).catch(() => emit('all'));
+        return;
+      }
       syncWorkspaceFromLocationInternal();
     },
     startMonitoring() {
@@ -3784,6 +4406,43 @@ export function createAppController(): AppController {
     async init() {
       const billingCheckoutSucceeded = typeof window !== 'undefined'
         && getBillingCheckoutIntent(window.location) === 'success';
+      const socialLinkIntent = typeof window !== 'undefined'
+        ? getSocialLinkIntent(window.location)
+        : null;
+      const socialLoginIntent = typeof window !== 'undefined'
+        ? getSocialLoginIntent(window.location)
+        : null;
+
+      if (
+        typeof window !== 'undefined'
+        && socialLinkIntent
+        && (window.name === SOCIAL_LINK_POPUP_WINDOW_NAME || (window.opener && !window.opener.closed))
+      ) {
+        publishSocialLinkResult(socialLinkIntent);
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({
+              type: SOCIAL_LINK_RESULT_MESSAGE_TYPE,
+              provider: socialLinkIntent.provider,
+              status: socialLinkIntent.status,
+            }, window.location.origin);
+          }
+        } catch {
+          // Ignore cross-tab messaging failures and fall back to storage sync.
+        }
+        clearSocialLinkUrl();
+        window.close();
+        window.setTimeout(() => {
+          try {
+            window.close();
+          } catch {
+            // Ignore delayed popup close failures.
+          }
+        }, 120);
+        setNotice(`${socialLinkIntent.provider === 'google' ? 'Google' : 'Discord'} linking finished. You can close this tab if it stays open.`);
+        emit();
+        return;
+      }
 
       if (typeof window !== 'undefined' && hasAuthRouteIntent(window.location)) {
         setBusy(false);
@@ -3805,13 +4464,37 @@ export function createAppController(): AppController {
         applySession(session.user);
         await refreshAccountAccessState(COOKIE_SESSION_MARKER);
         await refreshBillingState(COOKIE_SESSION_MARKER);
+        await refreshIdentityState(COOKIE_SESSION_MARKER);
         if (billingCheckoutSucceeded) {
           state.ui.authPanel = 'user-settings';
           clearBillingCheckoutUrl();
         }
+        if (socialLinkIntent) {
+          state.ui.authPanel = 'user-settings';
+          clearSocialLinkUrl();
+          if (socialLinkIntent.status === 'success') {
+            setNotice(`${socialLinkIntent.provider === 'google' ? 'Google' : 'Discord'} linked successfully.`);
+          } else if (socialLinkIntent.status === 'identity_conflict') {
+            setError('That social identity is already linked to another TrendScope account.');
+          } else if (socialLinkIntent.status === 'email_conflict') {
+            setError('The provider email matches a different existing account. Sign in to the original account instead. Automatic merge is blocked.');
+          } else if (socialLinkIntent.status === 'provider_denied') {
+            setError('The social provider did not approve the linking request.');
+          } else {
+            setError('Unable to complete social linking. Please try again.');
+          }
+        }
+        if (socialLoginIntent?.status === 'success') {
+          clearSocialLoginUrl();
+          setNotice(`${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in successful.`);
+        }
         await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         setNotice(
-          billingCheckoutSucceeded
+          socialLinkIntent
+            ? state.ui.notice
+            : socialLoginIntent?.status === 'success'
+            ? state.ui.notice
+            : billingCheckoutSucceeded
             ? 'Billing checkout completed. Access and billing history were refreshed.'
             : AUTH_NOTICE_SESSION_RESTORED
         );
@@ -3831,6 +4514,10 @@ export function createAppController(): AppController {
             if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
               schedulePreAccessConfirmationPolling();
             }
+          } else if (socialLoginIntent?.status === 'success') {
+            clearSocialLoginUrl();
+            state.preAccess.awaitingConfirmation = false;
+            setNotice(`${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in successful. Access payment is still required before entering the bot.`);
           } else {
             state.preAccess.awaitingConfirmation = false;
             if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
@@ -3838,13 +4525,34 @@ export function createAppController(): AppController {
             }
           }
         } catch {
+          await refreshPublicBillingState();
+          syncAnonymousRouteStateFromLocation();
           state.ui.loginErrorCount = 0;
-          const message = normalizeAuthError(error, 'restore');
-          if (message.includes('no longer valid') || message.includes('Unable to restore')) {
-            setNotice(AUTH_NOTICE_NO_SESSION);
-            setError(null);
+          if (socialLoginIntent) {
+            clearSocialLoginUrl();
+            if (socialLoginIntent.status === 'not_linked') {
+              setError(`This ${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} account is not linked to a TrendScope login yet. Sign in with email and password first, then link it from User Settings.`);
+            } else if (socialLoginIntent.status === 'provider_denied') {
+              setError(`The ${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in request was not approved.`);
+            } else if (socialLoginIntent.status === 'revoked') {
+              setError('This account was blocked from product access by an administrator or internal access policy.');
+            } else if (socialLoginIntent.status === 'deactivated') {
+              setError('Account is deactivated');
+            } else if (socialLoginIntent.status === 'email_unverified') {
+              setError('Email not verified. Check your inbox or resend verification before signing in.');
+            } else if (socialLoginIntent.status === 'provider_unavailable') {
+              setError(`The ${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in provider is not configured in this environment yet.`);
+            } else {
+              setError('Unable to complete social sign-in. Please try again or use email and password.');
+            }
           } else {
-            setError(message);
+            const message = normalizeAuthError(error, 'restore');
+            if (message.includes('no longer valid') || message.includes('Unable to restore')) {
+              setNotice(AUTH_NOTICE_NO_SESSION);
+              setError(null);
+            } else {
+              setError(message);
+            }
           }
         }
       } finally {
@@ -3854,11 +4562,21 @@ export function createAppController(): AppController {
 
       await handleAuthRouteIntent();
       if (state.session.status === 'pre_access') {
-        navigateToPreAccess();
+        if (typeof window !== 'undefined' && isAccountSecurityRoutePath(window.location.pathname)) {
+          await refreshAccountSecurityState();
+        } else {
+          navigateToPreAccess();
+        }
+      } else if (state.session.status === 'anonymous') {
+        syncAnonymousRouteStateFromLocation();
       } else {
-        syncWorkspaceFromLocationInternal({
-          canonicalize: state.session.status === 'authenticated',
-        });
+        if (typeof window !== 'undefined' && isAccountSecurityRoutePath(window.location.pathname)) {
+          await refreshAccountSecurityState();
+        } else {
+          syncWorkspaceFromLocationInternal({
+            canonicalize: state.session.status === 'authenticated',
+          });
+        }
       }
     },
     async login(email: string, password: string) {
@@ -3904,6 +4622,7 @@ export function createAppController(): AppController {
         applySession(session.user);
         await refreshAccountAccessState(COOKIE_SESSION_MARKER);
         await refreshBillingState(COOKIE_SESSION_MARKER);
+        await refreshIdentityState(COOKIE_SESSION_MARKER);
         await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         syncWorkspaceFromLocationInternal({ canonicalize: true });
         state.ui.loginErrorCount = 0;
@@ -3980,6 +4699,7 @@ export function createAppController(): AppController {
           applySession(result.user);
           await refreshAccountAccessState(COOKIE_SESSION_MARKER);
           await refreshBillingState(COOKIE_SESSION_MARKER);
+          await refreshIdentityState(COOKIE_SESSION_MARKER);
           await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
           syncWorkspaceFromLocationInternal({ canonicalize: true });
           state.ui.loginErrorCount = 0;
@@ -4050,6 +4770,7 @@ export function createAppController(): AppController {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
+        navigateToLogin();
         state.ui.pendingVerificationEmail = trimLoginEmailValue(validated.input.email);
         state.ui.authPanel = 'email-verification';
         setNotice(appendEmailDebugNotice(
@@ -4164,6 +4885,7 @@ export function createAppController(): AppController {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
+        navigateToLogin();
         state.ui.authPanel = 'none';
         state.ui.pendingPasswordResetToken = null;
         setNotice(result.message || 'Password reset successful. Please login again.');
@@ -4237,12 +4959,17 @@ export function createAppController(): AppController {
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Logout failed');
       } finally {
+        const hadPreAccessSession = state.session.status === 'pre_access';
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
+        if (hadPreAccessSession || typeof window !== 'undefined') {
+          navigateToPublicLanding();
+        }
         setBusy(false);
-        setNotice('Logged out.');
+        setNotice('Logged out. Review the plans or sign in again when ready.');
         emit();
+        void refreshPublicBillingState().then(() => emit('all')).catch(() => emit('all'));
       }
     },
     async logoutAll() {
