@@ -317,6 +317,32 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage18-social-identities',
+    name: 'Stage 18 social identity linking foundation',
+    repair: 'node src/utils/db-init-stage18.js',
+    tables: [
+      {
+        table: 'user_social_identities',
+        columns: [
+          'id',
+          'user_id',
+          'provider',
+          'provider_user_id',
+          'provider_email',
+          'provider_email_verified',
+          'provider_display_name',
+          'metadata',
+          'linked_at',
+          'last_login_at',
+          'updated_at',
+        ],
+        defaults: {
+          provider_email_verified: 'false',
+        },
+      },
+    ],
+  },
+  {
     key: 'stage14-pump-migration-grace',
     name: 'Stage 14 PumpFun migration grace field',
     repair: 'node src/utils/db-init-stage14.js',

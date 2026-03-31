@@ -97,6 +97,21 @@ function normalizeMoonpayNetwork(value) {
   return 'main';
 }
 
+function buildSocialProviderConfig({ clientIdEnv, clientSecretEnv, scopes }) {
+  const clientId = String(process.env[clientIdEnv] || '').trim();
+  const clientSecret = String(process.env[clientSecretEnv] || '').trim();
+  return {
+    clientId,
+    clientSecret,
+    scopes: [...scopes],
+    configured: Boolean(clientId && clientSecret),
+  };
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
 function getDefaultMoonpayApiBaseUrl(network) {
   return network === 'test'
     ? 'https://api.dev.hel.io/v1'
@@ -389,6 +404,50 @@ module.exports = {
         process.env.EMAIL_DEV_EXPOSE_DEBUG,
         (process.env.NODE_ENV || 'development') === 'development'
       ),
+    },
+  },
+
+  socialAuth: {
+    appBaseUrl: normalizeBaseUrl(process.env.APP_BASE_URL || ''),
+    callbackBaseUrl: normalizeBaseUrl(
+      process.env.SOCIAL_AUTH_CALLBACK_BASE_URL
+      || process.env.API_BASE_URL
+      || process.env.APP_BASE_URL
+      || ''
+    ),
+    linkCookie: {
+      name: process.env.SOCIAL_LINK_COOKIE_NAME || 'volume_alert_social_link',
+      domain: process.env.AUTH_COOKIE_DOMAIN || undefined,
+      secure: parseBoolean(
+        process.env.AUTH_COOKIE_SECURE,
+        (process.env.NODE_ENV || 'development') === 'production'
+      ),
+      sameSite: process.env.AUTH_COOKIE_SAMESITE
+        || (((process.env.NODE_ENV || 'development') === 'production') ? 'none' : 'lax'),
+      expiresMinutes: parseInt(process.env.SOCIAL_LINK_EXPIRES_MINUTES || '10', 10),
+    },
+    loginCookie: {
+      name: process.env.SOCIAL_LOGIN_COOKIE_NAME || 'volume_alert_social_login',
+      domain: process.env.AUTH_COOKIE_DOMAIN || undefined,
+      secure: parseBoolean(
+        process.env.AUTH_COOKIE_SECURE,
+        (process.env.NODE_ENV || 'development') === 'production'
+      ),
+      sameSite: process.env.AUTH_COOKIE_SAMESITE
+        || (((process.env.NODE_ENV || 'development') === 'production') ? 'none' : 'lax'),
+      expiresMinutes: parseInt(process.env.SOCIAL_LOGIN_EXPIRES_MINUTES || '10', 10),
+    },
+    providers: {
+      google: buildSocialProviderConfig({
+        clientIdEnv: 'GOOGLE_OAUTH_CLIENT_ID',
+        clientSecretEnv: 'GOOGLE_OAUTH_CLIENT_SECRET',
+        scopes: ['openid', 'email', 'profile'],
+      }),
+      discord: buildSocialProviderConfig({
+        clientIdEnv: 'DISCORD_OAUTH_CLIENT_ID',
+        clientSecretEnv: 'DISCORD_OAUTH_CLIENT_SECRET',
+        scopes: ['identify', 'email'],
+      }),
     },
   },
 
