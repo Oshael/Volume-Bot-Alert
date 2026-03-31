@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code on `2026-03-29` after the dedicated `/access` pre-access purchase flow, inactive-by-default new accounts, special-invite timed access, and the post-verify auto-login into pre-access were integrated.
+Last reviewed against code on `2026-03-31` after the public frontpage + `/login` split, the simplified `/access` purchase flow, the limited `/account-security` surface, and Google/Discord linking/unlinking were integrated and manually validated.
 
 ## Test Environment And Database Safety
 
@@ -87,12 +87,18 @@ The UI is now centered around two authenticated workspaces:
   - `Bid Zone Coins`
 
 The auth/account surface now also includes:
-- `Login`
-- `Create Account`
-- `Change Password`
-- `Forgot Password`
-- `Access Help`
-- `Pre-Access /access`
+- `/`
+  - public product landing
+  - public pricing preview
+- `/login`
+  - local login
+  - `Create Account`
+  - `Forgot Password`
+  - linked-only Google/Discord sign-in
+- `/access`
+  - authenticated pre-access purchase flow
+- `/account-security`
+  - limited recovery/settings surface for linked identities and billing history
 
 ## Main Directories
 
@@ -595,6 +601,16 @@ Current login behavior:
       - valid access -> `GET /api/auth/me` + normal bot hydration
       - `inactive` / expired -> pre-access session + `/access`
       - `revoked` / deactivated -> blocked
+  - social login path:
+    - login panel exposes `Continue with Google` and `Continue with Discord`
+    - `GET /api/auth/social/:provider/login/start`
+    - provider redirects to `GET /api/auth/social/:provider/login/callback`
+    - backend exchanges OAuth code, resolves linked provider identity, and never creates an account automatically
+    - backend branches by access state:
+      - linked + valid access -> normal bot session without OTP
+      - linked + `inactive` / expired -> pre-access session + `/access`
+      - linked + `revoked` / deactivated -> blocked
+      - not linked -> return to login with explicit social-login error
 - restore path:
   - normal session:
     - `GET /api/auth/me`
@@ -614,6 +630,10 @@ Login access rules:
 - `access_status = inactive` and expired access route the user into `/access`
 - `access_status = revoked` and `is_active = false` are hard blocks
 - successful verify-email now skips the immediate OTP step and opens pre-access directly
+- social login is allowed only for previously linked provider identities
+- social login does not use OTP
+- local `email + password` login still uses OTP
+- social login never performs account creation and never performs email-based merge
 
 Current login UX features:
 - `TrendScope` branding with `Volume Bot Tracker`
@@ -628,11 +648,17 @@ Current login UX features:
 - old-password warning after local password-change history match
 - email OTP modal to finish sign-in
 - dedicated pre-access landing and billing flow at `/access`
+- dedicated public landing at `/` with dynamic plan preview
+- dedicated login surface at `/login`
 - auth modals now use focus trapping so `Tab` stays inside the active modal
 - separated support actions:
   - `Create Account`
   - `Forgot Password`
   - `Access Help`
+- login panel now includes:
+  - `Continue with Google`
+  - `Continue with Discord`
+  - explicit copy that these buttons are for linked accounts only
 
 Current login/help layout rules:
 - `Create Account` and `Forgot Password` live under the password field
@@ -801,8 +827,6 @@ Behavior:
   - `revoked` accounts
   - `is_active = false` accounts
 - user can:
-  - review account identity
-  - see bot/value proposition copy
   - choose a plan
   - create a billing order
   - leave for MoonPay or local mock checkout
@@ -810,13 +834,120 @@ Behavior:
   - upgrade into the normal bot session after confirmed payment
 
 Current implementation notes:
+- `/access` is now intentionally narrow:
+  - topbar actions
+  - transient payment state notices
+  - pricing cards
+  - no giant account-target hero
 - local mock checkout is already integrated for development validation
 - webhook-confirmed access remains the backend source of truth
 - successful payment upgrades access and then upgrades the session into the normal bot session
 - `User Settings` billing still exists, but it is no longer the primary journey for no-access users
+- the pricing cards in `/access` now reuse the same visual/card hierarchy as the public landing instead of maintaining a separate older billing-card template
+- `/access` now hydrates plan selection from the public billing-plan payload so pricing cards do not wait on order-history loading
+- pre-access checkout opens in a new tab
+- while the checkout link is being generated, the selected pricing card shows an explicit in-card loading banner
 - current sandbox/dev validation uses a single public tunnel on the frontend origin:
   - `frontend/vite.config.ts` proxies `/api` and `/socket.io` to `localhost:3000`
   - this allows provider redirect and MoonPay webhook calls to share the same public host during local testing
+
+## Limited Account Settings Surface
+
+Files:
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/services/api/account.ts`
+- `src/routes/account-security.js`
+
+Behavior:
+- visible UI label is `Account Settings`
+- internal route remains `/account-security`
+- available to:
+  - normal authenticated sessions
+  - `pre_access` sessions
+- not available to:
+  - `revoked` accounts
+  - `is_active = false` accounts
+- user can:
+  - review linked Google/Discord identities
+  - unlink provider identities with `currentPassword`
+  - review billing history
+  - open internal receipt pages for paid orders
+  - resume unfinished checkout sessions from billing history
+
+Important rule:
+- `link` remains available only inside the normal authenticated bot session
+- this limited route is intentionally for recovery/settings tasks, not product access
+
+## Social Identity Linking
+
+Files:
+- `src/routes/social-auth.js`
+- `src/services/social-oauth.js`
+- `src/services/social-link-session.js`
+- `src/models/user-social-identity.js`
+- `src/services/social-auth.js`
+- `src/routes/account.js`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/services/api/account.ts`
+- `frontend/src/ui/sections/layout-sections.ts`
+
+Behavior:
+- only available from an already authenticated normal app session
+- exposed in `User Settings` under `Connected Identities`
+- supported providers:
+  - `Google`
+  - `Discord`
+- flow:
+  - `GET /api/auth/social/:provider/start`
+  - provider OAuth consent
+  - `GET /api/auth/social/:provider/callback`
+  - identity is attached to the current local account when validation succeeds
+
+Current linking rules:
+- linking must not start from pre-access
+- linking requires the same authenticated session that started the flow
+- provider identity conflict blocks linking
+- provider email conflict with another local account blocks linking
+- automatic merge by email is intentionally blocked
+- one provider slot per account is enforced in the current data model
+
+Current callback model:
+- `APP_BASE_URL` is the frontend/public app base
+- `SOCIAL_AUTH_CALLBACK_BASE_URL` is the backend/public callback base when frontend and backend live on different hosts
+- local testing currently works best when the full flow starts and ends on the same public host, typically the single frontend `ngrok` URL
+
+## Social Login
+
+Files:
+- `src/routes/social-auth.js`
+- `src/services/social-oauth.js`
+- `src/services/social-link-session.js`
+- `src/models/user-social-identity.js`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/ui/sections/layout-sections.ts`
+
+Behavior:
+- social login is now implemented for already-linked identities only
+- start routes:
+  - `GET /api/auth/social/:provider/login/start`
+- callback routes:
+  - `GET /api/auth/social/:provider/login/callback`
+
+Current login rules:
+- linked `Google` / `Discord` identities can sign in without OTP
+- local `email + password` login still requires OTP
+- social login never creates a new account
+- social login never merges by email
+- linked + active access -> normal bot session
+- linked + `inactive` / expired -> pre-access session + `/access`
+- linked + `revoked` / deactivated -> blocked
+- not linked -> return to login with explicit social-login error
+
+Important implementation note:
+- linking and social login now use different callback URIs for each provider
+- both callback URIs must be registered with Google and Discord
+- local/production misconfiguration of only one callback URI is enough to make half of the social-auth surface fail while the other half still works
 
 ## Access Help
 

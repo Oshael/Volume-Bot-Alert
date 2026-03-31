@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-29` after the dedicated `/access` pre-access purchase flow, inactive-by-default new accounts, special-invite timed access, and the post-verify auto-login into pre-access were integrated.
+Last reviewed against code on `2026-03-31` after the public frontpage + `/login` split, the simplified `/access` purchase flow, the limited `/account-security` surface, and Google/Discord linking/unlinking were integrated and manually validated.
 
 ## Test Database Safety
 
@@ -123,11 +123,18 @@ Important:
   - `POST /api/auth/password-reset/request`
   - `POST /api/auth/password-reset/confirm`
   - `GET /api/pre-access/me`
-  - `GET /api/pre-access/plans`
-  - `GET /api/pre-access/orders`
-  - `POST /api/pre-access/orders`
+  - `GET /api/pre-access/billing/state`
+  - `POST /api/pre-access/billing/orders`
   - `POST /api/pre-access/complete`
   - `POST /api/pre-access/logout`
+  - `GET /api/account/identities`
+  - `GET /api/account-security/identities`
+  - `POST /api/account-security/identities/:provider/unlink`
+  - `GET /api/account-security/billing/orders/:orderId/receipt`
+  - `GET /api/auth/social/:provider/start`
+  - `GET /api/auth/social/:provider/callback`
+  - `GET /api/auth/social/:provider/login/start`
+  - `GET /api/auth/social/:provider/login/callback`
 - Current session transport:
   - backend-issued `HttpOnly` cookie
   - frontend requests use `credentials: include`
@@ -140,6 +147,15 @@ Important:
   - `access_status = inactive` and expired access route the user into `/access`
   - successful email verification now creates the pre-access session directly instead of forcing OTP immediately after verify
   - manual login after logout still uses email/password + email OTP
+  - Google/Discord identities can now be linked only from an already authenticated normal app session
+  - social login is now available only for identities that were previously linked to an existing local account
+  - social login never creates accounts and never merges by email
+  - social login does not require OTP
+  - local `email + password` login still requires OTP
+  - linked social login branches by access state:
+    - valid access -> normal bot session
+    - `inactive` / expired -> pre-access session + `/access`
+    - `revoked` / deactivated -> blocked
 
 ### User config and user overlays
 - Source of truth: backend
@@ -690,18 +706,48 @@ Current monitored UI behavior:
      - billing/pre-access hydration path only
 
 Current login/account implementation status:
-- login, registration, email verification, pre-access purchase flow, password reset, and change password are implemented
+- login, registration, email verification, pre-access purchase flow, password reset, change password, social identity linking, and linked-only social login are implemented
+- unlink is now implemented in both normal authenticated `User Settings` and the limited `/account-security` surface
+- the public entry surface is now split as:
+  - `/`
+    - public product landing
+    - public billing plan preview
+  - `/login`
+    - local login
+    - register modal path
+    - linked-only Google/Discord login
+  - `/access`
+    - authenticated pre-access purchase flow
+    - dynamic billing cards using the same pricing system as the public landing
+  - `/account-security`
+    - limited recovery/settings surface
+    - linked-identity review + unlink
+    - billing history + internal receipt view
 - session restore after hard refresh, browser close, and normal browser restart is working in the integrated frontend while the cookie session remains valid
 - the live auth flow is cookie-backed and no longer depends on browser-readable token storage
 - auth UX is materially more complete than the older "raw login shell" state
 - current MoonPay sandbox/dev validation path uses the frontend dev server as the public origin:
   - Vite now proxies `/api` and `/socket.io` to the backend in development
   - a single public tunnel on the frontend origin can therefore serve both provider redirect and backend webhook paths during local sandbox testing
+- current social auth local validation uses the same public frontend origin approach:
+  - `APP_BASE_URL` and `SOCIAL_AUTH_CALLBACK_BASE_URL` can both point at the same public frontend tunnel during local testing
+  - social linking and social login now use different callback paths and both must be registered in Google/Discord
+  - for local OAuth validation, the flow must start and finish on the same public host; mixing `localhost` and `ngrok` is not a valid test shape
+- the social-link popup completion path is now CSP-safe:
+  - the callback page no longer depends on inline script
+  - a dedicated external bridge script is served from `/api/auth/social/popup-bridge.js`
+  - this bridge now closes the popup and syncs the main window correctly in the validated local/ngrok flow
+- the authenticated `User Settings` overlay now preserves scroll position during link/unlink rerenders, which prevents the modal from jumping back to the top on every identity interaction
+- `/access` now hydrates plan selection from the public billing-plan payload instead of blocking the pricing cards on order-history loading
+- pre-access checkout now opens MoonPay in a new tab and shows explicit in-card loading feedback while the secure checkout link is being generated
+- the limited `/account-security` label shown to users is now `Account Settings`, but the internal route remains `/account-security`
 
 Current login/account follow-up:
 - keep refining support/recovery wording and auth-state messaging
 - keep validating that frontend UX changes do not drift from the backend-owned session model
 - avoid reintroducing frontend-readable session state as part of convenience UX work
+- fresh email-OTP step-up remains an optional future hardening path for unlink, but the current shipped step-up is `currentPassword`
+- final validation on the permanent production domain should still be treated as a separate rollout check from the successful local/ngrok pass
 
 ### Auth and security hardening checkpoint
 - Session auth is now cookie-backed with `HttpOnly` cookies instead of browser-readable auth token storage.
