@@ -1,6 +1,34 @@
 {
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/login",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/login/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/access",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/access/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/account-security",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/account-security/:path*",
+      "destination": "/index.html"
+    },
+    {
       "source": "/alerts",
       "destination": "/index.html"
     },
