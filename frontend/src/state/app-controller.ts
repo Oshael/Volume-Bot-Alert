@@ -4003,7 +4003,7 @@ export function createAppController(): AppController {
 
       const normalizedProvider = provider === 'discord' ? 'discord' : 'google';
       const currentPath = `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`;
-      const url = new URL(`/api/auth/social/${normalizedProvider}/start`, window.location.origin);
+      const url = new URL(`/api/auth/social/${normalizedProvider}/start`, resolveApiBase(window.location));
       url.searchParams.set('returnTo', currentPath || '/alerts');
       const popup = window.open(url.toString(), SOCIAL_LINK_POPUP_WINDOW_NAME, 'popup=yes,width=760,height=860');
       if (!popup) {
@@ -4082,7 +4082,7 @@ export function createAppController(): AppController {
 
       const normalizedProvider = provider === 'discord' ? 'discord' : 'google';
       const currentPath = `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`;
-      const url = new URL(`/api/auth/social/${normalizedProvider}/login/start`, window.location.origin);
+      const url = new URL(`/api/auth/social/${normalizedProvider}/login/start`, resolveApiBase(window.location));
       url.searchParams.set('returnTo', currentPath || '/alerts');
       window.location.assign(url.toString());
     },
