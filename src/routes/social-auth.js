@@ -210,7 +210,10 @@ function buildLoginRedirect(path, provider, code) {
 
 function normalizeAuthenticatedSocialLoginReturnTo(path) {
   const normalized = normalizeReturnTo(path);
-  return normalized === '/access' || normalized.startsWith('/access/')
+  return normalized === '/login'
+    || normalized.startsWith('/login/')
+    || normalized === '/access'
+    || normalized.startsWith('/access/')
     ? '/alerts'
     : normalized;
 }
