@@ -137,67 +137,121 @@ function looksLikeTestDatabaseName(name) {
     || normalized.includes('testing');
 }
 
-function getDbConfig(runtimeEnv) {
-  const isTestEnv = runtimeEnv === 'test';
-  const hasTestSpecificUrl = Boolean(getEnv('DATABASE_URL_TEST', 'POSTGRES_URL_TEST'));
-  const hasTestSpecificParts = Boolean(getEnv(
-    'DB_HOST_TEST',
-    'PGHOST_TEST',
-    'DB_PORT_TEST',
-    'PGPORT_TEST',
-    'DB_NAME_TEST',
-    'PGDATABASE_TEST',
-    'DB_USER_TEST',
-    'PGUSER_TEST',
-    'DB_PASSWORD_TEST',
-    'PGPASSWORD_TEST'
-  ));
-  const preferTestSpecificVars = isTestEnv && (hasTestSpecificUrl || hasTestSpecificParts);
-  const connectionString = preferTestSpecificVars
-    ? getEnv('DATABASE_URL_TEST', 'POSTGRES_URL_TEST')
-    : getEnv('DATABASE_URL', 'POSTGRES_URL');
-  let parsed = null;
+const TEST_DB_URL_ENV_NAMES = ['DATABASE_URL_TEST', 'POSTGRES_URL_TEST'];
+const DEFAULT_DB_URL_ENV_NAMES = ['DATABASE_URL', 'POSTGRES_URL'];
+const TEST_DB_PART_ENV_NAMES = [
+  'DB_HOST_TEST',
+  'PGHOST_TEST',
+  'DB_PORT_TEST',
+  'PGPORT_TEST',
+  'DB_NAME_TEST',
+  'PGDATABASE_TEST',
+  'DB_USER_TEST',
+  'PGUSER_TEST',
+  'DB_PASSWORD_TEST',
+  'PGPASSWORD_TEST',
+];
 
-  if (connectionString) {
-    try {
-      parsed = new URL(connectionString);
-    } catch {
-      parsed = null;
-    }
+function parseConnectionUrl(connectionString) {
+  if (!connectionString) {
+    return null;
   }
 
-  const host = preferTestSpecificVars
-    ? getEnv('DB_HOST_TEST', 'PGHOST_TEST') || parsed?.hostname || ''
-    : getEnv('DB_HOST', 'PGHOST') || parsed?.hostname || '';
+  try {
+    return new URL(connectionString);
+  } catch {
+    return null;
+  }
+}
+
+function getDbEnvValue(preferTestSpecificVars, testNames, defaultNames) {
+  return preferTestSpecificVars
+    ? getEnv(...testNames)
+    : getEnv(...defaultNames);
+}
+
+function resolveDbStringValue(preferTestSpecificVars, testNames, defaultNames, fallback) {
+  return getDbEnvValue(preferTestSpecificVars, testNames, defaultNames) || fallback || '';
+}
+
+function getParsedConnectionValue(parsed, key) {
+  if (!parsed) {
+    return '';
+  }
+
+  if (key === 'database') {
+    return parsed.pathname ? parsed.pathname.replace(/^\//, '') : '';
+  }
+  if (key === 'user') {
+    return parsed.username ? decodeURIComponent(parsed.username) : '';
+  }
+  if (key === 'password') {
+    return parsed.password ? decodeURIComponent(parsed.password) : '';
+  }
+
+  return parsed[key] || '';
+}
+
+function resolveDbSslConfig(preferTestSpecificVars) {
+  const ssl = parseBoolean(
+    getDbEnvValue(preferTestSpecificVars, ['DB_SSL_TEST'], ['DB_SSL']),
+    false
+  ) || getDbEnvValue(preferTestSpecificVars, ['PGSSLMODE_TEST'], ['PGSSLMODE']) === 'require';
+
+  const sslRejectUnauthorized = parseBoolean(
+    getDbEnvValue(
+      preferTestSpecificVars,
+      ['DB_SSL_REJECT_UNAUTHORIZED_TEST'],
+      ['DB_SSL_REJECT_UNAUTHORIZED']
+    ),
+    false
+  );
+
+  return {
+    ssl,
+    sslRejectUnauthorized,
+  };
+}
+
+function getDbConfig(runtimeEnv) {
+  const isTestEnv = runtimeEnv === 'test';
+  const hasTestSpecificUrl = Boolean(getEnv(...TEST_DB_URL_ENV_NAMES));
+  const hasTestSpecificParts = Boolean(getEnv(...TEST_DB_PART_ENV_NAMES));
+  const preferTestSpecificVars = isTestEnv && (hasTestSpecificUrl || hasTestSpecificParts);
+  const connectionString = getDbEnvValue(preferTestSpecificVars, TEST_DB_URL_ENV_NAMES, DEFAULT_DB_URL_ENV_NAMES);
+  const parsed = parseConnectionUrl(connectionString);
+
+  const host = resolveDbStringValue(
+    preferTestSpecificVars,
+    ['DB_HOST_TEST', 'PGHOST_TEST'],
+    ['DB_HOST', 'PGHOST'],
+    getParsedConnectionValue(parsed, 'hostname')
+  );
   const port = parseInt(
-    (preferTestSpecificVars
-      ? getEnv('DB_PORT_TEST', 'PGPORT_TEST')
-      : getEnv('DB_PORT', 'PGPORT'))
-      || parsed?.port
+    getDbEnvValue(preferTestSpecificVars, ['DB_PORT_TEST', 'PGPORT_TEST'], ['DB_PORT', 'PGPORT'])
+      || getParsedConnectionValue(parsed, 'port')
       || '5432',
     10
   );
-  const database = preferTestSpecificVars
-    ? getEnv('DB_NAME_TEST', 'PGDATABASE_TEST') || (parsed?.pathname ? parsed.pathname.replace(/^\//, '') : '') || ''
-    : getEnv('DB_NAME', 'PGDATABASE') || (parsed?.pathname ? parsed.pathname.replace(/^\//, '') : '') || '';
-  const user = preferTestSpecificVars
-    ? getEnv('DB_USER_TEST', 'PGUSER_TEST') || (parsed?.username ? decodeURIComponent(parsed.username) : '') || ''
-    : getEnv('DB_USER', 'PGUSER') || (parsed?.username ? decodeURIComponent(parsed.username) : '') || '';
-  const password = preferTestSpecificVars
-    ? getEnv('DB_PASSWORD_TEST', 'PGPASSWORD_TEST') || (parsed?.password ? decodeURIComponent(parsed.password) : '') || ''
-    : getEnv('DB_PASSWORD', 'PGPASSWORD') || (parsed?.password ? decodeURIComponent(parsed.password) : '') || '';
-
-  // Useful for managed Postgres providers in production.
-  const ssl = parseBoolean(
-    preferTestSpecificVars ? getEnv('DB_SSL_TEST') : getEnv('DB_SSL'),
-    false
-  ) || (preferTestSpecificVars ? getEnv('PGSSLMODE_TEST') : getEnv('PGSSLMODE')) === 'require';
-  const sslRejectUnauthorized = parseBoolean(
-    preferTestSpecificVars
-      ? getEnv('DB_SSL_REJECT_UNAUTHORIZED_TEST')
-      : getEnv('DB_SSL_REJECT_UNAUTHORIZED'),
-    false
+  const database = resolveDbStringValue(
+    preferTestSpecificVars,
+    ['DB_NAME_TEST', 'PGDATABASE_TEST'],
+    ['DB_NAME', 'PGDATABASE'],
+    getParsedConnectionValue(parsed, 'database')
   );
+  const user = resolveDbStringValue(
+    preferTestSpecificVars,
+    ['DB_USER_TEST', 'PGUSER_TEST'],
+    ['DB_USER', 'PGUSER'],
+    getParsedConnectionValue(parsed, 'user')
+  );
+  const password = resolveDbStringValue(
+    preferTestSpecificVars,
+    ['DB_PASSWORD_TEST', 'PGPASSWORD_TEST'],
+    ['DB_PASSWORD', 'PGPASSWORD'],
+    getParsedConnectionValue(parsed, 'password')
+  );
+  const { ssl, sslRejectUnauthorized } = resolveDbSslConfig(preferTestSpecificVars);
 
   const explicitTestConfig = isTestEnv && preferTestSpecificVars;
 

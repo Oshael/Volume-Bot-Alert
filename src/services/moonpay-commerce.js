@@ -28,6 +28,36 @@ function buildMockCheckoutUrl(orderId, providerChargeId) {
   return `http://localhost:${config.port}/api/billing/mock-checkout/${encodeURIComponent(orderId)}?charge=${encodeURIComponent(providerChargeId)}`;
 }
 
+async function readMoonpayResponseText(response) {
+  try {
+    return await response.text();
+  } catch (_) {
+    return '';
+  }
+}
+
+function parseMoonpayResponseBody(rawText) {
+  try {
+    return rawText ? JSON.parse(rawText) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getMoonpayErrorDetail(response, body, rawText) {
+  const bodySummary = body && typeof body === 'object'
+    ? JSON.stringify(body)
+    : String(rawText || body || '').trim();
+
+  return body?.message
+    || body?.error
+    || body?.details
+    || body?.detail
+    || body?.title
+    || bodySummary
+    || `HTTP ${response.status}`;
+}
+
 async function requestMoonpay(path, init) {
   const method = String(init?.method || 'GET').toUpperCase();
   const requestUrl = buildUrl(path);
@@ -45,31 +75,11 @@ async function requestMoonpay(path, init) {
     throw new Error(`MoonPay Commerce request failed: ${message}`);
   }
 
-  let rawText = '';
-  try {
-    rawText = await response.text();
-  } catch (_) {
-    rawText = '';
-  }
-
-  let body = null;
-  try {
-    body = rawText ? JSON.parse(rawText) : null;
-  } catch (_) {
-    body = null;
-  }
+  const rawText = await readMoonpayResponseText(response);
+  const body = parseMoonpayResponseBody(rawText);
 
   if (!response.ok) {
-    const bodySummary = body && typeof body === 'object'
-      ? JSON.stringify(body)
-      : String(rawText || body || '').trim();
-    const detail = body?.message
-      || body?.error
-      || body?.details
-      || body?.detail
-      || body?.title
-      || bodySummary
-      || `HTTP ${response.status}`;
+    const detail = getMoonpayErrorDetail(response, body, rawText);
     throw new Error(`MoonPay Commerce request failed (${method} ${path} -> ${response.status}): ${detail}`);
   }
 
