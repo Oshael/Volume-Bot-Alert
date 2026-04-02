@@ -194,13 +194,6 @@ async function readAuthenticatedUserFromCookie(req) {
   }
 }
 
-function buildErrorRedirect(path, provider, code) {
-  return buildSocialLinkRedirect(path, {
-    socialLink: code,
-    socialProvider: provider,
-  });
-}
-
 function buildLoginRedirect(path, provider, code) {
   return buildSocialLinkRedirect(path, {
     socialLogin: code,
@@ -229,6 +222,204 @@ function buildSocialLoginBlockedCode(user, access) {
     return 'email_unverified';
   }
   return 'blocked';
+}
+
+function readSocialCallbackRequest(req, readCookie) {
+  return {
+    provider: UserSocialIdentity.normalizeProvider(req.params.provider),
+    stateParam: String(req.query?.state || '').trim(),
+    code: String(req.query?.code || '').trim(),
+    providerError: String(req.query?.error || '').trim(),
+    cookieState: readCookie(req),
+  };
+}
+
+function validateSocialCallbackRequest(provider, providerConfig, res) {
+  if (!provider || !providerConfig) {
+    res.status(400).json({ error: 'Unsupported social provider' });
+    return false;
+  }
+  return true;
+}
+
+function parseVerifiedSocialCallbackState(cookieState) {
+  try {
+    return {
+      decodedState: verifySocialLinkState(cookieState),
+      valid: true,
+    };
+  } catch (_) {
+    return {
+      decodedState: null,
+      valid: false,
+    };
+  }
+}
+
+function validateSocialCallbackState({
+  provider,
+  cookieState,
+  stateParam,
+  expectedType,
+  defaultReturnTo,
+}) {
+  if (!cookieState || !stateParam || cookieState !== stateParam) {
+    return {
+      ok: false,
+      returnTo: defaultReturnTo,
+      code: 'state_mismatch',
+    };
+  }
+
+  const verification = parseVerifiedSocialCallbackState(cookieState);
+  if (!verification.valid) {
+    return {
+      ok: false,
+      returnTo: defaultReturnTo,
+      code: 'state_invalid',
+    };
+  }
+
+  const returnTo = normalizeReturnTo(verification.decodedState.returnTo);
+  if (verification.decodedState.type !== expectedType || verification.decodedState.provider !== provider) {
+    return {
+      ok: false,
+      returnTo,
+      code: 'state_invalid',
+    };
+  }
+
+  return {
+    ok: true,
+    decodedState: verification.decodedState,
+    returnTo,
+  };
+}
+
+function sendSocialLinkCallbackResult(res, clearCookie, returnTo, provider, code) {
+  clearCookie(res);
+  return sendSocialLinkPopupResult(res, returnTo, provider, code);
+}
+
+function sendSocialLoginCallbackRedirect(
+  res,
+  clearCookie,
+  returnTo,
+  provider,
+  code,
+  { clearAuth = false, clearPreAccess = false } = {},
+) {
+  if (clearAuth) {
+    clearAuthCookie(res);
+  }
+  if (clearPreAccess) {
+    clearPreAccessCookie(res);
+  }
+  clearCookie(res);
+  return res.redirect(302, buildLoginRedirect(returnTo, provider, code));
+}
+
+function validateProviderCallbackInputs(providerError, code) {
+  if (providerError) {
+    return 'provider_denied';
+  }
+  if (!code) {
+    return 'missing_code';
+  }
+  return null;
+}
+
+function validateAuthenticatedSocialLinkSession(authSession, decodedState) {
+  if (!authSession) {
+    return 'session_missing';
+  }
+  if (authSession.user.id !== decodedState.userId || authSession.sessionId !== decodedState.sessionId) {
+    return 'session_mismatch';
+  }
+  return null;
+}
+
+async function validateSocialLinkIdentity(provider, identity, userId) {
+  if (!identity.providerUserId) {
+    return 'identity_missing';
+  }
+
+  const existingIdentity = await UserSocialIdentity.findByProviderIdentity(provider, identity.providerUserId);
+  if (existingIdentity && existingIdentity.user_id !== userId) {
+    return 'identity_conflict';
+  }
+
+  if (!identity.providerEmail) {
+    return null;
+  }
+
+  const emailOwner = await User.findByEmail(identity.providerEmail);
+  if (emailOwner && emailOwner.id !== userId) {
+    return 'email_conflict';
+  }
+
+  return null;
+}
+
+async function exchangeSocialIdentity(provider, code, intent) {
+  const accessToken = await exchangeCodeForAccessToken(provider, code, intent);
+  return fetchProviderIdentity(provider, accessToken);
+}
+
+async function resolveSocialLoginUser(provider, identity) {
+  if (!identity.providerUserId) {
+    return { errorCode: 'identity_missing' };
+  }
+
+  const linkedIdentity = await UserSocialIdentity.findByProviderIdentity(provider, identity.providerUserId);
+  if (!linkedIdentity) {
+    return { errorCode: 'not_linked' };
+  }
+
+  const user = await User.findById(linkedIdentity.user_id);
+  const access = user ? userAccess.buildAccessSnapshot(user) : null;
+
+  return {
+    linkedIdentity,
+    user,
+    access,
+  };
+}
+
+function resolveSocialLoginAccessState(user, access) {
+  if (!user || !user.is_active || !user.is_email_verified || isHardBlockedAccess(access)) {
+    return {
+      redirectTo: null,
+      code: buildSocialLoginBlockedCode(user, access),
+      clearAuth: true,
+      clearPreAccess: true,
+    };
+  }
+
+  if (access.hasProductAccess) {
+    return {
+      redirectTo: 'authenticated',
+      code: 'success',
+      clearAuth: false,
+      clearPreAccess: true,
+    };
+  }
+
+  if (isBillingRecoveryAccess(access)) {
+    return {
+      redirectTo: '/access',
+      code: 'success',
+      clearAuth: true,
+      clearPreAccess: false,
+    };
+  }
+
+  return {
+    redirectTo: null,
+    code: 'blocked',
+    clearAuth: true,
+    clearPreAccess: true,
+  };
 }
 
 router.get('/:provider/start', authenticate, async (req, res) => {
@@ -288,160 +479,97 @@ router.get('/:provider/login/start', async (req, res) => {
 });
 
 router.get('/:provider/callback', async (req, res) => {
-  const provider = UserSocialIdentity.normalizeProvider(req.params.provider);
-  const stateParam = String(req.query?.state || '').trim();
-  const code = String(req.query?.code || '').trim();
-  const providerError = String(req.query?.error || '').trim();
+  const callback = readSocialCallbackRequest(req, readSocialLinkCookie);
+  const { provider, stateParam, code, providerError, cookieState } = callback;
   const providerConfig = getProviderConfig(provider);
-  const cookieState = readSocialLinkCookie(req);
 
-  if (!provider || !providerConfig) {
-    return res.status(400).json({ error: 'Unsupported social provider' });
+  if (!validateSocialCallbackRequest(provider, providerConfig, res)) {
+    return;
   }
 
-  if (!cookieState || !stateParam || cookieState !== stateParam) {
-    clearSocialLinkCookie(res);
-    return sendSocialLinkPopupResult(res, '/alerts', provider, 'state_mismatch');
+  const state = validateSocialCallbackState({
+    provider,
+    cookieState,
+    stateParam,
+    expectedType: 'social_link',
+    defaultReturnTo: '/alerts',
+  });
+  if (!state.ok) {
+    return sendSocialLinkCallbackResult(res, clearSocialLinkCookie, state.returnTo, provider, state.code);
   }
+  const { decodedState, returnTo } = state;
 
-  let decodedState;
-  try {
-    decodedState = verifySocialLinkState(cookieState);
-  } catch (_) {
-    clearSocialLinkCookie(res);
-    return sendSocialLinkPopupResult(res, '/alerts', provider, 'state_invalid');
-  }
-
-  const returnTo = normalizeReturnTo(decodedState.returnTo);
-
-  if (decodedState.type !== 'social_link' || decodedState.provider !== provider) {
-    clearSocialLinkCookie(res);
-    return sendSocialLinkPopupResult(res, returnTo, provider, 'state_invalid');
-  }
-
-  if (providerError) {
-    clearSocialLinkCookie(res);
-    return sendSocialLinkPopupResult(res, returnTo, provider, 'provider_denied');
-  }
-
-  if (!code) {
-    clearSocialLinkCookie(res);
-    return sendSocialLinkPopupResult(res, returnTo, provider, 'missing_code');
+  const inputError = validateProviderCallbackInputs(providerError, code);
+  if (inputError) {
+    return sendSocialLinkCallbackResult(res, clearSocialLinkCookie, returnTo, provider, inputError);
   }
 
   try {
     const authSession = await readAuthenticatedUserFromCookie(req);
-    if (!authSession) {
-      clearSocialLinkCookie(res);
-      return sendSocialLinkPopupResult(res, returnTo, provider, 'session_missing');
+    const sessionError = validateAuthenticatedSocialLinkSession(authSession, decodedState);
+    if (sessionError) {
+      return sendSocialLinkCallbackResult(res, clearSocialLinkCookie, returnTo, provider, sessionError);
     }
 
-    if (authSession.user.id !== decodedState.userId || authSession.sessionId !== decodedState.sessionId) {
-      clearSocialLinkCookie(res);
-      return sendSocialLinkPopupResult(res, returnTo, provider, 'session_mismatch');
-    }
-
-    const accessToken = await exchangeCodeForAccessToken(provider, code, 'link');
-    const identity = await fetchProviderIdentity(provider, accessToken);
-
-    if (!identity.providerUserId) {
-      clearSocialLinkCookie(res);
-      return sendSocialLinkPopupResult(res, returnTo, provider, 'identity_missing');
-    }
-
-    const existingIdentity = await UserSocialIdentity.findByProviderIdentity(provider, identity.providerUserId);
-    if (existingIdentity && existingIdentity.user_id !== authSession.user.id) {
-      clearSocialLinkCookie(res);
-      return sendSocialLinkPopupResult(res, returnTo, provider, 'identity_conflict');
-    }
-
-    if (identity.providerEmail) {
-      const emailOwner = await User.findByEmail(identity.providerEmail);
-      if (emailOwner && emailOwner.id !== authSession.user.id) {
-        clearSocialLinkCookie(res);
-        return sendSocialLinkPopupResult(res, returnTo, provider, 'email_conflict');
-      }
+    const identity = await exchangeSocialIdentity(provider, code, 'link');
+    const identityError = await validateSocialLinkIdentity(provider, identity, authSession.user.id);
+    if (identityError) {
+      return sendSocialLinkCallbackResult(res, clearSocialLinkCookie, returnTo, provider, identityError);
     }
 
     await UserSocialIdentity.upsertLinkForUser(authSession.user.id, provider, identity);
-    clearSocialLinkCookie(res);
-    return sendSocialLinkPopupResult(res, returnTo, provider, 'success');
+    return sendSocialLinkCallbackResult(res, clearSocialLinkCookie, returnTo, provider, 'success');
   } catch (err) {
-    clearSocialLinkCookie(res);
     console.error('Social auth callback error:', err);
-    return sendSocialLinkPopupResult(res, returnTo, provider, 'callback_error');
+    return sendSocialLinkCallbackResult(res, clearSocialLinkCookie, returnTo, provider, 'callback_error');
   }
 });
 
 router.get('/:provider/login/callback', async (req, res) => {
-  const provider = UserSocialIdentity.normalizeProvider(req.params.provider);
-  const stateParam = String(req.query?.state || '').trim();
-  const code = String(req.query?.code || '').trim();
-  const providerError = String(req.query?.error || '').trim();
+  const callback = readSocialCallbackRequest(req, readSocialLoginCookie);
+  const { provider, stateParam, code, providerError, cookieState } = callback;
   const providerConfig = getProviderConfig(provider);
-  const cookieState = readSocialLoginCookie(req);
 
-  if (!provider || !providerConfig) {
-    return res.status(400).json({ error: 'Unsupported social provider' });
+  if (!validateSocialCallbackRequest(provider, providerConfig, res)) {
+    return;
   }
 
-  if (!cookieState || !stateParam || cookieState !== stateParam) {
-    clearSocialLoginCookie(res);
-    return res.redirect(302, buildLoginRedirect('/alerts', provider, 'state_mismatch'));
+  const state = validateSocialCallbackState({
+    provider,
+    cookieState,
+    stateParam,
+    expectedType: 'social_login',
+    defaultReturnTo: '/alerts',
+  });
+  if (!state.ok) {
+    return sendSocialLoginCallbackRedirect(res, clearSocialLoginCookie, state.returnTo, provider, state.code);
   }
+  const { returnTo } = state;
 
-  let decodedState;
-  try {
-    decodedState = verifySocialLinkState(cookieState);
-  } catch (_) {
-    clearSocialLoginCookie(res);
-    return res.redirect(302, buildLoginRedirect('/alerts', provider, 'state_invalid'));
-  }
-
-  const returnTo = normalizeReturnTo(decodedState.returnTo);
-
-  if (decodedState.type !== 'social_login' || decodedState.provider !== provider) {
-    clearSocialLoginCookie(res);
-    return res.redirect(302, buildLoginRedirect(returnTo, provider, 'state_invalid'));
-  }
-
-  if (providerError) {
-    clearSocialLoginCookie(res);
-    return res.redirect(302, buildLoginRedirect(returnTo, provider, 'provider_denied'));
-  }
-
-  if (!code) {
-    clearSocialLoginCookie(res);
-    return res.redirect(302, buildLoginRedirect(returnTo, provider, 'missing_code'));
+  const inputError = validateProviderCallbackInputs(providerError, code);
+  if (inputError) {
+    return sendSocialLoginCallbackRedirect(res, clearSocialLoginCookie, returnTo, provider, inputError);
   }
 
   try {
-    const accessToken = await exchangeCodeForAccessToken(provider, code, 'login');
-    const identity = await fetchProviderIdentity(provider, accessToken);
-
-    if (!identity.providerUserId) {
-      clearSocialLoginCookie(res);
-      return res.redirect(302, buildLoginRedirect(returnTo, provider, 'identity_missing'));
+    const identity = await exchangeSocialIdentity(provider, code, 'login');
+    const result = await resolveSocialLoginUser(provider, identity);
+    if (result.errorCode) {
+      return sendSocialLoginCallbackRedirect(res, clearSocialLoginCookie, returnTo, provider, result.errorCode);
     }
+    const { linkedIdentity, user, access } = result;
 
-    const linkedIdentity = await UserSocialIdentity.findByProviderIdentity(provider, identity.providerUserId);
-    if (!linkedIdentity) {
-      clearSocialLoginCookie(res);
-      return res.redirect(302, buildLoginRedirect(returnTo, provider, 'not_linked'));
-    }
-
-    const user = await User.findById(linkedIdentity.user_id);
-    const access = user ? userAccess.buildAccessSnapshot(user) : null;
-    if (!user || !user.is_active || !user.is_email_verified || isHardBlockedAccess(access)) {
-      clearAuthCookie(res);
-      clearPreAccessCookie(res);
-      clearSocialLoginCookie(res);
-      return res.redirect(302, buildLoginRedirect(returnTo, provider, buildSocialLoginBlockedCode(user, access)));
+    const accessState = resolveSocialLoginAccessState(user, access);
+    if (!accessState.redirectTo) {
+      return sendSocialLoginCallbackRedirect(res, clearSocialLoginCookie, returnTo, provider, accessState.code, {
+        clearAuth: accessState.clearAuth,
+        clearPreAccess: accessState.clearPreAccess,
+      });
     }
 
     await UserSocialIdentity.markLastLogin(linkedIdentity.id);
 
-    if (access.hasProductAccess) {
+    if (accessState.redirectTo === 'authenticated') {
       clearPreAccessCookie(res);
       clearSocialLoginCookie(res);
       await createAuthenticatedSession({
@@ -453,23 +581,16 @@ router.get('/:provider/login/callback', async (req, res) => {
       return res.redirect(302, buildLoginRedirect(normalizeAuthenticatedSocialLoginReturnTo(returnTo), provider, 'success'));
     }
 
-    if (isBillingRecoveryAccess(access)) {
-      clearAuthCookie(res);
-      clearSocialLoginCookie(res);
-      issuePreAccessFlow({ user, res });
-      return res.redirect(302, buildLoginRedirect('/access', provider, 'success'));
-    }
-
     clearAuthCookie(res);
-    clearPreAccessCookie(res);
     clearSocialLoginCookie(res);
-    return res.redirect(302, buildLoginRedirect(returnTo, provider, 'blocked'));
+    issuePreAccessFlow({ user, res });
+    return res.redirect(302, buildLoginRedirect('/access', provider, 'success'));
   } catch (err) {
-    clearAuthCookie(res);
-    clearPreAccessCookie(res);
-    clearSocialLoginCookie(res);
     console.error('Social login callback error:', err);
-    return res.redirect(302, buildLoginRedirect(returnTo, provider, 'callback_error'));
+    return sendSocialLoginCallbackRedirect(res, clearSocialLoginCookie, returnTo, provider, 'callback_error', {
+      clearAuth: true,
+      clearPreAccess: true,
+    });
   }
 });
 

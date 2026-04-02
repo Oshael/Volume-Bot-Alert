@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -14,6 +14,7 @@ import {
   type RegisterInput,
   type AuthEmailDebug,
   type SessionUser,
+  type VerifyEmailConfirmResponse,
   verifyLoginOtp as verifyLoginOtpRequest,
 } from '../services/api/auth';
 import {
@@ -37,7 +38,7 @@ import {
   type AccountIdentitiesPayload,
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
-import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload, type PreAccessMePayload } from '../services/api/pre-access';
+import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type BidZonePayload, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -167,6 +168,44 @@ type HistoryPeerState = {
   monitoringActive: boolean;
   seenAt: number;
 };
+
+type SocialProvider = 'google' | 'discord';
+type SocialIntent = {
+  status: string;
+  provider: SocialProvider;
+};
+
+type AuthRouteIntent = {
+  mode: 'verify-email' | 'reset-password';
+  token: string | null;
+};
+
+const TRACKED_MARKET_FIELD_KEYS = [
+  'mcap',
+  'priceUsd',
+  'volume5m',
+  'volume1h',
+  'volume6h',
+  'volume24h',
+  'priceChange1h',
+  'priceChange6h',
+  'priceChange24h',
+  'mcapDelta',
+  'prevMcap',
+  'prevVolume5mCanonical',
+] as const;
+
+const TRACKED_ALERT_PRESERVED_KEYS = [
+  'lastAlertAt',
+  '_hvncFired',
+  '_oldSurgeFired',
+  '_meteoraSurgeFired',
+  '_oldSurgeSessionBase1h',
+  '_oldSurgeSessionBase6h',
+  '_lastVolAlertPct',
+  '_lastMcapAlertPct',
+  '_lastAlertKind',
+] as const;
 export interface AppController {
   state: AppState;
   init(): Promise<void>;
@@ -315,48 +354,170 @@ function getBillingCheckoutIntent(locationLike: Location | null | undefined) {
   return status === 'success' ? 'success' : null;
 }
 
-function getSocialLinkIntent(locationLike: Location | null | undefined) {
+function normalizeSocialProvider(value: string | null | undefined): SocialProvider | null {
+  const provider = String(value || '').trim().toLowerCase();
+  if (provider === 'google' || provider === 'discord') {
+    return provider;
+  }
+  return null;
+}
+
+function getSocialProviderLabel(provider: SocialProvider) {
+  return provider === 'google' ? 'Google' : 'Discord';
+}
+
+function getSocialIntent(
+  locationLike: Location | null | undefined,
+  queryKey: 'socialLink' | 'socialLogin',
+): SocialIntent | null {
   if (!locationLike) {
     return null;
   }
 
   const search = new URLSearchParams(locationLike.search || '');
-  const status = String(search.get('socialLink') || '').trim().toLowerCase();
-  const provider = String(search.get('socialProvider') || '').trim().toLowerCase();
+  const status = String(search.get(queryKey) || '').trim().toLowerCase();
+  const provider = normalizeSocialProvider(search.get('socialProvider'));
   if (!status || !provider) {
-    return null;
-  }
-
-  if (provider !== 'google' && provider !== 'discord') {
     return null;
   }
 
   return {
     status,
-    provider: provider as 'google' | 'discord',
+    provider,
   };
 }
 
+function getSocialLinkIntent(locationLike: Location | null | undefined) {
+  return getSocialIntent(locationLike, 'socialLink');
+}
+
 function getSocialLoginIntent(locationLike: Location | null | undefined) {
+  return getSocialIntent(locationLike, 'socialLogin');
+}
+
+function getAuthRouteIntent(locationLike: Location | null | undefined): AuthRouteIntent | null {
   if (!locationLike) {
     return null;
   }
 
+  const pathname = String(locationLike.pathname || '/');
   const search = new URLSearchParams(locationLike.search || '');
-  const status = String(search.get('socialLogin') || '').trim().toLowerCase();
-  const provider = String(search.get('socialProvider') || '').trim().toLowerCase();
-  if (!status || !provider) {
+  const token = normalizeAuthRouteToken(String(search.get('token') || ''));
+  const rawMode = String(search.get('mode') || '').trim().toLowerCase();
+  const mode = rawMode === 'verify-email' || rawMode === 'reset-password'
+    ? rawMode
+    : null;
+
+  if (pathname === '/auth/verify-email' || mode === 'verify-email') {
+    return { mode: 'verify-email', token };
+  }
+
+  if (pathname === '/auth/reset-password' || mode === 'reset-password') {
+    return { mode: 'reset-password', token };
+  }
+
+  return null;
+}
+
+function getAuthDefaultErrorMessage(mode: 'login' | 'restore') {
+  return mode === 'login'
+    ? 'Unable to sign in right now. Please try again.'
+    : 'Unable to restore your session. Please login again.';
+}
+
+function getAuthLockoutErrorMessage(raw: string) {
+  if (!(raw.includes('Too many failed attempts') || raw.includes('Too many authentication attempts'))) {
     return null;
   }
 
-  if (provider !== 'google' && provider !== 'discord') {
-    return null;
+  const retryMatch = raw.match(/Try again in\s+(\d+)s\.?/i);
+  if (!retryMatch) {
+    return 'Login temporarily locked. Try again in a few minutes.';
   }
 
-  return {
-    status,
-    provider: provider as 'google' | 'discord',
-  };
+  const seconds = Number(retryMatch[1]);
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return `Login temporarily locked. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+}
+
+function getMappedAuthErrorMessage(raw: string) {
+  const matchedRule = [
+    {
+      matches: ['Invalid email or password'],
+      message: 'Incorrect email or password. Check your credentials and try again.',
+    },
+    {
+      matches: ['Account is deactivated'],
+      message: 'This account is deactivated. Contact an administrator if you need access restored.',
+    },
+    {
+      matches: ['Access expired'],
+      message: 'Your access has expired. Contact an administrator or renew your access to continue.',
+    },
+    {
+      matches: ['Access revoked'],
+      message: 'This account was blocked from product access by an administrator or internal access policy. Contact an administrator if you believe this is a mistake.',
+    },
+    {
+      matches: ['Access inactive'],
+      message: 'Your account does not currently have product access. Contact an administrator.',
+    },
+    {
+      matches: ['Email not verified'],
+      message: 'Your email is not verified yet. Check your inbox or request a new verification email.',
+    },
+    {
+      matches: ['Token expired', 'Invalid token', 'Session revoked', 'Authentication required', 'User not found'],
+      message: 'Your saved session is no longer valid. Please login again.',
+    },
+    {
+      matches: ['Network error:'],
+      message: 'Unable to reach the server. Check your connection or API availability and try again.',
+    },
+    {
+      matches: ['Internal server error'],
+      message: 'The server could not complete authentication right now. Please try again shortly.',
+    },
+  ].find((rule) => rule.matches.some((fragment) => raw.includes(fragment)));
+
+  return matchedRule?.message || null;
+}
+
+function getInitSocialLinkErrorMessage(intent: SocialIntent) {
+  if (intent.status === 'identity_conflict') {
+    return 'That social identity is already linked to another TrendScope account.';
+  }
+  if (intent.status === 'email_conflict') {
+    return 'The provider email matches a different existing account. Sign in to the original account instead. Automatic merge is blocked.';
+  }
+  if (intent.status === 'provider_denied') {
+    return 'The social provider did not approve the linking request.';
+  }
+  return 'Unable to complete social linking. Please try again.';
+}
+
+function getSocialLoginFailureMessage(intent: SocialIntent) {
+  const providerLabel = getSocialProviderLabel(intent.provider);
+
+  if (intent.status === 'not_linked') {
+    return `This ${providerLabel} account is not linked to a TrendScope login yet. Sign in with email and password first, then link it from User Settings.`;
+  }
+  if (intent.status === 'provider_denied') {
+    return `The ${providerLabel} sign-in request was not approved.`;
+  }
+  if (intent.status === 'revoked') {
+    return 'This account was blocked from product access by an administrator or internal access policy.';
+  }
+  if (intent.status === 'deactivated') {
+    return 'Account is deactivated';
+  }
+  if (intent.status === 'email_unverified') {
+    return 'Email not verified. Check your inbox or resend verification before signing in.';
+  }
+  if (intent.status === 'provider_unavailable') {
+    return `The ${providerLabel} sign-in provider is not configured in this environment yet.`;
+  }
+  return 'Unable to complete social sign-in. Please try again or use email and password.';
 }
 
 function normalizeWorkspace(value: string | null | undefined): WorkspaceView {
@@ -556,7 +717,7 @@ export function createAppController(): AppController {
     });
   }
 
-  function handleSocialLinkResult(intent: { status: string; provider: 'google' | 'discord' }) {
+  function handleSocialLinkResult(intent: SocialIntent) {
     stopSocialLinkSync();
     if (socialLinkPopupWindow && !socialLinkPopupWindow.closed) {
       try {
@@ -571,7 +732,7 @@ export function createAppController(): AppController {
     state.ui.error = null;
 
     if (intent.status === 'success') {
-      setNotice(`${intent.provider === 'google' ? 'Google' : 'Discord'} linked successfully.`);
+      setNotice(`${getSocialProviderLabel(intent.provider)} linked successfully.`);
     } else if (intent.status === 'identity_conflict') {
       setError('That social identity is already linked to another account.');
     } else if (intent.status === 'email_conflict') {
@@ -596,7 +757,7 @@ export function createAppController(): AppController {
       .catch(() => emit('overlay', 'header'));
   }
 
-  function publishSocialLinkResult(intent: { status: string; provider: 'google' | 'discord' }) {
+  function publishSocialLinkResult(intent: SocialIntent) {
     if (typeof window === 'undefined') {
       return;
     }
@@ -752,6 +913,152 @@ export function createAppController(): AppController {
     }
 
     return true;
+  }
+
+  function firstDefinedTrackedValue<T>(...values: Array<T | null | undefined>): T | null {
+    for (const value of values) {
+      if (value !== undefined && value !== null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function shouldApplyTrackedColdFields(
+    existingItem: ManualTokenEntry | undefined,
+    dashboardItem: DashboardMonitoredToken | undefined,
+    coldRefreshDue: boolean,
+  ) {
+    return Boolean(dashboardItem) && (!existingItem || hasCriticalColdFieldGap(existingItem) || coldRefreshDue);
+  }
+
+  function selectTrackedColdField<T>(
+    shouldApplyColdFields: boolean,
+    dashboardValue: T | null | undefined,
+    existingValue: T | null | undefined,
+    baseValue: T | null | undefined,
+  ): T | null {
+    return shouldApplyColdFields
+      ? firstDefinedTrackedValue(dashboardValue, existingValue, baseValue)
+      : firstDefinedTrackedValue(existingValue, baseValue);
+  }
+
+  function buildMergedTrackedColdFields(
+    existingItem: ManualTokenEntry | undefined,
+    dashboardItem: DashboardMonitoredToken | undefined,
+    base: ManualTokenEntry,
+    coldRefreshDue: boolean,
+  ) {
+    const shouldApplyColdFields = shouldApplyTrackedColdFields(existingItem, dashboardItem, coldRefreshDue);
+
+    return {
+      mintAddress: firstDefinedTrackedValue(existingItem?.mintAddress, dashboardItem?.address, base.address),
+      pairAddress: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.pairAddress, existingItem?.pairAddress, base.pairAddress),
+      pairUrl: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.pairUrl, existingItem?.pairUrl, base.pairUrl),
+      imageUrl: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.imageUrl, existingItem?.imageUrl, base.imageUrl),
+      twitterUrl: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.twitterUrl, existingItem?.twitterUrl, base.twitterUrl),
+      symbol: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.symbol, existingItem?.symbol, base.symbol),
+      name: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.name, existingItem?.name, base.name),
+      createdAt: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.tokenCreatedAt, existingItem?.createdAt, base.createdAt),
+    };
+  }
+
+  function buildMergedTrackedMarketFields(
+    existingItem: ManualTokenEntry | undefined,
+    dashboardItem: DashboardMonitoredToken | undefined,
+    base: ManualTokenEntry,
+  ) {
+    const nextFields: Partial<ManualTokenEntry> = {};
+
+    for (const key of TRACKED_MARKET_FIELD_KEYS) {
+      nextFields[key] = firstDefinedTrackedValue(
+        dashboardItem?.[key],
+        existingItem?.[key],
+        base[key],
+      );
+    }
+
+    nextFields.prevVolume5m = existingItem?.volume5m != null
+      ? existingItem.volume5m
+      : firstDefinedTrackedValue(existingItem?.prevVolume5m, base.prevVolume5m);
+
+    return nextFields;
+  }
+
+  function buildMergedTrackedAlertFields(
+    existingItem: ManualTokenEntry | undefined,
+    base: ManualTokenEntry,
+  ) {
+    const nextFields: Partial<ManualTokenEntry> = {};
+
+    for (const key of TRACKED_ALERT_PRESERVED_KEYS) {
+      const value = existingItem?.[key] ?? base[key];
+      if (value !== undefined) {
+        (nextFields as Record<typeof key, ManualTokenEntry[typeof key]>)[key] = value as ManualTokenEntry[typeof key];
+      }
+    }
+
+    nextFields.deadCycles = existingItem?.deadCycles ?? base.deadCycles ?? 0;
+    nextFields._volAlertAboveThreshold = existingItem?._volAlertAboveThreshold ?? base._volAlertAboveThreshold ?? false;
+    nextFields._mcapAlertAboveThreshold = existingItem?._mcapAlertAboveThreshold ?? base._mcapAlertAboveThreshold ?? false;
+
+    return nextFields;
+  }
+
+  function mergeTrackedDashboardFields(input: {
+    existingItem: ManualTokenEntry | undefined;
+    dashboardItem: DashboardMonitoredToken | undefined;
+    base: ManualTokenEntry;
+    coldRefreshDue: boolean;
+  }): ManualTokenEntry {
+    const { existingItem, dashboardItem, base, coldRefreshDue } = input;
+
+    return {
+      ...base,
+      ...buildMergedTrackedColdFields(existingItem, dashboardItem, base, coldRefreshDue),
+      ...buildMergedTrackedMarketFields(existingItem, dashboardItem, base),
+      ...buildMergedTrackedAlertFields(existingItem, base),
+    };
+  }
+
+  function selectMergedTrackedToken(
+    existingItem: ManualTokenEntry | undefined,
+    mergedItem: ManualTokenEntry,
+  ) {
+    return areTrackedTokensEquivalent(existingItem, mergedItem)
+      ? existingItem as ManualTokenEntry
+      : mergedItem;
+  }
+
+  function commitTrackedStateRebuild(input: {
+    nextTrackedStore: Record<string, ManualTokenEntry>;
+    manualTokens: ManualTokenEntry[];
+    monitoredMap: Map<string, ManualTokenEntry>;
+    alertCandidates: Set<string>;
+    coldRefreshDue: boolean;
+    now: number;
+  }) {
+    if (input.coldRefreshDue) {
+      nextColdFieldRefreshAt = input.now + COLD_FIELD_RECHECK_MS;
+    }
+
+    state.data.trackedTokensByAddress = input.nextTrackedStore;
+    state.data.manualTokenAddresses = input.manualTokens.map((item) => item.address);
+    state.data.monitoredTokenAddresses = [...input.monitoredMap.keys()];
+    state.data.recentTokenAddresses = [];
+    state.data.oldWeekTokenAddresses = [];
+    state.bars.manual = state.data.manualTokenAddresses.length;
+    deriveAgeBuckets();
+
+    if (state.runtime.mode === 'active' && shouldRunFrontendAlerts() && input.alertCandidates.size > 0) {
+      for (const token of getMonitoredTokens(state)) {
+        if (!input.alertCandidates.has(token.address)) continue;
+        maybeFireSpecialAlerts(token);
+        maybeFireLocalAlert(token);
+      }
+    }
+
+    refreshMonitoredPanelCounts();
   }
 
   function ensureHistorySyncChannel() {
@@ -1147,56 +1454,12 @@ export function createAppController(): AppController {
     const raw = error instanceof Error ? error.message : '';
 
     if (!raw) {
-      return mode === 'login' ? 'Unable to sign in right now. Please try again.' : 'Unable to restore your session. Please login again.';
+      return getAuthDefaultErrorMessage(mode);
     }
 
-    if (raw.includes('Invalid email or password')) {
-      return 'Incorrect email or password. Check your credentials and try again.';
-    }
-    if (raw.includes('Account is deactivated')) {
-      return 'This account is deactivated. Contact an administrator if you need access restored.';
-    }
-    if (raw.includes('Access expired')) {
-      return 'Your access has expired. Contact an administrator or renew your access to continue.';
-    }
-    if (raw.includes('Access revoked')) {
-      return 'This account was blocked from product access by an administrator or internal access policy. Contact an administrator if you believe this is a mistake.';
-    }
-    if (raw.includes('Access inactive')) {
-      return 'Your account does not currently have product access. Contact an administrator.';
-    }
-    if (raw.includes('Email not verified')) {
-      return 'Your email is not verified yet. Check your inbox or request a new verification email.';
-    }
-    if (
-      raw.includes('Too many failed attempts')
-      || raw.includes('Too many authentication attempts')
-    ) {
-      const retryMatch = raw.match(/Try again in\s+(\d+)s\.?/i);
-      if (retryMatch) {
-        const seconds = Number(retryMatch[1]);
-        const minutes = Math.max(1, Math.ceil(seconds / 60));
-        return `Login temporarily locked. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
-      }
-      return 'Login temporarily locked. Try again in a few minutes.';
-    }
-    if (
-      raw.includes('Token expired')
-      || raw.includes('Invalid token')
-      || raw.includes('Session revoked')
-      || raw.includes('Authentication required')
-      || raw.includes('User not found')
-    ) {
-      return 'Your saved session is no longer valid. Please login again.';
-    }
-    if (raw.includes('Network error:')) {
-      return 'Unable to reach the server. Check your connection or API availability and try again.';
-    }
-    if (raw.includes('Internal server error')) {
-      return 'The server could not complete authentication right now. Please try again shortly.';
-    }
-
-    return raw;
+    return getAuthLockoutErrorMessage(raw)
+      || getMappedAuthErrorMessage(raw)
+      || raw;
   }
 
   function isCredentialError(message: string | null) {
@@ -1670,10 +1933,6 @@ export function createAppController(): AppController {
     return getConfigNumber(key, fallback);
   }
 
-  function getMeteoraMinPool() {
-    return getConfigNumber('meteora-min-pool', 5000);
-  }
-
   function toHttpAssetUrl(url: string | null | undefined) {
     const value = String(url || '').trim();
     if (!value) {
@@ -1893,7 +2152,9 @@ export function createAppController(): AppController {
       const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
       maybePersistPumpBondTarget(average);
     }
-  }  function reportPumpMigration(token: PumpTokenEntry) {
+  }
+
+  function reportPumpMigration(token: PumpTokenEntry) {
     const sessionToken = state.session.token;
     if (!sessionToken) {
       return;
@@ -1914,6 +2175,55 @@ export function createAppController(): AppController {
     });
   }
 
+  function buildPumpAlertEntry(
+    token: PumpTokenEntry,
+    kind: 'pumpfun-hvnc' | 'pumpfun-vol',
+    label: 'PUMP HVNC' | 'PUMP VOL',
+    vol5m: number,
+    symbol: string,
+  ): AlertEntry {
+    return {
+      id: `${token.mint}-${Date.now()}-${kind === 'pumpfun-hvnc' ? 'pump-hvnc' : 'pump-vol'}`,
+      kind,
+      address: token.mint,
+      symbol,
+      name: token.name || null,
+      imageUrl: token.imageUrl || null,
+      twitterUrl: token.twitterUrl || null,
+      pairUrl: token.pairUrl || null,
+      createdAt: Date.now(),
+      tokenCreatedAt: token.createdAt ?? null,
+      volume5m: vol5m,
+      volume1h: null,
+      volume6h: null,
+      volume24h: token.volTotal ?? null,
+      prevMcap: null,
+      mcap: token.mcap ?? null,
+      pct: 0,
+      label,
+      isHvnc: kind === 'pumpfun-hvnc',
+    };
+  }
+
+  function shouldFirePumpHvncAlert(
+    token: PumpTokenEntry,
+    vol5m: number,
+    hvncMinVol: number,
+    ageMs: number,
+  ) {
+    return isAlertKindEnabled('pumpfun-hvnc')
+      && !token._hvncPumpFired
+      && hvncMinVol > 0
+      && ageMs < HVNC_MAX_AGE_MS
+      && vol5m >= hvncMinVol;
+  }
+
+  function shouldFirePumpVolumeAlert(token: PumpTokenEntry, vol5m: number, minVol: number) {
+    return isAlertKindEnabled('pumpfun-vol')
+      && vol5m >= minVol
+      && !token._alertFired;
+  }
+
   function maybeFirePumpAlert(token: PumpTokenEntry) {
     const vol5m = getPumpVolume5mTotal(token);
     const minVol = getPumpConfigNumber('pump-min-vol', 100000);
@@ -1921,54 +2231,15 @@ export function createAppController(): AppController {
     const ageMs = token.createdAt ? Date.now() - token.createdAt : Number.POSITIVE_INFINITY;
     const symbol = token.symbol || token.mint.slice(0, 6);
 
-    if (isAlertKindEnabled('pumpfun-hvnc') && !token._hvncPumpFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && vol5m >= hvncMinVol) {
+    if (shouldFirePumpHvncAlert(token, vol5m, hvncMinVol, ageMs)) {
       token._hvncPumpFired = true;
-      pushAlert({
-        id: `${token.mint}-${Date.now()}-pump-hvnc`,
-        kind: 'pumpfun-hvnc',
-        address: token.mint,
-        symbol,
-        name: token.name || null,
-        imageUrl: token.imageUrl || null,
-        twitterUrl: token.twitterUrl || null,
-        pairUrl: token.pairUrl || null,
-        createdAt: Date.now(),
-        tokenCreatedAt: token.createdAt ?? null,
-        volume5m: vol5m,
-        volume1h: null,
-        volume6h: null,
-        volume24h: token.volTotal ?? null,
-        prevMcap: null,
-        mcap: token.mcap ?? null,
-        pct: 0,
-        label: 'PUMP HVNC',
-        isHvnc: true,
-      });
+      pushAlert(buildPumpAlertEntry(token, 'pumpfun-hvnc', 'PUMP HVNC', vol5m, symbol));
       return;
     }
 
-    if (isAlertKindEnabled('pumpfun-vol') && vol5m >= minVol && !token._alertFired) {
+    if (shouldFirePumpVolumeAlert(token, vol5m, minVol)) {
       token._alertFired = true;
-      pushAlert({
-        id: `${token.mint}-${Date.now()}-pump-vol`,
-        kind: 'pumpfun-vol',
-        address: token.mint,
-        symbol,
-        name: token.name || null,
-        imageUrl: token.imageUrl || null,
-        twitterUrl: token.twitterUrl || null,
-        pairUrl: token.pairUrl || null,
-        createdAt: Date.now(),
-        tokenCreatedAt: token.createdAt ?? null,
-        volume5m: vol5m,
-        volume1h: null,
-        volume6h: null,
-        volume24h: token.volTotal ?? null,
-        prevMcap: null,
-        mcap: token.mcap ?? null,
-        pct: 0,
-        label: 'PUMP VOL',
-      });
+      pushAlert(buildPumpAlertEntry(token, 'pumpfun-vol', 'PUMP VOL', vol5m, symbol));
     }
   }
 
@@ -2013,6 +2284,121 @@ export function createAppController(): AppController {
     }
   }
 
+  function readPumpRawString(raw: Record<string, unknown>, key: string) {
+    const value = raw[key];
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  function buildInitialPumpToken(raw: Record<string, unknown>, mint: string, now: number): PumpTokenEntry {
+    const pairAddress = readPumpRawString(raw, 'pairAddress');
+    const metadataUri = readPumpRawString(raw, 'uri');
+    const imageUrl = readPumpRawString(raw, 'image');
+    return {
+      mint,
+      mintAddress: mint,
+      pairAddress,
+      metadataUri,
+      name: String(raw.name || mint.slice(0, 8)),
+      symbol: String(raw.symbol || mint.slice(0, 6)),
+      imageUrl: imageUrl ? toHttpAssetUrl(imageUrl) : null,
+      createdAt: now,
+      mcap: null,
+      volTotal: 0,
+      vol5m: [],
+      hidden: false,
+      _imageResolved: false,
+      _imageResolving: false,
+    };
+  }
+
+  function syncPumpTokenIdentity(token: PumpTokenEntry, raw: Record<string, unknown>, mint: string, now: number) {
+    const name = readPumpRawString(raw, 'name');
+    const symbol = readPumpRawString(raw, 'symbol');
+    const imageUrl = readPumpRawString(raw, 'image');
+    const pairAddress = readPumpRawString(raw, 'pairAddress');
+    const metadataUri = readPumpRawString(raw, 'uri');
+
+    if (name) {
+      token.name = name;
+    }
+    if (symbol) {
+      token.symbol = symbol;
+    }
+    if (imageUrl) {
+      token.imageUrl = toHttpAssetUrl(imageUrl);
+    }
+
+    token.createdAt = token.createdAt ?? now;
+    token.mintAddress = token.mintAddress || mint;
+    token.pairAddress = pairAddress ?? token.pairAddress ?? null;
+    token.metadataUri = metadataUri ?? token.metadataUri ?? null;
+  }
+
+  function syncPumpTokenCurveState(token: PumpTokenEntry, raw: Record<string, unknown>) {
+    const vTokensInBondingCurve = Number(raw.vTokensInBondingCurve);
+    const virtualSolReserves = Number(raw.virtualSolReserves);
+
+    token.bondingCurveKey = typeof raw.bondingCurveKey === 'string' ? raw.bondingCurveKey : token.bondingCurveKey;
+    if (Number.isFinite(vTokensInBondingCurve)) {
+      token.vTokensInBondingCurve = vTokensInBondingCurve;
+    }
+    if (Number.isFinite(virtualSolReserves)) {
+      token.virtualSolReserves = virtualSolReserves;
+    }
+  }
+
+  function resolvePumpTokenMcap(token: PumpTokenEntry, raw: Record<string, unknown>, solPriceUsd: number) {
+    const usdMcap = Number(raw.usd_market_cap);
+    const marketCapSol = Number(raw.marketCapSol);
+
+    if (Number.isFinite(usdMcap) && usdMcap > 0) {
+      return usdMcap;
+    }
+    if (Number.isFinite(marketCapSol) && marketCapSol > 0 && solPriceUsd > 0) {
+      return marketCapSol * solPriceUsd;
+    }
+    if ((token.virtualSolReserves || 0) > 0 && (token.vTokensInBondingCurve || 0) > 0 && solPriceUsd > 0) {
+      const priceUsd = ((token.virtualSolReserves || 0) / 1_000_000_000) / (token.vTokensInBondingCurve || 1) * solPriceUsd;
+      return priceUsd * 1_000_000_000;
+    }
+
+    return null;
+  }
+
+  function applyPumpTradeActivity(token: PumpTokenEntry, raw: Record<string, unknown>, now: number, solPriceUsd: number) {
+    const solAmount = Number(raw.solAmount);
+    const usdAmount = Number.isFinite(solAmount) && solAmount > 0 && solPriceUsd > 0 ? solAmount * solPriceUsd : 0;
+
+    if (usdAmount > 0) {
+      appendPumpVolumeBucket(token, usdAmount, now);
+      token.volTotal = (token.volTotal || 0) + usdAmount;
+    } else {
+      prunePumpTokenWindow(token, now);
+    }
+
+    token.lastTradeAt = now;
+    token.hidden = false;
+    subscribePumpMint(token.mint);
+    maybeFirePumpAlert(token);
+  }
+
+  function commitPumpTokenUpdate(token: PumpTokenEntry, existing: PumpTokenEntry | undefined) {
+    if (!existing) {
+      state.data.pumpTokens = [...state.data.pumpTokens, token];
+    }
+
+    refreshPumpPanelCounts();
+
+    if (!token.imageUrl) {
+      void resolvePumpTokenImage(token.mint);
+    }
+  }
+
   function createOrUpdatePumpToken(raw: Record<string, unknown>, mode: 'new' | 'trade') {
     const mint = String(raw.mint || '').trim();
     if (!mint || isBlocked(mint) || state.data.dismissedPump.includes(mint)) {
@@ -2022,75 +2408,20 @@ export function createAppController(): AppController {
     const now = Date.now();
     const solPriceUsd = state.pumpfun.solPriceUsd ?? 0;
     const existing = state.data.pumpTokens.find((item) => item.mint === mint);
-    const token: PumpTokenEntry = existing ?? {
-      mint,
-      mintAddress: mint,
-      pairAddress: typeof raw.pairAddress === 'string' && raw.pairAddress.trim() ? raw.pairAddress.trim() : null,
-      metadataUri: typeof raw.uri === 'string' && raw.uri.trim() ? raw.uri.trim() : null,
-      name: String(raw.name || mint.slice(0, 8)),
-      symbol: String(raw.symbol || mint.slice(0, 6)),
-      imageUrl: typeof raw.image === 'string' ? toHttpAssetUrl(raw.image) : null,
-      createdAt: now,
-      mcap: null,
-      volTotal: 0,
-      vol5m: [],
-      hidden: false,
-      _imageResolved: false,
-      _imageResolving: false,
-    };
+    const token: PumpTokenEntry = existing ?? buildInitialPumpToken(raw, mint, now);
 
-    token.name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : token.name;
-    token.symbol = typeof raw.symbol === 'string' && raw.symbol.trim() ? raw.symbol.trim() : token.symbol;
-    token.imageUrl = typeof raw.image === 'string' && raw.image.trim() ? toHttpAssetUrl(raw.image) : token.imageUrl;
-    token.createdAt = token.createdAt ?? now;
-    token.mintAddress = token.mintAddress || mint;
-    token.pairAddress = typeof raw.pairAddress === 'string' && raw.pairAddress.trim() ? raw.pairAddress.trim() : token.pairAddress || null;
-    token.metadataUri = typeof raw.uri === 'string' && raw.uri.trim() ? raw.uri.trim() : token.metadataUri || null;
-
-    const usdMcap = Number(raw.usd_market_cap);
-    const marketCapSol = Number(raw.marketCapSol);
-    const vTokensInBondingCurve = Number(raw.vTokensInBondingCurve);
-    const virtualSolReserves = Number(raw.virtualSolReserves);
-    token.bondingCurveKey = typeof raw.bondingCurveKey === 'string' ? raw.bondingCurveKey : token.bondingCurveKey;
-    if (Number.isFinite(vTokensInBondingCurve)) {
-      token.vTokensInBondingCurve = vTokensInBondingCurve;
-    }
-    if (Number.isFinite(virtualSolReserves)) {
-      token.virtualSolReserves = virtualSolReserves;
-    }
-    if (Number.isFinite(usdMcap) && usdMcap > 0) {
-      token.mcap = usdMcap;
-    } else if (Number.isFinite(marketCapSol) && marketCapSol > 0 && solPriceUsd > 0) {
-      token.mcap = marketCapSol * solPriceUsd;
-    } else if ((token.virtualSolReserves || 0) > 0 && (token.vTokensInBondingCurve || 0) > 0 && solPriceUsd > 0) {
-      const priceUsd = ((token.virtualSolReserves || 0) / 1_000_000_000) / (token.vTokensInBondingCurve || 1) * solPriceUsd;
-      token.mcap = priceUsd * 1_000_000_000;
+    syncPumpTokenIdentity(token, raw, mint, now);
+    syncPumpTokenCurveState(token, raw);
+    const nextMcap = resolvePumpTokenMcap(token, raw, solPriceUsd);
+    if (nextMcap != null) {
+      token.mcap = nextMcap;
     }
 
     if (mode === 'trade') {
-      const solAmount = Number(raw.solAmount);
-      const usdAmount = Number.isFinite(solAmount) && solAmount > 0 && solPriceUsd > 0 ? solAmount * solPriceUsd : 0;
-      if (usdAmount > 0) {
-        appendPumpVolumeBucket(token, usdAmount, now);
-        token.volTotal = (token.volTotal || 0) + usdAmount;
-      } else {
-        prunePumpTokenWindow(token, now);
-      }
-      token.lastTradeAt = now;
-      token.hidden = false;
-      subscribePumpMint(mint);
-      maybeFirePumpAlert(token);
+      applyPumpTradeActivity(token, raw, now, solPriceUsd);
     }
 
-    if (!existing) {
-      state.data.pumpTokens = [...state.data.pumpTokens, token];
-    }
-
-    refreshPumpPanelCounts();
-
-    if (!token.imageUrl) {
-      void resolvePumpTokenImage(mint);
-    }
+    commitPumpTokenUpdate(token, existing);
   }
   function logRemoval(target: 'recent' | 'oldWeek', token: ManualTokenEntry, reason: string) {
     const entry: RemovalLogEntry = {
@@ -2200,65 +2531,106 @@ export function createAppController(): AppController {
     return Boolean(options?.forceOldWeekList) || !state.ui.collapsed.oldWeek;
   }
 
-  function deriveAgeBuckets(options?: { forceRecentList?: boolean; forceOldWeekList?: boolean }) {
-    const context = getRoutedEligibilityContext();
-    const now = context.now;
-    const deriveRecentList = shouldDeriveRecentList(options);
-    const deriveOldWeekList = shouldDeriveOldWeekList(options);
-    const nextRecentAddresses: string[] = [];
-    const nextOldWeekAddresses: string[] = [];
+  function deriveRoutedTokenState(
+    item: ManualTokenEntry,
+    context: ReturnType<typeof getRoutedEligibilityContext>,
+  ) {
+    const wasRecent = Boolean(item._isRecentRouted);
+    const wasOldWeek = Boolean(item._isOldWeekRouted);
+    const nextRecent = isRecentEligible(item, context, {
+      preserveWithoutMcap: wasRecent,
+    });
+    const nextOldWeek = isOldWeekEligible(item, context, {
+      preserveWithoutMcap: wasOldWeek,
+    });
 
-    for (const item of getMonitoredTokens(state)) {
-      const wasRecent = Boolean(item._isRecentRouted);
-      const wasOldWeek = Boolean(item._isOldWeekRouted);
-      const nextRecent = isRecentEligible(item, context, {
-        preserveWithoutMcap: wasRecent,
-      });
-      const nextOldWeek = isOldWeekEligible(item, context, {
-        preserveWithoutMcap: wasOldWeek,
-      });
+    item._isRecentRouted = nextRecent;
+    item._isOldWeekRouted = nextOldWeek;
 
-      item._isRecentRouted = nextRecent;
-      item._isOldWeekRouted = nextOldWeek;
+    return {
+      wasRecent,
+      wasOldWeek,
+      nextRecent,
+      nextOldWeek,
+    };
+  }
 
-      if (nextRecent && deriveRecentList) {
-        nextRecentAddresses.push(item.address);
-      }
-      if (nextOldWeek && deriveOldWeekList) {
-        nextOldWeekAddresses.push(item.address);
-      }
-
-      if (!nextRecent && wasRecent && !context.recentDismissed.has(item.address)) {
-        const age = now - (item.createdAt || 0);
-        const mcap = item.mcap ?? 0;
-        const reason = age >= OLD_WEEK_MIN_AGE_MS
-          ? 'aged into Old Tokens 1 Week+'
-          : age < 0
-            ? 'age not yet valid for Recent'
-            : mcap > 0 && (mcap < context.recentMin || (context.recentMax > 0 && mcap > context.recentMax))
-              ? 'MCAP out of Recent range'
-              : 'left Recent routing';
-        logRemoval('recent', item, reason);
-      }
-
-      if (!nextOldWeek && wasOldWeek && !context.oldWeekDismissed.has(item.address)) {
-        const mcap = item.mcap ?? 0;
-        const age = now - (item.createdAt || 0);
-        const reason = age < OLD_WEEK_MIN_AGE_MS
-          ? 'age no longer in Old Week bucket'
-          : mcap > 0 && (mcap < context.oldWeekMin || (context.oldWeekMax > 0 && mcap > context.oldWeekMax))
-            ? 'MCAP out of Old Week range'
-            : 'left Old Week routing';
-        logRemoval('oldWeek', item, reason);
-      }
+  function maybeLogRecentRemoval(
+    item: ManualTokenEntry,
+    context: ReturnType<typeof getRoutedEligibilityContext>,
+    routedState: ReturnType<typeof deriveRoutedTokenState>,
+  ) {
+    if (routedState.nextRecent || !routedState.wasRecent || context.recentDismissed.has(item.address)) {
+      return;
     }
 
+    const age = context.now - (item.createdAt || 0);
+    const mcap = item.mcap ?? 0;
+    const reason = age >= OLD_WEEK_MIN_AGE_MS
+      ? 'aged into Old Tokens 1 Week+'
+      : age < 0
+        ? 'age not yet valid for Recent'
+        : mcap > 0 && (mcap < context.recentMin || (context.recentMax > 0 && mcap > context.recentMax))
+          ? 'MCAP out of Recent range'
+          : 'left Recent routing';
+    logRemoval('recent', item, reason);
+  }
+
+  function maybeLogOldWeekRemoval(
+    item: ManualTokenEntry,
+    context: ReturnType<typeof getRoutedEligibilityContext>,
+    routedState: ReturnType<typeof deriveRoutedTokenState>,
+  ) {
+    if (routedState.nextOldWeek || !routedState.wasOldWeek || context.oldWeekDismissed.has(item.address)) {
+      return;
+    }
+
+    const age = context.now - (item.createdAt || 0);
+    const mcap = item.mcap ?? 0;
+    const reason = age < OLD_WEEK_MIN_AGE_MS
+      ? 'age no longer in Old Week bucket'
+      : mcap > 0 && (mcap < context.oldWeekMin || (context.oldWeekMax > 0 && mcap > context.oldWeekMax))
+        ? 'MCAP out of Old Week range'
+        : 'left Old Week routing';
+    logRemoval('oldWeek', item, reason);
+  }
+
+  function finalizeAgeBucketState(
+    deriveRecentList: boolean,
+    deriveOldWeekList: boolean,
+    nextRecentAddresses: string[],
+    nextOldWeekAddresses: string[],
+  ) {
     state.data.recentTokenAddresses = deriveRecentList ? nextRecentAddresses : [];
     state.data.oldWeekTokenAddresses = deriveOldWeekList ? nextOldWeekAddresses : [];
     refreshTrackedTokenStore();
     state.bars.recent = getMonitoredTokens(state).filter((item) => item._isRecentRouted).length;
     state.bars.oldWeek = getMonitoredTokens(state).filter((item) => item._isOldWeekRouted).length;
     syncRoutedPagination();
+  }
+
+  function deriveAgeBuckets(options?: { forceRecentList?: boolean; forceOldWeekList?: boolean }) {
+    const context = getRoutedEligibilityContext();
+    const deriveRecentList = shouldDeriveRecentList(options);
+    const deriveOldWeekList = shouldDeriveOldWeekList(options);
+    const nextRecentAddresses: string[] = [];
+    const nextOldWeekAddresses: string[] = [];
+
+    for (const item of getMonitoredTokens(state)) {
+      const routedState = deriveRoutedTokenState(item, context);
+
+      if (routedState.nextRecent && deriveRecentList) {
+        nextRecentAddresses.push(item.address);
+      }
+      if (routedState.nextOldWeek && deriveOldWeekList) {
+        nextOldWeekAddresses.push(item.address);
+      }
+
+      maybeLogRecentRemoval(item, context, routedState);
+      maybeLogOldWeekRemoval(item, context, routedState);
+    }
+
+    finalizeAgeBucketState(deriveRecentList, deriveOldWeekList, nextRecentAddresses, nextOldWeekAddresses);
   }
   function applyBlockedFilters() {
     const blocked = new Set(state.data.blocklist.map((item) => item.address));
@@ -2536,6 +2908,108 @@ export function createAppController(): AppController {
     syncAlertState();
   }
 
+  function getAlertSymbol(token: ManualTokenEntry) {
+    return token.symbol || token.label || token.address.slice(0, 8);
+  }
+
+  function buildTrackedAlertEntry(
+    token: ManualTokenEntry,
+    now: number,
+    symbol: string,
+    kind: AlertEntry['kind'],
+    label: string,
+    pct: number,
+    extra?: Partial<AlertEntry>,
+  ): AlertEntry {
+    return {
+      id: `${token.address}-${now}-${kind}`,
+      kind,
+      address: token.address,
+      symbol,
+      name: token.name || token.label || null,
+      pairUrl: token.pairUrl || null,
+      mintAddress: token.mintAddress || token.address,
+      pairAddress: token.pairAddress || null,
+      imageUrl: token.imageUrl || null,
+      twitterUrl: token.twitterUrl || null,
+      createdAt: now,
+      tokenCreatedAt: token.createdAt ?? null,
+      prevVolume5m: token.prevVolume5m ?? null,
+      volume5m: token.volume5m ?? null,
+      volume1h: token.volume1h ?? null,
+      volume6h: token.volume6h ?? null,
+      volume24h: token.volume24h ?? null,
+      prevMcap: token.prevMcap ?? null,
+      mcap: token.mcap ?? null,
+      pct,
+      label,
+      ...extra,
+    };
+  }
+
+  function shouldFireHvncAlert(token: ManualTokenEntry, ageMs: number, hvncMinVol: number) {
+    return isAlertKindEnabled('hvnc')
+      && !token._hvncFired
+      && hvncMinVol > 0
+      && ageMs < HVNC_MAX_AGE_MS
+      && (token.volume24h ?? 0) >= hvncMinVol;
+  }
+
+  function primeOldSurgeSessionBases(token: ManualTokenEntry, pc1h: number | null, pc6h: number | null) {
+    if (token._oldSurgeSessionBase1h == null) {
+      token._oldSurgeSessionBase1h = pc1h;
+    }
+    if (token._oldSurgeSessionBase6h == null) {
+      token._oldSurgeSessionBase6h = pc6h;
+    }
+  }
+
+  function hasTriggeredOldSurge(base: number | null | undefined, current: number | null, threshold: number) {
+    const crossedThreshold = base != null && base < threshold && current != null && current >= threshold;
+    const repeatedHotMove = base != null && base >= threshold && current != null && current >= base + OLD_SURGE_SESSION_DELTA_PCT;
+    return crossedThreshold || repeatedHotMove;
+  }
+
+  function resolveOldSurgeAlert(token: ManualTokenEntry) {
+    const pc1h = token.priceChange1h ?? null;
+    const pc6h = token.priceChange6h ?? null;
+    const oldAlert1hPct = getOldAlert1hThreshold();
+    const oldAlert6hPct = getOldAlert6hThreshold();
+    const oldSurge1hEnabled = isConfigEnabled('alert-old-surge-1h-enabled');
+    const oldSurge6hEnabled = isConfigEnabled('alert-old-surge-6h-enabled');
+    const base1h = token._oldSurgeSessionBase1h;
+    const base6h = token._oldSurgeSessionBase6h;
+
+    primeOldSurgeSessionBases(token, pc1h, pc6h);
+
+    if (oldSurge6hEnabled && hasTriggeredOldSurge(base6h, pc6h, oldAlert6hPct)) {
+      return { pct: pc6h ?? 0, surgeWindow: '6H' as const };
+    }
+
+    if (oldSurge1hEnabled && hasTriggeredOldSurge(base1h, pc1h, oldAlert1hPct)) {
+      return { pct: pc1h ?? 0, surgeWindow: '1H' as const };
+    }
+
+    return null;
+  }
+
+  function shouldFireMeteoraSurgeAlert(
+    token: ManualTokenEntry,
+    meteoraEntry: MeteoraEntry | undefined,
+    meteoraCurrentTvl: number,
+    meteoraBaselineTvl1h: number | null,
+    meteoraAlertThreshold1h: number,
+  ) {
+    return isAlertKindEnabled('meteora-surge')
+      && !token._meteoraSurgeFired
+      && meteoraAlertThreshold1h > 0
+      && Boolean(meteoraEntry)
+      && !meteoraEntry?.noPool
+      && meteoraCurrentTvl >= METEORA_ALERT_MIN_TVL
+      && (meteoraBaselineTvl1h ?? 0) >= METEORA_ALERT_MIN_TVL
+      && (meteoraEntry?.change1h ?? 0) >= meteoraAlertThreshold1h;
+  }
+
   function maybeFireSpecialAlerts(token: ManualTokenEntry) {
     if (isBlocked(token.address)) {
       return;
@@ -2545,7 +3019,7 @@ export function createAppController(): AppController {
     if (isCrossAlertBlocked(token, now)) {
       return;
     }
-    const symbol = token.symbol || token.label || token.address.slice(0, 8);
+    const symbol = getAlertSymbol(token);
     const ageMs = token.createdAt ? now - token.createdAt : Number.POSITIVE_INFINITY;
     const hvncMinVol = getConfigNumber('hvnc-min-vol', 300000);
     const meteoraAlertThreshold1h = getConfigNumber('meteora-alert-1h-threshold', 50);
@@ -2553,140 +3027,116 @@ export function createAppController(): AppController {
     const meteoraCurrentTvl = Number(meteoraEntry?.tvl) || 0;
     const meteoraBaselineTvl1h = getMeteoraBaselineTvl1h(meteoraEntry);
 
-    if (isAlertKindEnabled('hvnc') && !token._hvncFired && hvncMinVol > 0 && ageMs < HVNC_MAX_AGE_MS && (token.volume24h ?? 0) >= hvncMinVol) {
+    if (shouldFireHvncAlert(token, ageMs, hvncMinVol)) {
       token._hvncFired = true;
-      pushAlert({
-        id: `${token.address}-${now}-hvnc`,
-        kind: 'hvnc',
-        address: token.address,
-        symbol,
-        name: token.name || token.label || null,
-        pairUrl: token.pairUrl || null,
-        mintAddress: token.mintAddress || token.address,
-        pairAddress: token.pairAddress || null,
-        imageUrl: token.imageUrl || null,
-        twitterUrl: token.twitterUrl || null,
-        createdAt: now,
-        tokenCreatedAt: token.createdAt ?? null,
-        prevVolume5m: token.prevVolume5m ?? null,
-        volume5m: token.volume5m ?? null,
-        volume1h: token.volume1h ?? null,
-        volume6h: token.volume6h ?? null,
-        volume24h: token.volume24h ?? null,
-        prevMcap: token.prevMcap ?? null,
-        mcap: token.mcap ?? null,
-        pct: 0,
-        label: 'HVNC',
-        isHvnc: true,
-      });
+      pushAlert(buildTrackedAlertEntry(token, now, symbol, 'hvnc', 'HVNC', 0, { isHvnc: true }));
       setNotice(`HVNC alert: ${symbol}`);
     }
 
     const isOldRouted = Boolean(token._isRecentRouted || token._isOldWeekRouted);
 
     if (!token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
-      const pc1h = token.priceChange1h ?? null;
-      const pc6h = token.priceChange6h ?? null;
-      const oldAlert1hPct = getOldAlert1hThreshold();
-      const oldAlert6hPct = getOldAlert6hThreshold();
-      const oldSurge1hEnabled = isConfigEnabled('alert-old-surge-1h-enabled');
-      const oldSurge6hEnabled = isConfigEnabled('alert-old-surge-6h-enabled');
-      let pct = 0;
-      let surgeWindow: '1H' | '6H' | null = null;
-      const base1h = token._oldSurgeSessionBase1h;
-      const base6h = token._oldSurgeSessionBase6h;
-
-      if (token._oldSurgeSessionBase1h == null) {
-        token._oldSurgeSessionBase1h = pc1h;
-      }
-      if (token._oldSurgeSessionBase6h == null) {
-        token._oldSurgeSessionBase6h = pc6h;
-      }
-
-      const crossed6h = base6h != null && base6h < oldAlert6hPct && pc6h != null && pc6h >= oldAlert6hPct;
-      const rose50AfterHot6h = base6h != null && base6h >= oldAlert6hPct && pc6h != null && pc6h >= base6h + OLD_SURGE_SESSION_DELTA_PCT;
-      const crossed1h = base1h != null && base1h < oldAlert1hPct && pc1h != null && pc1h >= oldAlert1hPct;
-      const rose50AfterHot1h = base1h != null && base1h >= oldAlert1hPct && pc1h != null && pc1h >= base1h + OLD_SURGE_SESSION_DELTA_PCT;
-
-      if (oldSurge6hEnabled && (crossed6h || rose50AfterHot6h)) {
-        pct = pc6h;
-        surgeWindow = '6H';
-      } else if (oldSurge1hEnabled && (crossed1h || rose50AfterHot1h)) {
-        pct = pc1h;
-        surgeWindow = '1H';
-      }
-
-      if (pct > 0) {
+      const surgeAlert = resolveOldSurgeAlert(token);
+      if (surgeAlert && surgeAlert.pct > 0) {
         token._oldSurgeFired = true;
         token.lastAlertAt = now;
         token._lastAlertKind = 'old-surge';
-        pushAlert({
-          id: `${token.address}-${now}-old-surge`,
-          kind: 'old-surge',
-          address: token.address,
-          symbol,
-          name: token.name || token.label || null,
-          pairUrl: token.pairUrl || null,
-          mintAddress: token.mintAddress || token.address,
-          pairAddress: token.pairAddress || null,
-          imageUrl: token.imageUrl || null,
-          twitterUrl: token.twitterUrl || null,
-          createdAt: now,
-          tokenCreatedAt: token.createdAt ?? null,
-          prevVolume5m: token.prevVolume5m ?? null,
-          volume5m: token.volume5m ?? null,
-          volume1h: token.volume1h ?? null,
-          volume6h: token.volume6h ?? null,
-          volume24h: token.volume24h ?? null,
-          prevMcap: token.prevMcap ?? null,
-          mcap: token.mcap ?? null,
-          pct,
-          label: surgeWindow ? `PCHANGE ${surgeWindow}` : 'PCHANGE',
-          surgeWindow,
+        pushAlert(buildTrackedAlertEntry(token, now, symbol, 'old-surge', `PCHANGE ${surgeAlert.surgeWindow}`, surgeAlert.pct, {
+          surgeWindow: surgeAlert.surgeWindow,
           isOldSurge: true,
-        });
-        setNotice(`Old token surge alert ${surgeWindow || ''}: ${symbol}`.trim());
+        }));
+        setNotice(`Old token surge alert ${surgeAlert.surgeWindow}: ${symbol}`);
       }
     }
 
-    if (
-      isAlertKindEnabled('meteora-surge')
-      && !token._meteoraSurgeFired
-      && meteoraAlertThreshold1h > 0
-      && meteoraEntry
-      && !meteoraEntry.noPool
-      && meteoraCurrentTvl >= METEORA_ALERT_MIN_TVL
-      && (meteoraBaselineTvl1h ?? 0) >= METEORA_ALERT_MIN_TVL
-      && (meteoraEntry.change1h ?? 0) >= meteoraAlertThreshold1h
-    ) {
+    if (shouldFireMeteoraSurgeAlert(token, meteoraEntry, meteoraCurrentTvl, meteoraBaselineTvl1h, meteoraAlertThreshold1h)) {
       token._meteoraSurgeFired = true;
       token.lastAlertAt = now;
       token._lastAlertKind = 'meteora-surge';
-      pushAlert({
-        id: `${token.address}-${now}-meteora-surge`,
-        kind: 'meteora-surge',
-        address: token.address,
-        symbol,
-        name: token.name || token.label || null,
-        pairUrl: token.pairUrl || null,
-        mintAddress: token.mintAddress || token.address,
-        pairAddress: token.pairAddress || null,
-        imageUrl: token.imageUrl || null,
-        twitterUrl: token.twitterUrl || null,
-        createdAt: now,
-        tokenCreatedAt: token.createdAt ?? null,
-        prevVolume5m: token.prevVolume5m ?? null,
-        volume5m: token.volume5m ?? null,
-        volume1h: token.volume1h ?? null,
-        volume6h: token.volume6h ?? null,
-        volume24h: token.volume24h ?? null,
-        prevMcap: token.prevMcap ?? null,
-        mcap: token.mcap ?? null,
-        pct: meteoraEntry.change1h ?? 0,
-        label: 'METEORA 1H',
-      });
+      pushAlert(buildTrackedAlertEntry(token, now, symbol, 'meteora-surge', 'METEORA 1H', meteoraEntry?.change1h ?? 0));
       setNotice(`Surge + Meteora Alert 1h: ${symbol}`);
     }
+  }
+
+  function hasLocalAlertCooldown(token: ManualTokenEntry, now: number) {
+    return Boolean(token.lastAlertAt && now - token.lastAlertAt < STANDARD_ALERT_COOLDOWN_MS);
+  }
+
+  function evaluateVolumeLocalAlert(
+    token: ManualTokenEntry,
+    now: number,
+    symbol: string,
+    threshold: number,
+    previousVol: number,
+    previousMcap: number | null,
+    currentVol: number,
+    mcapDeclining: boolean,
+  ) {
+    const volChange = (currentVol - previousVol) / previousVol;
+    const volPct = volChange * 100;
+    const volEligible = isAlertKindEnabled('monitored-vol') && volChange >= threshold && passesAlertFilters(token) && !mcapDeclining;
+    if (!volEligible) {
+      token._volAlertAboveThreshold = false;
+      return null;
+    }
+
+    const canRepeatVol = token._lastVolAlertPct != null && volPct >= token._lastVolAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
+    if (token._volAlertAboveThreshold && !canRepeatVol) {
+      return null;
+    }
+
+    return {
+      firedKind: 'vol' as const,
+      alert: buildTrackedAlertEntry(token, now, symbol, 'monitored-vol', 'VOL', volPct, {
+        prevVolume5m: previousVol,
+        prevMcap: previousMcap,
+      }),
+    };
+  }
+
+  function evaluateMcapLocalAlert(
+    token: ManualTokenEntry,
+    now: number,
+    symbol: string,
+    mcapThreshold: number,
+    previousVol: number | null,
+    previousMcap: number,
+    currentMcap: number,
+  ) {
+    const mcapChange = (currentMcap - previousMcap) / previousMcap;
+    const mcapPct = mcapChange * 100;
+    const mcapEligible = isAlertKindEnabled('monitored-mcap') && mcapChange >= mcapThreshold && passesAlertFilters(token);
+    if (!mcapEligible) {
+      token._mcapAlertAboveThreshold = false;
+      return null;
+    }
+
+    const canRepeatMcap = token._lastMcapAlertPct != null && mcapPct >= token._lastMcapAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
+    if (token._mcapAlertAboveThreshold && !canRepeatMcap) {
+      return null;
+    }
+
+    return {
+      firedKind: 'mcap' as const,
+      alert: buildTrackedAlertEntry(token, now, symbol, 'monitored-mcap', 'MCAP', mcapPct, {
+        prevVolume5m: previousVol,
+        prevMcap: previousMcap,
+      }),
+    };
+  }
+
+  function applyLocalAlertState(token: ManualTokenEntry, alert: AlertEntry, firedKind: 'vol' | 'mcap', now: number) {
+    token.lastAlertAt = now;
+    if (firedKind === 'vol') {
+      token._volAlertAboveThreshold = true;
+      token._lastVolAlertPct = alert.pct;
+      token._lastAlertKind = 'monitored-vol';
+      return;
+    }
+
+    token._mcapAlertAboveThreshold = true;
+    token._lastMcapAlertPct = alert.pct;
+    token._lastAlertKind = 'monitored-mcap';
   }
 
   function maybeFireLocalAlert(token: ManualTokenEntry) {
@@ -2705,99 +3155,25 @@ export function createAppController(): AppController {
     const currentVol = token.volume5m ?? 0;
     const currentMcap = token.mcap ?? 0;
 
-    if (token.lastAlertAt && now - token.lastAlertAt < STANDARD_ALERT_COOLDOWN_MS) {
+    if (hasLocalAlertCooldown(token, now)) {
       return;
     }
 
-    const symbol = token.symbol || token.label || token.address.slice(0, 8);
+    const symbol = getAlertSymbol(token);
     const mcapDeclining = previousMcap != null && previousMcap > 0 && currentMcap > 0 && currentMcap < previousMcap;
-    let alert: AlertEntry | null = null;
-    let firedKind: 'vol' | 'mcap' | null = null;
+    let localAlertCandidate: { alert: AlertEntry; firedKind: 'vol' | 'mcap' } | null = null;
 
     if (previousVol != null && previousVol > 0) {
-      const volChange = (currentVol - previousVol) / previousVol;
-      const volPct = volChange * 100;
-      const volEligible = isAlertKindEnabled('monitored-vol') && volChange >= threshold && passesAlertFilters(token) && !mcapDeclining;
-      if (!volEligible) {
-        token._volAlertAboveThreshold = false;
-      }
-      const canRepeatVol = token._lastVolAlertPct != null && volPct >= token._lastVolAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
-      if (volEligible && (!token._volAlertAboveThreshold || canRepeatVol)) {
-        alert = {
-          id: `${token.address}-${now}-vol`,
-          kind: 'monitored-vol',
-          address: token.address,
-          symbol,
-          name: token.name || token.label || null,
-          pairUrl: token.pairUrl || null,
-          mintAddress: token.mintAddress || token.address,
-          pairAddress: token.pairAddress || null,
-          imageUrl: token.imageUrl || null,
-          twitterUrl: token.twitterUrl || null,
-          createdAt: now,
-          tokenCreatedAt: token.createdAt ?? null,
-          prevVolume5m: previousVol,
-          volume5m: token.volume5m ?? null,
-          volume1h: token.volume1h ?? null,
-          volume6h: token.volume6h ?? null,
-          volume24h: token.volume24h ?? null,
-          prevMcap: previousMcap,
-          mcap: token.mcap ?? null,
-          pct: volPct,
-          label: 'VOL',
-        };
-        firedKind = 'vol';
-      }
+      localAlertCandidate = evaluateVolumeLocalAlert(token, now, symbol, threshold, previousVol, previousMcap, currentVol, mcapDeclining);
     }
 
-    if (!alert && mcapThreshold > 0 && previousMcap != null && previousMcap > 0) {
-      const mcapChange = (currentMcap - previousMcap) / previousMcap;
-      const mcapPct = mcapChange * 100;
-      const mcapEligible = isAlertKindEnabled('monitored-mcap') && mcapChange >= mcapThreshold && passesAlertFilters(token);
-      if (!mcapEligible) {
-        token._mcapAlertAboveThreshold = false;
-      }
-      const canRepeatMcap = token._lastMcapAlertPct != null && mcapPct >= token._lastMcapAlertPct + REPEAT_LOCAL_ALERT_STEP_PCT;
-      if (mcapEligible && (!token._mcapAlertAboveThreshold || canRepeatMcap)) {
-        alert = {
-          id: `${token.address}-${now}-mcap`,
-          kind: 'monitored-mcap',
-          address: token.address,
-          symbol,
-          name: token.name || token.label || null,
-          pairUrl: token.pairUrl || null,
-          mintAddress: token.mintAddress || token.address,
-          pairAddress: token.pairAddress || null,
-          imageUrl: token.imageUrl || null,
-          twitterUrl: token.twitterUrl || null,
-          createdAt: now,
-          tokenCreatedAt: token.createdAt ?? null,
-          prevVolume5m: previousVol,
-          volume5m: token.volume5m ?? null,
-          volume1h: token.volume1h ?? null,
-          volume6h: token.volume6h ?? null,
-          volume24h: token.volume24h ?? null,
-          prevMcap: previousMcap,
-          mcap: token.mcap ?? null,
-          pct: mcapPct,
-          label: 'MCAP',
-        };
-        firedKind = 'mcap';
-      }
+    if (!localAlertCandidate && mcapThreshold > 0 && previousMcap != null && previousMcap > 0) {
+      localAlertCandidate = evaluateMcapLocalAlert(token, now, symbol, mcapThreshold, previousVol, previousMcap, currentMcap);
     }
 
-    if (alert) {
-      token.lastAlertAt = now;
-      if (firedKind === 'vol') {
-        token._volAlertAboveThreshold = true;
-        token._lastVolAlertPct = alert.pct;
-        token._lastAlertKind = 'monitored-vol';
-      } else if (firedKind === 'mcap') {
-        token._mcapAlertAboveThreshold = true;
-        token._lastMcapAlertPct = alert.pct;
-        token._lastAlertKind = 'monitored-mcap';
-      }
-      pushAlert(alert);
+    if (localAlertCandidate) {
+      applyLocalAlertState(token, localAlertCandidate.alert, localAlertCandidate.firedKind, now);
+      pushAlert(localAlertCandidate.alert);
       setNotice(`Local monitored alert: ${symbol}`);
     }
   }
@@ -2812,74 +3188,6 @@ export function createAppController(): AppController {
     const nextTrackedStore: Record<string, ManualTokenEntry> = {};
     const now = Date.now();
     const coldRefreshDue = monitoredDashboardTokens.length > 0 && now >= nextColdFieldRefreshAt;
-    let reusedManualCount = 0;
-    let newManualCount = 0;
-    let reusedDashboardCount = 0;
-    let newDashboardCount = 0;
-
-    function mergeDashboardFields(
-      existingItem: ManualTokenEntry | undefined,
-      dashboardItem: DashboardMonitoredToken | undefined,
-      base: ManualTokenEntry,
-    ) {
-      const criticalColdFieldGap = hasCriticalColdFieldGap(existingItem);
-      const shouldApplyColdFields = Boolean(dashboardItem) && (!existingItem || criticalColdFieldGap || coldRefreshDue);
-
-      const nextMcap = dashboardItem?.mcap ?? existingItem?.mcap ?? base.mcap ?? null;
-      const nextVolume5m = dashboardItem?.volume5m ?? existingItem?.volume5m ?? base.volume5m ?? null;
-
-      return {
-        ...base,
-        mintAddress: existingItem?.mintAddress ?? dashboardItem?.address ?? base.address,
-        pairAddress: shouldApplyColdFields
-          ? dashboardItem?.pairAddress ?? existingItem?.pairAddress ?? base.pairAddress ?? null
-          : existingItem?.pairAddress ?? base.pairAddress ?? null,
-        pairUrl: shouldApplyColdFields
-          ? dashboardItem?.pairUrl ?? existingItem?.pairUrl ?? base.pairUrl ?? null
-          : existingItem?.pairUrl ?? base.pairUrl ?? null,
-        imageUrl: shouldApplyColdFields
-          ? dashboardItem?.imageUrl ?? existingItem?.imageUrl ?? base.imageUrl ?? null
-          : existingItem?.imageUrl ?? base.imageUrl ?? null,
-        twitterUrl: shouldApplyColdFields
-          ? dashboardItem?.twitterUrl ?? existingItem?.twitterUrl ?? base.twitterUrl ?? null
-          : existingItem?.twitterUrl ?? base.twitterUrl ?? null,
-        symbol: shouldApplyColdFields
-          ? dashboardItem?.symbol ?? existingItem?.symbol ?? base.symbol ?? null
-          : existingItem?.symbol ?? base.symbol ?? null,
-        name: shouldApplyColdFields
-          ? dashboardItem?.name ?? existingItem?.name ?? base.name ?? null
-          : existingItem?.name ?? base.name ?? null,
-        createdAt: shouldApplyColdFields
-          ? dashboardItem?.tokenCreatedAt ?? existingItem?.createdAt ?? base.createdAt ?? null
-          : existingItem?.createdAt ?? base.createdAt ?? null,
-        mcap: nextMcap,
-        priceUsd: dashboardItem?.priceUsd ?? existingItem?.priceUsd ?? base.priceUsd ?? null,
-        volume5m: nextVolume5m,
-        volume1h: dashboardItem?.volume1h ?? existingItem?.volume1h ?? base.volume1h ?? null,
-        volume6h: dashboardItem?.volume6h ?? existingItem?.volume6h ?? base.volume6h ?? null,
-        volume24h: dashboardItem?.volume24h ?? existingItem?.volume24h ?? base.volume24h ?? null,
-        priceChange1h: dashboardItem?.priceChange1h ?? existingItem?.priceChange1h ?? base.priceChange1h ?? null,
-        priceChange6h: dashboardItem?.priceChange6h ?? existingItem?.priceChange6h ?? base.priceChange6h ?? null,
-        priceChange24h: dashboardItem?.priceChange24h ?? existingItem?.priceChange24h ?? base.priceChange24h ?? null,
-        mcapDelta: dashboardItem?.mcapDelta ?? existingItem?.mcapDelta ?? base.mcapDelta ?? null,
-        prevMcap: dashboardItem?.prevMcap ?? existingItem?.prevMcap ?? base.prevMcap ?? null,
-        prevVolume5m: existingItem?.volume5m != null ? existingItem.volume5m : existingItem?.prevVolume5m ?? base.prevVolume5m ?? null,
-        prevVolume5mCanonical: dashboardItem?.prevVolume5mCanonical ?? existingItem?.prevVolume5mCanonical ?? base.prevVolume5mCanonical ?? null,
-        lastAlertAt: existingItem?.lastAlertAt ?? base.lastAlertAt ?? null,
-        deadCycles: existingItem?.deadCycles ?? base.deadCycles ?? 0,
-        _hvncFired: existingItem?._hvncFired ?? base._hvncFired,
-        _oldSurgeFired: existingItem?._oldSurgeFired ?? base._oldSurgeFired,
-        _meteoraSurgeFired: existingItem?._meteoraSurgeFired ?? base._meteoraSurgeFired,
-        _oldSurgeSessionBase1h: existingItem?._oldSurgeSessionBase1h ?? base._oldSurgeSessionBase1h ?? null,
-        _oldSurgeSessionBase6h: existingItem?._oldSurgeSessionBase6h ?? base._oldSurgeSessionBase6h ?? null,
-        _volAlertAboveThreshold: existingItem?._volAlertAboveThreshold ?? base._volAlertAboveThreshold ?? false,
-        _mcapAlertAboveThreshold: existingItem?._mcapAlertAboveThreshold ?? base._mcapAlertAboveThreshold ?? false,
-        _lastVolAlertPct: existingItem?._lastVolAlertPct ?? base._lastVolAlertPct ?? null,
-        _lastMcapAlertPct: existingItem?._lastMcapAlertPct ?? base._lastMcapAlertPct ?? null,
-        _lastAlertKind: existingItem?._lastAlertKind ?? base._lastAlertKind ?? null,
-      };
-    }
-
     const alertCandidates = new Set<string>();
 
     const manualTokens = sortAddresses(payload.tokens)
@@ -2889,20 +3197,20 @@ export function createAppController(): AppController {
         const dashboardItem = dashboardByAddress.get(item.address);
         if (existingItem) {
           alertCandidates.add(item.address);
-          reusedManualCount += 1;
-        } else {
-          newManualCount += 1;
         }
-        const mergedItem = mergeDashboardFields(existingItem, dashboardItem, {
-          ...existingItem,
-          address: item.address,
-          label: item.label ?? null,
-          manual: true,
-          _userManual: true,
+        const mergedItem = mergeTrackedDashboardFields({
+          existingItem,
+          dashboardItem,
+          base: {
+            ...existingItem,
+            address: item.address,
+            label: item.label ?? null,
+            manual: true,
+            _userManual: true,
+          },
+          coldRefreshDue,
         });
-        const nextItem = areTrackedTokensEquivalent(existingItem, mergedItem)
-          ? existingItem as ManualTokenEntry
-          : mergedItem;
+        const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
         nextTrackedStore[item.address] = nextItem;
         return nextItem;
       });
@@ -2919,41 +3227,32 @@ export function createAppController(): AppController {
       const existingItem = existing.get(item.address);
       if (existingItem) {
         alertCandidates.add(item.address);
-        reusedDashboardCount += 1;
-      } else {
-        newDashboardCount += 1;
       }
-      const mergedItem = mergeDashboardFields(existingItem, item, {
-        ...existingItem,
-        address: item.address,
-        label: existingItem?.label ?? item.symbol ?? 'Eligible',
-        manual: false,
-        _userManual: false,
+      const mergedItem = mergeTrackedDashboardFields({
+        existingItem,
+        dashboardItem: item,
+        base: {
+          ...existingItem,
+          address: item.address,
+          label: existingItem?.label ?? item.symbol ?? 'Eligible',
+          manual: false,
+          _userManual: false,
+        },
+        coldRefreshDue,
       });
-      const nextItem = areTrackedTokensEquivalent(existingItem, mergedItem)
-        ? existingItem as ManualTokenEntry
-        : mergedItem;
+      const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
       nextTrackedStore[item.address] = nextItem;
       monitoredMap.set(item.address, nextItem);
     }
-    if (coldRefreshDue) {
-      nextColdFieldRefreshAt = now + COLD_FIELD_RECHECK_MS;
-    }
-    state.data.trackedTokensByAddress = nextTrackedStore;
-    state.data.manualTokenAddresses = manualTokens.map((item) => item.address);
-    state.data.monitoredTokenAddresses = [...monitoredMap.keys()];
-    state.data.recentTokenAddresses = [];
-    state.data.oldWeekTokenAddresses = [];
-    state.bars.manual = state.data.manualTokenAddresses.length;
-    deriveAgeBuckets();
-    if (state.runtime.mode === 'active' && shouldRunFrontendAlerts() && alertCandidates.size > 0) {
-      for (const token of getMonitoredTokens(state)) {
-        if (!alertCandidates.has(token.address)) continue;
-        maybeFireSpecialAlerts(token);
-        maybeFireLocalAlert(token);
-      }
-    }
-    refreshMonitoredPanelCounts();
+
+    commitTrackedStateRebuild({
+      nextTrackedStore,
+      manualTokens,
+      monitoredMap,
+      alertCandidates,
+      coldRefreshDue,
+      now,
+    });
   }
 
   function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
@@ -2961,8 +3260,10 @@ export function createAppController(): AppController {
     emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
   }
 
-  function applyLateralizedPayload(payload: LateralizedPayload) {
-    state.data.lateralizedTokens = (payload.candidates || []).map((item) => ({
+  function buildCandidateIdentityFields(
+    item: LateralizedPayload['candidates'][number] | BidZonePayload['candidates'][number],
+  ) {
+    return {
       address: item.address,
       symbol: item.symbol ?? null,
       name: item.name ?? null,
@@ -2973,38 +3274,52 @@ export function createAppController(): AppController {
       volume1h: item.volume1h ?? null,
       volume6h: item.volume6h ?? null,
       volume24h: item.volume24h ?? null,
-      rangePct: item.rangePct ?? null,
-      rangeLimitPct: item.rangeLimitPct ?? null,
-      driftPct: item.driftPct ?? null,
-      driftLimitPct: item.driftLimitPct ?? null,
+    };
+  }
+
+  function buildCandidateMetricFields(
+    item: LateralizedPayload['candidates'][number] | BidZonePayload['candidates'][number],
+  ) {
+    return {
       coverageRatio: item.coverageRatio ?? null,
       bucketCount: item.bucketCount ?? 0,
       sampleCount: item.sampleCount ?? 0,
       expectedBucketCount: item.expectedBucketCount ?? 0,
       ageHours: item.ageHours ?? null,
-      currentPositionPct: item.currentPositionPct ?? null,
       requestedHours: item.requestedHours ?? undefined,
       minimumWindowHours: item.minimumWindowHours ?? 0,
       windowHoursUsed: item.windowHoursUsed ?? 0,
       score: item.score ?? null,
-    }));
+    };
+  }
+
+  function buildLateralizedSpecificFields(item: LateralizedPayload['candidates'][number]) {
+    return {
+      rangePct: item.rangePct ?? null,
+      rangeLimitPct: item.rangeLimitPct ?? null,
+      driftPct: item.driftPct ?? null,
+      driftLimitPct: item.driftLimitPct ?? null,
+      currentPositionPct: item.currentPositionPct ?? null,
+    };
+  }
+
+  function buildLateralizedTokenEntry(item: LateralizedPayload['candidates'][number]): LateralizedTokenEntry {
+    return {
+      ...buildCandidateIdentityFields(item),
+      ...buildCandidateMetricFields(item),
+      ...buildLateralizedSpecificFields(item),
+    };
+  }
+
+  function applyLateralizedPayload(payload: LateralizedPayload) {
+    state.data.lateralizedTokens = (payload.candidates || []).map(buildLateralizedTokenEntry);
     updateLateralizedFreshness(payload.generatedAt ?? null);
     state.panels.lateralized = state.data.lateralizedTokens.length;
     emit('lateralized');
   }
 
-  function applyBidZonePayload(payload: BidZonePayload) {
-    state.data.bidZoneTokens = (payload.candidates || []).map((item): BidZoneTokenEntry => ({
-      address: item.address,
-      symbol: item.symbol ?? null,
-      name: item.name ?? null,
-      monitorPriority: item.monitorPriority ?? null,
-      mcap: item.mcap ?? null,
-      catalogMcap: item.catalogMcap ?? null,
-      windowMcap: item.windowMcap ?? null,
-      volume1h: item.volume1h ?? null,
-      volume6h: item.volume6h ?? null,
-      volume24h: item.volume24h ?? null,
+  function buildBidZoneSpecificFields(item: BidZonePayload['candidates'][number]) {
+    return {
       supportLevelMcap: item.supportLevelMcap ?? null,
       resistanceLevelMcap: item.resistanceLevelMcap ?? null,
       robustRangePct: item.robustRangePct ?? null,
@@ -3013,16 +3328,19 @@ export function createAppController(): AppController {
       supportDistancePct: item.supportDistancePct ?? null,
       resistanceDistancePct: item.resistanceDistancePct ?? null,
       supportTouchClusters: item.supportTouchClusters ?? 0,
-      coverageRatio: item.coverageRatio ?? null,
-      bucketCount: item.bucketCount ?? 0,
-      sampleCount: item.sampleCount ?? 0,
-      expectedBucketCount: item.expectedBucketCount ?? 0,
-      ageHours: item.ageHours ?? null,
-      requestedHours: item.requestedHours ?? undefined,
-      minimumWindowHours: item.minimumWindowHours ?? 0,
-      windowHoursUsed: item.windowHoursUsed ?? 0,
-      score: item.score ?? null,
-    }));
+    };
+  }
+
+  function buildBidZoneTokenEntry(item: BidZonePayload['candidates'][number]): BidZoneTokenEntry {
+    return {
+      ...buildCandidateIdentityFields(item),
+      ...buildCandidateMetricFields(item),
+      ...buildBidZoneSpecificFields(item),
+    };
+  }
+
+  function applyBidZonePayload(payload: BidZonePayload) {
+    state.data.bidZoneTokens = (payload.candidates || []).map(buildBidZoneTokenEntry);
     updateBidZoneFreshness(payload.generatedAt ?? null);
     state.panels.bidZone = state.data.bidZoneTokens.length;
     emit('bid-zone');
@@ -3513,6 +3831,11 @@ export function createAppController(): AppController {
     ]);
   }
 
+  async function refreshAuthenticatedBootstrapState() {
+    await refreshUserSettingsState(COOKIE_SESSION_MARKER);
+    await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+  }
+
   function clearSession() {
     stopSocialLinkSync();
     stopPreAccessPolling();
@@ -3718,17 +4041,37 @@ export function createAppController(): AppController {
     manualTokensOverride?: Array<{ address: string; label?: string | null }>,
     generatedAt?: string | null,
   ) {
-    const manualPayload: ConfigPayload = {
+    const manualPayload = buildMonitoredDashboardPayload(manualTokensOverride);
+    syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens);
+    state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
+    state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+    if (generatedAt !== undefined) {
+      updateMonitoredFreshness(generatedAt ?? null);
+    }
+    rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+  }
+
+  function buildMonitoredDashboardPayload(
+    manualTokensOverride?: Array<{ address: string; label?: string | null }>,
+  ): ConfigPayload {
+    return {
       configs: state.data.configs,
       uiPrefs: buildUiPrefsPayload(),
       tokens: (manualTokensOverride ?? getManualTokens(state).map((item) => ({ address: item.address, label: item.label ?? null }))),
       blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
       starredTokens: state.data.starredTokens.map((address) => ({ address })),
     };
+  }
+
+  function syncMeteoraDashboardCache(
+    monitoredDashboardTokens: DashboardMonitoredToken[],
+    manualTokens: Array<{ address: string; label?: string | null }>,
+  ) {
     const activeAddresses = new Set(monitoredDashboardTokens.map((item) => item.address));
-    for (const item of manualPayload.tokens) {
+    for (const item of manualTokens) {
       activeAddresses.add(item.address);
     }
+
     for (const address of Object.keys(state.data.meteoraByAddress)) {
       if (!activeAddresses.has(address)) {
         delete state.data.meteoraByAddress[address];
@@ -3750,13 +4093,6 @@ export function createAppController(): AppController {
         change24h: item.meteora.change24h ?? null,
       };
     }
-
-    state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
-    state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
-    if (generatedAt !== undefined) {
-      updateMonitoredFreshness(generatedAt ?? null);
-    }
-    rebuildTrackedState(manualPayload, monitoredDashboardTokens);
   }
 
   function applyConfig(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
@@ -3795,7 +4131,7 @@ export function createAppController(): AppController {
       } else {
         emit('recent', 'old-week', 'header');
       }
-    } catch (error) {
+    } catch {
     }
   }
 
@@ -3812,79 +4148,318 @@ export function createAppController(): AppController {
     await hydrateDashboardMonitoredInternal(token, payload.tokens);
   }
 
+  async function applyVerifiedEmailPreAccessResult(result: VerifyEmailConfirmResponse) {
+    disconnectSocket();
+    stopMonitoringTimers();
+    clearSession();
+    applyPreAccessSession(result.user);
+    applyAccountAccess(result.access ?? null);
+    navigateToPreAccess(result.redirectPath || '/access');
+
+    try {
+      await refreshPreAccessState();
+      setNotice(result.message || 'Email verified successfully. Continue to access setup.');
+    } catch {
+      setError(AUTH_ERROR_COOKIE_BLOCKED);
+    }
+
+    emit('all');
+    flushEmit();
+  }
+
+  function applyVerifiedEmailSuccessResult(result: VerifyEmailConfirmResponse) {
+    if (state.session.status === 'authenticated') {
+      applySession(result.user);
+    }
+    state.ui.authPanel = 'email-verified-success';
+    setNotice(result.message || 'Email verified successfully.');
+    emit('all');
+    flushEmit();
+  }
+
+  async function processVerifyEmailRouteIntent(token: string | null) {
+    if (!token) {
+      setError('Verification link is missing or invalid.');
+      clearAuthUrl();
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice('Verifying email...');
+    emit();
+
+    try {
+      const result = await confirmEmailVerificationRequest(token);
+      if (result.requiresPreAccess) {
+        await applyVerifiedEmailPreAccessResult(result);
+        return;
+      }
+
+      applyVerifiedEmailSuccessResult(result);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Email verification failed');
+    } finally {
+      clearAuthUrl();
+      setBusy(false);
+      emit();
+    }
+  }
+
+  function processResetPasswordRouteIntent(token: string | null) {
+    state.ui.pendingPasswordResetToken = token || null;
+    state.ui.authPanel = 'password-reset';
+    setError(token ? null : 'Reset link is missing or invalid.');
+    setNotice(token ? 'Set a new password to finish the reset.' : null);
+    clearAuthUrl();
+    emit();
+  }
+
   async function handleAuthRouteIntent() {
     if (typeof window === 'undefined') {
       return;
     }
 
-    const pathname = window.location.pathname || '/';
-    const search = new URLSearchParams(window.location.search);
-    const token = normalizeAuthRouteToken(String(search.get('token') || ''));
-    const rawMode = String(search.get('mode') || '').trim().toLowerCase();
-    const mode = rawMode === 'verify-email' || rawMode === 'reset-password'
-      ? rawMode
-      : '';
-    const wantsVerify = pathname === '/auth/verify-email' || mode === 'verify-email';
-    const wantsReset = pathname === '/auth/reset-password' || mode === 'reset-password';
-
-    if (wantsVerify) {
-      if (!token) {
-        setError('Verification link is missing or invalid.');
-        clearAuthUrl();
-        return;
-      }
-
-      setBusy(true);
-      setError(null);
-      setNotice('Verifying email...');
-      emit();
-
-      try {
-        const result = await confirmEmailVerificationRequest(token);
-        if (result.requiresPreAccess) {
-          disconnectSocket();
-          stopMonitoringTimers();
-          clearSession();
-          applyPreAccessSession(result.user);
-          applyAccountAccess(result.access ?? null);
-          navigateToPreAccess(result.redirectPath || '/access');
-          try {
-            await refreshPreAccessState();
-            setNotice(result.message || 'Email verified successfully. Continue to access setup.');
-          } catch {
-            setError(AUTH_ERROR_COOKIE_BLOCKED);
-          }
-          emit('all');
-          flushEmit();
-          return;
-        }
-
-        if (state.session.status === 'authenticated') {
-          applySession(result.user);
-        }
-        state.ui.authPanel = 'email-verified-success';
-        setNotice(result.message || 'Email verified successfully.');
-        emit('all');
-        flushEmit();
-      } catch (error) {
-        setError(error instanceof Error ? error.message : 'Email verification failed');
-      } finally {
-        clearAuthUrl();
-        setBusy(false);
-        emit();
-      }
-
+    const intent = getAuthRouteIntent(window.location);
+    if (!intent) {
       return;
     }
 
-    if (wantsReset) {
-      state.ui.pendingPasswordResetToken = token || null;
-      state.ui.authPanel = 'password-reset';
-      setError(token ? null : 'Reset link is missing or invalid.');
-      setNotice(token ? 'Set a new password to finish the reset.' : null);
-      clearAuthUrl();
-      emit();
+    if (intent.mode === 'verify-email') {
+      await processVerifyEmailRouteIntent(intent.token);
+      return;
     }
+
+    processResetPasswordRouteIntent(intent.token);
+  }
+
+  function shouldHandleSocialLinkPopupIntent(intent: SocialIntent | null) {
+    return Boolean(
+      typeof window !== 'undefined'
+      && intent
+      && (window.name === SOCIAL_LINK_POPUP_WINDOW_NAME || (window.opener && !window.opener.closed))
+    );
+  }
+
+  function handleSocialLinkPopupIntent(intent: SocialIntent) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    publishSocialLinkResult(intent);
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          type: SOCIAL_LINK_RESULT_MESSAGE_TYPE,
+          provider: intent.provider,
+          status: intent.status,
+        }, window.location.origin);
+      }
+    } catch {
+      // Ignore cross-tab messaging failures and fall back to storage sync.
+    }
+
+    clearSocialLinkUrl();
+    window.close();
+    window.setTimeout(() => {
+      try {
+        window.close();
+      } catch {
+        // Ignore delayed popup close failures.
+      }
+    }, 120);
+    setNotice(`${getSocialProviderLabel(intent.provider)} linking finished. You can close this tab if it stays open.`);
+    emit();
+  }
+
+  function resetUiForAuthRouteIntent() {
+    setBusy(false);
+    setError(null);
+    setNotice(null);
+    emit();
+  }
+
+  async function handleInitAuthRouteIntent() {
+    if (typeof window === 'undefined' || !hasAuthRouteIntent(window.location)) {
+      return false;
+    }
+
+    resetUiForAuthRouteIntent();
+    await handleAuthRouteIntent();
+    syncWorkspaceFromLocationInternal({ canonicalize: false });
+    return true;
+  }
+
+  function applyAuthenticatedRestoreIntents(options: {
+    billingCheckoutSucceeded: boolean;
+    socialLinkIntent: SocialIntent | null;
+    socialLoginIntent: SocialIntent | null;
+  }) {
+    if (options.billingCheckoutSucceeded) {
+      state.ui.authPanel = 'user-settings';
+      clearBillingCheckoutUrl();
+    }
+
+    if (options.socialLinkIntent) {
+      state.ui.authPanel = 'user-settings';
+      clearSocialLinkUrl();
+      if (options.socialLinkIntent.status === 'success') {
+        setNotice(`${getSocialProviderLabel(options.socialLinkIntent.provider)} linked successfully.`);
+      } else {
+        setError(getInitSocialLinkErrorMessage(options.socialLinkIntent));
+      }
+    }
+
+    if (options.socialLoginIntent?.status === 'success') {
+      clearSocialLoginUrl();
+      setNotice(`${getSocialProviderLabel(options.socialLoginIntent.provider)} sign-in successful.`);
+    }
+  }
+
+  function getAuthenticatedRestoreNotice(options: {
+    billingCheckoutSucceeded: boolean;
+    socialLinkIntent: SocialIntent | null;
+    socialLoginIntent: SocialIntent | null;
+  }) {
+    if (options.socialLinkIntent || options.socialLoginIntent?.status === 'success') {
+      return state.ui.notice;
+    }
+    if (options.billingCheckoutSucceeded) {
+      return 'Billing checkout completed. Access and billing history were refreshed.';
+    }
+    return AUTH_NOTICE_SESSION_RESTORED;
+  }
+
+  async function restoreAuthenticatedSession(options: {
+    billingCheckoutSucceeded: boolean;
+    socialLinkIntent: SocialIntent | null;
+    socialLoginIntent: SocialIntent | null;
+  }) {
+    const session = await fetchCurrentSession();
+    applySession(session.user);
+    await refreshAuthenticatedBootstrapState();
+    applyAuthenticatedRestoreIntents(options);
+    setNotice(getAuthenticatedRestoreNotice(options));
+  }
+
+  async function handlePreAccessRestore(options: {
+    billingCheckoutSucceeded: boolean;
+    socialLoginIntent: SocialIntent | null;
+  }) {
+    await refreshPreAccessState();
+    navigateToPreAccess();
+    setError(null);
+    state.ui.loginErrorCount = 0;
+
+    if (options.billingCheckoutSucceeded) {
+      clearBillingCheckoutUrl();
+      state.preAccess.awaitingConfirmation = true;
+      setNotice('Waiting for payment confirmation...');
+      if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
+        schedulePreAccessConfirmationPolling();
+      }
+      return;
+    }
+
+    if (options.socialLoginIntent?.status === 'success') {
+      clearSocialLoginUrl();
+      state.preAccess.awaitingConfirmation = false;
+      setNotice(`${getSocialProviderLabel(options.socialLoginIntent.provider)} sign-in successful. Access payment is still required before entering the bot.`);
+      return;
+    }
+
+    state.preAccess.awaitingConfirmation = false;
+    if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
+      setNotice('Access payment required before entering the bot.');
+    }
+  }
+
+  async function handleAnonymousRestore(error: unknown, socialLoginIntent: SocialIntent | null) {
+    await refreshPublicBillingState();
+    syncAnonymousRouteStateFromLocation();
+    state.ui.loginErrorCount = 0;
+
+    if (socialLoginIntent) {
+      clearSocialLoginUrl();
+      setError(getSocialLoginFailureMessage(socialLoginIntent));
+      return;
+    }
+
+    const message = normalizeAuthError(error, 'restore');
+    if (message.includes('no longer valid') || message.includes('Unable to restore')) {
+      setNotice(AUTH_NOTICE_NO_SESSION);
+      setError(null);
+      return;
+    }
+
+    setError(message);
+  }
+
+  async function handleSessionRestoreFailure(
+    error: unknown,
+    options: {
+      billingCheckoutSucceeded: boolean;
+      socialLoginIntent: SocialIntent | null;
+    },
+  ) {
+    disconnectSocket();
+    stopMonitoringTimers();
+    clearSession();
+
+    try {
+      await handlePreAccessRestore(options);
+    } catch {
+      await handleAnonymousRestore(error, options.socialLoginIntent);
+    }
+  }
+
+  function buildOptimisticManualToken(address: string, label?: string | null) {
+    const existingTracked = state.data.trackedTokensByAddress[address]
+      || getMonitoredTokens(state).find((item) => item.address === address)
+      || getManualTokens(state).find((item) => item.address === address);
+    const nextManualDraft: ManualTokenEntry = {
+      ...(existingTracked || {}),
+      address,
+      label: label ?? existingTracked?.label ?? null,
+      manual: true,
+      _userManual: true,
+    };
+
+    return areTrackedTokensEquivalent(existingTracked, nextManualDraft)
+      ? existingTracked as ManualTokenEntry
+      : nextManualDraft;
+  }
+
+  function applyOptimisticManualToken(address: string, nextManual: ManualTokenEntry) {
+    state.data.trackedTokensByAddress[address] = nextManual;
+    state.data.manualTokenAddresses = state.data.manualTokenAddresses.includes(address)
+      ? state.data.manualTokenAddresses
+      : [...state.data.manualTokenAddresses, address];
+    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.includes(address)
+      ? state.data.monitoredTokenAddresses
+      : [...state.data.monitoredTokenAddresses, address];
+
+    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+    state.bars.manual = state.data.manualTokenAddresses.length;
+    refreshMonitoredPanelCounts();
+    deriveAgeBuckets();
+  }
+
+  async function syncManualTokenToBackend(address: string, label: string | null | undefined, token: string) {
+    const result = await addManualTokenRequest(address, label ?? null, token);
+    if (result?.token) {
+      const currentTracked = state.data.trackedTokensByAddress[address];
+      if (currentTracked) {
+        const syncedTracked = {
+          ...currentTracked,
+          label: result.token.label ?? currentTracked.label ?? null,
+        };
+        replaceTrackedTokenReferences(address, syncedTracked);
+      }
+    }
+
+    await trackManualToken(address, token);
+    await reloadConfigInternal(token);
   }
 
   return {
@@ -4404,53 +4979,16 @@ export function createAppController(): AppController {
       emit('header', 'recent', 'old-week');
     },
     async init() {
-      const billingCheckoutSucceeded = typeof window !== 'undefined'
-        && getBillingCheckoutIntent(window.location) === 'success';
-      const socialLinkIntent = typeof window !== 'undefined'
-        ? getSocialLinkIntent(window.location)
-        : null;
-      const socialLoginIntent = typeof window !== 'undefined'
-        ? getSocialLoginIntent(window.location)
-        : null;
+      const billingCheckoutSucceeded = typeof window !== 'undefined' && getBillingCheckoutIntent(window.location) === 'success';
+      const socialLinkIntent = typeof window !== 'undefined' ? getSocialLinkIntent(window.location) : null;
+      const socialLoginIntent = typeof window !== 'undefined' ? getSocialLoginIntent(window.location) : null;
 
-      if (
-        typeof window !== 'undefined'
-        && socialLinkIntent
-        && (window.name === SOCIAL_LINK_POPUP_WINDOW_NAME || (window.opener && !window.opener.closed))
-      ) {
-        publishSocialLinkResult(socialLinkIntent);
-        try {
-          if (window.opener && !window.opener.closed) {
-            window.opener.postMessage({
-              type: SOCIAL_LINK_RESULT_MESSAGE_TYPE,
-              provider: socialLinkIntent.provider,
-              status: socialLinkIntent.status,
-            }, window.location.origin);
-          }
-        } catch {
-          // Ignore cross-tab messaging failures and fall back to storage sync.
-        }
-        clearSocialLinkUrl();
-        window.close();
-        window.setTimeout(() => {
-          try {
-            window.close();
-          } catch {
-            // Ignore delayed popup close failures.
-          }
-        }, 120);
-        setNotice(`${socialLinkIntent.provider === 'google' ? 'Google' : 'Discord'} linking finished. You can close this tab if it stays open.`);
-        emit();
+      if (socialLinkIntent && shouldHandleSocialLinkPopupIntent(socialLinkIntent)) {
+        handleSocialLinkPopupIntent(socialLinkIntent);
         return;
       }
 
-      if (typeof window !== 'undefined' && hasAuthRouteIntent(window.location)) {
-        setBusy(false);
-        setError(null);
-        setNotice(null);
-        emit();
-        await handleAuthRouteIntent();
-        syncWorkspaceFromLocationInternal({ canonicalize: false });
+      if (await handleInitAuthRouteIntent()) {
         return;
       }
 
@@ -4460,101 +4998,16 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        const session = await fetchCurrentSession();
-        applySession(session.user);
-        await refreshAccountAccessState(COOKIE_SESSION_MARKER);
-        await refreshBillingState(COOKIE_SESSION_MARKER);
-        await refreshIdentityState(COOKIE_SESSION_MARKER);
-        if (billingCheckoutSucceeded) {
-          state.ui.authPanel = 'user-settings';
-          clearBillingCheckoutUrl();
-        }
-        if (socialLinkIntent) {
-          state.ui.authPanel = 'user-settings';
-          clearSocialLinkUrl();
-          if (socialLinkIntent.status === 'success') {
-            setNotice(`${socialLinkIntent.provider === 'google' ? 'Google' : 'Discord'} linked successfully.`);
-          } else if (socialLinkIntent.status === 'identity_conflict') {
-            setError('That social identity is already linked to another TrendScope account.');
-          } else if (socialLinkIntent.status === 'email_conflict') {
-            setError('The provider email matches a different existing account. Sign in to the original account instead. Automatic merge is blocked.');
-          } else if (socialLinkIntent.status === 'provider_denied') {
-            setError('The social provider did not approve the linking request.');
-          } else {
-            setError('Unable to complete social linking. Please try again.');
-          }
-        }
-        if (socialLoginIntent?.status === 'success') {
-          clearSocialLoginUrl();
-          setNotice(`${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in successful.`);
-        }
-        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
-        setNotice(
-          socialLinkIntent
-            ? state.ui.notice
-            : socialLoginIntent?.status === 'success'
-            ? state.ui.notice
-            : billingCheckoutSucceeded
-            ? 'Billing checkout completed. Access and billing history were refreshed.'
-            : AUTH_NOTICE_SESSION_RESTORED
-        );
+        await restoreAuthenticatedSession({
+          billingCheckoutSucceeded,
+          socialLinkIntent,
+          socialLoginIntent,
+        });
       } catch (error) {
-        disconnectSocket();
-        stopMonitoringTimers();
-        clearSession();
-        try {
-          await refreshPreAccessState();
-          navigateToPreAccess();
-          setError(null);
-          state.ui.loginErrorCount = 0;
-          if (billingCheckoutSucceeded) {
-            clearBillingCheckoutUrl();
-            state.preAccess.awaitingConfirmation = true;
-            setNotice('Waiting for payment confirmation...');
-            if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
-              schedulePreAccessConfirmationPolling();
-            }
-          } else if (socialLoginIntent?.status === 'success') {
-            clearSocialLoginUrl();
-            state.preAccess.awaitingConfirmation = false;
-            setNotice(`${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in successful. Access payment is still required before entering the bot.`);
-          } else {
-            state.preAccess.awaitingConfirmation = false;
-            if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
-              setNotice('Access payment required before entering the bot.');
-            }
-          }
-        } catch {
-          await refreshPublicBillingState();
-          syncAnonymousRouteStateFromLocation();
-          state.ui.loginErrorCount = 0;
-          if (socialLoginIntent) {
-            clearSocialLoginUrl();
-            if (socialLoginIntent.status === 'not_linked') {
-              setError(`This ${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} account is not linked to a TrendScope login yet. Sign in with email and password first, then link it from User Settings.`);
-            } else if (socialLoginIntent.status === 'provider_denied') {
-              setError(`The ${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in request was not approved.`);
-            } else if (socialLoginIntent.status === 'revoked') {
-              setError('This account was blocked from product access by an administrator or internal access policy.');
-            } else if (socialLoginIntent.status === 'deactivated') {
-              setError('Account is deactivated');
-            } else if (socialLoginIntent.status === 'email_unverified') {
-              setError('Email not verified. Check your inbox or resend verification before signing in.');
-            } else if (socialLoginIntent.status === 'provider_unavailable') {
-              setError(`The ${socialLoginIntent.provider === 'google' ? 'Google' : 'Discord'} sign-in provider is not configured in this environment yet.`);
-            } else {
-              setError('Unable to complete social sign-in. Please try again or use email and password.');
-            }
-          } else {
-            const message = normalizeAuthError(error, 'restore');
-            if (message.includes('no longer valid') || message.includes('Unable to restore')) {
-              setNotice(AUTH_NOTICE_NO_SESSION);
-              setError(null);
-            } else {
-              setError(message);
-            }
-          }
-        }
+        await handleSessionRestoreFailure(error, {
+          billingCheckoutSucceeded,
+          socialLoginIntent,
+        });
       } finally {
         setBusy(false);
         emit();
@@ -5063,49 +5516,12 @@ export function createAppController(): AppController {
       setError(null);
       setNotice('Adding manual token...');
 
-      const existingTracked = state.data.trackedTokensByAddress[normalizedAddress]
-        || getMonitoredTokens(state).find((item) => item.address === normalizedAddress)
-        || getManualTokens(state).find((item) => item.address === normalizedAddress);
-      const nextManualDraft: ManualTokenEntry = {
-        ...(existingTracked || {}),
-        address: normalizedAddress,
-        label: label ?? existingTracked?.label ?? null,
-        manual: true,
-        _userManual: true,
-      };
-      const nextManual = areTrackedTokensEquivalent(existingTracked, nextManualDraft)
-        ? existingTracked as ManualTokenEntry
-        : nextManualDraft;
-
-      state.data.trackedTokensByAddress[normalizedAddress] = nextManual;
-      state.data.manualTokenAddresses = state.data.manualTokenAddresses.includes(normalizedAddress)
-        ? state.data.manualTokenAddresses
-        : [...state.data.manualTokenAddresses, normalizedAddress];
-
-      state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.includes(normalizedAddress)
-        ? state.data.monitoredTokenAddresses
-        : [...state.data.monitoredTokenAddresses, normalizedAddress];
-
-      state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-      state.bars.manual = state.data.manualTokenAddresses.length;
-      refreshMonitoredPanelCounts();
-      deriveAgeBuckets();
+      const nextManual = buildOptimisticManualToken(normalizedAddress, label);
+      applyOptimisticManualToken(normalizedAddress, nextManual);
       emit();
 
       try {
-        const result = await addManualTokenRequest(normalizedAddress, label ?? null, token);
-        if (result?.token) {
-          const currentTracked = state.data.trackedTokensByAddress[normalizedAddress];
-          if (currentTracked) {
-            const syncedTracked = {
-              ...currentTracked,
-              label: result.token.label ?? currentTracked.label ?? null,
-            };
-            replaceTrackedTokenReferences(normalizedAddress, syncedTracked);
-          }
-        }
-        await trackManualToken(normalizedAddress, token);
-        await reloadConfigInternal(token);
+        await syncManualTokenToBackend(normalizedAddress, label, token);
         setNotice('Token added');
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to persist manual token');

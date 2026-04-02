@@ -58,12 +58,51 @@ function getReceiptField(label, value) {
   `;
 }
 
+function getReceiptProviderLabel(provider) {
+  return provider === 'moonpay_commerce'
+    ? 'MoonPay Commerce'
+    : String(provider || 'Unknown provider');
+}
+
+function getReceiptMetadata(metadata) {
+  return metadata && typeof metadata === 'object' ? metadata : {};
+}
+
+function renderReceiptSummaryCard(label, value) {
+  return `
+    <div class="summary-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function buildReceiptDetailRows(order, user, providerLabel, paidAt, createdAt, metadata) {
+  return [
+    getReceiptField('Receipt ID', `TS-${order.id}`),
+    getReceiptField('Account', user?.email || user?.username || null),
+    getReceiptField('Provider', providerLabel),
+    getReceiptField('Access days', order?.accessDays ? String(order.accessDays) : null),
+    getReceiptField('Paid at', paidAt),
+    getReceiptField('Order created', createdAt),
+    getReceiptField('Provider charge ID', order?.providerChargeId || null),
+    getReceiptField('Provider status', order?.providerStatus || null),
+    getReceiptField('Transaction ID', metadata.providerTransactionId || null),
+    getReceiptField('Transaction signature', metadata.providerTransactionSignature || null),
+  ].join('');
+}
+
 function renderBillingReceiptHtml(order, user) {
-  const metadata = order?.metadata && typeof order.metadata === 'object' ? order.metadata : {};
-  const providerLabel = order?.provider === 'moonpay_commerce' ? 'MoonPay Commerce' : String(order?.provider || 'Unknown provider');
+  const metadata = getReceiptMetadata(order?.metadata);
+  const providerLabel = getReceiptProviderLabel(order?.provider);
   const paidAt = formatDateTime(order?.paidAt);
   const createdAt = formatDateTime(order?.createdAt);
   const amount = formatBillingAmount(order?.currencyCode, order?.currencyAmountMinor);
+  const summaryCards = [
+    renderReceiptSummaryCard('Plan', order?.planName || 'Unknown plan'),
+    renderReceiptSummaryCard('Amount', amount),
+  ].join('');
+  const detailRows = buildReceiptDetailRows(order, user, providerLabel, paidAt, createdAt, metadata);
 
   return `<!doctype html>
 <html lang="en">
@@ -183,26 +222,10 @@ function renderBillingReceiptHtml(order, user) {
         <span class="badge">${escapeHtml(String(order?.status || 'paid').toUpperCase())}</span>
       </div>
       <section class="summary">
-        <div class="summary-card">
-          <span>Plan</span>
-          <strong>${escapeHtml(order?.planName || 'Unknown plan')}</strong>
-        </div>
-        <div class="summary-card">
-          <span>Amount</span>
-          <strong>${escapeHtml(amount)}</strong>
-        </div>
+        ${summaryCards}
       </section>
       <section class="details">
-        ${getReceiptField('Receipt ID', `TS-${order.id}`)}
-        ${getReceiptField('Account', user?.email || user?.username || null)}
-        ${getReceiptField('Provider', providerLabel)}
-        ${getReceiptField('Access days', order?.accessDays ? String(order.accessDays) : null)}
-        ${getReceiptField('Paid at', paidAt)}
-        ${getReceiptField('Order created', createdAt)}
-        ${getReceiptField('Provider charge ID', order?.providerChargeId || null)}
-        ${getReceiptField('Provider status', order?.providerStatus || null)}
-        ${getReceiptField('Transaction ID', metadata.providerTransactionId || null)}
-        ${getReceiptField('Transaction signature', metadata.providerTransactionSignature || null)}
+        ${detailRows}
       </section>
     </main>
   </body>

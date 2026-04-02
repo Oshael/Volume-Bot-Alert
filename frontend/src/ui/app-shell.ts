@@ -248,112 +248,70 @@ export function renderAppShell(
   applyHoverState(root);
 }
 
-function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
+function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null {
   const existingFrame = root.querySelector<HTMLElement>(APP_RENDER_FRAME_SELECTOR);
-  const existingHeaderSlot = existingFrame?.querySelector<HTMLElement>(APP_HEADER_SLOT_SELECTOR);
-  const existingShell = existingFrame?.querySelector<HTMLElement>(APP_SHELL_SELECTOR);
-  const existingToastsSlot = existingFrame?.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR);
-  const existingLegacySlot = existingFrame?.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR);
-  const existingOldWeekSlot = existingFrame?.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR);
-  const existingRecentSlot = existingFrame?.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR);
-  const existingManualSlot = existingFrame?.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR);
-  const existingPanels = existingFrame?.querySelector<HTMLElement>(APP_PANELS_SELECTOR);
-  const existingMonitoredSlot = existingFrame?.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR);
-  const existingLateralizedSlot = existingFrame?.querySelector<HTMLElement>(APP_LATERALIZED_SLOT_SELECTOR);
-  const existingBidZoneSlot = existingFrame?.querySelector<HTMLElement>(APP_BID_ZONE_SLOT_SELECTOR);
-  const existingPumpfunSlot = existingFrame?.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR);
-  const existingAlertsSlot = existingFrame?.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR);
-  const existingOverlaySlot = existingFrame?.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR);
+  const existingRenderFrame = {
+    frame: existingFrame,
+    headerSlot: existingFrame?.querySelector<HTMLElement>(APP_HEADER_SLOT_SELECTOR),
+    shell: existingFrame?.querySelector<HTMLElement>(APP_SHELL_SELECTOR),
+    toastsSlot: existingFrame?.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR),
+    legacySlot: existingFrame?.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR),
+    oldWeekSlot: existingFrame?.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR),
+    recentSlot: existingFrame?.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR),
+    manualSlot: existingFrame?.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR),
+    panels: existingFrame?.querySelector<HTMLElement>(APP_PANELS_SELECTOR),
+    monitoredSlot: existingFrame?.querySelector<HTMLElement>(APP_MONITORED_SLOT_SELECTOR),
+    lateralizedSlot: existingFrame?.querySelector<HTMLElement>(APP_LATERALIZED_SLOT_SELECTOR),
+    bidZoneSlot: existingFrame?.querySelector<HTMLElement>(APP_BID_ZONE_SLOT_SELECTOR),
+    pumpfunSlot: existingFrame?.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR),
+    alertsSlot: existingFrame?.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR),
+    overlaySlot: existingFrame?.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR),
+  };
 
-  if (
-    existingFrame
-    && existingHeaderSlot
-    && existingShell
-    && existingToastsSlot
-    && existingLegacySlot
-    && existingOldWeekSlot
-    && existingRecentSlot
-    && existingManualSlot
-    && existingPanels
-    && existingMonitoredSlot
-    && existingLateralizedSlot
-    && existingBidZoneSlot
-    && existingPumpfunSlot
-    && existingAlertsSlot
-    && existingOverlaySlot
-  ) {
-    return {
-      frame: existingFrame,
-      headerSlot: existingHeaderSlot,
-      shell: existingShell,
-      toastsSlot: existingToastsSlot,
-      legacySlot: existingLegacySlot,
-      oldWeekSlot: existingOldWeekSlot,
-      recentSlot: existingRecentSlot,
-      manualSlot: existingManualSlot,
-      panels: existingPanels,
-      monitoredSlot: existingMonitoredSlot,
-      lateralizedSlot: existingLateralizedSlot,
-      bidZoneSlot: existingBidZoneSlot,
-      pumpfunSlot: existingPumpfunSlot,
-      alertsSlot: existingAlertsSlot,
-      overlaySlot: existingOverlaySlot,
-    };
+  if (Object.values(existingRenderFrame).every(Boolean)) {
+    return existingRenderFrame as AppRenderFrame;
   }
 
+  return null;
+}
+
+function createRenderSlot(name: string) {
+  const slot = document.createElement('div');
+  slot.dataset.appRenderSlot = name;
+  return slot;
+}
+
+function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
   const frame = document.createElement('div');
   frame.dataset.appRenderFrame = 'true';
 
-  const headerSlot = document.createElement('div');
-  headerSlot.dataset.appRenderSlot = 'header';
+  const headerSlot = createRenderSlot('header');
 
-  const shell = document.createElement('div');
-  shell.dataset.appRenderSlot = 'shell';
+  const shell = createRenderSlot('shell');
   shell.className = 'app-shell';
 
-  const toastsSlot = document.createElement('div');
-  toastsSlot.dataset.appRenderSlot = 'toasts';
-
-  const legacySlot = document.createElement('div');
-  legacySlot.dataset.appRenderSlot = 'legacy';
-
-  const oldWeekSlot = document.createElement('div');
-  oldWeekSlot.dataset.appRenderSlot = 'old-week';
-
-  const recentSlot = document.createElement('div');
-  recentSlot.dataset.appRenderSlot = 'recent';
-
-  const manualSlot = document.createElement('div');
-  manualSlot.dataset.appRenderSlot = 'manual';
-
-  const panels = document.createElement('div');
-  panels.dataset.appRenderSlot = 'panels';
+  const toastsSlot = createRenderSlot('toasts');
+  const legacySlot = createRenderSlot('legacy');
+  const oldWeekSlot = createRenderSlot('old-week');
+  const recentSlot = createRenderSlot('recent');
+  const manualSlot = createRenderSlot('manual');
+  const panels = createRenderSlot('panels');
   panels.className = 'legacy-panels';
 
   const monitoredStack = document.createElement('div');
   monitoredStack.className = 'panel-stack monitored-stack';
 
-  const monitoredSlot = document.createElement('div');
-  monitoredSlot.dataset.appRenderSlot = 'monitored';
-
-  const lateralizedSlot = document.createElement('div');
-  lateralizedSlot.dataset.appRenderSlot = 'lateralized';
-
-  const bidZoneSlot = document.createElement('div');
-  bidZoneSlot.dataset.appRenderSlot = 'bid-zone';
-
-  const pumpfunSlot = document.createElement('div');
-  pumpfunSlot.dataset.appRenderSlot = 'pumpfun';
-
-  const alertsSlot = document.createElement('div');
-  alertsSlot.dataset.appRenderSlot = 'alerts';
+  const monitoredSlot = createRenderSlot('monitored');
+  const lateralizedSlot = createRenderSlot('lateralized');
+  const bidZoneSlot = createRenderSlot('bid-zone');
+  const pumpfunSlot = createRenderSlot('pumpfun');
+  const alertsSlot = createRenderSlot('alerts');
 
   monitoredStack.append(monitoredSlot, lateralizedSlot, bidZoneSlot);
   panels.append(monitoredStack, pumpfunSlot, alertsSlot);
   shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, manualSlot, panels);
 
-  const overlaySlot = document.createElement('div');
-  overlaySlot.dataset.appRenderSlot = 'overlay';
+  const overlaySlot = createRenderSlot('overlay');
 
   frame.append(headerSlot, shell, overlaySlot);
   root.replaceChildren(frame);
@@ -375,6 +333,10 @@ function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
     alertsSlot,
     overlaySlot,
   };
+}
+
+function ensureAppRenderFrame(root: HTMLElement): AppRenderFrame {
+  return tryGetExistingAppRenderFrame(root) ?? createAppRenderFrame(root);
 }
 
 function updateRenderSlot(slot: HTMLElement, nextKey: string, build: () => Node[]) {
@@ -1066,7 +1028,7 @@ function captureLoginDraft(root: HTMLElement): LoginDraft | null {
   };
 }
 
-function applyLoginDraft(root: HTMLElement, draft: LoginDraft | null, state: AppState) {
+function applyLoginDraft(root: HTMLElement, draft: LoginDraft | null, _state: AppState) {
   const form = root.querySelector<HTMLFormElement>('form[data-role="login-form"]');
   if (!form) {
     return;
@@ -1133,6 +1095,60 @@ function applyLoginFocus(root: HTMLElement, state: AppState) {
     passwordInput?.focus();
     passwordInput?.select();
   }
+}
+
+function focusInputAndSelect(input: HTMLInputElement | null | undefined) {
+  if (!input) {
+    return;
+  }
+  input.focus();
+  input.select();
+}
+
+function formContainsActiveElement(form: HTMLFormElement | null | undefined) {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && Boolean(form?.contains(active));
+}
+
+function hasChangePasswordDraftContent(draft: ChangePasswordDraft | null) {
+  return Boolean(
+    draft
+    && (
+      draft.currentPassword.length > 0
+      || draft.newPassword.length > 0
+      || draft.confirmNewPassword.length > 0
+    )
+  );
+}
+
+function resolveChangePasswordFocusTarget(
+  form: HTMLFormElement | null,
+  error: string | null,
+) {
+  const currentPassword = form?.querySelector<HTMLInputElement>('input[name="currentPassword"]');
+  const newPassword = form?.querySelector<HTMLInputElement>('input[name="newPassword"]');
+  const confirmNewPassword = form?.querySelector<HTMLInputElement>('input[name="confirmNewPassword"]');
+
+  if (error === 'Current password is required.' || error === 'Current password is incorrect') {
+    return currentPassword;
+  }
+
+  if (
+    error === 'New password is required.'
+    || error === 'New password must be at least 8 characters.'
+    || error === 'New password must be different from the current password.'
+  ) {
+    return newPassword;
+  }
+
+  if (
+    error === 'Please confirm the new password.'
+    || error === 'The new passwords do not match. Please check them and try again.'
+  ) {
+    return confirmNewPassword;
+  }
+
+  return null;
 }
 
 function captureChangePasswordDraft(root: HTMLElement): ChangePasswordDraft | null {
@@ -1204,54 +1220,15 @@ function applyChangePasswordFocus(root: HTMLElement, state: AppState, draft: Cha
   }
 
   const form = root.querySelector<HTMLFormElement>('form[data-role="change-password-form"]');
-  const currentPassword = form?.querySelector<HTMLInputElement>('input[name="currentPassword"]');
-  const newPassword = form?.querySelector<HTMLInputElement>('input[name="newPassword"]');
-  const active = document.activeElement;
-
-  if (active instanceof HTMLElement && form?.contains(active)) {
+  if (formContainsActiveElement(form)) {
     return;
   }
 
-  if (
-    draft
-    && (
-      draft.currentPassword.length > 0
-      || draft.newPassword.length > 0
-      || draft.confirmNewPassword.length > 0
-    )
-  ) {
+  if (hasChangePasswordDraftContent(draft)) {
     return;
   }
 
-  if (state.ui.error === 'Current password is required.') {
-    currentPassword?.focus();
-    currentPassword?.select();
-    return;
-  }
-  if (state.ui.error === 'Current password is incorrect') {
-    currentPassword?.focus();
-    currentPassword?.select();
-    return;
-  }
-  if (
-    state.ui.error === 'New password is required.'
-    || state.ui.error === 'New password must be at least 8 characters.'
-    || state.ui.error === 'New password must be different from the current password.'
-  ) {
-    newPassword?.focus();
-    newPassword?.select();
-    return;
-  }
-
-  if (
-    state.ui.error === 'Please confirm the new password.'
-    || state.ui.error === 'The new passwords do not match. Please check them and try again.'
-  ) {
-    const confirmNewPassword = form?.querySelector<HTMLInputElement>('input[name="confirmNewPassword"]');
-    confirmNewPassword?.focus();
-    confirmNewPassword?.select();
-    return;
-  }
+  focusInputAndSelect(resolveChangePasswordFocusTarget(form, state.ui.error));
 }
 
 function captureRegisterDraft(root: HTMLElement): RegisterDraft | null {
@@ -1355,68 +1332,78 @@ function applyRegisterDraft(root: HTMLElement, draft: RegisterDraft | null) {
   }
 }
 
+function focusInputWithSelection(input: HTMLInputElement | null | undefined) {
+  if (!input) {
+    return;
+  }
+  input.focus();
+  window.requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+function isRegisterUsernameError(error: string | null) {
+  return error === 'Username is required.'
+    || error === 'Username must be at least 3 characters.'
+    || error === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
+    || error === 'Username already taken';
+}
+
+function isRegisterEmailError(error: string | null) {
+  return error === 'Email is required.'
+    || error === 'Enter a valid email address.'
+    || error === 'Email already registered'
+    || error === 'Invalid email format';
+}
+
+function isRegisterPasswordError(error: string | null) {
+  return error === 'Password is required.'
+    || error === 'Password must be at least 8 characters.'
+    || error === 'Password must be 8-128 characters.';
+}
+
+function isRegisterInviteError(error: string | null) {
+  return Boolean(
+    error === 'Invite code is required.'
+    || error?.includes('Invite')
+    || error?.includes('invite')
+  );
+}
+
+function resolveRegisterFocusTarget(form: HTMLFormElement | null, error: string | null) {
+  const username = form?.querySelector<HTMLInputElement>('input[name="username"]');
+  const email = form?.querySelector<HTMLInputElement>('input[name="registerEmail"]');
+  const password = form?.querySelector<HTMLInputElement>('input[name="registerPassword"]');
+  const inviteCode = form?.querySelector<HTMLInputElement>('input[name="inviteCode"]');
+
+  if (isRegisterUsernameError(error)) {
+    return username;
+  }
+  if (isRegisterEmailError(error)) {
+    return email;
+  }
+  if (isRegisterPasswordError(error)) {
+    return password;
+  }
+  if (isRegisterInviteError(error)) {
+    return inviteCode;
+  }
+
+  return username;
+}
+
 function applyRegisterFocus(root: HTMLElement, state: AppState) {
   if (state.ui.authPanel !== 'register' || state.ui.busy) {
     return;
   }
 
   const form = root.querySelector<HTMLFormElement>('form[data-role="register-form"]');
-  const username = form?.querySelector<HTMLInputElement>('input[name="username"]');
-  const email = form?.querySelector<HTMLInputElement>('input[name="registerEmail"]');
-  const password = form?.querySelector<HTMLInputElement>('input[name="registerPassword"]');
-  const inviteCode = form?.querySelector<HTMLInputElement>('input[name="inviteCode"]');
-  const active = document.activeElement;
-  const focusAndSelect = (input: HTMLInputElement | null | undefined) => {
-    if (!input) {
-      return;
-    }
-    input.focus();
-    window.requestAnimationFrame(() => {
-      input.focus();
-      input.select();
-    });
-  };
-
-  if (active instanceof HTMLElement && form?.contains(active)) {
+  if (formContainsActiveElement(form)) {
     return;
   }
 
-  if (
-    state.ui.error === 'Username is required.'
-    || state.ui.error === 'Username must be at least 3 characters.'
-    || state.ui.error === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
-    || state.ui.error === 'Username already taken'
-  ) {
-    focusAndSelect(username);
-    return;
-  }
-  if (
-    state.ui.error === 'Email is required.'
-    || state.ui.error === 'Enter a valid email address.'
-    || state.ui.error === 'Email already registered'
-    || state.ui.error === 'Invalid email format'
-  ) {
-    focusAndSelect(email);
-    return;
-  }
-  if (
-    state.ui.error === 'Password is required.'
-    || state.ui.error === 'Password must be at least 8 characters.'
-    || state.ui.error === 'Password must be 8-128 characters.'
-  ) {
-    focusAndSelect(password);
-    return;
-  }
-  if (
-    state.ui.error === 'Invite code is required.'
-    || state.ui.error?.includes('Invite')
-    || state.ui.error?.includes('invite')
-  ) {
-    focusAndSelect(inviteCode);
-    return;
-  }
-
-  username?.focus();
+  focusInputWithSelection(resolveRegisterFocusTarget(form, state.ui.error));
 }
 
 function captureInviteAssistanceDraft(root: HTMLElement): InviteAssistanceDraft | null {
@@ -1425,7 +1412,6 @@ function captureInviteAssistanceDraft(root: HTMLElement): InviteAssistanceDraft 
     return null;
   }
 
-  const email = form.querySelector<HTMLInputElement>('input[name="assistanceEmail"]');
   const inviteCode = form.querySelector<HTMLInputElement>('input[name="assistanceInviteCode"]');
 
   return {

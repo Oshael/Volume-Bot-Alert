@@ -69,6 +69,175 @@ function isChangePasswordNoticeMessage(message: string) {
     || message === 'Password changed successfully. Please login again with your new password.';
 }
 
+function matchesMessage(
+  message: string,
+  options: { exact?: string[]; fragments?: string[]; noticeSet?: Set<string> },
+) {
+  return Boolean(
+    options.noticeSet?.has(message)
+    || options.exact?.includes(message)
+    || options.fragments?.some((fragment) => message.includes(fragment)),
+  );
+}
+
+function renderScopedFlash(
+  state: AppState,
+  options: {
+    isError: (message: string) => boolean;
+    isNotice: (message: string) => boolean;
+  },
+) {
+  const message = state.ui.error ?? state.ui.notice ?? '';
+  if (!message) {
+    return '';
+  }
+
+  const isScopedError = options.isError(message);
+  const isScopedNotice = options.isNotice(message);
+  if (!isScopedError && !isScopedNotice) {
+    return '';
+  }
+
+  return renderFlash({
+    ...state,
+    ui: {
+      ...state.ui,
+      error: isScopedError ? state.ui.error : null,
+      notice: isScopedNotice ? state.ui.notice : null,
+    },
+  });
+}
+
+function isRegisterFlashErrorMessage(message: string) {
+  return matchesMessage(message, {
+    exact: [
+      'Username is required.',
+      'Username must be at least 3 characters.',
+      'Username must be 3-32 characters and use only letters, numbers, or underscores.',
+      'Username already taken',
+      'Email is required.',
+      'Enter a valid email address.',
+      'Email already registered',
+      'Invalid email format',
+      'Password is required.',
+      'Password must be at least 8 characters.',
+      'Password must be 8-128 characters.',
+      'Please confirm your password.',
+      'The passwords do not match. Please check them and try again.',
+      'Invite code is required.',
+    ],
+    fragments: [
+      'Invite',
+      'invite',
+      'registered',
+      'Internal server error',
+      'Unable to reach the server',
+    ],
+  });
+}
+
+function isPasswordResetFlashErrorMessage(message: string) {
+  return matchesMessage(message, {
+    exact: [
+      'Email is required.',
+      'Enter a valid email address.',
+      'Reset link is missing or invalid.',
+      'New password is required.',
+      'New password must be at least 8 characters.',
+      'New password must be 8-128 characters.',
+      'Please confirm the new password.',
+      'The new passwords do not match. Please check them and try again.',
+    ],
+    fragments: [
+      'Reset token is invalid or expired',
+      'Reset token is invalid or already used',
+      'Password reset request failed',
+      'Password reset failed',
+      'not verified',
+      'verification email could not be sent',
+      'Internal server error',
+      'Unable to reach the server',
+    ],
+  });
+}
+
+function isPasswordResetFlashNoticeMessage(message: string) {
+  return matchesMessage(message, {
+    noticeSet: PASSWORD_RESET_TRANSIENT_NOTICES,
+    fragments: [
+      'password reset link has been sent',
+      'verification link has been sent',
+      'Check your inbox to verify your email',
+      'Password reset successful',
+    ],
+  });
+}
+
+function isLoginOtpFlashErrorMessage(message: string) {
+  return matchesMessage(message, {
+    exact: [
+      'Verification challenge is missing. Please sign in again.',
+      'Verification code is required.',
+      'Enter the 6-digit verification code.',
+    ],
+    fragments: [
+      'Verification code is incorrect',
+      'Verification code is invalid or expired',
+      'Too many invalid verification attempts',
+      'Unable to reach the server',
+      'Internal server error',
+    ],
+  });
+}
+
+function isLoginOtpFlashNoticeMessage(message: string) {
+  return matchesMessage(message, {
+    noticeSet: LOGIN_OTP_TRANSIENT_NOTICES,
+    fragments: [
+      'Verification code sent',
+      'A new verification code has been sent',
+    ],
+  });
+}
+
+function isDashboardLoginOnlyMessage(message: string) {
+  return matchesMessage(message, {
+    noticeSet: LOGIN_RELEVANT_NOTICES,
+    exact: [
+      'Incorrect email or password. Check your credentials and try again.',
+      'Email is required.',
+      'Enter a valid email address.',
+      'Password is required.',
+    ],
+    fragments: ['old password changed on'],
+  });
+}
+
+function isDashboardRegisterOnlyMessage(message: string) {
+  return matchesMessage(message, {
+    noticeSet: REGISTER_TRANSIENT_NOTICES,
+    exact: [
+      'Username is required.',
+      'Username must be at least 3 characters.',
+      'Username must be 3-32 characters and use only letters, numbers, or underscores.',
+      'Username already taken',
+      'Email already registered',
+      'Invalid email format',
+      'Password must be 8-128 characters.',
+      'Please confirm your password.',
+      'The passwords do not match. Please check them and try again.',
+      'Invite code is required.',
+    ],
+    fragments: ['Invite', 'invite', 'registered'],
+  });
+}
+
+function isDashboardChangePasswordOnlyMessage(message: string) {
+  return isChangePasswordErrorMessage(message)
+    || isChangePasswordNoticeMessage(message)
+    || CHANGE_PASSWORD_TRANSIENT_NOTICES.has(message);
+}
+
 function bindFocusTrap(panel: HTMLElement | null) {
   if (!panel || panel.dataset.focusTrapBound === 'true') {
     return;
@@ -603,42 +772,6 @@ function renderPublicLandingFeatureTiles() {
   `).join('');
 }
 
-function renderPreAccessIdentityCard(state: AppState) {
-  const username = state.session.username || '-';
-  const email = state.session.email || '-';
-  const monogram = String(username || email || '?').trim().charAt(0).toUpperCase() || '?';
-  const emailStatus = state.session.isEmailVerified ? 'Email verified' : 'Email pending';
-  return `
-    <aside class="legacy-pre-access-account-card">
-      <div class="legacy-pre-access-account-head">
-        <span class="legacy-pre-access-section-kicker">Account Target</span>
-        <strong>Payment binds to this account</strong>
-      </div>
-      <div class="legacy-pre-access-identity-hero">
-        <div class="legacy-pre-access-identity-avatar" aria-hidden="true">${escapeHtml(monogram)}</div>
-        <div class="legacy-pre-access-identity-copy">
-          <strong>${escapeHtml(username)}</strong>
-          <span>${escapeHtml(email)}</span>
-        </div>
-        <div class="legacy-pre-access-identity-badges">
-          <span class="legacy-pre-access-badge">${escapeHtml(emailStatus)}</span>
-          <span class="legacy-pre-access-badge subtle">Access target</span>
-        </div>
-      </div>
-      <div class="legacy-pre-access-identity-grid">
-        <div class="legacy-pre-access-identity-item">
-          <span>Username</span>
-          <strong>${escapeHtml(username)}</strong>
-        </div>
-        <div class="legacy-pre-access-identity-item">
-          <span>Email</span>
-          <strong>${escapeHtml(email)}</strong>
-        </div>
-      </div>
-    </aside>
-  `;
-}
-
 function renderAccountSecurityOrdersCard(state: AppState) {
   const heading = state.session.status === 'pre_access'
     ? 'Checkout History'
@@ -844,7 +977,6 @@ function renderProfileModalShell(options: {
 }
 
 function renderLegacyLogin(state: AppState, controller: AppController) {
-  const authError = state.ui.error ?? '';
   const authFeedbackMessage = state.ui.error ?? state.ui.notice ?? '';
   const authFeedbackKind = authFeedbackMessage ? getAuthFeedbackKind(state, authFeedbackMessage) : 'idle';
   const authSurfaceMode = getAuthSurfaceMode(state);
@@ -865,17 +997,41 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
         ${renderLoginExtensionRegion()}
       </div>
     </div>
-    ${state.ui.authPanel === 'register' ? renderRegisterModal(state) : ''}
-    ${state.ui.authPanel === 'email-verification' ? renderEmailVerificationModal(state) : ''}
-    ${state.ui.authPanel === 'email-verified-success' ? renderEmailVerifiedSuccessModal() : ''}
-    ${state.ui.authPanel === 'password-change-success' ? renderPasswordChangeSuccessModal() : ''}
-    ${state.ui.authPanel === 'invite-assistance' ? renderInviteAssistanceModal(state) : ''}
-    ${state.ui.authPanel === 'password-reset' ? renderPasswordResetModal(state) : ''}
-    ${state.ui.authPanel === 'email-otp' ? renderEmailOtpModal(state) : ''}
+    ${renderLegacyAuthPanels(state)}
   `;
   hydrateAuthSensitiveText(section, state);
 
   const form = section.querySelector<HTMLFormElement>('form[data-role="login-form"]');
+  bindLegacyLoginForm(section, form, state, controller);
+  bindLegacyLoginActions(section, state, controller);
+  bindRegisterPanel(section, controller, state);
+  bindEmailVerificationPanel(section, controller, state);
+  bindEmailOtpPanel(section, controller, state);
+  bindEmailVerifiedSuccessPanel(section, controller);
+  bindPasswordChangeSuccessPanel(section, controller);
+  bindInviteAssistancePanel(section, controller, state);
+  bindPasswordResetPanel(section, controller, state);
+  return section;
+}
+
+function renderLegacyAuthPanels(state: AppState) {
+  return [
+    state.ui.authPanel === 'register' ? renderRegisterModal(state) : '',
+    state.ui.authPanel === 'email-verification' ? renderEmailVerificationModal(state) : '',
+    state.ui.authPanel === 'email-verified-success' ? renderEmailVerifiedSuccessModal() : '',
+    state.ui.authPanel === 'password-change-success' ? renderPasswordChangeSuccessModal() : '',
+    state.ui.authPanel === 'invite-assistance' ? renderInviteAssistanceModal(state) : '',
+    state.ui.authPanel === 'password-reset' ? renderPasswordResetModal(state) : '',
+    state.ui.authPanel === 'email-otp' ? renderEmailOtpModal(state) : '',
+  ].join('');
+}
+
+function bindLegacyLoginForm(
+  section: HTMLElement,
+  form: HTMLFormElement | null,
+  state: AppState,
+  controller: AppController,
+) {
   const submitLoginForm = () => {
     if (!form || controller.state.ui.busy) {
       return;
@@ -884,14 +1040,21 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
     syncImmediateLoginBusyState(form);
     void controller.login(String(data.get('email') || '').trim(), String(data.get('password') || ''));
   };
+
   form?.addEventListener('submit', (event) => {
     event.preventDefault();
     submitLoginForm();
   });
 
-  form?.querySelector<HTMLButtonElement>('[data-action="toggle-password-visibility"]')?.addEventListener('click', (event) => {
+  bindLegacyPasswordVisibility(form);
+  bindLegacyLoginInputs(section, form, state, controller, submitLoginForm);
+}
+
+function bindLegacyPasswordVisibility(form: HTMLFormElement | null) {
+  const toggle = form?.querySelector<HTMLButtonElement>('[data-action="toggle-password-visibility"]');
+  toggle?.addEventListener('click', (event) => {
     const button = event.currentTarget as HTMLButtonElement;
-    const passwordInput = form.querySelector<HTMLInputElement>('input[name="password"]');
+    const passwordInput = form?.querySelector<HTMLInputElement>('input[name="password"]');
     if (!passwordInput) {
       return;
     }
@@ -910,46 +1073,75 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
       });
     }
   });
-  form?.querySelector<HTMLButtonElement>('[data-action="toggle-password-visibility"]')?.addEventListener('mousedown', (event) => {
+  toggle?.addEventListener('mousedown', (event) => {
     event.preventDefault();
   });
+}
 
-  const passwordInput = form?.querySelector<HTMLInputElement>('input[name="password"]');
-  const emailInput = form?.querySelector<HTMLInputElement>('input[name="email"]');
-  const capsLockHint = form?.querySelector<HTMLElement>('#login-capslock');
-  const sanitizeEmailInput = () => {
-    if (!emailInput) {
-      return;
+function sanitizeLegacyLoginEmailInput(emailInput: HTMLInputElement | null) {
+  if (!emailInput) {
+    return;
+  }
+  const rawValue = emailInput.value;
+  const nextValue = sanitizeLoginEmailValue(rawValue);
+  if (nextValue === rawValue) {
+    return;
+  }
+  const caret = emailInput.selectionStart;
+  emailInput.value = nextValue;
+  const nextCaret = adjustCaretAfterEmailSanitize(rawValue, caret);
+  emailInput.setSelectionRange(nextCaret, nextCaret);
+}
+
+function clampLegacyLoginPasswordInput(passwordInput: HTMLInputElement | null) {
+  if (!passwordInput) {
+    return;
+  }
+  const nextValue = clampLoginPasswordValue(passwordInput.value);
+  if (nextValue !== passwordInput.value) {
+    const caret = Math.min(passwordInput.selectionStart ?? nextValue.length, nextValue.length);
+    passwordInput.value = nextValue;
+    passwordInput.setSelectionRange(caret, caret);
+  }
+}
+
+function syncLegacyLoginCapsLock(capsLockHint: HTMLElement | null, event: KeyboardEvent) {
+  if (!capsLockHint) {
+    return;
+  }
+  capsLockHint.textContent = event.getModifierState('CapsLock') ? 'Caps Lock is on' : '';
+}
+
+function isLegacyLoginSubmitKey(event: KeyboardEvent) {
+  return event.key === 'Enter'
+    || event.key === 'Return'
+    || event.code === 'Enter'
+    || event.code === 'NumpadEnter'
+    || event.keyCode === 13;
+}
+
+function bindLegacyLoginInputs(
+  section: HTMLElement,
+  form: HTMLFormElement | null,
+  state: AppState,
+  controller: AppController,
+  submitLoginForm: () => void,
+) {
+  const passwordInput = form?.querySelector<HTMLInputElement>('input[name="password"]') ?? null;
+  const emailInput = form?.querySelector<HTMLInputElement>('input[name="email"]') ?? null;
+  const capsLockHint = section.querySelector<HTMLElement>('#login-capslock');
+  const clearErrorOnEdit = () => {
+    if (shouldClearAuthFeedbackOnEdit(state.ui.error, state.ui.notice)) {
+      controller.clearNotice();
     }
-    const rawValue = emailInput.value;
-    const nextValue = sanitizeLoginEmailValue(rawValue);
-    if (nextValue === rawValue) {
-      return;
-    }
-    const caret = emailInput.selectionStart;
-    emailInput.value = nextValue;
-    const nextCaret = adjustCaretAfterEmailSanitize(rawValue, caret);
-    emailInput.setSelectionRange(nextCaret, nextCaret);
   };
-  const clampPasswordInput = () => {
-    if (!passwordInput) {
-      return;
-    }
-    const nextValue = clampLoginPasswordValue(passwordInput.value);
-    if (nextValue !== passwordInput.value) {
-      const caret = Math.min(passwordInput.selectionStart ?? nextValue.length, nextValue.length);
-      passwordInput.value = nextValue;
-      passwordInput.setSelectionRange(caret, caret);
-    }
-  };
-  const syncCapsLock = (event: KeyboardEvent) => {
-    if (!capsLockHint) {
-      return;
-    }
-    capsLockHint.textContent = event.getModifierState('CapsLock') ? 'Caps Lock is on' : '';
-  };
-  passwordInput?.addEventListener('keydown', syncCapsLock);
-  passwordInput?.addEventListener('keyup', syncCapsLock);
+
+  passwordInput?.addEventListener('keydown', (event) => {
+    syncLegacyLoginCapsLock(capsLockHint, event);
+  });
+  passwordInput?.addEventListener('keyup', (event) => {
+    syncLegacyLoginCapsLock(capsLockHint, event);
+  });
   passwordInput?.addEventListener('blur', () => {
     if (capsLockHint) {
       capsLockHint.textContent = '';
@@ -962,30 +1154,22 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
     }
   });
 
-  const clearErrorOnEdit = () => {
-    if (shouldClearAuthFeedbackOnEdit(state.ui.error, state.ui.notice)) {
-      controller.clearNotice();
-    }
-  };
-  const submitOnEnter = (event: KeyboardEvent) => {
-    const isSubmitKey = event.key === 'Enter'
-      || event.key === 'Return'
-      || event.code === 'Enter'
-      || event.code === 'NumpadEnter'
-      || event.keyCode === 13;
-    if (!isSubmitKey || event.shiftKey || event.isComposing || controller.state.ui.busy) {
+  form?.addEventListener('keydown', (event) => {
+    if (!isLegacyLoginSubmitKey(event) || event.shiftKey || event.isComposing || controller.state.ui.busy) {
       return;
     }
     event.preventDefault();
     submitLoginForm();
-  };
+  });
+
   emailInput?.addEventListener('input', clearErrorOnEdit);
   passwordInput?.addEventListener('input', clearErrorOnEdit);
-  passwordInput?.addEventListener('input', clampPasswordInput);
-  form?.addEventListener('keydown', submitOnEnter);
+  passwordInput?.addEventListener('input', () => {
+    clampLegacyLoginPasswordInput(passwordInput);
+  });
   emailInput?.addEventListener('paste', () => {
     window.requestAnimationFrame(() => {
-      sanitizeEmailInput();
+      sanitizeLegacyLoginEmailInput(emailInput);
     });
   });
   emailInput?.addEventListener('keydown', (event) => {
@@ -994,10 +1178,14 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
     }
   });
   emailInput?.addEventListener('blur', () => {
-    sanitizeEmailInput();
+    sanitizeLegacyLoginEmailInput(emailInput);
   });
-  emailInput?.addEventListener('input', sanitizeEmailInput);
+  emailInput?.addEventListener('input', () => {
+    sanitizeLegacyLoginEmailInput(emailInput);
+  });
+}
 
+function bindLegacyLoginActions(section: HTMLElement, state: AppState, controller: AppController) {
   section.querySelector<HTMLButtonElement>('[data-action="dismiss-flash"]')?.addEventListener('click', () => {
     if (state.ui.error) controller.clearError();
     else controller.clearNotice();
@@ -1025,14 +1213,6 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
       }
     });
   });
-  bindRegisterPanel(section, controller, state);
-  bindEmailVerificationPanel(section, controller, state);
-  bindEmailOtpPanel(section, controller, state);
-  bindEmailVerifiedSuccessPanel(section, controller);
-  bindPasswordChangeSuccessPanel(section, controller);
-  bindInviteAssistancePanel(section, controller, state);
-  bindPasswordResetPanel(section, controller, state);
-  return section;
 }
 
 function setTextContentIfPresent(root: ParentNode, selector: string, value: string) {
@@ -1123,12 +1303,8 @@ function renderLoginHeader() {
 
 function renderLoginForm(state: AppState, options: { hasCredentialError: boolean; hasValidationError: boolean; hasAuthError: boolean }) {
   const { hasCredentialError, hasValidationError, hasAuthError } = options;
-  const emailFieldClass = hasCredentialError || state.ui.error === 'Email is required.' || state.ui.error === 'Enter a valid email address.'
-    ? `field-error ${hasValidationError && !hasCredentialError ? 'field-error-soft' : ''}`.trim()
-    : '';
-  const passwordFieldClass = hasCredentialError || state.ui.error === 'Password is required.'
-    ? `field-error ${hasValidationError && !hasCredentialError ? 'field-error-soft' : ''}`.trim()
-    : '';
+  const emailFieldClass = getLegacyLoginFieldClass(state.ui.error, hasCredentialError, hasValidationError, 'email');
+  const passwordFieldClass = getLegacyLoginFieldClass(state.ui.error, hasCredentialError, hasValidationError, 'password');
   const isRestoring = state.ui.busy && state.session.status === 'loading';
   const submitLabel = isRestoring ? 'RESTORING SESSION...' : state.ui.busy ? 'SIGNING IN...' : 'LOGIN';
   return `
@@ -1161,6 +1337,23 @@ function renderLoginForm(state: AppState, options: { hasCredentialError: boolean
   `;
 }
 
+function getLegacyLoginFieldClass(
+  error: string | null,
+  hasCredentialError: boolean,
+  hasValidationError: boolean,
+  field: 'email' | 'password',
+) {
+  const hasFieldError = field === 'email'
+    ? hasCredentialError || error === 'Email is required.' || error === 'Enter a valid email address.'
+    : hasCredentialError || error === 'Password is required.';
+
+  if (!hasFieldError) {
+    return '';
+  }
+
+  return `field-error ${hasValidationError && !hasCredentialError ? 'field-error-soft' : ''}`.trim();
+}
+
 function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackKind> | 'idle') {
   const supportKind = authFeedbackKind === 'idle' ? 'notice' : authFeedbackKind;
   const supportHeading = escapeHtml(getAuthSupportHeading(authFeedbackKind));
@@ -1188,45 +1381,9 @@ function renderLoginSupport(authFeedbackKind: ReturnType<typeof getAuthFeedbackK
 }
 
 function renderRegisterFlash(state: AppState) {
-  const message = state.ui.error ?? state.ui.notice ?? '';
-  if (!message) {
-    return '';
-  }
-
-  const isRegisterError = (
-    message === 'Username is required.'
-    || message === 'Username must be at least 3 characters.'
-    || message === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
-    || message === 'Username already taken'
-    || message === 'Email is required.'
-    || message === 'Enter a valid email address.'
-    || message === 'Email already registered'
-    || message === 'Invalid email format'
-    || message === 'Password is required.'
-    || message === 'Password must be at least 8 characters.'
-    || message === 'Password must be 8-128 characters.'
-    || message === 'Please confirm your password.'
-    || message === 'The passwords do not match. Please check them and try again.'
-    || message === 'Invite code is required.'
-    || message.includes('Invite')
-    || message.includes('invite')
-    || message.includes('registered')
-    || message.includes('Internal server error')
-    || message.includes('Unable to reach the server')
-  );
-
-  const isRegisterNotice = REGISTER_TRANSIENT_NOTICES.has(message);
-  if (!isRegisterError && !isRegisterNotice) {
-    return '';
-  }
-
-  return renderFlash({
-    ...state,
-    ui: {
-      ...state.ui,
-      error: isRegisterError ? state.ui.error : null,
-      notice: isRegisterNotice ? state.ui.notice : null,
-    },
+  return renderScopedFlash(state, {
+    isError: isRegisterFlashErrorMessage,
+    isNotice: (message) => REGISTER_TRANSIENT_NOTICES.has(message),
   });
 }
 
@@ -1254,82 +1411,16 @@ function renderChangePasswordFlash(state: AppState) {
 }
 
 function renderPasswordResetFlash(state: AppState) {
-  const message = state.ui.error ?? state.ui.notice ?? '';
-  if (!message) {
-    return '';
-  }
-
-  const isPasswordResetError = (
-    message === 'Email is required.'
-    || message === 'Enter a valid email address.'
-    || message === 'Reset link is missing or invalid.'
-    || message === 'New password is required.'
-    || message === 'New password must be at least 8 characters.'
-    || message === 'New password must be 8-128 characters.'
-    || message === 'Please confirm the new password.'
-    || message === 'The new passwords do not match. Please check them and try again.'
-    || message.includes('Reset token is invalid or expired')
-    || message.includes('Reset token is invalid or already used')
-    || message.includes('Password reset request failed')
-    || message.includes('Password reset failed')
-    || message.includes('not verified')
-    || message.includes('verification email could not be sent')
-    || message.includes('Internal server error')
-    || message.includes('Unable to reach the server')
-  );
-
-  const isPasswordResetNotice = PASSWORD_RESET_TRANSIENT_NOTICES.has(message)
-    || message.includes('password reset link has been sent')
-    || message.includes('verification link has been sent')
-    || message.includes('Check your inbox to verify your email')
-    || message.includes('Password reset successful');
-
-  if (!isPasswordResetError && !isPasswordResetNotice) {
-    return '';
-  }
-
-  return renderFlash({
-    ...state,
-    ui: {
-      ...state.ui,
-      error: isPasswordResetError ? state.ui.error : null,
-      notice: isPasswordResetNotice ? state.ui.notice : null,
-    },
+  return renderScopedFlash(state, {
+    isError: isPasswordResetFlashErrorMessage,
+    isNotice: isPasswordResetFlashNoticeMessage,
   });
 }
 
 function renderLoginOtpFlash(state: AppState) {
-  const message = state.ui.error ?? state.ui.notice ?? '';
-  if (!message) {
-    return '';
-  }
-
-  const isLoginOtpError = (
-    message === 'Verification challenge is missing. Please sign in again.'
-    || message === 'Verification code is required.'
-    || message === 'Enter the 6-digit verification code.'
-    || message.includes('Verification code is incorrect')
-    || message.includes('Verification code is invalid or expired')
-    || message.includes('Too many invalid verification attempts')
-    || message.includes('Unable to reach the server')
-    || message.includes('Internal server error')
-  );
-
-  const isLoginOtpNotice = LOGIN_OTP_TRANSIENT_NOTICES.has(message)
-    || message.includes('Verification code sent')
-    || message.includes('A new verification code has been sent');
-
-  if (!isLoginOtpError && !isLoginOtpNotice) {
-    return '';
-  }
-
-  return renderFlash({
-    ...state,
-    ui: {
-      ...state.ui,
-      error: isLoginOtpError ? state.ui.error : null,
-      notice: isLoginOtpNotice ? state.ui.notice : null,
-    },
+  return renderScopedFlash(state, {
+    isError: isLoginOtpFlashErrorMessage,
+    isNotice: isLoginOtpFlashNoticeMessage,
   });
 }
 
@@ -1343,33 +1434,9 @@ function renderDashboardFlash(state: AppState) {
     return '';
   }
 
-  const isLoginOnlyMessage = LOGIN_RELEVANT_NOTICES.has(message)
-    || message === 'Incorrect email or password. Check your credentials and try again.'
-    || message === 'Email is required.'
-    || message === 'Enter a valid email address.'
-    || message === 'Password is required.'
-    || message.includes('old password changed on');
-  const isRegisterOnlyMessage = (
-    message === 'Username is required.'
-    || message === 'Username must be at least 3 characters.'
-    || message === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
-    || message === 'Username already taken'
-    || message === 'Email already registered'
-    || message === 'Invalid email format'
-    || message === 'Password must be 8-128 characters.'
-    || message === 'Please confirm your password.'
-    || message === 'The passwords do not match. Please check them and try again.'
-    || message === 'Invite code is required.'
-    || REGISTER_TRANSIENT_NOTICES.has(message)
-    || message.includes('Invite')
-    || message.includes('invite')
-    || message.includes('registered')
-  );
-  const isChangePasswordOnlyMessage = (
-    isChangePasswordErrorMessage(message)
-    || isChangePasswordNoticeMessage(message)
-    || CHANGE_PASSWORD_TRANSIENT_NOTICES.has(message)
-  );
+  const isLoginOnlyMessage = isDashboardLoginOnlyMessage(message);
+  const isRegisterOnlyMessage = isDashboardRegisterOnlyMessage(message);
+  const isChangePasswordOnlyMessage = isDashboardChangePasswordOnlyMessage(message);
 
   if (isLoginOnlyMessage || isRegisterOnlyMessage || isChangePasswordOnlyMessage) {
     return '';
@@ -1378,23 +1445,59 @@ function renderDashboardFlash(state: AppState) {
   return renderFlash(state);
 }
 
+function isRegisterModalFieldError(error: string | null, field: 'username' | 'email' | 'password' | 'invite') {
+  if (field === 'username') {
+    return error === 'Username is required.'
+      || error === 'Username must be at least 3 characters.'
+      || error === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
+      || error === 'Username already taken';
+  }
+
+  if (field === 'email') {
+    return error === 'Email is required.'
+      || error === 'Enter a valid email address.'
+      || error === 'Email already registered'
+      || error === 'Invalid email format';
+  }
+
+  if (field === 'password') {
+    return error === 'Password is required.'
+      || error === 'Password must be at least 8 characters.'
+      || error === 'Password must be 8-128 characters.'
+      || error === 'Please confirm your password.'
+      || error === 'The passwords do not match. Please check them and try again.';
+  }
+
+  return Boolean(
+    error === 'Invite code is required.'
+    || error?.includes('Invite')
+    || error?.includes('invite')
+  );
+}
+
+function renderRegisterPasswordField(options: {
+  label: string;
+  name: string;
+  toggleAction: string;
+  passwordError: boolean;
+  busy: boolean;
+}) {
+  return `
+    <label>
+      <span>${options.label}</span>
+      <div class="legacy-password-wrap">
+        <input name="${options.name}" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" class="${options.passwordError ? 'field-error' : ''}" ${options.busy ? 'disabled' : ''} required />
+        <button type="button" class="legacy-password-toggle" data-action="${options.toggleAction}" ${options.busy ? 'disabled' : ''}>Show</button>
+      </div>
+    </label>
+  `;
+}
+
 function renderRegisterModal(state: AppState) {
-  const usernameError = state.ui.error === 'Username is required.'
-    || state.ui.error === 'Username must be at least 3 characters.'
-    || state.ui.error === 'Username must be 3-32 characters and use only letters, numbers, or underscores.'
-    || state.ui.error === 'Username already taken';
-  const emailError = state.ui.error === 'Email is required.'
-    || state.ui.error === 'Enter a valid email address.'
-    || state.ui.error === 'Email already registered'
-    || state.ui.error === 'Invalid email format';
-  const passwordError = state.ui.error === 'Password is required.'
-    || state.ui.error === 'Password must be at least 8 characters.'
-    || state.ui.error === 'Password must be 8-128 characters.'
-    || state.ui.error === 'Please confirm your password.'
-    || state.ui.error === 'The passwords do not match. Please check them and try again.';
-  const inviteError = state.ui.error === 'Invite code is required.'
-    || state.ui.error?.includes('Invite')
-    || state.ui.error?.includes('invite');
+  const usernameError = isRegisterModalFieldError(state.ui.error, 'username');
+  const emailError = isRegisterModalFieldError(state.ui.error, 'email');
+  const passwordError = isRegisterModalFieldError(state.ui.error, 'password');
+  const inviteError = isRegisterModalFieldError(state.ui.error, 'invite');
 
   return `
     <div class="legacy-auth-modal" data-auth-modal="register">
@@ -1417,20 +1520,8 @@ function renderRegisterModal(state: AppState) {
             <span>Email</span>
             <input name="registerEmail" type="email" inputmode="email" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false" class="${emailError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
           </label>
-          <label>
-            <span>Password</span>
-            <div class="legacy-password-wrap">
-              <input name="registerPassword" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" class="${passwordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-              <button type="button" class="legacy-password-toggle" data-action="toggle-register-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
-            </div>
-          </label>
-          <label>
-            <span>Confirm password</span>
-            <div class="legacy-password-wrap">
-              <input name="registerConfirmPassword" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" class="${passwordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-              <button type="button" class="legacy-password-toggle" data-action="toggle-register-confirm-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
-            </div>
-          </label>
+          ${renderRegisterPasswordField({ label: 'Password', name: 'registerPassword', toggleAction: 'toggle-register-password-visibility', passwordError, busy: state.ui.busy })}
+          ${renderRegisterPasswordField({ label: 'Confirm password', name: 'registerConfirmPassword', toggleAction: 'toggle-register-confirm-password-visibility', passwordError, busy: state.ui.busy })}
           <label>
             <span>Invite code</span>
             <input name="inviteCode" type="text" maxlength="64" autocapitalize="characters" spellcheck="false" class="${inviteError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
@@ -1443,6 +1534,47 @@ function renderRegisterModal(state: AppState) {
         </form>
       </div>
     </div>
+  `;
+}
+
+function renderEmailVerificationStatusCards(options: {
+  emailSendFailed: boolean;
+  hasLocalDevLink: boolean;
+}) {
+  return `
+    <div class="legacy-assistance-grid">
+      <div class="legacy-assistance-card">
+        <div class="legacy-assistance-card-title">${options.emailSendFailed ? 'DELIVERY ISSUE' : 'VERIFICATION SENT'}</div>
+        <div class="legacy-assistance-card-copy">${options.emailSendFailed
+          ? 'We could not send a confirmation email to '
+          : 'We sent a confirmation email to '
+        }<strong data-auth-text="pending-verification-email"></strong>${options.emailSendFailed ? ' just yet.' : '.'}</div>
+      </div>
+      <div class="legacy-assistance-card">
+        <div class="legacy-assistance-card-title">AFTER VERIFY</div>
+        <div class="legacy-assistance-card-copy">${options.hasLocalDevLink
+          ? 'Use the local dev verification link shown above. After confirmation, TrendScope will open the access setup flow with the plans and account-bound checkout.'
+          : options.emailSendFailed
+            ? 'Try sending the verification link again after fixing email delivery.'
+            : 'Open the email and confirm your address. After that, TrendScope will take you into the access setup flow instead of dropping you directly into the bot.'
+        }</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderEmailVerificationRequestForm(state: AppState, emailError: boolean) {
+  return `
+    <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="email-verification-form" novalidate>
+      <label>
+        <span>Account email</span>
+        <input name="verificationEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" class="${emailError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+      </label>
+      <div class="legacy-auth-panel-actions">
+        <button type="button" class="legacy-userbar-link" data-action="close-email-verification-panel" ${state.ui.busy ? 'disabled' : ''}>Close</button>
+        <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'SENDING...' : 'SEND VERIFICATION LINK'}</button>
+      </div>
+    </form>
   `;
 }
 
@@ -1471,38 +1603,97 @@ function renderEmailVerificationModal(state: AppState) {
         </div>
         <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderPasswordResetFlash(state)}</div>
         ${isPostRegisterNotice ? `
-          <div class="legacy-assistance-grid">
-            <div class="legacy-assistance-card">
-              <div class="legacy-assistance-card-title">${emailSendFailed ? 'DELIVERY ISSUE' : 'VERIFICATION SENT'}</div>
-              <div class="legacy-assistance-card-copy">${emailSendFailed
-                ? 'We could not send a confirmation email to '
-                : 'We sent a confirmation email to '
-              }<strong data-auth-text="pending-verification-email"></strong>${emailSendFailed ? ' just yet.' : '.'}</div>
-            </div>
-            <div class="legacy-assistance-card">
-              <div class="legacy-assistance-card-title">AFTER VERIFY</div>
-              <div class="legacy-assistance-card-copy">${hasLocalDevLink
-                ? 'Use the local dev verification link shown above. After confirmation, TrendScope will open the access setup flow with the plans and account-bound checkout.'
-                : emailSendFailed
-                  ? 'Try sending the verification link again after fixing email delivery.'
-                  : 'Open the email and confirm your address. After that, TrendScope will take you into the access setup flow instead of dropping you directly into the bot.'
-              }</div>
-            </div>
-          </div>
+          ${renderEmailVerificationStatusCards({ emailSendFailed, hasLocalDevLink })}
         ` : `
-          <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="email-verification-form" novalidate>
-            <label>
-              <span>Account email</span>
-              <input name="verificationEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" class="${emailError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-            </label>
-            <div class="legacy-auth-panel-actions">
-              <button type="button" class="legacy-userbar-link" data-action="close-email-verification-panel" ${state.ui.busy ? 'disabled' : ''}>Close</button>
-              <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'SENDING...' : 'SEND VERIFICATION LINK'}</button>
-            </div>
-          </form>
+          ${renderEmailVerificationRequestForm(state, emailError)}
         `}
       </div>
     </div>
+  `;
+}
+
+function isPasswordResetModalFieldError(error: string | null, field: 'email' | 'password') {
+  if (field === 'email') {
+    return error === 'Email is required.'
+      || error === 'Enter a valid email address.';
+  }
+
+  return Boolean(
+    error === 'New password is required.'
+    || error === 'New password must be at least 8 characters.'
+    || error === 'New password must be 8-128 characters.'
+    || error === 'Please confirm the new password.'
+    || error === 'The new passwords do not match. Please check them and try again.'
+    || error === 'Reset link is missing or invalid.'
+    || error?.includes('Reset token')
+  );
+}
+
+function renderPasswordResetInfoCards(hasResetToken: boolean) {
+  return `
+    <div class="legacy-assistance-grid">
+      <div class="legacy-assistance-card">
+        <div class="legacy-assistance-card-title">${hasResetToken ? 'RESET READY' : 'VERIFIED EMAIL ONLY'}</div>
+        <div class="legacy-assistance-card-copy">${hasResetToken ? 'This reset link is single-use and should be used immediately. After success, old sessions are revoked.' : 'Reset email is sent only for active, verified accounts. If the address exists and is eligible, the response stays generic.'}</div>
+      </div>
+      <div class="legacy-assistance-card">
+        <div class="legacy-assistance-card-title">${hasResetToken ? 'PASSWORD RULES' : 'WHAT TO EXPECT'}</div>
+        <div class="legacy-assistance-card-copy">${hasResetToken ? 'Use a fresh password with at least 8 characters. You will need to sign in again after the reset.' : 'Check your inbox for the reset email. If nothing arrives, verify the address first or try again later.'}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPasswordResetPasswordField(options: {
+  label: string;
+  name: string;
+  toggleAction: string;
+  passwordError: boolean;
+  busy: boolean;
+}) {
+  return `
+    <label>
+      <span>${options.label}</span>
+      <div class="legacy-password-wrap">
+        <input name="${options.name}" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${options.passwordError ? 'field-error' : ''}" ${options.busy ? 'disabled' : ''} required />
+        <button type="button" class="legacy-password-toggle" data-action="${options.toggleAction}" ${options.busy ? 'disabled' : ''}>Show</button>
+      </div>
+    </label>
+  `;
+}
+
+function renderPasswordResetForm(state: AppState, options: { hasResetToken: boolean; emailError: boolean; passwordError: boolean }) {
+  const submitLabel = options.hasResetToken
+    ? (state.ui.busy ? 'RESETTING...' : 'RESET PASSWORD')
+    : (state.ui.busy ? 'SENDING...' : 'SEND RESET LINK');
+
+  return `
+    <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="password-reset-form" novalidate>
+      ${options.hasResetToken ? `
+        ${renderPasswordResetPasswordField({
+          label: 'New password',
+          name: 'resetNewPassword',
+          toggleAction: 'toggle-reset-password-visibility',
+          passwordError: options.passwordError,
+          busy: state.ui.busy,
+        })}
+        ${renderPasswordResetPasswordField({
+          label: 'Confirm new password',
+          name: 'resetConfirmNewPassword',
+          toggleAction: 'toggle-reset-confirm-password-visibility',
+          passwordError: options.passwordError,
+          busy: state.ui.busy,
+        })}
+      ` : `
+        <label>
+          <span>Account email</span>
+          <input name="resetEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" class="${options.emailError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
+        </label>
+      `}
+      <div class="legacy-auth-panel-actions">
+        <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${submitLabel}</button>
+      </div>
+    </form>
   `;
 }
 
@@ -1615,15 +1806,8 @@ function renderInviteAssistanceModal(state: AppState) {
 
 function renderPasswordResetModal(state: AppState) {
   const hasResetToken = Boolean(state.ui.pendingPasswordResetToken);
-  const emailError = state.ui.error === 'Email is required.'
-    || state.ui.error === 'Enter a valid email address.';
-  const passwordError = state.ui.error === 'New password is required.'
-    || state.ui.error === 'New password must be at least 8 characters.'
-    || state.ui.error === 'New password must be 8-128 characters.'
-    || state.ui.error === 'Please confirm the new password.'
-    || state.ui.error === 'The new passwords do not match. Please check them and try again.'
-    || state.ui.error === 'Reset link is missing or invalid.'
-    || state.ui.error?.includes('Reset token');
+  const emailError = isPasswordResetModalFieldError(state.ui.error, 'email');
+  const passwordError = isPasswordResetModalFieldError(state.ui.error, 'password');
   return `
     <div class="legacy-auth-modal" data-auth-modal="password-reset">
       <div class="legacy-auth-modal-backdrop"></div>
@@ -1636,45 +1820,81 @@ function renderPasswordResetModal(state: AppState) {
           <button type="button" class="legacy-userbar-link" data-action="close-password-reset-panel">Close</button>
         </div>
         <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderPasswordResetFlash(state)}</div>
-        <div class="legacy-assistance-grid">
-          <div class="legacy-assistance-card">
-            <div class="legacy-assistance-card-title">${hasResetToken ? 'RESET READY' : 'VERIFIED EMAIL ONLY'}</div>
-            <div class="legacy-assistance-card-copy">${hasResetToken ? 'This reset link is single-use and should be used immediately. After success, old sessions are revoked.' : 'Reset email is sent only for active, verified accounts. If the address exists and is eligible, the response stays generic.'}</div>
-          </div>
-          <div class="legacy-assistance-card">
-            <div class="legacy-assistance-card-title">${hasResetToken ? 'PASSWORD RULES' : 'WHAT TO EXPECT'}</div>
-            <div class="legacy-assistance-card-copy">${hasResetToken ? 'Use a fresh password with at least 8 characters. You will need to sign in again after the reset.' : 'Check your inbox for the reset email. If nothing arrives, verify the address first or try again later.'}</div>
-          </div>
-        </div>
-        <form class="legacy-auth-panel-form legacy-auth-panel-form-register" data-role="password-reset-form" novalidate>
-          ${hasResetToken ? `
-            <label>
-              <span>New password</span>
-              <div class="legacy-password-wrap">
-                <input name="resetNewPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${passwordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-                <button type="button" class="legacy-password-toggle" data-action="toggle-reset-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
-              </div>
-            </label>
-            <label>
-              <span>Confirm new password</span>
-              <div class="legacy-password-wrap">
-                <input name="resetConfirmNewPassword" type="password" autocomplete="new-password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" class="${passwordError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-                <button type="button" class="legacy-password-toggle" data-action="toggle-reset-confirm-password-visibility" ${state.ui.busy ? 'disabled' : ''}>Show</button>
-              </div>
-            </label>
-          ` : `
-            <label>
-              <span>Account email</span>
-              <input name="resetEmail" type="email" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" class="${emailError ? 'field-error' : ''}" ${state.ui.busy ? 'disabled' : ''} required />
-            </label>
-          `}
-          <div class="legacy-auth-panel-actions">
-            <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${hasResetToken ? (state.ui.busy ? 'RESETTING...' : 'RESET PASSWORD') : (state.ui.busy ? 'SENDING...' : 'SEND RESET LINK')}</button>
-          </div>
-        </form>
+        ${renderPasswordResetInfoCards(hasResetToken)}
+        ${renderPasswordResetForm(state, { hasResetToken, emailError, passwordError })}
         <div class="legacy-auth-panel-note legacy-auth-panel-note-secondary">
           ${INVITE_SECURITY_WARNING}
         </div>
+      </div>
+    </div>
+  `;
+}
+
+function getPublicBillingPlanDescriptor(plan: AppState['billing']['plans'][number]) {
+  return plan.description || (plan.accessDays >= 30 ? 'Monthly access' : 'Weekly access');
+}
+
+function renderPublicBillingPlanValueLine(
+  plan: AppState['billing']['plans'][number],
+  recommended: boolean,
+  shortestPlan: AppState['billing']['plans'][number] | null,
+) {
+  const dailyRate = formatBillingDailyRate(plan.amountMinor, plan.accessDays);
+  const shortestDailyRate = shortestPlan ? formatBillingDailyRate(shortestPlan.amountMinor, shortestPlan.accessDays) : null;
+  if (!recommended || !dailyRate || !shortestDailyRate || !shortestPlan || shortestPlan.key === plan.key) {
+    return '';
+  }
+
+  return `<div class="legacy-public-plan-value-line">~${escapeHtml(dailyRate)} vs ${escapeHtml(shortestDailyRate)} on ${escapeHtml(shortestPlan.label.toLowerCase())}</div>`;
+}
+
+function renderPublicBillingPlanButton(
+  state: AppState,
+  plan: AppState['billing']['plans'][number],
+  recommended: boolean,
+  pending: boolean,
+) {
+  return `
+    <button
+      type="button"
+      class="legacy-btn ${recommended ? 'legacy-btn-primary' : 'legacy-public-plan-ghost-btn'}"
+      data-action="start-pre-access-checkout"
+      data-plan-key="${escapeHtml(plan.key)}"
+      ${!plan.available || pending || state.session.accessHasProductAccess ? 'disabled' : ''}
+    >${state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'CONTINUE TO CHECKOUT'}</button>
+  `;
+}
+
+function renderPublicBillingPlanCard(
+  state: AppState,
+  plan: AppState['billing']['plans'][number],
+  recommendedPlanKey: string | null,
+  shortestPlan: AppState['billing']['plans'][number] | null,
+) {
+  const pending = state.billing.pendingPlanKey === plan.key;
+  const recommended = recommendedPlanKey === plan.key;
+  const descriptor = getPublicBillingPlanDescriptor(plan);
+
+  return `
+    <div class="legacy-billing-plan-card legacy-pre-access-plan-card legacy-public-pricing-card ${recommended ? 'featured recommended' : ''} ${pending ? 'pending' : ''}">
+      ${recommended ? `<span class="legacy-public-plan-floating-badge">Best value</span>` : ''}
+      <div class="legacy-pre-access-plan-topline legacy-public-plan-topline">
+        <span class="legacy-pre-access-plan-badge">Access plan</span>
+        <span class="legacy-pre-access-plan-duration">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'}</span>
+      </div>
+      <div class="legacy-billing-plan-copy legacy-public-plan-copy">
+        <strong>${escapeHtml(plan.label)}</strong>
+        <span>${escapeHtml(descriptor)}</span>
+      </div>
+      <div class="legacy-public-plan-price-row">
+        <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
+        <strong class="legacy-billing-plan-price legacy-public-plan-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
+      </div>
+      <div class="legacy-billing-plan-meta legacy-public-plan-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
+      ${renderPublicBillingPlanValueLine(plan, recommended, shortestPlan)}
+      ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
+      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+        ${renderPublicBillingPlanButton(state, plan, recommended, pending)}
       </div>
     </div>
   `;
@@ -2120,45 +2340,7 @@ function renderPreAccessPlansCard(state: AppState) {
       <div class="legacy-auth-panel-note">${escapeHtml(billingUnavailableMessage)}</div>
     ` : `
       <div class="legacy-billing-plan-grid legacy-public-pricing-grid" data-role="billing-plans-card">
-        ${state.billing.plans.map((plan) => {
-          const pending = state.billing.pendingPlanKey === plan.key;
-          const recommended = recommendedPlanKey === plan.key;
-          const descriptor = plan.description || (plan.accessDays >= 30 ? 'Monthly access' : 'Weekly access');
-          const dailyRate = formatBillingDailyRate(plan.amountMinor, plan.accessDays);
-          const shortestDailyRate = shortestPlan ? formatBillingDailyRate(shortestPlan.amountMinor, shortestPlan.accessDays) : null;
-
-          return `
-            <div class="legacy-billing-plan-card legacy-pre-access-plan-card legacy-public-pricing-card ${recommended ? 'featured recommended' : ''} ${pending ? 'pending' : ''}">
-              ${recommended ? `<span class="legacy-public-plan-floating-badge">Best value</span>` : ''}
-              <div class="legacy-pre-access-plan-topline legacy-public-plan-topline">
-                <span class="legacy-pre-access-plan-badge">Access plan</span>
-                <span class="legacy-pre-access-plan-duration">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'}</span>
-              </div>
-              <div class="legacy-billing-plan-copy legacy-public-plan-copy">
-                <strong>${escapeHtml(plan.label)}</strong>
-                <span>${escapeHtml(descriptor)}</span>
-              </div>
-              <div class="legacy-public-plan-price-row">
-                <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
-                <strong class="legacy-billing-plan-price legacy-public-plan-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
-              </div>
-              <div class="legacy-billing-plan-meta legacy-public-plan-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
-              ${recommended && dailyRate && shortestDailyRate && shortestPlan && shortestPlan.key !== plan.key ? `
-                <div class="legacy-public-plan-value-line">~${escapeHtml(dailyRate)} vs ${escapeHtml(shortestDailyRate)} on ${escapeHtml(shortestPlan.label.toLowerCase())}</div>
-              ` : ''}
-              ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
-              <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-                <button
-                  type="button"
-                  class="legacy-btn ${recommended ? 'legacy-btn-primary' : 'legacy-public-plan-ghost-btn'}"
-                  data-action="start-pre-access-checkout"
-                  data-plan-key="${escapeHtml(plan.key)}"
-                  ${!plan.available || pending || state.session.accessHasProductAccess ? 'disabled' : ''}
-                >${state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'CONTINUE TO CHECKOUT'}</button>
-              </div>
-            </div>
-          `;
-        }).join('')}
+        ${state.billing.plans.map((plan) => renderPublicBillingPlanCard(state, plan, recommendedPlanKey, shortestPlan)).join('')}
       </div>
     `}
     <div class="legacy-public-pricing-trust-line">Payment via USDC on Solana · Access activates after payment confirmation · No recurring charges</div>
@@ -2195,46 +2377,6 @@ function renderBillingOrdersCard(state: AppState) {
                 ` : ''}
                 ${order.providerCheckoutUrl && order.status !== 'paid' ? `
                   <button type="button" class="legacy-userbar-link" data-action="resume-billing-checkout" data-checkout-url="${escapeHtml(order.providerCheckoutUrl)}">Resume Checkout</button>
-                ` : ''}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `}
-    </div>
-  `;
-}
-
-function renderPreAccessOrdersCard(state: AppState) {
-  return `
-    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-pre-access-orders-card">
-      <div class="legacy-user-settings-card-head legacy-pre-access-card-head">
-        <strong>Checkout History</strong>
-        <span>Recent pre-access checkout attempts and confirmed payments for this account.</span>
-      </div>
-      ${state.billing.orders.length === 0 ? `
-        <div class="legacy-auth-panel-note">No billing orders yet.</div>
-      ` : `
-        <div class="legacy-billing-order-list">
-          ${state.billing.orders.map((order) => `
-            <div class="legacy-billing-order-row">
-              <div class="legacy-billing-order-main">
-                <strong>${escapeHtml(order.planName)}</strong>
-                <span>${escapeHtml(formatBillingAmount(order.currencyCode, order.currencyAmountMinor))}</span>
-              </div>
-              <div class="legacy-billing-order-side">
-                <span>${escapeHtml(getBillingOrderStatusLabel(order.status))}</span>
-                <span>${escapeHtml(order.paidAt ? formatDateTime(order.paidAt) : formatDateTime(order.createdAt))}</span>
-                ${order.status === 'paid' ? `
-                  <a
-                    class="legacy-userbar-link"
-                    href="${escapeHtml(getBillingReceiptUrl(order.id))}"
-                    target="_blank"
-                    rel="noopener"
-                  >Receipt</a>
-                ` : ''}
-                ${order.providerCheckoutUrl && order.status !== 'paid' ? `
-                  <button type="button" class="legacy-userbar-link" data-action="resume-pre-access-checkout" data-checkout-url="${escapeHtml(order.providerCheckoutUrl)}">Resume Checkout</button>
                 ` : ''}
               </div>
             </div>
