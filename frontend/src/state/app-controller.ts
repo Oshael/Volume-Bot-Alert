@@ -4675,21 +4675,13 @@ export function createAppController(): AppController {
       state.billing.error = null;
       emit('overlay');
 
-      const popup = typeof window !== 'undefined'
-        ? (state.billing.providerMocked
-          ? window.open('', '_blank')
-          : window.open('', '_blank', 'noopener'))
-        : null;
-
       try {
         const result = await createBillingOrder(normalizedPlanKey, COOKIE_SESSION_MARKER);
         if (!result.checkoutUrl) {
           throw new Error('MoonPay Commerce checkout URL was not returned');
         }
         await refreshBillingState(COOKIE_SESSION_MARKER);
-        if (popup) {
-          popup.location.href = result.checkoutUrl;
-        } else if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined') {
           window.open(result.checkoutUrl, '_blank', 'noopener');
         }
         setNotice(
@@ -4698,9 +4690,6 @@ export function createAppController(): AppController {
             : 'MoonPay Commerce checkout opened in a new tab.'
         );
       } catch (error) {
-        if (popup) {
-          popup.close();
-        }
         state.billing.error = error instanceof Error ? error.message : 'Unable to start checkout';
         throw error;
       } finally {

@@ -1865,6 +1865,22 @@ function renderPublicBillingPlanButton(
   `;
 }
 
+function renderProfileBillingPlanButton(
+  state: AppState,
+  plan: AppState['billing']['plans'][number],
+  pending: boolean,
+) {
+  return `
+    <button
+      type="button"
+      class="legacy-btn legacy-profile-billing-btn"
+      data-action="start-billing-checkout"
+      data-plan-key="${escapeHtml(plan.key)}"
+      ${!plan.available || pending ? 'disabled' : ''}
+    >${state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'CONTINUE TO CHECKOUT'}</button>
+  `;
+}
+
 function renderPublicBillingPlanCard(
   state: AppState,
   plan: AppState['billing']['plans'][number],
@@ -1895,6 +1911,36 @@ function renderPublicBillingPlanCard(
       ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
       <div class="legacy-auth-panel-actions legacy-user-settings-actions">
         ${renderPublicBillingPlanButton(state, plan, recommended, pending)}
+      </div>
+    </div>
+  `;
+}
+
+function renderProfileBillingPlanCard(
+  state: AppState,
+  plan: AppState['billing']['plans'][number],
+) {
+  const pending = state.billing.pendingPlanKey === plan.key;
+  const descriptor = getPublicBillingPlanDescriptor(plan);
+
+  return `
+    <div class="legacy-billing-plan-card legacy-profile-billing-card ${plan.featured ? 'featured' : ''} ${pending ? 'pending' : ''}">
+      <div class="legacy-pre-access-plan-topline legacy-profile-billing-topline">
+        <span class="legacy-pre-access-plan-badge legacy-profile-billing-badge">Access plan</span>
+        <span class="legacy-pre-access-plan-duration legacy-profile-billing-duration">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'}</span>
+      </div>
+      <div class="legacy-billing-plan-copy legacy-profile-billing-copy">
+        <strong>${escapeHtml(plan.label)}</strong>
+        <span>${escapeHtml(descriptor)}</span>
+      </div>
+      <div class="legacy-profile-billing-price-row">
+        <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
+        <strong class="legacy-billing-plan-price legacy-profile-billing-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
+      </div>
+      <div class="legacy-billing-plan-meta legacy-profile-billing-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
+      ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
+      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+        ${renderProfileBillingPlanButton(state, plan, pending)}
       </div>
     </div>
   `;
@@ -2149,7 +2195,7 @@ function renderAccountAccessSummaryCard(state: AppState) {
           <span>Access Source</span>
           <div class="legacy-account-access-inline">
             <strong>${escapeHtml(sourceLabel)}</strong>
-            <button type="button" class="legacy-btn legacy-btn-primary legacy-account-access-billing-btn" data-action="focus-billing-plans">OPEN BILLING</button>
+            <button type="button" class="legacy-btn legacy-btn-soft-accent legacy-account-access-billing-btn" data-action="focus-billing-plans">OPEN BILLING</button>
           </div>
         </div>
       </div>
@@ -2198,7 +2244,7 @@ function renderUserLinkedIdentitiesCard(
                 ${provider.linked || !allowConnectActions ? '' : `
                   <button
                     type="button"
-                    class="legacy-btn legacy-btn-primary legacy-linked-identity-connect"
+                    class="legacy-btn legacy-btn-soft-accent legacy-linked-identity-connect"
                     data-action="start-social-link"
                     data-provider="${escapeHtml(provider.provider)}"
                     ${provider.configured ? '' : 'disabled'}
@@ -2213,13 +2259,13 @@ function renderUserLinkedIdentitiesCard(
                       </label>
                       <div class="legacy-auth-panel-actions legacy-user-settings-actions">
                         <button type="button" class="legacy-userbar-link" data-action="cancel-social-unlink" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
-                        <button type="submit" class="legacy-btn legacy-btn-primary" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'UNLINKING...' : `UNLINK ${escapeHtml(provider.label.toUpperCase())}`}</button>
+                        <button type="submit" class="legacy-btn legacy-btn-outline-accent" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'UNLINKING...' : `UNLINK ${escapeHtml(provider.label.toUpperCase())}`}</button>
                       </div>
                     </form>
                   ` : `
                     <button
                       type="button"
-                      class="legacy-userbar-link"
+                      class="legacy-btn legacy-btn-outline-accent legacy-linked-identity-unlink"
                       data-action="open-social-unlink"
                       data-provider="${escapeHtml(provider.provider)}"
                       ${state.ui.busy ? 'disabled' : ''}
@@ -2246,7 +2292,7 @@ function renderUserSecurityCard(state: AppState) {
         <span>${escapeHtml(otpStatus)}</span>
       </div>
       <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-        <button type="button" class="legacy-btn legacy-btn-primary" data-action="open-change-password-from-user-settings" ${state.ui.busy ? 'disabled' : ''}>CHANGE PASSWORD</button>
+        <button type="button" class="legacy-btn legacy-btn-outline-accent" data-action="open-change-password-from-user-settings" ${state.ui.busy ? 'disabled' : ''}>CHANGE PASSWORD</button>
       </div>
     </div>
   `;
@@ -2281,31 +2327,8 @@ function renderBillingPlansCard(state: AppState) {
       ${billingUnavailableMessage ? `
         <div class="legacy-auth-panel-note">${escapeHtml(billingUnavailableMessage)}</div>
       ` : `
-        <div class="legacy-billing-plan-grid">
-          ${state.billing.plans.map((plan) => {
-            const pending = state.billing.pendingPlanKey === plan.key;
-            return `
-              <div class="legacy-billing-plan-card ${plan.featured ? 'featured' : ''} ${pending ? 'pending' : ''}">
-                <div class="legacy-billing-plan-copy">
-                  <strong>${escapeHtml(plan.label)}</strong>
-                  <span>${escapeHtml(plan.description || `${plan.accessDays} days of product access`)}</span>
-                </div>
-                <div class="legacy-billing-plan-price">${escapeHtml(plan.priceDisplay || formatBillingAmount(plan.currencyCode, plan.amountMinor))}</div>
-                <div class="legacy-billing-plan-meta">${plan.accessDays} day${plan.accessDays === 1 ? '' : 's'} access</div>
-                ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
-                ${plan.available ? '' : `<div class="legacy-auth-panel-note">${escapeHtml(plan.availabilityReason || 'Unavailable')}</div>`}
-                <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-                  <button
-                    type="button"
-                    class="legacy-btn legacy-btn-primary"
-                    data-action="start-billing-checkout"
-                    data-plan-key="${escapeHtml(plan.key)}"
-                    ${!plan.available || pending ? 'disabled' : ''}
-                  >${state.billing.providerMocked ? 'OPEN LOCAL CHECKOUT' : 'PAY WITH MOONPAY'}</button>
-                </div>
-              </div>
-            `;
-          }).join('')}
+        <div class="legacy-billing-plan-grid legacy-profile-billing-grid">
+          ${state.billing.plans.map((plan) => renderProfileBillingPlanCard(state, plan)).join('')}
         </div>
       `}
     </div>

@@ -1719,6 +1719,10 @@ a {
   justify-self: end;
 }
 
+.legacy-linked-identity-unlink {
+  justify-self: end;
+}
+
 .legacy-linked-identity-meta {
   opacity: 0.92;
 }
@@ -2634,6 +2638,11 @@ a {
   gap: 14px;
 }
 
+.legacy-profile-billing-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .legacy-billing-plan-card,
 .legacy-billing-order-row {
   border-radius: 14px;
@@ -2645,6 +2654,16 @@ a {
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.legacy-profile-billing-card {
+  gap: 12px;
+  padding: 18px 18px 16px;
+  border-radius: 16px;
+  border-color: rgba(40, 68, 112, 0.92);
+  background:
+    linear-gradient(180deg, rgba(8, 13, 21, 0.98), rgba(7, 12, 19, 0.94)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.025), transparent 40%);
 }
 
 .legacy-billing-plan-card.featured {
@@ -2668,6 +2687,22 @@ a {
   color: #eef4ff;
   font-size: 22px;
   line-height: 1;
+}
+
+.legacy-profile-billing-copy {
+  gap: 6px;
+}
+
+.legacy-profile-billing-copy strong {
+  font-family: "Space Grotesk", "Syne", sans-serif;
+  font-size: 25px;
+  line-height: 1.04;
+}
+
+.legacy-profile-billing-copy span {
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 11px;
+  color: #8fa4bf;
 }
 
 .legacy-billing-plan-copy span,
@@ -2730,6 +2765,75 @@ a {
   font-size: 32px;
   font-weight: 700;
   line-height: 0.95;
+}
+
+.legacy-profile-billing-topline {
+  margin-bottom: 0;
+}
+
+.legacy-profile-billing-badge {
+  min-height: 28px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border-color: rgba(0, 212, 170, 0.2);
+  background: rgba(0, 212, 170, 0.08);
+  color: #00d4aa;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+.legacy-profile-billing-duration {
+  color: #32455d;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.legacy-profile-billing-price-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.legacy-profile-billing-price-row span {
+  color: #8396ae;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 13px;
+  line-height: 1.1;
+  margin-bottom: 6px;
+}
+
+.legacy-profile-billing-price {
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 42px;
+  line-height: 0.9;
+}
+
+.legacy-profile-billing-meta {
+  min-height: 0;
+  color: #57708b;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.legacy-profile-billing-btn {
+  min-height: 42px;
+  border-radius: 10px;
+  border-color: rgba(35, 52, 82, 0.95);
+  background: transparent;
+  color: #dfe9f7;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.legacy-profile-billing-btn:hover,
+.legacy-profile-billing-btn:focus-visible {
+  background: rgba(22, 33, 52, 0.82);
+  border-color: rgba(60, 85, 128, 0.96);
+  color: #f3f7ff;
 }
 
 .legacy-billing-order-list {
@@ -2855,6 +2959,10 @@ a {
   }
 
   .legacy-linked-identity-row {
+    grid-template-columns: 1fr;
+  }
+
+  .legacy-profile-billing-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3272,6 +3380,18 @@ button,
   color: #000;
 }
 
+.legacy-btn-soft-accent {
+  background: rgba(0, 212, 255, 0.14);
+  border-color: transparent;
+  color: #92deff;
+}
+
+.legacy-btn-outline-accent {
+  background: transparent;
+  border-color: rgba(88, 159, 255, 0.34);
+  color: #9bc9ff;
+}
+
 .btn-start.running {
   background: var(--red);
   border-color: var(--red);
@@ -3306,6 +3426,20 @@ button,
 .action-button:hover,
 .logout-btn:hover {
   transform: translateY(-1px);
+}
+
+.legacy-btn-soft-accent:hover,
+.legacy-btn-soft-accent:focus-visible {
+  background: rgba(0, 212, 255, 0.2);
+  border-color: transparent;
+  color: #c6f0ff;
+}
+
+.legacy-btn-outline-accent:hover,
+.legacy-btn-outline-accent:focus-visible {
+  background: rgba(88, 159, 255, 0.08);
+  border-color: rgba(108, 182, 255, 0.5);
+  color: #d9ebff;
 }
 
 .flash {
