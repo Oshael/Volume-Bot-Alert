@@ -142,6 +142,11 @@ app.use('/api/dashboard', dashboardRoutes);
 const { authenticate, requireAdmin } = require('./middleware/auth');
 app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
   res.json({
+    runtime: {
+      role: config.runtime.role,
+      socketEnabled: Boolean(config.runtime.runSocketHub),
+      backgroundJobsEnabled: Boolean(config.runtime.runBackgroundJobs),
+    },
     ...socketHub.getStatus(),
     security: getSecurityEventStats(),
     catalogWorker: catalogWorker.getStatus(),
@@ -169,34 +174,74 @@ function bootstrapRuntime(httpServer) {
     return;
   }
 
+  bootstrapWebRuntime(httpServer);
+  bootstrapBackgroundRuntime();
+
+  bootstrapped = true;
+}
+
+async function runCleanupCycle() {
+  const sessions = await Session.cleanup();
+  const attempts = await LoginAttempt.cleanup();
+  const loginOtps = await LoginEmailOtpChallenge.cleanup();
+  const emailVerifications = await EmailVerificationToken.cleanupExpired();
+  const passwordResets = await PasswordResetToken.cleanupExpired();
+
+  if (sessions > 0 || attempts > 0 || loginOtps > 0 || emailVerifications > 0 || passwordResets > 0) {
+    console.log(
+      `???? Cleanup: ${sessions} expired sessions, ${attempts} old login attempts, ${loginOtps} OTP challenges, ${emailVerifications} email verification tokens, ${passwordResets} password reset tokens`
+    );
+  }
+}
+
+function shouldBootstrapWebRuntime() {
+  return config.nodeEnv !== 'test' && config.runtime.runSocketHub;
+}
+
+function shouldBootstrapBackgroundRuntime() {
+  return config.runtime.runBackgroundJobs;
+}
+
+function shouldStartWorkerSet() {
+  return config.nodeEnv !== 'test' && shouldBootstrapBackgroundRuntime();
+}
+
+function startBackgroundCleanup() {
   cleanupInterval = setInterval(async () => {
     try {
-      const sessions = await Session.cleanup();
-      const attempts = await LoginAttempt.cleanup();
-      const loginOtps = await LoginEmailOtpChallenge.cleanup();
-      const emailVerifications = await EmailVerificationToken.cleanupExpired();
-      const passwordResets = await PasswordResetToken.cleanupExpired();
-
-      if (sessions > 0 || attempts > 0 || loginOtps > 0 || emailVerifications > 0 || passwordResets > 0) {
-        console.log(
-          `???? Cleanup: ${sessions} expired sessions, ${attempts} old login attempts, ${loginOtps} OTP challenges, ${emailVerifications} email verification tokens, ${passwordResets} password reset tokens`
-        );
-      }
+      await runCleanupCycle();
     } catch (err) {
       console.error('Cleanup error:', err.message);
     }
   }, 3600000);
+}
 
-  if (config.nodeEnv !== 'test') {
-    socketHub.init(httpServer);
-    catalogWorker.start();
-    catalogCleanupWorker.start();
-    meteoraSnapshotWorker.start();
-    dexDiscoveryWorker.start();
-    lateralizationWorker.start();
+function startWorkerSet() {
+  catalogWorker.start();
+  catalogCleanupWorker.start();
+  meteoraSnapshotWorker.start();
+  dexDiscoveryWorker.start();
+  lateralizationWorker.start();
+}
+
+function bootstrapWebRuntime(httpServer) {
+  if (!shouldBootstrapWebRuntime()) {
+    return;
   }
 
-  bootstrapped = true;
+  socketHub.init(httpServer);
+}
+
+function bootstrapBackgroundRuntime() {
+  if (!shouldBootstrapBackgroundRuntime()) {
+    return;
+  }
+
+  startBackgroundCleanup();
+
+  if (shouldStartWorkerSet()) {
+    startWorkerSet();
+  }
 }
 
 function startServer(port = config.port) {
@@ -219,6 +264,7 @@ function startServer(port = config.port) {
         console.log('');
         console.log(`???? Volume Alert Server running on port ${port}`);
         console.log(`   Environment: ${config.nodeEnv}`);
+        console.log(`   Runtime: socket=${config.runtime.runSocketHub ? 'on' : 'off'} background=${config.runtime.runBackgroundJobs ? 'on' : 'off'}`);
         console.log(`   CORS origins: ${config.corsOrigins.join(', ')}`);
         console.log('');
         console.log('   Endpoints:');

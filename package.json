@@ -5,8 +5,15 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:web": "RUN_SOCKET_HUB=true RUN_BACKGROUND_JOBS=false node src/server.js",
+    "start:worker": "RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true node src/server.js",
     "dev": "node --watch src/server.js",
+    "dev:web": "RUN_SOCKET_HUB=true RUN_BACKGROUND_JOBS=false node --watch src/server.js",
+    "dev:worker": "RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true node --watch src/server.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "node --test --test-force-exit tests/admin.test.js && node --test --test-force-exit tests/auth.test.js && node --test --test-force-exit tests/catalog.test.js",
+    "test:smoke": "playwright test",
     "db:init": "node src/utils/db-init.js",
     "db:schema-check": "node src/utils/check-runtime-schema.js",
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
@@ -30,6 +37,11 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "supertest": "^7.2.2"
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.58.2",
+    "eslint": "^10.1.0",
+    "globals": "^17.4.0",
+    "supertest": "^7.2.2",
+    "typescript-eslint": "^8.58.0"
   }
 }

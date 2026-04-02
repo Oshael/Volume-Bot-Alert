@@ -284,6 +284,9 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.status, 200);
       assert.equal(res.body.status, 'ok');
       assert.ok(res.body.db.connected);
+      assert.equal(res.body.runtime.role, 'background');
+      assert.equal(res.body.runtime.socketEnabled, false);
+      assert.equal(res.body.runtime.backgroundJobsEnabled, true);
     });
   });
 

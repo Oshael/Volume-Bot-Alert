@@ -112,6 +112,19 @@ function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+function getRuntimeRole(runSocketHub, runBackgroundJobs) {
+  if (runSocketHub && runBackgroundJobs) {
+    return 'combined';
+  }
+  if (runSocketHub) {
+    return 'web';
+  }
+  if (runBackgroundJobs) {
+    return 'background';
+  }
+  return 'idle';
+}
+
 function getDefaultMoonpayApiBaseUrl(network) {
   return network === 'test'
     ? 'https://api.dev.hel.io/v1'
@@ -317,9 +330,17 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+const runtime = {
+  runSocketHub: nodeEnv !== 'test' && parseBoolean(process.env.RUN_SOCKET_HUB, true),
+  runBackgroundJobs: parseBoolean(process.env.RUN_BACKGROUND_JOBS, true),
+};
+
+runtime.role = getRuntimeRole(runtime.runSocketHub, runtime.runBackgroundJobs);
+
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv,
+  runtime,
   forceHttps: parseBoolean(process.env.FORCE_HTTPS, false),
   performanceMetrics: {
     enabled: parseBoolean(

@@ -19,6 +19,11 @@ async function computeHealthPayload() {
       payload: {
         status: 'ok',
         uptime: Math.floor(process.uptime()),
+        runtime: {
+          role: config.runtime.role,
+          socketEnabled: Boolean(config.runtime.runSocketHub),
+          backgroundJobsEnabled: Boolean(config.runtime.runBackgroundJobs),
+        },
         db: { connected: true, latencyMs: dbMs },
         timestamp: new Date().toISOString(),
         cached: false,
@@ -29,6 +34,11 @@ async function computeHealthPayload() {
       statusCode: 503,
       payload: {
         status: 'error',
+        runtime: {
+          role: config.runtime.role,
+          socketEnabled: Boolean(config.runtime.runSocketHub),
+          backgroundJobsEnabled: Boolean(config.runtime.runBackgroundJobs),
+        },
         db: { connected: false, error: err.message },
         timestamp: new Date().toISOString(),
         cached: false,

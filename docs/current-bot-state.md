@@ -8,7 +8,28 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code on `2026-03-31` after the public frontpage + `/login` split, the simplified `/access` purchase flow, the limited `/account-security` surface, and Google/Discord linking/unlinking were integrated and manually validated.
+Last reviewed against code and the live deployment model on `2026-04-02` after the backend/database migration from Railway to a single VPS, while the public frontend continued on Vercel.
+
+## Current Deployment Topology
+
+Current production-like deployment shape:
+- public frontend:
+  - hosted separately from the backend
+  - currently served from Vercel
+  - public host: `https://www.trendscope.pro`
+- backend/API:
+  - runs as a single Node process on a private VPS
+  - managed by `systemd`
+  - reverse-proxied by `nginx`
+  - public host: `https://api.trendscope.pro`
+- database:
+  - PostgreSQL runs locally on the same VPS as the backend
+  - it is not intended to be exposed publicly on `5432`
+- current production assumption:
+  - one backend process
+  - one local production PostgreSQL instance
+- repository note:
+  - `railway.json` still exists, but it should now be treated as legacy deployment residue / fallback context rather than the primary production deployment contract
 
 ## Test Database Safety
 
@@ -101,10 +122,19 @@ Important:
   - `src/services/meteora-snapshot-worker.js`
   - `src/services/socket-hub.js`
 - Important deployment caveat:
-  - one Railway backend service normally means one instance
-  - if the backend is ever scaled to multiple replicas, or a second process points to the same production DB, every process will start its own workers
+  - the current production model still assumes one backend process
+  - however, the code now has explicit runtime-role controls:
+    - `RUN_SOCKET_HUB`
+    - `RUN_BACKGROUND_JOBS`
+  - current runtime roles are:
+    - `combined`
+    - `web`
+    - `background`
+    - `idle`
+  - current default remains `combined`
+  - if the backend is ever scaled to multiple replicas, or a second process points to the same production DB, every process will still start its own workers unless runtime roles are deliberately split
   - that would duplicate `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` work against the same DB/upstreams
-  - horizontal scale of the full backend is therefore not recommended without worker coordination, leader election, or process separation
+  - horizontal scale of the full backend is therefore still not recommended unless the split is intentionally deployed as separate web/background roles
 
 ## Source Of Truth By Area
 
@@ -145,6 +175,8 @@ Important:
   - new non-admin accounts default to `inactive`
   - `is_active = false` and `access_status = revoked` are hard blocks
   - `access_status = inactive` and expired access route the user into `/access`
+  - invite-based registration can immediately grant timed access if the consumed invite has `grant_access_days > 0`
+  - this invite grant affects access state only; it does not promote the new account to `admin`
   - successful email verification now creates the pre-access session directly instead of forcing OTP immediately after verify
   - manual login after logout still uses email/password + email OTP
   - Google/Discord identities can now be linked only from an already authenticated normal app session
@@ -1112,16 +1144,33 @@ Current limitation:
   - monitor catalog-worker backlog/overrun metrics in production-like runtime
   - if `high` or `normal` backlog appears persistently, treat that as the next performance/debug target for monitored freshness
 
-## VPS Migration Reminder
-- When migrating from Railway to a private VPS, treat public exposure hardening as a high-priority deployment task, not an optional cleanup item.
-- At minimum, the VPS migration should explicitly verify:
-  - only intended public ports are exposed
-  - backend is preferably bound behind a reverse proxy instead of being left broadly reachable on arbitrary ports
-  - HTTPS is enforced
-  - firewall / security-group rules are intentionally set, not left permissive by default
-  - admin access is protected beyond "normal login" when possible, such as IP allowlisting, VPN, or Tailscale
-  - production cookies, CORS/origin rules, and rate limiting are reviewed specifically for the new public-facing topology
-- Railway reduces some infra footguns by default; a raw VPS does not. Re-check public exposure assumptions before considering a VPS migration production-safe.
+## Current VPS Deployment Notes
+- The active production-like deployment is now a private VPS, not Railway.
+- Current intended exposure model:
+  - `nginx` is the public entrypoint on `80/443`
+  - the backend process stays behind `nginx`
+  - PostgreSQL stays local to the VPS and should not be exposed publicly
+- Current code-level runtime split support now exists:
+  - `RUN_SOCKET_HUB=true RUN_BACKGROUND_JOBS=false`
+    - intended `web` role
+  - `RUN_SOCKET_HUB=false RUN_BACKGROUND_JOBS=true`
+    - intended `background` role
+  - `npm run start:web`
+  - `npm run start:worker`
+  - `GET /api/health` now exposes:
+    - `runtime.role`
+    - `runtime.socketEnabled`
+    - `runtime.backgroundJobsEnabled`
+  - `GET /api/admin/ws-status` now exposes the same runtime role block for admin inspection
+- Operational checks that now matter continuously, not just during migration:
+  - verify only intended public ports are exposed
+  - keep HTTPS enforced at the proxy layer
+  - keep firewall rules intentional rather than permissive by default
+  - review production cookies, CORS/origin rules, and rate limiting against the actual public topology:
+    - frontend at `https://www.trendscope.pro`
+    - backend at `https://api.trendscope.pro`
+  - until the VPS deploy is explicitly split into separate roles, keep the backend as a single production process
+- Railway-specific deployment behavior should now be treated as legacy context only.
 
 ## Documentation Policy Going Forward
 - This file is the primary state-of-the-world document.
@@ -1134,14 +1183,12 @@ Current limitation:
 ## Docs Still Worth Keeping
 - `docs/current-bot-state.md`
   - canonical current-state doc
-- `docs/v68-behavior-contract.md`
-  - behavior rules that still matter during parity/regression review
 - `docs/phase6-runbook.md`
   - production/ops runbook
 - `docs/phase6-checklist.md`
   - deployment validation checklist
 - `docs/phase6-railway.md`
-  - Railway-specific deployment notes
+  - Railway-specific legacy deployment notes, no longer the primary production path
 
 ## Docs Retired By This Consolidation
 - `docs/frontend-vite-progress.md`
