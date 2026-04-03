@@ -234,21 +234,10 @@ function getInlineTradeTerminalIconMarkup(link: TradeTerminalLink, className: st
   if (link.key === 'photon') {
     return `
       <svg class="${className} terminal-icon-inline terminal-icon-${link.key}" viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="8" cy="8" r="5.75" stroke="url(#photon-ring)" stroke-width="1.8"/>
-        <path d="M8 3.2L9.18 5.93L11.9 7.1L9.18 8.27L8 11L6.82 8.27L4.1 7.1L6.82 5.93L8 3.2Z" fill="url(#photon-core)"/>
-        <circle cx="8" cy="8" r="1.25" fill="#E8F7FF"/>
-        <defs>
-          <linearGradient id="photon-ring" x1="2.6" y1="2.2" x2="13.4" y2="13.8" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#8A5CFF"/>
-            <stop offset="0.55" stop-color="#39F5FF"/>
-            <stop offset="1" stop-color="#00B8FF"/>
-          </linearGradient>
-          <linearGradient id="photon-core" x1="5" y1="4" x2="11" y2="10.8" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#8358FF"/>
-            <stop offset="0.55" stop-color="#3BF6FF"/>
-            <stop offset="1" stop-color="#1D9EFF"/>
-          </linearGradient>
-        </defs>
+        <circle cx="8" cy="8" r="5.75" stroke="#45C7FF" stroke-width="1.8"/>
+        <path d="M8 3.2L9.18 5.93L11.9 7.1L9.18 8.27L8 11L6.82 8.27L4.1 7.1L6.82 5.93L8 3.2Z" fill="#7C63FF"/>
+        <circle cx="8" cy="8" r="2.15" fill="#0A1220"/>
+        <circle cx="8" cy="8" r="1.15" fill="#E8F7FF"/>
       </svg>
     `.trim();
   }
