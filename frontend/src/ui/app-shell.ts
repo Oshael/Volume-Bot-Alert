@@ -410,7 +410,10 @@ function getHeaderRenderKey(state: AppState) {
     state.session.username,
     state.session.email,
     state.runtime.mode,
+    state.runtime.monitoredUpdatedAt,
+    state.runtime.monitoredFreshnessLabel,
     state.ui.workspace,
+    state.pumpfun.connected,
   ]);
 }
 
