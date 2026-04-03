@@ -13,7 +13,7 @@ export function renderBidZoneSection(state: AppState, controller: AppController)
 
   section.innerHTML = `
     <div class="panel-header">
-      <span>BID ZONE COINS</span>
+      <span>⌖ BID ZONE COINS</span>
       <div class="lateralized-header-meta">
         <span class="lateralized-freshness">${freshness}</span>
         <span class="count">${state.data.bidZoneTokens.length}</span>

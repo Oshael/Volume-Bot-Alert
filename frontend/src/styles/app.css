@@ -6818,10 +6818,12 @@ TEMP_LEGACY_BAR_TITLE {
 
 .lateralized-panel {
   height: 320px;
+  border-color: rgba(142, 226, 255, 0.3);
 }
 
 .bid-zone-panel {
   height: 320px;
+  border-color: rgba(142, 226, 255, 0.3);
 }
 
 .lateralized-panel.panel-collapsed {
@@ -6830,6 +6832,12 @@ TEMP_LEGACY_BAR_TITLE {
 
 .lateralized-panel .panel-header {
   align-items: center;
+  border-bottom-color: rgba(142, 226, 255, 0.2);
+}
+
+.lateralized-panel .panel-header > span,
+.bid-zone-panel .panel-header > span {
+  color: #cad7eb;
 }
 
 .lateralized-header-meta {
@@ -6859,6 +6867,18 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
+}
+
+.lateralized-list .lateralized-token-row,
+.bid-zone-list .lateralized-token-row {
+  margin-bottom: 0;
+  border-radius: 0;
+}
+
+.lateralized-list .lateralized-token-row + .lateralized-token-row,
+.bid-zone-list .lateralized-token-row + .lateralized-token-row {
+  border-top: 1px solid rgba(142, 226, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .lateralized-rank {

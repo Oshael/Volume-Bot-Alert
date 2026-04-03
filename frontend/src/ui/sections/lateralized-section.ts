@@ -13,7 +13,7 @@ export function renderLateralizedSection(state: AppState, controller: AppControl
 
   section.innerHTML = `
     <div class="panel-header">
-      <span>LATERALIZATION COINS</span>
+      <span>≈ LATERALIZATION COINS</span>
       <div class="lateralized-header-meta">
         <span class="lateralized-freshness">${freshness}</span>
         <span class="count">${state.data.lateralizedTokens.length}</span>
