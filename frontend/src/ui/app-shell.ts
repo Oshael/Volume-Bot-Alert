@@ -22,6 +22,7 @@ type PanelScrollDraft = {
   lateralized: number;
   bidZone: number;
   pumpfun: number;
+  pumpMigrations: number;
   alerts: number;
 };
 
@@ -995,6 +996,7 @@ function capturePanelScrollDraft(root: HTMLElement): PanelScrollDraft {
     lateralized: root.querySelector<HTMLElement>('.lateralized-list')?.scrollTop ?? 0,
     bidZone: root.querySelector<HTMLElement>('.bid-zone-list')?.scrollTop ?? 0,
     pumpfun: root.querySelector<HTMLElement>('.pump-list')?.scrollTop ?? 0,
+    pumpMigrations: root.querySelector<HTMLElement>('.pump-migration-strip')?.scrollLeft ?? 0,
     alerts: root.querySelector<HTMLElement>('.alerts-list')?.scrollTop ?? 0,
   };
 }
@@ -1004,12 +1006,14 @@ function applyPanelScrollDraft(root: HTMLElement, draft: PanelScrollDraft) {
   const lateralized = root.querySelector<HTMLElement>('.lateralized-list');
   const bidZone = root.querySelector<HTMLElement>('.bid-zone-list');
   const pumpfun = root.querySelector<HTMLElement>('.pump-list');
+  const pumpMigrations = root.querySelector<HTMLElement>('.pump-migration-strip');
   const alerts = root.querySelector<HTMLElement>('.alerts-list');
 
   if (monitored) monitored.scrollTop = draft.monitored;
   if (lateralized) lateralized.scrollTop = draft.lateralized;
   if (bidZone) bidZone.scrollTop = draft.bidZone;
   if (pumpfun) pumpfun.scrollTop = draft.pumpfun;
+  if (pumpMigrations) pumpMigrations.scrollLeft = draft.pumpMigrations;
   if (alerts) alerts.scrollTop = draft.alerts;
 }
 

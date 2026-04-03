@@ -5481,13 +5481,13 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .pump-migration-footer {
-  padding: 0 8px 8px;
+  padding: 0 8px 6px;
 }
 
 .pump-migration-shell {
   display: grid;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 8px 10px;
   border: 1px solid rgba(176, 106, 255, 0.18);
   border-radius: 10px;
   background: rgba(18, 13, 30, 0.78);
@@ -5501,7 +5501,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .pump-migration-title {
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--pump-color);
@@ -5511,21 +5511,21 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  min-height: 20px;
-  padding: 0 8px;
+  min-width: 22px;
+  min-height: 18px;
+  padding: 0 7px;
   border-radius: 999px;
   background: rgba(176, 106, 255, 0.15);
   color: #fff;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
 }
 
 .pump-migration-strip {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
-  padding: 2px 2px 6px;
+  padding: 1px 1px 5px;
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(176, 106, 255, 0.32) transparent;
@@ -5546,8 +5546,8 @@ TEMP_LEGACY_BAR_TITLE {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 6px 10px;
   border: 1px solid rgba(176, 106, 255, 0.16);
   border-radius: 8px;
   background: rgba(9, 10, 18, 0.92);
@@ -5555,9 +5555,9 @@ TEMP_LEGACY_BAR_TITLE {
 
 .pump-migration-avatar,
 .pump-migration-avatar-placeholder {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
   border-radius: 999px;
 }
 
@@ -5581,7 +5581,7 @@ TEMP_LEGACY_BAR_TITLE {
 .pump-migration-chip-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -5589,21 +5589,22 @@ TEMP_LEGACY_BAR_TITLE {
   min-width: 0;
   flex: 1 1 auto;
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.pump-migration-copy {
-  min-height: 26px;
-  padding: 0 8px;
-  border-radius: 8px;
+.action-button.small.pump-migration-copy {
+  min-height: 20px;
+  min-width: 34px;
+  padding: 0 6px;
+  border-radius: 7px;
   border-color: rgba(176, 106, 255, 0.18);
   background: rgba(176, 106, 255, 0.08);
   color: #f1e5ff;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.08em;
   flex: 0 0 auto;
