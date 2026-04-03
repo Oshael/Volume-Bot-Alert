@@ -6378,10 +6378,15 @@ TEMP_LEGACY_BAR_TITLE {
   transform-origin: center;
 }
 
-.terminal-icon-padre {
+.trade-btn-icon.terminal-icon-padre {
   transform: translateY(-3px) scale(1.14);
   transform-origin: center;
   margin: auto;
+}
+
+.trade-link-icon.terminal-icon-padre {
+  transform: scale(1.02);
+  transform-origin: center;
 }
 
 .trade-link-label {
