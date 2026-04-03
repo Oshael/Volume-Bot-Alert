@@ -3,6 +3,7 @@ const db = require('./db');
 const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'lateralized', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
 const MONITORED_SORT_MODES = ['vol', 'mcap', 'age'];
+const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 
 const DEFAULT_UI_PREFS = {
   collapsed: {
@@ -24,6 +25,7 @@ const DEFAULT_UI_PREFS = {
   recentSorts: [{ mode: 'vol', window: '24h' }],
   oldWeekSorts: [{ mode: 'vol', window: '24h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
+  enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
 };
 
 function cloneDefaultPrefs() {
@@ -143,6 +145,33 @@ function validateSorts(key, value, options) {
   };
 }
 
+function validateTradeTerminals(key, value) {
+  if (!Array.isArray(value)) {
+    return { valid: false, error: `${key} must be an array` };
+  }
+
+  const next = [];
+  const seen = new Set();
+
+  for (const item of value) {
+    const normalized = String(item || '').trim().toLowerCase();
+    if (!TRADE_TERMINAL_KEYS.includes(normalized)) {
+      return { valid: false, error: `${key} contains invalid terminal: ${normalized || '(empty)'}` };
+    }
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    next.push(normalized);
+  }
+
+  if (next.length === 0) {
+    return { valid: false, error: `${key} must contain at least one terminal` };
+  }
+
+  return { valid: true, value: next };
+}
+
 function normalizePrefs(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const defaults = cloneDefaultPrefs();
@@ -212,6 +241,11 @@ function normalizePrefs(raw) {
     defaults.monitoredSorts = monitoredSorts.value;
   }
 
+  const enabledTradeTerminals = validateTradeTerminals('enabledTradeTerminals', source.enabledTradeTerminals);
+  if (enabledTradeTerminals.valid) {
+    defaults.enabledTradeTerminals = enabledTradeTerminals.value;
+  }
+
   return defaults;
 }
 
@@ -274,6 +308,16 @@ function validatePatch(input) {
       });
       if (!result.valid) {
         errors.push(...result.errors);
+      } else {
+        prefs[key] = result.value;
+      }
+      continue;
+    }
+
+    if (key === 'enabledTradeTerminals') {
+      const result = validateTradeTerminals(key, value);
+      if (!result.valid) {
+        errors.push(result.error);
       } else {
         prefs[key] = result.value;
       }

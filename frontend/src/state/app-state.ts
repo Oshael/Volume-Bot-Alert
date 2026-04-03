@@ -221,6 +221,7 @@ export interface PumpToastEntry {
 
 export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
+export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
 export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'change-password';
 export type AuthPanel =
   | 'none'
@@ -432,6 +433,7 @@ export interface AppState {
     recentSorts: BucketSortCriterion[];
     oldWeekSorts: BucketSortCriterion[];
     monitoredSorts: MonitoredSortCriterion[];
+    enabledTradeTerminals: TradeTerminalKey[];
     soundEnabled: boolean;
     soundVolume: number;
     collapsed: Record<CollapsibleSectionKey, boolean>;
@@ -571,6 +573,7 @@ export function createAppState(): AppState {
       recentSorts: [{ mode: 'vol', window: '24h' }],
       oldWeekSorts: [{ mode: 'vol', window: '24h' }],
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
+      enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
       soundEnabled: true,
       soundVolume: 0.05,
       collapsed: {

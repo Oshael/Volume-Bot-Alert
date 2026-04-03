@@ -15,6 +15,8 @@ export interface MonitoredSortCriterionPayload {
   window: '5m' | '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
 }
 
+export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
+
 export interface UiPrefsPayload {
   collapsed: {
     manual: boolean;
@@ -35,6 +37,7 @@ export interface UiPrefsPayload {
   recentSorts: BucketSortCriterionPayload[];
   oldWeekSorts: BucketSortCriterionPayload[];
   monitoredSorts: MonitoredSortCriterionPayload[];
+  enabledTradeTerminals: TradeTerminalKey[];
 }
 
 export interface ConfigPayload {

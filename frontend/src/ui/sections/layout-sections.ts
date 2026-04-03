@@ -819,11 +819,34 @@ function renderAccountSecurityOrdersCard(state: AppState) {
   `;
 }
 
+function getWorkspaceConnectionState(state: AppState) {
+  if (state.session.status !== 'authenticated' || state.runtime.mode === 'stopped') {
+    return { tone: 'disconnected', label: 'Disconnected' };
+  }
+
+  if (state.runtime.mode === 'syncing') {
+    return { tone: 'unstable', label: 'Unstable' };
+  }
+
+  const monitoredUpdatedAt = state.runtime.monitoredUpdatedAt;
+  const monitoredAgeMs = monitoredUpdatedAt ? (Date.now() - new Date(monitoredUpdatedAt).getTime()) : Number.POSITIVE_INFINITY;
+  const hasFreshMonitoring = Number.isFinite(monitoredAgeMs) && monitoredAgeMs >= 0 && monitoredAgeMs <= 15_000;
+  const expectsPumpSocket = state.ui.workspace === 'live';
+  const hasExpectedPumpConnection = !expectsPumpSocket || state.pumpfun.connected;
+
+  if (!hasFreshMonitoring || !hasExpectedPumpConnection) {
+    return { tone: 'unstable', label: 'Unstable' };
+  }
+
+  return { tone: 'connected', label: 'Connected' };
+}
+
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-topbar workspace-topbar';
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
+  const connectionState = getWorkspaceConnectionState(state);
   section.innerHTML = `
     <div class="workspace-topbar-inner">
       <div class="workspace-brand">
@@ -831,10 +854,11 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
         <div class="workspace-brand-copy">
           <strong class="workspace-brand-title">TrendScope</strong>
           <span class="workspace-brand-sub">Volume Bot Tracker</span>
+          <div class="workspace-connection-status" data-state="${connectionState.tone}">
+            <span class="workspace-connection-dot" aria-hidden="true"></span>
+            <span class="workspace-connection-label">${connectionState.label}</span>
+          </div>
         </div>
-        <button type="button" class="legacy-btn btn-start workspace-monitor-btn ${state.runtime.mode === 'active' ? 'running' : ''}" data-action="toggle-monitoring">
-          ${state.runtime.mode === 'active' ? '&#9632; Stop' : '&#9654; Start'}
-        </button>
       </div>
       <div class="workspace-route-nav" aria-label="Workspace navigation">
         <button type="button" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</button>
@@ -864,14 +888,6 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   const avatarLabel = (state.session.username ?? state.session.email ?? 'U').trim().charAt(0).toUpperCase() || 'U';
   section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
   section.querySelector<HTMLElement>('[data-role="user-avatar"]')!.textContent = avatarLabel;
-
-  section.querySelector<HTMLButtonElement>('[data-action="toggle-monitoring"]')?.addEventListener('click', () => {
-    if (state.runtime.mode === 'active') {
-      controller.stopMonitoring();
-      return;
-    }
-    controller.startMonitoring();
-  });
   section.querySelector<HTMLButtonElement>('[data-action="open-workspace-live"]')?.addEventListener('click', () => {
     controller.setWorkspace('live');
   });
@@ -2454,6 +2470,7 @@ function renderBotSettingsFields(state: AppState) {
         <option value="off">Disabled</option>
       </select>
     </div>
+    ${renderTradeTerminalPrefsMenu(state)}
     ${renderOldSurgeThresholdMenu(state)}
     ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
     ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
@@ -2464,6 +2481,44 @@ function renderBotSettingsFields(state: AppState) {
         <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" />
       </div>
       ${renderSoundUploadStrip(state)}
+    </div>
+  `;
+}
+
+function renderTradeTerminalPrefsMenu(state: AppState) {
+  const terminalFields: Array<{ key: AppState['ui']['enabledTradeTerminals'][number]; label: string }> = [
+    { key: 'axiom', label: 'Axiom' },
+    { key: 'photon', label: 'Photon' },
+    { key: 'bullx', label: 'BullX' },
+    { key: 'gmgn', label: 'GMGN' },
+    { key: 'padre', label: 'Padre' },
+  ];
+  const enabled = new Set(state.ui.enabledTradeTerminals);
+
+  return `
+    <div class="config-item config-item-menu">
+      <label>Trading terminals</label>
+      <div class="sort-menu-wrap config-menu-wrap trade-terminal-menu-wrap" data-sort-wrap>
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="trade-terminals">${state.ui.enabledTradeTerminals.length}/${terminalFields.length} on</button>
+        <div class="sort-menu-dropdown config-menu-dropdown">
+          <div class="config-menu-summary">Choose which terminal destinations appear in redirect buttons. If only one stays enabled, the terminal button opens it directly.</div>
+          <div class="config-toggle-list">
+            ${terminalFields.map((field) => {
+              const isActive = enabled.has(field.key);
+              return `
+                <button
+                  type="button"
+                  class="config-toggle-item ${isActive ? 'active' : ''}"
+                  data-trade-terminal-key="${escapeHtml(field.key)}"
+                >
+                  <span>${escapeHtml(field.label)}</span>
+                  <span class="config-toggle-state">${isActive ? 'ON' : 'OFF'}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -2735,6 +2790,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
   });
 
   bindConfigToggleMenus(configSection, controller);
+  bindTradeTerminalPrefsMenu(configSection, controller);
   bindSoundUploadStrip(configSection, state);
 
   configSection.querySelectorAll<HTMLElement>('.config-toggle-list-scroll').forEach((list) => {
@@ -2747,6 +2803,53 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       event.stopPropagation();
       list.scrollTop += event.deltaY;
     }, { passive: false });
+  });
+}
+
+function bindTradeTerminalPrefsMenu(section: HTMLElement, controller: AppController) {
+  const wrap = section.querySelector<HTMLElement>('.trade-terminal-menu-wrap');
+  if (!wrap) {
+    return;
+  }
+
+  const getItems = () => [...wrap.querySelectorAll<HTMLButtonElement>('[data-trade-terminal-key]')];
+
+  const updateSummary = () => {
+    const toggleButton = wrap.querySelector<HTMLButtonElement>('.config-menu-button');
+    const items = getItems();
+    if (!toggleButton || items.length === 0) {
+      return;
+    }
+    const enabledCount = items.filter((item) => item.classList.contains('active')).length;
+    toggleButton.textContent = `${enabledCount}/${items.length} on`;
+  };
+
+  wrap.querySelectorAll<HTMLButtonElement>('[data-trade-terminal-key]').forEach((button) => {
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const items = getItems();
+      const activeItems = items.filter((item) => item.classList.contains('active'));
+      const isActive = button.classList.contains('active');
+      if (isActive && activeItems.length <= 1) {
+        return;
+      }
+
+      button.classList.toggle('active', !isActive);
+      const stateLabel = button.querySelector<HTMLElement>('.config-toggle-state');
+      if (stateLabel) {
+        stateLabel.textContent = isActive ? 'OFF' : 'ON';
+      }
+
+      updateSummary();
+      controller.setEnabledTradeTerminals(
+        items
+          .filter((item) => item.classList.contains('active'))
+          .map((item) => item.dataset.tradeTerminalKey)
+          .filter((item): item is AppState['ui']['enabledTradeTerminals'][number] => Boolean(item)),
+      );
+    });
   });
 }
 

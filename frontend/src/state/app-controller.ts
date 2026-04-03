@@ -270,6 +270,7 @@ export interface AppController {
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
+  setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
   toggleStarredToken(address: string): Promise<void>;
@@ -1561,6 +1562,29 @@ export function createAppController(): AppController {
     return next;
   }
 
+  function normalizeTradeTerminals(input: unknown): AppState['ui']['enabledTradeTerminals'] {
+    const defaults = createAppState().ui.enabledTradeTerminals;
+    if (!Array.isArray(input)) {
+      return [...defaults];
+    }
+
+    const next: AppState['ui']['enabledTradeTerminals'] = [];
+    const seen = new Set<string>();
+    for (const item of input) {
+      const normalized = String(item || '').trim().toLowerCase();
+      if (normalized !== 'axiom' && normalized !== 'photon' && normalized !== 'bullx' && normalized !== 'gmgn' && normalized !== 'padre') {
+        continue;
+      }
+      if (seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      next.push(normalized);
+    }
+
+    return next.length > 0 ? next : [...defaults];
+  }
+
   function buildUiPrefsPayload(): UiPrefsPayload {
     return {
       collapsed: {
@@ -1582,6 +1606,7 @@ export function createAppController(): AppController {
       recentSorts: [...state.ui.recentSorts],
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
+      enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
     };
   }
   function getConfigNumber(key: string, fallback: number) {
@@ -1772,6 +1797,7 @@ export function createAppController(): AppController {
     state.ui.recentSorts = normalizeBucketSorts(uiPrefs?.recentSorts, 'recent');
     state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
+    state.ui.enabledTradeTerminals = normalizeTradeTerminals(uiPrefs?.enabledTradeTerminals);
     syncRoutedPagination();
   }
 
@@ -1933,15 +1959,28 @@ export function createAppController(): AppController {
     return getConfigNumber(key, fallback);
   }
 
+  function isHotlinkBlockedPumpImageUrl(url: string | null | undefined) {
+    try {
+      return new URL(String(url || '').trim()).hostname.toLowerCase() === 'metadata.j7tracker.io';
+    } catch (_) {
+      return false;
+    }
+  }
+
   function toHttpAssetUrl(url: string | null | undefined) {
     const value = String(url || '').trim();
     if (!value) {
       return null;
     }
-    if (value.startsWith('ipfs://')) {
-      return `https://ipfs.io/ipfs/${value.slice('ipfs://'.length)}`;
+    const normalized = value.startsWith('ipfs://')
+      ? `https://ipfs.io/ipfs/${value.slice('ipfs://'.length)}`
+      : value;
+
+    if (isHotlinkBlockedPumpImageUrl(normalized)) {
+      return null;
     }
-    return value;
+
+    return normalized;
   }
 
   function getPumpVisibleTokens() {
@@ -2263,12 +2302,13 @@ export function createAppController(): AppController {
 
       try {
         const data = await fetchPumpfunTokenMeta(mint, sessionToken, token.metadataUri || null);
-        if (!data?.imageUrl) {
+        const resolvedImageUrl = toHttpAssetUrl(data?.imageUrl);
+        if (!resolvedImageUrl) {
           return;
         }
 
         state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
-          ? { ...item, imageUrl: data.imageUrl, _imageResolved: true, _imageResolving: false }
+          ? { ...item, imageUrl: resolvedImageUrl, _imageResolved: true, _imageResolving: false }
           : item);
         emit();
       } finally {
@@ -2330,7 +2370,10 @@ export function createAppController(): AppController {
       token.symbol = symbol;
     }
     if (imageUrl) {
-      token.imageUrl = toHttpAssetUrl(imageUrl);
+      const nextImageUrl = toHttpAssetUrl(imageUrl);
+      if (nextImageUrl) {
+        token.imageUrl = nextImageUrl;
+      }
     }
 
     token.createdAt = token.createdAt ?? now;
@@ -3555,7 +3598,7 @@ export function createAppController(): AppController {
         }
         state.pumpfun.connected = Boolean(payload.connected);
         state.pumpfun.statusLabel = state.pumpfun.connected ? 'connected' : 'disconnected';
-        emit('pumpfun');
+        emit('pumpfun', 'header');
       },
       onSolPrice(payload) {
         if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
@@ -3610,6 +3653,10 @@ export function createAppController(): AppController {
     if (state.session.status !== 'authenticated') {
       syncHistorySyncState();
       return;
+    }
+
+    if (state.runtime.mode !== 'active') {
+      startMonitoringTimers();
     }
 
     if (shouldRunPumpfunRuntime()) {
@@ -4485,10 +4532,7 @@ export function createAppController(): AppController {
     openAuthPanel(panel: Exclude<AuthPanel, 'none'>) {
       state.ui.pendingIdentityUnlinkProvider = null;
       if (panel === 'change-password') {
-        monitoringPausedForAuthPanel = state.runtime.mode === 'active';
-        if (monitoringPausedForAuthPanel) {
-          stopMonitoringTimers();
-        }
+        monitoringPausedForAuthPanel = false;
         state.ui.error = null;
         state.ui.notice = null;
       }
@@ -4916,6 +4960,11 @@ export function createAppController(): AppController {
       );
       queueUiPrefsPersist();
       emit('monitored');
+    },
+    setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']) {
+      state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals);
+      queueUiPrefsPersist();
+      emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
     },
     setSoundEnabled(enabled: boolean) {
       state.ui.soundEnabled = enabled;
