@@ -5525,20 +5525,30 @@ TEMP_LEGACY_BAR_TITLE {
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding: 1px 1px 5px;
+  padding: 1px 1px 8px;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(176, 106, 255, 0.32) transparent;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(176, 106, 255, 0.42) rgba(20, 14, 33, 0.92);
   -webkit-overflow-scrolling: touch;
 }
 
 .pump-migration-strip::-webkit-scrollbar {
-  height: 4px;
+  height: 8px;
+}
+
+.pump-migration-strip::-webkit-scrollbar-track {
+  background: rgba(20, 14, 33, 0.9);
+  border-radius: 999px;
 }
 
 .pump-migration-strip::-webkit-scrollbar-thumb {
-  background: rgba(176, 106, 255, 0.22);
+  background: rgba(176, 106, 255, 0.38);
   border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.pump-migration-strip::-webkit-scrollbar-thumb:hover {
+  background: rgba(176, 106, 255, 0.55);
 }
 
 .pump-migration-chip {
