@@ -26,6 +26,25 @@ export function sanitizeHttpUrl(value: unknown, fallback = '#') {
   return fallback;
 }
 
+export function sanitizeAssetUrl(value: unknown, fallback = '') {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  try {
+    const url = new URL(raw);
+    const protocol = url.protocol.toLowerCase();
+    if (protocol === 'http:' || protocol === 'https:' || protocol === 'data:' || protocol === 'blob:') {
+      return url.toString();
+    }
+  } catch (_) {
+    return fallback;
+  }
+
+  return fallback;
+}
+
 export function sanitizeOptionalHttpUrl(value: unknown) {
   const raw = String(value ?? '').trim();
   if (!raw) {

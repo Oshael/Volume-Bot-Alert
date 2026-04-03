@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, RemovalLogEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
-import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -214,7 +214,7 @@ function renderTradeTerminalIconMarkup(link: TradeTerminalLink, className = 'tra
   if (inlineIcon) {
     return inlineIcon;
   }
-  return `<img class="${className} terminal-icon terminal-icon-${link.key}" src="${sanitizeHttpUrl(link.iconHref)}" alt="" aria-hidden="true">`;
+  return `<img class="${className} terminal-icon terminal-icon-${link.key}" src="${sanitizeAssetUrl(link.iconHref)}" alt="" aria-hidden="true">`;
 }
 
 function buildTradeTerminalIcon(link: TradeTerminalLink, className = 'trade-link-icon') {
@@ -224,7 +224,7 @@ function buildTradeTerminalIcon(link: TradeTerminalLink, className = 'trade-link
   }
   const icon = document.createElement('img');
   icon.className = `${className} terminal-icon terminal-icon-${link.key}`;
-  icon.src = sanitizeHttpUrl(link.iconHref);
+  icon.src = sanitizeAssetUrl(link.iconHref);
   icon.alt = '';
   icon.setAttribute('aria-hidden', 'true');
   return icon;
