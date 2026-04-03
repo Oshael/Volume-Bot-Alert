@@ -3382,11 +3382,11 @@ function renderConfigToggleMenu(
   const safeLabel = escapeHtml(label);
   const safeSummaryLabel = escapeHtml(summaryLabel);
   const safeToggleKey = escapeHtml(label.toLowerCase().replace(/\s+/g, '-'));
-  const isSoundAlertTypeMenu = safeToggleKey === 'sound-by-alert-type';
-  const listClass = safeToggleKey === 'sound-by-alert-type'
+  const shouldUseScrollableList = fields.length > 6;
+  const listClass = shouldUseScrollableList
     ? 'config-toggle-list config-toggle-list-scroll'
     : 'config-toggle-list';
-  const dropdownClass = isSoundAlertTypeMenu
+  const dropdownClass = shouldUseScrollableList
     ? 'sort-menu-dropdown config-menu-dropdown config-menu-dropdown-scroll'
     : 'sort-menu-dropdown config-menu-dropdown';
   return `

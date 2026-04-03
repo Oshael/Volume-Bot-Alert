@@ -941,13 +941,32 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
   profileModalWired = true;
 
   const closeSelector = '[data-action="close-profile-modal"]';
-
-  root.addEventListener('click', (event) => {
-    const target = event.target as HTMLElement | null;
+  const shouldCloseProfileModal = (target: HTMLElement | null) => {
     const profileModal = target?.closest<HTMLElement>('[data-auth-modal-scope="profile"]');
     const closeButton = target?.closest<HTMLElement>(closeSelector);
     const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
-    if (!profileModal || (!closeButton && !backdrop)) {
+
+    return Boolean(profileModal && (closeButton || backdrop));
+  };
+
+  root.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (!shouldCloseProfileModal(target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    controller.closeAuthPanel();
+  });
+
+  root.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (!shouldCloseProfileModal(target)) {
       return;
     }
 
