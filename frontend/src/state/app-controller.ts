@@ -3484,7 +3484,7 @@ export function createAppController(): AppController {
         broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
       }
       if (isLiveWorkspace()) {
-        emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
+        emit('monitored', 'manual', 'recent', 'old-week', 'alerts', 'header');
       } else if (isHistoryWorkspace()) {
         emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
       } else {
