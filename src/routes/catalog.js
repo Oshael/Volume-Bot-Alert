@@ -24,6 +24,9 @@ const promoteRetryState = new Map();
 const pumpfunMetaCache = new Map();
 const pumpfunMetaInFlight = new Map();
 const PUMPFUN_META_CACHE_LIMIT = 500;
+const PUMPFUN_HOTLINK_BLOCKED_IMAGE_HOSTS = new Set([
+  'metadata.j7tracker.io',
+]);
 
 function normalizeMinMcap(value) {
   const parsed = Number(value);
@@ -391,8 +394,28 @@ function parseBidZoneQuery(query = {}) {
   };
 }
 
+function isHotlinkBlockedPumpfunAssetUrl(url) {
+  try {
+    const hostname = new URL(String(url || '').trim()).hostname.toLowerCase();
+    return PUMPFUN_HOTLINK_BLOCKED_IMAGE_HOSTS.has(hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
 function toHttpAssetUrl(url) {
-  return sanitizeAssetUrl(url, { allowHttp: true });
+  const normalized = sanitizeAssetUrl(url, { allowHttp: true });
+  if (!normalized) {
+    return null;
+  }
+
+  // Some PumpFun metadata images are served with anti-hotlink rules and fail
+  // inside the app. Reject them here so the resolver can continue to other sources.
+  if (isHotlinkBlockedPumpfunAssetUrl(normalized)) {
+    return null;
+  }
+
+  return normalized;
 }
 
 function toPumpfunMetadataUrl(url) {

@@ -1,6 +1,6 @@
 import type { AppState, PumpToastEntry } from '../../state/app-state';
-import { fmtAge, fmtMoney } from './shared';
-import { sanitizeOptionalHttpUrl } from './html-safety';
+import { bindCopyButtons, fmtAge, fmtMoney } from './shared';
+import { buildPumpImageWithFallback } from './pumpfun-image';
 
 export function renderPumpToasts(state: AppState) {
   const container = document.createElement('div');
@@ -9,23 +9,7 @@ export function renderPumpToasts(state: AppState) {
   for (const toast of state.data.pumpToasts) {
     container.append(renderPumpToast(toast));
   }
-
-  for (const button of container.querySelectorAll<HTMLButtonElement>('[data-action="copy-address"]')) {
-    button.addEventListener('click', async () => {
-      const address = button.dataset.address;
-      if (!address) return;
-      try {
-        await navigator.clipboard.writeText(address);
-        const original = button.textContent;
-        button.textContent = 'Copied';
-        window.setTimeout(() => {
-          button.textContent = original;
-        }, 1200);
-      } catch {
-        button.textContent = 'Copy failed';
-      }
-    });
-  }
+  bindCopyButtons(container);
 
   return container;
 }
@@ -33,22 +17,9 @@ export function renderPumpToasts(state: AppState) {
 function renderPumpToast(toast: PumpToastEntry) {
   const article = document.createElement('article');
   article.className = 'pump-toast';
-  const imageUrl = sanitizeOptionalHttpUrl(toast.imageUrl);
   const head = document.createElement('div');
   head.className = 'pump-toast-head';
-
-  if (imageUrl) {
-    const img = document.createElement('img');
-    img.src = imageUrl;
-    img.alt = toast.symbol;
-    img.className = 'pump-toast-img';
-    head.append(img);
-  } else {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'pump-toast-placeholder';
-    placeholder.textContent = toast.symbol.slice(0, 2).toUpperCase();
-    head.append(placeholder);
-  }
+  head.append(buildPumpImageWithFallback(toast.symbol, toast.imageUrl, 'pump-toast-img', 'pump-toast-placeholder'));
 
   const body = document.createElement('div');
   body.className = 'pump-toast-body';

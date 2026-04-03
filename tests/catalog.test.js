@@ -198,6 +198,39 @@ describe('Catalog routes', () => {
     assert.equal(typeof res.body.retryAt, 'number');
   });
 
+  it('skips hotlink-blocked pumpfun image hosts and falls back to dex metadata', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async (url) => {
+      if (String(url).includes(`https://frontend-api.pump.fun/coins/${VALID_ADDR}`)) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              symbol: 'WSOL',
+              name: 'Wrapped SOL',
+              image_uri: 'https://metadata.j7tracker.io/images/blocked.png',
+            };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected fetch in pumpfun metadata test: ${url}`);
+    };
+
+    try {
+      const res = await request(app)
+        .get(`/api/catalog/pumpfun/${VALID_ADDR}/meta`)
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.mint, VALID_ADDR);
+      assert.equal(res.body.imageUrl, 'https://example.com/token.png');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('rejects private metadata URI lookups for pumpfun metadata', async () => {
     const res = await request(app)
       .get(`/api/catalog/pumpfun/${VALID_ADDR}/meta`)
