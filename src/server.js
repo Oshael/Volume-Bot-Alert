@@ -52,8 +52,8 @@ const cspDirectives = {
   frameSrc: ["'none'"],
   formAction: ["'self'"],
   scriptSrc: ["'self'"],
-  styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://api.fontshare.com'],
-  fontSrc: ["'self'", 'data:', 'https:'],
+  styleSrc: ["'self'", "'unsafe-inline'"],
+  fontSrc: ["'self'", 'data:'],
   imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
   mediaSrc: ["'self'", 'data:', 'blob:'],
   connectSrc: [

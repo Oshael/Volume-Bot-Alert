@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-02` after the backend/database migration from Railway to a single VPS, while the public frontend continued on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-03` after the backend/database migration from Railway to a single VPS, while the public frontend continued on Vercel.
 
 ## Current Deployment Topology
 
@@ -202,6 +202,15 @@ Important:
 - Important current config behavior:
   - `chain` is now admin-only in the UI and protected on the backend
   - normal users no longer see or mutate `chain`
+  - `uiPrefs.enabledTradeTerminals` is now persisted per account
+  - supported terminal ids are:
+    - `axiom`
+    - `photon`
+    - `bullx`
+    - `gmgn`
+    - `padre`
+  - current default enables all five
+  - if exactly one terminal is enabled, terminal actions open it directly instead of showing the terminal selector menu
   - current default values for newly created accounts now include:
     - `min-vol = 5000`
     - `min-mcap = 30000`
@@ -331,8 +340,9 @@ Important:
    - user starred tokens
 
 Important:
-- The bot does not auto-start monitoring on login/session restore.
-- Start/stop is manual in the current UI.
+- The bot now auto-starts monitoring on login/session restore once an authenticated session is active.
+- The old manual start/stop control is no longer the primary workspace-header interaction.
+- If the browser tab stays hidden/unfocused for `20m`, the frontend stops the runtime and reloads when the user returns to the tab.
 - legacy frontend token storage was removed from the live auth flow
 
 Current login rule:
@@ -791,14 +801,21 @@ Current login/account follow-up:
   - `sanitizeOptionalHttpUrl(...)`
 - Selector interpolation that could be destabilized by unescaped dynamic values is also being reduced, including `CSS.escape(...)` for dynamic selectors in UI state wiring.
 - A pragmatic CSP is now active:
-  - frontend `meta http-equiv="Content-Security-Policy"` in `frontend/index.html`
+  - frontend response-header CSP via `frontend/vercel.json`
   - backend `helmet({ contentSecurityPolicy: ... })` in `src/server.js`
+- frontend typography no longer depends on Google Fonts / Fontshare requests:
+  - the currently used families are self-hosted from `frontend/public/fonts`
+  - `frontend/src/styles/local-fonts.css` registers the local `@font-face` entries
 - CSP currently allows only the sources required for the app to function:
   - self-hosted scripts
-  - Google Fonts / Fontshare styles
+  - self-hosted fonts
   - HTTPS images
   - local/dev and production API + websocket connections
   - `data:` / `blob:` where needed for custom audio and browser-managed assets
+
+Operational frontend-host note:
+- The frontend CSP / frame protections now depend on response headers configured in `frontend/vercel.json`.
+- If the frontend is moved away from Vercel or served by a different static host, those rewrites and security headers must be ported explicitly or the protections will silently weaken.
 
 Current honest security assessment:
 - Auth/session security is materially stronger than before.
@@ -915,6 +932,23 @@ Current security priority order:
 ### Trade terminal links
 - `Axiom` now prefers `pairAddress` for monitored/routed/manual token rows when available
 - `PUMPLIVE` still preserves its custom Axion/Axiom-address override path instead of using the generic monitored fallback order
+- terminal visibility is now user-configurable through persisted `uiPrefs.enabledTradeTerminals`
+- if multiple terminals are enabled, the selector menu is shown
+- if exactly one terminal is enabled, the button opens that terminal directly
+
+### Workspace header status
+- The workspace header now exposes runtime state through a compact status indicator instead of a manual start/stop button.
+- Current tones are:
+  - `Connected`
+  - `Unstable`
+  - `Disconnected`
+- Current rule shape:
+  - `Disconnected` if session is not authenticated or runtime mode is `stopped`
+  - `Unstable` if runtime mode is `syncing`
+  - `Unstable` if monitored freshness is older than `15s`
+  - `Unstable` in `/alerts` if `pumpfun.connected` is false
+  - otherwise `Connected`
+- The `/alerts` header now rerenders after successful monitored refreshes, so fresh dashboard payloads update the status tone immediately instead of waiting for a later header-only refresh
 
 ### Alerts
 - Standard monitored `VOL` and `MCAP` alerts share cooldown

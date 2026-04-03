@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-02` after the backend/database migration from Railway to a single VPS, while the public frontend remained on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-03` after the backend/database migration from Railway to a single VPS, while the public frontend remained on Vercel.
 
 ## Current Deployment Topology
 
@@ -548,8 +548,9 @@ Reasons:
    - starred tokens
 
 Important:
-- the session restoring does not auto-start monitoring
-- the user still needs to click `START MONITORING`
+- monitoring now auto-starts when an authenticated session is restored
+- the old `START MONITORING` button is no longer the primary workspace-header control
+- if the tab stays hidden/unfocused for `20m`, the frontend stops the runtime and forces a reload when the user returns
 - manual-token restore is intentionally independent of dashboard success; `GET /api/config` alone is sufficient to recover the per-user manual list
 - legacy frontend auth token storage was removed from the live session path
 - cookie-session expiry now defaults to `AUTH_SESSION_EXPIRES_IN || JWT_EXPIRES_IN || 30d`, so normal browser restarts preserve login until the session is revoked or expires
@@ -604,6 +605,19 @@ Multi-tab coordination:
   - `GET /api/catalog/bid-zone`
 - follower monitor tabs receive monitored/lateralized/bid-zone snapshots from the leader
 - this dedupe currently does **not** apply to `/alerts`, because alerts are still frontend-owned and per-tab
+
+Workspace header status:
+- the header now exposes runtime health through a compact status indicator:
+  - `Connected`
+  - `Unstable`
+  - `Disconnected`
+- current rule shape:
+  - `Disconnected` if session is not authenticated or runtime mode is `stopped`
+  - `Unstable` if runtime mode is `syncing`
+  - `Unstable` if monitored freshness is older than `15s`
+  - `Unstable` in `/alerts` if `pumpfun.connected` is false
+  - otherwise `Connected`
+- the `/alerts` path now invalidates/rerenders the header after successful monitored refreshes, so a fresh monitored payload updates the status immediately instead of waiting for a later header-only cycle
 
 ## Login / Account Surface
 
@@ -1226,7 +1240,7 @@ Rules:
 - supports compact local search by symbol, name, or contract/address
 - the compact-search input supports `Enter/Return` to blur/commit the current query
 - supports a compact `starred only` toggle
-- shows a green live-status emoji with a slower breathing pulse while the bot is active
+- the workspace header now uses a compact runtime status indicator instead of the old manual start/stop button
 - routed eligibility is now maintained on the token itself via:
   - `_isRecentRouted`
   - `_isOldWeekRouted`
@@ -1342,6 +1356,9 @@ Files:
 - `frontend/src/ui/sections/shared.ts`
 
 Current link behavior:
+- terminal availability is user-configurable through persisted `uiPrefs.enabledTradeTerminals`
+- if multiple terminals are enabled, token actions open the selector menu
+- if exactly one terminal is enabled, the token action opens that terminal directly
 - Axiom:
   - default path uses `tokenAddress`
   - PumpFun pre-bond rows override Axiom to prefer:
@@ -1629,6 +1646,12 @@ Current cross-browser-synced UI state:
   - `monitored`
   - `lateralized`
   - `pumpfun`
+- enabled trade terminals:
+  - `axiom`
+  - `photon`
+  - `bullx`
+  - `gmgn`
+  - `padre`
 - `starred only` toggles:
   - manual
   - recent
@@ -1740,11 +1763,13 @@ Admin status endpoint currently exposes:
 - discovery is restored through Dex feeds again, but underlying Dex availability remains a dependency
 - the highest-risk auth/account/config/list render surfaces have been hardened, but lower-traffic UI helpers still use HTML-string-heavy patterns in places
 - the current CSP is pragmatic and intentionally compatible with:
-  - Google Fonts
-  - Fontshare
+  - self-hosted fonts
   - external HTTPS token images
   - local websocket/API development
   This means it is stronger than before, but not maximalist
+- the frontend no longer depends on third-party font requests:
+  - currently used font families are self-hosted from `frontend/public/fonts`
+  - `frontend/src/styles/local-fonts.css` provides the local `@font-face` mapping
 
 ## Current VPS Deployment Notes
 
@@ -1818,11 +1843,18 @@ What was hardened:
 - safer selector interpolation using `CSS.escape(...)` in dynamic selector paths
 - trusted-origin requirement for mutating cookie-authenticated requests
 - CSP added in both frontend and backend layers
+- the frontend CSP is now delivered by response headers in `frontend/vercel.json` instead of only by `meta http-equiv`
 - frontend auth-flow token normalization for verify/reset/OTP challenge inputs
 - stricter `?api=` override rules so auth/config flows do not point at arbitrary backends by query string
 - backend auth routes reject malformed OTP challenge, verify-email, and password-reset tokens early
 - login OTP generation now uses cryptographically secure randomness
 - cleanup scheduler now removes expired OTP challenges, email verification tokens, and password reset tokens
+
+Frontend delivery note:
+- the public frontend currently relies on `frontend/vercel.json` for:
+  - SPA rewrites to `index.html`
+  - frontend security headers such as CSP / frame protection
+- if the frontend host changes, those rules must be recreated on the new host or the current security posture and route behavior will drift
 - session JWTs now carry unique per-login identity and session revocation is tracked per login
 - socket auth is cookie-first in live environments instead of keeping a general-purpose token handshake path
 - PumpFun metadata lookups reject private/local asset URIs

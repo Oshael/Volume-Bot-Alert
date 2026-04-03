@@ -1,3 +1,4 @@
+import './styles/local-fonts.css';
 import './styles/app.css';
 import { playAlertSound, playMigrateSound } from './services/alerts/sound';
 import { isProfileAuthPanel, type AppState } from './state/app-state';
