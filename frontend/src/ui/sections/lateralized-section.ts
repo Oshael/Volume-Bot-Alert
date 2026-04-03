@@ -105,7 +105,9 @@ function buildLateralizedRow(
   actions.className = 'lateralized-inline-actions';
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
-    buildTradeTerminalMenuElement(item.address, tracked?.mintAddress || item.address, tracked?.pairAddress || null),
+    buildTradeTerminalMenuElement(item.address, tracked?.mintAddress || item.address, tracked?.pairAddress || null, {
+      enabledTradeTerminals: state.ui.enabledTradeTerminals,
+    }),
     buildStarButton(item.address, isStarred, busy),
     buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token'),
   );

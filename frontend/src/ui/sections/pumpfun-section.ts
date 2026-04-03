@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AppState, PumpMigrationEntry, PumpTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtConfig, fmtMoney } from './shared';
-import { sanitizeOptionalHttpUrl } from './html-safety';
+import { buildPumpImageWithFallback } from './pumpfun-image';
 
 export function renderPumpfunSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -119,12 +119,11 @@ function buildPumpRow(token: PumpTokenEntry, busy: boolean, state: AppState) {
   const showBond = state.pumpfun.migrationCount >= 1;
   const bondTone = bondPct > 60 ? 'bond-hot' : bondPct > 30 ? 'bond-warm' : 'bond-cool';
   const mcapTone = showBond ? `pump-mcap-tone ${bondTone}` : 'pump-mcap-tone bond-cool';
-  const imageUrl = sanitizeOptionalHttpUrl(token.imageUrl);
   const article = document.createElement('article');
   article.className = 'pump-token-row';
   article.dataset.mint = token.mint;
   article.dataset.hoverKey = `pump:${token.mint}`;
-  article.append(buildPumpAvatar(symbol, imageUrl));
+  article.append(buildPumpAvatar(symbol, token.imageUrl || null));
 
   const main = document.createElement('div');
   main.className = 'pump-row-main';
@@ -170,6 +169,7 @@ function buildPumpRow(token: PumpTokenEntry, busy: boolean, state: AppState) {
     buildPumpActionButton('⧉', 'action-glyph copy-button', 'copy-address', token.mint, null, false, 'Copy contract'),
     buildTradeTerminalMenuElement(token.mint, token.mintAddress || token.mint, token.pairAddress, {
       axiomAddress: token.bondingCurveKey || token.pairAddress || token.mintAddress || token.mint,
+      enabledTradeTerminals: state.ui.enabledTradeTerminals,
     }),
     buildPumpRemoveButton(token.mint, busy),
   );
@@ -206,9 +206,10 @@ function buildPumpMigrationStrip(entries: PumpMigrationEntry[]) {
 
   const strip = document.createElement('div');
   strip.className = 'pump-migration-strip';
-  for (const entry of entries.slice(0, 6)) {
+  for (const entry of entries) {
     const chip = document.createElement('div');
     chip.className = 'pump-migration-chip';
+    chip.append(buildPumpMigrationAvatar(entry));
 
     const top = document.createElement('div');
     top.className = 'pump-migration-chip-top';
@@ -216,22 +217,29 @@ function buildPumpMigrationStrip(entries: PumpMigrationEntry[]) {
     const symbol = document.createElement('span');
     symbol.className = 'pump-migration-chip-symbol';
     symbol.textContent = entry.symbol || entry.mint.slice(0, 6);
+    top.append(symbol, buildPumpMigrationCopyButton(entry.mint));
 
-    const age = document.createElement('span');
-    age.className = 'pump-migration-chip-age';
-    age.textContent = fmtAge(entry.migratedAt);
-
-    top.append(symbol, age);
-
-    const meta = document.createElement('div');
-    meta.className = 'pump-migration-chip-meta';
-    meta.textContent = `${fmtMoney(entry.mcap)} / ${fmtMoney(entry.vol5m)}`;
-
-    chip.append(top, meta);
+    chip.append(top);
     strip.append(chip);
   }
   shell.append(strip);
   return shell;
+}
+
+function buildPumpMigrationAvatar(entry: PumpMigrationEntry) {
+  const symbol = entry.symbol || entry.mint.slice(0, 6);
+  return buildPumpImageWithFallback(symbol, entry.imageUrl, 'pump-migration-avatar', 'pump-migration-avatar-placeholder');
+}
+
+function buildPumpMigrationCopyButton(mint: string) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'action-button small pump-migration-copy';
+  button.dataset.action = 'copy-address';
+  button.dataset.address = mint;
+  button.title = 'Copy contract';
+  button.textContent = 'CA';
+  return button;
 }
 
 function getPumpVolume5m(token: PumpTokenEntry) {
@@ -239,18 +247,7 @@ function getPumpVolume5m(token: PumpTokenEntry) {
 }
 
 function buildPumpAvatar(symbol: string, imageUrl: string | null) {
-  if (imageUrl) {
-    const image = document.createElement('img');
-    image.src = imageUrl;
-    image.alt = symbol;
-    image.className = 'tok-avatar';
-    return image;
-  }
-
-  const placeholder = document.createElement('div');
-  placeholder.className = 'tok-avatar-placeholder';
-  placeholder.textContent = symbol.slice(0, 2).toUpperCase();
-  return placeholder;
+  return buildPumpImageWithFallback(symbol, imageUrl, 'tok-avatar', 'tok-avatar-placeholder');
 }
 
 function buildPumpMeta(className: string, text: string) {

@@ -37,7 +37,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   if (alertsList) {
     if (filteredAlerts.length) {
       for (const alert of filteredAlerts) {
-        alertsList.append(buildAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address), state.session.role === 'admin'));
+        alertsList.append(buildAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address), state.session.role === 'admin', state.ui.enabledTradeTerminals));
       }
     } else {
       const emptyState = document.createElement('div');
@@ -77,7 +77,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   return section;
 }
 
-function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean) {
+function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals']) {
   const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
   const symbol = String(alert.symbol || '');
   const safeName = String(alert.name || '');
@@ -143,7 +143,9 @@ function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isA
   actions.className = 'alert-actions-v68';
   actions.append(
     buildActionButton('Copiar CA', 'alert-action-button copy-button', 'copy-address', alert.address),
-    buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress),
+    buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
+      enabledTradeTerminals,
+    }),
     buildStarButton(alert.address, isStarred, busy, 'Star token'),
     buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy),
   );

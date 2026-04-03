@@ -26,6 +26,7 @@ export function renderStarredSection(state: AppState, controller: AppController)
           mode: manualAddressSet.has(address) || item._userManual ? 'manual' : recentAddressSet.has(address) ? 'recent' : oldWeekAddressSet.has(address) ? 'old-week' : 'monitored',
           isStarred: true,
           isAdmin: state.session.role === 'admin',
+          enabledTradeTerminals: state.ui.enabledTradeTerminals,
         });
         const card = wrapper.firstElementChild;
         if (card) {

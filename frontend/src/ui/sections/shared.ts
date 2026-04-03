@@ -1,7 +1,24 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, RemovalLogEntry } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, RemovalLogEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+
+const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
+const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
+  axiom: new URL('../../../terminal-axiom.ico', import.meta.url).href,
+  photon: new URL('../../../terminal-photon.svg', import.meta.url).href,
+  bullx: new URL('../../../terminal-bullx.png', import.meta.url).href,
+  gmgn: new URL('../../../terminal-gmgn.svg', import.meta.url).href,
+  padre: new URL('../../../terminal-padre.svg', import.meta.url).href,
+};
+
+type TradeTerminalLink = {
+  key: TradeTerminalKey;
+  label: string;
+  href: string;
+  cls: TradeTerminalKey;
+  iconHref: string;
+};
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -70,15 +87,21 @@ export function bindCopyButtons(section: ParentNode) {
     button.addEventListener('click', async () => {
       const address = button.dataset.address;
       if (!address) return;
+      const original = button.dataset.copyOriginalLabel ?? button.textContent ?? '';
+      button.dataset.copyOriginalLabel = original;
+      const keepTextFeedback = button.classList.contains('alert-action-button') || Boolean(button.closest('.alerts-panel'));
+
       try {
         await navigator.clipboard.writeText(address);
-        const original = button.textContent;
-        button.textContent = 'Copied';
+        button.textContent = keepTextFeedback ? 'Copied' : '✓';
         window.setTimeout(() => {
           button.textContent = original;
         }, 1200);
       } catch {
-        button.textContent = 'Copy failed';
+        button.textContent = keepTextFeedback ? 'Copy failed' : '✕';
+        window.setTimeout(() => {
+          button.textContent = original;
+        }, 1200);
       }
     });
   }
@@ -88,15 +111,21 @@ export function renderTradeTerminalMenu(
   address: string,
   mintAddress?: string | null,
   pairAddress?: string | null,
-  options?: { axiomAddress?: string | null },
+  options?: { axiomAddress?: string | null; enabledTradeTerminals?: TradeTerminalKey[] },
 ) {
   const links = getTradeTerminalLinks(address, mintAddress, pairAddress, options);
+  if (links.length === 1) {
+    const link = links[0];
+    return `
+      <a class="action-glyph trade-btn trade-btn-direct" href="${sanitizeHttpUrl(link.href)}" target="_blank" rel="noreferrer" title="Open in ${escapeHtml(link.label)}">${renderTradeTerminalButtonIcon(link)}</a>
+    `;
+  }
 
   return `
     <div class="trade-wrap" data-trade-wrap>
       <button type="button" class="action-glyph trade-btn" title="Open in trading terminal">&#128279;</button>
       <div class="trade-dd" data-trade-menu>
-        ${links.map((link) => `<a class="trade-link ${link.cls}" href="${sanitizeHttpUrl(link.href)}" target="_blank" rel="noreferrer">${escapeHtml(link.label)}</a>`).join('')}
+        ${links.map((link) => `<a class="trade-link ${link.cls}" href="${sanitizeHttpUrl(link.href)}" target="_blank" rel="noreferrer">${renderTradeTerminalLinkInner(link)}</a>`).join('')}
       </div>
     </div>
   `;
@@ -106,8 +135,21 @@ export function buildTradeTerminalMenuElement(
   address: string,
   mintAddress?: string | null,
   pairAddress?: string | null,
-  options?: { axiomAddress?: string | null },
+  options?: { axiomAddress?: string | null; enabledTradeTerminals?: TradeTerminalKey[] },
 ) {
+  const links = getTradeTerminalLinks(address, mintAddress, pairAddress, options);
+  if (links.length === 1) {
+    const link = links[0];
+    const anchor = document.createElement('a');
+    anchor.className = 'action-glyph trade-btn trade-btn-direct';
+    anchor.href = sanitizeHttpUrl(link.href);
+    anchor.target = '_blank';
+    anchor.rel = 'noreferrer';
+    anchor.title = `Open in ${link.label}`;
+    anchor.append(buildTradeTerminalIcon(link, 'trade-btn-icon'));
+    return anchor;
+  }
+
   const wrapper = document.createElement('div');
   wrapper.className = 'trade-wrap';
   wrapper.dataset.tradeWrap = '';
@@ -122,13 +164,16 @@ export function buildTradeTerminalMenuElement(
   menu.className = 'trade-dd';
   menu.dataset.tradeMenu = '';
 
-  for (const link of getTradeTerminalLinks(address, mintAddress, pairAddress, options)) {
+  for (const link of links) {
     const anchor = document.createElement('a');
     anchor.className = `trade-link ${link.cls}`;
     anchor.href = sanitizeHttpUrl(link.href);
     anchor.target = '_blank';
     anchor.rel = 'noreferrer';
-    anchor.textContent = link.label;
+    const label = document.createElement('span');
+    label.className = 'trade-link-label';
+    label.textContent = link.label;
+    anchor.append(buildTradeTerminalIcon(link), label);
     menu.append(anchor);
   }
 
@@ -140,18 +185,117 @@ function getTradeTerminalLinks(
   address: string,
   mintAddress?: string | null,
   pairAddress?: string | null,
-  options?: { axiomAddress?: string | null },
-) {
+  options?: { axiomAddress?: string | null; enabledTradeTerminals?: TradeTerminalKey[] },
+): TradeTerminalLink[] {
   const tokenAddress = mintAddress || address;
   const terminalAddress = pairAddress || mintAddress || address;
   const axiomAddress = options?.axiomAddress || pairAddress || tokenAddress;
-  return [
-    { label: 'Axiom', href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom' },
-    { label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon' },
-    { label: 'BullX', href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx' },
-    { label: 'GMGN', href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn' },
-    { label: 'Padre', href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre' },
+  const enabledTradeTerminals = normalizeEnabledTradeTerminals(options?.enabledTradeTerminals);
+  const links: TradeTerminalLink[] = [
+    { key: 'axiom', label: 'Axiom', href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
+    { key: 'photon', label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon', iconHref: TRADE_TERMINAL_ICON_URLS.photon },
+    { key: 'bullx', label: 'BullX', href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx', iconHref: TRADE_TERMINAL_ICON_URLS.bullx },
+    { key: 'gmgn', label: 'GMGN', href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
+    { key: 'padre', label: 'Padre', href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
   ];
+  return links.filter((link) => enabledTradeTerminals.includes(link.key));
+}
+
+function renderTradeTerminalLinkInner(link: TradeTerminalLink) {
+  return `${renderTradeTerminalIconMarkup(link)}<span class="trade-link-label">${escapeHtml(link.label)}</span>`;
+}
+
+function renderTradeTerminalButtonIcon(link: TradeTerminalLink) {
+  return renderTradeTerminalIconMarkup(link, 'trade-btn-icon');
+}
+
+function renderTradeTerminalIconMarkup(link: TradeTerminalLink, className = 'trade-link-icon') {
+  const inlineIcon = getInlineTradeTerminalIconMarkup(link, className);
+  if (inlineIcon) {
+    return inlineIcon;
+  }
+  return `<img class="${className} terminal-icon terminal-icon-${link.key}" src="${sanitizeHttpUrl(link.iconHref)}" alt="" aria-hidden="true">`;
+}
+
+function buildTradeTerminalIcon(link: TradeTerminalLink, className = 'trade-link-icon') {
+  const inlineIcon = buildInlineTradeTerminalIcon(link, className);
+  if (inlineIcon) {
+    return inlineIcon;
+  }
+  const icon = document.createElement('img');
+  icon.className = `${className} terminal-icon terminal-icon-${link.key}`;
+  icon.src = sanitizeHttpUrl(link.iconHref);
+  icon.alt = '';
+  icon.setAttribute('aria-hidden', 'true');
+  return icon;
+}
+
+function getInlineTradeTerminalIconMarkup(link: TradeTerminalLink, className: string) {
+  if (link.key === 'photon') {
+    return `
+      <svg class="${className} terminal-icon-inline terminal-icon-${link.key}" viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="8" cy="8" r="5.75" stroke="url(#photon-ring)" stroke-width="1.8"/>
+        <path d="M8 3.2L9.18 5.93L11.9 7.1L9.18 8.27L8 11L6.82 8.27L4.1 7.1L6.82 5.93L8 3.2Z" fill="url(#photon-core)"/>
+        <circle cx="8" cy="8" r="1.25" fill="#E8F7FF"/>
+        <defs>
+          <linearGradient id="photon-ring" x1="2.6" y1="2.2" x2="13.4" y2="13.8" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#8A5CFF"/>
+            <stop offset="0.55" stop-color="#39F5FF"/>
+            <stop offset="1" stop-color="#00B8FF"/>
+          </linearGradient>
+          <linearGradient id="photon-core" x1="5" y1="4" x2="11" y2="10.8" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#8358FF"/>
+            <stop offset="0.55" stop-color="#3BF6FF"/>
+            <stop offset="1" stop-color="#1D9EFF"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    `.trim();
+  }
+
+  if (link.key === 'padre') {
+    return `
+      <svg class="${className} terminal-icon-inline terminal-icon-${link.key}" viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+        <path d="M5.2 10.8L8.9 7.1C10 6 11.7 6 12.8 7.1C13.9 8.2 13.9 9.9 12.8 11L9.1 14.7C8 15.8 6.3 15.8 5.2 14.7C4.1 13.6 4.1 11.9 5.2 10.8Z" stroke="#86EFAC" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M6.6 9.4L9.4 6.6" stroke="#C8FFD8" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    `.trim();
+  }
+
+  return null;
+}
+
+function buildInlineTradeTerminalIcon(link: TradeTerminalLink, className: string) {
+  const markup = getInlineTradeTerminalIconMarkup(link, className);
+  if (!markup) {
+    return null;
+  }
+
+  const template = document.createElement('template');
+  template.innerHTML = markup;
+  const icon = template.content.firstElementChild;
+  return icon instanceof SVGElement ? icon : null;
+}
+
+function normalizeEnabledTradeTerminals(input?: TradeTerminalKey[] | null) {
+  if (!Array.isArray(input)) {
+    return [...DEFAULT_TRADE_TERMINALS];
+  }
+
+  const next: TradeTerminalKey[] = [];
+  const seen = new Set<TradeTerminalKey>();
+  for (const item of input) {
+    if (item !== 'axiom' && item !== 'photon' && item !== 'bullx' && item !== 'gmgn' && item !== 'padre') {
+      continue;
+    }
+    if (seen.has(item)) {
+      continue;
+    }
+    seen.add(item);
+    next.push(item);
+  }
+
+  return next.length > 0 ? next : [...DEFAULT_TRADE_TERMINALS];
 }
 
 export function bindBucketSortControls(section: ParentNode, controller: AppController, mode: 'manual' | 'recent' | 'old-week') {
@@ -184,12 +328,28 @@ export function bindCompactSearch(
     return;
   }
 
+  let clearButton = wrap.querySelector<HTMLButtonElement>('.compact-search-clear');
+  if (!clearButton) {
+    clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.className = 'compact-search-clear';
+    clearButton.setAttribute('aria-label', 'Clear search');
+    clearButton.textContent = '×';
+    wrap.append(clearButton);
+  }
+
+  const syncHasQuery = () => {
+    wrap.classList.toggle('has-query', Boolean(String(input.value || '').trim()));
+  };
+
   const open = () => wrap.classList.add('open');
   const closeIfEmpty = () => {
     if (!String(input.value || '').trim()) {
       wrap.classList.remove('open');
     }
   };
+
+  syncHasQuery();
 
   toggle.addEventListener('pointerdown', (event) => {
     event.preventDefault();
@@ -200,8 +360,21 @@ export function bindCompactSearch(
     });
   });
 
+  clearButton.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    input.value = '';
+    syncHasQuery();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    open();
+    window.requestAnimationFrame(() => input.focus());
+  });
+
   input.addEventListener('focus', open);
-  input.addEventListener('blur', closeIfEmpty);
+  input.addEventListener('blur', () => {
+    syncHasQuery();
+    closeIfEmpty();
+  });
+  input.addEventListener('input', syncHasQuery);
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -378,14 +551,14 @@ function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSortCriter
   });
 }
 
-export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false) {
-  if (tokens.length === 0) return '<p class="muted-block">No manual tokens loaded for this account yet.</p>';
+export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false, enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS) {
+  if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
   const starredSet = new Set(starredTokens);
   const sorted = sortBucketTokens(tokens, sortCriteria);
-  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool, isAdmin });
+  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool, isAdmin, enabledTradeTerminals });
 }
 
-export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false) {
+export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false, enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS) {
   if (tokens.length === 0) return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
 
   const starredSet = new Set(starredTokens);
@@ -397,7 +570,7 @@ export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boole
   const pageItems = sorted.slice(pageStart, pageStart + safePerPage);
 
   return `
-    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1, isAdmin })}
+    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1, isAdmin, enabledTradeTerminals })}
     <div class="bucket-footer">
       <div class="bucket-page-controls">
         <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" /></label>
@@ -421,6 +594,7 @@ function renderTokenTableShell(options: {
   meteoraMinPool: number;
   startRank?: number;
   isAdmin?: boolean;
+  enabledTradeTerminals: TradeTerminalKey[];
 }) {
   return `
     <div class="token-table-wrap token-table-${options.tone}">
@@ -444,14 +618,14 @@ function renderTokenTableShell(options: {
           </tr>
         </thead>
         <tbody>
-          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), options.meteoraByAddress, options.meteoraMinPool, (options.startRank ?? 1) + index, Boolean(options.isAdmin))).join('')}
+          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), options.meteoraByAddress, options.meteoraMinPool, (options.startRank ?? 1) + index, Boolean(options.isAdmin), options.enabledTradeTerminals)).join('')}
         </tbody>
       </table>
     </div>
   `;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean) {
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[]) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -479,7 +653,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
                 <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
                 ${twitterUrl ? `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="${escapeHtml(twitterMeta.title)}">${twitterMeta.icon}</a>` : `<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>`}
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
-                ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress)}
+                ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { enabledTradeTerminals })}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
                 ${isAdmin ? `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>` : ''}
               </div>
@@ -699,8 +873,8 @@ export function fmtConfig(state: AppState, key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean }) {
+export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[] }) {
   const wrapper = document.createElement('div');
-  wrapper.innerHTML = renderManualTokenTable([item], busy, options.isStarred ? [item.address] : [], [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin));
+  wrapper.innerHTML = renderManualTokenTable([item], busy, options.isStarred ? [item.address] : [], [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin), options.enabledTradeTerminals ?? DEFAULT_TRADE_TERMINALS);
   return wrapper.innerHTML;
 }

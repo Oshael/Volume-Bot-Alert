@@ -7,7 +7,7 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   const isCollapsed = state.ui.collapsed.monitored;
-  section.className = `panel legacy-panel${isCollapsed ? ' panel-collapsed' : ''}`;
+  section.className = `panel legacy-panel monitored-panel${isCollapsed ? ' panel-collapsed' : ''}`;
   const sorts = state.ui.monitoredSorts;
   const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
   const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
@@ -142,7 +142,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   if (monitoredList) {
     if (filteredTracked.length) {
       for (const item of pageItems) {
-        monitoredList.append(buildMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address), state.session.role === 'admin'));
+        monitoredList.append(buildMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address), state.session.role === 'admin', state.ui.enabledTradeTerminals));
       }
     } else {
       const emptyState = document.createElement('div');
@@ -189,7 +189,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   return section;
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean) {
+function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals']) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
@@ -242,7 +242,9 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   }
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
-    buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress),
+    buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress, {
+      enabledTradeTerminals,
+    }),
     buildStarButton(item.address, isStarred, busy),
     buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token'),
   );

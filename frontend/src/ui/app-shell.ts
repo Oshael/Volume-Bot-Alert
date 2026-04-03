@@ -462,6 +462,7 @@ function getMonitoredRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.monitored,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.monitoredSearchQuery,
     page: state.ui.monitoredPage,
     perPage: state.ui.monitoredPerPage,
@@ -476,6 +477,7 @@ function getManualRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.manual,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.manualSearchQuery,
     starredOnly: state.ui.manualStarredOnly,
     sorts: state.ui.manualSorts,
@@ -490,6 +492,7 @@ function getRecentRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.recent,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     runtimeMode: state.runtime.mode,
     search: state.ui.recentSearchQuery,
     starredOnly: state.ui.recentStarredOnly,
@@ -510,6 +513,7 @@ function getOldWeekRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.oldWeek,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.oldWeekSearchQuery,
     starredOnly: state.ui.oldWeekStarredOnly,
     page: state.ui.oldWeekPage,
@@ -529,6 +533,7 @@ function getLateralizedRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.lateralized,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     freshness: state.runtime.lateralizedFreshnessLabel,
     starred: state.data.starredTokens,
     tracked: state.data.lateralizedTokens.map((item) => serializePrimitiveList([
@@ -553,6 +558,7 @@ function getBidZoneRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.bidZone,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     freshness: state.runtime.bidZoneFreshnessLabel,
     starred: state.data.starredTokens,
     tracked: state.data.bidZoneTokens.map((item) => serializePrimitiveList([
@@ -581,6 +587,7 @@ function getPumpfunRenderKey(state: AppState) {
     collapsed: state.ui.collapsed.pumpfun,
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     statusLabel: state.pumpfun.statusLabel,
     connected: state.pumpfun.connected,
     configs: {
@@ -613,6 +620,7 @@ function getAlertsRenderKey(state: AppState) {
   return JSON.stringify({
     busy: state.ui.busy,
     role: state.session.role,
+    tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.alertSearchQuery,
     starred: state.data.starredTokens,
     alerts: state.data.alerts.map((alert) => serializePrimitiveList([

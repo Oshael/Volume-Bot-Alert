@@ -121,6 +121,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
       state.session.role === 'admin',
+      state.ui.enabledTradeTerminals,
     )}
   `;
   bindCompactSearch(section, {
@@ -293,6 +294,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
       state.session.role === 'admin',
+      state.ui.enabledTradeTerminals,
     )}
   `;
   bindCompactSearch(section, {
