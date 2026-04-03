@@ -15,6 +15,7 @@ const root: HTMLDivElement = rootElement;
 const controller = createAppController();
 const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
+const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -29,6 +30,10 @@ let interactionLockUntil = 0;
 let listInteractionDepth = 0;
 let restoreRenderQueued = false;
 let isDocumentHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+let hiddenSinceAt: number | null = isDocumentHidden ? Date.now() : null;
+let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
+let hiddenMonitoringWasActive = false;
+let hiddenAutoStopTriggered = false;
 
 declare global {
   interface Window {
@@ -208,6 +213,35 @@ function performRender(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegio
   renderAppShell(root, state, controller, dirtyRegions);
 }
 
+function clearHiddenRuntimeStopTimer() {
+  if (hiddenRuntimeStopTimer) {
+    clearTimeout(hiddenRuntimeStopTimer);
+    hiddenRuntimeStopTimer = null;
+  }
+}
+
+function shouldTreatMonitoringAsActive(state: AppState | null) {
+  return Boolean(state && state.session.status === 'authenticated' && state.runtime.mode === 'active');
+}
+
+function armHiddenRuntimeStopTimer() {
+  clearHiddenRuntimeStopTimer();
+  if (!isDocumentHidden || !hiddenMonitoringWasActive) {
+    return;
+  }
+
+  const startedAt = hiddenSinceAt ?? Date.now();
+  const remainingMs = Math.max(0, HIDDEN_RUNTIME_STOP_MS - (Date.now() - startedAt));
+  hiddenRuntimeStopTimer = window.setTimeout(() => {
+    hiddenRuntimeStopTimer = null;
+    if (!isDocumentHidden || !hiddenMonitoringWasActive || hiddenAutoStopTriggered) {
+      return;
+    }
+    controller.stopMonitoring();
+    hiddenAutoStopTriggered = true;
+  }, remainingMs);
+}
+
 root.addEventListener('pointerdown', (event) => {
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a, [data-action], [data-trade-wrap]')) {
@@ -338,6 +372,23 @@ controller.subscribe((state, dirtyRegions) => {
 document.addEventListener('visibilitychange', () => {
   isDocumentHidden = document.visibilityState === 'hidden';
   if (isDocumentHidden) {
+    hiddenSinceAt = Date.now();
+    hiddenMonitoringWasActive = shouldTreatMonitoringAsActive(latestState);
+    hiddenAutoStopTriggered = false;
+    armHiddenRuntimeStopTimer();
+    return;
+  }
+
+  clearHiddenRuntimeStopTimer();
+  const hiddenDurationMs = hiddenSinceAt ? Date.now() - hiddenSinceAt : 0;
+  const shouldAutoStopOnReturn = hiddenMonitoringWasActive && hiddenDurationMs >= HIDDEN_RUNTIME_STOP_MS;
+  hiddenSinceAt = null;
+  const shouldReloadAfterHidden = hiddenAutoStopTriggered || shouldAutoStopOnReturn;
+  hiddenMonitoringWasActive = false;
+  hiddenAutoStopTriggered = false;
+  if (shouldReloadAfterHidden) {
+    controller.stopMonitoring();
+    window.location.reload();
     return;
   }
 
