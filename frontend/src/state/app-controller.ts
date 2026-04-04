@@ -2065,8 +2065,14 @@ export function createAppController(): AppController {
     state.pumpfun.bondTargetMcap = nextTarget;
     state.data.configs['pump-bond-mcap'] = Math.round(nextTarget);
     void persistUiConfigs({ 'pump-bond-mcap': Math.round(nextTarget) });
-  }  function dismissPumpToast(id: string) {
+  }
+
+  function dismissPumpToast(id: string) {
     state.data.pumpToasts = state.data.pumpToasts.filter((item) => item.id !== id);
+  }
+
+  function shouldSurfacePumpMigration(token: Pick<PumpTokenEntry, 'mcap'>) {
+    return Number(token?.mcap || 0) >= PUMP_SILENCE_MIGRATION_MIN_MCAP;
   }
 
   function enqueuePumpToast(token: PumpTokenEntry) {
@@ -2085,6 +2091,68 @@ export function createAppController(): AppController {
       dismissPumpToast(toastId);
       emit();
     }, PUMP_TOAST_TTL_MS);
+  }
+
+  function hasRecordedPumpMigration(mint: string) {
+    return state.data.recentPumpMigrations.some((entry) => entry.mint === mint)
+      || state.data.pumpToasts.some((entry) => entry.mint === mint);
+  }
+
+  function resolvePumpMigrationText(
+    primary: string | null | undefined,
+    fallback: unknown,
+  ) {
+    return primary ?? (String(fallback || '').trim() || null);
+  }
+
+  function createEmptyPumpMigrationToken(mint: string): PumpTokenEntry {
+    return {
+      mint,
+      mintAddress: mint,
+      pairAddress: null,
+      metadataUri: null,
+      name: null,
+      symbol: null,
+      imageUrl: null,
+      twitterUrl: null,
+      pairUrl: null,
+      createdAt: null,
+      lastTradeAt: null,
+      mcap: null,
+      volTotal: 0,
+      vol5m: [],
+      _alertFired: false,
+      _hvncPumpFired: false,
+      _migrated: true,
+      _lowMcapSince: null,
+      bondingCurveKey: null,
+      vTokensInBondingCurve: null,
+      virtualSolReserves: null,
+      hidden: false,
+      _imageResolved: false,
+      _imageResolving: false,
+    };
+  }
+
+  function buildPumpMigrationTokenFromPayload(payload: Record<string, unknown>, existingToken?: PumpTokenEntry | null): PumpTokenEntry | null {
+    const mint = String(payload.mint || existingToken?.mint || '').trim();
+    if (!mint) {
+      return null;
+    }
+
+    const token = existingToken
+      ? { ...existingToken, mint }
+      : createEmptyPumpMigrationToken(mint);
+
+    token.mintAddress = token.mintAddress ?? mint;
+    token.pairAddress = resolvePumpMigrationText(token.pairAddress, payload.pool || payload.pairAddress);
+    token.name = resolvePumpMigrationText(token.name, payload.name);
+    token.symbol = resolvePumpMigrationText(token.symbol, payload.symbol);
+    token.imageUrl = resolvePumpMigrationText(token.imageUrl, payload.image);
+    token.twitterUrl = resolvePumpMigrationText(token.twitterUrl, payload.twitter);
+    token._migrated = true;
+
+    return token;
   }
 
   function runPumpGarbageCollection() {
@@ -2117,6 +2185,9 @@ export function createAppController(): AppController {
         token._migrated = true;
         recordPumpMigration(token);
         enqueuePumpToast(token);
+        if (!token.imageUrl) {
+          void resolvePumpMigrationMetadata(token.mint);
+        }
         removed.add(token.mint);
         migratedBySilence += 1;
         removedBySilenceMigration.push(token.mint);
@@ -2191,6 +2262,63 @@ export function createAppController(): AppController {
     if (samples.length > 0 && (state.pumpfun.migrationCount === 1 || ((state.pumpfun.migrationCount - 1) % 3 === 0))) {
       const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
       maybePersistPumpBondTarget(average);
+    }
+  }
+
+  const resolvingPumpMigrationMetadata = new Set<string>();
+
+  function getPendingPumpMigrationVisualState(mint: string) {
+    const migrationEntry = state.data.recentPumpMigrations.find((entry) => entry.mint === mint) || null;
+    const toastEntry = state.data.pumpToasts.find((entry) => entry.mint === mint) || null;
+    return {
+      existingSymbol: migrationEntry?.symbol || toastEntry?.symbol || null,
+      existingImageUrl: migrationEntry?.imageUrl || toastEntry?.imageUrl || null,
+    };
+  }
+
+  function applyResolvedPumpMigrationVisuals(mint: string, symbol: string | null, imageUrl: string | null) {
+    state.data.recentPumpMigrations = state.data.recentPumpMigrations.map((entry) => entry.mint === mint
+      ? {
+        ...entry,
+        symbol: symbol || entry.symbol,
+        imageUrl: imageUrl || entry.imageUrl || null,
+      }
+      : entry);
+    state.data.pumpToasts = state.data.pumpToasts.map((entry) => entry.mint === mint
+      ? {
+        ...entry,
+        symbol: symbol || entry.symbol,
+        imageUrl: imageUrl || entry.imageUrl || null,
+      }
+      : entry);
+  }
+
+  async function resolvePumpMigrationMetadata(mint: string) {
+    const sessionToken = state.session.token;
+    if (!sessionToken || resolvingPumpMigrationMetadata.has(mint)) {
+      return;
+    }
+
+    const { existingSymbol, existingImageUrl } = getPendingPumpMigrationVisualState(mint);
+    if (existingSymbol && existingImageUrl) {
+      return;
+    }
+
+    resolvingPumpMigrationMetadata.add(mint);
+    try {
+      const data = await fetchPumpfunTokenMeta(mint, sessionToken, null);
+      const resolvedSymbol = String(data?.symbol || '').trim() || existingSymbol;
+      const resolvedImageUrl = toHttpAssetUrl(data?.imageUrl) || existingImageUrl;
+      if (!resolvedSymbol && !resolvedImageUrl) {
+        return;
+      }
+
+      applyResolvedPumpMigrationVisuals(mint, resolvedSymbol, resolvedImageUrl);
+      emit('pumpfun', 'toasts');
+    } catch (_) {
+      // Keep fallback placeholders when metadata lookup fails.
+    } finally {
+      resolvingPumpMigrationMetadata.delete(mint);
     }
   }
 
@@ -3643,16 +3771,31 @@ export function createAppController(): AppController {
         }
         const mint = String(payload.mint || '').trim();
         if (!mint) return;
-        const token = state.data.pumpTokens.find((item) => item.mint === mint);
-        if (!token || token._migrated) return;
-        token._migrated = true;
-        recordPumpMigration(token);
-        reportPumpMigration(token);
-        enqueuePumpToast(token);
+        const existingToken = state.data.pumpTokens.find((item) => item.mint === mint) || null;
+        if ((existingToken && existingToken._migrated) || (!existingToken && hasRecordedPumpMigration(mint))) {
+          return;
+        }
+
+        const migrationToken = buildPumpMigrationTokenFromPayload(payload, existingToken);
+        if (!migrationToken) return;
+        if (existingToken) {
+          existingToken._migrated = true;
+        }
+
+        reportPumpMigration(migrationToken);
+        if (shouldSurfacePumpMigration(migrationToken)) {
+          recordPumpMigration(migrationToken);
+          enqueuePumpToast(migrationToken);
+          if (!migrationToken.symbol || !migrationToken.imageUrl) {
+            void resolvePumpMigrationMetadata(mint);
+          }
+        }
         state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== mint);
         unsubscribePumpMint(mint);
         refreshPumpPanelCounts();
-        setNotice(`PumpFun migration: ${token.symbol || mint.slice(0, 6)}`);
+        if (shouldSurfacePumpMigration(migrationToken)) {
+          setNotice(`PumpFun migration: ${migrationToken.symbol || mint.slice(0, 6)}`);
+        }
         emit('pumpfun', 'toasts', 'legacy', 'overlay');
       },
     });

@@ -3,6 +3,8 @@ const adminBlockedToken = require('./admin-blocked-token');
 const { isValidAddress } = require('./user-token');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
+const PUMPFUN_MIGRATION_MIN_MCAP = 30000;
+
 function normalizeSource(source) {
   const value = String(normalizeText(source, 64) || 'unknown').trim().toLowerCase();
   return value || 'unknown';
@@ -40,7 +42,8 @@ async function upsertToken(token) {
   const lastPriceChange6h = Number.isFinite(Number(token.priceChange6h)) ? Number(token.priceChange6h) : null;
   const lastPriceChange24h = Number.isFinite(Number(token.priceChange24h)) ? Number(token.priceChange24h) : null;
   const lastTokenCreatedAtMs = Number.isFinite(Number(token.tokenCreatedAt)) ? Math.trunc(Number(token.tokenCreatedAt)) : null;
-  const migrationGraceUntil = source === 'pumpfun-migrated'
+  const qualifiesPumpMigrationBoost = source === 'pumpfun-migrated' && lastMcap != null && lastMcap >= PUMPFUN_MIGRATION_MIN_MCAP;
+  const migrationGraceUntil = qualifiesPumpMigrationBoost
     ? toDateOrNull(token.migrationGraceUntil) || new Date(Date.now() + (10 * 60 * 1000))
     : null;
 
@@ -79,7 +82,7 @@ async function upsertToken(token) {
        last_price_change_24h = COALESCE(EXCLUDED.last_price_change_24h, token_catalog.last_price_change_24h),
        last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
        migration_grace_until = CASE
-         WHEN EXCLUDED.source = 'pumpfun-migrated' THEN
+         WHEN EXCLUDED.source = 'pumpfun-migrated' AND $19 = TRUE THEN
            CASE
              WHEN token_catalog.migration_grace_until IS NULL OR token_catalog.migration_grace_until < NOW()
                THEN EXCLUDED.migration_grace_until
@@ -93,7 +96,7 @@ async function upsertToken(token) {
          ELSE EXCLUDED.is_active_monitor_candidate
        END,
        next_evaluation_at = CASE
-         WHEN EXCLUDED.source = 'pumpfun-migrated'
+         WHEN EXCLUDED.source = 'pumpfun-migrated' AND $19 = TRUE
            THEN LEAST(token_catalog.next_evaluation_at, NOW())
          ELSE token_catalog.next_evaluation_at
        END,
@@ -118,6 +121,7 @@ async function upsertToken(token) {
       migrationGraceUntil,
       isActiveMonitorCandidate,
       address,
+      qualifiesPumpMigrationBoost,
     ]
   );
 
