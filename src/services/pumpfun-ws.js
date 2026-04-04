@@ -11,6 +11,7 @@
  */
 
 const WebSocket = require('ws');
+const { logTrace } = require('../utils/pump-migrate-trace');
 
 const PUMPFUN_WS_URL = 'wss://pumpportal.fun/api/data';
 const RECONNECT_DELAY = 3000;    // 3s between reconnect attempts
@@ -91,6 +92,14 @@ function connect() {
 
     if (msg.txType === 'migrate') {
       const mint = msg.mint;
+      logTrace('pump_migrate_received', {
+        tokenAddress: mint || null,
+        txType: msg.txType || null,
+        symbol: msg.symbol || null,
+        name: msg.name || null,
+        marketCapSol: Number.isFinite(Number(msg?.marketCapSol)) ? Number(msg.marketCapSol) : null,
+        signature: msg.signature || null,
+      });
       if (mint) {
         subscribedTokens.delete(mint);
         stats.subscribedCount = subscribedTokens.size;

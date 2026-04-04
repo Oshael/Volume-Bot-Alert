@@ -27,6 +27,7 @@ const pumpfun = require('./pumpfun-ws');
 const tokenCatalog = require('../models/token-catalog');
 const { getSocketClientIp, isAllowedOrigin } = require('../utils/request-security');
 const { logSecurityEvent } = require('../utils/security-events');
+const { logTrace } = require('../utils/pump-migrate-trace');
 
 let io = null;
 let solPriceTimer = null;
@@ -49,10 +50,36 @@ function sanitizeMint(rawMint) {
 }
 
 function queueCatalogUpsert(token, source = 'unknown') {
+  logTrace('pump_migrate_catalog_queue', {
+    tokenAddress: token?.address || token?.mint || null,
+    source,
+    symbol: token?.symbol || null,
+    name: token?.name || null,
+    marketCap: Number.isFinite(Number(token?.mcap)) ? Number(token.mcap) : null,
+  });
+
   Promise.resolve()
     .then(() => tokenCatalog.upsertToken({ ...token, source }))
+    .then((upserted) => {
+      logTrace('pump_migrate_catalog_upsert_ok', {
+        tokenAddress: upserted?.address || token?.address || token?.mint || null,
+        source: upserted?.source || source,
+        monitorPriority: upserted?.monitor_priority || null,
+        eligibleForMonitoring: upserted?.eligible_for_monitoring == null
+          ? null
+          : Boolean(upserted.eligible_for_monitoring),
+        nextEvaluationAt: upserted?.next_evaluation_at || null,
+        migrationGraceUntil: upserted?.migration_grace_until || null,
+        marketCap: upserted?.last_mcap == null ? null : Number(upserted.last_mcap),
+      });
+    })
     .catch((err) => {
       const address = token?.address || token?.mint || 'unknown';
+      logTrace('pump_migrate_catalog_upsert_error', {
+        tokenAddress: address,
+        source,
+        error: err.message,
+      }, { level: 'error' });
       console.error(`[TokenCatalog] Failed to upsert ${source} token ${address}:`, err.message);
     });
 }

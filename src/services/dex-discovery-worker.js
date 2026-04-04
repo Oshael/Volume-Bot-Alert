@@ -1,6 +1,7 @@
 const tokenCatalog = require('../models/token-catalog');
 const dexscreener = require('./dexscreener');
 const { isValidAddress } = require('../models/user-token');
+const { logTrace } = require('../utils/pump-migrate-trace');
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const PROFILE_LIMIT = 30;
@@ -60,6 +61,11 @@ async function upsertDiscoveredAddress(address) {
     isActiveMonitorCandidate: true,
   });
   await tokenCatalog.scheduleImmediateEvaluation(address);
+  logTrace('dex_discovery_catalog_upsert_new', {
+    tokenAddress: address,
+    source: DISCOVERY_SOURCE,
+    nextEvaluation: 'now',
+  });
 
   status.totalUpserts += 1;
   status.totalNewAddresses += 1;

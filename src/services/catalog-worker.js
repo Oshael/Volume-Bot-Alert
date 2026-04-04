@@ -3,6 +3,7 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
 const config = require('../../config');
+const { logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
 
 const LOOP_INTERVAL_MS = 2000;
 const DEX_REQUEST_BUDGET_PER_MINUTE = 300;
@@ -413,6 +414,16 @@ async function evaluateToken(token) {
 async function evaluateTokenWithData(token, data) {
   if (!data) {
     const retryMs = getDexUnavailableRetryMs(token);
+    if (shouldTraceTokenEvaluation(token)) {
+      logTrace('catalog_eval_result', {
+        tokenAddress: token.address,
+        source: token.source || null,
+        result: 'dex-unavailable',
+        previousEligibilityState: token.eligibility_state || null,
+        previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
+        nextEvaluationAt: new Date(Date.now() + retryMs).toISOString(),
+      }, { level: 'warn' });
+    }
     return tokenCatalog.applyEvaluationResult(token.address, {
       eligibilityState: 'dex-unavailable',
       eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
@@ -431,6 +442,16 @@ async function evaluateTokenWithData(token, data) {
     const nextRetryMs = shouldFastRetryManualBootstrap(token)
       ? MANUAL_BOOTSTRAP_RECHECK_MS
       : DORMANT_RECHECK_MS;
+    if (shouldTraceTokenEvaluation(token)) {
+      logTrace('catalog_eval_result', {
+        tokenAddress: token.address,
+        source: token.source || null,
+        result: 'dex-missing',
+        previousEligibilityState: token.eligibility_state || null,
+        previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
+        nextEvaluationAt: new Date(Date.now() + nextRetryMs).toISOString(),
+      }, { level: 'warn' });
+    }
     return tokenCatalog.applyEvaluationResult(token.address, {
       eligibilityState: 'dex-missing',
       eligibleForMonitoring: false,
@@ -445,9 +466,37 @@ async function evaluateTokenWithData(token, data) {
   const snapshot = derivePrioritySnapshot(bestPair, token);
   const marketCap = snapshot.marketCap;
   const isEligible = snapshot.eligibleForMonitoring;
+  const traceToken = shouldTraceTokenEvaluation(token);
+  const crossedDashboardThreshold = !token?.last_eligible_at && isEligible && marketCap >= 30000;
 
   if (isEligible) status.totalEligible++;
   else status.totalIneligible++;
+
+  if (traceToken) {
+    logTrace('catalog_eval_result', {
+      tokenAddress: token.address,
+      source: token.source || null,
+      result: snapshot.eligibilityState,
+      dexId: bestPair.dexId || null,
+      pairAddress: bestPair.pairAddress || null,
+      marketCap,
+      eligibleForMonitoring: isEligible,
+      monitorPriority: snapshot.monitorPriority,
+      nextEvaluationAt: snapshot.nextEvaluationAt?.toISOString?.() || null,
+    });
+  }
+
+  if (crossedDashboardThreshold) {
+    logTrace('dashboard_eligible_first_seen', {
+      tokenAddress: token.address,
+      source: token.source || null,
+      dexId: bestPair.dexId || null,
+      pairAddress: bestPair.pairAddress || null,
+      marketCap,
+      eligibilityState: snapshot.eligibilityState,
+      monitorPriority: snapshot.monitorPriority,
+    });
+  }
 
   const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
     eligibilityState: snapshot.eligibilityState,
@@ -519,6 +568,19 @@ function getDexPriorityHint(token) {
   return 'dormant';
 }
 
+function shouldTraceTokenEvaluation(token) {
+  if (!shouldTraceAddress(token?.address)) {
+    return false;
+  }
+
+  const source = String(token?.source || '').trim().toLowerCase();
+  if (source === 'pumpfun-migrated') {
+    return true;
+  }
+
+  return source === 'dexscreener-discovery' && String(token?.address || '').trim().toLowerCase().endsWith('pump');
+}
+
 async function runOnce() {
   if (!running) return;
 
@@ -575,6 +637,15 @@ async function runOnce() {
       const processBatch = fetchBatch.slice(processIndex, processIndex + CONCURRENCY);
       await Promise.all(processBatch.map(async (token) => {
         try {
+          if (shouldTraceTokenEvaluation(token) && !token?.last_evaluated_at) {
+            logTrace('catalog_eval_start', {
+              tokenAddress: token.address,
+              source: token.source || null,
+              monitorPriority: token.monitor_priority || null,
+              previousEligibilityState: token.eligibility_state || null,
+              previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
+            });
+          }
           await evaluateTokenWithData(token, dataByAddress.get(token.address) || null);
         } catch (err) {
           status.totalErrors++;

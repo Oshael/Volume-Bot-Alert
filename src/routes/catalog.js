@@ -13,6 +13,7 @@ const dexscreener = require('../services/dexscreener');
 const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
+const { logTrace } = require('../utils/pump-migrate-trace');
 
 const MONITORED_MIN_MCAP = 30000;
 const TRANSIENT_RETRY_MS = 40000;
@@ -898,6 +899,14 @@ router.post('/migrated', catalogWriteLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid token address' });
     }
 
+    logTrace('api_catalog_migrated_received', {
+      tokenAddress: address,
+      source: 'pumpfun-migrated',
+      symbol: tokenInput.symbol || null,
+      name: tokenInput.name || null,
+      marketCap: Number.isFinite(Number(tokenInput.mcap)) ? Number(tokenInput.mcap) : null,
+    });
+
     const token = await tokenCatalog.upsertToken({
       ...tokenInput,
       address,
@@ -906,8 +915,21 @@ router.post('/migrated', catalogWriteLimiter, async (req, res) => {
         : tokenInput.isActiveMonitorCandidate,
     });
 
+    logTrace('api_catalog_migrated_upsert_ok', {
+      tokenAddress: token?.address || address,
+      source: token?.source || 'pumpfun-migrated',
+      nextEvaluationAt: token?.next_evaluation_at || null,
+      migrationGraceUntil: token?.migration_grace_until || null,
+      marketCap: token?.last_mcap == null ? null : Number(token.last_mcap),
+    });
+
     res.status(201).json({ message: 'Migrated token cataloged', token });
   } catch (err) {
+    logTrace('api_catalog_migrated_upsert_error', {
+      tokenAddress: req.body?.address || null,
+      source: 'pumpfun-migrated',
+      error: err.message,
+    }, { level: 'error' });
     console.error('POST /catalog/migrated error:', err.message);
     res.status(500).json({ error: 'Failed to catalog migrated token' });
   }
