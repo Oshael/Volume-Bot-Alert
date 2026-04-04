@@ -55,6 +55,10 @@ function shouldTraceEvent(event, payload = {}) {
   return true;
 }
 
+function isTraceDiscoveryEnabled() {
+  return TRACE_DISCOVERY_ENABLED;
+}
+
 function logTrace(event, payload = {}, options = {}) {
   if (!shouldTraceEvent(event, payload)) {
     return;
@@ -83,6 +87,7 @@ function logTrace(event, payload = {}, options = {}) {
 
 module.exports = {
   getTokenAddress,
+  isTraceDiscoveryEnabled,
   logTrace,
   shouldTraceAddress,
   traceEnabled: TRACE_ENABLED,

@@ -3,7 +3,7 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
 const config = require('../../config');
-const { logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
+const { isTraceDiscoveryEnabled, logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
 
 const LOOP_INTERVAL_MS = 2000;
 const DEX_REQUEST_BUDGET_PER_MINUTE = 300;
@@ -412,9 +412,11 @@ async function evaluateToken(token) {
 }
 
 async function evaluateTokenWithData(token, data) {
+  const traceInitialEval = shouldTraceInitialEvalOnly(token);
+
   if (!data) {
     const retryMs = getDexUnavailableRetryMs(token);
-    if (shouldTraceTokenEvaluation(token)) {
+    if (traceInitialEval) {
       logTrace('catalog_eval_result', {
         tokenAddress: token.address,
         source: token.source || null,
@@ -442,7 +444,7 @@ async function evaluateTokenWithData(token, data) {
     const nextRetryMs = shouldFastRetryManualBootstrap(token)
       ? MANUAL_BOOTSTRAP_RECHECK_MS
       : DORMANT_RECHECK_MS;
-    if (shouldTraceTokenEvaluation(token)) {
+    if (traceInitialEval) {
       logTrace('catalog_eval_result', {
         tokenAddress: token.address,
         source: token.source || null,
@@ -466,13 +468,12 @@ async function evaluateTokenWithData(token, data) {
   const snapshot = derivePrioritySnapshot(bestPair, token);
   const marketCap = snapshot.marketCap;
   const isEligible = snapshot.eligibleForMonitoring;
-  const traceToken = shouldTraceTokenEvaluation(token);
   const crossedDashboardThreshold = !token?.last_eligible_at && isEligible && marketCap >= 30000;
 
   if (isEligible) status.totalEligible++;
   else status.totalIneligible++;
 
-  if (traceToken) {
+  if (traceInitialEval) {
     logTrace('catalog_eval_result', {
       tokenAddress: token.address,
       source: token.source || null,
@@ -578,7 +579,13 @@ function shouldTraceTokenEvaluation(token) {
     return true;
   }
 
-  return source === 'dexscreener-discovery' && String(token?.address || '').trim().toLowerCase().endsWith('pump');
+  return isTraceDiscoveryEnabled()
+    && source === 'dexscreener-discovery'
+    && String(token?.address || '').trim().toLowerCase().endsWith('pump');
+}
+
+function shouldTraceInitialEvalOnly(token) {
+  return shouldTraceTokenEvaluation(token) && !token?.last_evaluated_at;
 }
 
 async function runOnce() {
@@ -637,7 +644,7 @@ async function runOnce() {
       const processBatch = fetchBatch.slice(processIndex, processIndex + CONCURRENCY);
       await Promise.all(processBatch.map(async (token) => {
         try {
-          if (shouldTraceTokenEvaluation(token) && !token?.last_evaluated_at) {
+          if (shouldTraceInitialEvalOnly(token)) {
             logTrace('catalog_eval_start', {
               tokenAddress: token.address,
               source: token.source || null,
