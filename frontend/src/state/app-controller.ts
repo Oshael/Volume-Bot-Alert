@@ -92,6 +92,7 @@ const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HVNC_MAX_AGE_MS = 30 * 60 * 1000;
+const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
 const PUMP_WINDOW_MS = 5 * 60 * 1000;
 const PUMP_VOLUME_BUCKET_MS = 5 * 1000;
 const PUMP_GC_INTERVAL_MS = 30 * 1000;
@@ -3146,6 +3147,14 @@ export function createAppController(): AppController {
     previousMcap: number,
     currentMcap: number,
   ) {
+    if (typeof token.createdAt === 'number' && token.createdAt > 0) {
+      const tokenAgeMs = now - token.createdAt;
+      if (tokenAgeMs < MCAP_ALERT_MIN_TOKEN_AGE_MS) {
+        token._mcapAlertAboveThreshold = false;
+        return null;
+      }
+    }
+
     const mcapChange = (currentMcap - previousMcap) / previousMcap;
     const mcapPct = mcapChange * 100;
     const mcapEligible = isAlertKindEnabled('monitored-mcap') && mcapChange >= mcapThreshold && passesAlertFilters(token);
