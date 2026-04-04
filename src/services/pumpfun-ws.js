@@ -59,6 +59,11 @@ function connect() {
 
     // Subscribe to new token events
     safeSend({ method: 'subscribeNewToken' });
+    safeSend({ method: 'subscribeMigration' });
+    logTrace('pump_migrate_subscription_sent', {
+      tokenAddress: '_global_',
+      method: 'subscribeMigration',
+    });
 
     // Re-subscribe to all tracked tokens
     for (const mint of subscribedTokens) {
