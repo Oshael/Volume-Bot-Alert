@@ -284,6 +284,12 @@ function shouldFastRetryManualBootstrap(token) {
     && !token?.last_eligible_at;
 }
 
+function shouldFastRetryMigratedBootstrap(token) {
+  return String(token?.source || '').trim().toLowerCase() === 'pumpfun-migrated'
+    && isMigrationGraceActive(token)
+    && !token?.last_eligible_at;
+}
+
 function getRateLimitedRetryMs(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const priority = String(token?.monitor_priority || '').trim().toLowerCase();
@@ -317,6 +323,10 @@ function getDexUnavailableRetryMs(token, options = {}) {
     || dexscreener.getThrottleState().mode;
   if (throttleMode !== 'normal') {
     return getRateLimitedRetryMs(token);
+  }
+
+  if (shouldFastRetryMigratedBootstrap(token)) {
+    return LOW_NEAR_RECHECK_MS;
   }
 
   if (shouldFastRetryManualBootstrap(token)) {
