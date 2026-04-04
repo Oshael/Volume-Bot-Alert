@@ -50,6 +50,18 @@ const LOGIN_RELEVANT_NOTICES = new Set([
   'Password reset successful. Please login again.',
 ]);
 
+function getWorkspaceHref(workspace: 'live' | 'history') {
+  return workspace === 'history' ? '/monitor' : '/alerts';
+}
+
+function isPlainPrimaryClick(event: MouseEvent) {
+  return event.button === 0
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.shiftKey
+    && !event.altKey;
+}
+
 function isChangePasswordErrorMessage(message: string) {
   return message === 'Current password is required.'
     || message === 'New password is required.'
@@ -861,8 +873,8 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
         </div>
       </div>
       <div class="workspace-route-nav" aria-label="Workspace navigation">
-        <button type="button" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</button>
-        <button type="button" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">MONITOR</button>
+        <a href="${getWorkspaceHref('live')}" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</a>
+        <a href="${getWorkspaceHref('history')}" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">MONITOR</a>
       </div>
       <div class="workspace-userbar">
         <div class="legacy-user-menu workspace-user-menu" data-user-menu>
@@ -888,10 +900,18 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   const avatarLabel = (state.session.username ?? state.session.email ?? 'U').trim().charAt(0).toUpperCase() || 'U';
   section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
   section.querySelector<HTMLElement>('[data-role="user-avatar"]')!.textContent = avatarLabel;
-  section.querySelector<HTMLButtonElement>('[data-action="open-workspace-live"]')?.addEventListener('click', () => {
+  section.querySelector<HTMLAnchorElement>('[data-action="open-workspace-live"]')?.addEventListener('click', (event) => {
+    if (!isPlainPrimaryClick(event)) {
+      return;
+    }
+    event.preventDefault();
     controller.setWorkspace('live');
   });
-  section.querySelector<HTMLButtonElement>('[data-action="open-workspace-history"]')?.addEventListener('click', () => {
+  section.querySelector<HTMLAnchorElement>('[data-action="open-workspace-history"]')?.addEventListener('click', (event) => {
+    if (!isPlainPrimaryClick(event)) {
+      return;
+    }
+    event.preventDefault();
     controller.setWorkspace('history');
   });
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());

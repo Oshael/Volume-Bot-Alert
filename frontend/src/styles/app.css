@@ -1113,6 +1113,9 @@ a {
 }
 
 .workspace-route-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 34px;
   padding: 0 14px;
   border: 0;
@@ -1120,6 +1123,7 @@ a {
   background: transparent;
   color: rgba(200, 216, 232, 0.78);
   cursor: pointer;
+  text-decoration: none;
   transition: background 160ms ease, color 160ms ease;
 }
 
