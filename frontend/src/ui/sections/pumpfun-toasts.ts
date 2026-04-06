@@ -34,7 +34,7 @@ function renderPumpToast(toast: PumpToastEntry) {
 
   const meta = document.createElement('div');
   meta.className = 'pump-toast-meta';
-  meta.textContent = `AGE ${toast.createdAt ? fmtAge(toast.createdAt) : '-'}  VOL ${fmtMoney(toast.volTotal ?? toast.vol5m)}  MCAP ${fmtMoney(toast.mcap)}`;
+  meta.innerHTML = `AGE <span>${toast.createdAt ? fmtAge(toast.createdAt) : '-'}</span>  VOL <span>${fmtMoney(toast.volTotal ?? toast.vol5m)}</span>  MCAP <span>${fmtMoney(toast.mcap)}</span>`;
 
   body.append(label, ticker, meta);
 
