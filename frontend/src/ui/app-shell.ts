@@ -428,6 +428,7 @@ function getToastsRenderKey(state: AppState) {
       toast.migratedAt,
       toast.mcap,
       toast.vol5m,
+      toast.volTotal,
     ])),
   ].join('|');
 }
@@ -605,6 +606,7 @@ function getPumpfunRenderKey(state: AppState) {
       item.migratedAt,
       item.mcap,
       item.vol5m,
+      item.volTotal,
     ])),
     tokens: state.data.pumpTokens.map((token) => serializePrimitiveList([
       token.mint,

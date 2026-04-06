@@ -34,16 +34,17 @@ function renderPumpToast(toast: PumpToastEntry) {
 
   const meta = document.createElement('div');
   meta.className = 'pump-toast-meta';
-  meta.textContent = `AGE ${toast.createdAt ? fmtAge(toast.createdAt) : '-'}  VOL ${fmtMoney(toast.vol5m)}  MCAP ${fmtMoney(toast.mcap)}`;
+  meta.textContent = `AGE ${toast.createdAt ? fmtAge(toast.createdAt) : '-'}  VOL ${fmtMoney(toast.volTotal ?? toast.vol5m)}  MCAP ${fmtMoney(toast.mcap)}`;
 
   body.append(label, ticker, meta);
 
   const copyButton = document.createElement('button');
   copyButton.type = 'button';
-  copyButton.className = 'action-button small';
+  copyButton.className = 'action-glyph copy-button pump-toast-copy';
   copyButton.dataset.action = 'copy-address';
   copyButton.dataset.address = toast.mint;
-  copyButton.textContent = 'Copy CA';
+  copyButton.title = 'Copy contract';
+  copyButton.textContent = '⧉';
 
   head.append(body, copyButton);
   article.append(head);
