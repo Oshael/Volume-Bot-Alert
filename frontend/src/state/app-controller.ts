@@ -5204,6 +5204,7 @@ export function createAppController(): AppController {
       syncAlertState();
       setNotice('All alerts cleared.');
       emit('alerts', 'legacy', 'overlay');
+      flushEmit();
     },
     removeAlert(id: string) {
       const nextAlerts = state.data.alerts.filter((item) => item.id !== id);
@@ -5213,6 +5214,7 @@ export function createAppController(): AppController {
       state.data.alerts = nextAlerts;
       syncAlertState();
       emit('alerts');
+      flushEmit();
     },
     clearRecentRemovalLog() {
       state.data.recentRemovalLog = [];
