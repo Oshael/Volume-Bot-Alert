@@ -158,6 +158,67 @@ describe('high cap dump alert service', () => {
     }
   });
 
+  it('does not retrigger on recovery alone while the same dump window still qualifies', async () => {
+    const originalGetClient = db.getClient;
+    const originalCreateEvent = tokenAlertEvent.createEvent;
+    const originalGetState = tokenAlertRuleState.getState;
+    const originalUpsertState = tokenAlertRuleState.upsertState;
+    const clientLog = [];
+    let createEventCalls = 0;
+    let upsertCalls = 0;
+
+    db.getClient = async () => createClient(clientLog);
+    tokenAlertRuleState.getState = async () => ({
+      ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
+      tokenAddress: TOKEN_ADDRESS,
+      status: 'triggered',
+      lastBaselineTs: '2026-04-05T18:00:00.000Z',
+      lastBaselineMcap: 2520000,
+      lastWindowLowMcap: 642000,
+      lastCurrentTs: '2026-04-05T18:05:00.000Z',
+      lastCurrentCloseMcap: 2550000,
+      lastAlertedAt: '2026-04-05T18:05:05.000Z',
+      lastAlertedPct: -74.5,
+      rearmRequired: true,
+      metadata: { lastDecision: 'triggered' },
+    });
+    tokenAlertEvent.createEvent = async () => {
+      createEventCalls += 1;
+      throw new Error('should not retrigger while the same dump still qualifies');
+    };
+    tokenAlertRuleState.upsertState = async () => {
+      upsertCalls += 1;
+      throw new Error('should not rewrite state while the same dump is only being suppressed');
+    };
+
+    try {
+      const result = await highCapDumpAlert.evaluateDetection({
+        tokenAddress: TOKEN_ADDRESS,
+        baselineTs: '2026-04-05T18:01:00.000Z',
+        baselineMcap: 2500000,
+        currentTs: '2026-04-05T18:06:00.000Z',
+        currentCloseMcap: 2550000,
+        windowLowMcap: 642000,
+        latestBucketAgeMs: 12000,
+        bucketCount: 5,
+        dumpPct: -74.32,
+      });
+
+      assert.equal(result.action, 'suppressed');
+      assert.equal(result.emitted, false);
+      assert.equal(result.rearmed, false);
+      assert.equal(result.rearmReason, null);
+      assert.equal(createEventCalls, 0);
+      assert.equal(upsertCalls, 0);
+      assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+    } finally {
+      db.getClient = originalGetClient;
+      tokenAlertEvent.createEvent = originalCreateEvent;
+      tokenAlertRuleState.getState = originalGetState;
+      tokenAlertRuleState.upsertState = originalUpsertState;
+    }
+  });
+
   it('rearms without emitting when recovery reaches 85% of the baseline and the dump condition no longer passes', async () => {
     const originalGetClient = db.getClient;
     const originalCreateEvent = tokenAlertEvent.createEvent;

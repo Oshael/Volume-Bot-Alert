@@ -106,20 +106,24 @@ function getEvaluationTsMs(detection, options) {
   return toTimestampMs(detection.currentTs) ?? toTimestampMs(options.now) ?? Date.now();
 }
 
-function getRearmReason(state, detection, options) {
+function getRearmReason(state, detection, options, qualifies = false) {
   if (!hasTriggeredState(state)) {
     return null;
-  }
-
-  const recoveryMcap = computeRecoveryMcap(state, options);
-  if (recoveryMcap != null && detection.currentCloseMcap != null && detection.currentCloseMcap >= recoveryMcap) {
-    return 'recovery';
   }
 
   const lastAlertedAtMs = toTimestampMs(state.lastAlertedAt);
   const evaluationTsMs = getEvaluationTsMs(detection, options);
   if (lastAlertedAtMs != null && evaluationTsMs - lastAlertedAtMs >= options.rearmAfterMs) {
     return 'timeout';
+  }
+
+  if (qualifies) {
+    return null;
+  }
+
+  const recoveryMcap = computeRecoveryMcap(state, options);
+  if (recoveryMcap != null && detection.currentCloseMcap != null && detection.currentCloseMcap >= recoveryMcap) {
+    return 'recovery';
   }
 
   return null;
@@ -251,7 +255,7 @@ async function evaluateDetection(detectionInput, options = {}) {
     await client.query('BEGIN');
 
     const stateBefore = await tokenAlertRuleState.getState(settings.ruleKey, detection.tokenAddress, client);
-    const rearmReason = getRearmReason(stateBefore, detection, settings);
+    const rearmReason = getRearmReason(stateBefore, detection, settings, qualifies);
     let event = null;
     let stateAfter = stateBefore;
     let action = 'noop';
