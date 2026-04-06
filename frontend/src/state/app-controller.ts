@@ -2090,6 +2090,7 @@ export function createAppController(): AppController {
       migratedAt: Date.now(),
       mcap: token.mcap ?? null,
       vol5m: getPumpVolume5mTotal(token),
+      volTotal: token.volTotal ?? null,
     }, ...state.data.pumpToasts].slice(0, 6);
     window.setTimeout(() => {
       dismissPumpToast(toastId);
@@ -2256,6 +2257,7 @@ export function createAppController(): AppController {
       migratedAt: Date.now(),
       mcap: token.mcap ?? null,
       vol5m,
+      volTotal: token.volTotal ?? null,
     }, ...state.data.recentPumpMigrations].slice(0, 12);
 
     const samples = state.data.recentPumpMigrations
@@ -4435,11 +4437,52 @@ export function createAppController(): AppController {
         poolCount: Number(item.meteora.poolCount) || 0,
         noPool: Boolean(item.meteora.noPool),
         lastFetch: Date.now(),
+        lastCheckedAt: item.meteora.lastCheckedAt || null,
         lastSnapshotAt: item.meteora.lastSnapshotAt || null,
         change1h: item.meteora.change1h ?? null,
         change6h: item.meteora.change6h ?? null,
         change24h: item.meteora.change24h ?? null,
       };
+    }
+  }
+
+  function syncMeteoraBatchCache(items: MeteoraBatchItem[] = []) {
+    for (const item of items) {
+      if (!item?.address) continue;
+      state.data.meteoraByAddress[item.address] = {
+        ...(state.data.meteoraByAddress[item.address] || {}),
+        tvl: Number(item.tvl) || 0,
+        poolAddress: item.poolAddress || null,
+        poolCount: Number(item.poolCount) || 0,
+        noPool: Boolean(item.noPool),
+        lastFetch: Date.now(),
+        lastCheckedAt: item.lastCheckedAt || null,
+        lastSnapshotAt: item.lastSnapshotAt || null,
+        change1h: item.change1h ?? null,
+        change6h: item.change6h ?? null,
+        change24h: item.change24h ?? null,
+      };
+    }
+  }
+
+  function getSupplementalMeteoraAddresses(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
+    const monitoredAddresses = new Set(monitoredDashboardTokens.map((item) => item.address));
+    return Object.keys(state.data.trackedTokensByAddress)
+      .filter((address) => !monitoredAddresses.has(address))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  async function refreshSupplementalMeteoraState(token: string, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
+    const addresses = getSupplementalMeteoraAddresses(monitoredDashboardTokens);
+    if (addresses.length === 0) {
+      return;
+    }
+
+    try {
+      const items = await fetchMeteoraBatch(addresses, token);
+      syncMeteoraBatchCache(items);
+    } catch (error) {
+      console.warn('[AppController] Failed to hydrate supplemental Meteora state:', error instanceof Error ? error.message : error);
     }
   }
 
@@ -4470,6 +4513,7 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
+      await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
       if (isLiveWorkspace()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
       } else if (isHistoryWorkspace()) {

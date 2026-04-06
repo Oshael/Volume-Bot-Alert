@@ -2,6 +2,9 @@ const db = require('./db');
 const { isValidAddress } = require('./user-token');
 
 function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
@@ -24,10 +27,10 @@ function normalizeAddressList(addresses) {
   return normalized;
 }
 
-async function insertSnapshot(snapshot) {
+async function insertSnapshot(snapshot, runner = db) {
   const address = normalizeAddress(snapshot.tokenAddress || snapshot.address);
 
-  const { rows } = await db.query(
+  const { rows } = await runner.query(
     `INSERT INTO token_meteora_snapshots (
        token_address, ts, total_tvl, best_pool_address, pool_count, source
      )

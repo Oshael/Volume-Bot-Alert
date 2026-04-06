@@ -4,6 +4,9 @@ const { isValidAddress } = require('./user-token');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
 const PUMPFUN_MIGRATION_MIN_MCAP = 30000;
+const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
+const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
+const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
 
 function normalizeSource(source) {
   const value = String(normalizeText(source, 64) || 'unknown').trim().toLowerCase();
@@ -18,6 +21,35 @@ function toDateOrNull(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function normalizeMeteoraPriorityTier(value) {
+  const tier = String(value || '').trim().toLowerCase();
+  return METEORA_PRIORITY_TIERS.includes(tier) ? tier : null;
+}
+
+function buildMeteoraEligibilityWhereSql(tokenAlias = 'tc', stateAlias = 'ms') {
+  return `${tokenAlias}.is_active_monitor_candidate = TRUE
+    AND (
+      COALESCE(${tokenAlias}.last_mcap, 0) >= 100000
+      OR ${stateAlias}.has_pool = TRUE
+    )`;
+}
+
+function buildMeteoraPriorityTierSql(tokenAlias = 'tc') {
+  return `CASE
+    WHEN COALESCE(${tokenAlias}.last_vol_24h, 0) >= ${METEORA_HIGH_TIER_MIN_VOL_24H} THEN 'high'
+    WHEN COALESCE(${tokenAlias}.last_vol_24h, 0) >= ${METEORA_NORMAL_TIER_MIN_VOL_24H} THEN 'normal'
+    ELSE 'low'
+  END`;
+}
+
+function emptyMeteoraPriorityCounts() {
+  return {
+    high: 0,
+    normal: 0,
+    low: 0,
+  };
 }
 
 async function upsertToken(token) {
@@ -233,17 +265,107 @@ async function countDueForEvaluationSummary() {
   };
 }
 
-async function listEligibleForSnapshots(limit = 25) {
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 200));
+async function listDueForMeteoraSnapshots(limit = 25, tier = null, checkedBefore = null) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 1000));
+  const normalizedTier = normalizeMeteoraPriorityTier(tier);
+  const params = [safeLimit];
+  let tierFilterSql = '';
+  let checkedBeforeSql = '';
+
+  if (normalizedTier) {
+    params.push(normalizedTier);
+    tierFilterSql = `AND ${buildMeteoraPriorityTierSql('tc')} = $${params.length}`;
+  }
+
+  const checkedBeforeDate = toDateOrNull(checkedBefore);
+  if (checkedBeforeDate) {
+    params.push(checkedBeforeDate);
+    checkedBeforeSql = `AND (tc.last_meteora_checked_at IS NULL OR tc.last_meteora_checked_at <= $${params.length})`;
+  }
+
   const { rows } = await db.query(
-    `SELECT *
-     FROM token_catalog
-     WHERE eligible_for_monitoring = TRUE
-     ORDER BY last_evaluated_at DESC NULLS LAST, last_seen_at DESC
+    `SELECT
+       tc.*,
+       ${buildMeteoraPriorityTierSql('tc')} AS meteora_priority_tier
+     FROM token_catalog tc
+     LEFT JOIN token_meteora_state ms
+       ON ms.token_address = tc.address
+     WHERE ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
+       ${tierFilterSql}
+       ${checkedBeforeSql}
+     ORDER BY tc.last_meteora_checked_at ASC NULLS FIRST,
+              tc.last_seen_at DESC,
+              tc.address ASC
      LIMIT $1`,
-    [safeLimit]
+    params
   );
   return rows;
+}
+
+async function countDueForMeteoraSnapshots() {
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS count
+     FROM token_catalog tc
+     LEFT JOIN token_meteora_state ms
+       ON ms.token_address = tc.address
+     WHERE ${buildMeteoraEligibilityWhereSql('tc', 'ms')}`
+  );
+
+  return Number(rows[0]?.count) || 0;
+}
+
+async function countDueForMeteoraSnapshotsByTier() {
+  const { rows } = await db.query(
+    `SELECT
+       ${buildMeteoraPriorityTierSql('tc')} AS meteora_priority_tier,
+       COUNT(*)::int AS count
+     FROM token_catalog tc
+     LEFT JOIN token_meteora_state ms
+       ON ms.token_address = tc.address
+     WHERE ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
+     GROUP BY ${buildMeteoraPriorityTierSql('tc')}`
+  );
+
+  const byTier = emptyMeteoraPriorityCounts();
+  let total = 0;
+
+  for (const row of rows) {
+    const tier = normalizeMeteoraPriorityTier(row.meteora_priority_tier);
+    if (!tier) {
+      continue;
+    }
+    const count = Number(row.count) || 0;
+    byTier[tier] += count;
+    total += count;
+  }
+
+  return {
+    total,
+    byTier,
+  };
+}
+
+async function markMeteoraChecked(addresses, checkedAt = new Date(), runner = db) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return 0;
+  }
+
+  const timestamp = toDateOrNull(checkedAt) || new Date();
+  const result = await runner.query(
+    `UPDATE token_catalog
+     SET last_meteora_checked_at = $2
+     WHERE address = ANY($1::varchar[])`,
+    [unique, timestamp]
+  );
+
+  return result.rowCount || 0;
 }
 
 async function listEligibleVisible(limit = 500, minMcap = 30000) {
@@ -301,6 +423,40 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
      LIMIT $1`,
     [safeLimit, safeMinMcap]
   );
+  return rows;
+}
+
+async function listDashboardMetadataByAddresses(addresses) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const { rows } = await db.query(
+    `SELECT
+       address,
+       symbol,
+       name,
+       last_pair_address,
+       last_pair_url,
+       last_image_url,
+       last_twitter_url,
+       last_mcap,
+       last_vol_1h,
+       last_vol_6h,
+       last_vol_24h,
+       last_token_created_at_ms
+     FROM token_catalog
+     WHERE address = ANY($1::varchar[])`,
+    [unique]
+  );
+
   return rows;
 }
 
@@ -572,9 +728,13 @@ module.exports = {
   listRecent,
   listDueForEvaluation,
   countDueForEvaluationSummary,
-  listEligibleForSnapshots,
+  countDueForMeteoraSnapshots,
+  countDueForMeteoraSnapshotsByTier,
+  listDueForMeteoraSnapshots,
   listEligibleVisible,
   listDashboardMonitored,
+  listDashboardMetadataByAddresses,
+  markMeteoraChecked,
   scheduleImmediateEvaluation,
   reactivateSoftArchivedToken,
   applyEvaluationResult,

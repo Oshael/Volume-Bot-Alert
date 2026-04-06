@@ -112,6 +112,7 @@ export interface MeteoraEntry {
   poolCount?: number;
   noPool?: boolean;
   lastFetch?: number;
+  lastCheckedAt?: string | null;
   lastSnapshotAt?: string | null;
   change1h?: number | null;
   change6h?: number | null;
@@ -211,6 +212,7 @@ export interface PumpMigrationEntry {
   migratedAt: number;
   mcap?: number | null;
   vol5m?: number | null;
+  volTotal?: number | null;
 }
 
 export interface PumpToastEntry {
@@ -222,6 +224,7 @@ export interface PumpToastEntry {
   migratedAt: number;
   mcap?: number | null;
   vol5m?: number | null;
+  volTotal?: number | null;
 }
 
 export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'bidZone' | 'pumpfun';

@@ -432,6 +432,27 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage22-meteora-current-state',
+    name: 'Stage 22 Meteora current-state table',
+    repair: 'node src/utils/db-init-stage22.js',
+    tables: [
+      {
+        table: 'token_meteora_state',
+        columns: [
+          'token_address',
+          'last_checked_at',
+          'has_pool',
+          'current_tvl',
+          'best_pool_address',
+          'pool_count',
+          'last_error',
+          'source',
+          'updated_at',
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

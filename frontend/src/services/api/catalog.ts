@@ -212,6 +212,7 @@ export interface MeteoraBatchItem {
   tvl?: number | null;
   poolAddress?: string | null;
   poolCount?: number;
+  lastCheckedAt?: string | null;
   lastSnapshotAt?: string | null;
   change1h?: number | null;
   change6h?: number | null;

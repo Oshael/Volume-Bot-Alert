@@ -48,6 +48,7 @@ function buildMeteoraSummary(address, summaryRow) {
       tvl: null,
       poolAddress: null,
       poolCount: 0,
+      lastCheckedAt: null,
       lastSnapshotAt: null,
       change1h: null,
       change6h: null,
@@ -56,17 +57,19 @@ function buildMeteoraSummary(address, summaryRow) {
     };
   }
 
-  const latestTvl = Number(summaryRow.current_tvl);
+  const latestTvl = Number(summaryRow.currentTvl);
+  const hasPool = summaryRow.hasPool === true && Number.isFinite(latestTvl) && latestTvl > 0;
   return {
     address,
-    tvl: Number.isFinite(latestTvl) ? latestTvl : null,
-    poolAddress: summaryRow.best_pool_address || null,
-    poolCount: Number(summaryRow.pool_count) || 0,
-    lastSnapshotAt: summaryRow.current_ts || null,
-    change1h: computePctChange(summaryRow.current_tvl, summaryRow.baseline_tvl_1h),
-    change6h: computePctChange(summaryRow.current_tvl, summaryRow.baseline_tvl_6h),
-    change24h: computePctChange(summaryRow.current_tvl, summaryRow.baseline_tvl_24h),
-    noPool: false,
+    tvl: hasPool ? latestTvl : null,
+    poolAddress: hasPool ? (summaryRow.bestPoolAddress || null) : null,
+    poolCount: hasPool ? (Number(summaryRow.poolCount) || 0) : 0,
+    lastCheckedAt: summaryRow.lastCheckedAt || null,
+    lastSnapshotAt: summaryRow.lastSnapshotAt || null,
+    change1h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl1h) : null,
+    change6h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl6h) : null,
+    change24h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl24h) : null,
+    noPool: !hasPool,
   };
 }
 
@@ -90,13 +93,13 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
     const addresses = tokens.map((item) => item.address);
-    const meteoraSummaryRows = await tokenMeteoraSnapshot.listLatestSummaryByAddresses(addresses);
+    const meteoraSummaryRows = await tokenMeteoraState.listSummaryByAddresses(addresses);
     const meteoraByAddress = new Map();
     const marketMcapBaselineByAddress = new Map();
     const marketVolumeBaselineByAddress = new Map();
 
     for (const row of meteoraSummaryRows) {
-      meteoraByAddress.set(row.token_address, row);
+      meteoraByAddress.set(row.tokenAddress, row);
     }
 
     const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([

@@ -99,6 +99,7 @@ describe('Admin panel auth and management', () => {
   let adminToken;
   let userToken;
   let userId;
+  let tokenMarketBucket1m;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -111,6 +112,7 @@ describe('Admin panel auth and management', () => {
     process.env.APP_BASE_URL = 'http://localhost:5173';
     process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
 
+    tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
     const { pool } = require('../src/models/db');
 
     await ensureAccessSchema(pool);

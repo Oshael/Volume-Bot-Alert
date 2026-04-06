@@ -7,6 +7,7 @@ const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketLateralizationRun = require('../models/token-market-lateralization-run');
+const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
@@ -17,9 +18,6 @@ const { logTrace } = require('../utils/pump-migrate-trace');
 
 const MONITORED_MIN_MCAP = 30000;
 const TRANSIENT_RETRY_MS = 40000;
-const METEORA_DELTA_1H_MS = 60 * 60 * 1000;
-const METEORA_DELTA_6H_MS = 6 * 60 * 60 * 1000;
-const METEORA_DELTA_24H_MS = 24 * 60 * 60 * 1000;
 const PROMOTE_RETRY_MAX_ENTRIES = 2000;
 const promoteRetryState = new Map();
 const pumpfunMetaCache = new Map();
@@ -32,6 +30,25 @@ const PUMPFUN_HOTLINK_BLOCKED_IMAGE_HOSTS = new Set([
 function normalizeMinMcap(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
+}
+
+function parseMeteoraBatchAddresses(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const addresses = [...new Set(raw.map((item) => String(item || '').trim()).filter(Boolean))];
+  if (addresses.length === 0) {
+    return { ok: false, error: 'addresses is required' };
+  }
+  if (addresses.length > 500) {
+    return { ok: false, error: 'addresses must contain 500 items or fewer' };
+  }
+
+  for (const address of addresses) {
+    if (!isValidAddress(address)) {
+      return { ok: false, error: 'Invalid token address' };
+    }
+  }
+
+  return { ok: true, addresses };
 }
 
 router.use(authenticate);
@@ -186,54 +203,25 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
-function toDateOrNull(value) {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
-function computeMeteoraDelta(history, latestTvl, windowMs) {
-  if (!Array.isArray(history) || history.length < 2 || !(latestTvl > 0)) {
+function computePctChange(currentValue, baselineValue) {
+  const current = Number(currentValue);
+  const baseline = Number(baselineValue);
+  if (!Number.isFinite(current) || !Number.isFinite(baseline) || !(current > 0) || !(baseline > 0)) {
     return null;
   }
 
-  const now = Date.now();
-  const targetTs = now - windowMs;
-  let baseline = null;
-
-  for (const point of history) {
-    const pointTs = toDateOrNull(point.ts)?.getTime();
-    const tvl = Number(point.total_tvl);
-    if (!Number.isFinite(pointTs) || !(tvl > 0)) {
-      continue;
-    }
-
-    if (pointTs <= targetTs) {
-      baseline = { ts: pointTs, tvl };
-    } else if (!baseline) {
-      baseline = { ts: pointTs, tvl };
-      break;
-    } else {
-      break;
-    }
-  }
-
-  if (!baseline || !(baseline.tvl > 0)) {
-    return null;
-  }
-
-  const pct = ((latestTvl - baseline.tvl) / baseline.tvl) * 100;
+  const pct = ((current - baseline) / baseline) * 100;
   return Math.abs(pct) < 0.01 ? null : pct;
 }
 
-function buildMeteoraSummary(address, historyRows) {
-  const latest = historyRows[historyRows.length - 1] || null;
-  if (!latest) {
+function buildMeteoraSummary(address, summaryRow) {
+  if (!summaryRow) {
     return {
       address,
       tvl: null,
       poolAddress: null,
       poolCount: 0,
+      lastCheckedAt: null,
       lastSnapshotAt: null,
       change1h: null,
       change6h: null,
@@ -242,17 +230,19 @@ function buildMeteoraSummary(address, historyRows) {
     };
   }
 
-  const latestTvl = Number(latest.total_tvl);
+  const latestTvl = Number(summaryRow.currentTvl);
+  const hasPool = summaryRow.hasPool === true && Number.isFinite(latestTvl) && latestTvl > 0;
   return {
     address,
-    tvl: Number.isFinite(latestTvl) ? latestTvl : null,
-    poolAddress: latest.best_pool_address || null,
-    poolCount: Number(latest.pool_count) || 0,
-    lastSnapshotAt: latest.ts || null,
-    change1h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_1H_MS),
-    change6h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_6H_MS),
-    change24h: computeMeteoraDelta(historyRows, latestTvl, METEORA_DELTA_24H_MS),
-    noPool: false,
+    tvl: hasPool ? latestTvl : null,
+    poolAddress: hasPool ? (summaryRow.bestPoolAddress || null) : null,
+    poolCount: hasPool ? (Number(summaryRow.poolCount) || 0) : 0,
+    lastCheckedAt: summaryRow.lastCheckedAt || null,
+    lastSnapshotAt: summaryRow.lastSnapshotAt || null,
+    change1h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl1h) : null,
+    change6h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl6h) : null,
+    change24h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl24h) : null,
+    noPool: !hasPool,
   };
 }
 
@@ -826,6 +816,26 @@ router.get('/bid-zone', catalogReadLimiter, async (req, res) => {
   }
 });
 
+router.post('/meteora/batch', catalogReadLimiter, async (req, res) => {
+  try {
+    const parsed = parseMeteoraBatchAddresses(req.body?.addresses);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const rows = await tokenMeteoraState.listSummaryByAddresses(parsed.addresses);
+    const byAddress = new Map(rows.map((row) => [row.tokenAddress, row]));
+
+    res.json({
+      count: parsed.addresses.length,
+      items: parsed.addresses.map((address) => buildMeteoraSummary(address, byAddress.get(address) || null)),
+    });
+  } catch (err) {
+    console.error('POST /catalog/meteora/batch error:', err.message);
+    res.status(500).json({ error: 'Failed to load Meteora batch summary' });
+  }
+});
+
 router.get('/meteora/:address/history', catalogReadLimiter, async (req, res) => {
   try {
     const address = String(req.params?.address || '').trim();
@@ -838,13 +848,16 @@ router.get('/meteora/:address/history', catalogReadLimiter, async (req, res) => 
       return res.status(400).json({ error: parsedQuery.error });
     }
 
-    const snapshots = await tokenMeteoraSnapshot.listHistoryByAddress(address, parsedQuery.options);
+    const [snapshots, summaryRow] = await Promise.all([
+      tokenMeteoraSnapshot.listHistoryByAddress(address, parsedQuery.options),
+      tokenMeteoraState.getSummaryByAddress(address),
+    ]);
 
     res.json({
       address,
       count: snapshots.length,
       snapshots,
-      summary: buildMeteoraSummary(address, snapshots),
+      summary: buildMeteoraSummary(address, summaryRow),
     });
   } catch (err) {
     console.error('GET /catalog/meteora/:address/history error:', err.message);

@@ -10,6 +10,8 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 const dexscreener = require('../src/services/dexscreener');
+const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
+const tokenMeteoraState = require('../src/models/token-meteora-state');
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
@@ -259,6 +261,88 @@ describe('Catalog routes', () => {
 
     assert.equal(res.status, 400);
     assert.equal(res.body.error, 'limit must be an integer');
+  });
+
+  it('returns Meteora batch summaries for explicit addresses outside the monitored dashboard payload', async () => {
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    let capturedAddresses = null;
+
+    tokenMeteoraState.listSummaryByAddresses = async (addresses) => {
+      capturedAddresses = addresses;
+      return [{
+        tokenAddress: VALID_ADDR,
+        lastCheckedAt: '2026-04-05T22:00:00.000Z',
+        hasPool: true,
+        currentTvl: 42000,
+        bestPoolAddress: 'pool_test_456',
+        poolCount: 2,
+        lastError: null,
+        lastSnapshotAt: '2026-04-05T22:00:00.000Z',
+        baselineTvl1h: 21000,
+        baselineTvl6h: 14000,
+        baselineTvl24h: 7000,
+      }];
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/meteora/batch')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ addresses: [VALID_ADDR] });
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedAddresses, [VALID_ADDR]);
+      assert.equal(res.body.count, 1);
+      assert.equal(res.body.items[0].address, VALID_ADDR);
+      assert.equal(res.body.items[0].tvl, 42000);
+      assert.equal(res.body.items[0].poolCount, 2);
+      assert.equal(res.body.items[0].noPool, false);
+      assert.equal(res.body.items[0].change1h, 100);
+    } finally {
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
+  it('builds Meteora history summary from current state instead of stale snapshot presence alone', async () => {
+    const originalListHistoryByAddress = tokenMeteoraSnapshot.listHistoryByAddress;
+    const originalGetSummaryByAddress = tokenMeteoraState.getSummaryByAddress;
+
+    tokenMeteoraSnapshot.listHistoryByAddress = async () => [{
+      token_address: VALID_ADDR,
+      ts: '2026-04-05T18:00:00.000Z',
+      total_tvl: '9000',
+      best_pool_address: 'pool_test_123',
+      pool_count: 1,
+      source: 'meteora',
+    }];
+    tokenMeteoraState.getSummaryByAddress = async () => ({
+      tokenAddress: VALID_ADDR,
+      lastCheckedAt: '2026-04-05T21:00:00.000Z',
+      hasPool: false,
+      currentTvl: null,
+      bestPoolAddress: null,
+      poolCount: 0,
+      lastError: null,
+      lastSnapshotAt: '2026-04-05T18:00:00.000Z',
+      baselineTvl1h: null,
+      baselineTvl6h: null,
+      baselineTvl24h: null,
+    });
+
+    try {
+      const res = await request(app)
+        .get(`/api/catalog/meteora/${VALID_ADDR}/history`)
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.count, 1);
+      assert.equal(res.body.summary.noPool, true);
+      assert.equal(res.body.summary.tvl, null);
+      assert.equal(res.body.summary.lastSnapshotAt, '2026-04-05T18:00:00.000Z');
+    } finally {
+      tokenMeteoraSnapshot.listHistoryByAddress = originalListHistoryByAddress;
+      tokenMeteoraState.getSummaryByAddress = originalGetSummaryByAddress;
+    }
   });
 
   it('rejects malformed lateralized query params', async () => {
