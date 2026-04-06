@@ -121,6 +121,9 @@ describe('token meteora state model', () => {
       assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112']]);
       assert.match(capturedSql, /FROM token_meteora_state/i);
       assert.match(capturedSql, /latest_snapshot/i);
+      assert.doesNotMatch(capturedSql, /after_1h/i);
+      assert.doesNotMatch(capturedSql, /after_6h/i);
+      assert.doesNotMatch(capturedSql, /after_24h/i);
       assert.equal(rows[0].hasPool, true);
       assert.equal(rows[0].currentTvl, 82000);
       assert.equal(rows[0].baselineTvl24h, 10000);

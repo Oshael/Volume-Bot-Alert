@@ -208,18 +208,18 @@ async function listSummaryByAddresses(addresses, runner = db) {
        latest_snapshot.last_snapshot_at,
        CASE
          WHEN state.has_pool IS TRUE AND state.current_tvl IS NOT NULL
-           THEN COALESCE(before_1h.total_tvl, after_1h.total_tvl)
-         ELSE NULL
+          THEN before_1h.total_tvl
+        ELSE NULL
        END AS baseline_tvl_1h,
        CASE
          WHEN state.has_pool IS TRUE AND state.current_tvl IS NOT NULL
-           THEN COALESCE(before_6h.total_tvl, after_6h.total_tvl)
-         ELSE NULL
+          THEN before_6h.total_tvl
+        ELSE NULL
        END AS baseline_tvl_6h,
        CASE
          WHEN state.has_pool IS TRUE AND state.current_tvl IS NOT NULL
-           THEN COALESCE(before_24h.total_tvl, after_24h.total_tvl)
-         ELSE NULL
+          THEN before_24h.total_tvl
+        ELSE NULL
        END AS baseline_tvl_24h
      FROM state
      LEFT JOIN latest_snapshot
@@ -230,10 +230,10 @@ async function listSummaryByAddresses(addresses, runner = db) {
        WHERE token_address = state.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
-         AND state.last_checked_at IS NOT NULL
-         AND ts <= state.last_checked_at - INTERVAL '1 hour'
-       ORDER BY ts DESC
-       LIMIT 1
+       AND state.last_checked_at IS NOT NULL
+        AND ts <= state.last_checked_at - INTERVAL '1 hour'
+      ORDER BY ts DESC
+      LIMIT 1
      ) AS before_1h ON TRUE
      LEFT JOIN LATERAL (
        SELECT total_tvl
@@ -241,21 +241,10 @@ async function listSummaryByAddresses(addresses, runner = db) {
        WHERE token_address = state.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
-         AND state.last_checked_at IS NOT NULL
-         AND ts > state.last_checked_at - INTERVAL '1 hour'
-       ORDER BY ts ASC
-       LIMIT 1
-     ) AS after_1h ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT total_tvl
-       FROM token_meteora_snapshots
-       WHERE token_address = state.token_address
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-         AND state.last_checked_at IS NOT NULL
-         AND ts <= state.last_checked_at - INTERVAL '6 hour'
-       ORDER BY ts DESC
-       LIMIT 1
+       AND state.last_checked_at IS NOT NULL
+        AND ts <= state.last_checked_at - INTERVAL '6 hour'
+      ORDER BY ts DESC
+      LIMIT 1
      ) AS before_6h ON TRUE
      LEFT JOIN LATERAL (
        SELECT total_tvl
@@ -263,33 +252,11 @@ async function listSummaryByAddresses(addresses, runner = db) {
        WHERE token_address = state.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
-         AND state.last_checked_at IS NOT NULL
-         AND ts > state.last_checked_at - INTERVAL '6 hour'
-       ORDER BY ts ASC
-       LIMIT 1
-     ) AS after_6h ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT total_tvl
-       FROM token_meteora_snapshots
-       WHERE token_address = state.token_address
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-         AND state.last_checked_at IS NOT NULL
-         AND ts <= state.last_checked_at - INTERVAL '24 hour'
-       ORDER BY ts DESC
-       LIMIT 1
+       AND state.last_checked_at IS NOT NULL
+        AND ts <= state.last_checked_at - INTERVAL '24 hour'
+      ORDER BY ts DESC
+      LIMIT 1
      ) AS before_24h ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT total_tvl
-       FROM token_meteora_snapshots
-       WHERE token_address = state.token_address
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-         AND state.last_checked_at IS NOT NULL
-         AND ts > state.last_checked_at - INTERVAL '24 hour'
-       ORDER BY ts ASC
-       LIMIT 1
-     ) AS after_24h ON TRUE
      ORDER BY state.token_address ASC`,
     [normalized]
   );

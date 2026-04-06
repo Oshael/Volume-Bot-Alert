@@ -3095,16 +3095,28 @@ export function createAppController(): AppController {
   }
 
   function shouldSuppressDuplicateAlert(entry: AlertEntry) {
-    if (entry.kind !== 'monitored-mcap') {
-      return false;
+    let fingerprint = '';
+
+    switch (entry.kind) {
+      case 'monitored-mcap':
+        fingerprint = [
+          roundAlertMetric(entry.pct),
+          roundAlertMetric(entry.prevMcap ?? null),
+          roundAlertMetric(entry.mcap ?? null),
+        ].join('|');
+        break;
+      case 'meteora-surge':
+        fingerprint = [
+          roundAlertMetric(entry.pct),
+          roundAlertMetric(entry.mcap ?? null),
+          roundAlertMetric(entry.volume24h ?? null),
+        ].join('|');
+        break;
+      default:
+        return false;
     }
 
     const dedupeKey = `${entry.kind}:${entry.address}`;
-    const fingerprint = [
-      roundAlertMetric(entry.pct),
-      roundAlertMetric(entry.prevMcap ?? null),
-      roundAlertMetric(entry.mcap ?? null),
-    ].join('|');
     const now = Date.now();
     const previous = recentAlertFingerprints.get(dedupeKey);
 
