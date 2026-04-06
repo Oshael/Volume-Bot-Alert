@@ -317,6 +317,7 @@ const ALERT_TOGGLE_FIELDS = [
   { key: 'alert-meteora-surge-enabled', label: 'METEORA 1H' },
   { key: 'alert-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
   { key: 'alert-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
+  { key: 'alert-high-cap-dump-enabled', label: 'HIGH CAP DUMP 5M' },
 ] as const;
 
 const SOUND_TOGGLE_FIELDS = [
@@ -328,6 +329,7 @@ const SOUND_TOGGLE_FIELDS = [
   { key: 'sound-meteora-surge-enabled', label: 'METEORA 1H' },
   { key: 'sound-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
   { key: 'sound-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
+  { key: 'sound-high-cap-dump-enabled', label: 'HIGH CAP DUMP 5M' },
 ] as const;
 
 export function renderLegacyShell(state: AppState, controller: AppController) {

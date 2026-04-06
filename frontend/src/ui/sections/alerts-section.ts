@@ -6,6 +6,10 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const RECENT_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+function isHighCapDumpAlert(alert: AlertEntry) {
+  return alert.kind === 'high-cap-dump-5m';
+}
+
 export function renderAlertsSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'panel legacy-panel alerts-panel';
@@ -177,6 +181,11 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null) {
 
 function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
   const badge = document.createElement('span');
+  if (isHighCapDumpAlert(alert)) {
+    badge.className = `alert-badge-v68 ${toneClass}`;
+    badge.append('💥 Dump Alert!', document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'MCAP 5M')));
+    return badge;
+  }
   if (alert.isOldSurge) {
     const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
     const surgeTitle = tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
@@ -216,6 +225,11 @@ function buildXSearchUrl(symbol: string, address: string) {
 }
 
 function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
+  if (isHighCapDumpAlert(alert)) {
+    appendHighCapDumpFlowLine(container, alert);
+    return;
+  }
+
   const currentVol = fmtMoney(alert.volume5m);
   const currentMcap = fmtMoney(alert.mcap);
   const prevVol = alert.prevVolume5m != null ? fmtMoney(alert.prevVolume5m) : null;
@@ -246,6 +260,11 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 }
 
 function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
+  if (isHighCapDumpAlert(alert)) {
+    appendHighCapDumpStatsLine(container, alert);
+    return;
+  }
+
   container.append(
     buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up current-mcap'),
     buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
@@ -361,6 +380,10 @@ function isXCommunityUrl(url: string | null | undefined) {
 }
 
 function getAlertToneClass(alert: AlertEntry) {
+  if (isHighCapDumpAlert(alert)) {
+    return 'dump-alert';
+  }
+
   if (alert.isOldSurge) {
     const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
     return tokenAgeMs >= RECENT_TOKEN_MIN_AGE_MS && tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'recent-surge' : 'old-surge';
@@ -382,4 +405,38 @@ function getAlertToneClass(alert: AlertEntry) {
   if (pct >= 200) return 'mega';
   if (pct >= 100) return 'critical';
   return 'normal';
+}
+
+function appendHighCapDumpFlowLine(container: HTMLElement, alert: AlertEntry) {
+  const baselineMcap = fmtMoney(alert.baselineMcap ?? alert.prevMcap ?? null);
+  const currentMcap = fmtMoney(alert.mcap);
+  const dropAmount = fmtMoney(getHighCapDumpDropAmount(alert));
+
+  container.append(buildFlowTransition('MCAP', baselineMcap, currentMcap, 'down'));
+  const gap = document.createElement('span');
+  gap.className = 'flow-gap';
+  container.append(gap);
+  container.append(buildMetricPair('DROP', dropAmount, 'down'));
+}
+
+function appendHighCapDumpStatsLine(container: HTMLElement, alert: AlertEntry) {
+  container.append(
+    buildMetricPair('CURRENT', fmtMoney(alert.mcap), 'down current-mcap'),
+    buildMetricPair('DROP', fmtMoney(getHighCapDumpDropAmount(alert)), 'down'),
+    buildMetricPair('LOW 5M', fmtMoney(alert.windowLowMcap ?? null), 'down'),
+    buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+    buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
+    buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
+    buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
+  );
+}
+
+function getHighCapDumpDropAmount(alert: AlertEntry) {
+  const baseline = Number(alert.baselineMcap ?? alert.prevMcap);
+  const windowLow = Number(alert.windowLowMcap);
+  if (!Number.isFinite(baseline) || !Number.isFinite(windowLow)) {
+    return null;
+  }
+
+  return Math.max(0, baseline - windowLow);
 }

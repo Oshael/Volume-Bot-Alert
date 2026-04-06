@@ -39,7 +39,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardMonitored, fetchLateralizedCandidates, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, type BidZonePayload, type DashboardMonitoredToken, type LateralizedPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertEvents, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -115,6 +115,8 @@ const BID_ZONE_PANEL_LIMIT = 24;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
+const BACKEND_ALERT_FEED_LIMIT = 50;
+const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
 const HISTORY_SYNC_PEER_TTL_MS = 6000;
@@ -1642,6 +1644,8 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-pumpfun-vol-enabled');
       case 'pumpfun-hvnc':
         return isConfigEnabled('alert-pumpfun-hvnc-enabled');
+      case 'high-cap-dump-5m':
+        return isConfigEnabled('alert-high-cap-dump-enabled');
       default:
         return true;
     }
@@ -3046,6 +3050,48 @@ export function createAppController(): AppController {
     return String(Math.round(value * 100) / 100);
   }
 
+  function toOptionalNumber(value: number | null | undefined) {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function toOptionalText(value: string | null | undefined) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text || null;
+  }
+
+  function getBackendAlertCreatedAt(triggeredAt: string | null | undefined) {
+    const createdAt = triggeredAt ? new Date(triggeredAt).getTime() : Date.now();
+    return Number.isFinite(createdAt) ? createdAt : Date.now();
+  }
+
+  function buildBackendHighCapDumpAlertMarketFields(event: DashboardAlertEvent) {
+    return {
+      volume1h: toOptionalNumber(event.volume1h),
+      volume6h: toOptionalNumber(event.volume6h),
+      volume24h: toOptionalNumber(event.volume24h),
+      prevMcap: toOptionalNumber(event.baselineMcap),
+      mcap: toOptionalNumber(event.currentCloseMcap) ?? toOptionalNumber(event.mcap),
+      baselineMcap: toOptionalNumber(event.baselineMcap),
+      windowLowMcap: toOptionalNumber(event.windowLowMcap),
+      thresholdPct: toOptionalNumber(event.thresholdPct),
+      pct: toOptionalNumber(event.dumpPct) ?? 0,
+    };
+  }
+
+  function buildBackendHighCapDumpAlertMetaFields(event: DashboardAlertEvent, address: string) {
+    return {
+      pairAddress: toOptionalText(event.pairAddress),
+      symbol: toOptionalText(event.symbol) || address.slice(0, 8),
+      name: toOptionalText(event.name),
+      pairUrl: toOptionalText(event.pairUrl),
+      imageUrl: toOptionalText(event.imageUrl),
+      twitterUrl: toOptionalText(event.twitterUrl),
+      tokenCreatedAt: toOptionalNumber(event.tokenCreatedAt),
+      baselineTs: toOptionalText(event.baselineTs),
+      currentTs: toOptionalText(event.currentTs),
+    };
+  }
+
   function shouldSuppressDuplicateAlert(entry: AlertEntry) {
     if (entry.kind !== 'monitored-mcap') {
       return false;
@@ -3071,13 +3117,87 @@ export function createAppController(): AppController {
 
   function pushAlert(entry: AlertEntry) {
     if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
-      return;
+      return false;
+    }
+    if (state.data.alerts.some((item) => item.id === entry.id)) {
+      return false;
     }
     if (shouldSuppressDuplicateAlert(entry)) {
-      return;
+      return false;
     }
     state.data.alerts = [entry, ...state.data.alerts].slice(0, 100);
     syncAlertState();
+    return true;
+  }
+
+  function buildBackendHighCapDumpAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
+    const address = String(event.address || '').trim();
+    if (!address) {
+      return null;
+    }
+
+    const kind = String(event.kind || event.ruleKey || '').trim().toLowerCase();
+    if (kind && kind !== 'high-cap-dump-5m') {
+      return null;
+    }
+
+    const eventId = Number(event.id);
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      return null;
+    }
+
+    return {
+      id: `backend-high-cap-dump-5m:${eventId}`,
+      kind: 'high-cap-dump-5m',
+      address,
+      mintAddress: address,
+      createdAt: getBackendAlertCreatedAt(event.triggeredAt),
+      label: 'MCAP 5M',
+      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      ...buildBackendHighCapDumpAlertMarketFields(event),
+    };
+  }
+
+  function syncBackendAlertEvents(events: DashboardAlertEvent[] = []) {
+    const nextAlerts = events
+      .map((item) => buildBackendHighCapDumpAlertEntry(item))
+      .filter((item): item is AlertEntry => Boolean(item))
+      .sort((a, b) => a.createdAt - b.createdAt);
+
+    let added = 0;
+    for (const alert of nextAlerts) {
+      if (pushAlert(alert)) {
+        added += 1;
+      }
+    }
+
+    return added;
+  }
+
+  function getMaxBackendAlertEventId(events: DashboardAlertEvent[] = []) {
+    let maxId = 0;
+    for (const item of events) {
+      const eventId = Number(item?.id);
+      if (Number.isInteger(eventId) && eventId > maxId) {
+        maxId = eventId;
+      }
+    }
+    return maxId > 0 ? maxId : null;
+  }
+
+  async function markDashboardAlertEventsSeen(token: string, events: DashboardAlertEvent[], ruleKey?: string | null) {
+    const lastSeenEventId = getMaxBackendAlertEventId(events);
+    if (!lastSeenEventId) {
+      return;
+    }
+
+    try {
+      await updateDashboardAlertCursor({
+        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        lastSeenEventId,
+      }, token);
+    } catch {
+    }
   }
 
   function getAlertSymbol(token: ManualTokenEntry) {
@@ -3615,8 +3735,22 @@ export function createAppController(): AppController {
 
     monitoredRefreshInFlight = true;
     try {
-      const monitoredDashboard = await fetchDashboardMonitored(token);
+      const [monitoredDashboard, dashboardAlertEvents] = await Promise.all([
+        fetchDashboardMonitored(token),
+        fetchDashboardAlertEvents(token, {
+          limit: BACKEND_ALERT_FEED_LIMIT,
+          ruleKey: HIGH_CAP_DUMP_RULE_KEY,
+          mode: 'unseen',
+        }).catch(() => null),
+      ]);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
+      if (dashboardAlertEvents?.events?.length) {
+        const added = syncBackendAlertEvents(dashboardAlertEvents.events);
+        if (added > 0) {
+          void markDashboardAlertEventsSeen(token, dashboardAlertEvents.events, dashboardAlertEvents.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
+        }
+      }
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
         broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
       }
@@ -3797,6 +3931,21 @@ export function createAppController(): AppController {
           setNotice(`PumpFun migration: ${migrationToken.symbol || mint.slice(0, 6)}`);
         }
         emit('pumpfun', 'toasts', 'legacy', 'overlay');
+      },
+      onAlertEvent(payload) {
+        if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
+          return;
+        }
+        const sessionToken = state.session.token;
+        if (!sessionToken) {
+          return;
+        }
+
+        const added = syncBackendAlertEvents([payload]);
+        if (added > 0) {
+          void markDashboardAlertEventsSeen(sessionToken, [payload], payload.ruleKey || payload.kind || HIGH_CAP_DUMP_RULE_KEY);
+          emit('alerts', 'header', 'legacy');
+        }
       },
     });
   }

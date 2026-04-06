@@ -188,6 +188,15 @@ describe('Admin panel auth and management', () => {
       assert.equal(res.status, 403);
     });
 
+    it('GET /api/admin/high-cap-dump-candidates -> 403', async () => {
+      const res = await request(
+        'GET',
+        '/api/admin/high-cap-dump-candidates?addresses=So11111111111111111111111111111111111111112',
+        { token: userToken }
+      );
+      assert.equal(res.status, 403);
+    });
+
     it('no token -> 401', async () => {
       const res = await request('GET', '/api/admin/stats');
       assert.equal(res.status, 401);
@@ -204,6 +213,87 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.loginAttempts24h);
       assert.ok(res.body.users.total >= 2);
       assert.ok(res.body.sessions.active >= 1);
+    });
+  });
+
+  describe('Admin High Cap Dump Inspection', () => {
+    it('validates that addresses are required', async () => {
+      const res = await request('GET', '/api/admin/high-cap-dump-candidates', { token: adminToken });
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error, 'addresses query parameter is required');
+    });
+
+    it('returns admin inspection results from the dump detector', async () => {
+      const originalDetector = tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses;
+      let capturedAddresses = null;
+      let capturedOptions = null;
+
+      tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = async (addresses, options) => {
+        capturedAddresses = addresses;
+        capturedOptions = options;
+        return [
+          {
+            tokenAddress: 'So11111111111111111111111111111111111111112',
+            baselineTs: '2026-04-05T12:00:00.000Z',
+            baselineMcap: 8000000,
+            currentTs: '2026-04-05T12:05:00.000Z',
+            currentCloseMcap: 4200000,
+            windowLowMcap: 3200000,
+            bucketCount: 5,
+            latestBucketAgeMs: 20000,
+            dumpPct: -60,
+            passesHighCapGate: true,
+            passesCoverageGate: true,
+            passesFreshnessGate: true,
+            passesThreshold: true,
+          },
+          {
+            tokenAddress: '7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6',
+            baselineTs: '2026-04-05T12:00:00.000Z',
+            baselineMcap: 3500000,
+            currentTs: '2026-04-05T12:05:00.000Z',
+            currentCloseMcap: 2200000,
+            windowLowMcap: 1500000,
+            bucketCount: 5,
+            latestBucketAgeMs: 10000,
+            dumpPct: -57.14,
+            passesHighCapGate: false,
+            passesCoverageGate: true,
+            passesFreshnessGate: true,
+            passesThreshold: true,
+          },
+        ];
+      };
+
+      try {
+        const res = await request(
+          'GET',
+          '/api/admin/high-cap-dump-candidates?addresses=So11111111111111111111111111111111111111112,7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6&thresholdPct=55&minBucketCount=5&maxLatestBucketAgeMs=120000',
+          { token: adminToken }
+        );
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(capturedAddresses, [
+          'So11111111111111111111111111111111111111112',
+          '7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6',
+        ]);
+        assert.deepEqual(capturedOptions, {
+          windowMinutes: undefined,
+          thresholdPct: 55,
+          minBaselineMcap: undefined,
+          maxLatestBucketAgeMs: 120000,
+          minBucketCount: 5,
+        });
+        assert.equal(res.body.count, 2);
+        assert.equal(res.body.qualifyingCount, 1);
+        assert.equal(res.body.options.thresholdPct, 55);
+        assert.equal(res.body.options.minBaselineMcap, 2000000);
+        assert.equal(res.body.options.minBucketCount, 5);
+        assert.equal(res.body.detections[0].passesAllGates, true);
+        assert.equal(res.body.detections[1].passesAllGates, false);
+      } finally {
+        tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalDetector;
+      }
     });
   });
 

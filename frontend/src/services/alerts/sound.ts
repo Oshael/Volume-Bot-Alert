@@ -43,6 +43,12 @@ const ALERT_PATTERNS: Record<AlertEntry['kind'], ToneStep[]> = {
     { frequency: 783.99, durationMs: 90 },
     { frequency: 1046.5, durationMs: 180 },
   ],
+  'high-cap-dump-5m': [
+    { frequency: 659.25, durationMs: 70 },
+    { frequency: 523.25, durationMs: 70 },
+    { frequency: 392, durationMs: 100 },
+    { frequency: 261.63, durationMs: 180 },
+  ],
 };
 
 const MIGRATE_PATTERN: ToneStep[] = [
@@ -60,6 +66,7 @@ const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'meteora-surge': 'sound-meteora-surge-enabled',
   'pumpfun-vol': 'sound-pumpfun-vol-enabled',
   'pumpfun-hvnc': 'sound-pumpfun-hvnc-enabled',
+  'high-cap-dump-5m': 'sound-high-cap-dump-enabled',
 };
 
 function resolveAlertSoundConfigKey(alert: AlertEntry) {

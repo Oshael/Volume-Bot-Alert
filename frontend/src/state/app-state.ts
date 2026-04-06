@@ -1,6 +1,6 @@
 export interface AlertEntry {
   id: string;
-  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'pumpfun-vol' | 'pumpfun-hvnc';
+  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'pumpfun-vol' | 'pumpfun-hvnc' | 'high-cap-dump-5m';
   address: string;
   mintAddress?: string | null;
   pairAddress?: string | null;
@@ -18,6 +18,11 @@ export interface AlertEntry {
   volume24h?: number | null;
   prevMcap?: number | null;
   mcap?: number | null;
+  baselineMcap?: number | null;
+  windowLowMcap?: number | null;
+  thresholdPct?: number | null;
+  baselineTs?: string | null;
+  currentTs?: string | null;
   pct: number;
   label: string;
   surgeWindow?: '1H' | '6H' | null;

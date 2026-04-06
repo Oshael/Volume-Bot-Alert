@@ -8,8 +8,12 @@ const userAccess = require('../models/user-access');
 const { query } = require('../models/db');
 const socketHub = require('../services/socket-hub');
 const lateralizationWorker = require('../services/lateralization-worker');
+const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/backend-alert-rules');
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const { isValidAddress } = require('../models/user-token');
 
 const router = express.Router();
+const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
 
 function parseInviteCreateOptions(body = {}) {
   const opts = {};
@@ -83,6 +87,87 @@ function parseOptionalIntegerField(value, name, { min, max }) {
   }
 
   return { ok: true, value: parsed };
+}
+
+function parseAddressListQuery(value, { maxItems = 50 } = {}) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(',');
+
+  const unique = Array.from(new Set(
+    rawItems
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ));
+
+  if (!unique.length) {
+    return { ok: false, error: 'addresses query parameter is required' };
+  }
+
+  if (unique.length > maxItems) {
+    return { ok: false, error: `addresses must contain at most ${maxItems} items` };
+  }
+
+  const invalid = unique.find((item) => !isValidAddress(item));
+  if (invalid) {
+    return { ok: false, error: `Invalid token address: ${invalid}` };
+  }
+
+  return { ok: true, value: unique };
+}
+
+function parseHighCapDumpInspectOptions(query = {}) {
+  const addresses = parseAddressListQuery(query.addresses);
+  if (!addresses.ok) return addresses;
+
+  const windowMinutes = parseOptionalIntegerField(query.windowMinutes, 'windowMinutes', { min: 1, max: 60 });
+  if (!windowMinutes.ok) return windowMinutes;
+
+  const thresholdPct = parseOptionalIntegerField(query.thresholdPct, 'thresholdPct', { min: 1, max: 1000 });
+  if (!thresholdPct.ok) return thresholdPct;
+
+  const minBaselineMcap = parseOptionalIntegerField(query.minBaselineMcap, 'minBaselineMcap', { min: 1, max: 1000000000000 });
+  if (!minBaselineMcap.ok) return minBaselineMcap;
+
+  const maxLatestBucketAgeMs = parseOptionalIntegerField(query.maxLatestBucketAgeMs, 'maxLatestBucketAgeMs', { min: 1000, max: 3600000 });
+  if (!maxLatestBucketAgeMs.ok) return maxLatestBucketAgeMs;
+
+  const minBucketCount = parseOptionalIntegerField(query.minBucketCount, 'minBucketCount', { min: 1, max: 60 });
+  if (!minBucketCount.ok) return minBucketCount;
+
+  return {
+    ok: true,
+    addresses: addresses.value,
+    options: {
+      windowMinutes: windowMinutes.value,
+      thresholdPct: thresholdPct.value,
+      minBaselineMcap: minBaselineMcap.value,
+      maxLatestBucketAgeMs: maxLatestBucketAgeMs.value,
+      minBucketCount: minBucketCount.value,
+    },
+  };
+}
+
+function buildHighCapDumpInspectResponse(addresses, options, detections) {
+  const decorated = detections.map((item) => ({
+    ...item,
+    passesAllGates: Boolean(item.passesHighCapGate && item.passesCoverageGate && item.passesFreshnessGate && item.passesThreshold),
+  }));
+
+  return {
+    addresses,
+    options: {
+      windowMinutes: options.windowMinutes ?? 5,
+      thresholdPct: options.thresholdPct ?? 50,
+      minBaselineMcap: options.minBaselineMcap ?? HIGH_CAP_DUMP_RULE.defaults.minBaselineMcap,
+      maxLatestBucketAgeMs: options.maxLatestBucketAgeMs ?? 90000,
+      minBucketCount: options.minBucketCount ?? 4,
+    },
+    count: decorated.length,
+    qualifyingCount: decorated.filter((item) => item.passesAllGates).length,
+    detections: decorated,
+  };
 }
 
 function parseAccessDays(value) {
@@ -187,6 +272,19 @@ router.post('/lateralization/runs', async (req, res) => {
 
     console.error('Admin lateralization run error:', err.message);
     res.status(500).json({ error: 'Failed to compute lateralization run' });
+  }
+});
+
+router.get('/high-cap-dump-candidates', async (req, res) => {
+  const parsed = parseHighCapDumpInspectOptions(req.query || {});
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const detections = await tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses(parsed.addresses, parsed.options);
+    res.json(buildHighCapDumpInspectResponse(parsed.addresses, parsed.options, detections));
+  } catch (err) {
+    console.error('Admin high-cap dump candidates error:', err.message);
+    res.status(500).json({ error: 'Failed to inspect high-cap dump candidates' });
   }
 });
 

@@ -8,6 +8,7 @@
  * - pump:migrate      - token migrated to DEX
  * - pump:status       - PumpFun connection status
  * - sol:price         - SOL/USD price update
+ * - alert:event       - backend-owned alert event payload
  * - auth:revoked      - session revoked; client must logout
  *
  * Events received from clients:
@@ -563,4 +564,13 @@ function getIO() {
   return io;
 }
 
-module.exports = { init, stop, getStatus, getIO, revokeSessionSockets, revokeUserSockets };
+function emitBackendAlertEvent(payload) {
+  if (!io || !payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  io.emit('alert:event', payload);
+  return true;
+}
+
+module.exports = { init, stop, getStatus, getIO, emitBackendAlertEvent, revokeSessionSockets, revokeUserSockets };

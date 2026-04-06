@@ -1,5 +1,6 @@
 const db = require('./db');
 const { isValidAddress } = require('./user-token');
+const { HIGH_CAP_DUMP_RULE_KEY, getBackendAlertRule } = require('../services/backend-alert-rules');
 
 const DEFAULT_LATERALIZATION_MIN_MCAP = 90_000;
 const DEFAULT_LATERALIZATION_MIN_VOL_1H = 1_000;
@@ -27,6 +28,12 @@ const DEFAULT_BID_ZONE_MIN_SUPPORT_DISTANCE_PCT = -3;
 const DEFAULT_BID_ZONE_MAX_SUPPORT_DISTANCE_PCT = 18;
 const DEFAULT_BID_ZONE_MAX_RECENT_RANGE_PCT = 28;
 const DEFAULT_BID_ZONE_MAX_CLOSE_DRIFT_PCT = 30;
+const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
+const DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES = HIGH_CAP_DUMP_RULE.defaults.windowMinutes;
+const DEFAULT_HIGH_CAP_DUMP_THRESHOLD_PCT = HIGH_CAP_DUMP_RULE.defaults.thresholdPct;
+const DEFAULT_HIGH_CAP_DUMP_MIN_BASELINE_MCAP = HIGH_CAP_DUMP_RULE.defaults.minBaselineMcap;
+const DEFAULT_HIGH_CAP_DUMP_MAX_LATEST_BUCKET_AGE_MS = HIGH_CAP_DUMP_RULE.defaults.maxLatestBucketAgeMs;
+const DEFAULT_HIGH_CAP_DUMP_MIN_BUCKETS = HIGH_CAP_DUMP_RULE.defaults.minBucketCount;
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -51,6 +58,85 @@ function clamp01(value) {
 function roundMetric(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
   return Number(value.toFixed(digits));
+}
+
+function toTimestampMs(value) {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.getTime() : null;
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.getTime() : null;
+}
+
+function firstDefinedValue(...values) {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveHighCapDumpOptions(options = {}) {
+  return {
+    thresholdPct: Math.max(0, Number(options.thresholdPct) || DEFAULT_HIGH_CAP_DUMP_THRESHOLD_PCT),
+    minBaselineMcap: Math.max(0, Number(options.minBaselineMcap) || DEFAULT_HIGH_CAP_DUMP_MIN_BASELINE_MCAP),
+    maxLatestBucketAgeMs: Math.max(1, Number(options.maxLatestBucketAgeMs) || DEFAULT_HIGH_CAP_DUMP_MAX_LATEST_BUCKET_AGE_MS),
+    minBucketCount: Math.max(1, Number(options.minBucketCount) || DEFAULT_HIGH_CAP_DUMP_MIN_BUCKETS),
+    referenceTsMs: options.referenceTs == null ? Date.now() : toTimestampMs(options.referenceTs),
+  };
+}
+
+function computeHighCapDumpPct(baselineMcap, windowLowMcap) {
+  if (!(baselineMcap > 0) || !(windowLowMcap > 0)) {
+    return null;
+  }
+
+  return ((windowLowMcap - baselineMcap) / baselineMcap) * 100;
+}
+
+function computeLatestBucketAgeMs(currentTs, referenceTsMs) {
+  const currentTsMs = toTimestampMs(currentTs);
+  if (currentTsMs == null || referenceTsMs == null) {
+    return null;
+  }
+
+  return Math.max(0, referenceTsMs - currentTsMs);
+}
+
+function evaluateHighCapDumpGates(input, options) {
+  return {
+    passesHighCapGate: input.baselineMcap != null && input.baselineMcap >= options.minBaselineMcap,
+    passesCoverageGate: input.bucketCount >= options.minBucketCount,
+    passesFreshnessGate: input.latestBucketAgeMs != null && input.latestBucketAgeMs <= options.maxLatestBucketAgeMs,
+    passesThreshold: input.dumpPct != null && input.dumpPct <= (-1 * options.thresholdPct),
+  };
+}
+
+function normalizeHighCapDumpTextField(primaryValue, secondaryValue) {
+  return firstDefinedValue(primaryValue, secondaryValue) || null;
+}
+
+function normalizeHighCapDumpNumberField(primaryValue, secondaryValue) {
+  return toNumberOrNull(firstDefinedValue(primaryValue, secondaryValue));
+}
+
+function normalizeHighCapDumpBucketCount(primaryValue, secondaryValue) {
+  return Math.max(0, Number(firstDefinedValue(primaryValue, secondaryValue)) || 0);
+}
+
+function normalizeHighCapDumpRow(row) {
+  return {
+    tokenAddress: String(normalizeHighCapDumpTextField(row?.token_address, row?.tokenAddress) || '').trim(),
+    baselineTs: normalizeHighCapDumpTextField(row?.baseline_ts, row?.baselineTs),
+    currentTs: normalizeHighCapDumpTextField(row?.current_ts, row?.currentTs),
+    baselineMcap: normalizeHighCapDumpNumberField(row?.baseline_mcap, row?.baselineMcap),
+    currentCloseMcap: normalizeHighCapDumpNumberField(row?.current_close_mcap, row?.currentCloseMcap),
+    windowLowMcap: normalizeHighCapDumpNumberField(row?.window_low_mcap, row?.windowLowMcap),
+    bucketCount: normalizeHighCapDumpBucketCount(row?.bucket_count, row?.bucketCount),
+  };
 }
 
 function computeSampleStddev(values) {
@@ -780,6 +866,99 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   return rows;
 }
 
+function buildHighCapDumpDetection(row, options = {}) {
+  const normalizedRow = normalizeHighCapDumpRow(row);
+  const settings = resolveHighCapDumpOptions(options);
+  const latestBucketAgeMs = computeLatestBucketAgeMs(normalizedRow.currentTs, settings.referenceTsMs);
+  const dumpPct = computeHighCapDumpPct(normalizedRow.baselineMcap, normalizedRow.windowLowMcap);
+  const gates = evaluateHighCapDumpGates({
+    baselineMcap: normalizedRow.baselineMcap,
+    bucketCount: normalizedRow.bucketCount,
+    latestBucketAgeMs,
+    dumpPct,
+  }, settings);
+
+  return {
+    tokenAddress: normalizedRow.tokenAddress,
+    baselineTs: normalizedRow.baselineTs,
+    baselineMcap: normalizedRow.baselineMcap,
+    currentTs: normalizedRow.currentTs,
+    currentCloseMcap: normalizedRow.currentCloseMcap,
+    windowLowMcap: normalizedRow.windowLowMcap,
+    bucketCount: normalizedRow.bucketCount,
+    latestBucketAgeMs,
+    dumpPct: roundMetric(dumpPct, 2),
+    ...gates,
+  };
+}
+
+async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const safeWindowMinutes = Math.max(1, Math.min(Number(options.windowMinutes) || DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES, 60));
+  const { rows } = await db.query(
+    `WITH requested AS (
+       SELECT UNNEST($1::varchar[]) AS token_address
+     )
+     SELECT
+       requested.token_address,
+       current_row.current_ts,
+       current_row.current_close_mcap,
+       baseline_row.baseline_ts,
+       baseline_row.baseline_mcap,
+       window_stats.window_low_mcap,
+       window_stats.bucket_count
+     FROM requested
+     LEFT JOIN LATERAL (
+       SELECT
+         bucket_ts AS current_ts,
+         close_mcap AS current_close_mcap
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND close_mcap IS NOT NULL
+       ORDER BY bucket_ts DESC
+       LIMIT 1
+     ) AS current_row ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT
+         bucket_ts AS baseline_ts,
+         close_mcap AS baseline_mcap
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND close_mcap IS NOT NULL
+         AND current_row.current_ts IS NOT NULL
+         AND bucket_ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
+       ORDER BY bucket_ts DESC
+       LIMIT 1
+     ) AS baseline_row ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT
+         MIN(low_mcap) AS window_low_mcap,
+         COUNT(*)::int AS bucket_count
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND baseline_row.baseline_ts IS NOT NULL
+         AND current_row.current_ts IS NOT NULL
+         AND bucket_ts > baseline_row.baseline_ts
+         AND bucket_ts <= current_row.current_ts
+         AND (low_mcap IS NOT NULL OR high_mcap IS NOT NULL OR close_mcap IS NOT NULL)
+     ) AS window_stats ON TRUE
+     ORDER BY requested.token_address ASC`,
+    [unique, safeWindowMinutes]
+  );
+
+  return rows.map((row) => buildHighCapDumpDetection(row, options));
+}
+
 async function computeLateralizedCandidates(options = {}) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_LATERALIZATION_HOURS, 48));
   const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
@@ -1498,10 +1677,12 @@ module.exports = {
   listHistoryByAddress,
   deleteByAddresses,
   listCurrentAndBaselineByAddresses,
+  listHighCapDumpDetectionsByAddresses,
   listLateralizedCandidates,
   listBidZoneCandidates,
   debugLateralizedCandidateByAddress,
   __private: {
+    buildHighCapDumpDetection,
     computeAgeHours,
     computeQuantile,
     countTouchClusters,
@@ -1523,5 +1704,6 @@ module.exports = {
     computeSampleStddev,
     scoreBidZoneCandidate,
     scoreLateralizedCandidate,
+    toTimestampMs,
   },
 };

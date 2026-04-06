@@ -1,17 +1,31 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
-const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
+const tokenMeteoraState = require('../models/token-meteora-state');
+const backendAlertFeed = require('../services/backend-alert-feed');
 
 const MONITORED_MIN_MCAP = 30000;
 
 function normalizeMinMcap(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
+}
+
+function parseOptionalEventId(value, name) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return { ok: true, value: undefined };
+  }
+
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return { ok: false, error: `${name} must be a positive integer` };
+  }
+
+  return { ok: true, value: parsed };
 }
 
 router.use(authenticate);
@@ -144,8 +158,68 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
   }
 });
 
+router.get('/alert-events', dashboardLimiter, async (req, res) => {
+  const afterId = parseOptionalEventId(req.query?.afterId, 'afterId');
+  if (!afterId.ok) {
+    return res.status(400).json({ error: afterId.error });
+  }
+
+  try {
+    const payload = await backendAlertFeed.listDashboardAlertEvents({
+      userId: req.user.id,
+      ruleKey: req.query?.ruleKey,
+      limit: req.query?.limit,
+      mode: req.query?.mode,
+      afterId: afterId.value,
+    });
+    res.json(payload);
+  } catch (err) {
+    if (err.code === 'UNSUPPORTED_ALERT_RULE') {
+      res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
+      return;
+    }
+    console.error('GET /dashboard/alert-events error:', err.message);
+    res.status(500).json({ error: 'Failed to load dashboard alert events' });
+  }
+});
+
+router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const lastSeenEventId = parseOptionalEventId(req.body?.lastSeenEventId, 'lastSeenEventId');
+  if (!lastSeenEventId.ok) {
+    return res.status(400).json({ error: lastSeenEventId.error });
+  }
+
+  const lastAckedEventId = parseOptionalEventId(req.body?.lastAckedEventId, 'lastAckedEventId');
+  if (!lastAckedEventId.ok) {
+    return res.status(400).json({ error: lastAckedEventId.error });
+  }
+
+  if (lastSeenEventId.value == null && lastAckedEventId.value == null) {
+    return res.status(400).json({ error: 'lastSeenEventId or lastAckedEventId is required' });
+  }
+
+  try {
+    const cursor = await backendAlertFeed.updateDashboardAlertCursor(req.user.id, {
+      ruleKey: req.body?.ruleKey,
+      lastSeenEventId: lastSeenEventId.value,
+      lastAckedEventId: lastAckedEventId.value,
+    });
+
+    res.json({ cursor });
+  } catch (err) {
+    if (err.code === 'UNSUPPORTED_ALERT_RULE') {
+      res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
+      return;
+    }
+    console.error('POST /dashboard/alert-events/cursor error:', err.message);
+    res.status(500).json({ error: 'Failed to update dashboard alert cursor' });
+  }
+});
+
 router.__private = {
+  buildMeteoraSummary,
   buildMarketBaseline,
+  parseOptionalEventId,
 };
 
 module.exports = router;

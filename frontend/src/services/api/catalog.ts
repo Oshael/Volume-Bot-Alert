@@ -89,6 +89,47 @@ export interface DashboardMonitoredPayload {
   tokens: DashboardMonitoredToken[];
 }
 
+export interface DashboardAlertEvent {
+  id: number;
+  kind?: string | null;
+  ruleKey?: string | null;
+  address: string;
+  symbol?: string | null;
+  name?: string | null;
+  pairAddress?: string | null;
+  pairUrl?: string | null;
+  imageUrl?: string | null;
+  twitterUrl?: string | null;
+  tokenCreatedAt?: number | null;
+  mcap?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
+  volume24h?: number | null;
+  baselineTs?: string | null;
+  baselineMcap?: number | null;
+  windowLowMcap?: number | null;
+  currentTs?: string | null;
+  currentCloseMcap?: number | null;
+  dumpPct?: number | null;
+  thresholdPct?: number | null;
+  triggeredAt?: string | null;
+}
+
+export interface DashboardAlertEventsPayload {
+  generatedAt?: string | null;
+  kind?: string | null;
+  ruleKey?: string | null;
+  mode?: string | null;
+  cursor?: {
+    ruleKey?: string | null;
+    lastSeenEventId?: number | null;
+    lastAckedEventId?: number | null;
+    updatedAt?: string | null;
+  } | null;
+  count: number;
+  events: DashboardAlertEvent[];
+}
+
 export interface LateralizedCandidate {
   address: string;
   symbol?: string | null;
@@ -207,6 +248,63 @@ export function fetchDashboardMonitored(token?: string | null) {
       generatedAt: response.generatedAt ?? null,
       tokens: response.tokens || [],
     }));
+}
+
+export function fetchMeteoraBatch(addresses: string[], token?: string | null) {
+  return apiFetch<{ count?: number; items?: MeteoraBatchItem[] }>('/api/catalog/meteora/batch', {
+    method: 'POST',
+    body: JSON.stringify({ addresses }),
+    token,
+  }).then((response) => response.items || []);
+}
+
+export function fetchDashboardAlertEvents(token?: string | null, options?: { limit?: number; ruleKey?: string; mode?: string; afterId?: number }) {
+  const params = new URLSearchParams();
+  if (options?.limit) {
+    params.set('limit', String(options.limit));
+  }
+  if (options?.ruleKey) {
+    params.set('ruleKey', String(options.ruleKey));
+  }
+  if (options?.mode) {
+    params.set('mode', String(options.mode));
+  }
+  if (options?.afterId) {
+    params.set('afterId', String(options.afterId));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return apiFetch<DashboardAlertEventsPayload>(`/api/dashboard/alert-events${suffix}`, { token })
+    .then((response) => ({
+      generatedAt: response.generatedAt ?? null,
+      kind: response.kind ?? null,
+      ruleKey: response.ruleKey ?? null,
+      mode: response.mode ?? null,
+      cursor: response.cursor ?? null,
+      count: Number(response.count) || 0,
+      events: response.events || [],
+    }));
+}
+
+export function updateDashboardAlertCursor(
+  payload: { ruleKey?: string | null; lastSeenEventId?: number | null; lastAckedEventId?: number | null },
+  token?: string | null
+) {
+  return apiFetch<{
+    cursor?: {
+      ruleKey?: string | null;
+      lastSeenEventId?: number | null;
+      lastAckedEventId?: number | null;
+      updatedAt?: string | null;
+    } | null;
+  }>('/api/dashboard/alert-events/cursor', {
+    method: 'POST',
+    body: JSON.stringify({
+      ruleKey: payload.ruleKey ?? null,
+      lastSeenEventId: payload.lastSeenEventId ?? null,
+      lastAckedEventId: payload.lastAckedEventId ?? null,
+    }),
+    token,
+  });
 }
 
 export function fetchLateralizedCandidates(token?: string | null, options?: { limit?: number }) {

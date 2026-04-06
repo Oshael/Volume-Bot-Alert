@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { resolveApiBase } from '../api/base';
+import type { DashboardAlertEvent } from '../api/catalog';
 
 let socket: Socket | null = null;
 const desiredPumpSubscriptions = new Set<string>();
@@ -32,6 +33,7 @@ export function bindSocketLifecycle(options: {
   onPumpTrade?: (payload: Record<string, unknown>) => void;
   onPumpMigrate?: (payload: Record<string, unknown>) => void;
   onSolPrice?: (payload: { price?: number }) => void;
+  onAlertEvent?: (payload: DashboardAlertEvent) => void;
 }) {
   const current = connectSocket();
 
@@ -44,6 +46,7 @@ export function bindSocketLifecycle(options: {
   current.off('pump:trade');
   current.off('pump:migrate');
   current.off('sol:price');
+  current.off('alert:event');
 
   current.on('connect', () => {
     for (const mint of desiredPumpSubscriptions) {
@@ -82,6 +85,10 @@ export function bindSocketLifecycle(options: {
 
   current.on('sol:price', (payload: { price?: number }) => {
     options.onSolPrice?.(payload);
+  });
+
+  current.on('alert:event', (payload: DashboardAlertEvent) => {
+    options.onAlertEvent?.(payload);
   });
 
   return current;

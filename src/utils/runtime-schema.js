@@ -343,6 +343,85 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage19-token-alert-persistence',
+    name: 'Stage 19 token alert persistence foundation',
+    repair: 'node src/utils/db-init-stage19.js',
+    tables: [
+      {
+        table: 'token_alert_events',
+        columns: [
+          'id',
+          'rule_key',
+          'token_address',
+          'baseline_ts',
+          'baseline_mcap',
+          'window_low_mcap',
+          'current_ts',
+          'current_close_mcap',
+          'dump_pct',
+          'threshold_pct',
+          'triggered_at',
+          'metadata',
+          'created_at',
+        ],
+        defaults: {
+          metadata: "'{}'::jsonb",
+        },
+      },
+      {
+        table: 'token_alert_rule_state',
+        columns: [
+          'rule_key',
+          'token_address',
+          'status',
+          'last_baseline_ts',
+          'last_baseline_mcap',
+          'last_window_low_mcap',
+          'last_current_ts',
+          'last_current_close_mcap',
+          'last_alerted_at',
+          'last_alerted_pct',
+          'rearm_required',
+          'metadata',
+          'updated_at',
+        ],
+        defaults: {
+          status: "'idle'::character varying",
+          rearm_required: 'false',
+          metadata: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
+  {
+    key: 'stage20-alert-delivery-cursors',
+    name: 'Stage 20 alert delivery cursors',
+    repair: 'node src/utils/db-init-stage20.js',
+    tables: [
+      {
+        table: 'alert_delivery_cursors',
+        columns: [
+          'user_id',
+          'rule_key',
+          'last_seen_event_id',
+          'last_acked_event_id',
+          'updated_at',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage21-meteora-scheduling-foundation',
+    name: 'Stage 21 Meteora scheduling foundation',
+    repair: 'node src/utils/db-init-stage21.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: ['last_meteora_checked_at'],
+      },
+    ],
+  },
+  {
     key: 'stage14-pump-migration-grace',
     name: 'Stage 14 PumpFun migration grace field',
     repair: 'node src/utils/db-init-stage14.js',
