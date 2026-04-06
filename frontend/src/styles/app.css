@@ -882,6 +882,15 @@ a {
 .pump-toast-copy {
   width: 24px;
   height: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
   border-radius: 6px;
   flex: 0 0 auto;
   font-size: 12px;
@@ -1594,6 +1603,12 @@ a {
 .legacy-auth-panel-user-settings {
   width: min(920px, calc(100vw - 28px));
   overflow: auto;
+}
+
+.legacy-auth-panel-block-warning {
+  width: min(400px, calc(100vw - 24px));
+  padding: 20px 24px;
+  gap: 14px;
 }
 
 .legacy-auth-panel-settings {
@@ -3079,6 +3094,181 @@ a {
   background: rgba(16, 24, 36, 0.95);
 }
 
+.legacy-auth-modal[data-auth-modal-scope="block-warning"] .legacy-auth-modal-backdrop {
+  animation: legacy-block-warning-fade-in 0.15s ease-out;
+}
+
+.legacy-auth-modal[data-auth-modal-scope="block-warning"] .legacy-auth-panel-block-warning {
+  animation: legacy-block-warning-enter 0.2s ease-out;
+}
+
+.legacy-block-warning-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.legacy-block-warning-title {
+  color: #eef4ff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.legacy-block-warning-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(216, 228, 245, 0.82);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.legacy-block-warning-close:hover,
+.legacy-block-warning-close:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef4ff;
+}
+
+.legacy-block-warning-copy {
+  color: rgba(190, 203, 224, 0.82);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.legacy-block-warning-copy strong {
+  color: #eef4ff;
+  font-weight: 700;
+}
+
+.legacy-block-warning-address {
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(15, 22, 32, 0.92);
+  color: rgba(186, 200, 220, 0.78);
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.legacy-block-warning-address:hover {
+  border-color: rgba(116, 140, 179, 0.22);
+}
+
+.legacy-block-warning-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.legacy-block-warning-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: rgba(156, 171, 194, 0.72);
+  font-size: 11px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.legacy-block-warning-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: rgba(237, 91, 122, 0.9);
+}
+
+.legacy-block-warning-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.legacy-block-warning-button {
+  min-height: 30px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.legacy-block-warning-button-cancel {
+  border: 0.5px solid rgba(113, 132, 163, 0.58);
+  background: transparent;
+  color: #d7e0ec;
+}
+
+.legacy-block-warning-button-cancel:hover,
+.legacy-block-warning-button-cancel:focus-visible {
+  border-color: rgba(151, 173, 208, 0.78);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.legacy-block-warning-button-danger {
+  border: 0;
+  background: rgba(237, 91, 122, 0.12);
+  color: #ff7f98;
+  font-weight: 600;
+}
+
+.legacy-block-warning-button-danger:hover,
+.legacy-block-warning-button-danger:focus-visible {
+  background: rgba(237, 91, 122, 0.18);
+  color: #ff98ad;
+}
+
+.legacy-block-warning-button:disabled,
+.legacy-block-warning-close:disabled {
+  opacity: 0.52;
+  cursor: default;
+}
+
+@keyframes legacy-block-warning-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes legacy-block-warning-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 860px) {
   .legacy-user-settings-grid {
     grid-template-columns: 1fr;
@@ -3275,23 +3465,26 @@ label,
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-grid;
+  place-items: center;
   border: 1px solid rgba(0, 212, 255, 0.4);
   color: var(--cyan);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
   cursor: help;
+  text-indent: 0;
+  padding-left: 1px;
 }
 
 .config-help-panel {
   display: none;
   position: absolute;
   top: calc(100% + 8px);
-  left: 0;
-  width: 280px;
+  right: 0;
+  left: auto;
+  width: min(280px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid rgba(0, 212, 255, 0.2);

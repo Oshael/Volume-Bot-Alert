@@ -332,6 +332,10 @@ const SOUND_TOGGLE_FIELDS = [
   { key: 'sound-high-cap-dump-enabled', label: 'HIGH CAP DUMP 5M' },
 ] as const;
 
+const SAFETY_TOGGLE_FIELDS = [
+  { key: 'block-warning-enabled', label: 'BLOCK TOKEN WARNING' },
+] as const;
+
 export function renderLegacyShell(state: AppState, controller: AppController) {
   const wrapper = document.createElement('section');
   wrapper.className = 'legacy-shell';
@@ -945,7 +949,8 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
 }
 
 export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
-  if (!isProfileAuthPanel(state.ui.authPanel)) {
+  const hasBlockTokenWarning = state.session.status === 'authenticated' && Boolean(state.ui.blockTokenWarning);
+  if (!isProfileAuthPanel(state.ui.authPanel) && !hasBlockTokenWarning) {
     return null;
   }
 
@@ -969,6 +974,12 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
     overlay.innerHTML = renderBlockedTokensModal(state);
     bindProfileModalCloseActions(overlay, controller);
     bindBlockedTokensPanel(overlay, controller);
+    return overlay;
+  }
+
+  if (hasBlockTokenWarning) {
+    overlay.innerHTML = renderBlockTokenWarningModal(state);
+    bindBlockTokenWarningModal(overlay, controller);
     return overlay;
   }
 
@@ -1012,6 +1023,72 @@ function renderProfileModalShell(options: {
       </div>
     </div>
   `;
+}
+
+function renderBlockTokenWarningModal(state: AppState) {
+  const warning = state.ui.blockTokenWarning;
+  if (!warning) {
+    return '';
+  }
+
+  const label = warning.label || warning.address.slice(0, 8);
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="block-token-warning" data-auth-modal-scope="block-warning">
+      <div class="legacy-auth-modal-backdrop" data-action="close-block-token-warning"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-block-warning" data-auth-panel="block-token-warning" role="dialog" aria-modal="true" aria-labelledby="block-token-warning-title">
+        <div class="legacy-block-warning-head">
+          <strong id="block-token-warning-title" class="legacy-block-warning-title">Block token</strong>
+          <button type="button" class="legacy-block-warning-close" data-action="close-block-token-warning" aria-label="Close dialog">X</button>
+        </div>
+        <div class="legacy-block-warning-copy">Hide <strong>${escapeHtml(label)}</strong> from your workspace and stop all alerts for this token.</div>
+        <div
+          class="legacy-block-warning-address"
+          title="${escapeHtml(warning.address)}"
+        >${escapeHtml(warning.address)}</div>
+        <div class="legacy-block-warning-footer">
+          <label class="legacy-block-warning-toggle">
+            <input
+              type="checkbox"
+              data-action="toggle-block-token-warning-skip"
+              ${warning.dontShowAgain ? 'checked' : ''}
+              ${state.ui.busy ? 'disabled' : ''}
+            />
+            <span>Don't warn again</span>
+          </label>
+          <div class="legacy-block-warning-actions">
+            <button type="button" class="legacy-block-warning-button legacy-block-warning-button-cancel" data-action="cancel-block-token-warning" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+            <button type="button" class="legacy-block-warning-button legacy-block-warning-button-danger" data-action="confirm-block-token-warning" ${state.ui.busy ? 'disabled' : ''}>Block</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindBlockTokenWarningModal(section: ParentNode, controller: AppController) {
+  const panel = section.querySelector<HTMLElement>('[data-auth-panel="block-token-warning"]');
+  if (!panel) {
+    return;
+  }
+
+  bindFocusTrap(panel);
+
+  section.querySelectorAll<HTMLElement>('[data-action="close-block-token-warning"], [data-action="cancel-block-token-warning"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void controller.cancelBlockedTokenWarning();
+    });
+  });
+
+  section.querySelector<HTMLInputElement>('[data-action="toggle-block-token-warning-skip"]')?.addEventListener('change', (event) => {
+    const target = event.currentTarget as HTMLInputElement | null;
+    controller.setBlockedTokenWarningDontShowAgain(Boolean(target?.checked));
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="confirm-block-token-warning"]')?.addEventListener('click', () => {
+    void controller.confirmBlockedTokenWarning();
+  });
 }
 
 function renderLegacyLogin(state: AppState, controller: AppController) {
@@ -2496,6 +2573,17 @@ function renderBotSettingsFields(state: AppState) {
     ${renderOldSurgeThresholdMenu(state)}
     ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
     ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
+    ${renderConfigToggleMenu(
+      state,
+      'Safety prompts',
+      'Choose which confirmation prompts should appear before destructive workspace actions.',
+      SAFETY_TOGGLE_FIELDS,
+      {
+        helpLabel: 'What are safety prompts?',
+        helpText: 'Choose which confirmation prompts should appear before destructive workspace actions.',
+        hideSummary: true,
+      },
+    )}
     ${state.session.role === 'admin' ? renderAdminChainField(state) : ''}
     <div class="legacy-sound-row">
       <div class="config-item config-item-sound config-item-sound-volume">
@@ -3399,11 +3487,14 @@ function renderConfigToggleMenu(
   label: string,
   summaryLabel: string,
   fields: ReadonlyArray<{ key: string; label: string }>,
+  options?: { helpLabel?: string; helpText?: string; hideSummary?: boolean },
 ) {
   const enabledCount = fields.filter((field) => isConfigEnabled(state, field.key)).length;
   const safeLabel = escapeHtml(label);
   const safeSummaryLabel = escapeHtml(summaryLabel);
   const safeToggleKey = escapeHtml(label.toLowerCase().replace(/\s+/g, '-'));
+  const safeHelpLabel = escapeHtml(options?.helpLabel || `What is ${label}?`);
+  const safeHelpText = options?.helpText ? escapeHtml(options.helpText) : '';
   const shouldUseScrollableList = fields.length > 6;
   const listClass = shouldUseScrollableList
     ? 'config-toggle-list config-toggle-list-scroll'
@@ -3413,11 +3504,19 @@ function renderConfigToggleMenu(
     : 'sort-menu-dropdown config-menu-dropdown';
   return `
     <div class="config-item config-item-menu">
-      <label>${safeLabel}</label>
+      <label>
+        <span>${safeLabel}</span>
+        ${safeHelpText ? `
+          <span class="config-help-hover" tabindex="0" aria-label="${safeHelpLabel}">
+            <span class="config-help-trigger">?</span>
+            <span class="config-help-panel">${safeHelpText}</span>
+          </span>
+        ` : ''}
+      </label>
       <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
         <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="${safeToggleKey}">${enabledCount}/${fields.length} on</button>
         <div class="${dropdownClass}">
-          <div class="config-menu-summary">${safeSummaryLabel}</div>
+          ${options?.hideSummary ? '' : `<div class="config-menu-summary">${safeSummaryLabel}</div>`}
           <div class="${listClass}">
             ${fields.map((field) => {
               const enabled = isConfigEnabled(state, field.key);
