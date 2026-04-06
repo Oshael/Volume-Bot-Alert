@@ -72,6 +72,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
     button.addEventListener('click', () => {
       const alertId = button.dataset.alertId;
       if (alertId) {
+        removeAlertRowImmediately(section, button);
         controller.removeAlert(alertId);
       }
     });
@@ -79,6 +80,29 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   return section;
+}
+
+function removeAlertRowImmediately(section: HTMLElement, button: HTMLButtonElement) {
+  const row = button.closest<HTMLElement>('.alert-row');
+  const list = section.querySelector<HTMLElement>('.alerts-list');
+  const count = section.querySelector<HTMLElement>('.count');
+
+  row?.remove();
+
+  if (count && list) {
+    const nextCount = list.querySelectorAll('.alert-row').length;
+    count.textContent = String(nextCount);
+
+    if (nextCount === 0) {
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      const emptyText = document.createElement('div');
+      emptyText.className = 'empty-text';
+      emptyText.textContent = 'No alerts match the current search.';
+      emptyState.append(emptyText);
+      list.replaceChildren(emptyState);
+    }
+  }
 }
 
 function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals']) {
