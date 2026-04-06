@@ -39,6 +39,32 @@ describe('catalog worker drift compensation', () => {
     assert.equal(lowDustRetryMs, 2 * 60 * 1000);
   });
 
+  it('applies the 30s low-activity cooldown to dex-unavailable high and normal retries', () => {
+    const highRetryMs = catalogWorker.__private.getDexUnavailableRetryMs({
+      monitor_priority: 'high',
+      last_mcap: 250000,
+      last_vol_24h: 2500,
+    }, { throttleMode: 'normal' });
+    const normalRetryMs = catalogWorker.__private.getDexUnavailableRetryMs({
+      monitor_priority: 'normal',
+      last_mcap: 60000,
+      last_vol_24h: 2800,
+    }, { throttleMode: 'normal' });
+
+    assert.equal(highRetryMs, 30 * 1000);
+    assert.equal(normalRetryMs, 30 * 1000);
+  });
+
+  it('applies the 30s low-activity cooldown to rate-limited high retries', () => {
+    const retryMs = catalogWorker.__private.getDexUnavailableRetryMs({
+      monitor_priority: 'high',
+      last_mcap: 250000,
+      last_vol_24h: 1200,
+    }, { throttleMode: 'recovery' });
+
+    assert.equal(retryMs, 30 * 1000);
+  });
+
   it('keeps migrated low-dust tokens on the low-near path during migration grace', () => {
     const token = {
       source: 'pumpfun-migrated',
@@ -69,7 +95,7 @@ describe('catalog worker drift compensation', () => {
     assert.equal(catalogWorker.__private.getRateLimitedRetryMs(token), 2 * 60 * 1000);
   });
 
-  it('uses low-near cadence for migrated low-dust snapshots during grace', () => {
+  it('still honors the 30s low-activity cooldown for migrated low-dust snapshots during grace', () => {
     const now = Date.now();
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({
       marketCap: 9000,
@@ -83,7 +109,35 @@ describe('catalog worker drift compensation', () => {
     const nextMs = snapshot.nextEvaluationAt.getTime() - now;
     assert.equal(snapshot.monitorPriority, 'low');
     assert.equal(snapshot.eligibleForMonitoring, true);
-    assert.ok(nextMs >= 15000 && nextMs <= 18050, `expected low-near cadence, got ${nextMs}ms`);
+    assert.ok(nextMs >= 30000 && nextMs <= 30100, `expected low-activity cooldown, got ${nextMs}ms`);
+  });
+
+  it('slows high-activity buckets to at least 30s when 24h volume is below 3k', () => {
+    const now = Date.now();
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 250000,
+      volume: { h24: 2500, h6: 60000 },
+      priceChange: {},
+    });
+
+    const nextMs = snapshot.nextEvaluationAt.getTime() - now;
+    assert.equal(snapshot.monitorPriority, 'high');
+    assert.equal(snapshot.eligibleForMonitoring, true);
+    assert.ok(nextMs >= 30000 && nextMs <= 30100, `expected low-activity cooldown, got ${nextMs}ms`);
+  });
+
+  it('does not accelerate low-dust tokens that are already slower than 30s', () => {
+    const now = Date.now();
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 9000,
+      volume: { h24: 1000 },
+      priceChange: {},
+    });
+
+    const nextMs = snapshot.nextEvaluationAt.getTime() - now;
+    assert.equal(snapshot.monitorPriority, 'low');
+    assert.equal(snapshot.eligibleForMonitoring, true);
+    assert.ok(nextMs >= 10 * 60 * 1000, `expected existing low-dust cadence to remain slower than 30s, got ${nextMs}ms`);
   });
 
   it('keeps only high and manual tokens during cooldown', () => {

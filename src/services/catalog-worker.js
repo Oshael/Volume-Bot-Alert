@@ -18,6 +18,8 @@ const DEX_BATCH_LIMIT = DEX_TOKENS_PER_REQUEST;
 const DORMANT_RECHECK_MS = 30 * 60 * 1000;
 const LOW_NEAR_RECHECK_MS = 15 * 1000;
 const LOW_DUST_RECHECK_MS = 10 * 60 * 1000;
+const LOW_ACTIVITY_24H_MAX_VOL = 3 * 1000;
+const LOW_ACTIVITY_RECHECK_MS = 30 * 1000;
 const NORMAL_RECHECK_MS = 4 * 1000;
 const NORMAL_BOOST_6H_RECHECK_MS = 3 * 1000;
 const NORMAL_BOOST_1H_RECHECK_MS = 3 * 1000;
@@ -180,6 +182,8 @@ function derivePrioritySnapshot(bestPair, token = null) {
   const pchange24h = toNumber(bestPair?.priceChange?.h24);
   const now = Date.now();
 
+  const applyLowActivityCooldown = (delayMs) => applyLowActivityCooldownForVol24h(delayMs, vol24h);
+
   if (!(marketCap > 0)) {
     return {
       marketCap: null,
@@ -213,7 +217,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
       pchange6h,
       pchange24h,
       monitorPriority: 'low',
-      nextEvaluationAt: new Date(now + nextLowMs),
+      nextEvaluationAt: new Date(now + applyLowActivityCooldown(nextLowMs)),
       eligibleForMonitoring: true,
       eligibilityState: 'dex-low',
       suppressedReason: null,
@@ -239,7 +243,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
       pchange6h,
       pchange24h,
       monitorPriority: 'normal',
-      nextEvaluationAt: new Date(Date.now() + nextMs),
+      nextEvaluationAt: new Date(Date.now() + applyLowActivityCooldown(nextMs)),
       eligibleForMonitoring: true,
       eligibilityState: 'dex-normal',
       suppressedReason: null,
@@ -263,11 +267,18 @@ function derivePrioritySnapshot(bestPair, token = null) {
     pchange6h,
     pchange24h,
     monitorPriority: 'high',
-    nextEvaluationAt: new Date(Date.now() + nextHighMs),
+    nextEvaluationAt: new Date(Date.now() + applyLowActivityCooldown(nextHighMs)),
     eligibleForMonitoring: true,
     eligibilityState: 'dex-high',
     suppressedReason: null,
   };
+}
+
+function applyLowActivityCooldownForVol24h(delayMs, vol24h) {
+  const lowActivity24h = (Number(vol24h) || 0) < LOW_ACTIVITY_24H_MAX_VOL;
+  return lowActivity24h
+    ? Math.max(normalizeDelayMs(delayMs, LOW_ACTIVITY_RECHECK_MS), LOW_ACTIVITY_RECHECK_MS)
+    : delayMs;
 }
 
 function getRetryMsForPriority(priority) {
@@ -299,17 +310,18 @@ function getRateLimitedRetryMs(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const priority = String(token?.monitor_priority || '').trim().toLowerCase();
   const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
+  const lastVol24h = Number(token?.last_vol_24h);
 
   if (shouldFastRetryManualBootstrap(token)) {
     return RATE_LIMIT_MANUAL_RECHECK_MS;
   }
 
   if (priority === 'high' || marketCap >= 100000) {
-    return RATE_LIMIT_HIGH_RECHECK_MS;
+    return applyLowActivityCooldownForVol24h(RATE_LIMIT_HIGH_RECHECK_MS, lastVol24h);
   }
 
   if (priority === 'normal' || marketCap >= 30000) {
-    return RATE_LIMIT_NORMAL_RECHECK_MS;
+    return applyLowActivityCooldownForVol24h(RATE_LIMIT_NORMAL_RECHECK_MS, lastVol24h);
   }
 
   if (marketCap >= 15000 || lowDustProtected) {
@@ -338,7 +350,10 @@ function getDexUnavailableRetryMs(token, options = {}) {
     return MANUAL_BOOTSTRAP_RECHECK_MS;
   }
 
-  return getRetryMsForPriority(token.monitor_priority);
+  return applyLowActivityCooldownForVol24h(
+    getRetryMsForPriority(token.monitor_priority),
+    token?.last_vol_24h,
+  );
 }
 
 function getThrottleTokenBucket(token) {
@@ -813,6 +828,9 @@ module.exports = {
     addPriorityJitter,
     computeNextDelayMs,
     derivePrioritySnapshot,
+    LOW_ACTIVITY_24H_MAX_VOL,
+    LOW_ACTIVITY_RECHECK_MS,
+    applyLowActivityCooldownForVol24h,
     getDexUnavailableRetryMs,
     getDexPriorityHint,
     getGraceUntilMs,
