@@ -3119,8 +3119,40 @@ export function createAppController(): AppController {
     const dedupeKey = `${entry.kind}:${entry.address}`;
     const now = Date.now();
     const previous = recentAlertFingerprints.get(dedupeKey);
+    const existingAlert = state.data.alerts.find((item) => {
+      if (item.kind !== entry.kind || item.address !== entry.address) {
+        return false;
+      }
+
+      let existingFingerprint = '';
+      switch (item.kind) {
+        case 'monitored-mcap':
+          existingFingerprint = [
+            roundAlertMetric(item.pct),
+            roundAlertMetric(item.prevMcap ?? null),
+            roundAlertMetric(item.mcap ?? null),
+          ].join('|');
+          break;
+        case 'meteora-surge':
+          existingFingerprint = [
+            roundAlertMetric(item.pct),
+            roundAlertMetric(item.mcap ?? null),
+            roundAlertMetric(item.volume24h ?? null),
+          ].join('|');
+          break;
+        default:
+          return false;
+      }
+
+      return existingFingerprint === fingerprint
+        && Math.abs(now - Number(item.createdAt || 0)) < ALERT_DEDUPE_WINDOW_MS;
+    });
 
     recentAlertFingerprints.set(dedupeKey, { ts: now, fingerprint });
+
+    if (existingAlert) {
+      return true;
+    }
 
     if (!previous) {
       return false;
