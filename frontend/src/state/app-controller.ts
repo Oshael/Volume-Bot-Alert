@@ -1009,6 +1009,37 @@ export function createAppController(): AppController {
     return nextFields;
   }
 
+  function applyPersistedFrontendAlertFlags(nextTrackedStore: Record<string, ManualTokenEntry>) {
+    for (const alert of state.data.alerts) {
+      const token = nextTrackedStore[alert.address];
+      if (!token) {
+        continue;
+      }
+
+      const createdAt = Number(alert.createdAt);
+      if (Number.isFinite(createdAt) && (!token.lastAlertAt || createdAt > token.lastAlertAt)) {
+        token.lastAlertAt = createdAt;
+      }
+
+      switch (alert.kind) {
+        case 'hvnc':
+          token._hvncFired = true;
+          token._lastAlertKind = 'hvnc';
+          break;
+        case 'old-surge':
+          token._oldSurgeFired = true;
+          token._lastAlertKind = 'old-surge';
+          break;
+        case 'meteora-surge':
+          token._meteoraSurgeFired = true;
+          token._lastAlertKind = 'meteora-surge';
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
   function mergeTrackedDashboardFields(input: {
     existingItem: ManualTokenEntry | undefined;
     dashboardItem: DashboardMonitoredToken | undefined;
@@ -1047,6 +1078,7 @@ export function createAppController(): AppController {
     }
 
     state.data.trackedTokensByAddress = input.nextTrackedStore;
+    applyPersistedFrontendAlertFlags(state.data.trackedTokensByAddress);
     state.data.manualTokenAddresses = input.manualTokens.map((item) => item.address);
     state.data.monitoredTokenAddresses = [...input.monitoredMap.keys()];
     state.data.recentTokenAddresses = [];
