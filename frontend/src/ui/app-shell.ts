@@ -654,6 +654,7 @@ function getOverlayRenderKey(state: AppState) {
   return JSON.stringify({
     sessionStatus: state.session.status,
     authPanel: state.ui.authPanel,
+    blockTokenWarning: state.ui.blockTokenWarning,
     busy: state.ui.busy,
     error: state.ui.error,
     notice: state.ui.notice,
@@ -682,7 +683,7 @@ function getOverlayRenderKey(state: AppState) {
 }
 
 function syncProfileModalScrollLock(state: AppState) {
-  document.body.classList.toggle('profile-modal-open', isProfileAuthPanel(state.ui.authPanel));
+  document.body.classList.toggle('profile-modal-open', isProfileAuthPanel(state.ui.authPanel) || Boolean(state.ui.blockTokenWarning));
 }
 
 function captureUserMenuDraft(root: HTMLElement): UserMenuDraft | null {
@@ -947,12 +948,20 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
   profileModalWired = true;
 
   const closeSelector = '[data-action="close-profile-modal"]';
+  const blockWarningCloseSelector = '[data-action="close-block-token-warning"], [data-action="cancel-block-token-warning"]';
   const shouldCloseProfileModal = (target: HTMLElement | null) => {
     const profileModal = target?.closest<HTMLElement>('[data-auth-modal-scope="profile"]');
     const closeButton = target?.closest<HTMLElement>(closeSelector);
     const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
 
     return Boolean(profileModal && (closeButton || backdrop));
+  };
+  const shouldCloseBlockWarning = (target: HTMLElement | null) => {
+    const warningModal = target?.closest<HTMLElement>('[data-auth-modal-scope="block-warning"]');
+    const closeButton = target?.closest<HTMLElement>(blockWarningCloseSelector);
+    const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
+
+    return Boolean(warningModal && (closeButton || backdrop));
   };
 
   root.addEventListener('pointerdown', (event) => {
@@ -972,6 +981,12 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
 
   root.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
+    if (shouldCloseBlockWarning(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void controller.cancelBlockedTokenWarning();
+      return;
+    }
     if (!shouldCloseProfileModal(target)) {
       return;
     }
@@ -983,6 +998,13 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
 
   root.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') {
+      return;
+    }
+    const hasBlockWarning = root.querySelector('[data-auth-modal-scope="block-warning"]');
+    if (hasBlockWarning) {
+      event.preventDefault();
+      event.stopPropagation();
+      void controller.cancelBlockedTokenWarning();
       return;
     }
     const hasProfileModal = root.querySelector('[data-auth-modal-scope="profile"]');

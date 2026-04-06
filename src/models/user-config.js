@@ -34,6 +34,7 @@ const CONFIG_SCHEMA = {
   'alert-pumpfun-vol-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-pumpfun-hvnc-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-high-cap-dump-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'block-warning-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'sound-vol-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'sound-mcap-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'sound-hvnc-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },

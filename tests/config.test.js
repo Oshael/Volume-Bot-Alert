@@ -137,6 +137,7 @@ describe('Config — GET defaults', () => {
     expect(res.body.configs['old-week-mcap-max']).toBe(5000000);
     expect(res.body.configs['old-week-per-page']).toBe(30);
     expect(res.body.configs['meteora-min-pool']).toBe(5000);
+    expect(res.body.configs['block-warning-enabled']).toBe('on');
 
     // All schema keys present
     for (const key of Object.keys(CONFIG_SCHEMA)) {
@@ -185,6 +186,20 @@ describe('Config — PATCH (partial update)', () => {
     expect(res.body.configs.chain).toBe('ethereum');
     // Previously set value unchanged
     expect(res.body.configs.threshold).toBe(80);
+  });
+
+  test('Update block warning preference', async () => {
+    const res = await request(app)
+      .patch('/api/config')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        configs: {
+          'block-warning-enabled': 'off',
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.configs['block-warning-enabled']).toBe('off');
   });
 
   test('Reject unknown config key', async () => {

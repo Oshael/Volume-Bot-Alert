@@ -262,6 +262,12 @@ export interface AddressItem {
   label?: string | null;
 }
 
+export interface BlockTokenWarningState {
+  address: string;
+  label?: string | null;
+  dontShowAgain: boolean;
+}
+
 export interface SessionState {
   status: 'loading' | 'anonymous' | 'authenticated' | 'pre_access';
   token: string | null;
@@ -423,6 +429,7 @@ export interface AppState {
     pendingPasswordResetToken: string | null;
     pendingLoginOtpChallengeToken: string | null;
     pendingLoginOtpEmailHint: string | null;
+    blockTokenWarning: BlockTokenWarningState | null;
     alertSearchQuery: string;
     monitoredSearchQuery: string;
     manualSearchQuery: string;
@@ -563,6 +570,7 @@ export function createAppState(): AppState {
       pendingPasswordResetToken: null,
       pendingLoginOtpChallengeToken: null,
       pendingLoginOtpEmailHint: null,
+      blockTokenWarning: null,
       alertSearchQuery: '',
       monitoredSearchQuery: '',
       manualSearchQuery: '',

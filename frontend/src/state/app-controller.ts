@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -117,6 +117,7 @@ const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
+const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
 const HISTORY_SYNC_PEER_TTL_MS = 6000;
@@ -243,6 +244,9 @@ export interface AppController {
   addManualToken(address: string, label?: string | null): Promise<void>;
   removeManualToken(address: string): Promise<void>;
   addBlockedToken(address: string, label?: string | null): Promise<void>;
+  cancelBlockedTokenWarning(): Promise<void>;
+  setBlockedTokenWarningDontShowAgain(enabled: boolean): void;
+  confirmBlockedTokenWarning(): Promise<void>;
   adminBlockToken(address: string, label?: string | null): Promise<void>;
   removeBlockedToken(address: string): Promise<void>;
   removePumpToken(mint: string): void;
@@ -336,6 +340,19 @@ function hasAuthRouteIntent(locationLike: Location | null | undefined) {
 function isPreAccessRoutePath(pathname: string | null | undefined) {
   const value = String(pathname || '').trim().toLowerCase();
   return value === '/access' || value.startsWith('/access/');
+}
+
+function normalizeBlockWarningState(address: string, label?: string | null): BlockTokenWarningState | null {
+  const normalizedAddress = String(address || '').trim();
+  if (!normalizedAddress) {
+    return null;
+  }
+
+  return {
+    address: normalizedAddress,
+    label: String(label || '').trim() || null,
+    dontShowAgain: false,
+  };
 }
 
 function getLoginPanelIntent(locationLike: Location | null | undefined) {
@@ -1743,6 +1760,76 @@ export function createAppController(): AppController {
       state.data.configs = { ...state.data.configs, ...result.configs };
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to persist UI config');
+      emit();
+    }
+  }
+
+  function shouldShowBlockedTokenWarning() {
+    return String(state.data.configs[BLOCK_WARNING_ENABLED_CONFIG_KEY] || 'on').trim().toLowerCase() !== 'off';
+  }
+
+  function openBlockedTokenWarning(address: string, label?: string | null) {
+    const warning = normalizeBlockWarningState(address, label);
+    if (!warning) {
+      return false;
+    }
+
+    state.ui.blockTokenWarning = warning;
+    emit('overlay');
+    return true;
+  }
+
+  function clearBlockedTokenWarning() {
+    if (!state.ui.blockTokenWarning) {
+      return;
+    }
+
+    state.ui.blockTokenWarning = null;
+    emit('overlay');
+  }
+
+  async function finalizeBlockedTokenWarning() {
+    const warning = state.ui.blockTokenWarning;
+    if (!warning) {
+      return null;
+    }
+
+    clearBlockedTokenWarning();
+
+    if (warning.dontShowAgain) {
+      await persistUiConfigs({ [BLOCK_WARNING_ENABLED_CONFIG_KEY]: 'off' });
+    }
+
+    return warning;
+  }
+
+  async function addBlockedTokenInternal(address: string, label?: string | null) {
+    const token = state.session.token;
+    if (!token) {
+      setError('No authenticated session');
+      emit();
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice('Blocking token...');
+    emit();
+
+    try {
+      const result = await addBlockedTokenRequest(address, label, token);
+      if (!isBlocked(address)) {
+        state.data.blocklist = sortAddresses([...state.data.blocklist, { address, label: label ?? null }]);
+        state.bars.blocklist = state.data.blocklist.length;
+      }
+      removeTokenEverywhere(address);
+      applyBlockedFilters();
+      await reloadConfigInternal(token);
+      setNotice(result.message);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to block token');
+    } finally {
+      setBusy(false);
       emit();
     }
   }
@@ -6031,34 +6118,40 @@ export function createAppController(): AppController {
       }
     },
     async addBlockedToken(address: string, label?: string | null) {
-      const token = state.session.token;
-      if (!token) {
+      if (!state.session.token) {
         setError('No authenticated session');
         emit();
         return;
       }
 
-      setBusy(true);
-      setError(null);
-      setNotice('Blocking token...');
-      emit();
-
-      try {
-        const result = await addBlockedTokenRequest(address, label, token);
-        if (!isBlocked(address)) {
-          state.data.blocklist = sortAddresses([...state.data.blocklist, { address, label: label ?? null }]);
-          state.bars.blocklist = state.data.blocklist.length;
+      if (shouldShowBlockedTokenWarning()) {
+        if (openBlockedTokenWarning(address, label)) {
+          return;
         }
-        removeTokenEverywhere(address);
-        applyBlockedFilters();
-        await reloadConfigInternal(token);
-        setNotice(result.message);
-      } catch (error) {
-        setError(error instanceof Error ? error.message : 'Failed to block token');
-      } finally {
-        setBusy(false);
-        emit();
       }
+
+      await addBlockedTokenInternal(address, label);
+    },
+    async cancelBlockedTokenWarning() {
+      await finalizeBlockedTokenWarning();
+    },
+    setBlockedTokenWarningDontShowAgain(enabled: boolean) {
+      if (!state.ui.blockTokenWarning) {
+        return;
+      }
+
+      state.ui.blockTokenWarning = {
+        ...state.ui.blockTokenWarning,
+        dontShowAgain: Boolean(enabled),
+      };
+      emit('overlay');
+    },
+    async confirmBlockedTokenWarning() {
+      const warning = await finalizeBlockedTokenWarning();
+      if (!warning) {
+        return;
+      }
+      await addBlockedTokenInternal(warning.address, warning.label);
     },
     async adminBlockToken(address: string, label?: string | null) {
       const token = state.session.token;
