@@ -118,7 +118,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
         <div class="monitored-header-bottom">
           <div class="monitored-inline-pagination">
             <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle monitored-inline-collapse" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
-            <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query' : ''}">
+            <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query open' : ''}">
               <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search monitored tokens">&#128269;</button>
               <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
             </div>
@@ -160,14 +160,14 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
 
   section.append(renderManualTokenEntryForm(state, controller));
 
-  bindCompactSearch(section, {
-    toggleAction: 'monitored-search-focus',
-    inputAction: 'monitored-search',
-  });
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="monitored-search"]');
   if (searchInput) {
     searchInput.value = state.ui.monitoredSearchQuery || '';
   }
+  bindCompactSearch(section, {
+    toggleAction: 'monitored-search-focus',
+    inputAction: 'monitored-search',
+  });
   const perPageInput = section.querySelector<HTMLInputElement>('[data-action="monitored-per-page"]');
   if (perPageInput) {
     perPageInput.value = String(safePerPage);

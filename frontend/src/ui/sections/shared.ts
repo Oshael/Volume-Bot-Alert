@@ -328,7 +328,9 @@ export function bindCompactSearch(
   }
 
   const syncHasQuery = () => {
-    wrap.classList.toggle('has-query', Boolean(String(input.value || '').trim()));
+    const hasQuery = Boolean(String(input.value || '').trim());
+    wrap.classList.toggle('has-query', hasQuery);
+    wrap.classList.toggle('open', hasQuery || document.activeElement === input);
   };
 
   const open = () => wrap.classList.add('open');
@@ -354,8 +356,8 @@ export function bindCompactSearch(
     input.value = '';
     syncHasQuery();
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    open();
-    window.requestAnimationFrame(() => input.focus());
+    wrap.classList.remove('open');
+    input.blur();
   });
 
   input.addEventListener('focus', open);

@@ -27,7 +27,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
       <span>\u{1F514} ALERTS</span>
       <div style="display:flex;align-items:center;gap:6px">
         <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
-        <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query' : ''}">
+        <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
         </div>

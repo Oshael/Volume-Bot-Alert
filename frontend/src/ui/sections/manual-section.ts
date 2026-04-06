@@ -59,7 +59,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
       <div class="legacy-bar-controls">
         <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="manual" aria-label="Collapse manual tokens"><span class="compact-icon-glyph">−</span></button>
-        <div class="compact-search ${searchQuery ? 'has-query' : ''}">
+        <div class="compact-search ${searchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="manual-search" data-search-input="manual">
         </div>
@@ -112,14 +112,14 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
     )}
   `;
 
-  bindCompactSearch(section, {
-    toggleAction: 'manual-search-focus',
-    inputAction: 'manual-search',
-  });
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="manual-search"]');
   if (searchInput) {
     searchInput.value = state.ui.manualSearchQuery || '';
   }
+  bindCompactSearch(section, {
+    toggleAction: 'manual-search-focus',
+    inputAction: 'manual-search',
+  });
   searchInput?.addEventListener('input', (event) => {
     controller.setManualSearchQuery((event.currentTarget as HTMLInputElement).value);
   });

@@ -66,7 +66,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       </div>
       <div class="legacy-bar-controls">
         <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="recent" aria-label="Collapse recent tokens"><span class="compact-icon-glyph">−</span></button>
-        <div class="compact-search ${recentSearchQuery ? 'has-query' : ''}">
+        <div class="compact-search ${recentSearchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="recent-search" data-search-input="recent">
         </div>
@@ -124,14 +124,14 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       state.ui.enabledTradeTerminals,
     )}
   `;
-  bindCompactSearch(section, {
-    toggleAction: 'recent-search-focus',
-    inputAction: 'recent-search',
-  });
   const recentSearchInput = section.querySelector<HTMLInputElement>('[data-action="recent-search"]');
   if (recentSearchInput) {
     recentSearchInput.value = state.ui.recentSearchQuery || '';
   }
+  bindCompactSearch(section, {
+    toggleAction: 'recent-search-focus',
+    inputAction: 'recent-search',
+  });
   const recentMinInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-min"]');
   if (recentMinInput) {
     recentMinInput.value = String(min);
@@ -239,7 +239,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       </div>
       <div class="legacy-bar-controls">
         <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="oldWeek" aria-label="Collapse old tokens"><span class="compact-icon-glyph">−</span></button>
-        <div class="compact-search ${oldWeekSearchQuery ? 'has-query' : ''}">
+        <div class="compact-search ${oldWeekSearchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="old-week-search" data-search-input="old-week">
         </div>
@@ -297,14 +297,14 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       state.ui.enabledTradeTerminals,
     )}
   `;
-  bindCompactSearch(section, {
-    toggleAction: 'old-week-search-focus',
-    inputAction: 'old-week-search',
-  });
   const oldWeekSearchInput = section.querySelector<HTMLInputElement>('[data-action="old-week-search"]');
   if (oldWeekSearchInput) {
     oldWeekSearchInput.value = state.ui.oldWeekSearchQuery || '';
   }
+  bindCompactSearch(section, {
+    toggleAction: 'old-week-search-focus',
+    inputAction: 'old-week-search',
+  });
   const oldWeekMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-min"]');
   if (oldWeekMinInput) {
     oldWeekMinInput.value = String(min);
