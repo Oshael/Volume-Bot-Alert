@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-03` after the backend/database migration from Railway to a single VPS, while the public frontend remained on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-05` after the backend/database migration from Railway to a single VPS, while the public frontend remained on Vercel.
 
 ## Current Deployment Topology
 
@@ -228,6 +228,8 @@ Role:
 - reevaluates tokens already in `token_catalog`
 - updates eligibility, priority, latest market stats
 - inserts `1m` market-bucket snapshots
+- evaluates backend-owned high-cap dump detections from those `1m` buckets
+- persists dump events / rule state when the backend-owned rule fires
 - consumes DexScreener in batch mode instead of one token per request
 
 Cadence:
@@ -391,10 +393,35 @@ File:
 - `src/services/meteora-snapshot-worker.js`
 
 Role:
-- fetches and stores TVL snapshots for eligible tokens
+- fetches and stores Meteora current state plus TVL history for eligible tokens
+- scheduler is backend-owned and tiered rather than a flat queue
 
 Cadence:
-- every `30s`
+- targets `20s`
+- compensates for run duration to keep wall-clock cadence close to `20s`
+- global budget cap: `800 tokens/min`
+
+Eligibility:
+- `is_active_monitor_candidate = true`
+- and (`last_mcap >= 100k` or `has_pool = true`)
+
+Priority tiers:
+- `high`: `vol24h >= 100k`
+- `normal`: `15k <= vol24h < 100k`
+- `low`: `vol24h < 15k`
+
+Tier SLAs:
+- `high`: `30s`
+- `normal`: `60s`
+- `low`: `5m`
+
+Execution notes:
+- worker computes per-tier demand and effective budget under the `800/min` cap
+- batch composition is now tiered instead of one flat `LIMIT`
+- each tier applies its own due cutoff before selecting addresses
+- unused slots from an underfilled higher tier can spill into lower tiers
+- current state is persisted in `token_meteora_state`
+- positive checks also append history into `token_meteora_snapshots`
 
 #### Lateralization worker
 File:
@@ -463,6 +490,10 @@ Files:
 Used for:
 - pool TVL summary/history
 
+Current API shape:
+- client uses the current DLMM Datapi pools endpoint, not the legacy `pair/all_by_groups` route
+- worker queries `token_x` and `token_y` sides separately per token and merges the results
+
 ## Source Of Truth By Area
 
 ### Auth/session
@@ -524,8 +555,11 @@ Reasons:
 - per-user removal logs
 
 ### Alerts
-- frontend-owned behavior
-- only active in `/alerts`
+- mixed ownership
+- only active in `/alerts` as a rendered panel
+- current split:
+  - monitored/local alerts remain frontend-owned
+  - `high-cap-dump-5m` is backend-owned as a global token event and then delivered per user
 
 ### PumpFun live state
 - backend socket feed + frontend session state
@@ -580,6 +614,7 @@ High-level behavior:
   - PumpFun
   - alerts
 - keeps frontend alert evaluation active
+- replays unseen backend-owned dump alerts from the dashboard alert-events feed
 - keeps PumpFun runtime active
 - does not mount `Recent`, `Old Week`, or `Lateralization`
 - does not mount `Bid Zone`
@@ -604,7 +639,7 @@ Multi-tab coordination:
   - `GET /api/catalog/lateralized`
   - `GET /api/catalog/bid-zone`
 - follower monitor tabs receive monitored/lateralized/bid-zone snapshots from the leader
-- this dedupe currently does **not** apply to `/alerts`, because alerts are still frontend-owned and per-tab
+- this dedupe currently does **not** apply to `/alerts`, because the legacy alert engine there is still frontend-owned and per-tab
 
 Workspace header status:
 - the header now exposes runtime health through a compact status indicator:
@@ -1394,6 +1429,10 @@ Files:
 
 Behavior:
 - backend maintains one server-side PumpFun websocket
+- backend websocket subscribes with:
+  - `subscribeNewToken`
+  - `subscribeMigration`
+  - `subscribeTokenTrade`
 - frontend receives:
   - `pump:newToken`
   - `pump:trade`
@@ -1417,6 +1456,15 @@ Migration behavior:
 - migrated token is removed from PumpFun panel
 - migration is reported into the catalog/backend flow
 - migration toast is shown in frontend
+- current expected backend path after the migration subscription fix:
+  - PumpPortal websocket emits `txType: "migrate"`
+  - backend logs/handles `pump_migrate_received`
+  - backend upserts the token as `pumpfun-migrated`
+  - token gets `migration_grace_until`
+  - catalog worker performs the first Dex evaluation immediately
+- important nuance:
+  - Dex paid metadata is not a requirement for normal Dex market reads (`mcap`, `price`, `volume`, pair selection)
+  - the production issue identified in April 2026 was missing migration capture on the backend, which caused some migrated tokens to enter late via `dexscreener-discovery`
 
 ## Alerts
 
@@ -1424,6 +1472,8 @@ Files:
 - `frontend/src/state/app-controller.ts`
 - `frontend/src/ui/sections/alerts-section.ts`
 - `frontend/src/services/alerts/sound.ts`
+- `src/services/high-cap-dump-alert.js`
+- `src/services/backend-alert-feed.js`
 
 Main alert types:
 - `monitored-vol`
@@ -1433,11 +1483,13 @@ Main alert types:
 - `meteora-surge`
 - `pumpfun-vol`
 - `pumpfun-hvnc`
+- `high-cap-dump-5m`
 - the panel also supports local text search by symbol, name, or contract/address
 - the alerts search now uses the same compact-search behavior as the other lupa inputs and supports `Enter/Return` to blur/commit
 - alerts are restored from browser-local storage per account scope
 - runtime state and browser-local persistence now keep the most recent `100` alert cards
-- alerts are evaluated only in `/alerts`
+- local monitored alerts are evaluated only in `/alerts`
+- backend-owned dump alerts are delivered into `/alerts` from backend feed/socket paths
 - alerts can be removed:
   - all at once via `Clean All`
   - individually via the card-level `×`
@@ -1520,6 +1572,42 @@ Rules:
 - separate from monitored-token alerts
 - use PumpFun volume accumulation logic
 
+### High Cap Dump 5M
+Ownership:
+- backend-owned
+
+Rule source:
+- `src/services/backend-alert-rules.js`
+
+Detection model:
+- strict baseline anchored `5m` back
+- evaluates the minimum `low_mcap` inside the trailing `5m` window
+- default gate requires `baseline_mcap >= 2_000_000`
+- default threshold is `50%` down from baseline
+- wick-style intrawindow dumps qualify; it does not require the token to close the full `5m` window at the low
+
+Rearm / dedupe:
+- first qualifying dump creates a persisted event
+- the same collapse does not keep generating new events every minute
+- rearm requires either:
+  - recovery to `85%` of the last baseline
+  - or `6h` since the last alert
+
+Persistence and delivery:
+- global event history lives in `token_alert_events`
+- current rule state lives in `token_alert_rule_state`
+- per-user per-rule seen/replay progress lives in `alert_delivery_cursors`
+- backend feed endpoint:
+  - `GET /api/dashboard/alert-events`
+- cursor update endpoint:
+  - `POST /api/dashboard/alert-events/cursor`
+- realtime delivery also uses authenticated socket event `alert:event`
+
+Current user-config scope:
+- users can toggle the alert on/off
+- users can toggle its sound on/off
+- users cannot currently customize threshold, baseline market-cap gate, window length, or rearm
+
 ### Alert evaluation timing
 Important current behavior:
 - monitored alert evaluation runs on:
@@ -1555,6 +1643,7 @@ Current visual mapping:
 - `mega` alerts above `200%` use orange
 - `Recent Token Surge` uses green
 - `Old Token Surge` uses orange
+- `💥 Dump Alert!` uses an explicit red dump-alert treatment
 
 ## Top Config Menu
 
@@ -1577,6 +1666,7 @@ Current per-type toggle families:
 - `Surge`
 - `PumpFun VOL`
 - `PumpFun HVNC`
+- `High Cap Dump 5M`
 
 Persistence:
 - these are backend-persisted user config values
@@ -1742,8 +1832,19 @@ Reason for this split:
 - `POST /api/catalog/promote`
 - `POST /api/catalog/migrated`
 
+### Temporary migration trace flags
+- `PUMP_MIGRATE_TRACE_ENABLED`
+  - enables structured Pump migration trace logs in backend stdout/journal
+- `PUMP_MIGRATE_TRACE_DISCOVERY`
+  - when enabled, also traces `dexscreener-discovery` entry cases for comparison
+- `PUMP_MIGRATE_TRACE_ADDRESSES`
+  - optional comma-separated mint filter for narrowing trace output
+- these flags are intended for investigation and can be turned off after migration-path validation is complete
+
 ### Dashboard
 - `GET /api/dashboard/monitored`
+- `GET /api/dashboard/alert-events`
+- `POST /api/dashboard/alert-events/cursor`
 
 ### Admin status
 - `GET /api/admin/ws-status`
@@ -1755,6 +1856,16 @@ Admin status endpoint currently exposes:
 - catalog worker status
 - Meteora snapshot worker status
 - Dex discovery worker status
+
+Current Meteora worker status now includes:
+- total eligible Meteora universe
+- last dynamic batch limit
+- universe by tier
+- target checks/min by tier
+- effective checks/min by tier
+- target checks/cycle by tier
+- selected count by tier
+- degrade flag and degraded tiers
 
 ## Current Known Weak Spots
 

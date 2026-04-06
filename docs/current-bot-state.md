@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-03` after the backend/database migration from Railway to a single VPS, while the public frontend continued on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-05` after the backend/database migration from Railway to a single VPS, while the public frontend continued on Vercel.
 
 ## Current Deployment Topology
 
@@ -219,6 +219,8 @@ Important:
     - `old-alert-1h-threshold = 50`
     - `old-alert-6h-threshold = 150`
     - `meteora-alert-1h-threshold = 50`
+    - `alert-high-cap-dump-enabled = on`
+    - `sound-high-cap-dump-enabled = on`
 
 ### Global monitored baseline
 - Source of truth: backend catalog/dashboard state
@@ -233,6 +235,32 @@ Important:
   - `POST /api/catalog/admin-blocklist`
   - `DELETE /api/catalog/admin-blocklist/:address`
 - This admin block is global/backend-owned rather than account-scoped.
+
+### High Cap Dump alert
+- Source of truth: backend
+- Rule key:
+  - `high-cap-dump-5m`
+- Main detection/persistence files:
+  - `src/models/token-market-bucket-1m.js`
+  - `src/services/high-cap-dump-alert.js`
+  - `src/models/token-alert-event.js`
+  - `src/models/token-alert-rule-state.js`
+- Main delivery endpoints:
+  - `GET /api/dashboard/alert-events`
+  - `POST /api/dashboard/alert-events/cursor`
+- Current delivery shape:
+  - event creation is global per token, not per user
+  - replay/seen progress is persisted per user and per rule in `alert_delivery_cursors`
+  - realtime delivery also uses the authenticated socket event `alert:event`
+- Current rule shape:
+  - strict baseline anchored `5m` back
+  - compares the baseline against the minimum `low_mcap` inside the last `5m`
+  - qualifies only if `baseline_mcap >= 2_000_000`
+  - default dump threshold remains `50%`
+  - rearm happens on recovery to `85%` of the last baseline or after `6h`
+- Current user-scope limitation:
+  - users can currently only toggle this alert on/off and mute/unmute its sound
+  - threshold, minimum market cap, window length, and rearm are still canonical backend rule settings rather than per-user configs
 
 ### Lateralization Coins
 - Source of truth: backend-precomputed lateralization runs
@@ -300,18 +328,49 @@ Important:
 
 ### PumpFun live stream
 - Source of truth: backend socket stream for live events
+- Backend websocket subscription methods:
+  - `subscribeNewToken`
+  - `subscribeMigration`
+  - `subscribeTokenTrade`
 - Frontend consumes:
   - `pump:status`
   - `pump:newToken`
   - `pump:trade`
   - `pump:migrate`
   - `sol:price`
+- Current post-migration conclusion:
+  - the backend must explicitly subscribe to migration events or migrated tokens can skip the `pumpfun-migrated` catalog path and only appear later via `dexscreener-discovery`
+  - after the `subscribeMigration` fix, the expected path is:
+    - `pump_migrate_received`
+    - `pumpfun-migrated` catalog upsert
+    - immediate Dex evaluation with `migration_grace_until`
+  - this fix does not force Dex to return data, but it restores the early catalog bootstrap that was previously being missed on some migrations
 
 ### Meteora
-- Source of truth: backend-persisted snapshots
+- Source of truth: backend-persisted current state in `token_meteora_state`
 - Collection is done by backend worker
-- Frontend reads persisted summaries from `GET /api/dashboard/monitored`
-- The active frontend no longer uses the old batch-style Meteora read path
+- Historical TVL history remains in `token_meteora_snapshots`
+- Frontend reads persisted summaries from:
+  - `GET /api/dashboard/monitored`
+  - `POST /api/catalog/meteora/batch`
+- The active frontend no longer uses the old browser-driven batch-style Meteora read path
+- Current Meteora scheduler is backend-owned and tiered:
+  - global cap: `800 tokens/min`
+  - loop target: `20s`
+  - worker compensates for run duration to keep wall-clock cadence closer to `20s`
+  - eligible universe:
+    - `last_mcap >= 100k`
+    - or `has_pool = true`
+  - priority tiers:
+    - `high`: `vol24h >= 100k`
+    - `normal`: `15k <= vol24h < 100k`
+    - `low`: `vol24h < 15k`
+  - tier SLAs:
+    - `high`: `30s`
+    - `normal`: `60s`
+    - `low`: `5m`
+  - selection is now by tier budget plus due cutoff, not one flat queue
+  - carryover slots from an underfilled higher tier can spill into lower tiers
 
 ### Market history / MCAP baselines
 - Source of truth:
@@ -360,7 +419,7 @@ Current login rule:
     - latest market values persisted in catalog
     - MCAP baseline primarily from `token_market_buckets_1m`
     - legacy fallback baseline from `token_market_snapshots` only when the bucket baseline is missing
-    - latest Meteora summary from `token_meteora_snapshots`
+    - latest Meteora summary from `token_meteora_state`
 - Current intended effect:
   - frontend no longer depends on per-token Dex socket fetches as the main monitored refresh mechanism
   - frontend refresh should read backend-prepared state instead of causing Dex fetches itself
@@ -509,6 +568,7 @@ Current monitored UI behavior:
   - `pumpfun-migrated` tokens now persist `migration_grace_until`
   - during the first `10m` after migration, they cannot fall into the `low-dust` cadence even if Dex sees them below `15k`
   - while inside that grace, `<15k` migrated tokens still use at least the `low-near` cadence floor (`15s`), while `30k+` and `100k+` continue following the normal higher-priority buckets
+  - the migration bootstrap does not depend on any Dex paid profile/order; tokens can still receive normal Dex market data without paid Dex metadata if Dex already exposes a usable pair
 - Current write order inside token evaluation:
   - `token_catalog` is updated first
   - `token_market_buckets_1m` is upserted immediately after in the same evaluation
@@ -604,11 +664,27 @@ Current monitored UI behavior:
 
 ### 5. Meteora flow
 - Snapshot worker: `src/services/meteora-snapshot-worker.js`
-- Worker polls eligible catalog tokens every `30s`
+- Worker targets a `20s` loop with run-duration compensation
+- Scheduler is no longer flat:
+  - hard cap: `800 tokens/min`
+  - tiered budget:
+    - `high`
+    - `normal`
+    - `low`
+  - tier-specific due cutoff:
+    - `high`: only addresses not checked in the last `30s`
+    - `normal`: only addresses not checked in the last `60s`
+    - `low`: only addresses not checked in the last `5m`
+  - if a higher tier is underfilled, remaining slots can spill into lower tiers
+- Current eligible universe:
+  - `is_active_monitor_candidate = true`
+  - and (`last_mcap >= 100k` or `has_pool = true`)
 - Read routes:
   - `GET /api/catalog/meteora/:address/history`
+  - `POST /api/catalog/meteora/batch`
 - Active frontend read path:
   - embedded `meteora` payload inside `GET /api/dashboard/monitored`
+  - explicit batch hydration for tracked tokens outside the monitored dashboard payload
 - Current read path is DB-backed, not upstream-fetch-backed
 - Current alert behavior on top of Meteora data:
   - a dedicated `meteora-surge` alert now exists in frontend alert generation
@@ -954,10 +1030,25 @@ Current security priority order:
 - Standard monitored `VOL` and `MCAP` alerts share cooldown
 - HVNC remains separate
 - Old-surge remains separate
-- Alerts are still frontend-owned behavior
+- Alerts are currently mixed ownership:
+  - monitored `VOL`
+  - monitored `MCAP`
+  - `hvnc`
+  - `old-surge`
+  - `meteora-surge`
+  - PumpFun alerts
+  remain frontend-owned
+  - `high-cap-dump-5m` is backend-owned and then delivered into the same `Alerts` panel
 - Monitored alert evaluation now runs both on:
   - live patch merges
   - `GET /api/dashboard/monitored` rebuilds
+- backend-owned dump alerts are delivered on:
+  - `GET /api/dashboard/alert-events?mode=unseen`
+  - authenticated socket event `alert:event`
+- current backend dump delivery semantics:
+  - unseen replay is tracked per user and per rule, not only in browser-local dedupe
+  - the frontend marks dump alerts as seen after they are actually accepted into the alert list
+  - backend dump alerts still render inside `/alerts`, but they are not generated by the local monitored alert engine
 - the `Alerts` panel now supports local text search by:
   - symbol
   - name
@@ -986,6 +1077,11 @@ Current security priority order:
 - manual tokens
 - blocklist
 - starred tokens
+- backend alert delivery cursors
+
+### Backend-persisted global alert state
+- `token_alert_events`
+- `token_alert_rule_state`
 
 ### Browser-local but account-scoped
 - dismissed Recent set
@@ -1004,6 +1100,7 @@ Current security priority order:
   - `PumpFun`
   - `Alerts`
 - keeps the frontend-owned alert pipeline active
+- also replays unseen backend-owned dump alerts from `GET /api/dashboard/alert-events`
 - does not mount `Recent`, `Old Week`, or `Lateralization`
 
 ### `/monitor`
@@ -1135,8 +1232,10 @@ Current limitation:
     - `MCAP`
     - `High Volume New Coin`
     - `Surge`
+    - `Meteora 1H`
     - `PumpFun VOL`
     - `PumpFun HVNC`
+    - `High Cap Dump 5M`
   - `Sound By Alert Type`
     - the same per-type families above, but for sound playback only
 - These toggles are backend-persisted user configs
