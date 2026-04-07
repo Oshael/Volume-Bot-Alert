@@ -139,6 +139,8 @@ describe('backend alert feed service', () => {
 
   it('uses the per-user per-rule cursor when listing unseen dashboard alert events', async () => {
     const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalGetLatestEventId = tokenAlertEvent.getLatestEventId;
+    const originalMarkSeen = alertDeliveryCursor.markSeen;
     const originalListRecentEvents = tokenAlertEvent.listRecentEvents;
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
     let capturedCursorArgs = null;
@@ -153,6 +155,12 @@ describe('backend alert feed service', () => {
         lastAckedEventId: 19,
         updatedAt: '2026-04-05T18:15:00.000Z',
       };
+    };
+    tokenAlertEvent.getLatestEventId = async () => {
+      throw new Error('should not bootstrap when cursor already exists');
+    };
+    alertDeliveryCursor.markSeen = async () => {
+      throw new Error('should not mark seen when cursor already exists');
     };
     tokenAlertEvent.listRecentEvents = async (filters) => {
       capturedFilters = filters;
@@ -181,6 +189,72 @@ describe('backend alert feed service', () => {
       assert.equal(payload.count, 0);
     } finally {
       alertDeliveryCursor.getCursor = originalGetCursor;
+      tokenAlertEvent.getLatestEventId = originalGetLatestEventId;
+      alertDeliveryCursor.markSeen = originalMarkSeen;
+      tokenAlertEvent.listRecentEvents = originalListRecentEvents;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+    }
+  });
+
+  it('bootstraps the per-user unseen cursor instead of replaying historical events for first-time viewers', async () => {
+    const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalGetLatestEventId = tokenAlertEvent.getLatestEventId;
+    const originalMarkSeen = alertDeliveryCursor.markSeen;
+    const originalListRecentEvents = tokenAlertEvent.listRecentEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    let capturedLatestRuleKey = null;
+    let capturedMarkSeenArgs = null;
+    let capturedFilters = null;
+
+    alertDeliveryCursor.getCursor = async () => null;
+    tokenAlertEvent.getLatestEventId = async (filters) => {
+      capturedLatestRuleKey = filters?.ruleKey || null;
+      return 59;
+    };
+    alertDeliveryCursor.markSeen = async (userId, ruleKey, lastSeenEventId) => {
+      capturedMarkSeenArgs = [userId, ruleKey, lastSeenEventId];
+      return {
+        userId,
+        ruleKey,
+        lastSeenEventId,
+        lastAckedEventId: null,
+        updatedAt: '2026-04-07T08:09:24.867Z',
+      };
+    };
+    tokenAlertEvent.listRecentEvents = async (filters) => {
+      capturedFilters = filters;
+      return [];
+    };
+    tokenCatalog.listDashboardMetadataByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 4,
+        ruleKey: 'high-cap-dump-5m',
+        mode: 'unseen',
+        limit: 50,
+      });
+
+      assert.equal(capturedLatestRuleKey, 'high-cap-dump-5m');
+      assert.deepEqual(capturedMarkSeenArgs, [4, 'high-cap-dump-5m', 59]);
+      assert.deepEqual(capturedFilters, {
+        ruleKey: 'high-cap-dump-5m',
+        limit: 50,
+        afterId: 59,
+        sort: 'asc',
+      });
+      assert.equal(payload.mode, 'unseen');
+      assert.equal(payload.count, 0);
+      assert.deepEqual(payload.cursor, {
+        ruleKey: 'high-cap-dump-5m',
+        lastSeenEventId: 59,
+        lastAckedEventId: null,
+        updatedAt: '2026-04-07T08:09:24.867Z',
+      });
+    } finally {
+      alertDeliveryCursor.getCursor = originalGetCursor;
+      tokenAlertEvent.getLatestEventId = originalGetLatestEventId;
+      alertDeliveryCursor.markSeen = originalMarkSeen;
       tokenAlertEvent.listRecentEvents = originalListRecentEvents;
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
     }

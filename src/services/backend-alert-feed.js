@@ -102,10 +102,20 @@ async function listDashboardAlertEvents(options = {}) {
   const limit = normalizeAlertFeedLimit(options.limit);
   const rule = resolveDashboardFeedRule(options.ruleKey);
   const mode = normalizeAlertFeedMode(options.mode);
-  const cursor = options.userId == null ? null : await alertDeliveryCursor.getCursor(options.userId, rule.ruleKey);
-  const afterId = options.afterId != null && String(options.afterId).trim() !== ''
+  let cursor = options.userId == null ? null : await alertDeliveryCursor.getCursor(options.userId, rule.ruleKey);
+  const hasExplicitAfterId = options.afterId != null && String(options.afterId).trim() !== '';
+  let afterId = hasExplicitAfterId
     ? options.afterId
     : (mode === 'unseen' ? cursor?.lastSeenEventId : null);
+
+  if (mode === 'unseen' && !hasExplicitAfterId && cursor == null && options.userId != null) {
+    const latestEventId = await tokenAlertEvent.getLatestEventId({ ruleKey: rule.ruleKey });
+    if (latestEventId != null) {
+      cursor = await alertDeliveryCursor.markSeen(options.userId, rule.ruleKey, latestEventId);
+      afterId = latestEventId;
+    }
+  }
+
   const events = await tokenAlertEvent.listRecentEvents({
     ruleKey: rule.ruleKey,
     limit,

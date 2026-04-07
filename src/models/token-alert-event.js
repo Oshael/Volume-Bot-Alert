@@ -159,8 +159,39 @@ async function listRecentEvents(filters = {}) {
   return rows.map((row) => mapEventRow(row));
 }
 
+async function getLatestEventId(filters = {}) {
+  const values = [];
+  const clauses = [];
+
+  if (filters.ruleKey != null && String(filters.ruleKey).trim() !== '') {
+    values.push(normalizeRuleKey(filters.ruleKey));
+    clauses.push(`rule_key = $${values.length}`);
+  }
+
+  if (filters.tokenAddress != null && String(filters.tokenAddress).trim() !== '') {
+    const tokenAddress = String(filters.tokenAddress).trim();
+    if (!isValidAddress(tokenAddress)) {
+      throw new Error('Invalid token address format');
+    }
+    values.push(tokenAddress);
+    clauses.push(`token_address = $${values.length}`);
+  }
+
+  const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const { rows } = await db.query(
+    `SELECT MAX(id) AS latest_id
+     FROM token_alert_events
+     ${whereClause}`,
+    values
+  );
+
+  const latestId = Number(rows[0]?.latest_id);
+  return Number.isInteger(latestId) && latestId > 0 ? latestId : null;
+}
+
 module.exports = {
   createEvent,
+  getLatestEventId,
   listRecentEvents,
   __private: {
     mapEventRow,
