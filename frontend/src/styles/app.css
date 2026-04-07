@@ -7600,6 +7600,8 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-flow-v68 .label.meteora-pool-label,
 .alert-stats-v68 .label.meteora-pool-label {
   color: #d18cff;
+  font-weight: 700;
+  font-size: 13px;
 }
 
 .alert-flow-v68 .value,
@@ -7610,6 +7612,11 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-flow-v68 .value.up,
 .alert-stats-v68 .value.up {
   color: var(--green);
+}
+
+.alert-flow-v68 .value.meteora-pool-value,
+.alert-stats-v68 .value.meteora-pool-value {
+  color: #d18cff;
 }
 
 .alert-flow-v68 .value.down,

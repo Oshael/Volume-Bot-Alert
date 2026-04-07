@@ -308,33 +308,33 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
   }
 
   if (Number.isFinite(baselinePool24h) && baselinePool24h > 0) {
-    container.append(buildFlowTransition('POOL', fmtMoney(baselinePool24h), fmtMoney(currentPool), 'up', 'meteora-pool-label'));
+    container.append(buildFlowTransition('POOL', fmtMoney(baselinePool24h), fmtMoney(currentPool), 'up', 'meteora-pool-label', 'meteora-pool-value'));
     return;
   }
 
-  container.append(buildMetricPair('POOL', fmtMoney(currentPool), 'up', 'meteora-pool-label'));
+  container.append(buildMetricPair('POOL', fmtMoney(currentPool), 'up', 'meteora-pool-label', 'meteora-pool-value'));
 }
 
-function buildMetricPair(label: string, value: string, toneClass: string, labelClass = '') {
+function buildMetricPair(label: string, value: string, toneClass: string, labelClass = '', valueClass = '') {
   const wrapper = document.createElement('span');
   const labelEl = document.createElement('span');
   labelEl.className = ['label', labelClass].filter(Boolean).join(' ');
   labelEl.textContent = label;
   const valueEl = document.createElement('span');
-  valueEl.className = `value ${toneClass}`.trim();
+  valueEl.className = ['value', toneClass, valueClass].filter(Boolean).join(' ');
   valueEl.textContent = value;
   wrapper.append(labelEl, ' ', valueEl);
   return wrapper;
 }
 
-function buildFlowTransition(label: string, previous: string, next: string, toneClass: string, labelClass = '') {
+function buildFlowTransition(label: string, previous: string, next: string, toneClass: string, labelClass = '', valueClass = '') {
   const wrapper = document.createElement('span');
   const labelEl = document.createElement('span');
   labelEl.className = ['label', labelClass].filter(Boolean).join(' ');
   labelEl.textContent = label;
   wrapper.append(labelEl, ` ${previous} → `);
   const valueEl = document.createElement('span');
-  valueEl.className = `value ${toneClass}`.trim();
+  valueEl.className = ['value', toneClass, valueClass].filter(Boolean).join(' ');
   valueEl.textContent = next;
   wrapper.append(valueEl);
   return wrapper;
