@@ -100,6 +100,9 @@ describe('token market 1m bucket helpers', () => {
       );
 
       assert.match(capturedSql, /bucket_ts <= current_row\.current_ts - \(\$2::int \* INTERVAL '1 minute'\)/);
+      assert.match(capturedSql, /bucket_ts >= current_row\.current_ts - \(\(\$2::int \+ 1\) \* INTERVAL '1 minute'\)/);
+      assert.match(capturedSql, /bucket_ts > current_row\.current_ts - \(\$2::int \* INTERVAL '1 minute'\)/);
+      assert.doesNotMatch(capturedSql, /bucket_ts > baseline_row\.baseline_ts/);
       assert.doesNotMatch(capturedSql, /fallback/i);
       assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], 5]);
       assert.equal(rows.length, 1);

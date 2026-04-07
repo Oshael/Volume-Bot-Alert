@@ -936,6 +936,7 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
        WHERE token_address = requested.token_address
          AND close_mcap IS NOT NULL
          AND current_row.current_ts IS NOT NULL
+         AND bucket_ts >= current_row.current_ts - (($2::int + 1) * INTERVAL '1 minute')
          AND bucket_ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
        ORDER BY bucket_ts DESC
        LIMIT 1
@@ -946,9 +947,8 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
          COUNT(*)::int AS bucket_count
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
-         AND baseline_row.baseline_ts IS NOT NULL
          AND current_row.current_ts IS NOT NULL
-         AND bucket_ts > baseline_row.baseline_ts
+         AND bucket_ts > current_row.current_ts - ($2::int * INTERVAL '1 minute')
          AND bucket_ts <= current_row.current_ts
          AND (low_mcap IS NOT NULL OR high_mcap IS NOT NULL OR close_mcap IS NOT NULL)
      ) AS window_stats ON TRUE
