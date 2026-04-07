@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -67,7 +67,7 @@ import {
   validateRegisterInput,
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
-import { resolveApiBase } from '../services/api/base';
+import { API_NETWORK_ERROR_EVENT, resolveApiBase, type ApiNetworkErrorDetail } from '../services/api/base';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   findPreviousPasswordMatch,
@@ -121,6 +121,9 @@ const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
 const HISTORY_SYNC_PEER_TTL_MS = 6000;
+const NETWORK_DEBUG_TOGGLE_STORAGE_KEY = 'trendscope-network-debug-enabled';
+const NETWORK_DEBUG_LOG_STORAGE_KEY = 'trendscope-network-debug-log';
+const NETWORK_DEBUG_MAX_ENTRIES = 25;
 
 type HistorySyncPresenceMessage = {
   type: 'presence';
@@ -254,6 +257,8 @@ export interface AppController {
   dismissOldWeekToken(address: string): void;
   clearAllAlerts(): void;
   removeAlert(id: string): void;
+  setNetworkDebugEnabled(enabled: boolean): void;
+  clearNetworkDebugEntries(): void;
   clearRecentRemovalLog(): void;
   clearOldWeekRemovalLog(): void;
   clearDismissedRecent(): void;
@@ -562,6 +567,26 @@ function resolveWorkspaceFromPath(pathname: string | null | undefined): Workspac
   return 'live';
 }
 
+function normalizeNetworkDebugEntry(raw: unknown): NetworkDebugEntry | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+
+  const item = raw as Partial<NetworkDebugEntry>;
+  const id = String(item.id || '').trim();
+  const path = String(item.path || '').trim();
+  const method = String(item.method || '').trim().toUpperCase();
+  const message = String(item.message || '').trim();
+  const apiBase = String(item.apiBase || '').trim();
+  const ts = Number(item.ts);
+
+  if (!id || !path || !method || !message || !apiBase || !Number.isFinite(ts)) {
+    return null;
+  }
+
+  return { id, path, method, message, apiBase, ts };
+}
+
 export function createAppController(): AppController {
   const state = createAppState();
   if (typeof window !== 'undefined' && !isAuthRoutePath(window.location.pathname || '/') && !isPreAccessRoutePath(window.location.pathname || '/')) {
@@ -590,6 +615,7 @@ export function createAppController(): AppController {
   let socialLinkSyncTimer: ReturnType<typeof setInterval> | null = null;
   let socialLinkSyncStartedAt = 0;
   let socialLinkPendingProvider: 'google' | 'discord' | null = null;
+  let lastMonitoredDashboardError: string | null = null;
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
   let nextBidZoneRefreshAt = 0;
@@ -613,6 +639,59 @@ export function createAppController(): AppController {
     bidZone: 'bid-zone',
     pumpfun: 'pumpfun',
   };
+
+  function persistNetworkDebugState() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        NETWORK_DEBUG_TOGGLE_STORAGE_KEY,
+        state.ui.networkDebugEnabled ? '1' : '0',
+      );
+      window.localStorage.setItem(
+        NETWORK_DEBUG_LOG_STORAGE_KEY,
+        JSON.stringify(state.ui.networkDebugEntries.slice(0, NETWORK_DEBUG_MAX_ENTRIES)),
+      );
+    } catch {
+      // Ignore local persistence failures.
+    }
+  }
+
+  function loadNetworkDebugState() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      state.ui.networkDebugEnabled = window.localStorage.getItem(NETWORK_DEBUG_TOGGLE_STORAGE_KEY) === '1';
+      const raw = JSON.parse(window.localStorage.getItem(NETWORK_DEBUG_LOG_STORAGE_KEY) || '[]');
+      state.ui.networkDebugEntries = Array.isArray(raw)
+        ? raw.map((item) => normalizeNetworkDebugEntry(item)).filter((item): item is NetworkDebugEntry => Boolean(item)).slice(0, NETWORK_DEBUG_MAX_ENTRIES)
+        : [];
+    } catch {
+      state.ui.networkDebugEnabled = false;
+      state.ui.networkDebugEntries = [];
+    }
+  }
+
+  function appendNetworkDebugEntry(detail: ApiNetworkErrorDetail) {
+    const entry: NetworkDebugEntry = {
+      id: `${detail.method}:${detail.path}:${detail.ts}`,
+      ts: detail.ts,
+      path: detail.path,
+      method: detail.method,
+      message: detail.message,
+      apiBase: detail.apiBase,
+    };
+
+    state.ui.networkDebugEntries = [entry, ...state.ui.networkDebugEntries]
+      .slice(0, NETWORK_DEBUG_MAX_ENTRIES);
+    persistNetworkDebugState();
+  }
+
+  loadNetworkDebugState();
 
   function stopSocialLinkSync() {
     if (socialLinkSyncTimer) {
@@ -735,6 +814,18 @@ export function createAppController(): AppController {
         provider,
         status,
       });
+    });
+
+    window.addEventListener(API_NETWORK_ERROR_EVENT, (event) => {
+      const detail = event instanceof CustomEvent ? event.detail as ApiNetworkErrorDetail : null;
+      if (!detail || !state.ui.networkDebugEnabled || state.session.role !== 'admin') {
+        return;
+      }
+
+      appendNetworkDebugEntry(detail);
+      if (state.ui.authPanel === 'bot-settings') {
+        emit('overlay');
+      }
     });
   }
 
@@ -3929,6 +4020,10 @@ export function createAppController(): AppController {
       ]);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
       await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
+      if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
+        setError(null);
+      }
+      lastMonitoredDashboardError = null;
       if (dashboardAlertEvents?.events?.length) {
         const added = syncBackendAlertEvents(dashboardAlertEvents.events);
         if (added > 0) {
@@ -3946,7 +4041,9 @@ export function createAppController(): AppController {
         emit('recent', 'old-week', 'header');
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to refresh monitored dashboard');
+      const message = error instanceof Error ? error.message : 'Failed to refresh monitored dashboard';
+      lastMonitoredDashboardError = message;
+      setError(message);
       emit('legacy', 'overlay');
     } finally {
       monitoredRefreshInFlight = false;
@@ -5055,6 +5152,19 @@ export function createAppController(): AppController {
       state.ui.error = null;
       state.ui.loginErrorCount = 0;
       emit('legacy', 'overlay');
+    },
+    setNetworkDebugEnabled(enabled: boolean) {
+      state.ui.networkDebugEnabled = Boolean(enabled);
+      persistNetworkDebugState();
+      emit('overlay');
+    },
+    clearNetworkDebugEntries() {
+      if (state.ui.networkDebugEntries.length === 0) {
+        return;
+      }
+      state.ui.networkDebugEntries = [];
+      persistNetworkDebugState();
+      emit('overlay');
     },
     openAuthPanel(panel: Exclude<AuthPanel, 'none'>) {
       state.ui.pendingIdentityUnlinkProvider = null;

@@ -1,6 +1,23 @@
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
   || 'https://api.trendscope.pro';
 const PROD_API_ORIGIN = new URL(PROD_API_BASE).origin.toLowerCase();
+export const API_NETWORK_ERROR_EVENT = 'trendscope:api-network-error';
+
+export interface ApiNetworkErrorDetail {
+  ts: number;
+  path: string;
+  method: string;
+  message: string;
+  apiBase: string;
+}
+
+function dispatchApiNetworkError(detail: ApiNetworkErrorDetail) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent<ApiNetworkErrorDetail>(API_NETWORK_ERROR_EVENT, { detail }));
+}
 
 function stripTrailingSlashes(value: string) {
   return value.replace(/\/+$/, '');
@@ -82,7 +99,8 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
 
   let response: Response;
   try {
-    response = await fetch(`${resolveApiBase()}${path}`, {
+    const apiBase = resolveApiBase();
+    response = await fetch(`${apiBase}${path}`, {
       ...init,
       cache: 'no-store',
       credentials: 'include',
@@ -92,6 +110,13 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
     const message = error instanceof Error && error.message
       ? `Network error: ${error.message}`
       : 'Network error: unable to reach API';
+    dispatchApiNetworkError({
+      ts: Date.now(),
+      path,
+      method: String(init?.method || 'GET').trim().toUpperCase() || 'GET',
+      message,
+      apiBase: resolveApiBase(),
+    });
     throw new Error(message);
   }
 
