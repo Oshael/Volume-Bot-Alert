@@ -6,6 +6,7 @@ const billingCatalog = require('../services/billing-catalog');
 const billingService = require('../services/billing-service');
 
 const router = express.Router();
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 function escapeHtml(value) {
   return String(value || '')
@@ -91,7 +92,29 @@ function getMockCheckoutSuccessHtml({ order, redirectUrl }) {
 </html>`;
 }
 
-router.get('/mock-checkout/:orderId', async (req, res) => {
+function isLoopbackValue(value) {
+  return LOOPBACK_HOSTS.has(String(value || '').trim().toLowerCase());
+}
+
+function isLocalMockCheckoutRequest(req) {
+  const hostname = String(req.hostname || req.get('host') || '').split(':')[0];
+  const isLocalEnv = config.nodeEnv === 'development' || config.nodeEnv === 'test';
+  return isLocalEnv && isLoopbackValue(hostname);
+}
+
+function requireLocalMockCheckout(req, res, next) {
+  if (!billingCatalog.isMoonpayMockMode()) {
+    return res.status(404).send('Not found');
+  }
+
+  if (!isLocalMockCheckoutRequest(req)) {
+    return res.status(404).send('Not found');
+  }
+
+  return next();
+}
+
+router.get('/mock-checkout/:orderId', requireLocalMockCheckout, authenticateAllowExpiredAccess, async (req, res) => {
   if (!billingCatalog.isMoonpayMockMode()) {
     return res.status(404).send('Not found');
   }
@@ -101,7 +124,7 @@ router.get('/mock-checkout/:orderId', async (req, res) => {
     return res.status(400).send('Invalid order id');
   }
 
-  const order = await billingOrder.findById(orderId);
+  const order = await billingOrder.findByIdForUser(orderId, req.user.id);
   if (!order) {
     return res.status(404).send('Billing order not found');
   }
@@ -110,7 +133,7 @@ router.get('/mock-checkout/:orderId', async (req, res) => {
   return res.status(200).send(getMockCheckoutHtml(order));
 });
 
-router.post('/mock-checkout/:orderId/complete', async (req, res) => {
+router.post('/mock-checkout/:orderId/complete', requireLocalMockCheckout, authenticateAllowExpiredAccess, async (req, res) => {
   if (!billingCatalog.isMoonpayMockMode()) {
     return res.status(404).send('Not found');
   }
@@ -121,7 +144,7 @@ router.post('/mock-checkout/:orderId/complete', async (req, res) => {
       return res.status(400).send('Invalid order id');
     }
 
-    const order = await billingOrder.findById(orderId);
+    const order = await billingOrder.findByIdForUser(orderId, req.user.id);
     if (!order) {
       return res.status(404).send('Billing order not found');
     }
@@ -236,3 +259,7 @@ router.post('/webhooks/moonpay', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__private = {
+  isLocalMockCheckoutRequest,
+  requireLocalMockCheckout,
+};

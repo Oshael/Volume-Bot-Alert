@@ -8,6 +8,12 @@ let cachedHealthPayload = null;
 let cachedHealthStatusCode = 200;
 let cachedAt = 0;
 
+function resetHealthCache() {
+  cachedHealthPayload = null;
+  cachedHealthStatusCode = 200;
+  cachedAt = 0;
+}
+
 async function computeHealthPayload() {
   try {
     const dbStart = Date.now();
@@ -30,6 +36,7 @@ async function computeHealthPayload() {
       },
     };
   } catch (err) {
+    console.error('Health check DB probe failed:', err);
     return {
       statusCode: 503,
       payload: {
@@ -39,7 +46,8 @@ async function computeHealthPayload() {
           socketEnabled: Boolean(config.runtime.runSocketHub),
           backgroundJobsEnabled: Boolean(config.runtime.runBackgroundJobs),
         },
-        db: { connected: false, error: err.message },
+        db: { connected: false },
+        error: 'Database unavailable',
         timestamp: new Date().toISOString(),
         cached: false,
       },
@@ -81,3 +89,7 @@ router.get('/', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__private = {
+  computeHealthPayload,
+  resetHealthCache,
+};

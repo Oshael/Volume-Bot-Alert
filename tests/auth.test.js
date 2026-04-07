@@ -288,6 +288,31 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.body.runtime.socketEnabled, false);
       assert.equal(res.body.runtime.backgroundJobsEnabled, true);
     });
+
+    it('GET /api/health sanitizes DB failures', async () => {
+      const { pool } = require('../src/models/db');
+      const healthRoute = require('../src/routes/health');
+      const originalQuery = pool.query;
+
+      pool.query = async () => {
+        throw new Error('password authentication failed for user postgres');
+      };
+      healthRoute.__private.resetHealthCache();
+
+      try {
+        const res = await request('GET', '/api/health');
+        assert.equal(res.status, 503);
+        assert.equal(res.body.status, 'error');
+        assert.equal(res.body.db.connected, false);
+        assert.equal(res.body.error, 'Database unavailable');
+        assert.equal(res.body.db.error, undefined);
+        assert.equal(String(res.body.error || '').includes('password authentication failed'), false);
+        assert.equal(JSON.stringify(res.body).includes('password authentication failed'), false);
+      } finally {
+        pool.query = originalQuery;
+        healthRoute.__private.resetHealthCache();
+      }
+    });
   });
 
   describe('Bootstrap Invite', () => {

@@ -350,4 +350,55 @@ describe('Billing foundation', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.duplicate, true);
   });
+
+  it('keeps mock checkout disabled when mock mode is off', async () => {
+    const res = await request('GET', `/api/billing/mock-checkout/${lastOrderId}`, { token: userToken });
+    assert.equal(res.status, 404);
+  });
+
+  it('requires auth and loopback host for mock checkout when mock mode is enabled', async () => {
+    const config = require('../config');
+    const originalMockMode = config.billing.moonpay.mockMode;
+    config.billing.moonpay.mockMode = true;
+
+    try {
+      const orderResponse = await request('POST', '/api/billing/orders', {
+        token: userToken,
+        body: { planKey: 'plan-7d' },
+        headers: {
+          Origin: 'http://localhost:3000',
+        },
+      });
+
+      assert.equal(orderResponse.status, 201);
+      assert.match(String(orderResponse.body.checkoutUrl || ''), /\/api\/billing\/mock-checkout\//i);
+
+      const mockCheckoutPath = new URL(orderResponse.body.checkoutUrl).pathname;
+
+      const unauthenticatedGet = await request('GET', mockCheckoutPath);
+      assert.equal(unauthenticatedGet.status, 401);
+
+      const nonLoopbackHostGet = await request('GET', mockCheckoutPath, {
+        token: userToken,
+        headers: {
+          Host: 'evil.example.test',
+        },
+      });
+      assert.equal(nonLoopbackHostGet.status, 404);
+
+      const authenticatedGet = await request('GET', mockCheckoutPath, { token: userToken });
+      assert.equal(authenticatedGet.status, 200);
+      assert.match(String(authenticatedGet.body || ''), /Local Billing Mock Checkout/i);
+
+      const completeResponse = await request('POST', `${mockCheckoutPath}/complete`, { token: userToken });
+      assert.equal(completeResponse.status, 200);
+      assert.match(String(completeResponse.body || ''), /Mock Payment Confirmed/i);
+
+      const ordersResponse = await request('GET', '/api/billing/orders', { token: userToken });
+      assert.equal(ordersResponse.status, 200);
+      assert.equal(ordersResponse.body.orders[0].status, 'paid');
+    } finally {
+      config.billing.moonpay.mockMode = originalMockMode;
+    }
+  });
 });
