@@ -251,6 +251,8 @@ router.post('/webhooks/moonpay', async (req, res) => {
       message: result.duplicate ? 'Duplicate webhook ignored' : 'Webhook processed',
       duplicate: Boolean(result.duplicate),
       ignored: Boolean(result.ignored),
+      rejected: Boolean(result.rejected),
+      reason: result.reason || null,
     });
   } catch (err) {
     console.error('MoonPay Commerce webhook error:', err);

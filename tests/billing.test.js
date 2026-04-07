@@ -128,11 +128,68 @@ async function ensureSchemas(pool) {
   }
 }
 
+function jsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify(body);
+    },
+  };
+}
+
+function buildChargeLookupBody({
+  chargeId,
+  paylinkId = 'paylink_test_7d',
+  requestAmount = '1500',
+  currencySymbol = 'USDC',
+  transactionId = null,
+  transactionSignature = null,
+  transactionStatus = 'SUCCESS',
+} = {}) {
+  return {
+    id: chargeId,
+    pageUrl: `https://checkout.example.test/charge/${chargeId}`,
+    status: transactionId ? 'paid' : 'pending',
+    currencySymbol,
+    requestAmount,
+    prepareRequestBody: {
+      currency: currencySymbol,
+      amount: requestAmount,
+      quantity: 1,
+    },
+    paylink: {
+      id: paylinkId,
+      price: requestAmount,
+      normalizedPrice: requestAmount,
+      pricingCurrency: {
+        symbol: currencySymbol,
+      },
+    },
+    paylinkTx: transactionId ? {
+      id: transactionId,
+      paylinkId,
+      meta: {
+        transactionSignature: transactionSignature || `sig_${transactionId}`,
+        transactionStatus,
+        currency: {
+          symbol: currencySymbol,
+        },
+      },
+    } : null,
+  };
+}
+
 describe('Billing foundation', () => {
   let server;
   let userToken;
   let lastOrderId = null;
+  let lastOrderChargeId = null;
   let originalFetch;
+  let createdChargeCount = 0;
+  let createdChargeLookups;
+  let chargeLookupOverrides;
+  let transientLookupFailures;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -163,34 +220,43 @@ describe('Billing foundation', () => {
     process.env.MOONPAY_COMMERCE_WEBHOOK_TOKENS = 'test-webhook-token';
 
     originalFetch = global.fetch;
+    createdChargeLookups = new Map();
+    chargeLookupOverrides = new Map();
+    transientLookupFailures = new Map();
     global.fetch = async (url, init = {}) => {
       const targetUrl = String(url || '');
       if (targetUrl.includes('/charge/api-key')) {
+        createdChargeCount += 1;
+        const chargeId = `charge_test_${createdChargeCount}`;
+        const requestBody = JSON.parse(String(init.body || '{}'));
+        const paylinkId = requestBody?.paymentRequestId || 'paylink_test_7d';
         const body = {
-          id: 'charge_test_1',
-          pageUrl: 'https://checkout.example.test/charge/charge_test_1',
+          id: chargeId,
+          pageUrl: `https://checkout.example.test/charge/${chargeId}`,
           status: 'pending',
         };
-        return {
-          ok: true,
-          async text() {
-            return JSON.stringify(body);
-          },
-        };
+        createdChargeLookups.set(chargeId, buildChargeLookupBody({
+          chargeId,
+          paylinkId,
+          requestAmount: '1500',
+          currencySymbol: 'USDC',
+        }));
+        return jsonResponse(body);
       }
 
-      if (targetUrl.includes('/charge/charge_test_1')) {
-        const body = {
-          id: 'charge_test_1',
-          pageUrl: 'https://checkout.example.test/charge/charge_test_1',
-          status: 'pending',
-        };
-        return {
-          ok: true,
-          async text() {
-            return JSON.stringify(body);
-          },
-        };
+      const chargeMatch = targetUrl.match(/\/charge\/([^/?]+)/);
+      if (chargeMatch) {
+        const chargeId = decodeURIComponent(chargeMatch[1]);
+        const remainingFailures = transientLookupFailures.get(chargeId) || 0;
+        if (remainingFailures > 0) {
+          transientLookupFailures.set(chargeId, remainingFailures - 1);
+          throw new Error(`Simulated transient charge lookup failure for ${chargeId}`);
+        }
+
+        const body = chargeLookupOverrides.get(chargeId)
+          || createdChargeLookups.get(chargeId)
+          || buildChargeLookupBody({ chargeId });
+        return jsonResponse(body);
       }
 
       throw new Error(`Unexpected fetch call in test: ${targetUrl}`);
@@ -267,6 +333,7 @@ describe('Billing foundation', () => {
     assert.equal(res.body.order.planKey, 'plan-7d');
     assert.equal(res.body.checkoutUrl, 'https://checkout.example.test/charge/charge_test_1');
     lastOrderId = res.body.order.id;
+    lastOrderChargeId = res.body.order.providerChargeId;
   });
 
   it('lists created billing order', async () => {
@@ -277,6 +344,16 @@ describe('Billing foundation', () => {
   });
 
   it('processes MoonPay webhook and credits access', async () => {
+    chargeLookupOverrides.set(lastOrderChargeId, buildChargeLookupBody({
+      chargeId: lastOrderChargeId,
+      paylinkId: 'paylink_test_7d',
+      requestAmount: '1500',
+      currencySymbol: 'USDC',
+      transactionId: 'txn_test_1',
+      transactionSignature: 'sig_test_1',
+      transactionStatus: 'SUCCESS',
+    }));
+
     const res = await request('POST', '/api/billing/webhooks/moonpay', {
       headers: {
         Authorization: 'Bearer test-webhook-token',
@@ -302,6 +379,7 @@ describe('Billing foundation', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.duplicate, false);
     assert.equal(res.body.ignored, false);
+    assert.equal(res.body.rejected, false);
 
     const ordersResponse = await request('GET', '/api/billing/orders', { token: userToken });
     assert.equal(ordersResponse.status, 200);
@@ -349,6 +427,135 @@ describe('Billing foundation', () => {
 
     assert.equal(res.status, 200);
     assert.equal(res.body.duplicate, true);
+  });
+
+  it('rejects webhook when provider charge reconciliation does not match local order', async () => {
+    const orderResponse = await request('POST', '/api/billing/orders', {
+      token: userToken,
+      body: { planKey: 'plan-7d' },
+      headers: {
+        Origin: 'http://localhost:3000',
+      },
+    });
+
+    assert.equal(orderResponse.status, 201);
+    const rejectedOrderId = orderResponse.body.order.id;
+    const rejectedChargeId = orderResponse.body.order.providerChargeId;
+    const rejectedUserId = orderResponse.body.order.userId;
+
+    chargeLookupOverrides.set(rejectedChargeId, buildChargeLookupBody({
+      chargeId: rejectedChargeId,
+      paylinkId: 'paylink_wrong',
+      requestAmount: '1500',
+      currencySymbol: 'USDC',
+      transactionId: 'txn_reject_1',
+      transactionSignature: 'sig_reject_1',
+      transactionStatus: 'SUCCESS',
+    }));
+
+    const res = await request('POST', '/api/billing/webhooks/moonpay', {
+      headers: {
+        Authorization: 'Bearer test-webhook-token',
+      },
+      body: {
+        event: 'CREATED',
+        webhookDeliveryIdempotencyKey: 'reject_test_delivery_1',
+        transactionObject: {
+          id: 'txn_reject_1',
+          meta: {
+            transactionStatus: 'SUCCESS',
+            transactionSignature: 'sig_reject_1',
+            customerDetails: {
+              additionalJSON: JSON.stringify({
+                billingOrderId: rejectedOrderId,
+                billingPlanKey: 'plan-7d',
+                appUserId: rejectedUserId,
+              }),
+            },
+          },
+        },
+      },
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.duplicate, false);
+    assert.equal(res.body.ignored, true);
+    assert.equal(res.body.rejected, true);
+    assert.match(String(res.body.reason || ''), /paylink id/i);
+
+    const ordersResponse = await request('GET', '/api/billing/orders', { token: userToken });
+    assert.equal(ordersResponse.status, 200);
+    const rejectedOrder = ordersResponse.body.orders.find((entry) => entry.id === rejectedOrderId);
+    assert.ok(rejectedOrder);
+    assert.equal(rejectedOrder.status, 'awaiting_payment');
+  });
+
+  it('retries a received webhook after transient provider lookup failure', async () => {
+    const orderResponse = await request('POST', '/api/billing/orders', {
+      token: userToken,
+      body: { planKey: 'plan-7d' },
+      headers: {
+        Origin: 'http://localhost:3000',
+      },
+    });
+
+    assert.equal(orderResponse.status, 201);
+    const retryOrderId = orderResponse.body.order.id;
+    const retryChargeId = orderResponse.body.order.providerChargeId;
+
+    chargeLookupOverrides.set(retryChargeId, buildChargeLookupBody({
+      chargeId: retryChargeId,
+      paylinkId: 'paylink_test_7d',
+      requestAmount: '1500',
+      currencySymbol: 'USDC',
+      transactionId: 'txn_retry_1',
+      transactionSignature: 'sig_retry_1',
+      transactionStatus: 'SUCCESS',
+    }));
+    transientLookupFailures.set(retryChargeId, 1);
+
+    const payload = {
+      event: 'CREATED',
+      webhookDeliveryIdempotencyKey: 'retry_test_delivery_1',
+      transactionObject: {
+        id: 'txn_retry_1',
+        meta: {
+          transactionStatus: 'SUCCESS',
+          transactionSignature: 'sig_retry_1',
+          customerDetails: {
+            additionalJSON: JSON.stringify({
+              billingOrderId: retryOrderId,
+              billingPlanKey: 'plan-7d',
+            }),
+          },
+        },
+      },
+    };
+
+    const firstResponse = await request('POST', '/api/billing/webhooks/moonpay', {
+      headers: {
+        Authorization: 'Bearer test-webhook-token',
+      },
+      body: payload,
+    });
+    assert.equal(firstResponse.status, 500);
+
+    const retryResponse = await request('POST', '/api/billing/webhooks/moonpay', {
+      headers: {
+        Authorization: 'Bearer test-webhook-token',
+      },
+      body: payload,
+    });
+    assert.equal(retryResponse.status, 200);
+    assert.equal(retryResponse.body.duplicate, false);
+    assert.equal(retryResponse.body.ignored, false);
+    assert.equal(retryResponse.body.rejected, false);
+
+    const ordersResponse = await request('GET', '/api/billing/orders', { token: userToken });
+    assert.equal(ordersResponse.status, 200);
+    const retryOrder = ordersResponse.body.orders.find((entry) => entry.id === retryOrderId);
+    assert.ok(retryOrder);
+    assert.equal(retryOrder.status, 'paid');
   });
 
   it('keeps mock checkout disabled when mock mode is off', async () => {

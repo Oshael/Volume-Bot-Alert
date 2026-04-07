@@ -125,6 +125,49 @@ function extractStatus(body) {
   return body?.status || body?.chargeStatus || body?.transactionStatus || null;
 }
 
+function extractChargePaylinkId(body) {
+  return body?.paylink?.id
+    || body?.paymentRequestId
+    || null;
+}
+
+function extractChargeRequestAmount(body) {
+  return body?.requestAmount
+    || body?.prepareRequestBody?.amount
+    || body?.paylink?.normalizedPrice
+    || body?.paylink?.price
+    || null;
+}
+
+function extractChargeCurrencySymbol(body) {
+  const candidates = [
+    body?.currencySymbol,
+    body?.prepareRequestBody?.currency,
+    body?.paylink?.pricingCurrency?.symbol,
+    body?.paylink?.currency?.symbol,
+    body?.paylinkTx?.meta?.currency?.symbol,
+  ];
+  return candidates.find(Boolean) || null;
+}
+
+function extractChargePaymentTransaction(body) {
+  return body?.paylinkTx || null;
+}
+
+function extractChargePaymentTransactionId(body) {
+  return extractChargePaymentTransaction(body)?.id || null;
+}
+
+function extractChargePaymentTransactionSignature(body) {
+  return extractChargePaymentTransaction(body)?.meta?.transactionSignature || null;
+}
+
+function extractChargePaymentTransactionStatus(body) {
+  return extractChargePaymentTransaction(body)?.meta?.transactionStatus
+    || extractStatus(body)
+    || null;
+}
+
 function buildChargePayload(input) {
   const additionalJson = {
     billingOrderId: input.orderId,
@@ -196,6 +239,12 @@ async function getChargeById(chargeId) {
       providerChargeToken: chargeId,
       providerCheckoutUrl,
       providerStatus: 'pending',
+      providerPaylinkId: null,
+      providerRequestAmount: null,
+      providerCurrencySymbol: null,
+      providerTransactionId: null,
+      providerTransactionSignature: null,
+      providerTransactionStatus: null,
       raw: {
         id: chargeId,
         url: providerCheckoutUrl,
@@ -213,6 +262,12 @@ async function getChargeById(chargeId) {
     providerChargeToken: extractChargeToken(body, extractCheckoutUrl(body)),
     providerCheckoutUrl: extractCheckoutUrl(body),
     providerStatus: extractStatus(body),
+    providerPaylinkId: extractChargePaylinkId(body),
+    providerRequestAmount: extractChargeRequestAmount(body),
+    providerCurrencySymbol: extractChargeCurrencySymbol(body),
+    providerTransactionId: extractChargePaymentTransactionId(body),
+    providerTransactionSignature: extractChargePaymentTransactionSignature(body),
+    providerTransactionStatus: extractChargePaymentTransactionStatus(body),
     raw: body,
   };
 }
