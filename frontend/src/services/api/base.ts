@@ -1,5 +1,5 @@
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
-  || 'https://volume-alert-server-production.up.railway.app';
+  || 'https://api.trendscope.pro';
 const PROD_API_ORIGIN = new URL(PROD_API_BASE).origin.toLowerCase();
 
 function stripTrailingSlashes(value: string) {
