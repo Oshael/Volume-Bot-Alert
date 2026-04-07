@@ -229,7 +229,9 @@ Direcao sugerida:
 Mudancas:
 
 - adicionar nota operacional no doc certo ou runbook
-- deixar explicito que nginx deve sobrescrever `X-Forwarded-For`
+- deixar explicito que o backend deve permanecer atras de proxy privado/loopback
+- deixar explicito que o app confia apenas nesses hops privados
+- deixar explicito que `proxy_add_x_forwarded_for` continua aceitavel quando essa confianca e restrita corretamente
 
 #### Block 2C. Validar impacto em rate limit
 

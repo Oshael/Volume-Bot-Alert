@@ -5,7 +5,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const config = require('../config');
 const { defaultApiLimiter, healthLimiter } = require('./middleware/rate-limit');
-const { isAllowedOrigin } = require('./utils/request-security');
+const { isAllowedOrigin, trustProxySetting } = require('./utils/request-security');
 const { getSecurityEventStats } = require('./utils/security-events');
 const { assertRuntimeSchema } = require('./utils/runtime-schema');
 const Session = require('./models/session');
@@ -94,8 +94,8 @@ app.options('*', cors({
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
-// Trust proxy (for rate limiting behind reverse proxy / Nginx)
-app.set('trust proxy', 1);
+// Trust only local/private proxy hops so direct clients cannot spoof forwarded IPs.
+app.set('trust proxy', trustProxySetting);
 
 // Enforce HTTPS behind reverse proxy in production when enabled.
 if (config.nodeEnv === 'production' && config.forceHttps) {

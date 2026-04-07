@@ -1,6 +1,10 @@
+const net = require('net');
+const proxyaddr = require('proxy-addr');
 const config = require('../../config');
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1']);
+const TRUST_PROXY_SUBNETS = ['loopback', 'linklocal', 'uniquelocal'];
+const trustProxy = proxyaddr.compile(TRUST_PROXY_SUBNETS);
 
 function normalizeOriginValue(value) {
   const raw = String(value || '').trim();
@@ -53,23 +57,53 @@ function isAllowedOrigin(origin) {
   return false;
 }
 
-function extractForwardedIp(value) {
-  if (!value) return null;
-  const raw = Array.isArray(value) ? value[0] : String(value).split(',')[0];
-  const ip = String(raw || '').trim();
-  return ip || null;
+function normalizeIpValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  if (raw === '[::1]') {
+    return '::1';
+  }
+
+  if (raw.startsWith('::ffff:')) {
+    const mappedIpv4 = raw.slice(7);
+    if (net.isIP(mappedIpv4) === 4) {
+      return mappedIpv4;
+    }
+  }
+
+  return raw;
+}
+
+function resolveTrustedIp(reqLike) {
+  if (!reqLike) return null;
+
+  try {
+    const resolved = proxyaddr(reqLike, trustProxy);
+    if (resolved) {
+      return normalizeIpValue(resolved);
+    }
+  } catch (_) {
+    // Fall through to direct socket-derived IPs when request shape is partial.
+  }
+
+  return normalizeIpValue(
+    reqLike.ip
+      || reqLike.socket?.remoteAddress
+      || reqLike.connection?.remoteAddress
+      || reqLike.info?.remoteAddress
+      || null
+  );
 }
 
 function getRequestIp(req) {
-  return extractForwardedIp(req?.headers?.['x-forwarded-for'])
-    || String(req?.ip || '').trim()
-    || String(req?.socket?.remoteAddress || '').trim()
-    || null;
+  return resolveTrustedIp(req);
 }
 
 function getSocketClientIp(socket) {
-  return extractForwardedIp(socket?.handshake?.headers?.['x-forwarded-for'])
-    || String(socket?.handshake?.address || '').trim()
+  return resolveTrustedIp(socket?.request)
+    || normalizeIpValue(socket?.handshake?.address)
+    || normalizeIpValue(socket?.conn?.remoteAddress)
     || null;
 }
 
@@ -78,4 +112,5 @@ module.exports = {
   getSocketClientIp,
   isAllowedOrigin,
   normalizeOriginValue,
+  trustProxySetting: [...TRUST_PROXY_SUBNETS],
 };
