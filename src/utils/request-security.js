@@ -46,14 +46,6 @@ function isAllowedOrigin(origin) {
     if (config.nodeEnv === 'development' && isLoopbackHost(hostname)) {
       return true;
     }
-
-    if (hostname === 'volume-bot-alert-frontend.vercel.app') {
-      return true;
-    }
-
-    if (hostname.endsWith('.vercel.app') && hostname.startsWith('volume-bot-alert-frontend-')) {
-      return true;
-    }
   } catch (_) {
     return false;
   }
