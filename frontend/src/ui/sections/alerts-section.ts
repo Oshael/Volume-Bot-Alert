@@ -296,12 +296,29 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
     buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
     buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
   );
+
+  if (alert.kind !== 'meteora-surge') {
+    return;
+  }
+
+  const currentPool = Number(alert.meteoraCurrentTvl);
+  const baselinePool24h = Number(alert.meteoraBaselineTvl24h);
+  if (!(currentPool > 0)) {
+    return;
+  }
+
+  if (Number.isFinite(baselinePool24h) && baselinePool24h > 0) {
+    container.append(buildFlowTransition('POOL', fmtMoney(baselinePool24h), fmtMoney(currentPool), 'up', 'meteora-pool-label'));
+    return;
+  }
+
+  container.append(buildMetricPair('POOL', fmtMoney(currentPool), 'up', 'meteora-pool-label'));
 }
 
-function buildMetricPair(label: string, value: string, toneClass: string) {
+function buildMetricPair(label: string, value: string, toneClass: string, labelClass = '') {
   const wrapper = document.createElement('span');
   const labelEl = document.createElement('span');
-  labelEl.className = 'label';
+  labelEl.className = ['label', labelClass].filter(Boolean).join(' ');
   labelEl.textContent = label;
   const valueEl = document.createElement('span');
   valueEl.className = `value ${toneClass}`.trim();
@@ -310,10 +327,10 @@ function buildMetricPair(label: string, value: string, toneClass: string) {
   return wrapper;
 }
 
-function buildFlowTransition(label: string, previous: string, next: string, toneClass: string) {
+function buildFlowTransition(label: string, previous: string, next: string, toneClass: string, labelClass = '') {
   const wrapper = document.createElement('span');
   const labelEl = document.createElement('span');
-  labelEl.className = 'label';
+  labelEl.className = ['label', labelClass].filter(Boolean).join(' ');
   labelEl.textContent = label;
   wrapper.append(labelEl, ` ${previous} → `);
   const valueEl = document.createElement('span');

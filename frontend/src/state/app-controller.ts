@@ -3164,6 +3164,21 @@ export function createAppController(): AppController {
     return currentTvl / ratio;
   }
 
+  function getMeteoraBaselineTvl24h(entry: MeteoraEntry | undefined) {
+    const currentTvl = Number(entry?.tvl) || 0;
+    const change24hPct = Number(entry?.change24h);
+    if (!(currentTvl > 0) || !Number.isFinite(change24hPct)) {
+      return null;
+    }
+
+    const ratio = 1 + (change24hPct / 100);
+    if (!(ratio > 0)) {
+      return null;
+    }
+
+    return currentTvl / ratio;
+  }
+
   function roundAlertMetric(value: number | null | undefined) {
     if (value == null || !Number.isFinite(value)) {
       return 'na';
@@ -3483,6 +3498,7 @@ export function createAppController(): AppController {
     const meteoraEntry = state.data.meteoraByAddress[token.address];
     const meteoraCurrentTvl = Number(meteoraEntry?.tvl) || 0;
     const meteoraBaselineTvl1h = getMeteoraBaselineTvl1h(meteoraEntry);
+    const meteoraBaselineTvl24h = getMeteoraBaselineTvl24h(meteoraEntry);
 
     if (shouldFireHvncAlert(token, ageMs, hvncMinVol)) {
       token._hvncFired = true;
@@ -3510,7 +3526,10 @@ export function createAppController(): AppController {
       token._meteoraSurgeFired = true;
       token.lastAlertAt = now;
       token._lastAlertKind = 'meteora-surge';
-      pushAlert(buildTrackedAlertEntry(token, now, symbol, 'meteora-surge', 'METEORA 1H', meteoraEntry?.change1h ?? 0));
+      pushAlert(buildTrackedAlertEntry(token, now, symbol, 'meteora-surge', 'METEORA 1H', meteoraEntry?.change1h ?? 0, {
+        meteoraCurrentTvl,
+        meteoraBaselineTvl24h,
+      }));
       setNotice(`Surge + Meteora Alert 1h: ${symbol}`);
     }
   }

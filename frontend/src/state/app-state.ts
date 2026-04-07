@@ -23,6 +23,8 @@ export interface AlertEntry {
   thresholdPct?: number | null;
   baselineTs?: string | null;
   currentTs?: string | null;
+  meteoraCurrentTvl?: number | null;
+  meteoraBaselineTvl24h?: number | null;
   pct: number;
   label: string;
   surgeWindow?: '1H' | '6H' | null;
