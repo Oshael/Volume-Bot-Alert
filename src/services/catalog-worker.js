@@ -557,6 +557,7 @@ async function evaluateTokenWithData(token, data) {
 
   const marketSnapshotPayload = {
     tokenAddress: token.address,
+    pairAddress: bestPair.pairAddress || null,
     mcap: marketCap,
     price: bestPair.priceUsd || null,
     vol5m: snapshot.vol5m,

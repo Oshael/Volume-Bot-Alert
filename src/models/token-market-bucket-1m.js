@@ -127,15 +127,32 @@ function normalizeHighCapDumpBucketCount(primaryValue, secondaryValue) {
   return Math.max(0, Number(firstDefinedValue(primaryValue, secondaryValue)) || 0);
 }
 
+function readHighCapDumpTextField(row, snakeKey, camelKey) {
+  return normalizeHighCapDumpTextField(row?.[snakeKey], row?.[camelKey]);
+}
+
+function readHighCapDumpNumberField(row, snakeKey, camelKey) {
+  return normalizeHighCapDumpNumberField(row?.[snakeKey], row?.[camelKey]);
+}
+
+function readHighCapDumpBucketCountField(row, snakeKey, camelKey) {
+  return normalizeHighCapDumpBucketCount(row?.[snakeKey], row?.[camelKey]);
+}
+
 function normalizeHighCapDumpRow(row) {
   return {
-    tokenAddress: String(normalizeHighCapDumpTextField(row?.token_address, row?.tokenAddress) || '').trim(),
-    baselineTs: normalizeHighCapDumpTextField(row?.baseline_ts, row?.baselineTs),
-    currentTs: normalizeHighCapDumpTextField(row?.current_ts, row?.currentTs),
-    baselineMcap: normalizeHighCapDumpNumberField(row?.baseline_mcap, row?.baselineMcap),
-    currentCloseMcap: normalizeHighCapDumpNumberField(row?.current_close_mcap, row?.currentCloseMcap),
-    windowLowMcap: normalizeHighCapDumpNumberField(row?.window_low_mcap, row?.windowLowMcap),
-    bucketCount: normalizeHighCapDumpBucketCount(row?.bucket_count, row?.bucketCount),
+    tokenAddress: String(readHighCapDumpTextField(row, 'token_address', 'tokenAddress') || '').trim(),
+    baselineTs: readHighCapDumpTextField(row, 'baseline_ts', 'baselineTs'),
+    currentTs: readHighCapDumpTextField(row, 'current_ts', 'currentTs'),
+    baselinePairAddress: readHighCapDumpTextField(row, 'baseline_pair_address', 'baselinePairAddress'),
+    currentPairAddress: readHighCapDumpTextField(row, 'current_pair_address', 'currentPairAddress'),
+    windowLowBucketTs: readHighCapDumpTextField(row, 'window_low_bucket_ts', 'windowLowBucketTs'),
+    windowLowPairAddress: readHighCapDumpTextField(row, 'window_low_pair_address', 'windowLowPairAddress'),
+    baselineMcap: readHighCapDumpNumberField(row, 'baseline_mcap', 'baselineMcap'),
+    currentCloseMcap: readHighCapDumpNumberField(row, 'current_close_mcap', 'currentCloseMcap'),
+    windowLowMcap: readHighCapDumpNumberField(row, 'window_low_mcap', 'windowLowMcap'),
+    bucketCount: readHighCapDumpBucketCountField(row, 'bucket_count', 'bucketCount'),
+    windowPairCount: readHighCapDumpBucketCountField(row, 'window_pair_count', 'windowPairCount'),
   };
 }
 
@@ -667,12 +684,16 @@ async function upsertSnapshotBucket(snapshot) {
   const bucketTs = getBucketDate(snapshot.ts || new Date());
   const mcap = toNumberOrNull(snapshot.mcap);
   const price = toNumberOrNull(snapshot.price);
+  const pairAddress = isValidAddress(String(snapshot.pairAddress || '').trim())
+    ? String(snapshot.pairAddress).trim()
+    : null;
   const source = String(snapshot.source || 'dexscreener').trim().toLowerCase() || 'dexscreener';
 
   const { rows } = await db.query(
     `INSERT INTO token_market_buckets_1m (
        token_address,
        bucket_ts,
+       pair_address,
        open_mcap,
        high_mcap,
        low_mcap,
@@ -685,13 +706,14 @@ async function upsertSnapshotBucket(snapshot) {
        source
      )
      VALUES (
-       $1, $2,
-       $3, $3, $3, $3,
+       $1, $2, $3,
        $4, $4, $4, $4,
+       $5, $5, $5, $5,
        1,
-       $5
+       $6
      )
      ON CONFLICT (token_address, bucket_ts) DO UPDATE SET
+       pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_1m.pair_address),
        high_mcap = CASE
          WHEN EXCLUDED.high_mcap IS NULL THEN token_market_buckets_1m.high_mcap
          WHEN token_market_buckets_1m.high_mcap IS NULL THEN EXCLUDED.high_mcap
@@ -717,7 +739,7 @@ async function upsertSnapshotBucket(snapshot) {
        sample_count = token_market_buckets_1m.sample_count + 1,
        source = COALESCE(EXCLUDED.source, token_market_buckets_1m.source)
      RETURNING *`,
-    [address, bucketTs, mcap, price, source]
+    [address, bucketTs, pairAddress, mcap, price, source]
   );
 
   return rows[0];
@@ -749,6 +771,7 @@ async function listHistoryByAddress(address, options = {}) {
     `SELECT
        token_address,
        bucket_ts,
+       pair_address,
        open_mcap,
        high_mcap,
        low_mcap,
@@ -770,6 +793,7 @@ async function listHistoryByAddress(address, options = {}) {
   return rows.reverse().map((row) => ({
     token_address: row.token_address,
     ts: row.bucket_ts,
+    pairAddress: row.pair_address || null,
     mcap: row.close_mcap == null ? null : Number(row.close_mcap),
     price: row.close_price == null ? null : Number(row.close_price),
     openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
@@ -881,11 +905,17 @@ function buildHighCapDumpDetection(row, options = {}) {
   return {
     tokenAddress: normalizedRow.tokenAddress,
     baselineTs: normalizedRow.baselineTs,
+    baselinePairAddress: normalizedRow.baselinePairAddress,
     baselineMcap: normalizedRow.baselineMcap,
     currentTs: normalizedRow.currentTs,
+    currentPairAddress: normalizedRow.currentPairAddress,
     currentCloseMcap: normalizedRow.currentCloseMcap,
+    windowLowBucketTs: normalizedRow.windowLowBucketTs,
+    windowLowPairAddress: normalizedRow.windowLowPairAddress,
     windowLowMcap: normalizedRow.windowLowMcap,
     bucketCount: normalizedRow.bucketCount,
+    windowPairCount: normalizedRow.windowPairCount,
+    pairChangedInWindow: normalizedRow.windowPairCount > 1,
     latestBucketAgeMs,
     dumpPct: roundMetric(dumpPct, 2),
     ...gates,
@@ -912,15 +942,21 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
      SELECT
        requested.token_address,
        current_row.current_ts,
+       current_row.current_pair_address,
        current_row.current_close_mcap,
        baseline_row.baseline_ts,
+       baseline_row.baseline_pair_address,
        baseline_row.baseline_mcap,
-       window_stats.window_low_mcap,
-       window_stats.bucket_count
+       window_low_row.window_low_bucket_ts,
+       window_low_row.window_low_pair_address,
+       window_low_row.window_low_mcap,
+       window_stats.bucket_count,
+       window_stats.window_pair_count
      FROM requested
      LEFT JOIN LATERAL (
        SELECT
          bucket_ts AS current_ts,
+         pair_address AS current_pair_address,
          close_mcap AS current_close_mcap
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
@@ -931,6 +967,7 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
      LEFT JOIN LATERAL (
        SELECT
          bucket_ts AS baseline_ts,
+         pair_address AS baseline_pair_address,
          close_mcap AS baseline_mcap
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
@@ -943,8 +980,22 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
      ) AS baseline_row ON TRUE
      LEFT JOIN LATERAL (
        SELECT
-         MIN(low_mcap) AS window_low_mcap,
-         COUNT(*)::int AS bucket_count
+         bucket_ts AS window_low_bucket_ts,
+         pair_address AS window_low_pair_address,
+         low_mcap AS window_low_mcap
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND current_row.current_ts IS NOT NULL
+         AND bucket_ts > current_row.current_ts - ($2::int * INTERVAL '1 minute')
+         AND bucket_ts <= current_row.current_ts
+         AND low_mcap IS NOT NULL
+       ORDER BY low_mcap ASC, bucket_ts DESC
+       LIMIT 1
+     ) AS window_low_row ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT
+         COUNT(*)::int AS bucket_count,
+         COUNT(DISTINCT pair_address)::int AS window_pair_count
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
          AND current_row.current_ts IS NOT NULL

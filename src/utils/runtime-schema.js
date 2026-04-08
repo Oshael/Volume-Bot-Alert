@@ -297,6 +297,19 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage23-market-bucket-pair-diagnostics',
+    name: 'Stage 23 market bucket pair diagnostics',
+    repair: 'node src/utils/db-init-stage23.js',
+    tables: [
+      {
+        table: 'token_market_buckets_1m',
+        columns: [
+          'pair_address',
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage17-market-volume-buckets',
     name: 'Stage 17 market volume bucket table',
     repair: 'node src/utils/db-init-stage17.js',

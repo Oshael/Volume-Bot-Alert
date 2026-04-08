@@ -237,11 +237,17 @@ describe('Admin panel auth and management', () => {
           {
             tokenAddress: 'So11111111111111111111111111111111111111112',
             baselineTs: '2026-04-05T12:00:00.000Z',
+            baselinePairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
             baselineMcap: 8000000,
             currentTs: '2026-04-05T12:05:00.000Z',
+            currentPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
             currentCloseMcap: 4200000,
+            windowLowBucketTs: '2026-04-05T12:03:00.000Z',
+            windowLowPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
             windowLowMcap: 3200000,
             bucketCount: 5,
+            windowPairCount: 2,
+            pairChangedInWindow: true,
             latestBucketAgeMs: 20000,
             dumpPct: -60,
             passesHighCapGate: true,
@@ -292,6 +298,9 @@ describe('Admin panel auth and management', () => {
         assert.equal(res.body.options.minBaselineMcap, 2000000);
         assert.equal(res.body.options.minBucketCount, 5);
         assert.equal(res.body.detections[0].passesAllGates, true);
+        assert.equal(res.body.detections[0].pairChangedInWindow, true);
+        assert.equal(res.body.detections[0].windowPairCount, 2);
+        assert.equal(res.body.detections[0].currentPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
         assert.equal(res.body.detections[1].passesAllGates, false);
       } finally {
         tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalDetector;

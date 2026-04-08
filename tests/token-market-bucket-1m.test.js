@@ -19,11 +19,16 @@ describe('token market 1m bucket helpers', () => {
     const detection = tokenMarketBucket1m.__private.buildHighCapDumpDetection({
       token_address: 'So11111111111111111111111111111111111111112',
       baseline_ts: '2026-04-05T12:00:00.000Z',
+      baseline_pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
       baseline_mcap: 8_000_000,
       current_ts: '2026-04-05T12:05:00.000Z',
+      current_pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
       current_close_mcap: 3_600_000,
+      window_low_bucket_ts: '2026-04-05T12:03:00.000Z',
+      window_low_pair_address: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
       window_low_mcap: 3_200_000,
       bucket_count: 5,
+      window_pair_count: 2,
     }, {
       referenceTs: '2026-04-05T12:05:30.000Z',
     });
@@ -33,6 +38,8 @@ describe('token market 1m bucket helpers', () => {
     assert.equal(detection.passesFreshnessGate, true);
     assert.equal(detection.passesThreshold, true);
     assert.equal(detection.dumpPct, -60);
+    assert.equal(detection.pairChangedInWindow, true);
+    assert.equal(detection.windowLowPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
   });
 
   it('does not use current market cap for the high-cap gate', () => {
@@ -83,11 +90,16 @@ describe('token market 1m bucket helpers', () => {
           {
             token_address: 'So11111111111111111111111111111111111111112',
             baseline_ts: '2026-04-05T12:00:00.000Z',
+            baseline_pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
             baseline_mcap: '7000000',
             current_ts: '2026-04-05T12:05:00.000Z',
+            current_pair_address: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
             current_close_mcap: '5000000',
+            window_low_bucket_ts: '2026-04-05T12:03:00.000Z',
+            window_low_pair_address: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
             window_low_mcap: '3200000',
             bucket_count: 5,
+            window_pair_count: 2,
           },
         ],
       };
@@ -110,6 +122,42 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(rows[0].passesHighCapGate, true);
       assert.equal(rows[0].passesThreshold, true);
       assert.equal(rows[0].latestBucketAgeMs, 20_000);
+      assert.equal(rows[0].pairChangedInWindow, true);
+      assert.equal(rows[0].baselinePairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
+      assert.equal(rows[0].currentPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('includes pairAddress in history rows for bucket-level diagnostics', async () => {
+    const originalQuery = db.query;
+
+    db.query = async () => ({
+      rows: [
+        {
+          token_address: 'So11111111111111111111111111111111111111112',
+          bucket_ts: '2026-04-05T12:05:00.000Z',
+          pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+          open_mcap: '7000000',
+          high_mcap: '7100000',
+          low_mcap: '6800000',
+          close_mcap: '6900000',
+          open_price: '1.1',
+          high_price: '1.2',
+          low_price: '1.0',
+          close_price: '1.15',
+          sample_count: 3,
+          source: 'dexscreener',
+        },
+      ],
+    });
+
+    try {
+      const rows = await tokenMarketBucket1m.listHistoryByAddress('So11111111111111111111111111111111111111112');
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].pairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
+      assert.equal(rows[0].sampleCount, 3);
     } finally {
       db.query = originalQuery;
     }

@@ -4,6 +4,7 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_market_buckets_1m (
      token_address VARCHAR(64) NOT NULL,
      bucket_ts TIMESTAMPTZ NOT NULL,
+     pair_address VARCHAR(64),
      open_mcap NUMERIC(20, 2),
      high_mcap NUMERIC(20, 2),
      low_mcap NUMERIC(20, 2),
