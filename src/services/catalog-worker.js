@@ -180,6 +180,11 @@ function derivePrioritySnapshot(bestPair, token = null) {
   const pchange1h = toNumber(bestPair?.priceChange?.h1);
   const pchange6h = toNumber(bestPair?.priceChange?.h6);
   const pchange24h = toNumber(bestPair?.priceChange?.h24);
+  const liquidityUsd = toNumber(bestPair?.liquidity?.usd);
+  const txns1hBuys = toNumber(bestPair?.txns?.h1?.buys);
+  const txns1hSells = toNumber(bestPair?.txns?.h1?.sells);
+  const txns24hBuys = toNumber(bestPair?.txns?.h24?.buys);
+  const txns24hSells = toNumber(bestPair?.txns?.h24?.sells);
   const now = Date.now();
 
   const applyLowActivityCooldown = (delayMs) => applyLowActivityCooldownForVol24h(delayMs, vol24h);
@@ -194,6 +199,11 @@ function derivePrioritySnapshot(bestPair, token = null) {
       pchange1h,
       pchange6h,
       pchange24h,
+      liquidityUsd,
+      txns1hBuys,
+      txns1hSells,
+      txns24hBuys,
+      txns24hSells,
       monitorPriority: 'dormant',
       nextEvaluationAt: new Date(Date.now() + addPriorityJitter(DORMANT_RECHECK_MS, DORMANT_JITTER_MS)),
       eligibleForMonitoring: false,
@@ -216,6 +226,11 @@ function derivePrioritySnapshot(bestPair, token = null) {
       pchange1h,
       pchange6h,
       pchange24h,
+      liquidityUsd,
+      txns1hBuys,
+      txns1hSells,
+      txns24hBuys,
+      txns24hSells,
       monitorPriority: 'low',
       nextEvaluationAt: new Date(now + applyLowActivityCooldown(nextLowMs)),
       eligibleForMonitoring: true,
@@ -242,6 +257,11 @@ function derivePrioritySnapshot(bestPair, token = null) {
       pchange1h,
       pchange6h,
       pchange24h,
+      liquidityUsd,
+      txns1hBuys,
+      txns1hSells,
+      txns24hBuys,
+      txns24hSells,
       monitorPriority: 'normal',
       nextEvaluationAt: new Date(Date.now() + applyLowActivityCooldown(nextMs)),
       eligibleForMonitoring: true,
@@ -266,6 +286,11 @@ function derivePrioritySnapshot(bestPair, token = null) {
     pchange1h,
     pchange6h,
     pchange24h,
+    liquidityUsd,
+    txns1hBuys,
+    txns1hSells,
+    txns24hBuys,
+    txns24hSells,
     monitorPriority: 'high',
     nextEvaluationAt: new Date(Date.now() + applyLowActivityCooldown(nextHighMs)),
     eligibleForMonitoring: true,
@@ -552,6 +577,11 @@ async function evaluateTokenWithData(token, data) {
     priceChange1h: snapshot.pchange1h,
     priceChange6h: snapshot.pchange6h,
     priceChange24h: snapshot.pchange24h,
+    liquidityUsd: snapshot.liquidityUsd,
+    txns1hBuys: snapshot.txns1hBuys,
+    txns1hSells: snapshot.txns1hSells,
+    txns24hBuys: snapshot.txns24hBuys,
+    txns24hSells: snapshot.txns24hSells,
     tokenCreatedAt: toNumber(bestPair.pairCreatedAt),
   });
 

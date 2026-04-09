@@ -1,7 +1,10 @@
 const tokenAlertEvent = require('../models/token-alert-event');
 const alertDeliveryCursor = require('../models/alert-delivery-cursor');
 const tokenCatalog = require('../models/token-catalog');
+const tokenMeteoraState = require('../models/token-meteora-state');
 const { getBackendAlertRule, getDefaultDashboardAlertRuleKey } = require('./backend-alert-rules');
+const { classifyTokenJunk } = require('./token-junk-metric');
+const { buildRiskReviewSummary, buildStructuralRiskSummary } = require('./token-risk-summary');
 
 const DEFAULT_ALERT_FEED_LIMIT = 50;
 
@@ -49,6 +52,8 @@ function mapDeliveryCursor(cursor, rule) {
 }
 
 function buildDashboardAlertEventCatalogPayload(catalogRow) {
+  const meteora = catalogRow?.meteora || null;
+
   return {
     symbol: toTextOrNull(catalogRow?.symbol),
     name: toTextOrNull(catalogRow?.name),
@@ -60,7 +65,28 @@ function buildDashboardAlertEventCatalogPayload(catalogRow) {
     volume1h: toNumberOrNull(catalogRow?.last_vol_1h),
     volume6h: toNumberOrNull(catalogRow?.last_vol_6h),
     volume24h: toNumberOrNull(catalogRow?.last_vol_24h),
+    riskReview: buildRiskReviewSummary(catalogRow),
+    structuralRisk: buildStructuralRiskSummary(catalogRow),
+    junkAssessment: classifyTokenJunk({
+      ...catalogRow,
+      meteora,
+    }),
   };
+}
+
+async function loadDashboardCatalogRowsWithMeteora(addresses = []) {
+  const metadataRows = await tokenCatalog.listDashboardMetadataByAddresses(addresses);
+  const meteoraRows = await tokenMeteoraState.listSummaryByAddresses(addresses);
+  const meteoraByAddress = new Map(meteoraRows.map((row) => [row.tokenAddress, row]));
+
+  return metadataRows.map((row) => ({
+    ...row,
+    meteora: {
+      noPool: !(meteoraByAddress.get(row.address)?.hasPool === true && (Number(meteoraByAddress.get(row.address)?.currentTvl) || 0) > 0),
+      poolCount: Number(meteoraByAddress.get(row.address)?.poolCount) || 0,
+      tvl: toNumberOrNull(meteoraByAddress.get(row.address)?.currentTvl),
+    },
+  }));
 }
 
 function buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule) {
@@ -92,7 +118,7 @@ async function buildDashboardAlertEventFromEvent(eventRow) {
   const rule = resolveDashboardFeedRule(eventRow?.ruleKey);
   const tokenAddress = toTextOrNull(eventRow?.tokenAddress);
   const metadataRows = tokenAddress
-    ? await tokenCatalog.listDashboardMetadataByAddresses([tokenAddress])
+    ? await loadDashboardCatalogRowsWithMeteora([tokenAddress])
     : [];
 
   return buildDashboardAlertEventItem(eventRow, metadataRows[0] || null, rule);
@@ -122,9 +148,7 @@ async function listDashboardAlertEvents(options = {}) {
     afterId,
     sort: afterId != null ? 'asc' : 'desc',
   });
-  const metadataRows = await tokenCatalog.listDashboardMetadataByAddresses(
-    events.map((item) => item.tokenAddress)
-  );
+  const metadataRows = await loadDashboardCatalogRowsWithMeteora(events.map((item) => item.tokenAddress));
   const metadataByAddress = new Map(metadataRows.map((row) => [row.address, row]));
 
   return {
@@ -162,6 +186,7 @@ module.exports = {
   __private: {
     buildDashboardAlertEventCatalogPayload,
     buildDashboardAlertEventDetectionPayload,
+    loadDashboardCatalogRowsWithMeteora,
     mapDeliveryCursor,
     toNumberOrNull,
     toTextOrNull,

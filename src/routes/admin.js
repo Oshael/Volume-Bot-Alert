@@ -8,8 +8,15 @@ const userAccess = require('../models/user-access');
 const { query } = require('../models/db');
 const socketHub = require('../services/socket-hub');
 const lateralizationWorker = require('../services/lateralization-worker');
+const { classifyTokenJunk } = require('../services/token-junk-metric');
+const tokenRiskCandidateSelector = require('../services/token-risk-candidate-selector');
+const tokenRiskEnrichmentWorker = require('../services/token-risk-enrichment-worker');
+const tokenRiskEnrichment = require('../models/token-risk-enrichment');
+const tokenRiskReview = require('../models/token-risk-review');
 const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/backend-alert-rules');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const tokenCatalog = require('../models/token-catalog');
+const tokenMeteoraState = require('../models/token-meteora-state');
 const { isValidAddress } = require('../models/user-token');
 
 const router = express.Router();
@@ -149,6 +156,14 @@ function parseHighCapDumpInspectOptions(query = {}) {
   };
 }
 
+function parseTokenRiskLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!tokenRiskReview.VALID_LABELS.has(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 function buildHighCapDumpInspectResponse(addresses, options, detections) {
   const decorated = detections.map((item) => ({
     ...item,
@@ -168,6 +183,57 @@ function buildHighCapDumpInspectResponse(addresses, options, detections) {
     qualifyingCount: decorated.filter((item) => item.passesAllGates).length,
     detections: decorated,
   };
+}
+
+function buildTokenRiskCandidateResponse(candidates, options) {
+  return {
+    options: {
+      scanLimit: options.scanLimit,
+      resultLimit: options.resultLimit,
+    },
+    count: candidates.length,
+    candidates: candidates.map((candidate) => ({
+      address: candidate.address,
+      score: candidate.score ?? null,
+      reasonCodes: Array.isArray(candidate.reasonCodes) ? candidate.reasonCodes : [],
+      priority: candidate.priority || 'dormant',
+      ageHours: candidate.ageHours ?? null,
+      volToMcapRatio: candidate.volToMcapRatio ?? null,
+      lastEnrichedAt: candidate.lastEnrichedAt || null,
+      lastAttemptedAt: candidate.lastAttemptedAt || null,
+      marketCap: candidate.marketCap ?? null,
+      volume24h: candidate.volume24h ?? null,
+      manualLabel: candidate.manualLabel || null,
+    })),
+  };
+}
+
+function buildAdminMeteoraMetric(summaryRow) {
+  const hasPool = summaryRow?.hasPool === true && (Number(summaryRow?.currentTvl) || 0) > 0;
+  return {
+    noPool: !hasPool,
+    poolCount: hasPool ? (Number(summaryRow?.poolCount) || 0) : 0,
+    tvl: hasPool ? (Number(summaryRow?.currentTvl) || 0) : null,
+  };
+}
+
+function buildTokenJunkAssessmentResponse(rows, meteoraRows) {
+  const meteoraByAddress = new Map((meteoraRows || []).map((row) => [row.tokenAddress, row]));
+
+  return rows.map((row) => {
+    const meteora = buildAdminMeteoraMetric(meteoraByAddress.get(row.address) || null);
+    return {
+      address: row.address,
+      symbol: row.symbol || null,
+      name: row.name || null,
+      manualLabel: row.risk_review_label || null,
+      assessment: classifyTokenJunk({
+        ...row,
+        meteora,
+      }),
+      meteora,
+    };
+  });
 }
 
 function parseAccessDays(value) {
@@ -272,6 +338,183 @@ router.post('/lateralization/runs', async (req, res) => {
 
     console.error('Admin lateralization run error:', err.message);
     res.status(500).json({ error: 'Failed to compute lateralization run' });
+  }
+});
+
+router.post('/token-risk-enrichment/runs', async (req, res) => {
+  const scanLimit = parseOptionalIntegerField(req.body?.scanLimit, 'scanLimit', { min: 1, max: 5000 });
+  if (!scanLimit.ok) return res.status(400).json({ error: scanLimit.error });
+
+  const batchLimit = parseOptionalIntegerField(req.body?.batchLimit, 'batchLimit', { min: 1, max: 25 });
+  if (!batchLimit.ok) return res.status(400).json({ error: batchLimit.error });
+
+  try {
+    const result = await tokenRiskEnrichmentWorker.runOnce({
+      scanLimit: scanLimit.value,
+      batchLimit: batchLimit.value,
+    }, {
+      triggeredBy: 'admin',
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    if (err.message === 'Token risk enrichment worker already has an active run') {
+      return res.status(409).json({ error: err.message });
+    }
+
+    console.error('Admin token risk enrichment run error:', err.message);
+    res.status(500).json({ error: 'Failed to run token risk enrichment' });
+  }
+});
+
+router.get('/token-risk-candidates', async (req, res) => {
+  const scanLimit = parseOptionalIntegerField(req.query?.scanLimit, 'scanLimit', { min: 1, max: 5000 });
+  if (!scanLimit.ok) return res.status(400).json({ error: scanLimit.error });
+
+  const resultLimit = parseOptionalIntegerField(req.query?.resultLimit, 'resultLimit', { min: 1, max: 200 });
+  if (!resultLimit.ok) return res.status(400).json({ error: resultLimit.error });
+
+  try {
+    const options = {
+      scanLimit: scanLimit.value,
+      resultLimit: resultLimit.value,
+    };
+    const candidates = await tokenRiskCandidateSelector.listCandidates(options);
+    res.json(buildTokenRiskCandidateResponse(candidates, {
+      scanLimit: options.scanLimit ?? 250,
+      resultLimit: options.resultLimit ?? 50,
+    }));
+  } catch (err) {
+    console.error('Admin token risk candidates error:', err.message);
+    res.status(500).json({ error: 'Failed to load token risk candidates' });
+  }
+});
+
+router.get('/token-junk-assessments', async (req, res) => {
+  const parsed = parseAddressListQuery(req.query?.addresses, { maxItems: 100 });
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const [rows, meteoraRows] = await Promise.all([
+      tokenCatalog.listDashboardMetadataByAddresses(parsed.value),
+      tokenMeteoraState.listSummaryByAddresses(parsed.value),
+    ]);
+
+    const assessments = buildTokenJunkAssessmentResponse(rows, meteoraRows);
+    res.json({
+      assessments,
+      count: assessments.length,
+    });
+  } catch (err) {
+    console.error('Admin token junk assessments error:', err.message);
+    res.status(500).json({ error: 'Failed to load token junk assessments' });
+  }
+});
+
+router.get('/token-risk-enrichment', async (req, res) => {
+  const parsed = parseAddressListQuery(req.query?.addresses, { maxItems: 100 });
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const enrichments = await tokenRiskEnrichment.listByAddresses(parsed.value);
+    res.json({
+      enrichments,
+      count: enrichments.length,
+    });
+  } catch (err) {
+    console.error('Admin token risk enrichment list error:', err.message);
+    res.status(500).json({ error: 'Failed to load token risk enrichment' });
+  }
+});
+
+router.post('/token-risk-enrichment/addresses', async (req, res) => {
+  const parsed = parseAddressListQuery(req.body?.addresses, { maxItems: 25 });
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const result = await tokenRiskEnrichmentWorker.runAddressesOnce(parsed.value, {
+      triggeredBy: 'admin',
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    if (err.message === 'Token risk enrichment worker already has an active run') {
+      return res.status(409).json({ error: err.message });
+    }
+
+    console.error('Admin token risk enrichment addresses run error:', err.message);
+    res.status(500).json({ error: 'Failed to run token risk enrichment for addresses' });
+  }
+});
+
+router.get('/token-risk-labels', async (req, res) => {
+  const parsed = parseAddressListQuery(req.query?.addresses, { maxItems: 100 });
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const reviews = await tokenRiskReview.listByAddresses(parsed.value);
+    res.json({
+      reviews,
+      count: reviews.length,
+    });
+  } catch (err) {
+    console.error('Admin token risk labels list error:', err.message);
+    res.status(500).json({ error: 'Failed to load token risk labels' });
+  }
+});
+
+router.post('/token-risk-labels', async (req, res) => {
+  const address = String(req.body?.address || '').trim();
+  const label = parseTokenRiskLabel(req.body?.label);
+  const notes = typeof req.body?.notes === 'string'
+    ? req.body.notes.trim()
+    : '';
+
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: 'Invalid token address' });
+  }
+  if (!label) {
+    return res.status(400).json({ error: 'Invalid token risk label' });
+  }
+
+  try {
+    const review = await tokenRiskReview.upsertReview({
+      tokenAddress: address,
+      label,
+      notes,
+      createdBy: req.user.id,
+      updatedBy: req.user.id,
+    });
+
+    res.status(201).json({
+      message: 'Token risk label saved',
+      review,
+    });
+  } catch (err) {
+    console.error('Admin token risk label save error:', err.message);
+    res.status(500).json({ error: 'Failed to save token risk label' });
+  }
+});
+
+router.delete('/token-risk-labels/:address', async (req, res) => {
+  const address = String(req.params.address || '').trim();
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: 'Invalid token address' });
+  }
+
+  try {
+    const removed = await tokenRiskReview.remove(address);
+    if (!removed) {
+      return res.status(404).json({ error: 'Token risk label not found' });
+    }
+
+    res.json({
+      message: 'Token risk label removed',
+      address,
+    });
+  } catch (err) {
+    console.error('Admin token risk label remove error:', err.message);
+    res.status(500).json({ error: 'Failed to remove token risk label' });
   }
 });
 

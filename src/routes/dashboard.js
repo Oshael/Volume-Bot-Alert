@@ -7,6 +7,12 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const backendAlertFeed = require('../services/backend-alert-feed');
+const { classifyTokenJunk } = require('../services/token-junk-metric');
+const {
+  buildRiskReviewSummary,
+  buildStructuralRiskSummary,
+  toNumberOrNull,
+} = require('../services/token-risk-summary');
 
 const MONITORED_MIN_MCAP = 30000;
 
@@ -74,9 +80,9 @@ function buildMeteoraSummary(address, summaryRow) {
 }
 
 function buildMarketBaseline(mcapBaselineRow, volumeBaselineRow) {
-  const currentMcap = mcapBaselineRow?.current_mcap == null ? null : Number(mcapBaselineRow.current_mcap);
-  const previousMcap = mcapBaselineRow?.baseline_mcap == null ? null : Number(mcapBaselineRow.baseline_mcap);
-  const previousVolume5m = volumeBaselineRow?.baseline_vol_5m == null ? null : Number(volumeBaselineRow.baseline_vol_5m);
+  const currentMcap = toNumberOrNull(mcapBaselineRow?.current_mcap);
+  const previousMcap = toNumberOrNull(mcapBaselineRow?.baseline_mcap);
+  const previousVolume5m = toNumberOrNull(volumeBaselineRow?.baseline_vol_5m);
   const mcapDelta = currentMcap != null && previousMcap != null && previousMcap > 0
     ? ((currentMcap - previousMcap) / previousMcap) * 100
     : null;
@@ -85,6 +91,48 @@ function buildMarketBaseline(mcapBaselineRow, volumeBaselineRow) {
     prevMcap: Number.isFinite(previousMcap) ? previousMcap : null,
     mcapDelta: Number.isFinite(mcapDelta) ? mcapDelta : null,
     prevVolume5mCanonical: Number.isFinite(previousVolume5m) ? previousVolume5m : null,
+  };
+}
+
+function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress) {
+  const marketBaseline = buildMarketBaseline(
+    marketMcapBaselineByAddress.get(item.address) || null,
+    marketVolumeBaselineByAddress.get(item.address) || null
+  );
+  const meteora = buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null);
+
+  return {
+    address: item.address,
+    symbol: item.symbol || null,
+    name: item.name || null,
+    pairAddress: item.last_pair_address || null,
+    pairUrl: item.last_pair_url || null,
+    imageUrl: item.last_image_url || null,
+    twitterUrl: item.last_twitter_url || null,
+    eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
+    monitorPriority: item.monitor_priority || 'dormant',
+    mcap: toNumberOrNull(item.last_mcap),
+    priceUsd: toNumberOrNull(item.last_price),
+    volume5m: toNumberOrNull(item.last_vol_5m),
+    volume1h: toNumberOrNull(item.last_vol_1h),
+    volume6h: toNumberOrNull(item.last_vol_6h),
+    volume24h: toNumberOrNull(item.last_vol_24h),
+    priceChange1h: toNumberOrNull(item.last_price_change_1h),
+    priceChange6h: toNumberOrNull(item.last_price_change_6h),
+    priceChange24h: toNumberOrNull(item.last_price_change_24h),
+    tokenCreatedAt: toNumberOrNull(item.last_token_created_at_ms),
+    prevMcap: marketBaseline.prevMcap,
+    mcapDelta: marketBaseline.mcapDelta,
+    prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
+    lastSeenAt: item.last_seen_at || null,
+    lastEvaluatedAt: item.last_evaluated_at || null,
+    riskReview: buildRiskReviewSummary(item),
+    structuralRisk: buildStructuralRiskSummary(item),
+    junkAssessment: classifyTokenJunk({
+      ...item,
+      meteora,
+    }),
+    meteora,
   };
 }
 
@@ -120,39 +168,12 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       source: 'token_catalog',
       minMcap,
       count: tokens.length,
-      tokens: tokens.map((item) => {
-        const marketBaseline = buildMarketBaseline(
-          marketMcapBaselineByAddress.get(item.address) || null,
-          marketVolumeBaselineByAddress.get(item.address) || null
-        );
-        return {
-          address: item.address,
-          symbol: item.symbol || null,
-          name: item.name || null,
-          pairAddress: item.last_pair_address || null,
-          pairUrl: item.last_pair_url || null,
-          imageUrl: item.last_image_url || null,
-          twitterUrl: item.last_twitter_url || null,
-          eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
-          monitorPriority: item.monitor_priority || 'dormant',
-          mcap: item.last_mcap == null ? null : Number(item.last_mcap),
-          priceUsd: item.last_price == null ? null : Number(item.last_price),
-          volume5m: item.last_vol_5m == null ? null : Number(item.last_vol_5m),
-          volume1h: item.last_vol_1h == null ? null : Number(item.last_vol_1h),
-          volume6h: item.last_vol_6h == null ? null : Number(item.last_vol_6h),
-          volume24h: item.last_vol_24h == null ? null : Number(item.last_vol_24h),
-          priceChange1h: item.last_price_change_1h == null ? null : Number(item.last_price_change_1h),
-          priceChange6h: item.last_price_change_6h == null ? null : Number(item.last_price_change_6h),
-          priceChange24h: item.last_price_change_24h == null ? null : Number(item.last_price_change_24h),
-          tokenCreatedAt: item.last_token_created_at_ms == null ? null : Number(item.last_token_created_at_ms),
-          prevMcap: marketBaseline.prevMcap,
-          mcapDelta: marketBaseline.mcapDelta,
-          prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
-          lastSeenAt: item.last_seen_at || null,
-          lastEvaluatedAt: item.last_evaluated_at || null,
-          meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
-        };
-      }),
+      tokens: tokens.map((item) => buildMonitoredTokenPayload(
+        item,
+        meteoraByAddress,
+        marketMcapBaselineByAddress,
+        marketVolumeBaselineByAddress
+      )),
     };
     res.json(responsePayload);
   } catch (err) {
@@ -222,6 +243,9 @@ router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, asyn
 router.__private = {
   buildMeteoraSummary,
   buildMarketBaseline,
+  buildMonitoredTokenPayload,
+  buildRiskReviewSummary,
+  buildStructuralRiskSummary,
   parseOptionalEventId,
 };
 
