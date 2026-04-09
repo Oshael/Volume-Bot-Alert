@@ -35,6 +35,8 @@ const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 const lateralizationWorker = require('./services/lateralization-worker');
+const tokenRiskEnrichmentWorker = require('./services/token-risk-enrichment-worker');
+const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-worker');
 const dexscreener = require('./services/dexscreener');
 
 const app = express();
@@ -150,6 +152,8 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
     lateralizationWorker: lateralizationWorker.getStatus(),
+    tokenRiskEnrichmentWorker: tokenRiskEnrichmentWorker.getStatus(),
+    tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
   });
 });
@@ -218,6 +222,8 @@ function startWorkerSet() {
   meteoraSnapshotWorker.start();
   dexDiscoveryWorker.start();
   lateralizationWorker.start();
+  tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
+  tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
 }
 
 function bootstrapWebRuntime(httpServer) {
@@ -286,6 +292,7 @@ function startServer(port = config.port) {
         console.log('   DELETE /api/admin/invites/:id ??? Revoke invite');
         console.log('   GET  /api/admin/logs        ??? Login attempts');
         console.log('   GET  /api/admin/ws-status   ??? WebSocket hub status');
+        console.log('   POST /api/admin/token-risk-enrichment/runs ??? Trigger token risk enrichment batch');
         console.log('   --- WebSocket ---');
         console.log('   Socket.io on /            ??? Real-time data (cookie session auth)');
         console.log('');

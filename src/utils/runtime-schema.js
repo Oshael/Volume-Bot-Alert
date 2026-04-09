@@ -310,6 +310,98 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage24-token-risk-enrichment',
+    name: 'Stage 24 token risk structural enrichment cache',
+    repair: 'node src/utils/db-init-stage24.js',
+    tables: [
+      {
+        table: 'token_risk_enrichment',
+        columns: [
+          'token_address',
+          'source',
+          'last_attempted_at',
+          'last_enriched_at',
+          'last_error',
+          'holder_count',
+          'supply_amount',
+          'supply_decimals',
+          'supply_ui_amount',
+          'token_program',
+          'mint_authority',
+          'freeze_authority',
+          'mint_authority_active',
+          'freeze_authority_active',
+          'top_1_pct',
+          'top_5_pct',
+          'top_10_pct',
+          'top_20_pct',
+          'top_holders',
+          'reason_codes',
+          'updated_at',
+        ],
+        defaults: {
+          source: "'helius'::character varying",
+          mint_authority_active: 'false',
+          freeze_authority_active: 'false',
+          top_holders: "'[]'::jsonb",
+          reason_codes: "'[]'::jsonb",
+        },
+      },
+    ],
+  },
+  {
+    key: 'stage25-token-risk-reviews',
+    name: 'Stage 25 token risk review labels',
+    repair: 'node src/utils/db-init-stage25.js',
+    tables: [
+      {
+        table: 'token_risk_reviews',
+        columns: [
+          'token_address',
+          'label',
+          'notes',
+          'created_by',
+          'updated_by',
+          'created_at',
+          'updated_at',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage26-token-catalog-dex-enrichment',
+    name: 'Stage 26 token catalog Dex enrichment fields',
+    repair: 'node src/utils/db-init-stage26.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: [
+          'last_liquidity_usd',
+          'last_txns_1h_buys',
+          'last_txns_1h_sells',
+          'last_txns_24h_buys',
+          'last_txns_24h_sells',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage27-token-risk-review-sources',
+    name: 'Stage 27 token risk review sources',
+    repair: 'node src/utils/db-init-stage27.js',
+    tables: [
+      {
+        table: 'token_risk_reviews',
+        columns: [
+          'source',
+        ],
+        defaults: {
+          source: "'manual'::character varying",
+        },
+      },
+    ],
+  },
+  {
     key: 'stage17-market-volume-buckets',
     name: 'Stage 17 market volume bucket table',
     repair: 'node src/utils/db-init-stage17.js',

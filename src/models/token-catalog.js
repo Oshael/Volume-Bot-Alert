@@ -17,6 +17,16 @@ function toNullableText(value, maxLength = 256) {
   return normalizeText(value, maxLength);
 }
 
+function toNullableNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toNullableInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? Math.trunc(parsed) : null;
+}
+
 function toDateOrNull(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -52,6 +62,14 @@ function emptyMeteoraPriorityCounts() {
   };
 }
 
+function normalizeRiskCandidateLimit(value, fallback = 250) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(Math.trunc(parsed), 5000));
+}
+
 async function upsertToken(token) {
   await adminBlockedToken.ensureTable();
   const address = String(token.address || '').trim();
@@ -68,12 +86,17 @@ async function upsertToken(token) {
   const lastImageUrl = sanitizeAssetUrl(token.imageUrl);
   const lastTwitterUrl = sanitizeHttpUrl(token.twitterUrl);
   const isActiveMonitorCandidate = token.isActiveMonitorCandidate == null ? true : !!token.isActiveMonitorCandidate;
-  const lastMcap = Number.isFinite(Number(token.mcap)) ? Number(token.mcap) : null;
-  const lastPrice = Number.isFinite(Number(token.price)) ? Number(token.price) : null;
-  const lastPriceChange1h = Number.isFinite(Number(token.priceChange1h)) ? Number(token.priceChange1h) : null;
-  const lastPriceChange6h = Number.isFinite(Number(token.priceChange6h)) ? Number(token.priceChange6h) : null;
-  const lastPriceChange24h = Number.isFinite(Number(token.priceChange24h)) ? Number(token.priceChange24h) : null;
-  const lastTokenCreatedAtMs = Number.isFinite(Number(token.tokenCreatedAt)) ? Math.trunc(Number(token.tokenCreatedAt)) : null;
+  const lastMcap = toNullableNumber(token.mcap);
+  const lastPrice = toNullableNumber(token.price);
+  const lastPriceChange1h = toNullableNumber(token.priceChange1h);
+  const lastPriceChange6h = toNullableNumber(token.priceChange6h);
+  const lastPriceChange24h = toNullableNumber(token.priceChange24h);
+  const lastLiquidityUsd = toNullableNumber(token.liquidityUsd);
+  const lastTxns1hBuys = toNullableInteger(token.txns1hBuys);
+  const lastTxns1hSells = toNullableInteger(token.txns1hSells);
+  const lastTxns24hBuys = toNullableInteger(token.txns24hBuys);
+  const lastTxns24hSells = toNullableInteger(token.txns24hSells);
+  const lastTokenCreatedAtMs = toNullableInteger(token.tokenCreatedAt);
   const qualifiesPumpMigrationBoost = source === 'pumpfun-migrated' && lastMcap != null && lastMcap >= PUMPFUN_MIGRATION_MIN_MCAP;
   const migrationGraceUntil = qualifiesPumpMigrationBoost
     ? toDateOrNull(token.migrationGraceUntil) || new Date(Date.now() + (10 * 60 * 1000))
@@ -85,16 +108,19 @@ async function upsertToken(token) {
        last_mcap, last_price, last_pair_address, last_pair_url,
        last_image_url, last_twitter_url,
        last_price_change_1h, last_price_change_6h, last_price_change_24h,
+       last_liquidity_usd, last_txns_1h_buys, last_txns_1h_sells, last_txns_24h_buys, last_txns_24h_sells,
        last_token_created_at_ms, migration_grace_until,
        is_active_monitor_candidate
      )
      VALUES (
        $1, $2, $3, $4, $5,
-       $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+       $6, $7, $8, $9, $10, $11, $12, $13, $14,
+       $15, $16, $17, $18, $19,
+       $20, $21,
        CASE
-         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $18)
+         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $23)
            THEN FALSE
-         ELSE $17
+         ELSE $22
        END
      )
      ON CONFLICT (address) DO UPDATE SET
@@ -112,9 +138,14 @@ async function upsertToken(token) {
        last_price_change_1h = COALESCE(EXCLUDED.last_price_change_1h, token_catalog.last_price_change_1h),
        last_price_change_6h = COALESCE(EXCLUDED.last_price_change_6h, token_catalog.last_price_change_6h),
        last_price_change_24h = COALESCE(EXCLUDED.last_price_change_24h, token_catalog.last_price_change_24h),
+       last_liquidity_usd = COALESCE(EXCLUDED.last_liquidity_usd, token_catalog.last_liquidity_usd),
+       last_txns_1h_buys = COALESCE(EXCLUDED.last_txns_1h_buys, token_catalog.last_txns_1h_buys),
+       last_txns_1h_sells = COALESCE(EXCLUDED.last_txns_1h_sells, token_catalog.last_txns_1h_sells),
+       last_txns_24h_buys = COALESCE(EXCLUDED.last_txns_24h_buys, token_catalog.last_txns_24h_buys),
+       last_txns_24h_sells = COALESCE(EXCLUDED.last_txns_24h_sells, token_catalog.last_txns_24h_sells),
        last_token_created_at_ms = COALESCE(EXCLUDED.last_token_created_at_ms, token_catalog.last_token_created_at_ms),
        migration_grace_until = CASE
-         WHEN EXCLUDED.source = 'pumpfun-migrated' AND $19 = TRUE THEN
+         WHEN EXCLUDED.source = 'pumpfun-migrated' AND $24 = TRUE THEN
            CASE
              WHEN token_catalog.migration_grace_until IS NULL OR token_catalog.migration_grace_until < NOW()
                THEN EXCLUDED.migration_grace_until
@@ -128,7 +159,7 @@ async function upsertToken(token) {
          ELSE EXCLUDED.is_active_monitor_candidate
        END,
        next_evaluation_at = CASE
-         WHEN EXCLUDED.source = 'pumpfun-migrated' AND $19 = TRUE
+         WHEN EXCLUDED.source = 'pumpfun-migrated' AND $24 = TRUE
            THEN LEAST(token_catalog.next_evaluation_at, NOW())
          ELSE token_catalog.next_evaluation_at
        END,
@@ -149,6 +180,11 @@ async function upsertToken(token) {
       lastPriceChange1h,
       lastPriceChange6h,
       lastPriceChange24h,
+      lastLiquidityUsd,
+      lastTxns1hBuys,
+      lastTxns1hSells,
+      lastTxns24hBuys,
+      lastTxns24hSells,
       lastTokenCreatedAtMs,
       migrationGraceUntil,
       isActiveMonitorCandidate,
@@ -395,33 +431,115 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
   const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
   const { rows } = await db.query(
     `SELECT
-       address,
-       symbol,
-       name,
-       eligible_for_monitoring,
-       last_mcap,
-       last_price,
-       last_vol_5m,
-       last_vol_1h,
-       last_vol_6h,
-       last_vol_24h,
-       last_price_change_1h,
-       last_price_change_6h,
-       last_price_change_24h,
-       last_token_created_at_ms,
-       last_pair_address,
-       last_pair_url,
-       last_image_url,
-       last_twitter_url,
-       monitor_priority,
-       last_seen_at,
-       last_evaluated_at
-     FROM token_catalog
-     WHERE eligible_for_monitoring = TRUE
-       AND COALESCE(last_mcap, 0) >= $2
-     ORDER BY last_seen_at DESC, last_evaluated_at DESC NULLS LAST
+       tc.address,
+       tc.symbol,
+       tc.name,
+       tc.eligible_for_monitoring,
+       tc.last_mcap,
+       tc.last_price,
+       tc.last_vol_5m,
+       tc.last_vol_1h,
+       tc.last_vol_6h,
+       tc.last_vol_24h,
+       tc.last_liquidity_usd,
+       tc.last_txns_1h_buys,
+       tc.last_txns_1h_sells,
+       tc.last_txns_24h_buys,
+       tc.last_txns_24h_sells,
+       tc.last_price_change_1h,
+       tc.last_price_change_6h,
+       tc.last_price_change_24h,
+       tc.last_token_created_at_ms,
+       tc.last_pair_address,
+       tc.last_pair_url,
+       tc.last_image_url,
+       tc.last_twitter_url,
+       tc.monitor_priority,
+       tc.last_seen_at,
+       tc.last_evaluated_at,
+       trr.label AS risk_review_label,
+       trr.source AS risk_review_source,
+       trr.notes AS risk_review_notes,
+       trr.updated_at AS risk_review_updated_at,
+       tre.last_attempted_at AS risk_enrichment_last_attempted_at,
+       tre.last_enriched_at AS risk_enrichment_last_enriched_at,
+       tre.last_error AS risk_enrichment_last_error,
+       tre.holder_count AS risk_holder_count,
+       tre.mint_authority_active AS risk_mint_authority_active,
+       tre.freeze_authority_active AS risk_freeze_authority_active,
+       tre.top_10_pct AS risk_top_10_pct,
+       tre.top_20_pct AS risk_top_20_pct,
+       tre.reason_codes AS risk_reason_codes
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = tc.address
+     LEFT JOIN token_risk_enrichment tre
+       ON tre.token_address = tc.address
+     WHERE tc.eligible_for_monitoring = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $2
+     ORDER BY tc.last_seen_at DESC, tc.last_evaluated_at DESC NULLS LAST
      LIMIT $1`,
     [safeLimit, safeMinMcap]
+  );
+  return rows;
+}
+
+async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 30000) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 250, 5000));
+  const safeOffset = Math.max(0, Math.trunc(Number(offset) || 0));
+  const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
+  const { rows } = await db.query(
+    `SELECT
+       tc.address,
+       tc.symbol,
+       tc.name,
+       tc.eligible_for_monitoring,
+       tc.last_mcap,
+       tc.last_price,
+       tc.last_vol_5m,
+       tc.last_vol_1h,
+       tc.last_vol_6h,
+       tc.last_vol_24h,
+       tc.last_liquidity_usd,
+       tc.last_txns_1h_buys,
+       tc.last_txns_1h_sells,
+       tc.last_txns_24h_buys,
+       tc.last_txns_24h_sells,
+       tc.last_price_change_1h,
+       tc.last_price_change_6h,
+       tc.last_price_change_24h,
+       tc.last_token_created_at_ms,
+       tc.last_pair_address,
+       tc.last_pair_url,
+       tc.last_image_url,
+       tc.last_twitter_url,
+       tc.monitor_priority,
+       tc.last_seen_at,
+       tc.last_evaluated_at,
+       trr.label AS risk_review_label,
+       trr.source AS risk_review_source,
+       trr.notes AS risk_review_notes,
+       trr.updated_at AS risk_review_updated_at,
+       tre.last_attempted_at AS risk_enrichment_last_attempted_at,
+       tre.last_enriched_at AS risk_enrichment_last_enriched_at,
+       tre.last_error AS risk_enrichment_last_error,
+       tre.holder_count AS risk_holder_count,
+       tre.mint_authority_active AS risk_mint_authority_active,
+       tre.freeze_authority_active AS risk_freeze_authority_active,
+       tre.top_10_pct AS risk_top_10_pct,
+       tre.top_20_pct AS risk_top_20_pct,
+       tre.reason_codes AS risk_reason_codes
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = tc.address
+     LEFT JOIN token_risk_enrichment tre
+       ON tre.token_address = tc.address
+     WHERE tc.eligible_for_monitoring = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $3
+     ORDER BY tc.last_seen_at DESC, tc.address ASC
+     LIMIT $1
+     OFFSET $2`,
+    [safeLimit, safeOffset, safeMinMcap]
   );
   return rows;
 }
@@ -440,21 +558,112 @@ async function listDashboardMetadataByAddresses(addresses) {
 
   const { rows } = await db.query(
     `SELECT
-       address,
-       symbol,
-       name,
-       last_pair_address,
-       last_pair_url,
-       last_image_url,
-       last_twitter_url,
-       last_mcap,
-       last_vol_1h,
-       last_vol_6h,
-       last_vol_24h,
-       last_token_created_at_ms
-     FROM token_catalog
-     WHERE address = ANY($1::varchar[])`,
+       tc.address,
+       tc.symbol,
+       tc.name,
+       tc.last_pair_address,
+       tc.last_pair_url,
+       tc.last_image_url,
+       tc.last_twitter_url,
+       tc.last_mcap,
+       tc.last_vol_5m,
+       tc.last_vol_1h,
+       tc.last_vol_6h,
+       tc.last_vol_24h,
+       tc.last_liquidity_usd,
+       tc.last_txns_1h_buys,
+       tc.last_txns_1h_sells,
+       tc.last_txns_24h_buys,
+       tc.last_txns_24h_sells,
+       tc.last_price_change_1h,
+       tc.last_price_change_6h,
+       tc.last_price_change_24h,
+       tc.monitor_priority,
+       tc.last_token_created_at_ms,
+       trr.label AS risk_review_label,
+       trr.source AS risk_review_source,
+       trr.notes AS risk_review_notes,
+       trr.updated_at AS risk_review_updated_at,
+       tre.last_attempted_at AS risk_enrichment_last_attempted_at,
+       tre.last_enriched_at AS risk_enrichment_last_enriched_at,
+       tre.last_error AS risk_enrichment_last_error,
+       tre.holder_count AS risk_holder_count,
+       tre.mint_authority_active AS risk_mint_authority_active,
+       tre.freeze_authority_active AS risk_freeze_authority_active,
+       tre.top_10_pct AS risk_top_10_pct,
+       tre.top_20_pct AS risk_top_20_pct,
+       tre.reason_codes AS risk_reason_codes
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = tc.address
+     LEFT JOIN token_risk_enrichment tre
+       ON tre.token_address = tc.address
+     WHERE tc.address = ANY($1::varchar[])`,
     [unique]
+  );
+
+  return rows;
+}
+
+async function listRiskEnrichmentCandidates(limit = 250, runner = db) {
+  const safeLimit = normalizeRiskCandidateLimit(limit);
+  const { rows } = await runner.query(
+    `SELECT
+       tc.address,
+       tc.symbol,
+       tc.name,
+       tc.source,
+       tc.eligibility_state,
+       tc.eligible_for_monitoring,
+       tc.suppressed_reason,
+       tc.monitor_priority,
+       tc.last_mcap,
+       tc.last_vol_1h,
+       tc.last_vol_6h,
+       tc.last_vol_24h,
+       tc.last_liquidity_usd,
+       tc.last_txns_1h_buys,
+       tc.last_txns_1h_sells,
+       tc.last_txns_24h_buys,
+       tc.last_txns_24h_sells,
+       tc.last_price_change_1h,
+       tc.last_price_change_6h,
+       tc.last_price_change_24h,
+       tc.last_token_created_at_ms,
+       tc.last_seen_at,
+       tc.last_evaluated_at,
+       trr.label AS risk_review_label,
+       trr.source AS risk_review_source,
+       tre.last_attempted_at,
+       tre.last_enriched_at,
+       tre.last_error,
+       tre.holder_count,
+       tre.mint_authority_active,
+       tre.freeze_authority_active,
+       tre.top_10_pct,
+       tre.top_20_pct
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = tc.address
+     LEFT JOIN token_risk_enrichment tre
+       ON tre.token_address = tc.address
+     WHERE tc.is_active_monitor_candidate = TRUE
+       AND NOT EXISTS (
+         SELECT 1
+         FROM admin_blocked_tokens ab
+         WHERE ab.address = tc.address
+       )
+     ORDER BY CASE
+                WHEN COALESCE(tc.monitor_priority, 'dormant') = 'high' THEN 0
+                WHEN COALESCE(tc.monitor_priority, 'dormant') = 'normal' THEN 1
+                WHEN COALESCE(tc.monitor_priority, 'dormant') = 'low' THEN 2
+                ELSE 3
+              END ASC,
+              COALESCE(tre.last_enriched_at, tre.last_attempted_at, to_timestamp(0)) ASC,
+              tc.last_seen_at DESC,
+              tc.address ASC
+     LIMIT $1`,
+    [safeLimit]
   );
 
   return rows;
@@ -522,17 +731,22 @@ async function applyEvaluationResult(address, result) {
   const pairUrl = sanitizeHttpUrl(result.pairUrl);
   const imageUrl = sanitizeAssetUrl(result.imageUrl);
   const twitterUrl = sanitizeHttpUrl(result.twitterUrl);
-  const lastMcap = Number.isFinite(Number(result.mcap)) ? Number(result.mcap) : null;
-  const lastPrice = Number.isFinite(Number(result.price)) ? Number(result.price) : null;
+  const lastMcap = toNullableNumber(result.mcap);
+  const lastPrice = toNullableNumber(result.price);
   const monitorPriority = toNullableText(result.monitorPriority, 32) || 'dormant';
-  const lastVol5m = Number.isFinite(Number(result.vol5m)) ? Number(result.vol5m) : null;
-  const lastVol1h = Number.isFinite(Number(result.vol1h)) ? Number(result.vol1h) : null;
-  const lastVol6h = Number.isFinite(Number(result.vol6h)) ? Number(result.vol6h) : null;
-  const lastVol24h = Number.isFinite(Number(result.vol24h)) ? Number(result.vol24h) : null;
-  const lastPriceChange1h = Number.isFinite(Number(result.priceChange1h)) ? Number(result.priceChange1h) : null;
-  const lastPriceChange6h = Number.isFinite(Number(result.priceChange6h)) ? Number(result.priceChange6h) : null;
-  const lastPriceChange24h = Number.isFinite(Number(result.priceChange24h)) ? Number(result.priceChange24h) : null;
-  const lastTokenCreatedAtMs = Number.isFinite(Number(result.tokenCreatedAt)) ? Math.trunc(Number(result.tokenCreatedAt)) : null;
+  const lastVol5m = toNullableNumber(result.vol5m);
+  const lastVol1h = toNullableNumber(result.vol1h);
+  const lastVol6h = toNullableNumber(result.vol6h);
+  const lastVol24h = toNullableNumber(result.vol24h);
+  const lastPriceChange1h = toNullableNumber(result.priceChange1h);
+  const lastPriceChange6h = toNullableNumber(result.priceChange6h);
+  const lastPriceChange24h = toNullableNumber(result.priceChange24h);
+  const lastLiquidityUsd = toNullableNumber(result.liquidityUsd);
+  const lastTxns1hBuys = toNullableInteger(result.txns1hBuys);
+  const lastTxns1hSells = toNullableInteger(result.txns1hSells);
+  const lastTxns24hBuys = toNullableInteger(result.txns24hBuys);
+  const lastTxns24hSells = toNullableInteger(result.txns24hSells);
+  const lastTokenCreatedAtMs = toNullableInteger(result.tokenCreatedAt);
 
   const { rows } = await db.query(
     `UPDATE token_catalog
@@ -560,9 +774,14 @@ async function applyEvaluationResult(address, result) {
          last_price_change_1h = COALESCE($21, last_price_change_1h),
          last_price_change_6h = COALESCE($22, last_price_change_6h),
          last_price_change_24h = COALESCE($23, last_price_change_24h),
-         last_token_created_at_ms = COALESCE($24, last_token_created_at_ms),
+         last_liquidity_usd = COALESCE($24, last_liquidity_usd),
+         last_txns_1h_buys = COALESCE($25, last_txns_1h_buys),
+         last_txns_1h_sells = COALESCE($26, last_txns_1h_sells),
+         last_txns_24h_buys = COALESCE($27, last_txns_24h_buys),
+         last_txns_24h_sells = COALESCE($28, last_txns_24h_sells),
+         last_token_created_at_ms = COALESCE($29, last_token_created_at_ms),
          metadata_updated_at = CASE
-           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $17 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL OR $21 IS NOT NULL OR $22 IS NOT NULL OR $23 IS NOT NULL OR $24 IS NOT NULL
+           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $17 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL OR $21 IS NOT NULL OR $22 IS NOT NULL OR $23 IS NOT NULL OR $24 IS NOT NULL OR $25 IS NOT NULL OR $26 IS NOT NULL OR $27 IS NOT NULL OR $28 IS NOT NULL OR $29 IS NOT NULL
            THEN NOW()
            ELSE metadata_updated_at
          END
@@ -592,6 +811,11 @@ async function applyEvaluationResult(address, result) {
       lastPriceChange1h,
       lastPriceChange6h,
       lastPriceChange24h,
+      lastLiquidityUsd,
+      lastTxns1hBuys,
+      lastTxns1hSells,
+      lastTxns24hBuys,
+      lastTxns24hSells,
       lastTokenCreatedAtMs,
     ]
   );
@@ -733,7 +957,9 @@ module.exports = {
   listDueForMeteoraSnapshots,
   listEligibleVisible,
   listDashboardMonitored,
+  listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,
+  listRiskEnrichmentCandidates,
   markMeteoraChecked,
   scheduleImmediateEvaluation,
   reactivateSoftArchivedToken,
