@@ -97,9 +97,16 @@ async function ensureAccessSchema(pool) {
 describe('Admin panel auth and management', () => {
   let server;
   let adminToken;
+  let adminUserId;
   let userToken;
   let userId;
   let tokenMarketBucket1m;
+  let tokenCatalog;
+  let tokenRiskCandidateSelector;
+  let tokenRiskEnrichment;
+  let tokenRiskEnrichmentWorker;
+  let tokenRiskReview;
+  let tokenMeteoraState;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -113,6 +120,12 @@ describe('Admin panel auth and management', () => {
     process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
 
     tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
+    tokenCatalog = require('../src/models/token-catalog');
+    tokenRiskCandidateSelector = require('../src/services/token-risk-candidate-selector');
+    tokenRiskEnrichment = require('../src/models/token-risk-enrichment');
+    tokenRiskEnrichmentWorker = require('../src/services/token-risk-enrichment-worker');
+    tokenRiskReview = require('../src/models/token-risk-review');
+    tokenMeteoraState = require('../src/models/token-meteora-state');
     const { pool } = require('../src/models/db');
 
     await ensureAccessSchema(pool);
@@ -135,6 +148,7 @@ describe('Admin panel auth and management', () => {
       body: { username: 'testadmin', email: 'admin@test.com', password: 'adminpass123', inviteCode: 'ADMINTEST0001' },
     });
     await verifyEmailFromRegisterResponse(adminReg);
+    adminUserId = adminReg.body.user.id;
     await pool.query("UPDATE users SET role = 'admin' WHERE username = 'testadmin'");
     adminToken = await completeLogin('admin@test.com', 'adminpass123');
 
@@ -199,6 +213,60 @@ describe('Admin panel auth and management', () => {
       assert.equal(res.status, 403);
     });
 
+    it('POST /api/admin/token-risk-enrichment/runs -> 403', async () => {
+      const res = await request('POST', '/api/admin/token-risk-enrichment/runs', {
+        token: userToken,
+        body: { scanLimit: 10, batchLimit: 2 },
+      });
+      assert.equal(res.status, 403);
+    });
+
+    it('GET /api/admin/token-risk-enrichment -> 403', async () => {
+      const res = await request(
+        'GET',
+        '/api/admin/token-risk-enrichment?addresses=So11111111111111111111111111111111111111112',
+        { token: userToken }
+      );
+      assert.equal(res.status, 403);
+    });
+
+    it('GET /api/admin/token-risk-candidates -> 403', async () => {
+      const res = await request(
+        'GET',
+        '/api/admin/token-risk-candidates?scanLimit=10&resultLimit=3',
+        { token: userToken }
+      );
+      assert.equal(res.status, 403);
+    });
+
+    it('GET /api/admin/token-junk-assessments -> 403', async () => {
+      const res = await request(
+        'GET',
+        '/api/admin/token-junk-assessments?addresses=So11111111111111111111111111111111111111112',
+        { token: userToken }
+      );
+      assert.equal(res.status, 403);
+    });
+
+    it('POST /api/admin/token-risk-enrichment/addresses -> 403', async () => {
+      const res = await request('POST', '/api/admin/token-risk-enrichment/addresses', {
+        token: userToken,
+        body: { addresses: ['So11111111111111111111111111111111111111112'] },
+      });
+      assert.equal(res.status, 403);
+    });
+
+    it('POST /api/admin/token-risk-labels -> 403', async () => {
+      const res = await request('POST', '/api/admin/token-risk-labels', {
+        token: userToken,
+        body: {
+          address: 'So11111111111111111111111111111111111111112',
+          label: 'valid',
+        },
+      });
+      assert.equal(res.status, 403);
+    });
+
     it('no token -> 401', async () => {
       const res = await request('GET', '/api/admin/stats');
       assert.equal(res.status, 401);
@@ -215,6 +283,15 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.loginAttempts24h);
       assert.ok(res.body.users.total >= 2);
       assert.ok(res.body.sessions.active >= 1);
+    });
+
+    it('returns worker status including token risk enrichment worker', async () => {
+      const res = await request('GET', '/api/admin/ws-status', { token: adminToken });
+      assert.equal(res.status, 200);
+      assert.ok(res.body.runtime);
+      assert.ok(res.body.catalogWorker);
+      assert.ok(res.body.tokenRiskEnrichmentWorker);
+      assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
     });
   });
 
@@ -304,6 +381,325 @@ describe('Admin panel auth and management', () => {
         assert.equal(res.body.detections[1].passesAllGates, false);
       } finally {
         tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalDetector;
+      }
+    });
+  });
+
+  describe('Admin Token Risk Enrichment Worker', () => {
+    it('runs a token risk enrichment batch on demand', async () => {
+      const originalRunOnce = tokenRiskEnrichmentWorker.runOnce;
+      let capturedOptions = null;
+      let capturedMeta = null;
+
+      tokenRiskEnrichmentWorker.runOnce = async (options, meta) => {
+        capturedOptions = options;
+        capturedMeta = meta;
+        return {
+          startedAt: '2026-04-09T02:00:00.000Z',
+          completedAt: '2026-04-09T02:00:01.000Z',
+          candidateCount: 2,
+          processed: 2,
+          succeeded: 1,
+          failed: 1,
+          results: [],
+        };
+      };
+
+      try {
+        const res = await request('POST', '/api/admin/token-risk-enrichment/runs', {
+          token: adminToken,
+          body: {
+            scanLimit: 25,
+            batchLimit: 4,
+          },
+        });
+
+        assert.equal(res.status, 201);
+        assert.deepEqual(capturedOptions, {
+          scanLimit: 25,
+          batchLimit: 4,
+        });
+        assert.deepEqual(capturedMeta, {
+          triggeredBy: 'admin',
+        });
+        assert.equal(res.body.candidateCount, 2);
+        assert.equal(res.body.failed, 1);
+      } finally {
+        tokenRiskEnrichmentWorker.runOnce = originalRunOnce;
+      }
+    });
+
+    it('returns 409 when the enrichment worker is already running', async () => {
+      const originalRunOnce = tokenRiskEnrichmentWorker.runOnce;
+
+      tokenRiskEnrichmentWorker.runOnce = async () => {
+        throw new Error('Token risk enrichment worker already has an active run');
+      };
+
+      try {
+        const res = await request('POST', '/api/admin/token-risk-enrichment/runs', {
+          token: adminToken,
+          body: {
+            scanLimit: 25,
+            batchLimit: 4,
+          },
+        });
+
+        assert.equal(res.status, 409);
+        assert.equal(res.body.error, 'Token risk enrichment worker already has an active run');
+      } finally {
+        tokenRiskEnrichmentWorker.runOnce = originalRunOnce;
+      }
+    });
+
+    it('lists current token risk candidates from the selector', async () => {
+      const originalListCandidates = tokenRiskCandidateSelector.listCandidates;
+      let capturedOptions = null;
+
+      tokenRiskCandidateSelector.listCandidates = async (options) => {
+        capturedOptions = options;
+        return [{
+          address: 'So11111111111111111111111111111111111111112',
+          score: 73,
+          reasonCodes: ['missing_structural_enrichment', 'new_token'],
+          priority: 'high',
+          ageHours: 12,
+          volToMcapRatio: 1.8,
+          lastEnrichedAt: null,
+          lastAttemptedAt: null,
+          marketCap: 110000,
+          volume24h: 198000,
+          manualLabel: null,
+        }];
+      };
+
+      try {
+        const res = await request(
+          'GET',
+          '/api/admin/token-risk-candidates?scanLimit=90&resultLimit=5',
+          { token: adminToken }
+        );
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(capturedOptions, {
+          scanLimit: 90,
+          resultLimit: 5,
+        });
+        assert.equal(res.body.count, 1);
+        assert.equal(res.body.candidates[0].address, 'So11111111111111111111111111111111111111112');
+        assert.deepEqual(res.body.candidates[0].reasonCodes, ['missing_structural_enrichment', 'new_token']);
+      } finally {
+        tokenRiskCandidateSelector.listCandidates = originalListCandidates;
+      }
+    });
+
+    it('lists token risk enrichment by addresses', async () => {
+      const originalListByAddresses = tokenRiskEnrichment.listByAddresses;
+      let capturedAddresses = null;
+
+      tokenRiskEnrichment.listByAddresses = async (addresses) => {
+        capturedAddresses = addresses;
+        return [{
+          tokenAddress: 'So11111111111111111111111111111111111111112',
+          holderCount: 123,
+        }];
+      };
+
+      try {
+        const res = await request(
+          'GET',
+          '/api/admin/token-risk-enrichment?addresses=So11111111111111111111111111111111111111112',
+          { token: adminToken }
+        );
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(capturedAddresses, ['So11111111111111111111111111111111111111112']);
+        assert.equal(res.body.count, 1);
+        assert.equal(res.body.enrichments[0].holderCount, 123);
+      } finally {
+        tokenRiskEnrichment.listByAddresses = originalListByAddresses;
+      }
+    });
+
+    it('builds token junk assessments by addresses', async () => {
+      const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+      const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+      let capturedAddresses = null;
+
+      tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
+        capturedAddresses = addresses;
+        return [{
+          address: 'So11111111111111111111111111111111111111112',
+          symbol: 'WSOL',
+          name: 'Wrapped SOL',
+          last_mcap: '800000',
+          last_vol_1h: '80',
+          last_vol_6h: '900',
+          last_vol_24h: '20000',
+          last_price_change_6h: '10',
+          last_price_change_24h: '18',
+          monitor_priority: 'high',
+          risk_review_label: null,
+          risk_holder_count: 52,
+          risk_mint_authority_active: true,
+          risk_freeze_authority_active: false,
+          risk_top_10_pct: '76',
+          risk_top_20_pct: '89',
+        }];
+      };
+      tokenMeteoraState.listSummaryByAddresses = async () => [{
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        hasPool: false,
+        currentTvl: null,
+        poolCount: 0,
+      }];
+
+      try {
+        const res = await request(
+          'GET',
+          '/api/admin/token-junk-assessments?addresses=So11111111111111111111111111111111111111112',
+          { token: adminToken }
+        );
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(capturedAddresses, ['So11111111111111111111111111111111111111112']);
+        assert.equal(res.body.count, 1);
+        assert.equal(res.body.assessments[0].assessment.label, 'junk_probable');
+        assert.equal(res.body.assessments[0].assessment.autoBlock, false);
+      } finally {
+        tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+        tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+      }
+    });
+
+    it('runs token risk enrichment for explicit addresses', async () => {
+      const originalRunAddressesOnce = tokenRiskEnrichmentWorker.runAddressesOnce;
+      let capturedAddresses = null;
+      let capturedMeta = null;
+
+      tokenRiskEnrichmentWorker.runAddressesOnce = async (addresses, meta) => {
+        capturedAddresses = addresses;
+        capturedMeta = meta;
+        return {
+          startedAt: '2026-04-09T02:00:00.000Z',
+          completedAt: '2026-04-09T02:00:01.000Z',
+          candidateCount: 1,
+          processed: 1,
+          succeeded: 1,
+          failed: 0,
+          results: [],
+        };
+      };
+
+      try {
+        const res = await request('POST', '/api/admin/token-risk-enrichment/addresses', {
+          token: adminToken,
+          body: {
+            addresses: ['So11111111111111111111111111111111111111112'],
+          },
+        });
+
+        assert.equal(res.status, 201);
+        assert.deepEqual(capturedAddresses, ['So11111111111111111111111111111111111111112']);
+        assert.deepEqual(capturedMeta, {
+          triggeredBy: 'admin',
+        });
+        assert.equal(res.body.succeeded, 1);
+      } finally {
+        tokenRiskEnrichmentWorker.runAddressesOnce = originalRunAddressesOnce;
+      }
+    });
+  });
+
+  describe('Admin Token Risk Labels', () => {
+    it('saves a token risk label', async () => {
+      const originalUpsertReview = tokenRiskReview.upsertReview;
+      let capturedPayload = null;
+
+      tokenRiskReview.upsertReview = async (payload) => {
+        capturedPayload = payload;
+        return {
+          tokenAddress: payload.tokenAddress,
+          label: payload.label,
+          notes: payload.notes,
+          createdBy: payload.createdBy,
+          updatedBy: payload.updatedBy,
+        };
+      };
+
+      try {
+        const res = await request('POST', '/api/admin/token-risk-labels', {
+          token: adminToken,
+          body: {
+            address: 'So11111111111111111111111111111111111111112',
+            label: 'valid_but_weak',
+            notes: 'manual review',
+          },
+        });
+
+        assert.equal(res.status, 201);
+        assert.deepEqual(capturedPayload, {
+          tokenAddress: 'So11111111111111111111111111111111111111112',
+          label: 'valid_but_weak',
+          notes: 'manual review',
+          createdBy: adminUserId,
+          updatedBy: adminUserId,
+        });
+        assert.equal(res.body.review.label, 'valid_but_weak');
+      } finally {
+        tokenRiskReview.upsertReview = originalUpsertReview;
+      }
+    });
+
+    it('lists token risk labels by addresses', async () => {
+      const originalListByAddresses = tokenRiskReview.listByAddresses;
+      let capturedAddresses = null;
+
+      tokenRiskReview.listByAddresses = async (addresses) => {
+        capturedAddresses = addresses;
+        return [{
+          tokenAddress: 'So11111111111111111111111111111111111111112',
+          label: 'junk_probable',
+          notes: 'manual review',
+        }];
+      };
+
+      try {
+        const res = await request(
+          'GET',
+          '/api/admin/token-risk-labels?addresses=So11111111111111111111111111111111111111112',
+          { token: adminToken }
+        );
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(capturedAddresses, ['So11111111111111111111111111111111111111112']);
+        assert.equal(res.body.count, 1);
+        assert.equal(res.body.reviews[0].label, 'junk_probable');
+      } finally {
+        tokenRiskReview.listByAddresses = originalListByAddresses;
+      }
+    });
+
+    it('removes a token risk label', async () => {
+      const originalRemove = tokenRiskReview.remove;
+      let capturedAddress = null;
+
+      tokenRiskReview.remove = async (address) => {
+        capturedAddress = address;
+        return true;
+      };
+
+      try {
+        const res = await request(
+          'DELETE',
+          '/api/admin/token-risk-labels/So11111111111111111111111111111111111111112',
+          { token: adminToken }
+        );
+
+        assert.equal(res.status, 200);
+        assert.equal(capturedAddress, 'So11111111111111111111111111111111111111112');
+      } finally {
+        tokenRiskReview.remove = originalRemove;
       }
     });
   });

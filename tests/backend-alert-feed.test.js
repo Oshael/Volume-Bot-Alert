@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const alertDeliveryCursor = require('../src/models/alert-delivery-cursor');
 const tokenAlertEvent = require('../src/models/token-alert-event');
 const tokenCatalog = require('../src/models/token-catalog');
+const tokenMeteoraState = require('../src/models/token-meteora-state');
 const backendAlertFeed = require('../src/services/backend-alert-feed');
 
 describe('backend alert feed service', () => {
@@ -11,10 +12,17 @@ describe('backend alert feed service', () => {
     const originalGetCursor = alertDeliveryCursor.getCursor;
     const originalListRecentEvents = tokenAlertEvent.listRecentEvents;
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     let capturedFilters = null;
     let capturedAddresses = null;
 
     alertDeliveryCursor.getCursor = async () => null;
+    tokenMeteoraState.listSummaryByAddresses = async () => [{
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      hasPool: false,
+      currentTvl: null,
+      poolCount: 0,
+    }];
     tokenAlertEvent.listRecentEvents = async (filters) => {
       capturedFilters = filters;
       return [{
@@ -42,6 +50,9 @@ describe('backend alert feed service', () => {
         last_image_url: 'https://example.com/token.png',
         last_twitter_url: 'https://x.com/wsol',
         last_mcap: '4200000',
+        last_price_change_6h: '5',
+        last_price_change_24h: '12',
+        monitor_priority: 'high',
         last_vol_1h: '200000',
         last_vol_6h: '900000',
         last_vol_24h: '3400000',
@@ -72,10 +83,14 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].address, 'So11111111111111111111111111111111111111112');
       assert.equal(payload.events[0].symbol, 'WSOL');
       assert.equal(payload.events[0].dumpPct, -60);
+      assert.equal(payload.events[0].riskReview, null);
+      assert.equal(payload.events[0].structuralRisk, null);
+      assert.equal(payload.events[0].junkAssessment.label, 'valid_but_weak');
     } finally {
       alertDeliveryCursor.getCursor = originalGetCursor;
       tokenAlertEvent.listRecentEvents = originalListRecentEvents;
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }
   });
 
@@ -91,8 +106,15 @@ describe('backend alert feed service', () => {
 
   it('builds a single dashboard alert event payload for realtime delivery', async () => {
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     let capturedAddresses = null;
 
+    tokenMeteoraState.listSummaryByAddresses = async () => [{
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      hasPool: false,
+      currentTvl: null,
+      poolCount: 0,
+    }];
     tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
       capturedAddresses = addresses;
       return [{
@@ -104,6 +126,9 @@ describe('backend alert feed service', () => {
         last_image_url: 'https://example.com/token.png',
         last_twitter_url: 'https://x.com/wsol',
         last_mcap: '4200000',
+        last_price_change_6h: '5',
+        last_price_change_24h: '12',
+        monitor_priority: 'high',
         last_vol_1h: '200000',
         last_vol_6h: '900000',
         last_vol_24h: '3400000',
@@ -132,8 +157,12 @@ describe('backend alert feed service', () => {
       assert.equal(payload.address, 'So11111111111111111111111111111111111111112');
       assert.equal(payload.symbol, 'WSOL');
       assert.equal(payload.dumpPct, -60);
+      assert.equal(payload.riskReview, null);
+      assert.equal(payload.structuralRisk, null);
+      assert.equal(payload.junkAssessment.label, 'valid_but_weak');
     } finally {
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }
   });
 
@@ -143,6 +172,7 @@ describe('backend alert feed service', () => {
     const originalMarkSeen = alertDeliveryCursor.markSeen;
     const originalListRecentEvents = tokenAlertEvent.listRecentEvents;
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     let capturedCursorArgs = null;
     let capturedFilters = null;
 
@@ -167,6 +197,7 @@ describe('backend alert feed service', () => {
       return [];
     };
     tokenCatalog.listDashboardMetadataByAddresses = async () => [];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
 
     try {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
@@ -193,6 +224,7 @@ describe('backend alert feed service', () => {
       alertDeliveryCursor.markSeen = originalMarkSeen;
       tokenAlertEvent.listRecentEvents = originalListRecentEvents;
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }
   });
 
@@ -202,6 +234,7 @@ describe('backend alert feed service', () => {
     const originalMarkSeen = alertDeliveryCursor.markSeen;
     const originalListRecentEvents = tokenAlertEvent.listRecentEvents;
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     let capturedLatestRuleKey = null;
     let capturedMarkSeenArgs = null;
     let capturedFilters = null;
@@ -226,6 +259,7 @@ describe('backend alert feed service', () => {
       return [];
     };
     tokenCatalog.listDashboardMetadataByAddresses = async () => [];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
 
     try {
       const payload = await backendAlertFeed.listDashboardAlertEvents({
@@ -257,6 +291,7 @@ describe('backend alert feed service', () => {
       alertDeliveryCursor.markSeen = originalMarkSeen;
       tokenAlertEvent.listRecentEvents = originalListRecentEvents;
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }
   });
 
