@@ -448,6 +448,71 @@ function groupPairsByAddress(pairs, requestedAddresses) {
   return grouped;
 }
 
+function toFiniteNumberOrZero(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getSinglePairFromPayload(payload) {
+  if (!payload?.pairs || payload.pairs.length !== 1) {
+    return null;
+  }
+  return payload.pairs[0] || null;
+}
+
+function isPairOnRequestedChain(pair, chain = 'solana') {
+  return String(pair?.chainId || '').trim().toLowerCase() === String(chain || 'solana').trim().toLowerCase();
+}
+
+function isPumpfunPair(pair) {
+  return String(pair?.dexId || '').trim().toLowerCase() === 'pumpfun';
+}
+
+function isPairForRequestedAddress(pair, address) {
+  const normalizedAddress = normalizeAddress(address);
+  if (!normalizedAddress) {
+    return false;
+  }
+
+  const baseAddress = normalizeAddress(pair?.baseToken?.address);
+  const quoteAddress = normalizeAddress(pair?.quoteToken?.address);
+  return baseAddress === normalizedAddress || quoteAddress === normalizedAddress;
+}
+
+function isLowConfidencePumpfunPair(pair) {
+  const liquidityUsd = toFiniteNumberOrZero(pair?.liquidity?.usd);
+  const volume1h = toFiniteNumberOrZero(pair?.volume?.h1);
+  const volume6h = toFiniteNumberOrZero(pair?.volume?.h6);
+  const marketCap = toFiniteNumberOrZero(pair?.marketCap || pair?.fdv);
+
+  return liquidityUsd <= 1000
+    && volume1h <= 0
+    && volume6h <= 0
+    && marketCap > 0
+    && marketCap < 250000;
+}
+
+function shouldFallbackSuspiciousBatchPair(address, payload, chain = 'solana') {
+  const pair = getSinglePairFromPayload(payload);
+  if (!pair) {
+    return false;
+  }
+
+  if (!isPairOnRequestedChain(pair, chain)) {
+    return false;
+  }
+
+  if (!isPumpfunPair(pair)) {
+    return false;
+  }
+
+  if (!isPairForRequestedAddress(pair, address)) {
+    return false;
+  }
+
+  return isLowConfidencePumpfunPair(pair);
+}
+
 async function fetchTokenPairsBatchUncached(addresses, options = {}) {
   const normalizedAddresses = [...new Set((addresses || []).map((address) => normalizeAddress(address)).filter(Boolean))];
   const chain = String(options.chain || 'solana').trim() || 'solana';
@@ -500,15 +565,27 @@ async function fetchTokenPairsBatchUncached(addresses, options = {}) {
       const pairs = await res.json();
       noteSuccessfulResponse();
       const groupedPairs = groupPairsByAddress(pairs, chunk);
+      const fallbackAddresses = [];
 
       for (const address of chunk) {
         const payload = buildNormalizedPairsPayload(groupedPairs.get(address) || []);
+        if (shouldFallbackSuspiciousBatchPair(address, payload, chain)) {
+          fallbackAddresses.push(address);
+          continue;
+        }
         const data = payload.pairs.length > 0 ? payload : null;
         const ttlMs = data
           ? getTokenCacheTtl(priorityByAddress.get(address))
           : ERROR_COOLDOWN_MS;
         setCacheEntry(address, data, ttlMs);
         results.set(address, data);
+      }
+
+      if (fallbackAddresses.length > 0) {
+        await Promise.all(fallbackAddresses.map(async (address) => {
+          const fallbackData = await fetchTokenPairsUncached(address, priorityByAddress.get(address));
+          results.set(address, fallbackData);
+        }));
       }
     } catch (err) {
       const label = err.name === 'AbortError' ? 'Timeout' : 'Fetch error';
@@ -721,6 +798,7 @@ module.exports = {
     addRateLimitJitter,
     completeRecoveryCycle,
     computeRateLimitBackoffMs,
+    fetchTokenPairsBatchUncached,
     getThrottleState,
     isRecoveryActive,
     noteRateLimit,
@@ -728,5 +806,6 @@ module.exports = {
     parseRetryAfterMs,
     resetRateLimitState,
     resolveBatchOptions,
+    shouldFallbackSuspiciousBatchPair,
   },
 };
