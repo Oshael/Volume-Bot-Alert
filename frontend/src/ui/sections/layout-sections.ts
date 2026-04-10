@@ -2925,13 +2925,60 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
   bindFocusTrap(panel);
   hydrateLegacyConfigValues(configSection, state);
 
-  configSection.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
-    const name = input.name;
-    if (name === 'sound-mode' || name === 'sound-volume') {
+  const commitInputIfNeeded = async (input: HTMLInputElement) => {
+    if (input.dataset.pendingCommit !== 'true' || input.dataset.submitInFlight === 'true') {
       return;
     }
-    input.addEventListener('change', () => void submitLegacyConfig(configSection, controller));
+
+    input.dataset.submitInFlight = 'true';
+    try {
+      await submitLegacyConfig(configSection, controller);
+      input.dataset.pendingCommit = 'false';
+    } finally {
+      input.dataset.submitInFlight = 'false';
+    }
+  };
+
+  configSection.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
+    const name = input.name;
+    if (name === 'sound-volume') {
+      return;
+    }
+
+    if (input instanceof HTMLSelectElement) {
+      input.addEventListener('change', () => void submitLegacyConfig(configSection, controller));
+      return;
+    }
+
+    input.addEventListener('input', () => {
+      input.dataset.pendingCommit = 'true';
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') {
+        return;
+      }
+      event.preventDefault();
+      void commitInputIfNeeded(input);
+    });
   });
+
+  panel.addEventListener('pointerdown', (event) => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) || !configSection.contains(active)) {
+      return;
+    }
+
+    if (!active.name || active.name === 'sound-volume' || active.dataset.pendingCommit !== 'true') {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof Node && active.contains(target)) {
+      return;
+    }
+
+    void commitInputIfNeeded(active);
+  }, true);
 
   configSection.querySelector<HTMLSelectElement>('select[name="sound-mode"]')?.addEventListener('change', (event) => {
     controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
