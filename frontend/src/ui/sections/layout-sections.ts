@@ -3822,7 +3822,7 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
   const defaults: Record<string, number> = {
     threshold: 50,
     'mcap-threshold': 50,
-    'min-vol': 5000,
+    'min-vol': 8000,
     'min-mcap': 30000,
     'max-mcap': 0,
     'hvnc-min-vol': 300000,

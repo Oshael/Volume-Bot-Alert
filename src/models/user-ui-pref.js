@@ -22,8 +22,8 @@ const DEFAULT_UI_PREFS = {
   recentPerPage: 30,
   oldWeekPerPage: 30,
   manualSorts: [{ mode: 'mcap', window: 'highest' }],
-  recentSorts: [{ mode: 'vol', window: '24h' }],
-  oldWeekSorts: [{ mode: 'vol', window: '24h' }],
+  recentSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
+  oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
 };

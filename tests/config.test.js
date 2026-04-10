@@ -169,6 +169,20 @@ describe('Config routes', () => {
     assert.equal(response.body.configs.interval, 30);
     assert.equal(response.body.configs.chain, 'solana');
     assert.equal(response.body.configs['block-warning-enabled'], 'on');
+    assert.equal(response.body.configs['min-vol'], 8000);
+    assert.equal(response.body.configs['old-mcap-min'], 120000);
+    assert.equal(response.body.configs['old-mcap-max'], 100000000);
+    assert.equal(response.body.configs['old-week-mcap-min'], 120000);
+    assert.equal(response.body.configs['old-week-mcap-max'], 100000000);
+    assert.equal(response.body.configs['old-per-page'], 30);
+    assert.equal(response.body.configs['old-week-per-page'], 30);
+
+    assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
+    assert.deepEqual(response.body.uiPrefs.monitoredSorts, [{ mode: 'vol', window: '5m' }]);
+    assert.deepEqual(response.body.uiPrefs.recentSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
+    assert.deepEqual(response.body.uiPrefs.oldWeekSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
+    assert.equal(response.body.uiPrefs.recentPerPage, 30);
+    assert.equal(response.body.uiPrefs.oldWeekPerPage, 30);
   });
 
   it('patches config values and persists them on subsequent reads', async () => {

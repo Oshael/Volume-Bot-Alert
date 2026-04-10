@@ -2132,7 +2132,7 @@ export function createAppController(): AppController {
     if (scope === 'manual') {
       return [{ mode: 'mcap', window: 'highest' }];
     }
-    return [{ mode: 'vol', window: '24h' }];
+    return [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }];
   }
 
   function getDefaultMonitoredSorts(): MonitoredSortCriterion[] {
@@ -3229,7 +3229,7 @@ export function createAppController(): AppController {
   }
 
   function passesAlertFilters(token: ManualTokenEntry) {
-    const minVol = getConfigNumber('min-vol', 5000);
+    const minVol = getConfigNumber('min-vol', 8000);
     const minMcap = getConfigNumber('min-mcap', 30000);
     const maxMcap = getConfigNumber('max-mcap', 0);
     const volume5m = token.volume5m ?? 0;

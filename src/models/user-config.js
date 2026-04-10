@@ -5,7 +5,7 @@ const db = require('./db');
 const CONFIG_SCHEMA = {
   threshold:        { type: 'number', min: 0, max: 10000, default: 50 },
   'mcap-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
-  'min-vol':        { type: 'number', min: 0, max: 1e12, default: 5000 },
+  'min-vol':        { type: 'number', min: 0, max: 1e12, default: 8000 },
   'min-mcap':       { type: 'number', min: 30000, max: 1e12, default: 30000 },
   'max-mcap':       { type: 'number', min: 0, max: 1e15, default: 0 },
   'min-mcap-remove':{ type: 'number', min: 0, max: 1e12, default: 0 },
