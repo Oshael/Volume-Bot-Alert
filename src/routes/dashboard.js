@@ -9,6 +9,8 @@ const tokenMeteoraState = require('../models/token-meteora-state');
 const backendAlertFeed = require('../services/backend-alert-feed');
 const { classifyTokenJunk } = require('../services/token-junk-metric');
 const {
+  buildBlockStatusSummary,
+  buildEffectiveRiskLabel,
   buildRiskReviewSummary,
   buildStructuralRiskSummary,
   toNumberOrNull,
@@ -126,6 +128,8 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
     lastSeenAt: item.last_seen_at || null,
     lastEvaluatedAt: item.last_evaluated_at || null,
+    blockStatus: buildBlockStatusSummary(item),
+    effectiveRiskLabel: buildEffectiveRiskLabel(item),
     riskReview: buildRiskReviewSummary(item),
     structuralRisk: buildStructuralRiskSummary(item),
     junkAssessment: classifyTokenJunk({

@@ -141,4 +141,22 @@ describe('token risk review model', () => {
       db.query = originalQuery;
     }
   });
+
+  it('removes only auto reviews by token address', async () => {
+    const originalQuery = db.query;
+    let capturedParams = null;
+
+    db.query = async (_sql, params) => {
+      capturedParams = params;
+      return { rowCount: 1 };
+    };
+
+    try {
+      const removed = await tokenRiskReview.removeAutoReview('So11111111111111111111111111111111111111112');
+      assert.deepEqual(capturedParams, ['So11111111111111111111111111111111111111112']);
+      assert.equal(removed, true);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
 });

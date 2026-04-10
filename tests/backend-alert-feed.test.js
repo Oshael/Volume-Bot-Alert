@@ -57,6 +57,9 @@ describe('backend alert feed service', () => {
         last_vol_6h: '900000',
         last_vol_24h: '3400000',
         last_token_created_at_ms: String(Date.UTC(2026, 3, 1, 12, 0, 0)),
+        blocked_label: 'manual-junk-block',
+        blocked_created_by: 9,
+        blocked_created_at: '2026-04-09T11:00:00.000Z',
       }];
     };
 
@@ -83,6 +86,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].address, 'So11111111111111111111111111111111111111112');
       assert.equal(payload.events[0].symbol, 'WSOL');
       assert.equal(payload.events[0].dumpPct, -60);
+      assert.equal(payload.events[0].blockStatus.label, 'blocked_manual');
+      assert.equal(payload.events[0].effectiveRiskLabel, 'blocked_manual');
       assert.equal(payload.events[0].riskReview, null);
       assert.equal(payload.events[0].structuralRisk, null);
       assert.equal(payload.events[0].junkAssessment.label, 'valid_but_weak');

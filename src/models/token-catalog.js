@@ -461,6 +461,9 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
        trr.source AS risk_review_source,
        trr.notes AS risk_review_notes,
        trr.updated_at AS risk_review_updated_at,
+       ab.label AS blocked_label,
+       ab.created_by AS blocked_created_by,
+       ab.created_at AS blocked_created_at,
        tre.last_attempted_at AS risk_enrichment_last_attempted_at,
        tre.last_enriched_at AS risk_enrichment_last_enriched_at,
        tre.last_error AS risk_enrichment_last_error,
@@ -473,6 +476,8 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
        ON trr.token_address = tc.address
+     LEFT JOIN admin_blocked_tokens ab
+       ON ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
        ON tre.token_address = tc.address
      WHERE tc.eligible_for_monitoring = TRUE
@@ -520,6 +525,9 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
        trr.source AS risk_review_source,
        trr.notes AS risk_review_notes,
        trr.updated_at AS risk_review_updated_at,
+       ab.label AS blocked_label,
+       ab.created_by AS blocked_created_by,
+       ab.created_at AS blocked_created_at,
        tre.last_attempted_at AS risk_enrichment_last_attempted_at,
        tre.last_enriched_at AS risk_enrichment_last_enriched_at,
        tre.last_error AS risk_enrichment_last_error,
@@ -596,6 +604,8 @@ async function listDashboardMetadataByAddresses(addresses) {
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
        ON trr.token_address = tc.address
+     LEFT JOIN admin_blocked_tokens ab
+       ON ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
        ON tre.token_address = tc.address
      WHERE tc.address = ANY($1::varchar[])`,

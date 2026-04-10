@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-05` after the backend/database migration from Railway to a single VPS, while the public frontend continued on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-09` after the token-risk runtime gained Helius structural enrichment, automatic persisted risk labels, and manual-vs-auto review precedence while the public frontend continued on Vercel.
 
 ## Current Deployment Topology
 
@@ -29,7 +29,8 @@ Current production-like deployment shape:
   - one backend process
   - one local production PostgreSQL instance
 - repository note:
-  - `railway.json` still exists, but it should now be treated as legacy deployment residue / fallback context rather than the primary production deployment contract
+  - `railway.json` still exists, but it should now be treated as legacy deployment residue / historical context rather than the primary production deployment contract
+  - current frontend runtime defaults and CSP allowlists now point at `https://api.trendscope.pro` rather than Railway
 
 ## Test Database Safety
 
@@ -120,6 +121,8 @@ Important:
   - `src/services/dex-discovery-worker.js`
   - `src/services/lateralization-worker.js`
   - `src/services/meteora-snapshot-worker.js`
+  - `src/services/token-risk-enrichment-worker.js`
+  - `src/services/token-risk-review-sync-worker.js`
   - `src/services/socket-hub.js`
 - Important deployment caveat:
   - the current production model still assumes one backend process
@@ -134,7 +137,98 @@ Important:
   - current default remains `combined`
   - if the backend is ever scaled to multiple replicas, or a second process points to the same production DB, every process will still start its own workers unless runtime roles are deliberately split
   - that would duplicate `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` work against the same DB/upstreams
+  - it would also duplicate Helius enrichment and automatic token-risk review sync
   - horizontal scale of the full backend is therefore still not recommended unless the split is intentionally deployed as separate web/background roles
+
+## Token Risk Runtime
+
+### Classification layers
+- The runtime now has two distinct token-risk layers:
+  - `junkAssessment`
+    - computed on demand from current catalog + Meteora + structural enrichment data
+    - not authoritative by itself
+    - can return:
+      - `valid`
+      - `valid_but_weak`
+      - `junk_probable`
+      - `junk_permanent`
+  - `riskReview`
+    - persisted in `token_risk_reviews`
+    - now includes `source`:
+      - `manual`
+      - `auto`
+- Important distinction:
+  - `junkAssessment.label = valid` does not automatically mean a human reviewed the token
+  - `riskReview` is the persisted operational label used by other runtime decisions
+
+### Manual vs auto precedence
+- `manual` review labels remain authoritative
+- automatic review sync never overwrites an existing `manual` row
+- automatic persistence can create/update only `auto` rows
+- `junk_permanent` is never auto-persisted as `junk_permanent`
+  - automatic `junk_permanent` assessments are downgraded to persisted `junk_probable`
+  - auto-ban is still not active
+
+### Automatic persisted labels
+- Background runtime now includes a dedicated sync worker:
+  - `src/services/token-risk-review-sync-worker.js`
+- It periodically scans monitored catalog rows and persists the current risk label into `token_risk_reviews`
+- Current persisted automatic labels are still limited to the existing label set:
+  - `valid`
+  - `valid_but_weak`
+  - `junk_probable`
+  - `junk_permanent` is reserved for manual/explicit review semantics and is not auto-written by the worker
+- Safety rule:
+  - a token assessed as `valid` is only persisted as automatic `valid` after structural coverage exists
+  - without structural coverage, automatic `valid` is softened to persisted `valid_but_weak`
+  - this prevents the Helius selector from skipping a token too early
+
+### Helius structural enrichment
+- Helius/RPC enrichment is a separate background pipeline, not part of the main dashboard route path
+- Worker:
+  - `src/services/token-risk-enrichment-worker.js`
+- It fetches structural/on-chain signals such as:
+  - holder count
+  - top-holder concentration
+  - mint authority state
+  - freeze authority state
+- The cache lives in:
+  - `token_risk_enrichment`
+- The dashboard and backend alert payloads can expose this through `structuralRisk`
+
+### When Helius runs
+- A token becoming `monitored` does not guarantee immediate Helius enrichment
+- Helius enrichment uses a candidate selector with rate/cost-aware filtering
+- Practical behavior:
+  - `monitored` means the token is eligible for consideration
+  - Helius runs only if the token passes the selector conditions
+- Tokens can be skipped from normal Helius selection when:
+  - they already have a fresh structural cache
+  - they are under error backoff
+  - they were manually marked `valid`
+  - they were manually marked `junk_permanent`
+- Default freshness behavior:
+  - successful structural enrichment is now treated as fresh for `1h` by default
+  - after that, the token can re-enter the selector if it is still relevant and not otherwise skipped
+- Automatic persisted `valid` labels can also reduce future Helius usage, but only after the token has enough structural coverage to qualify for persisted `valid`
+
+### Operational visibility
+- `GET /api/admin/ws-status` now exposes:
+  - `tokenRiskEnrichmentWorker`
+  - `tokenRiskReviewSyncWorker`
+- `GET /api/dashboard/monitored` now exposes both:
+  - `riskReview`
+  - `junkAssessment`
+  - `blockStatus`
+  - `effectiveRiskLabel`
+- `riskReview.source` can be used to distinguish:
+  - human-reviewed state
+  - bot-persisted automatic state
+- blocked tokens keep their analysis history, but operational reads can now surface:
+  - `blocked_manual`
+  - `blocked_auto`
+- when a token is blocklisted through the backend catalog flow, automatic review rows are removed
+  - this prevents blocked tokens from continuing to inflate the automatic `junk_probable` pool
 
 ## Source Of Truth By Area
 
@@ -227,6 +321,9 @@ Important:
 - Active endpoint for monitored hydration:
   - `GET /api/dashboard/monitored`
 - This is the endpoint the frontend currently uses for the shared monitored set.
+- Important token-risk caveat:
+  - being present in `Monitored` does not imply that the token has already received Helius enrichment
+  - monitored membership and Helius structural enrichment are related but separate runtime steps
 - Current frontend state contract:
   - canonical token store is `trackedTokensByAddress`
   - `Monitored` now keeps `monitoredTokenAddresses`
@@ -913,9 +1010,17 @@ Current honest security assessment:
 - Recent backend validation hardening completed:
   - `GET /api/admin/logs` now validates `limit` explicitly as a positive integer and rejects malformed `success` query values instead of relying on implicit coercion
   - admin user-target routes now use the same positive-ID parsing contract already used elsewhere in the admin surface
+- Recent backend / billing / edge hardening completed:
+  - production API fallback in the frontend now defaults to `https://api.trendscope.pro` instead of the old Railway host
+  - trusted frontend origins now come only from explicit `CORS_ORIGINS`; implicit Vercel preview trust was removed
+  - legacy Railway hosts were removed from backend and frontend CSP `connect-src` allowlists
+  - request IP and socket IP resolution now follow proxy-aware private/loopback trust instead of preferring raw `X-Forwarded-For`
+  - `GET /api/health` no longer exposes raw database error text publicly
+  - mock checkout is now limited to authenticated local loopback requests in `development` / `test`
+  - MoonPay webhook processing now validates the local order, reconciles the provider charge before granting access, and allows retry after transient provider-lookup failure instead of treating every repeated delivery as a terminal duplicate
 - Risk is reduced, but not eliminated:
   - remaining risk is now mostly deeper structural / architectural, not the previously most-exposed auth/account/config/list surfaces
-  - the next line of defense after the current hardening is targeted defense-in-depth on lower-traffic render helpers, operational limits, and observability
+  - the next line of defense after the current hardening is targeted defense-in-depth on lower-traffic render helpers, operational verification against the real topology, and observability
 
 Current security priority order:
 1. Defense-in-depth render follow-up
@@ -1302,6 +1407,8 @@ Current limitation:
   - review production cookies, CORS/origin rules, and rate limiting against the actual public topology:
     - frontend at `https://www.trendscope.pro`
     - backend at `https://api.trendscope.pro`
+  - keep the backend behind local/private proxy hops only, because proxy-aware IP trust now assumes the public entrypoint is `nginx` rather than arbitrary direct exposure
+  - keep `CORS_ORIGINS` explicit; preview/staging frontend hosts no longer inherit access automatically
   - until the VPS deploy is explicitly split into separate roles, keep the backend as a single production process
 - Railway-specific deployment behavior should now be treated as legacy context only.
 

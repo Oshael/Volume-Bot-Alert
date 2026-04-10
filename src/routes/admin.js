@@ -18,6 +18,11 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const { isValidAddress } = require('../models/user-token');
+const {
+  buildBlockStatusSummary,
+  buildEffectiveRiskLabel,
+  buildRiskReviewSummary,
+} = require('../services/token-risk-summary');
 
 const router = express.Router();
 const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
@@ -226,6 +231,9 @@ function buildTokenJunkAssessmentResponse(rows, meteoraRows) {
       address: row.address,
       symbol: row.symbol || null,
       name: row.name || null,
+      effectiveRiskLabel: buildEffectiveRiskLabel(row),
+      blockStatus: buildBlockStatusSummary(row),
+      riskReview: buildRiskReviewSummary(row),
       manualLabel: row.risk_review_label || null,
       assessment: classifyTokenJunk({
         ...row,

@@ -4,7 +4,12 @@ const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const { getBackendAlertRule, getDefaultDashboardAlertRuleKey } = require('./backend-alert-rules');
 const { classifyTokenJunk } = require('./token-junk-metric');
-const { buildRiskReviewSummary, buildStructuralRiskSummary } = require('./token-risk-summary');
+const {
+  buildBlockStatusSummary,
+  buildEffectiveRiskLabel,
+  buildRiskReviewSummary,
+  buildStructuralRiskSummary,
+} = require('./token-risk-summary');
 
 const DEFAULT_ALERT_FEED_LIMIT = 50;
 
@@ -65,6 +70,8 @@ function buildDashboardAlertEventCatalogPayload(catalogRow) {
     volume1h: toNumberOrNull(catalogRow?.last_vol_1h),
     volume6h: toNumberOrNull(catalogRow?.last_vol_6h),
     volume24h: toNumberOrNull(catalogRow?.last_vol_24h),
+    blockStatus: buildBlockStatusSummary(catalogRow),
+    effectiveRiskLabel: buildEffectiveRiskLabel(catalogRow),
     riskReview: buildRiskReviewSummary(catalogRow),
     structuralRisk: buildStructuralRiskSummary(catalogRow),
     junkAssessment: classifyTokenJunk({

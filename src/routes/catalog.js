@@ -5,6 +5,7 @@ const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middlew
 const { catalogReadLimiter, catalogWriteLimiter, pumpfunMetaLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
+const tokenRiskReview = require('../models/token-risk-review');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketLateralizationRun = require('../models/token-market-lateralization-run');
 const tokenMeteoraState = require('../models/token-meteora-state');
@@ -137,6 +138,7 @@ router.post('/admin-blocklist', catalogWriteLimiter, requireAdmin, async (req, r
       monitorPriority: 'dormant',
       symbol: label,
     });
+    await tokenRiskReview.removeAutoReview(address);
 
     res.status(201).json({
       message: 'Token permanently blocked in backend catalog',

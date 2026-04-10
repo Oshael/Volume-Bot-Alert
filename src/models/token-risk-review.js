@@ -197,6 +197,17 @@ async function remove(address, runner = db) {
   return (result.rowCount || 0) > 0;
 }
 
+async function removeAutoReview(address, runner = db) {
+  const tokenAddress = normalizeAddress(address);
+  const result = await runner.query(
+    `DELETE FROM token_risk_reviews
+     WHERE token_address = $1
+       AND source = 'auto'`,
+    [tokenAddress]
+  );
+  return (result.rowCount || 0) > 0;
+}
+
 module.exports = {
   VALID_LABELS,
   VALID_SOURCES,
@@ -205,6 +216,7 @@ module.exports = {
   upsertReview,
   upsertAutoReview,
   remove,
+  removeAutoReview,
   __private: {
     mapRow,
     normalizeAddress,

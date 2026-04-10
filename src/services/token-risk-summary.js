@@ -39,6 +39,32 @@ function buildRiskReviewSummary(row) {
   };
 }
 
+function buildBlockStatusSummary(row) {
+  const createdAt = row?.blocked_created_at || null;
+  const reasonLabel = row?.blocked_label || null;
+  if (!createdAt && !reasonLabel) {
+    return null;
+  }
+
+  const source = row?.blocked_created_by == null ? 'auto' : 'manual';
+  return {
+    label: source === 'auto' ? 'blocked_auto' : 'blocked_manual',
+    source,
+    reasonLabel,
+    createdAt,
+  };
+}
+
+function buildEffectiveRiskLabel(row) {
+  const blockStatus = buildBlockStatusSummary(row);
+  if (blockStatus?.label) {
+    return blockStatus.label;
+  }
+
+  const riskReview = buildRiskReviewSummary(row);
+  return riskReview?.label || null;
+}
+
 function buildStructuralRiskSummary(row) {
   if (!hasStructuralRiskData(row)) {
     return null;
@@ -58,6 +84,8 @@ function buildStructuralRiskSummary(row) {
 }
 
 module.exports = {
+  buildBlockStatusSummary,
+  buildEffectiveRiskLabel,
   buildRiskReviewSummary,
   buildStructuralRiskSummary,
   normalizeReasonCodes,

@@ -187,6 +187,8 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.tokens[0].meteora.lastSnapshotAt, '2026-04-05T19:00:00.000Z');
       assert.equal(res.body.tokens[0].riskReview.label, 'valid_but_weak');
       assert.equal(res.body.tokens[0].riskReview.notes, 'manual review');
+      assert.equal(res.body.tokens[0].blockStatus, null);
+      assert.equal(res.body.tokens[0].effectiveRiskLabel, 'valid_but_weak');
       assert.equal(res.body.tokens[0].structuralRisk.holderCount, 123);
       assert.equal(res.body.tokens[0].structuralRisk.mintAuthorityActive, true);
       assert.equal(res.body.tokens[0].structuralRisk.freezeAuthorityActive, false);

@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-05` after the backend/database migration from Railway to a single VPS, while the public frontend remained on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-09` after the token-risk runtime gained Helius structural enrichment, automatic persisted risk labels, and manual-vs-auto review precedence while the public frontend remained on Vercel.
 
 ## Current Deployment Topology
 
@@ -32,7 +32,8 @@ Current production-like topology:
   - PostgreSQL runs on the same VPS as the backend
   - intended to stay private/local rather than publicly exposed
 - repository note:
-  - `railway.json` remains in the repo, but it is now legacy deployment residue / fallback context rather than the primary production deployment contract
+  - `railway.json` remains in the repo, but it is now legacy deployment residue / historical context rather than the primary production deployment contract
+  - current frontend runtime defaults and CSP allowlists now point at `https://api.trendscope.pro` rather than Railway
 
 ## Test Environment And Database Safety
 
@@ -202,6 +203,7 @@ Deployment caveat:
 - current default remains `combined`
 - if the backend is ever scaled to multiple replicas, or another process uses the same production DB, each process will still start the full worker set unless runtime roles are intentionally split
 - that duplicates `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` execution against the same DB/upstreams
+- it also duplicates Helius enrichment and automatic token-risk review sync
 - do not horizontally scale the full backend unless it is explicitly separated into web/background runtime roles or stronger coordination is introduced
 
 Admin worker status endpoint:
@@ -217,6 +219,8 @@ Admin worker status endpoint:
   - `meteoraSnapshotWorker`
   - `dexDiscoveryWorker`
   - `lateralizationWorker`
+  - `tokenRiskEnrichmentWorker`
+  - `tokenRiskReviewSyncWorker`
 
 ### Backend workers
 
@@ -414,6 +418,79 @@ Tier SLAs:
 - `high`: `30s`
 - `normal`: `60s`
 - `low`: `5m`
+
+#### Token risk enrichment worker
+File:
+- `src/services/token-risk-enrichment-worker.js`
+
+Role:
+- fetches structural/on-chain token signals through Helius/RPC
+- persists those signals into `token_risk_enrichment`
+- keeps structural analysis out of the main catalog worker critical path
+
+Important behavior:
+- the worker loop runs frequently, but per-token enrichment is cache-gated
+- a token is not re-enriched on every worker loop
+- the default “fresh structural cache” TTL is now `1h`
+- the Helius candidate selector can skip a token when:
+  - structural enrichment is still fresh
+  - the token is under enrichment error backoff
+  - the token has a persisted `manual` `valid` review
+  - the token has a persisted `manual` `junk_permanent` review
+- being present in `Monitored Tokens` does not guarantee immediate Helius enrichment
+  - monitored status makes the token eligible for consideration
+  - Helius still uses its own selector and TTL logic
+
+Persisted structural outputs:
+- holder count
+- top-holder concentration
+- mint authority state
+- freeze authority state
+- structural reason codes
+
+#### Token risk review sync worker
+File:
+- `src/services/token-risk-review-sync-worker.js`
+
+Role:
+- periodically computes the current runtime token-risk assessment for monitored tokens
+- persists that assessment into `token_risk_reviews`
+- creates an operational label cache that other runtime systems can reuse
+
+Important behavior:
+- automatic persisted labels use the existing review labels only:
+  - `valid`
+  - `valid_but_weak`
+  - `junk_probable`
+- automatic `junk_permanent` is intentionally not persisted as `junk_permanent`
+  - it is softened to persisted `junk_probable`
+  - the current runtime still does not auto-ban tokens
+- automatic `valid` is only persisted as `valid` after structural coverage exists
+  - without structural coverage, automatic `valid` is softened to persisted `valid_but_weak`
+  - this avoids skipping Helius too early
+
+Manual vs automatic precedence:
+- `token_risk_reviews` now has `source`:
+  - `manual`
+  - `auto`
+- manual review remains authoritative
+- automatic sync never overwrites an existing manual review row
+- the dashboard can expose both:
+  - `riskReview`
+  - `junkAssessment`
+  - `blockStatus`
+  - `effectiveRiskLabel`
+
+Practical distinction:
+- `junkAssessment`
+  - computed live from current data
+  - not authoritative by itself
+- `riskReview`
+  - persisted review state
+  - can be reused by selectors and operators
+- blocklist action remains separate from persisted analysis
+  - blocked tokens can surface as `blocked_manual` or `blocked_auto` in effective reads
+  - admin blocklisting removes automatic review rows so blocked tokens no longer linger in the automatic `junk_probable` pool
 
 Execution notes:
 - worker computes per-tier demand and effective budget under the `800/min` cap
@@ -921,8 +998,25 @@ Current implementation notes:
   - transient payment state notices
   - pricing cards
   - no giant account-target hero
-- local mock checkout is already integrated for development validation
+- local mock checkout is already integrated for development validation, but it is now intentionally narrow:
+  - available only in `development` / `test`
+  - available only on loopback hosts
+  - requires authenticated access
+  - only operates on the authenticated user's own order
 - webhook-confirmed access remains the backend source of truth
+- successful non-mock webhook processing is now stricter than the earlier version:
+  - the webhook bearer token alone is not enough to grant access
+  - `billingOrderId`, optional `billingPlanKey`, and optional `appUserId` from `additionalJSON` are validated against the saved order
+  - the backend now looks up the saved charge via the provider before granting access
+  - charge reconciliation currently checks:
+    - provider charge id
+    - paylink id
+    - requested amount
+    - currency
+    - provider transaction id
+    - transaction signature when present
+    - successful provider transaction status
+  - if a provider lookup fails transiently after the event row is created, the same delivery can be retried and processed later instead of being treated as permanently duplicated
 - successful payment upgrades access and then upgrades the session into the normal bot session
 - `User Settings` billing still exists, but it is no longer the primary journey for no-access users
 - the pricing cards in `/access` now reuse the same visual/card hierarchy as the public landing instead of maintaining a separate older billing-card template
@@ -1898,6 +1992,8 @@ Operational review points that now matter continuously:
 - HTTPS enforced at the proxy layer
 - intentional firewall / security-group rules
 - production cookie/origin/rate-limit settings revalidated for the actual public topology
+- backend kept behind local/private proxy hops because the app now resolves trusted client IPs through proxy-aware private/loopback trust instead of raw `X-Forwarded-For`
+- explicit `CORS_ORIGINS` maintained for every frontend host that should be allowed; implicit preview trust is no longer part of the code contract
 - code-level runtime split support now exists:
   - `npm run start:web`
   - `npm run start:worker`
@@ -1960,6 +2056,14 @@ What was hardened:
 - backend auth routes reject malformed OTP challenge, verify-email, and password-reset tokens early
 - login OTP generation now uses cryptographically secure randomness
 - cleanup scheduler now removes expired OTP challenges, email verification tokens, and password reset tokens
+- production frontend API fallback now defaults to `https://api.trendscope.pro`
+- implicit Vercel preview-origin trust was removed; origin allowlisting now depends on explicit `CORS_ORIGINS`
+- Railway hosts were removed from backend/frontend CSP `connect-src` allowlists
+- request IP and socket IP resolution now use proxy-aware private/loopback trust instead of preferring raw `X-Forwarded-For`
+- `GET /api/health` now returns a sanitized public DB-failure payload instead of exposing raw DB error text
+- mock checkout is now limited to authenticated loopback requests in `development` / `test`
+- MoonPay webhook granting now requires local order validation plus provider charge reconciliation before access is extended
+- repeated webhook deliveries are only treated as terminal duplicates once a prior delivery has left the initial `received` state
 
 Frontend delivery note:
 - the public frontend currently relies on `frontend/vercel.json` for:
@@ -1975,6 +2079,7 @@ Current honest assessment:
 - auth/session security is materially stronger than the pre-cookie implementation
 - frontend XSS risk has been reduced from obvious/high-risk territory into a much more controlled state
 - remaining XSS risk is now mostly structural and concentrated in lower-traffic helpers rather than the previously most-exposed auth/account/config/list surfaces
+- the most sensitive remaining billing risk is now more about provider contract drift or operational misconfiguration than about obviously forgeable webhook payloads
 
 ## Password Reset / Real Email State
 
