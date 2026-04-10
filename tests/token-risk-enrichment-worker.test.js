@@ -7,15 +7,20 @@ describe('token risk enrichment worker', () => {
   it('enriches selected candidates and persists structural signals', async () => {
     const savedPayloads = [];
     const recordedErrors = [];
+    let capturedSelectorOptions = null;
 
     const result = await worker.runOnce({
       scanLimit: 20,
       batchLimit: 2,
+      freshEnrichmentTtlMs: 60 * 60 * 1000,
     }, {}, {
       candidateSelector: {
-        listCandidates: async () => ([
+        listCandidates: async (options) => {
+          capturedSelectorOptions = options;
+          return ([
           { address: 'So11111111111111111111111111111111111111112' },
-        ]),
+          ]);
+        },
       },
       heliusApi: {
         getAsset: async () => ({
@@ -56,6 +61,7 @@ describe('token risk enrichment worker', () => {
     assert.equal(result.succeeded, 1);
     assert.equal(result.failed, 0);
     assert.equal(savedPayloads.length, 1);
+    assert.equal(capturedSelectorOptions.freshEnrichmentTtlMs, 60 * 60 * 1000);
     assert.equal(savedPayloads[0].tokenAddress, 'So11111111111111111111111111111111111111112');
     assert.equal(savedPayloads[0].holderCount, 123);
     assert.equal(savedPayloads[0].mintAuthorityActive, true);

@@ -6,6 +6,7 @@ const { buildStructuralSignals } = require('./token-risk-structural-signals');
 const LOOP_INTERVAL_MS = 30 * 1000;
 const DEFAULT_SCAN_LIMIT = 120;
 const DEFAULT_BATCH_LIMIT = 3;
+const DEFAULT_FRESH_ENRICHMENT_TTL_MS = 60 * 60 * 1000;
 
 let timer = null;
 let running = false;
@@ -19,6 +20,7 @@ let status = {
   lastScheduledDelayMs: LOOP_INTERVAL_MS,
   lastScanLimit: DEFAULT_SCAN_LIMIT,
   lastBatchLimit: DEFAULT_BATCH_LIMIT,
+  lastFreshEnrichmentTtlMs: DEFAULT_FRESH_ENRICHMENT_TTL_MS,
   lastCandidateCount: 0,
   lastProcessed: 0,
   lastSucceeded: 0,
@@ -54,6 +56,7 @@ function normalizeOptions(options = {}) {
   return {
     scanLimit: normalizeLimit(options.scanLimit, DEFAULT_SCAN_LIMIT, 5000),
     batchLimit: normalizeLimit(options.batchLimit, DEFAULT_BATCH_LIMIT, 25),
+    freshEnrichmentTtlMs: normalizeDelayMs(options.freshEnrichmentTtlMs, DEFAULT_FRESH_ENRICHMENT_TTL_MS),
   };
 }
 
@@ -195,6 +198,7 @@ async function runCandidateBatch(candidates = [], options = {}, meta = {}, deps 
     status.lastRunAt = new Date(startedAtMs).toISOString();
     status.lastScanLimit = normalizedOptions.scanLimit;
     status.lastBatchLimit = normalizedOptions.batchLimit;
+    status.lastFreshEnrichmentTtlMs = normalizedOptions.freshEnrichmentTtlMs;
     status.lastProcessed = 0;
     status.lastSucceeded = 0;
     status.lastFailed = 0;
@@ -242,6 +246,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
   const candidates = await selector.listCandidates({
     scanLimit: normalizedOptions.scanLimit,
     resultLimit: normalizedOptions.batchLimit,
+    freshEnrichmentTtlMs: normalizedOptions.freshEnrichmentTtlMs,
   });
 
   return runCandidateBatch(candidates, normalizedOptions, meta, deps);

@@ -425,6 +425,7 @@ module.exports = {
   tokenRiskEnrichmentWorker: {
     scanLimit: Math.max(1, Math.min(parseInt(process.env.TOKEN_RISK_ENRICHMENT_SCAN_LIMIT || '120', 10), 5000)),
     batchLimit: Math.max(1, Math.min(parseInt(process.env.TOKEN_RISK_ENRICHMENT_BATCH_LIMIT || '3', 10), 25)),
+    freshEnrichmentTtlMs: Math.max(60000, parseInt(process.env.TOKEN_RISK_ENRICHMENT_FRESH_TTL_MS || `${60 * 60 * 1000}`, 10) || (60 * 60 * 1000)),
   },
 
   tokenRiskReviewSyncWorker: {
