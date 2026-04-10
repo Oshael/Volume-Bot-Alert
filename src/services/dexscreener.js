@@ -164,10 +164,6 @@ function isRecoveryActive(now = Date.now()) {
   return Boolean(getRecoveryPhase());
 }
 
-function isThrottleModeActive(now = Date.now()) {
-  return isRateLimitBackoffActive(now) || isRecoveryActive(now);
-}
-
 function getRateLimitCooldownCacheTtlMs(now = Date.now()) {
   const remainingMs = getRateLimitBackoffRemainingMs(now);
   if (remainingMs > 0) {

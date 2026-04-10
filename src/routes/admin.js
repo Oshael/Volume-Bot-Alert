@@ -3,7 +3,6 @@ const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middlew
 const User = require('../models/user');
 const Invite = require('../models/invite');
 const Session = require('../models/session');
-const LoginAttempt = require('../models/login-attempt');
 const userAccess = require('../models/user-access');
 const { query } = require('../models/db');
 const socketHub = require('../services/socket-hub');

@@ -1,339 +1,278 @@
-/**
- * Etapa 4 — Testes completos: Configs, Manual Tokens, Blocklist
- *
- * Pré-requisitos:
- *   1. PostgreSQL rodando com banco volume_alert
- *   2. Tabelas da Etapa 1-3 criadas (npm run db:init)
- *   3. Tabelas da Etapa 4 criadas (node src/utils/db-init-stage4.js)
- *   4. .env configurado
- *
- * Rodar: npm test -- tests/config.test.js
- * Ou:    npx jest tests/config.test.js --verbose
- */
+process.env.NODE_ENV = 'test';
+process.env.EMAIL_ENABLED = 'true';
+process.env.EMAIL_PROVIDER = 'local';
+process.env.EMAIL_FROM = 'tests@trendscope.local';
+process.env.APP_BASE_URL = 'http://localhost:5173';
+process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
 
+const { describe, it, before, after } = require('node:test');
+const assert = require('node:assert/strict');
 const request = require('supertest');
+
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
 
-// ── Helpers ────────────────────────────────────────────────────────
-
-let token; // JWT do user de teste
-let adminToken;
-let inviteCode;
-
-// Endereços de teste (Solana-style base58)
 const VALID_ADDR_1 = 'So11111111111111111111111111111111111111112';
 const VALID_ADDR_2 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const VALID_ADDR_3 = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const INVALID_ADDR = 'not-a-valid-address!!!';
+const VALID_EVM_ADDR = `0x${'a'.repeat(40)}`;
 
-const TEST_USER = {
-  username: `configtest_${Date.now()}`,
-  email: `configtest_${Date.now()}@test.com`,
-  password: 'TestPass123!',
-};
+function getQueryToken(actionUrl) {
+  assert.ok(actionUrl, 'Expected actionUrl in email debug payload');
+  const parsed = new URL(actionUrl);
+  const token = parsed.searchParams.get('token');
+  assert.ok(token, 'Expected token query param in actionUrl');
+  return token;
+}
 
-beforeAll(async () => {
-  // Create bootstrap invite
-  const invite = await Invite.create(null, 5, 24);
-  inviteCode = invite.code;
+async function verifyEmailFromRegisterResponse(registerResponse) {
+  assert.equal(registerResponse.status, 201);
+  assert.equal(registerResponse.body.emailVerificationRequired, true);
 
-  // Register test user
-  const regRes = await request(app)
+  const verificationToken = getQueryToken(registerResponse.body.emailDebug?.actionUrl);
+  const verifyResponse = await request(app)
+    .post('/api/auth/verify-email/confirm')
+    .send({ token: verificationToken });
+
+  assert.equal(verifyResponse.status, 200);
+}
+
+async function completeLogin(email, password) {
+  const loginResponse = await request(app)
+    .post('/api/auth/login')
+    .send({ email, password });
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(loginResponse.body.otpRequired, true);
+  assert.ok(loginResponse.body.challengeToken);
+  assert.ok(loginResponse.body.emailDebug?.otpCode);
+
+  const verifyResponse = await request(app)
+    .post('/api/auth/login-otp/verify')
+    .send({
+      challengeToken: loginResponse.body.challengeToken,
+      code: loginResponse.body.emailDebug.otpCode,
+    });
+
+  assert.equal(verifyResponse.status, 200);
+  assert.ok(verifyResponse.body.token);
+  return verifyResponse.body.token;
+}
+
+async function ensureAccessSchema() {
+  const statements = [
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status VARCHAR(16) NOT NULL DEFAULT 'inactive'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_source VARCHAR(16) NOT NULL DEFAULT 'manual'`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS access_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'inactive'`,
+    `ALTER TABLE users ALTER COLUMN access_granted_at SET DEFAULT NOW()`,
+    `ALTER TABLE users ALTER COLUMN access_source SET DEFAULT 'manual'`,
+    `ALTER TABLE users ALTER COLUMN access_updated_at SET DEFAULT NOW()`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER`,
+    `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
+    `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
+  ];
+
+  for (const statement of statements) {
+    await db.query(statement);
+  }
+}
+
+async function createVerifiedUser({ username, email, password, role = 'user' }) {
+  const invite = await Invite.create(null, { maxUses: 2, expiryHours: 24, grantAccessDays: 30 });
+  const registerResponse = await request(app)
     .post('/api/auth/register')
-    .send({ ...TEST_USER, inviteCode });
+    .send({ username, email, password, inviteCode: invite.code });
 
-  token = regRes.body.token;
+  await verifyEmailFromRegisterResponse(registerResponse);
 
-  // Create admin user for edge cases
-  const invite2 = await Invite.create(null, 5, 24);
-  const adminUser = {
-    username: `cfgadmin_${Date.now()}`,
-    email: `cfgadmin_${Date.now()}@test.com`,
-    password: 'AdminPass123!',
-  };
-  const adminRegRes = await request(app)
-    .post('/api/auth/register')
-    .send({ ...adminUser, inviteCode: invite2.code });
+  if (role === 'admin') {
+    await db.query(`UPDATE users SET role = 'admin' WHERE email = $1`, [email]);
+  }
 
-  adminToken = adminRegRes.body.token;
+  return completeLogin(email, password);
+}
 
-  // Promote to admin
-  await db.query(
-    "UPDATE users SET role = 'admin' WHERE email = $1",
-    [adminUser.email]
-  );
-});
+describe('Config routes', () => {
+  let userToken;
+  let adminToken;
 
-afterAll(async () => {
-  if (server && server.close) server.close();
-  try { await db.pool.end(); } catch (_) {}
-});
+  before(async () => {
+    await ensureAccessSchema();
+    await db.query('DELETE FROM user_starred_tokens');
+    await db.query('DELETE FROM user_blocklist');
+    await db.query('DELETE FROM user_tokens');
+    await db.query('DELETE FROM user_ui_prefs');
+    await db.query('DELETE FROM user_configs');
+    await db.query('DELETE FROM sessions');
+    await db.query('DELETE FROM login_attempts');
+    await db.query('DELETE FROM users');
+    await db.query('DELETE FROM invites');
+    await db.query('ALTER TABLE invites ALTER COLUMN created_by DROP NOT NULL').catch(() => {});
 
-// ══════════════════════════════════════════════════════════════════
-//  1. AUTHENTICATION
-// ══════════════════════════════════════════════════════════════════
-
-describe('Config — Authentication', () => {
-  test('GET /api/config without token → 401', async () => {
-    const res = await request(app).get('/api/config');
-    expect(res.status).toBe(401);
+    const suffix = Date.now();
+    userToken = await createVerifiedUser({
+      username: `configuser_${suffix}`,
+      email: `configuser_${suffix}@test.com`,
+      password: 'TestPass123!',
+    });
+    adminToken = await createVerifiedUser({
+      username: `configadmin_${suffix}`,
+      email: `configadmin_${suffix}@test.com`,
+      password: 'AdminPass123!',
+      role: 'admin',
+    });
   });
 
-  test('PUT /api/config without token → 401', async () => {
-    const res = await request(app).put('/api/config').send({ configs: {} });
-    expect(res.status).toBe(401);
+  after(async () => {
+    if (server && server.close) {
+      server.close();
+    }
+    await db.pool.end().catch(() => {});
   });
 
-  test('PATCH /api/config without token → 401', async () => {
-    const res = await request(app).patch('/api/config').send({ configs: {} });
-    expect(res.status).toBe(401);
+  it('rejects config routes without authentication', async () => {
+    const responses = await Promise.all([
+      request(app).get('/api/config'),
+      request(app).put('/api/config').send({ configs: {} }),
+      request(app).patch('/api/config').send({ configs: {} }),
+      request(app).post('/api/config/tokens').send({ address: VALID_ADDR_1 }),
+      request(app).post('/api/config/blocklist').send({ address: VALID_ADDR_1 }),
+    ]);
+
+    for (const response of responses) {
+      assert.equal(response.status, 401);
+    }
   });
 
-  test('POST /api/config/tokens without token → 401', async () => {
-    const res = await request(app).post('/api/config/tokens').send({ address: VALID_ADDR_1 });
-    expect(res.status).toBe(401);
-  });
-
-  test('POST /api/config/blocklist without token → 401', async () => {
-    const res = await request(app).post('/api/config/blocklist').send({ address: VALID_ADDR_1 });
-    expect(res.status).toBe(401);
-  });
-
-  test('Invalid token → 401', async () => {
-    const res = await request(app)
+  it('returns default config payload for a fresh user', async () => {
+    const response = await request(app)
       .get('/api/config')
-      .set('Authorization', 'Bearer fake.token.here');
-    expect(res.status).toBe(401);
-  });
-});
+      .set('Authorization', `Bearer ${userToken}`);
 
-// ══════════════════════════════════════════════════════════════════
-//  2. GET /api/config — Defaults
-// ══════════════════════════════════════════════════════════════════
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.tokens, []);
+    assert.deepEqual(response.body.blocklist, []);
+    assert.deepEqual(response.body.starredTokens, []);
+    assert.ok(response.body.uiPrefs);
 
-describe('Config — GET defaults', () => {
-  test('Returns all default configs for new user', async () => {
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs).toBeDefined();
-    expect(res.body.tokens).toBeDefined();
-    expect(res.body.blocklist).toBeDefined();
-    expect(res.body.starredTokens).toBeDefined();
-
-    // Check defaults
-    expect(res.body.configs.threshold).toBe(50);
-    expect(res.body.configs.interval).toBe(30);
-    expect(res.body.configs.chain).toBe('solana');
-    expect(res.body.configs['min-vol']).toBe(500);
-    expect(res.body.configs['pump-entry-vol']).toBe(20000);
-    expect(res.body.configs['old-per-page']).toBe(30);
-    expect(res.body.configs['old-week-mcap-min']).toBe(120000);
-    expect(res.body.configs['old-week-mcap-max']).toBe(5000000);
-    expect(res.body.configs['old-week-per-page']).toBe(30);
-    expect(res.body.configs['meteora-min-pool']).toBe(5000);
-    expect(res.body.configs['block-warning-enabled']).toBe('on');
-
-    // All schema keys present
     for (const key of Object.keys(CONFIG_SCHEMA)) {
-      expect(res.body.configs).toHaveProperty(key);
+      assert.ok(Object.hasOwn(response.body.configs, key), `missing config key ${key}`);
     }
 
-    // Empty arrays for new user
-    expect(res.body.tokens).toHaveLength(0);
-    expect(res.body.blocklist).toHaveLength(0);
-    expect(res.body.starredTokens).toHaveLength(0);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-//  3. PATCH /api/config — Partial update
-// ══════════════════════════════════════════════════════════════════
-
-describe('Config — PATCH (partial update)', () => {
-  test('Update single config key', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: 80 } });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs.threshold).toBe(80);
-    // Other values unchanged
-    expect(res.body.configs.interval).toBe(30);
+    assert.equal(response.body.configs.threshold, 50);
+    assert.equal(response.body.configs.interval, 30);
+    assert.equal(response.body.configs.chain, 'solana');
+    assert.equal(response.body.configs['block-warning-enabled'], 'on');
   });
 
-  test('Update multiple config keys', async () => {
-    const res = await request(app)
+  it('patches config values and persists them on subsequent reads', async () => {
+    const patchResponse = await request(app)
       .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${userToken}`)
       .send({
         configs: {
-          'min-vol': 1000,
-          'min-mcap': 50000,
-          chain: 'ethereum',
-        },
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs['min-vol']).toBe(1000);
-    expect(res.body.configs['min-mcap']).toBe(50000);
-    expect(res.body.configs.chain).toBe('ethereum');
-    // Previously set value unchanged
-    expect(res.body.configs.threshold).toBe(80);
-  });
-
-  test('Update block warning preference', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        configs: {
+          threshold: 80,
+          interval: 15,
           'block-warning-enabled': 'off',
         },
       });
 
-    expect(res.status).toBe(200);
-    expect(res.body.configs['block-warning-enabled']).toBe('off');
+    assert.equal(patchResponse.status, 200);
+    assert.deepEqual(patchResponse.body.configs, {
+      threshold: 80,
+      interval: 15,
+      'block-warning-enabled': 'off',
+    });
+
+    const getResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(getResponse.status, 200);
+    assert.equal(getResponse.body.configs.threshold, 80);
+    assert.equal(getResponse.body.configs.interval, 15);
+    assert.equal(getResponse.body.configs['block-warning-enabled'], 'off');
   });
 
-  test('Reject unknown config key', async () => {
-    const res = await request(app)
+  it('rejects invalid and empty config patches', async () => {
+    const responses = await Promise.all([
+      request(app)
+        .patch('/api/config')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ configs: { 'hacker-key': 'oops' } }),
+      request(app)
+        .patch('/api/config')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ configs: { threshold: 'abc' } }),
+      request(app)
+        .patch('/api/config')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ configs: {} }),
+    ]);
+
+    assert.equal(responses[0].status, 400);
+    assert.match(responses[0].body.error, /Invalid config values/i);
+    assert.match(responses[0].body.details[0], /Unknown config key/i);
+
+    assert.equal(responses[1].status, 400);
+    assert.match(responses[1].body.details[0], /must be a finite number/i);
+
+    assert.equal(responses[2].status, 400);
+    assert.match(responses[2].body.error, /configs object is required/i);
+  });
+
+  it('strips restricted chain updates for non-admin users', async () => {
+    const patchResponse = await request(app)
       .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { 'hacker-key': 'malicious' } });
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ configs: { chain: 'ethereum' } });
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Invalid config/i);
-    expect(res.body.details).toContain('Unknown config key: hacker-key');
+    assert.equal(patchResponse.status, 400);
+    assert.match(patchResponse.body.error, /configs object is required/i);
+
+    const getResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(getResponse.status, 200);
+    assert.equal(getResponse.body.configs.chain, 'solana');
   });
 
-  test('Reject invalid number (negative where min is 0)', async () => {
-    const res = await request(app)
+  it('allows admins to update restricted chain config', async () => {
+    const patchResponse = await request(app)
       .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: -10 } });
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ configs: { chain: 'ethereum' } });
 
-    expect(res.status).toBe(400);
+    assert.equal(patchResponse.status, 200);
+    assert.deepEqual(patchResponse.body.configs, { chain: 'ethereum' });
+
+    const getResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(getResponse.status, 200);
+    assert.equal(getResponse.body.configs.chain, 'ethereum');
   });
 
-  test('Reject invalid number (NaN)', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: 'abc' } });
-
-    expect(res.status).toBe(400);
-  });
-
-  test('Reject invalid number (Infinity)', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: Infinity } });
-
-    expect(res.status).toBe(400);
-  });
-
-  test('Reject invalid chain value', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { chain: 'polygon' } });
-
-    expect(res.status).toBe(400);
-    expect(res.body.details[0]).toMatch(/chain must be one of/i);
-  });
-
-  test('Reject number exceeding max', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { interval: 9999 } });
-
-    expect(res.status).toBe(400);
-    expect(res.body.details[0]).toMatch(/interval must be between/i);
-  });
-
-  test('Reject empty configs object', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: {} });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/configs object is required/i);
-  });
-
-  test('Reject missing configs field', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ something: 'else' });
-
-    expect(res.status).toBe(400);
-  });
-
-  test('Accept boundary values (min)', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { interval: 5 } });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs.interval).toBe(5);
-  });
-
-  test('Accept boundary values (max)', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { interval: 600 } });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs.interval).toBe(600);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-//  4. PUT /api/config — Full sync
-// ══════════════════════════════════════════════════════════════════
-
-describe('Config — PUT (full sync)', () => {
-  test('Replace all configs', async () => {
-    const res = await request(app)
+  it('fully syncs configs, manual tokens, blocklist, starred tokens and resets omitted config keys to defaults', async () => {
+    const response = await request(app)
       .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${userToken}`)
       .send({
         configs: {
-          threshold: 100,
-          interval: 15,
-          chain: 'bsc',
+          threshold: 75,
+          interval: 45,
         },
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs.threshold).toBe(100);
-    expect(res.body.configs.interval).toBe(15);
-    expect(res.body.configs.chain).toBe('bsc');
-    // Keys not included revert to defaults
-    expect(res.body.configs['min-vol']).toBe(500); // default
-  });
-
-  test('Full sync with configs + tokens + blocklist', async () => {
-    const res = await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        configs: { threshold: 75, chain: 'solana' },
         tokens: [
           { address: VALID_ADDR_1, label: 'SOL' },
-          { address: VALID_ADDR_2, label: 'USDC' },
+          { address: VALID_EVM_ADDR, label: 'EVM' },
         ],
         blocklist: [
           { address: VALID_ADDR_3, label: 'SCAM' },
@@ -344,514 +283,121 @@ describe('Config — PUT (full sync)', () => {
         ],
       });
 
-    expect(res.status).toBe(200);
-    expect(res.body.configs.threshold).toBe(75);
-    expect(res.body.tokens).toHaveLength(2);
-    expect(res.body.blocklist).toHaveLength(1);
-    expect(res.body.starredTokens).toHaveLength(2);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.configs.threshold, 75);
+    assert.equal(response.body.configs.interval, 45);
+    assert.equal(response.body.configs['block-warning-enabled'], 'on');
+    assert.equal(response.body.tokens.length, 2);
+    assert.equal(response.body.blocklist.length, 1);
+    assert.deepEqual(response.body.starredTokens.map((item) => item.address), [VALID_ADDR_1, VALID_ADDR_3]);
   });
 
-  test('PUT with invalid config rejects entire request', async () => {
-    const res = await request(app)
+  it('rejects invalid full sync requests without persisting partial changes', async () => {
+    const beforeResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    const response = await request(app)
       .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        configs: { threshold: 'not-a-number' },
-        tokens: [{ address: VALID_ADDR_1 }],
-      });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Invalid config/i);
-  });
-
-  test('PUT with invalid token address rejects', async () => {
-    const res = await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        tokens: [{ address: INVALID_ADDR }],
-      });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/invalid token address/i);
-  });
-
-  test('PUT with invalid token does not persist partial config changes', async () => {
-    await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: 50 } });
-
-    const res = await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${userToken}`)
       .send({
         configs: { threshold: 123 },
         tokens: [{ address: INVALID_ADDR }],
       });
 
-    expect(res.status).toBe(400);
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /invalid token address/i);
 
-    const after = await request(app)
+    const afterResponse = await request(app)
       .get('/api/config')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
-    expect(after.status).toBe(200);
-    expect(after.body.configs.threshold).toBe(50);
+    assert.equal(afterResponse.status, 200);
+    assert.equal(afterResponse.body.configs.threshold, beforeResponse.body.configs.threshold);
+    assert.deepEqual(afterResponse.body.tokens, beforeResponse.body.tokens);
   });
 
-
-
-  test('PUT with starred tokens persists favorites', async () => {
-    const res = await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        starredTokens: [
-          { address: VALID_ADDR_1 },
-          { address: VALID_ADDR_2 },
-        ],
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body.starredTokens).toHaveLength(2);
-    expect(res.body.starredTokens.map(t => t.address)).toEqual([VALID_ADDR_1, VALID_ADDR_2]);
-  });
-
-  test('PUT with invalid starred token rejects', async () => {
-    const res = await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        starredTokens: [{ address: INVALID_ADDR }],
-      });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/invalid starred token address/i);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-//  5. MANUAL TOKENS — CRUD
-// ══════════════════════════════════════════════════════════════════
-
-describe('Tokens — CRUD', () => {
-  // Clean state first
-  beforeAll(async () => {
-    await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ tokens: [] });
-  });
-
-  test('POST /api/config/tokens — add token', async () => {
-    const res = await request(app)
+  it('supports manual token CRUD with address normalization', async () => {
+    const createResponse = await request(app)
       .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: VALID_ADDR_1, label: 'Wrapped SOL' });
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ address: `  ${VALID_ADDR_2}  `, label: 'Wrapped USDC' });
 
-    expect(res.status).toBe(201);
-    expect(res.body.token.address).toBe(VALID_ADDR_1);
-    expect(res.body.token.label).toBe('Wrapped SOL');
-  });
+    assert.equal(createResponse.status, 201);
+    assert.equal(createResponse.body.token.address, VALID_ADDR_2);
+    assert.equal(createResponse.body.token.label, 'Wrapped USDC');
 
-  test('POST duplicate token → 409', async () => {
-    const res = await request(app)
+    const duplicateResponse = await request(app)
       .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: VALID_ADDR_1 });
-
-    expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/already added/i);
-  });
-
-  test('POST invalid address → 400', async () => {
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: INVALID_ADDR });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Invalid token address/i);
-  });
-
-  test('POST missing address → 400', async () => {
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({});
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/address is required/i);
-  });
-
-  test('GET /api/config returns the added token', async () => {
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(200);
-    const found = res.body.tokens.find(t => t.address === VALID_ADDR_1);
-    expect(found).toBeDefined();
-    expect(found.label).toBe('Wrapped SOL');
-  });
-
-  test('DELETE /api/config/tokens/:address — remove token', async () => {
-    const res = await request(app)
-      .delete(`/api/config/tokens/${VALID_ADDR_1}`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.message).toMatch(/removed/i);
-  });
-
-  test('DELETE non-existent token → 404', async () => {
-    const res = await request(app)
-      .delete(`/api/config/tokens/${VALID_ADDR_1}`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(404);
-  });
-
-  test('Add token without label', async () => {
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${userToken}`)
       .send({ address: VALID_ADDR_2 });
 
-    expect(res.status).toBe(201);
-    expect(res.body.token.label).toBeNull();
+    assert.equal(duplicateResponse.status, 409);
 
-    // Cleanup
-    await request(app)
+    const deleteResponse = await request(app)
       .delete(`/api/config/tokens/${VALID_ADDR_2}`)
-      .set('Authorization', `Bearer ${token}`);
-  });
-});
+      .set('Authorization', `Bearer ${userToken}`);
 
-// ══════════════════════════════════════════════════════════════════
-//  6. BLOCKLIST — CRUD
-// ══════════════════════════════════════════════════════════════════
-
-describe('Blocklist — CRUD', () => {
-  beforeAll(async () => {
-    await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ blocklist: [] });
+    assert.equal(deleteResponse.status, 200);
+    assert.match(deleteResponse.body.message, /removed/i);
   });
 
-  test('POST /api/config/blocklist — block token', async () => {
-    const res = await request(app)
+  it('supports blocklist CRUD', async () => {
+    const createResponse = await request(app)
       .post('/api/config/blocklist')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: VALID_ADDR_3, label: 'SCAM' });
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ address: VALID_ADDR_2, label: 'Suspicious' });
 
-    expect(res.status).toBe(201);
-    expect(res.body.blocked.address).toBe(VALID_ADDR_3);
-  });
+    assert.equal(createResponse.status, 201);
+    assert.equal(createResponse.body.blocked.address, VALID_ADDR_2);
 
-  test('POST duplicate block → 409', async () => {
-    const res = await request(app)
+    const duplicateResponse = await request(app)
       .post('/api/config/blocklist')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: VALID_ADDR_3 });
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ address: VALID_ADDR_2 });
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/already blocked/i);
+    assert.equal(duplicateResponse.status, 409);
+
+    const deleteResponse = await request(app)
+      .delete(`/api/config/blocklist/${VALID_ADDR_2}`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(deleteResponse.status, 200);
+    assert.match(deleteResponse.body.message, /unblocked/i);
   });
 
-  test('POST invalid address → 400', async () => {
-    const res = await request(app)
-      .post('/api/config/blocklist')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: INVALID_ADDR });
-
-    expect(res.status).toBe(400);
-  });
-
-  test('POST missing address → 400', async () => {
-    const res = await request(app)
-      .post('/api/config/blocklist')
-      .set('Authorization', `Bearer ${token}`)
-      .send({});
-
-    expect(res.status).toBe(400);
-  });
-
-  test('GET /api/config returns blocked token', async () => {
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${token}`);
-
-    const found = res.body.blocklist.find(b => b.address === VALID_ADDR_3);
-    expect(found).toBeDefined();
-    expect(found.label).toBe('SCAM');
-  });
-
-  test('DELETE /api/config/blocklist/:address — unblock', async () => {
-    const res = await request(app)
-      .delete(`/api/config/blocklist/${VALID_ADDR_3}`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(200);
-    expect(res.body.message).toMatch(/unblocked/i);
-  });
-
-  test('DELETE non-existent block → 404', async () => {
-    const res = await request(app)
-      .delete(`/api/config/blocklist/${VALID_ADDR_3}`)
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(res.status).toBe(404);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-//  7. ISOLATION — Users don't see each other's data
-// ══════════════════════════════════════════════════════════════════
-
-describe('Config — User isolation', () => {
-  test('User A configs are invisible to User B', async () => {
-    // User A (token) sets config
-    await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: 99 } });
-
-    // User B (adminToken) sees only defaults
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${adminToken}`);
-
-    expect(res.body.configs.threshold).toBe(50); // default, not 99
-  });
-
-  test('User A tokens are invisible to User B', async () => {
-    // User A adds token
-    await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: VALID_ADDR_1, label: 'UserA' });
-
-    // User B sees empty
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${adminToken}`);
-
-    expect(res.body.tokens).toHaveLength(0);
-
-    // Cleanup
-    await request(app)
-      .delete(`/api/config/tokens/${VALID_ADDR_1}`)
-      .set('Authorization', `Bearer ${token}`);
-  });
-
-  test('User A blocklist is invisible to User B', async () => {
-    // User A blocks
-    await request(app)
-      .post('/api/config/blocklist')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: VALID_ADDR_3 });
-
-    // User B sees empty
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${adminToken}`);
-
-    expect(res.body.blocklist).toHaveLength(0);
-    expect(res.body.starredTokens).toHaveLength(0);
-
-    // Cleanup
-    await request(app)
-      .delete(`/api/config/blocklist/${VALID_ADDR_3}`)
-      .set('Authorization', `Bearer ${token}`);
-  });
-
-  test('User A starred tokens are invisible to User B', async () => {
-    await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ starredTokens: [{ address: VALID_ADDR_1 }] });
-
-    const res = await request(app)
-      .get('/api/config')
-      .set('Authorization', `Bearer ${adminToken}`);
-
-    expect(res.body.starredTokens).toHaveLength(0);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-//  8. EDGE CASES & SECURITY
-// ══════════════════════════════════════════════════════════════════
-
-describe('Config — Edge cases & security', () => {
-  test('SQL injection in config value → treated as string, rejected by validation', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: "'; DROP TABLE users; --" } });
-
-    expect(res.status).toBe(400); // NaN — not a valid number
-  });
-
-  test('SQL injection in token address → rejected by format validation', async () => {
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: "'; DROP TABLE user_tokens; --" });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/Invalid token address/i);
-  });
-
-  test('XSS in label field → stored safely (no HTML execution)', async () => {
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
+  it('patches ui prefs independently from config values', async () => {
+    const response = await request(app)
+      .patch('/api/config/ui-prefs')
+      .set('Authorization', `Bearer ${userToken}`)
       .send({
-        address: VALID_ADDR_2,
-        label: '<script>alert(1)</script>',
+        uiPrefs: {
+          manualStarredOnly: true,
+          enabledTradeTerminals: ['photon', 'bullx'],
+          monitoredPerPage: 50,
+        },
       });
 
-    // Label is truncated by DB (VARCHAR 32), but stored as plain text
-    expect(res.status).toBe(201);
-
-    // Cleanup
-    await request(app)
-      .delete(`/api/config/tokens/${VALID_ADDR_2}`)
-      .set('Authorization', `Bearer ${token}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.uiPrefs.manualStarredOnly, true);
+    assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
+    assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);
   });
 
-  test('Very long config value → rejected', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { chain: 'a'.repeat(100) } });
+  it('keeps config data isolated per user', async () => {
+    const userResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+    const adminResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${adminToken}`);
 
-    expect(res.status).toBe(400);
-  });
-
-  test('Float config values are accepted', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { threshold: 50.5 } });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs.threshold).toBe(50.5);
-  });
-
-  test('Zero values are valid', async () => {
-    const res = await request(app)
-      .patch('/api/config')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ configs: { 'max-mcap': 0, 'min-mcap-remove': 0 } });
-
-    expect(res.status).toBe(200);
-    expect(res.body.configs['max-mcap']).toBe(0);
-    expect(res.body.configs['min-mcap-remove']).toBe(0);
-  });
-
-  test('Whitespace-padded address is trimmed', async () => {
-    const padded = `  ${VALID_ADDR_1}  `;
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: padded });
-
-    expect(res.status).toBe(201);
-    expect(res.body.token.address).toBe(VALID_ADDR_1);
-
-    // Cleanup
-    await request(app)
-      .delete(`/api/config/tokens/${VALID_ADDR_1}`)
-      .set('Authorization', `Bearer ${token}`);
-  });
-
-  test('EVM address (0x...) is accepted', async () => {
-    const evmAddr = '0x' + 'a'.repeat(40);
-    const res = await request(app)
-      .post('/api/config/tokens')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ address: evmAddr });
-
-    expect(res.status).toBe(201);
-
-    // Cleanup
-    await request(app)
-      .delete(`/api/config/tokens/${evmAddr}`)
-      .set('Authorization', `Bearer ${token}`);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════
-//  9. CASCADING DELETE — user deletion cleans configs
-// ══════════════════════════════════════════════════════════════════
-
-describe('Config — CASCADE on user delete', () => {
-  let tempToken;
-  let tempUserId;
-
-  beforeAll(async () => {
-    // Create a throwaway user
-    const inv = await Invite.create(null, 1, 24);
-    const tempUser = {
-      username: `tempuser_${Date.now()}`,
-      email: `tempuser_${Date.now()}@test.com`,
-      password: 'TempPass123!',
-    };
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ ...tempUser, inviteCode: inv.code });
-
-    tempToken = res.body.token;
-
-    // Get user ID
-    const meRes = await request(app)
-      .get('/api/auth/me')
-      .set('Authorization', `Bearer ${tempToken}`);
-    tempUserId = meRes.body.user.id;
-
-    // Add configs, tokens, blocklist
-    await request(app)
-      .put('/api/config')
-      .set('Authorization', `Bearer ${tempToken}`)
-      .send({
-        configs: { threshold: 42 },
-        tokens: [{ address: VALID_ADDR_1 }],
-        blocklist: [{ address: VALID_ADDR_2 }],
-      });
-  });
-
-  test('Deleting user cascades to all config tables', async () => {
-    // Verify data exists
-    const before = await db.query(
-      'SELECT COUNT(*)::int AS c FROM user_configs WHERE user_id = $1',
-      [tempUserId]
-    );
-    expect(before.rows[0].c).toBeGreaterThan(0);
-
-    // Delete user
-    await db.query('DELETE FROM users WHERE id = $1', [tempUserId]);
-
-    // Verify cascade
-    const configs = await db.query(
-      'SELECT COUNT(*)::int AS c FROM user_configs WHERE user_id = $1',
-      [tempUserId]
-    );
-    const tokens = await db.query(
-      'SELECT COUNT(*)::int AS c FROM user_tokens WHERE user_id = $1',
-      [tempUserId]
-    );
-    const blocklist = await db.query(
-      'SELECT COUNT(*)::int AS c FROM user_blocklist WHERE user_id = $1',
-      [tempUserId]
-    );
-
-    expect(configs.rows[0].c).toBe(0);
-    expect(tokens.rows[0].c).toBe(0);
-    expect(blocklist.rows[0].c).toBe(0);
+    assert.equal(userResponse.status, 200);
+    assert.equal(adminResponse.status, 200);
+    assert.notEqual(userResponse.body.configs.threshold, adminResponse.body.configs.threshold);
+    assert.notDeepEqual(userResponse.body.uiPrefs, adminResponse.body.uiPrefs);
+    assert.notDeepEqual(userResponse.body.tokens, adminResponse.body.tokens);
+    assert.notDeepEqual(userResponse.body.blocklist, adminResponse.body.blocklist);
+    assert.notDeepEqual(userResponse.body.starredTokens, adminResponse.body.starredTokens);
   });
 });

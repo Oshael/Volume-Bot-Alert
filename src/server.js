@@ -41,7 +41,6 @@ const dexscreener = require('./services/dexscreener');
 
 const app = express();
 let server = null;
-let cleanupInterval = null;
 let bootstrapped = false;
 let startupInFlight = false;
 
@@ -164,7 +163,7 @@ app.use((req, res) => {
 });
 
 // ---- Global error handler ----
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
@@ -207,7 +206,7 @@ function shouldStartWorkerSet() {
 }
 
 function startBackgroundCleanup() {
-  cleanupInterval = setInterval(async () => {
+  setInterval(async () => {
     try {
       await runCleanupCycle();
     } catch (err) {

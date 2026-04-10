@@ -111,12 +111,6 @@ function subtractPriorityCounts(totalCounts = {}, processedCounts = {}) {
   return result;
 }
 
-function formatPriorityCounts(counts = {}) {
-  return ['high', 'normal', 'low', 'dormant', 'other']
-    .map((key) => `${key}:${Number(counts[key]) || 0}`)
-    .join(',');
-}
-
 function normalizeDelayMs(value, fallback = LOOP_INTERVAL_MS) {
   const delayMs = Number(value);
   if (!Number.isFinite(delayMs)) {
@@ -457,13 +451,6 @@ function prioritizeTokensForThrottle(tokens, throttleState = { mode: 'normal' },
       return Number(b?.last_mcap || 0) - Number(a?.last_mcap || 0);
     })
     .slice(0, safeLimit);
-}
-
-async function evaluateToken(token) {
-  const data = await dexscreener.getTokenPairs(token.address, {
-    priority: getDexPriorityHint(token),
-  });
-  return evaluateTokenWithData(token, data);
 }
 
 async function evaluateTokenWithData(token, data) {
