@@ -1,18 +1,12 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState } from '../../state/app-state';
+import { getAlertToneClass, getAlertVisualClasses, isAlertInArrivalWindow, isHighCapDumpAlert } from '../../services/alerts/impact-tier';
 import { bindCompactSearch, bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
-const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
-const RECENT_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
-function isHighCapDumpAlert(alert: AlertEntry) {
-  return alert.kind === 'high-cap-dump-5m';
-}
-
 export function renderAlertsSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
-  section.className = 'panel legacy-panel alerts-panel';
+  const renderNow = Date.now();
   const searchQuery = String(state.ui.alertSearchQuery || '').trim().toLowerCase();
   const filteredAlerts = searchQuery
     ? state.data.alerts.filter((alert) => {
@@ -22,26 +16,43 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
       return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
     })
     : state.data.alerts;
+  const arrivingAlerts = filteredAlerts.filter((alert) => isAlertInArrivalWindow(alert, renderNow));
+  const hasArrivalImpact = arrivingAlerts.length > 0;
+  section.className = `panel legacy-panel alerts-panel${hasArrivalImpact ? ' alerts-panel-impact-live' : ''}`;
   section.innerHTML = `
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
-      <div style="display:flex;align-items:center;gap:6px">
+      <div class="alerts-panel-header-controls">
         <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
         <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
         </div>
-        <span class="count">${filteredAlerts.length}</span>
+        <span class="count alerts-panel-count${hasArrivalImpact ? ' alerts-panel-count-pulse' : ''}">${filteredAlerts.length}</span>
       </div>
     </div>
-    <div class="alerts-list"></div>
+    <div class="alerts-list${hasArrivalImpact ? ' alerts-list-impact-live' : ''}"></div>
   `;
 
   const alertsList = section.querySelector<HTMLElement>('.alerts-list');
   if (alertsList) {
     if (filteredAlerts.length) {
+      let arrivalIndex = 0;
       for (const alert of filteredAlerts) {
-        alertsList.append(buildAlertRow(alert, state.ui.busy, state.data.starredTokens.includes(alert.address), state.session.role === 'admin', state.ui.enabledTradeTerminals));
+        const isArriving = isAlertInArrivalWindow(alert, renderNow);
+        const nextArrivalIndex = isArriving ? arrivalIndex : null;
+        alertsList.append(buildAlertRow(
+          alert,
+          state.ui.busy,
+          state.data.starredTokens.includes(alert.address),
+          state.session.role === 'admin',
+          state.ui.enabledTradeTerminals,
+          renderNow,
+          nextArrivalIndex,
+        ));
+        if (isArriving) {
+          arrivalIndex += 1;
+        }
       }
     } else {
       const emptyState = document.createElement('div');
@@ -105,17 +116,29 @@ function removeAlertRowImmediately(section: HTMLElement, button: HTMLButtonEleme
   }
 }
 
-function buildAlertRow(alert: AlertEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals']) {
+function buildAlertRow(
+  alert: AlertEntry,
+  busy: boolean,
+  isStarred: boolean,
+  isAdmin: boolean,
+  enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
+  renderNow: number,
+  arrivalIndex: number | null,
+) {
   const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
   const symbol = String(alert.symbol || '');
   const safeName = String(alert.name || '');
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
   const xSearch = buildXSearchUrl(symbol, alert.address);
-  const topClass = getAlertToneClass(alert);
+  const topClass = getAlertToneClass(alert, renderNow);
+  const visualClasses = getAlertVisualClasses(alert, renderNow);
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
   const article = document.createElement('article');
-  article.className = `alert-row ${topClass}${isStarred ? ' token-starred starred-card' : ''}`;
+  article.className = `alert-row ${visualClasses}${isStarred ? ' token-starred starred-card' : ''}`;
   article.dataset.hoverKey = `alert:${alert.id}`;
+  if (arrivalIndex != null) {
+    article.style.setProperty('--alert-arrival-delay', `${Math.min(arrivalIndex, 5) * 90}ms`);
+  }
 
   const grid = document.createElement('div');
   grid.className = 'alert-grid';
@@ -211,8 +234,7 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
     return badge;
   }
   if (alert.isOldSurge) {
-    const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
-    const surgeTitle = tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
+    const surgeTitle = toneClass === 'recent-surge' ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
     badge.className = `alert-badge-v68 ${toneClass}`;
     badge.append(`🔥 ${surgeTitle}`, document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'PCHANGE')));
     return badge;
@@ -418,34 +440,6 @@ function buildStarButton(address: string, isStarred: boolean, disabled: boolean,
 function isXCommunityUrl(url: string | null | undefined) {
   const value = String(url || '').trim().toLowerCase();
   return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
-}
-
-function getAlertToneClass(alert: AlertEntry) {
-  if (isHighCapDumpAlert(alert)) {
-    return 'dump-alert';
-  }
-
-  if (alert.isOldSurge) {
-    const tokenAgeMs = alert.tokenCreatedAt ? Date.now() - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
-    return tokenAgeMs >= RECENT_TOKEN_MIN_AGE_MS && tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS ? 'recent-surge' : 'old-surge';
-  }
-  if (alert.isHvnc) return 'mega';
-
-  if (alert.kind === 'pumpfun-vol') {
-    return 'pump-alert';
-  }
-
-  if (alert.kind === 'pumpfun-hvnc') {
-    return 'mega';
-  }
-  if (alert.kind === 'meteora-surge') {
-    return 'meteora-surge';
-  }
-
-  const pct = Math.abs(Number(alert.pct) || 0);
-  if (pct >= 200) return 'mega';
-  if (pct >= 100) return 'critical';
-  return 'normal';
 }
 
 function appendHighCapDumpFlowLine(container: HTMLElement, alert: AlertEntry) {

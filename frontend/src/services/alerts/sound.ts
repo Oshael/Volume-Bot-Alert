@@ -1,4 +1,5 @@
 import type { AlertEntry } from '../../state/app-state';
+import { getAlertImpactTier, isHvncAlert } from './impact-tier';
 import { loadCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 
 const DEFAULT_ALERT_SOUND_VOLUME = 0.05;
@@ -166,12 +167,12 @@ function resolveAlertSoundSlot(alert: AlertEntry): CustomSoundSlot {
   if (alert.kind === 'meteora-surge') {
     return 'old1h';
   }
-  if (alert.kind === 'hvnc' || alert.kind === 'pumpfun-hvnc') {
+  if (isHvncAlert(alert)) {
     return 'mega';
   }
-  const pct = Math.abs(Number(alert.pct) || 0);
-  if (pct >= 200) return 'mega';
-  if (pct >= 100) return 'critical';
+  const tier = getAlertImpactTier(alert);
+  if (tier === 'mega') return 'mega';
+  if (tier === 'critical') return 'critical';
   return 'normal';
 }
 
