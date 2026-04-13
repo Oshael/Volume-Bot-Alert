@@ -4,6 +4,12 @@ const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'later
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
 const MONITORED_SORT_MODES = ['vol', 'mcap', 'age'];
 const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
+const LIVE_PANEL_KEYS = ['monitored', 'pumpfun', 'alerts'];
+const LIVE_PANEL_SPANS = {
+  monitored: [1, 2, 3],
+  pumpfun: [1],
+  alerts: [1, 2, 3],
+};
 
 const DEFAULT_UI_PREFS = {
   collapsed: {
@@ -26,6 +32,14 @@ const DEFAULT_UI_PREFS = {
   oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
+  livePanelLayout: {
+    order: [...LIVE_PANEL_KEYS],
+    spans: {
+      monitored: 1,
+      pumpfun: 1,
+      alerts: 1,
+    },
+  },
 };
 
 function cloneDefaultPrefs() {
@@ -172,6 +186,62 @@ function validateTradeTerminals(key, value) {
   return { valid: true, value: next };
 }
 
+function normalizeLivePanelOrder(input) {
+  const next = [];
+  const seen = new Set();
+  for (const item of Array.isArray(input) ? input : []) {
+    const normalized = String(item || '').trim();
+    if (!LIVE_PANEL_KEYS.includes(normalized) || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  for (const key of LIVE_PANEL_KEYS) {
+    if (!seen.has(key)) {
+      next.push(key);
+    }
+  }
+  return next;
+}
+
+function validateLivePanelLayout(key, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key} must be an object` };
+  }
+
+  if (!Array.isArray(value.order)) {
+    return { valid: false, error: `${key}.order must be an array` };
+  }
+
+  const order = normalizeLivePanelOrder(value.order);
+  if (order.length !== LIVE_PANEL_KEYS.length) {
+    return { valid: false, error: `${key}.order must contain monitored, pumpfun, and alerts exactly once` };
+  }
+
+  if (!value.spans || typeof value.spans !== 'object' || Array.isArray(value.spans)) {
+    return { valid: false, error: `${key}.spans must be an object` };
+  }
+
+  const spans = {};
+  for (const panelKey of LIVE_PANEL_KEYS) {
+    const allowed = LIVE_PANEL_SPANS[panelKey];
+    const numeric = Number(value.spans[panelKey]);
+    if (!allowed.includes(numeric)) {
+      return { valid: false, error: `${key}.spans.${panelKey} must be one of ${allowed.join(', ')}` };
+    }
+    spans[panelKey] = numeric;
+  }
+
+  return {
+    valid: true,
+    value: {
+      order,
+      spans,
+    },
+  };
+}
+
 function normalizePrefs(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const defaults = cloneDefaultPrefs();
@@ -246,6 +316,11 @@ function normalizePrefs(raw) {
     defaults.enabledTradeTerminals = enabledTradeTerminals.value;
   }
 
+  const livePanelLayout = validateLivePanelLayout('livePanelLayout', source.livePanelLayout);
+  if (livePanelLayout.valid) {
+    defaults.livePanelLayout = livePanelLayout.value;
+  }
+
   return defaults;
 }
 
@@ -316,6 +391,16 @@ function validatePatch(input) {
 
     if (key === 'enabledTradeTerminals') {
       const result = validateTradeTerminals(key, value);
+      if (!result.valid) {
+        errors.push(result.error);
+      } else {
+        prefs[key] = result.value;
+      }
+      continue;
+    }
+
+    if (key === 'livePanelLayout') {
+      const result = validateLivePanelLayout(key, value);
       if (!result.valid) {
         errors.push(result.error);
       } else {

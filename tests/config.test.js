@@ -170,6 +170,7 @@ describe('Config routes', () => {
     assert.equal(response.body.configs.chain, 'solana');
     assert.equal(response.body.configs['block-warning-enabled'], 'on');
     assert.equal(response.body.configs['min-vol'], 8000);
+    assert.equal(response.body.configs['card-effects-mode'], 'on');
     assert.equal(response.body.configs['old-mcap-min'], 120000);
     assert.equal(response.body.configs['old-mcap-max'], 100000000);
     assert.equal(response.body.configs['old-week-mcap-min'], 120000);
@@ -181,6 +182,14 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.uiPrefs.monitoredSorts, [{ mode: 'vol', window: '5m' }]);
     assert.deepEqual(response.body.uiPrefs.recentSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
     assert.deepEqual(response.body.uiPrefs.oldWeekSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
+    assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
+      order: ['monitored', 'pumpfun', 'alerts'],
+      spans: {
+        monitored: 1,
+        pumpfun: 1,
+        alerts: 1,
+      },
+    });
     assert.equal(response.body.uiPrefs.recentPerPage, 30);
     assert.equal(response.body.uiPrefs.oldWeekPerPage, 30);
   });
@@ -194,6 +203,7 @@ describe('Config routes', () => {
           threshold: 80,
           interval: 15,
           'block-warning-enabled': 'off',
+          'card-effects-mode': 'off',
         },
       });
 
@@ -202,6 +212,7 @@ describe('Config routes', () => {
       threshold: 80,
       interval: 15,
       'block-warning-enabled': 'off',
+      'card-effects-mode': 'off',
     });
 
     const getResponse = await request(app)
@@ -212,6 +223,7 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs.threshold, 80);
     assert.equal(getResponse.body.configs.interval, 15);
     assert.equal(getResponse.body.configs['block-warning-enabled'], 'off');
+    assert.equal(getResponse.body.configs['card-effects-mode'], 'off');
   });
 
   it('rejects invalid and empty config patches', async () => {
@@ -389,6 +401,14 @@ describe('Config routes', () => {
           manualStarredOnly: true,
           enabledTradeTerminals: ['photon', 'bullx'],
           monitoredPerPage: 50,
+          livePanelLayout: {
+            order: ['alerts', 'monitored', 'pumpfun'],
+            spans: {
+              monitored: 2,
+              pumpfun: 1,
+              alerts: 3,
+            },
+          },
         },
       });
 
@@ -396,6 +416,14 @@ describe('Config routes', () => {
     assert.equal(response.body.uiPrefs.manualStarredOnly, true);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);
+    assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
+      order: ['alerts', 'monitored', 'pumpfun'],
+      spans: {
+        monitored: 2,
+        pumpfun: 1,
+        alerts: 3,
+      },
+    });
   });
 
   it('keeps config data isolated per user', async () => {

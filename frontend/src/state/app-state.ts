@@ -98,6 +98,18 @@ export interface MonitoredSortCriterion {
   window: MonitoredSortWindow;
 }
 
+export type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
+export type LiveWorkspacePanelSpan = 1 | 2 | 3;
+
+export interface LivePanelLayout {
+  order: LiveWorkspacePanelKey[];
+  spans: {
+    monitored: LiveWorkspacePanelSpan;
+    pumpfun: 1;
+    alerts: LiveWorkspacePanelSpan;
+  };
+}
+
 export interface PumpVolumePoint {
   usd: number;
   ts: number;
@@ -460,6 +472,7 @@ export interface AppState {
     oldWeekSorts: BucketSortCriterion[];
     monitoredSorts: MonitoredSortCriterion[];
     enabledTradeTerminals: TradeTerminalKey[];
+    livePanelLayout: LivePanelLayout;
     soundEnabled: boolean;
     soundVolume: number;
     collapsed: Record<CollapsibleSectionKey, boolean>;
@@ -603,6 +616,14 @@ export function createAppState(): AppState {
       oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
       monitoredSorts: [{ mode: 'vol', window: '5m' }],
       enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
+      livePanelLayout: {
+        order: ['monitored', 'pumpfun', 'alerts'],
+        spans: {
+          monitored: 1,
+          pumpfun: 1,
+          alerts: 1,
+        },
+      },
       soundEnabled: true,
       soundVolume: 0.05,
       collapsed: {

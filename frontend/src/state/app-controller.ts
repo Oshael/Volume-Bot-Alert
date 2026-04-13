@@ -283,6 +283,9 @@ export interface AppController {
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
   setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
+  setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
+  setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>): void;
+  resetLivePanelLayout(): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
   toggleStarredToken(address: string): Promise<void>;
@@ -1630,6 +1633,10 @@ export function createAppController(): AppController {
     };
   }
 
+  function getDefaultLivePanelLayout() {
+    return createAppState().ui.livePanelLayout;
+  }
+
   function normalizeUiPerPage(value: unknown, fallback: number) {
     const num = Number(value);
     if (!Number.isFinite(num)) {
@@ -1728,6 +1735,51 @@ export function createAppController(): AppController {
     return next.length > 0 ? next : [...defaults];
   }
 
+  function normalizeLivePanelOrder(input: unknown): AppState['ui']['livePanelLayout']['order'] {
+    const defaults = getDefaultLivePanelLayout().order;
+    const order: AppState['ui']['livePanelLayout']['order'] = [];
+    const seen = new Set<AppState['ui']['livePanelLayout']['order'][number]>();
+
+    for (const item of Array.isArray(input) ? input : []) {
+      if (item !== 'monitored' && item !== 'pumpfun' && item !== 'alerts') {
+        continue;
+      }
+      if (seen.has(item)) {
+        continue;
+      }
+      seen.add(item);
+      order.push(item);
+    }
+
+    for (const panelKey of defaults) {
+      if (!seen.has(panelKey)) {
+        order.push(panelKey);
+      }
+    }
+
+    return order;
+  }
+
+  function normalizeResizableLivePanelSpan(input: unknown): 1 | 2 | 3 {
+    const span = Number(input);
+    return span === 2 || span === 3 ? span : 1;
+  }
+
+  function normalizeLivePanelLayout(input: unknown): AppState['ui']['livePanelLayout'] {
+    const source = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Partial<UiPrefsPayload['livePanelLayout']>
+      : null;
+    const monitoredSpan = Number(source?.spans?.monitored);
+    return {
+      order: normalizeLivePanelOrder(source?.order),
+      spans: {
+        monitored: normalizeResizableLivePanelSpan(monitoredSpan),
+        pumpfun: 1,
+        alerts: normalizeResizableLivePanelSpan(source?.spans?.alerts),
+      },
+    };
+  }
+
   function buildUiPrefsPayload(): UiPrefsPayload {
     return {
       collapsed: {
@@ -1750,6 +1802,14 @@ export function createAppController(): AppController {
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
       enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
+      livePanelLayout: {
+        order: [...state.ui.livePanelLayout.order],
+        spans: {
+          monitored: state.ui.livePanelLayout.spans.monitored,
+          pumpfun: 1,
+          alerts: state.ui.livePanelLayout.spans.alerts,
+        },
+      },
     };
   }
   function getConfigNumber(key: string, fallback: number) {
@@ -2013,6 +2073,7 @@ export function createAppController(): AppController {
     state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
     state.ui.enabledTradeTerminals = normalizeTradeTerminals(uiPrefs?.enabledTradeTerminals);
+    state.ui.livePanelLayout = normalizeLivePanelLayout(uiPrefs?.livePanelLayout);
     syncRoutedPagination();
   }
 
@@ -3398,6 +3459,7 @@ export function createAppController(): AppController {
     }
     state.data.alerts = [entry, ...state.data.alerts].slice(0, 100);
     syncAlertState();
+    emit('alerts', 'legacy');
     return true;
   }
 
@@ -4578,6 +4640,7 @@ export function createAppController(): AppController {
     state.ui.recentSorts = getDefaultBucketSorts('recent');
     state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
     state.ui.monitoredSorts = getDefaultMonitoredSorts();
+    state.ui.livePanelLayout = getDefaultLivePanelLayout();
     if (uiPrefsPersistTimer) {
       clearTimeout(uiPrefsPersistTimer);
       uiPrefsPersistTimer = null;
@@ -5604,6 +5667,43 @@ export function createAppController(): AppController {
       state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals);
       queueUiPrefsPersist();
       emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
+    },
+    setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
+      const nextSpan = normalizeResizableLivePanelSpan(span);
+      if (state.ui.livePanelLayout.spans[panel] === nextSpan) {
+        return;
+      }
+      state.ui.livePanelLayout.spans[panel] = nextSpan;
+      queueUiPrefsPersist();
+      emit(panel);
+    },
+    setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>) {
+      const nextOrder = normalizeLivePanelOrder(order);
+      const currentOrder = state.ui.livePanelLayout.order;
+      if (currentOrder.length === nextOrder.length && currentOrder.every((item, index) => item === nextOrder[index])) {
+        return;
+      }
+      state.ui.livePanelLayout.order = nextOrder;
+      queueUiPrefsPersist();
+      emit('monitored', 'pumpfun', 'alerts');
+    },
+    resetLivePanelLayout() {
+      const defaults = getDefaultLivePanelLayout();
+      const current = state.ui.livePanelLayout;
+      const isDefaultOrder = current.order.length === defaults.order.length
+        && current.order.every((item, index) => item === defaults.order[index]);
+      const isDefaultSpans = current.spans.monitored === defaults.spans.monitored
+        && current.spans.pumpfun === defaults.spans.pumpfun
+        && current.spans.alerts === defaults.spans.alerts;
+      if (isDefaultOrder && isDefaultSpans) {
+        return;
+      }
+      state.ui.livePanelLayout = {
+        order: [...defaults.order],
+        spans: { ...defaults.spans },
+      };
+      queueUiPrefsPersist();
+      emit('monitored', 'pumpfun', 'alerts');
     },
     setSoundEnabled(enabled: boolean) {
       state.ui.soundEnabled = enabled;

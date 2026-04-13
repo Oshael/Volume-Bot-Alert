@@ -16,6 +16,17 @@ export interface MonitoredSortCriterionPayload {
 }
 
 export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
+export type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
+export type LiveWorkspacePanelSpan = 1 | 2 | 3;
+
+export interface LivePanelLayoutPayload {
+  order: LiveWorkspacePanelKey[];
+  spans: {
+    monitored: LiveWorkspacePanelSpan;
+    pumpfun: 1;
+    alerts: LiveWorkspacePanelSpan;
+  };
+}
 
 export interface UiPrefsPayload {
   collapsed: {
@@ -38,6 +49,7 @@ export interface UiPrefsPayload {
   oldWeekSorts: BucketSortCriterionPayload[];
   monitoredSorts: MonitoredSortCriterionPayload[];
   enabledTradeTerminals: TradeTerminalKey[];
+  livePanelLayout: LivePanelLayoutPayload;
 }
 
 export interface ConfigPayload {

@@ -878,9 +878,19 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
           </div>
         </div>
       </div>
-      <div class="workspace-route-nav" aria-label="Workspace navigation">
-        <a href="${getWorkspaceHref('live')}" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</a>
-        <a href="${getWorkspaceHref('history')}" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">MONITOR</a>
+      <div class="workspace-route-group">
+        <div class="workspace-route-nav" aria-label="Workspace navigation">
+          <a href="${getWorkspaceHref('live')}" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</a>
+          <a href="${getWorkspaceHref('history')}" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">MONITOR</a>
+        </div>
+        <div class="workspace-layout-reset" data-role="layout-reset">
+          <button type="button" class="workspace-layout-reset-btn" data-action="reset-live-panel-layout" aria-label="Reset bot layout">
+            <span aria-hidden="true">↺</span>
+          </button>
+          <div class="workspace-layout-reset-tooltip" role="tooltip">
+            ${escapeHtml('Isso reseta o layout do bot para as configurações visuais padrões')}
+          </div>
+        </div>
       </div>
       <div class="workspace-userbar">
         <div class="legacy-user-menu workspace-user-menu" data-user-menu>
@@ -920,6 +930,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
     event.preventDefault();
     controller.setWorkspace('history');
   });
+  bindWorkspaceLayoutResetActions(section, controller);
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
   section.querySelector<HTMLButtonElement>('[data-action="open-user-settings"]')?.addEventListener('pointerdown', (event) => {
     event.preventDefault();
@@ -946,6 +957,35 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   });
 
   return section;
+}
+
+function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppController) {
+  const resetWrap = section.querySelector<HTMLElement>('[data-role="layout-reset"]');
+  const resetButton = section.querySelector<HTMLButtonElement>('[data-action="reset-live-panel-layout"]');
+  if (!resetButton) {
+    return;
+  }
+
+  let resetTooltipTimer = 0;
+  const showResetTooltip = () => {
+    window.clearTimeout(resetTooltipTimer);
+    resetTooltipTimer = window.setTimeout(() => {
+      resetWrap?.setAttribute('data-tooltip-visible', 'true');
+    }, 700);
+  };
+  const hideResetTooltip = () => {
+    window.clearTimeout(resetTooltipTimer);
+    resetWrap?.removeAttribute('data-tooltip-visible');
+  };
+
+  resetButton.addEventListener('click', () => {
+    hideResetTooltip();
+    controller.resetLivePanelLayout();
+  });
+  resetButton.addEventListener('pointerenter', showResetTooltip);
+  resetButton.addEventListener('pointerleave', hideResetTooltip);
+  resetButton.addEventListener('focus', showResetTooltip);
+  resetButton.addEventListener('blur', hideResetTooltip);
 }
 
 export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
@@ -2569,6 +2609,13 @@ function renderBotSettingsFields(state: AppState) {
         <option value="off">Disabled</option>
       </select>
     </div>
+    <div class="config-item config-item-sound">
+      <label>Card effects</label>
+      <select name="card-effects-mode">
+        <option value="on">Enabled</option>
+        <option value="off">Disabled</option>
+      </select>
+    </div>
     ${renderTradeTerminalPrefsMenu(state)}
     ${renderOldSurgeThresholdMenu(state)}
     ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
@@ -2946,7 +2993,10 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
     }
 
     if (input instanceof HTMLSelectElement) {
-      input.addEventListener('change', () => void submitLegacyConfig(configSection, controller));
+      input.addEventListener('change', (event) => {
+        void submitLegacyConfig(configSection, controller);
+        (event.currentTarget as HTMLSelectElement).blur();
+      });
       return;
     }
 
@@ -2959,6 +3009,30 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       }
       event.preventDefault();
       void commitInputIfNeeded(input);
+    });
+  });
+
+  section.querySelectorAll<HTMLElement>('[data-action="close-profile-modal"]').forEach((element) => {
+    element.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement
+        && configSection.contains(active)
+        && active.name
+        && active.name !== 'sound-volume'
+        && active.dataset.pendingCommit === 'true'
+      ) {
+        void commitInputIfNeeded(active);
+      }
+
+      if (active instanceof HTMLSelectElement && configSection.contains(active)) {
+        active.blur();
+      }
+
+      controller.closeAuthPanel();
     });
   });
 
@@ -3838,6 +3912,11 @@ function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
   const soundMode = section.querySelector<HTMLSelectElement>('select[name="sound-mode"]');
   if (soundMode) {
     soundMode.value = state.ui.soundEnabled ? 'on' : 'off';
+  }
+
+  const cardEffectsMode = section.querySelector<HTMLSelectElement>('select[name="card-effects-mode"]');
+  if (cardEffectsMode) {
+    cardEffectsMode.value = String(state.data.configs['card-effects-mode'] ?? 'on').trim().toLowerCase() === 'off' ? 'off' : 'on';
   }
 
   const soundVolume = section.querySelector<HTMLInputElement>('input[name="sound-volume"]');

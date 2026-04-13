@@ -47,6 +47,7 @@ const CONFIG_SCHEMA = {
   'meteora-min-pool': { type: 'number', min: 0, max: 1e15, default: 5000 },
   'sound-volume':    { type: 'number', min: 0, max: 100, default: 50 },
   'sound-mode':      { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'card-effects-mode': { type: 'string', allowed: ['on', 'off'], default: 'on' },
 };
 
 function validateConfigEntry(key, value) {
