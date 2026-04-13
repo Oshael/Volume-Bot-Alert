@@ -82,6 +82,11 @@ function getAlertExclusiveClass(alert: AlertEntry) {
 }
 
 function getAlertArrivalClass(alert: AlertEntry, now: number) {
+  void alert;
+  void now;
+  return '';
+
+  /*
   if (!isAlertInArrivalWindow(alert, now)) {
     return '';
   }
@@ -104,13 +109,14 @@ function getAlertArrivalClass(alert: AlertEntry, now: number) {
   }
 
   return 'impact-enter impact-enter-normal';
+  */
 }
 
-export function getAlertVisualClasses(alert: AlertEntry, now = Date.now()) {
+export function getAlertVisualClasses(alert: AlertEntry, now = Date.now(), includeArrival = true) {
   return [
     getAlertToneClass(alert, now),
     getAlertExclusiveClass(alert),
-    getAlertArrivalClass(alert, now),
+    includeArrival ? getAlertArrivalClass(alert, now) : '',
   ]
     .filter(Boolean)
     .join(' ');

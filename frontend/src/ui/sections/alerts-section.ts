@@ -1,129 +1,770 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState } from '../../state/app-state';
-import { getAlertToneClass, getAlertVisualClasses, isAlertInArrivalWindow, isHighCapDumpAlert } from '../../services/alerts/impact-tier';
+import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isAlertInArrivalWindow, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { bindCompactSearch, bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
+const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
+const ALERT_FX_SETTLE_MS = 1_600;
+
+type AlertRowView = {
+  element: HTMLElement;
+  renderKey: string;
+};
+
+type AlertFxTier = AlertImpactTier | 'special';
+type AlertFxPhase = 'entering' | 'settled';
+type AlertFxState = {
+  enteredAt: number;
+  tier: AlertFxTier;
+  phase: AlertFxPhase;
+  settleTimer: ReturnType<typeof window.setTimeout> | null;
+  enterPlayedAt: number | null;
+};
+
+type AlertsSectionView = {
+  section: HTMLElement;
+  list: HTMLElement;
+  count: HTMLElement;
+  searchInput: HTMLInputElement;
+  searchWrap: HTMLElement;
+  emptyState: HTMLElement;
+  fxGhostHost: HTMLElement;
+  controller: AppController;
+  rowViews: Map<string, AlertRowView>;
+  fxStates: Map<string, AlertFxState>;
+};
+
+let alertsSectionView: AlertsSectionView | null = null;
+const alertRowShakeAnimations = new WeakMap<HTMLElement, Animation>();
+
 export function renderAlertsSection(state: AppState, controller: AppController) {
-  const section = document.createElement('section');
   const renderNow = Date.now();
-  const searchQuery = String(state.ui.alertSearchQuery || '').trim().toLowerCase();
-  const filteredAlerts = searchQuery
-    ? state.data.alerts.filter((alert) => {
-      const symbol = String(alert.symbol || '').toLowerCase();
-      const name = String(alert.name || '').toLowerCase();
-      const address = String(alert.address || '').toLowerCase();
-      return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
-    })
-    : state.data.alerts;
-  const arrivingAlerts = filteredAlerts.filter((alert) => isAlertInArrivalWindow(alert, renderNow));
-  const hasArrivalImpact = arrivingAlerts.length > 0;
-  section.className = `panel legacy-panel alerts-panel${hasArrivalImpact ? ' alerts-panel-impact-live' : ''}`;
+  const view = getOrCreateAlertsSectionView(controller);
+  const cardEffectsEnabled = areAlertCardEffectsEnabled(state);
+  view.controller = controller;
+  syncAlertFxStates(view, state.data.alerts, renderNow);
+  if (!cardEffectsEnabled && view.fxGhostHost.childElementCount > 0) {
+    view.fxGhostHost.replaceChildren();
+  }
+
+  const searchQuery = String(state.ui.alertSearchQuery || '');
+  const filteredAlerts = filterAlerts(state, searchQuery);
+
+  syncSearchInput(view, searchQuery);
+  reconcileAlertRows(view, filteredAlerts, state, renderNow, cardEffectsEnabled);
+  view.count.textContent = String(filteredAlerts.length);
+
+  return view.section;
+}
+
+function getOrCreateAlertsSectionView(controller: AppController) {
+  if (alertsSectionView) {
+    return alertsSectionView;
+  }
+
+  const section = document.createElement('section');
+  section.className = 'panel legacy-panel alerts-panel';
   section.innerHTML = `
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
       <div class="alerts-panel-header-controls">
         <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
-        <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query open' : ''}">
+        <div class="compact-search compact-search-fixed">
           <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
         </div>
-        <span class="count alerts-panel-count${hasArrivalImpact ? ' alerts-panel-count-pulse' : ''}">${filteredAlerts.length}</span>
+        <span class="count alerts-panel-count">0</span>
       </div>
     </div>
-    <div class="alerts-list${hasArrivalImpact ? ' alerts-list-impact-live' : ''}"></div>
+    <div class="alerts-list"></div>
   `;
 
-  const alertsList = section.querySelector<HTMLElement>('.alerts-list');
-  if (alertsList) {
-    if (filteredAlerts.length) {
-      let arrivalIndex = 0;
-      for (const alert of filteredAlerts) {
-        const isArriving = isAlertInArrivalWindow(alert, renderNow);
-        const nextArrivalIndex = isArriving ? arrivalIndex : null;
-        alertsList.append(buildAlertRow(
-          alert,
-          state.ui.busy,
-          state.data.starredTokens.includes(alert.address),
-          state.session.role === 'admin',
-          state.ui.enabledTradeTerminals,
-          renderNow,
-          nextArrivalIndex,
-        ));
-        if (isArriving) {
-          arrivalIndex += 1;
-        }
-      }
-    } else {
-      const emptyState = document.createElement('div');
-      emptyState.className = 'empty-state';
-      const emptyText = document.createElement('div');
-      emptyText.className = 'empty-text';
-      emptyText.textContent = 'No alerts match the current search.';
-      emptyState.append(emptyText);
-      alertsList.append(emptyState);
-    }
+  const list = section.querySelector<HTMLElement>('.alerts-list');
+  const count = section.querySelector<HTMLElement>('.alerts-panel-count');
+  const searchInput = section.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
+  const searchWrap = section.querySelector<HTMLElement>('.compact-search');
+  if (!list || !count || !searchInput || !searchWrap) {
+    throw new Error('Alerts section view failed to initialize.');
   }
 
-  const searchInput = section.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
-  if (searchInput) {
-    searchInput.value = state.ui.alertSearchQuery || '';
-  }
+  const emptyState = buildEmptyState();
+  alertsSectionView = {
+    section,
+    list,
+    count,
+    searchInput,
+    searchWrap,
+    emptyState,
+    fxGhostHost: getOrCreateAlertFxGhostHost(),
+    controller,
+    rowViews: new Map<string, AlertRowView>(),
+    fxStates: new Map<string, AlertFxState>(),
+  };
+
   bindCompactSearch(section, {
     toggleAction: 'alerts-search-focus',
     inputAction: 'alerts-search',
   });
-  searchInput?.addEventListener('input', (event) => {
-    controller.setAlertSearchQuery((event.currentTarget as HTMLInputElement).value);
+
+  searchInput.addEventListener('input', (event) => {
+    alertsSectionView?.controller.setAlertSearchQuery((event.currentTarget as HTMLInputElement).value);
   });
+
   section.querySelector<HTMLButtonElement>('[data-action="alerts-clear-all"]')?.addEventListener('click', () => {
-    controller.clearAllAlerts();
+    alertsSectionView?.controller.clearAllAlerts();
   });
-  section.querySelectorAll<HTMLButtonElement>('[data-action="remove-alert"]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const alertId = button.dataset.alertId;
-      if (alertId) {
-        removeAlertRowImmediately(section, button);
-        controller.removeAlert(alertId);
-      }
-    });
+
+  section.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-action="remove-alert"]');
+    const alertId = button?.dataset.alertId;
+    if (!button || !alertId || !alertsSectionView) {
+      return;
+    }
+
+    removeAlertRowImmediately(alertsSectionView, button);
+    alertsSectionView.controller.removeAlert(alertId);
   });
-  bindTokenActions(section, controller);
-  bindCopyButtons(section);
-  return section;
+
+  list.replaceChildren(emptyState);
+  return alertsSectionView;
 }
 
-function removeAlertRowImmediately(section: HTMLElement, button: HTMLButtonElement) {
-  const row = button.closest<HTMLElement>('.alert-row');
-  const list = section.querySelector<HTMLElement>('.alerts-list');
-  const count = section.querySelector<HTMLElement>('.count');
+function buildEmptyState() {
+  const emptyState = document.createElement('div');
+  emptyState.className = 'empty-state';
+  const emptyText = document.createElement('div');
+  emptyText.className = 'empty-text';
+  emptyText.textContent = 'No alerts match the current search.';
+  emptyState.append(emptyText);
+  return emptyState;
+}
 
-  row?.remove();
+function filterAlerts(state: AppState, searchQuery: string) {
+  const normalizedQuery = String(searchQuery || '').trim().toLowerCase();
+  if (!normalizedQuery) {
+    return state.data.alerts;
+  }
 
-  if (count && list) {
-    const nextCount = list.querySelectorAll('.alert-row').length;
-    count.textContent = String(nextCount);
+  return state.data.alerts.filter((alert) => {
+    const symbol = String(alert.symbol || '').toLowerCase();
+    const name = String(alert.name || '').toLowerCase();
+    const address = String(alert.address || '').toLowerCase();
+    return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery);
+  });
+}
 
-    if (nextCount === 0) {
-      const emptyState = document.createElement('div');
-      emptyState.className = 'empty-state';
-      const emptyText = document.createElement('div');
-      emptyText.className = 'empty-text';
-      emptyText.textContent = 'No alerts match the current search.';
-      emptyState.append(emptyText);
-      list.replaceChildren(emptyState);
+function syncSearchInput(view: AlertsSectionView, searchQuery: string) {
+  if (view.searchInput.value !== searchQuery) {
+    view.searchInput.value = searchQuery;
+  }
+
+  const hasQuery = Boolean(String(searchQuery || '').trim());
+  view.searchWrap.classList.toggle('has-query', hasQuery);
+  view.searchWrap.classList.toggle('open', hasQuery || document.activeElement === view.searchInput);
+}
+
+function reconcileAlertRows(
+  view: AlertsSectionView,
+  filteredAlerts: AlertEntry[],
+  state: AppState,
+  renderNow: number,
+  cardEffectsEnabled: boolean,
+) {
+  const liveAlertIds = new Set(state.data.alerts.map((alert) => alert.id));
+  const desiredNodes: HTMLElement[] = [];
+  const pendingEnterFx: Array<{ row: HTMLElement; fxState: AlertFxState }> = [];
+
+  for (const alert of filteredAlerts) {
+    const fxState = getOrCreateAlertFxState(view, alert, renderNow);
+    logAlertArrivalDebug(alert, fxState, renderNow);
+    const isStarred = state.data.starredTokens.includes(alert.address);
+    const renderKey = getAlertRowRenderKey(
+      alert,
+      state.ui.busy,
+      isStarred,
+      state.session.role === 'admin',
+      state.ui.enabledTradeTerminals,
+      renderNow,
+      fxState,
+    );
+
+    let rowView = view.rowViews.get(alert.id);
+    if (!rowView) {
+      const row = createAlertRowShell(alert.id);
+      rowView = {
+        element: row,
+        renderKey: '',
+      };
+      view.rowViews.set(alert.id, rowView);
     }
+
+    syncAlertRowShell(rowView.element, alert, isStarred, renderNow, fxState);
+    applyAlertFxStateToRow(rowView.element, fxState);
+    queuePendingAlertEnterFx(pendingEnterFx, rowView.element, fxState, renderNow, cardEffectsEnabled);
+
+    if (rowView.renderKey !== renderKey) {
+      rowView.element.querySelector<HTMLElement>('.alert-grid')?.remove();
+      rowView.element.append(buildAlertRowContent(
+        alert,
+        state.ui.busy,
+        isStarred,
+        state.session.role === 'admin',
+        state.ui.enabledTradeTerminals,
+        renderNow,
+        fxState,
+      ));
+      bindTokenActions(rowView.element, view.controller);
+      bindCopyButtons(rowView.element);
+      rowView.renderKey = renderKey;
+    }
+
+    desiredNodes.push(rowView.element);
+  }
+
+  for (const [alertId] of view.rowViews.entries()) {
+    if (!liveAlertIds.has(alertId)) {
+      view.rowViews.delete(alertId);
+    }
+  }
+
+  if (desiredNodes.length === 0) {
+    view.list.replaceChildren(view.emptyState);
+    return;
+  }
+
+  if (view.emptyState.parentElement === view.list) {
+    view.emptyState.remove();
+  }
+
+  for (let index = 0; index < desiredNodes.length; index += 1) {
+    const node = desiredNodes[index];
+    const currentAtIndex = view.list.children.item(index);
+    if (currentAtIndex !== node) {
+      view.list.insertBefore(node, currentAtIndex);
+    }
+  }
+
+  while (view.list.children.length > desiredNodes.length) {
+    view.list.lastElementChild?.remove();
+  }
+
+  for (const { row, fxState } of pendingEnterFx) {
+    playAlertFxEnter(view.fxGhostHost, row, fxState);
   }
 }
 
-function buildAlertRow(
+function areAlertCardEffectsEnabled(state: AppState) {
+  return String(state.data.configs['card-effects-mode'] ?? 'on').trim().toLowerCase() !== 'off';
+}
+
+function queuePendingAlertEnterFx(
+  pendingEnterFx: Array<{ row: HTMLElement; fxState: AlertFxState }>,
+  row: HTMLElement,
+  fxState: AlertFxState,
+  renderNow: number,
+  cardEffectsEnabled: boolean,
+) {
+  if (fxState.phase !== 'entering' || fxState.enterPlayedAt != null) {
+    return;
+  }
+
+  if (!cardEffectsEnabled) {
+    fxState.enterPlayedAt = renderNow;
+    return;
+  }
+
+  pendingEnterFx.push({ row, fxState });
+}
+
+function isAlertsRenderDebugEnabled() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return false;
+  }
+
+  return window.localStorage.getItem(ALERTS_RENDER_DEBUG_STORAGE_KEY) === '1';
+}
+
+function syncAlertFxStates(view: AlertsSectionView, alerts: AlertEntry[], now: number) {
+  const liveAlertIds = new Set(alerts.map((alert) => alert.id));
+  for (const alert of alerts) {
+    const fxState = getOrCreateAlertFxState(view, alert, now);
+    if (fxState.phase === 'entering' && now - fxState.enteredAt >= ALERT_FX_SETTLE_MS) {
+      settleAlertFxState(view, alert.id);
+    }
+  }
+
+  for (const [alertId, fxState] of view.fxStates.entries()) {
+    if (liveAlertIds.has(alertId)) {
+      continue;
+    }
+
+    if (fxState.settleTimer) {
+      clearTimeout(fxState.settleTimer);
+    }
+    view.fxStates.delete(alertId);
+  }
+}
+
+function getOrCreateAlertFxState(view: AlertsSectionView, alert: AlertEntry, now: number) {
+  const existing = view.fxStates.get(alert.id);
+  if (existing) {
+    return existing;
+  }
+
+  const nextState: AlertFxState = {
+    enteredAt: now,
+    tier: getAlertFxTier(alert),
+    phase: 'entering',
+    settleTimer: null,
+    enterPlayedAt: null,
+  };
+  nextState.settleTimer = window.setTimeout(() => {
+    settleAlertFxState(view, alert.id);
+  }, ALERT_FX_SETTLE_MS);
+  view.fxStates.set(alert.id, nextState);
+  return nextState;
+}
+
+function getAlertFxTier(alert: AlertEntry): AlertFxTier {
+  if (isHighCapDumpAlert(alert) || isHvncAlert(alert) || alert.kind === 'meteora-surge' || alert.isOldSurge) {
+    return 'special';
+  }
+
+  return getAlertImpactTier(alert);
+}
+
+function settleAlertFxState(view: AlertsSectionView, alertId: string) {
+  const fxState = view.fxStates.get(alertId);
+  if (!fxState || fxState.phase === 'settled') {
+    return;
+  }
+
+  if (fxState.settleTimer) {
+    clearTimeout(fxState.settleTimer);
+    fxState.settleTimer = null;
+  }
+  fxState.phase = 'settled';
+
+  const rowView = view.rowViews.get(alertId);
+  if (rowView) {
+    applyAlertFxStateToRow(rowView.element, fxState);
+  }
+}
+
+function applyAlertFxStateToRow(row: HTMLElement, fxState: AlertFxState) {
+  row.dataset.fxPhase = fxState.phase;
+  row.dataset.fxTier = fxState.tier;
+  row.classList.toggle('alert-fx-entering', fxState.phase === 'entering');
+  row.classList.toggle('alert-fx-settled', fxState.phase === 'settled');
+}
+
+function playAlertFxEnter(host: HTMLElement, row: HTMLElement, fxState: AlertFxState) {
+  if (fxState.phase !== 'entering' || fxState.enterPlayedAt != null) {
+    return;
+  }
+
+  const rect = row.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+
+  fxState.enterPlayedAt = Date.now();
+  const profile = getAlertFxOverlayProfile(fxState.tier);
+  const ghost = buildAlertFxGhost(fxState.tier, rect, row.style.getPropertyValue('--alert-fx-color'));
+  const stage = ghost.querySelector<HTMLElement>('.alert-fx-ghost-stage');
+  const glow = ghost.querySelector<HTMLElement>('.alert-fx-ghost-glow');
+  const rail = ghost.querySelector<HTMLElement>('.alert-fx-ghost-rail');
+  const flare = ghost.querySelector<HTMLElement>('.alert-fx-ghost-flare');
+  const haze = ghost.querySelector<HTMLElement>('.alert-fx-ghost-haze');
+  if (!stage || !glow || !rail || !flare || !haze) {
+    return;
+  }
+
+  host.append(ghost);
+
+  stage.animate(
+    [
+      {
+        offset: 0,
+        opacity: 0,
+        transform: 'scale(0.992)',
+        boxShadow: '0 0 0 0 transparent, 0 0 0 transparent',
+      },
+      {
+        offset: 0.18,
+        opacity: 1,
+        transform: `scale(${profile.pulseScale})`,
+        boxShadow: `0 0 0 1px color-mix(in srgb, var(--alert-fx-color) ${profile.pulseEdgeAlpha}%, transparent), 0 0 ${profile.pulseBlur}px color-mix(in srgb, var(--alert-fx-color) ${profile.pulseGlowAlpha}%, transparent)`,
+      },
+      {
+        offset: 0.82,
+        opacity: 0.86,
+        transform: 'scale(1)',
+        boxShadow: `0 0 0 1px color-mix(in srgb, var(--alert-fx-color) ${Math.max(profile.pulseEdgeAlpha - 20, 10)}%, transparent), 0 0 ${Math.max(profile.pulseBlur - 12, 10)}px color-mix(in srgb, var(--alert-fx-color) ${Math.max(profile.pulseGlowAlpha - 24, 10)}%, transparent)`,
+      },
+      {
+        offset: 1,
+        opacity: 0,
+        transform: 'scale(1)',
+        boxShadow: '0 0 0 0 transparent, 0 0 0 transparent',
+      },
+    ],
+    {
+      duration: profile.pulseDuration,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      fill: 'none',
+    },
+  );
+
+  if (profile.shakeAmplitudePx > 0) {
+    const existingShake = alertRowShakeAnimations.get(row);
+    if (existingShake) {
+      existingShake.cancel();
+      alertRowShakeAnimations.delete(row);
+    }
+
+    const shakeAnimation = row.animate(
+      [
+        { offset: 0, transform: 'translate3d(0, 0, 0)' },
+        { offset: 0.12, transform: `translate3d(-${profile.shakeAmplitudePx}px, 0, 0)` },
+        { offset: 0.24, transform: `translate3d(${profile.shakeAmplitudePx}px, 0, 0)` },
+        { offset: 0.38, transform: `translate3d(-${Math.max(profile.shakeAmplitudePx - 2, 1)}px, 0, 0)` },
+        { offset: 0.52, transform: `translate3d(${Math.max(profile.shakeAmplitudePx - 2, 1)}px, 0, 0)` },
+        { offset: 0.68, transform: `translate3d(-${Math.max(profile.shakeAmplitudePx - 4, 1)}px, 0, 0)` },
+        { offset: 0.84, transform: `translate3d(${Math.max(profile.shakeAmplitudePx - 4, 1)}px, 0, 0)` },
+        { offset: 1, transform: 'translate3d(0, 0, 0)' },
+      ],
+      {
+        duration: profile.shakeDuration,
+        easing: 'linear',
+        fill: 'none',
+      },
+    );
+
+    alertRowShakeAnimations.set(row, shakeAnimation);
+    shakeAnimation.addEventListener('finish', () => {
+      if (alertRowShakeAnimations.get(row) !== shakeAnimation) {
+        return;
+      }
+      alertRowShakeAnimations.delete(row);
+      row.style.transform = '';
+    });
+    shakeAnimation.addEventListener('cancel', () => {
+      if (alertRowShakeAnimations.get(row) !== shakeAnimation) {
+        return;
+      }
+      alertRowShakeAnimations.delete(row);
+      row.style.transform = '';
+    });
+  }
+
+  glow.animate(
+    [
+      { offset: 0, opacity: 0, transform: 'translate3d(-10%, 0, 0) scaleX(0.94)' },
+      { offset: 0.18, opacity: profile.glowPeakOpacity, transform: 'translate3d(0, 0, 0) scaleX(1)' },
+      { offset: 0.84, opacity: profile.glowTailOpacity, transform: 'translate3d(6%, 0, 0) scaleX(1.02)' },
+      { offset: 1, opacity: 0, transform: 'translate3d(8%, 0, 0) scaleX(1.02)' },
+    ],
+    {
+      duration: profile.glowDuration,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      fill: 'none',
+    },
+  );
+
+  rail.animate(
+    [
+      { offset: 0, opacity: profile.railLeadOpacity, transform: 'scaleY(0.82) scaleX(0.8)' },
+      { offset: 0.16, opacity: 1, transform: 'scaleY(1) scaleX(1.35)' },
+      { offset: 0.86, opacity: profile.railTailOpacity, transform: 'scaleY(1) scaleX(1)' },
+      { offset: 1, opacity: 0, transform: 'scaleY(1) scaleX(0.96)' },
+    ],
+    {
+      duration: profile.railDuration,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      fill: 'none',
+    },
+  );
+
+  flare.animate(
+    profile.doubleFlare
+      ? [
+        { offset: 0, opacity: 0, transform: 'translate3d(-36%, 0, 0) skewX(-14deg)' },
+        { offset: 0.28, opacity: profile.flarePeakOpacity, transform: 'translate3d(-2%, 0, 0) skewX(-14deg)' },
+        { offset: 0.62, opacity: 0.14, transform: 'translate3d(18%, 0, 0) skewX(-14deg)' },
+        { offset: 0.9, opacity: profile.flarePeakOpacity * 0.72, transform: 'translate3d(30%, 0, 0) skewX(-14deg)' },
+        { offset: 1, opacity: 0, transform: 'translate3d(48%, 0, 0) skewX(-14deg)' },
+      ]
+      : [
+        { offset: 0, opacity: 0, transform: 'translate3d(-36%, 0, 0) skewX(-14deg)' },
+        { offset: 0.34, opacity: profile.flarePeakOpacity, transform: 'translate3d(0%, 0, 0) skewX(-14deg)' },
+        { offset: 0.9, opacity: profile.flarePeakOpacity * 0.18, transform: 'translate3d(32%, 0, 0) skewX(-14deg)' },
+        { offset: 1, opacity: 0, transform: 'translate3d(42%, 0, 0) skewX(-14deg)' },
+      ],
+    {
+      duration: profile.flareDuration,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      fill: 'none',
+    },
+  );
+
+  haze.animate(
+    [
+      { offset: 0, opacity: 0, filter: 'blur(0px)', transform: 'scale(0.998)' },
+      { offset: 0.24, opacity: profile.hazePeakOpacity, filter: `blur(${profile.hazeBlurPx}px)`, transform: 'scale(1.003)' },
+      { offset: 0.82, opacity: profile.hazeTailOpacity, filter: `blur(${Math.max(profile.hazeBlurPx - 3, 2)}px)`, transform: 'scale(1.002)' },
+      { offset: 1, opacity: 0, filter: 'blur(0px)', transform: 'scale(1)' },
+    ],
+    {
+      duration: profile.hazeDuration,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      fill: 'none',
+    },
+  );
+
+  window.setTimeout(() => {
+    ghost.remove();
+  }, profile.removeAfterMs);
+}
+
+function getAlertFxOverlayProfile(tier: AlertFxTier) {
+  switch (tier) {
+    case 'critical':
+      return {
+        glowPeakOpacity: 0.56,
+        glowTailOpacity: 0.2,
+        glowDuration: 1_020,
+        railLeadOpacity: 0.54,
+        railTailOpacity: 0.88,
+        railDuration: 940,
+        flarePeakOpacity: 0.48,
+        flareDuration: 1_200,
+        pulseScale: 1.006,
+        pulseDuration: 880,
+        pulseEdgeAlpha: 52,
+        pulseGlowAlpha: 38,
+        pulseBlur: 26,
+        doubleFlare: false,
+        shakeAmplitudePx: 2,
+        shakeDuration: 300,
+        hazePeakOpacity: 0.16,
+        hazeTailOpacity: 0.08,
+        hazeBlurPx: 10,
+        hazeDuration: 1_300,
+        removeAfterMs: 1_520,
+      } as const;
+    case 'mega':
+      return {
+        glowPeakOpacity: 0.66,
+        glowTailOpacity: 0.3,
+        glowDuration: 1_520,
+        railLeadOpacity: 0.62,
+        railTailOpacity: 0.94,
+        railDuration: 1_460,
+        flarePeakOpacity: 0.58,
+        flareDuration: 1_560,
+        pulseScale: 1.009,
+        pulseDuration: 1_620,
+        pulseEdgeAlpha: 60,
+        pulseGlowAlpha: 46,
+        pulseBlur: 34,
+        doubleFlare: true,
+        shakeAmplitudePx: 14,
+        shakeDuration: 760,
+        hazePeakOpacity: 0.24,
+        hazeTailOpacity: 0.12,
+        hazeBlurPx: 14,
+        hazeDuration: 1_560,
+        removeAfterMs: 1_920,
+      } as const;
+    case 'special':
+      return {
+        glowPeakOpacity: 0.72,
+        glowTailOpacity: 0.34,
+        glowDuration: 1_640,
+        railLeadOpacity: 0.68,
+        railTailOpacity: 0.96,
+        railDuration: 1_560,
+        flarePeakOpacity: 0.64,
+        flareDuration: 1_700,
+        pulseScale: 1.01,
+        pulseDuration: 1_760,
+        pulseEdgeAlpha: 66,
+        pulseGlowAlpha: 54,
+        pulseBlur: 40,
+        doubleFlare: true,
+        shakeAmplitudePx: 18,
+        shakeDuration: 880,
+        hazePeakOpacity: 0.28,
+        hazeTailOpacity: 0.14,
+        hazeBlurPx: 16,
+        hazeDuration: 1_720,
+        removeAfterMs: 2_040,
+      } as const;
+    case 'normal':
+    default:
+      return {
+        glowPeakOpacity: 0.44,
+        glowTailOpacity: 0.2,
+        glowDuration: 1_260,
+        railLeadOpacity: 0.45,
+        railTailOpacity: 0.86,
+        railDuration: 1_180,
+        flarePeakOpacity: 0.38,
+        flareDuration: 1_360,
+        pulseScale: 1.004,
+        pulseDuration: 1_320,
+        pulseEdgeAlpha: 40,
+        pulseGlowAlpha: 28,
+        pulseBlur: 20,
+        doubleFlare: false,
+        shakeAmplitudePx: 0,
+        shakeDuration: 0,
+        hazePeakOpacity: 0.12,
+        hazeTailOpacity: 0.06,
+        hazeBlurPx: 8,
+        hazeDuration: 1_180,
+        removeAfterMs: 1_560,
+      } as const;
+  }
+}
+
+function logAlertArrivalDebug(alert: AlertEntry, fxState: AlertFxState, now: number) {
+  if (!isAlertsRenderDebugEnabled()) {
+    return;
+  }
+
+  const ageMs = now - Number(alert.createdAt || 0);
+  if (!Number.isFinite(ageMs) || ageMs > 5_000) {
+    return;
+  }
+
+  console.debug('[alerts-debug] arrival-check', {
+    id: alert.id,
+    kind: alert.kind,
+    address: alert.address,
+    ageMs,
+    isInArrivalWindow: isAlertInArrivalWindow(alert, now),
+    fxPhase: fxState.phase,
+    fxTier: fxState.tier,
+    enteredAt: fxState.enteredAt,
+  });
+}
+
+function removeAlertRowImmediately(view: AlertsSectionView, button: HTMLButtonElement) {
+  const row = button.closest<HTMLElement>('.alert-row');
+  row?.remove();
+
+  const alertId = button.dataset.alertId;
+  if (alertId) {
+    view.rowViews.delete(alertId);
+    const fxState = view.fxStates.get(alertId);
+    if (fxState?.settleTimer) {
+      clearTimeout(fxState.settleTimer);
+    }
+    view.fxStates.delete(alertId);
+  }
+
+  const nextCount = view.list.querySelectorAll('.alert-row').length;
+  view.count.textContent = String(nextCount);
+
+  if (nextCount === 0) {
+    view.list.replaceChildren(view.emptyState);
+  }
+}
+
+function getAlertRowRenderKey(
   alert: AlertEntry,
   busy: boolean,
   isStarred: boolean,
   isAdmin: boolean,
   enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
   renderNow: number,
-  arrivalIndex: number | null,
+  fxState: AlertFxState,
+) {
+  return JSON.stringify({
+    id: alert.id,
+    kind: alert.kind,
+    address: alert.address,
+    mintAddress: alert.mintAddress,
+    pairAddress: alert.pairAddress,
+    symbol: alert.symbol,
+    name: alert.name,
+    createdAt: alert.createdAt,
+    label: alert.label,
+    pct: alert.pct,
+    volume5m: alert.volume5m,
+    volume1h: alert.volume1h,
+    volume6h: alert.volume6h,
+    volume24h: alert.volume24h,
+    prevVolume5m: alert.prevVolume5m,
+    prevMcap: alert.prevMcap,
+    mcap: alert.mcap,
+    baselineMcap: alert.baselineMcap,
+    windowLowMcap: alert.windowLowMcap,
+    tokenCreatedAt: alert.tokenCreatedAt,
+    imageUrl: alert.imageUrl,
+    pairUrl: alert.pairUrl,
+    twitterUrl: alert.twitterUrl,
+    isHvnc: alert.isHvnc,
+    isOldSurge: alert.isOldSurge,
+    surgeWindow: alert.surgeWindow,
+    meteoraCurrentTvl: alert.meteoraCurrentTvl,
+    meteoraBaselineTvl24h: alert.meteoraBaselineTvl24h,
+    busy,
+    isStarred,
+    isAdmin,
+    enabledTradeTerminals,
+    toneClass: getAlertToneClass(alert, renderNow),
+    fxPhase: fxState.phase,
+    fxTier: fxState.tier,
+  });
+}
+
+function createAlertRowShell(alertId: string) {
+  const article = document.createElement('article');
+  article.dataset.alertId = alertId;
+  article.append(buildAlertFxLayer());
+  return article;
+}
+
+function getOrCreateAlertFxGhostHost() {
+  const existing = document.body.querySelector<HTMLElement>('.alert-fx-ghost-host');
+  if (existing) {
+    return existing;
+  }
+
+  const host = document.createElement('div');
+  host.className = 'alert-fx-ghost-host';
+  document.body.append(host);
+  return host;
+}
+
+function syncAlertRowShell(
+  article: HTMLElement,
+  alert: AlertEntry,
+  isStarred: boolean,
+  renderNow: number,
+  fxState: AlertFxState,
+) {
+  const toneClass = getAlertToneClass(alert, renderNow);
+  const visualClasses = getAlertVisualClasses(alert, renderNow, fxState.phase === 'entering');
+  article.className = `alert-row ${visualClasses}${isStarred ? ' token-starred starred-card' : ''}`;
+  article.dataset.hoverKey = `alert:${alert.id}`;
+  article.dataset.alertId = alert.id;
+  article.style.setProperty('--alert-fx-color', getAlertAccentColor(toneClass));
+}
+
+function buildAlertRowContent(
+  alert: AlertEntry,
+  busy: boolean,
+  isStarred: boolean,
+  isAdmin: boolean,
+  enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
+  renderNow: number,
+  _fxState: AlertFxState,
 ) {
   const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
   const symbol = String(alert.symbol || '');
@@ -131,15 +772,7 @@ function buildAlertRow(
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
   const xSearch = buildXSearchUrl(symbol, alert.address);
   const topClass = getAlertToneClass(alert, renderNow);
-  const visualClasses = getAlertVisualClasses(alert, renderNow);
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
-  const article = document.createElement('article');
-  article.className = `alert-row ${visualClasses}${isStarred ? ' token-starred starred-card' : ''}`;
-  article.dataset.hoverKey = `alert:${alert.id}`;
-  if (arrivalIndex != null) {
-    article.style.setProperty('--alert-arrival-delay', `${Math.min(arrivalIndex, 5) * 90}ms`);
-  }
-
   const grid = document.createElement('div');
   grid.className = 'alert-grid';
   const body = document.createElement('div');
@@ -207,8 +840,77 @@ function buildAlertRow(
 
   body.append(main, statsLine, links, actions);
   grid.append(body, time);
-  article.append(grid);
-  return article;
+  return grid;
+}
+
+function buildAlertFxLayer() {
+  const layer = document.createElement('div');
+  layer.className = 'alert-fx-layer';
+
+  const rail = document.createElement('div');
+  rail.className = 'alert-fx-rail';
+
+  const glow = document.createElement('div');
+  glow.className = 'alert-fx-glow';
+
+  const flare = document.createElement('div');
+  flare.className = 'alert-fx-flare';
+
+  layer.append(rail, glow, flare);
+  return layer;
+}
+
+function buildAlertFxGhost(tier: AlertFxTier, rect: DOMRect, accentColor: string) {
+  const ghost = document.createElement('div');
+  ghost.className = 'alert-fx-ghost';
+  ghost.dataset.fxTier = tier;
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  if (accentColor) {
+    ghost.style.setProperty('--alert-fx-color', accentColor);
+  }
+
+  const stage = document.createElement('div');
+  stage.className = 'alert-fx-ghost-stage';
+
+  const rail = document.createElement('div');
+  rail.className = 'alert-fx-ghost-rail';
+
+  const glow = document.createElement('div');
+  glow.className = 'alert-fx-ghost-glow';
+
+  const flare = document.createElement('div');
+  flare.className = 'alert-fx-ghost-flare';
+
+  const haze = document.createElement('div');
+  haze.className = 'alert-fx-ghost-haze';
+
+  stage.append(rail, glow, flare, haze);
+  ghost.append(stage);
+  return ghost;
+}
+
+function getAlertAccentColor(toneClass: string) {
+  switch (toneClass) {
+    case 'critical':
+      return 'var(--yellow)';
+    case 'dump-alert':
+      return 'var(--red)';
+    case 'meteora-surge':
+      return '#b06aff';
+    case 'mega':
+    case 'old-surge':
+      return '#ff6b00';
+    case 'pump-alert':
+      return 'var(--pump-color)';
+    case 'recent-surge':
+      return 'var(--green)';
+    case 'normal':
+    default:
+      return '#2ea8ff';
+  }
 }
 
 function buildAlertAvatar(symbol: string, imageUrl: string | null) {
