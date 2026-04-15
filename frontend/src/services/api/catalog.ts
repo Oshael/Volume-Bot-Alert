@@ -199,10 +199,16 @@ export interface LateralizedPayload {
 
 export interface BidZonePayload {
   generatedAt?: string | null;
+  runId?: number | null;
   requestedHours?: number;
   minMcap?: number;
   minVol1h?: number;
   minVol24h?: number;
+  candidateCount?: number;
+  resultCount?: number;
+  refreshAvailableAt?: string | null;
+  refreshed?: boolean;
+  retryAfterSeconds?: number;
   count: number;
   candidates: BidZoneCandidate[];
 }
@@ -335,13 +341,45 @@ export function fetchBidZoneCandidates(token?: string | null, options?: { limit?
   return apiFetch<BidZonePayload>(`/api/catalog/bid-zone${suffix}`, { token })
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
+      runId: response.runId ?? null,
       requestedHours: response.requestedHours,
       minMcap: response.minMcap,
       minVol1h: response.minVol1h,
       minVol24h: response.minVol24h,
+      candidateCount: response.candidateCount,
+      resultCount: response.resultCount,
+      refreshAvailableAt: response.refreshAvailableAt ?? null,
+      refreshed: response.refreshed,
+      retryAfterSeconds: response.retryAfterSeconds,
       count: Number(response.count) || 0,
       candidates: response.candidates || [],
     }));
+}
+
+export function refreshBidZoneSnapshot(token?: string | null, options?: { limit?: number }) {
+  const params = new URLSearchParams();
+  if (options?.limit) {
+    params.set('limit', String(options.limit));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return apiFetch<BidZonePayload>(`/api/catalog/bid-zone/refresh${suffix}`, {
+    method: 'POST',
+    token,
+  }).then((response) => ({
+    generatedAt: response.generatedAt ?? null,
+    runId: response.runId ?? null,
+    requestedHours: response.requestedHours,
+    minMcap: response.minMcap,
+    minVol1h: response.minVol1h,
+    minVol24h: response.minVol24h,
+    candidateCount: response.candidateCount,
+    resultCount: response.resultCount,
+    refreshAvailableAt: response.refreshAvailableAt ?? null,
+    refreshed: response.refreshed,
+    retryAfterSeconds: response.retryAfterSeconds,
+    count: Number(response.count) || 0,
+    candidates: response.candidates || [],
+  }));
 }
 
 export function fetchPumpfunTokenMeta(mint: string, token?: string | null, metadataUri?: string | null) {

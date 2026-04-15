@@ -7413,6 +7413,30 @@ TEMP_LEGACY_BAR_TITLE {
   text-transform: uppercase;
 }
 
+.bid-zone-last-updated {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.compact-refresh-button {
+  border: 1px solid rgba(142, 226, 255, 0.18);
+  background: rgba(12, 22, 36, 0.88);
+  color: #d9e8f9;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.compact-refresh-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .lateralized-list {
   padding: 6px 8px;
 }

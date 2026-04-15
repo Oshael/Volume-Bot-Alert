@@ -8,6 +8,7 @@ const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenRiskReview = require('../models/token-risk-review');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketLateralizationRun = require('../models/token-market-lateralization-run');
+const tokenMarketBidZoneRun = require('../models/token-market-bid-zone-run');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
@@ -16,8 +17,10 @@ const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 const { logTrace } = require('../utils/pump-migrate-trace');
+const bidZoneWorker = require('../services/bid-zone-worker');
 
 const MONITORED_MIN_MCAP = 30000;
+const BID_ZONE_DEFAULT_OPTIONS = bidZoneWorker.DEFAULT_OPTIONS;
 const TRANSIENT_RETRY_MS = 40000;
 const PROMOTE_RETRY_MAX_ENTRIES = 2000;
 const promoteRetryState = new Map();
@@ -384,6 +387,66 @@ function parseBidZoneQuery(query = {}) {
       minVol1h: minVol1h.value,
       minVol24h: minVol24h.value,
     },
+  };
+}
+
+function normalizeBidZoneOptions(options = {}) {
+  return {
+    hours: options.hours || BID_ZONE_DEFAULT_OPTIONS.hours,
+    minMcap: options.minMcap || BID_ZONE_DEFAULT_OPTIONS.minMcap,
+    minVol1h: options.minVol1h || BID_ZONE_DEFAULT_OPTIONS.minVol1h,
+    minVol24h: options.minVol24h || BID_ZONE_DEFAULT_OPTIONS.minVol24h,
+  };
+}
+
+function isDefaultBidZoneOptions(options = {}) {
+  return Number(options.hours) === BID_ZONE_DEFAULT_OPTIONS.hours
+    && Number(options.minMcap) === BID_ZONE_DEFAULT_OPTIONS.minMcap
+    && Number(options.minVol1h) === BID_ZONE_DEFAULT_OPTIONS.minVol1h
+    && Number(options.minVol24h) === BID_ZONE_DEFAULT_OPTIONS.minVol24h;
+}
+
+function buildBidZoneResponse(payload = {}, metadata = {}) {
+  return {
+    generatedAt: payload.generatedAt ?? null,
+    runId: payload.runId ?? null,
+    requestedHours: payload.requestedHours ?? BID_ZONE_DEFAULT_OPTIONS.hours,
+    minMcap: payload.minMcap ?? BID_ZONE_DEFAULT_OPTIONS.minMcap,
+    minVol1h: payload.minVol1h ?? BID_ZONE_DEFAULT_OPTIONS.minVol1h,
+    minVol24h: payload.minVol24h ?? BID_ZONE_DEFAULT_OPTIONS.minVol24h,
+    count: Number(payload.count) || 0,
+    candidateCount: payload.candidateCount ?? (Number(payload.count) || 0),
+    resultCount: payload.resultCount ?? (Number(payload.count) || 0),
+    refreshAvailableAt: metadata.refreshAvailableAt || null,
+    refreshed: metadata.refreshed,
+    retryAfterSeconds: metadata.retryAfterSeconds,
+    candidates: Array.isArray(payload.candidates) ? payload.candidates : [],
+  };
+}
+
+async function getStoredBidZoneSnapshot(options = {}, resultOptions = {}) {
+  const normalized = normalizeBidZoneOptions(options);
+  const run = await tokenMarketBidZoneRun.getLatestCompletedRunWithResults({
+    requestedHours: normalized.hours,
+    minMcap: normalized.minMcap,
+    minVol1h: normalized.minVol1h,
+    minVol24h: normalized.minVol24h,
+  }, resultOptions);
+  if (!run) {
+    return null;
+  }
+
+  return {
+    generatedAt: run.completedAt,
+    runId: run.id,
+    requestedHours: run.requestedHours,
+    minMcap: run.minMcap,
+    minVol1h: run.minVol1h,
+    minVol24h: run.minVol24h,
+    count: run.candidates.length,
+    candidateCount: run.candidateCount,
+    resultCount: run.resultCount,
+    candidates: run.candidates,
   };
 }
 
@@ -793,28 +856,61 @@ router.get('/bid-zone', catalogReadLimiter, async (req, res) => {
       return res.status(400).json({ error: parsedQuery.error });
     }
 
-    const options = {
-      ...parsedQuery.options,
-      hours: parsedQuery.options.hours || 48,
-      minMcap: parsedQuery.options.minMcap || 90000,
-      minVol1h: parsedQuery.options.minVol1h || 1000,
-      minVol24h: parsedQuery.options.minVol24h || 10000,
-    };
-    const candidates = await tokenMarketBucket1m.listBidZoneCandidates(options);
-    const generatedAt = new Date().toISOString();
+    const options = normalizeBidZoneOptions(parsedQuery.options);
+    const limit = parsedQuery.options.limit || BID_ZONE_DEFAULT_OPTIONS.limit;
+    const refreshAvailableAt = bidZoneWorker.getStatus().refreshAvailableAt;
 
-    res.json({
-      generatedAt,
+    if (isDefaultBidZoneOptions(options)) {
+      const storedSnapshot = await getStoredBidZoneSnapshot(options, { limit });
+      if (!storedSnapshot) {
+        return res.status(404).json({
+          error: 'No completed bid-zone snapshot available for the requested parameters',
+        });
+      }
+
+      return res.json(buildBidZoneResponse(storedSnapshot, { refreshAvailableAt }));
+    }
+
+    const candidates = await tokenMarketBucket1m.listBidZoneCandidates({
+      ...options,
+      limit,
+    });
+    return res.json(buildBidZoneResponse({
+      generatedAt: new Date().toISOString(),
+      runId: null,
       requestedHours: options.hours,
       minMcap: options.minMcap,
       minVol1h: options.minVol1h,
       minVol24h: options.minVol24h,
       count: candidates.length,
+      candidateCount: candidates.length,
+      resultCount: candidates.length,
       candidates,
-    });
+    }, { refreshAvailableAt }));
   } catch (err) {
     console.error('GET /catalog/bid-zone error:', err.message);
     res.status(500).json({ error: 'Failed to load bid-zone candidates' });
+  }
+});
+
+router.post('/bid-zone/refresh', catalogWriteLimiter, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(Number(req.query?.limit) || BID_ZONE_DEFAULT_OPTIONS.limit, 200));
+    const refresh = await bidZoneWorker.runManualRefresh(BID_ZONE_DEFAULT_OPTIONS);
+    const snapshot = await getStoredBidZoneSnapshot(BID_ZONE_DEFAULT_OPTIONS, { limit });
+
+    if (!snapshot) {
+      return res.status(500).json({ error: 'Failed to load bid-zone snapshot after refresh attempt' });
+    }
+
+    res.json(buildBidZoneResponse(snapshot, {
+      refreshAvailableAt: refresh.refreshAvailableAt,
+      refreshed: refresh.accepted,
+      retryAfterSeconds: refresh.retryAfterSeconds,
+    }));
+  } catch (err) {
+    console.error('POST /catalog/bid-zone/refresh error:', err.message);
+    res.status(500).json({ error: 'Failed to refresh bid-zone snapshot' });
   }
 });
 

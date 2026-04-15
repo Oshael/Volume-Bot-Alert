@@ -35,6 +35,7 @@ const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 const lateralizationWorker = require('./services/lateralization-worker');
+const bidZoneWorker = require('./services/bid-zone-worker');
 const tokenRiskEnrichmentWorker = require('./services/token-risk-enrichment-worker');
 const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-worker');
 const dexscreener = require('./services/dexscreener');
@@ -151,6 +152,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
     lateralizationWorker: lateralizationWorker.getStatus(),
+    bidZoneWorker: bidZoneWorker.getStatus(),
     tokenRiskEnrichmentWorker: tokenRiskEnrichmentWorker.getStatus(),
     tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
@@ -221,6 +223,7 @@ function startWorkerSet() {
   meteoraSnapshotWorker.start();
   dexDiscoveryWorker.start();
   lateralizationWorker.start();
+  bidZoneWorker.start();
   tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
   tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
 }

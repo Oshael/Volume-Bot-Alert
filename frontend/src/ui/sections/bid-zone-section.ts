@@ -6,6 +6,14 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 export function renderBidZoneSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   const isCollapsed = state.ui.collapsed.bidZone;
+  const lastUpdated = formatAbsoluteTimestamp(state.runtime.bidZoneUpdatedAt);
+  const refreshCooldownLabel = state.runtime.bidZoneRefreshCooldownLabel;
+  const refreshDisabled = state.runtime.bidZoneRefreshInFlight || refreshCooldownLabel !== 'ready';
+  const refreshLabel = state.runtime.bidZoneRefreshInFlight
+    ? 'REFRESHING...'
+    : refreshCooldownLabel === 'ready'
+      ? 'REFRESH'
+      : `WAIT ${refreshCooldownLabel.toUpperCase()}`;
   section.className = `panel legacy-panel lateralized-panel bid-zone-panel${isCollapsed ? ' panel-collapsed' : ''}`;
   const freshness = state.runtime.bidZoneFreshnessLabel !== '-'
     ? `SCAN ${state.runtime.bidZoneFreshnessLabel}`
@@ -16,6 +24,8 @@ export function renderBidZoneSection(state: AppState, controller: AppController)
       <span>⌖ BID ZONE COINS</span>
       <div class="lateralized-header-meta">
         <span class="lateralized-freshness">${freshness}</span>
+        <span class="bid-zone-last-updated">LAST ${lastUpdated}</span>
+        <button type="button" class="compact-refresh-button" data-action="refresh-bid-zone" ${refreshDisabled ? 'disabled' : ''}>${refreshLabel}</button>
         <span class="count">${state.data.bidZoneTokens.length}</span>
         <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="bidZone" aria-label="${isCollapsed ? 'Expand bid-zone panel' : 'Collapse bid-zone panel'}"><span class="compact-icon-glyph">${isCollapsed ? '+' : '−'}</span></button>
       </div>
@@ -25,6 +35,9 @@ export function renderBidZoneSection(state: AppState, controller: AppController)
 
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('bidZone');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="refresh-bid-zone"]')?.addEventListener('click', () => {
+    void controller.refreshBidZoneSnapshot();
   });
 
   if (isCollapsed) {
@@ -61,15 +74,7 @@ function buildBidZoneRow(
   isStarred: boolean,
   isAdmin: boolean,
 ) {
-  const tracked = getTrackedToken(state, item.address);
-  const symbol = tracked?.symbol || item.symbol || item.address.slice(0, 6);
-  const subtitle = String(tracked?.name || item.name || '');
-  const pairUrl = sanitizeHttpUrl(tracked?.pairUrl || `https://dexscreener.com/solana/${item.address}`);
-  const xSearchUrl = sanitizeHttpUrl(buildXSearchUrl(symbol, item.address));
-  const imageUrl = sanitizeOptionalHttpUrl(tracked?.imageUrl);
-  const volume1h = item.volume1h ?? tracked?.volume1h ?? null;
-  const volume24h = item.volume24h ?? tracked?.volume24h ?? null;
-  const age = formatBidZoneAge(item.ageHours, tracked?.createdAt ?? null);
+  const view = buildBidZoneRowView(state, item);
 
   const article = document.createElement('article');
   article.className = `token-row lateralized-token-row bid-zone-token-row${isStarred ? ' token-starred' : ''}`;
@@ -79,7 +84,7 @@ function buildBidZoneRow(
   rank.className = 'lateralized-rank';
   rank.textContent = `#${index + 1}`;
 
-  article.append(rank, buildAvatar(symbol, imageUrl));
+  article.append(rank, buildAvatar(view.symbol, view.imageUrl));
 
   const main = document.createElement('div');
   main.className = 'lateralized-row-main';
@@ -89,41 +94,28 @@ function buildBidZoneRow(
 
   const tokenName = document.createElement('span');
   tokenName.className = 'token-name';
-  tokenName.textContent = symbol;
+  tokenName.textContent = view.symbol;
 
   const tokenAddr = document.createElement('span');
   tokenAddr.className = 'token-addr';
-  tokenAddr.textContent = subtitle;
+  tokenAddr.textContent = view.subtitle;
 
   titleLine.append(
     tokenName,
     tokenAddr,
-    buildInlineLink('/ DEX', pairUrl),
-    buildInlineLink('X', xSearchUrl),
+    buildInlineLink('/ DEX', view.pairUrl),
+    buildInlineLink('X', view.xSearchUrl),
   );
 
-  const actions = document.createElement('span');
-  actions.className = 'lateralized-inline-actions';
-  actions.append(
-    buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
-    buildTradeTerminalMenuElement(item.address, tracked?.mintAddress || item.address, tracked?.pairAddress || null, {
-      enabledTradeTerminals: state.ui.enabledTradeTerminals,
-    }),
-    buildStarButton(item.address, isStarred, busy),
-    buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token'),
-  );
-
-  if (isAdmin) {
-    actions.append(buildGlyphButton('☠', 'action-glyph danger-glyph', 'admin-block-token', item.address, symbol, busy, 'Admin block permanently'));
-  }
+  const actions = buildBidZoneActions(state, item, view, isStarred, busy, isAdmin);
 
   const metaLine = document.createElement('div');
   metaLine.className = 'lateralized-meta-line';
   metaLine.append(
-    buildMetaMetric('MCAP', fmtMoney(item.mcap ?? tracked?.mcap ?? null)),
-    buildMetaMetric('AGE', age),
-    buildMetaMetric('VOL 1H', fmtMoney(volume1h)),
-    buildMetaMetric('VOL 24H', fmtMoney(volume24h)),
+    buildMetaMetric('MCAP', fmtMoney(view.mcap)),
+    buildMetaMetric('AGE', view.age),
+    buildMetaMetric('VOL 1H', fmtMoney(view.volume1h)),
+    buildMetaMetric('VOL 24H', fmtMoney(view.volume24h)),
   );
 
   const leftStack = document.createElement('div');
@@ -142,6 +134,71 @@ function buildBidZoneRow(
   main.append(leftStack, statsRail);
   article.append(main);
   return article;
+}
+
+function buildBidZoneRowView(state: AppState, item: BidZoneTokenEntry) {
+  const tracked = getTrackedToken(state, item.address);
+  const symbol = resolveBidZoneSymbol(tracked, item);
+  const links = resolveBidZoneLinks(tracked?.pairUrl, item.address, symbol);
+  const metrics = resolveBidZoneMetrics(tracked, item);
+  return {
+    tracked,
+    symbol,
+    subtitle: String(tracked?.name || item.name || ''),
+    pairUrl: links.pairUrl,
+    xSearchUrl: links.xSearchUrl,
+    imageUrl: sanitizeOptionalHttpUrl(tracked?.imageUrl),
+    volume1h: metrics.volume1h,
+    volume24h: metrics.volume24h,
+    age: metrics.age,
+    mcap: metrics.mcap,
+  };
+}
+
+function buildBidZoneActions(
+  state: AppState,
+  item: BidZoneTokenEntry,
+  view: ReturnType<typeof buildBidZoneRowView>,
+  isStarred: boolean,
+  busy: boolean,
+  isAdmin: boolean,
+) {
+  const actions = document.createElement('span');
+  actions.className = 'lateralized-inline-actions';
+  actions.append(
+    buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
+    buildTradeTerminalMenuElement(item.address, view.tracked?.mintAddress || item.address, view.tracked?.pairAddress || null, {
+      enabledTradeTerminals: state.ui.enabledTradeTerminals,
+    }),
+    buildStarButton(item.address, isStarred, busy),
+    buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, view.symbol, busy, 'Block token'),
+  );
+
+  if (isAdmin) {
+    actions.append(buildGlyphButton('☠', 'action-glyph danger-glyph', 'admin-block-token', item.address, view.symbol, busy, 'Admin block permanently'));
+  }
+
+  return actions;
+}
+
+function resolveBidZoneSymbol(tracked: ReturnType<typeof getTrackedToken>, item: BidZoneTokenEntry) {
+  return tracked?.symbol || item.symbol || item.address.slice(0, 6);
+}
+
+function resolveBidZoneLinks(pairUrl: string | null | undefined, address: string, symbol: string) {
+  return {
+    pairUrl: sanitizeHttpUrl(pairUrl || `https://dexscreener.com/solana/${address}`),
+    xSearchUrl: sanitizeHttpUrl(buildXSearchUrl(symbol, address)),
+  };
+}
+
+function resolveBidZoneMetrics(tracked: ReturnType<typeof getTrackedToken>, item: BidZoneTokenEntry) {
+  return {
+    volume1h: item.volume1h ?? tracked?.volume1h ?? null,
+    volume24h: item.volume24h ?? tracked?.volume24h ?? null,
+    age: formatBidZoneAge(item.ageHours, tracked?.createdAt ?? null),
+    mcap: item.mcap ?? tracked?.mcap ?? null,
+  };
 }
 
 function buildAvatar(symbol: string, imageUrl: string | null) {
@@ -259,6 +316,23 @@ function formatScore(value?: number | null) {
     return '-';
   }
   return num >= 100 ? Math.round(num).toString() : num.toFixed(1);
+}
+
+function formatAbsoluteTimestamp(timestamp: string | null) {
+  if (!timestamp) {
+    return '--:--:--';
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '--:--:--';
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
 function buildXSearchUrl(symbol: string, address: string) {

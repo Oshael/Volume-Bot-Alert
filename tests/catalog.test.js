@@ -12,6 +12,9 @@ const request = require('supertest');
 const dexscreener = require('../src/services/dexscreener');
 const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
+const tokenMarketBidZoneRun = require('../src/models/token-market-bid-zone-run');
+const bidZoneWorker = require('../src/services/bid-zone-worker');
+const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
@@ -353,5 +356,89 @@ describe('Catalog routes', () => {
 
     assert.equal(res.status, 400);
     assert.equal(res.body.error, 'hours must be an integer');
+  });
+
+  it('serves stored bid-zone snapshots for default monitor parameters', async () => {
+    const originalGetLatest = tokenMarketBidZoneRun.getLatestCompletedRunWithResults;
+    const originalGetStatus = bidZoneWorker.getStatus;
+    const originalListBidZoneCandidates = tokenMarketBucket1m.listBidZoneCandidates;
+
+    tokenMarketBidZoneRun.getLatestCompletedRunWithResults = async () => ({
+      id: 12,
+      completedAt: '2026-04-15T18:00:00.000Z',
+      requestedHours: 48,
+      minMcap: 90000,
+      minVol1h: 1000,
+      minVol24h: 10000,
+      candidateCount: 40,
+      resultCount: 2,
+      candidates: [
+        { address: VALID_ADDR, symbol: 'WSOL', supportDistancePct: 3.1, supportTouchClusters: 4 },
+        { address: 'So11111111111111111111111111111111111111113', symbol: 'BONK', supportDistancePct: 4.2, supportTouchClusters: 3 },
+      ],
+    });
+    bidZoneWorker.getStatus = () => ({ refreshAvailableAt: '2026-04-15T18:05:00.000Z' });
+    tokenMarketBucket1m.listBidZoneCandidates = async () => {
+      throw new Error('should not compute live candidates for default bid-zone query');
+    };
+
+    try {
+      const res = await request(app)
+        .get('/api/catalog/bid-zone')
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.runId, 12);
+      assert.equal(res.body.generatedAt, '2026-04-15T18:00:00.000Z');
+      assert.equal(res.body.refreshAvailableAt, '2026-04-15T18:05:00.000Z');
+      assert.equal(res.body.count, 2);
+      assert.equal(res.body.candidateCount, 40);
+      assert.equal(res.body.candidates[0].address, VALID_ADDR);
+    } finally {
+      tokenMarketBidZoneRun.getLatestCompletedRunWithResults = originalGetLatest;
+      bidZoneWorker.getStatus = originalGetStatus;
+      tokenMarketBucket1m.listBidZoneCandidates = originalListBidZoneCandidates;
+    }
+  });
+
+  it('forces a stored bid-zone refresh and returns the refreshed snapshot metadata', async () => {
+    const originalRunManualRefresh = bidZoneWorker.runManualRefresh;
+    const originalGetLatest = tokenMarketBidZoneRun.getLatestCompletedRunWithResults;
+
+    bidZoneWorker.runManualRefresh = async () => ({
+      accepted: true,
+      refreshAvailableAt: '2026-04-15T18:10:00.000Z',
+      retryAfterSeconds: 300,
+    });
+    tokenMarketBidZoneRun.getLatestCompletedRunWithResults = async () => ({
+      id: 14,
+      completedAt: '2026-04-15T18:05:00.000Z',
+      requestedHours: 48,
+      minMcap: 90000,
+      minVol1h: 1000,
+      minVol24h: 10000,
+      candidateCount: 21,
+      resultCount: 1,
+      candidates: [
+        { address: VALID_ADDR, symbol: 'WSOL', supportDistancePct: 2.4, supportTouchClusters: 5 },
+      ],
+    });
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/bid-zone/refresh')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', 'http://localhost:5173');
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.refreshed, true);
+      assert.equal(res.body.refreshAvailableAt, '2026-04-15T18:10:00.000Z');
+      assert.equal(res.body.retryAfterSeconds, 300);
+      assert.equal(res.body.runId, 14);
+      assert.equal(res.body.candidates.length, 1);
+    } finally {
+      bidZoneWorker.runManualRefresh = originalRunManualRefresh;
+      tokenMarketBidZoneRun.getLatestCompletedRunWithResults = originalGetLatest;
+    }
   });
 });
