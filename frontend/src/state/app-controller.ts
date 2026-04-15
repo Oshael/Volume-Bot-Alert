@@ -39,7 +39,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertEvents, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertEvents, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -118,6 +118,7 @@ const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
+const ALERT_STORAGE_DEBOUNCE_MS = 250;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
 const HISTORY_SYNC_PEER_TTL_MS = 6000;
@@ -295,6 +296,7 @@ export interface AppController {
   stopMonitoring(): void;
   clearNotice(): void;
   clearError(): void;
+  refreshBidZoneSnapshot(): Promise<void>;
   subscribe(listener: (state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) => void): () => void;
 }
 
@@ -611,6 +613,9 @@ export function createAppController(): AppController {
   let starredPersistRevision = 0;
   let uiPrefsPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let uiPrefsPersistRevision = 0;
+  let alertsPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  let alertsPersistScope: string | null = null;
+  let alertsPersistLifecycleBound = false;
   let emitScheduled = false;
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let preAccessPollingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1205,6 +1210,7 @@ export function createAppController(): AppController {
       }
     }
 
+    state.runtime.monitoredRevision += 1;
     refreshMonitoredPanelCounts();
   }
 
@@ -1919,6 +1925,24 @@ export function createAppController(): AppController {
     return String(state.data.configs[BLOCK_WARNING_ENABLED_CONFIG_KEY] || 'on').trim().toLowerCase() !== 'off';
   }
 
+  function replaceStarredTokens(nextStarredTokens: string[], options?: { resetRevision?: boolean }) {
+    const normalized = [...nextStarredTokens].sort((a, b) => a.localeCompare(b));
+    const current = state.data.starredTokens;
+    const changed = current.length !== normalized.length
+      || current.some((item, index) => item !== normalized[index]);
+
+    state.data.starredTokens = normalized;
+
+    if (options?.resetRevision) {
+      state.runtime.starredRevision = 0;
+      return;
+    }
+
+    if (changed) {
+      state.runtime.starredRevision += 1;
+    }
+  }
+
   function openBlockedTokenWarning(address: string, label?: string | null) {
     const warning = normalizeBlockWarningState(address, label);
     if (!warning) {
@@ -1999,7 +2023,7 @@ export function createAppController(): AppController {
       if (revision == starredPersistRevision) {
         state.data.configs = result.configs || {};
         applyUiPreferencesFromConfigs();
-        state.data.starredTokens = result.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+        replaceStarredTokens(result.starredTokens.map((item) => item.address));
         emit();
       }
     } catch (error) {
@@ -2081,13 +2105,54 @@ export function createAppController(): AppController {
     state.ui.soundEnabled = String(state.data.configs['sound-mode'] ?? 'on') !== 'off';
     state.ui.soundVolume = clampUiVolume(getConfigNumber('sound-volume', Math.round(state.ui.soundVolume * 100)) / 100);
   }
+
+  function ensureAlertsPersistLifecycle() {
+    if (alertsPersistLifecycleBound || typeof window === 'undefined') {
+      return;
+    }
+
+    alertsPersistLifecycleBound = true;
+    window.addEventListener('pagehide', () => {
+      flushAlertsPersist();
+    });
+  }
+
+  function flushAlertsPersist() {
+    if (alertsPersistTimer) {
+      clearTimeout(alertsPersistTimer);
+      alertsPersistTimer = null;
+    }
+
+    const scope = alertsPersistScope ?? getStorageScope();
+    alertsPersistScope = null;
+    saveAlerts(scope, state.data.alerts);
+  }
+
+  function scheduleAlertsPersist() {
+    if (typeof window === 'undefined') {
+      flushAlertsPersist();
+      return;
+    }
+
+    ensureAlertsPersistLifecycle();
+    if (alertsPersistTimer) {
+      return;
+    }
+
+    alertsPersistScope = getStorageScope();
+    alertsPersistTimer = window.setTimeout(() => {
+      alertsPersistTimer = null;
+      flushAlertsPersist();
+    }, ALERT_STORAGE_DEBOUNCE_MS);
+  }
+
   function persistBarStorage() {
     const scope = getStorageScope();
     saveDismissedRecent(scope, state.data.dismissedRecent);
     saveDismissedOldWeek(scope, state.data.dismissedOldWeek);
     saveRecentRemovalLog(scope, state.data.recentRemovalLog);
     saveOldWeekRemovalLog(scope, state.data.oldWeekRemovalLog);
-    saveAlerts(scope, state.data.alerts);
+    flushAlertsPersist();
   }
 
   function hydrateBarStorage() {
@@ -2098,6 +2163,7 @@ export function createAppController(): AppController {
     state.data.oldWeekRemovalLog = loadOldWeekRemovalLog(scope);
     state.data.alerts = loadAlerts(scope);
     state.runtime.alerts = state.data.alerts.length;
+    state.runtime.alertRevision = state.data.alerts.length > 0 ? 1 : 0;
     state.panels.alerts = state.data.alerts.length;
   }
 
@@ -2107,8 +2173,9 @@ export function createAppController(): AppController {
 
   function syncAlertState() {
     state.runtime.alerts = state.data.alerts.length;
+    state.runtime.alertRevision += 1;
     state.panels.alerts = state.data.alerts.length;
-    persistBarStorage();
+    scheduleAlertsPersist();
   }
 
   function removeAlertsForAddress(address: string) {
@@ -2130,7 +2197,7 @@ export function createAppController(): AppController {
     removeAlertsForAddress(address);
 
     if (options.removeFromStarred && state.data.starredTokens.includes(address)) {
-      state.data.starredTokens = state.data.starredTokens.filter((item) => item !== address);
+      replaceStarredTokens(state.data.starredTokens.filter((item) => item !== address));
       queueStarredTokensPersist();
     }
 
@@ -3055,6 +3122,7 @@ export function createAppController(): AppController {
     refreshTrackedTokenStore();
     state.bars.recent = getMonitoredTokens(state).filter((item) => item._isRecentRouted).length;
     state.bars.oldWeek = getMonitoredTokens(state).filter((item) => item._isOldWeekRouted).length;
+    state.runtime.routedRevision += 1;
     syncRoutedPagination();
   }
 
@@ -3184,6 +3252,20 @@ export function createAppController(): AppController {
     state.runtime.bidZoneFreshnessLabel = formatFreshnessLabel(timestamp);
   }
 
+  function formatCooldownLabel(timestamp: string | null) {
+    if (!timestamp) return 'ready';
+    const remainingMs = new Date(timestamp).getTime() - Date.now();
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) return 'ready';
+
+    const remainingMinutes = Math.ceil(remainingMs / 60000);
+    return remainingMinutes <= 1 ? '1m' : `${remainingMinutes}m`;
+  }
+
+  function updateBidZoneRefreshAvailability(timestamp: string | null) {
+    state.runtime.bidZoneRefreshAvailableAt = timestamp;
+    state.runtime.bidZoneRefreshCooldownLabel = formatCooldownLabel(timestamp);
+  }
+
   function startPumpGcTimer() {
     if (pumpGcInterval || !shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
       return;
@@ -3251,6 +3333,8 @@ export function createAppController(): AppController {
       state.data.bidZoneTokens = [];
       state.panels.bidZone = 0;
       updateBidZoneFreshness(null);
+      updateBidZoneRefreshAvailability(null);
+      state.runtime.bidZoneRefreshInFlight = false;
       return;
     }
 
@@ -3275,10 +3359,12 @@ export function createAppController(): AppController {
       const message = error instanceof Error ? error.message : '';
       if (
         message.includes('Failed to load bid-zone candidates')
+        || message.includes('No completed bid-zone snapshot available')
         || message.includes('API request failed:')
       ) {
         state.data.bidZoneTokens = [];
         updateBidZoneFreshness(null);
+        updateBidZoneRefreshAvailability(null);
         state.panels.bidZone = 0;
         emit('bid-zone');
         return;
@@ -3952,6 +4038,7 @@ export function createAppController(): AppController {
     state.data.lateralizedTokens = (payload.candidates || []).map(buildLateralizedTokenEntry);
     updateLateralizedFreshness(payload.generatedAt ?? null);
     state.panels.lateralized = state.data.lateralizedTokens.length;
+    state.runtime.lateralizedRevision += 1;
     emit('lateralized');
   }
 
@@ -3979,8 +4066,37 @@ export function createAppController(): AppController {
   function applyBidZonePayload(payload: BidZonePayload) {
     state.data.bidZoneTokens = (payload.candidates || []).map(buildBidZoneTokenEntry);
     updateBidZoneFreshness(payload.generatedAt ?? null);
+    updateBidZoneRefreshAvailability(payload.refreshAvailableAt ?? null);
     state.panels.bidZone = state.data.bidZoneTokens.length;
+    state.runtime.bidZoneRevision += 1;
     emit('bid-zone');
+  }
+
+  function loadDashboardAlertEventsForWorkspace(token: string, includeAlertFeed?: boolean) {
+    const shouldLoadDashboardAlerts = includeAlertFeed ?? isLiveWorkspace();
+    if (!shouldLoadDashboardAlerts) {
+      return Promise.resolve(null);
+    }
+
+    return fetchDashboardAlertEvents(token, {
+      limit: BACKEND_ALERT_FEED_LIMIT,
+      ruleKey: HIGH_CAP_DUMP_RULE_KEY,
+      mode: 'unseen',
+    }).catch(() => null);
+  }
+
+  function applyMonitoredDashboardRefreshSuccess(
+    token: string,
+    monitoredDashboard: Awaited<ReturnType<typeof fetchDashboardMonitored>>,
+    dashboardAlertEvents: Awaited<ReturnType<typeof loadDashboardAlertEventsForWorkspace>>,
+  ) {
+    applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+    if (dashboardAlertEvents?.events?.length) {
+      const added = syncBackendAlertEvents(dashboardAlertEvents.events);
+      if (added > 0) {
+        void markDashboardAlertEventsSeen(token, dashboardAlertEvents.events, dashboardAlertEvents.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
+      }
+    }
   }
 
   function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
@@ -4064,7 +4180,7 @@ export function createAppController(): AppController {
     }
   }
 
-  async function refreshMonitoredDashboard() {
+  async function refreshMonitoredDashboard(options?: { includeAlertFeed?: boolean }) {
     const token = state.session.token;
     if (!token || monitoredRefreshInFlight) {
       return;
@@ -4074,24 +4190,14 @@ export function createAppController(): AppController {
     try {
       const [monitoredDashboard, dashboardAlertEvents] = await Promise.all([
         fetchDashboardMonitored(token),
-        fetchDashboardAlertEvents(token, {
-          limit: BACKEND_ALERT_FEED_LIMIT,
-          ruleKey: HIGH_CAP_DUMP_RULE_KEY,
-          mode: 'unseen',
-        }).catch(() => null),
+        loadDashboardAlertEventsForWorkspace(token, options?.includeAlertFeed),
       ]);
-      applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      applyMonitoredDashboardRefreshSuccess(token, monitoredDashboard, dashboardAlertEvents);
       await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
       lastMonitoredDashboardError = null;
-      if (dashboardAlertEvents?.events?.length) {
-        const added = syncBackendAlertEvents(dashboardAlertEvents.events);
-        if (added > 0) {
-          void markDashboardAlertEventsSeen(token, dashboardAlertEvents.events, dashboardAlertEvents.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
-        }
-      }
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
         broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
       }
@@ -4118,6 +4224,7 @@ export function createAppController(): AppController {
     refreshMonitoredPanelCounts();
     computeUptimeLabel();
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
+    updateBidZoneRefreshAvailability(state.runtime.bidZoneRefreshAvailableAt);
     void refreshMonitoredDashboard();
     if (shouldRunLateralizedRuntime()) {
       void refreshLateralizedTokens();
@@ -4179,6 +4286,7 @@ export function createAppController(): AppController {
     state.runtime.mode = 'stopped';
     state.runtime.uptimeLabel = '0m';
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
+    updateBidZoneRefreshAvailability(state.runtime.bidZoneRefreshAvailableAt);
     syncHistorySyncState();
   }
 
@@ -4528,6 +4636,7 @@ export function createAppController(): AppController {
   }
 
   function clearSession() {
+    flushAlertsPersist();
     stopSocialLinkSync();
     stopPreAccessPolling();
     recentAlertFingerprints.clear();
@@ -4563,12 +4672,21 @@ export function createAppController(): AppController {
     state.preAccess.awaitingConfirmation = false;
     state.runtime.cycle = 0;
     state.runtime.alerts = 0;
+    state.runtime.alertRevision = 0;
+    state.runtime.monitoredRevision = 0;
+    state.runtime.routedRevision = 0;
+    state.runtime.lateralizedRevision = 0;
+    state.runtime.bidZoneRevision = 0;
+    state.runtime.starredRevision = 0;
     state.runtime.monitoredUpdatedAt = null;
     state.runtime.monitoredFreshnessLabel = '-';
     state.runtime.lateralizedUpdatedAt = null;
     state.runtime.lateralizedFreshnessLabel = '-';
     state.runtime.bidZoneUpdatedAt = null;
     state.runtime.bidZoneFreshnessLabel = '-';
+    state.runtime.bidZoneRefreshAvailableAt = null;
+    state.runtime.bidZoneRefreshCooldownLabel = 'ready';
+    state.runtime.bidZoneRefreshInFlight = false;
     state.panels.alerts = 0;
     state.panels.lateralized = 0;
     state.panels.bidZone = 0;
@@ -4647,6 +4765,7 @@ export function createAppController(): AppController {
     }
     hydrateSoundSettings();
     state.ui.collapsed = getDefaultCollapsedSections();
+    replaceStarredTokens([], { resetRevision: true });
     historySyncPeers.clear();
     historySyncLeaderTabId = null;
     syncHistorySyncState();
@@ -4843,7 +4962,7 @@ export function createAppController(): AppController {
     applyUiPreferences(payload.uiPrefs);
     persistSoundSettings();
     state.data.blocklist = sortAddresses(payload.blocklist);
-    state.data.starredTokens = payload.starredTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+    replaceStarredTokens(payload.starredTokens.map((item) => item.address));
     state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
     syncAlertState();
     state.bars.blocklist = payload.blocklist.length;
@@ -5215,6 +5334,45 @@ export function createAppController(): AppController {
       state.ui.error = null;
       state.ui.loginErrorCount = 0;
       emit('legacy', 'overlay');
+    },
+    async refreshBidZoneSnapshot() {
+      if (!shouldRunLateralizedRuntime() || state.runtime.bidZoneRefreshInFlight || bidZoneRefreshInFlight) {
+        return;
+      }
+
+      const token = state.session.token;
+      if (!token) {
+        return;
+      }
+
+      const availableAt = state.runtime.bidZoneRefreshAvailableAt ? new Date(state.runtime.bidZoneRefreshAvailableAt).getTime() : 0;
+      if (Number.isFinite(availableAt) && availableAt > Date.now()) {
+        return;
+      }
+
+      const requestedAt = Date.now();
+      state.runtime.bidZoneRefreshInFlight = true;
+      emit('bid-zone');
+
+      try {
+        const payload = await refreshBidZoneSnapshotRequest(token, { limit: BID_ZONE_PANEL_LIMIT });
+        applyBidZonePayload(payload);
+        if (payload.refreshed === true) {
+          nextBidZoneRefreshAt = requestedAt + BID_ZONE_REFRESH_INTERVAL_MS;
+        } else if (payload.retryAfterSeconds) {
+          setNotice(`Bid Zone refresh cooling down. Try again in about ${payload.retryAfterSeconds}s.`);
+        }
+        if (isHistoryWorkspace() && isHistorySyncLeader()) {
+          broadcastHistoryBidZoneSnapshot(payload);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to refresh bid-zone snapshot';
+        setError(message);
+        emit('legacy', 'overlay');
+      } finally {
+        state.runtime.bidZoneRefreshInFlight = false;
+        emit('bid-zone');
+      }
     },
     setNetworkDebugEnabled(enabled: boolean) {
       state.ui.networkDebugEnabled = Boolean(enabled);
@@ -5714,9 +5872,11 @@ export function createAppController(): AppController {
     },
     async toggleStarredToken(address: string) {
       const wasStarred = state.data.starredTokens.includes(address);
-      state.data.starredTokens = wasStarred
-        ? state.data.starredTokens.filter((item) => item !== address)
-        : [...state.data.starredTokens, address].sort((a, b) => a.localeCompare(b));
+      replaceStarredTokens(
+        wasStarred
+          ? state.data.starredTokens.filter((item) => item !== address)
+          : [...state.data.starredTokens, address],
+      );
       emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'alerts');
       queueStarredTokensPersist();
     },

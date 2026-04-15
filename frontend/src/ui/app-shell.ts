@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getManualTokens, getMonitoredTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -782,6 +782,9 @@ function getRecentRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     runtimeMode: state.runtime.mode,
+    monitoredRevision: state.runtime.monitoredRevision,
+    routedRevision: state.runtime.routedRevision,
+    starredRevision: state.runtime.starredRevision,
     search: state.ui.recentSearchQuery,
     starredOnly: state.ui.recentStarredOnly,
     page: state.ui.recentPage,
@@ -790,9 +793,8 @@ function getRecentRenderKey(state: AppState) {
     barsRecent: state.bars.recent,
     oldMcapMin: state.data.configs['old-mcap-min'],
     oldMcapMax: state.data.configs['old-mcap-max'],
-    log: state.data.recentRemovalLog.map((entry) => serializePrimitiveList([entry.address, entry.reason, entry.ts])),
-    starred: state.data.starredTokens,
-    tokens: getRecentTokens(state).map(serializeTrackedTokenForView),
+    logCount: state.data.recentRemovalLog.length,
+    tokenCount: state.data.recentTokenAddresses.length,
   });
 }
 
@@ -802,6 +804,9 @@ function getOldWeekRenderKey(state: AppState) {
     busy: state.ui.busy,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
+    monitoredRevision: state.runtime.monitoredRevision,
+    routedRevision: state.runtime.routedRevision,
+    starredRevision: state.runtime.starredRevision,
     search: state.ui.oldWeekSearchQuery,
     starredOnly: state.ui.oldWeekStarredOnly,
     page: state.ui.oldWeekPage,
@@ -810,9 +815,8 @@ function getOldWeekRenderKey(state: AppState) {
     barsOldWeek: state.bars.oldWeek,
     oldWeekMcapMin: state.data.configs['old-week-mcap-min'],
     oldWeekMcapMax: state.data.configs['old-week-mcap-max'],
-    log: state.data.oldWeekRemovalLog.map((entry) => serializePrimitiveList([entry.address, entry.reason, entry.ts])),
-    starred: state.data.starredTokens,
-    tokens: getOldWeekTokens(state).map(serializeTrackedTokenForView),
+    logCount: state.data.oldWeekRemovalLog.length,
+    tokenCount: state.data.oldWeekTokenAddresses.length,
   });
 }
 
@@ -823,21 +827,10 @@ function getLateralizedRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     freshness: state.runtime.lateralizedFreshnessLabel,
-    starred: state.data.starredTokens,
-    tracked: state.data.lateralizedTokens.map((item) => serializePrimitiveList([
-      item.address,
-      item.symbol,
-      item.name,
-      item.mcap,
-      item.volume1h,
-      item.volume24h,
-      item.ageHours,
-      item.score,
-      state.data.trackedTokensByAddress[item.address]?.symbol,
-      state.data.trackedTokensByAddress[item.address]?.name,
-      state.data.trackedTokensByAddress[item.address]?.imageUrl,
-      state.data.trackedTokensByAddress[item.address]?.pairUrl,
-    ])),
+    monitoredRevision: state.runtime.monitoredRevision,
+    lateralizedRevision: state.runtime.lateralizedRevision,
+    starredRevision: state.runtime.starredRevision,
+    tokenCount: state.data.lateralizedTokens.length,
   });
 }
 
@@ -845,28 +838,17 @@ function getBidZoneRenderKey(state: AppState) {
   return JSON.stringify({
     collapsed: state.ui.collapsed.bidZone,
     busy: state.ui.busy,
+    refreshInFlight: state.runtime.bidZoneRefreshInFlight,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     freshness: state.runtime.bidZoneFreshnessLabel,
-    starred: state.data.starredTokens,
-    tracked: state.data.bidZoneTokens.map((item) => serializePrimitiveList([
-      item.address,
-      item.symbol,
-      item.name,
-      item.mcap,
-      item.volume1h,
-      item.volume24h,
-      item.ageHours,
-      item.score,
-      item.supportDistancePct,
-      item.supportTouchClusters,
-      item.recentRangePct,
-      item.closeDriftPct,
-      state.data.trackedTokensByAddress[item.address]?.symbol,
-      state.data.trackedTokensByAddress[item.address]?.name,
-      state.data.trackedTokensByAddress[item.address]?.imageUrl,
-      state.data.trackedTokensByAddress[item.address]?.pairUrl,
-    ])),
+    lastUpdatedAt: state.runtime.bidZoneUpdatedAt,
+    refreshCooldown: state.runtime.bidZoneRefreshCooldownLabel,
+    refreshAvailableAt: state.runtime.bidZoneRefreshAvailableAt,
+    monitoredRevision: state.runtime.monitoredRevision,
+    bidZoneRevision: state.runtime.bidZoneRevision,
+    starredRevision: state.runtime.starredRevision,
+    tokenCount: state.data.bidZoneTokens.length,
   });
 }
 
@@ -912,24 +894,8 @@ function getAlertsRenderKey(state: AppState) {
     tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.alertSearchQuery,
     starred: state.data.starredTokens,
-    alerts: state.data.alerts.map((alert) => serializePrimitiveList([
-      alert.id,
-      alert.kind,
-      alert.address,
-      alert.symbol,
-      alert.name,
-      alert.createdAt,
-      alert.volume5m,
-      alert.volume1h,
-      alert.volume6h,
-      alert.volume24h,
-      alert.prevMcap,
-      alert.mcap,
-      alert.pct,
-      alert.label,
-      alert.isHvnc,
-      alert.isOldSurge,
-    ])),
+    alertRevision: state.runtime.alertRevision,
+    alertCount: state.data.alerts.length,
   });
 }
 

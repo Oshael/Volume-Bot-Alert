@@ -388,6 +388,12 @@ export interface AppState {
     mode: StatusMode;
     cycle: number;
     alerts: number;
+    alertRevision: number;
+    monitoredRevision: number;
+    routedRevision: number;
+    lateralizedRevision: number;
+    bidZoneRevision: number;
+    starredRevision: number;
     timeouts: number;
     uptimeLabel: string;
     monitoredUpdatedAt: string | null;
@@ -396,6 +402,9 @@ export interface AppState {
     lateralizedFreshnessLabel: string;
     bidZoneUpdatedAt: string | null;
     bidZoneFreshnessLabel: string;
+    bidZoneRefreshAvailableAt: string | null;
+    bidZoneRefreshCooldownLabel: string;
+    bidZoneRefreshInFlight: boolean;
   };
   bars: {
     manual: number;
@@ -525,6 +534,12 @@ export function createAppState(): AppState {
       mode: 'stopped',
       cycle: 0,
       alerts: 0,
+      alertRevision: 0,
+      monitoredRevision: 0,
+      routedRevision: 0,
+      lateralizedRevision: 0,
+      bidZoneRevision: 0,
+      starredRevision: 0,
       timeouts: 0,
       uptimeLabel: '0m',
       monitoredUpdatedAt: null,
@@ -533,6 +548,9 @@ export function createAppState(): AppState {
       lateralizedFreshnessLabel: '-',
       bidZoneUpdatedAt: null,
       bidZoneFreshnessLabel: '-',
+      bidZoneRefreshAvailableAt: null,
+      bidZoneRefreshCooldownLabel: 'ready',
+      bidZoneRefreshInFlight: false,
     },
     bars: {
       manual: 0,

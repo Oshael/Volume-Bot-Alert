@@ -187,7 +187,6 @@ function reconcileAlertRows(
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
       renderNow,
-      fxState,
     );
 
     let rowView = view.rowViews.get(alert.id);
@@ -313,18 +312,31 @@ function getOrCreateAlertFxState(view: AlertsSectionView, alert: AlertEntry, now
     return existing;
   }
 
+  const enteredAt = normalizeAlertFxEnteredAt(alert, now);
+  const shouldStartSettled = now - enteredAt >= ALERT_FX_SETTLE_MS;
   const nextState: AlertFxState = {
-    enteredAt: now,
+    enteredAt,
     tier: getAlertFxTier(alert),
-    phase: 'entering',
+    phase: shouldStartSettled ? 'settled' : 'entering',
     settleTimer: null,
-    enterPlayedAt: null,
+    enterPlayedAt: shouldStartSettled ? enteredAt : null,
   };
-  nextState.settleTimer = window.setTimeout(() => {
-    settleAlertFxState(view, alert.id);
-  }, ALERT_FX_SETTLE_MS);
+  if (!shouldStartSettled) {
+    nextState.settleTimer = window.setTimeout(() => {
+      settleAlertFxState(view, alert.id);
+    }, Math.max(0, ALERT_FX_SETTLE_MS - (now - enteredAt)));
+  }
   view.fxStates.set(alert.id, nextState);
   return nextState;
+}
+
+function normalizeAlertFxEnteredAt(alert: AlertEntry, now: number) {
+  const createdAt = Number(alert.createdAt || 0);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) {
+    return now;
+  }
+
+  return Math.min(createdAt, now);
 }
 
 function getAlertFxTier(alert: AlertEntry): AlertFxTier {
@@ -682,7 +694,6 @@ function getAlertRowRenderKey(
   isAdmin: boolean,
   enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
   renderNow: number,
-  fxState: AlertFxState,
 ) {
   return JSON.stringify({
     id: alert.id,
@@ -718,8 +729,6 @@ function getAlertRowRenderKey(
     isAdmin,
     enabledTradeTerminals,
     toneClass: getAlertToneClass(alert, renderNow),
-    fxPhase: fxState.phase,
-    fxTier: fxState.tier,
   });
 }
 
