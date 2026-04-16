@@ -376,4 +376,220 @@ describe('Dashboard routes', () => {
     assert.equal(res.status, 400);
     assert.equal(res.body.error, 'lastSeenEventId must be a positive integer');
   });
+
+  it('returns recent and old-week history bootstrap slices without loading full monitored payloads', async () => {
+    const originalListDashboardHistoryBucket = tokenCatalog.listDashboardHistoryBucket;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
+    const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
+    const capturedCalls = [];
+
+    tokenCatalog.listDashboardHistoryBucket = async (bucket, options) => {
+      capturedCalls.push([bucket, options]);
+      if (bucket === 'recent') {
+        return {
+          total: 41,
+          page: 1,
+          perPage: 20,
+          rows: [{
+            address: 'So11111111111111111111111111111111111111112',
+            symbol: 'WSOL',
+            name: 'Wrapped SOL',
+            eligible_for_monitoring: true,
+            last_mcap: '150000',
+            last_price: '123',
+            last_vol_5m: '1000',
+            last_vol_1h: '5000',
+            last_vol_6h: '15000',
+            last_vol_24h: '60000',
+            last_price_change_1h: '2',
+            last_price_change_6h: '5',
+            last_price_change_24h: '9',
+            last_token_created_at_ms: Date.UTC(2026, 3, 10, 12, 0, 0),
+            last_pair_address: 'pair_test_123',
+            last_pair_url: 'https://dexscreener.com/solana/testpair',
+            last_image_url: 'https://example.com/token.png',
+            last_twitter_url: 'https://x.com/wsol',
+            monitor_priority: 'normal',
+            last_seen_at: '2026-04-15T21:10:00.000Z',
+            last_evaluated_at: '2026-04-15T21:09:00.000Z',
+            risk_review_label: null,
+            risk_review_source: null,
+            risk_review_notes: null,
+            risk_review_updated_at: null,
+            blocked_label: null,
+            blocked_created_by: null,
+            blocked_created_at: null,
+            risk_enrichment_last_attempted_at: null,
+            risk_enrichment_last_enriched_at: null,
+            risk_enrichment_last_error: null,
+            risk_holder_count: null,
+            risk_mint_authority_active: false,
+            risk_freeze_authority_active: false,
+            risk_top_10_pct: null,
+            risk_top_20_pct: null,
+            risk_reason_codes: [],
+          }],
+        };
+      }
+
+      return {
+        total: 11,
+        page: 0,
+        perPage: 30,
+        rows: [{
+          address: 'So11111111111111111111111111111111111111113',
+          symbol: 'BONK',
+          name: 'Bonk',
+          eligible_for_monitoring: true,
+          last_mcap: '250000',
+          last_price: '1.2',
+          last_vol_5m: '900',
+          last_vol_1h: '4500',
+          last_vol_6h: '17000',
+          last_vol_24h: '91000',
+          last_price_change_1h: '3',
+          last_price_change_6h: '7',
+          last_price_change_24h: '14',
+          last_token_created_at_ms: Date.UTC(2026, 3, 1, 12, 0, 0),
+          last_pair_address: 'pair_test_456',
+          last_pair_url: 'https://dexscreener.com/solana/testpair2',
+          last_image_url: 'https://example.com/token2.png',
+          last_twitter_url: 'https://x.com/bonk',
+          monitor_priority: 'normal',
+          last_seen_at: '2026-04-15T20:10:00.000Z',
+          last_evaluated_at: '2026-04-15T20:09:00.000Z',
+          risk_review_label: null,
+          risk_review_source: null,
+          risk_review_notes: null,
+          risk_review_updated_at: null,
+          blocked_label: null,
+          blocked_created_by: null,
+          blocked_created_at: null,
+          risk_enrichment_last_attempted_at: null,
+          risk_enrichment_last_enriched_at: null,
+          risk_enrichment_last_error: null,
+          risk_holder_count: null,
+          risk_mint_authority_active: false,
+          risk_freeze_authority_active: false,
+          risk_top_10_pct: null,
+          risk_top_20_pct: null,
+          risk_reason_codes: [],
+        }],
+      };
+    };
+    tokenMeteoraState.listSummaryByAddresses = async (addresses) => addresses.map((address) => ({
+      tokenAddress: address,
+      lastCheckedAt: '2026-04-15T21:08:00.000Z',
+      hasPool: false,
+      currentTvl: null,
+      bestPoolAddress: null,
+      poolCount: 0,
+      lastError: null,
+      lastSnapshotAt: '2026-04-15T19:00:00.000Z',
+      baselineTvl1h: null,
+      baselineTvl6h: null,
+      baselineTvl24h: null,
+    }));
+    tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+    tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+
+    try {
+      const res = await request(app)
+        .post('/api/dashboard/history-bootstrap')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({
+          starredTokens: ['So11111111111111111111111111111111111111112'],
+          recent: {
+            page: 1,
+            perPage: 20,
+            searchQuery: 'wsol',
+            starredOnly: false,
+            sorts: [{ mode: 'vol', window: '1h' }, { mode: 'age', window: 'newest' }],
+            dismissedAddresses: [],
+            mcapMin: 120000,
+            mcapMax: 0,
+          },
+          oldWeek: {
+            page: 0,
+            perPage: 30,
+            searchQuery: '',
+            starredOnly: true,
+            sorts: [{ mode: 'mcap', window: 'highest' }],
+            dismissedAddresses: ['So11111111111111111111111111111111111111114'],
+            mcapMin: 90000,
+            mcapMax: 500000,
+          },
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(capturedCalls.length, 2);
+      assert.deepEqual(capturedCalls[0], ['recent', {
+        page: 1,
+        perPage: 20,
+        searchQuery: 'wsol',
+        starredOnly: false,
+        sorts: [{ mode: 'vol', window: '1h' }, { mode: 'age', window: 'newest' }],
+        dismissedAddresses: [],
+        mcapMin: 120000,
+        mcapMax: 0,
+        starredAddresses: ['So11111111111111111111111111111111111111112'],
+      }]);
+      assert.deepEqual(capturedCalls[1], ['oldWeek', {
+        page: 0,
+        perPage: 30,
+        searchQuery: '',
+        starredOnly: true,
+        sorts: [{ mode: 'mcap', window: 'highest' }],
+        dismissedAddresses: ['So11111111111111111111111111111111111111114'],
+        mcapMin: 90000,
+        mcapMax: 500000,
+        starredAddresses: ['So11111111111111111111111111111111111111112'],
+      }]);
+      assert.equal(res.body.recent.total, 41);
+      assert.equal(res.body.recent.page, 1);
+      assert.equal(res.body.recent.tokens.length, 1);
+      assert.equal(res.body.oldWeek.total, 11);
+      assert.equal(res.body.oldWeek.tokens[0].symbol, 'BONK');
+    } finally {
+      tokenCatalog.listDashboardHistoryBucket = originalListDashboardHistoryBucket;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+      tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
+      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
+    }
+  });
+
+  it('rejects malformed history bootstrap payloads', async () => {
+    const res = await request(app)
+      .post('/api/dashboard/history-bootstrap')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Origin', 'http://localhost:5173')
+      .send({
+        starredTokens: [],
+        recent: {
+          page: 0,
+          perPage: 30,
+          searchQuery: '',
+          starredOnly: false,
+          sorts: [{ mode: 'wat', window: '1h' }],
+          dismissedAddresses: [],
+          mcapMin: 120000,
+          mcapMax: 0,
+        },
+        oldWeek: {
+          page: 0,
+          perPage: 30,
+          searchQuery: '',
+          starredOnly: false,
+          sorts: [{ mode: 'vol', window: '1h' }],
+          dismissedAddresses: [],
+          mcapMin: 120000,
+          mcapMax: 0,
+        },
+      });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'recent.sorts contains an invalid sort criterion');
+  });
 });

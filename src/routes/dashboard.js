@@ -7,6 +7,7 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const backendAlertFeed = require('../services/backend-alert-feed');
+const { isValidAddress } = require('../models/user-token');
 const { classifyTokenJunk } = require('../services/token-junk-metric');
 const {
   buildBlockStatusSummary,
@@ -34,6 +35,158 @@ function parseOptionalEventId(value, name) {
   }
 
   return { ok: true, value: parsed };
+}
+
+function parseOptionalBoolean(value, name) {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, value: false };
+  }
+
+  if (typeof value === 'boolean') {
+    return { ok: true, value };
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'true') return { ok: true, value: true };
+  if (normalized === 'false') return { ok: true, value: false };
+  return { ok: false, error: `${name} must be a boolean` };
+}
+
+function isValidHistorySortCriterion(mode, window) {
+  return (
+    (mode === 'vol' && (window === '1h' || window === '6h' || window === '24h'))
+    || (mode === 'mcap' && (window === 'highest' || window === 'lowest'))
+    || (mode === 'pchange' && (window === '1h' || window === '6h' || window === '24h'))
+    || (mode === 'age' && (window === 'newest' || window === 'oldest'))
+  );
+}
+
+function parseNonNegativeInteger(value, name, { min = 0, max = 500 } = {}) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isInteger(parsed)) {
+    return { ok: false, error: `${name} must be an integer` };
+  }
+  if (parsed < min || parsed > max) {
+    return { ok: false, error: `${name} must be between ${min} and ${max}` };
+  }
+  return { ok: true, value: parsed };
+}
+
+function parseSorts(value, name) {
+  if (!Array.isArray(value)) {
+    return { ok: false, error: `${name} must be an array` };
+  }
+
+  const next = [];
+  const seen = new Set();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, error: `${name} entries must be objects` };
+    }
+
+    const mode = String(item.mode || '').trim();
+    const window = String(item.window || '').trim();
+    if (!isValidHistorySortCriterion(mode, window)) {
+      return { ok: false, error: `${name} contains an invalid sort criterion` };
+    }
+
+    const key = `${mode}:${window}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    next.push({ mode, window });
+  }
+
+  if (next.length === 0) {
+    return { ok: false, error: `${name} must contain at least one sort criterion` };
+  }
+
+  return { ok: true, value: next.slice(0, 8) };
+}
+
+function parseAddressArray(value, name) {
+  if (value === undefined || value === null) {
+    return { ok: true, value: [] };
+  }
+
+  if (!Array.isArray(value)) {
+    return { ok: false, error: `${name} must be an array` };
+  }
+
+  const next = [];
+  const seen = new Set();
+  for (const item of value) {
+    const address = String(item || '').trim();
+    if (!address) {
+      continue;
+    }
+    if (!isValidAddress(address)) {
+      return { ok: false, error: `${name} contains an invalid token address` };
+    }
+    if (seen.has(address)) {
+      continue;
+    }
+    seen.add(address);
+    next.push(address);
+  }
+
+  return { ok: true, value: next };
+}
+
+function parseHistoryBucketRequest(body = {}, name) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: `${name} payload is required` };
+  }
+
+  const page = parseNonNegativeInteger(body.page, `${name}.page`, { min: 0, max: 10000 });
+  if (!page.ok) return page;
+  const perPage = parseNonNegativeInteger(body.perPage, `${name}.perPage`, { min: 10, max: 500 });
+  if (!perPage.ok) return perPage;
+  const starredOnly = parseOptionalBoolean(body.starredOnly, `${name}.starredOnly`);
+  if (!starredOnly.ok) return starredOnly;
+  const sorts = parseSorts(body.sorts, `${name}.sorts`);
+  if (!sorts.ok) return sorts;
+  const dismissed = parseAddressArray(body.dismissedAddresses, `${name}.dismissedAddresses`);
+  if (!dismissed.ok) return dismissed;
+
+  const mcapMin = normalizeMinMcap(body.mcapMin);
+  const parsedMax = Number(body.mcapMax);
+  const mcapMax = Number.isFinite(parsedMax) ? Math.max(0, parsedMax) : 0;
+
+  return {
+    ok: true,
+    value: {
+      page: page.value,
+      perPage: perPage.value,
+      searchQuery: String(body.searchQuery || '').trim().slice(0, 120),
+      starredOnly: starredOnly.value,
+      sorts: sorts.value,
+      dismissedAddresses: dismissed.value,
+      mcapMin,
+      mcapMax,
+    },
+  };
+}
+
+function buildHistoryBootstrapPayload(recentResult, oldWeekResult, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress) {
+  return {
+    generatedAt: new Date().toISOString(),
+    recent: {
+      total: recentResult.total,
+      page: recentResult.page,
+      perPage: recentResult.perPage,
+      count: recentResult.rows.length,
+      tokens: recentResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
+    },
+    oldWeek: {
+      total: oldWeekResult.total,
+      page: oldWeekResult.page,
+      perPage: oldWeekResult.perPage,
+      count: oldWeekResult.rows.length,
+      tokens: oldWeekResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
+    },
+  };
 }
 
 router.use(authenticate);
@@ -183,6 +336,74 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored dashboard' });
+  }
+});
+
+router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const starredAddresses = parseAddressArray(req.body?.starredTokens, 'starredTokens');
+  if (!starredAddresses.ok) {
+    return res.status(400).json({ error: starredAddresses.error });
+  }
+
+  const recent = parseHistoryBucketRequest(req.body?.recent, 'recent');
+  if (!recent.ok) {
+    return res.status(400).json({ error: recent.error });
+  }
+
+  const oldWeek = parseHistoryBucketRequest(req.body?.oldWeek, 'oldWeek');
+  if (!oldWeek.ok) {
+    return res.status(400).json({ error: oldWeek.error });
+  }
+
+  try {
+    const [recentResult, oldWeekResult] = await Promise.all([
+      tokenCatalog.listDashboardHistoryBucket('recent', {
+        ...recent.value,
+        starredAddresses: starredAddresses.value,
+      }),
+      tokenCatalog.listDashboardHistoryBucket('oldWeek', {
+        ...oldWeek.value,
+        starredAddresses: starredAddresses.value,
+      }),
+    ]);
+
+    const addresses = Array.from(new Set([
+      ...recentResult.rows.map((item) => item.address),
+      ...oldWeekResult.rows.map((item) => item.address),
+    ]));
+
+    const meteoraSummaryRows = await tokenMeteoraState.listSummaryByAddresses(addresses);
+    const meteoraByAddress = new Map();
+    const marketMcapBaselineByAddress = new Map();
+    const marketVolumeBaselineByAddress = new Map();
+
+    for (const row of meteoraSummaryRows) {
+      meteoraByAddress.set(row.tokenAddress, row);
+    }
+
+    const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
+      tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+    ]);
+
+    for (const row of primaryMarketBaselineRows) {
+      marketMcapBaselineByAddress.set(row.token_address, row);
+    }
+
+    for (const row of primaryVolumeBaselineRows) {
+      marketVolumeBaselineByAddress.set(row.token_address, row);
+    }
+
+    res.json(buildHistoryBootstrapPayload(
+      recentResult,
+      oldWeekResult,
+      meteoraByAddress,
+      marketMcapBaselineByAddress,
+      marketVolumeBaselineByAddress,
+    ));
+  } catch (err) {
+    console.error('POST /dashboard/history-bootstrap error:', err.message);
+    res.status(500).json({ error: 'Failed to load history workspace bootstrap' });
   }
 });
 

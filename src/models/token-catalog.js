@@ -7,6 +7,74 @@ const PUMPFUN_MIGRATION_MIN_MCAP = 30000;
 const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
 const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
 const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
+const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const HISTORY_BUCKET_SORT_MODES = new Set(['vol', 'mcap', 'pchange', 'age']);
+
+const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
+  vol: Object.freeze({
+    '1h': 'tc.last_vol_1h',
+    '6h': 'tc.last_vol_6h',
+    '24h': 'tc.last_vol_24h',
+  }),
+  mcap: Object.freeze({
+    highest: 'tc.last_mcap',
+    lowest: 'tc.last_mcap',
+  }),
+  pchange: Object.freeze({
+    '1h': 'tc.last_price_change_1h',
+    '6h': 'tc.last_price_change_6h',
+    '24h': 'tc.last_price_change_24h',
+  }),
+  age: Object.freeze({
+    newest: 'tc.last_token_created_at_ms',
+    oldest: 'tc.last_token_created_at_ms',
+  }),
+});
+
+const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
+   tc.address,
+   tc.symbol,
+   tc.name,
+   tc.eligible_for_monitoring,
+   tc.last_mcap,
+   tc.last_price,
+   tc.last_vol_5m,
+   tc.last_vol_1h,
+   tc.last_vol_6h,
+   tc.last_vol_24h,
+   tc.last_liquidity_usd,
+   tc.last_txns_1h_buys,
+   tc.last_txns_1h_sells,
+   tc.last_txns_24h_buys,
+   tc.last_txns_24h_sells,
+   tc.last_price_change_1h,
+   tc.last_price_change_6h,
+   tc.last_price_change_24h,
+   tc.last_token_created_at_ms,
+   tc.last_pair_address,
+   tc.last_pair_url,
+   tc.last_image_url,
+   tc.last_twitter_url,
+   tc.monitor_priority,
+   tc.last_seen_at,
+   tc.last_evaluated_at,
+   trr.label AS risk_review_label,
+   trr.source AS risk_review_source,
+   trr.notes AS risk_review_notes,
+   trr.updated_at AS risk_review_updated_at,
+   ab.label AS blocked_label,
+   ab.created_by AS blocked_created_by,
+   ab.created_at AS blocked_created_at,
+   tre.last_attempted_at AS risk_enrichment_last_attempted_at,
+   tre.last_enriched_at AS risk_enrichment_last_enriched_at,
+   tre.last_error AS risk_enrichment_last_error,
+   tre.holder_count AS risk_holder_count,
+   tre.mint_authority_active AS risk_mint_authority_active,
+   tre.freeze_authority_active AS risk_freeze_authority_active,
+   tre.top_10_pct AS risk_top_10_pct,
+   tre.top_20_pct AS risk_top_20_pct,
+   tre.reason_codes AS risk_reason_codes`;
 
 function normalizeSource(source) {
   const value = String(normalizeText(source, 64) || 'unknown').trim().toLowerCase();
@@ -430,49 +498,7 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 5000));
   const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
   const { rows } = await db.query(
-    `SELECT
-       tc.address,
-       tc.symbol,
-       tc.name,
-       tc.eligible_for_monitoring,
-       tc.last_mcap,
-       tc.last_price,
-       tc.last_vol_5m,
-       tc.last_vol_1h,
-       tc.last_vol_6h,
-       tc.last_vol_24h,
-       tc.last_liquidity_usd,
-       tc.last_txns_1h_buys,
-       tc.last_txns_1h_sells,
-       tc.last_txns_24h_buys,
-       tc.last_txns_24h_sells,
-       tc.last_price_change_1h,
-       tc.last_price_change_6h,
-       tc.last_price_change_24h,
-       tc.last_token_created_at_ms,
-       tc.last_pair_address,
-       tc.last_pair_url,
-       tc.last_image_url,
-       tc.last_twitter_url,
-       tc.monitor_priority,
-       tc.last_seen_at,
-       tc.last_evaluated_at,
-       trr.label AS risk_review_label,
-       trr.source AS risk_review_source,
-       trr.notes AS risk_review_notes,
-       trr.updated_at AS risk_review_updated_at,
-       ab.label AS blocked_label,
-       ab.created_by AS blocked_created_by,
-       ab.created_at AS blocked_created_at,
-       tre.last_attempted_at AS risk_enrichment_last_attempted_at,
-       tre.last_enriched_at AS risk_enrichment_last_enriched_at,
-       tre.last_error AS risk_enrichment_last_error,
-       tre.holder_count AS risk_holder_count,
-       tre.mint_authority_active AS risk_mint_authority_active,
-       tre.freeze_authority_active AS risk_freeze_authority_active,
-       tre.top_10_pct AS risk_top_10_pct,
-       tre.top_20_pct AS risk_top_20_pct,
-       tre.reason_codes AS risk_reason_codes
+    `${DASHBOARD_MONITORED_SELECT_SQL}
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
        ON trr.token_address = tc.address
@@ -487,6 +513,192 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
     [safeLimit, safeMinMcap]
   );
   return rows;
+}
+
+function normalizeHistoryBucketName(bucket) {
+  const normalized = String(bucket || '').trim();
+  return normalized === 'oldWeek' ? 'oldWeek' : 'recent';
+}
+
+function normalizeHistoryBucketSorts(input) {
+  if (!Array.isArray(input) || input.length === 0) {
+    return [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }];
+  }
+
+  const next = [];
+  const seen = new Set();
+  for (const item of input) {
+    const mode = String(item?.mode || '').trim();
+    const window = String(item?.window || '').trim();
+    if (!HISTORY_BUCKET_SORT_MODES.has(mode)) {
+      continue;
+    }
+
+    const column = HISTORY_BUCKET_SORT_COLUMNS[mode]?.[window];
+    if (!column) {
+      continue;
+    }
+
+    const key = `${mode}:${window}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    next.push({ mode, window });
+    if (next.length >= 8) {
+      break;
+    }
+  }
+
+  return next.length > 0 ? next : [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }];
+}
+
+function getHistoryBucketOrderDirection(mode, window) {
+  if ((mode === 'mcap' && window === 'lowest') || (mode === 'age' && window === 'oldest')) {
+    return 'ASC';
+  }
+  return 'DESC';
+}
+
+function buildHistoryBucketOrderSql(sorts) {
+  const clauses = normalizeHistoryBucketSorts(sorts).map(({ mode, window }) => {
+    const column = HISTORY_BUCKET_SORT_COLUMNS[mode][window];
+    const direction = getHistoryBucketOrderDirection(mode, window);
+    return `COALESCE(${column}, 0) ${direction}`;
+  });
+
+  clauses.push('COALESCE(tc.last_token_created_at_ms, 0) DESC');
+  clauses.push('COALESCE(tc.last_mcap, 0) DESC');
+  clauses.push('tc.address ASC');
+  return clauses.join(', ');
+}
+
+function buildHistoryBucketAgeWhereSql(bucket) {
+  if (normalizeHistoryBucketName(bucket) === 'oldWeek') {
+    return 'tc.last_token_created_at_ms <= $1';
+  }
+
+  return 'tc.last_token_created_at_ms BETWEEN $1 AND $2';
+}
+
+function buildHistoryBucketQueryParams(bucket, options = {}) {
+  const normalizedBucket = normalizeHistoryBucketName(bucket);
+  const safePage = Math.max(0, Math.floor(Number(options.page) || 0));
+  const safePerPage = Math.max(10, Math.min(Math.floor(Number(options.perPage) || 30), 500));
+  const safeMinMcap = Math.max(0, Number.isFinite(Number(options.mcapMin)) ? Number(options.mcapMin) : 0);
+  const safeMaxMcap = Number.isFinite(Number(options.mcapMax)) ? Number(options.mcapMax) : 0;
+  const searchQuery = String(options.searchQuery || '').trim().toLowerCase();
+  const searchPattern = searchQuery ? `%${searchQuery}%` : null;
+  const dismissedAddresses = Array.from(new Set(
+    (Array.isArray(options.dismissedAddresses) ? options.dismissedAddresses : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => isValidAddress(item))
+  ));
+  const starredAddresses = Array.from(new Set(
+    (Array.isArray(options.starredAddresses) ? options.starredAddresses : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => isValidAddress(item))
+  ));
+
+  if (Boolean(options.starredOnly) && starredAddresses.length === 0) {
+    return {
+      ok: false,
+      empty: true,
+      params: {
+        page: safePage,
+        perPage: safePerPage,
+      },
+    };
+  }
+
+  const now = Date.now();
+  const ageParams = normalizedBucket === 'oldWeek'
+    ? [now - OLD_WEEK_MIN_AGE_MS]
+    : [now - OLD_WEEK_MIN_AGE_MS, now - RECENT_TOKEN_MIN_AGE_MS];
+
+  return {
+    ok: true,
+    params: {
+      bucket: normalizedBucket,
+      page: safePage,
+      perPage: safePerPage,
+      offset: safePage * safePerPage,
+      minMcap: safeMinMcap,
+      maxMcap: safeMaxMcap,
+      searchPattern,
+      dismissedAddresses,
+      starredAddresses,
+      starredOnly: Boolean(options.starredOnly),
+      orderSql: buildHistoryBucketOrderSql(options.sorts),
+      ageParams,
+    },
+  };
+}
+
+async function listDashboardHistoryBucket(bucket, options = {}) {
+  const normalized = buildHistoryBucketQueryParams(bucket, options);
+  if (!normalized.ok) {
+    return {
+      total: 0,
+      rows: [],
+      page: normalized.params.page,
+      perPage: normalized.params.perPage,
+    };
+  }
+
+  const { params } = normalized;
+  const whereSql = [
+    'tc.eligible_for_monitoring = TRUE',
+    'tc.last_token_created_at_ms IS NOT NULL',
+    'tc.last_token_created_at_ms > 0',
+    buildHistoryBucketAgeWhereSql(params.bucket),
+    `COALESCE(tc.last_mcap, 0) >= $${params.ageParams.length + 1}`,
+    `($${params.ageParams.length + 2} <= 0 OR COALESCE(tc.last_mcap, 0) <= $${params.ageParams.length + 2})`,
+    `($${params.ageParams.length + 3}::text IS NULL OR (
+      LOWER(COALESCE(tc.symbol, '')) LIKE $${params.ageParams.length + 3}
+      OR LOWER(COALESCE(tc.name, '')) LIKE $${params.ageParams.length + 3}
+      OR LOWER(tc.address) LIKE $${params.ageParams.length + 3}
+    ))`,
+    `($${params.ageParams.length + 4}::varchar[] = '{}'::varchar[] OR tc.address <> ALL($${params.ageParams.length + 4}::varchar[]))`,
+    `($${params.ageParams.length + 5}::boolean = FALSE OR tc.address = ANY($${params.ageParams.length + 6}::varchar[]))`,
+  ];
+
+  const queryParams = [
+    ...params.ageParams,
+    params.minMcap,
+    params.maxMcap,
+    params.searchPattern,
+    params.dismissedAddresses,
+    params.starredOnly,
+    params.starredAddresses,
+    params.perPage,
+    params.offset,
+  ];
+
+  const { rows } = await db.query(
+    `${DASHBOARD_MONITORED_SELECT_SQL},
+       COUNT(*) OVER() AS total_count
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = tc.address
+     LEFT JOIN admin_blocked_tokens ab
+       ON ab.address = tc.address
+     LEFT JOIN token_risk_enrichment tre
+       ON tre.token_address = tc.address
+     WHERE ${whereSql.join('\n       AND ')}
+     ORDER BY ${params.orderSql}
+     LIMIT $${params.ageParams.length + 7}
+     OFFSET $${params.ageParams.length + 8}`,
+    queryParams
+  );
+
+  return {
+    total: Number(rows[0]?.total_count) || 0,
+    rows,
+    page: params.page,
+    perPage: params.perPage,
+  };
 }
 
 async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 30000) {
@@ -967,6 +1179,7 @@ module.exports = {
   listDueForMeteoraSnapshots,
   listEligibleVisible,
   listDashboardMonitored,
+  listDashboardHistoryBucket,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,
   listRiskEnrichmentCandidates,
