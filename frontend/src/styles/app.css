@@ -5313,6 +5313,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .live-panel-collapsed-stack > .live-panel-item {
   min-width: 0;
+  position: relative;
 }
 
 .legacy-panels[data-workspace="history"] {
