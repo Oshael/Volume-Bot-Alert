@@ -6,6 +6,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const section = document.createElement('section');
   section.className = 'legacy-token-bar recent-bar';
   const isCollapsed = state.ui.collapsed.recent;
+  const usesServerSlice = state.ui.workspace === 'history';
   const min = fmtConfig(state, 'old-mcap-min', 120000);
   const max = fmtConfig(state, 'old-mcap-max', 100000000);
   const recentSorts = state.ui.recentSorts;
@@ -55,8 +56,11 @@ export function renderRecentSection(state: AppState, controller: AppController) 
     });
     return section;
   }
-  const safeRecentPerPage = Math.max(10, Math.floor(state.ui.recentPerPage) || 30);
-  const recentTotalPages = Math.max(1, Math.ceil(filteredRecentTokens.length / safeRecentPerPage));
+  const safeRecentPerPage = Math.max(10, Math.floor(state.ui.recentPerPage) || 15);
+  const recentTotalCount = usesServerSlice
+    ? Math.max(filteredRecentTokens.length, state.bars.recent)
+    : filteredRecentTokens.length;
+  const recentTotalPages = Math.max(1, Math.ceil(recentTotalCount / safeRecentPerPage));
   const safeRecentPage = Math.min(Math.max(0, Math.floor(state.ui.recentPage) || 0), recentTotalPages - 1);
   section.innerHTML = `
     <div class="legacy-bar-head">
@@ -122,6 +126,10 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       Number(state.data.configs['meteora-min-pool']) || 5000,
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
+      {
+        totalCount: recentTotalCount,
+        skipClientSort: usesServerSlice,
+      },
     )}
   `;
   const recentSearchInput = section.querySelector<HTMLInputElement>('[data-action="recent-search"]');
@@ -179,6 +187,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const section = document.createElement('section');
   section.className = 'legacy-token-bar old-week-bar';
   const isCollapsed = state.ui.collapsed.oldWeek;
+  const usesServerSlice = state.ui.workspace === 'history';
   const min = fmtConfig(state, 'old-week-mcap-min', 120000);
   const max = fmtConfig(state, 'old-week-mcap-max', 100000000);
   const oldWeekSorts = state.ui.oldWeekSorts;
@@ -228,8 +237,11 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
     });
     return section;
   }
-  const safeOldWeekPerPage = Math.max(10, Math.floor(state.ui.oldWeekPerPage) || 30);
-  const oldWeekTotalPages = Math.max(1, Math.ceil(filteredOldWeekTokens.length / safeOldWeekPerPage));
+  const safeOldWeekPerPage = Math.max(10, Math.floor(state.ui.oldWeekPerPage) || 15);
+  const oldWeekTotalCount = usesServerSlice
+    ? Math.max(filteredOldWeekTokens.length, state.bars.oldWeek)
+    : filteredOldWeekTokens.length;
+  const oldWeekTotalPages = Math.max(1, Math.ceil(oldWeekTotalCount / safeOldWeekPerPage));
   const safeOldWeekPage = Math.min(Math.max(0, Math.floor(state.ui.oldWeekPage) || 0), oldWeekTotalPages - 1);
   section.innerHTML = `
     <div class="legacy-bar-head">
@@ -295,6 +307,10 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       Number(state.data.configs['meteora-min-pool']) || 5000,
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
+      {
+        totalCount: oldWeekTotalCount,
+        skipClientSort: usesServerSlice,
+      },
     )}
   `;
   const oldWeekSearchInput = section.querySelector<HTMLInputElement>('[data-action="old-week-search"]');

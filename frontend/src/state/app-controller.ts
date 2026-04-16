@@ -39,7 +39,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertEvents, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertEvents, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -118,6 +118,7 @@ const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
+const ROUTED_BUCKET_DEFAULT_PER_PAGE = 15;
 const ALERT_STORAGE_DEBOUNCE_MS = 250;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
@@ -608,6 +609,7 @@ export function createAppController(): AppController {
   let monitoredRefreshInFlight = false;
   let lateralizedRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
+  let historyBootstrapRequestRevision = 0;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -941,6 +943,24 @@ export function createAppController(): AppController {
 
   function isHistoryWorkspace() {
     return state.ui.workspace === 'history';
+  }
+
+  function usesHistoryBucketBootstrap() {
+    return isHistoryWorkspace();
+  }
+
+  function getRecentTokenTotalForPagination() {
+    if (!usesHistoryBucketBootstrap()) {
+      return state.data.recentTokenAddresses.length;
+    }
+    return Math.max(state.data.recentTokenAddresses.length, state.bars.recent);
+  }
+
+  function getOldWeekTokenTotalForPagination() {
+    if (!usesHistoryBucketBootstrap()) {
+      return state.data.oldWeekTokenAddresses.length;
+    }
+    return Math.max(state.data.oldWeekTokenAddresses.length, state.bars.oldWeek);
   }
 
   function shouldRunFrontendAlerts() {
@@ -1801,8 +1821,8 @@ export function createAppController(): AppController {
       recentStarredOnly: Boolean(state.ui.recentStarredOnly),
       oldWeekStarredOnly: Boolean(state.ui.oldWeekStarredOnly),
       monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
-      recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, 30),
-      oldWeekPerPage: normalizeUiPerPage(state.ui.oldWeekPerPage, 30),
+      recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
+      oldWeekPerPage: normalizeUiPerPage(state.ui.oldWeekPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
       manualSorts: [...state.ui.manualSorts],
       recentSorts: [...state.ui.recentSorts],
       oldWeekSorts: [...state.ui.oldWeekSorts],
@@ -2085,11 +2105,11 @@ export function createAppController(): AppController {
     state.ui.monitoredPerPage = normalizeUiPerPage(uiPrefs?.monitoredPerPage, 30);
     state.ui.recentPerPage = normalizeUiPerPage(
       uiPrefs?.recentPerPage,
-      getConfigNumber('old-per-page', state.ui.recentPerPage || 30),
+      getConfigNumber('old-per-page', state.ui.recentPerPage || ROUTED_BUCKET_DEFAULT_PER_PAGE),
     );
     state.ui.oldWeekPerPage = normalizeUiPerPage(
       uiPrefs?.oldWeekPerPage,
-      getConfigNumber('old-week-per-page', state.ui.oldWeekPerPage || 30),
+      getConfigNumber('old-week-per-page', state.ui.oldWeekPerPage || ROUTED_BUCKET_DEFAULT_PER_PAGE),
     );
 
     state.ui.manualSorts = normalizeBucketSorts(uiPrefs?.manualSorts, 'manual');
@@ -3036,8 +3056,8 @@ export function createAppController(): AppController {
 
   function syncRoutedPagination() {
     syncMonitoredPagination();
-    state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
-    state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
+    state.ui.recentPage = clampPage(state.ui.recentPage, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
+    state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
   }
   function shouldDeriveRecentList(options?: { forceRecentList?: boolean }) {
     return Boolean(options?.forceRecentList) || !state.ui.collapsed.recent;
@@ -4180,9 +4200,64 @@ export function createAppController(): AppController {
     }
   }
 
+  async function refreshHistoryWorkspaceBootstrap(options?: {
+    token?: string;
+    manualTokensOverride?: AddressItem[];
+    suppressErrors?: boolean;
+  }) {
+    const token = options?.token ?? state.session.token;
+    if (!token) {
+      return;
+    }
+
+    const requestRevision = historyBootstrapRequestRevision + 1;
+    historyBootstrapRequestRevision = requestRevision;
+    const requestPayload = buildHistoryBootstrapRequest();
+
+    try {
+      const payload = await fetchDashboardHistoryBootstrap(requestPayload, token);
+      if (
+        requestRevision !== historyBootstrapRequestRevision
+        || !usesHistoryBucketBootstrap()
+        || state.session.token !== token
+      ) {
+        return;
+      }
+
+      applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
+      if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
+        setError(null);
+      }
+      lastMonitoredDashboardError = null;
+      emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+    } catch (error) {
+      if (
+        requestRevision !== historyBootstrapRequestRevision
+        || options?.suppressErrors
+        || state.session.token !== token
+      ) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Failed to refresh monitor history';
+      lastMonitoredDashboardError = message;
+      setError(message);
+      emit('legacy', 'overlay');
+    }
+  }
+
   async function refreshMonitoredDashboard(options?: { includeAlertFeed?: boolean }) {
     const token = state.session.token;
-    if (!token || monitoredRefreshInFlight) {
+    if (!token) {
+      return;
+    }
+
+    if (usesHistoryBucketBootstrap()) {
+      await refreshHistoryWorkspaceBootstrap({ token });
+      return;
+    }
+
+    if (monitoredRefreshInFlight) {
       return;
     }
 
@@ -4220,12 +4295,16 @@ export function createAppController(): AppController {
 
   function runMonitoringCycle() {
     state.runtime.cycle += 1;
-    sweepMinMcapRemove();
-    refreshMonitoredPanelCounts();
     computeUptimeLabel();
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
     updateBidZoneRefreshAvailability(state.runtime.bidZoneRefreshAvailableAt);
-    void refreshMonitoredDashboard();
+    if (usesHistoryBucketBootstrap()) {
+      void refreshHistoryWorkspaceBootstrap();
+    } else {
+      sweepMinMcapRemove();
+      refreshMonitoredPanelCounts();
+      void refreshMonitoredDashboard();
+    }
     if (shouldRunLateralizedRuntime()) {
       void refreshLateralizedTokens();
       void refreshBidZoneTokens();
@@ -4443,7 +4522,11 @@ export function createAppController(): AppController {
       return;
     }
 
-    void refreshMonitoredDashboard();
+    if (usesHistoryBucketBootstrap()) {
+      void refreshHistoryWorkspaceBootstrap();
+    } else {
+      void refreshMonitoredDashboard();
+    }
     if (shouldRunLateralizedRuntime()) {
       void refreshLateralizedTokens({ force: true });
       void refreshBidZoneTokens({ force: true });
@@ -4752,8 +4835,8 @@ export function createAppController(): AppController {
     state.ui.recentPage = 0;
     state.ui.oldWeekPage = 0;
     state.ui.monitoredPerPage = 30;
-    state.ui.recentPerPage = 30;
-    state.ui.oldWeekPerPage = 30;
+    state.ui.recentPerPage = ROUTED_BUCKET_DEFAULT_PER_PAGE;
+    state.ui.oldWeekPerPage = ROUTED_BUCKET_DEFAULT_PER_PAGE;
     state.ui.manualSorts = getDefaultBucketSorts('manual');
     state.ui.recentSorts = getDefaultBucketSorts('recent');
     state.ui.oldWeekSorts = getDefaultBucketSorts('old-week');
@@ -4766,6 +4849,7 @@ export function createAppController(): AppController {
     hydrateSoundSettings();
     state.ui.collapsed = getDefaultCollapsedSections();
     replaceStarredTokens([], { resetRevision: true });
+    historyBootstrapRequestRevision = 0;
     historySyncPeers.clear();
     historySyncLeaderTabId = null;
     syncHistorySyncState();
@@ -4860,6 +4944,55 @@ export function createAppController(): AppController {
       updateMonitoredFreshness(generatedAt ?? null);
     }
     rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+  }
+
+  function buildHistoryBootstrapRequest() {
+    return {
+      starredTokens: [...state.data.starredTokens],
+      recent: {
+        page: state.ui.recentPage,
+        perPage: state.ui.recentPerPage,
+        searchQuery: state.ui.recentSearchQuery,
+        starredOnly: state.ui.recentStarredOnly,
+        sorts: state.ui.recentSorts,
+        dismissedAddresses: [...state.data.dismissedRecent],
+        mcapMin: getConfigNumber('old-mcap-min', 120000),
+        mcapMax: getConfigNumber('old-mcap-max', 100000000),
+      },
+      oldWeek: {
+        page: state.ui.oldWeekPage,
+        perPage: state.ui.oldWeekPerPage,
+        searchQuery: state.ui.oldWeekSearchQuery,
+        starredOnly: state.ui.oldWeekStarredOnly,
+        sorts: state.ui.oldWeekSorts,
+        dismissedAddresses: [...state.data.dismissedOldWeek],
+        mcapMin: getConfigNumber('old-week-mcap-min', 120000),
+        mcapMax: getConfigNumber('old-week-mcap-max', 100000000),
+      },
+    };
+  }
+
+  function applyHistoryBootstrapPayload(
+    payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
+    manualTokensOverride?: Array<{ address: string; label?: string | null }>,
+  ) {
+    const requestedRecentPage = Math.max(0, Number(payload.recent?.page) || 0);
+    const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek?.page) || 0);
+    const recentTokens = payload.recent?.tokens || [];
+    const oldWeekTokens = payload.oldWeek?.tokens || [];
+    const monitoredDashboardTokens = Array.from(new Map(
+      [...recentTokens, ...oldWeekTokens].map((item) => [item.address, item]),
+    ).values());
+
+    applyMonitoredDashboard(monitoredDashboardTokens, manualTokensOverride, payload.generatedAt ?? null);
+    state.data.recentTokenAddresses = recentTokens.map((item) => item.address);
+    state.data.oldWeekTokenAddresses = oldWeekTokens.map((item) => item.address);
+    state.bars.recent = Math.max(0, Number(payload.recent?.total) || 0);
+    state.bars.oldWeek = Math.max(0, Number(payload.oldWeek?.total) || 0);
+    state.ui.recentPage = requestedRecentPage;
+    state.ui.oldWeekPage = requestedOldWeekPage;
+    state.runtime.routedRevision += 1;
+    syncRoutedPagination();
   }
 
   function buildMonitoredDashboardPayload(
@@ -4972,6 +5105,22 @@ export function createAppController(): AppController {
 
   async function hydrateDashboardMonitoredInternal(token: string, manualTokens: AddressItem[]) {
     try {
+      if (usesHistoryBucketBootstrap()) {
+        await refreshHistoryWorkspaceBootstrap({
+          token,
+          manualTokensOverride: manualTokens,
+          suppressErrors: true,
+        });
+        if (isHistoryWorkspace()) {
+          void refreshLateralizedTokens({ force: true });
+          void refreshBidZoneTokens({ force: true });
+          emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+        } else {
+          emit('recent', 'old-week', 'header');
+        }
+        return;
+      }
+
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
       await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
@@ -5647,22 +5796,28 @@ export function createAppController(): AppController {
       if (!state.data.dismissedRecent.includes(address)) {
         state.data.dismissedRecent = [...state.data.dismissedRecent, address];
         state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
-        state.bars.recent = state.data.recentTokenAddresses.length;
+        state.bars.recent = Math.max(0, state.bars.recent - 1);
         syncRoutedPagination();
         persistBarStorage();
         setNotice('Recent token dismissed.');
         emit('recent', 'legacy', 'overlay');
+        if (usesHistoryBucketBootstrap()) {
+          void refreshHistoryWorkspaceBootstrap();
+        }
       }
     },
     dismissOldWeekToken(address: string) {
       if (!state.data.dismissedOldWeek.includes(address)) {
         state.data.dismissedOldWeek = [...state.data.dismissedOldWeek, address];
         state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
-        state.bars.oldWeek = state.data.oldWeekTokenAddresses.length;
+        state.bars.oldWeek = Math.max(0, state.bars.oldWeek - 1);
         syncRoutedPagination();
         persistBarStorage();
         setNotice('Old Week token dismissed.');
         emit('old-week', 'legacy', 'overlay');
+        if (usesHistoryBucketBootstrap()) {
+          void refreshHistoryWorkspaceBootstrap();
+        }
       }
     },
     clearAllAlerts() {
@@ -5697,14 +5852,22 @@ export function createAppController(): AppController {
     },
     clearDismissedRecent() {
       state.data.dismissedRecent = [];
-      deriveAgeBuckets();
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      } else {
+        deriveAgeBuckets();
+      }
       persistBarStorage();
       setNotice('Recent dismissed set cleared.');
       emit('recent', 'legacy', 'overlay');
     },
     clearDismissedOldWeek() {
       state.data.dismissedOldWeek = [];
-      deriveAgeBuckets();
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      } else {
+        deriveAgeBuckets();
+      }
       persistBarStorage();
       setNotice('Old Week dismissed set cleared.');
       emit('old-week', 'legacy', 'overlay');
@@ -5736,11 +5899,17 @@ export function createAppController(): AppController {
       state.ui.recentSearchQuery = String(query || '');
       state.ui.recentPage = 0;
       emit('recent');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setOldWeekSearchQuery(query: string) {
       state.ui.oldWeekSearchQuery = String(query || '');
       state.ui.oldWeekPage = 0;
       emit('old-week');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setManualStarredOnly(enabled: boolean) {
       state.ui.manualStarredOnly = Boolean(enabled);
@@ -5752,24 +5921,36 @@ export function createAppController(): AppController {
       state.ui.recentPage = 0;
       queueUiPrefsPersist();
       emit('recent');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setOldWeekStarredOnly(enabled: boolean) {
       state.ui.oldWeekStarredOnly = Boolean(enabled);
       state.ui.oldWeekPage = 0;
       queueUiPrefsPersist();
       emit('old-week');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       emit('monitored');
     },
     setRecentPage(page: number) {
-      state.ui.recentPage = clampPage(page, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
+      state.ui.recentPage = clampPage(page, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
       emit('recent');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setOldWeekPage(page: number) {
-      state.ui.oldWeekPage = clampPage(page, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
+      state.ui.oldWeekPage = clampPage(page, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
       emit('old-week');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setMonitoredPerPage(perPage: number) {
       state.ui.monitoredPerPage = normalizeUiPerPage(perPage, 30);
@@ -5778,16 +5959,22 @@ export function createAppController(): AppController {
       emit('monitored');
     },
     setRecentPerPage(perPage: number) {
-      state.ui.recentPerPage = normalizeUiPerPage(perPage, 30);
-      state.ui.recentPage = clampPage(state.ui.recentPage, state.data.recentTokenAddresses.length, state.ui.recentPerPage);
+      state.ui.recentPerPage = normalizeUiPerPage(perPage, ROUTED_BUCKET_DEFAULT_PER_PAGE);
+      state.ui.recentPage = clampPage(state.ui.recentPage, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
       queueUiPrefsPersist();
       emit('recent');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setOldWeekPerPage(perPage: number) {
-      state.ui.oldWeekPerPage = normalizeUiPerPage(perPage, 30);
-      state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, state.data.oldWeekTokenAddresses.length, state.ui.oldWeekPerPage);
+      state.ui.oldWeekPerPage = normalizeUiPerPage(perPage, ROUTED_BUCKET_DEFAULT_PER_PAGE);
+      state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
       queueUiPrefsPersist();
       emit('old-week');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.manualSorts = toggleSortCriterion(
@@ -5802,16 +5989,24 @@ export function createAppController(): AppController {
         state.ui.recentSorts,
         normalizeBucketCriterion(mode, window),
       );
+      state.ui.recentPage = 0;
       queueUiPrefsPersist();
       emit('recent');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.oldWeekSorts = toggleSortCriterion(
         state.ui.oldWeekSorts,
         normalizeBucketCriterion(mode, window),
       );
+      state.ui.oldWeekPage = 0;
       queueUiPrefsPersist();
       emit('old-week');
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow) {
       state.ui.monitoredSorts = toggleSortCriterion(
@@ -5879,6 +6074,9 @@ export function createAppController(): AppController {
       );
       emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'alerts');
       queueStarredTokensPersist();
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      }
     },
     setSoundVolume(volume: number) {
       const nextVolume = clampUiVolume(volume);
@@ -6426,8 +6624,12 @@ export function createAppController(): AppController {
         state.data.configs = { ...state.data.configs, ...patchResult.configs };
         applyUiPreferencesFromConfigs();
         persistSoundSettings();
-        sweepMinMcapRemove();
-        deriveAgeBuckets();
+        if (usesHistoryBucketBootstrap()) {
+          await refreshHistoryWorkspaceBootstrap({ token });
+        } else {
+          sweepMinMcapRemove();
+          deriveAgeBuckets();
+        }
         emit();
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to save config');

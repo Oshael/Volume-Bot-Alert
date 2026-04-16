@@ -542,6 +542,38 @@ function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSortCriter
   });
 }
 
+function getAgeBucketEmptyState(mode: 'recent' | 'old-week') {
+  return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
+}
+
+function resolveAgeBucketRows(
+  tokens: ManualTokenEntry[],
+  sortCriteria: BucketSortCriterion[],
+  options?: { skipClientSort?: boolean },
+) {
+  return options?.skipClientSort ? [...tokens] : sortBucketTokens(tokens, sortCriteria);
+}
+
+function paginateAgeBucketRows(
+  rows: ManualTokenEntry[],
+  page: number,
+  perPage: number,
+  totalCount: number,
+  options?: { skipClientSort?: boolean },
+) {
+  const safePerPage = Math.max(10, Math.floor(perPage) || 15);
+  const resolvedTotalCount = Math.max(rows.length, totalCount);
+  const totalPages = Math.max(1, Math.ceil(resolvedTotalCount / safePerPage));
+  const safePage = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
+  const pageStart = safePage * safePerPage;
+  return {
+    totalPages,
+    safePage,
+    pageStart,
+    pageItems: options?.skipClientSort ? rows : rows.slice(pageStart, pageStart + safePerPage),
+  };
+}
+
 export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false, enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
   const starredSet = new Set(starredTokens);
@@ -549,16 +581,28 @@ export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean
   return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool, isAdmin, enabledTradeTerminals });
 }
 
-export function renderPagedAgeBucketList(tokens: ManualTokenEntry[], busy: boolean, mode: 'recent' | 'old-week', page: number, perPage: number, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false, enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS) {
-  if (tokens.length === 0) return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
+export function renderPagedAgeBucketList(
+  tokens: ManualTokenEntry[],
+  busy: boolean,
+  mode: 'recent' | 'old-week',
+  page: number,
+  perPage: number,
+  starredTokens: string[] = [],
+  sortCriteria: BucketSortCriterion[] = [{ mode: 'vol', window: '24h' }],
+  meteoraByAddress: Record<string, MeteoraEntry> = {},
+  meteoraMinPool = 5000,
+  isAdmin = false,
+  enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS,
+  options?: { totalCount?: number; skipClientSort?: boolean },
+) {
+  const totalCount = Math.max(0, Number(options?.totalCount) || 0);
+  if (tokens.length === 0 && totalCount === 0) {
+    return getAgeBucketEmptyState(mode);
+  }
 
   const starredSet = new Set(starredTokens);
-  const sorted = sortBucketTokens(tokens, sortCriteria);
-  const safePerPage = Math.max(10, Math.floor(perPage) || 30);
-  const totalPages = Math.max(1, Math.ceil(sorted.length / safePerPage));
-  const safePage = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
-  const pageStart = safePage * safePerPage;
-  const pageItems = sorted.slice(pageStart, pageStart + safePerPage);
+  const rows = resolveAgeBucketRows(tokens, sortCriteria, options);
+  const { totalPages, safePage, pageStart, pageItems } = paginateAgeBucketRows(rows, page, perPage, totalCount, options);
 
   return `
     ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1, isAdmin, enabledTradeTerminals })}

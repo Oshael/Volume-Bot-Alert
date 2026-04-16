@@ -89,6 +89,46 @@ export interface DashboardMonitoredPayload {
   tokens: DashboardMonitoredToken[];
 }
 
+export interface DashboardHistoryBucketRequest {
+  page?: number;
+  perPage?: number;
+  searchQuery?: string;
+  starredOnly?: boolean;
+  sorts?: Array<{
+    mode: 'vol' | 'mcap' | 'pchange' | 'age';
+    window: '1h' | '6h' | '24h' | 'highest' | 'lowest' | 'newest' | 'oldest';
+  }>;
+  dismissedAddresses?: string[];
+  mcapMin?: number;
+  mcapMax?: number;
+}
+
+export interface DashboardHistoryBucketSlicePayload {
+  total: number;
+  page: number;
+  perPage: number;
+  count: number;
+  tokens: DashboardMonitoredToken[];
+}
+
+export interface DashboardHistoryBootstrapPayload {
+  generatedAt?: string | null;
+  recent: DashboardHistoryBucketSlicePayload;
+  oldWeek: DashboardHistoryBucketSlicePayload;
+}
+
+function normalizeDashboardHistoryBucketSlice(
+  slice: Partial<DashboardHistoryBucketSlicePayload> | null | undefined,
+): DashboardHistoryBucketSlicePayload {
+  return {
+    total: Number(slice?.total) || 0,
+    page: Number(slice?.page) || 0,
+    perPage: Number(slice?.perPage) || 30,
+    count: Number(slice?.count) || 0,
+    tokens: slice?.tokens || [],
+  };
+}
+
 export interface DashboardAlertEvent {
   id: number;
   kind?: string | null;
@@ -255,6 +295,29 @@ export function fetchDashboardMonitored(token?: string | null) {
       generatedAt: response.generatedAt ?? null,
       tokens: response.tokens || [],
     }));
+}
+
+export function fetchDashboardHistoryBootstrap(
+  payload: {
+    starredTokens?: string[];
+    recent?: DashboardHistoryBucketRequest;
+    oldWeek?: DashboardHistoryBucketRequest;
+  },
+  token?: string | null,
+) {
+  return apiFetch<DashboardHistoryBootstrapPayload>('/api/dashboard/history-bootstrap', {
+    method: 'POST',
+    body: JSON.stringify({
+      starredTokens: payload.starredTokens ?? [],
+      recent: payload.recent ?? {},
+      oldWeek: payload.oldWeek ?? {},
+    }),
+    token,
+  }).then((response) => ({
+    generatedAt: response.generatedAt ?? null,
+    recent: normalizeDashboardHistoryBucketSlice(response.recent),
+    oldWeek: normalizeDashboardHistoryBucketSlice(response.oldWeek),
+  }));
 }
 
 export function fetchMeteoraBatch(addresses: string[], token?: string | null) {
