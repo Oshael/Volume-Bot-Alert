@@ -62,11 +62,11 @@ function buildLateralizedRow(
   isAdmin: boolean,
 ) {
   const tracked = getTrackedToken(state, item.address);
-  const symbol = tracked?.symbol || item.symbol || item.address.slice(0, 6);
-  const subtitle = String(tracked?.name || item.name || '');
-  const pairUrl = sanitizeHttpUrl(tracked?.pairUrl || `https://dexscreener.com/solana/${item.address}`);
+  const symbol = item.symbol || tracked?.symbol || item.address.slice(0, 6);
+  const subtitle = String(item.name || tracked?.name || '');
+  const pairUrl = sanitizeHttpUrl(item.pairUrl || tracked?.pairUrl || `https://dexscreener.com/solana/${item.address}`);
   const xSearchUrl = sanitizeHttpUrl(buildXSearchUrl(symbol, item.address));
-  const imageUrl = sanitizeOptionalHttpUrl(tracked?.imageUrl);
+  const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl || tracked?.imageUrl);
   const volume1h = item.volume1h ?? tracked?.volume1h ?? null;
   const volume24h = item.volume24h ?? tracked?.volume24h ?? null;
   const age = formatLateralizedAge(item.ageHours, tracked?.createdAt ?? null);
@@ -105,7 +105,7 @@ function buildLateralizedRow(
   actions.className = 'lateralized-inline-actions';
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
-    buildTradeTerminalMenuElement(item.address, tracked?.mintAddress || item.address, tracked?.pairAddress || null, {
+    buildTradeTerminalMenuElement(item.address, tracked?.mintAddress || item.address, tracked?.pairAddress || item.pairAddress || null, {
       enabledTradeTerminals: state.ui.enabledTradeTerminals,
     }),
     buildStarButton(item.address, isStarred, busy),
@@ -250,14 +250,6 @@ function formatScore(value?: number | null) {
     return '-';
   }
   return num >= 100 ? Math.round(num).toString() : num.toFixed(1);
-}
-
-function formatHours(value?: number | null) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) {
-    return '-';
-  }
-  return `${Math.round(num)}H`;
 }
 
 function buildXSearchUrl(symbol: string, address: string) {

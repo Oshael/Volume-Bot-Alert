@@ -424,6 +424,36 @@ function buildBidZoneResponse(payload = {}, metadata = {}) {
   };
 }
 
+async function enrichDashboardCandidateMetadata(candidates = []) {
+  const baseCandidates = Array.isArray(candidates) ? candidates : [];
+  if (!baseCandidates.length) {
+    return [];
+  }
+
+  const metadataRows = await tokenCatalog.listDashboardMetadataByAddresses(
+    baseCandidates.map((item) => item?.address).filter(Boolean)
+  );
+  const metadataByAddress = new Map(metadataRows.map((row) => [row.address, row]));
+
+  return baseCandidates.map((item) => {
+    const metadata = metadataByAddress.get(item.address);
+    if (!metadata) {
+      return item;
+    }
+
+    return {
+      ...item,
+      symbol: item.symbol ?? metadata.symbol ?? null,
+      name: item.name ?? metadata.name ?? null,
+      monitorPriority: item.monitorPriority ?? metadata.monitor_priority ?? null,
+      pairAddress: item.pairAddress ?? metadata.last_pair_address ?? null,
+      pairUrl: item.pairUrl ?? metadata.last_pair_url ?? null,
+      imageUrl: item.imageUrl ?? metadata.last_image_url ?? null,
+      twitterUrl: item.twitterUrl ?? metadata.last_twitter_url ?? null,
+    };
+  });
+}
+
 async function getStoredBidZoneSnapshot(options = {}, resultOptions = {}) {
   const normalized = normalizeBidZoneOptions(options);
   const run = await tokenMarketBidZoneRun.getLatestCompletedRunWithResults({
@@ -827,6 +857,8 @@ router.get('/lateralized', catalogReadLimiter, async (req, res) => {
       });
     }
 
+    const candidates = await enrichDashboardCandidateMetadata(run.candidates);
+
     res.json({
       generatedAt: run.completedAt,
       runId: run.id,
@@ -841,7 +873,7 @@ router.get('/lateralized', catalogReadLimiter, async (req, res) => {
       count: run.candidates.length,
       candidateCount: run.candidateCount,
       resultCount: run.resultCount,
-      candidates: run.candidates,
+      candidates,
     });
   } catch (err) {
     console.error('GET /catalog/lateralized error:', err.message);
@@ -868,13 +900,18 @@ router.get('/bid-zone', catalogReadLimiter, async (req, res) => {
         });
       }
 
-      return res.json(buildBidZoneResponse(storedSnapshot, { refreshAvailableAt }));
+      const candidates = await enrichDashboardCandidateMetadata(storedSnapshot.candidates);
+      return res.json(buildBidZoneResponse({
+        ...storedSnapshot,
+        candidates,
+      }, { refreshAvailableAt }));
     }
 
     const candidates = await tokenMarketBucket1m.listBidZoneCandidates({
       ...options,
       limit,
     });
+    const enrichedCandidates = await enrichDashboardCandidateMetadata(candidates);
     return res.json(buildBidZoneResponse({
       generatedAt: new Date().toISOString(),
       runId: null,
@@ -882,10 +919,10 @@ router.get('/bid-zone', catalogReadLimiter, async (req, res) => {
       minMcap: options.minMcap,
       minVol1h: options.minVol1h,
       minVol24h: options.minVol24h,
-      count: candidates.length,
-      candidateCount: candidates.length,
-      resultCount: candidates.length,
-      candidates,
+      count: enrichedCandidates.length,
+      candidateCount: enrichedCandidates.length,
+      resultCount: enrichedCandidates.length,
+      candidates: enrichedCandidates,
     }, { refreshAvailableAt }));
   } catch (err) {
     console.error('GET /catalog/bid-zone error:', err.message);
@@ -903,7 +940,12 @@ router.post('/bid-zone/refresh', catalogWriteLimiter, async (req, res) => {
       return res.status(500).json({ error: 'Failed to load bid-zone snapshot after refresh attempt' });
     }
 
-    res.json(buildBidZoneResponse(snapshot, {
+    const candidates = await enrichDashboardCandidateMetadata(snapshot.candidates);
+
+    res.json(buildBidZoneResponse({
+      ...snapshot,
+      candidates,
+    }, {
       refreshAvailableAt: refresh.refreshAvailableAt,
       refreshed: refresh.accepted,
       retryAfterSeconds: refresh.retryAfterSeconds,

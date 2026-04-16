@@ -10,8 +10,10 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 const dexscreener = require('../src/services/dexscreener');
+const tokenCatalog = require('../src/models/token-catalog');
 const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
+const tokenMarketLateralizationRun = require('../src/models/token-market-lateralization-run');
 const tokenMarketBidZoneRun = require('../src/models/token-market-bid-zone-run');
 const bidZoneWorker = require('../src/services/bid-zone-worker');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
@@ -358,10 +360,57 @@ describe('Catalog routes', () => {
     assert.equal(res.body.error, 'hours must be an integer');
   });
 
+  it('enriches lateralized candidates with catalog metadata', async () => {
+    const originalGetLatest = tokenMarketLateralizationRun.getLatestCompletedRunWithResults;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+
+    tokenMarketLateralizationRun.getLatestCompletedRunWithResults = async () => ({
+      id: 9,
+      completedAt: '2026-04-15T17:55:00.000Z',
+      requestedHours: 48,
+      minMcap: 90000,
+      minVol24h: 10000,
+      candidateCount: 12,
+      resultCount: 1,
+      candidates: [
+        { address: VALID_ADDR, score: 97.4, volume1h: 4200, volume24h: 182000 },
+      ],
+    });
+    tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
+      assert.deepEqual(addresses, [VALID_ADDR]);
+      return [{
+        address: VALID_ADDR,
+        symbol: 'WSOL',
+        name: 'Wrapped SOL',
+        last_pair_address: 'pair_test_123',
+        last_pair_url: 'https://dexscreener.com/solana/testpair',
+        last_image_url: 'https://example.com/token.png',
+        last_twitter_url: 'https://x.com/wsol',
+        monitor_priority: 'high',
+      }];
+    };
+
+    try {
+      const res = await request(app)
+        .get('/api/catalog/lateralized')
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.candidates.length, 1);
+      assert.equal(res.body.candidates[0].symbol, 'WSOL');
+      assert.equal(res.body.candidates[0].pairUrl, 'https://dexscreener.com/solana/testpair');
+      assert.equal(res.body.candidates[0].imageUrl, 'https://example.com/token.png');
+    } finally {
+      tokenMarketLateralizationRun.getLatestCompletedRunWithResults = originalGetLatest;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+    }
+  });
+
   it('serves stored bid-zone snapshots for default monitor parameters', async () => {
     const originalGetLatest = tokenMarketBidZoneRun.getLatestCompletedRunWithResults;
     const originalGetStatus = bidZoneWorker.getStatus;
     const originalListBidZoneCandidates = tokenMarketBucket1m.listBidZoneCandidates;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
 
     tokenMarketBidZoneRun.getLatestCompletedRunWithResults = async () => ({
       id: 12,
@@ -381,6 +430,19 @@ describe('Catalog routes', () => {
     tokenMarketBucket1m.listBidZoneCandidates = async () => {
       throw new Error('should not compute live candidates for default bid-zone query');
     };
+    tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
+      assert.deepEqual(addresses, [VALID_ADDR, 'So11111111111111111111111111111111111111113']);
+      return [{
+        address: VALID_ADDR,
+        symbol: 'WSOL',
+        name: 'Wrapped SOL',
+        last_pair_address: 'pair_test_123',
+        last_pair_url: 'https://dexscreener.com/solana/testpair',
+        last_image_url: 'https://example.com/token.png',
+        last_twitter_url: 'https://x.com/wsol',
+        monitor_priority: 'high',
+      }];
+    };
 
     try {
       const res = await request(app)
@@ -394,10 +456,13 @@ describe('Catalog routes', () => {
       assert.equal(res.body.count, 2);
       assert.equal(res.body.candidateCount, 40);
       assert.equal(res.body.candidates[0].address, VALID_ADDR);
+      assert.equal(res.body.candidates[0].pairUrl, 'https://dexscreener.com/solana/testpair');
+      assert.equal(res.body.candidates[0].imageUrl, 'https://example.com/token.png');
     } finally {
       tokenMarketBidZoneRun.getLatestCompletedRunWithResults = originalGetLatest;
       bidZoneWorker.getStatus = originalGetStatus;
       tokenMarketBucket1m.listBidZoneCandidates = originalListBidZoneCandidates;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
     }
   });
 

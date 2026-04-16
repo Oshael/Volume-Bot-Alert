@@ -138,6 +138,10 @@ export interface LateralizedTokenEntry {
   address: string;
   symbol?: string | null;
   name?: string | null;
+  pairAddress?: string | null;
+  pairUrl?: string | null;
+  imageUrl?: string | null;
+  twitterUrl?: string | null;
   monitorPriority?: string | null;
   mcap?: number | null;
   catalogMcap?: number | null;
@@ -165,6 +169,10 @@ export interface BidZoneTokenEntry {
   address: string;
   symbol?: string | null;
   name?: string | null;
+  pairAddress?: string | null;
+  pairUrl?: string | null;
+  imageUrl?: string | null;
+  twitterUrl?: string | null;
   monitorPriority?: string | null;
   mcap?: number | null;
   catalogMcap?: number | null;

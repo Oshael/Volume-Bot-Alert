@@ -174,6 +174,10 @@ export interface LateralizedCandidate {
   address: string;
   symbol?: string | null;
   name?: string | null;
+  pairAddress?: string | null;
+  pairUrl?: string | null;
+  imageUrl?: string | null;
+  twitterUrl?: string | null;
   monitorPriority?: string | null;
   mcap?: number | null;
   catalogMcap?: number | null;
@@ -201,6 +205,10 @@ export interface BidZoneCandidate {
   address: string;
   symbol?: string | null;
   name?: string | null;
+  pairAddress?: string | null;
+  pairUrl?: string | null;
+  imageUrl?: string | null;
+  twitterUrl?: string | null;
   monitorPriority?: string | null;
   mcap?: number | null;
   catalogMcap?: number | null;

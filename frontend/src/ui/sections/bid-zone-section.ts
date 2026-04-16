@@ -139,15 +139,15 @@ function buildBidZoneRow(
 function buildBidZoneRowView(state: AppState, item: BidZoneTokenEntry) {
   const tracked = getTrackedToken(state, item.address);
   const symbol = resolveBidZoneSymbol(tracked, item);
-  const links = resolveBidZoneLinks(tracked?.pairUrl, item.address, symbol);
+  const links = resolveBidZoneLinks(item.pairUrl || tracked?.pairUrl, item.address, symbol);
   const metrics = resolveBidZoneMetrics(tracked, item);
   return {
     tracked,
     symbol,
-    subtitle: String(tracked?.name || item.name || ''),
+    subtitle: String(item.name || tracked?.name || ''),
     pairUrl: links.pairUrl,
     xSearchUrl: links.xSearchUrl,
-    imageUrl: sanitizeOptionalHttpUrl(tracked?.imageUrl),
+    imageUrl: sanitizeOptionalHttpUrl(item.imageUrl || tracked?.imageUrl),
     volume1h: metrics.volume1h,
     volume24h: metrics.volume24h,
     age: metrics.age,
@@ -167,7 +167,7 @@ function buildBidZoneActions(
   actions.className = 'lateralized-inline-actions';
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
-    buildTradeTerminalMenuElement(item.address, view.tracked?.mintAddress || item.address, view.tracked?.pairAddress || null, {
+    buildTradeTerminalMenuElement(item.address, view.tracked?.mintAddress || item.address, view.tracked?.pairAddress || item.pairAddress || null, {
       enabledTradeTerminals: state.ui.enabledTradeTerminals,
     }),
     buildStarButton(item.address, isStarred, busy),
@@ -182,7 +182,7 @@ function buildBidZoneActions(
 }
 
 function resolveBidZoneSymbol(tracked: ReturnType<typeof getTrackedToken>, item: BidZoneTokenEntry) {
-  return tracked?.symbol || item.symbol || item.address.slice(0, 6);
+  return item.symbol || tracked?.symbol || item.address.slice(0, 6);
 }
 
 function resolveBidZoneLinks(pairUrl: string | null | undefined, address: string, symbol: string) {
