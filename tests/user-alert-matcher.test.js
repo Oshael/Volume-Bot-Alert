@@ -1,0 +1,1102 @@
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+
+const userAlertMatcher = require('../src/services/user-alert-matcher');
+
+const TOKEN_ADDRESS = 'So11111111111111111111111111111111111111112';
+
+function createClient(log) {
+  return {
+    async query(sql) {
+      log.push(String(sql).trim());
+      return { rows: [] };
+    },
+    release() {
+      log.push('RELEASE');
+    },
+  };
+}
+
+function createDeps(overrides = {}) {
+  const stateByRule = overrides.stateByRule || {};
+  const transactionLog = [];
+  const eventWrites = [];
+  const triggeredWrites = [];
+  const rearmWrites = [];
+  const getStateImpl = overrides.getState;
+
+  return {
+    deps: {
+      db: {
+        async getClient() {
+          return createClient(transactionLog);
+        },
+      },
+      tokenMarketVolumeBucket1m: {
+        async listCurrentAndBaselineByAddresses() {
+          return overrides.volumeRows || [];
+        },
+      },
+      tokenMarketBucket1m: {
+        async listCurrentAndBaselineByAddresses() {
+          return overrides.mcapRows || [];
+        },
+      },
+      tokenMeteoraState: {
+        async listSummaryByAddresses() {
+          return overrides.meteoraRows || [];
+        },
+      },
+      userAlertProfileCache: {
+        async listActiveProfiles() {
+          return overrides.profiles || [];
+        },
+      },
+      userAlertRuleState: {
+        async getState(userId, ruleKey, tokenAddress) {
+          if (typeof getStateImpl === 'function') {
+            return getStateImpl(userId, ruleKey, tokenAddress);
+          }
+          return stateByRule[ruleKey] || null;
+        },
+        async markTriggered(payload) {
+          triggeredWrites.push(payload);
+          return payload;
+        },
+        async markRearmed(payload) {
+          rearmWrites.push(payload);
+          return payload;
+        },
+      },
+      userAlertEvent: {
+        async createEvent(payload) {
+          eventWrites.push(payload);
+          return {
+            id: overrides.nextEventId || 11,
+            userId: payload.userId,
+            ruleKey: payload.ruleKey,
+            kind: payload.kind,
+            tokenAddress: payload.tokenAddress,
+            payload: payload.payload,
+            triggeredAt: payload.triggeredAt,
+          };
+        },
+      },
+      backendAlertPublisher: {
+        async publishEventSafe(event) {
+          return { payload: { id: event.id }, delivered: true };
+        },
+      },
+      tokenAlertSignalBuilder: overrides.tokenAlertSignalBuilder,
+    },
+    eventWrites,
+    rearmWrites,
+    stateByRule,
+    transactionLog,
+    triggeredWrites,
+  };
+}
+
+describe('user alert matcher', () => {
+  it('emits a monitored-vol event for active users who match the backend signal', async () => {
+    const profile = {
+      userId: 15,
+      ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+      thresholdPct: 50,
+      minVol: 8000,
+      minMcap: 30000,
+      maxMcap: 0,
+    };
+    const context = createDeps({
+      profiles: [profile],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 250000,
+        last_vol_5m: 12000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        name: 'Wrapped SOL',
+        last_pair_address: 'So11111111111111111111111111111111111111112',
+        last_vol_5m: 18000,
+        last_vol_1h: 50000,
+        last_vol_6h: 120000,
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.evaluatedProfiles, 1);
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'monitored-vol');
+    assert.equal(context.eventWrites[0].payload.label, 'VOL');
+    assert.equal(context.eventWrites[0].payload.prevVolume5m, 10000);
+    assert.equal(context.eventWrites[0].payload.volume5m, 18000);
+    assert.equal(context.eventWrites[0].payload.mcap, 300000);
+    assert.equal(context.triggeredWrites.length, 1);
+    assert.equal(context.triggeredWrites[0].lastAlertedPct, 80);
+    assert.deepEqual(context.transactionLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+  });
+
+  it('suppresses monitored-vol retriggers until the next alert beats the last alerted volume by the user threshold', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 8,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 8000,
+        minMcap: 30000,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedPct: 80,
+          lastAlertedValue: 18000,
+          cooldownUntil: '2026-04-16T11:58:00.000Z',
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 250000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 20000,
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.transactionLog.length, 0);
+  });
+
+  it('suppresses monitored-vol repeats when the current 5m volume did not advance and only the rolling baseline shrank', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 44,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 201,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 5150.05,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-16T11:59:57.000Z',
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 309000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 16000,
+        last_vol_24h: 136000,
+        last_mcap: 317000,
+      },
+    }, { now: '2026-04-17T03:00:58.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('suppresses monitored-vol repeats when the absolute 5m volume only advances a little after cooldown', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 45,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 26000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 243.26,
+          lastAlertedValue: 57000,
+          cooldownUntil: '2026-04-17T03:06:12.000Z',
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 613000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 63000,
+        last_vol_24h: 1130000,
+        last_mcap: 613000,
+      },
+    }, { now: '2026-04-17T03:06:15.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('requires monitored-vol repeats to beat the last alerted volume by the user threshold, not just the rolling 5m baseline', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 46,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 24000,
+        last_vol_24h: 24000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T18:17:24.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('emits monitored-vol repeats against the last alerted volume and renders that anchored comparison in the payload', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 47,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 32000,
+        last_vol_24h: 32000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T18:17:24.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].payload.prevVolume5m, 16000);
+    assert.equal(context.eventWrites[0].payload.volume5m, 32000);
+    assert.equal(context.eventWrites[0].payload.pct, 100);
+  });
+
+  it('preserves monitored-vol cooldown on rearm so a fast re-crossing cannot alert again within 60s', async () => {
+    const cooldownUntil = '2026-04-16T12:01:00.000Z';
+    const rearmContext = createDeps({
+      profiles: [{
+        userId: 41,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedPct: 653.17,
+          cooldownUntil,
+        },
+      },
+    });
+
+    const rearmResult = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 230000,
+        last_vol_5m: 760,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 231000,
+        last_vol_5m: 900,
+        last_vol_24h: 3390000,
+      },
+    }, { now: '2026-04-16T12:00:11.000Z', deps: rearmContext.deps });
+
+    assert.equal(rearmResult.rearmed, 1);
+    assert.equal(rearmContext.rearmWrites.length, 1);
+    assert.equal(rearmContext.rearmWrites[0].cooldownUntil, cooldownUntil);
+
+    const suppressContext = createDeps({
+      profiles: [{
+        userId: 41,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 554,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 653.17,
+          cooldownUntil,
+        },
+      },
+    });
+
+    const suppressResult = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 233000,
+        last_vol_5m: 760,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 235000,
+        last_vol_5m: 6100,
+        last_vol_24h: 3390000,
+      },
+    }, { now: '2026-04-16T12:00:22.000Z', deps: suppressContext.deps });
+
+    assert.equal(suppressResult.emitted, 0);
+    assert.equal(suppressResult.suppressed, 1);
+    assert.equal(suppressContext.eventWrites.length, 0);
+  });
+
+  it('emits monitored-mcap alerts only after the token is old enough for the current frontend rule', async () => {
+    const createdAt = Date.UTC(2026, 3, 16, 9, 0, 0);
+    const context = createDeps({
+      profiles: [{
+        userId: 18,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: true, hvnc: false, meteoraSurge: false },
+        mcapThresholdPct: 50,
+        minVol: 8000,
+        minMcap: 30000,
+        maxMcap: 0,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 100000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 12000,
+        last_vol_24h: 180000,
+        last_mcap: 170000,
+        last_token_created_at_ms: createdAt,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'monitored-mcap');
+    assert.equal(context.eventWrites[0].payload.label, 'MCAP');
+    assert.equal(context.eventWrites[0].payload.prevMcap, 100000);
+    assert.equal(context.eventWrites[0].payload.mcap, 170000);
+    assert.equal(context.triggeredWrites[0].lastAlertedPct, 70);
+  });
+
+  it('prefers the 1m market-cap bucket baseline over a stale tokenBefore catalog snapshot', async () => {
+    const createdAt = Date.UTC(2026, 3, 17, 16, 0, 0);
+    const context = createDeps({
+      profiles: [{
+        userId: 19,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: true, hvnc: false, meteoraSurge: false },
+        mcapThresholdPct: 50,
+        minVol: 8000,
+        minMcap: 30000,
+        maxMcap: 0,
+      }],
+      mcapRows: [{
+        token_address: TOKEN_ADDRESS,
+        current_ts: '2026-04-17T19:25:00.000Z',
+        current_mcap: 52231,
+        baseline_ts: '2026-04-17T19:20:00.000Z',
+        baseline_mcap: 30100,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 10536,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 9813.43,
+        last_vol_24h: 885000,
+        last_mcap: 52231,
+        last_token_created_at_ms: createdAt,
+      },
+    }, { now: '2026-04-17T19:25:08.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].payload.prevMcap, 30100);
+    assert.equal(context.eventWrites[0].payload.mcap, 52231);
+    assert.equal(Math.round(context.eventWrites[0].payload.pct), 74);
+  });
+
+  it('rearms hvnc when the token no longer matches the single-fire gate', async () => {
+    const createdAt = Date.UTC(2026, 3, 16, 11, 45, 0);
+    const context = createDeps({
+      profiles: [{
+        userId: 21,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+        hvncMinVol: 300000,
+      }],
+      stateByRule: {
+        hvnc: {
+          status: 'triggered',
+          rearmRequired: true,
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_24h: 200000,
+        last_token_created_at_ms: createdAt,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.rearmed, 1);
+    assert.equal(context.rearmWrites.length, 1);
+    assert.equal(context.rearmWrites[0].ruleKey, 'hvnc');
+  });
+
+  it('emits meteora-surge from stored meteora baselines without frontend recomputation', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 5,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 25000,
+        baselineTvl1h: 15625,
+        baselineTvl24h: 10000,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_5m: 12000,
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'meteora-surge');
+    assert.equal(context.eventWrites[0].payload.label, 'METEORA 1H');
+    assert.equal(Math.round(context.eventWrites[0].payload.pct), 60);
+    assert.equal(context.eventWrites[0].payload.meteoraCurrentTvl, 25000);
+    assert.equal(context.eventWrites[0].payload.meteoraBaselineTvl24h, 10000);
+  });
+
+  it('matches multiple active users from a single signal computation for the same token update', async () => {
+    let buildSignalCalls = 0;
+    const context = createDeps({
+      profiles: [
+        {
+          userId: 1,
+          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+          thresholdPct: 50,
+          minVol: 8000,
+          minMcap: 30000,
+          maxMcap: 0,
+        },
+        {
+          userId: 2,
+          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+          thresholdPct: 80,
+          minVol: 14000,
+          minMcap: 30000,
+          maxMcap: 0,
+        },
+        {
+          userId: 3,
+          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+          thresholdPct: 90,
+          minVol: 10000,
+          minMcap: 30000,
+          maxMcap: 0,
+        },
+      ],
+      tokenAlertSignalBuilder: {
+        buildTokenAlertSignals() {
+          buildSignalCalls += 1;
+          return {
+            prevVolume5m: 10000,
+            currentVolume5m: 18000,
+            prevMcap: 250000,
+            currentMcap: 300000,
+            volume24h: 350000,
+            tokenCreatedAt: null,
+            hasVol5mBaseline: true,
+            hasMcapBaseline: true,
+            vol5mChangePct: 80,
+            mcapChangePct: 20,
+            isMcapDeclining: false,
+            mcapAlertTokenAgeGatePassed: true,
+            passesHvncPrereqs: false,
+            passesMeteoraPrereqs: false,
+            meteoraChange1h: null,
+            meteoraCurrentTvl: null,
+            meteoraBaselineTvl24h: null,
+          };
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 250000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_5m: 18000,
+        last_vol_1h: 50000,
+        last_vol_6h: 120000,
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(buildSignalCalls, 1);
+    assert.equal(result.evaluatedProfiles, 3);
+    assert.equal(result.emitted, 2);
+    assert.equal(context.eventWrites.length, 2);
+    assert.deepEqual(context.eventWrites.map((item) => item.userId), [1, 2]);
+    assert.equal(context.triggeredWrites.length, 2);
+    assert.equal(context.transactionLog.filter((item) => item === 'BEGIN').length, 2);
+  });
+
+  it('emits recent surge when the 1h price change crosses the configured threshold after 2d and before 7d', async () => {
+    const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 31,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 25,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_1h: 18,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_mcap: 300000,
+        last_vol_24h: 350000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 32,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(result.suppressed, 0);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'recent-surge-1h');
+    assert.equal(context.eventWrites[0].kind, 'old-surge');
+    assert.equal(context.eventWrites[0].payload.label, 'PCHANGE 1H');
+    assert.equal(context.eventWrites[0].payload.ageBucket, 'recent');
+    assert.equal(context.eventWrites[0].payload.isOldSurge, true);
+    assert.equal(context.eventWrites[0].payload.priceChange1h, 32);
+  });
+
+  it('suppresses surge alerts for tokens below 30k market cap', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 19, 17, 48);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 70,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: true,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge6hThresholdPct: 100,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 90,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'YUJI',
+        last_mcap: 15000,
+        last_vol_24h: 10000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 149,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 0);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('primes a hot old-week surge without emitting when the user first sees an already-hot token', async () => {
+    const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+    const createdAt = nowMs - (10 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 32,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 120,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 135,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_mcap: 300000,
+        last_vol_24h: 350000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 150,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.triggeredWrites.length, 1);
+    assert.equal(context.triggeredWrites[0].ruleKey, 'old-week-surge-6h');
+    assert.equal(context.triggeredWrites[0].metadata.lastDecision, 'primed-hot');
+    assert.equal(context.triggeredWrites[0].metadata.sessionStartedAt, null);
+  });
+
+  it('suppresses surge crossings during the initial active-session warmup so old history is not dumped on connect', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 4, 25, 45);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 52,
+        loadedAt: new Date(nowMs - 20_000).toISOString(),
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: true,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge6hThresholdPct: 100,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 99,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'RUDI',
+        last_mcap: 247000,
+        last_vol_24h: 280000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 105,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.triggeredWrites.length, 1);
+    assert.equal(context.triggeredWrites[0].lastAlertedAt, null);
+    assert.equal(context.triggeredWrites[0].metadata.lastDecision, 'primed-hot');
+  });
+
+  it('rearms a surge rule after the price change drops back below the configured threshold', async () => {
+    const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 33,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 25,
+      }],
+      stateByRule: {
+        'recent-surge-1h': {
+          status: 'triggered',
+          rearmRequired: true,
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 12,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.rearmed, 1);
+    assert.equal(context.rearmWrites.length, 1);
+    assert.equal(context.rearmWrites[0].ruleKey, 'recent-surge-1h');
+  });
+
+  it('suppresses repeated surge alerts in the same session unless the price change advances by 50pp', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);
+    const createdAt = nowMs - (281 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 61,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 100,
+          metadata: {
+            lastDecision: 'rearmed',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'JONATHAN',
+        last_mcap: 148000,
+        last_vol_24h: 285000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 100,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('allows a same-session surge repeat after a 50pp price-change advance', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 45, 0);
+    const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 62,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 100,
+          metadata: {
+            lastDecision: 'rearmed',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'INCOME',
+        last_mcap: 500000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 151,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'old-week-surge-6h');
+  });
+
+  it('suppresses a 6h surge if the sibling 1h surge fired for the same token within the last hour', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 17, 54, 11);
+    const createdAt = nowMs - (30 * 24 * 60 * 60 * 1000);
+    const loadedAt = new Date(nowMs - 5 * 60 * 1000).toISOString();
+    const context = createDeps({
+      profiles: [{
+        userId: 63,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: true,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge1hThresholdPct: 50,
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      getState(userId, ruleKey) {
+        if (ruleKey === 'old-week-surge-6h') {
+          return null;
+        }
+        if (ruleKey === 'old-week-surge-1h') {
+          return {
+            status: 'triggered',
+            rearmRequired: true,
+            lastAlertedAt: new Date(nowMs - (7 * 1000)).toISOString(),
+            lastAlertedPct: 79.61,
+            metadata: {
+              lastDecision: 'triggered',
+              sessionStartedAt: loadedAt,
+            },
+          };
+        }
+        return null;
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_1h: 75,
+        last_price_change_6h: 99,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'FORG',
+        last_mcap: 165000,
+        last_vol_24h: 14000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 79.61,
+        last_price_change_6h: 125,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('suppresses a repeated 6h surge for the same token within one hour even if the pct advanced', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 19, 11, 11);
+    const createdAt = nowMs - (2 * 24 * 60 * 60 * 1000);
+    const loadedAt = new Date(nowMs - (15 * 60 * 1000)).toISOString();
+    const context = createDeps({
+      profiles: [{
+        userId: 71,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: true,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'recent-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (3 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 5427,
+          lastAlertedValue: 5427,
+          metadata: {
+            lastDecision: 'rearmed',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 5400,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'PEACE',
+        last_mcap: 178260000,
+        last_vol_24h: 1370000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 5587,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+});
