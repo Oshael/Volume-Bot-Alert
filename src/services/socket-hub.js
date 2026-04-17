@@ -14,6 +14,7 @@
  * Events received from clients:
  * - pump:subscribe    - { mint }    - subscribe to a specific PumpFun token
  * - pump:unsubscribe  - { mint }    - unsubscribe from a PumpFun token
+ * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
  */
 
 const { Server } = require('socket.io');
@@ -26,6 +27,7 @@ const userAccess = require('../models/user-access');
 const solPrice = require('./sol-price');
 const pumpfun = require('./pumpfun-ws');
 const tokenCatalog = require('../models/token-catalog');
+const userAlertProfileCache = require('./user-alert-profile-cache');
 const { getSocketClientIp, isAllowedOrigin } = require('../utils/request-security');
 const { logSecurityEvent } = require('../utils/security-events');
 const { logTrace } = require('../utils/pump-migrate-trace');
@@ -42,6 +44,13 @@ const sessionSockets = new Map();
 const userSessions = new Map();
 const ipSockets = new Map();
 const socketActionState = new Map();
+
+function getUserRoom(userId) {
+  const normalizedUserId = Number.parseInt(String(userId || '').trim(), 10);
+  return Number.isInteger(normalizedUserId) && normalizedUserId > 0
+    ? `user:${normalizedUserId}`
+    : null;
+}
 
 function sanitizeMint(rawMint) {
   if (typeof rawMint !== 'string') return null;
@@ -450,6 +459,10 @@ function init(httpServer) {
     console.log(`[Socket.io] ${socket.user.username} connected (${socket.id})`);
     ensureSocketSubscriptions(socket);
     trackSessionSocket(socket);
+    const userRoom = getUserRoom(socket.user?.id);
+    if (userRoom) {
+      socket.join(userRoom);
+    }
 
     socket.emit('sol:price', { price: solPrice.getPrice() });
     socket.emit('pump:status', pumpfun.getStatus());
@@ -468,9 +481,25 @@ function init(httpServer) {
       unsubscribeSocketFromMint(socket, mint);
     });
 
+    socket.on('live:presence', (data) => {
+      if (!noteSocketAction(socket, 'live:presence')) return;
+      try {
+        userAlertProfileCache.upsertLivePresence(socket.user.id, socket.id, data);
+      } catch (error) {
+        logSecurityEvent('socket_live_presence_rejected', {
+          socketId: socket.id,
+          userId: socket.user?.id,
+          sessionId: socket.sessionId,
+          ip: socket.clientIp,
+          error: error.message,
+        });
+      }
+    });
+
     socket.on('disconnect', (reason) => {
       cleanupSocketSubscriptions(socket);
       untrackSessionSocket(socket);
+      userAlertProfileCache.clearLivePresence(socket.id);
       socketActionState.delete(socket.id);
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
@@ -555,6 +584,7 @@ function getStatus() {
     trackedAuthenticatedSessions: sessionSockets.size,
     trackedClientIps: ipSockets.size,
     trackedSocketActionWindows: socketActionState.size,
+    liveAlertPresence: userAlertProfileCache.getStatus(),
     pumpfun: pumpfun.getStatus(),
     solPrice: solPrice.getStatus(),
   };
@@ -564,9 +594,20 @@ function getIO() {
   return io;
 }
 
-function emitBackendAlertEvent(payload) {
+function emitBackendAlertEvent(payload, options = {}) {
   if (!io || !payload || typeof payload !== 'object') {
     return false;
+  }
+
+  const userRoom = getUserRoom(options.userId);
+  if (userRoom) {
+    const room = io.sockets.adapter.rooms.get(userRoom);
+    if (!room || room.size === 0) {
+      return false;
+    }
+
+    io.to(userRoom).emit('alert:event', payload);
+    return true;
   }
 
   io.emit('alert:event', payload);

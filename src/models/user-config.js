@@ -24,12 +24,20 @@ const CONFIG_SCHEMA = {
   'hvnc-min-vol':    { type: 'number', min: 0, max: 1e15, default: 300000 },
   'old-alert-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
   'old-alert-6h-threshold': { type: 'number', min: 0, max: 10000, default: 150 },
+  'recent-surge-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
+  'recent-surge-6h-threshold': { type: 'number', min: 0, max: 10000, default: 150 },
+  'old-week-surge-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
+  'old-week-surge-6h-threshold': { type: 'number', min: 0, max: 10000, default: 150 },
   'meteora-alert-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
   'alert-vol-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-mcap-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-hvnc-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-old-surge-1h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-old-surge-6h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-recent-surge-1h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-recent-surge-6h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-old-week-surge-1h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-old-week-surge-6h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-meteora-surge-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-pumpfun-vol-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-pumpfun-hvnc-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
@@ -104,27 +112,70 @@ function validateConfigs(obj) {
   };
 }
 
-async function getAll(userId) {
+function buildDefaultConfigs() {
+  const configs = {};
+  for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
+    configs[key] = schema.default;
+  }
+  return configs;
+}
+
+function applyLegacySurgeConfigFallbacks(configs, storedKeys = new Set()) {
+  const safeStoredKeys = storedKeys instanceof Set ? storedKeys : new Set();
+  const thresholdFallbacks = [
+    ['recent-surge-1h-threshold', 'old-alert-1h-threshold'],
+    ['recent-surge-6h-threshold', 'old-alert-6h-threshold'],
+    ['old-week-surge-1h-threshold', 'old-alert-1h-threshold'],
+    ['old-week-surge-6h-threshold', 'old-alert-6h-threshold'],
+  ];
+  const enabledFallbacks = [
+    ['alert-recent-surge-1h-enabled', 'alert-old-surge-1h-enabled'],
+    ['alert-recent-surge-6h-enabled', 'alert-old-surge-6h-enabled'],
+    ['alert-old-week-surge-1h-enabled', 'alert-old-surge-1h-enabled'],
+    ['alert-old-week-surge-6h-enabled', 'alert-old-surge-6h-enabled'],
+  ];
+
+  for (const [primaryKey, legacyKey] of thresholdFallbacks) {
+    if (!safeStoredKeys.has(primaryKey) && safeStoredKeys.has(legacyKey)) {
+      configs[primaryKey] = configs[legacyKey];
+    }
+  }
+
+  for (const [primaryKey, legacyKey] of enabledFallbacks) {
+    if (!safeStoredKeys.has(primaryKey) && safeStoredKeys.has(legacyKey)) {
+      configs[primaryKey] = configs[legacyKey];
+    }
+  }
+
+  return configs;
+}
+
+async function getAllWithStoredKeys(userId) {
   const { rows } = await db.query(
     'SELECT config_key, config_value FROM user_configs WHERE user_id = $1',
     [userId]
   );
 
-  const configs = {};
-  for (const [key, schema] of Object.entries(CONFIG_SCHEMA)) {
-    configs[key] = schema.default;
-  }
+  const configs = buildDefaultConfigs();
+  const storedKeys = new Set();
 
   for (const row of rows) {
     const schema = CONFIG_SCHEMA[row.config_key];
     if (schema) {
+      storedKeys.add(row.config_key);
       configs[row.config_key] = schema.type === 'number'
         ? Number(row.config_value)
         : row.config_value;
     }
   }
 
-  return configs;
+  applyLegacySurgeConfigFallbacks(configs, storedKeys);
+  return { configs, storedKeys };
+}
+
+async function getAll(userId) {
+  const result = await getAllWithStoredKeys(userId);
+  return result.configs;
 }
 
 async function setMultiple(userId, configs) {
@@ -181,6 +232,9 @@ async function remove(userId, key) {
 
 module.exports = {
   CONFIG_SCHEMA,
+  applyLegacySurgeConfigFallbacks,
+  buildDefaultConfigs,
+  getAllWithStoredKeys,
   validateConfigEntry,
   validateConfigs,
   getAll,

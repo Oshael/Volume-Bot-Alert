@@ -8,6 +8,7 @@ const userToken = require('../models/user-token');
 const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
+const userAlertProfileCache = require('../services/user-alert-profile-cache');
 const { normalizeText } = require('../utils/url-safety');
 
 // All config routes require authentication
@@ -265,6 +266,7 @@ router.put('/', async (req, res) => {
       upsertCatalogItems(normalizedBlocklist, 'blocklist'),
       upsertCatalogItems(normalizedStarred, 'starred'),
     ]);
+    userAlertProfileCache.invalidateUserProfile(req.user.id);
     const result = {
       configs: await userConfig.getAll(req.user.id),
       uiPrefs: await userUiPref.getAll(req.user.id),
@@ -308,6 +310,7 @@ router.patch('/', async (req, res) => {
     }
 
     await userConfig.setMultiple(req.user.id, validation.configs);
+    userAlertProfileCache.invalidateUserProfile(req.user.id);
     const responsePayload = { message: 'Config updated', configs: validation.configs };
     res.json(responsePayload);
   } catch (err) {

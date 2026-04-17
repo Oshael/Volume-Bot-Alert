@@ -173,10 +173,18 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['card-effects-mode'], 'on');
     assert.equal(response.body.configs['old-mcap-min'], 120000);
     assert.equal(response.body.configs['old-mcap-max'], 100000000);
+    assert.equal(response.body.configs['recent-surge-1h-threshold'], 50);
+    assert.equal(response.body.configs['recent-surge-6h-threshold'], 150);
+    assert.equal(response.body.configs['old-week-surge-1h-threshold'], 50);
+    assert.equal(response.body.configs['old-week-surge-6h-threshold'], 150);
+    assert.equal(response.body.configs['alert-recent-surge-1h-enabled'], 'on');
+    assert.equal(response.body.configs['alert-recent-surge-6h-enabled'], 'on');
+    assert.equal(response.body.configs['alert-old-week-surge-1h-enabled'], 'on');
+    assert.equal(response.body.configs['alert-old-week-surge-6h-enabled'], 'on');
     assert.equal(response.body.configs['old-week-mcap-min'], 120000);
     assert.equal(response.body.configs['old-week-mcap-max'], 100000000);
-    assert.equal(response.body.configs['old-per-page'], 30);
-    assert.equal(response.body.configs['old-week-per-page'], 30);
+    assert.equal(response.body.configs['old-per-page'], 15);
+    assert.equal(response.body.configs['old-week-per-page'], 15);
 
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
     assert.deepEqual(response.body.uiPrefs.monitoredSorts, [{ mode: 'vol', window: '5m' }]);
@@ -202,6 +210,8 @@ describe('Config routes', () => {
         configs: {
           threshold: 80,
           interval: 15,
+          'recent-surge-1h-threshold': 22,
+          'alert-old-week-surge-6h-enabled': 'off',
           'block-warning-enabled': 'off',
           'card-effects-mode': 'off',
         },
@@ -211,6 +221,8 @@ describe('Config routes', () => {
     assert.deepEqual(patchResponse.body.configs, {
       threshold: 80,
       interval: 15,
+      'recent-surge-1h-threshold': 22,
+      'alert-old-week-surge-6h-enabled': 'off',
       'block-warning-enabled': 'off',
       'card-effects-mode': 'off',
     });
@@ -222,8 +234,43 @@ describe('Config routes', () => {
     assert.equal(getResponse.status, 200);
     assert.equal(getResponse.body.configs.threshold, 80);
     assert.equal(getResponse.body.configs.interval, 15);
+    assert.equal(getResponse.body.configs['recent-surge-1h-threshold'], 22);
+    assert.equal(getResponse.body.configs['alert-old-week-surge-6h-enabled'], 'off');
     assert.equal(getResponse.body.configs['block-warning-enabled'], 'off');
     assert.equal(getResponse.body.configs['card-effects-mode'], 'off');
+  });
+
+  it('mirrors legacy surge config values into the new recent and old-week keys on read when the new keys were never stored', async () => {
+    const patchResponse = await request(app)
+      .put('/api/config')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({
+        configs: {
+          'old-alert-1h-threshold': 31,
+          'old-alert-6h-threshold': 125,
+          'alert-old-surge-1h-enabled': 'off',
+          'alert-old-surge-6h-enabled': 'off',
+        },
+        tokens: [],
+        blocklist: [],
+        starredTokens: [],
+      });
+
+    assert.equal(patchResponse.status, 200);
+
+    const getResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(getResponse.status, 200);
+    assert.equal(getResponse.body.configs['recent-surge-1h-threshold'], 31);
+    assert.equal(getResponse.body.configs['recent-surge-6h-threshold'], 125);
+    assert.equal(getResponse.body.configs['old-week-surge-1h-threshold'], 31);
+    assert.equal(getResponse.body.configs['old-week-surge-6h-threshold'], 125);
+    assert.equal(getResponse.body.configs['alert-recent-surge-1h-enabled'], 'off');
+    assert.equal(getResponse.body.configs['alert-recent-surge-6h-enabled'], 'off');
+    assert.equal(getResponse.body.configs['alert-old-week-surge-1h-enabled'], 'off');
+    assert.equal(getResponse.body.configs['alert-old-week-surge-6h-enabled'], 'off');
   });
 
   it('rejects invalid and empty config patches', async () => {

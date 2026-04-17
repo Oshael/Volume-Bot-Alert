@@ -432,6 +432,25 @@ router.get('/alert-events', dashboardLimiter, async (req, res) => {
   }
 });
 
+router.get('/alert-feeds', dashboardLimiter, async (req, res) => {
+  try {
+    const payload = await backendAlertFeed.listDashboardAlertFeeds({
+      userId: req.user.id,
+      ruleKeys: req.query?.ruleKeys,
+      limit: req.query?.limit,
+      mode: req.query?.mode,
+    });
+    res.json(payload);
+  } catch (err) {
+    if (err.code === 'UNSUPPORTED_ALERT_RULE') {
+      res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
+      return;
+    }
+    console.error('GET /dashboard/alert-feeds error:', err.message);
+    res.status(500).json({ error: 'Failed to load dashboard alert feeds' });
+  }
+});
+
 router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   const lastSeenEventId = parseOptionalEventId(req.body?.lastSeenEventId, 'lastSeenEventId');
   if (!lastSeenEventId.ok) {

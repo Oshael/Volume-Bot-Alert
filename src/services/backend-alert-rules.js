@@ -1,4 +1,12 @@
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
+const MONITORED_VOL_RULE_KEY = 'monitored-vol';
+const MONITORED_MCAP_RULE_KEY = 'monitored-mcap';
+const HVNC_RULE_KEY = 'hvnc';
+const RECENT_SURGE_1H_RULE_KEY = 'recent-surge-1h';
+const RECENT_SURGE_6H_RULE_KEY = 'recent-surge-6h';
+const OLD_WEEK_SURGE_1H_RULE_KEY = 'old-week-surge-1h';
+const OLD_WEEK_SURGE_6H_RULE_KEY = 'old-week-surge-6h';
+const METEORA_SURGE_RULE_KEY = 'meteora-surge';
 
 const BACKEND_ALERT_RULES = Object.freeze({
   [HIGH_CAP_DUMP_RULE_KEY]: Object.freeze({
@@ -16,6 +24,70 @@ const BACKEND_ALERT_RULES = Object.freeze({
       rearmRecoveryPct: 85,
       rearmAfterMs: 6 * 60 * 60 * 1000,
     }),
+  }),
+  [MONITORED_VOL_RULE_KEY]: Object.freeze({
+    ruleKey: MONITORED_VOL_RULE_KEY,
+    kind: 'monitored-vol',
+    displayName: 'Monitored Vol 5M',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [MONITORED_MCAP_RULE_KEY]: Object.freeze({
+    ruleKey: MONITORED_MCAP_RULE_KEY,
+    kind: 'monitored-mcap',
+    displayName: 'Monitored MCap 5M',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [HVNC_RULE_KEY]: Object.freeze({
+    ruleKey: HVNC_RULE_KEY,
+    kind: 'hvnc',
+    displayName: 'HVNC',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [RECENT_SURGE_1H_RULE_KEY]: Object.freeze({
+    ruleKey: RECENT_SURGE_1H_RULE_KEY,
+    kind: 'old-surge',
+    displayName: 'Recent Surge 1H',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [RECENT_SURGE_6H_RULE_KEY]: Object.freeze({
+    ruleKey: RECENT_SURGE_6H_RULE_KEY,
+    kind: 'old-surge',
+    displayName: 'Recent Surge 6H',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [OLD_WEEK_SURGE_1H_RULE_KEY]: Object.freeze({
+    ruleKey: OLD_WEEK_SURGE_1H_RULE_KEY,
+    kind: 'old-surge',
+    displayName: 'Old Week Surge 1H',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [OLD_WEEK_SURGE_6H_RULE_KEY]: Object.freeze({
+    ruleKey: OLD_WEEK_SURGE_6H_RULE_KEY,
+    kind: 'old-surge',
+    displayName: 'Old Week Surge 6H',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [METEORA_SURGE_RULE_KEY]: Object.freeze({
+    ruleKey: METEORA_SURGE_RULE_KEY,
+    kind: 'meteora-surge',
+    displayName: 'Meteora Surge 1H',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
   }),
 });
 
@@ -44,13 +116,20 @@ function listBackendAlertRules(filters = {}) {
 }
 
 function getDefaultDashboardAlertRuleKey() {
-  const [firstRule] = listBackendAlertRules({ dashboardFeedEnabled: true });
-  return firstRule?.ruleKey || HIGH_CAP_DUMP_RULE_KEY;
+  return HIGH_CAP_DUMP_RULE_KEY;
 }
 
 module.exports = {
   BACKEND_ALERT_RULES,
   HIGH_CAP_DUMP_RULE_KEY,
+  HVNC_RULE_KEY,
+  METEORA_SURGE_RULE_KEY,
+  MONITORED_MCAP_RULE_KEY,
+  MONITORED_VOL_RULE_KEY,
+  OLD_WEEK_SURGE_1H_RULE_KEY,
+  OLD_WEEK_SURGE_6H_RULE_KEY,
+  RECENT_SURGE_1H_RULE_KEY,
+  RECENT_SURGE_6H_RULE_KEY,
   getBackendAlertRule,
   getDefaultDashboardAlertRuleKey,
   listBackendAlertRules,

@@ -630,6 +630,59 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage29-user-alert-rule-state',
+    name: 'Stage 29 user alert rule state',
+    repair: 'node src/utils/db-init-stage29.js',
+    tables: [
+      {
+        table: 'user_alert_rule_state',
+        columns: [
+          'user_id',
+          'rule_key',
+          'token_address',
+          'status',
+          'last_alerted_at',
+          'last_alerted_value',
+          'last_alerted_pct',
+          'cooldown_until',
+          'rearm_required',
+          'last_fingerprint',
+          'metadata',
+          'updated_at',
+        ],
+        defaults: {
+          status: "'idle'::character varying",
+          rearm_required: 'false',
+          metadata: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
+  {
+    key: 'stage30-user-alert-events',
+    name: 'Stage 30 user alert events',
+    repair: 'node src/utils/db-init-stage30.js',
+    tables: [
+      {
+        table: 'user_alert_events',
+        columns: [
+          'id',
+          'user_id',
+          'rule_key',
+          'kind',
+          'token_address',
+          'dedupe_key',
+          'payload',
+          'triggered_at',
+          'created_at',
+        ],
+        defaults: {
+          payload: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

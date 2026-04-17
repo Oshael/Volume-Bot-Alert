@@ -10,6 +10,7 @@ describe('backend alert publisher', () => {
     const originalBuildDashboardAlertEventFromEvent = backendAlertFeed.buildDashboardAlertEventFromEvent;
     const originalEmitBackendAlertEvent = socketHub.emitBackendAlertEvent;
     const emittedPayloads = [];
+    const emittedOptions = [];
 
     backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
       id: event.id,
@@ -17,8 +18,9 @@ describe('backend alert publisher', () => {
       ruleKey: event.ruleKey,
       address: event.tokenAddress,
     });
-    socketHub.emitBackendAlertEvent = (payload) => {
+    socketHub.emitBackendAlertEvent = (payload, options) => {
       emittedPayloads.push(payload);
+      emittedOptions.push(options || null);
       return true;
     };
 
@@ -37,6 +39,39 @@ describe('backend alert publisher', () => {
         address: 'So11111111111111111111111111111111111111112',
       });
       assert.deepEqual(emittedPayloads, [result.payload]);
+      assert.deepEqual(emittedOptions, [{ userId: null }]);
+    } finally {
+      backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
+      socketHub.emitBackendAlertEvent = originalEmitBackendAlertEvent;
+    }
+  });
+
+  it('targets user-owned realtime events to the matching authenticated sockets', async () => {
+    const originalBuildDashboardAlertEventFromEvent = backendAlertFeed.buildDashboardAlertEventFromEvent;
+    const originalEmitBackendAlertEvent = socketHub.emitBackendAlertEvent;
+    const emittedOptions = [];
+
+    backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
+      id: event.id,
+      kind: 'monitored-vol',
+      ruleKey: event.ruleKey,
+      address: event.tokenAddress,
+    });
+    socketHub.emitBackendAlertEvent = (_payload, options) => {
+      emittedOptions.push(options || null);
+      return true;
+    };
+
+    try {
+      const result = await backendAlertPublisher.publishEvent({
+        id: 12,
+        userId: 15,
+        ruleKey: 'monitored-vol',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+      });
+
+      assert.equal(result.delivered, true);
+      assert.deepEqual(emittedOptions, [{ userId: 15 }]);
     } finally {
       backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
       socketHub.emitBackendAlertEvent = originalEmitBackendAlertEvent;

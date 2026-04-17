@@ -3,7 +3,9 @@ const socketHub = require('./socket-hub');
 
 async function publishEvent(eventRow) {
   const payload = await backendAlertFeed.buildDashboardAlertEventFromEvent(eventRow);
-  const delivered = socketHub.emitBackendAlertEvent(payload);
+  const delivered = socketHub.emitBackendAlertEvent(payload, {
+    userId: eventRow?.userId ?? null,
+  });
 
   return {
     payload,

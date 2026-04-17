@@ -1,8 +1,13 @@
 const tokenAlertEvent = require('../models/token-alert-event');
+const userAlertEvent = require('../models/user-alert-event');
 const alertDeliveryCursor = require('../models/alert-delivery-cursor');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
-const { getBackendAlertRule, getDefaultDashboardAlertRuleKey } = require('./backend-alert-rules');
+const {
+  getBackendAlertRule,
+  getDefaultDashboardAlertRuleKey,
+  listBackendAlertRules,
+} = require('./backend-alert-rules');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const {
   buildBlockStatusSummary,
@@ -36,6 +41,17 @@ function normalizeAlertFeedMode(value) {
   return String(value || '').trim().toLowerCase() === 'unseen' ? 'unseen' : 'all';
 }
 
+function normalizeAlertFeedRuleKeys(value) {
+  const inputs = Array.isArray(value)
+    ? value
+    : (value == null ? [] : [value]);
+
+  return Array.from(new Set(inputs
+    .flatMap((item) => String(item || '').split(','))
+    .map((item) => String(item || '').trim().toLowerCase())
+    .filter(Boolean)));
+}
+
 function resolveDashboardFeedRule(value) {
   const rule = getBackendAlertRule(value || getDefaultDashboardAlertRuleKey());
   if (rule && rule.dashboardFeedEnabled) {
@@ -45,6 +61,15 @@ function resolveDashboardFeedRule(value) {
   const error = new Error('Unsupported dashboard alert rule key');
   error.code = 'UNSUPPORTED_ALERT_RULE';
   throw error;
+}
+
+function resolveDashboardFeedRules(value) {
+  const explicitRuleKeys = normalizeAlertFeedRuleKeys(value);
+  if (explicitRuleKeys.length === 0) {
+    return listBackendAlertRules({ dashboardFeedEnabled: true });
+  }
+
+  return explicitRuleKeys.map((ruleKey) => resolveDashboardFeedRule(ruleKey));
 }
 
 function mapDeliveryCursor(cursor, rule) {
@@ -67,6 +92,8 @@ function buildDashboardAlertEventCatalogPayload(catalogRow) {
     imageUrl: toTextOrNull(catalogRow?.last_image_url),
     twitterUrl: toTextOrNull(catalogRow?.last_twitter_url),
     tokenCreatedAt: toNumberOrNull(catalogRow?.last_token_created_at_ms),
+    priceChange1h: toNumberOrNull(catalogRow?.last_price_change_1h),
+    priceChange6h: toNumberOrNull(catalogRow?.last_price_change_6h),
     volume1h: toNumberOrNull(catalogRow?.last_vol_1h),
     volume6h: toNumberOrNull(catalogRow?.last_vol_6h),
     volume24h: toNumberOrNull(catalogRow?.last_vol_24h),
@@ -113,7 +140,71 @@ function buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule) {
   };
 }
 
+function normalizeUserAlertPayloadValue(payload, key, fallback = null) {
+  return payload && Object.prototype.hasOwnProperty.call(payload, key)
+    ? payload[key]
+    : fallback;
+}
+
+function buildDashboardUserAlertIdentityPayload(payload, catalogRow) {
+  return {
+    address: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'address')) || toTextOrNull(catalogRow?.address) || '',
+    symbol: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'symbol')) ?? toTextOrNull(catalogRow?.symbol),
+    name: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'name')) ?? toTextOrNull(catalogRow?.name),
+    pairAddress: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'pairAddress')) ?? toTextOrNull(catalogRow?.last_pair_address),
+    pairUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'pairUrl')) ?? toTextOrNull(catalogRow?.last_pair_url),
+    imageUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'imageUrl')) ?? toTextOrNull(catalogRow?.last_image_url),
+    twitterUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'twitterUrl')) ?? toTextOrNull(catalogRow?.last_twitter_url),
+    tokenCreatedAt: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'tokenCreatedAt')) ?? toNumberOrNull(catalogRow?.last_token_created_at_ms),
+  };
+}
+
+function buildDashboardUserAlertMetricPayload(payload, catalogRow) {
+  return {
+    volume5m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume5m')),
+    volume1h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume1h')) ?? toNumberOrNull(catalogRow?.last_vol_1h),
+    volume6h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume6h')) ?? toNumberOrNull(catalogRow?.last_vol_6h),
+    volume24h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume24h')) ?? toNumberOrNull(catalogRow?.last_vol_24h),
+    priceChange1h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'priceChange1h')) ?? toNumberOrNull(catalogRow?.last_price_change_1h),
+    priceChange6h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'priceChange6h')) ?? toNumberOrNull(catalogRow?.last_price_change_6h),
+    prevVolume5m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevVolume5m')),
+    prevMcap: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevMcap')),
+    mcap: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'mcap')) ?? toNumberOrNull(catalogRow?.last_mcap),
+    pct: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'pct')),
+    label: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'label')),
+    isHvnc: Boolean(normalizeUserAlertPayloadValue(payload, 'isHvnc')),
+    isOldSurge: Boolean(normalizeUserAlertPayloadValue(payload, 'isOldSurge')),
+    surgeWindow: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'surgeWindow')),
+    ageBucket: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'ageBucket')),
+    meteoraCurrentTvl: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'meteoraCurrentTvl')),
+    meteoraBaselineTvl24h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'meteoraBaselineTvl24h')),
+    thresholdPct: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'thresholdPct')),
+  };
+}
+
+function buildDashboardUserAlertEventPayload(eventRow, catalogRow, rule) {
+  const payload = eventRow?.payload && typeof eventRow.payload === 'object' && !Array.isArray(eventRow.payload)
+    ? eventRow.payload
+    : {};
+
+  return {
+    id: toNumberOrNull(eventRow?.id),
+    kind: rule.kind,
+    ruleKey: rule.ruleKey,
+    ...buildDashboardUserAlertIdentityPayload(payload, catalogRow),
+    ...buildDashboardUserAlertMetricPayload(payload, catalogRow),
+    triggeredAt: toTextOrNull(eventRow?.triggeredAt),
+  };
+}
+
 function buildDashboardAlertEventItem(eventRow, catalogRow, rule) {
+  if (rule.scope === 'user-token') {
+    return {
+      ...buildDashboardAlertEventCatalogPayload(catalogRow),
+      ...buildDashboardUserAlertEventPayload(eventRow, catalogRow, rule),
+    };
+  }
+
   return {
     address: toTextOrNull(eventRow?.tokenAddress) || '',
     ...buildDashboardAlertEventCatalogPayload(catalogRow),
@@ -131,10 +222,15 @@ async function buildDashboardAlertEventFromEvent(eventRow) {
   return buildDashboardAlertEventItem(eventRow, metadataRows[0] || null, rule);
 }
 
+function resolveAlertEventModel(rule) {
+  return rule.scope === 'user-token' ? userAlertEvent : tokenAlertEvent;
+}
+
 async function listDashboardAlertEvents(options = {}) {
   const limit = normalizeAlertFeedLimit(options.limit);
   const rule = resolveDashboardFeedRule(options.ruleKey);
   const mode = normalizeAlertFeedMode(options.mode);
+  const eventModel = resolveAlertEventModel(rule);
   let cursor = options.userId == null ? null : await alertDeliveryCursor.getCursor(options.userId, rule.ruleKey);
   const hasExplicitAfterId = options.afterId != null && String(options.afterId).trim() !== '';
   let afterId = hasExplicitAfterId
@@ -142,19 +238,29 @@ async function listDashboardAlertEvents(options = {}) {
     : (mode === 'unseen' ? cursor?.lastSeenEventId : null);
 
   if (mode === 'unseen' && !hasExplicitAfterId && cursor == null && options.userId != null) {
-    const latestEventId = await tokenAlertEvent.getLatestEventId({ ruleKey: rule.ruleKey });
+    const latestEventFilters = { ruleKey: rule.ruleKey };
+    if (rule.scope === 'user-token') {
+      latestEventFilters.userId = options.userId;
+    }
+
+    const latestEventId = await eventModel.getLatestEventId(latestEventFilters);
     if (latestEventId != null) {
       cursor = await alertDeliveryCursor.markSeen(options.userId, rule.ruleKey, latestEventId);
       afterId = latestEventId;
     }
   }
 
-  const events = await tokenAlertEvent.listRecentEvents({
+  const eventFilters = {
     ruleKey: rule.ruleKey,
     limit,
     afterId,
     sort: afterId != null ? 'asc' : 'desc',
-  });
+  };
+  if (rule.scope === 'user-token') {
+    eventFilters.userId = options.userId;
+  }
+
+  const events = await eventModel.listRecentEvents(eventFilters);
   const metadataRows = await loadDashboardCatalogRowsWithMeteora(events.map((item) => item.tokenAddress));
   const metadataByAddress = new Map(metadataRows.map((row) => [row.address, row]));
 
@@ -166,6 +272,23 @@ async function listDashboardAlertEvents(options = {}) {
     cursor: mapDeliveryCursor(cursor, rule),
     count: events.length,
     events: events.map((item) => buildDashboardAlertEventItem(item, metadataByAddress.get(item.tokenAddress) || null, rule)),
+  };
+}
+
+async function listDashboardAlertFeeds(options = {}) {
+  const rules = resolveDashboardFeedRules(options.ruleKeys);
+  const mode = normalizeAlertFeedMode(options.mode);
+  const listSingleFeed = module.exports.listDashboardAlertEvents || listDashboardAlertEvents;
+  const feeds = await Promise.all(rules.map((rule) => listSingleFeed({
+    ...options,
+    ruleKey: rule.ruleKey,
+  })));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    mode,
+    count: feeds.reduce((sum, feed) => sum + (Number(feed?.count) || 0), 0),
+    feeds,
   };
 }
 
@@ -185,16 +308,23 @@ module.exports = {
   DEFAULT_ALERT_FEED_LIMIT,
   buildDashboardAlertEventFromEvent,
   buildDashboardAlertEventItem,
+  listDashboardAlertFeeds,
   listDashboardAlertEvents,
   normalizeAlertFeedLimit,
   normalizeAlertFeedMode,
+  normalizeAlertFeedRuleKeys,
   resolveDashboardFeedRule,
+  resolveDashboardFeedRules,
   updateDashboardAlertCursor,
   __private: {
     buildDashboardAlertEventCatalogPayload,
     buildDashboardAlertEventDetectionPayload,
+    buildDashboardUserAlertIdentityPayload,
+    buildDashboardUserAlertMetricPayload,
+    buildDashboardUserAlertEventPayload,
     loadDashboardCatalogRowsWithMeteora,
     mapDeliveryCursor,
+    resolveAlertEventModel,
     toNumberOrNull,
     toTextOrNull,
   },

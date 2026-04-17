@@ -3,6 +3,7 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
 const highCapDumpAlert = require('./high-cap-dump-alert');
+const userAlertMatcher = require('./user-alert-matcher');
 const config = require('../../config');
 const { isTraceDiscoveryEnabled, logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
 
@@ -587,6 +588,15 @@ async function evaluateTokenWithData(token, data) {
   await tokenMarketBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
   await tokenMarketVolumeBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
 
+  try {
+    await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: token,
+      tokenAfter: updatedToken,
+    });
+  } catch (error) {
+    console.error(`[CatalogWorker] Failed to evaluate per-user alerts for ${token.address}:`, error.message);
+  }
+
   return updatedToken;
 }
 
@@ -862,5 +872,6 @@ module.exports = {
     normalizeDelayMs,
     prioritizeTokensForThrottle,
     processHighCapDumpAlertsForAddresses,
+    evaluateTokenWithData,
   },
 };

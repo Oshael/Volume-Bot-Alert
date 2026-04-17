@@ -1,6 +1,7 @@
 import './styles/local-fonts.css';
 import './styles/app.css';
 import { playAlertSound, playMigrateSound } from './services/alerts/sound';
+import { updateLivePresence } from './services/socket/client';
 import { isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
@@ -17,6 +18,7 @@ const controller = createAppController();
 const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
+const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -35,6 +37,7 @@ let hiddenSinceAt: number | null = isDocumentHidden ? Date.now() : null;
 let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
+let lastLivePresenceSignature: string | null = null;
 
 declare global {
   interface Window {
@@ -225,6 +228,48 @@ function shouldTreatMonitoringAsActive(state: AppState | null) {
   return Boolean(state && state.session.status === 'authenticated' && state.runtime.mode === 'active');
 }
 
+function buildDesiredLivePresence(state: AppState | null) {
+  if (
+    !state
+    || state.session.status !== 'authenticated'
+    || state.ui.workspace !== 'live'
+    || state.runtime.mode !== 'active'
+  ) {
+    return {
+      workspace: 'live' as const,
+      mode: 'inactive' as const,
+    };
+  }
+
+  if (isDocumentHidden) {
+    return {
+      workspace: 'live' as const,
+      mode: 'hidden' as const,
+      hiddenGraceMs: HIDDEN_RUNTIME_STOP_MS,
+    };
+  }
+
+  return {
+    workspace: 'live' as const,
+    mode: 'foreground' as const,
+  };
+}
+
+function getLivePresenceSignature(payload: ReturnType<typeof buildDesiredLivePresence>) {
+  return `${payload.workspace}:${payload.mode}:${payload.hiddenGraceMs ?? 0}`;
+}
+
+function syncLivePresence(state: AppState | null, options?: { force?: boolean }) {
+  const payload = buildDesiredLivePresence(state);
+  const signature = getLivePresenceSignature(payload);
+  if (!options?.force && signature === lastLivePresenceSignature) {
+    return;
+  }
+
+  updateLivePresence(payload);
+  lastLivePresenceSignature = signature;
+}
+
 function armHiddenRuntimeStopTimer() {
   clearHiddenRuntimeStopTimer();
   if (!isDocumentHidden || !hiddenMonitoringWasActive) {
@@ -309,6 +354,7 @@ controller.subscribe((state, dirtyRegions) => {
   lastObservedAuthPanel = state.ui.authPanel;
   lastObservedAuthModalKey = getAuthModalRenderKey(state);
   lastObservedRouteKey = currentRouteKey;
+  syncLivePresence(state);
 
   if (sessionJustBecameAuthenticated) {
     for (const alert of state.data.alerts) {
@@ -376,6 +422,7 @@ document.addEventListener('visibilitychange', () => {
     hiddenSinceAt = Date.now();
     hiddenMonitoringWasActive = shouldTreatMonitoringAsActive(latestState);
     hiddenAutoStopTriggered = false;
+    syncLivePresence(latestState, { force: true });
     armHiddenRuntimeStopTimer();
     return;
   }
@@ -396,6 +443,7 @@ document.addEventListener('visibilitychange', () => {
   interactionLockUntil = 0;
   listInteractionDepth = 0;
   suppressNextFocusFlush = false;
+  syncLivePresence(latestState, { force: true });
   scheduleRestoreRender();
 });
 
@@ -409,5 +457,17 @@ window.setInterval(() => {
   }
   flushPendingRender();
 }, 250);
+
+window.setInterval(() => {
+  if (!latestState || isDocumentHidden) {
+    return;
+  }
+
+  if (!shouldTreatMonitoringAsActive(latestState) || latestState.ui.workspace !== 'live') {
+    return;
+  }
+
+  syncLivePresence(latestState, { force: true });
+}, LIVE_PRESENCE_HEARTBEAT_MS);
 
 void controller.init();

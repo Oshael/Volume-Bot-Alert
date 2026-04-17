@@ -4,6 +4,11 @@ import type { DashboardAlertEvent } from '../api/catalog';
 
 let socket: Socket | null = null;
 const desiredPumpSubscriptions = new Set<string>();
+let desiredLivePresence: {
+  workspace: 'live';
+  mode: 'foreground' | 'hidden' | 'inactive';
+  hiddenGraceMs?: number;
+} | null = null;
 
 function normalizeMint(value: string) {
   return String(value || '').trim();
@@ -51,6 +56,9 @@ export function bindSocketLifecycle(options: {
   current.on('connect', () => {
     for (const mint of desiredPumpSubscriptions) {
       current.emit('pump:subscribe', { mint });
+    }
+    if (desiredLivePresence) {
+      current.emit('live:presence', desiredLivePresence);
     }
     options.onStatus?.('Socket connected.');
   });
@@ -117,6 +125,29 @@ export function getSocket(): Socket | null {
 
 export function getDesiredPumpSubscriptionCount() {
   return desiredPumpSubscriptions.size;
+}
+
+export function updateLivePresence(payload: {
+  workspace: 'live';
+  mode: 'foreground' | 'hidden' | 'inactive';
+  hiddenGraceMs?: number;
+}) {
+  desiredLivePresence = payload.mode === 'hidden'
+    ? {
+        workspace: 'live',
+        mode: 'hidden',
+        hiddenGraceMs: Math.max(1, Math.trunc(Number(payload.hiddenGraceMs) || 0)),
+      }
+    : {
+        workspace: 'live',
+        mode: payload.mode,
+      };
+
+  if (!socket) {
+    return;
+  }
+
+  socket.emit('live:presence', desiredLivePresence);
 }
 
 export function disconnectSocket() {

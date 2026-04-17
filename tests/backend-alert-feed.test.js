@@ -5,6 +5,7 @@ const alertDeliveryCursor = require('../src/models/alert-delivery-cursor');
 const tokenAlertEvent = require('../src/models/token-alert-event');
 const tokenCatalog = require('../src/models/token-catalog');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
+const userAlertEvent = require('../src/models/user-alert-event');
 const backendAlertFeed = require('../src/services/backend-alert-feed');
 
 describe('backend alert feed service', () => {
@@ -166,6 +167,206 @@ describe('backend alert feed service', () => {
       assert.equal(payload.structuralRisk, null);
       assert.equal(payload.junkAssessment.label, 'valid_but_weak');
     } finally {
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
+  it('builds a dashboard payload for per-user backend alert rules from persisted user events', async () => {
+    const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalListRecentEvents = userAlertEvent.listRecentEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    let capturedFilters = null;
+
+    alertDeliveryCursor.getCursor = async () => null;
+    userAlertEvent.listRecentEvents = async (filters) => {
+      capturedFilters = filters;
+      return [{
+        id: 31,
+        userId: 7,
+        ruleKey: 'monitored-vol',
+        kind: 'monitored-vol',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        payload: {
+          address: 'So11111111111111111111111111111111111111112',
+          symbol: 'WSOL',
+          label: 'VOL',
+          pct: 80,
+          prevVolume5m: 10000,
+          volume5m: 18000,
+          volume1h: 50000,
+          volume6h: 120000,
+          volume24h: 350000,
+          prevMcap: 250000,
+          mcap: 300000,
+        },
+        triggeredAt: '2026-04-16T12:05:10.000Z',
+      }];
+    };
+    tokenCatalog.listDashboardMetadataByAddresses = async () => [{
+      address: 'So11111111111111111111111111111111111111112',
+      symbol: 'WSOL',
+      name: 'Wrapped SOL',
+      last_pair_address: 'pair_test_123',
+      last_pair_url: 'https://dexscreener.com/solana/testpair',
+      last_image_url: 'https://example.com/token.png',
+      last_twitter_url: 'https://x.com/wsol',
+      last_mcap: '300000',
+      last_vol_1h: '50000',
+      last_vol_6h: '120000',
+      last_vol_24h: '350000',
+      last_token_created_at_ms: String(Date.UTC(2026, 3, 1, 12, 0, 0)),
+    }];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 7,
+        ruleKey: 'monitored-vol',
+        limit: 20,
+      });
+
+      assert.deepEqual(capturedFilters, {
+        userId: 7,
+        ruleKey: 'monitored-vol',
+        limit: 20,
+        afterId: null,
+        sort: 'desc',
+      });
+      assert.equal(payload.ruleKey, 'monitored-vol');
+      assert.equal(payload.kind, 'monitored-vol');
+      assert.equal(payload.count, 1);
+      assert.equal(payload.events[0].label, 'VOL');
+      assert.equal(payload.events[0].pct, 80);
+      assert.equal(payload.events[0].prevVolume5m, 10000);
+      assert.equal(payload.events[0].volume5m, 18000);
+      assert.equal(payload.events[0].mcap, 300000);
+      assert.equal(payload.events[0].triggeredAt, '2026-04-16T12:05:10.000Z');
+    } finally {
+      alertDeliveryCursor.getCursor = originalGetCursor;
+      userAlertEvent.listRecentEvents = originalListRecentEvents;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
+  it('lists all dashboard-enabled alert feeds for the authenticated user', async () => {
+    const originalListDashboardAlertEvents = backendAlertFeed.listDashboardAlertEvents;
+    const capturedRuleKeys = [];
+
+    backendAlertFeed.listDashboardAlertEvents = async (options) => {
+      capturedRuleKeys.push(options.ruleKey);
+      return {
+        generatedAt: '2026-04-16T12:05:10.000Z',
+        kind: options.ruleKey,
+        ruleKey: options.ruleKey,
+        mode: options.mode || 'all',
+        cursor: {
+          ruleKey: options.ruleKey,
+          lastSeenEventId: null,
+          lastAckedEventId: null,
+          updatedAt: null,
+        },
+        count: options.ruleKey === 'high-cap-dump-5m' ? 1 : 0,
+        events: options.ruleKey === 'high-cap-dump-5m'
+          ? [{ id: 9, kind: 'high-cap-dump-5m', ruleKey: 'high-cap-dump-5m', address: 'So11111111111111111111111111111111111111112' }]
+          : [],
+      };
+    };
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertFeeds({
+        userId: 7,
+        limit: 10,
+        mode: 'unseen',
+      });
+
+      assert.deepEqual(capturedRuleKeys, [
+        'high-cap-dump-5m',
+        'monitored-vol',
+        'monitored-mcap',
+        'hvnc',
+        'recent-surge-1h',
+        'recent-surge-6h',
+        'old-week-surge-1h',
+        'old-week-surge-6h',
+        'meteora-surge',
+      ]);
+      assert.equal(payload.mode, 'unseen');
+      assert.equal(payload.count, 1);
+      assert.equal(payload.feeds.length, 9);
+    } finally {
+      backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
+    }
+  });
+
+  it('builds a dashboard payload for surge backend events with age bucket metadata', async () => {
+    const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalListRecentEvents = userAlertEvent.listRecentEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+
+    alertDeliveryCursor.getCursor = async () => null;
+    userAlertEvent.listRecentEvents = async () => [{
+      id: 44,
+      userId: 7,
+      ruleKey: 'recent-surge-1h',
+      kind: 'old-surge',
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      payload: {
+        address: 'So11111111111111111111111111111111111111112',
+        symbol: 'WSOL',
+        label: 'PCHANGE 1H',
+        pct: 32,
+        priceChange1h: 32,
+        priceChange6h: 110,
+        thresholdPct: 25,
+        surgeWindow: '1H',
+        ageBucket: 'recent',
+        isOldSurge: true,
+      },
+      triggeredAt: '2026-04-16T12:05:10.000Z',
+    }];
+    tokenCatalog.listDashboardMetadataByAddresses = async () => [{
+      address: 'So11111111111111111111111111111111111111112',
+      symbol: 'WSOL',
+      name: 'Wrapped SOL',
+      last_pair_address: 'pair_test_123',
+      last_pair_url: 'https://dexscreener.com/solana/testpair',
+      last_image_url: 'https://example.com/token.png',
+      last_twitter_url: 'https://x.com/wsol',
+      last_mcap: '300000',
+      last_price_change_1h: '32',
+      last_price_change_6h: '110',
+      last_vol_1h: '50000',
+      last_vol_6h: '120000',
+      last_vol_24h: '350000',
+      last_token_created_at_ms: String(Date.UTC(2026, 3, 13, 12, 0, 0)),
+    }];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 7,
+        ruleKey: 'recent-surge-1h',
+        limit: 20,
+      });
+
+      assert.equal(payload.ruleKey, 'recent-surge-1h');
+      assert.equal(payload.kind, 'old-surge');
+      assert.equal(payload.count, 1);
+      assert.equal(payload.events[0].ruleKey, 'recent-surge-1h');
+      assert.equal(payload.events[0].kind, 'old-surge');
+      assert.equal(payload.events[0].surgeWindow, '1H');
+      assert.equal(payload.events[0].ageBucket, 'recent');
+      assert.equal(payload.events[0].thresholdPct, 25);
+      assert.equal(payload.events[0].isOldSurge, true);
+      assert.equal(payload.events[0].priceChange1h, 32);
+      assert.equal(payload.events[0].priceChange6h, 110);
+    } finally {
+      alertDeliveryCursor.getCursor = originalGetCursor;
+      userAlertEvent.listRecentEvents = originalListRecentEvents;
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }

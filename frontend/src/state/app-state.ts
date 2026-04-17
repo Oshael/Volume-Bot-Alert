@@ -1,6 +1,7 @@
 export interface AlertEntry {
   id: string;
   kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'pumpfun-vol' | 'pumpfun-hvnc' | 'high-cap-dump-5m';
+  ruleKey?: string | null;
   address: string;
   mintAddress?: string | null;
   pairAddress?: string | null;
@@ -11,6 +12,8 @@ export interface AlertEntry {
   twitterUrl?: string | null;
   createdAt: number;
   tokenCreatedAt?: number | null;
+  priceChange1h?: number | null;
+  priceChange6h?: number | null;
   prevVolume5m?: number | null;
   volume5m?: number | null;
   volume1h?: number | null;
@@ -28,6 +31,7 @@ export interface AlertEntry {
   pct: number;
   label: string;
   surgeWindow?: '1H' | '6H' | null;
+  ageBucket?: 'recent' | 'old-week' | null;
   isHvnc?: boolean;
   isOldSurge?: boolean;
 }
@@ -71,10 +75,7 @@ export interface ManualTokenEntry {
   lastAlertAt?: number | null;
   deadCycles?: number;
   _hvncFired?: boolean;
-  _oldSurgeFired?: boolean;
   _meteoraSurgeFired?: boolean;
-  _oldSurgeSessionBase1h?: number | null;
-  _oldSurgeSessionBase6h?: number | null;
   _volAlertAboveThreshold?: boolean;
   _mcapAlertAboveThreshold?: boolean;
   _lastVolAlertPct?: number | null;

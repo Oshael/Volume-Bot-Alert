@@ -15,6 +15,13 @@ export function isHvncAlert(alert: AlertEntry) {
 }
 
 function getOldSurgeToneClass(alert: AlertEntry, now: number) {
+  if (alert.ageBucket === 'recent') {
+    return 'recent-surge';
+  }
+  if (alert.ageBucket === 'old-week') {
+    return 'old-surge';
+  }
+
   const tokenAgeMs = alert.tokenCreatedAt ? now - alert.tokenCreatedAt : Number.POSITIVE_INFINITY;
   return tokenAgeMs >= RECENT_TOKEN_MIN_AGE_MS && tokenAgeMs <= RECENT_TOKEN_MAX_AGE_MS
     ? 'recent-surge'

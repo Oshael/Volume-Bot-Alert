@@ -39,7 +39,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertEvents, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -89,7 +89,6 @@ const SOCIAL_LINK_SYNC_TIMEOUT_MS = 90_000;
 const AUTH_ERROR_COOKIE_BLOCKED = 'Login succeeded, but the secure session cookie was not accepted. Check browser cookie/privacy settings and try again.';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
-const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HVNC_MAX_AGE_MS = 30 * 60 * 1000;
 const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
@@ -103,7 +102,6 @@ const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
-const OLD_SURGE_SESSION_DELTA_PCT = 50;
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
@@ -117,6 +115,17 @@ const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
+const BACKEND_OWNED_ALERT_RULE_KEYS = [
+  HIGH_CAP_DUMP_RULE_KEY,
+  'monitored-vol',
+  'monitored-mcap',
+  'hvnc',
+  'recent-surge-1h',
+  'recent-surge-6h',
+  'old-week-surge-1h',
+  'old-week-surge-6h',
+  'meteora-surge',
+] as const;
 const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
 const ROUTED_BUCKET_DEFAULT_PER_PAGE = 15;
 const ALERT_STORAGE_DEBOUNCE_MS = 250;
@@ -207,10 +216,7 @@ const TRACKED_MARKET_FIELD_KEYS = [
 const TRACKED_ALERT_PRESERVED_KEYS = [
   'lastAlertAt',
   '_hvncFired',
-  '_oldSurgeFired',
   '_meteoraSurgeFired',
-  '_oldSurgeSessionBase1h',
-  '_oldSurgeSessionBase6h',
   '_lastVolAlertPct',
   '_lastMcapAlertPct',
   '_lastAlertKind',
@@ -967,6 +973,10 @@ export function createAppController(): AppController {
     return isLiveWorkspace();
   }
 
+  function shouldUseBackendOwnedMonitoredAlerts() {
+    return isLiveWorkspace() && isAuthenticatedSession();
+  }
+
   function shouldRunPumpfunRuntime() {
     return isLiveWorkspace();
   }
@@ -1163,7 +1173,6 @@ export function createAppController(): AppController {
           token._lastAlertKind = 'hvnc';
           break;
         case 'old-surge':
-          token._oldSurgeFired = true;
           token._lastAlertKind = 'old-surge';
           break;
         case 'meteora-surge':
@@ -1848,14 +1857,6 @@ export function createAppController(): AppController {
     return String(state.data.configs[key] ?? (fallback ? 'on' : 'off')) !== 'off';
   }
 
-  function getOldAlert1hThreshold() {
-    return getConfigNumber('old-alert-1h-threshold', 50);
-  }
-
-  function getOldAlert6hThreshold() {
-    return getConfigNumber('old-alert-6h-threshold', 150);
-  }
-
   function isAlertKindEnabled(kind: AlertEntry['kind']) {
     switch (kind) {
       case 'monitored-vol':
@@ -1877,9 +1878,24 @@ export function createAppController(): AppController {
     }
   }
 
-  function isAlertEntryEnabled(entry: Pick<AlertEntry, 'kind' | 'surgeWindow'>) {
+  function resolveBackendSurgeAlertEnabled(entry: Pick<AlertEntry, 'ruleKey' | 'surgeWindow'>) {
+    switch (entry.ruleKey) {
+      case 'recent-surge-1h':
+        return isConfigEnabled('alert-recent-surge-1h-enabled');
+      case 'recent-surge-6h':
+        return isConfigEnabled('alert-recent-surge-6h-enabled');
+      case 'old-week-surge-1h':
+        return isConfigEnabled('alert-old-week-surge-1h-enabled');
+      case 'old-week-surge-6h':
+        return isConfigEnabled('alert-old-week-surge-6h-enabled');
+      default:
+        return isConfigEnabled(entry.surgeWindow === '6H' ? 'alert-old-surge-6h-enabled' : 'alert-old-surge-1h-enabled');
+    }
+  }
+
+  function isAlertEntryEnabled(entry: Pick<AlertEntry, 'kind' | 'ruleKey' | 'surgeWindow'>) {
     if (entry.kind === 'old-surge') {
-      return isConfigEnabled(entry.surgeWindow === '6H' ? 'alert-old-surge-6h-enabled' : 'alert-old-surge-1h-enabled');
+      return resolveBackendSurgeAlertEnabled(entry);
     }
 
     return isAlertKindEnabled(entry.kind);
@@ -3597,9 +3613,111 @@ export function createAppController(): AppController {
     };
   }
 
+  function buildBackendSimpleAlertEntry(event: DashboardAlertEvent, kind: Extract<AlertEntry['kind'], 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'meteora-surge'>): AlertEntry | null {
+    const address = String(event.address || '').trim();
+    if (!address) {
+      return null;
+    }
+
+    const eventId = Number(event.id);
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      return null;
+    }
+
+    return {
+      id: `backend:${kind}:${eventId}`,
+      kind,
+      ruleKey: toOptionalText(event.ruleKey),
+      address,
+      mintAddress: address,
+      createdAt: getBackendAlertCreatedAt(event.triggeredAt),
+      label: toOptionalText(event.label) || (
+        kind === 'hvnc'
+          ? 'HVNC'
+          : kind === 'meteora-surge'
+            ? 'METEORA 1H'
+            : kind === 'monitored-mcap'
+              ? 'MCAP'
+              : 'VOL'
+      ),
+      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      volume5m: toOptionalNumber(event.volume5m),
+      volume1h: toOptionalNumber(event.volume1h),
+      volume6h: toOptionalNumber(event.volume6h),
+      volume24h: toOptionalNumber(event.volume24h),
+      prevVolume5m: toOptionalNumber(event.prevVolume5m),
+      prevMcap: toOptionalNumber(event.prevMcap),
+      mcap: toOptionalNumber(event.mcap),
+      pct: toOptionalNumber(event.pct) ?? 0,
+      isHvnc: kind === 'hvnc' ? true : undefined,
+      meteoraCurrentTvl: toOptionalNumber(event.meteoraCurrentTvl),
+      meteoraBaselineTvl24h: toOptionalNumber(event.meteoraBaselineTvl24h),
+    };
+  }
+
+  function buildBackendSurgeAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
+    const address = String(event.address || '').trim();
+    if (!address) {
+      return null;
+    }
+
+    const eventId = Number(event.id);
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      return null;
+    }
+
+    const surgeWindow = event.surgeWindow === '6H' ? '6H' : '1H';
+    const ageBucket = event.ageBucket === 'recent' || event.ageBucket === 'old-week'
+      ? event.ageBucket
+      : null;
+
+    return {
+      id: `backend:${toOptionalText(event.ruleKey) || 'old-surge'}:${eventId}`,
+      kind: 'old-surge',
+      ruleKey: toOptionalText(event.ruleKey),
+      address,
+      mintAddress: address,
+      createdAt: getBackendAlertCreatedAt(event.triggeredAt),
+      label: toOptionalText(event.label) || `PCHANGE ${surgeWindow}`,
+      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      priceChange1h: toOptionalNumber(event.priceChange1h),
+      priceChange6h: toOptionalNumber(event.priceChange6h),
+      volume1h: toOptionalNumber(event.volume1h),
+      volume6h: toOptionalNumber(event.volume6h),
+      volume24h: toOptionalNumber(event.volume24h),
+      mcap: toOptionalNumber(event.mcap),
+      thresholdPct: toOptionalNumber(event.thresholdPct),
+      pct: toOptionalNumber(event.pct) ?? 0,
+      surgeWindow,
+      ageBucket,
+      isOldSurge: true,
+    };
+  }
+
+  function buildBackendAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
+    const kind = String(event.kind || event.ruleKey || '').trim().toLowerCase();
+
+    switch (kind) {
+      case 'high-cap-dump-5m':
+        return buildBackendHighCapDumpAlertEntry(event);
+      case 'monitored-vol':
+        return buildBackendSimpleAlertEntry(event, 'monitored-vol');
+      case 'monitored-mcap':
+        return buildBackendSimpleAlertEntry(event, 'monitored-mcap');
+      case 'hvnc':
+        return buildBackendSimpleAlertEntry(event, 'hvnc');
+      case 'old-surge':
+        return buildBackendSurgeAlertEntry(event);
+      case 'meteora-surge':
+        return buildBackendSimpleAlertEntry(event, 'meteora-surge');
+      default:
+        return null;
+    }
+  }
+
   function syncBackendAlertEvents(events: DashboardAlertEvent[] = []) {
     const nextAlerts = events
-      .map((item) => buildBackendHighCapDumpAlertEntry(item))
+      .map((item) => buildBackendAlertEntry(item))
       .filter((item): item is AlertEntry => Boolean(item))
       .sort((a, b) => a.createdAt - b.createdAt);
 
@@ -3686,44 +3804,6 @@ export function createAppController(): AppController {
       && (token.volume24h ?? 0) >= hvncMinVol;
   }
 
-  function primeOldSurgeSessionBases(token: ManualTokenEntry, pc1h: number | null, pc6h: number | null) {
-    if (token._oldSurgeSessionBase1h == null) {
-      token._oldSurgeSessionBase1h = pc1h;
-    }
-    if (token._oldSurgeSessionBase6h == null) {
-      token._oldSurgeSessionBase6h = pc6h;
-    }
-  }
-
-  function hasTriggeredOldSurge(base: number | null | undefined, current: number | null, threshold: number) {
-    const crossedThreshold = base != null && base < threshold && current != null && current >= threshold;
-    const repeatedHotMove = base != null && base >= threshold && current != null && current >= base + OLD_SURGE_SESSION_DELTA_PCT;
-    return crossedThreshold || repeatedHotMove;
-  }
-
-  function resolveOldSurgeAlert(token: ManualTokenEntry) {
-    const pc1h = token.priceChange1h ?? null;
-    const pc6h = token.priceChange6h ?? null;
-    const oldAlert1hPct = getOldAlert1hThreshold();
-    const oldAlert6hPct = getOldAlert6hThreshold();
-    const oldSurge1hEnabled = isConfigEnabled('alert-old-surge-1h-enabled');
-    const oldSurge6hEnabled = isConfigEnabled('alert-old-surge-6h-enabled');
-    const base1h = token._oldSurgeSessionBase1h;
-    const base6h = token._oldSurgeSessionBase6h;
-
-    primeOldSurgeSessionBases(token, pc1h, pc6h);
-
-    if (oldSurge6hEnabled && hasTriggeredOldSurge(base6h, pc6h, oldAlert6hPct)) {
-      return { pct: pc6h ?? 0, surgeWindow: '6H' as const };
-    }
-
-    if (oldSurge1hEnabled && hasTriggeredOldSurge(base1h, pc1h, oldAlert1hPct)) {
-      return { pct: pc1h ?? 0, surgeWindow: '1H' as const };
-    }
-
-    return null;
-  }
-
   function shouldFireMeteoraSurgeAlert(
     token: ManualTokenEntry,
     meteoraEntry: MeteoraEntry | undefined,
@@ -3758,30 +3838,15 @@ export function createAppController(): AppController {
     const meteoraCurrentTvl = Number(meteoraEntry?.tvl) || 0;
     const meteoraBaselineTvl1h = getMeteoraBaselineTvl1h(meteoraEntry);
     const meteoraBaselineTvl24h = getMeteoraBaselineTvl24h(meteoraEntry);
+    const backendOwnedAlerts = shouldUseBackendOwnedMonitoredAlerts();
 
-    if (shouldFireHvncAlert(token, ageMs, hvncMinVol)) {
+    if (!backendOwnedAlerts && shouldFireHvncAlert(token, ageMs, hvncMinVol)) {
       token._hvncFired = true;
       pushAlert(buildTrackedAlertEntry(token, now, symbol, 'hvnc', 'HVNC', 0, { isHvnc: true }));
       setNotice(`HVNC alert: ${symbol}`);
     }
 
-    const isOldRouted = Boolean(token._isRecentRouted || token._isOldWeekRouted);
-
-    if (!token._oldSurgeFired && isOldRouted && ageMs >= SURGE_MIN_AGE_MS) {
-      const surgeAlert = resolveOldSurgeAlert(token);
-      if (surgeAlert && surgeAlert.pct > 0) {
-        token._oldSurgeFired = true;
-        token.lastAlertAt = now;
-        token._lastAlertKind = 'old-surge';
-        pushAlert(buildTrackedAlertEntry(token, now, symbol, 'old-surge', `PCHANGE ${surgeAlert.surgeWindow}`, surgeAlert.pct, {
-          surgeWindow: surgeAlert.surgeWindow,
-          isOldSurge: true,
-        }));
-        setNotice(`Old token surge alert ${surgeAlert.surgeWindow}: ${symbol}`);
-      }
-    }
-
-    if (shouldFireMeteoraSurgeAlert(token, meteoraEntry, meteoraCurrentTvl, meteoraBaselineTvl1h, meteoraAlertThreshold1h)) {
+    if (!backendOwnedAlerts && shouldFireMeteoraSurgeAlert(token, meteoraEntry, meteoraCurrentTvl, meteoraBaselineTvl1h, meteoraAlertThreshold1h)) {
       token._meteoraSurgeFired = true;
       token.lastAlertAt = now;
       token._lastAlertKind = 'meteora-surge';
@@ -3882,8 +3947,38 @@ export function createAppController(): AppController {
     token._lastAlertKind = 'monitored-mcap';
   }
 
+  function resolveLocalAlertCandidate(
+    token: ManualTokenEntry,
+    now: number,
+    symbol: string,
+    threshold: number,
+    mcapThreshold: number,
+    previousVol: number | null,
+    previousMcap: number | null,
+    currentVol: number,
+    currentMcap: number,
+  ) {
+    const mcapDeclining = previousMcap != null && previousMcap > 0 && currentMcap > 0 && currentMcap < previousMcap;
+
+    if (previousVol != null && previousVol > 0) {
+      const volumeCandidate = evaluateVolumeLocalAlert(token, now, symbol, threshold, previousVol, previousMcap, currentVol, mcapDeclining);
+      if (volumeCandidate) {
+        return volumeCandidate;
+      }
+    }
+
+    if (mcapThreshold > 0 && previousMcap != null && previousMcap > 0) {
+      return evaluateMcapLocalAlert(token, now, symbol, mcapThreshold, previousVol, previousMcap, currentMcap);
+    }
+
+    return null;
+  }
+
   function maybeFireLocalAlert(token: ManualTokenEntry) {
     if (isBlocked(token.address)) {
+      return;
+    }
+    if (shouldUseBackendOwnedMonitoredAlerts()) {
       return;
     }
 
@@ -3903,16 +3998,17 @@ export function createAppController(): AppController {
     }
 
     const symbol = getAlertSymbol(token);
-    const mcapDeclining = previousMcap != null && previousMcap > 0 && currentMcap > 0 && currentMcap < previousMcap;
-    let localAlertCandidate: { alert: AlertEntry; firedKind: 'vol' | 'mcap' } | null = null;
-
-    if (previousVol != null && previousVol > 0) {
-      localAlertCandidate = evaluateVolumeLocalAlert(token, now, symbol, threshold, previousVol, previousMcap, currentVol, mcapDeclining);
-    }
-
-    if (!localAlertCandidate && mcapThreshold > 0 && previousMcap != null && previousMcap > 0) {
-      localAlertCandidate = evaluateMcapLocalAlert(token, now, symbol, mcapThreshold, previousVol, previousMcap, currentMcap);
-    }
+    const localAlertCandidate = resolveLocalAlertCandidate(
+      token,
+      now,
+      symbol,
+      threshold,
+      mcapThreshold,
+      previousVol,
+      previousMcap,
+      currentVol,
+      currentMcap,
+    );
 
     if (localAlertCandidate) {
       applyLocalAlertState(token, localAlertCandidate.alert, localAlertCandidate.firedKind, now);
@@ -4096,29 +4192,33 @@ export function createAppController(): AppController {
     emit('bid-zone');
   }
 
-  function loadDashboardAlertEventsForWorkspace(token: string, includeAlertFeed?: boolean) {
+  function loadDashboardAlertFeedsForWorkspace(token: string, includeAlertFeed?: boolean) {
     const shouldLoadDashboardAlerts = includeAlertFeed ?? isLiveWorkspace();
     if (!shouldLoadDashboardAlerts) {
       return Promise.resolve(null);
     }
 
-    return fetchDashboardAlertEvents(token, {
+    return fetchDashboardAlertFeeds(token, {
       limit: BACKEND_ALERT_FEED_LIMIT,
-      ruleKey: HIGH_CAP_DUMP_RULE_KEY,
       mode: 'unseen',
+      ruleKeys: [...BACKEND_OWNED_ALERT_RULE_KEYS],
     }).catch(() => null);
   }
 
   function applyMonitoredDashboardRefreshSuccess(
     token: string,
     monitoredDashboard: Awaited<ReturnType<typeof fetchDashboardMonitored>>,
-    dashboardAlertEvents: Awaited<ReturnType<typeof loadDashboardAlertEventsForWorkspace>>,
+    dashboardAlertFeeds: Awaited<ReturnType<typeof loadDashboardAlertFeedsForWorkspace>>,
   ) {
     applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
-    if (dashboardAlertEvents?.events?.length) {
-      const added = syncBackendAlertEvents(dashboardAlertEvents.events);
-      if (added > 0) {
-        void markDashboardAlertEventsSeen(token, dashboardAlertEvents.events, dashboardAlertEvents.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
+    if (dashboardAlertFeeds?.feeds?.length) {
+      for (const feed of dashboardAlertFeeds.feeds) {
+        if (!feed?.events?.length) {
+          continue;
+        }
+
+        syncBackendAlertEvents(feed.events);
+        void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
       }
     }
   }
@@ -4269,7 +4369,7 @@ export function createAppController(): AppController {
     try {
       const [monitoredDashboard, dashboardAlertEvents] = await Promise.all([
         fetchDashboardMonitored(token),
-        loadDashboardAlertEventsForWorkspace(token, options?.includeAlertFeed),
+        loadDashboardAlertFeedsForWorkspace(token, options?.includeAlertFeed),
       ]);
       applyMonitoredDashboardRefreshSuccess(token, monitoredDashboard, dashboardAlertEvents);
       await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);

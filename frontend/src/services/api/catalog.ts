@@ -142,9 +142,22 @@ export interface DashboardAlertEvent {
   twitterUrl?: string | null;
   tokenCreatedAt?: number | null;
   mcap?: number | null;
+  priceChange1h?: number | null;
+  priceChange6h?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;
   volume24h?: number | null;
+  volume5m?: number | null;
+  prevVolume5m?: number | null;
+  prevMcap?: number | null;
+  pct?: number | null;
+  label?: string | null;
+  isHvnc?: boolean;
+  isOldSurge?: boolean;
+  surgeWindow?: '1H' | '6H' | null;
+  ageBucket?: 'recent' | 'old-week' | null;
+  meteoraCurrentTvl?: number | null;
+  meteoraBaselineTvl24h?: number | null;
   baselineTs?: string | null;
   baselineMcap?: number | null;
   windowLowMcap?: number | null;
@@ -168,6 +181,13 @@ export interface DashboardAlertEventsPayload {
   } | null;
   count: number;
   events: DashboardAlertEvent[];
+}
+
+export interface DashboardAlertFeedsPayload {
+  generatedAt?: string | null;
+  mode?: string | null;
+  count: number;
+  feeds: DashboardAlertEventsPayload[];
 }
 
 export interface LateralizedCandidate {
@@ -360,6 +380,37 @@ export function fetchDashboardAlertEvents(token?: string | null, options?: { lim
       cursor: response.cursor ?? null,
       count: Number(response.count) || 0,
       events: response.events || [],
+    }));
+}
+
+export function fetchDashboardAlertFeeds(token?: string | null, options?: { limit?: number; mode?: string; ruleKeys?: string[] }) {
+  const params = new URLSearchParams();
+  if (options?.limit) {
+    params.set('limit', String(options.limit));
+  }
+  if (options?.mode) {
+    params.set('mode', String(options.mode));
+  }
+  if (Array.isArray(options?.ruleKeys) && options.ruleKeys.length > 0) {
+    params.set('ruleKeys', options.ruleKeys.join(','));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return apiFetch<DashboardAlertFeedsPayload>(`/api/dashboard/alert-feeds${suffix}`, { token })
+    .then((response) => ({
+      generatedAt: response.generatedAt ?? null,
+      mode: response.mode ?? null,
+      count: Number(response.count) || 0,
+      feeds: Array.isArray(response.feeds)
+        ? response.feeds.map((feed) => ({
+            generatedAt: feed.generatedAt ?? null,
+            kind: feed.kind ?? null,
+            ruleKey: feed.ruleKey ?? null,
+            mode: feed.mode ?? null,
+            cursor: feed.cursor ?? null,
+            count: Number(feed.count) || 0,
+            events: feed.events || [],
+          }))
+        : [],
     }));
 }
 

@@ -2,8 +2,12 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const catalogWorker = require('../src/services/catalog-worker');
+const tokenCatalog = require('../src/models/token-catalog');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
+const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-bucket-1m');
+const dexscreener = require('../src/services/dexscreener');
 const highCapDumpAlert = require('../src/services/high-cap-dump-alert');
+const userAlertMatcher = require('../src/services/user-alert-matcher');
 
 describe('catalog worker drift compensation', () => {
   it('reduces the next delay when the cycle finishes early', () => {
@@ -233,6 +237,94 @@ describe('catalog worker drift compensation', () => {
     } finally {
       tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalListDetections;
       highCapDumpAlert.evaluateDetection = originalEvaluateDetection;
+    }
+  });
+
+  it('evaluates per-user matcher only after persisting the updated token and market snapshots', async () => {
+    const originalGetBestPair = dexscreener.getBestPair;
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
+    const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const originalEvaluateUpdatedToken = userAlertMatcher.evaluateUpdatedToken;
+    const callOrder = [];
+    const tokenBefore = {
+      address: 'So11111111111111111111111111111111111111112',
+      chain: 'solana',
+      source: 'dexscreener-discovery',
+      last_mcap: 250000,
+      last_vol_5m: 10000,
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      symbol: 'WSOL',
+      name: 'Wrapped SOL',
+      last_pair_address: 'pair-1',
+      last_vol_5m: 18000,
+      last_vol_1h: 50000,
+      last_vol_6h: 120000,
+      last_vol_24h: 350000,
+      last_mcap: 300000,
+      last_token_created_at_ms: Date.UTC(2026, 3, 16, 10, 0, 0),
+    };
+
+    dexscreener.getBestPair = () => ({
+      marketCap: 300000,
+      pairAddress: 'pair-1',
+      priceUsd: '0.42',
+      url: 'https://dex.example/pair-1',
+      baseToken: { symbol: 'WSOL', name: 'Wrapped SOL' },
+      info: {
+        imageUrl: 'https://img.example/wsol.png',
+        socials: [{ type: 'twitter', url: 'https://x.com/wsol' }],
+      },
+      volume: { m5: 18000, h1: 50000, h6: 120000, h24: 350000 },
+      priceChange: { h1: 15, h6: 50, h24: 90 },
+      liquidity: { usd: 100000 },
+      txns: { h1: { buys: 20, sells: 10 }, h24: { buys: 200, sells: 120 } },
+      pairCreatedAt: Date.UTC(2026, 3, 16, 10, 0, 0),
+    });
+    tokenCatalog.applyEvaluationResult = async (_address, payload) => {
+      callOrder.push('applyEvaluationResult');
+      assert.equal(payload.vol5m, 18000);
+      return updatedToken;
+    };
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => {
+      callOrder.push('marketBucket');
+      assert.equal(payload.tokenAddress, tokenBefore.address);
+      assert.equal(payload.vol5m, 18000);
+      return payload;
+    };
+    tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => {
+      callOrder.push('volumeBucket');
+      assert.equal(payload.tokenAddress, tokenBefore.address);
+      assert.equal(payload.vol24h, 350000);
+      return payload;
+    };
+    userAlertMatcher.evaluateUpdatedToken = async (payload) => {
+      callOrder.push('matcher');
+      assert.equal(payload.tokenBefore, tokenBefore);
+      assert.equal(payload.tokenAfter, updatedToken);
+      return { emitted: 1 };
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+
+      assert.equal(result, updatedToken);
+      assert.deepEqual(callOrder, [
+        'applyEvaluationResult',
+        'marketBucket',
+        'volumeBucket',
+        'matcher',
+      ]);
+    } finally {
+      dexscreener.getBestPair = originalGetBestPair;
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
+      tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
+      userAlertMatcher.evaluateUpdatedToken = originalEvaluateUpdatedToken;
     }
   });
 });

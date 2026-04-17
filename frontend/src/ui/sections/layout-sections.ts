@@ -312,8 +312,10 @@ const ALERT_TOGGLE_FIELDS = [
   { key: 'alert-vol-enabled', label: 'VOL' },
   { key: 'alert-mcap-enabled', label: 'MCAP' },
   { key: 'alert-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
-  { key: 'alert-old-surge-1h-enabled', label: 'SURGE 1H' },
-  { key: 'alert-old-surge-6h-enabled', label: 'SURGE 6H' },
+  { key: 'alert-recent-surge-1h-enabled', label: 'RECENT SURGE 1H' },
+  { key: 'alert-recent-surge-6h-enabled', label: 'RECENT SURGE 6H' },
+  { key: 'alert-old-week-surge-1h-enabled', label: 'OLD SURGE 1H' },
+  { key: 'alert-old-week-surge-6h-enabled', label: 'OLD SURGE 6H' },
   { key: 'alert-meteora-surge-enabled', label: 'METEORA 1H' },
   { key: 'alert-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
   { key: 'alert-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
@@ -2617,7 +2619,7 @@ function renderBotSettingsFields(state: AppState) {
       </select>
     </div>
     ${renderTradeTerminalPrefsMenu(state)}
-    ${renderOldSurgeThresholdMenu(state)}
+    ${renderSurgeThresholdMenu(state)}
     ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
     ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
     ${renderConfigToggleMenu(
@@ -3623,9 +3625,11 @@ function isConfigEnabled(state: AppState, key: string) {
   return String(state.data.configs[key] ?? 'on') !== 'off';
 }
 
-function renderOldSurgeThresholdMenu(state: AppState) {
-  const value1h = Number(state.data.configs['old-alert-1h-threshold'] ?? 50);
-  const value6h = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
+function renderSurgeThresholdMenu(state: AppState) {
+  const recent1h = Number(state.data.configs['recent-surge-1h-threshold'] ?? 50);
+  const recent6h = Number(state.data.configs['recent-surge-6h-threshold'] ?? 150);
+  const oldWeek1h = Number(state.data.configs['old-week-surge-1h-threshold'] ?? 50);
+  const oldWeek6h = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 150);
   return `
     <div class="config-item config-item-menu">
       <label>
@@ -3633,21 +3637,29 @@ function renderOldSurgeThresholdMenu(state: AppState) {
         <span class="config-help-hover" tabindex="0" aria-label="What is Surge alert?">
           <span class="config-help-trigger">?</span>
           <span class="config-help-panel">
-            Surge is the alert for older routed tokens. It fires when a token in the routed old-token buckets reaches the configured 1H or 6H price-change threshold during the current session.
+            Surge uses token age and Dex price change. Recent surge covers tokens from 2d up to 7d old, and old surge covers tokens from 7d+. Already-hot tokens are suppressed on startup until a real new crossing happens.
           </span>
         </span>
       </label>
       <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
-        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="old-surge-threshold">${Math.round(value1h)}% / ${Math.round(value6h)}%</button>
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="surge-threshold">Recent ${Math.round(recent1h)}%/${Math.round(recent6h)}% · Old ${Math.round(oldWeek1h)}%/${Math.round(oldWeek6h)}%</button>
         <div class="sort-menu-dropdown config-menu-dropdown config-threshold-dropdown">
           <div class="config-threshold-grid">
             <div class="config-threshold-field">
-              <span>1H</span>
-              <input type="number" min="0" name="old-alert-1h-threshold" />
+              <span>Recent 1H (2d-7d)</span>
+              <input type="number" min="0" name="recent-surge-1h-threshold" />
             </div>
             <div class="config-threshold-field">
-              <span>6H</span>
-              <input type="number" min="0" name="old-alert-6h-threshold" />
+              <span>Recent 6H (2d-7d)</span>
+              <input type="number" min="0" name="recent-surge-6h-threshold" />
+            </div>
+            <div class="config-threshold-field">
+              <span>Old 1H (7d+)</span>
+              <input type="number" min="0" name="old-week-surge-1h-threshold" />
+            </div>
+            <div class="config-threshold-field">
+              <span>Old 6H (7d+)</span>
+              <input type="number" min="0" name="old-week-surge-6h-threshold" />
             </div>
           </div>
         </div>
@@ -3715,14 +3727,26 @@ function renderConfigToggleMenu(
 
 function renderSoundUploadStrip(state: AppState) {
   const scope = state.session.email || state.session.username || 'anonymous';
-  const old1hThreshold = Number(state.data.configs['old-alert-1h-threshold'] ?? 50);
-  const old6hThreshold = Number(state.data.configs['old-alert-6h-threshold'] ?? 150);
+  const recent1hThreshold = Number(state.data.configs['recent-surge-1h-threshold'] ?? 50);
+  const recent6hThreshold = Number(state.data.configs['recent-surge-6h-threshold'] ?? 150);
+  const oldWeek1hThreshold = Number(state.data.configs['old-week-surge-1h-threshold'] ?? 50);
+  const oldWeek6hThreshold = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 150);
   const slots: Array<{ slot: CustomSoundSlot; title: string; sub: string; dot: string }> = [
     { slot: 'normal', title: 'Sound Level Normal', sub: '(+50%) / MP3/WAV/OGG', dot: 'sound-dot normal' },
     { slot: 'critical', title: 'Sound Level Critical', sub: '(+100%) / MP3/WAV/OGG', dot: 'sound-dot critical' },
     { slot: 'mega', title: 'Sound Level Mega', sub: '(+200%) / MP3/WAV/OGG', dot: 'sound-dot mega' },
-    { slot: 'old1h', title: 'Surge + MET Alert 1h', sub: `(+${Math.round(old1hThreshold)}%) / MP3/WAV/OGG`, dot: 'sound-dot old1h' },
-    { slot: 'old6h', title: 'Surge Alert 6h', sub: `(+${Math.round(old6hThreshold)}%) / MP3/WAV/OGG`, dot: 'sound-dot old6h' },
+    {
+      slot: 'old1h',
+      title: 'Surge + MET Alert 1h',
+      sub: `Recent +${Math.round(recent1hThreshold)}% / Old +${Math.round(oldWeek1hThreshold)}% / MP3/WAV/OGG`,
+      dot: 'sound-dot old1h',
+    },
+    {
+      slot: 'old6h',
+      title: 'Surge Alert 6h',
+      sub: `Recent +${Math.round(recent6hThreshold)}% / Old +${Math.round(oldWeek6hThreshold)}% / MP3/WAV/OGG`,
+      dot: 'sound-dot old6h',
+    },
   ];
 
   return `
@@ -3924,14 +3948,18 @@ function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
     soundVolume.value = String(Math.round(state.ui.soundVolume * 100));
   }
 
-  const oldAlert1h = section.querySelector<HTMLInputElement>('input[name="old-alert-1h-threshold"]');
-  if (oldAlert1h) {
-    oldAlert1h.value = String(Math.round(Number(state.data.configs['old-alert-1h-threshold'] ?? 50)));
-  }
-
-  const oldAlert6h = section.querySelector<HTMLInputElement>('input[name="old-alert-6h-threshold"]');
-  if (oldAlert6h) {
-    oldAlert6h.value = String(Math.round(Number(state.data.configs['old-alert-6h-threshold'] ?? 150)));
+  const surgeThresholdFields = [
+    ['recent-surge-1h-threshold', 50],
+    ['recent-surge-6h-threshold', 150],
+    ['old-week-surge-1h-threshold', 50],
+    ['old-week-surge-6h-threshold', 150],
+  ] as const;
+  for (const [fieldName, fallback] of surgeThresholdFields) {
+    const input = section.querySelector<HTMLInputElement>(`input[name="${fieldName}"]`);
+    if (!input) {
+      continue;
+    }
+    input.value = String(Math.round(Number(state.data.configs[fieldName] ?? fallback)));
   }
 
   const chainSelect = section.querySelector<HTMLSelectElement>('select[name="chain"]');
@@ -3954,6 +3982,10 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
     'hvnc-min-vol': 300000,
     'old-alert-1h-threshold': 50,
     'old-alert-6h-threshold': 150,
+    'recent-surge-1h-threshold': 50,
+    'recent-surge-6h-threshold': 150,
+    'old-week-surge-1h-threshold': 50,
+    'old-week-surge-6h-threshold': 150,
     'meteora-alert-1h-threshold': 50,
     'old-mcap-max': 100000000,
     'old-week-mcap-max': 100000000,

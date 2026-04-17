@@ -309,6 +309,61 @@ describe('Dashboard routes', () => {
     }
   });
 
+  it('loads aggregated dashboard alert feeds for all backend-owned rule keys', async () => {
+    const originalListDashboardAlertFeeds = backendAlertFeed.listDashboardAlertFeeds;
+    let capturedOptions = null;
+
+    backendAlertFeed.listDashboardAlertFeeds = async (options) => {
+      capturedOptions = options;
+      return {
+        generatedAt: '2026-04-16T12:05:10.000Z',
+        mode: 'unseen',
+        count: 2,
+        feeds: [
+          {
+            generatedAt: '2026-04-16T12:05:10.000Z',
+            kind: 'monitored-vol',
+            ruleKey: 'monitored-vol',
+            mode: 'unseen',
+            cursor: { ruleKey: 'monitored-vol', lastSeenEventId: 21, lastAckedEventId: null, updatedAt: '2026-04-16T12:05:11.000Z' },
+            count: 1,
+            events: [{ id: 21, kind: 'monitored-vol', ruleKey: 'monitored-vol', address: 'A' }],
+          },
+          {
+            generatedAt: '2026-04-16T12:05:10.000Z',
+            kind: 'high-cap-dump-5m',
+            ruleKey: 'high-cap-dump-5m',
+            mode: 'unseen',
+            cursor: { ruleKey: 'high-cap-dump-5m', lastSeenEventId: 30, lastAckedEventId: 28, updatedAt: '2026-04-16T12:05:11.000Z' },
+            count: 1,
+            events: [{ id: 30, kind: 'high-cap-dump-5m', ruleKey: 'high-cap-dump-5m', address: 'B' }],
+          },
+        ],
+      };
+    };
+
+    try {
+      const res = await request(app)
+        .get('/api/dashboard/alert-feeds?mode=unseen&limit=25')
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedOptions, {
+        userId,
+        ruleKeys: undefined,
+        limit: '25',
+        mode: 'unseen',
+      });
+      assert.equal(res.body.mode, 'unseen');
+      assert.equal(res.body.count, 2);
+      assert.equal(res.body.feeds.length, 2);
+      assert.equal(res.body.feeds[0].ruleKey, 'monitored-vol');
+      assert.equal(res.body.feeds[1].ruleKey, 'high-cap-dump-5m');
+    } finally {
+      backendAlertFeed.listDashboardAlertFeeds = originalListDashboardAlertFeeds;
+    }
+  });
+
   it('rejects unsupported dashboard alert rule keys', async () => {
     const originalListDashboardAlertEvents = backendAlertFeed.listDashboardAlertEvents;
 
