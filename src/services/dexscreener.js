@@ -91,6 +91,8 @@ function getTokenCacheTtl(priorityHint) {
       return 15 * 1000;
     case 'low-dust':
       return 10 * 60 * 1000;
+    case 'low-activity':
+      return 3 * 60 * 1000;
     case 'dormant':
       return 30 * 60 * 1000;
     default:

@@ -19,8 +19,9 @@ const DEX_BATCH_LIMIT = DEX_TOKENS_PER_REQUEST;
 const DORMANT_RECHECK_MS = 30 * 60 * 1000;
 const LOW_NEAR_RECHECK_MS = 15 * 1000;
 const LOW_DUST_RECHECK_MS = 10 * 60 * 1000;
-const LOW_ACTIVITY_24H_MAX_VOL = 3 * 1000;
-const LOW_ACTIVITY_RECHECK_MS = 30 * 1000;
+const LOW_ACTIVITY_24H_MAX_VOL = 5 * 1000;
+const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
+const LOW_ACTIVITY_JITTER_MS = 60 * 1000;
 const NORMAL_RECHECK_MS = 4 * 1000;
 const NORMAL_BOOST_6H_RECHECK_MS = 3 * 1000;
 const NORMAL_BOOST_1H_RECHECK_MS = 3 * 1000;
@@ -166,6 +167,22 @@ function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) 
   return marketCap > 0 && marketCap < 15000 && isMigrationGraceActive(token, now);
 }
 
+function isManualSource(token) {
+  return String(token?.source || '').trim().toLowerCase() === 'user-manual';
+}
+
+function isLowActivityAutoToken(token, vol24h) {
+  const numericVol24h = Number(vol24h);
+  return !isManualSource(token)
+    && Number.isFinite(numericVol24h)
+    && numericVol24h >= 0
+    && numericVol24h < LOW_ACTIVITY_24H_MAX_VOL;
+}
+
+function getLowActivityMinimumRecheckMs(token, vol24h) {
+  return isLowActivityAutoToken(token, vol24h) ? LOW_ACTIVITY_RECHECK_MS : 0;
+}
+
 function derivePrioritySnapshot(bestPair, token = null) {
   const marketCap = Number(bestPair?.marketCap || bestPair?.fdv || 0);
   const vol5m = toNumber(bestPair?.volume?.m5);
@@ -182,7 +199,33 @@ function derivePrioritySnapshot(bestPair, token = null) {
   const txns24hSells = toNumber(bestPair?.txns?.h24?.sells);
   const now = Date.now();
 
-  const applyLowActivityCooldown = (delayMs) => applyLowActivityCooldownForVol24h(delayMs, vol24h);
+  const applyLowActivityCooldown = (delayMs, randomValue = Math.random()) => {
+    const minimumDelayMs = getLowActivityMinimumRecheckMs(token, vol24h);
+    const safeDelayMs = normalizeDelayMs(delayMs, minimumDelayMs || LOOP_INTERVAL_MS);
+    if (minimumDelayMs > safeDelayMs) {
+      return addPriorityJitter(minimumDelayMs, LOW_ACTIVITY_JITTER_MS, randomValue);
+    }
+    return safeDelayMs;
+  };
+
+  const maybeSuppressLowActivity = (snapshot) => {
+    if (!isLowActivityAutoToken(token, vol24h)) {
+      return snapshot;
+    }
+
+    const baseDelayMs = snapshot?.nextEvaluationAt instanceof Date
+      ? normalizeDelayMs(snapshot.nextEvaluationAt.getTime() - now, LOW_ACTIVITY_RECHECK_MS)
+      : LOW_ACTIVITY_RECHECK_MS;
+
+    return {
+      ...snapshot,
+      monitorPriority: 'low',
+      nextEvaluationAt: new Date(now + applyLowActivityCooldown(baseDelayMs)),
+      eligibleForMonitoring: false,
+      eligibilityState: 'dex-low-activity',
+      suppressedReason: 'low_activity_24h',
+    };
+  };
 
   if (!(marketCap > 0)) {
     return {
@@ -212,7 +255,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
       ? addPriorityJitter(LOW_NEAR_RECHECK_MS, LOW_NEAR_JITTER_MS)
       : addPriorityJitter(LOW_DUST_RECHECK_MS, LOW_DUST_JITTER_MS);
 
-    return {
+    return maybeSuppressLowActivity({
       marketCap,
       vol5m,
       vol1h,
@@ -231,7 +274,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
       eligibleForMonitoring: true,
       eligibilityState: 'dex-low',
       suppressedReason: null,
-    };
+    });
   }
 
   if (marketCap < 100000) {
@@ -243,7 +286,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
       nextMs = Math.min(nextMs, NORMAL_BOOST_1H_RECHECK_MS);
     }
 
-    return {
+    return maybeSuppressLowActivity({
       marketCap,
       vol5m,
       vol1h,
@@ -258,11 +301,11 @@ function derivePrioritySnapshot(bestPair, token = null) {
       txns24hBuys,
       txns24hSells,
       monitorPriority: 'normal',
-      nextEvaluationAt: new Date(Date.now() + applyLowActivityCooldown(nextMs)),
+      nextEvaluationAt: new Date(now + applyLowActivityCooldown(nextMs)),
       eligibleForMonitoring: true,
       eligibilityState: 'dex-normal',
       suppressedReason: null,
-    };
+    });
   }
 
   let nextHighMs = HIGH_HOT_RECHECK_MS;
@@ -272,7 +315,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
     nextHighMs = HIGH_LOW_VOL_RECHECK_MS;
   }
 
-  return {
+  return maybeSuppressLowActivity({
     marketCap,
     vol5m,
     vol1h,
@@ -287,18 +330,19 @@ function derivePrioritySnapshot(bestPair, token = null) {
     txns24hBuys,
     txns24hSells,
     monitorPriority: 'high',
-    nextEvaluationAt: new Date(Date.now() + applyLowActivityCooldown(nextHighMs)),
+    nextEvaluationAt: new Date(now + applyLowActivityCooldown(nextHighMs)),
     eligibleForMonitoring: true,
     eligibilityState: 'dex-high',
     suppressedReason: null,
-  };
+  });
 }
 
-function applyLowActivityCooldownForVol24h(delayMs, vol24h) {
-  const lowActivity24h = (Number(vol24h) || 0) < LOW_ACTIVITY_24H_MAX_VOL;
-  return lowActivity24h
-    ? Math.max(normalizeDelayMs(delayMs, LOW_ACTIVITY_RECHECK_MS), LOW_ACTIVITY_RECHECK_MS)
-    : delayMs;
+function applyLowActivityCooldownForVol24h(delayMs, vol24h, token = null) {
+  const minimumDelayMs = getLowActivityMinimumRecheckMs(token, vol24h);
+  const safeDelayMs = normalizeDelayMs(delayMs, minimumDelayMs || LOOP_INTERVAL_MS);
+  return minimumDelayMs > 0
+    ? Math.max(safeDelayMs, minimumDelayMs)
+    : safeDelayMs;
 }
 
 function getRetryMsForPriority(priority) {
@@ -316,7 +360,7 @@ function getRetryMsForPriority(priority) {
 }
 
 function shouldFastRetryManualBootstrap(token) {
-  return String(token?.source || '').trim().toLowerCase() === 'user-manual'
+  return isManualSource(token)
     && !token?.last_eligible_at;
 }
 
@@ -336,12 +380,16 @@ function getRateLimitedRetryMs(token) {
     return RATE_LIMIT_MANUAL_RECHECK_MS;
   }
 
+  if (isLowActivityAutoToken(token, lastVol24h)) {
+    return LOW_ACTIVITY_RECHECK_MS;
+  }
+
   if (priority === 'high' || marketCap >= 100000) {
-    return applyLowActivityCooldownForVol24h(RATE_LIMIT_HIGH_RECHECK_MS, lastVol24h);
+    return applyLowActivityCooldownForVol24h(RATE_LIMIT_HIGH_RECHECK_MS, lastVol24h, token);
   }
 
   if (priority === 'normal' || marketCap >= 30000) {
-    return applyLowActivityCooldownForVol24h(RATE_LIMIT_NORMAL_RECHECK_MS, lastVol24h);
+    return applyLowActivityCooldownForVol24h(RATE_LIMIT_NORMAL_RECHECK_MS, lastVol24h, token);
   }
 
   if (marketCap >= 15000 || lowDustProtected) {
@@ -370,9 +418,14 @@ function getDexUnavailableRetryMs(token, options = {}) {
     return MANUAL_BOOTSTRAP_RECHECK_MS;
   }
 
+  if (isLowActivityAutoToken(token, token?.last_vol_24h)) {
+    return LOW_ACTIVITY_RECHECK_MS;
+  }
+
   return applyLowActivityCooldownForVol24h(
     getRetryMsForPriority(token.monitor_priority),
     token?.last_vol_24h,
+    token,
   );
 }
 
@@ -383,6 +436,7 @@ function getThrottleTokenBucket(token) {
   const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
   if (source === 'user-manual') return 'manual';
+  if (isLowActivityAutoToken(token, token?.last_vol_24h)) return 'low-dust';
   if (priority === 'high' || marketCap >= 100000) return 'high';
   if (priority === 'normal' || marketCap >= 30000) return 'normal';
   if (marketCap >= 15000 || lowDustProtected) return 'low-near';
@@ -666,6 +720,10 @@ function getDexPriorityHint(token) {
   const vol6h = Number(token?.last_vol_6h || 0);
   const lowDustProtected = isLowDustProtectedByMigrationGrace(token, marketCap);
 
+  if (isLowActivityAutoToken(token, token?.last_vol_24h)) {
+    return 'low-activity';
+  }
+
   if (priority === 'high' || marketCap >= 100000) {
     if (vol6h < 15000) return 'high-cold';
     if (vol6h < 30000) return 'high-warm';
@@ -856,13 +914,17 @@ module.exports = {
     addPriorityJitter,
     computeNextDelayMs,
     derivePrioritySnapshot,
+    getLowActivityMinimumRecheckMs,
     LOW_ACTIVITY_24H_MAX_VOL,
+    LOW_ACTIVITY_JITTER_MS,
     LOW_ACTIVITY_RECHECK_MS,
     applyLowActivityCooldownForVol24h,
     getDexUnavailableRetryMs,
     getDexPriorityHint,
     getGraceUntilMs,
     isLowDustProtectedByMigrationGrace,
+    isLowActivityAutoToken,
+    isManualSource,
     isMigrationGraceActive,
     getRateLimitedRetryMs,
     getThrottleTokenBucket,
