@@ -156,12 +156,29 @@ const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
 const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 
+export type AppRenderProfiler = {
+  measure(label: string, durationMs: number): void;
+};
+
+function profileRenderWork(profiler: AppRenderProfiler | null | undefined, label: string, work: () => void) {
+  if (!profiler) {
+    work();
+    return;
+  }
+
+  const startedAt = performance.now();
+  work();
+  profiler.measure(label, performance.now() - startedAt);
+}
+
 export function renderAppShell(
   root: HTMLElement,
   state: AppState,
   controller: AppController,
   dirtyRegions: ReadonlySet<AppRenderRegion> = new Set<AppRenderRegion>(['all']),
+  profiler?: AppRenderProfiler | null,
 ) {
+  const shellStartedAt = performance.now();
   const configDraft = captureConfigDraft(root);
   const panelScrollDraft = capturePanelScrollDraft(root);
   const profileModalScrollDraft = captureProfileModalScrollDraft(root);
@@ -179,19 +196,27 @@ export function renderAppShell(
   const isHistoryWorkspace = state.ui.workspace === 'history';
   const pathname = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
   const isAccountSecurityRoute = pathname === '/account-security' || pathname.startsWith('/account-security/');
-  updateRegionSlot(renderFrame.headerSlot, 'header', dirtyRegions, getHeaderRenderKey(state), () => (
-    state.session.status === 'authenticated' && !isAccountSecurityRoute
-      ? [renderWorkspaceHeader(state, controller)]
-      : []
-  ));
+  profileRenderWork(profiler, 'header', () => {
+    updateRegionSlot(renderFrame.headerSlot, 'header', dirtyRegions, getHeaderRenderKey(state), () => (
+      state.session.status === 'authenticated' && !isAccountSecurityRoute
+        ? [renderWorkspaceHeader(state, controller)]
+        : []
+    ));
+  });
 
   renderFrame.toastsSlot.hidden = !isLiveWorkspace;
   if (isLiveWorkspace) {
-    updateRegionSlot(renderFrame.toastsSlot, 'toasts', dirtyRegions, getToastsRenderKey(state), () => [renderPumpToasts(state)]);
+    profileRenderWork(profiler, 'toasts', () => {
+      updateRegionSlot(renderFrame.toastsSlot, 'toasts', dirtyRegions, getToastsRenderKey(state), () => [renderPumpToasts(state)]);
+    });
   } else {
-    updateRenderSlot(renderFrame.toastsSlot, 'hidden', () => []);
+    profileRenderWork(profiler, 'toasts:hidden', () => {
+      updateRenderSlot(renderFrame.toastsSlot, 'hidden', () => []);
+    });
   }
-  updateRegionSlot(renderFrame.legacySlot, 'legacy', dirtyRegions, getLegacyRenderKey(state), () => [renderLegacyShell(state, controller)]);
+  profileRenderWork(profiler, 'legacy', () => {
+    updateRegionSlot(renderFrame.legacySlot, 'legacy', dirtyRegions, getLegacyRenderKey(state), () => [renderLegacyShell(state, controller)]);
+  });
 
   if (state.session.status === 'authenticated' && !isAccountSecurityRoute) {
     renderFrame.oldWeekSlot.hidden = !isHistoryWorkspace;
@@ -200,24 +225,48 @@ export function renderAppShell(
     renderFrame.panels.hidden = false;
 
     if (isHistoryWorkspace) {
-      updateRegionSlot(renderFrame.oldWeekSlot, 'old-week', dirtyRegions, getOldWeekRenderKey(state), () => [renderOldWeekSection(state, controller)]);
-      updateRegionSlot(renderFrame.recentSlot, 'recent', dirtyRegions, getRecentRenderKey(state), () => [renderRecentSection(state, controller)]);
+      profileRenderWork(profiler, 'old-week', () => {
+        updateRegionSlot(renderFrame.oldWeekSlot, 'old-week', dirtyRegions, getOldWeekRenderKey(state), () => [renderOldWeekSection(state, controller)]);
+      });
+      profileRenderWork(profiler, 'recent', () => {
+        updateRegionSlot(renderFrame.recentSlot, 'recent', dirtyRegions, getRecentRenderKey(state), () => [renderRecentSection(state, controller)]);
+      });
     } else {
-      updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
+      profileRenderWork(profiler, 'old-week:hidden', () => {
+        updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
+      });
+      profileRenderWork(profiler, 'recent:hidden', () => {
+        updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
+      });
     }
 
     if (isLiveWorkspace) {
-      updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
-      updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
-      updateRegionSlot(renderFrame.pumpfunSlot, 'pumpfun', dirtyRegions, getPumpfunRenderKey(state), () => [renderPumpfunSection(state, controller)]);
+      profileRenderWork(profiler, 'manual', () => {
+        updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
+      });
+      profileRenderWork(profiler, 'monitored', () => {
+        updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
+      });
+      profileRenderWork(profiler, 'pumpfun', () => {
+        updateRegionSlot(renderFrame.pumpfunSlot, 'pumpfun', dirtyRegions, getPumpfunRenderKey(state), () => [renderPumpfunSection(state, controller)]);
+      });
       logAlertsRenderDebug(renderFrame.alertsSlot, state, dirtyRegions);
-      updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
+      profileRenderWork(profiler, 'alerts', () => {
+        updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
+      });
     } else {
-      updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.monitoredSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.alertsSlot, 'hidden', () => []);
+      profileRenderWork(profiler, 'manual:hidden', () => {
+        updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
+      });
+      profileRenderWork(profiler, 'monitored:hidden', () => {
+        updateRenderSlot(renderFrame.monitoredSlot, 'hidden', () => []);
+      });
+      profileRenderWork(profiler, 'pumpfun:hidden', () => {
+        updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
+      });
+      profileRenderWork(profiler, 'alerts:hidden', () => {
+        updateRenderSlot(renderFrame.alertsSlot, 'hidden', () => []);
+      });
     }
 
     renderFrame.monitoredSlot.hidden = !isLiveWorkspace;
@@ -227,11 +276,19 @@ export function renderAppShell(
     renderFrame.bidZoneSlot.hidden = !isHistoryWorkspace;
 
     if (isHistoryWorkspace) {
-      updateRegionSlot(renderFrame.lateralizedSlot, 'lateralized', dirtyRegions, getLateralizedRenderKey(state), () => [renderLateralizedSection(state, controller)]);
-      updateRegionSlot(renderFrame.bidZoneSlot, 'bid-zone', dirtyRegions, getBidZoneRenderKey(state), () => [renderBidZoneSection(state, controller)]);
+      profileRenderWork(profiler, 'lateralized', () => {
+        updateRegionSlot(renderFrame.lateralizedSlot, 'lateralized', dirtyRegions, getLateralizedRenderKey(state), () => [renderLateralizedSection(state, controller)]);
+      });
+      profileRenderWork(profiler, 'bid-zone', () => {
+        updateRegionSlot(renderFrame.bidZoneSlot, 'bid-zone', dirtyRegions, getBidZoneRenderKey(state), () => [renderBidZoneSection(state, controller)]);
+      });
     } else {
-      updateRenderSlot(renderFrame.lateralizedSlot, 'hidden', () => []);
-      updateRenderSlot(renderFrame.bidZoneSlot, 'hidden', () => []);
+      profileRenderWork(profiler, 'lateralized:hidden', () => {
+        updateRenderSlot(renderFrame.lateralizedSlot, 'hidden', () => []);
+      });
+      profileRenderWork(profiler, 'bid-zone:hidden', () => {
+        updateRenderSlot(renderFrame.bidZoneSlot, 'hidden', () => []);
+      });
     }
   } else {
     renderFrame.oldWeekSlot.hidden = true;
@@ -239,9 +296,15 @@ export function renderAppShell(
     renderFrame.manualSlot.hidden = true;
     renderFrame.panels.hidden = true;
 
-    updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
-    updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
-    updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
+    profileRenderWork(profiler, 'old-week:hidden', () => {
+      updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
+    });
+    profileRenderWork(profiler, 'recent:hidden', () => {
+      updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
+    });
+    profileRenderWork(profiler, 'manual:hidden', () => {
+      updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
+    });
     renderFrame.monitoredSlot.replaceChildren();
     renderFrame.lateralizedSlot.replaceChildren();
     renderFrame.bidZoneSlot.replaceChildren();
@@ -251,11 +314,13 @@ export function renderAppShell(
 
   syncLivePanelLayout(renderFrame, state);
 
-  updateRegionSlot(renderFrame.overlaySlot, 'overlay', dirtyRegions, getOverlayRenderKey(state), () => {
-    const profileOverlay = state.session.status === 'authenticated' && !isAccountSecurityRoute
-      ? renderWorkspaceProfileOverlay(state, controller)
-      : null;
-    return profileOverlay ? [profileOverlay] : [];
+  profileRenderWork(profiler, 'overlay', () => {
+    updateRegionSlot(renderFrame.overlaySlot, 'overlay', dirtyRegions, getOverlayRenderKey(state), () => {
+      const profileOverlay = state.session.status === 'authenticated' && !isAccountSecurityRoute
+        ? renderWorkspaceProfileOverlay(state, controller)
+        : null;
+      return profileOverlay ? [profileOverlay] : [];
+    });
   });
   syncProfileModalScrollLock(state);
   applyLoginDraft(root, loginDraft, state);
@@ -287,6 +352,7 @@ export function renderAppShell(
   wireLivePanelReorder(root, controller);
   wireLivePanelResize(root, controller);
   applyHoverState(root);
+  profiler?.measure('shell-total', performance.now() - shellStartedAt);
 }
 
 function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null {

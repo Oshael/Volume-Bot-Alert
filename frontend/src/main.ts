@@ -4,7 +4,7 @@ import { playAlertSound, playMigrateSound } from './services/alerts/sound';
 import { updateLivePresence } from './services/socket/client';
 import { isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
-import { renderAppShell } from './ui/app-shell';
+import { renderAppShell, type AppRenderProfiler } from './ui/app-shell';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 
@@ -38,10 +38,107 @@ let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
 let lastLivePresenceSignature: string | null = null;
+let hiddenResumeTraceSequence = 0;
+let activeHiddenResumeTrace: HiddenResumeTrace | null = null;
+
+type HiddenResumeTrace = {
+  id: number;
+  hiddenDurationMs: number;
+  routeKey: string;
+  workspace: string | null;
+  sessionStatus: string | null;
+  startedAt: number;
+  queueDelayMs: number | null;
+  immediateRegions: string[];
+  deferredRegions: string[];
+  immediateRenderMs: number | null;
+  deferredRenderMs: number | null;
+  immediatePaintMs: number | null;
+  totalMs: number | null;
+  regionMeasures: Array<{
+    phase: 'immediate' | 'deferred';
+    label: string;
+    durationMs: number;
+  }>;
+};
 
 declare global {
   interface Window {
+    __trendScopeHiddenResumeDebug?: {
+      traces: HiddenResumeTrace[];
+      clear: () => void;
+    };
   }
+}
+
+function getHiddenResumeDebugStore() {
+  if (!window.__trendScopeHiddenResumeDebug) {
+    window.__trendScopeHiddenResumeDebug = {
+      traces: [],
+      clear() {
+        this.traces = [];
+      },
+    };
+  }
+  return window.__trendScopeHiddenResumeDebug;
+}
+
+function createHiddenResumeTrace(state: AppState | null, hiddenDurationMs: number): HiddenResumeTrace {
+  return {
+    id: ++hiddenResumeTraceSequence,
+    hiddenDurationMs,
+    routeKey: typeof window !== 'undefined'
+      ? `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`
+      : '/',
+    workspace: state?.ui.workspace ?? null,
+    sessionStatus: state?.session.status ?? null,
+    startedAt: performance.now(),
+    queueDelayMs: null,
+    immediateRegions: [],
+    deferredRegions: [],
+    immediateRenderMs: null,
+    deferredRenderMs: null,
+    immediatePaintMs: null,
+    totalMs: null,
+    regionMeasures: [],
+  };
+}
+
+function createHiddenResumeProfiler(trace: HiddenResumeTrace, phase: 'immediate' | 'deferred'): AppRenderProfiler {
+  return {
+    measure(label, durationMs) {
+      trace.regionMeasures.push({
+        phase,
+        label,
+        durationMs: Number(durationMs.toFixed(2)),
+      });
+    },
+  };
+}
+
+function finalizeHiddenResumeTrace(trace: HiddenResumeTrace) {
+  trace.totalMs = Number((performance.now() - trace.startedAt).toFixed(2));
+  const store = getHiddenResumeDebugStore();
+  store.traces = [trace, ...store.traces].slice(0, 20);
+  const sortedMeasures = [...trace.regionMeasures].sort((a, b) => b.durationMs - a.durationMs);
+  console.groupCollapsed(
+    `[hidden-resume:${trace.id}] hidden=${Math.round(trace.hiddenDurationMs)}ms total=${trace.totalMs}ms route=${trace.routeKey}`,
+  );
+  console.log({
+    workspace: trace.workspace,
+    sessionStatus: trace.sessionStatus,
+    queueDelayMs: trace.queueDelayMs,
+    immediateRegions: trace.immediateRegions,
+    deferredRegions: trace.deferredRegions,
+    immediateRenderMs: trace.immediateRenderMs,
+    deferredRenderMs: trace.deferredRenderMs,
+    immediatePaintMs: trace.immediatePaintMs,
+    totalMs: trace.totalMs,
+  });
+  if (sortedMeasures.length > 0) {
+    console.table(sortedMeasures);
+  }
+  console.groupEnd();
 }
 function isEditingInteractiveField() {
   const active = document.activeElement;
@@ -256,8 +353,36 @@ function scheduleRestoreRender() {
       nextState,
       nextDirtyRegions.size > 0 ? nextDirtyRegions : new Set<AppRenderRegion>(['all']),
     );
-    performRender(nextState, restoreSets.immediate.size > 0 ? restoreSets.immediate : new Set<AppRenderRegion>(['all']));
+    const trace = activeHiddenResumeTrace;
+    if (trace) {
+      trace.queueDelayMs = Number((performance.now() - trace.startedAt).toFixed(2));
+      trace.immediateRegions = [...(restoreSets.immediate.size > 0 ? restoreSets.immediate : new Set<AppRenderRegion>(['all']))];
+      trace.deferredRegions = [...restoreSets.deferred];
+    }
+
+    const immediateRegions = restoreSets.immediate.size > 0 ? restoreSets.immediate : new Set<AppRenderRegion>(['all']);
+    const immediateStartedAt = performance.now();
+    performRender(
+      nextState,
+      immediateRegions,
+      trace ? createHiddenResumeProfiler(trace, 'immediate') : null,
+    );
+    if (trace) {
+      trace.immediateRenderMs = Number((performance.now() - immediateStartedAt).toFixed(2));
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => {
+          if (activeHiddenResumeTrace !== trace) {
+            return;
+          }
+          trace.immediatePaintMs = Number((performance.now() - trace.startedAt).toFixed(2));
+        });
+      }
+    }
     if (restoreSets.deferred.size === 0) {
+      if (trace) {
+        finalizeHiddenResumeTrace(trace);
+        activeHiddenResumeTrace = null;
+      }
       return;
     }
 
@@ -265,7 +390,19 @@ function scheduleRestoreRender() {
       if (isDocumentHidden) {
         return;
       }
-      performRender(latestState ?? nextState, restoreSets.deferred);
+      const deferredStartedAt = performance.now();
+      performRender(
+        latestState ?? nextState,
+        restoreSets.deferred,
+        trace ? createHiddenResumeProfiler(trace, 'deferred') : null,
+      );
+      if (trace) {
+        trace.deferredRenderMs = Number((performance.now() - deferredStartedAt).toFixed(2));
+        finalizeHiddenResumeTrace(trace);
+        if (activeHiddenResumeTrace === trace) {
+          activeHiddenResumeTrace = null;
+        }
+      }
     }, 0);
   };
 
@@ -281,8 +418,12 @@ function scheduleRestoreRender() {
   window.setTimeout(() => flushRestore(), 0);
 }
 
-function performRender(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion> = new Set<AppRenderRegion>(['all'])) {
-  renderAppShell(root, state, controller, dirtyRegions);
+function performRender(
+  state: AppState,
+  dirtyRegions: ReadonlySet<AppRenderRegion> = new Set<AppRenderRegion>(['all']),
+  profiler: AppRenderProfiler | null = null,
+) {
+  renderAppShell(root, state, controller, dirtyRegions, profiler);
 }
 
 function clearHiddenRuntimeStopTimer() {
@@ -512,6 +653,7 @@ document.addEventListener('visibilitychange', () => {
   listInteractionDepth = 0;
   suppressNextFocusFlush = false;
   syncLivePresence(latestState, { force: true });
+  activeHiddenResumeTrace = createHiddenResumeTrace(latestState, hiddenDurationMs);
   scheduleRestoreRender();
 });
 
