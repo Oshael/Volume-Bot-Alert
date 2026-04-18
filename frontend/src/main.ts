@@ -19,7 +19,6 @@ const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
-const RESTORE_RENDER_BATCH_SIZE = 1;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -39,7 +38,6 @@ let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
 let lastLivePresenceSignature: string | null = null;
-let restoreRenderRunId = 0;
 
 declare global {
   interface Window {
@@ -176,62 +174,54 @@ function flushPendingRender() {
   pendingDirtyRegions = null;
 }
 
-function getRestoreRenderOrder(dirtyRegions: ReadonlySet<AppRenderRegion>) {
-  if (dirtyRegions.has('all')) {
-    return [
-      'header',
-      'overlay',
-      'legacy',
-      'manual',
-      'monitored',
-      'pumpfun',
-      'alerts',
-      'recent',
-      'old-week',
-      'lateralized',
-      'bid-zone',
-      'toasts',
-    ] satisfies AppRenderRegion[];
+function getRestorePriorityRegions(state: AppState) {
+  if (state.session.status !== 'authenticated') {
+    return ['header', 'overlay', 'legacy'] satisfies AppRenderRegion[];
   }
 
-  const priority = [
-    'header',
-    'overlay',
-    'legacy',
-    'manual',
-    'monitored',
-    'pumpfun',
-    'alerts',
-    'recent',
-    'old-week',
-    'lateralized',
-    'bid-zone',
-    'toasts',
-  ] satisfies AppRenderRegion[];
+  if (state.ui.workspace === 'live') {
+    return ['header', 'overlay', 'legacy', 'manual', 'alerts', 'monitored', 'pumpfun', 'toasts'] satisfies AppRenderRegion[];
+  }
 
-  return priority.filter((region) => dirtyRegions.has(region));
+  if (state.ui.workspace === 'history') {
+    return ['header', 'overlay', 'legacy', 'recent', 'old-week', 'lateralized', 'bid-zone'] satisfies AppRenderRegion[];
+  }
+
+  return ['header', 'overlay', 'legacy'] satisfies AppRenderRegion[];
 }
 
-function scheduleRestoreRenderBatches(state: AppState, orderedRegions: AppRenderRegion[], runId: number, index = 0) {
-  if (isDocumentHidden || runId !== restoreRenderRunId) {
-    return;
+function buildRestoreRenderSets(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  if (dirtyRegions.has('all')) {
+    return {
+      immediate: new Set<AppRenderRegion>(getRestorePriorityRegions(state)),
+      deferred: new Set<AppRenderRegion>(['all']),
+    };
   }
 
-  if (index >= orderedRegions.length) {
-    return;
+  const priority = new Set(getRestorePriorityRegions(state));
+  const immediate = new Set<AppRenderRegion>();
+  const deferred = new Set<AppRenderRegion>();
+
+  for (const region of dirtyRegions) {
+    if (region === 'all') {
+      continue;
+    }
+    if (priority.has(region)) {
+      immediate.add(region);
+    } else {
+      deferred.add(region);
+    }
   }
 
-  const nextState = latestState ?? state;
-  const batch = orderedRegions.slice(index, index + RESTORE_RENDER_BATCH_SIZE);
-  performRender(nextState, new Set(batch));
-
-  if ((index + RESTORE_RENDER_BATCH_SIZE) >= orderedRegions.length) {
-    return;
+  if (immediate.size === 0 && deferred.size > 0) {
+    const firstDeferred = deferred.values().next().value as AppRenderRegion | undefined;
+    if (firstDeferred) {
+      deferred.delete(firstDeferred);
+      immediate.add(firstDeferred);
+    }
   }
 
-  window.setTimeout(() => {
-    scheduleRestoreRenderBatches(state, orderedRegions, runId, index + RESTORE_RENDER_BATCH_SIZE);
-  }, 0);
+  return { immediate, deferred };
 }
 
 function scheduleRestoreRender() {
@@ -262,14 +252,21 @@ function scheduleRestoreRender() {
       return;
     }
 
-    const orderedRegions = getRestoreRenderOrder(nextDirtyRegions.size > 0 ? nextDirtyRegions : new Set<AppRenderRegion>(['all']));
-    if (orderedRegions.length === 0) {
-      performRender(nextState, new Set<AppRenderRegion>(['all']));
+    const restoreSets = buildRestoreRenderSets(
+      nextState,
+      nextDirtyRegions.size > 0 ? nextDirtyRegions : new Set<AppRenderRegion>(['all']),
+    );
+    performRender(nextState, restoreSets.immediate.size > 0 ? restoreSets.immediate : new Set<AppRenderRegion>(['all']));
+    if (restoreSets.deferred.size === 0) {
       return;
     }
 
-    restoreRenderRunId += 1;
-    scheduleRestoreRenderBatches(nextState, orderedRegions, restoreRenderRunId);
+    window.setTimeout(() => {
+      if (isDocumentHidden) {
+        return;
+      }
+      performRender(latestState ?? nextState, restoreSets.deferred);
+    }, 0);
   };
 
   if (typeof window.requestAnimationFrame === 'function') {
