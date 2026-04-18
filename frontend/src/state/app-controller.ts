@@ -4680,7 +4680,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function applySession(user: SessionUser) {
+  function applySession(user: SessionUser, options?: { deferWorkspaceSync?: boolean }) {
     state.session.status = 'authenticated';
     state.session.token = COOKIE_SESSION_MARKER;
     state.session.username = user.username;
@@ -4690,8 +4690,10 @@ export function createAppController(): AppController {
     state.session.emailVerifiedAt = user.emailVerifiedAt ?? null;
     hydrateBarStorage();
     hydrateSoundSettings();
-    syncWorkspaceCapabilities();
-    syncHistorySyncState({ runImmediatelyOnGain: true });
+    if (!options?.deferWorkspaceSync) {
+      syncWorkspaceCapabilities();
+      syncHistorySyncState({ runImmediatelyOnGain: true });
+    }
   }
 
   function applyPreAccessSession(user: SessionUser) {
@@ -5042,7 +5044,7 @@ export function createAppController(): AppController {
       const result = await completePreAccessSession();
       stopPreAccessPolling();
       state.preAccess.awaitingConfirmation = false;
-      applySession(result.user);
+      applySession(result.user, { deferWorkspaceSync: true });
       await refreshAccountAccessState(COOKIE_SESSION_MARKER);
       await refreshBillingState(COOKIE_SESSION_MARKER);
       navigateToWorkspace('live');
@@ -5500,7 +5502,7 @@ export function createAppController(): AppController {
     socialLoginIntent: SocialIntent | null;
   }) {
     const session = await fetchCurrentSession();
-    applySession(session.user);
+    applySession(session.user, { deferWorkspaceSync: true });
     await refreshAuthenticatedBootstrapState();
     applyAuthenticatedRestoreIntents(options);
     setNotice(getAuthenticatedRestoreNotice(options));
@@ -6369,7 +6371,7 @@ export function createAppController(): AppController {
           return;
         }
         const session = await fetchCurrentSession();
-        applySession(session.user);
+        applySession(session.user, { deferWorkspaceSync: true });
         await refreshAccountAccessState(COOKIE_SESSION_MARKER);
         await refreshBillingState(COOKIE_SESSION_MARKER);
         await refreshIdentityState(COOKIE_SESSION_MARKER);
@@ -6446,7 +6448,7 @@ export function createAppController(): AppController {
           state.ui.loginErrorCount = 0;
           setNotice(result.message || 'Access payment required before entering the bot.');
         } else {
-          applySession(result.user);
+          applySession(result.user, { deferWorkspaceSync: true });
           await refreshAccountAccessState(COOKIE_SESSION_MARKER);
           await refreshBillingState(COOKIE_SESSION_MARKER);
           await refreshIdentityState(COOKIE_SESSION_MARKER);
