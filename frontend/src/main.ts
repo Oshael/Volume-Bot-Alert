@@ -206,7 +206,11 @@ function scheduleRestoreRender() {
   };
 
   if (typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(() => flushRestore());
+    // Let the browser paint the previously visible DOM first when the tab becomes
+    // visible again, then reconcile the hidden-time state update in a follow-up task.
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => flushRestore(), 0);
+    });
     return;
   }
 
