@@ -104,6 +104,14 @@ type LivePanelResizeDraft = {
   previewOrder: LiveWorkspacePanelKey[];
 };
 
+type LivePanelResizePendingDraft = {
+  item: HTMLElement;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  zone: 'right' | 'left';
+};
+
 type LivePanelReorderDraft = {
   panelKey: LiveWorkspacePanelKey;
   item: HTMLElement;
@@ -113,6 +121,13 @@ type LivePanelReorderDraft = {
   startY: number;
   originalOrder: LiveWorkspacePanelKey[];
   previewOrder: LiveWorkspacePanelKey[];
+};
+
+type LivePanelReorderPendingDraft = {
+  item: HTMLElement;
+  pointerId: number;
+  startX: number;
+  startY: number;
 };
 
 type AppRenderFrame = {
@@ -155,6 +170,8 @@ const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
 const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
 const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
+const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
+const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
 
 export function renderAppShell(
   root: HTMLElement,
@@ -1003,8 +1020,10 @@ let profileModalWired = false;
 let sectionCollapseWired = false;
 let livePanelResizeWired = false;
 let livePanelResizeDraft: LivePanelResizeDraft | null = null;
+let livePanelResizePendingDraft: LivePanelResizePendingDraft | null = null;
 let livePanelReorderWired = false;
 let livePanelReorderDraft: LivePanelReorderDraft | null = null;
+let livePanelReorderPendingDraft: LivePanelReorderPendingDraft | null = null;
 
 function wireHoverPersistence(root: HTMLElement) {
   if (hoverWired) return;
@@ -1806,7 +1825,7 @@ function wireLivePanelReorder(root: HTMLElement, controller: AppController) {
   livePanelReorderWired = true;
 
   root.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0 || livePanelResizeDraft) {
+    if (event.button !== 0 || livePanelResizeDraft || livePanelResizePendingDraft) {
       return;
     }
 
@@ -1817,41 +1836,79 @@ function wireLivePanelReorder(root: HTMLElement, controller: AppController) {
       return;
     }
 
-    if (beginLivePanelReorder(item, event.pointerId, event.clientX, event.clientY)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    item.setPointerCapture(event.pointerId);
+    livePanelReorderPendingDraft = {
+      item,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    event.preventDefault();
+    event.stopPropagation();
   });
 
   root.addEventListener('pointermove', (event) => {
-    if (!livePanelReorderDraft) {
+    if (livePanelReorderDraft) {
+      previewLivePanelReorder(event.clientX, event.clientY);
+      return;
+    }
+
+    if (!livePanelReorderPendingDraft || event.pointerId !== livePanelReorderPendingDraft.pointerId) {
+      return;
+    }
+
+    const distance = Math.hypot(
+      event.clientX - livePanelReorderPendingDraft.startX,
+      event.clientY - livePanelReorderPendingDraft.startY,
+    );
+    if (distance < LIVE_PANEL_REORDER_ACTIVATION_DISTANCE) {
+      return;
+    }
+
+    const pendingDraft = livePanelReorderPendingDraft;
+    livePanelReorderPendingDraft = null;
+    if (!beginLivePanelReorder(
+      pendingDraft.item,
+      pendingDraft.pointerId,
+      pendingDraft.startX,
+      pendingDraft.startY,
+    )) {
+      releaseLivePanelPointerCapture(pendingDraft.item, pendingDraft.pointerId);
       return;
     }
     previewLivePanelReorder(event.clientX, event.clientY);
   });
 
   root.addEventListener('pointerup', (event) => {
-    if (!livePanelReorderDraft) {
+    if (livePanelReorderDraft) {
+      const activeItem = livePanelReorderDraft.item;
+      releaseLivePanelPointerCapture(activeItem, event.pointerId);
+      endLivePanelReorder(root, controller, { commit: true });
       return;
     }
 
-    const activeItem = livePanelReorderDraft.item;
-    if (activeItem.hasPointerCapture(event.pointerId)) {
-      activeItem.releasePointerCapture(event.pointerId);
+    if (!livePanelReorderPendingDraft || event.pointerId !== livePanelReorderPendingDraft.pointerId) {
+      return;
     }
-    endLivePanelReorder(root, controller, { commit: true });
+
+    releaseLivePanelPointerCapture(livePanelReorderPendingDraft.item, event.pointerId);
+    livePanelReorderPendingDraft = null;
   });
 
   root.addEventListener('pointercancel', (event) => {
-    if (!livePanelReorderDraft) {
+    if (livePanelReorderDraft) {
+      const activeItem = livePanelReorderDraft.item;
+      releaseLivePanelPointerCapture(activeItem, event.pointerId);
+      endLivePanelReorder(root, controller, { commit: false });
       return;
     }
 
-    const activeItem = livePanelReorderDraft.item;
-    if (activeItem.hasPointerCapture(event.pointerId)) {
-      activeItem.releasePointerCapture(event.pointerId);
+    if (!livePanelReorderPendingDraft || event.pointerId !== livePanelReorderPendingDraft.pointerId) {
+      return;
     }
-    endLivePanelReorder(root, controller, { commit: false });
+
+    releaseLivePanelPointerCapture(livePanelReorderPendingDraft.item, event.pointerId);
+    livePanelReorderPendingDraft = null;
   });
 }
 
@@ -1926,7 +1983,8 @@ function getLivePanelResizePreviewSpan(draft: LivePanelResizeDraft, clientX: num
 
 function beginLivePanelResize(
   item: HTMLElement,
-  event: PointerEvent,
+  pointerId: number,
+  startX: number,
   zone: 'right' | 'left',
 ) {
   const panelKey = item.dataset.panelKey;
@@ -1941,7 +1999,7 @@ function beginLivePanelResize(
 
   flattenLivePanelCollapsedStack(panels);
 
-  item.setPointerCapture(event.pointerId);
+  item.setPointerCapture(pointerId);
   const startSpan = item.dataset.span === '2' ? 2 : item.dataset.span === '3' ? 3 : 1;
   const originalOrder = getLivePanelOrderFromDom(panels);
   const spanMap = getLivePanelSpanMap(panels);
@@ -1958,7 +2016,7 @@ function beginLivePanelResize(
     panelKey,
     item,
     panels,
-    startX: event.clientX,
+    startX,
     startSpan,
     previewSpan: startSpan,
     direction: resolveLivePanelResizeDirection(zone),
@@ -1979,6 +2037,12 @@ function beginLivePanelResize(
   item.dataset.resizing = 'true';
   item.closest<HTMLElement>('[data-app-render-frame]')?.classList.add('live-panel-resize-active');
   return true;
+}
+
+function releaseLivePanelPointerCapture(item: HTMLElement, pointerId: number) {
+  if (item.hasPointerCapture(pointerId)) {
+    item.releasePointerCapture(pointerId);
+  }
 }
 
 function updateLivePanelResize(clientX: number) {
@@ -2046,7 +2110,7 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
   livePanelResizeWired = true;
 
   root.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) {
+    if (event.button !== 0 || livePanelReorderDraft || livePanelReorderPendingDraft) {
       return;
     }
 
@@ -2058,42 +2122,82 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
     }
 
     const zoneName = zone.dataset.livePanelResizeZone;
-    if ((zoneName === 'right' || zoneName === 'left')
-      && beginLivePanelResize(item, event, zoneName)) {
-      event.preventDefault();
-      event.stopPropagation();
+    if (zoneName !== 'right' && zoneName !== 'left') {
+      return;
     }
+
+    item.setPointerCapture(event.pointerId);
+    livePanelResizePendingDraft = {
+      item,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      zone: zoneName,
+    };
+    event.preventDefault();
+    event.stopPropagation();
   });
 
   root.addEventListener('pointermove', (event) => {
-    if (!livePanelResizeDraft) {
+    if (livePanelResizeDraft) {
+      updateLivePanelResize(event.clientX);
+      return;
+    }
+
+    if (!livePanelResizePendingDraft || event.pointerId !== livePanelResizePendingDraft.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - livePanelResizePendingDraft.startX;
+    const deltaY = event.clientY - livePanelResizePendingDraft.startY;
+    if (Math.abs(deltaX) < LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE || Math.abs(deltaX) < Math.abs(deltaY)) {
+      return;
+    }
+
+    const pendingDraft = livePanelResizePendingDraft;
+    livePanelResizePendingDraft = null;
+    if (!beginLivePanelResize(
+      pendingDraft.item,
+      pendingDraft.pointerId,
+      pendingDraft.startX,
+      pendingDraft.zone,
+    )) {
+      releaseLivePanelPointerCapture(pendingDraft.item, pendingDraft.pointerId);
       return;
     }
     updateLivePanelResize(event.clientX);
   });
 
   root.addEventListener('pointerup', (event) => {
-    if (!livePanelResizeDraft) {
+    if (livePanelResizeDraft) {
+      const activeItem = livePanelResizeDraft.item;
+      releaseLivePanelPointerCapture(activeItem, event.pointerId);
+      endLivePanelResize(root, controller, { commit: true });
       return;
     }
 
-    const activeItem = livePanelResizeDraft.item;
-    if (activeItem.hasPointerCapture(event.pointerId)) {
-      activeItem.releasePointerCapture(event.pointerId);
+    if (!livePanelResizePendingDraft || event.pointerId !== livePanelResizePendingDraft.pointerId) {
+      return;
     }
-    endLivePanelResize(root, controller, { commit: true });
+
+    releaseLivePanelPointerCapture(livePanelResizePendingDraft.item, event.pointerId);
+    livePanelResizePendingDraft = null;
   });
 
   root.addEventListener('pointercancel', (event) => {
-    if (!livePanelResizeDraft) {
+    if (livePanelResizeDraft) {
+      const activeItem = livePanelResizeDraft.item;
+      releaseLivePanelPointerCapture(activeItem, event.pointerId);
+      endLivePanelResize(root, controller, { commit: false });
       return;
     }
 
-    const activeItem = livePanelResizeDraft.item;
-    if (activeItem.hasPointerCapture(event.pointerId)) {
-      activeItem.releasePointerCapture(event.pointerId);
+    if (!livePanelResizePendingDraft || event.pointerId !== livePanelResizePendingDraft.pointerId) {
+      return;
     }
-    endLivePanelResize(root, controller, { commit: false });
+
+    releaseLivePanelPointerCapture(livePanelResizePendingDraft.item, event.pointerId);
+    livePanelResizePendingDraft = null;
   });
 }
 

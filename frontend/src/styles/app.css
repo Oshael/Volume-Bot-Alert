@@ -5334,7 +5334,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .live-panel-resize-frame {
   position: absolute;
-  inset: -8px;
+  inset: -4px;
   z-index: 3;
   pointer-events: none;
 }
@@ -5342,7 +5342,7 @@ TEMP_LEGACY_BAR_TITLE {
 .live-panel-resize-frame::before {
   content: '';
   position: absolute;
-  inset: 8px;
+  inset: 4px;
   border-left: 2px solid rgba(142, 226, 255, 0.16);
   border-right: 2px solid rgba(142, 226, 255, 0.16);
   border-top: 0;
@@ -5363,18 +5363,18 @@ TEMP_LEGACY_BAR_TITLE {
 
 .live-panel-resize-zone--left,
 .live-panel-resize-zone--right {
-  top: 8px;
-  height: calc(100% - 16px);
-  width: 18px;
+  top: 4px;
+  height: calc(100% - 8px);
+  width: 12px;
   cursor: ew-resize;
 }
 
 .live-panel-resize-zone--left {
-  left: 2px;
+  left: 0;
 }
 
 .live-panel-resize-zone--right {
-  right: 2px;
+  right: 0;
 }
 
 .legacy-panels[data-workspace="live"] > .live-panel-item--resizable:hover .live-panel-resize-frame::before,
