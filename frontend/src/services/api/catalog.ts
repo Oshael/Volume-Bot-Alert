@@ -1,4 +1,5 @@
 import { apiFetch } from './base';
+import type { MonitoredSortCriterion } from '../../state/app-state';
 
 export interface ReportMigratedTokenPayload {
   address: string;
@@ -87,6 +88,10 @@ export interface DashboardMonitoredToken {
 export interface DashboardMonitoredPayload {
   generatedAt?: string | null;
   tokens: DashboardMonitoredToken[];
+  total?: number;
+  page?: number;
+  perPage?: number;
+  hasMore?: boolean;
 }
 
 export interface DashboardHistoryBucketRequest {
@@ -317,11 +322,30 @@ export function fetchEligibleCatalog(token?: string | null) {
     })));
 }
 
-export function fetchDashboardMonitored(token?: string | null) {
-  return apiFetch<DashboardMonitoredPayload>('/api/dashboard/monitored', { token })
+export function fetchDashboardMonitored(
+  token?: string | null,
+  options?: { page?: number; perPage?: number; sorts?: MonitoredSortCriterion[] },
+) {
+  const query = new URLSearchParams();
+  if (options?.page != null) {
+    query.set('page', String(Math.max(0, Math.trunc(options.page))));
+  }
+  if (options?.perPage != null) {
+    query.set('perPage', String(Math.max(1, Math.trunc(options.perPage))));
+  }
+  if (Array.isArray(options?.sorts) && options.sorts.length > 0) {
+    query.set('sorts', JSON.stringify(options.sorts));
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+
+  return apiFetch<DashboardMonitoredPayload>(`/api/dashboard/monitored${suffix}`, { token })
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
       tokens: response.tokens || [],
+      total: Number(response.total) || 0,
+      page: Number(response.page) || 0,
+      perPage: Number(response.perPage) || 0,
+      hasMore: Boolean(response.hasMore),
     }));
 }
 

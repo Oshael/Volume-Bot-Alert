@@ -305,42 +305,161 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
   return payload;
 }
 
+function parseMonitoredSliceQuery(query) {
+  if (query?.page === undefined && query?.perPage === undefined) {
+    return { ok: true, value: null };
+  }
+
+  const page = query?.page === undefined
+    ? { ok: true, value: 0 }
+    : parseNonNegativeInteger(query.page, 'page', { min: 0, max: 1000 });
+  if (!page.ok) {
+    return page;
+  }
+
+  const perPage = query?.perPage === undefined
+    ? { ok: true, value: 30 }
+    : parseNonNegativeInteger(query.perPage, 'perPage', { min: 1, max: 500 });
+  if (!perPage.ok) {
+    return perPage;
+  }
+
+  return {
+    ok: true,
+    value: {
+      page: page.value,
+      perPage: perPage.value,
+    },
+  };
+}
+
+function parseMonitoredSortsQuery(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return { ok: true, value: [] };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(String(value));
+  } catch {
+    return { ok: false, error: 'sorts must be valid JSON' };
+  }
+
+  if (!Array.isArray(parsed)) {
+    return { ok: false, error: 'sorts must be an array' };
+  }
+
+  const toSortEntry = (item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, error: 'sorts entries must be objects' };
+    }
+
+    const mode = String(item.mode || '').trim();
+    const window = String(item.window || '').trim();
+    const valid = (
+      (mode === 'vol' && (window === '5m' || window === '1h' || window === '6h' || window === '24h'))
+      || (mode === 'mcap' && (window === 'highest' || window === 'lowest'))
+      || (mode === 'age' && (window === 'newest' || window === 'oldest'))
+    );
+    if (!valid) {
+      return { ok: false, error: 'sorts contains an invalid monitored sort criterion' };
+    }
+
+    return { ok: true, value: { mode, window } };
+  };
+
+  const next = [];
+  const seen = new Set();
+  for (const item of parsed) {
+    const normalized = toSortEntry(item);
+    if (!normalized.ok) {
+      return normalized;
+    }
+
+    const key = `${normalized.value.mode}:${normalized.value.window}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    next.push(normalized.value);
+    if (next.length >= 8) {
+      break;
+    }
+  }
+
+  return { ok: true, value: next };
+}
+
+async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = null) {
+  const addresses = items.map((item) => item.address);
+  const emptyMeteoraByAddress = new Map();
+  const marketMcapBaselineByAddress = new Map();
+  const marketVolumeBaselineByAddress = new Map();
+
+  const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
+    tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+    tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+  ]);
+
+  for (const row of primaryMarketBaselineRows) {
+    marketMcapBaselineByAddress.set(row.token_address, row);
+  }
+
+  for (const row of primaryVolumeBaselineRows) {
+    marketVolumeBaselineByAddress.set(row.token_address, row);
+  }
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    source: 'token_catalog',
+    minMcap,
+    count: items.length,
+    tokens: items.map((item) => buildMonitoredTokenPayload(
+      item,
+      emptyMeteoraByAddress,
+      marketMcapBaselineByAddress,
+      marketVolumeBaselineByAddress,
+      { includeMeteora: false, includeRisk: false }
+    )),
+  };
+
+  if (!pagination) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    total: pagination.total,
+    page: pagination.page,
+    perPage: pagination.perPage,
+    hasMore: ((pagination.page + 1) * pagination.perPage) < pagination.total,
+  };
+}
+
 router.get('/monitored', dashboardLimiter, async (req, res) => {
+  const monitoredSliceQuery = parseMonitoredSliceQuery(req.query);
+  if (!monitoredSliceQuery.ok) {
+    return res.status(400).json({ error: monitoredSliceQuery.error });
+  }
+  const monitoredSortsQuery = parseMonitoredSortsQuery(req.query?.sorts);
+  if (!monitoredSortsQuery.ok) {
+    return res.status(400).json({ error: monitoredSortsQuery.error });
+  }
+
   try {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
+    if (monitoredSliceQuery.value) {
+      const monitoredSlice = await tokenCatalog.listDashboardMonitoredSlice(
+        monitoredSliceQuery.value.page,
+        monitoredSliceQuery.value.perPage,
+        minMcap,
+        monitoredSortsQuery.value,
+      );
+      return res.json(await buildLeanMonitoredDashboardResponse(monitoredSlice.rows, minMcap, monitoredSlice));
+    }
+
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
-    const addresses = tokens.map((item) => item.address);
-    const emptyMeteoraByAddress = new Map();
-    const marketMcapBaselineByAddress = new Map();
-    const marketVolumeBaselineByAddress = new Map();
-
-    const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
-      tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
-      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
-    ]);
-
-    for (const row of primaryMarketBaselineRows) {
-      marketMcapBaselineByAddress.set(row.token_address, row);
-    }
-
-    for (const row of primaryVolumeBaselineRows) {
-      marketVolumeBaselineByAddress.set(row.token_address, row);
-    }
-
-    const responsePayload = {
-      generatedAt: new Date().toISOString(),
-      source: 'token_catalog',
-      minMcap,
-      count: tokens.length,
-      tokens: tokens.map((item) => buildMonitoredTokenPayload(
-        item,
-        emptyMeteoraByAddress,
-        marketMcapBaselineByAddress,
-        marketVolumeBaselineByAddress,
-        { includeMeteora: false, includeRisk: false }
-      )),
-    };
-    res.json(responsePayload);
+    res.json(await buildLeanMonitoredDashboardResponse(tokens, minMcap));
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored dashboard' });

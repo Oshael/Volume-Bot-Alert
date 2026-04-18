@@ -618,6 +618,7 @@ export function createAppController(): AppController {
   let lateralizedRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
   let historyBootstrapRequestRevision = 0;
+  let monitoredBootstrapHydrationRevision = 0;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -5110,6 +5111,24 @@ export function createAppController(): AppController {
     rebuildTrackedState(manualPayload, monitoredDashboardTokens);
   }
 
+  function emitMonitoredWorkspaceRegions() {
+    if (isLiveWorkspace()) {
+      emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
+      return;
+    }
+    if (isHistoryWorkspace()) {
+      void refreshLateralizedTokens({ force: true });
+      void refreshBidZoneTokens({ force: true });
+      emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+      return;
+    }
+    emit('recent', 'old-week', 'header');
+  }
+
+  function getMonitoredBootstrapSorts(): MonitoredSortCriterion[] {
+    return normalizeMonitoredSorts(state.ui.monitoredSorts);
+  }
+
   function buildHistoryBootstrapRequest() {
     return {
       starredTokens: [...state.data.starredTokens],
@@ -5296,17 +5315,55 @@ export function createAppController(): AppController {
         return;
       }
 
-      const monitoredDashboard = await fetchDashboardMonitored(token);
-      applyMonitoredDashboard(monitoredDashboard.tokens, manualTokens, monitoredDashboard.generatedAt ?? null);
-      await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
-      if (isLiveWorkspace()) {
-        emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
-      } else if (isHistoryWorkspace()) {
-        void refreshLateralizedTokens({ force: true });
-        void refreshBidZoneTokens({ force: true });
-        emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
-      } else {
-        emit('recent', 'old-week', 'header');
+      const requestRevision = monitoredBootstrapHydrationRevision + 1;
+      monitoredBootstrapHydrationRevision = requestRevision;
+      const firstPageSize = Math.max(1, state.ui.monitoredPerPage || 30);
+      const bootstrapSorts = getMonitoredBootstrapSorts();
+      const firstPage = await fetchDashboardMonitored(token, {
+        page: 0,
+        perPage: firstPageSize,
+        sorts: bootstrapSorts,
+      });
+      if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
+        return;
+      }
+
+      let aggregatedTokens = [...(firstPage.tokens || [])];
+      const generatedAt = firstPage.generatedAt ?? null;
+      applyMonitoredDashboard(aggregatedTokens, manualTokens, generatedAt);
+      emitMonitoredWorkspaceRegions();
+      queueSupplementalMeteoraRefresh(token, aggregatedTokens);
+
+      if (!firstPage.hasMore || aggregatedTokens.length >= firstPage.total) {
+        return;
+      }
+
+      const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || firstPageSize, 1));
+      for (let page = 1; page < totalPages; page += 1) {
+        if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
+          return;
+        }
+
+        const nextPage = await fetchDashboardMonitored(token, {
+          page,
+          perPage: firstPageSize,
+          sorts: bootstrapSorts,
+        });
+        if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
+          return;
+        }
+
+        if (nextPage.tokens.length === 0) {
+          break;
+        }
+
+        aggregatedTokens = Array.from(new Map(
+          [...aggregatedTokens, ...nextPage.tokens].map((item) => [item.address, item]),
+        ).values());
+        applyMonitoredDashboard(aggregatedTokens, manualTokens);
+        emitMonitoredWorkspaceRegions();
+        queueSupplementalMeteoraRefresh(token, aggregatedTokens);
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
       }
     } catch {
     }
@@ -6188,8 +6245,15 @@ export function createAppController(): AppController {
         state.ui.monitoredSorts,
         normalizeMonitoredCriterion(mode, window),
       );
+      state.ui.monitoredPage = 0;
       queueUiPrefsPersist();
       emit('monitored');
+      if (state.session.token && !usesHistoryBucketBootstrap()) {
+        void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
+          address: item.address,
+          label: item.label ?? null,
+        })));
+      }
     },
     setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']) {
       state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals);

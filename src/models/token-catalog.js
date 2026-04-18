@@ -32,6 +32,23 @@ const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
   }),
 });
 
+const MONITORED_SORT_COLUMNS = Object.freeze({
+  vol: Object.freeze({
+    '5m': 'tc.last_vol_5m',
+    '1h': 'tc.last_vol_1h',
+    '6h': 'tc.last_vol_6h',
+    '24h': 'tc.last_vol_24h',
+  }),
+  mcap: Object.freeze({
+    highest: 'tc.last_mcap',
+    lowest: 'tc.last_mcap',
+  }),
+  age: Object.freeze({
+    newest: 'tc.last_token_created_at_ms',
+    oldest: 'tc.last_token_created_at_ms',
+  }),
+});
+
 const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
    tc.address,
    tc.symbol,
@@ -530,6 +547,81 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
     [safeLimit, safeMinMcap]
   );
   return rows;
+}
+
+function normalizeDashboardMonitoredSorts(input) {
+  if (!Array.isArray(input) || input.length === 0) {
+    return [{ mode: 'vol', window: '5m' }];
+  }
+
+  const next = [];
+  const seen = new Set();
+  for (const item of input) {
+    const mode = String(item?.mode || '').trim();
+    const window = String(item?.window || '').trim();
+    const column = MONITORED_SORT_COLUMNS[mode]?.[window];
+    if (!column) {
+      continue;
+    }
+
+    const key = `${mode}:${window}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    next.push({ mode, window });
+    if (next.length >= 8) {
+      break;
+    }
+  }
+
+  return next.length > 0 ? next : [{ mode: 'vol', window: '5m' }];
+}
+
+function getMonitoredSortDirection(mode, window) {
+  if ((mode === 'mcap' && window === 'lowest') || (mode === 'age' && window === 'oldest')) {
+    return 'ASC';
+  }
+  return 'DESC';
+}
+
+function buildDashboardMonitoredOrderSql(sorts) {
+  const clauses = normalizeDashboardMonitoredSorts(sorts).map(({ mode, window }) => {
+    const column = MONITORED_SORT_COLUMNS[mode][window];
+    const direction = getMonitoredSortDirection(mode, window);
+    return `COALESCE(${column}, 0) ${direction}`;
+  });
+  clauses.push('COALESCE(tc.last_token_created_at_ms, 0) DESC');
+  clauses.push('COALESCE(tc.last_mcap, 0) DESC');
+  clauses.push('tc.address ASC');
+  return clauses.join(', ');
+}
+
+async function listDashboardMonitoredSlice(page = 0, perPage = 30, minMcap = 30000, sorts = []) {
+  const safePage = Math.max(0, Number(page) || 0);
+  const safePerPage = Math.max(1, Math.min(Number(perPage) || 30, 500));
+  const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
+  const offset = safePage * safePerPage;
+  const orderSql = buildDashboardMonitoredOrderSql(sorts);
+  const { rows } = await db.query(
+    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
+       COUNT(*) OVER() AS total_count
+     FROM token_catalog tc
+     WHERE tc.eligible_for_monitoring = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $3
+     ORDER BY ${orderSql}
+     LIMIT $1
+     OFFSET $2`,
+    [safePerPage, offset, safeMinMcap]
+  );
+  const total = Math.max(0, Number(rows[0]?.total_count) || 0);
+  return {
+    total,
+    page: safePage,
+    perPage: safePerPage,
+    rows: rows.map(({ total_count: _totalCount, ...item }) => item),
+  };
 }
 
 function normalizeHistoryBucketName(bucket) {
@@ -1196,6 +1288,7 @@ module.exports = {
   listDueForMeteoraSnapshots,
   listEligibleVisible,
   listDashboardMonitored,
+  listDashboardMonitoredSlice,
   listDashboardHistoryBucket,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,

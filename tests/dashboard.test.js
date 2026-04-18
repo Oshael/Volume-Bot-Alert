@@ -170,6 +170,71 @@ describe('Dashboard routes', () => {
     }
   });
 
+  it('returns paginated monitored dashboard slices when page params are provided', async () => {
+    const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
+    const originalListDashboardMonitoredSlice = tokenCatalog.listDashboardMonitoredSlice;
+    const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
+    const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
+
+    tokenCatalog.listDashboardMonitored = async () => {
+      throw new Error('listDashboardMonitored should not be called for paginated /api/dashboard/monitored');
+    };
+    let capturedSorts = null;
+    tokenCatalog.listDashboardMonitoredSlice = async (page, perPage, _minMcap, sorts) => {
+      capturedSorts = sorts;
+      return {
+      total: 5,
+      page,
+      perPage,
+      rows: [{
+        address: 'So11111111111111111111111111111111111111112',
+        symbol: 'WSOL',
+        name: 'Wrapped SOL',
+        eligible_for_monitoring: true,
+        last_mcap: '150000',
+        last_price: '123',
+        last_vol_5m: '1000',
+        last_vol_1h: '5000',
+        last_vol_6h: '15000',
+        last_vol_24h: '60000',
+        last_price_change_1h: '2',
+        last_price_change_6h: '5',
+        last_price_change_24h: '9',
+        last_token_created_at_ms: Date.UTC(2026, 3, 1, 12, 0, 0),
+        last_pair_address: 'pair_test_123',
+        last_pair_url: 'https://dexscreener.com/solana/testpair',
+        last_image_url: 'https://example.com/token.png',
+        last_twitter_url: 'https://x.com/wsol',
+        monitor_priority: 'normal',
+        last_seen_at: '2026-04-05T21:10:00.000Z',
+        last_evaluated_at: '2026-04-05T21:09:00.000Z',
+      }],
+      };
+    };
+    tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+    tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+
+    try {
+      const res = await request(app)
+        .get(`/api/dashboard/monitored?page=1&perPage=2&sorts=${encodeURIComponent(JSON.stringify([{ mode: 'mcap', window: 'highest' }]))}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.page, 1);
+      assert.equal(res.body.perPage, 2);
+      assert.equal(res.body.total, 5);
+      assert.equal(res.body.hasMore, true);
+      assert.equal(res.body.count, 1);
+      assert.equal(res.body.tokens.length, 1);
+      assert.deepEqual(capturedSorts, [{ mode: 'mcap', window: 'highest' }]);
+    } finally {
+      tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
+      tokenCatalog.listDashboardMonitoredSlice = originalListDashboardMonitoredSlice;
+      tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
+      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
+    }
+  });
+
   it('returns enriched high-cap dump alert events', async () => {
     const originalListDashboardAlertEvents = backendAlertFeed.listDashboardAlertEvents;
     let capturedOptions = null;
