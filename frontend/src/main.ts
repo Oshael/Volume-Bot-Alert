@@ -19,6 +19,7 @@ const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
+const RESTORE_RENDER_BATCH_SIZE = 1;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -38,6 +39,7 @@ let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
 let lastLivePresenceSignature: string | null = null;
+let restoreRenderRunId = 0;
 
 declare global {
   interface Window {
@@ -174,6 +176,64 @@ function flushPendingRender() {
   pendingDirtyRegions = null;
 }
 
+function getRestoreRenderOrder(dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  if (dirtyRegions.has('all')) {
+    return [
+      'header',
+      'overlay',
+      'legacy',
+      'manual',
+      'monitored',
+      'pumpfun',
+      'alerts',
+      'recent',
+      'old-week',
+      'lateralized',
+      'bid-zone',
+      'toasts',
+    ] satisfies AppRenderRegion[];
+  }
+
+  const priority = [
+    'header',
+    'overlay',
+    'legacy',
+    'manual',
+    'monitored',
+    'pumpfun',
+    'alerts',
+    'recent',
+    'old-week',
+    'lateralized',
+    'bid-zone',
+    'toasts',
+  ] satisfies AppRenderRegion[];
+
+  return priority.filter((region) => dirtyRegions.has(region));
+}
+
+function scheduleRestoreRenderBatches(state: AppState, orderedRegions: AppRenderRegion[], runId: number, index = 0) {
+  if (isDocumentHidden || runId !== restoreRenderRunId) {
+    return;
+  }
+
+  if (index >= orderedRegions.length) {
+    return;
+  }
+
+  const nextState = latestState ?? state;
+  const batch = orderedRegions.slice(index, index + RESTORE_RENDER_BATCH_SIZE);
+  performRender(nextState, new Set(batch));
+
+  if ((index + RESTORE_RENDER_BATCH_SIZE) >= orderedRegions.length) {
+    return;
+  }
+
+  window.setTimeout(() => {
+    scheduleRestoreRenderBatches(state, orderedRegions, runId, index + RESTORE_RENDER_BATCH_SIZE);
+  }, 0);
+}
+
 function scheduleRestoreRender() {
   if (restoreRenderQueued || isDocumentHidden) {
     return;
@@ -202,7 +262,14 @@ function scheduleRestoreRender() {
       return;
     }
 
-    performRender(nextState, nextDirtyRegions.size > 0 ? nextDirtyRegions : new Set<AppRenderRegion>(['all']));
+    const orderedRegions = getRestoreRenderOrder(nextDirtyRegions.size > 0 ? nextDirtyRegions : new Set<AppRenderRegion>(['all']));
+    if (orderedRegions.length === 0) {
+      performRender(nextState, new Set<AppRenderRegion>(['all']));
+      return;
+    }
+
+    restoreRenderRunId += 1;
+    scheduleRestoreRenderBatches(nextState, orderedRegions, restoreRenderRunId);
   };
 
   if (typeof window.requestAnimationFrame === 'function') {
