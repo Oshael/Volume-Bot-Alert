@@ -299,6 +299,7 @@ export interface AppController {
   toggleStarredToken(address: string): Promise<void>;
   setWorkspace(workspace: WorkspaceView): void;
   syncWorkspaceFromLocation(): void;
+  setDocumentHidden(hidden: boolean): void;
   startMonitoring(): void;
   stopMonitoring(): void;
   clearNotice(): void;
@@ -619,6 +620,7 @@ export function createAppController(): AppController {
   let bidZoneRefreshInFlight = false;
   let historyBootstrapRequestRevision = 0;
   let monitoredBootstrapHydrationRevision = 0;
+  let documentHiddenForUi = typeof document !== 'undefined' && document.visibilityState === 'hidden';
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -980,6 +982,10 @@ export function createAppController(): AppController {
     return isLiveWorkspace() && isAuthenticatedSession();
   }
 
+  function isLiveWorkspaceHiddenForUiWork() {
+    return documentHiddenForUi && isLiveWorkspace() && state.runtime.mode === 'active';
+  }
+
   function shouldRunPumpfunRuntime() {
     return isLiveWorkspace();
   }
@@ -1014,6 +1020,9 @@ export function createAppController(): AppController {
 
   function shouldRunLocalMonitoringPolling() {
     if (state.runtime.mode !== 'active') {
+      return false;
+    }
+    if (isLiveWorkspaceHiddenForUiWork()) {
       return false;
     }
     if (isLiveWorkspace()) {
@@ -4235,6 +4244,10 @@ export function createAppController(): AppController {
     token: string,
     includeAlertFeed?: boolean,
   ) {
+    if (isLiveWorkspaceHiddenForUiWork()) {
+      return;
+    }
+
     if (dashboardAlertFeedRefreshInFlight) {
       return;
     }
@@ -4257,6 +4270,10 @@ export function createAppController(): AppController {
     token: string,
     monitoredDashboardTokens: DashboardMonitoredToken[] = [],
   ) {
+    if (isLiveWorkspaceHiddenForUiWork()) {
+      return;
+    }
+
     if (supplementalMeteoraRefreshInFlight) {
       return;
     }
@@ -4401,6 +4418,9 @@ export function createAppController(): AppController {
     if (!token) {
       return;
     }
+    if (isLiveWorkspaceHiddenForUiWork()) {
+      return;
+    }
 
     if (usesHistoryBucketBootstrap()) {
       await refreshHistoryWorkspaceBootstrap({ token });
@@ -4446,6 +4466,9 @@ export function createAppController(): AppController {
     computeUptimeLabel();
     updateMonitoredFreshness(state.runtime.monitoredUpdatedAt);
     updateBidZoneRefreshAvailability(state.runtime.bidZoneRefreshAvailableAt);
+    if (isLiveWorkspaceHiddenForUiWork()) {
+      return;
+    }
     if (usesHistoryBucketBootstrap()) {
       void refreshHistoryWorkspaceBootstrap();
     } else {
@@ -4547,10 +4570,13 @@ export function createAppController(): AppController {
         }
         state.pumpfun.connected = Boolean(payload.connected);
         state.pumpfun.statusLabel = state.pumpfun.connected ? 'connected' : 'disconnected';
+        if (isLiveWorkspaceHiddenForUiWork()) {
+          return;
+        }
         emit('pumpfun', 'header');
       },
       onSolPrice(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
           return;
         }
         const price = Number(payload.price);
@@ -4560,7 +4586,7 @@ export function createAppController(): AppController {
         emit('pumpfun');
       },
       onPumpNewToken(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
           return;
         }
         createOrUpdatePumpToken(payload, 'new');
@@ -4571,14 +4597,14 @@ export function createAppController(): AppController {
         emit('pumpfun');
       },
       onPumpTrade(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
           return;
         }
         createOrUpdatePumpToken(payload, 'trade');
         emit('pumpfun');
       },
       onPumpMigrate(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active') {
+        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
           return;
         }
         const mint = String(payload.mint || '').trim();
@@ -4619,10 +4645,15 @@ export function createAppController(): AppController {
           return;
         }
 
+        const hiddenForUiWork = isLiveWorkspaceHiddenForUiWork();
         const added = syncBackendAlertEvents([payload]);
         if (added > 0) {
           void markDashboardAlertEventsSeen(sessionToken, [payload], payload.ruleKey || payload.kind || HIGH_CAP_DUMP_RULE_KEY);
-          emit('alerts', 'header', 'legacy');
+          if (hiddenForUiWork) {
+            emit('alerts');
+          } else {
+            emit('alerts', 'header', 'legacy');
+          }
         }
       },
     });
@@ -6343,6 +6374,31 @@ export function createAppController(): AppController {
         return;
       }
       syncWorkspaceFromLocationInternal();
+    },
+    setDocumentHidden(hidden: boolean) {
+      documentHiddenForUi = Boolean(hidden);
+      if (state.session.status !== 'authenticated' || state.runtime.mode !== 'active') {
+        return;
+      }
+
+      if (hidden) {
+        syncMonitoringPolling();
+        if (isLiveWorkspace()) {
+          stopPumpGcTimer();
+        }
+        return;
+      }
+
+      syncMonitoringPolling();
+      if (isLiveWorkspace()) {
+        startPumpGcTimer();
+        window.setTimeout(() => {
+          if (documentHiddenForUi || state.session.status !== 'authenticated' || state.runtime.mode !== 'active' || !isLiveWorkspace()) {
+            return;
+          }
+          void refreshMonitoredDashboard({ includeAlertFeed: true });
+        }, 250);
+      }
     },
     startMonitoring() {
       startMonitoringTimers();
