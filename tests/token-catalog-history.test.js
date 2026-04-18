@@ -38,8 +38,44 @@ describe('token-catalog history bucket queries', () => {
       assert.equal(result.perPage, 30);
       assert.match(captured.sql, /^SELECT\s+tc\.address,/);
       assert.doesNotMatch(captured.sql, /\bSELECT\s+SELECT\b/i);
+      assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$1/);
       assert.ok(Array.isArray(captured.params));
-      assert.equal(captured.params.length, 10);
+      assert.equal(captured.params.length, 9);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('uses a single upper age bound for old-week buckets', async () => {
+    const originalQuery = db.query;
+    const captured = {
+      sql: '',
+      params: null,
+    };
+
+    db.query = async (sql, params) => {
+      captured.sql = String(sql);
+      captured.params = params;
+      return { rows: [] };
+    };
+
+    try {
+      const result = await tokenCatalog.listDashboardHistoryBucket('oldWeek', {
+        page: 0,
+        perPage: 30,
+        searchQuery: '',
+        starredOnly: false,
+        sorts: [{ mode: 'vol', window: '1h' }],
+        dismissedAddresses: [],
+        starredAddresses: [],
+        mcapMin: 120000,
+        mcapMax: 0,
+      });
+
+      assert.equal(result.total, 0);
+      assert.match(captured.sql, /tc\.last_token_created_at_ms <= \$1/);
+      assert.ok(Array.isArray(captured.params));
+      assert.equal(captured.params.length, 9);
     } finally {
       db.query = originalQuery;
     }

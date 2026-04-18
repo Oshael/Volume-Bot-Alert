@@ -7,7 +7,6 @@ const PUMPFUN_MIGRATION_MIN_MCAP = 30000;
 const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
 const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
 const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
-const RECENT_TOKEN_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HISTORY_BUCKET_SORT_MODES = new Set(['vol', 'mcap', 'pchange', 'age']);
 
@@ -688,7 +687,7 @@ function buildHistoryBucketAgeWhereSql(bucket) {
     return 'tc.last_token_created_at_ms <= $1';
   }
 
-  return 'tc.last_token_created_at_ms BETWEEN $1 AND $2';
+  return 'tc.last_token_created_at_ms >= $1';
 }
 
 function buildHistoryBucketQueryParams(bucket, options = {}) {
@@ -722,9 +721,7 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
   }
 
   const now = Date.now();
-  const ageParams = normalizedBucket === 'oldWeek'
-    ? [now - OLD_WEEK_MIN_AGE_MS]
-    : [now - OLD_WEEK_MIN_AGE_MS, now - RECENT_TOKEN_MIN_AGE_MS];
+  const ageParams = [now - OLD_WEEK_MIN_AGE_MS];
 
   return {
     ok: true,
