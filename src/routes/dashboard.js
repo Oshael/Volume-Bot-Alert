@@ -249,14 +249,18 @@ function buildMarketBaseline(mcapBaselineRow, volumeBaselineRow) {
   };
 }
 
-function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress) {
+function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress, options = {}) {
+  const includeRisk = options.includeRisk !== false;
+  const includeMeteora = options.includeMeteora !== false;
   const marketBaseline = buildMarketBaseline(
     marketMcapBaselineByAddress.get(item.address) || null,
     marketVolumeBaselineByAddress.get(item.address) || null
   );
-  const meteora = buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null);
+  const meteora = includeMeteora
+    ? buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null)
+    : null;
 
-  return {
+  const payload = {
     address: item.address,
     symbol: item.symbol || null,
     name: item.name || null,
@@ -281,16 +285,24 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
     lastSeenAt: item.last_seen_at || null,
     lastEvaluatedAt: item.last_evaluated_at || null,
-    blockStatus: buildBlockStatusSummary(item),
-    effectiveRiskLabel: buildEffectiveRiskLabel(item),
-    riskReview: buildRiskReviewSummary(item),
-    structuralRisk: buildStructuralRiskSummary(item),
-    junkAssessment: classifyTokenJunk({
+  };
+
+  if (includeRisk) {
+    payload.blockStatus = buildBlockStatusSummary(item);
+    payload.effectiveRiskLabel = buildEffectiveRiskLabel(item);
+    payload.riskReview = buildRiskReviewSummary(item);
+    payload.structuralRisk = buildStructuralRiskSummary(item);
+    payload.junkAssessment = classifyTokenJunk({
       ...item,
       meteora,
-    }),
-    meteora,
-  };
+    });
+  }
+
+  if (includeMeteora) {
+    payload.meteora = meteora;
+  }
+
+  return payload;
 }
 
 router.get('/monitored', dashboardLimiter, async (req, res) => {
@@ -298,14 +310,9 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
     const addresses = tokens.map((item) => item.address);
-    const meteoraSummaryRows = await tokenMeteoraState.listSummaryByAddresses(addresses);
-    const meteoraByAddress = new Map();
+    const emptyMeteoraByAddress = new Map();
     const marketMcapBaselineByAddress = new Map();
     const marketVolumeBaselineByAddress = new Map();
-
-    for (const row of meteoraSummaryRows) {
-      meteoraByAddress.set(row.tokenAddress, row);
-    }
 
     const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
@@ -327,9 +334,10 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
       count: tokens.length,
       tokens: tokens.map((item) => buildMonitoredTokenPayload(
         item,
-        meteoraByAddress,
+        emptyMeteoraByAddress,
         marketMcapBaselineByAddress,
-        marketVolumeBaselineByAddress
+        marketVolumeBaselineByAddress,
+        { includeMeteora: false, includeRisk: false }
       )),
     };
     res.json(responsePayload);

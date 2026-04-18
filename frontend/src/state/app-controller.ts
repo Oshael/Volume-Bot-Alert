@@ -5224,9 +5224,15 @@ export function createAppController(): AppController {
   }
 
   function getSupplementalMeteoraAddresses(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
-    const monitoredAddresses = new Set(monitoredDashboardTokens.map((item) => item.address));
-    return Object.keys(state.data.trackedTokensByAddress)
-      .filter((address) => !monitoredAddresses.has(address))
+    const activeAddresses = new Set([
+      ...Object.keys(state.data.trackedTokensByAddress),
+      ...monitoredDashboardTokens.map((item) => item.address),
+    ]);
+    return [...activeAddresses]
+      .filter((address) => {
+        const cached = state.data.meteoraByAddress[address];
+        return !cached || (!cached.lastFetch && !cached.lastCheckedAt && !cached.poolAddress && cached.noPool !== true && !(cached.tvl > 0));
+      })
       .sort((a, b) => a.localeCompare(b));
   }
 
@@ -5237,8 +5243,13 @@ export function createAppController(): AppController {
     }
 
     try {
-      const items = await fetchMeteoraBatch(addresses, token);
-      syncMeteoraBatchCache(items);
+      for (let index = 0; index < addresses.length; index += 500) {
+        if (state.session.token !== token || !isAuthenticatedSession()) {
+          return;
+        }
+        const items = await fetchMeteoraBatch(addresses.slice(index, index + 500), token);
+        syncMeteoraBatchCache(items);
+      }
     } catch (error) {
       console.warn('[AppController] Failed to hydrate supplemental Meteora state:', error instanceof Error ? error.message : error);
     }

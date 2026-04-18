@@ -76,6 +76,29 @@ const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
    tre.top_20_pct AS risk_top_20_pct,
    tre.reason_codes AS risk_reason_codes`;
 
+const DASHBOARD_MONITORED_LEAN_SELECT_SQL = `SELECT
+   tc.address,
+   tc.symbol,
+   tc.name,
+   tc.eligible_for_monitoring,
+   tc.last_mcap,
+   tc.last_price,
+   tc.last_vol_5m,
+   tc.last_vol_1h,
+   tc.last_vol_6h,
+   tc.last_vol_24h,
+   tc.last_price_change_1h,
+   tc.last_price_change_6h,
+   tc.last_price_change_24h,
+   tc.last_token_created_at_ms,
+   tc.last_pair_address,
+   tc.last_pair_url,
+   tc.last_image_url,
+   tc.last_twitter_url,
+   tc.monitor_priority,
+   tc.last_seen_at,
+   tc.last_evaluated_at`;
+
 function normalizeSource(source) {
   const value = String(normalizeText(source, 64) || 'unknown').trim().toLowerCase();
   return value || 'unknown';
@@ -498,14 +521,8 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 5000));
   const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
   const { rows } = await db.query(
-    `${DASHBOARD_MONITORED_SELECT_SQL}
+    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL}
      FROM token_catalog tc
-     LEFT JOIN token_risk_reviews trr
-       ON trr.token_address = tc.address
-     LEFT JOIN admin_blocked_tokens ab
-       ON ab.address = tc.address
-     LEFT JOIN token_risk_enrichment tre
-       ON tre.token_address = tc.address
      WHERE tc.eligible_for_monitoring = TRUE
        AND COALESCE(tc.last_mcap, 0) >= $2
      ORDER BY tc.last_seen_at DESC, tc.last_evaluated_at DESC NULLS LAST

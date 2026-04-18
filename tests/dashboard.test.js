@@ -114,7 +114,7 @@ describe('Dashboard routes', () => {
     assert.equal(res.status, 401);
   });
 
-  it('uses current Meteora state for monitored dashboard summaries instead of stale positive snapshot history', async () => {
+  it('returns a lean monitored dashboard payload without blocking on Meteora summaries', async () => {
     const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
@@ -142,34 +142,9 @@ describe('Dashboard routes', () => {
       monitor_priority: 'normal',
       last_seen_at: '2026-04-05T21:10:00.000Z',
       last_evaluated_at: '2026-04-05T21:09:00.000Z',
-      risk_review_label: 'valid_but_weak',
-      risk_review_notes: 'manual review',
-      risk_review_updated_at: '2026-04-05T20:00:00.000Z',
-      risk_enrichment_last_attempted_at: '2026-04-05T20:10:00.000Z',
-      risk_enrichment_last_enriched_at: '2026-04-05T20:10:05.000Z',
-      risk_enrichment_last_error: null,
-      risk_holder_count: 123,
-      risk_mint_authority_active: true,
-      risk_freeze_authority_active: false,
-      risk_top_10_pct: '61.25',
-      risk_top_20_pct: '82.15',
-      risk_reason_codes: ['mint_authority_active'],
     }];
-    tokenMeteoraState.listSummaryByAddresses = async (addresses) => {
-      assert.deepEqual(addresses, ['So11111111111111111111111111111111111111112']);
-      return [{
-        tokenAddress: 'So11111111111111111111111111111111111111112',
-        lastCheckedAt: '2026-04-05T21:08:00.000Z',
-        hasPool: false,
-        currentTvl: null,
-        bestPoolAddress: null,
-        poolCount: 0,
-        lastError: null,
-        lastSnapshotAt: '2026-04-05T19:00:00.000Z',
-        baselineTvl1h: null,
-        baselineTvl6h: null,
-        baselineTvl24h: null,
-      }];
+    tokenMeteoraState.listSummaryByAddresses = async () => {
+      throw new Error('listSummaryByAddresses should not be called for /api/dashboard/monitored');
     };
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
@@ -181,21 +156,12 @@ describe('Dashboard routes', () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.body.tokens.length, 1);
-      assert.equal(res.body.tokens[0].meteora.noPool, true);
-      assert.equal(res.body.tokens[0].meteora.tvl, null);
-      assert.equal(res.body.tokens[0].meteora.poolCount, 0);
-      assert.equal(res.body.tokens[0].meteora.lastSnapshotAt, '2026-04-05T19:00:00.000Z');
-      assert.equal(res.body.tokens[0].riskReview.label, 'valid_but_weak');
-      assert.equal(res.body.tokens[0].riskReview.notes, 'manual review');
-      assert.equal(res.body.tokens[0].blockStatus, null);
-      assert.equal(res.body.tokens[0].effectiveRiskLabel, 'valid_but_weak');
-      assert.equal(res.body.tokens[0].structuralRisk.holderCount, 123);
-      assert.equal(res.body.tokens[0].structuralRisk.mintAuthorityActive, true);
-      assert.equal(res.body.tokens[0].structuralRisk.freezeAuthorityActive, false);
-      assert.equal(res.body.tokens[0].structuralRisk.top10Pct, 61.25);
-      assert.deepEqual(res.body.tokens[0].structuralRisk.reasonCodes, ['mint_authority_active']);
-      assert.equal(res.body.tokens[0].junkAssessment.label, 'valid_but_weak');
-      assert.equal(res.body.tokens[0].junkAssessment.autoBlock, false);
+      assert.equal(res.body.tokens[0].meteora, undefined);
+      assert.equal(res.body.tokens[0].riskReview, undefined);
+      assert.equal(res.body.tokens[0].blockStatus, undefined);
+      assert.equal(res.body.tokens[0].effectiveRiskLabel, undefined);
+      assert.equal(res.body.tokens[0].structuralRisk, undefined);
+      assert.equal(res.body.tokens[0].junkAssessment, undefined);
     } finally {
       tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
