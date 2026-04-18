@@ -287,19 +287,6 @@ function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {
   return placeholder;
 }
 
-function buildInlineLink(label: string, href: string, title?: string) {
-  const link = document.createElement('a');
-  link.href = href;
-  link.target = '_blank';
-  link.rel = 'noreferrer';
-  link.className = 'inline-link';
-  link.textContent = label;
-  if (title) {
-    link.title = title;
-  }
-  return link;
-}
-
 function buildInlineActionLink(label: string, href: string, className: string, title: string) {
   const link = document.createElement('a');
   link.href = href;

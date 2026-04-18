@@ -613,6 +613,8 @@ export function createAppController(): AppController {
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
+  let dashboardAlertFeedRefreshInFlight = false;
+  let supplementalMeteoraRefreshInFlight = false;
   let lateralizedRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
   let historyBootstrapRequestRevision = 0;
@@ -4205,22 +4207,65 @@ export function createAppController(): AppController {
     }).catch(() => null);
   }
 
-  function applyMonitoredDashboardRefreshSuccess(
+  function applyDashboardAlertFeedRefreshSuccess(
     token: string,
-    monitoredDashboard: Awaited<ReturnType<typeof fetchDashboardMonitored>>,
     dashboardAlertFeeds: Awaited<ReturnType<typeof loadDashboardAlertFeedsForWorkspace>>,
   ) {
-    applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
-    if (dashboardAlertFeeds?.feeds?.length) {
-      for (const feed of dashboardAlertFeeds.feeds) {
-        if (!feed?.events?.length) {
-          continue;
+    if (!dashboardAlertFeeds?.feeds?.length) {
+      return;
+    }
+
+    let addedEvents = 0;
+    for (const feed of dashboardAlertFeeds.feeds) {
+      if (!feed?.events?.length) {
+        continue;
+      }
+
+      addedEvents += syncBackendAlertEvents(feed.events);
+      void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
+    }
+
+    if (addedEvents > 0) {
+      emit('alerts', 'header', 'legacy');
+    }
+  }
+
+  function queueDashboardAlertFeedRefresh(
+    token: string,
+    includeAlertFeed?: boolean,
+  ) {
+    if (dashboardAlertFeedRefreshInFlight) {
+      return;
+    }
+
+    dashboardAlertFeedRefreshInFlight = true;
+    void loadDashboardAlertFeedsForWorkspace(token, includeAlertFeed)
+      .then((dashboardAlertFeeds) => {
+        if (state.session.token !== token || !isAuthenticatedSession()) {
+          return;
         }
 
-        syncBackendAlertEvents(feed.events);
-        void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
-      }
+        applyDashboardAlertFeedRefreshSuccess(token, dashboardAlertFeeds);
+      })
+      .finally(() => {
+        dashboardAlertFeedRefreshInFlight = false;
+      });
+  }
+
+  function queueSupplementalMeteoraRefresh(
+    token: string,
+    monitoredDashboardTokens: DashboardMonitoredToken[] = [],
+  ) {
+    if (supplementalMeteoraRefreshInFlight) {
+      return;
     }
+
+    supplementalMeteoraRefreshInFlight = true;
+    void refreshSupplementalMeteoraState(token, monitoredDashboardTokens)
+      .catch(() => null)
+      .finally(() => {
+        supplementalMeteoraRefreshInFlight = false;
+      });
   }
 
   function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
@@ -4367,21 +4412,19 @@ export function createAppController(): AppController {
 
     monitoredRefreshInFlight = true;
     try {
-      const [monitoredDashboard, dashboardAlertEvents] = await Promise.all([
-        fetchDashboardMonitored(token),
-        loadDashboardAlertFeedsForWorkspace(token, options?.includeAlertFeed),
-      ]);
-      applyMonitoredDashboardRefreshSuccess(token, monitoredDashboard, dashboardAlertEvents);
-      await refreshSupplementalMeteoraState(token, monitoredDashboard.tokens);
+      const monitoredDashboard = await fetchDashboardMonitored(token);
+      applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
       lastMonitoredDashboardError = null;
+      queueSupplementalMeteoraRefresh(token, monitoredDashboard.tokens);
+      queueDashboardAlertFeedRefresh(token, options?.includeAlertFeed);
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
         broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
       }
       if (isLiveWorkspace()) {
-        emit('monitored', 'manual', 'recent', 'old-week', 'alerts', 'header');
+        emit('monitored', 'manual', 'recent', 'old-week', 'header');
       } else if (isHistoryWorkspace()) {
         emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
       } else {
@@ -4817,9 +4860,24 @@ export function createAppController(): AppController {
     ]);
   }
 
+  function refreshDeferredAuthenticatedAncillaryState(token: string) {
+    void Promise.all([
+      refreshBillingState(token),
+      refreshIdentityState(token),
+    ])
+      .finally(() => {
+        if (state.session.status === 'authenticated') {
+          emit('overlay', 'header');
+        }
+      });
+  }
+
   async function refreshAuthenticatedBootstrapState() {
-    await refreshUserSettingsState(COOKIE_SESSION_MARKER);
-    await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+    await Promise.all([
+      refreshAccountAccessState(COOKIE_SESSION_MARKER),
+      reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true }),
+    ]);
+    refreshDeferredAuthenticatedAncillaryState(COOKIE_SESSION_MARKER);
   }
 
   function clearSession() {
