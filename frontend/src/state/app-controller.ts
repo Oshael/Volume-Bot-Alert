@@ -1086,6 +1086,10 @@ export function createAppController(): AppController {
     return null;
   }
 
+  function toNullableTrackedValue<T>(value: T | null | undefined): T | null {
+    return value ?? null;
+  }
+
   function shouldApplyTrackedColdFields(
     existingItem: ManualTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
@@ -5142,6 +5146,75 @@ export function createAppController(): AppController {
     rebuildTrackedState(manualPayload, monitoredDashboardTokens);
   }
 
+  function buildCurrentMonitoredMeteoraSnapshot(address: string) {
+    const meteora = state.data.meteoraByAddress[address];
+    if (!meteora) {
+      return null;
+    }
+
+    return {
+      address,
+      tvl: toNullableTrackedValue(meteora.tvl),
+      poolAddress: toNullableTrackedValue(meteora.poolAddress),
+      poolCount: meteora.poolCount ?? 0,
+      lastCheckedAt: toNullableTrackedValue(meteora.lastCheckedAt),
+      lastSnapshotAt: toNullableTrackedValue(meteora.lastSnapshotAt),
+      change1h: toNullableTrackedValue(meteora.change1h),
+      change6h: toNullableTrackedValue(meteora.change6h),
+      change24h: toNullableTrackedValue(meteora.change24h),
+      noPool: meteora.noPool ?? false,
+    };
+  }
+
+  function buildCurrentMonitoredSnapshotToken(address: string) {
+    const item = state.data.trackedTokensByAddress[address];
+    if (!item) {
+      return null;
+    }
+
+    return {
+      address: item.address,
+      symbol: toNullableTrackedValue(item.symbol),
+      name: toNullableTrackedValue(item.name),
+      pairAddress: toNullableTrackedValue(item.pairAddress),
+      pairUrl: toNullableTrackedValue(item.pairUrl),
+      imageUrl: toNullableTrackedValue(item.imageUrl),
+      twitterUrl: toNullableTrackedValue(item.twitterUrl),
+      mcap: toNullableTrackedValue(item.mcap),
+      priceUsd: toNullableTrackedValue(item.priceUsd),
+      volume5m: toNullableTrackedValue(item.volume5m),
+      volume1h: toNullableTrackedValue(item.volume1h),
+      volume6h: toNullableTrackedValue(item.volume6h),
+      volume24h: toNullableTrackedValue(item.volume24h),
+      priceChange1h: toNullableTrackedValue(item.priceChange1h),
+      priceChange6h: toNullableTrackedValue(item.priceChange6h),
+      priceChange24h: toNullableTrackedValue(item.priceChange24h),
+      tokenCreatedAt: toNullableTrackedValue(item.createdAt),
+      prevMcap: toNullableTrackedValue(item.prevMcap),
+      mcapDelta: toNullableTrackedValue(item.mcapDelta),
+      prevVolume5mCanonical: firstDefinedTrackedValue(item.prevVolume5mCanonical, item.prevVolume5m),
+      meteora: buildCurrentMonitoredMeteoraSnapshot(address),
+    } satisfies DashboardMonitoredToken;
+  }
+
+  function getCurrentMonitoredDashboardSnapshot(): DashboardMonitoredToken[] {
+    const manualAddresses = new Set(state.data.manualTokenAddresses);
+    const snapshot: DashboardMonitoredToken[] = [];
+
+    for (const address of state.data.monitoredTokenAddresses) {
+      if (manualAddresses.has(address)) {
+        continue;
+      }
+
+      const item = buildCurrentMonitoredSnapshotToken(address);
+      if (item) {
+        snapshot.push(item);
+      }
+    }
+
+    return snapshot;
+  }
+
   function emitMonitoredWorkspaceRegions() {
     if (isLiveWorkspace()) {
       emit('monitored', 'manual', 'recent', 'old-week', 'alerts');
@@ -5411,6 +5484,11 @@ export function createAppController(): AppController {
     }
 
     await hydrateDashboardMonitoredInternal(token, payload.tokens);
+  }
+
+  async function reloadConfigPreservingMonitoredSnapshot(token: string) {
+    const payload = await fetchConfig(token);
+    applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
   }
 
   async function applyVerifiedEmailPreAccessResult(result: VerifyEmailConfirmResponse) {
@@ -5724,7 +5802,7 @@ export function createAppController(): AppController {
     }
 
     await trackManualToken(address, token);
-    await reloadConfigInternal(token);
+    await reloadConfigPreservingMonitoredSnapshot(token);
   }
 
   return {
@@ -6994,7 +7072,7 @@ export function createAppController(): AppController {
         refreshMonitoredPanelCounts();
         emit();
         await removeManualTokenRequest(address, token);
-        await reloadConfigInternal(token);
+        await reloadConfigPreservingMonitoredSnapshot(token);
         setNotice('Token removed');
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to remove manual token');
