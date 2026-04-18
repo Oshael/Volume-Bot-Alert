@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 const dexscreener = require('../src/services/dexscreener');
+const catalogWorker = require('../src/services/catalog-worker');
 const tokenCatalog = require('../src/models/token-catalog');
 const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
@@ -31,6 +32,8 @@ const VALID_ADDR = 'So11111111111111111111111111111111111111112';
 
 const originalGetTokenPairs = dexscreener.getTokenPairs;
 const originalGetBestPair = dexscreener.getBestPair;
+const originalClearCache = dexscreener.clearCache;
+const originalEvaluateTokenWithData = catalogWorker.__private.evaluateTokenWithData;
 
 function getQueryToken(actionUrl) {
   assert.ok(actionUrl, 'Expected actionUrl in email debug payload');
@@ -135,11 +138,15 @@ describe('Catalog routes', () => {
   beforeEach(() => {
     mockPair = buildPair();
     mockDataAvailable = true;
+    dexscreener.clearCache = () => {};
+    catalogWorker.__private.evaluateTokenWithData = async () => ({ address: VALID_ADDR });
   });
 
   after(async () => {
     dexscreener.getTokenPairs = originalGetTokenPairs;
     dexscreener.getBestPair = originalGetBestPair;
+    dexscreener.clearCache = originalClearCache;
+    catalogWorker.__private.evaluateTokenWithData = originalEvaluateTokenWithData;
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
     if (server && server.close) server.close();
     await db.pool.end().catch(() => {});
@@ -151,6 +158,86 @@ describe('Catalog routes', () => {
       .send({ address: VALID_ADDR, source: 'monitored-token' });
 
     assert.equal(res.status, 401);
+  });
+
+  it('reactivates soft-archived tokens for manual catalog tracking', async () => {
+    const originalGetByAddress = tokenCatalog.getByAddress;
+    const originalReactivateSoftArchivedToken = tokenCatalog.reactivateSoftArchivedToken;
+    const originalUpsertToken = tokenCatalog.upsertToken;
+    const originalScheduleImmediateEvaluation = tokenCatalog.scheduleImmediateEvaluation;
+    let reactivatedAddress = null;
+    let upsertCalls = 0;
+    let scheduleCalls = 0;
+
+    tokenCatalog.getByAddress = async (address) => ({
+      address,
+      suppressed_reason: 'cleanup_soft_archive',
+    });
+    tokenCatalog.reactivateSoftArchivedToken = async (address) => {
+      reactivatedAddress = address;
+      return { address };
+    };
+    tokenCatalog.upsertToken = async () => {
+      upsertCalls += 1;
+      return { address: VALID_ADDR };
+    };
+    tokenCatalog.scheduleImmediateEvaluation = async () => {
+      scheduleCalls += 1;
+      return null;
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/manual-track')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ address: VALID_ADDR });
+
+      assert.equal(res.status, 201);
+      assert.equal(reactivatedAddress, VALID_ADDR);
+      assert.equal(upsertCalls, 0);
+      assert.equal(scheduleCalls, 0);
+      assert.equal(res.body.bootstrapState, 'evaluated');
+    } finally {
+      tokenCatalog.getByAddress = originalGetByAddress;
+      tokenCatalog.reactivateSoftArchivedToken = originalReactivateSoftArchivedToken;
+      tokenCatalog.upsertToken = originalUpsertToken;
+      tokenCatalog.scheduleImmediateEvaluation = originalScheduleImmediateEvaluation;
+    }
+  });
+
+  it('eagerly evaluates manual catalog tracking so new manual tokens do not wait for the worker loop', async () => {
+    const originalGetByAddress = tokenCatalog.getByAddress;
+    const originalUpsertToken = tokenCatalog.upsertToken;
+    const originalScheduleImmediateEvaluation = tokenCatalog.scheduleImmediateEvaluation;
+    const originalEvaluateToken = catalogWorker.__private.evaluateTokenWithData;
+    let evaluatedToken = null;
+    let evaluatedPayload = null;
+
+    tokenCatalog.getByAddress = async () => null;
+    tokenCatalog.upsertToken = async () => ({ address: VALID_ADDR, source: 'user-manual', last_eligible_at: null });
+    tokenCatalog.scheduleImmediateEvaluation = async () => ({ address: VALID_ADDR, source: 'user-manual', last_eligible_at: null });
+    catalogWorker.__private.evaluateTokenWithData = async (tokenRow, payload) => {
+      evaluatedToken = tokenRow;
+      evaluatedPayload = payload;
+      return { address: tokenRow.address, eligible_for_monitoring: true };
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/manual-track')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ address: VALID_ADDR });
+
+      assert.equal(res.status, 201);
+      assert.deepEqual(evaluatedToken, { address: VALID_ADDR, source: 'user-manual', last_eligible_at: null });
+      assert.deepEqual(evaluatedPayload, { pairs: [mockPair] });
+      assert.equal(res.body.bootstrapState, 'evaluated');
+    } finally {
+      tokenCatalog.getByAddress = originalGetByAddress;
+      tokenCatalog.upsertToken = originalUpsertToken;
+      tokenCatalog.scheduleImmediateEvaluation = originalScheduleImmediateEvaluation;
+      catalogWorker.__private.evaluateTokenWithData = originalEvaluateToken;
+    }
   });
 
   it('upserts monitored token into token_catalog when Dex data is available', async () => {

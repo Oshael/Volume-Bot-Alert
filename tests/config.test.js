@@ -12,6 +12,7 @@ const request = require('supertest');
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
+const tokenCatalog = require('../src/models/token-catalog');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
 
 const VALID_ADDR_1 = 'So11111111111111111111111111111111111111112';
@@ -413,6 +414,50 @@ describe('Config routes', () => {
 
     assert.equal(deleteResponse.status, 200);
     assert.match(deleteResponse.body.message, /removed/i);
+  });
+
+  it('reactivates soft-archived catalog rows when adding a manual token', async () => {
+    const originalGetByAddress = tokenCatalog.getByAddress;
+    const originalReactivateSoftArchivedToken = tokenCatalog.reactivateSoftArchivedToken;
+    const originalUpsertToken = tokenCatalog.upsertToken;
+    const originalScheduleImmediateEvaluation = tokenCatalog.scheduleImmediateEvaluation;
+    let reactivatedAddress = null;
+    let upsertCalls = 0;
+    let scheduleCalls = 0;
+
+    tokenCatalog.getByAddress = async (address) => ({
+      address,
+      suppressed_reason: 'cleanup_soft_archive',
+    });
+    tokenCatalog.reactivateSoftArchivedToken = async (address) => {
+      reactivatedAddress = address;
+      return { address };
+    };
+    tokenCatalog.upsertToken = async () => {
+      upsertCalls += 1;
+      return { address: VALID_ADDR_2 };
+    };
+    tokenCatalog.scheduleImmediateEvaluation = async () => {
+      scheduleCalls += 1;
+      return null;
+    };
+
+    try {
+      const createResponse = await request(app)
+        .post('/api/config/tokens')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ address: VALID_ADDR_2 });
+
+      assert.equal(createResponse.status, 201);
+      assert.equal(reactivatedAddress, VALID_ADDR_2);
+      assert.equal(upsertCalls, 0);
+      assert.equal(scheduleCalls, 0);
+    } finally {
+      tokenCatalog.getByAddress = originalGetByAddress;
+      tokenCatalog.reactivateSoftArchivedToken = originalReactivateSoftArchivedToken;
+      tokenCatalog.upsertToken = originalUpsertToken;
+      tokenCatalog.scheduleImmediateEvaluation = originalScheduleImmediateEvaluation;
+    }
   });
 
   it('supports blocklist CRUD', async () => {

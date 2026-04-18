@@ -13,6 +13,7 @@ const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
+const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
@@ -93,16 +94,14 @@ router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Token is permanently blocked by admin' });
     }
 
-    await tokenCatalog.upsertToken({
-      address,
-      chain: 'solana',
-      source: 'user-manual',
+    const bootstrap = await manualTokenBootstrap.upsertManualCatalogToken(address, {
+      eagerEvaluate: true,
     });
-    await tokenCatalog.scheduleImmediateEvaluation(address);
 
     res.status(201).json({
       message: 'Manual token scheduled for catalog tracking',
       tracked: { address },
+      bootstrapState: bootstrap.bootstrapState,
     });
   } catch (err) {
     console.error('POST /catalog/manual-track error:', err.message);

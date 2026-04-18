@@ -9,6 +9,7 @@ const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
 const userAlertProfileCache = require('../services/user-alert-profile-cache');
+const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const { normalizeText } = require('../utils/url-safety');
 
 // All config routes require authentication
@@ -70,13 +71,14 @@ async function upsertCatalogItemsAndSchedule(items, source) {
 
   for (const item of items) {
     try {
-      await tokenCatalog.upsertToken({
-        address: item.address,
-        chain: 'solana',
-        source,
-      });
       if (source === 'user-manual') {
-        await tokenCatalog.scheduleImmediateEvaluation(item.address);
+        await manualTokenBootstrap.upsertManualCatalogToken(item.address);
+      } else {
+        await tokenCatalog.upsertToken({
+          address: item.address,
+          chain: 'solana',
+          source,
+        });
       }
     } catch (err) {
       console.error(`[TokenCatalog] Failed to upsert ${source} token ${item.address}:`, err.message);
@@ -380,12 +382,7 @@ router.post('/tokens', async (req, res) => {
     }
 
     try {
-      await tokenCatalog.upsertToken({
-        address: addr,
-        chain: 'solana',
-        source: 'user-manual',
-      });
-      await tokenCatalog.scheduleImmediateEvaluation(addr);
+      await manualTokenBootstrap.upsertManualCatalogToken(addr);
     } catch (catalogErr) {
       console.error(`[TokenCatalog] Failed to catalog manual token ${addr}:`, catalogErr.message);
     }
