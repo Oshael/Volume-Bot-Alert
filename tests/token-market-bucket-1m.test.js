@@ -37,6 +37,7 @@ describe('token market 1m bucket helpers', () => {
     assert.equal(detection.passesCoverageGate, true);
     assert.equal(detection.passesFreshnessGate, true);
     assert.equal(detection.passesThreshold, true);
+    assert.equal(detection.passesPairConsistencyGate, false);
     assert.equal(detection.dumpPct, -60);
     assert.equal(detection.pairChangedInWindow, true);
     assert.equal(detection.windowLowPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
@@ -121,6 +122,7 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(rows[0].tokenAddress, 'So11111111111111111111111111111111111111112');
       assert.equal(rows[0].passesHighCapGate, true);
       assert.equal(rows[0].passesThreshold, true);
+      assert.equal(rows[0].passesPairConsistencyGate, false);
       assert.equal(rows[0].latestBucketAgeMs, 20_000);
       assert.equal(rows[0].pairChangedInWindow, true);
       assert.equal(rows[0].baselinePairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');

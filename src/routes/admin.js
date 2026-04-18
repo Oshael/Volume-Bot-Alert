@@ -171,7 +171,13 @@ function parseTokenRiskLabel(value) {
 function buildHighCapDumpInspectResponse(addresses, options, detections) {
   const decorated = detections.map((item) => ({
     ...item,
-    passesAllGates: Boolean(item.passesHighCapGate && item.passesCoverageGate && item.passesFreshnessGate && item.passesThreshold),
+    passesAllGates: Boolean(
+      item.passesHighCapGate
+      && item.passesCoverageGate
+      && item.passesFreshnessGate
+      && item.passesThreshold
+      && item.passesPairConsistencyGate
+    ),
   }));
 
   return {

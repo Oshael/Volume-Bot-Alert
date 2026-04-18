@@ -351,4 +351,60 @@ describe('high cap dump alert service', () => {
       tokenAlertRuleState.upsertState = originalUpsertState;
     }
   });
+
+  it('suppresses a candidate when the dump window mixes multiple pairs', async () => {
+    const originalGetClient = db.getClient;
+    const originalCreateEvent = tokenAlertEvent.createEvent;
+    const originalGetState = tokenAlertRuleState.getState;
+    const originalUpsertState = tokenAlertRuleState.upsertState;
+    const clientLog = [];
+    let createEventCalls = 0;
+    let upsertCalls = 0;
+
+    db.getClient = async () => createClient(clientLog);
+    tokenAlertRuleState.getState = async () => null;
+    tokenAlertEvent.createEvent = async () => {
+      createEventCalls += 1;
+      throw new Error('should not emit when pair churn invalidates the window');
+    };
+    tokenAlertRuleState.upsertState = async () => {
+      upsertCalls += 1;
+      throw new Error('should not persist triggered state when pair churn invalidates the window');
+    };
+
+    try {
+      const result = await highCapDumpAlert.evaluateDetection({
+        tokenAddress: TOKEN_ADDRESS,
+        baselineTs: '2026-04-05T18:00:00.000Z',
+        baselinePairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+        baselineMcap: 8000000,
+        currentTs: '2026-04-05T18:05:00.000Z',
+        currentPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
+        currentCloseMcap: 4200000,
+        windowLowBucketTs: '2026-04-05T18:03:00.000Z',
+        windowLowPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
+        windowLowMcap: 3200000,
+        latestBucketAgeMs: 15000,
+        bucketCount: 5,
+        windowPairCount: 2,
+        pairChangedInWindow: true,
+        dumpPct: -60,
+      });
+
+      assert.equal(result.action, 'noop');
+      assert.equal(result.emitted, false);
+      assert.equal(result.rearmed, false);
+      assert.equal(result.detection.passesThreshold, true);
+      assert.equal(result.detection.passesPairConsistencyGate, false);
+      assert.equal(result.detection.passesAllGates, false);
+      assert.equal(createEventCalls, 0);
+      assert.equal(upsertCalls, 0);
+      assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+    } finally {
+      db.getClient = originalGetClient;
+      tokenAlertEvent.createEvent = originalCreateEvent;
+      tokenAlertRuleState.getState = originalGetState;
+      tokenAlertRuleState.upsertState = originalUpsertState;
+    }
+  });
 });

@@ -29,6 +29,24 @@ function toTimestampMs(value) {
   return parsed ? parsed.getTime() : null;
 }
 
+function readTextInput(input, camelKey, snakeKey) {
+  const value = firstDefinedValue(input?.[camelKey], input?.[snakeKey]);
+  return value == null ? null : String(value);
+}
+
+function readNumberInput(input, camelKey, snakeKey) {
+  return toNumberOrNull(firstDefinedValue(input?.[camelKey], input?.[snakeKey]));
+}
+
+function readBooleanInput(input, camelKey, snakeKey) {
+  const value = firstDefinedValue(input?.[camelKey], input?.[snakeKey]);
+  return value === true;
+}
+
+function readCountInput(input, camelKey, snakeKey) {
+  return Math.max(0, Number(firstDefinedValue(input?.[camelKey], input?.[snakeKey])) || 0);
+}
+
 function resolveOptions(options = {}) {
   return {
     ruleKey: String(options.ruleKey || HIGH_CAP_DUMP_RULE_KEY).trim().toLowerCase(),
@@ -44,20 +62,45 @@ function resolveOptions(options = {}) {
 
 function normalizeDetection(input = {}) {
   return {
-    tokenAddress: String(input.tokenAddress || input.token_address || '').trim(),
-    baselineTs: input.baselineTs || input.baseline_ts || null,
-    baselineMcap: toNumberOrNull(input.baselineMcap ?? input.baseline_mcap),
-    currentTs: input.currentTs || input.current_ts || null,
-    currentCloseMcap: toNumberOrNull(input.currentCloseMcap ?? input.current_close_mcap),
-    windowLowMcap: toNumberOrNull(input.windowLowMcap ?? input.window_low_mcap),
-    latestBucketAgeMs: toNumberOrNull(input.latestBucketAgeMs ?? input.latest_bucket_age_ms),
-    bucketCount: Math.max(0, Number(input.bucketCount ?? input.bucket_count) || 0),
-    dumpPct: toNumberOrNull(input.dumpPct ?? input.dump_pct),
+    tokenAddress: String(readTextInput(input, 'tokenAddress', 'token_address') || '').trim(),
+    baselineTs: readTextInput(input, 'baselineTs', 'baseline_ts'),
+    baselinePairAddress: readTextInput(input, 'baselinePairAddress', 'baseline_pair_address'),
+    baselineMcap: readNumberInput(input, 'baselineMcap', 'baseline_mcap'),
+    currentTs: readTextInput(input, 'currentTs', 'current_ts'),
+    currentPairAddress: readTextInput(input, 'currentPairAddress', 'current_pair_address'),
+    currentCloseMcap: readNumberInput(input, 'currentCloseMcap', 'current_close_mcap'),
+    windowLowBucketTs: readTextInput(input, 'windowLowBucketTs', 'window_low_bucket_ts'),
+    windowLowPairAddress: readTextInput(input, 'windowLowPairAddress', 'window_low_pair_address'),
+    windowLowMcap: readNumberInput(input, 'windowLowMcap', 'window_low_mcap'),
+    latestBucketAgeMs: readNumberInput(input, 'latestBucketAgeMs', 'latest_bucket_age_ms'),
+    bucketCount: readCountInput(input, 'bucketCount', 'bucket_count'),
+    windowPairCount: readCountInput(input, 'windowPairCount', 'window_pair_count'),
+    pairChangedInWindow: readBooleanInput(input, 'pairChangedInWindow', 'pair_changed_in_window'),
+    dumpPct: readNumberInput(input, 'dumpPct', 'dump_pct'),
     passesHighCapGate: input.passesHighCapGate,
     passesCoverageGate: input.passesCoverageGate,
     passesFreshnessGate: input.passesFreshnessGate,
     passesThreshold: input.passesThreshold,
+    passesPairConsistencyGate: input.passesPairConsistencyGate,
   };
+}
+
+function hasConsistentPairWindow(detection) {
+  if (detection.pairChangedInWindow || detection.windowPairCount > 1) {
+    return false;
+  }
+
+  const uniquePairs = new Set(
+    [
+      detection.baselinePairAddress,
+      detection.currentPairAddress,
+      detection.windowLowPairAddress,
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+
+  return uniquePairs.size <= 1;
 }
 
 function evaluateDetectionGates(detection, options) {
@@ -66,6 +109,7 @@ function evaluateDetectionGates(detection, options) {
     passesCoverageGate: detection.bucketCount >= options.minBucketCount,
     passesFreshnessGate: detection.latestBucketAgeMs != null && detection.latestBucketAgeMs <= options.maxLatestBucketAgeMs,
     passesThreshold: detection.dumpPct != null && detection.dumpPct <= (-1 * options.thresholdPct),
+    passesPairConsistencyGate: hasConsistentPairWindow(detection),
   };
 }
 
@@ -76,6 +120,9 @@ function resolveDetectionGates(detection, options) {
     passesCoverageGate: typeof detection.passesCoverageGate === 'boolean' ? detection.passesCoverageGate : computed.passesCoverageGate,
     passesFreshnessGate: typeof detection.passesFreshnessGate === 'boolean' ? detection.passesFreshnessGate : computed.passesFreshnessGate,
     passesThreshold: typeof detection.passesThreshold === 'boolean' ? detection.passesThreshold : computed.passesThreshold,
+    passesPairConsistencyGate: typeof detection.passesPairConsistencyGate === 'boolean'
+      ? detection.passesPairConsistencyGate
+      : computed.passesPairConsistencyGate,
   };
 }
 
@@ -86,6 +133,7 @@ function passesAllGates(gates) {
     && gates.passesCoverageGate
     && gates.passesFreshnessGate
     && gates.passesThreshold
+    && gates.passesPairConsistencyGate
   );
 }
 
@@ -233,6 +281,11 @@ function buildEventPayload(ruleKey, detection, options, rearmReason) {
       {
         bucketCount: detection.bucketCount,
         latestBucketAgeMs: detection.latestBucketAgeMs,
+        baselinePairAddress: detection.baselinePairAddress,
+        currentPairAddress: detection.currentPairAddress,
+        windowLowPairAddress: detection.windowLowPairAddress,
+        windowPairCount: detection.windowPairCount,
+        pairChangedInWindow: detection.pairChangedInWindow,
       },
       rearmReason ? { rearmedBy: rearmReason } : null
     ),
@@ -326,6 +379,7 @@ module.exports = {
     computeRecoveryMcap,
     evaluateDetectionGates,
     getRearmReason,
+    hasConsistentPairWindow,
     hasTriggeredState,
     mergeMetadata,
     normalizeDetection,

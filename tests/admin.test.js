@@ -331,6 +331,7 @@ describe('Admin panel auth and management', () => {
             passesCoverageGate: true,
             passesFreshnessGate: true,
             passesThreshold: true,
+            passesPairConsistencyGate: false,
           },
           {
             tokenAddress: '7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6',
@@ -346,6 +347,7 @@ describe('Admin panel auth and management', () => {
             passesCoverageGate: true,
             passesFreshnessGate: true,
             passesThreshold: true,
+            passesPairConsistencyGate: true,
           },
         ];
       };
@@ -370,12 +372,13 @@ describe('Admin panel auth and management', () => {
           minBucketCount: 5,
         });
         assert.equal(res.body.count, 2);
-        assert.equal(res.body.qualifyingCount, 1);
+        assert.equal(res.body.qualifyingCount, 0);
         assert.equal(res.body.options.thresholdPct, 55);
         assert.equal(res.body.options.minBaselineMcap, 2000000);
         assert.equal(res.body.options.minBucketCount, 5);
-        assert.equal(res.body.detections[0].passesAllGates, true);
+        assert.equal(res.body.detections[0].passesAllGates, false);
         assert.equal(res.body.detections[0].pairChangedInWindow, true);
+        assert.equal(res.body.detections[0].passesPairConsistencyGate, false);
         assert.equal(res.body.detections[0].windowPairCount, 2);
         assert.equal(res.body.detections[0].currentPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
         assert.equal(res.body.detections[1].passesAllGates, false);

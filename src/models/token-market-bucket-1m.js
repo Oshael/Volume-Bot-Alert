@@ -112,7 +112,28 @@ function evaluateHighCapDumpGates(input, options) {
     passesCoverageGate: input.bucketCount >= options.minBucketCount,
     passesFreshnessGate: input.latestBucketAgeMs != null && input.latestBucketAgeMs <= options.maxLatestBucketAgeMs,
     passesThreshold: input.dumpPct != null && input.dumpPct <= (-1 * options.thresholdPct),
+    passesPairConsistencyGate: isHighCapDumpPairWindowConsistent(input),
   };
+}
+
+function isHighCapDumpPairWindowConsistent(input) {
+  const explicitPairChange = input?.pairChangedInWindow === true
+    || (Number(input?.windowPairCount) || 0) > 1;
+  if (explicitPairChange) {
+    return false;
+  }
+
+  const uniquePairs = new Set(
+    [
+      input?.baselinePairAddress,
+      input?.currentPairAddress,
+      input?.windowLowPairAddress,
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+
+  return uniquePairs.size <= 1;
 }
 
 function normalizeHighCapDumpTextField(primaryValue, secondaryValue) {
@@ -900,6 +921,11 @@ function buildHighCapDumpDetection(row, options = {}) {
     bucketCount: normalizedRow.bucketCount,
     latestBucketAgeMs,
     dumpPct,
+    baselinePairAddress: normalizedRow.baselinePairAddress,
+    currentPairAddress: normalizedRow.currentPairAddress,
+    windowLowPairAddress: normalizedRow.windowLowPairAddress,
+    windowPairCount: normalizedRow.windowPairCount,
+    pairChangedInWindow: normalizedRow.windowPairCount > 1,
   }, settings);
 
   return {
@@ -1750,6 +1776,7 @@ module.exports = {
     getMinimumWindowHoursForMcap,
     getRangeLimitPct,
     getStaleLowCapPenalty,
+    isHighCapDumpPairWindowConsistent,
     getLiquidityRankingAdjustment,
     passesDeadLiquidityFilter,
     computeSampleStddev,
