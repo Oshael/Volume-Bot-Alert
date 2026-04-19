@@ -2988,6 +2988,16 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
     }
   };
 
+  const blurConfigFieldIfNeeded = (element: Element | null) => {
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement)) {
+      return;
+    }
+    if (!configSection.contains(element)) {
+      return;
+    }
+    element.blur();
+  };
+
   configSection.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[name], select[name]').forEach((input) => {
     const name = input.name;
     if (name === 'sound-volume') {
@@ -3012,6 +3022,9 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       event.preventDefault();
       void commitInputIfNeeded(input);
     });
+    input.addEventListener('blur', () => {
+      void commitInputIfNeeded(input);
+    });
   });
 
   section.querySelectorAll<HTMLElement>('[data-action="close-profile-modal"]').forEach((element) => {
@@ -3020,6 +3033,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       event.stopPropagation();
 
       const active = document.activeElement;
+      blurConfigFieldIfNeeded(active);
       if (
         active instanceof HTMLInputElement
         && configSection.contains(active)
@@ -3053,6 +3067,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       return;
     }
 
+    active.blur();
     void commitInputIfNeeded(active);
   }, true);
 
