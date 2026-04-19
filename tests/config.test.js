@@ -174,6 +174,8 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['card-effects-mode'], 'on');
     assert.equal(response.body.configs['old-mcap-min'], 120000);
     assert.equal(response.body.configs['old-mcap-max'], 100000000);
+    assert.equal(response.body.configs['recent-age-min'], 0);
+    assert.equal(response.body.configs['recent-age-max'], 10080);
     assert.equal(response.body.configs['recent-surge-1h-threshold'], 50);
     assert.equal(response.body.configs['recent-surge-6h-threshold'], 150);
     assert.equal(response.body.configs['old-week-surge-1h-threshold'], 50);
@@ -184,6 +186,8 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['alert-old-week-surge-6h-enabled'], 'on');
     assert.equal(response.body.configs['old-week-mcap-min'], 120000);
     assert.equal(response.body.configs['old-week-mcap-max'], 100000000);
+    assert.equal(response.body.configs['old-week-age-min'], 10080);
+    assert.equal(response.body.configs['old-week-age-max'], 0);
     assert.equal(response.body.configs['old-per-page'], 15);
     assert.equal(response.body.configs['old-week-per-page'], 15);
 
@@ -215,6 +219,10 @@ describe('Config routes', () => {
           'alert-old-week-surge-6h-enabled': 'off',
           'block-warning-enabled': 'off',
           'card-effects-mode': 'off',
+          'recent-age-min': 30,
+          'recent-age-max': 120,
+          'old-week-age-min': 20160,
+          'old-week-age-max': 43200,
         },
       });
 
@@ -226,6 +234,10 @@ describe('Config routes', () => {
       'alert-old-week-surge-6h-enabled': 'off',
       'block-warning-enabled': 'off',
       'card-effects-mode': 'off',
+      'recent-age-min': 30,
+      'recent-age-max': 120,
+      'old-week-age-min': 20160,
+      'old-week-age-max': 43200,
     });
 
     const getResponse = await request(app)
@@ -239,6 +251,10 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs['alert-old-week-surge-6h-enabled'], 'off');
     assert.equal(getResponse.body.configs['block-warning-enabled'], 'off');
     assert.equal(getResponse.body.configs['card-effects-mode'], 'off');
+    assert.equal(getResponse.body.configs['recent-age-min'], 30);
+    assert.equal(getResponse.body.configs['recent-age-max'], 120);
+    assert.equal(getResponse.body.configs['old-week-age-min'], 20160);
+    assert.equal(getResponse.body.configs['old-week-age-max'], 43200);
   });
 
   it('mirrors legacy surge config values into the new recent and old-week keys on read when the new keys were never stored', async () => {

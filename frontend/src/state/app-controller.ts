@@ -102,6 +102,9 @@ const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
 const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
+const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
+const RECENT_MAX_AGE_MINUTES = OLD_WEEK_MIN_AGE_MINUTES;
+const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
@@ -2235,6 +2238,104 @@ export function createAppController(): AppController {
     syncAlertState();
   }
 
+  function captureRemovedTokenSnapshot(address: string) {
+    return {
+      address,
+      trackedToken: state.data.trackedTokensByAddress[address]
+        ? { ...state.data.trackedTokensByAddress[address] }
+        : null,
+      wasInMonitored: state.data.monitoredTokenAddresses.includes(address),
+      wasInManual: state.data.manualTokenAddresses.includes(address),
+      wasEligibleCatalog: state.data.eligibleCatalogTokens.includes(address),
+      removedPumpTokens: state.data.pumpTokens
+        .filter((item) => item.mint === address || item.mintAddress === address)
+        .map((item) => ({ ...item })),
+      removedRecentPumpMigrations: state.data.recentPumpMigrations
+        .filter((item) => item.mint === address)
+        .map((item) => ({ ...item })),
+      removedAlerts: state.data.alerts
+        .filter((item) => item.address === address)
+        .map((item) => ({ ...item })),
+      wasDismissedRecent: state.data.dismissedRecent.includes(address),
+      wasDismissedOldWeek: state.data.dismissedOldWeek.includes(address),
+      wasStarred: state.data.starredTokens.includes(address),
+    };
+  }
+
+  function restoreTrackedTokenCollections(snapshot: ReturnType<typeof captureRemovedTokenSnapshot>) {
+    const { address } = snapshot;
+
+    if (snapshot.trackedToken && !state.data.trackedTokensByAddress[address]) {
+      state.data.trackedTokensByAddress[address] = snapshot.trackedToken;
+    }
+
+    if (snapshot.wasInMonitored && !state.data.monitoredTokenAddresses.includes(address)) {
+      state.data.monitoredTokenAddresses = [...state.data.monitoredTokenAddresses, address];
+    }
+
+    if (snapshot.wasInManual && !state.data.manualTokenAddresses.includes(address)) {
+      state.data.manualTokenAddresses = [...state.data.manualTokenAddresses, address];
+    }
+
+    if (snapshot.wasEligibleCatalog && !state.data.eligibleCatalogTokens.includes(address)) {
+      state.data.eligibleCatalogTokens = [...state.data.eligibleCatalogTokens, address]
+        .sort((a, b) => a.localeCompare(b));
+    }
+  }
+
+  function restorePumpAndAlertCollections(snapshot: ReturnType<typeof captureRemovedTokenSnapshot>) {
+    const { address } = snapshot;
+
+    for (const item of snapshot.removedPumpTokens) {
+      const exists = state.data.pumpTokens.some((current) => current.mint === item.mint);
+      if (!exists) {
+        state.data.pumpTokens = [...state.data.pumpTokens, item];
+      }
+    }
+
+    for (const item of snapshot.removedRecentPumpMigrations) {
+      const exists = state.data.recentPumpMigrations.some((current) => current.mint === item.mint);
+      if (!exists) {
+        state.data.recentPumpMigrations = [...state.data.recentPumpMigrations, item];
+      }
+    }
+
+    for (const item of snapshot.removedAlerts) {
+      const exists = state.data.alerts.some((current) => current.id === item.id);
+      if (!exists) {
+        state.data.alerts = [...state.data.alerts, item];
+      }
+    }
+    syncAlertState();
+
+    if (snapshot.wasDismissedRecent && !state.data.dismissedRecent.includes(address)) {
+      state.data.dismissedRecent = [...state.data.dismissedRecent, address];
+    }
+
+    if (snapshot.wasDismissedOldWeek && !state.data.dismissedOldWeek.includes(address)) {
+      state.data.dismissedOldWeek = [...state.data.dismissedOldWeek, address];
+    }
+  }
+
+  function restoreRemovedTokenSnapshot(snapshot: ReturnType<typeof captureRemovedTokenSnapshot>) {
+    const { address } = snapshot;
+
+    restoreTrackedTokenCollections(snapshot);
+    restorePumpAndAlertCollections(snapshot);
+
+    if (snapshot.wasStarred && !state.data.starredTokens.includes(address)) {
+      replaceStarredTokens([...state.data.starredTokens, address]);
+    }
+
+    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+    state.bars.manual = state.data.manualTokenAddresses.length;
+    deriveAgeBuckets();
+    refreshTrackedTokenStore();
+    refreshMonitoredPanelCounts();
+    refreshPumpPanelCounts();
+    persistBarStorage();
+  }
+
   function removeTokenEverywhere(address: string, options: { removeFromStarred?: boolean } = {}) {
     state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => item !== address);
     state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
@@ -3017,12 +3118,42 @@ export function createAppController(): AppController {
   }
 
   function getRoutedEligibilityContext(now = Date.now()) {
+    const recentAgeMinMinutes = Math.max(0, Math.min(
+      RECENT_MAX_AGE_MINUTES,
+      Math.round(getConfigNumber('recent-age-min', 0))
+    ));
+    const recentAgeMaxMinutes = Math.max(
+      recentAgeMinMinutes,
+      Math.min(
+        RECENT_MAX_AGE_MINUTES,
+        Math.round(getConfigNumber('recent-age-max', RECENT_MAX_AGE_MINUTES))
+      )
+    );
+    const oldWeekAgeMinMinutes = Math.max(
+      OLD_WEEK_MIN_AGE_MINUTES,
+      Math.min(
+        OPEN_ENDED_AGE_MAX_MINUTES,
+        Math.round(getConfigNumber('old-week-age-min', OLD_WEEK_MIN_AGE_MINUTES))
+      )
+    );
+    const rawOldWeekAgeMaxMinutes = Math.round(getConfigNumber('old-week-age-max', 0));
+    const oldWeekAgeMaxMinutes = rawOldWeekAgeMaxMinutes > 0
+      ? Math.max(
+          oldWeekAgeMinMinutes,
+          Math.min(OPEN_ENDED_AGE_MAX_MINUTES, rawOldWeekAgeMaxMinutes)
+        )
+      : 0;
+
     return {
       now,
       recentMin: getConfigNumber('old-mcap-min', 120000),
       recentMax: getConfigNumber('old-mcap-max', 100000000),
+      recentAgeMinMs: recentAgeMinMinutes * 60 * 1000,
+      recentAgeMaxMs: recentAgeMaxMinutes * 60 * 1000,
       oldWeekMin: getConfigNumber('old-week-mcap-min', 120000),
       oldWeekMax: getConfigNumber('old-week-mcap-max', 100000000),
+      oldWeekAgeMinMs: oldWeekAgeMinMinutes * 60 * 1000,
+      oldWeekAgeMaxMs: oldWeekAgeMaxMinutes > 0 ? oldWeekAgeMaxMinutes * 60 * 1000 : 0,
       recentDismissed: new Set(state.data.dismissedRecent),
       oldWeekDismissed: new Set(state.data.dismissedOldWeek),
     };
@@ -3041,7 +3172,7 @@ export function createAppController(): AppController {
     }
 
     const age = context.now - token.createdAt;
-    if (!(age >= 0 && age < OLD_WEEK_MIN_AGE_MS)) {
+    if (!(age >= context.recentAgeMinMs && age <= context.recentAgeMaxMs && age <= OLD_WEEK_MIN_AGE_MS)) {
       return false;
     }
 
@@ -3066,7 +3197,10 @@ export function createAppController(): AppController {
     }
 
     const age = context.now - token.createdAt;
-    if (age < OLD_WEEK_MIN_AGE_MS) {
+    if (age < context.oldWeekAgeMinMs) {
+      return false;
+    }
+    if (context.oldWeekAgeMaxMs > 0 && age > context.oldWeekAgeMaxMs) {
       return false;
     }
 
@@ -3134,10 +3268,14 @@ export function createAppController(): AppController {
 
     const age = context.now - (item.createdAt || 0);
     const mcap = item.mcap ?? 0;
-    const reason = age >= OLD_WEEK_MIN_AGE_MS
+    const entersOldWeek = age >= context.oldWeekAgeMinMs
+      && (context.oldWeekAgeMaxMs <= 0 || age <= context.oldWeekAgeMaxMs);
+    const reason = entersOldWeek
       ? 'aged into Old Tokens 1 Week+'
-      : age < 0
-        ? 'age not yet valid for Recent'
+      : age < context.recentAgeMinMs
+        ? 'age below Recent min'
+        : age > context.recentAgeMaxMs
+          ? 'age above Recent max'
         : mcap > 0 && (mcap < context.recentMin || (context.recentMax > 0 && mcap > context.recentMax))
           ? 'MCAP out of Recent range'
           : 'left Recent routing';
@@ -3155,11 +3293,13 @@ export function createAppController(): AppController {
 
     const age = context.now - (item.createdAt || 0);
     const mcap = item.mcap ?? 0;
-    const reason = age < OLD_WEEK_MIN_AGE_MS
-      ? 'age no longer in Old Week bucket'
-      : mcap > 0 && (mcap < context.oldWeekMin || (context.oldWeekMax > 0 && mcap > context.oldWeekMax))
-        ? 'MCAP out of Old Week range'
-        : 'left Old Week routing';
+    const reason = age < context.oldWeekAgeMinMs
+      ? 'age below Old Tokens min'
+      : context.oldWeekAgeMaxMs > 0 && age > context.oldWeekAgeMaxMs
+        ? 'age above Old Tokens max'
+        : mcap > 0 && (mcap < context.oldWeekMin || (context.oldWeekMax > 0 && mcap > context.oldWeekMax))
+          ? 'MCAP out of Old Week range'
+          : 'left Old Week routing';
     logRemoval('oldWeek', item, reason);
   }
 
@@ -5245,6 +5385,8 @@ export function createAppController(): AppController {
         dismissedAddresses: [...state.data.dismissedRecent],
         mcapMin: getConfigNumber('old-mcap-min', 120000),
         mcapMax: getConfigNumber('old-mcap-max', 100000000),
+        ageMinMinutes: getConfigNumber('recent-age-min', 0),
+        ageMaxMinutes: getConfigNumber('recent-age-max', RECENT_MAX_AGE_MINUTES),
       },
       oldWeek: {
         page: state.ui.oldWeekPage,
@@ -5255,6 +5397,8 @@ export function createAppController(): AppController {
         dismissedAddresses: [...state.data.dismissedOldWeek],
         mcapMin: getConfigNumber('old-week-mcap-min', 120000),
         mcapMax: getConfigNumber('old-week-mcap-max', 100000000),
+        ageMinMinutes: getConfigNumber('old-week-age-min', OLD_WEEK_MIN_AGE_MINUTES),
+        ageMaxMinutes: getConfigNumber('old-week-age-max', 0),
       },
     };
   }
@@ -7134,13 +7278,19 @@ export function createAppController(): AppController {
       setBusy(true);
       setError(null);
       setNotice('Permanently blocking token in backend...');
+      const removedTokenSnapshot = captureRemovedTokenSnapshot(address);
+      removeTokenEverywhere(address);
       emit();
 
       try {
         const result = await adminBlockTokenRequest(address, label, token);
-        removeTokenEverywhere(address, { removeFromStarred: true });
+        if (removedTokenSnapshot.wasStarred) {
+          replaceStarredTokens(state.data.starredTokens.filter((item) => item !== address));
+          queueStarredTokensPersist();
+        }
         setNotice(result.message);
       } catch (error) {
+        restoreRemovedTokenSnapshot(removedTokenSnapshot);
         setError(error instanceof Error ? error.message : 'Failed to permanently block token');
       } finally {
         setBusy(false);

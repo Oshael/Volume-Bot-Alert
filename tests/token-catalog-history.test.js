@@ -31,6 +31,8 @@ describe('token-catalog history bucket queries', () => {
         starredAddresses: [],
         mcapMin: 120000,
         mcapMax: 0,
+        ageMinMinutes: 30,
+        ageMaxMinutes: 120,
       });
 
       assert.equal(result.total, 0);
@@ -38,9 +40,9 @@ describe('token-catalog history bucket queries', () => {
       assert.equal(result.perPage, 30);
       assert.match(captured.sql, /^SELECT\s+tc\.address,/);
       assert.doesNotMatch(captured.sql, /\bSELECT\s+SELECT\b/i);
-      assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$1/);
+      assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$1 AND tc\.last_token_created_at_ms <= \$2/);
       assert.ok(Array.isArray(captured.params));
-      assert.equal(captured.params.length, 9);
+      assert.equal(captured.params.length, 10);
     } finally {
       db.query = originalQuery;
     }
@@ -76,6 +78,43 @@ describe('token-catalog history bucket queries', () => {
       assert.match(captured.sql, /tc\.last_token_created_at_ms <= \$1/);
       assert.ok(Array.isArray(captured.params));
       assert.equal(captured.params.length, 9);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('uses a bounded age range for old-week buckets when an age max is provided', async () => {
+    const originalQuery = db.query;
+    const captured = {
+      sql: '',
+      params: null,
+    };
+
+    db.query = async (sql, params) => {
+      captured.sql = String(sql);
+      captured.params = params;
+      return { rows: [] };
+    };
+
+    try {
+      const result = await tokenCatalog.listDashboardHistoryBucket('oldWeek', {
+        page: 0,
+        perPage: 30,
+        searchQuery: '',
+        starredOnly: false,
+        sorts: [{ mode: 'vol', window: '1h' }],
+        dismissedAddresses: [],
+        starredAddresses: [],
+        mcapMin: 120000,
+        mcapMax: 0,
+        ageMinMinutes: 20160,
+        ageMaxMinutes: 43200,
+      });
+
+      assert.equal(result.total, 0);
+      assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$1 AND tc\.last_token_created_at_ms <= \$2/);
+      assert.ok(Array.isArray(captured.params));
+      assert.equal(captured.params.length, 10);
     } finally {
       db.query = originalQuery;
     }

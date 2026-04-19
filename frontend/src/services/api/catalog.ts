@@ -106,6 +106,8 @@ export interface DashboardHistoryBucketRequest {
   dismissedAddresses?: string[];
   mcapMin?: number;
   mcapMax?: number;
+  ageMinMinutes?: number;
+  ageMaxMinutes?: number;
 }
 
 export interface DashboardHistoryBucketSlicePayload {

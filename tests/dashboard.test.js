@@ -596,6 +596,8 @@ describe('Dashboard routes', () => {
             dismissedAddresses: [],
             mcapMin: 120000,
             mcapMax: 0,
+            ageMinMinutes: 30,
+            ageMaxMinutes: 120,
           },
           oldWeek: {
             page: 0,
@@ -606,6 +608,8 @@ describe('Dashboard routes', () => {
             dismissedAddresses: ['So11111111111111111111111111111111111111114'],
             mcapMin: 90000,
             mcapMax: 500000,
+            ageMinMinutes: 20160,
+            ageMaxMinutes: 43200,
           },
         });
 
@@ -620,6 +624,8 @@ describe('Dashboard routes', () => {
         dismissedAddresses: [],
         mcapMin: 120000,
         mcapMax: 0,
+        ageMinMinutes: 30,
+        ageMaxMinutes: 120,
         starredAddresses: ['So11111111111111111111111111111111111111112'],
       }]);
       assert.deepEqual(capturedCalls[1], ['oldWeek', {
@@ -631,6 +637,8 @@ describe('Dashboard routes', () => {
         dismissedAddresses: ['So11111111111111111111111111111111111111114'],
         mcapMin: 90000,
         mcapMax: 500000,
+        ageMinMinutes: 20160,
+        ageMaxMinutes: 43200,
         starredAddresses: ['So11111111111111111111111111111111111111112'],
       }]);
       assert.equal(res.body.recent.total, 41);

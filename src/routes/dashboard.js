@@ -134,6 +134,52 @@ function parseAddressArray(value, name) {
   return { ok: true, value: next };
 }
 
+const DEFAULT_RECENT_AGE_MAX_MINUTES = 7 * 24 * 60;
+const DEFAULT_OLD_WEEK_AGE_MIN_MINUTES = DEFAULT_RECENT_AGE_MAX_MINUTES;
+const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
+
+function parseAgeMinutesInput(value) {
+  return Number.parseInt(String(value ?? '').trim(), 10);
+}
+
+function parseRecentHistoryBucketAgeRange(body = {}) {
+  const parsedAgeMin = parseAgeMinutesInput(body.ageMinMinutes);
+  const parsedAgeMax = parseAgeMinutesInput(body.ageMaxMinutes);
+  const ageMinMinutes = Number.isInteger(parsedAgeMin)
+    ? Math.max(0, Math.min(DEFAULT_RECENT_AGE_MAX_MINUTES, parsedAgeMin))
+    : 0;
+  const rawAgeMaxMinutes = Number.isInteger(parsedAgeMax)
+    ? Math.max(0, Math.min(DEFAULT_RECENT_AGE_MAX_MINUTES, parsedAgeMax))
+    : DEFAULT_RECENT_AGE_MAX_MINUTES;
+
+  return {
+    ageMinMinutes,
+    ageMaxMinutes: Math.max(ageMinMinutes, rawAgeMaxMinutes),
+  };
+}
+
+function parseOldWeekHistoryBucketAgeRange(body = {}) {
+  const parsedAgeMin = parseAgeMinutesInput(body.ageMinMinutes);
+  const parsedAgeMax = parseAgeMinutesInput(body.ageMaxMinutes);
+  const ageMinMinutes = Number.isInteger(parsedAgeMin)
+    ? Math.max(DEFAULT_OLD_WEEK_AGE_MIN_MINUTES, Math.min(OPEN_ENDED_AGE_MAX_MINUTES, parsedAgeMin))
+    : DEFAULT_OLD_WEEK_AGE_MIN_MINUTES;
+  const rawAgeMaxMinutes = Number.isInteger(parsedAgeMax)
+    ? Math.max(0, Math.min(OPEN_ENDED_AGE_MAX_MINUTES, parsedAgeMax))
+    : 0;
+
+  return {
+    ageMinMinutes,
+    ageMaxMinutes: rawAgeMaxMinutes > 0 ? Math.max(ageMinMinutes, rawAgeMaxMinutes) : 0,
+  };
+}
+
+function parseHistoryBucketAgeRange(body = {}, name) {
+  return name === 'recent'
+    ? parseRecentHistoryBucketAgeRange(body)
+    : parseOldWeekHistoryBucketAgeRange(body);
+}
+
 function parseHistoryBucketRequest(body = {}, name) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, error: `${name} payload is required` };
@@ -153,6 +199,7 @@ function parseHistoryBucketRequest(body = {}, name) {
   const mcapMin = normalizeMinMcap(body.mcapMin);
   const parsedMax = Number(body.mcapMax);
   const mcapMax = Number.isFinite(parsedMax) ? Math.max(0, parsedMax) : 0;
+  const { ageMinMinutes, ageMaxMinutes } = parseHistoryBucketAgeRange(body, name);
 
   return {
     ok: true,
@@ -165,6 +212,8 @@ function parseHistoryBucketRequest(body = {}, name) {
       dismissedAddresses: dismissed.value,
       mcapMin,
       mcapMax,
+      ageMinMinutes,
+      ageMaxMinutes,
     },
   };
 }

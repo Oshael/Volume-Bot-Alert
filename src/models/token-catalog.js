@@ -8,6 +8,8 @@ const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
 const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
 const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
+const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
 const HISTORY_BUCKET_SORT_MODES = new Set(['vol', 'mcap', 'pchange', 'age']);
 
 const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
@@ -682,12 +684,42 @@ function buildHistoryBucketOrderSql(sorts) {
   return clauses.join(', ');
 }
 
-function buildHistoryBucketAgeWhereSql(bucket) {
-  if (normalizeHistoryBucketName(bucket) === 'oldWeek') {
+function buildHistoryBucketAgeWhereSql(bucket, ageParams = []) {
+  if (normalizeHistoryBucketName(bucket) === 'oldWeek' && ageParams.length < 2) {
     return 'tc.last_token_created_at_ms <= $1';
   }
 
-  return 'tc.last_token_created_at_ms >= $1';
+  return 'tc.last_token_created_at_ms >= $1 AND tc.last_token_created_at_ms <= $2';
+}
+
+function normalizeRecentAgeMinutes(value, fallbackMinutes) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMinutes;
+  }
+
+  return Math.max(0, Math.min(OLD_WEEK_MIN_AGE_MINUTES, Math.round(parsed)));
+}
+
+function normalizeOldWeekAgeMinMinutes(value, fallbackMinutes) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMinutes;
+  }
+
+  return Math.max(OLD_WEEK_MIN_AGE_MINUTES, Math.min(OPEN_ENDED_AGE_MAX_MINUTES, Math.round(parsed)));
+}
+
+function normalizeOldWeekAgeMaxMinutes(value, fallbackMinutes) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMinutes;
+  }
+  if (parsed <= 0) {
+    return 0;
+  }
+
+  return Math.max(OLD_WEEK_MIN_AGE_MINUTES, Math.min(OPEN_ENDED_AGE_MAX_MINUTES, Math.round(parsed)));
 }
 
 function buildHistoryBucketQueryParams(bucket, options = {}) {
@@ -721,7 +753,31 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
   }
 
   const now = Date.now();
-  const ageParams = [now - OLD_WEEK_MIN_AGE_MS];
+  const ageParams = normalizedBucket === 'oldWeek'
+    ? (() => {
+        const oldWeekAgeMinMinutes = normalizeOldWeekAgeMinMinutes(options.ageMinMinutes, OLD_WEEK_MIN_AGE_MINUTES);
+        const oldWeekAgeMaxMinutes = normalizeOldWeekAgeMaxMinutes(options.ageMaxMinutes, 0);
+        if (oldWeekAgeMaxMinutes > 0) {
+          return [
+            now - (Math.max(oldWeekAgeMinMinutes, oldWeekAgeMaxMinutes) * 60 * 1000),
+            now - (oldWeekAgeMinMinutes * 60 * 1000),
+          ];
+        }
+
+        return [now - (oldWeekAgeMinMinutes * 60 * 1000)];
+      })()
+    : (() => {
+        const recentAgeMinMinutes = normalizeRecentAgeMinutes(options.ageMinMinutes, 0);
+        const recentAgeMaxMinutes = Math.max(
+          recentAgeMinMinutes,
+          normalizeRecentAgeMinutes(options.ageMaxMinutes, OLD_WEEK_MIN_AGE_MINUTES)
+        );
+
+        return [
+          now - (recentAgeMaxMinutes * 60 * 1000),
+          now - (recentAgeMinMinutes * 60 * 1000),
+        ];
+      })();
 
   return {
     ok: true,
@@ -758,7 +814,7 @@ async function listDashboardHistoryBucket(bucket, options = {}) {
     'tc.eligible_for_monitoring = TRUE',
     'tc.last_token_created_at_ms IS NOT NULL',
     'tc.last_token_created_at_ms > 0',
-    buildHistoryBucketAgeWhereSql(params.bucket),
+    buildHistoryBucketAgeWhereSql(params.bucket, params.ageParams),
     `COALESCE(tc.last_mcap, 0) >= $${params.ageParams.length + 1}`,
     `($${params.ageParams.length + 2} <= 0 OR COALESCE(tc.last_mcap, 0) <= $${params.ageParams.length + 2})`,
     `($${params.ageParams.length + 3}::text IS NULL OR (

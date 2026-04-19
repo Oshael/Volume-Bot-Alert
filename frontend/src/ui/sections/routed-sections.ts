@@ -2,6 +2,144 @@
 import { getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderLogSummary, renderPagedAgeBucketList } from './shared';
 
+const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
+const OLD_WEEK_MIN_AGE_MINUTES = RECENT_MAX_AGE_MINUTES;
+const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
+
+function normalizeRecentAgeMinutes(value: unknown, fallbackMinutes: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMinutes;
+  }
+
+  return Math.max(0, Math.min(RECENT_MAX_AGE_MINUTES, Math.round(parsed)));
+}
+
+function formatAgeInput(minutes: number) {
+  const normalized = Math.max(0, Math.round(minutes));
+  if (normalized > 0 && normalized % (24 * 60) === 0) {
+    return `${normalized / (24 * 60)}d`;
+  }
+  if (normalized > 0 && normalized % 60 === 0) {
+    return `${normalized / 60}h`;
+  }
+
+  return `${normalized}m`;
+}
+
+function formatRecentAgeInput(minutes: number) {
+  return formatAgeInput(normalizeRecentAgeMinutes(minutes, 0));
+}
+
+function parseRecentAgeInput(value: string, fallbackMinutes: number) {
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  if (!normalizedValue) {
+    return { ok: true as const, minutes: fallbackMinutes };
+  }
+
+  const match = normalizedValue.match(/^(\d+)\s*([mhd]?)$/);
+  if (!match) {
+    return {
+      ok: false as const,
+      message: 'Use minutos, horas ou dias. Ex.: 30m, 2h, 1d.',
+    };
+  }
+
+  const amount = Number.parseInt(match[1], 10);
+  const unit = match[2] || 'm';
+  if (!Number.isFinite(amount)) {
+    return {
+      ok: false as const,
+      message: 'Idade invalida.',
+    };
+  }
+
+  const multiplier = unit === 'd' ? 24 * 60 : unit === 'h' ? 60 : 1;
+  return {
+    ok: true as const,
+    minutes: normalizeRecentAgeMinutes(amount * multiplier, fallbackMinutes),
+  };
+}
+
+function normalizeOldWeekAgeMinMinutes(value: unknown, fallbackMinutes: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMinutes;
+  }
+
+  return Math.max(OLD_WEEK_MIN_AGE_MINUTES, Math.min(OPEN_ENDED_AGE_MAX_MINUTES, Math.round(parsed)));
+}
+
+function normalizeOldWeekAgeMaxMinutes(value: unknown, fallbackMinutes: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMinutes;
+  }
+  if (parsed <= 0) {
+    return 0;
+  }
+
+  return Math.max(OLD_WEEK_MIN_AGE_MINUTES, Math.min(OPEN_ENDED_AGE_MAX_MINUTES, Math.round(parsed)));
+}
+
+function parseOldWeekAgeInput(value: string, fallbackMinutes: number, options: { allowBlank?: boolean } = {}) {
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  if (!normalizedValue) {
+    return {
+      ok: true as const,
+      minutes: options.allowBlank ? 0 : fallbackMinutes,
+    };
+  }
+
+  const match = normalizedValue.match(/^(\d+)\s*([mhd]?)$/);
+  if (!match) {
+    return {
+      ok: false as const,
+      message: 'Use minutos, horas ou dias. Ex.: 7d, 14d, 30d.',
+    };
+  }
+
+  const amount = Number.parseInt(match[1], 10);
+  const unit = match[2] || 'm';
+  if (!Number.isFinite(amount)) {
+    return {
+      ok: false as const,
+      message: 'Idade invalida.',
+    };
+  }
+
+  const multiplier = unit === 'd' ? 24 * 60 : unit === 'h' ? 60 : 1;
+  const minutes = amount * multiplier;
+  return {
+    ok: true as const,
+    minutes: options.allowBlank
+      ? normalizeOldWeekAgeMaxMinutes(minutes, fallbackMinutes)
+      : normalizeOldWeekAgeMinMinutes(minutes, fallbackMinutes),
+  };
+}
+
+function formatOldWeekAgeMaxInput(minutes: number) {
+  return minutes > 0 ? formatAgeInput(minutes) : '';
+}
+
+function bindCommittedInputs(
+  inputs: Array<HTMLInputElement | null | undefined>,
+  onCommit: () => void,
+) {
+  const liveInputs = inputs.filter((input): input is HTMLInputElement => Boolean(input));
+  for (const input of liveInputs) {
+    input.addEventListener('change', onCommit);
+    input.addEventListener('blur', onCommit);
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') {
+        return;
+      }
+      event.preventDefault();
+      input.blur();
+    });
+  }
+}
+
 export function renderRecentSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-token-bar recent-bar';
@@ -9,6 +147,11 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const usesServerSlice = state.ui.workspace === 'history';
   const min = fmtConfig(state, 'old-mcap-min', 120000);
   const max = fmtConfig(state, 'old-mcap-max', 100000000);
+  const recentAgeMinMinutes = normalizeRecentAgeMinutes(state.data.configs['recent-age-min'], 0);
+  const recentAgeMaxMinutes = Math.max(
+    recentAgeMinMinutes,
+    normalizeRecentAgeMinutes(state.data.configs['recent-age-max'], RECENT_MAX_AGE_MINUTES)
+  );
   const recentSorts = state.ui.recentSorts;
   const hasRecentMode = (mode: string) => recentSorts.some((item) => item.mode === mode);
   const hasRecentCriterion = (mode: string, window: string) => recentSorts.some((item) => item.mode === mode && item.window === window);
@@ -68,18 +211,34 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         <span class="legacy-bar-title recent"><span class="recent-live-emoji ${state.runtime.mode === 'active' ? 'live' : ''}">\u{1F7E2}</span> RECENT TOKENS</span>
         ${renderLogSummary('Recent Removal Log', state.data.recentRemovalLog, 'clear-recent-log', 'recent')}
       </div>
-      <div class="legacy-bar-controls">
-        <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="recent" aria-label="Collapse recent tokens"><span class="compact-icon-glyph">−</span></button>
-        <div class="compact-search ${recentSearchQuery ? 'has-query open' : ''}">
-          <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
-          <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="recent-search" data-search-input="recent">
+      <div class="legacy-bar-controls recent-bar-controls">
+        <div class="recent-ctrl-icons">
+          <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="recent" aria-label="Collapse recent tokens"><span class="compact-icon-glyph">−</span></button>
+          <div class="compact-search ${recentSearchQuery ? 'has-query open' : ''}">
+            <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
+            <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="recent-search" data-search-input="recent">
+          </div>
+          <button type="button" class="compact-icon-toggle ${state.ui.recentStarredOnly ? 'active' : ''}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
-        <button type="button" class="compact-icon-toggle ${state.ui.recentStarredOnly ? 'active' : ''}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
-        <label class="legacy-mini-field">MCAP MIN <input type="number" name="old-mcap-min"></label>
-        <label class="legacy-mini-field">MCAP MAX <input type="number" name="old-mcap-max"></label>
-        <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="recent-per-page" /></label>
-        <div class="sort-pill-group">
-          <span class="filter-label">SORT</span>
+        <div class="recent-ctrl-filters">
+        <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
+          <span class="recent-ctrl-cluster-label">AGE</span>
+          <input type="text" name="recent-age-min" inputmode="numeric" placeholder="30m / 1d" aria-label="Age min">
+          <span class="recent-ctrl-range-sep">–</span>
+          <input type="text" name="recent-age-max" inputmode="numeric" placeholder="2h / 7d" aria-label="Age max">
+        </div>
+        <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
+          <span class="recent-ctrl-cluster-label">MCAP</span>
+          <input type="number" name="old-mcap-min" aria-label="Mcap min">
+          <span class="recent-ctrl-range-sep">–</span>
+          <input type="number" name="old-mcap-max" aria-label="Mcap max">
+        </div>
+        <div class="recent-ctrl-cluster">
+          <span class="recent-ctrl-cluster-label">PER PAGE</span>
+          <input type="number" min="10" step="1" data-action="recent-per-page" aria-label="Per page">
+        </div>
+        <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort">
+          <span class="filter-label recent-ctrl-cluster-label">SORT</span>
           <div class="sort-menu-wrap" data-sort-wrap>
             <button type="button" class="old-filter-btn ${recentVolActive}" data-sort-toggle="vol">VOL</button>
             <div class="sort-menu-dropdown">
@@ -111,7 +270,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
             </div>
           </div>
         </div>
-        <span class="legacy-bar-note">1d - 7d &middot; recent</span>
+        </div>
       </div>
     </div>
     ${renderPagedAgeBucketList(
@@ -148,6 +307,14 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   if (recentMaxInput) {
     recentMaxInput.value = String(max);
   }
+  const recentAgeMinInput = section.querySelector<HTMLInputElement>('input[name="recent-age-min"]');
+  if (recentAgeMinInput) {
+    recentAgeMinInput.value = formatRecentAgeInput(recentAgeMinMinutes);
+  }
+  const recentAgeMaxInput = section.querySelector<HTMLInputElement>('input[name="recent-age-max"]');
+  if (recentAgeMaxInput) {
+    recentAgeMaxInput.value = formatRecentAgeInput(recentAgeMaxMinutes);
+  }
   const recentPerPageInput = section.querySelector<HTMLInputElement>('[data-action="recent-per-page"]');
   if (recentPerPageInput) {
     recentPerPageInput.value = String(safeRecentPerPage);
@@ -179,6 +346,48 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       });
     });
   });
+  bindCommittedInputs([recentAgeMinInput, recentAgeMaxInput], () => {
+    const minInput = section.querySelector<HTMLInputElement>('input[name="recent-age-min"]');
+    const maxInput = section.querySelector<HTMLInputElement>('input[name="recent-age-max"]');
+    const parsedMin = parseRecentAgeInput(minInput?.value || '', recentAgeMinMinutes);
+    if (!parsedMin.ok) {
+      if (minInput) {
+        minInput.setCustomValidity(parsedMin.message);
+        minInput.reportValidity();
+      }
+      return;
+    }
+
+    const parsedMax = parseRecentAgeInput(maxInput?.value || '', recentAgeMaxMinutes);
+    if (!parsedMax.ok) {
+      if (maxInput) {
+        maxInput.setCustomValidity(parsedMax.message);
+        maxInput.reportValidity();
+      }
+      return;
+    }
+
+    if (minInput) {
+      minInput.setCustomValidity('');
+    }
+    if (maxInput) {
+      maxInput.setCustomValidity('');
+    }
+
+    const normalizedMinMinutes = parsedMin.minutes;
+    const normalizedMaxMinutes = Math.max(normalizedMinMinutes, parsedMax.minutes);
+    if (minInput) {
+      minInput.value = formatRecentAgeInput(normalizedMinMinutes);
+    }
+    if (maxInput) {
+      maxInput.value = formatRecentAgeInput(normalizedMaxMinutes);
+    }
+
+    void controller.saveMonitoringConfig({
+      'recent-age-min': normalizedMinMinutes,
+      'recent-age-max': normalizedMaxMinutes,
+    });
+  });
   section.querySelector<HTMLButtonElement>('[data-action="clear-recent-log"]')?.addEventListener('click', () => controller.clearRecentRemovalLog());
   return section;
 }
@@ -190,6 +399,11 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const usesServerSlice = state.ui.workspace === 'history';
   const min = fmtConfig(state, 'old-week-mcap-min', 120000);
   const max = fmtConfig(state, 'old-week-mcap-max', 100000000);
+  const oldWeekAgeMinMinutes = normalizeOldWeekAgeMinMinutes(state.data.configs['old-week-age-min'], OLD_WEEK_MIN_AGE_MINUTES);
+  const rawOldWeekAgeMaxMinutes = normalizeOldWeekAgeMaxMinutes(state.data.configs['old-week-age-max'], 0);
+  const oldWeekAgeMaxMinutes = rawOldWeekAgeMaxMinutes > 0
+    ? Math.max(oldWeekAgeMinMinutes, rawOldWeekAgeMaxMinutes)
+    : 0;
   const oldWeekSorts = state.ui.oldWeekSorts;
   const hasOldWeekMode = (mode: string) => oldWeekSorts.some((item) => item.mode === mode);
   const hasOldWeekCriterion = (mode: string, window: string) => oldWeekSorts.some((item) => item.mode === mode && item.window === window);
@@ -249,50 +463,66 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         <span class="legacy-bar-title old-week">\u{1F4C5} OLD TOKENS 1 WEEK+</span>
         ${renderLogSummary('Old Week Removal Log', state.data.oldWeekRemovalLog, 'clear-old-week-log', 'old-week')}
       </div>
-      <div class="legacy-bar-controls">
-        <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="oldWeek" aria-label="Collapse old tokens"><span class="compact-icon-glyph">−</span></button>
-        <div class="compact-search ${oldWeekSearchQuery ? 'has-query open' : ''}">
-          <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
-          <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="old-week-search" data-search-input="old-week">
+      <div class="legacy-bar-controls recent-bar-controls">
+        <div class="recent-ctrl-icons">
+          <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="oldWeek" aria-label="Collapse old tokens"><span class="compact-icon-glyph">−</span></button>
+          <div class="compact-search ${oldWeekSearchQuery ? 'has-query open' : ''}">
+            <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
+            <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="old-week-search" data-search-input="old-week">
+          </div>
+          <button type="button" class="compact-icon-toggle ${state.ui.oldWeekStarredOnly ? 'active' : ''}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
-        <button type="button" class="compact-icon-toggle ${state.ui.oldWeekStarredOnly ? 'active' : ''}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
-        <label class="legacy-mini-field">MCAP MIN <input type="number" name="old-week-mcap-min"></label>
-        <label class="legacy-mini-field">MCAP MAX <input type="number" name="old-week-mcap-max"></label>
-        <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="old-week-per-page" /></label>
-        <div class="sort-pill-group">
-          <span class="filter-label">SORT</span>
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${oldWeekVolActive}" data-sort-toggle="vol">VOL</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${oldWeekVol1h}" data-sort-mode="vol" data-sort-window="1h">1H</button>
-              <button type="button" class="sort-menu-item ${oldWeekVol6h}" data-sort-mode="vol" data-sort-window="6h">6H</button>
-              <button type="button" class="sort-menu-item ${oldWeekVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
-            </div>
+        <div class="recent-ctrl-filters">
+          <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
+            <span class="recent-ctrl-cluster-label">AGE</span>
+            <input type="text" name="old-week-age-min" inputmode="numeric" placeholder="7d / 30d" aria-label="Age min">
+            <span class="recent-ctrl-range-sep">–</span>
+            <input type="text" name="old-week-age-max" inputmode="numeric" placeholder="∞" title="Deixe em branco para não limitar a idade máxima (∞)" aria-label="Age max">
           </div>
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-toggle="mcap">MCAP</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${oldWeekMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
-              <button type="button" class="sort-menu-item ${oldWeekMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
-            </div>
+          <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
+            <span class="recent-ctrl-cluster-label">MCAP</span>
+            <input type="number" name="old-week-mcap-min" aria-label="Mcap min">
+            <span class="recent-ctrl-range-sep">–</span>
+            <input type="number" name="old-week-mcap-max" aria-label="Mcap max">
           </div>
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${oldWeekPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${oldWeekPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
-              <button type="button" class="sort-menu-item ${oldWeekPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
-              <button type="button" class="sort-menu-item ${oldWeekPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
-            </div>
+          <div class="recent-ctrl-cluster">
+            <span class="recent-ctrl-cluster-label">PER PAGE</span>
+            <input type="number" min="10" step="1" data-action="old-week-per-page" aria-label="Per page">
           </div>
-          <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${oldWeekAgeActive}" data-sort-toggle="age">AGE</button>
-            <div class="sort-menu-dropdown">
-              <button type="button" class="sort-menu-item ${oldWeekAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
-              <button type="button" class="sort-menu-item ${oldWeekAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
+          <div class="sort-pill-group recent-ctrl-cluster recent-ctrl-cluster-sort">
+            <span class="filter-label recent-ctrl-cluster-label">SORT</span>
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${oldWeekVolActive}" data-sort-toggle="vol">VOL</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${oldWeekVol1h}" data-sort-mode="vol" data-sort-window="1h">1H</button>
+                <button type="button" class="sort-menu-item ${oldWeekVol6h}" data-sort-mode="vol" data-sort-window="6h">6H</button>
+                <button type="button" class="sort-menu-item ${oldWeekVol24h}" data-sort-mode="vol" data-sort-window="24h">24H</button>
+              </div>
+            </div>
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-toggle="mcap">MCAP</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${oldWeekMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
+                <button type="button" class="sort-menu-item ${oldWeekMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
+              </div>
+            </div>
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${oldWeekPchangeActive}" data-sort-toggle="pchange">PCHANGE</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${oldWeekPchange1h}" data-sort-mode="pchange" data-sort-window="1h">1H</button>
+                <button type="button" class="sort-menu-item ${oldWeekPchange6h}" data-sort-mode="pchange" data-sort-window="6h">6H</button>
+                <button type="button" class="sort-menu-item ${oldWeekPchange24h}" data-sort-mode="pchange" data-sort-window="24h">24H</button>
+              </div>
+            </div>
+            <div class="sort-menu-wrap" data-sort-wrap>
+              <button type="button" class="old-filter-btn ${oldWeekAgeActive}" data-sort-toggle="age">AGE</button>
+              <div class="sort-menu-dropdown">
+                <button type="button" class="sort-menu-item ${oldWeekAgeNewest}" data-sort-mode="age" data-sort-window="newest">NEWEST</button>
+                <button type="button" class="sort-menu-item ${oldWeekAgeOldest}" data-sort-mode="age" data-sort-window="oldest">OLDEST</button>
+              </div>
             </div>
           </div>
         </div>
-        <span class="legacy-bar-note">7d+ &middot; no max age</span>
       </div>
     </div>
     ${renderPagedAgeBucketList(
@@ -329,6 +559,14 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   if (oldWeekMaxInput) {
     oldWeekMaxInput.value = String(max);
   }
+  const oldWeekAgeMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-min"]');
+  if (oldWeekAgeMinInput) {
+    oldWeekAgeMinInput.value = formatAgeInput(oldWeekAgeMinMinutes);
+  }
+  const oldWeekAgeMaxInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-max"]');
+  if (oldWeekAgeMaxInput) {
+    oldWeekAgeMaxInput.value = formatOldWeekAgeMaxInput(oldWeekAgeMaxMinutes);
+  }
   const oldWeekPerPageInput = section.querySelector<HTMLInputElement>('[data-action="old-week-per-page"]');
   if (oldWeekPerPageInput) {
     oldWeekPerPageInput.value = String(safeOldWeekPerPage);
@@ -358,6 +596,50 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         'old-week-mcap-min': Number(minInput?.value || 120000),
         'old-week-mcap-max': Number(maxInput?.value || 100000000),
       });
+    });
+  });
+  bindCommittedInputs([oldWeekAgeMinInput, oldWeekAgeMaxInput], () => {
+    const minInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-min"]');
+    const maxInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-max"]');
+    const parsedMin = parseOldWeekAgeInput(minInput?.value || '', oldWeekAgeMinMinutes);
+    if (!parsedMin.ok) {
+      if (minInput) {
+        minInput.setCustomValidity(parsedMin.message);
+        minInput.reportValidity();
+      }
+      return;
+    }
+
+    const parsedMax = parseOldWeekAgeInput(maxInput?.value || '', oldWeekAgeMaxMinutes, { allowBlank: true });
+    if (!parsedMax.ok) {
+      if (maxInput) {
+        maxInput.setCustomValidity(parsedMax.message);
+        maxInput.reportValidity();
+      }
+      return;
+    }
+
+    if (minInput) {
+      minInput.setCustomValidity('');
+    }
+    if (maxInput) {
+      maxInput.setCustomValidity('');
+    }
+
+    const normalizedMinMinutes = parsedMin.minutes;
+    const normalizedMaxMinutes = parsedMax.minutes > 0
+      ? Math.max(normalizedMinMinutes, parsedMax.minutes)
+      : 0;
+    if (minInput) {
+      minInput.value = formatAgeInput(normalizedMinMinutes);
+    }
+    if (maxInput) {
+      maxInput.value = formatOldWeekAgeMaxInput(normalizedMaxMinutes);
+    }
+
+    void controller.saveMonitoringConfig({
+      'old-week-age-min': normalizedMinMinutes,
+      'old-week-age-max': normalizedMaxMinutes,
     });
   });
   section.querySelector<HTMLButtonElement>('[data-action="clear-old-week-log"]')?.addEventListener('click', () => controller.clearOldWeekRemovalLog());
