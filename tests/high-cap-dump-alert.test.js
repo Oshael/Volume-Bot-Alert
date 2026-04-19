@@ -21,8 +21,42 @@ function createClient(log) {
   };
 }
 
+function createStablePinState(overrides = {}) {
+  return {
+    ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
+    tokenAddress: TOKEN_ADDRESS,
+    status: 'idle',
+    rearmRequired: false,
+    metadata: {
+      pinnedPairAddress: 'pair-1',
+      pairPinStatus: 'stable',
+    },
+    ...overrides,
+  };
+}
+
+function createStablePinnedDetection(overrides = {}) {
+  return {
+    tokenAddress: TOKEN_ADDRESS,
+    baselineTs: '2026-04-05T18:00:00.000Z',
+    baselinePairAddress: 'pair-1',
+    baselineMcap: 8000000,
+    currentTs: '2026-04-05T18:05:00.000Z',
+    currentPairAddress: 'pair-1',
+    liveCurrentPairAddress: 'pair-1',
+    currentCloseMcap: 4200000,
+    windowLowBucketTs: '2026-04-05T18:03:00.000Z',
+    windowLowPairAddress: 'pair-1',
+    windowLowMcap: 3200000,
+    latestBucketAgeMs: 15000,
+    bucketCount: 5,
+    dumpPct: -60,
+    ...overrides,
+  };
+}
+
 describe('high cap dump alert service', () => {
-  it('creates a first event and marks the rule as triggered', async () => {
+  it('creates an event once the pair pin is already stable', async () => {
     const originalGetClient = db.getClient;
     const originalCreateEvent = tokenAlertEvent.createEvent;
     const originalGetState = tokenAlertRuleState.getState;
@@ -34,7 +68,7 @@ describe('high cap dump alert service', () => {
     const publishedEvents = [];
 
     db.getClient = async () => createClient(clientLog);
-    tokenAlertRuleState.getState = async () => null;
+    tokenAlertRuleState.getState = async () => createStablePinState();
     tokenAlertEvent.createEvent = async (payload) => {
       eventWrites.push(payload);
       return {
@@ -61,27 +95,20 @@ describe('high cap dump alert service', () => {
     };
 
     try {
-      const result = await highCapDumpAlert.evaluateDetection({
-        tokenAddress: TOKEN_ADDRESS,
-        baselineTs: '2026-04-05T18:00:00.000Z',
-        baselineMcap: 8000000,
-        currentTs: '2026-04-05T18:05:00.000Z',
-        currentCloseMcap: 4200000,
-        windowLowMcap: 3200000,
-        latestBucketAgeMs: 15000,
-        bucketCount: 5,
-        dumpPct: -60,
-      });
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection());
 
       assert.equal(result.action, 'triggered');
       assert.equal(result.emitted, true);
       assert.equal(result.rearmed, false);
+      assert.equal(result.detection.pinReadyForEvaluation, true);
       assert.equal(eventWrites.length, 1);
       assert.equal(eventWrites[0].thresholdPct, 50);
+      assert.equal(eventWrites[0].metadata.pinnedPairAddress, 'pair-1');
       assert.equal(stateWrites.length, 1);
       assert.equal(stateWrites[0].status, 'triggered');
       assert.equal(stateWrites[0].rearmRequired, true);
       assert.equal(stateWrites[0].lastAlertedPct, -60);
+      assert.equal(stateWrites[0].metadata.pinnedPairAddress, 'pair-1');
       assert.deepEqual(publishedEvents, [{
         id: 11,
         ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
@@ -108,9 +135,7 @@ describe('high cap dump alert service', () => {
     let createEventCalls = 0;
 
     db.getClient = async () => createClient(clientLog);
-    tokenAlertRuleState.getState = async () => ({
-      ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
-      tokenAddress: TOKEN_ADDRESS,
+    tokenAlertRuleState.getState = async () => createStablePinState({
       status: 'triggered',
       lastBaselineTs: '2026-04-05T18:00:00.000Z',
       lastBaselineMcap: 8000000,
@@ -120,7 +145,12 @@ describe('high cap dump alert service', () => {
       lastAlertedAt: '2026-04-05T18:05:05.000Z',
       lastAlertedPct: -60,
       rearmRequired: true,
-      metadata: { lastDecision: 'triggered' },
+      metadata: {
+        lastDecision: 'triggered',
+        pinnedPairAddress: 'pair-1',
+        pairPinStatus: 'stable',
+        lastObservedPairAddress: 'pair-1',
+      },
     });
     tokenAlertEvent.createEvent = async () => {
       createEventCalls += 1;
@@ -132,17 +162,15 @@ describe('high cap dump alert service', () => {
     };
 
     try {
-      const result = await highCapDumpAlert.evaluateDetection({
-        tokenAddress: TOKEN_ADDRESS,
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
         baselineTs: '2026-04-05T18:01:00.000Z',
         baselineMcap: 7900000,
         currentTs: '2026-04-05T18:06:00.000Z',
         currentCloseMcap: 4100000,
         windowLowMcap: 3000000,
         latestBucketAgeMs: 12000,
-        bucketCount: 5,
         dumpPct: -62,
-      });
+      }));
 
       assert.equal(result.action, 'suppressed');
       assert.equal(result.emitted, false);
@@ -168,9 +196,7 @@ describe('high cap dump alert service', () => {
     let upsertCalls = 0;
 
     db.getClient = async () => createClient(clientLog);
-    tokenAlertRuleState.getState = async () => ({
-      ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
-      tokenAddress: TOKEN_ADDRESS,
+    tokenAlertRuleState.getState = async () => createStablePinState({
       status: 'triggered',
       lastBaselineTs: '2026-04-05T18:00:00.000Z',
       lastBaselineMcap: 2520000,
@@ -180,7 +206,12 @@ describe('high cap dump alert service', () => {
       lastAlertedAt: '2026-04-05T18:05:05.000Z',
       lastAlertedPct: -74.5,
       rearmRequired: true,
-      metadata: { lastDecision: 'triggered' },
+      metadata: {
+        lastDecision: 'triggered',
+        pinnedPairAddress: 'pair-1',
+        pairPinStatus: 'stable',
+        lastObservedPairAddress: 'pair-1',
+      },
     });
     tokenAlertEvent.createEvent = async () => {
       createEventCalls += 1;
@@ -192,17 +223,15 @@ describe('high cap dump alert service', () => {
     };
 
     try {
-      const result = await highCapDumpAlert.evaluateDetection({
-        tokenAddress: TOKEN_ADDRESS,
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
         baselineTs: '2026-04-05T18:01:00.000Z',
         baselineMcap: 2500000,
         currentTs: '2026-04-05T18:06:00.000Z',
         currentCloseMcap: 2550000,
         windowLowMcap: 642000,
         latestBucketAgeMs: 12000,
-        bucketCount: 5,
         dumpPct: -74.32,
-      });
+      }));
 
       assert.equal(result.action, 'suppressed');
       assert.equal(result.emitted, false);
@@ -229,9 +258,7 @@ describe('high cap dump alert service', () => {
     let createEventCalls = 0;
 
     db.getClient = async () => createClient(clientLog);
-    tokenAlertRuleState.getState = async () => ({
-      ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
-      tokenAddress: TOKEN_ADDRESS,
+    tokenAlertRuleState.getState = async () => createStablePinState({
       status: 'triggered',
       lastBaselineTs: '2026-04-05T18:00:00.000Z',
       lastBaselineMcap: 8000000,
@@ -241,7 +268,11 @@ describe('high cap dump alert service', () => {
       lastAlertedAt: '2026-04-05T18:05:05.000Z',
       lastAlertedPct: -60,
       rearmRequired: true,
-      metadata: { lastDecision: 'triggered' },
+      metadata: {
+        lastDecision: 'triggered',
+        pinnedPairAddress: 'pair-1',
+        pairPinStatus: 'stable',
+      },
     });
     tokenAlertEvent.createEvent = async () => {
       createEventCalls += 1;
@@ -253,17 +284,15 @@ describe('high cap dump alert service', () => {
     };
 
     try {
-      const result = await highCapDumpAlert.evaluateDetection({
-        tokenAddress: TOKEN_ADDRESS,
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
         baselineTs: '2026-04-05T18:10:00.000Z',
         baselineMcap: 7600000,
         currentTs: '2026-04-05T18:15:00.000Z',
         currentCloseMcap: 6900000,
         windowLowMcap: 6800000,
         latestBucketAgeMs: 14000,
-        bucketCount: 5,
         dumpPct: -10.53,
-      });
+      }));
 
       assert.equal(result.action, 'rearmed');
       assert.equal(result.emitted, false);
@@ -293,9 +322,7 @@ describe('high cap dump alert service', () => {
     const eventWrites = [];
 
     db.getClient = async () => createClient(clientLog);
-    tokenAlertRuleState.getState = async () => ({
-      ruleKey: highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY,
-      tokenAddress: TOKEN_ADDRESS,
+    tokenAlertRuleState.getState = async () => createStablePinState({
       status: 'triggered',
       lastBaselineTs: '2026-04-05T10:00:00.000Z',
       lastBaselineMcap: 8000000,
@@ -305,7 +332,11 @@ describe('high cap dump alert service', () => {
       lastAlertedAt: '2026-04-05T10:05:05.000Z',
       lastAlertedPct: -60,
       rearmRequired: true,
-      metadata: { lastDecision: 'triggered' },
+      metadata: {
+        lastDecision: 'triggered',
+        pinnedPairAddress: 'pair-1',
+        pairPinStatus: 'stable',
+      },
     });
     tokenAlertEvent.createEvent = async (payload) => {
       eventWrites.push(payload);
@@ -322,17 +353,14 @@ describe('high cap dump alert service', () => {
     };
 
     try {
-      const result = await highCapDumpAlert.evaluateDetection({
-        tokenAddress: TOKEN_ADDRESS,
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
         baselineTs: '2026-04-05T16:10:00.000Z',
         baselineMcap: 5000000,
         currentTs: '2026-04-05T16:15:00.000Z',
         currentCloseMcap: 3100000,
         windowLowMcap: 2400000,
-        latestBucketAgeMs: 15000,
-        bucketCount: 5,
         dumpPct: -52,
-      });
+      }));
 
       assert.equal(result.action, 'retriggered');
       assert.equal(result.emitted, true);
@@ -358,8 +386,8 @@ describe('high cap dump alert service', () => {
     const originalGetState = tokenAlertRuleState.getState;
     const originalUpsertState = tokenAlertRuleState.upsertState;
     const clientLog = [];
+    const stateWrites = [];
     let createEventCalls = 0;
-    let upsertCalls = 0;
 
     db.getClient = async () => createClient(clientLog);
     tokenAlertRuleState.getState = async () => null;
@@ -367,9 +395,9 @@ describe('high cap dump alert service', () => {
       createEventCalls += 1;
       throw new Error('should not emit when pair churn invalidates the window');
     };
-    tokenAlertRuleState.upsertState = async () => {
-      upsertCalls += 1;
-      throw new Error('should not persist triggered state when pair churn invalidates the window');
+    tokenAlertRuleState.upsertState = async (payload) => {
+      stateWrites.push(payload);
+      return payload;
     };
 
     try {
@@ -380,6 +408,7 @@ describe('high cap dump alert service', () => {
         baselineMcap: 8000000,
         currentTs: '2026-04-05T18:05:00.000Z',
         currentPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
+        liveCurrentPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
         currentCloseMcap: 4200000,
         windowLowBucketTs: '2026-04-05T18:03:00.000Z',
         windowLowPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
@@ -397,8 +426,174 @@ describe('high cap dump alert service', () => {
       assert.equal(result.detection.passesThreshold, true);
       assert.equal(result.detection.passesPairConsistencyGate, false);
       assert.equal(result.detection.passesAllGates, false);
+      assert.equal(result.detection.pinReadyForEvaluation, false);
       assert.equal(createEventCalls, 0);
-      assert.equal(upsertCalls, 0);
+      assert.equal(stateWrites.length, 1);
+      assert.equal(stateWrites[0].status, 'idle');
+      assert.equal(stateWrites[0].metadata.pairCandidateAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
+      assert.equal(stateWrites[0].metadata.pairCandidateCount, 1);
+      assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+    } finally {
+      db.getClient = originalGetClient;
+      tokenAlertEvent.createEvent = originalCreateEvent;
+      tokenAlertRuleState.getState = originalGetState;
+      tokenAlertRuleState.upsertState = originalUpsertState;
+    }
+  });
+
+  it('tracks a new pair until the pin is acquired before allowing the first trigger', async () => {
+    const originalGetClient = db.getClient;
+    const originalCreateEvent = tokenAlertEvent.createEvent;
+    const originalGetState = tokenAlertRuleState.getState;
+    const originalUpsertState = tokenAlertRuleState.upsertState;
+    const clientLog = [];
+    const stateWrites = [];
+    let createEventCalls = 0;
+
+    db.getClient = async () => createClient(clientLog);
+    tokenAlertRuleState.getState = async () => null;
+    tokenAlertEvent.createEvent = async () => {
+      createEventCalls += 1;
+      throw new Error('should not emit before the pair pin is stable');
+    };
+    tokenAlertRuleState.upsertState = async (payload) => {
+      stateWrites.push(payload);
+      return payload;
+    };
+
+    try {
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection());
+
+      assert.equal(result.action, 'suppressed');
+      assert.equal(result.emitted, false);
+      assert.equal(result.rearmed, false);
+      assert.equal(result.detection.passesAllGates, false);
+      assert.equal(result.detection.pinReadyForEvaluation, false);
+      assert.equal(createEventCalls, 0);
+      assert.equal(stateWrites.length, 1);
+      assert.equal(stateWrites[0].status, 'idle');
+      assert.equal(stateWrites[0].metadata.pairPinStatus, 'acquiring');
+      assert.equal(stateWrites[0].metadata.pairCandidateAddress, 'pair-1');
+      assert.equal(stateWrites[0].metadata.pairCandidateCount, 1);
+      assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+    } finally {
+      db.getClient = originalGetClient;
+      tokenAlertEvent.createEvent = originalCreateEvent;
+      tokenAlertRuleState.getState = originalGetState;
+      tokenAlertRuleState.upsertState = originalUpsertState;
+    }
+  });
+
+  it('switches the pin only after ten consecutive live observations of a new best pair', async () => {
+    const originalGetClient = db.getClient;
+    const originalCreateEvent = tokenAlertEvent.createEvent;
+    const originalGetState = tokenAlertRuleState.getState;
+    const originalUpsertState = tokenAlertRuleState.upsertState;
+    const clientLog = [];
+    const stateWrites = [];
+    let createEventCalls = 0;
+
+    db.getClient = async () => createClient(clientLog);
+    tokenAlertRuleState.getState = async () => createStablePinState({
+      status: 'rearmed',
+      metadata: {
+        pinnedPairAddress: 'pair-1',
+        pairCandidateAddress: 'pair-2',
+        pairCandidateCount: highCapDumpAlert.PAIR_PIN_STABILITY_COUNT - 1,
+        pairPinStatus: 'switch-pending',
+      },
+    });
+    tokenAlertEvent.createEvent = async () => {
+      createEventCalls += 1;
+      throw new Error('should not emit on the same cycle that the pin switches');
+    };
+    tokenAlertRuleState.upsertState = async (payload) => {
+      stateWrites.push(payload);
+      return payload;
+    };
+
+    try {
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
+        liveCurrentPairAddress: 'pair-2',
+      }));
+
+      assert.equal(result.action, 'suppressed');
+      assert.equal(result.emitted, false);
+      assert.equal(result.rearmed, false);
+      assert.equal(result.detection.pinStatus, 'switched');
+      assert.equal(result.detection.pinnedPairAddress, 'pair-2');
+      assert.equal(createEventCalls, 0);
+      assert.equal(stateWrites.length, 1);
+      assert.equal(stateWrites[0].status, 'rearmed');
+      assert.equal(stateWrites[0].metadata.pinnedPairAddress, 'pair-2');
+      assert.equal(stateWrites[0].metadata.pairCandidateAddress, null);
+      assert.equal(stateWrites[0].metadata.pairCandidateCount, 0);
+      assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+    } finally {
+      db.getClient = originalGetClient;
+      tokenAlertEvent.createEvent = originalCreateEvent;
+      tokenAlertRuleState.getState = originalGetState;
+      tokenAlertRuleState.upsertState = originalUpsertState;
+    }
+  });
+
+  it('rearms the old collapse leg immediately when the live best pair diverges from the pinned pair', async () => {
+    const originalGetClient = db.getClient;
+    const originalCreateEvent = tokenAlertEvent.createEvent;
+    const originalGetState = tokenAlertRuleState.getState;
+    const originalUpsertState = tokenAlertRuleState.upsertState;
+    const clientLog = [];
+    const stateWrites = [];
+    let createEventCalls = 0;
+
+    db.getClient = async () => createClient(clientLog);
+    tokenAlertRuleState.getState = async () => createStablePinState({
+      status: 'triggered',
+      lastBaselineTs: '2026-04-05T18:00:00.000Z',
+      lastBaselineMcap: 8000000,
+      lastWindowLowMcap: 3200000,
+      lastCurrentTs: '2026-04-05T18:05:00.000Z',
+      lastCurrentCloseMcap: 4200000,
+      lastAlertedAt: '2026-04-05T18:05:05.000Z',
+      lastAlertedPct: -60,
+      rearmRequired: true,
+      metadata: {
+        lastDecision: 'triggered',
+        pinnedPairAddress: 'pair-1',
+        pairPinStatus: 'stable',
+      },
+    });
+    tokenAlertEvent.createEvent = async () => {
+      createEventCalls += 1;
+      throw new Error('should rearm instead of emitting when the live pair changed');
+    };
+    tokenAlertRuleState.upsertState = async (payload) => {
+      stateWrites.push(payload);
+      return payload;
+    };
+
+    try {
+      const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
+        baselineTs: '2026-04-05T18:01:00.000Z',
+        baselineMcap: 7900000,
+        currentTs: '2026-04-05T18:06:00.000Z',
+        currentCloseMcap: 4100000,
+        windowLowMcap: 3000000,
+        latestBucketAgeMs: 12000,
+        dumpPct: -62,
+        liveCurrentPairAddress: 'pair-2',
+      }));
+
+      assert.equal(result.action, 'rearmed');
+      assert.equal(result.emitted, false);
+      assert.equal(result.rearmed, true);
+      assert.equal(result.rearmReason, 'pair-switch');
+      assert.equal(createEventCalls, 0);
+      assert.equal(stateWrites.length, 1);
+      assert.equal(stateWrites[0].status, 'rearmed');
+      assert.equal(stateWrites[0].metadata.lastRearmReason, 'pair-switch');
+      assert.equal(stateWrites[0].metadata.pairCandidateAddress, 'pair-2');
+      assert.equal(stateWrites[0].metadata.pairCandidateCount, 1);
       assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
     } finally {
       db.getClient = originalGetClient;

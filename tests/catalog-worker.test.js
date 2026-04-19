@@ -3,11 +3,15 @@ const assert = require('node:assert/strict');
 
 const catalogWorker = require('../src/services/catalog-worker');
 const tokenCatalog = require('../src/models/token-catalog');
+const tokenAlertRuleState = require('../src/models/token-alert-rule-state');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-bucket-1m');
 const dexscreener = require('../src/services/dexscreener');
 const highCapDumpAlert = require('../src/services/high-cap-dump-alert');
 const userAlertMatcher = require('../src/services/user-alert-matcher');
+
+const TOKEN_A = 'So11111111111111111111111111111111111111112';
+const TOKEN_B = 'So11111111111111111111111111111111111111113';
 
 describe('catalog worker drift compensation', () => {
   it('reduces the next delay when the cycle finishes early', () => {
@@ -200,34 +204,49 @@ describe('catalog worker drift compensation', () => {
   });
 
   it('evaluates high-cap dump alerts in batch using the just-processed addresses', async () => {
+    const originalGetState = tokenAlertRuleState.getState;
     const originalListDetections = tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses;
     const originalEvaluateDetection = highCapDumpAlert.evaluateDetection;
     const listedAddresses = [];
+    const queryOptions = [];
     const evaluatedAddresses = [];
 
-    tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = async (addresses) => {
+    tokenAlertRuleState.getState = async (_ruleKey, tokenAddress) => ({
+      metadata: {
+        pinnedPairAddress: tokenAddress === TOKEN_A ? 'pair-a' : null,
+      },
+    });
+    tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = async (addresses, options) => {
       listedAddresses.push(addresses);
+      queryOptions.push(options);
       return [
-        { tokenAddress: 'A', baselineMcap: 8000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 4200000, windowLowMcap: 3200000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -60 },
-        { tokenAddress: 'B', baselineMcap: 7000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 6100000, windowLowMcap: 6000000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -14.29 },
+        { tokenAddress: TOKEN_A, baselineMcap: 8000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 4200000, windowLowMcap: 3200000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -60 },
+        { tokenAddress: TOKEN_B, baselineMcap: 7000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 6100000, windowLowMcap: 6000000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -14.29 },
       ];
     };
     highCapDumpAlert.evaluateDetection = async (detection) => {
       evaluatedAddresses.push(detection.tokenAddress);
       return {
-        action: detection.tokenAddress === 'A' ? 'triggered' : 'suppressed',
-        emitted: detection.tokenAddress === 'A',
+        action: detection.tokenAddress === TOKEN_A ? 'triggered' : 'suppressed',
+        emitted: detection.tokenAddress === TOKEN_A,
         rearmed: false,
       };
     };
 
     try {
-      const summary = await catalogWorker.__private.processHighCapDumpAlertsForAddresses(['A', 'B', 'A'], {
+      const summary = await catalogWorker.__private.processHighCapDumpAlertsForAddresses([TOKEN_A, TOKEN_B, TOKEN_A], {
         now: new Date('2026-04-05T18:05:10.000Z'),
       });
 
-      assert.deepEqual(listedAddresses, [['A', 'B']]);
-      assert.deepEqual(evaluatedAddresses.sort(), ['A', 'B']);
+      assert.deepEqual(listedAddresses, [[TOKEN_A, TOKEN_B]]);
+      assert.deepEqual(queryOptions, [{
+        referenceTs: new Date('2026-04-05T18:05:10.000Z'),
+        pinnedPairByAddress: {
+          [TOKEN_A]: 'pair-a',
+          [TOKEN_B]: null,
+        },
+      }]);
+      assert.deepEqual(evaluatedAddresses.sort(), [TOKEN_A, TOKEN_B]);
       assert.deepEqual(summary, {
         evaluated: 2,
         emitted: 1,
@@ -236,28 +255,31 @@ describe('catalog worker drift compensation', () => {
         errors: 0,
       });
     } finally {
+      tokenAlertRuleState.getState = originalGetState;
       tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalListDetections;
       highCapDumpAlert.evaluateDetection = originalEvaluateDetection;
     }
   });
 
   it('keeps the batch alive when one high-cap dump evaluation fails', async () => {
+    const originalGetState = tokenAlertRuleState.getState;
     const originalListDetections = tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses;
     const originalEvaluateDetection = highCapDumpAlert.evaluateDetection;
 
+    tokenAlertRuleState.getState = async () => null;
     tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = async () => ([
-      { tokenAddress: 'A', baselineMcap: 8000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 4200000, windowLowMcap: 3200000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -60 },
-      { tokenAddress: 'B', baselineMcap: 7000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 3500000, windowLowMcap: 3000000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -50 },
+      { tokenAddress: TOKEN_A, baselineMcap: 8000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 4200000, windowLowMcap: 3200000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -60 },
+      { tokenAddress: TOKEN_B, baselineMcap: 7000000, currentTs: '2026-04-05T18:05:00.000Z', currentCloseMcap: 3500000, windowLowMcap: 3000000, bucketCount: 5, latestBucketAgeMs: 12000, dumpPct: -50 },
     ]);
     highCapDumpAlert.evaluateDetection = async (detection) => {
-      if (detection.tokenAddress === 'A') {
+      if (detection.tokenAddress === TOKEN_A) {
         throw new Error('boom');
       }
       return { action: 'retriggered', emitted: true, rearmed: true };
     };
 
     try {
-      const summary = await catalogWorker.__private.processHighCapDumpAlertsForAddresses(['A', 'B'], {
+      const summary = await catalogWorker.__private.processHighCapDumpAlertsForAddresses([TOKEN_A, TOKEN_B], {
         now: new Date('2026-04-05T18:05:10.000Z'),
       });
 
@@ -269,6 +291,7 @@ describe('catalog worker drift compensation', () => {
         errors: 1,
       });
     } finally {
+      tokenAlertRuleState.getState = originalGetState;
       tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalListDetections;
       highCapDumpAlert.evaluateDetection = originalEvaluateDetection;
     }

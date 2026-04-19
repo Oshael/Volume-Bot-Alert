@@ -90,11 +90,14 @@ describe('token market 1m bucket helpers', () => {
         rows: [
           {
             token_address: 'So11111111111111111111111111111111111111112',
+            pinned_pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
             baseline_ts: '2026-04-05T12:00:00.000Z',
             baseline_pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
             baseline_mcap: '7000000',
             current_ts: '2026-04-05T12:05:00.000Z',
             current_pair_address: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
+            live_current_ts: '2026-04-05T12:05:00.000Z',
+            live_current_pair_address: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
             current_close_mcap: '5000000',
             window_low_bucket_ts: '2026-04-05T12:03:00.000Z',
             window_low_pair_address: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
@@ -112,12 +115,12 @@ describe('token market 1m bucket helpers', () => {
         { referenceTs: '2026-04-05T12:05:20.000Z' }
       );
 
-      assert.match(capturedSql, /bucket_ts <= current_row\.current_ts - \(\$2::int \* INTERVAL '1 minute'\)/);
-      assert.match(capturedSql, /bucket_ts >= current_row\.current_ts - \(\(\$2::int \+ 1\) \* INTERVAL '1 minute'\)/);
-      assert.match(capturedSql, /bucket_ts > current_row\.current_ts - \(\$2::int \* INTERVAL '1 minute'\)/);
+      assert.match(capturedSql, /bucket_ts <= current_row\.current_ts - \(\$3::int \* INTERVAL '1 minute'\)/);
+      assert.match(capturedSql, /bucket_ts >= current_row\.current_ts - \(\(\$3::int \+ 1\) \* INTERVAL '1 minute'\)/);
+      assert.match(capturedSql, /bucket_ts > current_row\.current_ts - \(\$3::int \* INTERVAL '1 minute'\)/);
       assert.doesNotMatch(capturedSql, /bucket_ts > baseline_row\.baseline_ts/);
       assert.doesNotMatch(capturedSql, /fallback/i);
-      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], 5]);
+      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], [null], 5]);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].tokenAddress, 'So11111111111111111111111111111111111111112');
       assert.equal(rows[0].passesHighCapGate, true);
@@ -127,6 +130,8 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(rows[0].pairChangedInWindow, true);
       assert.equal(rows[0].baselinePairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
       assert.equal(rows[0].currentPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
+      assert.equal(rows[0].pinnedPairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
+      assert.equal(rows[0].liveCurrentPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
     } finally {
       db.query = originalQuery;
     }

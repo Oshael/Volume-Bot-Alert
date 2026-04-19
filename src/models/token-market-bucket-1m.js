@@ -165,8 +165,11 @@ function normalizeHighCapDumpRow(row) {
     tokenAddress: String(readHighCapDumpTextField(row, 'token_address', 'tokenAddress') || '').trim(),
     baselineTs: readHighCapDumpTextField(row, 'baseline_ts', 'baselineTs'),
     currentTs: readHighCapDumpTextField(row, 'current_ts', 'currentTs'),
+    liveCurrentTs: readHighCapDumpTextField(row, 'live_current_ts', 'liveCurrentTs'),
     baselinePairAddress: readHighCapDumpTextField(row, 'baseline_pair_address', 'baselinePairAddress'),
     currentPairAddress: readHighCapDumpTextField(row, 'current_pair_address', 'currentPairAddress'),
+    liveCurrentPairAddress: readHighCapDumpTextField(row, 'live_current_pair_address', 'liveCurrentPairAddress'),
+    pinnedPairAddress: readHighCapDumpTextField(row, 'pinned_pair_address', 'pinnedPairAddress'),
     windowLowBucketTs: readHighCapDumpTextField(row, 'window_low_bucket_ts', 'windowLowBucketTs'),
     windowLowPairAddress: readHighCapDumpTextField(row, 'window_low_pair_address', 'windowLowPairAddress'),
     baselineMcap: readHighCapDumpNumberField(row, 'baseline_mcap', 'baselineMcap'),
@@ -935,6 +938,9 @@ function buildHighCapDumpDetection(row, options = {}) {
     baselineMcap: normalizedRow.baselineMcap,
     currentTs: normalizedRow.currentTs,
     currentPairAddress: normalizedRow.currentPairAddress,
+    liveCurrentTs: normalizedRow.liveCurrentTs,
+    liveCurrentPairAddress: normalizedRow.liveCurrentPairAddress,
+    pinnedPairAddress: normalizedRow.pinnedPairAddress,
     currentCloseMcap: normalizedRow.currentCloseMcap,
     windowLowBucketTs: normalizedRow.windowLowBucketTs,
     windowLowPairAddress: normalizedRow.windowLowPairAddress,
@@ -961,15 +967,27 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
   }
 
   const safeWindowMinutes = Math.max(1, Math.min(Number(options.windowMinutes) || DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES, 60));
+  const pinnedPairByAddress = options.pinnedPairByAddress && typeof options.pinnedPairByAddress === 'object'
+    ? options.pinnedPairByAddress
+    : {};
+  const pinnedPairs = unique.map((address) => {
+    const value = pinnedPairByAddress[address];
+    const normalized = String(value || '').trim();
+    return normalized || null;
+  });
   const { rows } = await db.query(
     `WITH requested AS (
-       SELECT UNNEST($1::varchar[]) AS token_address
+       SELECT *
+       FROM UNNEST($1::varchar[], $2::varchar[]) AS t(token_address, pinned_pair_address)
      )
      SELECT
        requested.token_address,
+       requested.pinned_pair_address,
        current_row.current_ts,
        current_row.current_pair_address,
        current_row.current_close_mcap,
+       live_current_row.live_current_ts,
+       live_current_row.live_current_pair_address,
        baseline_row.baseline_ts,
        baseline_row.baseline_pair_address,
        baseline_row.baseline_mcap,
@@ -987,9 +1005,23 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
          AND close_mcap IS NOT NULL
+         AND (
+           requested.pinned_pair_address IS NULL
+           OR pair_address = requested.pinned_pair_address
+         )
        ORDER BY bucket_ts DESC
        LIMIT 1
      ) AS current_row ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT
+         bucket_ts AS live_current_ts,
+         pair_address AS live_current_pair_address
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND close_mcap IS NOT NULL
+       ORDER BY bucket_ts DESC
+       LIMIT 1
+     ) AS live_current_row ON TRUE
      LEFT JOIN LATERAL (
        SELECT
          bucket_ts AS baseline_ts,
@@ -999,8 +1031,12 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
        WHERE token_address = requested.token_address
          AND close_mcap IS NOT NULL
          AND current_row.current_ts IS NOT NULL
-         AND bucket_ts >= current_row.current_ts - (($2::int + 1) * INTERVAL '1 minute')
-         AND bucket_ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
+         AND bucket_ts >= current_row.current_ts - (($3::int + 1) * INTERVAL '1 minute')
+         AND bucket_ts <= current_row.current_ts - ($3::int * INTERVAL '1 minute')
+         AND (
+           requested.pinned_pair_address IS NULL
+           OR pair_address = requested.pinned_pair_address
+         )
        ORDER BY bucket_ts DESC
        LIMIT 1
      ) AS baseline_row ON TRUE
@@ -1012,9 +1048,13 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
          AND current_row.current_ts IS NOT NULL
-         AND bucket_ts > current_row.current_ts - ($2::int * INTERVAL '1 minute')
+         AND bucket_ts > current_row.current_ts - ($3::int * INTERVAL '1 minute')
          AND bucket_ts <= current_row.current_ts
          AND low_mcap IS NOT NULL
+         AND (
+           requested.pinned_pair_address IS NULL
+           OR pair_address = requested.pinned_pair_address
+         )
        ORDER BY low_mcap ASC, bucket_ts DESC
        LIMIT 1
      ) AS window_low_row ON TRUE
@@ -1025,12 +1065,16 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
        FROM token_market_buckets_1m
        WHERE token_address = requested.token_address
          AND current_row.current_ts IS NOT NULL
-         AND bucket_ts > current_row.current_ts - ($2::int * INTERVAL '1 minute')
+         AND bucket_ts > current_row.current_ts - ($3::int * INTERVAL '1 minute')
          AND bucket_ts <= current_row.current_ts
          AND (low_mcap IS NOT NULL OR high_mcap IS NOT NULL OR close_mcap IS NOT NULL)
+         AND (
+           requested.pinned_pair_address IS NULL
+           OR pair_address = requested.pinned_pair_address
+         )
      ) AS window_stats ON TRUE
      ORDER BY requested.token_address ASC`,
-    [unique, safeWindowMinutes]
+    [unique, pinnedPairs, safeWindowMinutes]
   );
 
   return rows.map((row) => buildHighCapDumpDetection(row, options));

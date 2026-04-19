@@ -1,4 +1,5 @@
 const tokenCatalog = require('../models/token-catalog');
+const tokenAlertRuleState = require('../models/token-alert-rule-state');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
@@ -664,6 +665,12 @@ function createEmptyHighCapDumpAlertSummary() {
   };
 }
 
+function readPinnedPairAddressFromState(state) {
+  const value = state?.metadata?.pinnedPairAddress;
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
 async function processHighCapDumpAlertsForAddresses(addresses, options = {}) {
   const uniqueAddresses = Array.from(
     new Set(
@@ -678,8 +685,18 @@ async function processHighCapDumpAlertsForAddresses(addresses, options = {}) {
   }
 
   const now = options.now || new Date();
+  const states = await Promise.all(
+    uniqueAddresses.map(async (tokenAddress) => ([
+      tokenAddress,
+      await tokenAlertRuleState.getState(highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY, tokenAddress),
+    ]))
+  );
+  const pinnedPairByAddress = Object.fromEntries(
+    states.map(([tokenAddress, state]) => [tokenAddress, readPinnedPairAddressFromState(state)])
+  );
   const detections = await tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses(uniqueAddresses, {
     referenceTs: now,
+    pinnedPairByAddress,
   });
   const summary = createEmptyHighCapDumpAlertSummary();
   summary.evaluated = detections.length;
@@ -934,6 +951,7 @@ module.exports = {
     normalizeDelayMs,
     prioritizeTokensForThrottle,
     processHighCapDumpAlertsForAddresses,
+    readPinnedPairAddressFromState,
     evaluateTokenWithData,
   },
 };
