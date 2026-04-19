@@ -33,7 +33,7 @@ export function reportMigratedToken(payload: ReportMigratedTokenPayload, token?:
 }
 
 export function trackManualToken(address: string, token?: string | null) {
-  return apiFetch<{ message: string; tracked: { address: string } }>('/api/catalog/manual-track', {
+  return apiFetch<{ message: string; tracked: { address: string }; bootstrapState?: 'scheduled' | 'evaluated' | null }>('/api/catalog/manual-track', {
     method: 'POST',
     body: JSON.stringify({ address }),
     token,
@@ -349,6 +349,18 @@ export function fetchDashboardMonitored(
       perPage: Number(response.perPage) || 0,
       hasMore: Boolean(response.hasMore),
     }));
+}
+
+export function fetchMonitoredMetadataBatch(addresses: string[], token?: string | null) {
+  return apiFetch<{
+    generatedAt?: string | null;
+    count: number;
+    tokens: DashboardMonitoredToken[];
+  }>('/api/catalog/monitored-metadata-batch', {
+    method: 'POST',
+    body: JSON.stringify({ addresses }),
+    token,
+  }).then((response) => response.tokens || []);
 }
 
 export function fetchDashboardHistoryBootstrap(

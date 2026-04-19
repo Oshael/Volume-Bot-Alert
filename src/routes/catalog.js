@@ -7,6 +7,7 @@ const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenRiskReview = require('../models/token-risk-review');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMarketLateralizationRun = require('../models/token-market-lateralization-run');
 const tokenMarketBidZoneRun = require('../models/token-market-bid-zone-run');
 const tokenMeteoraState = require('../models/token-meteora-state');
@@ -106,6 +107,53 @@ router.post('/manual-track', catalogWriteLimiter, async (req, res) => {
   } catch (err) {
     console.error('POST /catalog/manual-track error:', err.message);
     res.status(500).json({ error: 'Failed to schedule manual token tracking' });
+  }
+});
+
+router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) => {
+  const parsed = parseMeteoraBatchAddresses(req.body?.addresses);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  try {
+    const addresses = parsed.addresses;
+    const [metadataRows, meteoraSummaryRows, primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
+      tokenCatalog.listDashboardMetadataByAddresses(addresses),
+      tokenMeteoraState.listSummaryByAddresses(addresses),
+      tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+    ]);
+
+    const metadataByAddress = new Map(metadataRows.map((row) => [row.address, row]));
+    const meteoraByAddress = new Map(meteoraSummaryRows.map((row) => [row.tokenAddress, row]));
+    const marketMcapBaselineByAddress = new Map(primaryMarketBaselineRows.map((row) => [row.token_address, row]));
+    const marketVolumeBaselineByAddress = new Map(primaryVolumeBaselineRows.map((row) => [row.token_address, row]));
+
+    const tokens = addresses
+      .map((address) => {
+        const item = metadataByAddress.get(address);
+        if (!item) {
+          return null;
+        }
+
+        return buildMonitoredMetadataPayload(
+          item,
+          meteoraByAddress,
+          marketMcapBaselineByAddress,
+          marketVolumeBaselineByAddress,
+        );
+      })
+      .filter(Boolean);
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      count: tokens.length,
+      tokens,
+    });
+  } catch (err) {
+    console.error('POST /catalog/monitored-metadata-batch error:', err.message);
+    res.status(500).json({ error: 'Failed to load monitored metadata batch' });
   }
 });
 
@@ -218,6 +266,21 @@ function computePctChange(currentValue, baselineValue) {
   return Math.abs(pct) < 0.01 ? null : pct;
 }
 
+function buildMarketBaseline(mcapBaselineRow, volumeBaselineRow) {
+  const currentMcap = toNumber(mcapBaselineRow?.current_mcap);
+  const previousMcap = toNumber(mcapBaselineRow?.baseline_mcap);
+  const previousVolume5m = toNumber(volumeBaselineRow?.baseline_vol_5m);
+  const mcapDelta = currentMcap != null && previousMcap != null && previousMcap > 0
+    ? ((currentMcap - previousMcap) / previousMcap) * 100
+    : null;
+
+  return {
+    prevMcap: Number.isFinite(previousMcap) ? previousMcap : null,
+    mcapDelta: Number.isFinite(mcapDelta) ? mcapDelta : null,
+    prevVolume5mCanonical: Number.isFinite(previousVolume5m) ? previousVolume5m : null,
+  };
+}
+
 function buildMeteoraSummary(address, summaryRow) {
   if (!summaryRow) {
     return {
@@ -247,6 +310,41 @@ function buildMeteoraSummary(address, summaryRow) {
     change6h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl6h) : null,
     change24h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl24h) : null,
     noPool: !hasPool,
+  };
+}
+
+function buildMonitoredMetadataPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress) {
+  const marketBaseline = buildMarketBaseline(
+    marketMcapBaselineByAddress.get(item.address) || null,
+    marketVolumeBaselineByAddress.get(item.address) || null
+  );
+
+  return {
+    address: item.address,
+    symbol: item.symbol || null,
+    name: item.name || null,
+    pairAddress: item.last_pair_address || null,
+    pairUrl: item.last_pair_url || null,
+    imageUrl: item.last_image_url || null,
+    twitterUrl: item.last_twitter_url || null,
+    eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
+    monitorPriority: item.monitor_priority || 'dormant',
+    mcap: toNumber(item.last_mcap),
+    priceUsd: toNumber(item.last_price),
+    volume5m: toNumber(item.last_vol_5m),
+    volume1h: toNumber(item.last_vol_1h),
+    volume6h: toNumber(item.last_vol_6h),
+    volume24h: toNumber(item.last_vol_24h),
+    priceChange1h: toNumber(item.last_price_change_1h),
+    priceChange6h: toNumber(item.last_price_change_6h),
+    priceChange24h: toNumber(item.last_price_change_24h),
+    tokenCreatedAt: Number.isFinite(Number(item.last_token_created_at_ms)) ? Number(item.last_token_created_at_ms) : null,
+    prevMcap: marketBaseline.prevMcap,
+    mcapDelta: marketBaseline.mcapDelta,
+    prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
+    lastSeenAt: item.last_seen_at || null,
+    lastEvaluatedAt: item.last_evaluated_at || null,
+    meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
   };
 }
 

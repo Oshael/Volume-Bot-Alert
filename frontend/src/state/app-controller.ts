@@ -39,7 +39,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -5858,6 +5858,107 @@ export function createAppController(): AppController {
     deriveAgeBuckets();
   }
 
+  function buildDashboardMeteoraBatchItem(dashboardItem: DashboardMonitoredToken): MeteoraBatchItem | null {
+    if (!dashboardItem.meteora) {
+      return null;
+    }
+
+    return {
+      address: dashboardItem.address,
+      tvl: dashboardItem.meteora.tvl ?? null,
+      poolAddress: dashboardItem.meteora.poolAddress ?? null,
+      poolCount: dashboardItem.meteora.poolCount ?? 0,
+      lastCheckedAt: dashboardItem.meteora.lastCheckedAt ?? null,
+      lastSnapshotAt: dashboardItem.meteora.lastSnapshotAt ?? null,
+      change1h: dashboardItem.meteora.change1h ?? null,
+      change6h: dashboardItem.meteora.change6h ?? null,
+      change24h: dashboardItem.meteora.change24h ?? null,
+      noPool: dashboardItem.meteora.noPool ?? false,
+    };
+  }
+
+  function mergeHydratedManualToken(
+    address: string,
+    currentTracked: ManualTokenEntry,
+    dashboardItem: DashboardMonitoredToken,
+  ) {
+    const meteoraItem = buildDashboardMeteoraBatchItem(dashboardItem);
+    if (meteoraItem) {
+      syncMeteoraBatchCache([meteoraItem]);
+    }
+
+    const mergedItem = mergeTrackedDashboardFields({
+      existingItem: currentTracked,
+      dashboardItem,
+      base: {
+        ...currentTracked,
+        address,
+        label: currentTracked.label ?? dashboardItem.symbol ?? null,
+        manual: true,
+        _userManual: true,
+      },
+      coldRefreshDue: true,
+    });
+    return selectMergedTrackedToken(currentTracked, mergedItem);
+  }
+
+  function applyHydratedManualToken(address: string, nextItem: ManualTokenEntry, currentTracked: ManualTokenEntry) {
+    if (nextItem === currentTracked) {
+      return;
+    }
+
+    replaceTrackedTokenReferences(address, nextItem);
+    deriveAgeBuckets();
+    state.runtime.monitoredRevision += 1;
+    refreshMonitoredPanelCounts();
+    emit('monitored', 'manual', 'recent', 'old-week', 'header');
+  }
+
+  async function hydrateManualTokenDashboardAttempt(address: string, token: string) {
+    const currentTracked = state.data.trackedTokensByAddress[address];
+    if (!currentTracked || !hasCriticalColdFieldGap(currentTracked)) {
+      return true;
+    }
+
+    const [dashboardItem] = await fetchMonitoredMetadataBatch([address], token);
+    if (state.session.token !== token || !isAuthenticatedSession()) {
+      return true;
+    }
+    if (!dashboardItem) {
+      return false;
+    }
+
+    const nextItem = mergeHydratedManualToken(address, currentTracked, dashboardItem);
+    applyHydratedManualToken(address, nextItem, currentTracked);
+    return !hasCriticalColdFieldGap(nextItem);
+  }
+
+  async function hydrateManualTokenDashboardFields(
+    address: string,
+    token: string,
+    options?: { retryDelaysMs?: number[] },
+  ) {
+    const retryDelaysMs = options?.retryDelaysMs || [0];
+
+    for (const delayMs of retryDelaysMs) {
+      if (delayMs > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      }
+
+      if (state.session.token !== token || !isAuthenticatedSession()) {
+        return;
+      }
+
+      try {
+        const complete = await hydrateManualTokenDashboardAttempt(address, token);
+        if (complete) {
+          return;
+        }
+      } catch {
+      }
+    }
+  }
+
   async function syncManualTokenToBackend(address: string, label: string | null | undefined, token: string) {
     const result = await addManualTokenRequest(address, label ?? null, token);
     if (result?.token) {
@@ -5871,8 +5972,13 @@ export function createAppController(): AppController {
       }
     }
 
-    await trackManualToken(address, token);
+    const trackResult = await trackManualToken(address, token);
     await reloadConfigPreservingMonitoredSnapshot(token);
+    void hydrateManualTokenDashboardFields(address, token, {
+      retryDelaysMs: trackResult?.bootstrapState === 'evaluated'
+        ? [0]
+        : [0, 750, 2000],
+    });
   }
 
   return {
