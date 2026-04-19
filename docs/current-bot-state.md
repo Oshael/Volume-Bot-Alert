@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-09` after the token-risk runtime gained Helius structural enrichment, automatic persisted risk labels, and manual-vs-auto review precedence while the public frontend continued on Vercel.
+Last reviewed against code and the live deployment model on `2026-04-18` after backend-owned user alert matching became the primary alert source for `VOL`, `MCAP`, `HVNC`, `Surge`, and `Meteora`, the monitored bootstrap became paged, and the live workspace gained hidden-tab light-mode behavior.
 
 ## Current Deployment Topology
 
@@ -37,10 +37,19 @@ Current production-like deployment shape:
 This repository now treats automated tests as a destructive operation against the selected database.
 
 Current code facts:
-- the test files force `NODE_ENV=test` internally:
+- the core automated test path now runs:
+  - `npm run db:schema-check:test`
+  - `tests/admin.test.js`
+  - `tests/auth.test.js`
+  - `tests/catalog.test.js`
+  - `tests/config.test.js`
+  - `tests/billing.test.js`
+- multiple test entrypoints force `NODE_ENV=test` internally, including:
   - `tests/catalog.test.js`
   - `tests/admin.test.js`
   - `tests/auth.test.js`
+  - `tests/config.test.js`
+  - `tests/billing.test.js`
 - test setup deletes and recreates data in the target DB
 - config loading now prefers `.env.test` in test mode and supports explicit test-only DB variables in `config/index.js`:
   - `DATABASE_URL_TEST`
@@ -296,6 +305,10 @@ Important:
 - Important current config behavior:
   - `chain` is now admin-only in the UI and protected on the backend
   - normal users no longer see or mutate `chain`
+  - `card-effects-mode` is now a persisted per-user config:
+    - `on`
+    - `off`
+  - current default keeps card FX enabled
   - `uiPrefs.enabledTradeTerminals` is now persisted per account
   - supported terminal ids are:
     - `axiom`
@@ -305,9 +318,19 @@ Important:
     - `padre`
   - current default enables all five
   - if exactly one terminal is enabled, terminal actions open it directly instead of showing the terminal selector menu
+  - `uiPrefs.livePanelLayout` is now persisted per account for the `/alerts` workspace:
+    - `order`:
+      - `monitored`
+      - `pumpfun`
+      - `alerts`
+    - `spans.monitored`: `1 | 2 | 3`
+    - `spans.pumpfun`: fixed to `1`
+    - `spans.alerts`: `1 | 2 | 3`
   - current default values for newly created accounts now include:
-    - `min-vol = 5000`
+    - `min-vol = 8000`
     - `min-mcap = 30000`
+    - `pump-entry-vol = 3000`
+    - `pump-min-vol = 100000`
     - `old-mcap-max = 100000000`
     - `old-week-mcap-max = 100000000`
     - `old-alert-1h-threshold = 50`
@@ -315,6 +338,27 @@ Important:
     - `meteora-alert-1h-threshold = 50`
     - `alert-high-cap-dump-enabled = on`
     - `sound-high-cap-dump-enabled = on`
+  - current default UI-pref values for newly created accounts now include:
+    - `monitoredSorts = [{ mode: 'vol', window: '5m' }]`
+    - `recentSorts = [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]`
+    - `oldWeekSorts = [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]`
+    - `enabledTradeTerminals = ['axiom', 'photon', 'bullx', 'gmgn', 'padre']`
+    - `livePanelLayout.order = ['monitored', 'pumpfun', 'alerts']`
+    - `livePanelLayout.spans.monitored = 1`
+    - `livePanelLayout.spans.pumpfun = 1`
+    - `livePanelLayout.spans.alerts = 1`
+  - current surge-config reality:
+    - recent surge and old-week surge now have separate backend-persisted threshold keys:
+      - `recent-surge-1h-threshold`
+      - `recent-surge-6h-threshold`
+      - `old-week-surge-1h-threshold`
+      - `old-week-surge-6h-threshold`
+    - alert toggles are also split per age bucket/window:
+      - `alert-recent-surge-1h-enabled`
+      - `alert-recent-surge-6h-enabled`
+      - `alert-old-week-surge-1h-enabled`
+      - `alert-old-week-surge-6h-enabled`
+    - legacy `old-alert-*` / `alert-old-surge-*` keys still exist only as compatibility fallback inputs when the newer split keys are absent
 
 ### Global monitored baseline
 - Source of truth: backend catalog/dashboard state
@@ -354,6 +398,14 @@ Important:
   - compares the baseline against the minimum `low_mcap` inside the last `5m`
   - qualifies only if `baseline_mcap >= 2_000_000`
   - default dump threshold remains `50%`
+  - pair consistency is now part of the gate:
+    - the detector tracks pair/pool identity through the window
+    - dumps are suppressed when the window shows pair churn instead of a consistent collapse on the same pair
+    - this was added to reduce false dump alerts caused by Dex returning a different pool for the same token
+  - dump evaluation now keeps a rule-local pinned pair per token in `token_alert_rule_state.metadata`
+  - pin acquisition / pin switch requires `10` consecutive live observations of the same best pair before the detector trusts that new pair
+  - while a pair pin is being acquired or switched, dump alerts are intentionally suppressed
+  - if the live best pair diverges from the pinned pair while a dump leg is still marked triggered, the old leg is rearmed immediately with reason `pair-switch`
   - rearm happens on recovery to `85%` of the last baseline or after `6h`
 - Current user-scope limitation:
   - users can currently only toggle this alert on/off and mute/unmute its sound
@@ -413,7 +465,6 @@ Important:
 - Why still frontend-owned:
   - MCAP windows are per-user
   - dismiss state is per-user
-  - removal logs are local/account-scoped
 - Current routed/elegibility behavior:
   - token-level routed eligibility (`_isRecentRouted`, `_isOldWeekRouted`) is maintained in the tracked-token pipeline even when the bars are collapsed
   - `Recent` / `Old Week` list derivation is now paused while the corresponding bar is collapsed
@@ -472,14 +523,14 @@ Important:
 ### Market history / MCAP baselines
 - Source of truth:
   - backend-persisted `token_market_buckets_1m` for the primary MCAP baseline path
-  - backend-persisted `token_market_snapshots` for the canonical visual `VOL 5M` baseline used by `Monitored`
+  - backend-persisted `token_market_volume_buckets_1m` for the canonical visual `VOL 5M` baseline used by `Monitored`
 - Primary model:
   - `src/models/token-market-bucket-1m.js`
 - Important current note:
   - `token_market_buckets_1m` remains the main pre-aggregated market-history path
-  - the catalog worker now also writes fresh `token_market_snapshots` again
-  - that snapshot table is currently used to provide a canonical `VOL 5M` visual baseline to the `Monitored` cards
-  - this snapshot path does not change the monitored alert engine
+  - fresh raw `token_market_snapshots` are no longer the normal monitored baseline path
+  - the dashboard route now builds the canonical visual `VOL 5M` baseline from `token_market_volume_buckets_1m`
+  - legacy `token_market_snapshots` still exist mainly for historical/backfill compatibility and cleanup behavior
 
 ## Active Data Flows
 
@@ -498,6 +549,12 @@ Important:
 Important:
 - The bot now auto-starts monitoring on login/session restore once an authenticated session is active.
 - The old manual start/stop control is no longer the primary workspace-header interaction.
+- If `/alerts` is hidden for less than `20m`, the live workspace now enters a lighter hidden mode instead of behaving exactly like the visible workspace:
+  - live polling is paused
+  - PumpFun GC is paused
+  - backend alert events can still be accepted into alert state
+  - backend alert sounds can still play while hidden
+  - returning to the tab schedules a monitored refresh with unseen alert-feed catch-up
 - If the browser tab stays hidden/unfocused for `20m`, the frontend stops the runtime and reloads when the user returns to the tab.
 - legacy frontend token storage was removed from the live auth flow
 
@@ -515,7 +572,7 @@ Current login rule:
   - backend enriches rows with:
     - latest market values persisted in catalog
     - MCAP baseline primarily from `token_market_buckets_1m`
-    - legacy fallback baseline from `token_market_snapshots` only when the bucket baseline is missing
+    - canonical `VOL 5M` baseline from `token_market_volume_buckets_1m`
     - latest Meteora summary from `token_meteora_state`
 - Current intended effect:
   - frontend no longer depends on per-token Dex socket fetches as the main monitored refresh mechanism
@@ -549,6 +606,8 @@ Current monitored UI behavior:
 - backend payload now includes `generatedAt`
 - frontend shows freshness text in the panel header using that timestamp
 - `Monitored Tokens` now paginates the rendered cards
+- initial authenticated bootstrap now loads monitored page `0` first using the current `monitoredPerPage` and persisted monitored sorts
+- remaining monitored pages continue hydrating in background and merge into the shared tracked-token store without blocking the first paint of the panel
 - `Monitored Tokens` now supports compact local search by:
   - symbol
   - name
@@ -557,7 +616,7 @@ Current monitored UI behavior:
 - pagination does not change alert logic:
   - the full monitored address set still stays in frontend state
   - only the visible page is rendered
-  - hidden pages still receive fresh data through the monitored payload
+  - once all pages hydrate, hidden pages continue receiving refreshed state through the shared monitored payload/store
 - the monitored header now behaves as two tuned rows:
   - title isolated on the left
   - sort controls + token count on the top row
@@ -581,6 +640,10 @@ Current monitored UI behavior:
   - the main `VOL 5M` number is still the live `5m` volume from catalog/Dex
   - the small delta below it now uses backend-provided `prevVolume5mCanonical`
   - this is visual-only and separate from the monitored alert baseline
+- current low-activity monitored policy in the backend worker:
+  - automatic catalog tokens with `volume24h < 5k` are treated as low-activity and are forced onto at least a `3m` recheck floor
+  - manual tokens are exempt from this low-activity suppression
+  - the monitored dashboard route still defaults to `minMcap = 30k`, but worker cadence no longer assumes all low-activity auto tokens should be refreshed aggressively
 
 ### 2a. Lateralization Coins
 - Frontend refresh interval: `60s`
@@ -623,7 +686,9 @@ Current monitored UI behavior:
   3. frontend asks backend to track the token in catalog
   4. backend upserts it into `token_catalog`
   5. backend schedules immediate catalog evaluation
-  6. frontend reloads canonical state with:
+  6. `POST /api/catalog/manual-track` now also attempts an eager Dex evaluation immediately instead of depending only on the background worker loop
+  7. if that eager evaluation fails, the token still falls back to the normal scheduled worker evaluation path
+  8. frontend reloads canonical state with:
      - `GET /api/config`
      - `GET /api/dashboard/monitored`
 
@@ -784,11 +849,11 @@ Current monitored UI behavior:
   - explicit batch hydration for tracked tokens outside the monitored dashboard payload
 - Current read path is DB-backed, not upstream-fetch-backed
 - Current alert behavior on top of Meteora data:
-  - a dedicated `meteora-surge` alert now exists in frontend alert generation
-  - it uses the persisted `change1h` Meteora summary from the dashboard payload
+  - a dedicated `meteora-surge` alert now exists in the backend user-alert matcher
+  - it uses the persisted `change1h` Meteora summary from monitored/backend signal inputs
   - it is independently toggleable from normal surge alerts
   - it is independently muteable in `Sound by alert type`
-  - it currently reuses the `old1h` sound slot/effect while keeping its own sound-enable key
+  - it is delivered into the same `/alerts` feed/socket flow as the other backend-owned user alerts
 - Current anti-noise rule for Meteora alerting:
   - requires `TVL current >= 10k`
   - requires inferred `TVL baseline 1h >= 10k`
@@ -1132,28 +1197,29 @@ Current security priority order:
 - The `/alerts` header now rerenders after successful monitored refreshes, so fresh dashboard payloads update the status tone immediately instead of waiting for a later header-only refresh
 
 ### Alerts
-- Standard monitored `VOL` and `MCAP` alerts share cooldown
-- HVNC remains separate
-- Old-surge remains separate
-- Alerts are currently mixed ownership:
-  - monitored `VOL`
-  - monitored `MCAP`
-  - `hvnc`
-  - `old-surge`
-  - `meteora-surge`
-  - PumpFun alerts
-  remain frontend-owned
-  - `high-cap-dump-5m` is backend-owned and then delivered into the same `Alerts` panel
-- Monitored alert evaluation now runs both on:
-  - live patch merges
-  - `GET /api/dashboard/monitored` rebuilds
-- backend-owned dump alerts are delivered on:
+- Current ownership split is now mostly backend-first:
+  - backend-owned user alerts:
+    - `monitored-vol`
+    - `monitored-mcap`
+    - `hvnc`
+    - `recent-surge-1h`
+    - `recent-surge-6h`
+    - `old-week-surge-1h`
+    - `old-week-surge-6h`
+    - `meteora-surge`
+  - backend-owned global-token alert:
+    - `high-cap-dump-5m`
+  - frontend-local alerts that still remain local:
+    - `pumpfun-vol`
+    - `pumpfun-hvnc`
+- backend-owned alerts are delivered on:
   - `GET /api/dashboard/alert-events?mode=unseen`
   - authenticated socket event `alert:event`
-- current backend dump delivery semantics:
+- current backend delivery semantics:
   - unseen replay is tracked per user and per rule, not only in browser-local dedupe
-  - the frontend marks dump alerts as seen after they are actually accepted into the alert list
-  - backend dump alerts still render inside `/alerts`, but they are not generated by the local monitored alert engine
+  - per-user event idempotency uses mandatory `dedupe_key`
+  - the frontend marks backend alert events as seen only after accepting them into the local alert list
+  - backend-owned alerts still render inside `/alerts`, but they no longer depend on the local monitored alert engine
 - the `Alerts` panel now supports local text search by:
   - symbol
   - name
@@ -1161,12 +1227,17 @@ Current security priority order:
 - the alerts search now uses the same compact-search interaction model as the other lupas, including `Enter/Return` to commit by blurring the input
 - alerts are now restored from browser-local storage per account scope
 - alerts history is currently capped at the most recent `100` entries in runtime state and browser-local storage
+- the panel now also supports per-user animated card FX behind `card-effects-mode`
+- current implementation detail:
+  - the visible card shell stays stable in the list
+  - most arrival FX run through a separate ghost overlay layer
+  - row-level shake is intentionally limited to higher tiers to reduce re-render flicker risk
 - users can clear:
   - all alerts at once via `Clean All`
   - a single alert card via the card-level `×` button
 - current workspace/runtime rule:
-  - alerts are evaluated only inside `/alerts`
-  - `/monitor` still receives live dashboard data but does not run frontend alert evaluation
+  - `/alerts` is still the only workspace that renders and actively catches up the alert feed
+  - `/monitor` still receives live monitored/history data but does not run PumpFun alert generation or mount the alerts panel
 - current alert-link behavior:
   - `X Buscar CA /` opens X search using `contract OR $ticker`
   - the separate social link now renders only the emoji:
@@ -1191,8 +1262,6 @@ Current security priority order:
 ### Browser-local but account-scoped
 - dismissed Recent set
 - dismissed Old Week set
-- Recent removal log
-- Old Week removal log
 - alert cards
 - custom sound assets
 
@@ -1204,9 +1273,14 @@ Current security priority order:
   - `Manual Tokens`
   - `PumpFun`
   - `Alerts`
-- keeps the frontend-owned alert pipeline active
-- also replays unseen backend-owned dump alerts from `GET /api/dashboard/alert-events`
+- replays unseen backend-owned alert feeds from `GET /api/dashboard/alert-events`
+- still keeps only PumpFun-local alerting frontend-owned
 - does not mount `Recent`, `Old Week`, or `Lateralization`
+- the live workspace layout is now user-customizable and persisted:
+  - panels can be reordered by drag handle
+  - `Monitored` and `Alerts` can resize between `1/3`, `2/3`, and `3/3`
+  - `PumpFun` can be reordered but remains fixed at `1/3`
+  - the header now includes a dedicated reset action for the default live layout
 
 ### `/monitor`
 - is the lighter dashboard-analysis workspace
@@ -1229,7 +1303,7 @@ Current security priority order:
   - `GET /api/catalog/bid-zone`
 - follower `/monitor` tabs receive monitored/lateralized/bid-zone snapshots from the leader instead of duplicating that polling
 - this coordination currently applies only to `/monitor`
-- `/alerts` still runs independently per tab because alerts are still frontend-owned behavior
+- `/alerts` still runs independently per tab because live presence, hidden-light behavior, PumpFun runtime, and backend alert acceptance remain scoped to the active browser tab/session
 
 ## Important Current Implementation Notes
 
@@ -1262,6 +1336,17 @@ Current limitation:
   - name
   - contract/address
 - search inputs preserve typing/focus through rerenders so the user can continue typing while live state refreshes
+- `Recent Tokens` now also supports per-user persisted age-window filters:
+  - `AGE MIN`
+  - `AGE MAX`
+- the UI accepts shorthand age inputs like `30m`, `2h`, and `1d`
+- `Recent Tokens` age range is clamped to `0m` through `7d`
+- `AGE MAX` is normalized so it never ends up below `AGE MIN`
+- `Old Tokens 1 Week+` now also supports per-user persisted age-window filters:
+  - `AGE MIN`
+  - `AGE MAX`
+- `Old Tokens 1 Week+` keeps a hard floor of `7d` for `AGE MIN`
+- `Old Tokens 1 Week+` accepts an empty `AGE MAX`, which means no maximum age limit
 - `AGE` currently supports two directions in the UI:
   - `NEWEST`
   - `OLDEST`
@@ -1270,6 +1355,8 @@ Current limitation:
 - `Recent Tokens` now shows a green live indicator with a slower “breathing” pulse while the bot is active
 - current persistence split:
   - `MCAP` min/max filters remain backend-persisted user configs
+  - `Recent Tokens` age min/max also remain backend-persisted user configs
+  - `Old Tokens 1 Week+` age min/max also remain backend-persisted user configs
   - collapse state, sort state, starred-only toggles, and per-page controls are backend-persisted in `user_ui_prefs`
   - free-text search inputs remain browser-local UI state only
 
@@ -1294,49 +1381,43 @@ Current limitation:
   - rate limiting is no longer one global bucket for the whole API
   - remaining pressure points are still mainly dashboard polling plus per-token PumpFun metadata fetches
 
-### Monitored alert trigger model
-- `VOL` and `MCAP` monitored alerts are computed on the frontend from monitored state deltas
-- Current monitored alert evaluation runs during dashboard-driven rebuilds, not only socket patch merges
-- This matters because the monitored table is now backend-driven and no longer relies on Dex socket updates as the primary refresh path
-- `VOL` and `MCAP` now only repeat if:
-  - they drop back below threshold and cross again
-  - or they advance at least `+40` percentage points beyond the last alert of that same type
-- The old behavior where near-identical monitored alerts could re-fire after cooldown is no longer intended
-- Tokens now also have a cross-alert block:
-  - if a token fires one alert type, other alert types for that same token are blocked for `5m`
-  - `Surge` is evaluated before local `VOL/MCAP`, so it wins when both would qualify in the same cycle
+### Backend user-alert matcher model
+- `VOL`, `MCAP`, `HVNC`, `Surge`, and `Meteora` user alerts are now matched in the backend user-alert matcher, not generated primarily in the frontend panel
+- `monitored-vol` and `monitored-mcap` now use anchored repeat semantics:
+  - the first alert uses the current persisted baseline
+  - repeat alerts compare against the last alerted value rather than forever reusing the original baseline
+  - this is why a token now needs fresh progression to re-alert instead of just waiting out `1m`
+- `recent/old-week surge` now use backend rule keys split by age bucket and time window:
+  - `recent-surge-1h`
+  - `recent-surge-6h`
+  - `old-week-surge-1h`
+  - `old-week-surge-6h`
+- surge age gates are backend-enforced:
+  - no surge for tokens younger than `2d`
+  - `2d <= age < 7d` qualifies only for recent-surge
+  - `age >= 7d` qualifies only for old-week-surge
+- surge now also has backend anti-spam guards:
+  - first-seen hot tokens are primed instead of always alerting immediately
+  - same-session repeat requires another `+50` percentage points
+  - `1H` and `6H` variants in the same age bucket cross-block each other for `1h`
+  - surge requires `mcap >= 30k`
 - semantic note:
-  - the alert engine still uses `prevVolume5m` as the session-local previous observed `volume5m`
-  - the newer `prevVolume5mCanonical` field is visual-only for the `Monitored` cards
-  - the visual cleanup of the monitored `VOL 5M` delta therefore did not change alert behavior
-
-### Old Token Surge rule
-- Old Surge no longer fires immediately on bot start just because a token is already hot
-- The current rule is session-based:
-  - if `PCHANGE 1H` or `PCHANGE 6H` crosses its threshold during the session, it alerts
-  - if the token already started above threshold, it only alerts after rising an additional `+50` percentage points above the session baseline
-- This prevents noisy “instant boot alerts” while still allowing genuinely stronger continuation moves to alert later in the same session
-- Surge is now additionally age-gated:
-  - tokens younger than `2d` do not qualify for Surge at all
-  - tokens from `2d` to `7d` can show as `Recent Token Surge`
-  - tokens older than `7d` show as `Old Token Surge`
-- The same `old-surge` engine covers both routed buckets:
-  - `Recent Token Surge`
-  - `Old Token Surge`
-- Current visual contract:
-  - `Recent Token Surge` is green
-  - `Old Token Surge` is orange
-  - standard `50%-100%` monitored alerts are blue
+  - `prevVolume5mCanonical` remains visual-only for monitored cards
+  - alert matching uses backend signal inputs and persisted rule state, not the visual card delta
 
 ### Top config controls
 - The top config area now exposes:
   - `Surge Threshold`
-    - editable `1H` and `6H` surge thresholds
+    - editable recent `1H` and `6H` surge thresholds
+    - editable old-week `1H` and `6H` surge thresholds
   - `Alert Toggles`
     - `VOL`
     - `MCAP`
     - `High Volume New Coin`
-    - `Surge`
+    - `Recent Surge 1H`
+    - `Recent Surge 6H`
+    - `Old Token Surge 1H`
+    - `Old Token Surge 6H`
     - `Meteora 1H`
     - `PumpFun VOL`
     - `PumpFun HVNC`

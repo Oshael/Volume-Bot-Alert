@@ -1,11 +1,10 @@
-import type { AlertEntry, RemovalLogEntry } from '../state/app-state';
+import type { AlertEntry } from '../state/app-state';
 
 const RECENT_DISMISSED_KEY = 'recent_dismissed';
 const OLD_WEEK_DISMISSED_KEY = 'old_week_dismissed';
 const RECENT_REMOVAL_LOG_KEY = 'recent_removal_log';
 const OLD_WEEK_REMOVAL_LOG_KEY = 'old_week_removal_log';
 const ALERTS_KEY = 'alerts';
-const LOG_EXPIRY_MS = 8 * 60 * 60 * 1000;
 
 function scopedKey(scope: string, key: string) {
   return `frontend_vite:${scope}:${key}`;
@@ -41,9 +40,15 @@ function writeJson(scope: string, key: string, value: unknown) {
   }
 }
 
-function pruneLog(entries: RemovalLogEntry[]) {
-  const now = Date.now();
-  return entries.filter((entry) => now - entry.ts < LOG_EXPIRY_MS).slice(0, 100);
+function removeScopedItem(scope: string, key: string) {
+  const storage = getStorage();
+  if (!storage) return;
+
+  try {
+    storage.removeItem(scopedKey(scope, key));
+  } catch {
+    // Ignore storage errors in the migration shell.
+  }
 }
 
 export function loadDismissedRecent(scope: string) {
@@ -62,26 +67,12 @@ export function saveDismissedOldWeek(scope: string, addresses: string[]) {
   writeJson(scope, OLD_WEEK_DISMISSED_KEY, [...new Set(addresses)].sort((a, b) => a.localeCompare(b)));
 }
 
-export function loadRecentRemovalLog(scope: string) {
-  const entries = readJson<RemovalLogEntry[]>(scope, RECENT_REMOVAL_LOG_KEY, []);
-  const pruned = pruneLog(entries);
-  writeJson(scope, RECENT_REMOVAL_LOG_KEY, pruned);
-  return pruned;
+export function clearRecentRemovalLogStorage(scope: string) {
+  removeScopedItem(scope, RECENT_REMOVAL_LOG_KEY);
 }
 
-export function saveRecentRemovalLog(scope: string, entries: RemovalLogEntry[]) {
-  writeJson(scope, RECENT_REMOVAL_LOG_KEY, pruneLog(entries));
-}
-
-export function loadOldWeekRemovalLog(scope: string) {
-  const entries = readJson<RemovalLogEntry[]>(scope, OLD_WEEK_REMOVAL_LOG_KEY, []);
-  const pruned = pruneLog(entries);
-  writeJson(scope, OLD_WEEK_REMOVAL_LOG_KEY, pruned);
-  return pruned;
-}
-
-export function saveOldWeekRemovalLog(scope: string, entries: RemovalLogEntry[]) {
-  writeJson(scope, OLD_WEEK_REMOVAL_LOG_KEY, pruneLog(entries));
+export function clearOldWeekRemovalLogStorage(scope: string) {
+  removeScopedItem(scope, OLD_WEEK_REMOVAL_LOG_KEY);
 }
 
 function pruneAlerts(entries: AlertEntry[]) {

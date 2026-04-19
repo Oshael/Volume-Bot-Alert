@@ -297,7 +297,6 @@ export function renderAppShell(
   wireHoverPersistence(root);
   wireTradeMenus(root);
   wireSortMenus(root);
-  wireLogHovers(root);
   wireUserMenus(root);
   wireProfileModals(root, controller);
   wireSectionCollapseToggles(root, controller);
@@ -810,7 +809,6 @@ function getRecentRenderKey(state: AppState) {
     barsRecent: state.bars.recent,
     oldMcapMin: state.data.configs['old-mcap-min'],
     oldMcapMax: state.data.configs['old-mcap-max'],
-    logCount: state.data.recentRemovalLog.length,
     tokenCount: state.data.recentTokenAddresses.length,
   });
 }
@@ -832,7 +830,6 @@ function getOldWeekRenderKey(state: AppState) {
     barsOldWeek: state.bars.oldWeek,
     oldWeekMcapMin: state.data.configs['old-week-mcap-min'],
     oldWeekMcapMax: state.data.configs['old-week-mcap-max'],
-    logCount: state.data.oldWeekRemovalLog.length,
     tokenCount: state.data.oldWeekTokenAddresses.length,
   });
 }
@@ -1015,7 +1012,6 @@ let hoverWired = false;
 let tradeWired = false;
 let sortMenusWired = false;
 let userMenusWired = false;
-let logHoverWired = false;
 let profileModalWired = false;
 let sectionCollapseWired = false;
 let livePanelResizeWired = false;
@@ -1125,66 +1121,6 @@ function wireSortMenus(root: HTMLElement) {
       for (const openWrap of root.querySelectorAll<HTMLElement>('[data-sort-wrap].open')) {
         openWrap.classList.remove('open');
       }
-    }
-  });
-}
-
-function wireLogHovers(root: HTMLElement) {
-  if (logHoverWired) return;
-  logHoverWired = true;
-
-  const syncLogHoverToggles = () => {
-    for (const wrap of root.querySelectorAll<HTMLElement>('[data-log-hover]')) {
-      const toggle = wrap.querySelector<HTMLElement>('[data-log-hover-toggle]');
-      if (toggle) {
-        toggle.setAttribute('aria-expanded', wrap.classList.contains('open') ? 'true' : 'false');
-      }
-    }
-  };
-
-  root.addEventListener('click', (event) => {
-    const target = event.target as HTMLElement | null;
-    const toggle = target?.closest<HTMLElement>('[data-log-hover-toggle]');
-    const closeButton = target?.closest<HTMLElement>('[data-log-hover-close]');
-    const wrap = target?.closest<HTMLElement>('[data-log-hover]');
-
-    for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
-      if (openWrap !== wrap) openWrap.classList.remove('open');
-    }
-
-    if (toggle && wrap) {
-      event.preventDefault();
-      wrap.classList.toggle('open');
-      syncLogHoverToggles();
-      return;
-    }
-
-    if (closeButton && wrap) {
-      event.preventDefault();
-      wrap.classList.remove('open');
-      syncLogHoverToggles();
-      return;
-    }
-
-    if (!wrap) {
-      for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
-        openWrap.classList.remove('open');
-      }
-      syncLogHoverToggles();
-    }
-  });
-
-  root.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') {
-      return;
-    }
-    let changed = false;
-    for (const openWrap of root.querySelectorAll<HTMLElement>('[data-log-hover].open')) {
-      openWrap.classList.remove('open');
-      changed = true;
-    }
-    if (changed) {
-      syncLogHoverToggles();
     }
   });
 }

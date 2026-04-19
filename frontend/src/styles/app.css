@@ -632,24 +632,6 @@ a {
   margin-top: 12px;
 }
 
-.removal-log {
-  margin-top: 18px;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.removal-log-list {
-  display: grid;
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.removal-log-card {
-  background: rgba(0, 0, 0, 0.18);
-}
-
 .alert-card.hvnc {
   border-color: rgba(255, 107, 0, 0.35);
   background: rgba(255, 107, 0, 0.08);
@@ -4631,21 +4613,12 @@ TEMP_LEGACY_BAR_TITLE {
   }
 }
 
-.legacy-removal-badge,
 .legacy-bar-note,
 .filter-label,
 .legacy-mini-field,
 .compact-inline {
   font-size: 9px;
   color: var(--muted);
-}
-
-.legacy-removal-badge {
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
 }
 
 .legacy-mini-field {
@@ -5144,14 +5117,6 @@ TEMP_LEGACY_BAR_TITLE {
 .token-table.old-week .token-avatar.placeholder {
   color: #ff8c00;
   background: rgba(255, 140, 0, 0.12);
-}
-
-.removal-log.recent {
-  border-color: rgba(0, 204, 102, 0.18);
-}
-
-.removal-log.old-week {
-  border-color: rgba(255, 140, 0, 0.18);
 }
 
 @media (max-width: 980px) {
@@ -6330,70 +6295,6 @@ TEMP_LEGACY_BAR_TITLE {
   padding: 0;
 }
 
-.log-hover {
-  position: relative;
-  display: inline-block;
-}
-
-.log-hover::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 0;
-  width: 100%;
-  height: 8px;
-}
-
-.log-hover-panel {
-  display: none;
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 420px;
-  max-width: 560px;
-  max-height: 440px;
-  overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 10px;
-  padding: 12px;
-  z-index: 140;
-  box-shadow: 0 14px 40px rgba(0,0,0,0.56);
-}
-
-.log-hover.open .log-hover-panel {
-  display: block;
-}
-
-.log-hover-panel.recent {
-  border-color: rgba(0, 204, 102, 0.3);
-}
-
-.log-hover-panel.old-week {
-  border-color: rgba(255, 140, 0, 0.3);
-}
-
-.log-hover-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  position: sticky;
-  top: -12px;
-  background: var(--bg);
-  z-index: 2;
-}
-
-.log-hover-head span {
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
 .panel-manual-entry {
   padding: 0 10px 10px;
 }
@@ -6420,12 +6321,6 @@ TEMP_LEGACY_BAR_TITLE {
 @media (max-width: 980px) {
   .panel-manual-form {
     grid-template-columns: 1fr;
-  }
-
-  .log-hover-panel {
-    min-width: min(320px, calc(100vw - 32px));
-    left: auto;
-    right: 0;
   }
 }
 
@@ -6465,100 +6360,6 @@ TEMP_LEGACY_BAR_TITLE {
   margin-top: 0;
 }
 
-.log-hover-panel {
-  min-width: 360px;
-  max-width: 520px;
-  padding: 12px;
-}
-
-.removal-log-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.log-entry-card {
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.028);
-}
-
-.log-entry-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.log-entry-address {
-  margin-top: 2px;
-  color: rgba(255,255,255,0.72);
-  font-size: 11px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-}
-
-.log-entry-title span {
-  color: var(--muted);
-  font-weight: 400;
-  margin-left: 6px;
-}
-
-.log-entry-body {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.log-entry-time {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.log-entry-meta-row {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.log-entry-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.log-entry-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.log-hover-head span {
-  font-size: 10px;
-}
-
-.log-hover-title-wrap {
-  display: grid;
-  gap: 2px;
-}
-
-.log-hover-title-wrap small {
-  color: rgba(255,255,255,0.6);
-  font-size: 10px;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.log-hover-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
 @media (max-width: 980px) {
   .bucket-footer {
     grid-template-columns: 1fr;
@@ -6570,30 +6371,6 @@ TEMP_LEGACY_BAR_TITLE {
   }
 }
 
-.log-entry-head {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.log-entry-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid rgba(255,255,255,0.1);
-}
-
-.log-entry-avatar.placeholder {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255,255,255,0.06);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 700;
-}
-
 /* VISUAL SCALE OVERRIDES */
 .manual-bar .legacy-bar-title,
 .recent-bar .legacy-bar-title,
@@ -6601,17 +6378,14 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 11px !important;
 }
 
-.manual-bar .legacy-removal-badge,
 .manual-bar .legacy-bar-note,
 .manual-bar .filter-label,
 .manual-bar .legacy-mini-field,
 .manual-bar .compact-inline,
-.recent-bar .legacy-removal-badge,
 .recent-bar .legacy-bar-note,
 .recent-bar .filter-label,
 .recent-bar .legacy-mini-field,
 .recent-bar .compact-inline,
-.old-week-bar .legacy-removal-badge,
 .old-week-bar .legacy-bar-note,
 .old-week-bar .filter-label,
 .old-week-bar .legacy-mini-field,
@@ -6646,10 +6420,8 @@ TEMP_LEGACY_BAR_TITLE {
 
 /* RECENT & OLD TOKENS: control bar sizing */
 :is(.recent-bar, .old-week-bar) .legacy-bar-head {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  row-gap: 10px;
+  gap: 12px;
+  row-gap: 8px;
   padding-bottom: 12px;
   border-bottom: 1px solid rgba(0, 255, 136, 0.12);
   box-shadow: 0 1px 0 rgba(0, 255, 136, 0.04);
@@ -6659,23 +6431,19 @@ TEMP_LEGACY_BAR_TITLE {
   border-bottom-color: rgba(255, 140, 0, 0.18);
   box-shadow: 0 1px 0 rgba(255, 140, 0, 0.05);
 }
-:is(.recent-bar, .old-week-bar) .legacy-bar-title-wrap {
-  width: 100%;
-}
 :is(.recent-bar, .old-week-bar) .legacy-bar-controls,
 :is(.recent-bar, .old-week-bar) .sort-pill-group {
   gap: 8px;
   row-gap: 6px;
 }
 :is(.recent-bar, .old-week-bar) .recent-bar-controls {
-  width: 100%;
-  padding-left: 4px;
+  padding-left: 0;
 }
 :is(.recent-bar, .old-week-bar) .recent-ctrl-filters {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  margin-left: 24px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -6686,65 +6454,65 @@ TEMP_LEGACY_BAR_TITLE {
 }
 :is(.recent-bar, .old-week-bar) .legacy-mini-field input,
 :is(.recent-bar, .old-week-bar) .compact-inline input {
-  width: 88px !important;
-  min-height: 32px !important;
-  padding: 4px 8px !important;
-  font-size: 13px !important;
+  width: 76px !important;
+  min-height: 26px !important;
+  padding: 3px 6px !important;
+  font-size: 12px !important;
   border-width: 1.5px !important;
 }
 :is(.recent-bar, .old-week-bar) .old-filter-btn,
 :is(.recent-bar, .old-week-bar) .inline-icon {
-  min-height: 32px !important;
-  padding: 4px 12px !important;
-  font-size: 12px !important;
+  min-height: 26px !important;
+  padding: 3px 10px !important;
+  font-size: 11px !important;
   letter-spacing: 0.5px !important;
   border-width: 1.5px !important;
 }
 :is(.recent-bar, .old-week-bar) .filter-label {
-  font-size: 11px !important;
+  font-size: 10px !important;
   letter-spacing: 0.5px !important;
 }
 :is(.recent-bar, .old-week-bar) .compact-icon-toggle {
-  flex: 0 0 34px;
-  width: 34px;
-  min-width: 34px;
-  max-width: 34px;
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
   height: 32px;
   min-height: 32px;
   max-height: 32px;
   border-radius: 8px;
 }
 :is(.recent-bar, .old-week-bar) .compact-icon-glyph {
-  font-size: 18px;
+  font-size: 16px;
 }
 :is(.recent-bar, .old-week-bar) .compact-search {
-  width: 34px;
-  min-width: 34px;
+  width: 32px;
+  min-width: 32px;
   height: 32px;
   border-radius: 8px;
 }
 :is(.recent-bar, .old-week-bar) .compact-search-toggle {
-  width: 32px;
+  width: 30px;
   height: 30px;
-  font-size: 14px;
+  font-size: 13px;
 }
 :is(.recent-bar, .old-week-bar) .compact-search-input {
-  left: 32px;
+  left: 30px;
   height: 28px;
   line-height: 28px;
-  font-size: 12px;
+  font-size: 11px;
 }
 :is(.recent-bar, .old-week-bar) .compact-search.has-query,
 :is(.recent-bar, .old-week-bar) .compact-search.open,
 :is(.recent-bar, .old-week-bar) .compact-search:focus-within {
-  width: 160px;
-  min-width: 160px;
+  width: 140px;
+  min-width: 140px;
 }
 :is(.recent-bar, .old-week-bar) .compact-search.has-query .compact-search-input,
 :is(.recent-bar, .old-week-bar) .compact-search.open .compact-search-input,
 :is(.recent-bar, .old-week-bar) .compact-search:focus-within .compact-search-input {
-  width: 116px;
-  padding: 0 28px 0 4px;
+  width: 100px;
+  padding: 0 24px 0 4px;
 }
 :is(.recent-bar, .old-week-bar) .legacy-bar-note {
   font-size: 11px !important;
@@ -6765,12 +6533,12 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .old-week-bar input[name="old-week-age-max"]:placeholder-shown {
-  padding-top: 10px !important;
+  padding-top: 8px !important;
   padding-bottom: 0 !important;
   line-height: 1 !important;
 }
 .old-week-bar input[name="old-week-age-max"]::placeholder {
-  font-size: 30px;
+  font-size: 24px;
   line-height: 1;
   opacity: 0.7;
 }
@@ -6778,31 +6546,31 @@ TEMP_LEGACY_BAR_TITLE {
 .recent-bar-controls .recent-ctrl-cluster {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  min-height: 38px;
+  gap: 6px;
+  padding: 3px 10px;
+  min-height: 32px;
   border: 1.5px solid rgba(34, 48, 74, 0.95);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(8, 11, 16, 0.96);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .recent-bar-controls .recent-ctrl-cluster-label {
-  font-size: 12px !important;
-  letter-spacing: 0.8px;
+  font-size: 11px !important;
+  letter-spacing: 0.7px;
   color: var(--muted);
   text-transform: uppercase;
   font-weight: 700;
   border-right: 1px solid rgba(34, 48, 74, 0.7);
   line-height: 1;
-  padding: 4px 10px 4px 0;
+  padding: 3px 8px 3px 0;
 }
 
 .recent-bar-controls .recent-ctrl-cluster input {
-  width: 86px !important;
-  min-height: 28px !important;
-  padding: 4px 6px !important;
-  font-size: 14px !important;
+  width: 74px !important;
+  min-height: 24px !important;
+  padding: 3px 6px !important;
+  font-size: 12px !important;
   border: 0 !important;
   background: transparent !important;
   color: var(--text);
@@ -6817,27 +6585,27 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .recent-bar-controls .recent-ctrl-cluster-range input {
-  width: 78px !important;
+  width: 68px !important;
   text-align: center;
 }
 
 .recent-bar-controls .recent-ctrl-range-sep {
   color: rgba(142, 226, 255, 0.4);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   padding: 0 2px;
 }
 
 .recent-bar-controls .recent-ctrl-cluster-sort {
-  gap: 6px;
-  padding-left: 12px;
-  padding-right: 6px;
+  gap: 4px;
+  padding-left: 10px;
+  padding-right: 4px;
 }
 
 .recent-bar-controls .recent-ctrl-cluster-sort .old-filter-btn {
-  min-height: 28px !important;
-  padding: 4px 12px !important;
-  font-size: 12px !important;
+  min-height: 24px !important;
+  padding: 3px 10px !important;
+  font-size: 11px !important;
   border: 1.5px solid transparent !important;
   background: transparent !important;
   border-radius: 6px;

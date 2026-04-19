@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type RemovalLogEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -43,16 +43,14 @@ import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetc
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
+  clearRecentRemovalLogStorage,
+  clearOldWeekRemovalLogStorage,
   loadAlerts,
   loadDismissedOldWeek,
   loadDismissedRecent,
-  loadOldWeekRemovalLog,
-  loadRecentRemovalLog,
   saveAlerts,
   saveDismissedOldWeek,
   saveDismissedRecent,
-  saveOldWeekRemovalLog,
-  saveRecentRemovalLog,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
 import {
@@ -270,8 +268,6 @@ export interface AppController {
   removeAlert(id: string): void;
   setNetworkDebugEnabled(enabled: boolean): void;
   clearNetworkDebugEntries(): void;
-  clearRecentRemovalLog(): void;
-  clearOldWeekRemovalLog(): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
   toggleSectionCollapsed(section: CollapsibleSectionKey): void;
@@ -2205,8 +2201,8 @@ export function createAppController(): AppController {
     const scope = getStorageScope();
     saveDismissedRecent(scope, state.data.dismissedRecent);
     saveDismissedOldWeek(scope, state.data.dismissedOldWeek);
-    saveRecentRemovalLog(scope, state.data.recentRemovalLog);
-    saveOldWeekRemovalLog(scope, state.data.oldWeekRemovalLog);
+    clearRecentRemovalLogStorage(scope);
+    clearOldWeekRemovalLogStorage(scope);
     flushAlertsPersist();
   }
 
@@ -2214,8 +2210,8 @@ export function createAppController(): AppController {
     const scope = getStorageScope();
     state.data.dismissedRecent = loadDismissedRecent(scope);
     state.data.dismissedOldWeek = loadDismissedOldWeek(scope);
-    state.data.recentRemovalLog = loadRecentRemovalLog(scope);
-    state.data.oldWeekRemovalLog = loadOldWeekRemovalLog(scope);
+    clearRecentRemovalLogStorage(scope);
+    clearOldWeekRemovalLogStorage(scope);
     state.data.alerts = loadAlerts(scope);
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision = state.data.alerts.length > 0 ? 1 : 0;
@@ -3092,25 +3088,6 @@ export function createAppController(): AppController {
 
     commitPumpTokenUpdate(token, existing);
   }
-  function logRemoval(target: 'recent' | 'oldWeek', token: ManualTokenEntry, reason: string) {
-    const entry: RemovalLogEntry = {
-      address: token.address,
-      symbol: token.symbol || token.label || token.address.slice(0, 8),
-      imageUrl: token.imageUrl || null,
-      pairUrl: token.pairUrl || null,
-      mcap: token.mcap ?? null,
-      reason,
-      ts: Date.now(),
-    };
-
-    if (target === 'recent') {
-      state.data.recentRemovalLog = [entry, ...state.data.recentRemovalLog].slice(0, 100);
-    } else {
-      state.data.oldWeekRemovalLog = [entry, ...state.data.oldWeekRemovalLog].slice(0, 100);
-    }
-    persistBarStorage();
-  }
-
   function clampPage(page: number, totalItems: number, perPage: number) {
     const safePerPage = Math.max(10, Math.floor(perPage) || 30);
     const totalPages = Math.max(1, Math.ceil(totalItems / safePerPage));
@@ -3257,52 +3234,6 @@ export function createAppController(): AppController {
     };
   }
 
-  function maybeLogRecentRemoval(
-    item: ManualTokenEntry,
-    context: ReturnType<typeof getRoutedEligibilityContext>,
-    routedState: ReturnType<typeof deriveRoutedTokenState>,
-  ) {
-    if (routedState.nextRecent || !routedState.wasRecent || context.recentDismissed.has(item.address)) {
-      return;
-    }
-
-    const age = context.now - (item.createdAt || 0);
-    const mcap = item.mcap ?? 0;
-    const entersOldWeek = age >= context.oldWeekAgeMinMs
-      && (context.oldWeekAgeMaxMs <= 0 || age <= context.oldWeekAgeMaxMs);
-    const reason = entersOldWeek
-      ? 'aged into Old Tokens 1 Week+'
-      : age < context.recentAgeMinMs
-        ? 'age below Recent min'
-        : age > context.recentAgeMaxMs
-          ? 'age above Recent max'
-        : mcap > 0 && (mcap < context.recentMin || (context.recentMax > 0 && mcap > context.recentMax))
-          ? 'MCAP out of Recent range'
-          : 'left Recent routing';
-    logRemoval('recent', item, reason);
-  }
-
-  function maybeLogOldWeekRemoval(
-    item: ManualTokenEntry,
-    context: ReturnType<typeof getRoutedEligibilityContext>,
-    routedState: ReturnType<typeof deriveRoutedTokenState>,
-  ) {
-    if (routedState.nextOldWeek || !routedState.wasOldWeek || context.oldWeekDismissed.has(item.address)) {
-      return;
-    }
-
-    const age = context.now - (item.createdAt || 0);
-    const mcap = item.mcap ?? 0;
-    const reason = age < context.oldWeekAgeMinMs
-      ? 'age below Old Tokens min'
-      : context.oldWeekAgeMaxMs > 0 && age > context.oldWeekAgeMaxMs
-        ? 'age above Old Tokens max'
-        : mcap > 0 && (mcap < context.oldWeekMin || (context.oldWeekMax > 0 && mcap > context.oldWeekMax))
-          ? 'MCAP out of Old Week range'
-          : 'left Old Week routing';
-    logRemoval('oldWeek', item, reason);
-  }
-
   function finalizeAgeBucketState(
     deriveRecentList: boolean,
     deriveOldWeekList: boolean,
@@ -3334,9 +3265,6 @@ export function createAppController(): AppController {
       if (routedState.nextOldWeek && deriveOldWeekList) {
         nextOldWeekAddresses.push(item.address);
       }
-
-      maybeLogRecentRemoval(item, context, routedState);
-      maybeLogOldWeekRemoval(item, context, routedState);
     }
 
     finalizeAgeBucketState(deriveRecentList, deriveOldWeekList, nextRecentAddresses, nextOldWeekAddresses);
@@ -5137,8 +5065,6 @@ export function createAppController(): AppController {
       dismissedRecent: [],
       dismissedOldWeek: [],
       dismissedPump: [],
-      recentRemovalLog: [],
-      oldWeekRemovalLog: [],
       blocklist: [],
       starredTokens: [],
       eligibleCatalogTokens: [],
@@ -6324,16 +6250,6 @@ export function createAppController(): AppController {
       syncAlertState();
       emit('alerts');
       flushEmit();
-    },
-    clearRecentRemovalLog() {
-      state.data.recentRemovalLog = [];
-      persistBarStorage();
-      emit('recent');
-    },
-    clearOldWeekRemovalLog() {
-      state.data.oldWeekRemovalLog = [];
-      persistBarStorage();
-      emit('old-week');
     },
     clearDismissedRecent() {
       state.data.dismissedRecent = [];

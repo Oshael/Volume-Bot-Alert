@@ -36,16 +36,6 @@ export interface AlertEntry {
   isOldSurge?: boolean;
 }
 
-export interface RemovalLogEntry {
-  address: string;
-  symbol: string;
-  imageUrl?: string | null;
-  pairUrl?: string | null;
-  mcap?: number | null;
-  reason: string;
-  ts: number;
-}
-
 export interface ManualTokenEntry {
   address: string;
   mintAddress?: string | null;
@@ -446,8 +436,6 @@ export interface AppState {
     dismissedRecent: string[];
     dismissedOldWeek: string[];
     dismissedPump: string[];
-    recentRemovalLog: RemovalLogEntry[];
-    oldWeekRemovalLog: RemovalLogEntry[];
     blocklist: AddressItem[];
     starredTokens: string[];
     eligibleCatalogTokens: string[];
@@ -599,8 +587,6 @@ export function createAppState(): AppState {
       dismissedRecent: [],
       dismissedOldWeek: [],
       dismissedPump: [],
-      recentRemovalLog: [],
-      oldWeekRemovalLog: [],
       blocklist: [],
       starredTokens: [],
       eligibleCatalogTokens: [],

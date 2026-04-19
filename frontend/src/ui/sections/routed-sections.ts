@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderLogSummary, renderPagedAgeBucketList } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderPagedAgeBucketList } from './shared';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
 const OLD_WEEK_MIN_AGE_MINUTES = RECENT_MAX_AGE_MINUTES;
@@ -209,7 +209,6 @@ export function renderRecentSection(state: AppState, controller: AppController) 
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
         <span class="legacy-bar-title recent"><span class="recent-live-emoji ${state.runtime.mode === 'active' ? 'live' : ''}">\u{1F7E2}</span> RECENT TOKENS</span>
-        ${renderLogSummary('Recent Removal Log', state.data.recentRemovalLog, 'clear-recent-log', 'recent')}
       </div>
       <div class="legacy-bar-controls recent-bar-controls">
         <div class="recent-ctrl-icons">
@@ -388,7 +387,6 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       'recent-age-max': normalizedMaxMinutes,
     });
   });
-  section.querySelector<HTMLButtonElement>('[data-action="clear-recent-log"]')?.addEventListener('click', () => controller.clearRecentRemovalLog());
   return section;
 }
 
@@ -461,7 +459,6 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
     <div class="legacy-bar-head">
       <div class="legacy-bar-title-wrap">
         <span class="legacy-bar-title old-week">\u{1F4C5} OLD TOKENS 1 WEEK+</span>
-        ${renderLogSummary('Old Week Removal Log', state.data.oldWeekRemovalLog, 'clear-old-week-log', 'old-week')}
       </div>
       <div class="legacy-bar-controls recent-bar-controls">
         <div class="recent-ctrl-icons">
@@ -642,6 +639,5 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       'old-week-age-max': normalizedMaxMinutes,
     });
   });
-  section.querySelector<HTMLButtonElement>('[data-action="clear-old-week-log"]')?.addEventListener('click', () => controller.clearOldWeekRemovalLog());
   return section;
 }

@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, RemovalLogEntry, TradeTerminalKey } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
@@ -484,30 +484,6 @@ export function renderFlash(state: AppState) {
   return `<div class="${toneClass}" role="${liveRole}" aria-live="polite"><span class="flash-copy">${badge ? `<strong class="flash-badge">${escapeHtml(badge)}</strong>` : ''}<span>${escapeHtml(message)}</span></span><button type="button" class="flash-dismiss" data-action="dismiss-flash">Close</button></div>`;
 }
 
-export function renderLogSummary(title: string, entries: RemovalLogEntry[], clearAction: string, tone: 'recent' | 'old-week') {
-  if (entries.length === 0) return '';
-  const safeTitle = escapeHtml(title);
-  const visibleEntries = entries.slice(0, 20);
-  return `
-    <div class="log-hover ${tone}" data-log-hover>
-      <button type="button" class="legacy-removal-badge" data-log-hover-toggle aria-expanded="false" aria-haspopup="dialog">${entries.length} removed</button>
-      <div class="log-hover-panel ${tone}">
-        <div class="log-hover-head">
-          <div class="log-hover-title-wrap">
-            <span>${safeTitle}</span>
-            <small>${visibleEntries.length} latest token${visibleEntries.length === 1 ? '' : 's'}</small>
-          </div>
-          <div class="log-hover-actions">
-            <button type="button" class="action-button small" data-action="${clearAction}">Clear All</button>
-            <button type="button" class="action-button small" data-log-hover-close>Close</button>
-          </div>
-        </div>
-        <div class="removal-log-list">${visibleEntries.map((entry) => renderRemovalLogEntry(entry)).join('')}</div>
-      </div>
-    </div>
-  `;
-}
-
 function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
   if (mode === 'age') return item.createdAt || 0;
   if (mode === 'mcap') return item.mcap || 0;
@@ -811,50 +787,6 @@ function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, min
       </div>
     </div>
   `;
-}
-
-function renderRemovalLogEntry(entry: RemovalLogEntry) {
-  const mcap = fmtMoney(entry.mcap);
-  const droppedTo = extractDroppedMcap(entry.reason) ?? mcap;
-  const safeSymbol = escapeHtml(entry.symbol);
-  const safeAddress = escapeHtml(entry.address);
-  const safeShortAddress = escapeHtml(`${entry.address.slice(0, 6)}...${entry.address.slice(-4)}`);
-  const imageUrl = sanitizeOptionalHttpUrl(entry.imageUrl);
-  const avatar = imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="log-entry-avatar" />` : `<div class="log-entry-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
-  const dexUrl = sanitizeHttpUrl(entry.pairUrl || `https://dexscreener.com/solana/${entry.address}`);
-  return `
-    <article class="log-entry-card">
-      <div class="log-entry-head">
-        ${avatar}
-        <div class="log-entry-copy">
-          <div class="log-entry-title">${safeSymbol} <span>MCAP ${escapeHtml(mcap)}</span></div>
-          <div class="log-entry-address">${safeShortAddress}</div>
-          <div class="log-entry-body">MCAP dropped to ${escapeHtml(droppedTo)} - below min $120K</div>
-          <div class="log-entry-meta-row">
-            <div class="log-entry-time">${escapeHtml(fmtLogDate(entry.ts))}</div>
-            <div class="log-entry-actions">
-              <button type="button" class="action-button small" data-action="copy-address" data-address="${safeAddress}">Copy CA</button>
-              <a class="action-button small" href="${dexUrl}" target="_blank" rel="noreferrer">DEX</a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </article>
-  `;
-}
-
-function extractDroppedMcap(reason: string) {
-  const match = reason.match(/\$[\d.,]+[KMB]?/i);
-  return match ? match[0] : null;
-}
-
-function fmtLogDate(ts: number) {
-  const date = new Date(ts);
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${day}/${month}, ${hours}:${minutes}`;
 }
 
 function renderAvatar(item: ManualTokenEntry, symbol: string) {
