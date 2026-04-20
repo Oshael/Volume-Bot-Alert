@@ -39,6 +39,22 @@ let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
 let lastLivePresenceSignature: string | null = null;
 
+const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.monitored-list, .lateralized-list, .pump-list, .pump-migration-strip, .alerts-list';
+const TABLE_INTERACTION_LOCK_ZONE_SELECTOR = [
+  '.token-actions-inline',
+  '.action-col',
+  '.bucket-footer',
+  '.compact-search',
+  '[data-sort-wrap]',
+  '[data-trade-wrap]',
+  'button',
+  'a',
+  'input',
+  'select',
+  'textarea',
+  '[data-action]',
+].join(', ');
+
 controller.setDocumentHidden(isDocumentHidden);
 
 function isEditingInteractiveField() {
@@ -341,6 +357,25 @@ function syncLivePresence(state: AppState | null, options?: { force?: boolean })
   lastLivePresenceSignature = signature;
 }
 
+function resolveListInteractionZone(target: HTMLElement | null) {
+  const broadList = target?.closest<HTMLElement>(FULL_LIST_INTERACTION_LOCK_SELECTOR);
+  if (broadList) {
+    return broadList;
+  }
+
+  const tableWrap = target?.closest<HTMLElement>('.token-table-wrap');
+  if (!tableWrap) {
+    return null;
+  }
+
+  const interactionZone = target?.closest<HTMLElement>(TABLE_INTERACTION_LOCK_ZONE_SELECTOR);
+  if (!interactionZone || !tableWrap.contains(interactionZone)) {
+    return null;
+  }
+
+  return interactionZone;
+}
+
 function armHiddenRuntimeStopTimer() {
   clearHiddenRuntimeStopTimer();
   if (!isDocumentHidden || !hiddenMonitoringWasActive) {
@@ -373,13 +408,13 @@ root.addEventListener('pointerdown', (event) => {
 
 root.addEventListener('pointerover', (event) => {
   const target = event.target as HTMLElement | null;
-  const list = target?.closest('.token-table-wrap, .monitored-list, .lateralized-list, .pump-list, .pump-migration-strip, .alerts-list');
-  if (!list) {
+  const interactionZone = resolveListInteractionZone(target);
+  if (!interactionZone) {
     return;
   }
 
   const related = event.relatedTarget as HTMLElement | null;
-  if (related && list.contains(related)) {
+  if (related && interactionZone.contains(related)) {
     return;
   }
 
@@ -388,13 +423,13 @@ root.addEventListener('pointerover', (event) => {
 
 root.addEventListener('pointerout', (event) => {
   const target = event.target as HTMLElement | null;
-  const list = target?.closest('.token-table-wrap, .monitored-list, .lateralized-list, .pump-list, .pump-migration-strip, .alerts-list');
-  if (!list) {
+  const interactionZone = resolveListInteractionZone(target);
+  if (!interactionZone) {
     return;
   }
 
   const related = event.relatedTarget as HTMLElement | null;
-  if (related && list.contains(related)) {
+  if (related && interactionZone.contains(related)) {
     return;
   }
 
@@ -411,80 +446,132 @@ root.addEventListener('focusout', () => {
   window.setTimeout(() => flushPendingRender(), 0);
 });
 
-controller.subscribe((state, dirtyRegions) => {
-  const previousSessionStatus = lastObservedSessionStatus;
-  const previousAuthPanel = lastObservedAuthPanel;
-  const previousAuthModalKey = lastObservedAuthModalKey;
-  const currentRouteKey = typeof window !== 'undefined'
+function clearPendingRenderState() {
+  pendingState = null;
+  pendingDirtyRegions = null;
+}
+
+function queuePendingRenderState(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  pendingState = state;
+  pendingDirtyRegions = mergeDirtyRegions(pendingDirtyRegions, dirtyRegions);
+}
+
+function getCurrentRouteKey() {
+  return typeof window !== 'undefined'
     ? `${window.location.pathname || '/'}${window.location.search || ''}${window.location.hash || ''}`
     : '/';
-  const previousRouteKey = lastObservedRouteKey;
-  const sessionJustBecameAuthenticated = previousSessionStatus !== 'authenticated' && state.session.status === 'authenticated';
+}
+
+function shouldForceRenderForSessionTransition(
+  previousSessionStatus: AppState['session']['status'] | null,
+  state: AppState,
+) {
+  return previousSessionStatus !== state.session.status
+    && (state.session.status === 'authenticated' || state.session.status === 'pre_access');
+}
+
+function shouldForceRenderForAuthPanelOpen(
+  previousAuthPanel: AppState['ui']['authPanel'] | null,
+  state: AppState,
+) {
+  return previousAuthPanel !== state.ui.authPanel && state.ui.authPanel !== 'none';
+}
+
+function shouldQueueRenderDuringInteraction() {
+  return isEditingInteractiveField()
+    || isInteractionLocked()
+    || isListInteractionLocked()
+    || isSortMenuOpen();
+}
+
+function primePlayedAlertsOnAuthentication(state: AppState, sessionJustBecameAuthenticated: boolean) {
+  if (!sessionJustBecameAuthenticated) {
+    return;
+  }
+
+  for (const alert of state.data.alerts) {
+    playedAlertIds.add(alert.id);
+  }
+}
+
+function syncObservedState(state: AppState, currentRouteKey: string) {
+  const previous = {
+    sessionStatus: lastObservedSessionStatus,
+    authPanel: lastObservedAuthPanel,
+    authModalKey: lastObservedAuthModalKey,
+    routeKey: lastObservedRouteKey,
+  };
+
   latestState = state;
   lastObservedSessionStatus = state.session.status;
   lastObservedAuthPanel = state.ui.authPanel;
   lastObservedAuthModalKey = getAuthModalRenderKey(state);
   lastObservedRouteKey = currentRouteKey;
-  syncLivePresence(state);
 
-  if (sessionJustBecameAuthenticated) {
-    for (const alert of state.data.alerts) {
-      playedAlertIds.add(alert.id);
-    }
+  return previous;
+}
+
+function handleAuthPanelRender(
+  state: AppState,
+  dirtyRegions: ReadonlySet<AppRenderRegion>,
+  previousAuthModalKey: string | null,
+) {
+  if (state.ui.authPanel === 'none') {
+    return false;
   }
 
+  if (previousAuthModalKey !== lastObservedAuthModalKey) {
+    performRender(state, dirtyRegions);
+  }
+
+  clearPendingRenderState();
+  return true;
+}
+
+controller.subscribe((state, dirtyRegions) => {
+  const currentRouteKey = getCurrentRouteKey();
+  const previous = syncObservedState(state, currentRouteKey);
+  const sessionJustBecameAuthenticated = previous.sessionStatus !== 'authenticated' && state.session.status === 'authenticated';
+  syncLivePresence(state);
+  primePlayedAlertsOnAuthentication(state, sessionJustBecameAuthenticated);
   syncAudioSideEffects(state);
 
   if (isDocumentHidden) {
     hiddenPendingState = state;
     hiddenDirtyRegions = mergeDirtyRegions(hiddenDirtyRegions, dirtyRegions);
-    pendingState = null;
-    pendingDirtyRegions = null;
+    clearPendingRenderState();
     return;
   }
 
-  if (
-    previousSessionStatus !== state.session.status
-    && (state.session.status === 'authenticated' || state.session.status === 'pre_access')
-  ) {
+  if (shouldForceRenderForSessionTransition(previous.sessionStatus, state)) {
     performRender(state, dirtyRegions);
-    pendingState = null;
-    pendingDirtyRegions = null;
+    clearPendingRenderState();
     return;
   }
 
-  if (previousRouteKey !== currentRouteKey) {
+  if (previous.routeKey !== currentRouteKey) {
     performRender(state, dirtyRegions);
-    pendingState = null;
-    pendingDirtyRegions = null;
+    clearPendingRenderState();
     return;
   }
 
-  if (previousAuthPanel !== state.ui.authPanel && state.ui.authPanel !== 'none') {
+  if (shouldForceRenderForAuthPanelOpen(previous.authPanel, state)) {
     performRender(state, dirtyRegions);
-    pendingState = null;
-    pendingDirtyRegions = null;
+    clearPendingRenderState();
     return;
   }
 
-  if (state.ui.authPanel !== 'none') {
-    if (previousAuthModalKey !== lastObservedAuthModalKey) {
-      performRender(state, dirtyRegions);
-    }
-    pendingState = null;
-    pendingDirtyRegions = null;
+  if (handleAuthPanelRender(state, dirtyRegions, previous.authModalKey)) {
     return;
   }
 
-  if (isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
-    pendingState = state;
-    pendingDirtyRegions = mergeDirtyRegions(pendingDirtyRegions, dirtyRegions);
+  if (shouldQueueRenderDuringInteraction()) {
+    queuePendingRenderState(state, dirtyRegions);
     return;
   }
 
   performRender(state, dirtyRegions);
-  pendingState = null;
-  pendingDirtyRegions = null;
+  clearPendingRenderState();
 });
 
 document.addEventListener('visibilitychange', () => {
