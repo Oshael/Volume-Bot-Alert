@@ -4496,6 +4496,10 @@ export function createAppController(): AppController {
 
     if (usesHistoryBucketBootstrap()) {
       await refreshHistoryWorkspaceBootstrap({ token });
+      void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
+        address: item.address,
+        label: item.label ?? null,
+      })), { emitOnComplete: false });
       return;
     }
 
@@ -4507,6 +4511,10 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
+        address: item.address,
+        label: item.label ?? null,
+      })), { emitOnComplete: false });
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
@@ -5474,11 +5482,14 @@ export function createAppController(): AppController {
   async function hydrateDashboardMonitoredInternal(token: string, manualTokens: AddressItem[]) {
     try {
       if (usesHistoryBucketBootstrap()) {
-        await refreshHistoryWorkspaceBootstrap({
-          token,
-          manualTokensOverride: manualTokens,
-          suppressErrors: true,
-        });
+        await Promise.all([
+          refreshHistoryWorkspaceBootstrap({
+            token,
+            manualTokensOverride: manualTokens,
+            suppressErrors: true,
+          }),
+          hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false }),
+        ]);
         if (isHistoryWorkspace()) {
           void refreshLateralizedTokens({ force: true });
           void refreshBidZoneTokens({ force: true });
@@ -5505,6 +5516,7 @@ export function createAppController(): AppController {
       let aggregatedTokens = [...(firstPage.tokens || [])];
       const generatedAt = firstPage.generatedAt ?? null;
       applyMonitoredDashboard(aggregatedTokens, manualTokens, generatedAt);
+      void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
       emitMonitoredWorkspaceRegions();
       queueSupplementalMeteoraRefresh(token, aggregatedTokens);
 
@@ -5535,6 +5547,7 @@ export function createAppController(): AppController {
           [...aggregatedTokens, ...nextPage.tokens].map((item) => [item.address, item]),
         ).values());
         applyMonitoredDashboard(aggregatedTokens, manualTokens);
+        void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
         emitMonitoredWorkspaceRegions();
         queueSupplementalMeteoraRefresh(token, aggregatedTokens);
         await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -5912,6 +5925,72 @@ export function createAppController(): AppController {
     state.runtime.monitoredRevision += 1;
     refreshMonitoredPanelCounts();
     emit('monitored', 'manual', 'recent', 'old-week', 'header');
+  }
+
+  async function hydrateManualTokensMetadataBatch(
+    token: string,
+    manualTokens: Array<{ address: string; label?: string | null }>,
+    options?: { emitOnComplete?: boolean },
+  ) {
+    if (state.session.token !== token || !isAuthenticatedSession()) {
+      return;
+    }
+
+    const normalizedManualTokens = Array.from(new Map(
+      (Array.isArray(manualTokens) ? manualTokens : [])
+        .map((item) => ({
+          address: String(item?.address || '').trim(),
+          label: item?.label ?? null,
+        }))
+        .filter((item) => item.address)
+        .map((item) => [item.address, item]),
+    ).values());
+
+    if (normalizedManualTokens.length === 0) {
+      return;
+    }
+
+    let changed = false;
+
+    for (let index = 0; index < normalizedManualTokens.length; index += 500) {
+      if (state.session.token !== token || !isAuthenticatedSession()) {
+        return;
+      }
+
+      const chunk = normalizedManualTokens.slice(index, index + 500);
+      const dashboardItems = await fetchMonitoredMetadataBatch(chunk.map((item) => item.address), token);
+      if (state.session.token !== token || !isAuthenticatedSession()) {
+        return;
+      }
+
+      const dashboardByAddress = new Map(dashboardItems.map((item) => [item.address, item]));
+      for (const manualToken of chunk) {
+        const currentTracked = state.data.trackedTokensByAddress[manualToken.address];
+        const dashboardItem = dashboardByAddress.get(manualToken.address);
+        if (!currentTracked || !dashboardItem) {
+          continue;
+        }
+
+        const nextItem = mergeHydratedManualToken(manualToken.address, currentTracked, dashboardItem);
+        if (nextItem === currentTracked) {
+          continue;
+        }
+
+        replaceTrackedTokenReferences(manualToken.address, nextItem);
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    deriveAgeBuckets();
+    state.runtime.monitoredRevision += 1;
+    refreshMonitoredPanelCounts();
+    if (options?.emitOnComplete !== false) {
+      emit('monitored', 'manual', 'recent', 'old-week', 'header');
+    }
   }
 
   async function hydrateManualTokenDashboardAttempt(address: string, token: string) {
