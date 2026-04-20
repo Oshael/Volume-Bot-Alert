@@ -348,7 +348,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindCommittedInputs([recentAgeMinInput, recentAgeMaxInput], () => {
     const minInput = section.querySelector<HTMLInputElement>('input[name="recent-age-min"]');
     const maxInput = section.querySelector<HTMLInputElement>('input[name="recent-age-max"]');
-    const parsedMin = parseRecentAgeInput(minInput?.value || '', recentAgeMinMinutes);
+    const parsedMin = parseRecentAgeInput(minInput?.value || '', 0);
     if (!parsedMin.ok) {
       if (minInput) {
         minInput.setCustomValidity(parsedMin.message);
@@ -598,7 +598,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindCommittedInputs([oldWeekAgeMinInput, oldWeekAgeMaxInput], () => {
     const minInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-min"]');
     const maxInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-max"]');
-    const parsedMin = parseOldWeekAgeInput(minInput?.value || '', oldWeekAgeMinMinutes);
+    const parsedMin = parseOldWeekAgeInput(minInput?.value || '', OLD_WEEK_MIN_AGE_MINUTES);
     if (!parsedMin.ok) {
       if (minInput) {
         minInput.setCustomValidity(parsedMin.message);

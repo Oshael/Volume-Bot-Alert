@@ -7236,20 +7236,35 @@ export function createAppController(): AppController {
       }
 
       setError(null);
+      const previousConfigs = { ...state.data.configs };
+      state.data.configs = { ...state.data.configs, ...configs };
+      applyUiPreferencesFromConfigs();
+      persistSoundSettings();
+
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap({ token });
+      } else {
+        sweepMinMcapRemove();
+        deriveAgeBuckets();
+      }
+      emit();
 
       try {
         const patchResult = await patchConfig(configs, token);
         state.data.configs = { ...state.data.configs, ...patchResult.configs };
         applyUiPreferencesFromConfigs();
         persistSoundSettings();
+        emit();
+      } catch (error) {
+        state.data.configs = previousConfigs;
+        applyUiPreferencesFromConfigs();
+        persistSoundSettings();
         if (usesHistoryBucketBootstrap()) {
-          await refreshHistoryWorkspaceBootstrap({ token });
+          void refreshHistoryWorkspaceBootstrap({ token });
         } else {
           sweepMinMcapRemove();
           deriveAgeBuckets();
         }
-        emit();
-      } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to save config');
         emit();
       }
