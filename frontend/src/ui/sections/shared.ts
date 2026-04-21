@@ -526,7 +526,7 @@ export function renderManualTokenTable(
   tokens: ManualTokenEntry[],
   busy: boolean,
   starredTokens: string[] = [],
-  sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }],
+  _sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }],
   meteoraByAddress: Record<string, MeteoraEntry> = {},
   meteoraMinPool = 5000,
   isAdmin = false,
@@ -538,11 +538,10 @@ export function renderManualTokenTable(
 ) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
   const starredSet = new Set(starredTokens);
-  const sorted = sortBucketTokens(tokens, sortCriteria);
   return renderTokenTableShell({
     tone: 'manual',
     mode: 'manual',
-    rows: sorted,
+    rows: tokens,
     busy,
     starredSet,
     meteoraByAddress,
@@ -632,7 +631,7 @@ function renderTokenTableShell(options: {
           <tr>
             <th class="rank-col">#</th>
             <th>Token</th>
-            ${showSparkline ? '<th class="sparkline-col">7D</th>' : ''}
+            ${showSparkline ? '<th class="sparkline-col">Chart</th>' : ''}
             <th class="num-col">Age</th>
             <th class="num-col">MCAP</th>
             <th class="delta-col">D</th>
@@ -690,7 +689,7 @@ function buildSparklinePolyline(series: number[]) {
 }
 
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
-  const parts = [`7D sparkline`, `${series.length} pts`];
+  const parts = [`Mini chart`, `${series.length} pts`];
   parts.push(`${formatSparklineSpan(entry.effectiveHours)} span`);
   parts.push(`${formatSparklineGranularity(entry.granularityMinutes)} resolution`);
 
@@ -729,12 +728,12 @@ function formatSparklineGranularity(granularityMinutes?: number | null) {
 
 function renderSparklineCell(entry: TokenSparklineEntry | null) {
   if (!entry) {
-    return '<span class="sparkline-empty">-</span>';
+    return '<span class="sparkline-empty" title="Chart not loaded for this row">-</span>';
   }
 
   const series = normalizeSparklineSeries(entry.series);
   if (series.length < 2) {
-    return '<span class="sparkline-empty">-</span>';
+    return '<span class="sparkline-empty" title="Chart unavailable for this row yet">-</span>';
   }
 
   const start = series[0];

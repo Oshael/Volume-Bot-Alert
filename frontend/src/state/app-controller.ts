@@ -4451,12 +4451,19 @@ export function createAppController(): AppController {
     return 15;
   }
 
-  function getVisibleHistorySparklineBatches(referenceTs = Date.now()) {
+  function getVisibleWorkspaceSparklineAddresses() {
+    if (isLiveWorkspace()) {
+      return getVisibleManualSparklineAddresses();
+    }
+    if (isHistoryWorkspace()) {
+      return getVisibleRoutedHistorySparklineAddresses();
+    }
+    return [];
+  }
+
+  function getVisibleWorkspaceSparklineBatches(referenceTs = Date.now()) {
     const grouped = new Map<number, string[]>();
-    const selectedAddresses = [
-      ...getVisibleManualSparklineAddresses(),
-      ...getVisibleRoutedHistorySparklineAddresses(),
-    ];
+    const selectedAddresses = getVisibleWorkspaceSparklineAddresses();
 
     for (const address of selectedAddresses) {
       const trackedToken = getTrackedToken(state, address);
@@ -4553,12 +4560,12 @@ export function createAppController(): AppController {
 
   async function refreshHistoryWorkspaceSparklines(options?: { force?: boolean; token?: string }) {
     const token = options?.token ?? state.session.token;
-    if (!token || !isHistoryWorkspace()) {
+    if (!token || (!isHistoryWorkspace() && !isLiveWorkspace())) {
       clearHistorySparklineCache();
       return;
     }
 
-    const batches = getVisibleHistorySparklineBatches();
+    const batches = getVisibleWorkspaceSparklineBatches();
     const addressKey = buildSparklineBatchKey(batches);
     if (batches.length === 0) {
       clearHistorySparklineCache();
@@ -4585,7 +4592,7 @@ export function createAppController(): AppController {
       );
       const payload = mergeHistorySparklinePayloads(payloads);
 
-      if (state.session.token !== token || !isAuthenticatedSession() || !isHistoryWorkspace()) {
+      if (state.session.token !== token || !isAuthenticatedSession() || (!isHistoryWorkspace() && !isLiveWorkspace())) {
         return;
       }
 
@@ -4759,6 +4766,7 @@ export function createAppController(): AppController {
     try {
       const monitoredDashboard = await fetchDashboardMonitored(token);
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      void refreshHistoryWorkspaceSparklines({ token });
       void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
         address: item.address,
         label: item.label ?? null,
@@ -6731,6 +6739,9 @@ export function createAppController(): AppController {
     setManualSearchQuery(query: string) {
       state.ui.manualSearchQuery = String(query || '');
       emit('manual');
+      if (state.session.token && isLiveWorkspace()) {
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+      }
     },
     setRecentSearchQuery(query: string) {
       state.ui.recentSearchQuery = String(query || '');
@@ -6752,6 +6763,9 @@ export function createAppController(): AppController {
       state.ui.manualStarredOnly = Boolean(enabled);
       queueUiPrefsPersist();
       emit('manual');
+      if (state.session.token && isLiveWorkspace()) {
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+      }
     },
     setRecentStarredOnly(enabled: boolean) {
       state.ui.recentStarredOnly = Boolean(enabled);
@@ -6820,6 +6834,9 @@ export function createAppController(): AppController {
       );
       queueUiPrefsPersist();
       emit('manual');
+      if (state.session.token && isLiveWorkspace()) {
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+      }
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.recentSorts = toggleSortCriterion(
