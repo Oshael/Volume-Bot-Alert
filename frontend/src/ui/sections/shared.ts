@@ -2,6 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { sortBucketTokens } from '../../utils/token-table';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -489,40 +490,6 @@ export function renderFlash(state: AppState) {
   return `<div class="${toneClass}" role="${liveRole}" aria-live="polite"><span class="flash-copy">${badge ? `<strong class="flash-badge">${escapeHtml(badge)}</strong>` : ''}<span>${escapeHtml(message)}</span></span><button type="button" class="flash-dismiss" data-action="dismiss-flash">Close</button></div>`;
 }
 
-function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
-  if (mode === 'age') return item.createdAt || 0;
-  if (mode === 'mcap') return item.mcap || 0;
-  if (mode === 'pchange') {
-    if (window === '1h') return item.priceChange1h || 0;
-    if (window === '6h') return item.priceChange6h || 0;
-    return item.priceChange24h || 0;
-  }
-  if (window === '1h') return item.volume1h || 0;
-  if (window === '6h') return item.volume6h || 0;
-  return item.volume24h || 0;
-}
-
-function compareBucketCriterion(a: ManualTokenEntry, b: ManualTokenEntry, criterion: BucketSortCriterion) {
-  const aMetric = getBucketMetric(a, criterion.mode, criterion.window);
-  const bMetric = getBucketMetric(b, criterion.mode, criterion.window);
-  if ((criterion.mode === 'age' && criterion.window === 'oldest') || (criterion.mode === 'mcap' && criterion.window === 'lowest')) {
-    return aMetric - bMetric;
-  }
-  return bMetric - aMetric;
-}
-
-function sortBucketTokens(tokens: ManualTokenEntry[], criteria: BucketSortCriterion[]) {
-  return [...tokens].sort((a, b) => {
-    for (const criterion of criteria) {
-      const delta = compareBucketCriterion(a, b, criterion);
-      if (delta !== 0) return delta;
-    }
-    const createdDelta = (b.createdAt || 0) - (a.createdAt || 0);
-    if (createdDelta !== 0) return createdDelta;
-    return (b.mcap || 0) - (a.mcap || 0);
-  });
-}
-
 function getAgeBucketEmptyState(mode: 'recent' | 'old-week') {
   return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
 }
@@ -555,11 +522,36 @@ function paginateAgeBucketRows(
   };
 }
 
-export function renderManualTokenTable(tokens: ManualTokenEntry[], busy: boolean, starredTokens: string[] = [], sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }], meteoraByAddress: Record<string, MeteoraEntry> = {}, meteoraMinPool = 5000, isAdmin = false, enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS) {
+export function renderManualTokenTable(
+  tokens: ManualTokenEntry[],
+  busy: boolean,
+  starredTokens: string[] = [],
+  sortCriteria: BucketSortCriterion[] = [{ mode: 'mcap', window: 'highest' }],
+  meteoraByAddress: Record<string, MeteoraEntry> = {},
+  meteoraMinPool = 5000,
+  isAdmin = false,
+  enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS,
+  options?: {
+    showSparkline?: boolean;
+    sparklineByAddress?: Record<string, TokenSparklineEntry>;
+  },
+) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
   const starredSet = new Set(starredTokens);
   const sorted = sortBucketTokens(tokens, sortCriteria);
-  return renderTokenTableShell({ tone: 'manual', mode: 'manual', rows: sorted, busy, starredSet, meteoraByAddress, meteoraMinPool, isAdmin, enabledTradeTerminals });
+  return renderTokenTableShell({
+    tone: 'manual',
+    mode: 'manual',
+    rows: sorted,
+    busy,
+    starredSet,
+    meteoraByAddress,
+    meteoraMinPool,
+    isAdmin,
+    enabledTradeTerminals,
+    showSparkline: options?.showSparkline,
+    sparklineByAddress: options?.sparklineByAddress,
+  });
 }
 
 export function renderPagedAgeBucketList(
@@ -632,7 +624,7 @@ function renderTokenTableShell(options: {
   showSparkline?: boolean;
   sparklineByAddress?: Record<string, TokenSparklineEntry>;
 }) {
-  const showSparkline = Boolean(options.showSparkline && options.mode !== 'manual');
+  const showSparkline = Boolean(options.showSparkline);
   return `
     <div class="token-table-wrap token-table-${options.tone}">
       <table class="token-table ${options.tone}">
@@ -806,10 +798,6 @@ function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: Ma
 }
 
 function renderBucketSparklineCell(mode: 'manual' | 'recent' | 'old-week', sparkline: TokenSparklineEntry | null) {
-  if (mode === 'manual') {
-    return '';
-  }
-
   return `<td class="sparkline-col">${renderSparklineCell(sparkline)}</td>`;
 }
 

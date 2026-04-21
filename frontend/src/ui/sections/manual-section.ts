@@ -1,6 +1,7 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getManualTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
+import { resolveManualTableRows } from '../../utils/token-table';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -24,19 +25,13 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const manualPchange24h = hasCriterion('pchange', '24h') ? 'active' : '';
   const manualAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
   const manualAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
-  const searchQuery = String(state.ui.manualSearchQuery || '').trim().toLowerCase();
-  const filteredManualTokens = getManualTokens(state).filter((item) => {
-    if (state.ui.manualStarredOnly && !state.data.starredTokens.includes(item.address)) {
-      return false;
-    }
-    if (!searchQuery) {
-      return true;
-    }
-      const symbol = String(item.symbol || item.label || '').toLowerCase();
-      const name = String(item.name || '').toLowerCase();
-      const address = String(item.address || '').toLowerCase();
-      return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
-    });
+  const searchQuery = String(state.ui.manualSearchQuery || '').trim();
+  const filteredManualTokens = resolveManualTableRows(getManualTokens(state), {
+    starredOnly: state.ui.manualStarredOnly,
+    starredTokens: state.data.starredTokens,
+    searchQuery,
+    sortCriteria: state.ui.manualSorts,
+  });
   if (isCollapsed) {
     section.innerHTML = `
       <div class="legacy-bar-head legacy-bar-head-collapsed">
@@ -109,6 +104,10 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       Number(state.data.configs['meteora-min-pool']) || 5000,
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
+      {
+        showSparkline: true,
+        sparklineByAddress: state.data.sparklineByAddress,
+      },
     )}
   `;
 

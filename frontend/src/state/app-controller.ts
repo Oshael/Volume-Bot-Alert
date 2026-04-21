@@ -1,4 +1,5 @@
 import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { resolveManualTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -115,6 +116,7 @@ const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_WINDOW_HOURS = 7 * 24;
 const SPARKLINE_POINT_COUNT = 336;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 50;
+const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_AGE_5M_MAX_MS = 48 * 60 * 60 * 1000;
 const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 15;
@@ -4389,11 +4391,23 @@ export function createAppController(): AppController {
       nextSparklineRefreshAt = 0;
     }
     if (hasEntries) {
-      emit('recent', 'old-week');
+      emit('manual', 'recent', 'old-week');
     }
   }
 
-  function getVisibleHistorySparklineAddresses() {
+  function getVisibleManualSparklineAddresses() {
+    return resolveManualTableRows(getManualTokens(state), {
+      starredOnly: state.ui.manualStarredOnly,
+      starredTokens: state.data.starredTokens,
+      searchQuery: state.ui.manualSearchQuery,
+      sortCriteria: state.ui.manualSorts,
+    })
+      .slice(0, SPARKLINE_VISIBLE_LIMIT_MANUAL)
+      .map((item) => item.address)
+      .filter(Boolean);
+  }
+
+  function getVisibleRoutedHistorySparklineAddresses() {
     const recentAddresses = state.data.recentTokenAddresses.filter(Boolean);
     const oldWeekAddresses = state.data.oldWeekTokenAddresses.filter(Boolean);
     const selected = [];
@@ -4439,10 +4453,18 @@ export function createAppController(): AppController {
 
   function getVisibleHistorySparklineBatches(referenceTs = Date.now()) {
     const grouped = new Map<number, string[]>();
-    for (const address of getVisibleHistorySparklineAddresses()) {
+    const selectedAddresses = [
+      ...getVisibleManualSparklineAddresses(),
+      ...getVisibleRoutedHistorySparklineAddresses(),
+    ];
+
+    for (const address of selectedAddresses) {
       const trackedToken = getTrackedToken(state, address);
       const granularityMinutes = resolveSparklineGranularityMinutes(trackedToken?.createdAt ?? null, referenceTs);
       const batch = grouped.get(granularityMinutes);
+      if (batch?.includes(address)) {
+        continue;
+      }
       if (batch) {
         batch.push(address);
         continue;
@@ -4487,7 +4509,7 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
-    emit('recent', 'old-week');
+    emit('manual', 'recent', 'old-week');
   }
 
   function broadcastHistorySparklineSnapshot(payload: TokenSparklinesPayload) {
