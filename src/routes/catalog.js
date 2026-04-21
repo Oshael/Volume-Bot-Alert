@@ -57,6 +57,50 @@ function parseMeteoraBatchAddresses(value) {
   return { ok: true, addresses };
 }
 
+function parseOptionalIntegerBodyField(value, name, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return { ok: true, value: null };
+  }
+
+  const normalized = String(value).trim();
+  if (!/^-?\d+$/.test(normalized)) {
+    return { ok: false, error: `${name} must be an integer` };
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return { ok: false, error: `${name} must be between ${min} and ${max}` };
+  }
+
+  return { ok: true, value: parsed };
+}
+
+function parseSparklineBatchRequest(body = {}) {
+  const addresses = parseMeteoraBatchAddresses(body.addresses);
+  if (!addresses.ok) {
+    return addresses;
+  }
+
+  const hours = parseOptionalIntegerBodyField(body.hours, 'hours', { min: 1, max: 24 * 30 });
+  if (!hours.ok) {
+    return hours;
+  }
+
+  const points = parseOptionalIntegerBodyField(body.points, 'points', { min: 10, max: 500 });
+  if (!points.ok) {
+    return points;
+  }
+
+  return {
+    ok: true,
+    value: {
+      addresses: addresses.addresses,
+      hours: hours.value || 48,
+      points: points.value || 240,
+    },
+  };
+}
+
 router.use(authenticate);
 router.use(requireTrustedOrigin);
 
@@ -154,6 +198,34 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
   } catch (err) {
     console.error('POST /catalog/monitored-metadata-batch error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored metadata batch' });
+  }
+});
+
+router.post('/sparklines', catalogReadLimiter, async (req, res) => {
+  const parsed = parseSparklineBatchRequest(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  try {
+    const items = await tokenMarketBucket1m.listSparklineByAddresses(
+      parsed.value.addresses,
+      {
+        hours: parsed.value.hours,
+        points: parsed.value.points,
+      }
+    );
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      hours: parsed.value.hours,
+      points: parsed.value.points,
+      count: items.length,
+      items,
+    });
+  } catch (err) {
+    console.error('POST /catalog/sparklines error:', err.message);
+    res.status(500).json({ error: 'Failed to load token sparklines' });
   }
 });
 

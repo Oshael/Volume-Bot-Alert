@@ -437,6 +437,60 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('rejects malformed sparkline batch params', async () => {
+    const res = await request(app)
+      .post('/api/catalog/sparklines')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ addresses: [VALID_ADDR], points: 'abc' });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'points must be an integer');
+  });
+
+  it('returns sparkline batches for the requested addresses', async () => {
+    const originalListSparklineByAddresses = tokenMarketBucket1m.listSparklineByAddresses;
+    let capturedAddresses = null;
+    let capturedOptions = null;
+
+    tokenMarketBucket1m.listSparklineByAddresses = async (addresses, options) => {
+      capturedAddresses = addresses;
+      capturedOptions = options;
+      return [
+        {
+          address: VALID_ADDR,
+          pairAddress: 'pair_test_123',
+          bucketCount: 2400,
+          coverageRatio: 0.92,
+          latestBucketAt: '2026-04-20T12:00:00.000Z',
+          series: [100, 105, 102],
+        },
+      ];
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          addresses: [VALID_ADDR],
+          hours: 48,
+          points: 240,
+        });
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedAddresses, [VALID_ADDR]);
+      assert.deepEqual(capturedOptions, { hours: 48, points: 240 });
+      assert.equal(res.body.hours, 48);
+      assert.equal(res.body.points, 240);
+      assert.equal(res.body.count, 1);
+      assert.equal(res.body.items[0].address, VALID_ADDR);
+      assert.equal(res.body.items[0].coverageRatio, 0.92);
+      assert.deepEqual(res.body.items[0].series, [100, 105, 102]);
+    } finally {
+      tokenMarketBucket1m.listSparklineByAddresses = originalListSparklineByAddresses;
+    }
+  });
+
   it('rejects malformed lateralized query params', async () => {
     const res = await request(app)
       .get('/api/catalog/lateralized')

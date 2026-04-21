@@ -169,4 +169,114 @@ describe('token market 1m bucket helpers', () => {
       db.query = originalQuery;
     }
   });
+
+  it('builds a fixed-width sparkline series from bucket history', () => {
+    const sparkline = tokenMarketBucket1m.__private.buildSparklineSeriesFromBuckets([
+      {
+        ts: '2026-04-05T12:00:00.000Z',
+        closeMcap: 100,
+        pairAddress: 'So11111111111111111111111111111111111111112',
+      },
+      {
+        ts: '2026-04-05T12:01:00.000Z',
+        closeMcap: 120,
+        pairAddress: 'So11111111111111111111111111111111111111112',
+      },
+      {
+        ts: '2026-04-05T12:03:00.000Z',
+        closeMcap: 90,
+        pairAddress: 'So11111111111111111111111111111111111111112',
+      },
+    ], {
+      hours: 1,
+      points: 60,
+    });
+
+    assert.equal(sparkline.series.length, 60);
+    assert.equal(sparkline.series[0], 100);
+    assert.equal(sparkline.series[sparkline.series.length - 1], 90);
+    assert.equal(Math.max(...sparkline.series), 120);
+    assert.equal(Math.min(...sparkline.series), 90);
+    assert.equal(sparkline.bucketCount, 3);
+    assert.equal(sparkline.coverageRatio, 0.75);
+  });
+
+  it('interpolates sparse sparkline gaps before downsampling', () => {
+    const denseSeries = tokenMarketBucket1m.__private.buildDenseSparklineMinuteSeries([
+      {
+        tsMs: Date.parse('2026-04-05T12:00:00.000Z'),
+        closeMcap: 100,
+      },
+      {
+        tsMs: Date.parse('2026-04-05T12:03:00.000Z'),
+        closeMcap: 160,
+      },
+    ], Date.parse('2026-04-05T12:00:00.000Z'), 3 * 60000);
+
+    assert.deepEqual(denseSeries, [100, 120, 140, 160]);
+  });
+
+  it('preserves spikes when downsampling sparkline series', () => {
+    const sampled = tokenMarketBucket1m.__private.downsampleSparklineSeries([
+      100, 102, 101, 103, 104, 180, 106, 108, 110, 112, 114,
+    ], 5);
+
+    assert.equal(sampled.length, 5);
+    assert.equal(sampled[0], 100);
+    assert.equal(sampled[sampled.length - 1], 114);
+    assert(sampled.includes(180));
+  });
+
+  it('maps sparkline batch rows by address and preserves empty results', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-05T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '100',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-05T12:01:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '120',
+          },
+        ],
+      };
+    };
+
+    try {
+      const rows = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+      ], {
+        hours: 48,
+        points: 240,
+      });
+
+      assert.match(capturedSql, /FROM token_market_buckets_1m/);
+      assert.match(capturedSql, /token_address = ANY\(\$1::varchar\[\]\)/);
+      assert.match(capturedSql, /bucket_ts >= NOW\(\) - \(\$2::int \* INTERVAL '1 hour'\)/);
+      assert.deepEqual(capturedParams, [[
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+      ], 48]);
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
+      assert.equal(rows[0].series.length, 240);
+      assert.equal(rows[1].address, 'So11111111111111111111111111111111111111113');
+      assert.deepEqual(rows[1].series, []);
+      assert.equal(rows[1].coverageRatio, 0);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
 });

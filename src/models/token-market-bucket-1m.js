@@ -28,6 +28,8 @@ const DEFAULT_BID_ZONE_MIN_SUPPORT_DISTANCE_PCT = -3;
 const DEFAULT_BID_ZONE_MAX_SUPPORT_DISTANCE_PCT = 18;
 const DEFAULT_BID_ZONE_MAX_RECENT_RANGE_PCT = 28;
 const DEFAULT_BID_ZONE_MAX_CLOSE_DRIFT_PCT = 30;
+const DEFAULT_SPARKLINE_HOURS = 48;
+const DEFAULT_SPARKLINE_POINTS = 240;
 const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
 const DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES = HIGH_CAP_DUMP_RULE.defaults.windowMinutes;
 const DEFAULT_HIGH_CAP_DUMP_THRESHOLD_PCT = HIGH_CAP_DUMP_RULE.defaults.thresholdPct;
@@ -833,6 +835,287 @@ async function listHistoryByAddress(address, options = {}) {
   }));
 }
 
+function buildSparklineSeriesFromBuckets(buckets, options = {}) {
+  const items = Array.isArray(buckets) ? buckets : [];
+  const safeHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30));
+  const safePoints = Math.max(10, Math.min(Number(options.points) || DEFAULT_SPARKLINE_POINTS, 500));
+  const normalizedBuckets = items
+    .map((item) => ({
+      tsMs: toTimestampMs(item?.ts),
+      closeMcap: toNumberOrNull(item?.closeMcap ?? item?.mcap),
+      pairAddress: isValidAddress(String(item?.pairAddress || '').trim())
+        ? String(item.pairAddress).trim()
+        : null,
+    }))
+    .filter((item) => item.tsMs != null && item.closeMcap != null)
+    .sort((a, b) => a.tsMs - b.tsMs);
+
+  if (!normalizedBuckets.length) {
+    return {
+      pairAddress: null,
+      bucketCount: 0,
+      coverageRatio: 0,
+      series: [],
+      latestBucketAt: null,
+    };
+  }
+
+  const latestBucket = normalizedBuckets[normalizedBuckets.length - 1];
+  const endTsMs = latestBucket.tsMs;
+  const windowSpanMs = safeHours * 60 * 60 * 1000;
+  const windowStartMs = endTsMs - windowSpanMs;
+  const scopedBuckets = normalizedBuckets.filter((item) => item.tsMs >= windowStartMs && item.tsMs <= endTsMs);
+  const denseSeries = buildDenseSparklineMinuteSeries(scopedBuckets, windowStartMs, windowSpanMs);
+
+  if (!denseSeries.length) {
+    return {
+      pairAddress: latestBucket.pairAddress,
+      bucketCount: scopedBuckets.length,
+      coverageRatio: 0,
+      series: [],
+      latestBucketAt: new Date(endTsMs).toISOString(),
+    };
+  }
+  const series = downsampleSparklineSeries(denseSeries, safePoints);
+
+  const firstScopedTsMs = scopedBuckets[0]?.tsMs ?? endTsMs;
+  const effectiveExpectedBucketCount = Math.max(
+    1,
+    Math.min(
+      Math.round(safeHours * 60),
+      Math.floor((endTsMs - firstScopedTsMs) / 60000) + 1
+    )
+  );
+  const coverageRatio = scopedBuckets.length / effectiveExpectedBucketCount;
+
+  return {
+    pairAddress: latestBucket.pairAddress,
+    bucketCount: scopedBuckets.length,
+    coverageRatio: roundMetric(coverageRatio, 4),
+    series,
+    latestBucketAt: new Date(endTsMs).toISOString(),
+  };
+}
+
+function buildDenseSparklineMinuteSeries(buckets, windowStartMs, windowSpanMs) {
+  const minuteCount = Math.max(2, Math.round(windowSpanMs / 60000) + 1);
+  const series = new Array(minuteCount).fill(null);
+
+  for (const bucket of buckets) {
+    const relativeTs = Math.max(0, bucket.tsMs - windowStartMs);
+    const index = Math.max(0, Math.min(
+      minuteCount - 1,
+      Math.round(relativeTs / 60000)
+    ));
+    series[index] = bucket.closeMcap;
+  }
+
+  let firstKnownIndex = -1;
+  for (let index = 0; index < series.length; index += 1) {
+    if (series[index] != null) {
+      firstKnownIndex = index;
+      break;
+    }
+  }
+
+  if (firstKnownIndex === -1) {
+    return [];
+  }
+
+  let previousKnownIndex = firstKnownIndex;
+  for (let index = 0; index < firstKnownIndex; index += 1) {
+    series[index] = series[firstKnownIndex];
+  }
+
+  for (let index = firstKnownIndex + 1; index < series.length; index += 1) {
+    if (series[index] == null) {
+      continue;
+    }
+
+    const gap = index - previousKnownIndex;
+    if (gap > 1) {
+      const startValue = series[previousKnownIndex];
+      const endValue = series[index];
+      for (let offset = 1; offset < gap; offset += 1) {
+        const ratio = offset / gap;
+        series[previousKnownIndex + offset] = startValue + ((endValue - startValue) * ratio);
+      }
+    }
+
+    previousKnownIndex = index;
+  }
+
+  for (let index = previousKnownIndex + 1; index < series.length; index += 1) {
+    series[index] = series[previousKnownIndex];
+  }
+
+  return series;
+}
+
+function downsampleSparklineSeries(series, targetPoints) {
+  if (!Array.isArray(series) || series.length === 0) {
+    return [];
+  }
+
+  const safeTargetPoints = Math.max(2, Math.floor(targetPoints) || 2);
+  if (series.length === safeTargetPoints) {
+    return series.slice();
+  }
+  if (series.length < safeTargetPoints) {
+    return interpolateSeriesToFixedPoints(series, safeTargetPoints);
+  }
+
+  return largestTriangleThreeBuckets(series, safeTargetPoints);
+}
+
+function interpolateSeriesToFixedPoints(series, targetPoints) {
+  if (!Array.isArray(series) || series.length === 0) {
+    return [];
+  }
+  if (targetPoints <= 1) {
+    return [series[series.length - 1]];
+  }
+
+  const lastIndex = series.length - 1;
+  const result = new Array(targetPoints);
+  for (let index = 0; index < targetPoints; index += 1) {
+    const position = (index * lastIndex) / (targetPoints - 1);
+    const leftIndex = Math.floor(position);
+    const rightIndex = Math.min(lastIndex, Math.ceil(position));
+    if (leftIndex === rightIndex) {
+      result[index] = series[leftIndex];
+      continue;
+    }
+
+    const ratio = position - leftIndex;
+    const leftValue = series[leftIndex];
+    const rightValue = series[rightIndex];
+    result[index] = leftValue + ((rightValue - leftValue) * ratio);
+  }
+
+  return result;
+}
+
+function largestTriangleThreeBuckets(series, targetPoints) {
+  if (!Array.isArray(series) || series.length <= targetPoints) {
+    return series.slice();
+  }
+  if (targetPoints <= 2) {
+    return [series[0], series[series.length - 1]];
+  }
+
+  const sampled = [series[0]];
+  const bucketSize = (series.length - 2) / (targetPoints - 2);
+  let anchorIndex = 0;
+
+  for (let bucketIndex = 0; bucketIndex < targetPoints - 2; bucketIndex += 1) {
+    const rangeStart = Math.floor((bucketIndex + 1) * bucketSize) + 1;
+    const rangeEnd = Math.min(
+      series.length - 1,
+      Math.floor((bucketIndex + 2) * bucketSize) + 1
+    );
+    const nextRangeStart = Math.floor((bucketIndex + 2) * bucketSize) + 1;
+    const nextRangeEnd = Math.min(
+      series.length,
+      Math.floor((bucketIndex + 3) * bucketSize) + 1
+    );
+
+    let avgX = 0;
+    let avgY = 0;
+    let avgCount = 0;
+    for (let index = nextRangeStart; index < nextRangeEnd; index += 1) {
+      avgX += index;
+      avgY += series[index];
+      avgCount += 1;
+    }
+    if (avgCount === 0) {
+      avgX = series.length - 1;
+      avgY = series[series.length - 1];
+    } else {
+      avgX /= avgCount;
+      avgY /= avgCount;
+    }
+
+    let bestIndex = rangeStart;
+    let bestArea = -1;
+    const anchorY = series[anchorIndex];
+
+    for (let index = rangeStart; index < rangeEnd; index += 1) {
+      const area = Math.abs(
+        ((anchorIndex - avgX) * (series[index] - anchorY))
+        - ((anchorIndex - index) * (avgY - anchorY))
+      );
+      if (area > bestArea) {
+        bestArea = area;
+        bestIndex = index;
+      }
+    }
+
+    sampled.push(series[bestIndex]);
+    anchorIndex = bestIndex;
+  }
+
+  sampled.push(series[series.length - 1]);
+  return sampled;
+}
+
+async function listSparklineByAddresses(addresses, options = {}) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const safeHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30));
+  const safePoints = Math.max(10, Math.min(Number(options.points) || DEFAULT_SPARKLINE_POINTS, 500));
+  const { rows } = await db.query(
+    `SELECT
+       token_address,
+       bucket_ts,
+       pair_address,
+       close_mcap
+     FROM token_market_buckets_1m
+     WHERE token_address = ANY($1::varchar[])
+       AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
+       AND close_mcap IS NOT NULL
+     ORDER BY token_address ASC, bucket_ts ASC`,
+    [unique, safeHours]
+  );
+
+  const bucketsByAddress = new Map(unique.map((address) => [address, []]));
+  for (const row of rows) {
+    const address = row.token_address;
+    if (!bucketsByAddress.has(address)) {
+      bucketsByAddress.set(address, []);
+    }
+    bucketsByAddress.get(address).push({
+      ts: row.bucket_ts,
+      closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
+      pairAddress: row.pair_address || null,
+    });
+  }
+
+  return unique.map((address) => {
+    const sparkline = buildSparklineSeriesFromBuckets(bucketsByAddress.get(address) || [], {
+      hours: safeHours,
+      points: safePoints,
+    });
+    return {
+      address,
+      pairAddress: sparkline.pairAddress,
+      bucketCount: sparkline.bucketCount,
+      coverageRatio: sparkline.coverageRatio,
+      latestBucketAt: sparkline.latestBucketAt,
+      series: sparkline.series,
+    };
+  });
+}
+
 async function deleteByAddresses(addresses) {
   const unique = Array.from(
     new Set(
@@ -1223,7 +1506,6 @@ async function computeLateralizedCandidates(options = {}) {
       }
 
       const firstBucket = scopedBuckets.find((bucket) => bucket.openMcap != null || bucket.closeMcap != null) || null;
-      const lastBucket = [...scopedBuckets].reverse().find((bucket) => bucket.closeMcap != null || bucket.openMcap != null) || null;
       const closeValues = scopedBuckets
         .map((bucket) => bucket.closeMcap)
         .filter((value) => Number.isFinite(value));
@@ -1796,6 +2078,7 @@ module.exports = {
   computeBidZoneCandidates,
   upsertSnapshotBucket,
   listHistoryByAddress,
+  listSparklineByAddresses,
   deleteByAddresses,
   listCurrentAndBaselineByAddresses,
   listHighCapDumpDetectionsByAddresses,
@@ -1826,6 +2109,10 @@ module.exports = {
     computeSampleStddev,
     scoreBidZoneCandidate,
     scoreLateralizedCandidate,
+    buildSparklineSeriesFromBuckets,
+    buildDenseSparklineMinuteSeries,
+    downsampleSparklineSeries,
+    largestTriangleThreeBuckets,
     toTimestampMs,
   },
 };

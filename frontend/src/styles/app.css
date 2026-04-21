@@ -4926,12 +4926,70 @@ TEMP_LEGACY_BAR_TITLE {
 .rank-col,
 .action-col,
 .delta-col,
-.num-col {
+.num-col,
+.sparkline-col {
   text-align: right;
 }
 
 .delta-col {
   text-align: left;
+}
+
+.sparkline-col {
+  width: 132px;
+  min-width: 132px;
+  text-align: center;
+}
+
+.sparkline-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 124px;
+  height: 30px;
+  color: #9fb0c2;
+}
+
+.sparkline-wrap.up {
+  color: #33d17a;
+}
+
+.sparkline-wrap.down {
+  color: #ff6b6b;
+}
+
+.sparkline-wrap.flat {
+  color: #9fb0c2;
+}
+
+.token-sparkline {
+  width: 124px;
+  height: 30px;
+  display: block;
+  overflow: visible;
+}
+
+.token-sparkline-glow {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 5.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-opacity: 0.26;
+  filter: blur(3px);
+}
+
+.token-sparkline-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sparkline-empty {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .meteora-col {

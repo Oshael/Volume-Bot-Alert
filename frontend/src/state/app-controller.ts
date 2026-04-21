@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -39,7 +39,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -111,6 +111,10 @@ const LATERALIZED_REFRESH_INTERVAL_MS = 60 * 1000;
 const LATERALIZED_PANEL_LIMIT = 24;
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
+const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
+const SPARKLINE_WINDOW_HOURS = 48;
+const SPARKLINE_POINT_COUNT = 240;
+const SPARKLINE_VISIBLE_LIMIT_PER_BUCKET = 15;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
@@ -174,12 +178,20 @@ type HistorySyncBidZoneSnapshotMessage = {
   ts: number;
 };
 
+type HistorySyncSparklineSnapshotMessage = {
+  type: 'sparkline-snapshot';
+  tabId: string;
+  payload: TokenSparklinesPayload;
+  ts: number;
+};
+
 type HistorySyncMessage =
   | HistorySyncPresenceMessage
   | HistorySyncClosingMessage
   | HistorySyncMonitoredSnapshotMessage
   | HistorySyncLateralizedSnapshotMessage
-  | HistorySyncBidZoneSnapshotMessage;
+  | HistorySyncBidZoneSnapshotMessage
+  | HistorySyncSparklineSnapshotMessage;
 
 type HistoryPeerState = {
   workspace: WorkspaceView;
@@ -617,6 +629,7 @@ export function createAppController(): AppController {
   let supplementalMeteoraRefreshInFlight = false;
   let lateralizedRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
+  let sparklineRefreshInFlight = false;
   let historyBootstrapRequestRevision = 0;
   let monitoredBootstrapHydrationRevision = 0;
   let documentHiddenForUi = typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -639,6 +652,8 @@ export function createAppController(): AppController {
   let nextColdFieldRefreshAt = 0;
   let nextLateralizedRefreshAt = 0;
   let nextBidZoneRefreshAt = 0;
+  let nextSparklineRefreshAt = 0;
+  let lastSparklineAddressKey = '';
   let suppressSocketStatusNoticeUntil = 0;
   const historySyncTabId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -4358,6 +4373,106 @@ export function createAppController(): AppController {
       });
   }
 
+  function clearHistorySparklineCache(options?: { resetSchedule?: boolean }) {
+    const hasEntries = Object.keys(state.data.sparklineByAddress).length > 0;
+    state.data.sparklineByAddress = {};
+    lastSparklineAddressKey = '';
+    if (options?.resetSchedule !== false) {
+      nextSparklineRefreshAt = 0;
+    }
+    if (hasEntries) {
+      emit('recent', 'old-week');
+    }
+  }
+
+  function getVisibleHistorySparklineAddresses() {
+    return Array.from(new Set([
+      ...state.data.recentTokenAddresses.slice(0, SPARKLINE_VISIBLE_LIMIT_PER_BUCKET),
+      ...state.data.oldWeekTokenAddresses.slice(0, SPARKLINE_VISIBLE_LIMIT_PER_BUCKET),
+    ].filter(Boolean)));
+  }
+
+  function applyHistorySparklinePayload(payload: TokenSparklinesPayload) {
+    const nextCache: Record<string, TokenSparklineEntry> = {};
+    for (const item of payload.items || []) {
+      if (!item?.address) {
+        continue;
+      }
+      nextCache[item.address] = {
+        address: item.address,
+        pairAddress: item.pairAddress ?? null,
+        bucketCount: Number(item.bucketCount) || 0,
+        coverageRatio: item.coverageRatio ?? null,
+        latestBucketAt: item.latestBucketAt ?? null,
+        generatedAt: payload.generatedAt ?? null,
+        hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
+        points: Number(payload.points) || SPARKLINE_POINT_COUNT,
+        series: Array.isArray(item.series) ? item.series : [],
+      };
+    }
+
+    state.data.sparklineByAddress = nextCache;
+    emit('recent', 'old-week');
+  }
+
+  function broadcastHistorySparklineSnapshot(payload: TokenSparklinesPayload) {
+    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'sparkline-snapshot',
+      tabId: historySyncTabId,
+      payload,
+      ts: Date.now(),
+    });
+  }
+
+  async function refreshHistoryWorkspaceSparklines(options?: { force?: boolean; token?: string }) {
+    const token = options?.token ?? state.session.token;
+    if (!token || !isHistoryWorkspace()) {
+      clearHistorySparklineCache();
+      return;
+    }
+
+    const addresses = getVisibleHistorySparklineAddresses();
+    const addressKey = addresses.join(',');
+    if (addresses.length === 0) {
+      clearHistorySparklineCache();
+      return;
+    }
+
+    const now = Date.now();
+    if (!options?.force && addressKey === lastSparklineAddressKey && now < nextSparklineRefreshAt) {
+      return;
+    }
+
+    if (sparklineRefreshInFlight) {
+      return;
+    }
+
+    sparklineRefreshInFlight = true;
+    try {
+      const payload = await fetchTokenSparklines(addresses, {
+        hours: SPARKLINE_WINDOW_HOURS,
+        points: SPARKLINE_POINT_COUNT,
+      }, token);
+
+      if (state.session.token !== token || !isAuthenticatedSession() || !isHistoryWorkspace()) {
+        return;
+      }
+
+      lastSparklineAddressKey = addressKey;
+      nextSparklineRefreshAt = Date.now() + SPARKLINE_REFRESH_INTERVAL_MS;
+      applyHistorySparklinePayload(payload);
+      broadcastHistorySparklineSnapshot(payload);
+    } catch (error) {
+      console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
+    } finally {
+      sparklineRefreshInFlight = false;
+    }
+  }
+
   function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
     if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
       return;
@@ -4436,6 +4551,11 @@ export function createAppController(): AppController {
 
     if (message.type === 'bid-zone-snapshot') {
       applyBidZonePayload(message.payload);
+      return;
+    }
+
+    if (message.type === 'sparkline-snapshot') {
+      applyHistorySparklinePayload(message.payload);
     }
   }
 
@@ -4464,6 +4584,7 @@ export function createAppController(): AppController {
       }
 
       applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
+      void refreshHistoryWorkspaceSparklines({ token });
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
@@ -5000,6 +5121,8 @@ export function createAppController(): AppController {
     stopPreAccessPolling();
     recentAlertFingerprints.clear();
     nextColdFieldRefreshAt = 0;
+    nextSparklineRefreshAt = 0;
+    lastSparklineAddressKey = '';
     state.session.status = 'anonymous';
     state.session.token = null;
     state.session.username = null;
@@ -5077,6 +5200,7 @@ export function createAppController(): AppController {
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
+      sparklineByAddress: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],

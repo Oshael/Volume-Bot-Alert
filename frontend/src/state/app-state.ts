@@ -125,6 +125,18 @@ export interface MeteoraEntry {
   history?: MeteoraTvlPoint[];
 }
 
+export interface TokenSparklineEntry {
+  address: string;
+  pairAddress?: string | null;
+  bucketCount?: number;
+  coverageRatio?: number | null;
+  latestBucketAt?: string | null;
+  generatedAt?: string | null;
+  hours?: number;
+  points?: number;
+  series: number[];
+}
+
 export interface LateralizedTokenEntry {
   address: string;
   symbol?: string | null;
@@ -440,6 +452,7 @@ export interface AppState {
     starredTokens: string[];
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
+    sparklineByAddress: Record<string, TokenSparklineEntry>;
     lateralizedTokens: LateralizedTokenEntry[];
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
@@ -591,6 +604,7 @@ export function createAppState(): AppState {
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
+      sparklineByAddress: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
@@ -675,6 +689,10 @@ export function getStatusMetrics(state: AppState): StatusMetric[] {
 
 export function getTrackedToken(state: AppState, address: string) {
   return state.data.trackedTokensByAddress[String(address || '').trim()] || null;
+}
+
+export function getTokenSparkline(state: AppState, address: string) {
+  return state.data.sparklineByAddress[String(address || '').trim()] || null;
 }
 
 export function getManualTokens(state: AppState) {

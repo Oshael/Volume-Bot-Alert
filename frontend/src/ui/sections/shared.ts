@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, TradeTerminalKey } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
@@ -19,6 +19,11 @@ type TradeTerminalLink = {
   cls: TradeTerminalKey;
   iconHref: string;
 };
+
+const SPARKLINE_SVG_WIDTH = 124;
+const SPARKLINE_SVG_HEIGHT = 30;
+const SPARKLINE_PADDING_X = 3;
+const SPARKLINE_PADDING_Y = 3;
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -569,7 +574,12 @@ export function renderPagedAgeBucketList(
   meteoraMinPool = 5000,
   isAdmin = false,
   enabledTradeTerminals: TradeTerminalKey[] = DEFAULT_TRADE_TERMINALS,
-  options?: { totalCount?: number; skipClientSort?: boolean },
+  options?: {
+    totalCount?: number;
+    skipClientSort?: boolean;
+    showSparkline?: boolean;
+    sparklineByAddress?: Record<string, TokenSparklineEntry>;
+  },
 ) {
   const totalCount = Math.max(0, Number(options?.totalCount) || 0);
   if (tokens.length === 0 && totalCount === 0) {
@@ -581,7 +591,20 @@ export function renderPagedAgeBucketList(
   const { totalPages, safePage, pageStart, pageItems } = paginateAgeBucketRows(rows, page, perPage, totalCount, options);
 
   return `
-    ${renderTokenTableShell({ tone: mode, mode, rows: pageItems, busy, starredSet, meteoraByAddress, meteoraMinPool, startRank: pageStart + 1, isAdmin, enabledTradeTerminals })}
+    ${renderTokenTableShell({
+      tone: mode,
+      mode,
+      rows: pageItems,
+      busy,
+      starredSet,
+      meteoraByAddress,
+      meteoraMinPool,
+      startRank: pageStart + 1,
+      isAdmin,
+      enabledTradeTerminals,
+      showSparkline: options?.showSparkline,
+      sparklineByAddress: options?.sparklineByAddress,
+    })}
     <div class="bucket-footer">
       <div class="bucket-page-controls">
         <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" /></label>
@@ -606,7 +629,10 @@ function renderTokenTableShell(options: {
   startRank?: number;
   isAdmin?: boolean;
   enabledTradeTerminals: TradeTerminalKey[];
+  showSparkline?: boolean;
+  sparklineByAddress?: Record<string, TokenSparklineEntry>;
 }) {
+  const showSparkline = Boolean(options.showSparkline && options.mode !== 'manual');
   return `
     <div class="token-table-wrap token-table-${options.tone}">
       <table class="token-table ${options.tone}">
@@ -614,6 +640,7 @@ function renderTokenTableShell(options: {
           <tr>
             <th class="rank-col">#</th>
             <th>Token</th>
+            ${showSparkline ? '<th class="sparkline-col">48H</th>' : ''}
             <th class="num-col">Age</th>
             <th class="num-col">MCAP</th>
             <th class="delta-col">D</th>
@@ -629,14 +656,139 @@ function renderTokenTableShell(options: {
           </tr>
         </thead>
         <tbody>
-          ${options.rows.map((item, index) => renderTokenTableRow(item, options.mode, options.busy, options.starredSet.has(item.address), options.meteoraByAddress, options.meteoraMinPool, (options.startRank ?? 1) + index, Boolean(options.isAdmin), options.enabledTradeTerminals)).join('')}
+          ${options.rows.map((item, index) => renderTokenTableRow(
+            item,
+            options.mode,
+            options.busy,
+            options.starredSet.has(item.address),
+            options.meteoraByAddress,
+            options.meteoraMinPool,
+            (options.startRank ?? 1) + index,
+            Boolean(options.isAdmin),
+            options.enabledTradeTerminals,
+            showSparkline ? options.sparklineByAddress?.[item.address] || null : null,
+          )).join('')}
         </tbody>
       </table>
     </div>
   `;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[]) {
+function normalizeSparklineSeries(series: number[] | null | undefined) {
+  return Array.isArray(series) ? series.filter((value) => Number.isFinite(value)) : [];
+}
+
+function buildSparklinePolyline(series: number[]) {
+  if (series.length < 2) {
+    return '';
+  }
+
+  const min = Math.min(...series);
+  const max = Math.max(...series);
+  const range = max - min;
+  const innerWidth = SPARKLINE_SVG_WIDTH - (SPARKLINE_PADDING_X * 2);
+  const innerHeight = SPARKLINE_SVG_HEIGHT - (SPARKLINE_PADDING_Y * 2);
+
+  return series.map((value, index) => {
+    const x = SPARKLINE_PADDING_X + ((innerWidth * index) / Math.max(1, series.length - 1));
+    const normalized = range > 0 ? (value - min) / range : 0.5;
+    const y = SPARKLINE_PADDING_Y + innerHeight - (normalized * innerHeight);
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+}
+
+function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
+  const parts = [`48H sparkline`, `${series.length} pts`];
+
+  if (entry.coverageRatio != null && Number.isFinite(entry.coverageRatio)) {
+    parts.push(`${Math.round(entry.coverageRatio * 100)}% cov`);
+  }
+  if (entry.generatedAt) {
+    parts.push(`updated ${new Date(entry.generatedAt).toLocaleString()}`);
+  }
+
+  return parts.join(' · ');
+}
+
+function renderSparklineCell(entry: TokenSparklineEntry | null) {
+  if (!entry) {
+    return '<span class="sparkline-empty">-</span>';
+  }
+
+  const series = normalizeSparklineSeries(entry.series);
+  if (series.length < 2) {
+    return '<span class="sparkline-empty">-</span>';
+  }
+
+  const start = series[0];
+  const end = series[series.length - 1];
+  const trendClass = end > start ? 'up' : end < start ? 'down' : 'flat';
+  const title = escapeHtml(buildSparklineTitle(entry, series));
+  const polyline = buildSparklinePolyline(series);
+
+  return `
+    <div class="sparkline-wrap ${trendClass}" title="${title}">
+      <svg class="token-sparkline" viewBox="0 0 ${SPARKLINE_SVG_WIDTH} ${SPARKLINE_SVG_HEIGHT}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <polyline class="token-sparkline-glow" points="${polyline}"></polyline>
+        <polyline class="token-sparkline-line" points="${polyline}"></polyline>
+      </svg>
+    </div>
+  `;
+}
+
+function resolveTokenMcapDelta(item: ManualTokenEntry) {
+  if (item.mcapDelta != null) {
+    return item.mcapDelta;
+  }
+  if (!(item.prevMcap && item.prevMcap > 0) || item.mcap == null) {
+    return null;
+  }
+
+  return ((item.mcap - item.prevMcap) / item.prevMcap) * 100;
+}
+
+function renderBucketDismissButton(mode: 'manual' | 'recent' | 'old-week', safeAddress: string, busy: boolean) {
+  if (mode === 'manual') {
+    return `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
+  }
+
+  const action = mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week';
+  return `<button type="button" class="inline-icon danger" data-action="${action}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
+}
+
+function renderTokenTwitterAction(twitterUrl: string | null, twitterMeta: { title: string; icon: string }) {
+  if (!twitterUrl) {
+    return '<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>';
+  }
+
+  return `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="${escapeHtml(twitterMeta.title)}">${twitterMeta.icon}</a>`;
+}
+
+function renderTokenAdminAction(isAdmin: boolean, safeAddress: string, safeSymbol: string, busy: boolean) {
+  if (!isAdmin) {
+    return '';
+  }
+
+  return `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>`;
+}
+
+function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: ManualTokenEntry) {
+  if (mode !== 'manual') {
+    return '';
+  }
+
+  return `<td class="num-col">${fmtMoney(item.volume5m)}</td>`;
+}
+
+function renderBucketSparklineCell(mode: 'manual' | 'recent' | 'old-week', sparkline: TokenSparklineEntry | null) {
+  if (mode === 'manual') {
+    return '';
+  }
+
+  return `<td class="sparkline-col">${renderSparklineCell(sparkline)}</td>`;
+}
+
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -646,10 +798,8 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
   const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
   const twitterMeta = getXDestinationMeta(twitterUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const mcapDelta = item.mcapDelta ?? (item.prevMcap && item.prevMcap > 0 && item.mcap != null ? ((item.mcap - item.prevMcap) / item.prevMcap) * 100 : null);
-  const actionButton = mode === 'manual'
-    ? `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`
-    : `<button type="button" class="inline-icon danger" data-action="${mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week'}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
+  const mcapDelta = resolveTokenMcapDelta(item);
+  const actionButton = renderBucketDismissButton(mode, safeAddress, busy);
 
   return `
     <tr class="${isStarred ? 'token-starred' : ''}" data-hover-key="${mode}:${safeAddress}">
@@ -662,21 +812,22 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
               <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
               <div class="token-actions-inline">
                 <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
-                ${twitterUrl ? `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="${escapeHtml(twitterMeta.title)}">${twitterMeta.icon}</a>` : `<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>`}
+                ${renderTokenTwitterAction(twitterUrl, twitterMeta)}
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { enabledTradeTerminals })}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
-                ${isAdmin ? `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>` : ''}
+                ${renderTokenAdminAction(isAdmin, safeAddress, safeSymbol, busy)}
               </div>
             </div>
             <div class="token-subline">${safeName}</div>
           </div>
         </div>
       </td>
+      ${renderBucketSparklineCell(mode, sparkline)}
       <td class="num-col">${age}</td>
       <td class="num-col strong">${fmtMoney(item.mcap)}</td>
       <td class="delta-col">${renderPctSpan(mcapDelta)}</td>
-      ${mode === 'manual' ? `<td class="num-col">${fmtMoney(item.volume5m)}</td>` : ''}
+      ${renderBucketVolumeCell(mode, item)}
       <td class="num-col">${fmtMoney(item.volume1h)}</td>
       <td class="num-col">${fmtMoney(item.volume6h)}</td>
       <td class="num-col">${fmtMoney(item.volume24h)}</td>

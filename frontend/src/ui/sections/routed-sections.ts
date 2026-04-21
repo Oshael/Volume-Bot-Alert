@@ -287,6 +287,8 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       {
         totalCount: recentTotalCount,
         skipClientSort: usesServerSlice,
+        showSparkline: usesServerSlice,
+        sparklineByAddress: state.data.sparklineByAddress,
       },
     )}
   `;
@@ -537,6 +539,8 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       {
         totalCount: oldWeekTotalCount,
         skipClientSort: usesServerSlice,
+        showSparkline: usesServerSlice,
+        sparklineByAddress: state.data.sparklineByAddress,
       },
     )}
   `;

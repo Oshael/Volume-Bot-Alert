@@ -197,6 +197,23 @@ export interface DashboardAlertFeedsPayload {
   feeds: DashboardAlertEventsPayload[];
 }
 
+export interface TokenSparklineItem {
+  address: string;
+  pairAddress?: string | null;
+  bucketCount?: number;
+  coverageRatio?: number | null;
+  latestBucketAt?: string | null;
+  series: number[];
+}
+
+export interface TokenSparklinesPayload {
+  generatedAt?: string | null;
+  hours?: number;
+  points?: number;
+  count: number;
+  items: TokenSparklineItem[];
+}
+
 export interface LateralizedCandidate {
   address: string;
   symbol?: string | null;
@@ -383,6 +400,37 @@ export function fetchDashboardHistoryBootstrap(
     generatedAt: response.generatedAt ?? null,
     recent: normalizeDashboardHistoryBucketSlice(response.recent),
     oldWeek: normalizeDashboardHistoryBucketSlice(response.oldWeek),
+  }));
+}
+
+export function fetchTokenSparklines(
+  addresses: string[],
+  options?: { hours?: number; points?: number },
+  token?: string | null,
+) {
+  return apiFetch<TokenSparklinesPayload>('/api/catalog/sparklines', {
+    method: 'POST',
+    body: JSON.stringify({
+      addresses,
+      hours: options?.hours ?? 48,
+      points: options?.points ?? 240,
+    }),
+    token,
+  }).then((response) => ({
+    generatedAt: response.generatedAt ?? null,
+    hours: Number(response.hours) || 48,
+    points: Number(response.points) || 240,
+    count: Number(response.count) || 0,
+    items: Array.isArray(response.items) ? response.items.map((item) => ({
+      address: item.address,
+      pairAddress: item.pairAddress ?? null,
+      bucketCount: Number(item.bucketCount) || 0,
+      coverageRatio: item.coverageRatio ?? null,
+      latestBucketAt: item.latestBucketAt ?? null,
+      series: Array.isArray(item.series)
+        ? item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+        : [],
+    })) : [],
   }));
 }
 
