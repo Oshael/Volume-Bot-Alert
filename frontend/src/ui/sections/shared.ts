@@ -20,10 +20,10 @@ type TradeTerminalLink = {
   iconHref: string;
 };
 
-const SPARKLINE_SVG_WIDTH = 132;
-const SPARKLINE_SVG_HEIGHT = 40;
+const SPARKLINE_SVG_WIDTH = 144;
+const SPARKLINE_SVG_HEIGHT = 56;
 const SPARKLINE_PADDING_X = 3;
-const SPARKLINE_PADDING_Y = 4;
+const SPARKLINE_PADDING_Y = 5;
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
