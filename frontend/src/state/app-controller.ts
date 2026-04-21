@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type NetworkDebugEntry, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -115,6 +115,9 @@ const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_WINDOW_HOURS = 7 * 24;
 const SPARKLINE_POINT_COUNT = 336;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 50;
+const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
+const SPARKLINE_AGE_5M_MAX_MS = 48 * 60 * 60 * 1000;
+const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 15;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
@@ -198,6 +201,11 @@ type HistoryPeerState = {
   authenticated: boolean;
   monitoringActive: boolean;
   seenAt: number;
+};
+
+type SparklineBatchRequest = {
+  granularityMinutes: number;
+  addresses: string[];
 };
 
 type SocialProvider = 'google' | 'discord';
@@ -4413,6 +4421,50 @@ export function createAppController(): AppController {
     return selected;
   }
 
+  function resolveSparklineGranularityMinutes(createdAt?: number | null, referenceTs = Date.now()) {
+    const createdAtMs = Number(createdAt);
+    if (!Number.isFinite(createdAtMs) || createdAtMs <= 0 || createdAtMs > referenceTs) {
+      return SPARKLINE_GRANULARITY_FALLBACK_MINUTES;
+    }
+
+    const ageMs = Math.max(0, referenceTs - createdAtMs);
+    if (ageMs < SPARKLINE_AGE_1M_MAX_MS) {
+      return 1;
+    }
+    if (ageMs < SPARKLINE_AGE_5M_MAX_MS) {
+      return 5;
+    }
+    return 15;
+  }
+
+  function getVisibleHistorySparklineBatches(referenceTs = Date.now()) {
+    const grouped = new Map<number, string[]>();
+    for (const address of getVisibleHistorySparklineAddresses()) {
+      const trackedToken = getTrackedToken(state, address);
+      const granularityMinutes = resolveSparklineGranularityMinutes(trackedToken?.createdAt ?? null, referenceTs);
+      const batch = grouped.get(granularityMinutes);
+      if (batch) {
+        batch.push(address);
+        continue;
+      }
+
+      grouped.set(granularityMinutes, [address]);
+    }
+
+    return [1, 5, 15]
+      .map((granularityMinutes) => ({
+        granularityMinutes,
+        addresses: grouped.get(granularityMinutes) || [],
+      }))
+      .filter((item) => item.addresses.length > 0);
+  }
+
+  function buildSparklineBatchKey(batches: SparklineBatchRequest[]) {
+    return batches
+      .map((item) => `${item.granularityMinutes}:${item.addresses.join(',')}`)
+      .join('|');
+  }
+
   function applyHistorySparklinePayload(payload: TokenSparklinesPayload) {
     const nextCache: Record<string, TokenSparklineEntry> = {};
     for (const item of payload.items || []) {
@@ -4424,6 +4476,8 @@ export function createAppController(): AppController {
         pairAddress: item.pairAddress ?? null,
         bucketCount: Number(item.bucketCount) || 0,
         coverageRatio: item.coverageRatio ?? null,
+        effectiveHours: item.effectiveHours ?? null,
+        granularityMinutes: item.granularityMinutes ?? payload.granularityMinutes ?? SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
         latestBucketAt: item.latestBucketAt ?? null,
         generatedAt: payload.generatedAt ?? null,
         hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
@@ -4449,6 +4503,32 @@ export function createAppController(): AppController {
     });
   }
 
+  function mergeHistorySparklinePayloads(payloads: TokenSparklinesPayload[]): TokenSparklinesPayload {
+    const itemsByAddress = new Map<string, TokenSparklinesPayload['items'][number]>();
+    let generatedAt: string | null = null;
+
+    for (const payload of payloads) {
+      if (payload.generatedAt && (!generatedAt || payload.generatedAt > generatedAt)) {
+        generatedAt = payload.generatedAt;
+      }
+
+      for (const item of payload.items || []) {
+        if (!item?.address) {
+          continue;
+        }
+        itemsByAddress.set(item.address, item);
+      }
+    }
+
+    return {
+      generatedAt,
+      hours: SPARKLINE_WINDOW_HOURS,
+      points: SPARKLINE_POINT_COUNT,
+      count: itemsByAddress.size,
+      items: [...itemsByAddress.values()],
+    };
+  }
+
   async function refreshHistoryWorkspaceSparklines(options?: { force?: boolean; token?: string }) {
     const token = options?.token ?? state.session.token;
     if (!token || !isHistoryWorkspace()) {
@@ -4456,9 +4536,9 @@ export function createAppController(): AppController {
       return;
     }
 
-    const addresses = getVisibleHistorySparklineAddresses();
-    const addressKey = addresses.join(',');
-    if (addresses.length === 0) {
+    const batches = getVisibleHistorySparklineBatches();
+    const addressKey = buildSparklineBatchKey(batches);
+    if (batches.length === 0) {
       clearHistorySparklineCache();
       return;
     }
@@ -4474,10 +4554,14 @@ export function createAppController(): AppController {
 
     sparklineRefreshInFlight = true;
     try {
-      const payload = await fetchTokenSparklines(addresses, {
-        hours: SPARKLINE_WINDOW_HOURS,
-        points: SPARKLINE_POINT_COUNT,
-      }, token);
+      const payloads = await Promise.all(
+        batches.map((batch) => fetchTokenSparklines(batch.addresses, {
+          hours: SPARKLINE_WINDOW_HOURS,
+          points: SPARKLINE_POINT_COUNT,
+          granularityMinutes: batch.granularityMinutes,
+        }, token))
+      );
+      const payload = mergeHistorySparklinePayloads(payloads);
 
       if (state.session.token !== token || !isAuthenticatedSession() || !isHistoryWorkspace()) {
         return;

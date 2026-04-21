@@ -461,6 +461,8 @@ describe('Catalog routes', () => {
           pairAddress: 'pair_test_123',
           bucketCount: 2400,
           coverageRatio: 0.92,
+          effectiveHours: 72,
+          granularityMinutes: 5,
           latestBucketAt: '2026-04-20T12:00:00.000Z',
           series: [100, 105, 102],
         },
@@ -475,16 +477,20 @@ describe('Catalog routes', () => {
           addresses: [VALID_ADDR],
           hours: 7 * 24,
           points: 336,
+          granularityMinutes: 5,
         });
 
       assert.equal(res.status, 200);
       assert.deepEqual(capturedAddresses, [VALID_ADDR]);
-      assert.deepEqual(capturedOptions, { hours: 7 * 24, points: 336 });
+      assert.deepEqual(capturedOptions, { hours: 7 * 24, points: 336, granularityMinutes: 5 });
       assert.equal(res.body.hours, 7 * 24);
       assert.equal(res.body.points, 336);
+      assert.equal(res.body.granularityMinutes, 5);
       assert.equal(res.body.count, 1);
       assert.equal(res.body.items[0].address, VALID_ADDR);
       assert.equal(res.body.items[0].coverageRatio, 0.92);
+      assert.equal(res.body.items[0].effectiveHours, 72);
+      assert.equal(res.body.items[0].granularityMinutes, 5);
       assert.deepEqual(res.body.items[0].series, [100, 105, 102]);
     } finally {
       tokenMarketBucket1m.listSparklineByAddresses = originalListSparklineByAddresses;

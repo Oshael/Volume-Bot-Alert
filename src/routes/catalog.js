@@ -91,12 +91,22 @@ function parseSparklineBatchRequest(body = {}) {
     return points;
   }
 
+  const granularityMinutes = parseOptionalIntegerBodyField(
+    body.granularityMinutes,
+    'granularityMinutes',
+    { min: 1, max: 60 }
+  );
+  if (!granularityMinutes.ok) {
+    return granularityMinutes;
+  }
+
   return {
     ok: true,
     value: {
       addresses: addresses.addresses,
       hours: hours.value || (7 * 24),
       points: points.value || 336,
+      granularityMinutes: granularityMinutes.value || 15,
     },
   };
 }
@@ -213,6 +223,7 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
       {
         hours: parsed.value.hours,
         points: parsed.value.points,
+        granularityMinutes: parsed.value.granularityMinutes,
       }
     );
 
@@ -220,6 +231,7 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
       generatedAt: new Date().toISOString(),
       hours: parsed.value.hours,
       points: parsed.value.points,
+      granularityMinutes: parsed.value.granularityMinutes,
       count: items.length,
       items,
     });

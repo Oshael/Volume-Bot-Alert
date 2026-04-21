@@ -196,10 +196,38 @@ describe('token market 1m bucket helpers', () => {
     assert.equal(sparkline.series.length, 60);
     assert.equal(sparkline.series[0], 100);
     assert.equal(sparkline.series[sparkline.series.length - 1], 90);
-    assert.equal(Math.max(...sparkline.series), 120);
+    assert(Math.max(...sparkline.series) > 119);
+    assert(Math.max(...sparkline.series) <= 120);
     assert.equal(Math.min(...sparkline.series), 90);
     assert.equal(sparkline.bucketCount, 3);
-    assert.equal(sparkline.coverageRatio, 0.75);
+    assert.equal(sparkline.effectiveHours, 0.05);
+    assert.equal(sparkline.granularityMinutes, 1);
+    assert.equal(sparkline.coverageRatio, 1);
+  });
+
+  it('compresses the sparkline window to the token lifespan when younger than 7d', () => {
+    const sparkline = tokenMarketBucket1m.__private.buildSparklineSeriesFromBuckets([
+      {
+        ts: '2026-04-05T00:00:00.000Z',
+        closeMcap: 100,
+        pairAddress: 'So11111111111111111111111111111111111111112',
+      },
+      {
+        ts: '2026-04-08T00:00:00.000Z',
+        closeMcap: 160,
+        pairAddress: 'So11111111111111111111111111111111111111112',
+      },
+    ], {
+      hours: 7 * 24,
+      points: 20,
+      granularityMinutes: 15,
+    });
+
+    assert.equal(sparkline.series.length, 20);
+    assert.equal(sparkline.series[0], 100);
+    assert.equal(sparkline.series[sparkline.series.length - 1], 160);
+    assert.equal(sparkline.effectiveHours, 72);
+    assert.equal(sparkline.granularityMinutes, 15);
   });
 
   it('interpolates sparse sparkline gaps before downsampling', () => {
@@ -274,9 +302,12 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(rows.length, 2);
       assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
       assert.equal(rows[0].series.length, 336);
+      assert(rows[0].effectiveHours > 0);
+      assert.equal(rows[0].granularityMinutes, 15);
       assert.equal(rows[1].address, 'So11111111111111111111111111111111111111113');
       assert.deepEqual(rows[1].series, []);
       assert.equal(rows[1].coverageRatio, 0);
+      assert.equal(rows[1].granularityMinutes, 15);
     } finally {
       db.query = originalQuery;
     }

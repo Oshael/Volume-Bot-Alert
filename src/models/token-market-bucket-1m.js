@@ -857,23 +857,33 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
       pairAddress: null,
       bucketCount: 0,
       coverageRatio: 0,
+      effectiveHours: 0,
+      granularityMinutes: safeGranularityMinutes,
       series: [],
       latestBucketAt: null,
     };
   }
 
+  const firstBucket = normalizedBuckets[0];
   const latestBucket = normalizedBuckets[normalizedBuckets.length - 1];
   const endTsMs = latestBucket.tsMs;
   const windowSpanMs = safeHours * 60 * 60 * 1000;
-  const windowStartMs = endTsMs - windowSpanMs;
-  const scopedBuckets = normalizedBuckets.filter((item) => item.tsMs >= windowStartMs && item.tsMs <= endTsMs);
-  const denseSeries = buildDenseSparklineMinuteSeries(scopedBuckets, windowStartMs, windowSpanMs, safeGranularityMinutes);
+  const nominalWindowStartMs = endTsMs - windowSpanMs;
+  const effectiveWindowStartMs = Math.max(firstBucket.tsMs, nominalWindowStartMs);
+  const effectiveWindowSpanMs = Math.max(
+    safeGranularityMinutes * 60000,
+    endTsMs - effectiveWindowStartMs
+  );
+  const scopedBuckets = normalizedBuckets.filter((item) => item.tsMs >= effectiveWindowStartMs && item.tsMs <= endTsMs);
+  const denseSeries = buildDenseSparklineMinuteSeries(scopedBuckets, effectiveWindowStartMs, effectiveWindowSpanMs, safeGranularityMinutes);
 
   if (!denseSeries.length) {
     return {
       pairAddress: latestBucket.pairAddress,
       bucketCount: scopedBuckets.length,
       coverageRatio: 0,
+      effectiveHours: roundMetric(effectiveWindowSpanMs / 3600000, 4),
+      granularityMinutes: safeGranularityMinutes,
       series: [],
       latestBucketAt: new Date(endTsMs).toISOString(),
     };
@@ -884,7 +894,7 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   const effectiveExpectedBucketCount = Math.max(
     1,
     Math.min(
-      Math.round((safeHours * 60) / safeGranularityMinutes),
+      Math.round(effectiveWindowSpanMs / (safeGranularityMinutes * 60000)),
       Math.floor((endTsMs - firstScopedTsMs) / (safeGranularityMinutes * 60000)) + 1
     )
   );
@@ -894,6 +904,8 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
     pairAddress: latestBucket.pairAddress,
     bucketCount: scopedBuckets.length,
     coverageRatio: roundMetric(coverageRatio, 4),
+    effectiveHours: roundMetric(effectiveWindowSpanMs / 3600000, 4),
+    granularityMinutes: safeGranularityMinutes,
     series,
     latestBucketAt: new Date(endTsMs).toISOString(),
   };
@@ -1145,6 +1157,8 @@ async function listSparklineByAddresses(addresses, options = {}) {
       pairAddress: sparkline.pairAddress,
       bucketCount: sparkline.bucketCount,
       coverageRatio: sparkline.coverageRatio,
+      effectiveHours: sparkline.effectiveHours,
+      granularityMinutes: sparkline.granularityMinutes,
       latestBucketAt: sparkline.latestBucketAt,
       series: sparkline.series,
     };

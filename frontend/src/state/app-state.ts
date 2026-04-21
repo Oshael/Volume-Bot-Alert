@@ -130,6 +130,8 @@ export interface TokenSparklineEntry {
   pairAddress?: string | null;
   bucketCount?: number;
   coverageRatio?: number | null;
+  effectiveHours?: number | null;
+  granularityMinutes?: number | null;
   latestBucketAt?: string | null;
   generatedAt?: string | null;
   hours?: number;

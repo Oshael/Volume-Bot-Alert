@@ -202,6 +202,8 @@ export interface TokenSparklineItem {
   pairAddress?: string | null;
   bucketCount?: number;
   coverageRatio?: number | null;
+  effectiveHours?: number | null;
+  granularityMinutes?: number | null;
   latestBucketAt?: string | null;
   series: number[];
 }
@@ -210,6 +212,7 @@ export interface TokenSparklinesPayload {
   generatedAt?: string | null;
   hours?: number;
   points?: number;
+  granularityMinutes?: number | null;
   count: number;
   items: TokenSparklineItem[];
 }
@@ -405,7 +408,7 @@ export function fetchDashboardHistoryBootstrap(
 
 export function fetchTokenSparklines(
   addresses: string[],
-  options?: { hours?: number; points?: number },
+  options?: { hours?: number; points?: number; granularityMinutes?: number },
   token?: string | null,
 ) {
   return apiFetch<TokenSparklinesPayload>('/api/catalog/sparklines', {
@@ -414,18 +417,22 @@ export function fetchTokenSparklines(
       addresses,
       hours: options?.hours ?? (7 * 24),
       points: options?.points ?? 336,
+      granularityMinutes: options?.granularityMinutes ?? 15,
     }),
     token,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
     hours: Number(response.hours) || (7 * 24),
     points: Number(response.points) || 336,
+    granularityMinutes: Number(response.granularityMinutes) || 15,
     count: Number(response.count) || 0,
     items: Array.isArray(response.items) ? response.items.map((item) => ({
       address: item.address,
       pairAddress: item.pairAddress ?? null,
       bucketCount: Number(item.bucketCount) || 0,
       coverageRatio: item.coverageRatio ?? null,
+      effectiveHours: item.effectiveHours ?? null,
+      granularityMinutes: Number(item.granularityMinutes) || Number(response.granularityMinutes) || 15,
       latestBucketAt: item.latestBucketAt ?? null,
       series: Array.isArray(item.series)
         ? item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))

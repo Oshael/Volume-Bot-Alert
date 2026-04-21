@@ -699,6 +699,8 @@ function buildSparklinePolyline(series: number[]) {
 
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
   const parts = [`7D sparkline`, `${series.length} pts`];
+  parts.push(`${formatSparklineSpan(entry.effectiveHours)} span`);
+  parts.push(`${formatSparklineGranularity(entry.granularityMinutes)} resolution`);
 
   if (entry.coverageRatio != null && Number.isFinite(entry.coverageRatio)) {
     parts.push(`${Math.round(entry.coverageRatio * 100)}% cov`);
@@ -708,6 +710,29 @@ function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
   }
 
   return parts.join(' · ');
+}
+
+function formatSparklineSpan(hours?: number | null) {
+  const safeHours = Number(hours);
+  if (!Number.isFinite(safeHours) || safeHours <= 0) {
+    return '7D max';
+  }
+
+  if (safeHours >= 24) {
+    const days = Math.max(1, Math.round(safeHours / 24));
+    return `${days}D of 7D max`;
+  }
+
+  return `${Math.max(1, Math.round(safeHours))}H of 7D max`;
+}
+
+function formatSparklineGranularity(granularityMinutes?: number | null) {
+  const safeGranularity = Number(granularityMinutes);
+  if (!Number.isFinite(safeGranularity) || safeGranularity <= 0) {
+    return '15m';
+  }
+
+  return `${Math.round(safeGranularity)}m`;
 }
 
 function renderSparklineCell(entry: TokenSparklineEntry | null) {
@@ -973,6 +998,15 @@ export function fmtPct(value?: number | null) {
 
 export function fmtAge(createdAt: number) {
   const ageMs = Math.max(0, Date.now() - createdAt);
+  const monthDays = 30;
+  const months = Math.floor(ageMs / (monthDays * 86400000));
+  if (months >= 12) {
+    return `${Math.floor(months / 12)}y`;
+  }
+  if (months >= 1) {
+    return `${months}mo`;
+  }
+
   const days = Math.floor(ageMs / 86400000);
   if (days >= 1) return `${days}d`;
 
