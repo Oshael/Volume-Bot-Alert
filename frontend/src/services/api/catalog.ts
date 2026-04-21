@@ -412,14 +412,14 @@ export function fetchTokenSparklines(
     method: 'POST',
     body: JSON.stringify({
       addresses,
-      hours: options?.hours ?? 48,
-      points: options?.points ?? 240,
+      hours: options?.hours ?? (7 * 24),
+      points: options?.points ?? 336,
     }),
     token,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
-    hours: Number(response.hours) || 48,
-    points: Number(response.points) || 240,
+    hours: Number(response.hours) || (7 * 24),
+    points: Number(response.points) || 336,
     count: Number(response.count) || 0,
     items: Array.isArray(response.items) ? response.items.map((item) => ({
       address: item.address,

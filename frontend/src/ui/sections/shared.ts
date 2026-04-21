@@ -640,7 +640,7 @@ function renderTokenTableShell(options: {
           <tr>
             <th class="rank-col">#</th>
             <th>Token</th>
-            ${showSparkline ? '<th class="sparkline-col">48H</th>' : ''}
+            ${showSparkline ? '<th class="sparkline-col">7D</th>' : ''}
             <th class="num-col">Age</th>
             <th class="num-col">MCAP</th>
             <th class="delta-col">D</th>
@@ -698,7 +698,7 @@ function buildSparklinePolyline(series: number[]) {
 }
 
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
-  const parts = [`48H sparkline`, `${series.length} pts`];
+  const parts = [`7D sparkline`, `${series.length} pts`];
 
   if (entry.coverageRatio != null && Number.isFinite(entry.coverageRatio)) {
     parts.push(`${Math.round(entry.coverageRatio * 100)}% cov`);

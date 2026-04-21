@@ -28,8 +28,9 @@ const DEFAULT_BID_ZONE_MIN_SUPPORT_DISTANCE_PCT = -3;
 const DEFAULT_BID_ZONE_MAX_SUPPORT_DISTANCE_PCT = 18;
 const DEFAULT_BID_ZONE_MAX_RECENT_RANGE_PCT = 28;
 const DEFAULT_BID_ZONE_MAX_CLOSE_DRIFT_PCT = 30;
-const DEFAULT_SPARKLINE_HOURS = 48;
-const DEFAULT_SPARKLINE_POINTS = 240;
+const DEFAULT_SPARKLINE_HOURS = 7 * 24;
+const DEFAULT_SPARKLINE_POINTS = 336;
+const DEFAULT_SPARKLINE_GRANULARITY_MINUTES = 15;
 const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
 const DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES = HIGH_CAP_DUMP_RULE.defaults.windowMinutes;
 const DEFAULT_HIGH_CAP_DUMP_THRESHOLD_PCT = HIGH_CAP_DUMP_RULE.defaults.thresholdPct;
@@ -839,6 +840,7 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   const items = Array.isArray(buckets) ? buckets : [];
   const safeHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30));
   const safePoints = Math.max(10, Math.min(Number(options.points) || DEFAULT_SPARKLINE_POINTS, 500));
+  const safeGranularityMinutes = normalizeSparklineGranularityMinutes(options.granularityMinutes);
   const normalizedBuckets = items
     .map((item) => ({
       tsMs: toTimestampMs(item?.ts),
@@ -865,7 +867,7 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   const windowSpanMs = safeHours * 60 * 60 * 1000;
   const windowStartMs = endTsMs - windowSpanMs;
   const scopedBuckets = normalizedBuckets.filter((item) => item.tsMs >= windowStartMs && item.tsMs <= endTsMs);
-  const denseSeries = buildDenseSparklineMinuteSeries(scopedBuckets, windowStartMs, windowSpanMs);
+  const denseSeries = buildDenseSparklineMinuteSeries(scopedBuckets, windowStartMs, windowSpanMs, safeGranularityMinutes);
 
   if (!denseSeries.length) {
     return {
@@ -882,8 +884,8 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   const effectiveExpectedBucketCount = Math.max(
     1,
     Math.min(
-      Math.round(safeHours * 60),
-      Math.floor((endTsMs - firstScopedTsMs) / 60000) + 1
+      Math.round((safeHours * 60) / safeGranularityMinutes),
+      Math.floor((endTsMs - firstScopedTsMs) / (safeGranularityMinutes * 60000)) + 1
     )
   );
   const coverageRatio = scopedBuckets.length / effectiveExpectedBucketCount;
@@ -897,15 +899,20 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   };
 }
 
-function buildDenseSparklineMinuteSeries(buckets, windowStartMs, windowSpanMs) {
-  const minuteCount = Math.max(2, Math.round(windowSpanMs / 60000) + 1);
-  const series = new Array(minuteCount).fill(null);
+function normalizeSparklineGranularityMinutes(value) {
+  return Math.max(1, Math.min(Number(value) || DEFAULT_SPARKLINE_GRANULARITY_MINUTES, 60));
+}
+
+function buildDenseSparklineMinuteSeries(buckets, windowStartMs, windowSpanMs, granularityMinutes = 1) {
+  const bucketWidthMs = Math.max(1, granularityMinutes) * 60000;
+  const bucketCount = Math.max(2, Math.round(windowSpanMs / bucketWidthMs) + 1);
+  const series = new Array(bucketCount).fill(null);
 
   for (const bucket of buckets) {
     const relativeTs = Math.max(0, bucket.tsMs - windowStartMs);
     const index = Math.max(0, Math.min(
-      minuteCount - 1,
-      Math.round(relativeTs / 60000)
+      bucketCount - 1,
+      Math.round(relativeTs / bucketWidthMs)
     ));
     series[index] = bucket.closeMcap;
   }
@@ -1073,18 +1080,45 @@ async function listSparklineByAddresses(addresses, options = {}) {
 
   const safeHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30));
   const safePoints = Math.max(10, Math.min(Number(options.points) || DEFAULT_SPARKLINE_POINTS, 500));
+  const safeGranularityMinutes = normalizeSparklineGranularityMinutes(options.granularityMinutes);
   const { rows } = await db.query(
-    `SELECT
+    `WITH raw AS (
+       SELECT
+         token_address,
+         pair_address,
+         bucket_ts,
+         close_mcap,
+         date_trunc('hour', bucket_ts)
+           + (
+             FLOOR(EXTRACT(MINUTE FROM bucket_ts) / $3::numeric)
+             * ($3::int * INTERVAL '1 minute')
+           ) AS spark_bucket_ts
+       FROM token_market_buckets_1m
+       WHERE token_address = ANY($1::varchar[])
+         AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
+         AND close_mcap IS NOT NULL
+     ),
+     ranked AS (
+       SELECT
+         token_address,
+         spark_bucket_ts,
+         pair_address,
+         close_mcap,
+         ROW_NUMBER() OVER (
+           PARTITION BY token_address, spark_bucket_ts
+           ORDER BY bucket_ts DESC
+         ) AS rn_close
+       FROM raw
+     )
+     SELECT
        token_address,
-       bucket_ts,
+       spark_bucket_ts AS bucket_ts,
        pair_address,
        close_mcap
-     FROM token_market_buckets_1m
-     WHERE token_address = ANY($1::varchar[])
-       AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
-       AND close_mcap IS NOT NULL
+     FROM ranked
+     WHERE rn_close = 1
      ORDER BY token_address ASC, bucket_ts ASC`,
-    [unique, safeHours]
+    [unique, safeHours, safeGranularityMinutes]
   );
 
   const bucketsByAddress = new Map(unique.map((address) => [address, []]));
@@ -1104,6 +1138,7 @@ async function listSparklineByAddresses(addresses, options = {}) {
     const sparkline = buildSparklineSeriesFromBuckets(bucketsByAddress.get(address) || [], {
       hours: safeHours,
       points: safePoints,
+      granularityMinutes: safeGranularityMinutes,
     });
     return {
       address,
@@ -2113,6 +2148,7 @@ module.exports = {
     buildDenseSparklineMinuteSeries,
     downsampleSparklineSeries,
     largestTriangleThreeBuckets,
+    normalizeSparklineGranularityMinutes,
     toTimestampMs,
   },
 };

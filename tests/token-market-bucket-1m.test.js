@@ -190,6 +190,7 @@ describe('token market 1m bucket helpers', () => {
     ], {
       hours: 1,
       points: 60,
+      granularityMinutes: 1,
     });
 
     assert.equal(sparkline.series.length, 60);
@@ -211,7 +212,7 @@ describe('token market 1m bucket helpers', () => {
         tsMs: Date.parse('2026-04-05T12:03:00.000Z'),
         closeMcap: 160,
       },
-    ], Date.parse('2026-04-05T12:00:00.000Z'), 3 * 60000);
+    ], Date.parse('2026-04-05T12:00:00.000Z'), 3 * 60000, 1);
 
     assert.deepEqual(denseSeries, [100, 120, 140, 160]);
   });
@@ -258,20 +259,21 @@ describe('token market 1m bucket helpers', () => {
         'So11111111111111111111111111111111111111112',
         'So11111111111111111111111111111111111111113',
       ], {
-        hours: 48,
-        points: 240,
+        hours: 7 * 24,
+        points: 336,
       });
 
       assert.match(capturedSql, /FROM token_market_buckets_1m/);
       assert.match(capturedSql, /token_address = ANY\(\$1::varchar\[\]\)/);
       assert.match(capturedSql, /bucket_ts >= NOW\(\) - \(\$2::int \* INTERVAL '1 hour'\)/);
+      assert.match(capturedSql, /spark_bucket_ts/);
       assert.deepEqual(capturedParams, [[
         'So11111111111111111111111111111111111111112',
         'So11111111111111111111111111111111111111113',
-      ], 48]);
+      ], 7 * 24, 15]);
       assert.equal(rows.length, 2);
       assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
-      assert.equal(rows[0].series.length, 240);
+      assert.equal(rows[0].series.length, 336);
       assert.equal(rows[1].address, 'So11111111111111111111111111111111111111113');
       assert.deepEqual(rows[1].series, []);
       assert.equal(rows[1].coverageRatio, 0);
