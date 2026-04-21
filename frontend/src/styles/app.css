@@ -4945,8 +4945,8 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 124px;
-  height: 30px;
+  width: 132px;
+  height: 40px;
   color: #9fb0c2;
 }
 
@@ -4963,8 +4963,8 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .token-sparkline {
-  width: 124px;
-  height: 30px;
+  width: 132px;
+  height: 40px;
   display: block;
   overflow: visible;
 }
