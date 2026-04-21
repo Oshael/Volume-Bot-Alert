@@ -114,7 +114,7 @@ const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_WINDOW_HOURS = 48;
 const SPARKLINE_POINT_COUNT = 240;
-const SPARKLINE_VISIBLE_LIMIT_PER_BUCKET = 15;
+const SPARKLINE_VISIBLE_LIMIT_TOTAL = 50;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
@@ -4386,10 +4386,31 @@ export function createAppController(): AppController {
   }
 
   function getVisibleHistorySparklineAddresses() {
-    return Array.from(new Set([
-      ...state.data.recentTokenAddresses.slice(0, SPARKLINE_VISIBLE_LIMIT_PER_BUCKET),
-      ...state.data.oldWeekTokenAddresses.slice(0, SPARKLINE_VISIBLE_LIMIT_PER_BUCKET),
-    ].filter(Boolean)));
+    const recentAddresses = state.data.recentTokenAddresses.filter(Boolean);
+    const oldWeekAddresses = state.data.oldWeekTokenAddresses.filter(Boolean);
+    const selected = [];
+    const seen = new Set();
+    const maxLength = Math.max(recentAddresses.length, oldWeekAddresses.length);
+
+    for (let index = 0; index < maxLength && selected.length < SPARKLINE_VISIBLE_LIMIT_TOTAL; index += 1) {
+      const recentAddress = recentAddresses[index];
+      if (recentAddress && !seen.has(recentAddress)) {
+        seen.add(recentAddress);
+        selected.push(recentAddress);
+      }
+
+      if (selected.length >= SPARKLINE_VISIBLE_LIMIT_TOTAL) {
+        break;
+      }
+
+      const oldWeekAddress = oldWeekAddresses[index];
+      if (oldWeekAddress && !seen.has(oldWeekAddress)) {
+        seen.add(oldWeekAddress);
+        selected.push(oldWeekAddress);
+      }
+    }
+
+    return selected;
   }
 
   function applyHistorySparklinePayload(payload: TokenSparklinesPayload) {
