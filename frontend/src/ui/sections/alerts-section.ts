@@ -875,7 +875,7 @@ function buildAlertRowContent(
 function buildAlertSparklineBlock(address: string, sparkline: TokenSparklineEntry | null) {
   const chart = document.createElement('div');
   chart.className = 'alert-chart-v1';
-  chart.innerHTML = renderSparklineFigure(sparkline, address);
+  chart.innerHTML = renderSparklineFigure(sparkline, address, { areaFill: true });
   return chart;
 }
 

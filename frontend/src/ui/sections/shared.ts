@@ -39,6 +39,7 @@ const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 type SparklineRenderOptions = {
   expanded?: boolean;
   expandable?: boolean;
+  areaFill?: boolean;
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -826,6 +827,24 @@ function buildSparklinePolyline(series: number[], options: SparklineRenderOption
   }).join(' ');
 }
 
+function buildSparklineAreaPolyline(series: number[], options: SparklineRenderOptions = {}) {
+  if (series.length < 2) {
+    return '';
+  }
+
+  const dimensions = resolveSparklineDimensions(options);
+  const linePoints = buildSparklinePolyline(series, options);
+  if (!linePoints) {
+    return '';
+  }
+
+  const bottomY = dimensions.height - dimensions.paddingY;
+  const rightX = dimensions.width - dimensions.paddingX;
+  const leftX = dimensions.paddingX;
+
+  return `${leftX.toFixed(2)},${bottomY.toFixed(2)} ${linePoints} ${rightX.toFixed(2)},${bottomY.toFixed(2)}`;
+}
+
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
   const parts = [`Mini chart`, `${series.length} pts`];
   parts.push(`${formatSparklineSpan(entry.effectiveHours)} span`);
@@ -896,15 +915,18 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   const end = series[series.length - 1];
   const trendClass = end > start ? 'up' : end < start ? 'down' : 'flat';
   const polyline = buildSparklinePolyline(series, options);
+  const areaPolyline = options.areaFill ? buildSparklineAreaPolyline(series, options) : '';
   const summary = escapeHtml(buildSparklineTitle(entry, series));
   const safeAddress = escapeHtml(String(address || entry.address || '').trim());
   const expandedClass = options.expanded ? ' sparkline-wrap-expanded' : '';
+  const filledClass = options.areaFill ? ' sparkline-wrap-filled' : '';
   const svgExpandedClass = options.expanded ? ' token-sparkline-expanded' : '';
   const expandableAttr = options.expandable ? ' data-sparkline-expandable="true"' : '';
 
   return `
-    <div class="sparkline-wrap ${trendClass}${expandedClass}" data-address="${safeAddress}" data-sparkline-summary="${summary}"${expandableAttr}>
+    <div class="sparkline-wrap ${trendClass}${expandedClass}${filledClass}" data-address="${safeAddress}" data-sparkline-summary="${summary}"${expandableAttr}>
       <svg class="token-sparkline${svgExpandedClass}" viewBox="0 0 ${dimensions.width} ${dimensions.height}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        ${areaPolyline ? `<polygon class="token-sparkline-area" points="${areaPolyline}"></polygon>` : ''}
         <polyline class="token-sparkline-glow" points="${polyline}"></polyline>
         <polyline class="token-sparkline-line" points="${polyline}"></polyline>
       </svg>
@@ -918,7 +940,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
 }
 
 function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string) {
-  return renderSparklineFigure(entry, address, { expandable: true });
+  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true });
 }
 
 function resolveTokenMcapDelta(item: ManualTokenEntry) {

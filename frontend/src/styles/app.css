@@ -5153,6 +5153,11 @@ TEMP_LEGACY_BAR_TITLE {
   overflow: visible;
 }
 
+.token-sparkline-area {
+  fill: currentColor;
+  opacity: 0.12;
+}
+
 .token-sparkline-expanded {
   width: 100%;
   height: 170px;
@@ -8884,6 +8889,11 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alerts-panel .alert-chart-v1 .token-sparkline {
   height: 76px;
+}
+
+.alerts-panel .alert-chart-v1 .token-sparkline-area {
+  opacity: 0.16;
+  filter: drop-shadow(0 8px 16px color-mix(in srgb, currentColor 14%, transparent));
 }
 
 .alerts-panel .alert-chart-v1 .sparkline-empty {
