@@ -25,6 +25,12 @@ const SPARKLINE_SVG_WIDTH = 144;
 const SPARKLINE_SVG_HEIGHT = 56;
 const SPARKLINE_PADDING_X = 3;
 const SPARKLINE_PADDING_Y = 5;
+const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -110,6 +116,76 @@ export function bindCopyButtons(section: ParentNode) {
         }, 1200);
       }
     });
+  }
+}
+
+export function bindSparklineHover(
+  section: ParentNode,
+  sparklineByAddress: Record<string, TokenSparklineEntry> = {},
+) {
+  for (const wrap of section.querySelectorAll<HTMLElement>('.sparkline-wrap[data-address]')) {
+    const address = String(wrap.dataset.address || '').trim();
+    const entry = sparklineByAddress[address];
+    const series = normalizeSparklineSeries(entry?.series);
+    const hover = wrap.querySelector<HTMLElement>('.sparkline-hover');
+    const line = wrap.querySelector<HTMLElement>('.sparkline-hover-line');
+    const dot = wrap.querySelector<HTMLElement>('.sparkline-hover-dot');
+    const tooltip = wrap.querySelector<HTMLElement>('.sparkline-hover-tooltip');
+
+    if (!entry || series.length < 2 || !hover || !line || !dot || !tooltip) {
+      continue;
+    }
+
+    let activeIndex = -1;
+
+    const hide = () => {
+      activeIndex = -1;
+      hover.classList.remove('active');
+    };
+
+    const update = (clientX: number) => {
+      const rect = wrap.getBoundingClientRect();
+      if (!(rect.width > 0)) {
+        return;
+      }
+
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const index = Math.max(0, Math.min(series.length - 1, Math.round(ratio * (series.length - 1))));
+      if (index === activeIndex) {
+        return;
+      }
+
+      activeIndex = index;
+      const pointRatio = series.length <= 1 ? 1 : index / (series.length - 1);
+      const min = Math.min(...series);
+      const max = Math.max(...series);
+      const range = max - min;
+      const normalized = range > 0 ? (series[index] - min) / range : 0.5;
+      const xPct = pointRatio * 100;
+      const yPct = 100 - (normalized * 100);
+
+      line.style.left = `${xPct}%`;
+      dot.style.left = `${xPct}%`;
+      dot.style.top = `${yPct}%`;
+      tooltip.style.left = `${Math.max(10, Math.min(90, xPct))}%`;
+      tooltip.textContent = `MCAP ${fmtMoney(series[index])} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
+      hover.classList.add('active');
+    };
+
+    wrap.addEventListener('pointerenter', (event) => {
+      if (event.pointerType === 'touch') {
+        return;
+      }
+      update(event.clientX);
+    });
+    wrap.addEventListener('pointermove', (event) => {
+      if (event.pointerType === 'touch') {
+        return;
+      }
+      update(event.clientX);
+    });
+    wrap.addEventListener('pointerleave', hide);
+    wrap.addEventListener('pointercancel', hide);
   }
 }
 
@@ -726,7 +802,24 @@ function formatSparklineGranularity(granularityMinutes?: number | null) {
   return `${Math.round(safeGranularity)}m`;
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null) {
+function formatApproxSparklineTime(entry: TokenSparklineEntry, index: number, totalPoints: number) {
+  const latestTsMs = Date.parse(String(entry.latestBucketAt || ''));
+  const effectiveHours = Number(entry.effectiveHours ?? entry.hours);
+  if (!Number.isFinite(latestTsMs) || !Number.isFinite(effectiveHours) || effectiveHours <= 0) {
+    return 'time unavailable';
+  }
+
+  const spanMs = effectiveHours * 60 * 60 * 1000;
+  const startTsMs = latestTsMs - spanMs;
+  const pointRatio = totalPoints <= 1 ? 1 : index / (totalPoints - 1);
+  const estimatedTsMs = startTsMs + (spanMs * pointRatio);
+  const granularityMinutes = Math.max(1, Math.round(Number(entry.granularityMinutes) || 1));
+  const snappedTsMs = Math.round(estimatedTsMs / (granularityMinutes * 60000)) * granularityMinutes * 60000;
+
+  return SPARKLINE_HOVER_TIME_FORMATTER.format(new Date(snappedTsMs));
+}
+
+function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string) {
   if (!entry) {
     return '<span class="sparkline-empty" title="Chart not loaded for this row">-</span>';
   }
@@ -739,15 +832,21 @@ function renderSparklineCell(entry: TokenSparklineEntry | null) {
   const start = series[0];
   const end = series[series.length - 1];
   const trendClass = end > start ? 'up' : end < start ? 'down' : 'flat';
-  const title = escapeHtml(buildSparklineTitle(entry, series));
   const polyline = buildSparklinePolyline(series);
+  const summary = escapeHtml(buildSparklineTitle(entry, series));
+  const safeAddress = escapeHtml(String(address || entry.address || '').trim());
 
   return `
-    <div class="sparkline-wrap ${trendClass}" title="${title}">
+    <div class="sparkline-wrap ${trendClass}" data-address="${safeAddress}" data-sparkline-summary="${summary}">
       <svg class="token-sparkline" viewBox="0 0 ${SPARKLINE_SVG_WIDTH} ${SPARKLINE_SVG_HEIGHT}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
         <polyline class="token-sparkline-glow" points="${polyline}"></polyline>
         <polyline class="token-sparkline-line" points="${polyline}"></polyline>
       </svg>
+      <div class="sparkline-hover" aria-hidden="true">
+        <span class="sparkline-hover-line"></span>
+        <span class="sparkline-hover-dot"></span>
+        <span class="sparkline-hover-tooltip"></span>
+      </div>
     </div>
   `;
 }
@@ -796,8 +895,8 @@ function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: Ma
   return `<td class="num-col">${fmtMoney(item.volume5m)}</td>`;
 }
 
-function renderBucketSparklineCell(mode: 'manual' | 'recent' | 'old-week', sparkline: TokenSparklineEntry | null) {
-  return `<td class="sparkline-col">${renderSparklineCell(sparkline)}</td>`;
+function renderBucketSparklineCell(mode: 'manual' | 'recent' | 'old-week', sparkline: TokenSparklineEntry | null, address: string) {
+  return `<td class="sparkline-col">${renderSparklineCell(sparkline, address)}</td>`;
 }
 
 function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null) {
@@ -835,7 +934,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
           </div>
         </div>
       </td>
-      ${renderBucketSparklineCell(mode, sparkline)}
+      ${renderBucketSparklineCell(mode, sparkline, item.address)}
       <td class="num-col">${age}</td>
       <td class="num-col strong">${fmtMoney(item.mcap)}</td>
       <td class="delta-col">${renderPctSpan(mcapDelta)}</td>

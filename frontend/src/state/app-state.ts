@@ -479,6 +479,8 @@ export interface AppState {
     manualSearchQuery: string;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
+    recentSearchPending: boolean;
+    oldWeekSearchPending: boolean;
     manualStarredOnly: boolean;
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
@@ -631,6 +633,8 @@ export function createAppState(): AppState {
       manualSearchQuery: '',
       recentSearchQuery: '',
       oldWeekSearchQuery: '',
+      recentSearchPending: false,
+      oldWeekSearchPending: false,
       manualStarredOnly: false,
       recentStarredOnly: false,
       oldWeekStarredOnly: false,

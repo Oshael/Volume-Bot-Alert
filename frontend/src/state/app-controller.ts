@@ -748,6 +748,21 @@ export function createAppController(): AppController {
     socialLinkPendingProvider = null;
   }
 
+  function clearHistorySearchPending(options: { emitRegions?: boolean } = {}) {
+    let changed = false;
+    if (state.ui.recentSearchPending) {
+      state.ui.recentSearchPending = false;
+      changed = true;
+    }
+    if (state.ui.oldWeekSearchPending) {
+      state.ui.oldWeekSearchPending = false;
+      changed = true;
+    }
+    if (changed && options.emitRegions !== false) {
+      emit('recent', 'old-week');
+    }
+  }
+
   async function pollSocialLinkSync() {
     const pendingProvider = socialLinkPendingProvider;
     if (!pendingProvider || state.session.status !== 'authenticated') {
@@ -4704,6 +4719,7 @@ export function createAppController(): AppController {
   }) {
     const token = options?.token ?? state.session.token;
     if (!token) {
+      clearHistorySearchPending({ emitRegions: false });
       return;
     }
 
@@ -4721,6 +4737,7 @@ export function createAppController(): AppController {
         return;
       }
 
+      clearHistorySearchPending({ emitRegions: false });
       applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
       void refreshHistoryWorkspaceSparklines({ token });
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
@@ -4737,6 +4754,7 @@ export function createAppController(): AppController {
         return;
       }
 
+      clearHistorySearchPending();
       const message = error instanceof Error ? error.message : 'Failed to refresh monitor history';
       lastMonitoredDashboardError = message;
       setError(message);
@@ -4761,6 +4779,8 @@ export function createAppController(): AppController {
       })), { emitOnComplete: false });
       return;
     }
+
+    clearHistorySearchPending({ emitRegions: false });
 
     if (monitoredRefreshInFlight) {
       return;
@@ -5365,6 +5385,8 @@ export function createAppController(): AppController {
     state.ui.manualSearchQuery = '';
     state.ui.recentSearchQuery = '';
     state.ui.oldWeekSearchQuery = '';
+    state.ui.recentSearchPending = false;
+    state.ui.oldWeekSearchPending = false;
     state.ui.manualStarredOnly = false;
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
@@ -6749,6 +6771,7 @@ export function createAppController(): AppController {
     },
     setRecentSearchQuery(query: string) {
       state.ui.recentSearchQuery = String(query || '');
+      state.ui.recentSearchPending = usesHistoryBucketBootstrap() && Boolean(String(query || '').trim());
       state.ui.recentPage = 0;
       emit('recent');
       if (usesHistoryBucketBootstrap()) {
@@ -6757,6 +6780,7 @@ export function createAppController(): AppController {
     },
     setOldWeekSearchQuery(query: string) {
       state.ui.oldWeekSearchQuery = String(query || '');
+      state.ui.oldWeekSearchPending = usesHistoryBucketBootstrap() && Boolean(String(query || '').trim());
       state.ui.oldWeekPage = 0;
       emit('old-week');
       if (usesHistoryBucketBootstrap()) {

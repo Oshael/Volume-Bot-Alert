@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindTokenActions, fmtConfig, renderPagedAgeBucketList } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindTokenActions, fmtConfig, renderPagedAgeBucketList } from './shared';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
 const OLD_WEEK_MIN_AGE_MINUTES = RECENT_MAX_AGE_MINUTES;
@@ -170,6 +170,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const recentAgeNewest = hasRecentCriterion('age', 'newest') ? 'active' : '';
   const recentAgeOldest = hasRecentCriterion('age', 'oldest') ? 'active' : '';
   const recentSearchQuery = String(state.ui.recentSearchQuery || '').trim().toLowerCase();
+  const recentSearchPending = usesServerSlice && state.ui.recentSearchPending;
   const filteredRecentTokens = getRecentTokens(state).filter((item) => {
     if (state.ui.recentStarredOnly && !state.data.starredTokens.includes(item.address)) {
       return false;
@@ -217,6 +218,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
             <button type="button" class="compact-search-toggle" data-action="recent-search-focus" aria-label="Search recent tokens">&#128269;</button>
             <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="recent-search" data-search-input="recent">
           </div>
+          ${recentSearchPending ? '<span class="search-status-indicator active" aria-live="polite">Searching...</span>' : ''}
           <button type="button" class="compact-icon-toggle ${state.ui.recentStarredOnly ? 'active' : ''}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
         <div class="recent-ctrl-filters">
@@ -335,6 +337,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
+  bindSparklineHover(section, state.data.sparklineByAddress);
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
   section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"]').forEach((input) => {
@@ -422,6 +425,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const oldWeekAgeNewest = hasOldWeekCriterion('age', 'newest') ? 'active' : '';
   const oldWeekAgeOldest = hasOldWeekCriterion('age', 'oldest') ? 'active' : '';
   const oldWeekSearchQuery = String(state.ui.oldWeekSearchQuery || '').trim().toLowerCase();
+  const oldWeekSearchPending = usesServerSlice && state.ui.oldWeekSearchPending;
   const filteredOldWeekTokens = getOldWeekTokens(state).filter((item) => {
     if (state.ui.oldWeekStarredOnly && !state.data.starredTokens.includes(item.address)) {
       return false;
@@ -469,6 +473,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
             <button type="button" class="compact-search-toggle" data-action="old-week-search-focus" aria-label="Search old tokens">&#128269;</button>
             <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="old-week-search" data-search-input="old-week">
           </div>
+          ${oldWeekSearchPending ? '<span class="search-status-indicator active" aria-live="polite">Searching...</span>' : ''}
           <button type="button" class="compact-icon-toggle ${state.ui.oldWeekStarredOnly ? 'active' : ''}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
         <div class="recent-ctrl-filters">
@@ -587,6 +592,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
+  bindSparklineHover(section, state.data.sparklineByAddress);
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
   section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"]').forEach((input) => {

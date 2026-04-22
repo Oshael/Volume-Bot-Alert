@@ -4942,12 +4942,14 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .sparkline-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 144px;
   height: 56px;
   color: #9fb0c2;
+  cursor: crosshair;
 }
 
 .sparkline-wrap.up {
@@ -4985,6 +4987,58 @@ TEMP_LEGACY_BAR_TITLE {
   stroke-width: 2.15;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.sparkline-hover {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.sparkline-hover.active {
+  opacity: 1;
+}
+
+.sparkline-hover-line {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: currentColor;
+  opacity: 0.32;
+  transform: translateX(-50%);
+}
+
+.sparkline-hover-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(8, 11, 16, 0.92), 0 0 14px currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.sparkline-hover-tooltip {
+  position: absolute;
+  bottom: calc(100% + 3px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid rgba(76, 99, 133, 0.6);
+  border-radius: 7px;
+  background: rgba(8, 11, 16, 0.96);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.34);
+  color: #eef5ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.25px;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .sparkline-empty {
@@ -6588,6 +6642,47 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: center;
   gap: 6px;
   padding: 0;
+}
+
+.search-status-indicator {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(0, 212, 255, 0.26);
+  border-radius: 999px;
+  background: rgba(0, 212, 255, 0.08);
+  color: #9be9ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.45px;
+  text-transform: uppercase;
+}
+
+.search-status-indicator.active {
+  display: inline-flex;
+}
+
+.search-status-indicator::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 12px currentColor;
+  animation: search-status-pulse 1s ease-in-out infinite;
+}
+
+@keyframes search-status-pulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
 }
 
 .old-week-bar input[name="old-week-age-max"]:placeholder-shown {

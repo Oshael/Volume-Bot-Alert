@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getManualTokens, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindTokenActions, renderManualTokenTable } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, renderManualTokenTable } from './shared';
 import { resolveManualTableRows } from '../../utils/token-table';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
@@ -130,6 +130,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
+  bindSparklineHover(section, state.data.sparklineByAddress);
   bindBucketSortControls(section, controller, 'manual');
   return section;
 }
