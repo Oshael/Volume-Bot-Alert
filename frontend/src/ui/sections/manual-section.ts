@@ -130,7 +130,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
-  bindSparklineHover(section, state.data.sparklineByAddress);
+  bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindBucketSortControls(section, controller, 'manual');
   return section;
 }

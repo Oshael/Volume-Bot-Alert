@@ -25,12 +25,21 @@ const SPARKLINE_SVG_WIDTH = 144;
 const SPARKLINE_SVG_HEIGHT = 56;
 const SPARKLINE_PADDING_X = 3;
 const SPARKLINE_PADDING_Y = 5;
+const EXPANDED_SPARKLINE_SVG_WIDTH = 720;
+const EXPANDED_SPARKLINE_SVG_HEIGHT = 260;
+const EXPANDED_SPARKLINE_PADDING_X = 12;
+const EXPANDED_SPARKLINE_PADDING_Y = 16;
 const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
   hour: 'numeric',
   minute: '2-digit',
 });
+
+type SparklineRenderOptions = {
+  expanded?: boolean;
+  expandable?: boolean;
+};
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -122,6 +131,7 @@ export function bindCopyButtons(section: ParentNode) {
 export function bindSparklineHover(
   section: ParentNode,
   sparklineByAddress: Record<string, TokenSparklineEntry> = {},
+  options: { controller?: AppController } = {},
 ) {
   for (const wrap of section.querySelectorAll<HTMLElement>('.sparkline-wrap[data-address]')) {
     const address = String(wrap.dataset.address || '').trim();
@@ -134,6 +144,22 @@ export function bindSparklineHover(
 
     if (!entry || series.length < 2 || !hover || !line || !dot || !tooltip) {
       continue;
+    }
+
+    if (wrap.dataset.sparklineExpandable === 'true' && options.controller) {
+      wrap.tabIndex = 0;
+      wrap.setAttribute('role', 'button');
+      wrap.setAttribute('aria-label', `Expand chart for ${address}`);
+      wrap.addEventListener('click', () => {
+        options.controller?.openExpandedSparkline(address);
+      });
+      wrap.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+        event.preventDefault();
+        options.controller?.openExpandedSparkline(address);
+      });
     }
 
     let activeIndex = -1;
@@ -156,18 +182,13 @@ export function bindSparklineHover(
       }
 
       activeIndex = index;
-      const pointRatio = series.length <= 1 ? 1 : index / (series.length - 1);
-      const min = Math.min(...series);
-      const max = Math.max(...series);
-      const range = max - min;
-      const normalized = range > 0 ? (series[index] - min) / range : 0.5;
-      const xPct = pointRatio * 100;
-      const yPct = 100 - (normalized * 100);
+      const point = resolveSparklineHoverPoint(series, index, wrap);
+      const tooltipLeft = Math.max(10, Math.min(rect.width - 10, point.x));
 
-      line.style.left = `${xPct}%`;
-      dot.style.left = `${xPct}%`;
-      dot.style.top = `${yPct}%`;
-      tooltip.style.left = `${Math.max(10, Math.min(90, xPct))}%`;
+      line.style.left = `${point.x}px`;
+      dot.style.left = `${point.x}px`;
+      dot.style.top = `${point.y}px`;
+      tooltip.style.left = `${tooltipLeft}px`;
       tooltip.textContent = `MCAP ${fmtMoney(series[index])} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
       hover.classList.add('active');
     };
@@ -745,21 +766,62 @@ function normalizeSparklineSeries(series: number[] | null | undefined) {
   return Array.isArray(series) ? series.filter((value) => Number.isFinite(value)) : [];
 }
 
-function buildSparklinePolyline(series: number[]) {
+function resolveSparklineDimensions(options: SparklineRenderOptions = {}) {
+  if (options.expanded) {
+    return {
+      width: EXPANDED_SPARKLINE_SVG_WIDTH,
+      height: EXPANDED_SPARKLINE_SVG_HEIGHT,
+      paddingX: EXPANDED_SPARKLINE_PADDING_X,
+      paddingY: EXPANDED_SPARKLINE_PADDING_Y,
+    };
+  }
+
+  return {
+    width: SPARKLINE_SVG_WIDTH,
+    height: SPARKLINE_SVG_HEIGHT,
+    paddingX: SPARKLINE_PADDING_X,
+    paddingY: SPARKLINE_PADDING_Y,
+  };
+}
+
+function resolveSparklineHoverPoint(series: number[], index: number, wrap: HTMLElement) {
+  const rect = wrap.getBoundingClientRect();
+  const dimensions = resolveSparklineDimensions({
+    expanded: wrap.classList.contains('sparkline-wrap-expanded'),
+  });
+  const min = Math.min(...series);
+  const max = Math.max(...series);
+  const range = max - min;
+  const innerWidth = dimensions.width - (dimensions.paddingX * 2);
+  const innerHeight = dimensions.height - (dimensions.paddingY * 2);
+  const pointRatio = series.length <= 1 ? 1 : index / (series.length - 1);
+  const svgX = dimensions.paddingX + ((innerWidth * index) / Math.max(1, series.length - 1));
+  const normalized = range > 0 ? (series[index] - min) / range : 0.5;
+  const svgY = dimensions.paddingY + innerHeight - (normalized * innerHeight);
+
+  return {
+    ratio: pointRatio,
+    x: (svgX / dimensions.width) * rect.width,
+    y: (svgY / dimensions.height) * rect.height,
+  };
+}
+
+function buildSparklinePolyline(series: number[], options: SparklineRenderOptions = {}) {
   if (series.length < 2) {
     return '';
   }
 
+  const dimensions = resolveSparklineDimensions(options);
   const min = Math.min(...series);
   const max = Math.max(...series);
   const range = max - min;
-  const innerWidth = SPARKLINE_SVG_WIDTH - (SPARKLINE_PADDING_X * 2);
-  const innerHeight = SPARKLINE_SVG_HEIGHT - (SPARKLINE_PADDING_Y * 2);
+  const innerWidth = dimensions.width - (dimensions.paddingX * 2);
+  const innerHeight = dimensions.height - (dimensions.paddingY * 2);
 
   return series.map((value, index) => {
-    const x = SPARKLINE_PADDING_X + ((innerWidth * index) / Math.max(1, series.length - 1));
+    const x = dimensions.paddingX + ((innerWidth * index) / Math.max(1, series.length - 1));
     const normalized = range > 0 ? (value - min) / range : 0.5;
-    const y = SPARKLINE_PADDING_Y + innerHeight - (normalized * innerHeight);
+    const y = dimensions.paddingY + innerHeight - (normalized * innerHeight);
     return `${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(' ');
 }
@@ -819,7 +881,7 @@ function formatApproxSparklineTime(entry: TokenSparklineEntry, index: number, to
   return SPARKLINE_HOVER_TIME_FORMATTER.format(new Date(snappedTsMs));
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string) {
+export function renderSparklineFigure(entry: TokenSparklineEntry | null, address?: string, options: SparklineRenderOptions = {}) {
   if (!entry) {
     return '<span class="sparkline-empty" title="Chart not loaded for this row">-</span>';
   }
@@ -829,16 +891,20 @@ function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string
     return '<span class="sparkline-empty" title="Chart unavailable for this row yet">-</span>';
   }
 
+  const dimensions = resolveSparklineDimensions(options);
   const start = series[0];
   const end = series[series.length - 1];
   const trendClass = end > start ? 'up' : end < start ? 'down' : 'flat';
-  const polyline = buildSparklinePolyline(series);
+  const polyline = buildSparklinePolyline(series, options);
   const summary = escapeHtml(buildSparklineTitle(entry, series));
   const safeAddress = escapeHtml(String(address || entry.address || '').trim());
+  const expandedClass = options.expanded ? ' sparkline-wrap-expanded' : '';
+  const svgExpandedClass = options.expanded ? ' token-sparkline-expanded' : '';
+  const expandableAttr = options.expandable ? ' data-sparkline-expandable="true"' : '';
 
   return `
-    <div class="sparkline-wrap ${trendClass}" data-address="${safeAddress}" data-sparkline-summary="${summary}">
-      <svg class="token-sparkline" viewBox="0 0 ${SPARKLINE_SVG_WIDTH} ${SPARKLINE_SVG_HEIGHT}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <div class="sparkline-wrap ${trendClass}${expandedClass}" data-address="${safeAddress}" data-sparkline-summary="${summary}"${expandableAttr}>
+      <svg class="token-sparkline${svgExpandedClass}" viewBox="0 0 ${dimensions.width} ${dimensions.height}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
         <polyline class="token-sparkline-glow" points="${polyline}"></polyline>
         <polyline class="token-sparkline-line" points="${polyline}"></polyline>
       </svg>
@@ -849,6 +915,10 @@ function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string
       </div>
     </div>
   `;
+}
+
+function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string) {
+  return renderSparklineFigure(entry, address, { expandable: true });
 }
 
 function resolveTokenMcapDelta(item: ManualTokenEntry) {

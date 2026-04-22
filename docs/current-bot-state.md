@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-18` after backend-owned user alert matching became the primary alert source for `VOL`, `MCAP`, `HVNC`, `Surge`, and `Meteora`, the monitored bootstrap became paged, and the live workspace gained hidden-tab light-mode behavior.
+Last reviewed against code and the live deployment model on `2026-04-22` after manual/routed sparkline rollout stabilized around a compact expanded hologram popup, approximate hover inspection, `1m` refresh cadence, and age-adaptive granularity (`1m` / `5m` / `15m`) inside a `7d` max window.
 
 ## Current Deployment Topology
 
@@ -1159,6 +1159,31 @@ Current security priority order:
 - Use `_userManual = true`
 - Are protected from `min-mcap-remove`
 - Removing from `Manual Tokens` clears manual pinning but does not imply global block
+- Current workspace/UI behavior:
+  - `Manual Tokens` is mounted only in `/alerts`
+  - the table now includes a `Chart` column
+  - charts are not rendered in `Monitored Tokens` cards and are not rendered in the alerts feed rows
+- Current sparkline behavior for `Manual Tokens`:
+  - source endpoint: `POST /api/catalog/sparklines`
+  - source data: aggregated from `token_market_buckets_1m`
+  - only the current visible manual table rows are considered
+  - current manual cap is `30` charted rows
+  - the visible-row selection respects current manual search, starred-only toggle, and manual sort order
+  - refresh cadence is `1m`
+  - chart header label is now `Chart`
+  - chart tooltip now identifies the visual as `Mini chart`
+  - hover shows approximate market cap + approximate bucket time for the inspected point
+  - clicking a manual-row mini chart opens a compact expanded hologram popup for the same series
+  - the expanded popup is chart-only; it no longer uses projection/feixe lines from the clicked row
+  - max chart window is `7d`, but younger tokens use their real available lifespan instead of rendering a long empty left side
+  - current age-adaptive chart granularity:
+    - `< 24h`: `1m`
+    - `24h` to `< 72h`: `5m`
+    - `72h+`: `15m`
+- Current table-age formatting:
+  - younger rows still use `d`, `h`, `m`, `s`
+  - `30d+` now renders as `1mo`, `2mo`, etc.
+  - `12mo+` now renders as `1y`, `2y`, etc.
 
 ### Recent / Old Week routing
 - Current routed bars:
@@ -1168,6 +1193,22 @@ Current security priority order:
 - `_userManual` tokens are excluded from routed discovery bars
 - Dismissed sets are stored locally and are account-scoped in browser storage
 - Removal-log hover is now click-sticky as well as hover-driven, so the panel can stay open while the user reads it
+- Current routed chart behavior:
+  - `/monitor` routed tables now include a `Chart` column
+  - source endpoint: `POST /api/catalog/sparklines`
+  - source data: aggregated from `token_market_buckets_1m`
+  - current routed cap is `50` total charted rows across `Recent` + `Old Tokens 1 Week+`
+  - selection is neutral/interleaved rather than permanently prioritizing one side
+  - refresh cadence is `1m`
+  - hover shows approximate market cap + approximate bucket time for the inspected point
+  - clicking a routed mini chart opens the same compact expanded hologram popup used by manual tokens
+  - max chart window is `7d`
+  - younger tokens compress to their real lifespan inside that `7d` ceiling
+  - current age-adaptive chart granularity:
+    - `< 24h`: `1m`
+    - `24h` to `< 72h`: `5m`
+    - `72h+`: `15m`
+  - routed compact search now exposes a visible searching/loading state while the filtered table is resolving
 
 ### PumpFun
 - `X` removes a row from the panel only
@@ -1301,7 +1342,10 @@ Current security priority order:
   - `GET /api/dashboard/monitored`
   - `GET /api/catalog/lateralized`
   - `GET /api/catalog/bid-zone`
+- the leader also owns routed chart refresh for:
+  - `POST /api/catalog/sparklines`
 - follower `/monitor` tabs receive monitored/lateralized/bid-zone snapshots from the leader instead of duplicating that polling
+- follower `/monitor` tabs also receive routed chart snapshots from the leader
 - this coordination currently applies only to `/monitor`
 - `/alerts` still runs independently per tab because live presence, hidden-light behavior, PumpFun runtime, and backend alert acceptance remain scoped to the active browser tab/session
 

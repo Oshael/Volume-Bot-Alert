@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
+import { getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -17,7 +17,7 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { renderFlash } from './shared';
+import { bindSparklineHover, fmtMoney, renderFlash, renderSparklineFigure } from './shared';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
@@ -992,7 +992,10 @@ function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppCo
 
 export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
   const hasBlockTokenWarning = state.session.status === 'authenticated' && Boolean(state.ui.blockTokenWarning);
-  if (!isProfileAuthPanel(state.ui.authPanel) && !hasBlockTokenWarning) {
+  const expandedSparklineAddress = String(state.ui.expandedSparklineAddress || '').trim();
+  const expandedSparkline = expandedSparklineAddress ? getTokenSparkline(state, expandedSparklineAddress) : null;
+  const hasExpandedSparkline = Boolean(expandedSparkline && Array.isArray(expandedSparkline.series) && expandedSparkline.series.length >= 2);
+  if (!isProfileAuthPanel(state.ui.authPanel) && !hasBlockTokenWarning && !hasExpandedSparkline) {
     return null;
   }
 
@@ -1022,6 +1025,16 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
   if (hasBlockTokenWarning) {
     overlay.innerHTML = renderBlockTokenWarningModal(state);
     bindBlockTokenWarningModal(overlay, controller);
+    return overlay;
+  }
+
+  if (hasExpandedSparkline && expandedSparklineAddress) {
+    const sparklineEntry = expandedSparkline;
+    if (!sparklineEntry) {
+      return overlay;
+    }
+    overlay.innerHTML = renderExpandedSparklineModal(state, expandedSparklineAddress);
+    bindExpandedSparklineModal(overlay, controller, expandedSparklineAddress, sparklineEntry);
     return overlay;
   }
 
@@ -1105,6 +1118,83 @@ function renderBlockTokenWarningModal(state: AppState) {
       </div>
     </div>
   `;
+}
+
+function renderExpandedSparklineModal(state: AppState, address: string) {
+  const token = getTrackedToken(state, address);
+  const sparkline = getTokenSparkline(state, address);
+  if (!sparkline) {
+    return '';
+  }
+
+  const symbol = token?.symbol || token?.label || address.slice(0, 8);
+  const name = token?.name || token?.label || address;
+  const stats = getExpandedSparklineStats(sparkline);
+
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="expanded-sparkline" data-auth-modal-scope="sparkline">
+      <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
+        <div class="expanded-sparkline-toolbar">
+          <div class="expanded-sparkline-identity">
+            <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
+            <span>${escapeHtml(name)}</span>
+          </div>
+          <div class="expanded-sparkline-popover-subhead">
+            <span>MCAP ${escapeHtml(fmtMoney(stats.latestValue))}</span>
+            <span>${escapeHtml(stats.spanLabel)} span</span>
+            <span>${escapeHtml(stats.resolutionLabel)}</span>
+          </div>
+          <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
+        </div>
+        <div class="expanded-sparkline-chart">
+          ${renderSparklineFigure(sparkline, address, { expanded: true })}
+        </div>
+        <div class="expanded-sparkline-footnote">Updated ${escapeHtml(stats.updatedLabel)}. Hover for approximate market cap and time.</div>
+      </div>
+    </div>
+  `;
+}
+
+function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>) {
+  const series = Array.isArray(sparkline.series) ? sparkline.series : [];
+  const latestValue = series.length > 0 ? series[series.length - 1] : null;
+  const updatedLabel = sparkline.generatedAt
+    ? new Date(sparkline.generatedAt).toLocaleString()
+    : 'unknown';
+  const spanLabel = sparkline.effectiveHours != null && Number.isFinite(sparkline.effectiveHours)
+    ? `${Math.max(1, Math.round(sparkline.effectiveHours / 24))}d`
+    : '14d';
+  const resolutionLabel = sparkline.granularityMinutes != null && Number.isFinite(sparkline.granularityMinutes)
+    ? `${Math.round(sparkline.granularityMinutes)}m`
+    : '-';
+
+  return {
+    latestValue,
+    updatedLabel,
+    spanLabel,
+    resolutionLabel,
+  };
+}
+
+function bindExpandedSparklineModal(
+  section: ParentNode,
+  controller: AppController,
+  address: string,
+  sparkline: ReturnType<typeof getTokenSparkline>,
+) {
+  if (!sparkline) {
+    return;
+  }
+
+  section.querySelectorAll<HTMLElement>('[data-action="close-expanded-sparkline"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeExpandedSparkline();
+    });
+  });
+  bindSparklineHover(section, { [address]: sparkline });
 }
 
 function bindBlockTokenWarningModal(section: ParentNode, controller: AppController) {

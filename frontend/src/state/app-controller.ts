@@ -289,6 +289,8 @@ export interface AppController {
   dismissOldWeekToken(address: string): void;
   clearAllAlerts(): void;
   removeAlert(id: string): void;
+  openExpandedSparkline(address: string): void;
+  closeExpandedSparkline(): void;
   setNetworkDebugEnabled(enabled: boolean): void;
   clearNetworkDebugEntries(): void;
   clearDismissedRecent(): void;
@@ -5387,6 +5389,7 @@ export function createAppController(): AppController {
     state.ui.oldWeekSearchQuery = '';
     state.ui.recentSearchPending = false;
     state.ui.oldWeekSearchPending = false;
+    state.ui.expandedSparklineAddress = null;
     state.ui.manualStarredOnly = false;
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
@@ -6720,6 +6723,22 @@ export function createAppController(): AppController {
       syncAlertState();
       emit('alerts');
       flushEmit();
+    },
+    openExpandedSparkline(address: string) {
+      const normalized = String(address || '').trim();
+      const sparkline = state.data.sparklineByAddress[normalized];
+      if (!normalized || !sparkline || !Array.isArray(sparkline.series) || sparkline.series.length < 2) {
+        return;
+      }
+      state.ui.expandedSparklineAddress = normalized;
+      emit('overlay');
+    },
+    closeExpandedSparkline() {
+      if (!state.ui.expandedSparklineAddress) {
+        return;
+      }
+      state.ui.expandedSparklineAddress = null;
+      emit('overlay');
     },
     clearDismissedRecent() {
       state.data.dismissedRecent = [];

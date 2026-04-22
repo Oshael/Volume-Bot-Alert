@@ -1664,6 +1664,178 @@ a {
   gap: 14px;
 }
 
+.legacy-auth-panel-expanded-sparkline {
+  position: relative;
+  width: min(576px, calc(100vw - 24px));
+  max-height: min(72vh, 374px);
+  padding: 8px 8px 8px;
+  gap: 6px;
+  overflow: visible;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  box-shadow: none;
+  isolation: isolate;
+  animation: expanded-sparkline-hologram-enter 0.16s ease-out;
+}
+
+.legacy-auth-panel-expanded-sparkline::before {
+  content: "";
+  position: absolute;
+  inset: 96px 8px 8px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(0, 212, 255, 0.12), transparent 34%),
+    radial-gradient(circle at 82% 8%, rgba(90, 122, 255, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(9, 18, 31, 0.42), rgba(5, 10, 18, 0.2));
+  border: 1px solid rgba(58, 104, 170, 0.26);
+  filter: blur(10px);
+  opacity: 0.94;
+  z-index: -1;
+}
+
+@keyframes expanded-sparkline-hologram-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.legacy-auth-modal[data-auth-modal-scope="sparkline"] {
+  align-items: start;
+  padding-top: min(12vh, 84px);
+}
+
+.legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-auth-modal-backdrop {
+  background:
+    radial-gradient(circle at center, rgba(8, 16, 29, 0.16), rgba(3, 6, 12, 0.08) 52%, transparent 78%);
+  backdrop-filter: blur(2px);
+}
+
+.expanded-sparkline-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.expanded-sparkline-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 2px 2px 0 2px;
+}
+
+.expanded-sparkline-identity strong {
+  color: #f3fbff;
+  font-size: 17px;
+  line-height: 1.1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 0 14px rgba(73, 236, 255, 0.18);
+}
+
+.expanded-sparkline-identity span {
+  color: #86b8dc;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.12);
+}
+
+.expanded-sparkline-popover-subhead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  padding: 0 4px 0 0;
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  align-self: center;
+}
+
+.expanded-sparkline-popover-subhead span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 9px;
+  border: 1px solid rgba(63, 113, 176, 0.34);
+  border-radius: 999px;
+  background: rgba(7, 14, 24, 0.28);
+  box-shadow:
+    0 0 18px rgba(0, 212, 255, 0.05),
+    0 0 0 1px rgba(14, 25, 40, 0.18) inset;
+  color: #a8cae8;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  backdrop-filter: blur(10px);
+}
+
+.expanded-sparkline-chart {
+  position: relative;
+  padding: 6px 6px 2px;
+  border: 1px solid rgba(65, 109, 182, 0.3);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at top, rgba(49, 147, 255, 0.08), transparent 56%),
+    linear-gradient(180deg, rgba(6, 12, 22, 0.34), rgba(4, 10, 18, 0.18)),
+    rgba(5, 10, 18, 0.18);
+  box-shadow:
+    0 0 40px rgba(0, 212, 255, 0.08),
+    inset 0 0 24px rgba(31, 93, 183, 0.12);
+  backdrop-filter: blur(14px) saturate(115%);
+  overflow: visible;
+  z-index: 1;
+}
+
+.expanded-sparkline-chart::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(rgba(0, 212, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(122, 236, 255, 0.04), transparent 28%, transparent 72%, rgba(122, 236, 255, 0.03));
+  background-size: 100% 18px, 22px 100%, 100% 100%;
+  opacity: 0.46;
+  pointer-events: none;
+}
+
+.expanded-sparkline-chart::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(86, 135, 210, 0.16);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.expanded-sparkline-chart > * {
+  position: relative;
+  z-index: 1;
+}
+
+.expanded-sparkline-footnote {
+  color: #7593af;
+  font-size: 9px;
+  line-height: 1.5;
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.08);
+  position: relative;
+  z-index: 1;
+}
+
 .legacy-auth-panel-settings {
   overflow: visible;
 }
@@ -4952,6 +5124,16 @@ TEMP_LEGACY_BAR_TITLE {
   cursor: crosshair;
 }
 
+.sparkline-wrap[data-sparkline-expandable="true"] {
+  cursor: zoom-in;
+}
+
+.sparkline-wrap-expanded {
+  width: 100%;
+  height: 170px;
+  display: flex;
+}
+
 .sparkline-wrap.up {
   color: #33d17a;
 }
@@ -4969,6 +5151,26 @@ TEMP_LEGACY_BAR_TITLE {
   height: 56px;
   display: block;
   overflow: visible;
+}
+
+.token-sparkline-expanded {
+  width: 100%;
+  height: 170px;
+}
+
+.legacy-auth-panel-expanded-sparkline .token-sparkline-glow {
+  stroke-width: 8;
+  stroke-opacity: 0.24;
+  filter: blur(6px);
+}
+
+.legacy-auth-panel-expanded-sparkline .token-sparkline-line {
+  stroke-width: 2.35;
+  filter: drop-shadow(0 0 8px currentColor);
+}
+
+.sparkline-wrap-expanded .sparkline-hover {
+  z-index: 5;
 }
 
 .token-sparkline-glow {
@@ -5039,6 +5241,48 @@ TEMP_LEGACY_BAR_TITLE {
   letter-spacing: 0.25px;
   transform: translateX(-50%);
   white-space: nowrap;
+}
+
+.sparkline-wrap-expanded .sparkline-hover-line {
+  top: 10px;
+  bottom: 10px;
+}
+
+.sparkline-wrap-expanded .sparkline-hover-dot {
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px rgba(8, 11, 16, 0.94), 0 0 16px currentColor;
+}
+
+.sparkline-wrap-expanded .sparkline-hover-tooltip {
+  bottom: calc(100% + 5px);
+  min-height: 24px;
+  padding: 4px 9px;
+  border-radius: 9px;
+  font-size: 11px;
+  border-color: rgba(74, 125, 194, 0.48);
+  background: rgba(8, 14, 24, 0.88);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.32),
+    0 0 18px rgba(0, 212, 255, 0.08);
+  z-index: 6;
+  white-space: nowrap;
+}
+
+.legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-profile-modal-close {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  border-color: rgba(66, 110, 180, 0.34);
+  background: rgba(8, 13, 23, 0.24);
+  color: #dff4ff;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 18px rgba(0, 212, 255, 0.05);
+}
+
+.legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-profile-modal-close:hover {
+  border-color: rgba(104, 162, 255, 0.54);
+  background: rgba(10, 18, 30, 0.36);
 }
 
 .sparkline-empty {

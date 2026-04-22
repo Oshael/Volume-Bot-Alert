@@ -918,6 +918,7 @@ function getOverlayRenderKey(state: AppState) {
     sessionStatus: state.session.status,
     authPanel: state.ui.authPanel,
     blockTokenWarning: state.ui.blockTokenWarning,
+    expandedSparkline: getExpandedSparklineOverlaySnapshot(state),
     busy: state.ui.busy,
     error: state.ui.error,
     notice: state.ui.notice,
@@ -926,27 +927,58 @@ function getOverlayRenderKey(state: AppState) {
     accessExpiresAt: state.session.accessExpiresAt,
     accessDaysRemaining: state.session.accessDaysRemaining,
     accessSource: state.session.accessSource,
-    username: state.ui.authPanel === 'user-settings' ? state.session.username : null,
-    email: state.ui.authPanel === 'user-settings' ? state.session.email : null,
-    isEmailVerified: state.ui.authPanel === 'user-settings' ? state.session.isEmailVerified : null,
-    emailVerifiedAt: state.ui.authPanel === 'user-settings' ? state.session.emailVerifiedAt : null,
-    identityProviders: state.ui.authPanel === 'user-settings' ? state.identities.providers : null,
-    identityError: state.ui.authPanel === 'user-settings' ? state.identities.error : null,
-    pendingIdentityUnlinkProvider: state.ui.authPanel === 'user-settings' ? state.ui.pendingIdentityUnlinkProvider : null,
-    billingLoaded: state.ui.authPanel === 'user-settings' ? state.billing.loaded : null,
-    billingEnabled: state.ui.authPanel === 'user-settings' ? state.billing.enabled : null,
-    billingProviderReady: state.ui.authPanel === 'user-settings' ? state.billing.providerReady : null,
-    billingPlans: state.ui.authPanel === 'user-settings' ? state.billing.plans : null,
-    billingOrders: state.ui.authPanel === 'user-settings' ? state.billing.orders : null,
-    billingPendingPlanKey: state.ui.authPanel === 'user-settings' ? state.billing.pendingPlanKey : null,
-    billingError: state.ui.authPanel === 'user-settings' ? state.billing.error : null,
-    configs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
-    blocklist: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
+    userSettings: getUserSettingsOverlaySnapshot(state),
+    botSettingsConfigs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
+    blockedTokens: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
   });
 }
 
+function getExpandedSparklineOverlaySnapshot(state: AppState) {
+  const address = String(state.ui.expandedSparklineAddress || '').trim();
+  if (!address) {
+    return null;
+  }
+
+  const sparkline = state.data.sparklineByAddress[address] || null;
+  const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
+  return {
+    address,
+    generatedAt: sparkline?.generatedAt ?? null,
+    points: series.length,
+    latest: series.length > 0 ? series[series.length - 1] : null,
+  };
+}
+
+function getUserSettingsOverlaySnapshot(state: AppState) {
+  if (state.ui.authPanel !== 'user-settings') {
+    return null;
+  }
+
+  return {
+    username: state.session.username,
+    email: state.session.email,
+    isEmailVerified: state.session.isEmailVerified,
+    emailVerifiedAt: state.session.emailVerifiedAt,
+    identityProviders: state.identities.providers,
+    identityError: state.identities.error,
+    pendingIdentityUnlinkProvider: state.ui.pendingIdentityUnlinkProvider,
+    billingLoaded: state.billing.loaded,
+    billingEnabled: state.billing.enabled,
+    billingProviderReady: state.billing.providerReady,
+    billingPlans: state.billing.plans,
+    billingOrders: state.billing.orders,
+    billingPendingPlanKey: state.billing.pendingPlanKey,
+    billingError: state.billing.error,
+  };
+}
+
 function syncProfileModalScrollLock(state: AppState) {
-  document.body.classList.toggle('profile-modal-open', isProfileAuthPanel(state.ui.authPanel) || Boolean(state.ui.blockTokenWarning));
+  document.body.classList.toggle(
+    'profile-modal-open',
+    isProfileAuthPanel(state.ui.authPanel)
+      || Boolean(state.ui.blockTokenWarning)
+      || Boolean(state.ui.expandedSparklineAddress),
+  );
 }
 
 function captureUserMenuDraft(root: HTMLElement): UserMenuDraft | null {
@@ -1158,6 +1190,7 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
 
   const closeSelector = '[data-action="close-profile-modal"]';
   const blockWarningCloseSelector = '[data-action="close-block-token-warning"], [data-action="cancel-block-token-warning"]';
+  const expandedSparklineCloseSelector = '[data-action="close-expanded-sparkline"]';
   const shouldCloseProfileModal = (target: HTMLElement | null) => {
     const profileModal = target?.closest<HTMLElement>('[data-auth-modal-scope="profile"]');
     const closeButton = target?.closest<HTMLElement>(closeSelector);
@@ -1172,6 +1205,13 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
 
     return Boolean(warningModal && (closeButton || backdrop));
   };
+  const shouldCloseExpandedSparkline = (target: HTMLElement | null) => {
+    const sparklineModal = target?.closest<HTMLElement>('[data-auth-modal-scope="sparkline"]');
+    const closeButton = target?.closest<HTMLElement>(expandedSparklineCloseSelector);
+    const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
+
+    return Boolean(sparklineModal && (closeButton || backdrop));
+  };
 
   root.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) {
@@ -1179,6 +1219,12 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
     }
 
     const target = event.target as HTMLElement | null;
+    if (shouldCloseExpandedSparkline(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeExpandedSparkline();
+      return;
+    }
     if (!shouldCloseProfileModal(target)) {
       return;
     }
@@ -1194,6 +1240,12 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
       event.preventDefault();
       event.stopPropagation();
       void controller.cancelBlockedTokenWarning();
+      return;
+    }
+    if (shouldCloseExpandedSparkline(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeExpandedSparkline();
       return;
     }
     if (!shouldCloseProfileModal(target)) {
@@ -1214,6 +1266,13 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
       event.preventDefault();
       event.stopPropagation();
       void controller.cancelBlockedTokenWarning();
+      return;
+    }
+    const hasExpandedSparkline = root.querySelector('[data-auth-modal-scope="sparkline"]');
+    if (hasExpandedSparkline) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeExpandedSparkline();
       return;
     }
     const hasProfileModal = root.querySelector('[data-auth-modal-scope="profile"]');

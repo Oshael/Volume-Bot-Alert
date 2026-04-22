@@ -337,7 +337,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
-  bindSparklineHover(section, state.data.sparklineByAddress);
+  bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
   section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"]').forEach((input) => {
@@ -592,7 +592,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   });
   bindTokenActions(section, controller);
   bindCopyButtons(section);
-  bindSparklineHover(section, state.data.sparklineByAddress);
+  bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
   section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"]').forEach((input) => {

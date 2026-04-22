@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-18` after backend-owned user alert matching became the primary alert source for `VOL`, `MCAP`, `HVNC`, `Surge`, and `Meteora`, the monitored bootstrap became paged, and the live workspace gained hidden-tab light-mode behavior.
+Last reviewed against code and the live deployment model on `2026-04-22` after the manual/routed sparkline rollout stabilized around `Chart` columns, approximate hover inspection, a compact expanded hologram popup, `1m` refresh cadence, and age-adaptive chart granularity (`1m` / `5m` / `15m`) inside a `7d` max visual window.
 
 ## Current Deployment Topology
 
@@ -650,6 +650,34 @@ Important:
 - frontend still applies optimistic UI updates
 - backend also ingests the token for global catalog tracking through a separate catalog path
 - the reload path now rebuilds manual-token UI state directly from `GET /api/config` payload tokens, which is what makes same-account cross-device restore work correctly
+- workspace placement:
+  - mounted only in `/alerts`
+  - not mounted in `/monitor`
+- current table behavior:
+  - supports compact search by symbol, name, and contract/address
+  - supports starred-only filtering
+  - supports client-side manual sort modes
+  - now includes a `Chart` column
+- current manual chart behavior:
+  - charts are loaded only for the visible manual table rows after manual search/filter/sort resolution
+  - current manual chart cap is `30` rows
+  - source endpoint is `POST /api/catalog/sparklines`
+  - backend reads from `token_market_buckets_1m` and aggregates to the requested chart granularity
+  - refresh cadence is `1m`
+  - the chart tooltip now labels the visual as `Mini chart`
+  - hover inspection shows approximate market cap plus approximate bucket time for the selected point
+  - clicking a manual mini chart opens a compact expanded hologram popup for that same series
+  - the expanded popup keeps the chart-focused layout and does not render projection/feixe lines
+  - the visual span is `7d` max, but tokens younger than `7d` render only their real available lifespan
+  - current age-adaptive granularity:
+    - `< 24h`: `1m`
+    - `24h` to `< 72h`: `5m`
+    - `72h+`: `15m`
+  - manual search changes, starred-only toggles, and manual sort changes now force a sparkline refresh in the live workspace
+- current table-age formatting:
+  - `< 30d`: `d` / `h` / `m` / `s`
+  - `30d+`: `1mo`, `2mo`, ...
+  - `12mo+`: `1y`, `2y`, ...
 
 ### Monitored tokens baseline
 - backend
@@ -677,6 +705,25 @@ Reasons:
 - per-user MCAP windows
 - per-user dismissed state
 - per-user removal logs
+- current routed table behavior:
+  - mounted only in `/monitor`
+  - both routed tables now include a `Chart` column
+  - the header text is `Chart`, while the tooltip labels the visual as `Mini chart`
+- current routed chart behavior:
+  - source endpoint: `POST /api/catalog/sparklines`
+  - source data: `token_market_buckets_1m`
+  - only visible routed rows are fetched
+  - current routed chart cap is `50` total rows across `Recent Tokens` + `Old Tokens 1 Week+`
+  - the routed selector is neutral/interleaved rather than permanently prioritizing recent or old-week
+  - refresh cadence is `1m`
+  - hover inspection shows approximate market cap plus approximate bucket time for the selected point
+  - clicking a routed mini chart opens the same compact expanded hologram popup used in `Manual Tokens`
+  - visual span is `7d` max, with younger-token compression to the real available lifespan
+  - current age-adaptive granularity:
+    - `< 24h`: `1m`
+    - `24h` to `< 72h`: `5m`
+    - `72h+`: `15m`
+  - routed compact search surfaces a visible searching/loading state while the table resolves the query
 
 ### Alerts
 - mostly backend-owned, with PumpFun alerts still frontend-local
@@ -760,6 +807,7 @@ High-level behavior:
   - manual
   - PumpFun
   - alerts
+- manual token charts are loaded in this workspace
 - replays unseen backend-owned alert feeds from the dashboard alert-events feed
 - keeps only PumpFun-local alert generation frontend-owned
 - keeps PumpFun runtime active
@@ -777,6 +825,7 @@ High-level behavior:
   - `Old Tokens 1 Week+`
   - `Lateralization Coins`
   - `Bid Zone Coins`
+- routed token charts are loaded in this workspace
 - still consumes live monitored dashboard state
 - does not run:
   - frontend alerts
@@ -790,7 +839,9 @@ Multi-tab coordination:
   - `GET /api/dashboard/monitored`
   - `GET /api/catalog/lateralized`
   - `GET /api/catalog/bid-zone`
-- follower monitor tabs receive monitored/lateralized/bid-zone snapshots from the leader
+- leader also owns routed-chart refresh for:
+  - `POST /api/catalog/sparklines`
+- follower monitor tabs receive monitored/lateralized/bid-zone/sparkline snapshots from the leader
 - this coordination still does **not** apply to `/alerts`, because live presence, hidden-light behavior, PumpFun runtime, and backend alert acceptance remain scoped to the active browser tab/session
 
 Workspace header status:

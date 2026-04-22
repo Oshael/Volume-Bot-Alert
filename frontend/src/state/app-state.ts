@@ -481,6 +481,7 @@ export interface AppState {
     oldWeekSearchQuery: string;
     recentSearchPending: boolean;
     oldWeekSearchPending: boolean;
+    expandedSparklineAddress: string | null;
     manualStarredOnly: boolean;
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
@@ -635,6 +636,7 @@ export function createAppState(): AppState {
       oldWeekSearchQuery: '',
       recentSearchPending: false,
       oldWeekSearchPending: false,
+      expandedSparklineAddress: null,
       manualStarredOnly: false,
       recentStarredOnly: false,
       oldWeekStarredOnly: false,
