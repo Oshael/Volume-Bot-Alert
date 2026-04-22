@@ -8392,6 +8392,12 @@ TEMP_LEGACY_BAR_TITLE {
   min-width: 0;
 }
 
+.alert-content-v68 {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .alert-top-v68 {
   display: flex;
   justify-content: space-between;
@@ -8403,6 +8409,26 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: flex-start;
   gap: 8px;
+}
+
+.alert-rail-v68 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 14px;
+  min-width: 0;
+  width: 100%;
+}
+
+.alert-side-v68 {
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-left: auto;
+  text-align: right;
 }
 
 .alert-token-v68 {
@@ -8502,6 +8528,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-flow-v68,
 .alert-stats-v68,
+.alert-chart-v1,
 .alert-links-v68,
 .alert-actions-v68 {
   margin-top: 4px;
@@ -8510,10 +8537,26 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-flow-v68,
 .alert-stats-v68 {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
   align-items: center;
   font-size: 10px;
+}
+
+.alert-flow-v68 {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.alert-stats-v68 {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.alert-stats-row-v68 {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 18px;
+  align-items: center;
 }
 
 .alert-flow-v68 .label,
@@ -8559,6 +8602,29 @@ TEMP_LEGACY_BAR_TITLE {
   gap: 6px;
   align-items: center;
   font-size: 10px;
+}
+
+.alert-chart-v1 {
+  display: flex;
+  align-items: center;
+  min-height: 60px;
+}
+
+.alerts-panel .alert-chart-v1 .sparkline-wrap {
+  width: min(100%, 196px);
+  height: 60px;
+  justify-content: flex-start;
+}
+
+.alerts-panel .alert-chart-v1 .token-sparkline {
+  width: 100%;
+  height: 60px;
+}
+
+.alerts-panel .alert-chart-v1 .sparkline-empty {
+  display: inline-flex;
+  align-items: center;
+  min-height: 60px;
 }
 
 .alert-inline-link {
@@ -8709,17 +8775,21 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alert-body-v68 {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 16px;
+  align-items: start;
   min-width: 0;
 }
 
 .alert-top-v68 {
   align-items: center;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .alert-flow-v68,
 .alert-stats-v68,
+.alert-content-v68,
 .alert-links-v68,
 .alert-actions-v68 {
   margin-left: 0;
@@ -8734,12 +8804,6 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 
-.alert-body-v68 {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
 .alert-main-v68 {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
@@ -8751,6 +8815,10 @@ TEMP_LEGACY_BAR_TITLE {
   min-width: 0;
 }
 
+.alert-content-v68 > * + * {
+  margin-top: 4px;
+}
+
 .alert-stats-v68,
 .alert-links-v68,
 .alert-actions-v68 {
@@ -8760,15 +8828,14 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-top-v68 {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
 }
 
 .alert-pct-v68,
 .alert-badge-v68 {
-  margin-left: auto;
-  min-width: 120px;
-  justify-self: end;
+  min-width: 0;
+  justify-self: auto;
 }
 
 
@@ -8797,6 +8864,30 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-links-v68,
 .alert-actions-v68 {
   padding-right: 84px;
+}
+
+.alert-chart-v1 {
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: 12px;
+  align-self: start;
+  flex: 0 1 auto;
+}
+
+.alerts-panel .alert-chart-v1 .sparkline-wrap {
+  width: min(180px, 18vw);
+  min-width: 132px;
+  max-width: 180px;
+  height: 76px;
+  justify-content: flex-start;
+}
+
+.alerts-panel .alert-chart-v1 .token-sparkline {
+  height: 76px;
+}
+
+.alerts-panel .alert-chart-v1 .sparkline-empty {
+  min-height: 76px;
 }
 
 

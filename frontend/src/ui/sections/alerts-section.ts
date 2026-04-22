@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
-import type { AlertEntry, AppState } from '../../state/app-state';
+import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isAlertInArrivalWindow, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
-import { bindCompactSearch, bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
@@ -53,6 +53,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
 
   syncSearchInput(view, searchQuery);
   reconcileAlertRows(view, filteredAlerts, state, renderNow, cardEffectsEnabled);
+  bindSparklineHover(view.section, state.data.alertSparklineByAddress);
   view.count.textContent = String(filteredAlerts.length);
 
   return view.section;
@@ -180,6 +181,7 @@ function reconcileAlertRows(
     const fxState = getOrCreateAlertFxState(view, alert, renderNow);
     logAlertArrivalDebug(alert, fxState, renderNow);
     const isStarred = state.data.starredTokens.includes(alert.address);
+    const sparkline = state.data.alertSparklineByAddress[alert.address] || null;
     const renderKey = getAlertRowRenderKey(
       alert,
       state.ui.busy,
@@ -187,6 +189,7 @@ function reconcileAlertRows(
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
       renderNow,
+      sparkline,
     );
 
     let rowView = view.rowViews.get(alert.id);
@@ -212,6 +215,7 @@ function reconcileAlertRows(
         state.session.role === 'admin',
         state.ui.enabledTradeTerminals,
         renderNow,
+        sparkline,
         fxState,
       ));
       bindTokenActions(rowView.element, view.controller);
@@ -694,7 +698,9 @@ function getAlertRowRenderKey(
   isAdmin: boolean,
   enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
   renderNow: number,
+  sparkline: TokenSparklineEntry | null,
 ) {
+  const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
   return JSON.stringify({
     id: alert.id,
     kind: alert.kind,
@@ -729,6 +735,10 @@ function getAlertRowRenderKey(
     isAdmin,
     enabledTradeTerminals,
     toneClass: getAlertToneClass(alert, renderNow),
+    sparklineGeneratedAt: sparkline?.generatedAt ?? null,
+    sparklineLatestBucketAt: sparkline?.latestBucketAt ?? null,
+    sparklinePoints: series.length,
+    sparklineLast: series.length > 0 ? series[series.length - 1] : null,
   });
 }
 
@@ -773,6 +783,7 @@ function buildAlertRowContent(
   isAdmin: boolean,
   enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
   renderNow: number,
+  sparkline: TokenSparklineEntry | null,
   _fxState: AlertFxState,
 ) {
   const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
@@ -806,10 +817,7 @@ function buildAlertRowContent(
   tokenName.className = 'alert-token-name';
   tokenName.textContent = safeName;
   tokenLine.append(' ', tokenName);
-  const topSide = document.createElement('div');
-  topSide.className = 'alert-top-side';
-  topSide.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id));
-  top.append(tokenLine, topSide);
+  top.append(tokenLine);
 
   const flowLine = document.createElement('div');
   flowLine.className = 'alert-flow-v68';
@@ -821,6 +829,17 @@ function buildAlertRowContent(
   const statsLine = document.createElement('div');
   statsLine.className = 'alert-stats-v68';
   appendAlertStatsLine(statsLine, alert);
+
+  const content = document.createElement('div');
+  content.className = 'alert-content-v68';
+
+  const chart = buildAlertSparklineBlock(alert.address, sparkline);
+  const side = document.createElement('div');
+  side.className = 'alert-side-v68';
+  side.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id));
+  const rail = document.createElement('div');
+  rail.className = 'alert-rail-v68';
+  rail.append(chart, side);
 
   const links = document.createElement('div');
   links.className = 'alert-links-v68';
@@ -847,9 +866,17 @@ function buildAlertRowContent(
     actions.append(buildActionButton('Admin Block', 'alert-action-button danger', 'admin-block-token', alert.address, symbol, busy));
   }
 
-  body.append(main, statsLine, links, actions);
+  content.append(main, statsLine, links, actions);
+  body.append(content, rail);
   grid.append(body, time);
   return grid;
+}
+
+function buildAlertSparklineBlock(address: string, sparkline: TokenSparklineEntry | null) {
+  const chart = document.createElement('div');
+  chart.className = 'alert-chart-v1';
+  chart.innerHTML = renderSparklineFigure(sparkline, address);
+  return chart;
 }
 
 function buildAlertFxLayer() {
@@ -1022,13 +1049,20 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
     return;
   }
 
-  container.append(
-    buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up current-mcap'),
-    buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
-    buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
-    buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
-    buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
-  );
+  if (alert.isOldSurge) {
+    appendMetricRow(container, [
+      buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
+      buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
+      buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
+    ]);
+  } else {
+    appendMetricRow(container, [
+      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+      buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
+      buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
+      buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
+    ]);
+  }
 
   if (alert.kind !== 'meteora-surge') {
     return;
@@ -1041,11 +1075,31 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
   }
 
   if (Number.isFinite(baselinePool24h) && baselinePool24h > 0) {
-    container.append(buildFlowTransition('POOL', fmtMoney(baselinePool24h), fmtMoney(currentPool), 'up', 'meteora-pool-label', 'meteora-pool-value'));
+    appendMetricRow(container, [
+      buildFlowTransition('POOL', fmtMoney(baselinePool24h), fmtMoney(currentPool), 'up', 'meteora-pool-label', 'meteora-pool-value'),
+    ]);
     return;
   }
 
-  container.append(buildMetricPair('POOL', fmtMoney(currentPool), 'up', 'meteora-pool-label', 'meteora-pool-value'));
+  appendMetricRow(container, [
+    buildMetricPair('POOL', fmtMoney(currentPool), 'up', 'meteora-pool-label', 'meteora-pool-value'),
+  ]);
+}
+
+function appendMetricRow(container: HTMLElement, items: Array<HTMLElement | null | undefined>) {
+  const row = document.createElement('div');
+  row.className = 'alert-stats-row-v68';
+
+  for (const item of items) {
+    if (!item) {
+      continue;
+    }
+    row.append(item);
+  }
+
+  if (row.childElementCount > 0) {
+    container.append(row);
+  }
 }
 
 function buildMetricPair(label: string, value: string, toneClass: string, labelClass = '', valueClass = '') {
@@ -1166,15 +1220,17 @@ function appendHighCapDumpFlowLine(container: HTMLElement, alert: AlertEntry) {
 }
 
 function appendHighCapDumpStatsLine(container: HTMLElement, alert: AlertEntry) {
-  container.append(
+  appendMetricRow(container, [
     buildMetricPair('CURRENT', fmtMoney(alert.mcap), 'down current-mcap'),
     buildMetricPair('DROP', fmtMoney(getHighCapDumpDropAmount(alert)), 'down'),
     buildMetricPair('LOW 5M', fmtMoney(alert.windowLowMcap ?? null), 'down'),
     buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+  ]);
+  appendMetricRow(container, [
     buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
     buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
     buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
-  );
+  ]);
 }
 
 function getHighCapDumpDropAmount(alert: AlertEntry) {

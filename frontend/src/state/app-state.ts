@@ -455,6 +455,7 @@ export interface AppState {
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
+    alertSparklineByAddress: Record<string, TokenSparklineEntry>;
     lateralizedTokens: LateralizedTokenEntry[];
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
@@ -610,6 +611,7 @@ export function createAppState(): AppState {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
+      alertSparklineByAddress: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
