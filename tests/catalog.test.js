@@ -475,17 +475,17 @@ describe('Catalog routes', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({
           addresses: [VALID_ADDR],
-          hours: 7 * 24,
+          hours: 14 * 24,
           points: 336,
-          granularityMinutes: 5,
+          granularityMinutes: 30,
         });
 
       assert.equal(res.status, 200);
       assert.deepEqual(capturedAddresses, [VALID_ADDR]);
-      assert.deepEqual(capturedOptions, { hours: 7 * 24, points: 336, granularityMinutes: 5 });
-      assert.equal(res.body.hours, 7 * 24);
+      assert.deepEqual(capturedOptions, { hours: 14 * 24, points: 336, granularityMinutes: 30 });
+      assert.equal(res.body.hours, 14 * 24);
       assert.equal(res.body.points, 336);
-      assert.equal(res.body.granularityMinutes, 5);
+      assert.equal(res.body.granularityMinutes, 30);
       assert.equal(res.body.count, 1);
       assert.equal(res.body.items[0].address, VALID_ADDR);
       assert.equal(res.body.items[0].coverageRatio, 0.92);

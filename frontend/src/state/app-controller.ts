@@ -113,13 +113,14 @@ const LATERALIZED_PANEL_LIMIT = 24;
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
-const SPARKLINE_WINDOW_HOURS = 7 * 24;
+const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 50;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_AGE_5M_MAX_MS = 72 * 60 * 60 * 1000;
-const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 15;
+const SPARKLINE_AGE_15M_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 30;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
@@ -4448,7 +4449,10 @@ export function createAppController(): AppController {
     if (ageMs < SPARKLINE_AGE_5M_MAX_MS) {
       return 5;
     }
-    return 15;
+    if (ageMs < SPARKLINE_AGE_15M_MAX_MS) {
+      return 15;
+    }
+    return 30;
   }
 
   function getVisibleWorkspaceSparklineAddresses() {
@@ -4480,7 +4484,7 @@ export function createAppController(): AppController {
       grouped.set(granularityMinutes, [address]);
     }
 
-    return [1, 5, 15]
+    return [1, 5, 15, 30]
       .map((granularityMinutes) => ({
         granularityMinutes,
         addresses: grouped.get(granularityMinutes) || [],

@@ -104,9 +104,9 @@ function parseSparklineBatchRequest(body = {}) {
     ok: true,
     value: {
       addresses: addresses.addresses,
-      hours: hours.value || (7 * 24),
+      hours: hours.value || (14 * 24),
       points: points.value || 336,
-      granularityMinutes: granularityMinutes.value || 15,
+      granularityMinutes: granularityMinutes.value || 30,
     },
   };
 }

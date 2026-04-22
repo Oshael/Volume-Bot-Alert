@@ -415,16 +415,16 @@ export function fetchTokenSparklines(
     method: 'POST',
     body: JSON.stringify({
       addresses,
-      hours: options?.hours ?? (7 * 24),
+      hours: options?.hours ?? (14 * 24),
       points: options?.points ?? 336,
-      granularityMinutes: options?.granularityMinutes ?? 15,
+      granularityMinutes: options?.granularityMinutes ?? 30,
     }),
     token,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
-    hours: Number(response.hours) || (7 * 24),
+    hours: Number(response.hours) || (14 * 24),
     points: Number(response.points) || 336,
-    granularityMinutes: Number(response.granularityMinutes) || 15,
+    granularityMinutes: Number(response.granularityMinutes) || 30,
     count: Number(response.count) || 0,
     items: Array.isArray(response.items) ? response.items.map((item) => ({
       address: item.address,
@@ -432,7 +432,7 @@ export function fetchTokenSparklines(
       bucketCount: Number(item.bucketCount) || 0,
       coverageRatio: item.coverageRatio ?? null,
       effectiveHours: item.effectiveHours ?? null,
-      granularityMinutes: Number(item.granularityMinutes) || Number(response.granularityMinutes) || 15,
+      granularityMinutes: Number(item.granularityMinutes) || Number(response.granularityMinutes) || 30,
       latestBucketAt: item.latestBucketAt ?? null,
       series: Array.isArray(item.series)
         ? item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))

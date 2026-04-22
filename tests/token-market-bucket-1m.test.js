@@ -205,7 +205,7 @@ describe('token market 1m bucket helpers', () => {
     assert.equal(sparkline.coverageRatio, 1);
   });
 
-  it('compresses the sparkline window to the token lifespan when younger than 7d', () => {
+  it('compresses the sparkline window to the token lifespan when younger than 14d', () => {
     const sparkline = tokenMarketBucket1m.__private.buildSparklineSeriesFromBuckets([
       {
         ts: '2026-04-05T00:00:00.000Z',
@@ -218,7 +218,7 @@ describe('token market 1m bucket helpers', () => {
         pairAddress: 'So11111111111111111111111111111111111111112',
       },
     ], {
-      hours: 7 * 24,
+      hours: 14 * 24,
       points: 20,
       granularityMinutes: 15,
     });
@@ -287,7 +287,7 @@ describe('token market 1m bucket helpers', () => {
         'So11111111111111111111111111111111111111112',
         'So11111111111111111111111111111111111111113',
       ], {
-        hours: 7 * 24,
+        hours: 14 * 24,
         points: 336,
       });
 
@@ -298,16 +298,16 @@ describe('token market 1m bucket helpers', () => {
       assert.deepEqual(capturedParams, [[
         'So11111111111111111111111111111111111111112',
         'So11111111111111111111111111111111111111113',
-      ], 7 * 24, 15]);
+      ], 14 * 24, 30]);
       assert.equal(rows.length, 2);
       assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
       assert.equal(rows[0].series.length, 336);
       assert(rows[0].effectiveHours > 0);
-      assert.equal(rows[0].granularityMinutes, 15);
+      assert.equal(rows[0].granularityMinutes, 30);
       assert.equal(rows[1].address, 'So11111111111111111111111111111111111111113');
       assert.deepEqual(rows[1].series, []);
       assert.equal(rows[1].coverageRatio, 0);
-      assert.equal(rows[1].granularityMinutes, 15);
+      assert.equal(rows[1].granularityMinutes, 30);
     } finally {
       db.query = originalQuery;
     }

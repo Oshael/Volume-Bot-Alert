@@ -706,15 +706,15 @@ function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
 function formatSparklineSpan(hours?: number | null) {
   const safeHours = Number(hours);
   if (!Number.isFinite(safeHours) || safeHours <= 0) {
-    return '7D max';
+    return '14D max';
   }
 
   if (safeHours >= 24) {
     const days = Math.max(1, Math.round(safeHours / 24));
-    return `${days}D of 7D max`;
+    return `${days}D of 14D max`;
   }
 
-  return `${Math.max(1, Math.round(safeHours))}H of 7D max`;
+  return `${Math.max(1, Math.round(safeHours))}H of 14D max`;
 }
 
 function formatSparklineGranularity(granularityMinutes?: number | null) {
