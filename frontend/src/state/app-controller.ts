@@ -88,6 +88,8 @@ const SOCIAL_LINK_RESULT_MESSAGE_TYPE = 'trend_scope_social_link_result';
 const SOCIAL_LINK_SYNC_POLL_MS = 1000;
 const SOCIAL_LINK_SYNC_TIMEOUT_MS = 90_000;
 const AUTH_ERROR_COOKIE_BLOCKED = 'Login succeeded, but the secure session cookie was not accepted. Check browser cookie/privacy settings and try again.';
+const SOLANA_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const EVM_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -6425,6 +6427,21 @@ export function createAppController(): AppController {
       : nextManualDraft;
   }
 
+  function isValidTokenAddressFormat(address: string) {
+    const normalized = String(address || '').trim();
+    return SOLANA_ADDR_RE.test(normalized) || EVM_ADDR_RE.test(normalized);
+  }
+
+  function captureOptimisticManualTokenSnapshot(address: string) {
+    return {
+      trackedToken: state.data.trackedTokensByAddress[address]
+        ? { ...state.data.trackedTokensByAddress[address] }
+        : null,
+      wasManual: state.data.manualTokenAddresses.includes(address),
+      wasMonitored: state.data.monitoredTokenAddresses.includes(address),
+    };
+  }
+
   function applyOptimisticManualToken(address: string, nextManual: ManualTokenEntry) {
     state.data.trackedTokensByAddress[address] = nextManual;
     state.data.manualTokenAddresses = state.data.manualTokenAddresses.includes(address)
@@ -6433,6 +6450,34 @@ export function createAppController(): AppController {
     state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.includes(address)
       ? state.data.monitoredTokenAddresses
       : [...state.data.monitoredTokenAddresses, address];
+
+    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+    state.bars.manual = state.data.manualTokenAddresses.length;
+    refreshMonitoredPanelCounts();
+    deriveAgeBuckets();
+  }
+
+  function revertOptimisticManualToken(
+    address: string,
+    snapshot: ReturnType<typeof captureOptimisticManualTokenSnapshot>,
+  ) {
+    if (snapshot.trackedToken) {
+      state.data.trackedTokensByAddress[address] = snapshot.trackedToken;
+    } else {
+      delete state.data.trackedTokensByAddress[address];
+    }
+
+    state.data.manualTokenAddresses = snapshot.wasManual
+      ? state.data.manualTokenAddresses.includes(address)
+        ? state.data.manualTokenAddresses
+        : [...state.data.manualTokenAddresses, address]
+      : state.data.manualTokenAddresses.filter((item) => item !== address);
+
+    state.data.monitoredTokenAddresses = snapshot.wasMonitored
+      ? state.data.monitoredTokenAddresses.includes(address)
+        ? state.data.monitoredTokenAddresses
+        : [...state.data.monitoredTokenAddresses, address]
+      : state.data.monitoredTokenAddresses.filter((item) => item !== address);
 
     state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
     state.bars.manual = state.data.manualTokenAddresses.length;
@@ -7880,10 +7925,18 @@ export function createAppController(): AppController {
         return;
       }
 
+      if (!isValidTokenAddressFormat(normalizedAddress)) {
+        setError('Invalid token address format');
+        setNotice(null);
+        emit();
+        return;
+      }
+
       setBusy(true);
       setError(null);
       setNotice('Adding manual token...');
 
+      const optimisticSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress);
       const nextManual = buildOptimisticManualToken(normalizedAddress, label);
       applyOptimisticManualToken(normalizedAddress, nextManual);
       emit();
@@ -7892,8 +7945,9 @@ export function createAppController(): AppController {
         await syncManualTokenToBackend(normalizedAddress, label, token);
         setNotice('Token added');
       } catch (error) {
+        revertOptimisticManualToken(normalizedAddress, optimisticSnapshot);
         setError(error instanceof Error ? error.message : 'Failed to persist manual token');
-        setNotice('Token added locally, but backend sync failed.');
+        setNotice(null);
       } finally {
         setBusy(false);
         emit();
