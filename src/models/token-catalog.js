@@ -914,6 +914,8 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
        ON trr.token_address = tc.address
+     LEFT JOIN admin_blocked_tokens ab
+       ON ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
        ON tre.token_address = tc.address
      WHERE tc.eligible_for_monitoring = TRUE

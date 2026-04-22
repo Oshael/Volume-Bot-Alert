@@ -40,3 +40,38 @@ describe('token catalog risk enrichment candidates', () => {
     }
   });
 });
+
+describe('token catalog auto risk review candidates', () => {
+  it('joins blocked token metadata so the auto review worker query stays valid', async () => {
+    const originalQuery = db.query;
+    let capturedSql = null;
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return {
+        rows: [{
+          address: 'So11111111111111111111111111111111111111112',
+          blocked_label: null,
+          risk_review_label: null,
+          risk_holder_count: null,
+        }],
+      };
+    };
+
+    try {
+      const rows = await tokenCatalog.listAutoRiskReviewCandidates(25, 10, 30000);
+
+      assert.deepEqual(capturedParams, [25, 10, 30000]);
+      assert.match(capturedSql, /LEFT JOIN token_risk_reviews/i);
+      assert.match(capturedSql, /LEFT JOIN admin_blocked_tokens ab/i);
+      assert.match(capturedSql, /LEFT JOIN token_risk_enrichment/i);
+      assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= \$3/i);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+});
