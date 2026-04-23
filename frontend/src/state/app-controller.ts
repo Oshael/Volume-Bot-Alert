@@ -225,6 +225,12 @@ type SparklineBatchRequest = {
   addresses: string[];
 };
 
+type HistoryBootstrapRefreshOptions = {
+  token?: string;
+  manualTokensOverride?: AddressItem[];
+  suppressErrors?: boolean;
+};
+
 type SocialProvider = 'google' | 'discord';
 type SocialIntent = {
   status: string;
@@ -638,6 +644,9 @@ export function createAppController(): AppController {
   let lateralizedRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
+  let historyBootstrapRefreshInFlight = false;
+  let historyBootstrapInFlightRequestKey = '';
+  let queuedHistoryBootstrapRefresh: HistoryBootstrapRefreshOptions | null = null;
   let historyBootstrapRequestRevision = 0;
   let monitoredBootstrapHydrationRevision = 0;
   let documentHiddenForUi = typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -4961,20 +4970,23 @@ export function createAppController(): AppController {
     }
   }
 
-  async function refreshHistoryWorkspaceBootstrap(options?: {
-    token?: string;
-    manualTokensOverride?: AddressItem[];
-    suppressErrors?: boolean;
-  }) {
+  async function refreshHistoryWorkspaceBootstrap(options?: HistoryBootstrapRefreshOptions) {
     const token = options?.token ?? state.session.token;
     if (!token) {
       clearHistorySearchPending({ emitRegions: false });
       return;
     }
 
+    const requestPayload = buildHistoryBootstrapRequest();
+    const requestKey = buildHistoryBootstrapRequestKey(token, requestPayload, options?.manualTokensOverride);
+    if (queueHistoryBootstrapRefreshIfInFlight(token, requestKey, options)) {
+      return;
+    }
+
+    historyBootstrapRefreshInFlight = true;
+    historyBootstrapInFlightRequestKey = requestKey;
     const requestRevision = historyBootstrapRequestRevision + 1;
     historyBootstrapRequestRevision = requestRevision;
-    const requestPayload = buildHistoryBootstrapRequest();
 
     try {
       const payload = await measureRuntimePerfAsync(
@@ -5016,6 +5028,8 @@ export function createAppController(): AppController {
       lastMonitoredDashboardError = message;
       setError(message);
       emit('legacy', 'overlay');
+    } finally {
+      flushQueuedHistoryBootstrapRefresh();
     }
   }
 
@@ -5839,9 +5853,57 @@ export function createAppController(): AppController {
     };
   }
 
+  function buildHistoryBootstrapRequestKey(
+    token: string,
+    requestPayload: ReturnType<typeof buildHistoryBootstrapRequest>,
+    manualTokensOverride?: AddressItem[],
+  ) {
+    return JSON.stringify({
+      token,
+      requestPayload,
+      manualTokensOverride: (manualTokensOverride || []).map((item) => ({
+        address: item.address,
+        label: item.label ?? null,
+      })),
+    });
+  }
+
+  function queueHistoryBootstrapRefreshIfInFlight(
+    token: string,
+    requestKey: string,
+    options?: HistoryBootstrapRefreshOptions,
+  ) {
+    if (!historyBootstrapRefreshInFlight) {
+      return false;
+    }
+
+    if (requestKey !== historyBootstrapInFlightRequestKey) {
+      queuedHistoryBootstrapRefresh = {
+        token,
+        manualTokensOverride: options?.manualTokensOverride,
+        suppressErrors: options?.suppressErrors,
+      };
+      historyBootstrapRequestRevision += 1;
+    }
+
+    return true;
+  }
+
+  function flushQueuedHistoryBootstrapRefresh() {
+    historyBootstrapRefreshInFlight = false;
+    historyBootstrapInFlightRequestKey = '';
+    const queuedRefresh = queuedHistoryBootstrapRefresh;
+    queuedHistoryBootstrapRefresh = null;
+    if (!queuedRefresh || state.session.token !== queuedRefresh.token || !usesHistoryBucketBootstrap()) {
+      return;
+    }
+
+    void refreshHistoryWorkspaceBootstrap(queuedRefresh);
+  }
+
   function applyHistoryBootstrapPayload(
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
-    manualTokensOverride?: Array<{ address: string; label?: string | null }>,
+    manualTokensOverride?: AddressItem[],
   ) {
     const requestedRecentPage = Math.max(0, Number(payload.recent?.page) || 0);
     const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek?.page) || 0);

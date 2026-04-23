@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getManualTokens, getMonitoredTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -696,6 +696,90 @@ function serializeTrackedTokenForView(token: ReturnType<typeof getMonitoredToken
   ]);
 }
 
+function serializeRenderedMoneyValue(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return '';
+  }
+  if (Math.abs(value) >= 1000000) {
+    return `${(value / 1000000).toFixed(2)}M`;
+  }
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toFixed(0)}K`;
+  }
+  return value.toFixed(0);
+}
+
+function serializeRenderedPctValue(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return '';
+  }
+  return value.toFixed(2);
+}
+
+function resolveRenderedMcapDelta(token: ReturnType<typeof getMonitoredTokens>[number]) {
+  if (token.mcapDelta != null) {
+    return token.mcapDelta;
+  }
+  if (!(token.prevMcap && token.prevMcap > 0) || token.mcap == null) {
+    return null;
+  }
+  return ((token.mcap - token.prevMcap) / token.prevMcap) * 100;
+}
+
+function serializeSparklineForView(state: AppState, address: string) {
+  const entry = state.data.sparklineByAddress[address] || null;
+  const series = Array.isArray(entry?.series) ? entry.series : [];
+  return serializePrimitiveList([
+    entry?.pairAddress,
+    entry?.bucketCount,
+    entry?.coverageRatio == null ? null : Number(entry.coverageRatio).toFixed(3),
+    entry?.effectiveHours == null ? null : Number(entry.effectiveHours).toFixed(2),
+    entry?.granularityMinutes,
+    entry?.hours,
+    entry?.points,
+    series.length,
+    series.map((value) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : '')).join('|'),
+  ]);
+}
+
+function serializeMeteoraForView(state: AppState, address: string) {
+  const entry = state.data.meteoraByAddress[address] || null;
+  return serializePrimitiveList([
+    entry?.poolAddress,
+    entry?.poolCount,
+    entry?.noPool,
+    serializeRenderedMoneyValue(entry?.tvl),
+    entry?.change1h == null ? null : Number(entry.change1h).toFixed(1),
+    entry?.change6h == null ? null : Number(entry.change6h).toFixed(1),
+    entry?.change24h == null ? null : Number(entry.change24h).toFixed(1),
+  ]);
+}
+
+function serializeRoutedTokenForView(state: AppState, token: ReturnType<typeof getMonitoredTokens>[number]) {
+  return serializePrimitiveList([
+    token.address,
+    token.symbol,
+    token.name,
+    token.label,
+    token.createdAt,
+    serializeRenderedMoneyValue(token.mcap),
+    serializeRenderedPctValue(resolveRenderedMcapDelta(token)),
+    serializeRenderedMoneyValue(token.volume1h),
+    serializeRenderedMoneyValue(token.volume6h),
+    serializeRenderedMoneyValue(token.volume24h),
+    serializeRenderedPctValue(token.priceChange1h),
+    serializeRenderedPctValue(token.priceChange6h),
+    serializeRenderedPctValue(token.priceChange24h),
+    token.pairUrl,
+    token.imageUrl,
+    token.twitterUrl,
+    token._isRecentRouted,
+    token._isOldWeekRouted,
+    serializeSparklineForView(state, token.address),
+    serializeMeteoraForView(state, token.address),
+  ]);
+}
+
 function getHeaderRenderKey(state: AppState) {
   return serializePrimitiveList([
     state.session.status,
@@ -774,8 +858,6 @@ function getRecentRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     runtimeMode: state.runtime.mode,
-    monitoredRevision: state.runtime.monitoredRevision,
-    routedRevision: state.runtime.routedRevision,
     starredRevision: state.runtime.starredRevision,
     search: state.ui.recentSearchQuery,
     starredOnly: state.ui.recentStarredOnly,
@@ -786,6 +868,8 @@ function getRecentRenderKey(state: AppState) {
     oldMcapMin: state.data.configs['old-mcap-min'],
     oldMcapMax: state.data.configs['old-mcap-max'],
     tokenCount: state.data.recentTokenAddresses.length,
+    ageMinute: Math.floor(Date.now() / 60000),
+    tokens: getRecentTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
   });
 }
 
@@ -795,8 +879,6 @@ function getOldWeekRenderKey(state: AppState) {
     busy: state.ui.busy,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
-    monitoredRevision: state.runtime.monitoredRevision,
-    routedRevision: state.runtime.routedRevision,
     starredRevision: state.runtime.starredRevision,
     search: state.ui.oldWeekSearchQuery,
     starredOnly: state.ui.oldWeekStarredOnly,
@@ -807,6 +889,8 @@ function getOldWeekRenderKey(state: AppState) {
     oldWeekMcapMin: state.data.configs['old-week-mcap-min'],
     oldWeekMcapMax: state.data.configs['old-week-mcap-max'],
     tokenCount: state.data.oldWeekTokenAddresses.length,
+    ageMinute: Math.floor(Date.now() / 60000),
+    tokens: getOldWeekTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
   });
 }
 
@@ -885,9 +969,8 @@ function getExpandedSparklineOverlaySnapshot(state: AppState) {
   const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
   return {
     address,
-    generatedAt: sparkline?.generatedAt ?? null,
     points: series.length,
-    latest: series.length > 0 ? series[series.length - 1] : null,
+    seriesKey: series.map((value) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : value)).join('|'),
   };
 }
 
