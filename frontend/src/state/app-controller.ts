@@ -143,6 +143,8 @@ const BACKEND_OWNED_ALERT_RULE_KEYS = [
 ] as const;
 const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
 const ROUTED_BUCKET_DEFAULT_PER_PAGE = 15;
+const ALERTS_MAX_ENTRIES = 120;
+const ALERTS_PER_PAGE = 40;
 const ALERT_STORAGE_DEBOUNCE_MS = 250;
 const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
@@ -310,6 +312,7 @@ export interface AppController {
   setRecentStarredOnly(enabled: boolean): void;
   setOldWeekStarredOnly(enabled: boolean): void;
   setMonitoredPage(page: number): void;
+  setAlertPage(page: number): void;
   setRecentPage(page: number): void;
   setOldWeekPage(page: number): void;
   setMonitoredPerPage(perPage: number): void;
@@ -684,7 +687,7 @@ export function createAppController(): AppController {
   let historySyncLeaderTabId: string | null = null;
   const historySyncPeers = new Map<string, HistoryPeerState>();
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
-  const pendingAlertSparklineAddresses = new Set<string>();
+  const pendingAlertSparklineRequests = new Map<string, string>();
   const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
   const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
     manual: 'manual',
@@ -2219,32 +2222,32 @@ export function createAppController(): AppController {
     });
   }
 
-  function getActiveAlertAddressSet() {
+  function getActiveAlertIdSet() {
     return new Set(
       state.data.alerts
-        .map((item) => String(item.address || '').trim())
+        .map((item) => String(item.id || '').trim())
         .filter(Boolean),
     );
   }
 
   function pruneAlertSparklineCache() {
-    const activeAddresses = getActiveAlertAddressSet();
+    const activeAlertIds = getActiveAlertIdSet();
     const nextCache: Record<string, TokenSparklineEntry> = {};
     let changed = false;
 
-    for (const [address, entry] of Object.entries(state.data.alertSparklineByAddress)) {
-      if (!activeAddresses.has(address)) {
+    for (const [alertId, entry] of Object.entries(state.data.alertSparklineById)) {
+      if (!activeAlertIds.has(alertId)) {
         changed = true;
         continue;
       }
-      nextCache[address] = entry;
+      nextCache[alertId] = entry;
     }
 
-    if (!changed && Object.keys(nextCache).length === Object.keys(state.data.alertSparklineByAddress).length) {
+    if (!changed && Object.keys(nextCache).length === Object.keys(state.data.alertSparklineById).length) {
       return false;
     }
 
-    state.data.alertSparklineByAddress = nextCache;
+    state.data.alertSparklineById = nextCache;
     return true;
   }
 
@@ -2257,7 +2260,7 @@ export function createAppController(): AppController {
     const scope = alertsPersistScope ?? getStorageScope();
     alertsPersistScope = null;
     saveAlerts(scope, state.data.alerts);
-    saveAlertSparklineCache(scope, state.data.alertSparklineByAddress);
+    saveAlertSparklineCache(scope, state.data.alertSparklineById);
   }
 
   function scheduleAlertsPersist() {
@@ -2294,11 +2297,12 @@ export function createAppController(): AppController {
     clearRecentRemovalLogStorage(scope);
     clearOldWeekRemovalLogStorage(scope);
     state.data.alerts = loadAlerts(scope);
-    state.data.alertSparklineByAddress = loadAlertSparklineCache(scope);
+    state.data.alertSparklineById = loadAlertSparklineCache(scope);
     pruneAlertSparklineCache();
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision = state.data.alerts.length > 0 ? 1 : 0;
     state.panels.alerts = state.data.alerts.length;
+    syncAlertPagination();
     queueMissingAlertSparklineRefresh();
   }
 
@@ -2308,6 +2312,7 @@ export function createAppController(): AppController {
 
   function syncAlertState() {
     pruneAlertSparklineCache();
+    syncAlertPagination();
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision += 1;
     state.panels.alerts = state.data.alerts.length;
@@ -2337,9 +2342,12 @@ export function createAppController(): AppController {
       removedAlerts: state.data.alerts
         .filter((item) => item.address === address)
         .map((item) => ({ ...item })),
-      removedAlertSparkline: state.data.alertSparklineByAddress[address]
-        ? { ...state.data.alertSparklineByAddress[address] }
-        : null,
+      removedAlertSparklines: Object.fromEntries(
+        state.data.alerts
+          .filter((item) => item.address === address)
+          .map((item) => [item.id, state.data.alertSparklineById[item.id]])
+          .filter((entry): entry is [string, TokenSparklineEntry] => Boolean(entry[0] && entry[1])),
+      ),
       wasDismissedRecent: state.data.dismissedRecent.includes(address),
       wasDismissedOldWeek: state.data.dismissedOldWeek.includes(address),
       wasStarred: state.data.starredTokens.includes(address),
@@ -2391,8 +2399,10 @@ export function createAppController(): AppController {
       }
     }
 
-    if (snapshot.removedAlertSparkline && !state.data.alertSparklineByAddress[address]) {
-      state.data.alertSparklineByAddress[address] = snapshot.removedAlertSparkline;
+    for (const [alertId, entry] of Object.entries(snapshot.removedAlertSparklines || {})) {
+      if (!state.data.alertSparklineById[alertId]) {
+        state.data.alertSparklineById[alertId] = entry;
+      }
     }
     syncAlertState();
 
@@ -3285,11 +3295,30 @@ export function createAppController(): AppController {
     return getMonitoredTokens(state).filter(isVisibleMonitoredToken);
   }
 
+  function getFilteredAlertsForPagination() {
+    const normalizedQuery = String(state.ui.alertSearchQuery || '').trim().toLowerCase();
+    if (!normalizedQuery) {
+      return state.data.alerts;
+    }
+
+    return state.data.alerts.filter((alert) => {
+      const symbol = String(alert.symbol || '').toLowerCase();
+      const name = String(alert.name || '').toLowerCase();
+      const address = String(alert.address || '').toLowerCase();
+      return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery);
+    });
+  }
+
+  function syncAlertPagination() {
+    state.ui.alertPage = clampPage(state.ui.alertPage, getFilteredAlertsForPagination().length, ALERTS_PER_PAGE);
+  }
+
   function syncMonitoredPagination() {
     state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
   }
 
   function syncRoutedPagination() {
+    syncAlertPagination();
     syncMonitoredPagination();
     state.ui.recentPage = clampPage(state.ui.recentPage, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
     state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
@@ -3755,9 +3784,9 @@ export function createAppController(): AppController {
     if (shouldSuppressDuplicateAlert(entry)) {
       return false;
     }
-    state.data.alerts = [entry, ...state.data.alerts].slice(0, 100);
+    state.data.alerts = [entry, ...state.data.alerts].slice(0, ALERTS_MAX_ENTRIES);
     syncAlertState();
-    queueAlertSparklineRefresh(entry.address);
+    queueAlertSparklineRefresh(entry.id, entry.address);
     emit('alerts', 'legacy');
     return true;
   }
@@ -4559,48 +4588,62 @@ export function createAppController(): AppController {
       .filter((item) => item.addresses.length > 0);
   }
 
-  function resolveAlertSparklineCreatedAt(address: string) {
+  function resolveAlertSparklineCreatedAt(alertId: string, address: string) {
+    const matchingAlert = state.data.alerts.find((item) => item.id === alertId);
+    const alertCreatedAt = Number(matchingAlert?.tokenCreatedAt);
+    if (Number.isFinite(alertCreatedAt) && alertCreatedAt > 0) {
+      return alertCreatedAt;
+    }
+
     const trackedToken = getTrackedToken(state, address);
     const trackedCreatedAt = Number(trackedToken?.createdAt);
     if (Number.isFinite(trackedCreatedAt) && trackedCreatedAt > 0) {
       return trackedCreatedAt;
     }
 
-    const matchingAlert = state.data.alerts.find((item) => item.address === address);
-    const alertCreatedAt = Number(matchingAlert?.tokenCreatedAt);
-    if (Number.isFinite(alertCreatedAt) && alertCreatedAt > 0) {
-      return alertCreatedAt;
-    }
-
     return null;
   }
 
   function getPendingAlertSparklineBatches(referenceTs = Date.now()) {
-    const grouped = new Map<number, string[]>();
-    const activeAddresses = getActiveAlertAddressSet();
-    const addresses = [...pendingAlertSparklineAddresses].filter((address) => activeAddresses.has(address));
+    const grouped = new Map<number, { addresses: string[]; alertIdsByAddress: Map<string, string[]> }>();
+    const activeAlertIds = getActiveAlertIdSet();
+    const pendingRequests = [...pendingAlertSparklineRequests.entries()]
+      .filter(([alertId, address]) => activeAlertIds.has(alertId) && Boolean(String(address || '').trim()));
 
-    for (const address of addresses) {
+    for (const [alertId, address] of pendingRequests) {
       const granularityMinutes = resolveSparklineGranularityMinutes(
-        resolveAlertSparklineCreatedAt(address),
+        resolveAlertSparklineCreatedAt(alertId, address),
         referenceTs,
       );
-      const batch = grouped.get(granularityMinutes);
-      if (batch?.includes(address)) {
-        continue;
+
+      let batch = grouped.get(granularityMinutes);
+      if (!batch) {
+        batch = {
+          addresses: [],
+          alertIdsByAddress: new Map<string, string[]>(),
+        };
+        grouped.set(granularityMinutes, batch);
       }
-      if (batch) {
-        batch.push(address);
+
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress) {
         continue;
       }
 
-      grouped.set(granularityMinutes, [address]);
+      const alertIds = batch.alertIdsByAddress.get(normalizedAddress) || [];
+      if (!alertIds.includes(alertId)) {
+        batch.alertIdsByAddress.set(normalizedAddress, [...alertIds, alertId]);
+      }
+      if (!batch.addresses.includes(normalizedAddress)) {
+        batch.addresses.push(normalizedAddress);
+      }
     }
 
     return [1, 5, 15, 30]
       .map((granularityMinutes) => ({
         granularityMinutes,
-        addresses: grouped.get(granularityMinutes) || [],
+        addresses: grouped.get(granularityMinutes)?.addresses || [],
+        alertIdsByAddress: grouped.get(granularityMinutes)?.alertIdsByAddress || new Map<string, string[]>(),
       }))
       .filter((item) => item.addresses.length > 0);
   }
@@ -4715,23 +4758,20 @@ export function createAppController(): AppController {
 
     return {
       address,
-      entry: {
-        address,
-        pairAddress: toOptionalSparklineString(item?.pairAddress),
-        bucketCount: resolveSparklineCount(item?.bucketCount, 0),
-        coverageRatio: toOptionalSparklineNumber(item?.coverageRatio),
-        effectiveHours: toOptionalSparklineNumber(item?.effectiveHours),
-        granularityMinutes: resolveSparklineCount(
-          item?.granularityMinutes ?? payload.granularityMinutes,
-          SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
-        ),
-        latestBucketAt: toOptionalSparklineString(item?.latestBucketAt),
-        generatedAt: toOptionalSparklineString(payload.generatedAt),
-        hours: resolveSparklineCount(payload.hours, SPARKLINE_WINDOW_HOURS),
-        points: resolveSparklineCount(payload.points, SPARKLINE_POINT_COUNT),
-        series,
-      } satisfies TokenSparklineEntry,
-    };
+      pairAddress: toOptionalSparklineString(item?.pairAddress),
+      bucketCount: resolveSparklineCount(item?.bucketCount, 0),
+      coverageRatio: toOptionalSparklineNumber(item?.coverageRatio),
+      effectiveHours: toOptionalSparklineNumber(item?.effectiveHours),
+      granularityMinutes: resolveSparklineCount(
+        item?.granularityMinutes ?? payload.granularityMinutes,
+        SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
+      ),
+      latestBucketAt: toOptionalSparklineString(item?.latestBucketAt),
+      generatedAt: toOptionalSparklineString(payload.generatedAt),
+      hours: resolveSparklineCount(payload.hours, SPARKLINE_WINDOW_HOURS),
+      points: resolveSparklineCount(payload.points, SPARKLINE_POINT_COUNT),
+      series,
+    } satisfies TokenSparklineEntry;
   }
 
   function didAlertSparklineEntryChange(previous: TokenSparklineEntry | undefined, nextEntry: TokenSparklineEntry) {
@@ -4748,20 +4788,30 @@ export function createAppController(): AppController {
       || previousLast !== nextLast;
   }
 
-  function applyAlertSparklinePayloads(payloads: TokenSparklinesPayload[]) {
-    const activeAddresses = getActiveAlertAddressSet();
-    const nextCache = { ...state.data.alertSparklineByAddress };
+  function applyAlertSparklinePayloads(batchedPayloads: Array<{
+    batch: ReturnType<typeof getPendingAlertSparklineBatches>[number];
+    payload: TokenSparklinesPayload;
+  }>) {
+    const activeAlertIds = getActiveAlertIdSet();
+    const nextCache = { ...state.data.alertSparklineById };
     let changed = false;
 
-    for (const payload of payloads) {
+    for (const { batch, payload } of batchedPayloads) {
       for (const item of payload.items || []) {
         const normalized = buildAlertSparklineCacheEntry(item, payload);
-        if (!normalized || !activeAddresses.has(normalized.address)) {
+        if (!normalized) {
           continue;
         }
 
-        nextCache[normalized.address] = normalized.entry;
-        changed = changed || didAlertSparklineEntryChange(state.data.alertSparklineByAddress[normalized.address], normalized.entry);
+        const alertIds = batch.alertIdsByAddress.get(normalized.address) || [];
+        for (const alertId of alertIds) {
+          if (!activeAlertIds.has(alertId)) {
+            continue;
+          }
+
+          nextCache[alertId] = normalized;
+          changed = changed || didAlertSparklineEntryChange(state.data.alertSparklineById[alertId], normalized);
+        }
       }
     }
 
@@ -4769,7 +4819,8 @@ export function createAppController(): AppController {
       return;
     }
 
-    state.data.alertSparklineByAddress = nextCache;
+    state.data.alertSparklineById = nextCache;
+    state.runtime.alertRevision += 1;
     scheduleAlertsPersist();
     emit('alerts');
   }
@@ -4781,12 +4832,12 @@ export function createAppController(): AppController {
 
     const token = options?.token ?? state.session.token;
     if (!token || !isAuthenticatedSession()) {
-      pendingAlertSparklineAddresses.clear();
+      pendingAlertSparklineRequests.clear();
       return;
     }
 
     const batches = getPendingAlertSparklineBatches();
-    pendingAlertSparklineAddresses.clear();
+    pendingAlertSparklineRequests.clear();
     if (batches.length === 0) {
       return;
     }
@@ -4794,11 +4845,14 @@ export function createAppController(): AppController {
     alertSparklineRefreshInFlight = true;
     try {
       const payloads = await Promise.all(
-        batches.map((batch) => fetchTokenSparklines(batch.addresses, {
+        batches.map(async (batch) => ({
+          batch,
+          payload: await fetchTokenSparklines(batch.addresses, {
           hours: SPARKLINE_WINDOW_HOURS,
           points: SPARKLINE_POINT_COUNT,
           granularityMinutes: batch.granularityMinutes,
-        }, token)),
+          }, token),
+        })),
       );
 
       if (state.session.token !== token || !isAuthenticatedSession()) {
@@ -4810,19 +4864,23 @@ export function createAppController(): AppController {
       console.warn('[AppController] Failed to refresh alert sparklines:', error instanceof Error ? error.message : error);
     } finally {
       alertSparklineRefreshInFlight = false;
-      if (pendingAlertSparklineAddresses.size > 0) {
-        queueAlertSparklineRefresh([...pendingAlertSparklineAddresses][0] || '');
+      if (pendingAlertSparklineRequests.size > 0) {
+        const [nextAlertId, nextAddress] = pendingAlertSparklineRequests.entries().next().value || [];
+        if (nextAlertId && nextAddress) {
+          queueAlertSparklineRefresh(nextAlertId, nextAddress);
+        }
       }
     }
   }
 
-  function queueAlertSparklineRefresh(address: string) {
-    const normalized = String(address || '').trim();
-    if (!normalized) {
+  function queueAlertSparklineRefresh(alertId: string, address: string) {
+    const normalizedAlertId = String(alertId || '').trim();
+    const normalizedAddress = String(address || '').trim();
+    if (!normalizedAlertId || !normalizedAddress) {
       return;
     }
 
-    pendingAlertSparklineAddresses.add(normalized);
+    pendingAlertSparklineRequests.set(normalizedAlertId, normalizedAddress);
     if (alertSparklineRefreshTimer) {
       return;
     }
@@ -4839,20 +4897,14 @@ export function createAppController(): AppController {
   }
 
   function queueMissingAlertSparklineRefresh() {
-    for (const address of getActiveAlertAddressSet()) {
-      const entry = state.data.alertSparklineByAddress[address];
+    for (const alert of state.data.alerts) {
+      const entry = state.data.alertSparklineById[alert.id];
       const series = Array.isArray(entry?.series) ? entry.series : [];
       if (series.length >= 2) {
         continue;
       }
-      pendingAlertSparklineAddresses.add(address);
+      queueAlertSparklineRefresh(alert.id, alert.address);
     }
-
-    if (pendingAlertSparklineAddresses.size === 0) {
-      return;
-    }
-
-    queueAlertSparklineRefresh([...pendingAlertSparklineAddresses][0] || '');
   }
 
   async function refreshHistoryWorkspaceSparklines(options?: { force?: boolean; token?: string }) {
@@ -5638,7 +5690,7 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
-      alertSparklineByAddress: {},
+      alertSparklineById: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
@@ -5670,7 +5722,8 @@ export function createAppController(): AppController {
     state.ui.manualStarredOnly = false;
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
-    pendingAlertSparklineAddresses.clear();
+    state.ui.alertPage = 0;
+    pendingAlertSparklineRequests.clear();
     if (alertSparklineRefreshTimer) {
       clearTimeout(alertSparklineRefreshTimer);
       alertSparklineRefreshTimer = null;
@@ -7100,6 +7153,7 @@ export function createAppController(): AppController {
     },
     setAlertSearchQuery(query: string) {
       state.ui.alertSearchQuery = String(query || '');
+      state.ui.alertPage = 0;
       emit('alerts');
     },
     setMonitoredSearchQuery(query: string) {
@@ -7161,6 +7215,10 @@ export function createAppController(): AppController {
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       emit('monitored');
+    },
+    setAlertPage(page: number) {
+      state.ui.alertPage = clampPage(page, getFilteredAlertsForPagination().length, ALERTS_PER_PAGE);
+      emit('alerts');
     },
     setRecentPage(page: number) {
       state.ui.recentPage = clampPage(page, getRecentTokenTotalForPagination(), state.ui.recentPerPage);

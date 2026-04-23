@@ -6,6 +6,7 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 const ALERT_FX_SETTLE_MS = 1_600;
+const ALERTS_PER_PAGE = 40;
 
 type AlertRowView = {
   element: HTMLElement;
@@ -28,6 +29,10 @@ type AlertsSectionView = {
   count: HTMLElement;
   searchInput: HTMLInputElement;
   searchWrap: HTMLElement;
+  pageJumpInput: HTMLInputElement;
+  pageTotal: HTMLElement;
+  prevButton: HTMLButtonElement;
+  nextButton: HTMLButtonElement;
   emptyState: HTMLElement;
   fxGhostHost: HTMLElement;
   controller: AppController;
@@ -50,10 +55,12 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
 
   const searchQuery = String(state.ui.alertSearchQuery || '');
   const filteredAlerts = filterAlerts(state, searchQuery);
+  const pagination = paginateAlerts(filteredAlerts, state.ui.alertPage);
 
   syncSearchInput(view, searchQuery);
-  reconcileAlertRows(view, filteredAlerts, state, renderNow, cardEffectsEnabled);
-  bindSparklineHover(view.section, state.data.alertSparklineByAddress);
+  syncPaginationControls(view, pagination.safePage, pagination.totalPages);
+  reconcileAlertRows(view, pagination.pageItems, state, renderNow, cardEffectsEnabled);
+  bindSparklineHover(view.section, state.data.alertSparklineById);
   view.count.textContent = String(filteredAlerts.length);
 
   return view.section;
@@ -71,6 +78,12 @@ function getOrCreateAlertsSectionView(controller: AppController) {
       <span>\u{1F514} ALERTS</span>
       <div class="alerts-panel-header-controls">
         <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
+        <div class="alerts-page-controls" aria-label="Alerts pages">
+          <button type="button" class="action-button small" data-action="alerts-prev">Prev</button>
+          <label class="legacy-mini-field alerts-page-field">PAGE <input type="number" min="1" step="1" data-action="alerts-page-jump" /></label>
+          <span class="bucket-page-total alerts-page-total">1</span>
+          <button type="button" class="action-button small" data-action="alerts-next">Next</button>
+        </div>
         <div class="compact-search compact-search-fixed">
           <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
@@ -85,7 +98,11 @@ function getOrCreateAlertsSectionView(controller: AppController) {
   const count = section.querySelector<HTMLElement>('.alerts-panel-count');
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
   const searchWrap = section.querySelector<HTMLElement>('.compact-search');
-  if (!list || !count || !searchInput || !searchWrap) {
+  const pageJumpInput = section.querySelector<HTMLInputElement>('[data-action="alerts-page-jump"]');
+  const pageTotal = section.querySelector<HTMLElement>('.alerts-page-total');
+  const prevButton = section.querySelector<HTMLButtonElement>('[data-action="alerts-prev"]');
+  const nextButton = section.querySelector<HTMLButtonElement>('[data-action="alerts-next"]');
+  if (!list || !count || !searchInput || !searchWrap || !pageJumpInput || !pageTotal || !prevButton || !nextButton) {
     throw new Error('Alerts section view failed to initialize.');
   }
 
@@ -96,6 +113,10 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     count,
     searchInput,
     searchWrap,
+    pageJumpInput,
+    pageTotal,
+    prevButton,
+    nextButton,
     emptyState,
     fxGhostHost: getOrCreateAlertFxGhostHost(),
     controller,
@@ -114,6 +135,31 @@ function getOrCreateAlertsSectionView(controller: AppController) {
 
   section.querySelector<HTMLButtonElement>('[data-action="alerts-clear-all"]')?.addEventListener('click', () => {
     alertsSectionView?.controller.clearAllAlerts();
+  });
+
+  prevButton.addEventListener('click', () => {
+    alertsSectionView?.controller.setAlertPage((alertsSectionView?.controller.state.ui.alertPage || 0) - 1);
+  });
+
+  nextButton.addEventListener('click', () => {
+    alertsSectionView?.controller.setAlertPage((alertsSectionView?.controller.state.ui.alertPage || 0) + 1);
+  });
+
+  const commitPageJump = () => {
+    const value = Number(pageJumpInput.value);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    alertsSectionView?.controller.setAlertPage(value - 1);
+  };
+  pageJumpInput.addEventListener('change', commitPageJump);
+  pageJumpInput.addEventListener('blur', commitPageJump);
+  pageJumpInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+    commitPageJump();
   });
 
   section.addEventListener('click', (event) => {
@@ -156,6 +202,18 @@ function filterAlerts(state: AppState, searchQuery: string) {
   });
 }
 
+function paginateAlerts(alerts: AlertEntry[], page: number) {
+  const totalPages = Math.max(1, Math.ceil(alerts.length / ALERTS_PER_PAGE));
+  const safePage = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
+  const pageStart = safePage * ALERTS_PER_PAGE;
+
+  return {
+    totalPages,
+    safePage,
+    pageItems: alerts.slice(pageStart, pageStart + ALERTS_PER_PAGE),
+  };
+}
+
 function syncSearchInput(view: AlertsSectionView, searchQuery: string) {
   if (view.searchInput.value !== searchQuery) {
     view.searchInput.value = searchQuery;
@@ -164,6 +222,14 @@ function syncSearchInput(view: AlertsSectionView, searchQuery: string) {
   const hasQuery = Boolean(String(searchQuery || '').trim());
   view.searchWrap.classList.toggle('has-query', hasQuery);
   view.searchWrap.classList.toggle('open', hasQuery || document.activeElement === view.searchInput);
+}
+
+function syncPaginationControls(view: AlertsSectionView, safePage: number, totalPages: number) {
+  view.pageJumpInput.max = String(totalPages);
+  view.pageJumpInput.value = String(safePage + 1);
+  view.pageTotal.textContent = String(totalPages);
+  view.prevButton.disabled = safePage === 0;
+  view.nextButton.disabled = safePage >= totalPages - 1;
 }
 
 function reconcileAlertRows(
@@ -181,7 +247,7 @@ function reconcileAlertRows(
     const fxState = getOrCreateAlertFxState(view, alert, renderNow);
     logAlertArrivalDebug(alert, fxState, renderNow);
     const isStarred = state.data.starredTokens.includes(alert.address);
-    const sparkline = state.data.alertSparklineByAddress[alert.address] || null;
+    const sparkline = state.data.alertSparklineById[alert.id] || null;
     const renderKey = getAlertRowRenderKey(
       alert,
       state.ui.busy,
@@ -833,7 +899,7 @@ function buildAlertRowContent(
   const content = document.createElement('div');
   content.className = 'alert-content-v68';
 
-  const chart = buildAlertSparklineBlock(alert.address, sparkline);
+  const chart = buildAlertSparklineBlock(alert.id, alert.address, sparkline);
   const side = document.createElement('div');
   side.className = 'alert-side-v68';
   side.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id));
@@ -872,10 +938,10 @@ function buildAlertRowContent(
   return grid;
 }
 
-function buildAlertSparklineBlock(address: string, sparkline: TokenSparklineEntry | null) {
+function buildAlertSparklineBlock(alertId: string, address: string, sparkline: TokenSparklineEntry | null) {
   const chart = document.createElement('div');
   chart.className = 'alert-chart-v1';
-  chart.innerHTML = renderSparklineFigure(sparkline, address, { areaFill: true });
+  chart.innerHTML = renderSparklineFigure(sparkline, address, { areaFill: true, lookupKey: alertId });
   return chart;
 }
 

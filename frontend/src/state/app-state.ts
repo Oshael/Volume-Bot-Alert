@@ -455,7 +455,7 @@ export interface AppState {
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
-    alertSparklineByAddress: Record<string, TokenSparklineEntry>;
+    alertSparklineById: Record<string, TokenSparklineEntry>;
     lateralizedTokens: LateralizedTokenEntry[];
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
@@ -487,6 +487,7 @@ export interface AppState {
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
     monitoredPage: number;
+    alertPage: number;
     recentPage: number;
     oldWeekPage: number;
     monitoredPerPage: number;
@@ -611,7 +612,7 @@ export function createAppState(): AppState {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
-      alertSparklineByAddress: {},
+      alertSparklineById: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
@@ -643,6 +644,7 @@ export function createAppState(): AppState {
       recentStarredOnly: false,
       oldWeekStarredOnly: false,
       monitoredPage: 0,
+      alertPage: 0,
       recentPage: 0,
       oldWeekPage: 0,
       monitoredPerPage: 30,

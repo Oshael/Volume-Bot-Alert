@@ -79,7 +79,7 @@ export function clearOldWeekRemovalLogStorage(scope: string) {
 function pruneAlerts(entries: AlertEntry[]) {
   return entries
     .filter((entry) => entry && typeof entry.id === 'string' && entry.id.trim())
-    .slice(0, 100);
+    .slice(0, 120);
 }
 
 function normalizeSparklineCacheEntry(address: string, value: unknown): TokenSparklineEntry | null {

@@ -907,6 +907,7 @@ function getAlertsRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.alertSearchQuery,
+    page: state.ui.alertPage,
     starred: state.data.starredTokens,
     alertRevision: state.runtime.alertRevision,
     alertCount: state.data.alerts.length,

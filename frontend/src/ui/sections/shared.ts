@@ -40,6 +40,7 @@ type SparklineRenderOptions = {
   expanded?: boolean;
   expandable?: boolean;
   areaFill?: boolean;
+  lookupKey?: string;
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -131,12 +132,13 @@ export function bindCopyButtons(section: ParentNode) {
 
 export function bindSparklineHover(
   section: ParentNode,
-  sparklineByAddress: Record<string, TokenSparklineEntry> = {},
+  sparklineByLookupKey: Record<string, TokenSparklineEntry> = {},
   options: { controller?: AppController } = {},
 ) {
-  for (const wrap of section.querySelectorAll<HTMLElement>('.sparkline-wrap[data-address]')) {
+  for (const wrap of section.querySelectorAll<HTMLElement>('.sparkline-wrap')) {
+    const lookupKey = String(wrap.dataset.sparklineKey || wrap.dataset.address || '').trim();
     const address = String(wrap.dataset.address || '').trim();
-    const entry = sparklineByAddress[address];
+    const entry = sparklineByLookupKey[lookupKey];
     const series = normalizeSparklineSeries(entry?.series);
     const hover = wrap.querySelector<HTMLElement>('.sparkline-hover');
     const line = wrap.querySelector<HTMLElement>('.sparkline-hover-line');
@@ -918,13 +920,14 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   const areaPolyline = options.areaFill ? buildSparklineAreaPolyline(series, options) : '';
   const summary = escapeHtml(buildSparklineTitle(entry, series));
   const safeAddress = escapeHtml(String(address || entry.address || '').trim());
+  const safeLookupKey = escapeHtml(String(options.lookupKey || address || entry.address || '').trim());
   const expandedClass = options.expanded ? ' sparkline-wrap-expanded' : '';
   const filledClass = options.areaFill ? ' sparkline-wrap-filled' : '';
   const svgExpandedClass = options.expanded ? ' token-sparkline-expanded' : '';
   const expandableAttr = options.expandable ? ' data-sparkline-expandable="true"' : '';
 
   return `
-    <div class="sparkline-wrap ${trendClass}${expandedClass}${filledClass}" data-address="${safeAddress}" data-sparkline-summary="${summary}"${expandableAttr}>
+    <div class="sparkline-wrap ${trendClass}${expandedClass}${filledClass}" data-address="${safeAddress}" data-sparkline-key="${safeLookupKey}" data-sparkline-summary="${summary}"${expandableAttr}>
       <svg class="token-sparkline${svgExpandedClass}" viewBox="0 0 ${dimensions.width} ${dimensions.height}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
         ${areaPolyline ? `<polygon class="token-sparkline-area" points="${areaPolyline}"></polygon>` : ''}
         <polyline class="token-sparkline-glow" points="${polyline}"></polyline>

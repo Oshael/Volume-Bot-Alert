@@ -8086,6 +8086,26 @@ TEMP_LEGACY_BAR_TITLE {
   gap: 6px;
 }
 
+.alerts-page-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.alerts-page-field {
+  min-height: 30px;
+}
+
+.alerts-page-field input {
+  width: 42px;
+}
+
+.alerts-page-controls .bucket-page-total {
+  min-width: 34px;
+  min-height: 28px;
+  padding: 2px 6px;
+}
+
 .alerts-list {
   padding: 8px;
 }
