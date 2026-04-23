@@ -134,6 +134,7 @@ const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 30;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
+const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
@@ -676,6 +677,8 @@ export function createAppController(): AppController {
   let lastSparklineAddressKey = '';
   let manualMetadataBatchCacheKey = '';
   let manualMetadataBatchCacheExpiresAt = 0;
+  let manualMetadataMeteoraCacheKey = '';
+  let manualMetadataNextMeteoraRefreshAt = 0;
   let suppressSocketStatusNoticeUntil = 0;
   const historySyncTabId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -6566,6 +6569,27 @@ export function createAppController(): AppController {
     return !manualTokens.some((item) => hasCriticalColdFieldGap(state.data.trackedTokensByAddress[item.address]));
   }
 
+  function shouldIncludeMeteoraInManualMetadataBatch(cacheKeyCandidate: string) {
+    return cacheKeyCandidate !== manualMetadataMeteoraCacheKey || Date.now() >= manualMetadataNextMeteoraRefreshAt;
+  }
+
+  function resetManualMetadataBatchState() {
+    manualMetadataBatchCacheKey = '';
+    manualMetadataBatchCacheExpiresAt = 0;
+    manualMetadataMeteoraCacheKey = '';
+    manualMetadataNextMeteoraRefreshAt = 0;
+  }
+
+  function updateManualMetadataBatchRefreshState(cacheKeyCandidate: string, includeMeteora: boolean) {
+    const now = Date.now();
+    manualMetadataBatchCacheKey = cacheKeyCandidate;
+    manualMetadataBatchCacheExpiresAt = now + MANUAL_METADATA_BATCH_CACHE_MS;
+    if (includeMeteora) {
+      manualMetadataMeteoraCacheKey = cacheKeyCandidate;
+      manualMetadataNextMeteoraRefreshAt = now + MANUAL_METADATA_METEORA_REFRESH_MS;
+    }
+  }
+
   async function hydrateManualTokensMetadataBatch(
     token: string,
     manualTokens: Array<{ address: string; label?: string | null }>,
@@ -6586,8 +6610,7 @@ export function createAppController(): AppController {
     ).values());
 
     if (normalizedManualTokens.length === 0) {
-      manualMetadataBatchCacheKey = '';
-      manualMetadataBatchCacheExpiresAt = 0;
+      resetManualMetadataBatchState();
       return;
     }
 
@@ -6595,6 +6618,8 @@ export function createAppController(): AppController {
     if (shouldReuseManualMetadataBatch(manualMetadataBatchCacheKeyCandidate, normalizedManualTokens)) {
       return;
     }
+
+    const includeMeteora = shouldIncludeMeteoraInManualMetadataBatch(manualMetadataBatchCacheKeyCandidate);
 
     let changed = false;
 
@@ -6604,7 +6629,11 @@ export function createAppController(): AppController {
       }
 
       const chunk = normalizedManualTokens.slice(index, index + 500);
-      const dashboardItems = await fetchMonitoredMetadataBatch(chunk.map((item) => item.address), token);
+      const dashboardItems = await fetchMonitoredMetadataBatch(
+        chunk.map((item) => item.address),
+        token,
+        { includeMeteora },
+      );
       if (state.session.token !== token || !isAuthenticatedSession()) {
         return;
       }
@@ -6627,8 +6656,7 @@ export function createAppController(): AppController {
       }
     }
 
-    manualMetadataBatchCacheKey = manualMetadataBatchCacheKeyCandidate;
-    manualMetadataBatchCacheExpiresAt = Date.now() + MANUAL_METADATA_BATCH_CACHE_MS;
+    updateManualMetadataBatchRefreshState(manualMetadataBatchCacheKeyCandidate, includeMeteora);
 
     if (!changed) {
       return;

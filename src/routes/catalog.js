@@ -58,6 +58,26 @@ function parseMeteoraBatchAddresses(value) {
   return { ok: true, addresses };
 }
 
+function parseOptionalBooleanBodyField(value, defaultValue = true) {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, value: defaultValue };
+  }
+
+  if (typeof value === 'boolean') {
+    return { ok: true, value };
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'true') {
+    return { ok: true, value: true };
+  }
+  if (normalized === 'false') {
+    return { ok: true, value: false };
+  }
+
+  return { ok: false, error: 'includeMeteora must be a boolean' };
+}
+
 function parseOptionalIntegerBodyField(value, name, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   if (value === undefined || value === null || String(value).trim() === '') {
     return { ok: true, value: null };
@@ -170,12 +190,16 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
   if (!parsed.ok) {
     return res.status(400).json({ error: parsed.error });
   }
+  const includeMeteora = parseOptionalBooleanBodyField(req.body?.includeMeteora, true);
+  if (!includeMeteora.ok) {
+    return res.status(400).json({ error: includeMeteora.error });
+  }
 
   try {
     const addresses = parsed.addresses;
     const [metadataRows, meteoraSummaryRows, primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
       tokenCatalog.listDashboardMetadataByAddresses(addresses),
-      uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses),
+      includeMeteora.value ? uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses) : Promise.resolve([]),
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     ]);
@@ -197,6 +221,7 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
           meteoraByAddress,
           marketMcapBaselineByAddress,
           marketVolumeBaselineByAddress,
+          { includeMeteora: includeMeteora.value },
         );
       })
       .filter(Boolean);
@@ -398,7 +423,14 @@ function buildMeteoraSummary(address, summaryRow) {
   };
 }
 
-function buildMonitoredMetadataPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress) {
+function buildMonitoredMetadataPayload(
+  item,
+  meteoraByAddress,
+  marketMcapBaselineByAddress,
+  marketVolumeBaselineByAddress,
+  options = {},
+) {
+  const includeMeteora = options.includeMeteora !== false;
   const marketBaseline = buildMarketBaseline(
     marketMcapBaselineByAddress.get(item.address) || null,
     marketVolumeBaselineByAddress.get(item.address) || null
@@ -429,7 +461,9 @@ function buildMonitoredMetadataPayload(item, meteoraByAddress, marketMcapBaselin
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
     lastSeenAt: item.last_seen_at || null,
     lastEvaluatedAt: item.last_evaluated_at || null,
-    meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
+    meteora: includeMeteora
+      ? buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null)
+      : null,
   };
 }
 

@@ -371,14 +371,21 @@ export function fetchDashboardMonitored(
     }));
 }
 
-export function fetchMonitoredMetadataBatch(addresses: string[], token?: string | null) {
+export function fetchMonitoredMetadataBatch(
+  addresses: string[],
+  token?: string | null,
+  options?: { includeMeteora?: boolean },
+) {
   return apiFetch<{
     generatedAt?: string | null;
     count: number;
     tokens: DashboardMonitoredToken[];
   }>('/api/catalog/monitored-metadata-batch', {
     method: 'POST',
-    body: JSON.stringify({ addresses }),
+    body: JSON.stringify({
+      addresses,
+      includeMeteora: options?.includeMeteora ?? true,
+    }),
     token,
   }).then((response) => response.tokens || []);
 }
