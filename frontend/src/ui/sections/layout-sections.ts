@@ -2724,58 +2724,12 @@ function renderBotSettingsFields(state: AppState) {
       },
     )}
     ${state.session.role === 'admin' ? renderAdminChainField(state) : ''}
-    ${state.session.role === 'admin' ? renderAdminNetworkDebugCard(state) : ''}
     <div class="legacy-sound-row">
       <div class="config-item config-item-sound config-item-sound-volume">
         <label>Sound volume: ${Math.round(state.ui.soundVolume * 100)}%</label>
         <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" />
       </div>
       ${renderSoundUploadStrip(state)}
-    </div>
-  `;
-}
-
-function renderAdminNetworkDebugCard(state: AppState) {
-  const entries = state.ui.networkDebugEntries;
-
-  return `
-    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide">
-      <div class="legacy-user-settings-card-head">
-        <strong>Admin Network Debug</strong>
-        <span>Temporary local capture of transport-level API fetch failures</span>
-      </div>
-      <label class="legacy-block-warning-toggle">
-        <input
-          type="checkbox"
-          data-action="toggle-network-debug"
-          ${state.ui.networkDebugEnabled ? 'checked' : ''}
-        />
-        <span>Capture exact network fetch failures in this browser</span>
-      </label>
-      <div class="config-menu-summary">
-        This is local to your current browser profile only. It records the path, method, API base, timestamp, and raw fetch error message whenever a browser-level API request fails before an HTTP response exists.
-      </div>
-      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-        <button type="button" class="legacy-userbar-link" data-action="clear-network-debug-log" ${entries.length === 0 ? 'disabled' : ''}>Clear log</button>
-      </div>
-      ${entries.length === 0 ? `
-        <div class="blocked-token-empty">No captured network failures yet.</div>
-      ` : `
-        <div class="blocked-tokens-modal-list">
-          ${entries.map((entry) => `
-            <div class="blocked-token-row">
-              <div class="blocked-token-main">
-                <div class="blocked-token-copy">
-                  <strong>${escapeHtml(entry.method)} ${escapeHtml(entry.path)}</strong>
-                  <span>${escapeHtml(new Date(entry.ts).toLocaleString('en-US'))}</span>
-                  <span>${escapeHtml(entry.message)}</span>
-                  <span>${escapeHtml(entry.apiBase)}</span>
-                </div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `}
     </div>
   `;
 }
@@ -3171,13 +3125,6 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
     const value = Number((event.currentTarget as HTMLInputElement).value || '0');
     if (volumeLabel) volumeLabel.textContent = `Sound volume: ${value}%`;
     controller.setSoundVolume(value / 100);
-  });
-
-  configSection.querySelector<HTMLInputElement>('[data-action="toggle-network-debug"]')?.addEventListener('change', (event) => {
-    controller.setNetworkDebugEnabled((event.currentTarget as HTMLInputElement).checked);
-  });
-  configSection.querySelector<HTMLButtonElement>('[data-action="clear-network-debug-log"]')?.addEventListener('click', () => {
-    controller.clearNetworkDebugEntries();
   });
 
   bindConfigToggleMenus(configSection, controller);

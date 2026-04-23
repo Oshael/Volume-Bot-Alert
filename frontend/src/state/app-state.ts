@@ -357,15 +357,6 @@ export interface LinkedIdentityEntry {
   lastLoginAt: string | null;
 }
 
-export interface NetworkDebugEntry {
-  id: string;
-  ts: number;
-  path: string;
-  method: string;
-  message: string;
-  apiBase: string;
-}
-
 export interface ConfigSummary {
   loaded: boolean;
   configCount: number;
@@ -503,8 +494,6 @@ export interface AppState {
     soundVolume: number;
     collapsed: Record<CollapsibleSectionKey, boolean>;
     workspace: WorkspaceView;
-    networkDebugEnabled: boolean;
-    networkDebugEntries: NetworkDebugEntry[];
   };
 }
 
@@ -675,8 +664,6 @@ export function createAppState(): AppState {
         pumpfun: false,
       },
       workspace: 'live',
-      networkDebugEnabled: false,
-      networkDebugEntries: [],
     },
   };
 }
