@@ -33,17 +33,6 @@ const ALERT_PATTERNS: Record<AlertEntry['kind'], ToneStep[]> = {
     { frequency: 523.25, durationMs: 130 },
     { frequency: 659.25, durationMs: 180 },
   ],
-  'pumpfun-vol': [
-    { frequency: 349.23, durationMs: 110 },
-    { frequency: 523.25, durationMs: 150 },
-    { frequency: 659.25, durationMs: 170 },
-  ],
-  'pumpfun-hvnc': [
-    { frequency: 523.25, durationMs: 90 },
-    { frequency: 659.25, durationMs: 90 },
-    { frequency: 783.99, durationMs: 90 },
-    { frequency: 1046.5, durationMs: 180 },
-  ],
   'high-cap-dump-5m': [
     { frequency: 659.25, durationMs: 70 },
     { frequency: 523.25, durationMs: 70 },
@@ -65,8 +54,6 @@ const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-mcap': 'sound-mcap-enabled',
   hvnc: 'sound-hvnc-enabled',
   'meteora-surge': 'sound-meteora-surge-enabled',
-  'pumpfun-vol': 'sound-pumpfun-vol-enabled',
-  'pumpfun-hvnc': 'sound-pumpfun-hvnc-enabled',
   'high-cap-dump-5m': 'sound-high-cap-dump-enabled',
 };
 

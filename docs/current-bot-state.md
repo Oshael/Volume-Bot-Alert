@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-22` after manual/routed sparkline rollout stabilized around a compact expanded hologram popup, approximate hover inspection, `1m` refresh cadence, and age-adaptive granularity (`1m` / `5m` / `15m`) inside a `7d` max window.
+Last reviewed against code and the live deployment model on `2026-04-22` after manual/routed sparkline rollout expanded to a `14d` / `336`-point window, filled-area mini charts, frozen per-alert alert-card mini chart snapshots, alert pagination, approximate hover inspection, a compact expanded hologram popup for routed/manual tables, `1m` refresh cadence, and age-adaptive granularity (`1m` / `5m` / `15m` / `30m`).
 
 ## Current Deployment Topology
 
@@ -107,7 +107,6 @@ Important:
   - `/alerts`
     - `Monitored Tokens`
     - `Manual Tokens`
-    - `PumpFun`
     - `Alerts`
   - `/monitor`
     - `Recent Tokens`
@@ -329,8 +328,6 @@ Important:
   - current default values for newly created accounts now include:
     - `min-vol = 8000`
     - `min-mcap = 30000`
-    - `pump-entry-vol = 3000`
-    - `pump-min-vol = 100000`
     - `old-mcap-max = 100000000`
     - `old-week-mcap-max = 100000000`
     - `old-alert-1h-threshold = 50`
@@ -474,25 +471,21 @@ Important:
 - Current workspace placement:
   - `Recent Tokens` and `Old Tokens 1 Week+` now live in `/monitor`, not the main `/alerts` workspace
 
-### PumpFun live stream
-- Source of truth: backend socket stream for live events
+### PumpFun backend migration stream
+- Source of truth: backend PumpPortal websocket migration stream
 - Backend websocket subscription methods:
-  - `subscribeNewToken`
   - `subscribeMigration`
-  - `subscribeTokenTrade`
-- Frontend consumes:
-  - `pump:status`
-  - `pump:newToken`
-  - `pump:trade`
-  - `pump:migrate`
-  - `sol:price`
+- Frontend no longer consumes or subscribes to PumpFun live events:
+  - no `pump:*` Socket.io fanout
+  - no `sol:price` Socket.io fanout for PumpFun UI
+  - no frontend `pump:subscribe` / `pump:unsubscribe`
 - Current post-migration conclusion:
   - the backend must explicitly subscribe to migration events or migrated tokens can skip the `pumpfun-migrated` catalog path and only appear later via `dexscreener-discovery`
-  - after the `subscribeMigration` fix, the expected path is:
+  - the expected path is:
     - `pump_migrate_received`
     - `pumpfun-migrated` catalog upsert
     - immediate Dex evaluation with `migration_grace_until`
-  - this fix does not force Dex to return data, but it restores the early catalog bootstrap that was previously being missed on some migrations
+  - this does not force Dex to return data and does not bypass market-cap or catalog-worker filters
 
 ### Meteora
 - Source of truth: backend-persisted current state in `token_meteora_state`
@@ -551,7 +544,7 @@ Important:
 - The old manual start/stop control is no longer the primary workspace-header interaction.
 - If `/alerts` is hidden for less than `20m`, the live workspace now enters a lighter hidden mode instead of behaving exactly like the visible workspace:
   - live polling is paused
-  - PumpFun GC is paused
+  - PumpFun frontend runtime is no longer mounted
   - backend alert events can still be accepted into alert state
   - backend alert sounds can still play while hidden
   - returning to the tab schedules a monitored refresh with unseen alert-feed catch-up
@@ -861,9 +854,9 @@ Current monitored UI behavior:
   - default threshold is `50%`
 
 ### 6. PumpFun metadata enrichment
-- Frontend still resolves some PumpFun token images/metadata through:
+- The legacy PumpFun metadata route still exists:
   - `GET /api/catalog/pumpfun/:mint/meta`
-- This happens when incoming PumpFun tokens are missing image/meta in local state
+- The active frontend PumpFun live panel no longer calls this route because PumpFun is backend-only for migrations.
 - These are individual per-mint requests, not socket messages
 - This route remains an auxiliary traffic source, but the main Dex overload issue was addressed in the catalog worker rather than here
 - Current metadata/image behavior:
@@ -1069,9 +1062,8 @@ Current honest security assessment:
   - blocklist chips are now built as DOM nodes instead of interpolated HTML strings
   - manual, monitored, recent, and old-week search inputs now restore the typed query through DOM input values instead of HTML attribute interpolation
   - primary config-grid values now hydrate through DOM input/select state instead of being embedded directly into HTML `value` / `selected` attributes
-  - alerts search, PumpFun controls, starred address-only cards, PumpFun toasts, and star toggles all reduced reliance on inline HTML mutation / interpolation further
-  - live rows in `ALERTS`, `MONITORED TOKENS`, and `PUMPFUN - LIVE` now build their external-data-heavy card content through DOM nodes instead of row-level HTML-string interpolation
-  - the PumpFun migration strip now hydrates through DOM chips instead of string-joined HTML
+  - alerts search, starred address-only cards, and star toggles all reduced reliance on inline HTML mutation / interpolation further
+  - live rows in `ALERTS` and `MONITORED TOKENS` now build their external-data-heavy card content through DOM nodes instead of row-level HTML-string interpolation
 - Recent backend validation hardening completed:
   - `GET /api/admin/logs` now validates `limit` explicitly as a positive integer and rejects malformed `success` query values instead of relying on implicit coercion
   - admin user-target routes now use the same positive-ID parsing contract already used elsewhere in the admin surface
@@ -1162,7 +1154,8 @@ Current security priority order:
 - Current workspace/UI behavior:
   - `Manual Tokens` is mounted only in `/alerts`
   - the table now includes a `Chart` column
-  - charts are not rendered in `Monitored Tokens` cards and are not rendered in the alerts feed rows
+  - charts are not rendered in `Monitored Tokens` cards
+  - alerts feed rows now render their own static mini charts
 - Current sparkline behavior for `Manual Tokens`:
   - source endpoint: `POST /api/catalog/sparklines`
   - source data: aggregated from `token_market_buckets_1m`
@@ -1170,16 +1163,26 @@ Current security priority order:
   - current manual cap is `30` charted rows
   - the visible-row selection respects current manual search, starred-only toggle, and manual sort order
   - refresh cadence is `1m`
+  - requested span is `14d`
+  - requested point budget is `336`
   - chart header label is now `Chart`
   - chart tooltip now identifies the visual as `Mini chart`
+  - compact mini charts render a translucent filled area under the line
   - hover shows approximate market cap + approximate bucket time for the inspected point
   - clicking a manual-row mini chart opens a compact expanded hologram popup for the same series
   - the expanded popup is chart-only; it no longer uses projection/feixe lines from the clicked row
-  - max chart window is `7d`, but younger tokens use their real available lifespan instead of rendering a long empty left side
+  - max chart window is `14d`, but younger tokens use their real available lifespan instead of rendering a long empty left side
   - current age-adaptive chart granularity:
     - `< 24h`: `1m`
     - `24h` to `< 72h`: `5m`
-    - `72h+`: `15m`
+    - `72h` to `< 11d`: `15m`
+    - `11d+`: `30m`
+- Current add-token validation behavior:
+  - the frontend now rejects obvious non-address input before optimistic add
+  - accepted optimistic input formats are currently:
+    - Solana-style base58 addresses with `32-44` chars
+    - EVM-style `0x` addresses with `40` hex chars
+  - if backend persistence fails, the optimistic manual row is rolled back instead of being left behind locally
 - Current table-age formatting:
   - younger rows still use `d`, `h`, `m`, `s`
   - `30d+` now renders as `1mo`, `2mo`, etc.
@@ -1200,21 +1203,24 @@ Current security priority order:
   - current routed cap is `50` total charted rows across `Recent` + `Old Tokens 1 Week+`
   - selection is neutral/interleaved rather than permanently prioritizing one side
   - refresh cadence is `1m`
+  - requested span is `14d`
+  - requested point budget is `336`
+  - compact mini charts render a translucent filled area under the line
   - hover shows approximate market cap + approximate bucket time for the inspected point
   - clicking a routed mini chart opens the same compact expanded hologram popup used by manual tokens
-  - max chart window is `7d`
-  - younger tokens compress to their real lifespan inside that `7d` ceiling
+  - max chart window is `14d`
+  - younger tokens compress to their real lifespan inside that `14d` ceiling
   - current age-adaptive chart granularity:
     - `< 24h`: `1m`
     - `24h` to `< 72h`: `5m`
-    - `72h+`: `15m`
+    - `72h` to `< 11d`: `15m`
+    - `11d+`: `30m`
   - routed compact search now exposes a visible searching/loading state while the filtered table is resolving
 
 ### PumpFun
-- `X` removes a row from the panel only
-- Token may reappear on new trades
-- Pump live updates are ignored while the bot is stopped
-- PumpFun runtime is now restricted to `/alerts`; `/monitor` does not mount or keep the PumpFun live workspace active
+- PumpFun is backend-only for migrations.
+- The frontend no longer mounts the PumpFun live panel, PumpFun toasts, PumpFun local alerts, or per-mint PumpFun trade subscriptions.
+- Migrated tokens enter the backend catalog as `pumpfun-migrated` active monitor candidates and continue through the existing migration grace, minimum market-cap, eligibility, and archive rules.
 
 ### Trade terminal links
 - `Axiom` now prefers `pairAddress` for monitored/routed/manual token rows when available
@@ -1233,7 +1239,6 @@ Current security priority order:
   - `Disconnected` if session is not authenticated or runtime mode is `stopped`
   - `Unstable` if runtime mode is `syncing`
   - `Unstable` if monitored freshness is older than `15s`
-  - `Unstable` in `/alerts` if `pumpfun.connected` is false
   - otherwise `Connected`
 - The `/alerts` header now rerenders after successful monitored refreshes, so fresh dashboard payloads update the status tone immediately instead of waiting for a later header-only refresh
 
@@ -1250,9 +1255,7 @@ Current security priority order:
     - `meteora-surge`
   - backend-owned global-token alert:
     - `high-cap-dump-5m`
-  - frontend-local alerts that still remain local:
-    - `pumpfun-vol`
-    - `pumpfun-hvnc`
+- PumpFun frontend-local alert generation is disabled with the live panel/runtime removal.
 - backend-owned alerts are delivered on:
   - `GET /api/dashboard/alert-events?mode=unseen`
   - authenticated socket event `alert:event`
@@ -1267,12 +1270,24 @@ Current security priority order:
   - contract/address
 - the alerts search now uses the same compact-search interaction model as the other lupas, including `Enter/Return` to commit by blurring the input
 - alerts are now restored from browser-local storage per account scope
-- alerts history is currently capped at the most recent `100` entries in runtime state and browser-local storage
+- alerts history is currently capped at the most recent `120` entries in runtime state and browser-local storage
+- the panel paginates alert cards at `40` alerts per page
+- pagination controls live in the `Alerts` header so page navigation remains visible while the alert list scrolls
 - the panel now also supports per-user animated card FX behind `card-effects-mode`
 - current implementation detail:
   - the visible card shell stays stable in the list
   - most arrival FX run through a separate ghost overlay layer
   - row-level shake is intentionally limited to higher tiers to reduce re-render flicker risk
+- current alert mini-chart behavior:
+  - alert cards now render a static `Chart` snapshot at the right side of the card
+  - alert mini charts reuse the same sparkline source family as routed/manual tables
+  - alert mini charts render a translucent filled area under the line
+  - hover shows approximate market cap + approximate bucket time for the inspected point
+  - alert mini charts are not clickable and do not open the expanded hologram popup
+  - snapshots are cached browser-locally per account and keyed by `alert.id`
+  - each alert row freezes its own mini chart snapshot after the fetch completes
+  - a newer alert for the same token no longer mutates older alert-card mini charts
+  - snapshot cache is pruned when old alert rows leave the capped `120`-alert local history or are removed/cleared
 - users can clear:
   - all alerts at once via `Clean All`
   - a single alert card via the card-level `×` button
@@ -1304,6 +1319,7 @@ Current security priority order:
 - dismissed Recent set
 - dismissed Old Week set
 - alert cards
+- alert mini-chart snapshot cache keyed by `alert.id`
 - custom sound assets
 
 ## Workspace Split And Multi-Tab Behavior
@@ -1312,15 +1328,13 @@ Current security priority order:
 - owns the high-churn live runtime:
   - `Monitored Tokens`
   - `Manual Tokens`
-  - `PumpFun`
   - `Alerts`
 - replays unseen backend-owned alert feeds from `GET /api/dashboard/alert-events`
-- still keeps only PumpFun-local alerting frontend-owned
+- no longer runs PumpFun-local frontend alerting
 - does not mount `Recent`, `Old Week`, or `Lateralization`
 - the live workspace layout is now user-customizable and persisted:
   - panels can be reordered by drag handle
   - `Monitored` and `Alerts` can resize between `1/3`, `2/3`, and `3/3`
-  - `PumpFun` can be reordered but remains fixed at `1/3`
   - the header now includes a dedicated reset action for the default live layout
 
 ### `/monitor`
@@ -1333,8 +1347,7 @@ Current security priority order:
 - still consumes `GET /api/dashboard/monitored` so routed/history surfaces stay current
 - does not run:
   - frontend alerts
-  - PumpFun runtime
-  - PumpFun GC
+  - PumpFun frontend runtime
 
 ### Multi-tab coordination
 - monitor tabs now use `BroadcastChannel` leader election
@@ -1347,7 +1360,7 @@ Current security priority order:
 - follower `/monitor` tabs receive monitored/lateralized/bid-zone snapshots from the leader instead of duplicating that polling
 - follower `/monitor` tabs also receive routed chart snapshots from the leader
 - this coordination currently applies only to `/monitor`
-- `/alerts` still runs independently per tab because live presence, hidden-light behavior, PumpFun runtime, and backend alert acceptance remain scoped to the active browser tab/session
+- `/alerts` still runs independently per tab because live presence, hidden-light behavior, and backend alert acceptance remain scoped to the active browser tab/session
 
 ## Important Current Implementation Notes
 
@@ -1463,8 +1476,6 @@ Current limitation:
     - `Old Token Surge 1H`
     - `Old Token Surge 6H`
     - `Meteora 1H`
-    - `PumpFun VOL`
-    - `PumpFun HVNC`
     - `High Cap Dump 5M`
   - `Sound By Alert Type`
     - the same per-type families above, but for sound playback only

@@ -11,7 +11,7 @@ export function isHighCapDumpAlert(alert: AlertEntry) {
 }
 
 export function isHvncAlert(alert: AlertEntry) {
-  return alert.isHvnc === true || alert.kind === 'hvnc' || alert.kind === 'pumpfun-hvnc';
+  return alert.isHvnc === true || alert.kind === 'hvnc';
 }
 
 function getOldSurgeToneClass(alert: AlertEntry, now: number) {
@@ -50,10 +50,6 @@ export function getAlertToneClass(alert: AlertEntry, now = Date.now()) {
 
   if (isHvncAlert(alert)) {
     return 'mega';
-  }
-
-  if (alert.kind === 'pumpfun-vol') {
-    return 'pump-alert';
   }
 
   if (alert.kind === 'meteora-surge') {

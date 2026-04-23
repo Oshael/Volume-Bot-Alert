@@ -21,8 +21,7 @@ Hoje o bot ja tem uma base util para esse tipo de trabalho:
   - [frontend/src/services/alerts/sound.ts](/Users/ezequielmarinho/Volume-Bot-Alert/frontend/src/services/alerts/sound.ts)
 - feed visual de alertas em:
   - [frontend/src/ui/sections/alerts-section.ts](/Users/ezequielmarinho/Volume-Bot-Alert/frontend/src/ui/sections/alerts-section.ts)
-- toasts de eventos especiais em:
-  - [frontend/src/ui/sections/pumpfun-toasts.ts](/Users/ezequielmarinho/Volume-Bot-Alert/frontend/src/ui/sections/pumpfun-toasts.ts)
+- toasts PumpFun foram removidos quando o fluxo passou a ser backend-only para migrações
 - persistencia de som por usuario/escopo em:
   - [frontend/src/utils/sound-storage.ts](/Users/ezequielmarinho/Volume-Bot-Alert/frontend/src/utils/sound-storage.ts)
 

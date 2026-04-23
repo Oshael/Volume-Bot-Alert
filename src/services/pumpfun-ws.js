@@ -1,11 +1,9 @@
 /**
  * PumpFun WebSocket Service
  * Maintains a single server-side WebSocket connection to PumpFun.
- * Distributes raw trade data and token creation events to all connected clients.
+ * Backend-only migration feed used to seed the token catalog.
  *
  * Events emitted via onEvent callback:
- * - { type: 'newToken', data: {...} }        - new token created on PumpFun
- * - { type: 'trade', data: {...} }           - trade on a subscribed token
  * - { type: 'migrate', data: {...} }         - token migrated to DEX
  * - { type: 'status', data: { connected } }  - connection status change
  */
@@ -23,7 +21,6 @@ let pingTimer = null;
 let reconnectTimer = null;
 let reconnectDelay = RECONNECT_DELAY;
 let isRunning = false;
-let subscribedTokens = new Set();
 let eventCallback = null;
 let stats = {
   connected: false,
@@ -57,18 +54,13 @@ function connect() {
     stats.connected = true;
     reconnectDelay = RECONNECT_DELAY; // reset backoff
 
-    // Subscribe to new token events
-    safeSend({ method: 'subscribeNewToken' });
+    // Only migrations are needed in backend-only mode. New-token/trade streams
+    // were frontend panel inputs and are intentionally not subscribed anymore.
     safeSend({ method: 'subscribeMigration' });
     logTrace('pump_migrate_subscription_sent', {
       tokenAddress: '_global_',
       method: 'subscribeMigration',
     });
-
-    // Re-subscribe to all tracked tokens
-    for (const mint of subscribedTokens) {
-      safeSend({ method: 'subscribeTokenTrade', keys: [mint] });
-    }
 
     emit('status', { connected: true });
     startPing();
@@ -85,16 +77,6 @@ function connect() {
       return; // ignore non-JSON
     }
 
-    if (msg.txType === 'create') {
-      emit('newToken', msg);
-      return;
-    }
-
-    if (msg.txType === 'buy' || msg.txType === 'sell') {
-      emit('trade', msg);
-      return;
-    }
-
     if (msg.txType === 'migrate') {
       const mint = msg.mint;
       logTrace('pump_migrate_received', {
@@ -105,11 +87,6 @@ function connect() {
         marketCapSol: Number.isFinite(Number(msg?.marketCapSol)) ? Number(msg.marketCapSol) : null,
         signature: msg.signature || null,
       });
-      if (mint) {
-        subscribedTokens.delete(mint);
-        stats.subscribedCount = subscribedTokens.size;
-        safeSend({ method: 'unsubscribeTokenTrade', keys: [mint] });
-      }
       emit('migrate', msg);
     }
   });
@@ -168,20 +145,12 @@ function scheduleReconnect() {
   reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
 }
 
-function unsubscribeToken(mint) {
-  if (subscribedTokens.has(mint)) {
-    subscribedTokens.delete(mint);
-    stats.subscribedCount = subscribedTokens.size;
-    safeSend({ method: 'unsubscribeTokenTrade', keys: [mint] });
-  }
+function unsubscribeToken() {
+  return false;
 }
 
-function subscribeToken(mint) {
-  if (!subscribedTokens.has(mint)) {
-    subscribedTokens.add(mint);
-    stats.subscribedCount = subscribedTokens.size;
-    safeSend({ method: 'subscribeTokenTrade', keys: [mint] });
-  }
+function subscribeToken() {
+  return false;
 }
 
 function start(onEvent) {
@@ -205,7 +174,6 @@ function stop() {
     ws.close();
     ws = null;
   }
-  subscribedTokens.clear();
   stats.connected = false;
   stats.subscribedCount = 0;
   stats.messagesReceived = 0;

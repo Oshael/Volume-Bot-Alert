@@ -3,17 +3,10 @@
  * Authenticates clients via the backend session token, distributes real-time data.
  *
  * Events sent to clients:
- * - pump:newToken     - new token created on PumpFun
- * - pump:trade        - trade event on subscribed token
- * - pump:migrate      - token migrated to DEX
- * - pump:status       - PumpFun connection status
- * - sol:price         - SOL/USD price update
  * - alert:event       - backend-owned alert event payload
  * - auth:revoked      - session revoked; client must logout
  *
  * Events received from clients:
- * - pump:subscribe    - { mint }    - subscribe to a specific PumpFun token
- * - pump:unsubscribe  - { mint }    - unsubscribe from a PumpFun token
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
  */
 
@@ -33,13 +26,9 @@ const { logSecurityEvent } = require('../utils/security-events');
 const { logTrace } = require('../utils/pump-migrate-trace');
 
 let io = null;
-let solPriceTimer = null;
 let accessSweepTimer = null;
 
-const SOL_PRICE_BROADCAST_INTERVAL = 30000;
 const ACCESS_SWEEP_INTERVAL = 60000;
-const socketSubscriptions = new Map();
-const mintSubscribers = new Map();
 const sessionSockets = new Map();
 const userSessions = new Map();
 const ipSockets = new Map();
@@ -112,15 +101,6 @@ function buildCatalogTokenFromPump(msg) {
     twitterUrl: msg?.twitter || null,
     isActiveMonitorCandidate: true,
   };
-}
-
-function ensureSocketSubscriptions(socket) {
-  let subscriptions = socketSubscriptions.get(socket.id);
-  if (!subscriptions) {
-    subscriptions = new Set();
-    socketSubscriptions.set(socket.id, subscriptions);
-  }
-  return subscriptions;
 }
 
 function noteSocketAction(socket, action) {
@@ -218,90 +198,6 @@ function untrackSessionSocket(socket) {
   sessions.delete(sessionId);
   if (sessions.size === 0) {
     userSessions.delete(userId);
-  }
-}
-
-function subscribeSocketToMint(socket, mint) {
-  const socketMints = ensureSocketSubscriptions(socket);
-  if (socketMints.has(mint)) return false;
-
-  const maxSubscriptionsPerSocket = Math.max(1, Number(config.security?.socket?.maxSubscriptionsPerSocket) || 80);
-  if (socketMints.size >= maxSubscriptionsPerSocket) {
-    logSecurityEvent('socket_subscription_limit_reached', {
-      socketId: socket.id,
-      userId: socket.user?.id,
-      sessionId: socket.sessionId,
-      ip: socket.clientIp,
-      currentSubscriptions: socketMints.size,
-      attemptedMint: mint,
-      limit: maxSubscriptionsPerSocket,
-    });
-    return false;
-  }
-
-  socketMints.add(mint);
-
-  let subscribers = mintSubscribers.get(mint);
-  if (!subscribers) {
-    subscribers = new Set();
-    mintSubscribers.set(mint, subscribers);
-  }
-
-  subscribers.add(socket.id);
-  if (subscribers.size === 1) {
-    pumpfun.subscribeToken(mint);
-  }
-
-  return true;
-}
-
-function unsubscribeSocketFromMint(socket, mint) {
-  const socketMints = socketSubscriptions.get(socket.id);
-  if (socketMints) {
-    socketMints.delete(mint);
-    if (socketMints.size === 0) {
-      socketSubscriptions.delete(socket.id);
-    }
-  }
-
-  const subscribers = mintSubscribers.get(mint);
-  if (!subscribers) return false;
-
-  subscribers.delete(socket.id);
-  if (subscribers.size === 0) {
-    mintSubscribers.delete(mint);
-    pumpfun.unsubscribeToken(mint);
-    return true;
-  }
-
-  return false;
-}
-
-function clearMintSubscriptions(mint) {
-  const subscribers = mintSubscribers.get(mint);
-  if (!subscribers) return;
-
-  for (const socketId of subscribers) {
-    const socketMints = socketSubscriptions.get(socketId);
-    if (!socketMints) continue;
-    socketMints.delete(mint);
-    if (socketMints.size === 0) {
-      socketSubscriptions.delete(socketId);
-    }
-  }
-
-  mintSubscribers.delete(mint);
-}
-
-function cleanupSocketSubscriptions(socket) {
-  const socketMints = socketSubscriptions.get(socket.id);
-  if (!socketMints || socketMints.size === 0) {
-    socketSubscriptions.delete(socket.id);
-    return;
-  }
-
-  for (const mint of Array.from(socketMints)) {
-    unsubscribeSocketFromMint(socket, mint);
   }
 }
 
@@ -457,29 +353,11 @@ function init(httpServer) {
 
   io.on('connection', (socket) => {
     console.log(`[Socket.io] ${socket.user.username} connected (${socket.id})`);
-    ensureSocketSubscriptions(socket);
     trackSessionSocket(socket);
     const userRoom = getUserRoom(socket.user?.id);
     if (userRoom) {
       socket.join(userRoom);
     }
-
-    socket.emit('sol:price', { price: solPrice.getPrice() });
-    socket.emit('pump:status', pumpfun.getStatus());
-
-    socket.on('pump:subscribe', (data) => {
-      if (!noteSocketAction(socket, 'pump:subscribe')) return;
-      const mint = sanitizeMint(data?.mint);
-      if (!mint) return;
-      subscribeSocketToMint(socket, mint);
-    });
-
-    socket.on('pump:unsubscribe', (data) => {
-      if (!noteSocketAction(socket, 'pump:unsubscribe')) return;
-      const mint = sanitizeMint(data?.mint);
-      if (!mint) return;
-      unsubscribeSocketFromMint(socket, mint);
-    });
 
     socket.on('live:presence', (data) => {
       if (!noteSocketAction(socket, 'live:presence')) return;
@@ -497,7 +375,6 @@ function init(httpServer) {
     });
 
     socket.on('disconnect', (reason) => {
-      cleanupSocketSubscriptions(socket);
       untrackSessionSocket(socket);
       userAlertProfileCache.clearLivePresence(socket.id);
       socketActionState.delete(socket.id);
@@ -513,12 +390,6 @@ function init(httpServer) {
 function startServices() {
   solPrice.start();
 
-  solPriceTimer = setInterval(() => {
-    if (io) {
-      io.emit('sol:price', { price: solPrice.getPrice() });
-    }
-  }, SOL_PRICE_BROADCAST_INTERVAL);
-
   accessSweepTimer = setInterval(() => {
     void sweepAccessEligibility();
   }, ACCESS_SWEEP_INTERVAL);
@@ -526,46 +397,22 @@ function startServices() {
   pumpfun.start((event) => {
     if (!io) return;
 
-    switch (event.type) {
-      case 'newToken': {
-        io.emit('pump:newToken', event.data);
-        break;
+    if (event.type === 'migrate') {
+      const catalogToken = buildCatalogTokenFromPump(event.data);
+      if (catalogToken) {
+        queueCatalogUpsert(catalogToken, 'pumpfun-migrated');
       }
-      case 'trade': {
-        io.emit('pump:trade', event.data);
-        break;
-      }
-      case 'migrate': {
-        const catalogToken = buildCatalogTokenFromPump(event.data);
-        if (catalogToken) {
-          queueCatalogUpsert(catalogToken, 'pumpfun-migrated');
-        }
-        if (event.data?.mint) {
-          clearMintSubscriptions(event.data.mint);
-        }
-        io.emit('pump:migrate', event.data);
-        break;
-      }
-      case 'status':
-        io.emit('pump:status', event.data);
-        break;
     }
   });
 }
 
 function stop() {
-  if (solPriceTimer) {
-    clearInterval(solPriceTimer);
-    solPriceTimer = null;
-  }
   if (accessSweepTimer) {
     clearInterval(accessSweepTimer);
     accessSweepTimer = null;
   }
   solPrice.stop();
   pumpfun.stop();
-  socketSubscriptions.clear();
-  mintSubscribers.clear();
   sessionSockets.clear();
   userSessions.clear();
   ipSockets.clear();
@@ -579,7 +426,7 @@ function stop() {
 function getStatus() {
   return {
     clients: io ? io.engine.clientsCount : 0,
-    trackedPumpSubscriptions: mintSubscribers.size,
+    trackedPumpSubscriptions: 0,
     trackedAuthenticatedUsers: userSessions.size,
     trackedAuthenticatedSessions: sessionSockets.size,
     trackedClientIps: ipSockets.size,

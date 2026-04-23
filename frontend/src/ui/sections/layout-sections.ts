@@ -317,8 +317,6 @@ const ALERT_TOGGLE_FIELDS = [
   { key: 'alert-old-week-surge-1h-enabled', label: 'OLD SURGE 1H' },
   { key: 'alert-old-week-surge-6h-enabled', label: 'OLD SURGE 6H' },
   { key: 'alert-meteora-surge-enabled', label: 'METEORA 1H' },
-  { key: 'alert-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
-  { key: 'alert-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
   { key: 'alert-high-cap-dump-enabled', label: 'HIGH CAP DUMP 5M' },
 ] as const;
 
@@ -329,8 +327,6 @@ const SOUND_TOGGLE_FIELDS = [
   { key: 'sound-old-surge-1h-enabled', label: 'SURGE 1H' },
   { key: 'sound-old-surge-6h-enabled', label: 'SURGE 6H' },
   { key: 'sound-meteora-surge-enabled', label: 'METEORA 1H' },
-  { key: 'sound-pumpfun-vol-enabled', label: 'PUMPFUN VOL' },
-  { key: 'sound-pumpfun-hvnc-enabled', label: 'PUMPFUN HVNC' },
   { key: 'sound-high-cap-dump-enabled', label: 'HIGH CAP DUMP 5M' },
 ] as const;
 
@@ -851,10 +847,8 @@ function getWorkspaceConnectionState(state: AppState) {
   const monitoredUpdatedAt = state.runtime.monitoredUpdatedAt;
   const monitoredAgeMs = monitoredUpdatedAt ? (Date.now() - new Date(monitoredUpdatedAt).getTime()) : Number.POSITIVE_INFINITY;
   const hasFreshMonitoring = Number.isFinite(monitoredAgeMs) && monitoredAgeMs >= 0 && monitoredAgeMs <= 15_000;
-  const expectsPumpSocket = state.ui.workspace === 'live';
-  const hasExpectedPumpConnection = !expectsPumpSocket || state.pumpfun.connected;
 
-  if (!hasFreshMonitoring || !hasExpectedPumpConnection) {
+  if (!hasFreshMonitoring) {
     return { tone: 'unstable', label: 'Unstable' };
   }
 

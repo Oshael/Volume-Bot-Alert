@@ -1,6 +1,6 @@
 export interface AlertEntry {
   id: string;
-  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'pumpfun-vol' | 'pumpfun-hvnc' | 'high-cap-dump-5m';
+  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'high-cap-dump-5m';
   ruleKey?: string | null;
   address: string;
   mintAddress?: string | null;

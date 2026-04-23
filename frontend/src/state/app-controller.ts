@@ -109,6 +109,7 @@ const PUMP_GC_LOW_MCAP_TIME_MS = 13 * 60 * 1000;
 const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
+const PUMP_RENDER_THROTTLE_MS = 500;
 const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
 const RECENT_MAX_AGE_MINUTES = OLD_WEEK_MIN_AGE_MINUTES;
@@ -629,6 +630,7 @@ export function createAppController(): AppController {
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
+  let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
   let dashboardAlertFeedRefreshInFlight = false;
@@ -674,6 +676,7 @@ export function createAppController(): AppController {
   const recentAlertFingerprints = new Map<string, { ts: number; fingerprint: string }>();
   const pendingAlertSparklineRequests = new Map<string, string>();
   const pendingDirtyRegions = new Set<AppRenderRegion>(['all']);
+  const pendingPumpfunEmitRegions = new Set<AppRenderRegion>();
   const COLLAPSIBLE_SECTION_TO_RENDER_REGION: Record<CollapsibleSectionKey, AppRenderRegion> = {
     manual: 'manual',
     recent: 'recent',
@@ -975,7 +978,7 @@ export function createAppController(): AppController {
   }
 
   function shouldRunPumpfunRuntime() {
-    return isLiveWorkspace();
+    return false;
   }
 
   function shouldRunLateralizedRuntime() {
@@ -1380,6 +1383,46 @@ export function createAppController(): AppController {
     }
 
     emitTimer = window.setTimeout(() => flushEmit(), 0);
+  }
+
+  function flushPumpfunEmit() {
+    if (pumpfunEmitTimer) {
+      clearTimeout(pumpfunEmitTimer);
+      pumpfunEmitTimer = null;
+    }
+
+    if (pendingPumpfunEmitRegions.size === 0) {
+      return;
+    }
+
+    const regions = [...pendingPumpfunEmitRegions];
+    pendingPumpfunEmitRegions.clear();
+    emit(...regions);
+  }
+
+  function cancelScheduledPumpfunEmit() {
+    if (pumpfunEmitTimer) {
+      clearTimeout(pumpfunEmitTimer);
+      pumpfunEmitTimer = null;
+    }
+    pendingPumpfunEmitRegions.clear();
+  }
+
+  function schedulePumpfunEmit(...regions: AppRenderRegion[]) {
+    for (const region of regions.length > 0 ? regions : ['pumpfun' as AppRenderRegion]) {
+      pendingPumpfunEmitRegions.add(region);
+    }
+
+    if (typeof window === 'undefined') {
+      flushPumpfunEmit();
+      return;
+    }
+
+    if (pumpfunEmitTimer) {
+      return;
+    }
+
+    pumpfunEmitTimer = window.setTimeout(() => flushPumpfunEmit(), PUMP_RENDER_THROTTLE_MS);
   }
 
   function setBusy(busy: boolean) {
@@ -1875,10 +1918,6 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-hvnc-enabled');
       case 'meteora-surge':
         return isConfigEnabled('alert-meteora-surge-enabled');
-      case 'pumpfun-vol':
-        return isConfigEnabled('alert-pumpfun-vol-enabled');
-      case 'pumpfun-hvnc':
-        return isConfigEnabled('alert-pumpfun-hvnc-enabled');
       case 'high-cap-dump-5m':
         return isConfigEnabled('alert-high-cap-dump-enabled');
       default:
@@ -2488,10 +2527,6 @@ export function createAppController(): AppController {
     return { mode, window: normalizeMonitoredVolWindow(window) };
   }
 
-  function getPumpConfigNumber(key: string, fallback: number) {
-    return getConfigNumber(key, fallback);
-  }
-
   function isHotlinkBlockedPumpImageUrl(url: string | null | undefined) {
     try {
       return new URL(String(url || '').trim()).hostname.toLowerCase() === 'metadata.j7tracker.io';
@@ -2517,25 +2552,7 @@ export function createAppController(): AppController {
   }
 
   function getPumpVisibleTokens() {
-    const entryVol = getPumpConfigNumber('pump-entry-vol', 3000);
-    const maxAgeMin = getPumpConfigNumber('pump-max-age-min', 0);
-    const now = Date.now();
-    return state.data.pumpTokens.filter((item) => {
-      if (item._migrated || isBlocked(item.mint) || state.data.dismissedPump.includes(item.mint)) {
-        return false;
-      }
-      const vol5m = getPumpVolume5mTotal(item);
-      if (!(vol5m >= entryVol) || item.hidden) {
-        return false;
-      }
-      if (maxAgeMin > 0 && item.createdAt) {
-        const ageMinutes = (now - item.createdAt) / 60000;
-        if (ageMinutes > maxAgeMin) {
-          return false;
-        }
-      }
-      return true;
-    });
+    return [];
   }
 
   function refreshPumpPanelCounts() {
@@ -2595,15 +2612,13 @@ export function createAppController(): AppController {
       return;
     }
     state.pumpfun.bondTargetMcap = nextTarget;
-    state.data.configs['pump-bond-mcap'] = Math.round(nextTarget);
-    void persistUiConfigs({ 'pump-bond-mcap': Math.round(nextTarget) });
   }
 
   function dismissPumpToast(id: string) {
     state.data.pumpToasts = state.data.pumpToasts.filter((item) => item.id !== id);
   }
 
-  function shouldSurfacePumpMigration(token: Pick<PumpTokenEntry, 'mcap'>) {
+  function _shouldSurfacePumpMigration(token: Pick<PumpTokenEntry, 'mcap'>) {
     return Number(token?.mcap || 0) >= PUMP_SILENCE_MIGRATION_MIN_MCAP;
   }
 
@@ -2626,7 +2641,7 @@ export function createAppController(): AppController {
     }, PUMP_TOAST_TTL_MS);
   }
 
-  function hasRecordedPumpMigration(mint: string) {
+  function _hasRecordedPumpMigration(mint: string) {
     return state.data.recentPumpMigrations.some((entry) => entry.mint === mint)
       || state.data.pumpToasts.some((entry) => entry.mint === mint);
   }
@@ -2667,7 +2682,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildPumpMigrationTokenFromPayload(payload: Record<string, unknown>, existingToken?: PumpTokenEntry | null): PumpTokenEntry | null {
+  function _buildPumpMigrationTokenFromPayload(payload: Record<string, unknown>, existingToken?: PumpTokenEntry | null): PumpTokenEntry | null {
     const mint = String(payload.mint || existingToken?.mint || '').trim();
     if (!mint) {
       return null;
@@ -2848,6 +2863,7 @@ export function createAppController(): AppController {
       }
 
       applyResolvedPumpMigrationVisuals(mint, resolvedSymbol, resolvedImageUrl);
+      cancelScheduledPumpfunEmit();
       emit('pumpfun', 'toasts');
     } catch (_) {
       // Keep fallback placeholders when metadata lookup fails.
@@ -2856,7 +2872,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function reportPumpMigration(token: PumpTokenEntry) {
+  function _reportPumpMigration(token: PumpTokenEntry) {
     const sessionToken = state.session.token;
     if (!sessionToken) {
       return;
@@ -2877,72 +2893,8 @@ export function createAppController(): AppController {
     });
   }
 
-  function buildPumpAlertEntry(
-    token: PumpTokenEntry,
-    kind: 'pumpfun-hvnc' | 'pumpfun-vol',
-    label: 'PUMP HVNC' | 'PUMP VOL',
-    vol5m: number,
-    symbol: string,
-  ): AlertEntry {
-    return {
-      id: `${token.mint}-${Date.now()}-${kind === 'pumpfun-hvnc' ? 'pump-hvnc' : 'pump-vol'}`,
-      kind,
-      address: token.mint,
-      symbol,
-      name: token.name || null,
-      imageUrl: token.imageUrl || null,
-      twitterUrl: token.twitterUrl || null,
-      pairUrl: token.pairUrl || null,
-      createdAt: Date.now(),
-      tokenCreatedAt: token.createdAt ?? null,
-      volume5m: vol5m,
-      volume1h: null,
-      volume6h: null,
-      volume24h: token.volTotal ?? null,
-      prevMcap: null,
-      mcap: token.mcap ?? null,
-      pct: 0,
-      label,
-      isHvnc: kind === 'pumpfun-hvnc',
-    };
-  }
-
-  function shouldFirePumpHvncAlert(
-    token: PumpTokenEntry,
-    vol5m: number,
-    hvncMinVol: number,
-    ageMs: number,
-  ) {
-    return isAlertKindEnabled('pumpfun-hvnc')
-      && !token._hvncPumpFired
-      && hvncMinVol > 0
-      && ageMs < HVNC_MAX_AGE_MS
-      && vol5m >= hvncMinVol;
-  }
-
-  function shouldFirePumpVolumeAlert(token: PumpTokenEntry, vol5m: number, minVol: number) {
-    return isAlertKindEnabled('pumpfun-vol')
-      && vol5m >= minVol
-      && !token._alertFired;
-  }
-
   function maybeFirePumpAlert(token: PumpTokenEntry) {
-    const vol5m = getPumpVolume5mTotal(token);
-    const minVol = getPumpConfigNumber('pump-min-vol', 100000);
-    const hvncMinVol = getConfigNumber('hvnc-min-vol', 300000);
-    const ageMs = token.createdAt ? Date.now() - token.createdAt : Number.POSITIVE_INFINITY;
-    const symbol = token.symbol || token.mint.slice(0, 6);
-
-    if (shouldFirePumpHvncAlert(token, vol5m, hvncMinVol, ageMs)) {
-      token._hvncPumpFired = true;
-      pushAlert(buildPumpAlertEntry(token, 'pumpfun-hvnc', 'PUMP HVNC', vol5m, symbol));
-      return;
-    }
-
-    if (shouldFirePumpVolumeAlert(token, vol5m, minVol)) {
-      token._alertFired = true;
-      pushAlert(buildPumpAlertEntry(token, 'pumpfun-vol', 'PUMP VOL', vol5m, symbol));
-    }
+    void token;
   }
 
   async function resolvePumpTokenImage(mint: string) {
@@ -2953,14 +2905,14 @@ export function createAppController(): AppController {
     }
 
     token._imageResolving = true;
-    emit();
+    schedulePumpfunEmit('pumpfun');
 
     try {
       const timeout = window.setTimeout(() => {
         state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
           ? { ...item, _imageResolved: true, _imageResolving: false }
           : item);
-        emit();
+        schedulePumpfunEmit('pumpfun');
       }, PUMP_IMAGE_TIMEOUT_MS);
 
       try {
@@ -2973,7 +2925,7 @@ export function createAppController(): AppController {
         state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
           ? { ...item, imageUrl: resolvedImageUrl, _imageResolved: true, _imageResolving: false }
           : item);
-        emit();
+        schedulePumpfunEmit('pumpfun');
       } finally {
         clearTimeout(timeout);
       }
@@ -2983,7 +2935,7 @@ export function createAppController(): AppController {
       state.data.pumpTokens = state.data.pumpTokens.map((item) => item.mint === mint
         ? { ...item, _imageResolved: true, _imageResolving: false }
         : item);
-      emit();
+      schedulePumpfunEmit('pumpfun');
     }
   }
 
@@ -3105,7 +3057,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function createOrUpdatePumpToken(raw: Record<string, unknown>, mode: 'new' | 'trade') {
+  function _createOrUpdatePumpToken(raw: Record<string, unknown>, mode: 'new' | 'trade') {
     const mint = String(raw.mint || '').trim();
     if (!mint || isBlocked(mint) || state.data.dismissedPump.includes(mint)) {
       return;
@@ -5189,7 +5141,6 @@ export function createAppController(): AppController {
     computeUptimeLabel();
     syncHistorySyncState({ runImmediatelyOnGain: true });
     syncMonitoringPolling({ runImmediately: true });
-    startPumpGcTimer();
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
       emit('header');
@@ -5199,6 +5150,7 @@ export function createAppController(): AppController {
   function stopMonitoringTimers() {
     if (monitoringInterval) clearInterval(monitoringInterval);
     if (uptimeInterval) clearInterval(uptimeInterval);
+    flushPumpfunEmit();
     stopPumpGcTimer();
     monitoringInterval = null;
     uptimeInterval = null;
@@ -5234,78 +5186,6 @@ export function createAppController(): AppController {
         }
         emit('all');
       },
-      onPumpStatus(payload) {
-        if (!shouldRunPumpfunRuntime()) {
-          return;
-        }
-        state.pumpfun.connected = Boolean(payload.connected);
-        state.pumpfun.statusLabel = state.pumpfun.connected ? 'connected' : 'disconnected';
-        if (isLiveWorkspaceHiddenForUiWork()) {
-          return;
-        }
-        emit('pumpfun', 'header');
-      },
-      onSolPrice(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
-          return;
-        }
-        const price = Number(payload.price);
-        if (Number.isFinite(price) && price > 0) {
-          state.pumpfun.solPriceUsd = price;
-        }
-        emit('pumpfun');
-      },
-      onPumpNewToken(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
-          return;
-        }
-        createOrUpdatePumpToken(payload, 'new');
-        const mint = String(payload.mint || '').trim();
-        if (mint) {
-          subscribePumpMint(mint);
-        }
-        emit('pumpfun');
-      },
-      onPumpTrade(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
-          return;
-        }
-        createOrUpdatePumpToken(payload, 'trade');
-        emit('pumpfun');
-      },
-      onPumpMigrate(payload) {
-        if (!shouldRunPumpfunRuntime() || state.runtime.mode !== 'active' || isLiveWorkspaceHiddenForUiWork()) {
-          return;
-        }
-        const mint = String(payload.mint || '').trim();
-        if (!mint) return;
-        const existingToken = state.data.pumpTokens.find((item) => item.mint === mint) || null;
-        if ((existingToken && existingToken._migrated) || (!existingToken && hasRecordedPumpMigration(mint))) {
-          return;
-        }
-
-        const migrationToken = buildPumpMigrationTokenFromPayload(payload, existingToken);
-        if (!migrationToken) return;
-        if (existingToken) {
-          existingToken._migrated = true;
-        }
-
-        reportPumpMigration(migrationToken);
-        if (shouldSurfacePumpMigration(migrationToken)) {
-          recordPumpMigration(migrationToken);
-          enqueuePumpToast(migrationToken);
-          if (!migrationToken.symbol || !migrationToken.imageUrl) {
-            void resolvePumpMigrationMetadata(mint);
-          }
-        }
-        state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== mint);
-        unsubscribePumpMint(mint);
-        refreshPumpPanelCounts();
-        if (shouldSurfacePumpMigration(migrationToken)) {
-          setNotice(`PumpFun migration: ${migrationToken.symbol || mint.slice(0, 6)}`);
-        }
-        emit('pumpfun', 'toasts', 'legacy', 'overlay');
-      },
       onAlertEvent(payload) {
         if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
           return;
@@ -5339,13 +5219,20 @@ export function createAppController(): AppController {
       startMonitoringTimers();
     }
 
-    if (shouldRunPumpfunRuntime()) {
+    if (shouldUseBackendOwnedMonitoredAlerts()) {
       connectRealtime();
-      startPumpGcTimer();
     } else {
       suppressSocketStatusNoticeUntil = Date.now() + 2000;
       disconnectSocket();
-      stopPumpGcTimer();
+    }
+
+    stopPumpGcTimer();
+    if (
+      state.pumpfun.connected
+      || state.data.pumpTokens.length > 0
+      || state.data.recentPumpMigrations.length > 0
+      || state.data.pumpToasts.length > 0
+    ) {
       clearPumpWorkspaceState();
       emit('pumpfun', 'toasts', 'legacy', 'overlay');
     }
@@ -6081,7 +5968,6 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: monitoredDashboardTokens.length,
     };
     state.data.configs = payload.configs || {};
-    state.pumpfun.bondTargetMcap = getConfigNumber('pump-bond-mcap', state.pumpfun.bondTargetMcap || 35000);
     applyUiPreferencesFromConfigs();
     applyUiPreferences(payload.uiPrefs);
     persistSoundSettings();
