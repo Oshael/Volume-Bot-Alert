@@ -5,6 +5,14 @@ import { updateLivePresence } from './services/socket/client';
 import { isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
+import {
+  installRuntimePerfDebugConsole,
+  isRuntimePerfDebugEnabled,
+  measureRuntimePerf,
+  observeRuntimeLongTasks,
+  readRuntimePerfMemory,
+  recordRuntimePerfDebugEntry,
+} from './utils/runtime-perf-debug';
 
 const rootElement = document.querySelector<HTMLDivElement>('#app');
 
@@ -19,6 +27,7 @@ const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
+const PERF_DEBUG_SAMPLE_INTERVAL_MS = 10 * 1000;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -56,6 +65,36 @@ const TABLE_INTERACTION_LOCK_ZONE_SELECTOR = [
 ].join(', ');
 
 controller.setDocumentHidden(isDocumentHidden);
+installRuntimePerfDebugConsole();
+
+function isRuntimePerfDebugActive(state: AppState | null = latestState) {
+  return Boolean(state?.session.role === 'admin' && isRuntimePerfDebugEnabled());
+}
+
+function formatDirtyRegions(dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  return dirtyRegions.has('all') ? 'all' : [...dirtyRegions].sort().join(',');
+}
+
+function buildRuntimePerfSample(state: AppState) {
+  return {
+    workspace: state.ui.workspace,
+    runtimeMode: state.runtime.mode,
+    trackedTokens: Object.keys(state.data.trackedTokensByAddress).length,
+    monitored: state.data.monitoredTokenAddresses.length,
+    manual: state.data.manualTokenAddresses.length,
+    recent: state.data.recentTokenAddresses.length,
+    oldWeek: state.data.oldWeekTokenAddresses.length,
+    alerts: state.data.alerts.length,
+    pumpTokens: state.data.pumpTokens.length,
+    pumpToasts: state.data.pumpToasts.length,
+    sparklines: Object.keys(state.data.sparklineByAddress).length,
+    meteora: Object.keys(state.data.meteoraByAddress).length,
+    pendingRender: Boolean(pendingState),
+    pendingRegions: pendingDirtyRegions ? formatDirtyRegions(pendingDirtyRegions) : '',
+  };
+}
+
+observeRuntimeLongTasks(() => isRuntimePerfDebugActive());
 
 function isEditingInteractiveField() {
   const active = document.activeElement;
@@ -301,7 +340,18 @@ function performRender(
   state: AppState,
   dirtyRegions: ReadonlySet<AppRenderRegion> = new Set<AppRenderRegion>(['all']),
 ) {
-  renderAppShell(root, state, controller, dirtyRegions);
+  measureRuntimePerf(
+    'frontend.render',
+    isRuntimePerfDebugActive(state),
+    {
+      workspace: state.ui.workspace,
+      regions: formatDirtyRegions(dirtyRegions),
+      monitored: state.data.monitoredTokenAddresses.length,
+      manual: state.data.manualTokenAddresses.length,
+      alerts: state.data.alerts.length,
+    },
+    () => renderAppShell(root, state, controller, dirtyRegions),
+  );
 }
 
 function clearHiddenRuntimeStopTimer() {
@@ -629,5 +679,19 @@ window.setInterval(() => {
 
   syncLivePresence(latestState, { force: true });
 }, LIVE_PRESENCE_HEARTBEAT_MS);
+
+window.setInterval(() => {
+  if (!latestState || !isRuntimePerfDebugActive(latestState)) {
+    return;
+  }
+
+  recordRuntimePerfDebugEntry({
+    ts: Date.now(),
+    kind: 'sample',
+    label: 'frontend.runtime-sample',
+    meta: buildRuntimePerfSample(latestState),
+    memory: readRuntimePerfMemory(),
+  }, true);
+}, PERF_DEBUG_SAMPLE_INTERVAL_MS);
 
 void controller.init();

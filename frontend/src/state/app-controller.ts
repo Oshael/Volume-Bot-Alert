@@ -75,6 +75,11 @@ import {
   formatPasswordChangedDate,
   rememberPreviousPassword,
 } from '../utils/password-history';
+import {
+  isRuntimePerfDebugEnabled,
+  measureRuntimePerf,
+  measureRuntimePerfAsync,
+} from '../utils/runtime-perf-debug';
 
 const AUTH_NOTICE_NO_SESSION = 'No saved session. Sign in to continue.';
 const AUTH_NOTICE_RESTORING = 'Restoring session...';
@@ -1350,6 +1355,10 @@ export function createAppController(): AppController {
     for (const listener of listeners) {
       listener(state, dirtyRegions);
     }
+  }
+
+  function isRuntimePerfDebugActive() {
+    return state.session.role === 'admin' && isRuntimePerfDebugEnabled();
   }
 
   function emit(...regions: AppRenderRegion[]) {
@@ -3301,24 +3310,34 @@ export function createAppController(): AppController {
   }
 
   function deriveAgeBuckets(options?: { forceRecentList?: boolean; forceOldWeekList?: boolean }) {
-    const context = getRoutedEligibilityContext();
-    const deriveRecentList = shouldDeriveRecentList(options);
-    const deriveOldWeekList = shouldDeriveOldWeekList(options);
-    const nextRecentAddresses: string[] = [];
-    const nextOldWeekAddresses: string[] = [];
+    measureRuntimePerf(
+      'controller.deriveAgeBuckets',
+      isRuntimePerfDebugActive(),
+      {
+        monitored: state.data.monitoredTokenAddresses.length,
+        workspace: state.ui.workspace,
+      },
+      () => {
+        const context = getRoutedEligibilityContext();
+        const deriveRecentList = shouldDeriveRecentList(options);
+        const deriveOldWeekList = shouldDeriveOldWeekList(options);
+        const nextRecentAddresses: string[] = [];
+        const nextOldWeekAddresses: string[] = [];
 
-    for (const item of getMonitoredTokens(state)) {
-      const routedState = deriveRoutedTokenState(item, context);
+        for (const item of getMonitoredTokens(state)) {
+          const routedState = deriveRoutedTokenState(item, context);
 
-      if (routedState.nextRecent && deriveRecentList) {
-        nextRecentAddresses.push(item.address);
+          if (routedState.nextRecent && deriveRecentList) {
+            nextRecentAddresses.push(item.address);
+          }
+          if (routedState.nextOldWeek && deriveOldWeekList) {
+            nextOldWeekAddresses.push(item.address);
+          }
+        }
+
+        finalizeAgeBucketState(deriveRecentList, deriveOldWeekList, nextRecentAddresses, nextOldWeekAddresses);
       }
-      if (routedState.nextOldWeek && deriveOldWeekList) {
-        nextOldWeekAddresses.push(item.address);
-      }
-    }
-
-    finalizeAgeBucketState(deriveRecentList, deriveOldWeekList, nextRecentAddresses, nextOldWeekAddresses);
+    );
   }
   function applyBlockedFilters() {
     const blocked = new Set(state.data.blocklist.map((item) => item.address));
@@ -3475,7 +3494,12 @@ export function createAppController(): AppController {
 
     lateralizedRefreshInFlight = true;
     try {
-      const payload = await fetchLateralizedCandidates(token, { limit: LATERALIZED_PANEL_LIMIT });
+      const payload = await measureRuntimePerfAsync(
+        'api.catalog.lateralized',
+        isRuntimePerfDebugActive(),
+        { limit: LATERALIZED_PANEL_LIMIT, force: Boolean(options?.force) },
+        () => fetchLateralizedCandidates(token, { limit: LATERALIZED_PANEL_LIMIT }),
+      );
       applyLateralizedPayload(payload);
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
         broadcastHistoryLateralizedSnapshot(payload);
@@ -3521,7 +3545,12 @@ export function createAppController(): AppController {
 
     bidZoneRefreshInFlight = true;
     try {
-      const payload = await fetchBidZoneCandidates(token, { limit: BID_ZONE_PANEL_LIMIT });
+      const payload = await measureRuntimePerfAsync(
+        'api.catalog.bid-zone',
+        isRuntimePerfDebugActive(),
+        { limit: BID_ZONE_PANEL_LIMIT, force: Boolean(options?.force) },
+        () => fetchBidZoneCandidates(token, { limit: BID_ZONE_PANEL_LIMIT }),
+      );
       applyBidZonePayload(payload);
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
         broadcastHistoryBidZoneSnapshot(payload);
@@ -4862,12 +4891,20 @@ export function createAppController(): AppController {
 
     sparklineRefreshInFlight = true;
     try {
-      const payloads = await Promise.all(
-        batches.map((batch) => fetchTokenSparklines(batch.addresses, {
-          hours: SPARKLINE_WINDOW_HOURS,
-          points: SPARKLINE_POINT_COUNT,
-          granularityMinutes: batch.granularityMinutes,
-        }, token))
+      const payloads = await measureRuntimePerfAsync(
+        'api.catalog.sparklines',
+        isRuntimePerfDebugActive(),
+        {
+          batches: batches.length,
+          addresses: batches.reduce((total, batch) => total + batch.addresses.length, 0),
+        },
+        () => Promise.all(
+          batches.map((batch) => fetchTokenSparklines(batch.addresses, {
+            hours: SPARKLINE_WINDOW_HOURS,
+            points: SPARKLINE_POINT_COUNT,
+            granularityMinutes: batch.granularityMinutes,
+          }, token))
+        ),
       );
       const payload = mergeHistorySparklinePayloads(payloads);
 
@@ -4988,7 +5025,15 @@ export function createAppController(): AppController {
     const requestPayload = buildHistoryBootstrapRequest();
 
     try {
-      const payload = await fetchDashboardHistoryBootstrap(requestPayload, token);
+      const payload = await measureRuntimePerfAsync(
+        'api.dashboard.history-bootstrap',
+        isRuntimePerfDebugActive(),
+        {
+          recentPerPage: requestPayload.recent.perPage,
+          oldWeekPerPage: requestPayload.oldWeek.perPage,
+        },
+        () => fetchDashboardHistoryBootstrap(requestPayload, token),
+      );
       if (
         requestRevision !== historyBootstrapRequestRevision
         || !usesHistoryBucketBootstrap()
@@ -5048,7 +5093,12 @@ export function createAppController(): AppController {
 
     monitoredRefreshInFlight = true;
     try {
-      const monitoredDashboard = await fetchDashboardMonitored(token);
+      const monitoredDashboard = await measureRuntimePerfAsync(
+        'api.dashboard.monitored',
+        isRuntimePerfDebugActive(),
+        { workspace: state.ui.workspace, mode: 'poll' },
+        () => fetchDashboardMonitored(token),
+      );
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
       void refreshHistoryWorkspaceSparklines({ token });
       void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
@@ -5764,14 +5814,25 @@ export function createAppController(): AppController {
     manualTokensOverride?: Array<{ address: string; label?: string | null }>,
     generatedAt?: string | null,
   ) {
-    const manualPayload = buildMonitoredDashboardPayload(manualTokensOverride);
-    syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens);
-    state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
-    state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
-    if (generatedAt !== undefined) {
-      updateMonitoredFreshness(generatedAt ?? null);
-    }
-    rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+    measureRuntimePerf(
+      'controller.applyMonitoredDashboard',
+      isRuntimePerfDebugActive(),
+      {
+        tokens: monitoredDashboardTokens.length,
+        manualOverride: manualTokensOverride?.length ?? null,
+        workspace: state.ui.workspace,
+      },
+      () => {
+        const manualPayload = buildMonitoredDashboardPayload(manualTokensOverride);
+        syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens);
+        state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
+        state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
+        if (generatedAt !== undefined) {
+          updateMonitoredFreshness(generatedAt ?? null);
+        }
+        rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+      },
+    );
   }
 
   function buildCurrentMonitoredMeteoraSnapshot(address: string) {
@@ -6058,11 +6119,16 @@ export function createAppController(): AppController {
       monitoredBootstrapHydrationRevision = requestRevision;
       const firstPageSize = Math.max(1, state.ui.monitoredPerPage || 30);
       const bootstrapSorts = getMonitoredBootstrapSorts();
-      const firstPage = await fetchDashboardMonitored(token, {
-        page: 0,
-        perPage: firstPageSize,
-        sorts: bootstrapSorts,
-      });
+      const firstPage = await measureRuntimePerfAsync(
+        'api.dashboard.monitored',
+        isRuntimePerfDebugActive(),
+        { workspace: state.ui.workspace, mode: 'bootstrap-page', page: 0, perPage: firstPageSize },
+        () => fetchDashboardMonitored(token, {
+          page: 0,
+          perPage: firstPageSize,
+          sorts: bootstrapSorts,
+        }),
+      );
       if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
         return;
       }
@@ -6084,11 +6150,16 @@ export function createAppController(): AppController {
           return;
         }
 
-        const nextPage = await fetchDashboardMonitored(token, {
-          page,
-          perPage: firstPageSize,
-          sorts: bootstrapSorts,
-        });
+        const nextPage = await measureRuntimePerfAsync(
+          'api.dashboard.monitored',
+          isRuntimePerfDebugActive(),
+          { workspace: state.ui.workspace, mode: 'bootstrap-page', page, perPage: firstPageSize },
+          () => fetchDashboardMonitored(token, {
+            page,
+            perPage: firstPageSize,
+            sorts: bootstrapSorts,
+          }),
+        );
         if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
           return;
         }
