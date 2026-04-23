@@ -76,7 +76,8 @@ a {
 }
 
 .app-shell {
-  width: min(1880px, 100vw);
+  width: min(1880px, 100%);
+  max-width: 100%;
   margin: 0 auto;
   padding: 0 0 32px;
 }
@@ -8108,6 +8109,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alerts-list {
   padding: 8px;
+  overflow-x: hidden;
 }
 
 .alerts-list-impact-live {
@@ -8453,6 +8455,7 @@ TEMP_LEGACY_BAR_TITLE {
   flex: 0 0 auto;
   align-self: flex-start;
   margin-left: auto;
+  min-width: 0;
   text-align: right;
 }
 
@@ -8579,9 +8582,10 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-stats-row-v68 {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   align-items: center;
+  min-width: 0;
 }
 
 .alert-flow-v68 .label,
@@ -8801,7 +8805,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-body-v68 {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  grid-template-columns: minmax(0, 1fr) minmax(132px, clamp(150px, 40%, 420px));
   gap: 16px;
   align-items: start;
   min-width: 0;
