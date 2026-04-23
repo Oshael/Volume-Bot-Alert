@@ -6,7 +6,8 @@ import { renderBidZoneSection } from './sections/bid-zone-section';
 import { renderManualTokensSection } from './sections/manual-section';
 import { renderLateralizedSection } from './sections/lateralized-section';
 import { renderMonitoredSection } from './sections/monitored-section';
-import { renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
+import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
+import { isRuntimePerfDebugEnabled, recordRuntimePerfSample } from '../utils/runtime-perf-debug';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -170,6 +171,7 @@ const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
 const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
+const UI_RENDER_DEBUG_REGIONS = new Set<AppRenderRegion>(['recent', 'old-week', 'overlay']);
 
 export function renderAppShell(
   root: HTMLElement,
@@ -211,8 +213,22 @@ export function renderAppShell(
     renderFrame.panels.hidden = false;
 
     if (isHistoryWorkspace) {
-      updateRegionSlot(renderFrame.oldWeekSlot, 'old-week', dirtyRegions, getOldWeekRenderKey(state), () => [renderOldWeekSection(state, controller)]);
-      updateRegionSlot(renderFrame.recentSlot, 'recent', dirtyRegions, getRecentRenderKey(state), () => [renderRecentSection(state, controller)]);
+      updateRegionSlot(
+        renderFrame.oldWeekSlot,
+        'old-week',
+        dirtyRegions,
+        getOldWeekRenderKey(state),
+        () => [renderOldWeekSection(state, controller)],
+        () => patchOldWeekSection(renderFrame.oldWeekSlot, state, controller),
+      );
+      updateRegionSlot(
+        renderFrame.recentSlot,
+        'recent',
+        dirtyRegions,
+        getRecentRenderKey(state),
+        () => [renderRecentSection(state, controller)],
+        () => patchRecentSection(renderFrame.recentSlot, state, controller),
+      );
     } else {
       updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
@@ -488,7 +504,7 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     syncLivePanelResizeFrame(monitoredItem, 'monitored', false);
     syncLivePanelResizeFrame(renderFrame.pumpfunSlot, 'pumpfun', false);
     syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', false);
-    renderFrame.panels.replaceChildren(monitoredItem, renderFrame.alertsSlot);
+    renderFrame.panels.replaceChildren(monitoredItem, renderFrame.alertsSlot, renderFrame.pumpfunSlot);
     return;
   }
 
@@ -521,6 +537,10 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   } else {
     flattenLivePanelCollapsedStack(renderFrame.panels);
     renderFrame.panels.replaceChildren(...previewOrder.map((panelKey) => livePanelItems[panelKey]));
+  }
+
+  if (!renderFrame.panels.contains(renderFrame.pumpfunSlot)) {
+    renderFrame.panels.append(renderFrame.pumpfunSlot);
   }
 
   if (livePanelReorderDraft) {
@@ -569,12 +589,50 @@ function updateRegionSlot(
   dirtyRegions: ReadonlySet<AppRenderRegion>,
   nextKey: string,
   build: () => Node[],
+  patch?: () => boolean,
 ) {
   if (!shouldRefreshRegion(slot, region, dirtyRegions)) {
     return;
   }
 
+  const previousKey = slot.dataset.renderKey || '';
+  const keyChanged = previousKey !== nextKey;
+  if (previousKey && keyChanged && patch) {
+    const patched = patch();
+    if (patched) {
+      logUiRenderDebug(region, 'patch', dirtyRegions, slot, previousKey, nextKey);
+      slot.dataset.renderKey = nextKey;
+      return;
+    }
+  }
+
+  if (keyChanged) {
+    logUiRenderDebug(region, 'replace', dirtyRegions, slot, previousKey, nextKey);
+  }
   updateRenderSlot(slot, nextKey, build);
+}
+
+function logUiRenderDebug(
+  region: AppRenderRegion,
+  mode: 'patch' | 'replace',
+  dirtyRegions: ReadonlySet<AppRenderRegion>,
+  slot: HTMLElement,
+  previousKey: string,
+  nextKey: string,
+) {
+  if (!isRuntimePerfDebugEnabled() || !UI_RENDER_DEBUG_REGIONS.has(region)) {
+    return;
+  }
+
+  recordRuntimePerfSample('ui.render.region', {
+    region,
+    mode,
+    dirtyRegions: [...dirtyRegions],
+    hadPreviousKey: Boolean(previousKey),
+    previousKeyLength: previousKey.length,
+    nextKeyLength: nextKey.length,
+    childCount: slot.childElementCount,
+  }, true);
 }
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {

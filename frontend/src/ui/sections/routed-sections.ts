@@ -651,3 +651,123 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   });
   return section;
 }
+
+const ROUTED_STATIC_CELL_INDEXES = [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+
+function collectRoutedRowKeys(section: ParentNode) {
+  return [...section.querySelectorAll<HTMLTableRowElement>('tbody tr')]
+    .map((row) => String(row.dataset.hoverKey || '').trim())
+    .filter(Boolean);
+}
+
+function getInputValue(section: ParentNode, selector: string) {
+  return section.querySelector<HTMLInputElement>(selector)?.value ?? null;
+}
+
+function getIndicatorText(section: ParentNode, selector: string) {
+  return section.querySelector<HTMLElement>(selector)?.textContent?.trim() ?? null;
+}
+
+function canPatchRoutedSection(currentSection: HTMLElement, nextSection: HTMLElement) {
+  const currentKeys = collectRoutedRowKeys(currentSection);
+  const nextKeys = collectRoutedRowKeys(nextSection);
+  if (currentKeys.length === 0 || currentKeys.length !== nextKeys.length) {
+    return false;
+  }
+  if (currentKeys.some((key, index) => key !== nextKeys[index])) {
+    return false;
+  }
+
+  const currentSearchValue = getInputValue(currentSection, '[data-search-input]');
+  const nextSearchValue = getInputValue(nextSection, '[data-search-input]');
+  if (currentSearchValue !== nextSearchValue) {
+    return false;
+  }
+
+  const currentPageValue = getInputValue(currentSection, '[data-action$="-page-jump"]');
+  const nextPageValue = getInputValue(nextSection, '[data-action$="-page-jump"]');
+  if (currentPageValue !== nextPageValue) {
+    return false;
+  }
+
+  const currentPageTotal = getIndicatorText(currentSection, '.bucket-page-total');
+  const nextPageTotal = getIndicatorText(nextSection, '.bucket-page-total');
+  if (currentPageTotal !== nextPageTotal) {
+    return false;
+  }
+
+  const currentSearchStatus = getIndicatorText(currentSection, '.search-status-indicator');
+  const nextSearchStatus = getIndicatorText(nextSection, '.search-status-indicator');
+  return currentSearchStatus === nextSearchStatus;
+}
+
+function patchRoutedRow(
+  currentRow: HTMLTableRowElement,
+  nextRow: HTMLTableRowElement,
+  state: AppState,
+  controller: AppController,
+) {
+  const currentCells = [...currentRow.children] as HTMLElement[];
+  const nextCells = [...nextRow.children] as HTMLElement[];
+  if (currentCells.length !== nextCells.length || currentCells.length < 14) {
+    return false;
+  }
+
+  currentRow.className = nextRow.className;
+  currentRow.dataset.hoverKey = nextRow.dataset.hoverKey || '';
+
+  for (const index of ROUTED_STATIC_CELL_INDEXES) {
+    if (currentCells[index]?.innerHTML === nextCells[index]?.innerHTML) {
+      continue;
+    }
+    currentCells[index].innerHTML = nextCells[index].innerHTML;
+  }
+
+  bindTokenActions(currentRow, controller);
+  bindCopyButtons(currentRow);
+
+  const currentSparklineCell = currentCells[2];
+  const nextSparklineCell = nextCells[2];
+  const currentSummary = currentSparklineCell?.querySelector<HTMLElement>('.sparkline-wrap')?.dataset.sparklineSummary ?? null;
+  const nextSummary = nextSparklineCell?.querySelector<HTMLElement>('.sparkline-wrap')?.dataset.sparklineSummary ?? null;
+  if (currentSummary !== nextSummary && currentSparklineCell && nextSparklineCell) {
+    currentSparklineCell.innerHTML = nextSparklineCell.innerHTML;
+    bindSparklineHover(currentSparklineCell, state.data.sparklineByAddress, { controller });
+  }
+
+  return true;
+}
+
+function patchRenderedRoutedSection(
+  slot: HTMLElement,
+  nextSection: HTMLElement,
+  state: AppState,
+  controller: AppController,
+) {
+  const currentSection = slot.firstElementChild;
+  if (!(currentSection instanceof HTMLElement) || !canPatchRoutedSection(currentSection, nextSection)) {
+    return false;
+  }
+
+  const currentRows = currentSection.querySelectorAll<HTMLTableRowElement>('tbody tr');
+  const nextRows = nextSection.querySelectorAll<HTMLTableRowElement>('tbody tr');
+  if (currentRows.length !== nextRows.length || currentRows.length === 0) {
+    return false;
+  }
+
+  for (let index = 0; index < currentRows.length; index += 1) {
+    if (!patchRoutedRow(currentRows[index], nextRows[index], state, controller)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function patchRecentSection(slot: HTMLElement, state: AppState, controller: AppController) {
+  return patchRenderedRoutedSection(slot, renderRecentSection(state, controller), state, controller);
+}
+
+export function patchOldWeekSection(slot: HTMLElement, state: AppState, controller: AppController) {
+  return patchRenderedRoutedSection(slot, renderOldWeekSection(state, controller), state, controller);
+}

@@ -3,6 +3,7 @@ import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, M
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
+import { isRuntimePerfDebugEnabled, recordRuntimePerfSample } from '../../utils/runtime-perf-debug';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -149,11 +150,37 @@ export function bindSparklineHover(
       continue;
     }
 
+    const debugActive = isRuntimePerfDebugEnabled();
+    const debugExpanded = wrap.classList.contains('sparkline-wrap-expanded');
+    let lastHoverDebugAt = 0;
+
+    const logHoverDebug = (phase: string, meta: Record<string, unknown> = {}) => {
+      if (!debugActive) {
+        return;
+      }
+
+      const now = Date.now();
+      if (phase === 'move' && now - lastHoverDebugAt < 120) {
+        return;
+      }
+      lastHoverDebugAt = now;
+      recordRuntimePerfSample('ui.sparkline.hover', {
+        phase,
+        address,
+        lookupKey,
+        expanded: debugExpanded,
+        activeIndex,
+        seriesLength: series.length,
+        ...meta,
+      }, true);
+    };
+
     if (wrap.dataset.sparklineExpandable === 'true' && options.controller) {
       wrap.tabIndex = 0;
       wrap.setAttribute('role', 'button');
       wrap.setAttribute('aria-label', `Expand chart for ${address}`);
       wrap.addEventListener('click', () => {
+        logHoverDebug('expand-click');
         options.controller?.openExpandedSparkline(address);
       });
       wrap.addEventListener('keydown', (event) => {
@@ -161,6 +188,7 @@ export function bindSparklineHover(
           return;
         }
         event.preventDefault();
+        logHoverDebug('expand-keydown', { key: event.key });
         options.controller?.openExpandedSparkline(address);
       });
     }
@@ -168,6 +196,7 @@ export function bindSparklineHover(
     let activeIndex = -1;
 
     const hide = () => {
+      logHoverDebug('leave');
       activeIndex = -1;
       hover.classList.remove('active');
     };
@@ -194,12 +223,17 @@ export function bindSparklineHover(
       tooltip.style.left = `${tooltipLeft}px`;
       tooltip.textContent = `MCAP ${fmtMoney(series[index])} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
       hover.classList.add('active');
+      logHoverDebug('move', {
+        index,
+        ratio: Number(ratio.toFixed(3)),
+      });
     };
 
     wrap.addEventListener('pointerenter', (event) => {
       if (event.pointerType === 'touch') {
         return;
       }
+      logHoverDebug('enter', { pointerType: event.pointerType });
       update(event.clientX);
     });
     wrap.addEventListener('pointermove', (event) => {

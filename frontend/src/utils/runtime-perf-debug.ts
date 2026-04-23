@@ -35,6 +35,7 @@ declare global {
       disable: () => void;
       clear: () => void;
       dump: () => RuntimePerfDebugEntry[];
+      dumpMatching: (pattern: string) => RuntimePerfDebugEntry[];
       dumpArchives: () => RuntimePerfDebugArchive[];
       dumpAll: () => { active: RuntimePerfDebugEntry[]; archives: RuntimePerfDebugArchive[] };
       isEnabled: () => boolean;
@@ -121,6 +122,18 @@ export function getRuntimePerfDebugArchives(): RuntimePerfDebugArchive[] {
   }
 }
 
+export function getRuntimePerfDebugLogMatching(pattern: string) {
+  const normalizedPattern = String(pattern || '').trim().toLowerCase();
+  if (!normalizedPattern) {
+    return getRuntimePerfDebugLog();
+  }
+
+  return getRuntimePerfDebugLog().filter((entry) => (
+    String(entry.label || '').toLowerCase().includes(normalizedPattern)
+    || JSON.stringify(entry.meta || {}).toLowerCase().includes(normalizedPattern)
+  ));
+}
+
 function persistRuntimePerfDebugLog(entries: RuntimePerfDebugEntry[]) {
   getStorage()?.setItem(PERF_DEBUG_LOG_KEY, JSON.stringify(entries));
 }
@@ -199,6 +212,20 @@ export function recordRuntimePerfDebugEntry(entry: RuntimePerfDebugEntry, active
   }
 }
 
+export function recordRuntimePerfSample(
+  label: string,
+  meta: Record<string, unknown>,
+  active = isRuntimePerfDebugEnabled(),
+) {
+  recordRuntimePerfDebugEntry({
+    ts: Date.now(),
+    kind: 'sample',
+    label,
+    meta,
+    memory: readRuntimePerfMemory(),
+  }, active);
+}
+
 export function measureRuntimePerf<T>(
   label: string,
   active: boolean,
@@ -259,6 +286,7 @@ export function installRuntimePerfDebugConsole() {
     disable: () => setRuntimePerfDebugEnabled(false),
     clear: clearRuntimePerfDebugLog,
     dump: getRuntimePerfDebugLog,
+    dumpMatching: getRuntimePerfDebugLogMatching,
     dumpArchives: getRuntimePerfDebugArchives,
     dumpAll: () => ({
       active: getRuntimePerfDebugLog(),
