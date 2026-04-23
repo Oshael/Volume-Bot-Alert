@@ -4,6 +4,8 @@ import { loadCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-st
 
 const DEFAULT_ALERT_SOUND_VOLUME = 0.05;
 
+export type AlertSoundPlaybackResult = 'played' | 'skipped' | 'blocked';
+
 type ToneStep = {
   frequency: number;
   durationMs: number;
@@ -92,14 +94,14 @@ function getAudioContext() {
 async function playPattern(pattern: ToneStep[], options?: { volume?: number; triangle?: boolean }) {
   const context = getAudioContext();
   if (!context) {
-    return;
+    return 'skipped' as const;
   }
 
   if (context.state === 'suspended') {
     try {
       await context.resume();
     } catch {
-      return;
+      return 'blocked' as const;
     }
   }
 
@@ -128,22 +130,24 @@ async function playPattern(pattern: ToneStep[], options?: { volume?: number; tri
 
     offsetSeconds += durationSeconds + 0.03;
   }
+
+  return 'played' as const;
 }
 
 
 async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: number; scope?: string }) {
   const asset = loadCustomSoundAsset(options?.scope || 'anonymous', slot);
   if (!asset || typeof window === 'undefined') {
-    return false;
+    return 'skipped' as const;
   }
 
   try {
     const audio = new Audio(asset.dataUrl);
     audio.volume = clampVolume(options?.volume ?? DEFAULT_ALERT_SOUND_VOLUME);
     await audio.play();
-    return true;
+    return 'played' as const;
   } catch {
-    return false;
+    return 'blocked' as const;
   }
 }
 
@@ -163,37 +167,58 @@ function resolveAlertSoundSlot(alert: AlertEntry): CustomSoundSlot {
   return 'normal';
 }
 
-export async function playAlertSound(alert: AlertEntry, options?: { enabled?: boolean; volume?: number; scope?: string; configs?: Record<string, string | number> }) {
+export async function playAlertSound(
+  alert: AlertEntry,
+  options?: { enabled?: boolean; volume?: number; scope?: string; configs?: Record<string, string | number> },
+): Promise<AlertSoundPlaybackResult> {
   if (options?.enabled === false) {
-    return;
+    return 'skipped';
   }
 
   const configKey = resolveAlertSoundConfigKey(alert);
   if (configKey && String(options?.configs?.[configKey] ?? 'on') === 'off') {
-    return;
+    return 'skipped';
   }
 
   const slot = resolveAlertSoundSlot(alert);
-  const playedCustom = await playCustomSound(slot, { volume: options?.volume, scope: options?.scope });
-  if (playedCustom) {
-    return;
+  const customResult = await playCustomSound(slot, { volume: options?.volume, scope: options?.scope });
+  if (customResult === 'played') {
+    return 'played';
   }
 
   const pattern = ALERT_PATTERNS[alert.kind];
   if (!pattern) {
-    return;
+    return customResult;
   }
 
-  await playPattern(pattern, {
+  const patternResult = await playPattern(pattern, {
     volume: options?.volume,
     triangle: alert.kind === 'old-surge' || alert.kind === 'meteora-surge',
   });
+  if (patternResult === 'played') {
+    return 'played';
+  }
+
+  return customResult === 'blocked' ? 'blocked' : patternResult;
 }
 
-export async function playMigrateSound(options?: { enabled?: boolean; volume?: number }) {
+export async function playMigrateSound(options?: { enabled?: boolean; volume?: number }): Promise<AlertSoundPlaybackResult> {
   if (options?.enabled === false) {
+    return 'skipped';
+  }
+
+  return playPattern(MIGRATE_PATTERN, { volume: options?.volume });
+}
+
+export async function primeAlertAudio() {
+  const context = getAudioContext();
+  if (!context || context.state !== 'suspended') {
     return;
   }
 
-  await playPattern(MIGRATE_PATTERN, { volume: options?.volume });
+  try {
+    await context.resume();
+  } catch {
+    // Ignore autoplay unlock failures; playback can retry later.
+  }
 }

@@ -1,6 +1,6 @@
 import './styles/local-fonts.css';
 import './styles/app.css';
-import { playAlertSound, playMigrateSound } from './services/alerts/sound';
+import { playAlertSound, playMigrateSound, primeAlertAudio } from './services/alerts/sound';
 import { updateLivePresence } from './services/socket/client';
 import { isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
@@ -25,6 +25,8 @@ const root: HTMLDivElement = rootElement;
 const controller = createAppController();
 const playedAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
+const pendingAlertSoundIds = new Set<string>();
+const pendingPumpToastSoundIds = new Set<string>();
 const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
 const PERF_DEBUG_SAMPLE_INTERVAL_MS = 10 * 1000;
@@ -112,29 +114,45 @@ function isEditingInteractiveField() {
 
 function syncAudioSideEffects(state: AppState) {
   for (const alert of state.data.alerts) {
-    if (playedAlertIds.has(alert.id)) {
+    if (playedAlertIds.has(alert.id) || pendingAlertSoundIds.has(alert.id)) {
       continue;
     }
 
-    playedAlertIds.add(alert.id);
+    pendingAlertSoundIds.add(alert.id);
     void playAlertSound(alert, {
       enabled: state.ui.soundEnabled,
       volume: state.ui.soundVolume,
       scope: state.session.email || state.session.username || 'anonymous',
       configs: state.data.configs,
-    });
+    })
+      .then((result) => {
+        if (result !== 'blocked') {
+          playedAlertIds.add(alert.id);
+        }
+      })
+      .finally(() => {
+        pendingAlertSoundIds.delete(alert.id);
+      });
   }
 
   for (const toast of state.data.pumpToasts) {
-    if (playedPumpToastIds.has(toast.id)) {
+    if (playedPumpToastIds.has(toast.id) || pendingPumpToastSoundIds.has(toast.id)) {
       continue;
     }
 
-    playedPumpToastIds.add(toast.id);
+    pendingPumpToastSoundIds.add(toast.id);
     void playMigrateSound({
       enabled: state.ui.soundEnabled,
       volume: state.ui.soundVolume,
-    });
+    })
+      .then((result) => {
+        if (result !== 'blocked') {
+          playedPumpToastIds.add(toast.id);
+        }
+      })
+      .finally(() => {
+        pendingPumpToastSoundIds.delete(toast.id);
+      });
   }
 
   const liveIds = new Set(state.data.alerts.map((alert) => alert.id));
@@ -445,6 +463,7 @@ function armHiddenRuntimeStopTimer() {
 }
 
 root.addEventListener('pointerdown', (event) => {
+  void primeAlertAudio();
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a, [data-action], [data-trade-wrap]')) {
     interactionLockUntil = Date.now() + 300;
@@ -454,6 +473,10 @@ root.addEventListener('pointerdown', (event) => {
       flushPendingRender();
     }, 320);
   }
+});
+
+root.addEventListener('keydown', () => {
+  void primeAlertAudio();
 });
 
 root.addEventListener('pointerover', (event) => {
