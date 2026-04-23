@@ -133,6 +133,7 @@ const SPARKLINE_AGE_15M_MAX_MS = 11 * 24 * 60 * 60 * 1000;
 const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 30;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
+const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
@@ -673,6 +674,8 @@ export function createAppController(): AppController {
   let nextBidZoneRefreshAt = 0;
   let nextSparklineRefreshAt = 0;
   let lastSparklineAddressKey = '';
+  let manualMetadataBatchCacheKey = '';
+  let manualMetadataBatchCacheExpiresAt = 0;
   let suppressSocketStatusNoticeUntil = 0;
   const historySyncTabId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -6543,6 +6546,26 @@ export function createAppController(): AppController {
     emit('monitored', 'manual', 'recent', 'old-week', 'header');
   }
 
+  function buildManualMetadataBatchCacheCandidate(
+    manualTokens: Array<{ address: string; label?: string | null }>,
+  ) {
+    return manualTokens
+      .map((item) => item.address)
+      .sort((left, right) => left.localeCompare(right))
+      .join(',');
+  }
+
+  function shouldReuseManualMetadataBatch(
+    cacheKeyCandidate: string,
+    manualTokens: Array<{ address: string; label?: string | null }>,
+  ) {
+    if (cacheKeyCandidate !== manualMetadataBatchCacheKey || Date.now() >= manualMetadataBatchCacheExpiresAt) {
+      return false;
+    }
+
+    return !manualTokens.some((item) => hasCriticalColdFieldGap(state.data.trackedTokensByAddress[item.address]));
+  }
+
   async function hydrateManualTokensMetadataBatch(
     token: string,
     manualTokens: Array<{ address: string; label?: string | null }>,
@@ -6563,6 +6586,13 @@ export function createAppController(): AppController {
     ).values());
 
     if (normalizedManualTokens.length === 0) {
+      manualMetadataBatchCacheKey = '';
+      manualMetadataBatchCacheExpiresAt = 0;
+      return;
+    }
+
+    const manualMetadataBatchCacheKeyCandidate = buildManualMetadataBatchCacheCandidate(normalizedManualTokens);
+    if (shouldReuseManualMetadataBatch(manualMetadataBatchCacheKeyCandidate, normalizedManualTokens)) {
       return;
     }
 
@@ -6596,6 +6626,9 @@ export function createAppController(): AppController {
         changed = true;
       }
     }
+
+    manualMetadataBatchCacheKey = manualMetadataBatchCacheKeyCandidate;
+    manualMetadataBatchCacheExpiresAt = Date.now() + MANUAL_METADATA_BATCH_CACHE_MS;
 
     if (!changed) {
       return;

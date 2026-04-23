@@ -5,8 +5,8 @@ const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
-const tokenMeteoraState = require('../models/token-meteora-state');
 const backendAlertFeed = require('../services/backend-alert-feed');
+const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const { isValidAddress } = require('../models/user-token');
 const { classifyTokenJunk } = require('../services/token-junk-metric');
 const {
@@ -548,7 +548,7 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
       ...oldWeekResult.rows.map((item) => item.address),
     ]));
 
-    const meteoraSummaryRows = await tokenMeteoraState.listSummaryByAddresses(addresses);
+    const meteoraSummaryRows = await uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses);
     const meteoraByAddress = new Map();
     const marketMcapBaselineByAddress = new Map();
     const marketVolumeBaselineByAddress = new Map();

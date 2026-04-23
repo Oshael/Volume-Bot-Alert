@@ -15,6 +15,7 @@ const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
+const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
@@ -174,7 +175,7 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
     const addresses = parsed.addresses;
     const [metadataRows, meteoraSummaryRows, primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
       tokenCatalog.listDashboardMetadataByAddresses(addresses),
-      tokenMeteoraState.listSummaryByAddresses(addresses),
+      uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses),
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     ]);
@@ -1144,7 +1145,7 @@ router.post('/meteora/batch', catalogReadLimiter, async (req, res) => {
       return res.status(400).json({ error: parsed.error });
     }
 
-    const rows = await tokenMeteoraState.listSummaryByAddresses(parsed.addresses);
+    const rows = await uiMeteoraSummaryCache.listUiSummaryByAddresses(parsed.addresses);
     const byAddress = new Map(rows.map((row) => [row.tokenAddress, row]));
 
     res.json({

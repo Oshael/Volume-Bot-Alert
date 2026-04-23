@@ -356,6 +356,7 @@ module.exports = {
       process.env.DB_SLOW_QUERY_LOG_MS || (nodeEnv === 'production' ? '2500' : '1000'),
       10
     ),
+    uiMeteoraSummaryCacheMs: parseInt(process.env.DB_UI_METEORA_SUMMARY_CACHE_MS || '12000', 10),
     logSlowQueries: parseBoolean(process.env.DB_LOG_SLOW_QUERIES, true),
   },
 
