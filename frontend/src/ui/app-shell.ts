@@ -7,7 +7,6 @@ import { renderManualTokensSection } from './sections/manual-section';
 import { renderLateralizedSection } from './sections/lateralized-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
-import { isRuntimePerfDebugEnabled, recordRuntimePerfSample } from '../utils/runtime-perf-debug';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -171,7 +170,6 @@ const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
 const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
-const UI_RENDER_DEBUG_REGIONS = new Set<AppRenderRegion>(['recent', 'old-week', 'overlay']);
 
 export function renderAppShell(
   root: HTMLElement,
@@ -600,39 +598,12 @@ function updateRegionSlot(
   if (previousKey && keyChanged && patch) {
     const patched = patch();
     if (patched) {
-      logUiRenderDebug(region, 'patch', dirtyRegions, slot, previousKey, nextKey);
       slot.dataset.renderKey = nextKey;
       return;
     }
   }
 
-  if (keyChanged) {
-    logUiRenderDebug(region, 'replace', dirtyRegions, slot, previousKey, nextKey);
-  }
   updateRenderSlot(slot, nextKey, build);
-}
-
-function logUiRenderDebug(
-  region: AppRenderRegion,
-  mode: 'patch' | 'replace',
-  dirtyRegions: ReadonlySet<AppRenderRegion>,
-  slot: HTMLElement,
-  previousKey: string,
-  nextKey: string,
-) {
-  if (!isRuntimePerfDebugEnabled() || !UI_RENDER_DEBUG_REGIONS.has(region)) {
-    return;
-  }
-
-  recordRuntimePerfSample('ui.render.region', {
-    region,
-    mode,
-    dirtyRegions: [...dirtyRegions],
-    hadPreviousKey: Boolean(previousKey),
-    previousKeyLength: previousKey.length,
-    nextKeyLength: nextKey.length,
-    childCount: slot.childElementCount,
-  }, true);
 }
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
