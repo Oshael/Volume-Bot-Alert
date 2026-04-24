@@ -173,6 +173,22 @@ export interface DashboardAlertEvent {
   dumpPct?: number | null;
   thresholdPct?: number | null;
   triggeredAt?: string | null;
+  tickerPeers?: {
+    sourceSymbol?: string | null;
+    normalizedSymbol?: string | null;
+    count?: number;
+    hasSubtickerMatch?: boolean;
+    items?: Array<{
+      address: string;
+      symbol?: string | null;
+      name?: string | null;
+      imageUrl?: string | null;
+      mcap?: number | null;
+      tokenCreatedAt?: number | null;
+      ageMsAtAlert?: number | null;
+      matchType?: 'exact' | 'subticker' | null;
+    }>;
+  } | null;
 }
 
 export interface DashboardAlertEventsPayload {

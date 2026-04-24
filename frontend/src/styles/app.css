@@ -8472,6 +8472,116 @@ TEMP_LEGACY_BAR_TITLE {
   font-weight: 400;
 }
 
+.alert-ticker-peers-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  margin-left: 2px;
+  color: #ff4d5f;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: pointer;
+  list-style: none;
+}
+
+.alert-ticker-peers-badge-mark {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: 1;
+}
+
+.alert-ticker-peers-panel {
+  position: relative;
+  display: inline-block;
+  z-index: 1;
+}
+
+.alert-row:has(.alert-ticker-peers-panel[open]) {
+  z-index: 40;
+}
+
+.alert-row:has(.alert-ticker-peers-panel[open]) .alert-ticker-peers-panel {
+  z-index: 41;
+}
+
+.alert-ticker-peers-badge::-webkit-details-marker {
+  display: none;
+}
+
+.alert-ticker-peers-list {
+  position: absolute;
+  z-index: 42;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 280px;
+  max-width: 340px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(73, 101, 127, 0.45);
+  border-radius: 10px;
+  background: rgba(8, 18, 28, 0.96);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+}
+
+.alert-ticker-peers-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 10px;
+}
+
+.alert-ticker-peers-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.alert-ticker-peers-identity .alert-avatar,
+.alert-ticker-peers-identity .alert-avatar-placeholder {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+.alert-ticker-peers-text {
+  min-width: 0;
+}
+
+.alert-ticker-peers-symbol {
+  color: #fff;
+  font-weight: 700;
+}
+
+.alert-ticker-peers-address {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.alert-ticker-peers-copy {
+  flex: 0 0 auto;
+}
+
+.alert-ticker-peers-stats {
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.alert-ticker-peers-age.up {
+  color: var(--green);
+}
+
+.alert-ticker-peers-age.down {
+  color: var(--red);
+}
+
 .alert-pct-v68,
 .alert-badge-v68 {
   text-align: right;

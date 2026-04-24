@@ -3740,6 +3740,7 @@ export function createAppController(): AppController {
       mintAddress: address,
       createdAt: getBackendAlertCreatedAt(event.triggeredAt),
       label: 'MCAP 5M',
+      tickerPeers: event.tickerPeers ?? null,
       ...buildBackendHighCapDumpAlertMetaFields(event, address),
       ...buildBackendHighCapDumpAlertMarketFields(event),
     };
@@ -3772,6 +3773,7 @@ export function createAppController(): AppController {
               ? 'MCAP'
               : 'VOL'
       ),
+      tickerPeers: event.tickerPeers ?? null,
       ...buildBackendHighCapDumpAlertMetaFields(event, address),
       volume5m: toOptionalNumber(event.volume5m),
       volume1h: toOptionalNumber(event.volume1h),

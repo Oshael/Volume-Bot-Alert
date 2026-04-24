@@ -174,8 +174,22 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     alertsSectionView.controller.removeAlert(alertId);
   });
 
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('.alert-ticker-peers-panel')) {
+      return;
+    }
+    closeOpenTickerPeerPanels(section);
+  });
+
   list.replaceChildren(emptyState);
   return alertsSectionView;
+}
+
+function closeOpenTickerPeerPanels(root: ParentNode) {
+  for (const panel of root.querySelectorAll<HTMLDetailsElement>('.alert-ticker-peers-panel[open]')) {
+    panel.open = false;
+  }
 }
 
 function buildEmptyState() {
@@ -796,6 +810,7 @@ function getAlertRowRenderKey(
     surgeWindow: alert.surgeWindow,
     meteoraCurrentTvl: alert.meteoraCurrentTvl,
     meteoraBaselineTvl24h: alert.meteoraBaselineTvl24h,
+    tickerPeers: alert.tickerPeers ?? null,
     busy,
     isStarred,
     isAdmin,
@@ -883,6 +898,10 @@ function buildAlertRowContent(
   tokenName.className = 'alert-token-name';
   tokenName.textContent = safeName;
   tokenLine.append(' ', tokenName);
+  const tickerPeersControl = buildTickerPeersControl(alert);
+  if (tickerPeersControl) {
+    tokenLine.append(' ', tickerPeersControl);
+  }
   top.append(tokenLine);
 
   const flowLine = document.createElement('div');
@@ -1089,7 +1108,7 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   if (alert.isOldSurge) {
     container.append(
       buildMetricPair('MCAP', currentMcap, 'up'),
-      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
     );
     return;
   }
@@ -1123,7 +1142,7 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
     ]);
   } else {
     appendMetricRow(container, [
-      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
       buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
       buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
@@ -1290,7 +1309,7 @@ function appendHighCapDumpStatsLine(container: HTMLElement, alert: AlertEntry) {
     buildMetricPair('CURRENT', fmtMoney(alert.mcap), 'down current-mcap'),
     buildMetricPair('DROP', fmtMoney(getHighCapDumpDropAmount(alert)), 'down'),
     buildMetricPair('LOW 5M', fmtMoney(alert.windowLowMcap ?? null), 'down'),
-    buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', 'white'),
+    buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
   ]);
   appendMetricRow(container, [
     buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
@@ -1307,4 +1326,146 @@ function getHighCapDumpDropAmount(alert: AlertEntry) {
   }
 
   return Math.max(0, baseline - windowLow);
+}
+
+function getAlertAgeToneClass(alert: AlertEntry) {
+  const tokenCreatedAt = Number(alert.tokenCreatedAt);
+  if (!(tokenCreatedAt > 0)) {
+    return 'white';
+  }
+
+  return getAgeToneClassFromAgeMs(Math.max(0, Date.now() - tokenCreatedAt));
+}
+
+function getAgeToneClassFromAgeMs(ageMs: number | null | undefined) {
+  if (!(Number(ageMs) >= 0)) {
+    return 'white';
+  }
+
+  return Number(ageMs) < 24 * 60 * 60 * 1000 ? 'up' : 'down';
+}
+
+function fmtAgeFromDurationMs(ageMs: number | null | undefined) {
+  if (ageMs == null) {
+    return '-';
+  }
+
+  const duration = Number(ageMs);
+  if (!Number.isFinite(duration) || duration < 0) {
+    return '-';
+  }
+
+  const monthDays = 30;
+  const months = Math.floor(duration / (monthDays * 86400000));
+  if (months >= 12) {
+    return `${Math.floor(months / 12)}y`;
+  }
+  if (months >= 1) {
+    return `${months}mo`;
+  }
+
+  const days = Math.floor(duration / 86400000);
+  if (days >= 1) {
+    return `${days}d`;
+  }
+  const hours = Math.floor(duration / 3600000);
+  if (hours >= 1) {
+    return `${hours}h`;
+  }
+  const minutes = Math.floor(duration / 60000);
+  if (minutes >= 1) {
+    return `${minutes}m`;
+  }
+  return '0m';
+}
+
+function buildTickerPeersControl(alert: AlertEntry) {
+  const count = Number(alert.tickerPeers?.count) || 0;
+  if (count <= 1) {
+    return null;
+  }
+
+  const details = document.createElement('details');
+  details.className = 'alert-ticker-peers-panel';
+
+  const summary = document.createElement('summary');
+  summary.className = 'alert-ticker-peers-badge';
+  summary.title = alert.tickerPeers?.hasSubtickerMatch
+    ? `${count} ticker/subticker peers snapshot`
+    : `${count} ticker peers snapshot`;
+  const badgeMark = document.createElement('span');
+  badgeMark.className = 'alert-ticker-peers-badge-mark';
+  badgeMark.textContent = '!';
+  summary.append(badgeMark);
+
+  const list = document.createElement('div');
+  list.className = 'alert-ticker-peers-list';
+  const items = Array.isArray(alert.tickerPeers?.items) ? alert.tickerPeers.items : [];
+
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'alert-ticker-peers-row';
+
+    const identity = document.createElement('div');
+    identity.className = 'alert-ticker-peers-identity';
+    identity.append(buildAlertAvatar(String(item.symbol || '?'), sanitizeOptionalHttpUrl(item.imageUrl)));
+
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'action-glyph copy-button alert-ticker-peers-copy';
+    copy.dataset.action = 'copy-address';
+    copy.dataset.address = item.address;
+    copy.title = 'Copy contract';
+    copy.textContent = '⧉';
+
+    const identityText = document.createElement('div');
+    identityText.className = 'alert-ticker-peers-text';
+
+    const symbol = document.createElement('div');
+    symbol.className = 'alert-ticker-peers-symbol';
+    symbol.textContent = item.symbol || item.address.slice(0, 8);
+
+    const address = document.createElement('div');
+    address.className = 'alert-ticker-peers-address';
+    address.textContent = `${item.address.slice(0, 4)}...${item.address.slice(-4)}`;
+
+    identityText.append(symbol, address);
+    identity.append(identityText, copy);
+
+    const stats = document.createElement('div');
+    stats.className = 'alert-ticker-peers-stats';
+    const mcapLabel = document.createElement('span');
+    mcapLabel.textContent = fmtMoney(item.mcap);
+    const separator = document.createElement('span');
+    separator.textContent = ' • ';
+    const ageMs = resolveTickerPeerAgeMs(alert, item);
+    const age = document.createElement('span');
+    age.className = `alert-ticker-peers-age ${getAgeToneClassFromAgeMs(ageMs)}`;
+    age.textContent = fmtAgeFromDurationMs(ageMs);
+    stats.append(mcapLabel, separator, age);
+
+    row.append(identity, stats);
+    list.append(row);
+  }
+
+  details.append(summary, list);
+  return details;
+}
+
+function resolveTickerPeerAgeMs(
+  alert: AlertEntry,
+  item: NonNullable<NonNullable<AlertEntry['tickerPeers']>['items']>[number],
+) {
+  const ageMsAtAlert = Number(item.ageMsAtAlert);
+  if (Number.isFinite(ageMsAtAlert) && ageMsAtAlert >= 0) {
+    return ageMsAtAlert;
+  }
+
+  const tokenCreatedAt = Number(item.tokenCreatedAt);
+  const alertCreatedAt = Number(alert.createdAt);
+  if (Number.isFinite(tokenCreatedAt) && tokenCreatedAt > 0 && Number.isFinite(alertCreatedAt) && alertCreatedAt > 0) {
+    return Math.max(0, alertCreatedAt - tokenCreatedAt);
+  }
+
+  return null;
 }
