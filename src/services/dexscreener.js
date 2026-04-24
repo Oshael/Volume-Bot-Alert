@@ -455,6 +455,126 @@ function toFiniteNumberOrZero(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function getPairTxnCount(pair, window) {
+  const txns = pair?.txns?.[window];
+  return toFiniteNumberOrZero(txns?.buys) + toFiniteNumberOrZero(txns?.sells);
+}
+
+function hasMeaningful5mActivity(volume5m, txns5m) {
+  return volume5m >= 100 || txns5m >= 2;
+}
+
+function hasMeaningful1hActivity(volume1h, txns1h) {
+  return volume1h >= 1000 || txns1h >= 5;
+}
+
+function hasMeaningful6hActivity(volume6h, volume24h, txns24h) {
+  return volume6h >= 5000 || volume24h >= 10000 || txns24h >= 12;
+}
+
+function getPairActivityTier(metrics) {
+  if (hasMeaningful5mActivity(metrics.volume5m, metrics.txns5m)) {
+    return 3;
+  }
+  if (hasMeaningful1hActivity(metrics.volume1h, metrics.txns1h)) {
+    return 2;
+  }
+  if (hasMeaningful6hActivity(metrics.volume6h, metrics.volume24h, metrics.txns24h)) {
+    return 1;
+  }
+  return 0;
+}
+
+function getPairSelectionMetrics(pair) {
+  const volume5m = toFiniteNumberOrZero(pair?.volume?.m5);
+  const volume1h = toFiniteNumberOrZero(pair?.volume?.h1);
+  const volume6h = toFiniteNumberOrZero(pair?.volume?.h6);
+  const volume24h = toFiniteNumberOrZero(pair?.volume?.h24);
+  const txns5m = getPairTxnCount(pair, 'm5');
+  const txns1h = getPairTxnCount(pair, 'h1');
+  const txns24h = getPairTxnCount(pair, 'h24');
+  const liquidityUsd = toFiniteNumberOrZero(pair?.liquidity?.usd);
+  const marketCap = toFiniteNumberOrZero(pair?.marketCap || pair?.fdv);
+  const metrics = {
+    volume5m,
+    volume1h,
+    volume6h,
+    volume24h,
+    txns5m,
+    txns1h,
+    txns24h,
+    liquidityUsd,
+    marketCap,
+  };
+
+  return {
+    ...metrics,
+    activityTier: getPairActivityTier(metrics),
+  };
+}
+
+function getPairSelectionScore(pair) {
+  const metrics = getPairSelectionMetrics(pair);
+  return (
+    (metrics.activityTier * 1_000_000)
+    + (Math.log10(metrics.volume5m + 1) * 120_000)
+    + (Math.log10(metrics.txns5m + 1) * 90_000)
+    + (Math.log10(metrics.volume1h + 1) * 70_000)
+    + (Math.log10(metrics.txns1h + 1) * 45_000)
+    + (Math.log10(metrics.volume6h + 1) * 20_000)
+    + (Math.log10(metrics.volume24h + 1) * 8_000)
+    + (Math.log10(metrics.liquidityUsd + 1) * 4_000)
+    + (Math.log10(metrics.marketCap + 1) * 500)
+  );
+}
+
+function areComparablePairMetrics(leftValue, rightValue, ratioThreshold) {
+  const left = toFiniteNumberOrZero(leftValue);
+  const right = toFiniteNumberOrZero(rightValue);
+  if (left <= 0 && right <= 0) {
+    return true;
+  }
+  if (left <= 0 || right <= 0) {
+    return false;
+  }
+  const maxValue = Math.max(left, right);
+  const minValue = Math.min(left, right);
+  return (maxValue / minValue) <= ratioThreshold;
+}
+
+function comparePairsForSelection(left, right) {
+  const leftMetrics = getPairSelectionMetrics(left);
+  const rightMetrics = getPairSelectionMetrics(right);
+
+  const hasComparableRecentActivity = leftMetrics.activityTier === rightMetrics.activityTier
+    && areComparablePairMetrics(leftMetrics.volume5m, rightMetrics.volume5m, 1.4)
+    && areComparablePairMetrics(leftMetrics.volume1h, rightMetrics.volume1h, 1.25)
+    && areComparablePairMetrics(leftMetrics.txns1h, rightMetrics.txns1h, 1.35);
+
+  if (hasComparableRecentActivity) {
+    return (
+      rightMetrics.liquidityUsd - leftMetrics.liquidityUsd
+      || rightMetrics.volume1h - leftMetrics.volume1h
+      || rightMetrics.volume5m - leftMetrics.volume5m
+      || rightMetrics.volume24h - leftMetrics.volume24h
+      || rightMetrics.marketCap - leftMetrics.marketCap
+    );
+  }
+
+  const scoreDelta = getPairSelectionScore(right) - getPairSelectionScore(left);
+  if (scoreDelta !== 0) {
+    return scoreDelta;
+  }
+
+  return (
+    rightMetrics.liquidityUsd - leftMetrics.liquidityUsd
+    || rightMetrics.volume1h - leftMetrics.volume1h
+    || rightMetrics.volume5m - leftMetrics.volume5m
+    || rightMetrics.volume24h - leftMetrics.volume24h
+    || rightMetrics.marketCap - leftMetrics.marketCap
+  );
+}
+
 function getSinglePairFromPayload(payload) {
   if (!payload?.pairs || payload.pairs.length !== 1) {
     return null;
@@ -741,7 +861,7 @@ function getBestPair(data, chain = 'solana') {
   const chainPairs = data.pairs.filter(p => p.chainId === chain);
   if (!chainPairs.length) return null;
 
-  return chainPairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+  return [...chainPairs].sort(comparePairsForSelection)[0];
 }
 
 function clearCache(address = null) {
@@ -806,6 +926,9 @@ module.exports = {
     noteRateLimit,
     noteSuccessfulResponse,
     parseRetryAfterMs,
+    comparePairsForSelection,
+    getPairSelectionMetrics,
+    getPairSelectionScore,
     resetRateLimitState,
     resolveBatchOptions,
     shouldFallbackSuspiciousBatchPair,

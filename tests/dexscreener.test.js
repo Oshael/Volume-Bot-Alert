@@ -136,4 +136,74 @@ describe('dexscreener rate-limit helpers', () => {
       global.fetch = originalFetch;
     }
   });
+
+  it('prefers a pair with meaningful recent activity over a more liquid but stale pair', () => {
+    const activePair = {
+      chainId: 'solana',
+      dexId: 'raydium',
+      pairAddress: 'active-pair',
+      liquidity: { usd: 62000 },
+      marketCap: 320000,
+      volume: { m5: 3103, h1: 18400, h6: 88200, h24: 120000 },
+      txns: {
+        m5: { buys: 4, sells: 3 },
+        h1: { buys: 28, sells: 17 },
+        h24: { buys: 210, sells: 180 },
+      },
+    };
+    const staleLiquidityPair = {
+      chainId: 'solana',
+      dexId: 'raydium',
+      pairAddress: 'stale-liquidity-pair',
+      liquidity: { usd: 110000 },
+      marketCap: 30000,
+      volume: { m5: 0, h1: 0, h6: 43522, h24: 43522 },
+      txns: {
+        m5: { buys: 0, sells: 0 },
+        h1: { buys: 0, sells: 0 },
+        h24: { buys: 22, sells: 19 },
+      },
+    };
+
+    const bestPair = dexscreener.getBestPair({
+      pairs: [staleLiquidityPair, activePair],
+    }, 'solana');
+
+    assert.equal(bestPair?.pairAddress, activePair.pairAddress);
+  });
+
+  it('still prefers the more liquid pair when recent activity is comparable', () => {
+    const lowerLiquidityPair = {
+      chainId: 'solana',
+      dexId: 'raydium',
+      pairAddress: 'lower-liquidity-pair',
+      liquidity: { usd: 42000 },
+      marketCap: 280000,
+      volume: { m5: 1800, h1: 12000, h6: 64000, h24: 110000 },
+      txns: {
+        m5: { buys: 3, sells: 2 },
+        h1: { buys: 16, sells: 13 },
+        h24: { buys: 170, sells: 120 },
+      },
+    };
+    const higherLiquidityPair = {
+      chainId: 'solana',
+      dexId: 'raydium',
+      pairAddress: 'higher-liquidity-pair',
+      liquidity: { usd: 98000 },
+      marketCap: 300000,
+      volume: { m5: 1600, h1: 11800, h6: 60000, h24: 108000 },
+      txns: {
+        m5: { buys: 3, sells: 2 },
+        h1: { buys: 15, sells: 12 },
+        h24: { buys: 168, sells: 118 },
+      },
+    };
+
+    const bestPair = dexscreener.getBestPair({
+      pairs: [lowerLiquidityPair, higherLiquidityPair],
+    }, 'solana');
+
+    assert.equal(bestPair?.pairAddress, higherLiquidityPair.pairAddress);
+  });
 });
