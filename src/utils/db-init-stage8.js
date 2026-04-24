@@ -12,6 +12,9 @@ const STATEMENTS = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_token_meteora_snapshots_addr_ts
      ON token_meteora_snapshots(token_address, ts DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_token_meteora_snapshots_addr_ts_positive_tvl
+     ON token_meteora_snapshots(token_address, ts DESC)
+     WHERE total_tvl IS NOT NULL AND total_tvl > 0`,
   `CREATE INDEX IF NOT EXISTS idx_token_meteora_snapshots_ts
      ON token_meteora_snapshots(ts DESC)`
 ];
