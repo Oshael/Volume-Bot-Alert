@@ -87,6 +87,11 @@ function createDeps(overrides = {}) {
           return { payload: { id: event.id }, delivered: true };
         },
       },
+      alertTickerPeers: {
+        async buildTickerPeerSnapshotForAlert() {
+          return overrides.tickerPeers || null;
+        },
+      },
       tokenAlertSignalBuilder: overrides.tokenAlertSignalBuilder,
     },
     eventWrites,
@@ -145,6 +150,64 @@ describe('user alert matcher', () => {
     assert.equal(context.triggeredWrites.length, 1);
     assert.equal(context.triggeredWrites[0].lastAlertedPct, 80);
     assert.deepEqual(context.transactionLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+  });
+
+  it('persists ticker peer snapshots with emitted backend alerts', async () => {
+    const profile = {
+      userId: 17,
+      ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+      thresholdPct: 50,
+      minVol: 8000,
+      minMcap: 30000,
+      maxMcap: 0,
+    };
+    const context = createDeps({
+      profiles: [profile],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+      tickerPeers: {
+        sourceSymbol: 'WSOL',
+        normalizedSymbol: 'WSOL',
+        count: 2,
+        hasSubtickerMatch: false,
+        items: [
+          {
+            address: TOKEN_ADDRESS,
+            symbol: 'WSOL',
+            mcap: 300000,
+            ageMsAtAlert: 3600000,
+            matchType: 'exact',
+          },
+          {
+            address: '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+            symbol: 'WSOL',
+            mcap: 120000,
+            ageMsAtAlert: 7200000,
+            matchType: 'exact',
+          },
+        ],
+      },
+    });
+
+    await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 250000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_5m: 18000,
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].payload.tickerPeers?.count, 2);
+    assert.equal(context.eventWrites[0].payload.tickerPeers?.items?.[1]?.address, '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
   });
 
   it('suppresses monitored-vol retriggers until the next alert beats the last alerted volume by the user threshold', async () => {

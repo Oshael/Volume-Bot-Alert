@@ -5,6 +5,7 @@ const tokenMeteoraState = require('../models/token-meteora-state');
 const userAlertEvent = require('../models/user-alert-event');
 const userAlertRuleState = require('../models/user-alert-rule-state');
 const backendAlertPublisher = require('./backend-alert-publisher');
+const alertTickerPeers = require('./alert-ticker-peers');
 const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
 const userAlertProfileCache = require('./user-alert-profile-cache');
 
@@ -626,9 +627,18 @@ async function primeCandidate(profile, tokenAfter, candidate, nowMs, deps) {
 async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps) {
   const client = await deps.db.getClient();
   let event = null;
+  const tickerPeers = await (deps.alertTickerPeers || alertTickerPeers).buildTickerPeerSnapshotForAlert({
+    address: tokenAfter.address,
+    symbol: candidate.payload?.symbol || tokenAfter.symbol || null,
+  }, { snapshotTsMs: nowMs });
 
   try {
     await client.query('BEGIN');
+
+    const eventPayload = buildRepeatAwarePayload(candidate, state);
+    if (tickerPeers) {
+      eventPayload.tickerPeers = tickerPeers;
+    }
 
     event = await deps.userAlertEvent.createEvent({
       userId: profile.userId,
@@ -636,7 +646,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
       kind: candidate.kind,
       tokenAddress: tokenAfter.address,
       dedupeKey: `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${candidate.fingerprint}`,
-      payload: buildRepeatAwarePayload(candidate, state),
+      payload: eventPayload,
       triggeredAt: new Date(nowMs),
     }, client);
 

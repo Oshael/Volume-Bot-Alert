@@ -3,6 +3,7 @@ const tokenAlertEvent = require('../models/token-alert-event');
 const tokenAlertRuleState = require('../models/token-alert-rule-state');
 const { isValidAddress } = require('../models/user-token');
 const backendAlertPublisher = require('./backend-alert-publisher');
+const alertTickerPeers = require('./alert-ticker-peers');
 const { HIGH_CAP_DUMP_RULE_KEY, getBackendAlertRule } = require('./backend-alert-rules');
 
 const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
@@ -503,10 +504,25 @@ async function applyEvaluationDecision(context) {
   let event = null;
   let stateAfter = stateBefore;
   let action = 'noop';
+  const snapshotTsMs = toTimestampMs(detection.currentTs) || Date.now();
+  const tickerPeers = canTrigger
+    ? await alertTickerPeers.buildTickerPeerSnapshotForAlert(
+      { address: detection.tokenAddress },
+      { snapshotTsMs },
+    )
+    : null;
 
   if (canTrigger) {
     event = await tokenAlertEvent.createEvent(
-      buildEventPayload(settings.ruleKey, detection, settings, rearmReason, pairPinMetadata),
+      buildEventPayload(
+        settings.ruleKey,
+        detection,
+        settings,
+        rearmReason,
+        tickerPeers
+          ? { ...pairPinMetadata, tickerPeers }
+          : pairPinMetadata,
+      ),
       client
     );
     stateAfter = await tokenAlertRuleState.upsertState(

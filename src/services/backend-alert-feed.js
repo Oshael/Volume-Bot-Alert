@@ -136,6 +136,7 @@ function buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule) {
     currentCloseMcap: toNumberOrNull(eventRow?.currentCloseMcap),
     dumpPct: toNumberOrNull(eventRow?.dumpPct),
     thresholdPct: toNumberOrNull(eventRow?.thresholdPct),
+    tickerPeers: normalizeTickerPeersSnapshot(eventRow?.metadata?.tickerPeers),
     triggeredAt: toTextOrNull(eventRow?.triggeredAt),
   };
 }
@@ -144,6 +145,50 @@ function normalizeUserAlertPayloadValue(payload, key, fallback = null) {
   return payload && Object.prototype.hasOwnProperty.call(payload, key)
     ? payload[key]
     : fallback;
+}
+
+function normalizeTickerPeersSnapshot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const items = Array.isArray(value.items)
+    ? value.items
+      .map((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          return null;
+        }
+
+        const address = toTextOrNull(item.address);
+        if (!address) {
+          return null;
+        }
+
+        return {
+          address,
+          symbol: toTextOrNull(item.symbol),
+          name: toTextOrNull(item.name),
+          imageUrl: toTextOrNull(item.imageUrl),
+          mcap: toNumberOrNull(item.mcap),
+          tokenCreatedAt: toNumberOrNull(item.tokenCreatedAt),
+          ageMsAtAlert: toNumberOrNull(item.ageMsAtAlert),
+          matchType: toTextOrNull(item.matchType) === 'subticker' ? 'subticker' : 'exact',
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  if (items.length <= 1) {
+    return null;
+  }
+
+  return {
+    sourceSymbol: toTextOrNull(value.sourceSymbol),
+    normalizedSymbol: toTextOrNull(value.normalizedSymbol),
+    count: Math.max(items.length, Number(value.count) || 0),
+    hasSubtickerMatch: Boolean(value.hasSubtickerMatch),
+    items,
+  };
 }
 
 function buildDashboardUserAlertIdentityPayload(payload, catalogRow) {
@@ -179,6 +224,7 @@ function buildDashboardUserAlertMetricPayload(payload, catalogRow) {
     meteoraCurrentTvl: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'meteoraCurrentTvl')),
     meteoraBaselineTvl24h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'meteoraBaselineTvl24h')),
     thresholdPct: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'thresholdPct')),
+    tickerPeers: normalizeTickerPeersSnapshot(normalizeUserAlertPayloadValue(payload, 'tickerPeers')),
   };
 }
 

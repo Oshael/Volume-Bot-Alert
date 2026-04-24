@@ -155,6 +155,29 @@ describe('backend alert feed service', () => {
         dumpPct: -60,
         thresholdPct: 50,
         triggeredAt: '2026-04-05T18:05:05.000Z',
+        metadata: {
+          tickerPeers: {
+            sourceSymbol: 'WSOL',
+            normalizedSymbol: 'WSOL',
+            count: 2,
+            items: [
+              {
+                address: 'So11111111111111111111111111111111111111112',
+                symbol: 'WSOL',
+                mcap: 4100000,
+                ageMsAtAlert: 3600000,
+                matchType: 'exact',
+              },
+              {
+                address: '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+                symbol: 'WSOL',
+                mcap: 120000,
+                ageMsAtAlert: 7200000,
+                matchType: 'exact',
+              },
+            ],
+          },
+        },
       });
 
       assert.deepEqual(capturedAddresses, ['So11111111111111111111111111111111111111112']);
@@ -163,6 +186,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.address, 'So11111111111111111111111111111111111111112');
       assert.equal(payload.symbol, 'WSOL');
       assert.equal(payload.dumpPct, -60);
+      assert.equal(payload.tickerPeers?.count, 2);
+      assert.equal(payload.tickerPeers?.items?.[1]?.ageMsAtAlert, 7200000);
       assert.equal(payload.riskReview, null);
       assert.equal(payload.structuralRisk, null);
       assert.equal(payload.junkAssessment.label, 'valid_but_weak');
@@ -200,6 +225,28 @@ describe('backend alert feed service', () => {
           volume24h: 350000,
           prevMcap: 250000,
           mcap: 300000,
+          tickerPeers: {
+            sourceSymbol: 'WSOL',
+            normalizedSymbol: 'WSOL',
+            count: 2,
+            items: [
+              {
+                address: 'So11111111111111111111111111111111111111112',
+                symbol: 'WSOL',
+                mcap: 300000,
+                ageMsAtAlert: 3600000,
+                matchType: 'exact',
+              },
+              {
+                address: '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+                symbol: 'WSOL',
+                mcap: 120000,
+                ageMsAtAlert: 7200000,
+                matchType: 'subticker',
+              },
+            ],
+            hasSubtickerMatch: true,
+          },
         },
         triggeredAt: '2026-04-16T12:05:10.000Z',
       }];
@@ -238,6 +285,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.kind, 'monitored-vol');
       assert.equal(payload.count, 1);
       assert.equal(payload.events[0].label, 'VOL');
+      assert.equal(payload.events[0].tickerPeers?.count, 2);
+      assert.equal(payload.events[0].tickerPeers?.hasSubtickerMatch, true);
       assert.equal(payload.events[0].pct, 80);
       assert.equal(payload.events[0].prevVolume5m, 10000);
       assert.equal(payload.events[0].volume5m, 18000);
