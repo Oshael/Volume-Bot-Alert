@@ -50,6 +50,7 @@ const MIGRATE_PATTERN: ToneStep[] = [
 ];
 
 let audioContext: AudioContext | null = null;
+const activeCustomAudioElements = new Set<HTMLAudioElement>();
 
 const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-vol': 'sound-vol-enabled',
@@ -141,12 +142,27 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
     return 'skipped' as const;
   }
 
+  const cleanup = (audio: HTMLAudioElement) => {
+    activeCustomAudioElements.delete(audio);
+    audio.onended = null;
+    audio.onerror = null;
+  };
+
   try {
     const audio = new Audio(asset.dataUrl);
+    audio.preload = 'auto';
     audio.volume = clampVolume(options?.volume ?? DEFAULT_ALERT_SOUND_VOLUME);
+    activeCustomAudioElements.add(audio);
+    audio.onended = () => cleanup(audio);
+    audio.onerror = () => cleanup(audio);
     await audio.play();
     return 'played' as const;
   } catch {
+    for (const audio of activeCustomAudioElements) {
+      if (audio.src === asset.dataUrl) {
+        cleanup(audio);
+      }
+    }
     return 'blocked' as const;
   }
 }

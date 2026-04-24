@@ -113,6 +113,10 @@ function isEditingInteractiveField() {
 }
 
 function syncAudioSideEffects(state: AppState) {
+  if (isDocumentHidden) {
+    return;
+  }
+
   for (const alert of state.data.alerts) {
     if (playedAlertIds.has(alert.id) || pendingAlertSoundIds.has(alert.id)) {
       continue;
@@ -676,6 +680,9 @@ document.addEventListener('visibilitychange', () => {
   interactionLockUntil = 0;
   listInteractionDepth = 0;
   suppressNextFocusFlush = false;
+  if (latestState) {
+    syncAudioSideEffects(latestState);
+  }
   syncLivePresence(latestState, { force: true });
   scheduleRestoreRender();
 });
