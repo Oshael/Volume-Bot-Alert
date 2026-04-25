@@ -66,6 +66,28 @@ function incrementCounter(map, key) {
   map[normalizedKey] = (map[normalizedKey] || 0) + 1;
 }
 
+function normalizeHumanLabel(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+
+  if (raw === 'junk' || raw === 'junk_probable') {
+    return 'junk_probable';
+  }
+  if (raw === 'junk_permanent') {
+    return 'junk_permanent';
+  }
+  if (raw === 'legit' || raw === 'valid') {
+    return 'valid';
+  }
+  if (raw === 'valid_but_weak' || raw === 'weak but legit' || raw === 'weak/monitoring') {
+    return 'valid_but_weak';
+  }
+
+  return raw;
+}
+
 function pickSnapshotOpen(snapshot) {
   return toNumberOrNull(snapshot?.openMcap ?? snapshot?.openPrice);
 }
@@ -364,9 +386,13 @@ function buildMeteoraSummary(summary = {}) {
 }
 
 function buildHumanAssessment(entry = {}) {
+  const rawHumanLabel = entry.label || null;
+  const normalizedHumanLabel = normalizeHumanLabel(rawHumanLabel);
+
   return {
     address: entry.address || null,
-    humanLabel: entry.label || null,
+    humanLabel: normalizedHumanLabel,
+    rawHumanLabel,
     humanConfidence: entry.confidence || null,
     reason: entry.reason || null,
     notes: entry.notes || null,
@@ -494,6 +520,7 @@ module.exports = {
   buildCompactEntry,
   buildHeuristicFlags,
   buildAnalysisSummary,
+  normalizeHumanLabel,
   parseArgs,
   runAnalysis,
   summarizeCandleShape,

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   buildAnalysisSummary,
   buildCompactEntry,
+  normalizeHumanLabel,
   parseArgs,
   summarizeCandleShape,
 } = require('../src/utils/analyze-token-junk-samples');
@@ -47,7 +48,7 @@ describe('analyze token junk samples helpers', () => {
   it('builds a compact analysis row with partial metric assessment', () => {
     const entry = buildCompactEntry({
       address: 'So11111111111111111111111111111111111111112',
-      label: 'junk_probable',
+      label: 'junk',
       confidence: 'high',
       reason: 'test reason',
       collection: {
@@ -96,11 +97,20 @@ describe('analyze token junk samples helpers', () => {
     });
 
     assert.equal(entry.address, 'So11111111111111111111111111111111111111112');
+    assert.equal(entry.rawHumanLabel, 'junk');
+    assert.equal(entry.humanLabel, 'junk_probable');
     assert.equal(entry.dex.symbol, 'TEST');
     assert.equal(entry.metricPartialContext, true);
     assert.equal(entry.heuristicFlags.lowLiquidityToMcap, true);
     assert.equal(entry.heuristicFlags.oneSidedOrderFlow24h, true);
     assert.equal(entry.marketHistory.shape.longestGreenStreak, 4);
+  });
+
+  it('normalizes short human labels into the internal label vocabulary', () => {
+    assert.equal(normalizeHumanLabel('junk'), 'junk_probable');
+    assert.equal(normalizeHumanLabel('legit'), 'valid');
+    assert.equal(normalizeHumanLabel('weak but legit'), 'valid_but_weak');
+    assert.equal(normalizeHumanLabel('junk_permanent'), 'junk_permanent');
   });
 
   it('builds summary counts and confusion matrix', () => {
