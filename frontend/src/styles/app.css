@@ -8713,6 +8713,14 @@ TEMP_LEGACY_BAR_TITLE {
   gap: 12px;
 }
 
+.alert-flow-v68.alert-flow-v68-hvnc {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: 16px;
+  row-gap: 6px;
+  align-items: center;
+}
+
 .alert-stats-v68 {
   flex-direction: column;
   align-items: flex-start;
@@ -8725,6 +8733,14 @@ TEMP_LEGACY_BAR_TITLE {
   gap: 8px 12px;
   align-items: center;
   min-width: 0;
+}
+
+.alert-stats-row-v68.alert-stats-row-v68-hvnc {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  column-gap: 16px;
+  row-gap: 6px;
+  align-items: center;
 }
 
 .alert-flow-v68 .label,

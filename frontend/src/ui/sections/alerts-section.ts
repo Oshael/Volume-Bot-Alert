@@ -1184,14 +1184,20 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
     return;
   }
 
+  if (alert.isHvnc) {
+    container.classList.add('alert-flow-v68-hvnc');
+  }
+
   container.append(
     prevVol
       ? buildFlowTransition('VOL 5M', prevVol, currentVol, 'up')
       : buildMetricPair('VOL 5M', currentVol, 'up'),
   );
-  const gap = document.createElement('span');
-  gap.className = 'flow-gap';
-  container.append(gap);
+  if (!alert.isHvnc) {
+    const gap = document.createElement('span');
+    gap.className = 'flow-gap';
+    container.append(gap);
+  }
   container.append(
     prevMcap
       ? buildFlowTransition('MCAP', prevMcap, currentMcap, mcapTone)
@@ -1212,12 +1218,15 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
     ]);
   } else {
-    appendMetricRow(container, [
+    const row = appendMetricRow(container, [
       buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
       buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
       buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
     ]);
+    if (alert.isHvnc) {
+      row?.classList.add('alert-stats-row-v68-hvnc');
+    }
   }
 
   if (alert.kind !== 'meteora-surge') {
@@ -1255,7 +1264,10 @@ function appendMetricRow(container: HTMLElement, items: Array<HTMLElement | null
 
   if (row.childElementCount > 0) {
     container.append(row);
+    return row;
   }
+
+  return null;
 }
 
 function buildMetricPair(label: string, value: string, toneClass: string, labelClass = '', valueClass = '') {
