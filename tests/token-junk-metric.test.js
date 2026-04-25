@@ -310,6 +310,57 @@ describe('token junk metric', () => {
     assert.equal(assessment.label, 'valid');
   });
 
+  it('upgrades high-liquidity active high caps back to valid when only ratio mismatches remain', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 19843127,
+      volume1h: 9976.96,
+      volume6h: 110868.04,
+      volume24h: 471272.23,
+      liquidityUsd: 375087.27,
+      txns24hBuys: 4351,
+      txns24hSells: 4418,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'valid');
+    assert.ok(assessment.reasonCodes.includes('volume_to_mcap_too_low'));
+    assert.ok(assessment.reasonCodes.includes('liquidity_to_mcap_too_low'));
+  });
+
+  it('upgrades strong-flow mid caps back to valid when only volume-to-mcap looks weak', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 869561,
+      volume1h: 589.61,
+      volume6h: 7284.34,
+      volume24h: 37039.72,
+      liquidityUsd: 190254.25,
+      txns24hBuys: 339,
+      txns24hSells: 167,
+      priceChange24h: -27.97,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'valid');
+    assert.ok(assessment.reasonCodes.includes('volume_to_mcap_too_low'));
+  });
+
+  it('upgrades high-activity dislocation tokens back to valid when market support is strong', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 335365,
+      volume1h: 1012.16,
+      volume6h: 19442.54,
+      volume24h: 305310.76,
+      liquidityUsd: 19923.37,
+      txns24hBuys: 2218,
+      txns24hSells: 1700,
+      priceChange24h: 1842,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'valid');
+    assert.ok(assessment.reasonCodes.includes('price_dislocation_extreme'));
+  });
+
   it('flags tokens with missing market data and no Meteora support for manual review', () => {
     const assessment = classifyTokenJunk({
       mcap: null,

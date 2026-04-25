@@ -374,6 +374,25 @@ function hasHealthyLiquiditySupport(input, liquidityToMcapRatio) {
     || (liquidityToMcapRatio != null && liquidityToMcapRatio >= 0.08);
 }
 
+function hasStrongLegitMarketSupport(input, metrics) {
+  const txns24hTotal = metrics.txns24hTotal ?? 0;
+  const volume1h = input.volume1h ?? 0;
+  const volume24h = input.volume24h ?? 0;
+  const marketCap = input.marketCap ?? 0;
+  const liquidityUsd = input.liquidityUsd ?? 0;
+  const liquidityToMcapRatio = metrics.liquidityToMcapRatio ?? null;
+  const volToMcapRatio = metrics.volToMcapRatio ?? null;
+
+  return txns24hTotal >= 300
+    && volume1h >= 500
+    && (
+      liquidityUsd >= 150000
+      || (liquidityToMcapRatio != null && liquidityToMcapRatio >= 0.12)
+      || ((marketCap > 0) && volume24h >= Math.max(30000, marketCap * 0.5))
+      || (volToMcapRatio != null && volToMcapRatio >= 0.5)
+    );
+}
+
 function buildPositiveProfileSignals(input, metrics, options) {
   const signals = [];
 
@@ -400,19 +419,31 @@ function shouldApplyLegitGuardrail(strongSignals, positiveSignals) {
   return strongSignals.length === 0 && positiveSignals.length >= 4;
 }
 
-function canUpgradeToValid(strongSignals, weakSignals, behavioralSignals, positiveSignals) {
+function isStrongLegitBehavioralSignal(signal, strongLegitMarketSupport) {
+  if (signal === 'meteora_absent_above_400k_mcap' || signal === 'volume_to_mcap_too_low' || signal === 'liquidity_to_mcap_too_low') {
+    return true;
+  }
+
+  return strongLegitMarketSupport && signal === 'price_dislocation_extreme';
+}
+
+function canUpgradeToValid(input, metrics, strongSignals, weakSignals, behavioralSignals, positiveSignals) {
   const benignBehavioralSignals = new Set([
     'meteora_absent_above_400k_mcap',
     'volume_to_mcap_too_low',
+    'liquidity_to_mcap_too_low',
   ]);
+  const strongLegitMarketSupport = hasStrongLegitMarketSupport(input, metrics);
+  const minimumPositiveSignals = strongLegitMarketSupport ? 2 : 4;
 
   return strongSignals.length === 0
     && weakSignals.length === 0
-    && positiveSignals.length >= 4
+    && positiveSignals.length >= minimumPositiveSignals
     && behavioralSignals.length > 0
     && behavioralSignals.length <= 2
     && !behavioralSignals.includes('buy_sell_imbalance_extreme')
-    && behavioralSignals.every((signal) => benignBehavioralSignals.has(signal));
+    && !behavioralSignals.includes('buy_sell_imbalance_high')
+    && behavioralSignals.every((signal) => benignBehavioralSignals.has(signal) || isStrongLegitBehavioralSignal(signal, strongLegitMarketSupport));
 }
 
 function hasProbableBehavioralBundle(behavioralSignals) {
@@ -606,7 +637,7 @@ function applyLegitGuardrail(input, suggestedLabel, strongSignals, weakSignals, 
     return suggestedLabel;
   }
 
-  if (canUpgradeToValid(strongSignals, weakSignals, behavioralSignals, positiveSignals)) {
+  if (canUpgradeToValid(input, metrics, strongSignals, weakSignals, behavioralSignals, positiveSignals)) {
     return 'valid';
   }
 
