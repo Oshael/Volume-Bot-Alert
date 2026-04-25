@@ -623,6 +623,7 @@ describe('user alert matcher', () => {
     const context = createDeps({
       profiles: [{
         userId: 5,
+        loadedAt: '2026-04-16T10:00:00.000Z',
         ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
         meteoraAlert1hThreshold: 50,
       }],
@@ -632,6 +633,7 @@ describe('user alert matcher', () => {
         currentTvl: 25000,
         baselineTvl1h: 15625,
         baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
       }],
     });
 
@@ -651,6 +653,253 @@ describe('user alert matcher', () => {
     assert.equal(Math.round(context.eventWrites[0].payload.pct), 60);
     assert.equal(context.eventWrites[0].payload.meteoraCurrentTvl, 25000);
     assert.equal(context.eventWrites[0].payload.meteoraBaselineTvl24h, 10000);
+    assert.equal(
+      context.triggeredWrites[0].cooldownUntil.toISOString(),
+      '2026-04-16T12:10:00.000Z'
+    );
+  });
+
+  it('primes a hot meteora surge during startup warmup instead of emitting immediately', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 6,
+        loadedAt: '2026-04-16T11:59:30.000Z',
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 25000,
+        baselineTvl1h: 15625,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.triggeredWrites.length, 1);
+    assert.equal(context.triggeredWrites[0].ruleKey, 'meteora-surge');
+    assert.equal(context.triggeredWrites[0].lastAlertedAt, null);
+    assert.equal(context.triggeredWrites[0].metadata.lastDecision, 'primed-hot');
+    assert.equal(context.triggeredWrites[0].metadata.sessionStartedAt, '2026-04-16T11:59:30.000Z');
+  });
+
+  it('suppresses a primed meteora surge until change1h advances by 10pp in the same session', async () => {
+    const loadedAt = '2026-04-16T11:59:30.000Z';
+    const context = createDeps({
+      profiles: [{
+        userId: 7,
+        loadedAt,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 25500,
+        baselineTvl1h: 16451.61,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: null,
+          lastAlertedPct: 50,
+          metadata: {
+            lastDecision: 'primed-hot',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 370000,
+        last_mcap: 302000,
+      },
+    }, { now: '2026-04-16T12:02:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('emits a primed meteora surge after change1h advances by 10pp in the same session', async () => {
+    const loadedAt = '2026-04-16T11:59:30.000Z';
+    const context = createDeps({
+      profiles: [{
+        userId: 8,
+        loadedAt,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 27500,
+        baselineTvl1h: 17187.5,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: null,
+          lastAlertedPct: 50,
+          metadata: {
+            lastDecision: 'primed-hot',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 390000,
+        last_mcap: 310000,
+      },
+    }, { now: '2026-04-16T12:02:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'meteora-surge');
+  });
+
+  it('keeps the meteora fingerprint stable when only mcap and volume24h drift', () => {
+    const profile = {
+      userId: 9,
+      ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+      meteoraAlert1hThreshold: 50,
+    };
+
+    const first = userAlertMatcher.__private.buildMeteoraCandidate(
+      profile,
+      { symbol: 'WSOL' },
+      {
+        passesMeteoraPrereqs: true,
+        meteoraChange1h: 62,
+        meteoraCurrentTvl: 25900,
+        meteoraBaselineTvl24h: 10000,
+        meteoraBestPoolAddress: 'pool_meteora_primary',
+        currentMcap: 300000,
+        volume24h: 350000,
+      }
+    );
+    const second = userAlertMatcher.__private.buildMeteoraCandidate(
+      profile,
+      { symbol: 'WSOL' },
+      {
+        passesMeteoraPrereqs: true,
+        meteoraChange1h: 64,
+        meteoraCurrentTvl: 26100,
+        meteoraBaselineTvl24h: 10000,
+        meteoraBestPoolAddress: 'pool_meteora_primary',
+        currentMcap: 450000,
+        volume24h: 510000,
+      }
+    );
+
+    assert.equal(first.fingerprint, second.fingerprint);
+  });
+
+  it('preserves meteora cooldown on rearm so a fast pool/state flap cannot re-alert immediately', async () => {
+    const cooldownUntil = '2026-04-16T12:10:00.000Z';
+    const rearmContext = createDeps({
+      profiles: [{
+        userId: 10,
+        loadedAt: '2026-04-16T11:00:00.000Z',
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: false,
+        currentTvl: null,
+        baselineTvl1h: null,
+        baselineTvl24h: null,
+        bestPoolAddress: null,
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedPct: 60,
+          cooldownUntil,
+        },
+      },
+    });
+
+    const rearmResult = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:02:00.000Z', deps: rearmContext.deps });
+
+    assert.equal(rearmResult.rearmed, 1);
+    assert.equal(rearmContext.rearmWrites.length, 1);
+    assert.equal(rearmContext.rearmWrites[0].cooldownUntil, cooldownUntil);
+
+    const suppressContext = createDeps({
+      profiles: [{
+        userId: 10,
+        loadedAt: '2026-04-16T11:00:00.000Z',
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 25000,
+        baselineTvl1h: 15625,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 60,
+          cooldownUntil,
+        },
+      },
+    });
+
+    const suppressResult = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:03:00.000Z', deps: suppressContext.deps });
+
+    assert.equal(suppressResult.emitted, 0);
+    assert.equal(suppressResult.suppressed, 1);
+    assert.equal(suppressContext.eventWrites.length, 0);
   });
 
   it('matches multiple active users from a single signal computation for the same token update', async () => {

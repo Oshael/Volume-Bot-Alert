@@ -18,6 +18,11 @@ const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
   '1H': 5,
   '6H': 10,
 });
+const METEORA_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const METEORA_STARTUP_SUPPRESS_MS = 60 * 1000;
+const METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT = 10;
+const METEORA_FINGERPRINT_CHANGE_BUCKET_PCT = 5;
+const METEORA_FINGERPRINT_TVL_BUCKET_USD = 10_000;
 const MATCHER_RULE_KEYS = Object.freeze([
   'monitored-vol',
   'monitored-mcap',
@@ -41,6 +46,7 @@ const RULE_ENABLED_FIELD_BY_KEY = Object.freeze({
 const REARM_PRESERVE_COOLDOWN_RULE_KEYS = new Set([
   'monitored-vol',
   'monitored-mcap',
+  'meteora-surge',
 ]);
 const ANCHORED_REPEAT_RULE_KEYS = new Set([
   'monitored-vol',
@@ -81,6 +87,16 @@ function roundAlertMetric(value) {
 
 function buildFingerprint(parts = []) {
   return parts.map((part) => roundAlertMetric(part)).join('|');
+}
+
+function bucketMetric(value, bucketSize) {
+  const num = toNumberOrNull(value);
+  const bucket = Number(bucketSize);
+  if (num == null || !(bucket > 0)) {
+    return roundAlertMetric(value);
+  }
+
+  return String(Math.floor(num / bucket) * bucket);
 }
 
 function createEmptySummary() {
@@ -178,9 +194,18 @@ function buildMeteoraCandidate(profile, shared, signals) {
     label: 'METEORA 1H',
     pct: signals.meteoraChange1h,
     lastAlertedValue: signals.meteoraCurrentTvl,
-    cooldownMs: 0,
+    cooldownMs: METEORA_ALERT_COOLDOWN_MS,
     repeatStepPct: null,
-    fingerprint: buildFingerprint([signals.meteoraChange1h, signals.currentMcap, signals.volume24h]),
+    fingerprint: buildFingerprint([
+      'meteora-surge',
+      bucketMetric(signals.meteoraChange1h, METEORA_FINGERPRINT_CHANGE_BUCKET_PCT),
+      bucketMetric(signals.meteoraCurrentTvl, METEORA_FINGERPRINT_TVL_BUCKET_USD),
+      toTextOrNull(signals.meteoraBestPoolAddress),
+    ]),
+    startupSuppressUntilMs: (() => {
+      const loadedAtMs = toProfileLoadedAtMs(profile);
+      return loadedAtMs != null ? loadedAtMs + METEORA_STARTUP_SUPPRESS_MS : null;
+    })(),
     payload: {
       ...shared,
       meteoraCurrentTvl: signals.meteoraCurrentTvl,
@@ -451,6 +476,7 @@ function buildMeteoraSignalInput(meteoraRow) {
     meteoraCurrentTvl: meteoraRow?.currentTvl ?? null,
     meteoraBaselineTvl1h: meteoraRow?.baselineTvl1h ?? null,
     meteoraBaselineTvl24h: meteoraRow?.baselineTvl24h ?? null,
+    meteoraBestPoolAddress: meteoraRow?.bestPoolAddress ?? null,
     meteoraNoPool: !(meteoraRow?.hasPool === true && (toNumberOrNull(meteoraRow?.currentTvl) || 0) > 0),
   };
 }
@@ -542,6 +568,34 @@ function canRepeatSurgeInSession(candidate, state) {
     : SURGE_POST_ALERT_REPEAT_STEP_PCT;
 
   return nextPct >= lastAlertedPct + requiredAdvancePct;
+}
+
+function isSameSessionMeteoraPrimedState(candidate, state, profile) {
+  if (candidate?.kind !== 'meteora-surge' || !state) {
+    return false;
+  }
+
+  if (toTextOrNull(state?.metadata?.lastDecision) !== 'primed-hot') {
+    return false;
+  }
+
+  const profileLoadedAt = toProfileLoadedAtIso(profile);
+  const stateSessionStartedAt = toTextOrNull(state?.metadata?.sessionStartedAt);
+  return Boolean(profileLoadedAt && stateSessionStartedAt && profileLoadedAt === stateSessionStartedAt);
+}
+
+function canRepeatMeteoraInSession(candidate, state, profile) {
+  if (!isSameSessionMeteoraPrimedState(candidate, state, profile)) {
+    return false;
+  }
+
+  const lastAlertedPct = toNumberOrNull(state?.lastAlertedPct);
+  const nextPct = toNumberOrNull(candidate?.pct);
+  if (lastAlertedPct == null || nextPct == null) {
+    return false;
+  }
+
+  return nextPct >= lastAlertedPct + METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT;
 }
 
 function getAnchoredRepeatPct(candidate, state) {
@@ -715,10 +769,15 @@ async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps) {
 }
 
 function resolveCandidateState(candidate, rawState, profile) {
-  if (candidate?.kind !== 'old-surge') {
-    return rawState;
+  if (candidate?.kind === 'old-surge') {
+    return isSameSurgeSessionState(candidate, rawState, profile) ? rawState : null;
   }
-  return isSameSurgeSessionState(candidate, rawState, profile) ? rawState : null;
+  if (candidate?.kind === 'meteora-surge'
+    && toTextOrNull(rawState?.metadata?.lastDecision) === 'primed-hot'
+    && !isSameSessionMeteoraPrimedState(candidate, rawState, profile)) {
+    return null;
+  }
+  return rawState;
 }
 
 function shouldSuppressSurgeSessionRepeat(candidate, state, profile) {
@@ -727,12 +786,35 @@ function shouldSuppressSurgeSessionRepeat(candidate, state, profile) {
     && !canRepeatSurgeInSession(candidate, state);
 }
 
+function shouldSuppressMeteoraSessionRepeat(candidate, state, profile) {
+  return isSameSessionMeteoraPrimedState(candidate, state, profile)
+    && toNumberOrNull(state?.lastAlertedPct) != null
+    && !canRepeatMeteoraInSession(candidate, state, profile);
+}
+
+function resolveRepeatAllowed(candidate, state, profile) {
+  if (candidate?.kind === 'old-surge') {
+    return canRepeatSurgeInSession(candidate, state);
+  }
+  if (candidate?.kind === 'meteora-surge') {
+    return canRepeatMeteoraInSession(candidate, state, profile);
+  }
+  return canRepeatCandidate(candidate, state);
+}
+
+function hasSatisfiedRepeatAdvance(candidate, state, profile, repeatAllowed) {
+  if (candidate?.kind === 'meteora-surge'
+    && isSameSessionMeteoraPrimedState(candidate, state, profile)) {
+    return repeatAllowed;
+  }
+  return hasAdvancedRepeatValue(candidate, state);
+}
+
 function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   const triggered = state?.status === 'triggered' && state?.rearmRequired === true;
   const cooldownActive = isCooldownActive(state, nowMs);
-  const repeatAllowed = candidate?.kind === 'old-surge'
-    ? canRepeatSurgeInSession(candidate, state)
-    : canRepeatCandidate(candidate, state);
+  const repeatAllowed = resolveRepeatAllowed(candidate, state, profile);
+  const hasAdvancedRepeat = hasSatisfiedRepeatAdvance(candidate, state, profile, repeatAllowed);
 
   if (shouldPrimeCandidate(candidate, state, nowMs)) {
     return 'prime';
@@ -740,7 +822,10 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   if (shouldSuppressSurgeSessionRepeat(candidate, state, profile)) {
     return 'suppress';
   }
-  if (!hasAdvancedRepeatValue(candidate, state)) {
+  if (shouldSuppressMeteoraSessionRepeat(candidate, state, profile)) {
+    return 'suppress';
+  }
+  if (!hasAdvancedRepeat) {
     return 'suppress';
   }
   if (triggered && (cooldownActive || !repeatAllowed)) {
@@ -850,8 +935,14 @@ module.exports = {
   SURGE_STARTUP_SUPPRESS_MS,
   SURGE_POST_ALERT_REPEAT_STEP_PCT,
   SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW,
+  METEORA_ALERT_COOLDOWN_MS,
+  METEORA_STARTUP_SUPPRESS_MS,
+  METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT,
+  METEORA_FINGERPRINT_CHANGE_BUCKET_PCT,
+  METEORA_FINGERPRINT_TVL_BUCKET_USD,
   evaluateUpdatedToken,
   __private: {
+    bucketMetric,
     buildFingerprint,
     buildHvncCandidate,
     buildMeteoraCandidate,
@@ -864,14 +955,17 @@ module.exports = {
     buildRepeatAwarePayload,
     buildSharedPayload,
     buildRearmRuleKeys,
+    canRepeatMeteoraInSession,
     canRepeatCandidate,
     canRepeatSurgeInSession,
     getAnchoredRepeatPct,
+    hasSatisfiedRepeatAdvance,
     hasAdvancedRepeatValue,
     hasRecentRelatedSurgeAlert,
     createEmptySummary,
     getCandidateLifecycleDecision,
     getRelatedSurgeRuleKeys,
+    isSameSessionMeteoraPrimedState,
     isSameSurgeSessionState,
     isCooldownActive,
     loadMcapRows,
@@ -891,6 +985,7 @@ module.exports = {
     toProfileLoadedAtIso,
     shouldPreserveCooldownOnRearm,
     shouldPrimeCandidate,
+    resolveRepeatAllowed,
     toNumberOrNull,
     toTextOrNull,
     toTimestampMs,
