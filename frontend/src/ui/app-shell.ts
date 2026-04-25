@@ -7,6 +7,7 @@ import { renderManualTokensSection } from './sections/manual-section';
 import { renderLateralizedSection } from './sections/lateralized-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
+import { resolveManualTableRows } from '../utils/token-table';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -866,6 +867,13 @@ function getMonitoredRenderKey(state: AppState) {
 }
 
 function getManualRenderKey(state: AppState) {
+  const filteredManualTokens = resolveManualTableRows(getManualTokens(state), {
+    starredOnly: state.ui.manualStarredOnly,
+    starredTokens: state.data.starredTokens,
+    searchQuery: state.ui.manualSearchQuery,
+    sortCriteria: state.ui.manualSorts,
+  });
+
   return JSON.stringify({
     collapsed: state.ui.collapsed.manual,
     busy: state.ui.busy,
@@ -877,6 +885,18 @@ function getManualRenderKey(state: AppState) {
     starred: state.data.starredTokens,
     meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
     tokens: getManualTokens(state).map(serializeTrackedTokenForView),
+    sparklines: filteredManualTokens.map((token) => {
+      const sparkline = state.data.sparklineByAddress[token.address];
+      const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
+      return {
+        address: token.address,
+        loading: Boolean(sparkline?.loading),
+        generatedAt: sparkline?.generatedAt ?? null,
+        latestBucketAt: sparkline?.latestBucketAt ?? null,
+        points: series.length,
+        last: series.length > 0 ? series[series.length - 1] : null,
+      };
+    }),
   });
 }
 
