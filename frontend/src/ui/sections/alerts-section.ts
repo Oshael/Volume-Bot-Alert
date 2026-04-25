@@ -960,7 +960,7 @@ function buildAlertRowContent(
 function buildAlertSparklineBlock(alertId: string, address: string, sparkline: TokenSparklineEntry | null) {
   const chart = document.createElement('div');
   chart.className = 'alert-chart-v1';
-  chart.innerHTML = renderSparklineFigure(sparkline, address, { areaFill: true, lookupKey: alertId });
+  chart.innerHTML = renderSparklineFigure(sparkline, address, { areaFill: true, lookupKey: alertId, variant: 'alert' });
   return chart;
 }
 

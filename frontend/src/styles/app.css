@@ -9045,9 +9045,9 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alerts-panel .alert-chart-v1 .sparkline-wrap {
-  width: min(180px, 18vw);
-  min-width: 132px;
-  max-width: 180px;
+  width: clamp(168px, 22vw, 320px);
+  min-width: 168px;
+  max-width: min(320px, calc(100vw - 112px));
   height: 76px;
   justify-content: flex-start;
 }
