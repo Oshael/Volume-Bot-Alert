@@ -32,20 +32,44 @@ function normalizeStructuralOptions(options = {}) {
   };
 }
 
+function resolveNonNegativeOption(options, key, fallback) {
+  return Math.max(0, toNumberOrNull(options[key]) ?? fallback);
+}
+
+function resolveMinOneOption(options, key, fallback) {
+  return Math.max(1, toNumberOrNull(options[key]) ?? fallback);
+}
+
+function resolveNonNegativeIntegerOption(options, key, fallback) {
+  return Math.max(0, Math.trunc(toNumberOrNull(options[key]) ?? fallback));
+}
+
 function normalizeBehavioralOptions(options = {}) {
   return {
-    deadVolume1h: Math.max(0, toNumberOrNull(options.deadVolume1h) ?? 100),
-    deadVolume6h: Math.max(0, toNumberOrNull(options.deadVolume6h) ?? 1500),
-    lowVolToMcapMinMcap: Math.max(0, toNumberOrNull(options.lowVolToMcapMinMcap) ?? 400000),
-    lowVolToMcapRatio: Math.max(0, toNumberOrNull(options.lowVolToMcapRatio) ?? 0.05),
-    lowLiquidityToMcapMinMcap: Math.max(0, toNumberOrNull(options.lowLiquidityToMcapMinMcap) ?? 150000),
-    lowLiquidityToMcapRatio: Math.max(0, toNumberOrNull(options.lowLiquidityToMcapRatio) ?? 0.05),
-    minBuySellTxns24h: Math.max(0, Math.trunc(toNumberOrNull(options.minBuySellTxns24h) ?? 24)),
-    highBuySellImbalanceRatio: Math.max(1, toNumberOrNull(options.highBuySellImbalanceRatio) ?? 3),
-    extremeBuySellImbalanceRatio: Math.max(1, toNumberOrNull(options.extremeBuySellImbalanceRatio) ?? 8),
-    minDeadVolumeTxns24h: Math.max(0, Math.trunc(toNumberOrNull(options.minDeadVolumeTxns24h) ?? 30)),
-    extremePriceChange24hPct: Math.max(0, toNumberOrNull(options.extremePriceChange24hPct) ?? 120),
-    extremePriceChange6hPct: Math.max(0, toNumberOrNull(options.extremePriceChange6hPct) ?? 60),
+    deadVolume1h: resolveNonNegativeOption(options, 'deadVolume1h', 100),
+    deadVolume6h: resolveNonNegativeOption(options, 'deadVolume6h', 1500),
+    lowVolToMcapMinMcap: resolveNonNegativeOption(options, 'lowVolToMcapMinMcap', 400000),
+    lowVolToMcapRatio: resolveNonNegativeOption(options, 'lowVolToMcapRatio', 0.05),
+    lowLiquidityToMcapMinMcap: resolveNonNegativeOption(options, 'lowLiquidityToMcapMinMcap', 150000),
+    lowLiquidityToMcapRatio: resolveNonNegativeOption(options, 'lowLiquidityToMcapRatio', 0.05),
+    minBuySellTxns24h: resolveNonNegativeIntegerOption(options, 'minBuySellTxns24h', 24),
+    highBuySellImbalanceRatio: resolveMinOneOption(options, 'highBuySellImbalanceRatio', 3),
+    extremeBuySellImbalanceRatio: resolveMinOneOption(options, 'extremeBuySellImbalanceRatio', 8),
+    minDeadVolumeTxns24h: resolveNonNegativeIntegerOption(options, 'minDeadVolumeTxns24h', 30),
+    extremePriceChange24hPct: resolveNonNegativeOption(options, 'extremePriceChange24hPct', 120),
+    extremePriceChange6hPct: resolveNonNegativeOption(options, 'extremePriceChange6hPct', 60),
+    microcapDeadMarketMaxMcap: resolveNonNegativeOption(options, 'microcapDeadMarketMaxMcap', 100000),
+    microcapDeadVolume24h: resolveNonNegativeOption(options, 'microcapDeadVolume24h', 1500),
+    microcapDeadLiquidityUsd: resolveNonNegativeOption(options, 'microcapDeadLiquidityUsd', 500),
+    microcapCollapseMaxMcap: resolveNonNegativeOption(options, 'microcapCollapseMaxMcap', 20000),
+    microcapCollapseMaxVolume1h: resolveNonNegativeOption(options, 'microcapCollapseMaxVolume1h', 500),
+    microcapCollapseMaxTxns24h: resolveNonNegativeIntegerOption(options, 'microcapCollapseMaxTxns24h', 60),
+    microcapCollapseMinPriceDrop24hPct: resolveNonNegativeOption(options, 'microcapCollapseMinPriceDrop24hPct', 50),
+    dislocationSuspiciousMaxMcap: resolveNonNegativeOption(options, 'dislocationSuspiciousMaxMcap', 100000),
+    dislocationSuspiciousMaxLiquidityUsd: resolveNonNegativeOption(options, 'dislocationSuspiciousMaxLiquidityUsd', 10000),
+    dislocationSuspiciousMaxVolume1h: resolveNonNegativeOption(options, 'dislocationSuspiciousMaxVolume1h', 1500),
+    extremeImbalanceProbableMaxMcap: resolveNonNegativeOption(options, 'extremeImbalanceProbableMaxMcap', 250000),
+    extremeImbalanceProbableMaxVolume1h: resolveNonNegativeOption(options, 'extremeImbalanceProbableMaxVolume1h', 500),
   };
 }
 
@@ -408,6 +432,43 @@ function hasProbableBehavioralBundle(behavioralSignals) {
       ));
 }
 
+function hasMicrocapDeadMarketBundle(input, metrics, options) {
+  return (input.marketCap ?? 0) > 0
+    && (input.marketCap ?? 0) <= options.microcapDeadMarketMaxMcap
+    && (
+      ((input.volume24h ?? 0) <= options.microcapDeadVolume24h && (metrics.txns24hTotal ?? 0) <= options.minDeadVolumeTxns24h)
+      || ((input.liquidityUsd ?? Number.POSITIVE_INFINITY) <= options.microcapDeadLiquidityUsd
+        && (metrics.volToMcapRatio == null || metrics.volToMcapRatio < 0.05))
+    );
+}
+
+function hasMicrocapCollapseBundle(input, metrics, options) {
+  return (input.marketCap ?? 0) > 0
+    && (input.marketCap ?? 0) <= options.microcapCollapseMaxMcap
+    && Math.abs(input.priceChange24h ?? 0) >= options.microcapCollapseMinPriceDrop24hPct
+    && (input.priceChange24h ?? 0) < 0
+    && (input.volume1h ?? Number.POSITIVE_INFINITY) <= options.microcapCollapseMaxVolume1h
+    && (metrics.txns24hTotal ?? 0) <= options.microcapCollapseMaxTxns24h;
+}
+
+function hasDislocationSuspiciousLowCapBundle(input, options, behavioralSignals) {
+  if (!behavioralSignals.includes('price_dislocation_extreme')) {
+    return false;
+  }
+
+  return (input.marketCap ?? 0) <= options.dislocationSuspiciousMaxMcap
+    && (
+      (input.liquidityUsd ?? Number.POSITIVE_INFINITY) <= options.dislocationSuspiciousMaxLiquidityUsd
+      || (input.volume1h ?? Number.POSITIVE_INFINITY) <= options.dislocationSuspiciousMaxVolume1h
+    );
+}
+
+function hasExtremeImbalanceLowCapBundle(input, options, behavioralSignals) {
+  return behavioralSignals.includes('buy_sell_imbalance_extreme')
+    && (input.marketCap ?? 0) <= options.extremeImbalanceProbableMaxMcap
+    && (input.volume1h ?? Number.POSITIVE_INFINITY) <= options.extremeImbalanceProbableMaxVolume1h;
+}
+
 function hasWeakBehavioralProbableCombo(weakSignals, behavioralSignals) {
   const hasWeakStructuralSignal = weakSignals.length >= 1;
   if (!hasWeakStructuralSignal || behavioralSignals.length < 2) {
@@ -517,6 +578,10 @@ function determineSuggestedLabel(input, strongSignals, weakSignals, behavioralSi
     || hasWeakBehavioralProbableCombo(weakSignals, behavioralSignals)
     || hasNoPoolSuspiciousProbableBundle(input, weakSignals, behavioralSignals, metrics)
     || hasProbableBehavioralBundle(behavioralSignals)
+    || hasMicrocapDeadMarketBundle(input, metrics, options)
+    || hasMicrocapCollapseBundle(input, metrics, options)
+    || hasDislocationSuspiciousLowCapBundle(input, options, behavioralSignals)
+    || hasExtremeImbalanceLowCapBundle(input, options, behavioralSignals)
   ) {
     return 'junk_probable';
   }

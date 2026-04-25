@@ -129,6 +129,75 @@ describe('token junk metric', () => {
     assert.ok(assessment.reasonCodes.includes('volume24h_too_low'));
   });
 
+  it('promotes dead microcap shells into junk_probable even without structural enrichment', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 81902.29,
+      volume1h: 0,
+      volume6h: 0,
+      volume24h: 10.64,
+      liquidityUsd: 0,
+      txns24hBuys: 1,
+      txns24hSells: 0,
+      priceChange24h: 0,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.equal(assessment.txns24hTotal, 1);
+    assert.ok(assessment.reasonCodes.includes('volume_to_mcap_too_low') || assessment.reasonCodes.length === 0);
+  });
+
+  it('promotes collapsed ultra-low-cap tokens into junk_probable when activity is tiny', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 7498,
+      volume1h: 296.92,
+      volume6h: 3928.83,
+      volume24h: 7596.16,
+      liquidityUsd: 6782.23,
+      txns24hBuys: 26,
+      txns24hSells: 18,
+      priceChange24h: -55.76,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+  });
+
+  it('promotes low-cap dislocation bundles into junk_probable when liquidity support is tiny', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 14723,
+      volume1h: 331.31,
+      volume6h: 364.09,
+      volume24h: 563.24,
+      liquidityUsd: 67.78,
+      txns24hBuys: 90,
+      txns24hSells: 47,
+      priceChange6h: 0,
+      priceChange24h: 1604,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('price_dislocation_extreme'));
+  });
+
+  it('promotes low-cap extreme imbalance bundles into junk_probable when recent volume is dead', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 2072,
+      volume1h: 4.8,
+      volume6h: 12.06,
+      volume24h: 1074.26,
+      liquidityUsd: 3604.41,
+      txns24hBuys: 84,
+      txns24hSells: 10,
+      priceChange24h: -24.22,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('buy_sell_imbalance_extreme'));
+  });
+
   it('promotes no-pool high-imbalance thin-market bundles back to junk_probable in v2.1', () => {
     const assessment = classifyTokenJunk({
       mcap: 558022,
