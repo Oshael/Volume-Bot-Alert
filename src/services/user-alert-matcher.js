@@ -13,7 +13,11 @@ const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
 const SURGE_MIN_MCAP = 30_000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
-const SURGE_SESSION_REPEAT_STEP_PCT = 50;
+const SURGE_POST_ALERT_REPEAT_STEP_PCT = 50;
+const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
+  '1H': 5,
+  '6H': 10,
+});
 const MATCHER_RULE_KEYS = Object.freeze([
   'monitored-vol',
   'monitored-mcap',
@@ -528,7 +532,16 @@ function canRepeatSurgeInSession(candidate, state) {
     return false;
   }
 
-  return nextPct >= lastAlertedPct + SURGE_SESSION_REPEAT_STEP_PCT;
+  const sameSessionPrimedHot = toTextOrNull(state?.metadata?.lastDecision) === 'primed-hot'
+    && toTimestampMs(state?.lastAlertedAt) == null;
+  const primedProofStepPct = toNumberOrNull(
+    SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW[candidate?.payload?.surgeWindow]
+  );
+  const requiredAdvancePct = sameSessionPrimedHot && primedProofStepPct != null
+    ? primedProofStepPct
+    : SURGE_POST_ALERT_REPEAT_STEP_PCT;
+
+  return nextPct >= lastAlertedPct + requiredAdvancePct;
 }
 
 function getAnchoredRepeatPct(candidate, state) {
@@ -717,6 +730,9 @@ function shouldSuppressSurgeSessionRepeat(candidate, state, profile) {
 function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   const triggered = state?.status === 'triggered' && state?.rearmRequired === true;
   const cooldownActive = isCooldownActive(state, nowMs);
+  const repeatAllowed = candidate?.kind === 'old-surge'
+    ? canRepeatSurgeInSession(candidate, state)
+    : canRepeatCandidate(candidate, state);
 
   if (shouldPrimeCandidate(candidate, state, nowMs)) {
     return 'prime';
@@ -727,7 +743,7 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   if (!hasAdvancedRepeatValue(candidate, state)) {
     return 'suppress';
   }
-  if (triggered && (cooldownActive || !canRepeatCandidate(candidate, state))) {
+  if (triggered && (cooldownActive || !repeatAllowed)) {
     return 'suppress';
   }
   return cooldownActive ? 'suppress' : 'emit';
@@ -832,7 +848,8 @@ module.exports = {
   SURGE_CROSS_WINDOW_COOLDOWN_MS,
   SURGE_MIN_MCAP,
   SURGE_STARTUP_SUPPRESS_MS,
-  SURGE_SESSION_REPEAT_STEP_PCT,
+  SURGE_POST_ALERT_REPEAT_STEP_PCT,
+  SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW,
   evaluateUpdatedToken,
   __private: {
     buildFingerprint,

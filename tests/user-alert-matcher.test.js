@@ -996,6 +996,206 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
+  it('suppresses a primed 1h surge until the same-session price change advances by 5pp', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 81,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 40,
+      }],
+      stateByRule: {
+        'recent-surge-1h': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: null,
+          lastAlertedPct: 50,
+          metadata: {
+            lastDecision: 'primed-hot',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'LITE',
+        last_mcap: 148000,
+        last_vol_24h: 285000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 54,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('emits a primed 1h surge after the same-session price change advances by 5pp', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 45, 0);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 82,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 40,
+      }],
+      stateByRule: {
+        'recent-surge-1h': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: null,
+          lastAlertedPct: 50,
+          metadata: {
+            lastDecision: 'primed-hot',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'LIME',
+        last_mcap: 151000,
+        last_vol_24h: 295000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 55,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'recent-surge-1h');
+  });
+
+  it('suppresses a primed 6h surge until the same-session price change advances by 10pp', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);
+    const createdAt = nowMs - (10 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 83,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: null,
+          lastAlertedPct: 150,
+          metadata: {
+            lastDecision: 'primed-hot',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'CLOUD',
+        last_mcap: 500000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 159,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('emits a primed 6h surge after the same-session price change advances by 10pp', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 45, 0);
+    const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 84,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: null,
+          lastAlertedPct: 150,
+          metadata: {
+            lastDecision: 'primed-hot',
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'MINT',
+        last_mcap: 500000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 160,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'old-week-surge-6h');
+  });
+
   it('allows a same-session surge repeat after a 50pp price-change advance', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 45, 0);
