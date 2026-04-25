@@ -5296,6 +5296,35 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 11px;
 }
 
+.sparkline-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  min-height: 60px;
+}
+
+.sparkline-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(116, 159, 224, 0.18);
+  border-top-color: rgba(148, 206, 255, 0.92);
+  border-right-color: rgba(68, 205, 255, 0.7);
+  box-shadow: 0 0 10px rgba(68, 205, 255, 0.14);
+  animation: sparkline-spinner-spin 0.78s linear infinite;
+}
+
+@keyframes sparkline-spinner-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .meteora-col {
   color: #d18cff;
 }
@@ -9035,7 +9064,6 @@ TEMP_LEGACY_BAR_TITLE {
 .alerts-panel .alert-chart-v1 .sparkline-empty {
   min-height: 76px;
 }
-
 
 .alerts-panel {
   display: flex;

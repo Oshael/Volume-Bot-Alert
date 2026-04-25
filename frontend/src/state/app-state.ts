@@ -153,6 +153,7 @@ export interface TokenSparklineEntry {
   hours?: number;
   points?: number;
   series: number[];
+  loading?: boolean;
 }
 
 export interface LateralizedTokenEntry {

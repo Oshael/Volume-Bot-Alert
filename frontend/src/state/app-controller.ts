@@ -125,7 +125,7 @@ const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
-const SPARKLINE_VISIBLE_LIMIT_TOTAL = 50;
+const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_AGE_5M_MAX_MS = 72 * 60 * 60 * 1000;
@@ -4582,6 +4582,109 @@ export function createAppController(): AppController {
       .join('|');
   }
 
+  function collectWorkspaceSparklineAddresses(batches: SparklineBatchRequest[]) {
+    const addresses: string[] = [];
+    const seen = new Set<string>();
+
+    for (const batch of batches) {
+      for (const address of batch.addresses) {
+        const normalizedAddress = String(address || '').trim();
+        if (!normalizedAddress || seen.has(normalizedAddress)) {
+          continue;
+        }
+        seen.add(normalizedAddress);
+        addresses.push(normalizedAddress);
+      }
+    }
+
+    return addresses;
+  }
+
+  function hasRenderableSparklineSeries(entry?: TokenSparklineEntry | null) {
+    const series = Array.isArray(entry?.series) ? entry.series : [];
+    return series.length >= 2;
+  }
+
+  function buildWorkspaceSparklineLoadingEntry(address: string, existing?: TokenSparklineEntry) {
+    return {
+      address,
+      pairAddress: existing?.pairAddress ?? null,
+      bucketCount: existing?.bucketCount ?? 0,
+      coverageRatio: existing?.coverageRatio ?? null,
+      effectiveHours: existing?.effectiveHours ?? null,
+      granularityMinutes: existing?.granularityMinutes ?? null,
+      latestBucketAt: existing?.latestBucketAt ?? null,
+      generatedAt: existing?.generatedAt ?? null,
+      hours: existing?.hours,
+      points: existing?.points,
+      series: [],
+      loading: true,
+    } satisfies TokenSparklineEntry;
+  }
+
+  function ensureWorkspaceSparklineLoadingEntries(addresses: string[]) {
+    let nextCache: Record<string, TokenSparklineEntry> | null = null;
+    let changed = false;
+
+    for (const address of addresses) {
+      const existing = (nextCache || state.data.sparklineByAddress)[address];
+      if (hasRenderableSparklineSeries(existing) || existing?.loading) {
+        continue;
+      }
+
+      nextCache ||= { ...state.data.sparklineByAddress };
+      nextCache[address] = buildWorkspaceSparklineLoadingEntry(address, existing);
+      changed = true;
+    }
+
+    if (!nextCache || !changed) {
+      return false;
+    }
+
+    state.data.sparklineByAddress = nextCache;
+    return true;
+  }
+
+  function clearWorkspaceSparklineLoadingEntries(addresses: Iterable<string>) {
+    let nextCache: Record<string, TokenSparklineEntry> | null = null;
+    let changed = false;
+
+    for (const address of addresses) {
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress) {
+        continue;
+      }
+
+      const existing = (nextCache || state.data.sparklineByAddress)[normalizedAddress];
+      if (!existing?.loading || hasRenderableSparklineSeries(existing)) {
+        continue;
+      }
+
+      nextCache ||= { ...state.data.sparklineByAddress };
+      delete nextCache[normalizedAddress];
+      changed = true;
+    }
+
+    if (!nextCache || !changed) {
+      return false;
+    }
+
+    state.data.sparklineByAddress = nextCache;
+    return true;
+  }
+
+  function isWorkspaceSparklineSessionValid(token: string) {
+    return state.session.token === token && isAuthenticatedSession() && (isHistoryWorkspace() || isLiveWorkspace());
+  }
+
+  function handleWorkspaceSparklineRefreshFailure(visibleAddresses: string[], error: unknown) {
+    if (clearWorkspaceSparklineLoadingEntries(visibleAddresses)) {
+      emit('manual', 'recent', 'old-week');
+    }
+
+    console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
+  }
+
   function applyHistorySparklinePayload(payload: TokenSparklinesPayload) {
     const nextCache: Record<string, TokenSparklineEntry> = {};
     for (const item of payload.items || []) {
@@ -4600,6 +4703,7 @@ export function createAppController(): AppController {
         hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
         points: Number(payload.points) || SPARKLINE_POINT_COUNT,
         series: Array.isArray(item.series) ? item.series : [],
+        loading: false,
       };
     }
 
@@ -4837,13 +4941,14 @@ export function createAppController(): AppController {
 
   async function refreshHistoryWorkspaceSparklines(options?: { force?: boolean; token?: string }) {
     const token = options?.token ?? state.session.token;
-    if (!token || (!isHistoryWorkspace() && !isLiveWorkspace())) {
+    if (!token || !isWorkspaceSparklineSessionValid(token)) {
       clearHistorySparklineCache();
       return;
     }
 
     const batches = getVisibleWorkspaceSparklineBatches();
     const addressKey = buildSparklineBatchKey(batches);
+    const visibleAddresses = collectWorkspaceSparklineAddresses(batches);
     if (batches.length === 0) {
       clearHistorySparklineCache();
       return;
@@ -4856,6 +4961,10 @@ export function createAppController(): AppController {
 
     if (sparklineRefreshInFlight) {
       return;
+    }
+
+    if (ensureWorkspaceSparklineLoadingEntries(visibleAddresses)) {
+      emit('manual', 'recent', 'old-week');
     }
 
     sparklineRefreshInFlight = true;
@@ -4877,7 +4986,7 @@ export function createAppController(): AppController {
       );
       const payload = mergeHistorySparklinePayloads(payloads);
 
-      if (state.session.token !== token || !isAuthenticatedSession() || (!isHistoryWorkspace() && !isLiveWorkspace())) {
+      if (!isWorkspaceSparklineSessionValid(token)) {
         return;
       }
 
@@ -4886,7 +4995,7 @@ export function createAppController(): AppController {
       applyHistorySparklinePayload(payload);
       broadcastHistorySparklineSnapshot(payload);
     } catch (error) {
-      console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
+      handleWorkspaceSparklineRefreshFailure(visibleAddresses, error);
     } finally {
       sparklineRefreshInFlight = false;
     }

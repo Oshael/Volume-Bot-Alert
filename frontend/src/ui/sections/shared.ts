@@ -909,6 +909,13 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
 
   const series = normalizeSparklineSeries(entry.series);
   if (series.length < 2) {
+    if (entry.loading) {
+      return `
+        <span class="sparkline-loading" title="Loading chart for this row">
+          <span class="sparkline-loading-spinner" aria-hidden="true"></span>
+        </span>
+      `;
+    }
     return '<span class="sparkline-empty" title="Chart unavailable for this row yet">-</span>';
   }
 
