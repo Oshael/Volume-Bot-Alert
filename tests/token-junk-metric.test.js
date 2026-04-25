@@ -147,6 +147,22 @@ describe('token junk metric', () => {
     assert.ok(assessment.reasonCodes.includes('volume_to_mcap_too_low') || assessment.reasonCodes.length === 0);
   });
 
+  it('does not promote weak-but-legit microcaps when dead volume is offset by deep liquidity support', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 71483,
+      volume1h: 0,
+      volume6h: 10,
+      volume24h: 92.92,
+      liquidityUsd: 92092,
+      txns24hBuys: 3,
+      txns24hSells: 2,
+      priceChange24h: 0.46,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'valid_but_weak');
+  });
+
   it('promotes collapsed ultra-low-cap tokens into junk_probable when activity is tiny', () => {
     const assessment = classifyTokenJunk({
       mcap: 7498,
@@ -196,6 +212,38 @@ describe('token junk metric', () => {
 
     assert.equal(assessment.label, 'junk_probable');
     assert.ok(assessment.reasonCodes.includes('buy_sell_imbalance_extreme'));
+  });
+
+  it('promotes zeroed unavailable shells into junk_probable when there is no market left at all', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 0,
+      volume1h: 0,
+      volume6h: 0,
+      volume24h: 0,
+      liquidityUsd: 0,
+      txns24hBuys: 0,
+      txns24hSells: 0,
+      meteora: { noPool: true, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('market_data_unavailable'));
+  });
+
+  it('promotes terminal microcap collapses into junk_probable even when churn remains high', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 1367,
+      volume1h: 0,
+      volume6h: 100,
+      volume24h: 17190,
+      liquidityUsd: 2660,
+      txns24hBuys: 300,
+      txns24hSells: 260,
+      priceChange24h: -95.47,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
   });
 
   it('promotes no-pool high-imbalance thin-market bundles back to junk_probable in v2.1', () => {
@@ -325,6 +373,23 @@ describe('token junk metric', () => {
     assert.equal(assessment.label, 'valid');
     assert.ok(assessment.reasonCodes.includes('volume_to_mcap_too_low'));
     assert.ok(assessment.reasonCodes.includes('liquidity_to_mcap_too_low'));
+  });
+
+  it('promotes thin-support high caps into junk_probable when meteora is absent and tx flow is weak', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 1907306,
+      volume1h: 164.82,
+      volume6h: 1410.17,
+      volume24h: 13160.41,
+      liquidityUsd: 108876.18,
+      txns24hBuys: 57,
+      txns24hSells: 36,
+      meteora: { noPool: true, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('meteora_absent_above_400k_mcap'));
+    assert.ok(assessment.reasonCodes.includes('volume_to_mcap_too_low'));
   });
 
   it('upgrades strong-flow mid caps back to valid when only volume-to-mcap looks weak', () => {

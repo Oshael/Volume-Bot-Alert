@@ -467,7 +467,14 @@ function hasMicrocapDeadMarketBundle(input, metrics, options) {
   return (input.marketCap ?? 0) > 0
     && (input.marketCap ?? 0) <= options.microcapDeadMarketMaxMcap
     && (
-      ((input.volume24h ?? 0) <= options.microcapDeadVolume24h && (metrics.txns24hTotal ?? 0) <= options.minDeadVolumeTxns24h)
+      (
+        (input.volume24h ?? 0) <= options.microcapDeadVolume24h
+        && (metrics.txns24hTotal ?? 0) <= options.minDeadVolumeTxns24h
+        && (
+          (input.liquidityUsd ?? Number.POSITIVE_INFINITY) <= options.microcapDeadLiquidityUsd
+          || (metrics.liquidityToMcapRatio == null || metrics.liquidityToMcapRatio < 0.03)
+        )
+      )
       || ((input.liquidityUsd ?? Number.POSITIVE_INFINITY) <= options.microcapDeadLiquidityUsd
         && (metrics.volToMcapRatio == null || metrics.volToMcapRatio < 0.05))
     );
@@ -498,6 +505,60 @@ function hasExtremeImbalanceLowCapBundle(input, options, behavioralSignals) {
   return behavioralSignals.includes('buy_sell_imbalance_extreme')
     && (input.marketCap ?? 0) <= options.extremeImbalanceProbableMaxMcap
     && (input.volume1h ?? Number.POSITIVE_INFINITY) <= options.extremeImbalanceProbableMaxVolume1h;
+}
+
+function hasUnavailableZeroMarketBundle(input, metrics, behavioralSignals) {
+  return behavioralSignals.includes('market_data_unavailable')
+    && input.marketCap === 0
+    && input.volume24h === 0
+    && input.liquidityUsd === 0
+    && input.txns24hBuys === 0
+    && input.txns24hSells === 0;
+}
+
+function hasTerminalMicrocapCollapseBundle(input, metrics) {
+  return (input.marketCap ?? 0) > 0
+    && (input.marketCap ?? 0) <= 5000
+    && (input.priceChange24h ?? 0) <= -90
+    && (metrics.txns24hTotal ?? 0) >= 50;
+}
+
+function hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics) {
+  return (input.marketCap ?? 0) >= 400000
+    && behavioralSignals.includes('meteora_absent_above_400k_mcap')
+    && behavioralSignals.includes('volume_to_mcap_too_low')
+    && (metrics.txns24hTotal ?? 0) <= 300
+    && (
+      metrics.liquidityToMcapRatio == null
+      || metrics.liquidityToMcapRatio < 0.1
+    );
+}
+
+function hasWeakButLegitMicrocapProfile(input, metrics, strongSignals, weakSignals, behavioralSignals) {
+  return strongSignals.length === 0
+    && weakSignals.length === 0
+    && behavioralSignals.length === 0
+    && (input.marketCap ?? 0) > 0
+    && (input.marketCap ?? 0) < 100000
+    && (metrics.txns24hTotal ?? 0) > 0
+    && (metrics.txns24hTotal ?? 0) < 20
+    && (metrics.liquidityToMcapRatio != null && metrics.liquidityToMcapRatio >= 0.5);
+}
+
+function hasProbableLabelTriggers(input, strongSignals, weakSignals, behavioralSignals, metrics, options) {
+  return strongSignals.length >= 2
+    || (strongSignals.length >= 1 && (weakSignals.length + behavioralSignals.length) >= 1)
+    || (weakSignals.length >= 2 && behavioralSignals.length >= 1)
+    || hasWeakBehavioralProbableCombo(weakSignals, behavioralSignals)
+    || hasNoPoolSuspiciousProbableBundle(input, weakSignals, behavioralSignals, metrics)
+    || hasProbableBehavioralBundle(behavioralSignals)
+    || hasUnavailableZeroMarketBundle(input, metrics, behavioralSignals)
+    || hasTerminalMicrocapCollapseBundle(input, metrics)
+    || hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics)
+    || hasMicrocapDeadMarketBundle(input, metrics, options)
+    || hasMicrocapCollapseBundle(input, metrics, options)
+    || hasDislocationSuspiciousLowCapBundle(input, options, behavioralSignals)
+    || hasExtremeImbalanceLowCapBundle(input, options, behavioralSignals);
 }
 
 function hasWeakBehavioralProbableCombo(weakSignals, behavioralSignals) {
@@ -602,22 +663,15 @@ function determineSuggestedLabel(input, strongSignals, weakSignals, behavioralSi
     return 'junk_permanent';
   }
 
-  if (
-    strongSignals.length >= 2
-    || (strongSignals.length >= 1 && (weakSignals.length + behavioralSignals.length) >= 1)
-    || (weakSignals.length >= 2 && behavioralSignals.length >= 1)
-    || hasWeakBehavioralProbableCombo(weakSignals, behavioralSignals)
-    || hasNoPoolSuspiciousProbableBundle(input, weakSignals, behavioralSignals, metrics)
-    || hasProbableBehavioralBundle(behavioralSignals)
-    || hasMicrocapDeadMarketBundle(input, metrics, options)
-    || hasMicrocapCollapseBundle(input, metrics, options)
-    || hasDislocationSuspiciousLowCapBundle(input, options, behavioralSignals)
-    || hasExtremeImbalanceLowCapBundle(input, options, behavioralSignals)
-  ) {
+  if (hasProbableLabelTriggers(input, strongSignals, weakSignals, behavioralSignals, metrics, options)) {
     return 'junk_probable';
   }
 
   if (strongSignals.length >= 1 || weakSignals.length >= 1 || behavioralSignals.length >= 1) {
+    return 'valid_but_weak';
+  }
+
+  if (hasWeakButLegitMicrocapProfile(input, metrics, strongSignals, weakSignals, behavioralSignals)) {
     return 'valid_but_weak';
   }
 
