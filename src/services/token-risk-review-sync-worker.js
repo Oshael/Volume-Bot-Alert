@@ -1,6 +1,7 @@
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenRiskReview = require('../models/token-risk-review');
+const tokenJunkEvidenceCapture = require('./token-junk-evidence-capture');
 const { classifyTokenJunk } = require('./token-junk-metric');
 
 const LOOP_INTERVAL_MS = 60 * 1000;
@@ -114,6 +115,15 @@ function buildAutoNotes(assessment) {
   return `auto/${mode}: ${reasonCodes.join(', ')}`;
 }
 
+async function captureEvidenceSafely(row, assessment, meteoraSummary, deps = {}) {
+  const evidenceCaptureService = deps.tokenJunkEvidenceCaptureService || tokenJunkEvidenceCapture;
+  try {
+    await evidenceCaptureService.captureJunkEvidence(row, assessment, meteoraSummary, deps);
+  } catch (err) {
+    console.error(`[TokenRiskReviewSyncWorker] Failed to capture junk evidence for ${row?.address || 'unknown'}:`, err.message);
+  }
+}
+
 async function listCandidates(offset, options, deps = {}) {
   const catalogModel = deps.tokenCatalogModel || tokenCatalog;
   const rows = await catalogModel.listAutoRiskReviewCandidates(options.scanLimit, offset, options.minMcap);
@@ -135,15 +145,18 @@ async function processRows(rows = [], deps = {}) {
   let manualProtected = 0;
 
   for (const row of rows) {
+    const meteoraSummary = meteoraByAddress.get(row.address) || null;
     const assessment = classifyTokenJunk({
       ...row,
-      meteora: buildMeteoraMetric(meteoraByAddress.get(row.address) || null),
+      meteora: buildMeteoraMetric(meteoraSummary),
     });
 
     const label = normalizePersistedAutoLabel(row, assessment);
     if (!label) {
       continue;
     }
+
+    await captureEvidenceSafely(row, assessment, meteoraSummary, deps);
 
     const review = await reviewModel.upsertAutoReview({
       tokenAddress: row.address,
@@ -277,6 +290,7 @@ module.exports = {
   stop,
   __private: {
     buildAutoNotes,
+    captureEvidenceSafely,
     buildMeteoraMetric,
     hasStructuralCoverage,
     listCandidates,

@@ -6,6 +6,7 @@ const worker = require('../src/services/token-risk-review-sync-worker');
 describe('token risk review sync worker', () => {
   it('persists auto labels from the current junk assessment', async () => {
     const saved = [];
+    const evidence = [];
     const result = await worker.__private.processRows([
       {
         address: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
@@ -43,12 +44,19 @@ describe('token risk review sync worker', () => {
           };
         },
       },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async (row, assessment, meteoraSummary) => {
+          evidence.push({ row, assessment, meteoraSummary });
+        },
+      },
     });
 
     assert.equal(result.saved, 1);
     assert.equal(result.manualProtected, 0);
     assert.equal(saved[0].label, 'junk_probable');
     assert.match(saved[0].notes, /^auto\/v1_manual_review:/);
+    assert.equal(evidence.length, 1);
+    assert.equal(evidence[0].assessment.label, 'junk_probable');
   });
 
   it('counts manual rows as protected when auto sync hits an existing manual review', async () => {
@@ -132,5 +140,54 @@ describe('token risk review sync worker', () => {
 
     assert.equal(result.saved, 1);
     assert.equal(saved[0].label, 'valid_but_weak');
+  });
+
+  it('does not fail the sync when junk evidence capture throws', async () => {
+    const saved = [];
+    const result = await worker.__private.processRows([
+      {
+        address: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
+        symbol: 'RTPBET',
+        last_mcap: 113660296,
+        last_vol_1h: 10,
+        last_vol_6h: 100,
+        last_vol_24h: 900,
+        last_liquidity_usd: 877620.15,
+        last_txns_24h_buys: 9,
+        last_txns_24h_sells: 26,
+        risk_holder_count: 158,
+        risk_top_10_pct: 84.63,
+        risk_top_20_pct: 97.49,
+        risk_mint_authority_active: false,
+        risk_freeze_authority_active: false,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [{
+          tokenAddress: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
+          hasPool: false,
+          currentTvl: null,
+          poolCount: 0,
+        }],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return {
+            tokenAddress: payload.tokenAddress,
+            label: payload.label,
+            source: 'auto',
+          };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {
+          throw new Error('boom');
+        },
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(saved[0].label, 'junk_probable');
   });
 });

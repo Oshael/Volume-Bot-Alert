@@ -683,6 +683,35 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage31-token-junk-evidence',
+    name: 'Stage 31 token junk evidence',
+    repair: 'node src/utils/db-init-stage31.js',
+    tables: [
+      {
+        table: 'token_junk_evidence',
+        columns: [
+          'id',
+          'token_address',
+          'label',
+          'source',
+          'assessment_fingerprint',
+          'assessment',
+          'catalog_snapshot',
+          'market_history',
+          'meteora_history',
+          'created_at',
+        ],
+        defaults: {
+          source: "'auto_sync'::character varying",
+          assessment: "'{}'::jsonb",
+          catalog_snapshot: "'{}'::jsonb",
+          market_history: "'{}'::jsonb",
+          meteora_history: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
