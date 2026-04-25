@@ -8471,7 +8471,7 @@ TEMP_LEGACY_BAR_TITLE {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  column-gap: 14px;
+  column-gap: clamp(34px, 3vw, 48px);
   min-width: 0;
   width: 100%;
 }
@@ -8944,8 +8944,8 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-body-v68 {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, clamp(260px, 44%, 500px));
-  gap: 16px;
+  grid-template-columns: minmax(0, var(--alert-content-width, 420px)) minmax(var(--alert-rail-min-width, 320px), 1fr);
+  gap: clamp(18px, 2.2vw, 28px);
   align-items: start;
   min-width: 0;
 }
@@ -9041,7 +9041,7 @@ TEMP_LEGACY_BAR_TITLE {
   align-self: start;
   flex: 0 1 auto;
   padding-left: 0;
-  margin-left: -28px;
+  margin-left: clamp(-72px, -4.2vw, -28px);
 }
 
 .alerts-panel .alert-chart-v1 .sparkline-wrap {

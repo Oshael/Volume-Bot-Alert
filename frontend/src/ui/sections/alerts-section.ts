@@ -7,6 +7,11 @@ import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 const ALERT_FX_SETTLE_MS = 1_600;
 const ALERTS_PER_PAGE = 40;
+const ALERT_CONTENT_MAX_WIDTH_PX = 640;
+const ALERT_CONTENT_BUFFER_PX = 20;
+const ALERT_CHART_MIN_WIDTH_PX = 200;
+const ALERT_RAIL_EXTRA_WIDTH_PX = 12;
+const ALERT_RAIL_GAP_FALLBACK_PX = 36;
 
 type AlertRowView = {
   element: HTMLElement;
@@ -38,6 +43,8 @@ type AlertsSectionView = {
   controller: AppController;
   rowViews: Map<string, AlertRowView>;
   fxStates: Map<string, AlertFxState>;
+  layoutMeasureRaf: number | null;
+  resizeObserver: ResizeObserver | null;
 };
 
 let alertsSectionView: AlertsSectionView | null = null;
@@ -122,7 +129,17 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     controller,
     rowViews: new Map<string, AlertRowView>(),
     fxStates: new Map<string, AlertFxState>(),
+    layoutMeasureRaf: null,
+    resizeObserver: null,
   };
+
+  if (typeof ResizeObserver !== 'undefined') {
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleAlertLayoutMetrics(alertsSectionView);
+    });
+    resizeObserver.observe(section);
+    alertsSectionView.resizeObserver = resizeObserver;
+  }
 
   bindCompactSearch(section, {
     toggleAction: 'alerts-search-focus',
@@ -333,9 +350,63 @@ function reconcileAlertRows(
     view.list.lastElementChild?.remove();
   }
 
+  scheduleAlertLayoutMetrics(view);
+
   for (const { row, fxState } of pendingEnterFx) {
     playAlertFxEnter(view.fxGhostHost, row, fxState);
   }
+}
+
+function scheduleAlertLayoutMetrics(view: AlertsSectionView | null) {
+  if (!view || typeof window === 'undefined') {
+    return;
+  }
+
+  if (view.layoutMeasureRaf != null) {
+    window.cancelAnimationFrame(view.layoutMeasureRaf);
+  }
+
+  view.layoutMeasureRaf = window.requestAnimationFrame(() => {
+    view.layoutMeasureRaf = null;
+    applyAlertLayoutMetrics(view);
+  });
+}
+
+function applyAlertLayoutMetrics(view: AlertsSectionView) {
+  for (const rowView of view.rowViews.values()) {
+    syncAlertLayoutMetrics(rowView.element);
+  }
+}
+
+function parsePixelValue(value: string | null | undefined, fallback = 0) {
+  const parsed = Number.parseFloat(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function syncAlertLayoutMetrics(row: HTMLElement) {
+  const body = row.querySelector<HTMLElement>('.alert-body-v68');
+  const content = row.querySelector<HTMLElement>('.alert-content-v68');
+  const rail = row.querySelector<HTMLElement>('.alert-rail-v68');
+  const side = row.querySelector<HTMLElement>('.alert-side-v68');
+  if (!body || !content || !rail || !side || !body.isConnected) {
+    return;
+  }
+
+  const railComputed = window.getComputedStyle(rail);
+  const railGap = parsePixelValue(railComputed.columnGap || railComputed.gap, ALERT_RAIL_GAP_FALLBACK_PX);
+  const contentWidth = Math.ceil(content.scrollWidth);
+  const sideWidth = Math.ceil(side.scrollWidth);
+  const railMinWidth = sideWidth + ALERT_CHART_MIN_WIDTH_PX + railGap + ALERT_RAIL_EXTRA_WIDTH_PX;
+  const bodyWidth = Math.ceil(body.clientWidth);
+  const maxContentWidth = Math.max(220, bodyWidth - railMinWidth);
+  const measuredContentWidth = Math.min(
+    ALERT_CONTENT_MAX_WIDTH_PX,
+    maxContentWidth,
+    contentWidth + ALERT_CONTENT_BUFFER_PX,
+  );
+
+  body.style.setProperty('--alert-content-width', `${Math.max(220, measuredContentWidth)}px`);
+  body.style.setProperty('--alert-rail-min-width', `${Math.max(280, railMinWidth)}px`);
 }
 
 function areAlertCardEffectsEnabled(state: AppState) {
