@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, alert-card backend-event upsert, and stricter `6H` surge repeat gates (`20m` cooldown plus `+60%` relative PCHANGE growth / `+15% MCAP`).
+Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, alert-card backend-event upsert, and stricter `6H` surge repeat gates (`20m` cooldown plus `+50%` relative PCHANGE growth / `+15% MCAP`).
 
 ## Current Deployment Topology
 
@@ -1463,9 +1463,9 @@ Current limitation:
   - `age >= 7d` qualifies only for old-week-surge
 - surge now also has backend anti-spam guards:
   - first-seen hot tokens are primed instead of always alerting immediately
-  - `1H` same-session repeat now requires `+60%` relative PCHANGE growth after the first emitted alert
+  - `1H` same-session repeat now requires `+50%` relative PCHANGE growth after the first emitted alert
   - `6H` same-session repeat now also applies a `20m` cooldown and requires:
-    - `+60%` relative PCHANGE growth
+    - `+50%` relative PCHANGE growth
     - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` variants in the same age bucket cross-block each other for `1h`
   - surge requires `mcap >= 30k`

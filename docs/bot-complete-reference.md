@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, backend-alert card upsert on repeated event ids, and stricter `6H` surge repeat gates (`20m` cooldown plus `+60%` relative PCHANGE growth / `+15% MCAP`).
+Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, backend-alert card upsert on repeated event ids, and stricter `6H` surge repeat gates (`20m` cooldown plus `+50%` relative PCHANGE growth / `+15% MCAP`).
 
 ## Current Deployment Topology
 
@@ -1782,10 +1782,10 @@ Rules:
   - old-week `6H`
 - backend anti-spam behavior:
   - if a token is already hot when the current matcher session begins, the rule can be primed instead of alerting immediately
-  - `1H` same-session repeat now requires `+60%` relative PCHANGE growth after the first emitted alert
+  - `1H` same-session repeat now requires `+50%` relative PCHANGE growth after the first emitted alert
   - `6H` repeat is now stricter after the first emitted alert:
     - `20m` cooldown
-    - `+60%` relative PCHANGE growth
+    - `+50%` relative PCHANGE growth
     - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` surge variants in the same age bucket cross-block each other for `1h`
   - surge requires `mcap >= 30k`
