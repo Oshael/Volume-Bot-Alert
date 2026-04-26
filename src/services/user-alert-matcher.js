@@ -77,6 +77,14 @@ function toProfileLoadedAtIso(profile) {
   return toTextOrNull(profile?.loadedAt);
 }
 
+function toProfilePresenceMode(profile) {
+  return toTextOrNull(profile?.presenceMode);
+}
+
+function toProfileHiddenSessionKey(profile) {
+  return toTextOrNull(profile?.hiddenSessionKey);
+}
+
 function roundAlertMetric(value) {
   const num = toNumberOrNull(value);
   if (num == null) {
@@ -712,7 +720,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
       ruleKey: candidate.ruleKey,
       kind: candidate.kind,
       tokenAddress: tokenAfter.address,
-      dedupeKey: `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${candidate.fingerprint}`,
+      dedupeKey: buildEventDedupeKey(profile, tokenAfter, candidate),
       payload: eventPayload,
       triggeredAt: new Date(nowMs),
     }, client);
@@ -729,6 +737,8 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
       metadata: {
         lastDecision: 'triggered',
         lastEventId: event?.id || null,
+        lastHiddenSessionKey: toProfileHiddenSessionKey(profile),
+        lastPresenceMode: toProfilePresenceMode(profile),
         label: candidate.label,
         sessionStartedAt: toProfileLoadedAtIso(profile),
       },
@@ -792,6 +802,25 @@ function shouldSuppressMeteoraSessionRepeat(candidate, state, profile) {
     && !canRepeatMeteoraInSession(candidate, state, profile);
 }
 
+function shouldSuppressHiddenSessionRepeat(state, profile) {
+  const hiddenSessionKey = toProfileHiddenSessionKey(profile);
+  if (toProfilePresenceMode(profile) !== 'hidden' || !hiddenSessionKey) {
+    return false;
+  }
+
+  return toTimestampMs(state?.lastAlertedAt) != null
+    && toTextOrNull(state?.metadata?.lastHiddenSessionKey) === hiddenSessionKey;
+}
+
+function buildEventDedupeKey(profile, tokenAfter, candidate) {
+  const hiddenSessionKey = toProfileHiddenSessionKey(profile);
+  if (toProfilePresenceMode(profile) === 'hidden' && hiddenSessionKey) {
+    return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${hiddenSessionKey}`;
+  }
+
+  return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${candidate.fingerprint}`;
+}
+
 function resolveRepeatAllowed(candidate, state, profile) {
   if (candidate?.kind === 'old-surge') {
     return canRepeatSurgeInSession(candidate, state);
@@ -818,6 +847,9 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
 
   if (shouldPrimeCandidate(candidate, state, nowMs)) {
     return 'prime';
+  }
+  if (shouldSuppressHiddenSessionRepeat(state, profile)) {
+    return 'suppress';
   }
   if (shouldSuppressSurgeSessionRepeat(candidate, state, profile)) {
     return 'suppress';
@@ -958,6 +990,7 @@ module.exports = {
     canRepeatMeteoraInSession,
     canRepeatCandidate,
     canRepeatSurgeInSession,
+    buildEventDedupeKey,
     getAnchoredRepeatPct,
     hasSatisfiedRepeatAdvance,
     hasAdvancedRepeatValue,
@@ -981,8 +1014,11 @@ module.exports = {
     resolveCandidateState,
     resolveDisplaySymbol,
     shouldSuppressSurgeSessionRepeat,
+    shouldSuppressHiddenSessionRepeat,
+    toProfileHiddenSessionKey,
     toProfileLoadedAtMs,
     toProfileLoadedAtIso,
+    toProfilePresenceMode,
     shouldPreserveCooldownOnRearm,
     shouldPrimeCandidate,
     resolveRepeatAllowed,

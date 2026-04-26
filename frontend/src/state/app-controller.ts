@@ -3717,6 +3717,34 @@ export function createAppController(): AppController {
     return true;
   }
 
+  function areAlertEntriesEquivalent(left: AlertEntry, right: AlertEntry) {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  function upsertBackendAlertEntry(entry: AlertEntry) {
+    if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
+      return false;
+    }
+
+    const existingIndex = state.data.alerts.findIndex((item) => item.id === entry.id);
+    if (existingIndex < 0) {
+      return pushAlert(entry);
+    }
+
+    const existing = state.data.alerts[existingIndex];
+    if (areAlertEntriesEquivalent(existing, entry)) {
+      return false;
+    }
+
+    const nextAlerts = state.data.alerts.slice();
+    nextAlerts[existingIndex] = entry;
+    nextAlerts.sort((a, b) => b.createdAt - a.createdAt);
+    state.data.alerts = nextAlerts.slice(0, ALERTS_MAX_ENTRIES);
+    syncAlertState();
+    queueAlertSparklineRefresh(entry.id, entry.address);
+    return true;
+  }
+
   function buildBackendHighCapDumpAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
     const address = String(event.address || '').trim();
     if (!address) {
@@ -3857,7 +3885,7 @@ export function createAppController(): AppController {
 
     let added = 0;
     for (const alert of nextAlerts) {
-      if (pushAlert(alert)) {
+      if (upsertBackendAlertEntry(alert)) {
         added += 1;
       }
     }

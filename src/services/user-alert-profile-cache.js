@@ -210,17 +210,100 @@ function isPresenceEntryActive(entry, options = {}) {
   return foregroundStillFresh || hiddenGraceStillValid;
 }
 
+function isPresenceEntryForegroundActive(entry, options = {}) {
+  if (!entry || entry.mode !== 'foreground') {
+    return false;
+  }
+
+  const nowMs = getNowMs(options);
+  return Number(entry.foregroundSeenAtMs) > 0
+    && (nowMs - entry.foregroundSeenAtMs) <= FOREGROUND_TTL_MS;
+}
+
+function isPresenceEntryHiddenActive(entry, options = {}) {
+  if (!entry || entry.mode !== 'hidden') {
+    return false;
+  }
+
+  const nowMs = getNowMs(options);
+  return Number(entry.hiddenGraceUntilMs) > nowMs;
+}
+
+function listActivePresenceEntriesForUser(userId, options = {}) {
+  const normalizedUserId = normalizeUserId(userId);
+  const nowMs = getNowMs(options);
+  const socketIds = socketIdsByUserId.get(normalizedUserId);
+  if (!socketIds || socketIds.size === 0) {
+    return [];
+  }
+
+  const entries = [];
+  for (const socketId of socketIds) {
+    const entry = livePresenceBySocketId.get(socketId);
+    if (!entry || !isPresenceEntryActive(entry, { nowMs })) {
+      continue;
+    }
+    entries.push({ ...entry });
+  }
+
+  return entries;
+}
+
+function getActivePresenceContextForUser(userId, options = {}) {
+  const nowMs = getNowMs(options);
+  const entries = listActivePresenceEntriesForUser(userId, { nowMs });
+  if (entries.length === 0) {
+    return null;
+  }
+
+  if (entries.some((entry) => isPresenceEntryForegroundActive(entry, { nowMs }))) {
+    return {
+      mode: 'foreground',
+      hiddenSessionKey: null,
+      hiddenStartedAtMs: null,
+    };
+  }
+
+  const hiddenEntries = entries.filter((entry) => isPresenceEntryHiddenActive(entry, { nowMs }));
+  if (hiddenEntries.length === 0) {
+    return null;
+  }
+
+  const hiddenStartedAtMs = Math.min(...hiddenEntries.map((entry) => {
+    const startedAtMs = Number(entry.hiddenStartedAtMs);
+    return Number.isFinite(startedAtMs) && startedAtMs > 0
+      ? startedAtMs
+      : Number(entry.updatedAtMs) || nowMs;
+  }));
+
+  return {
+    mode: 'hidden',
+    hiddenSessionKey: `hidden:${hiddenStartedAtMs}`,
+    hiddenStartedAtMs,
+  };
+}
+
 function upsertLivePresence(userId, socketId, payload = {}, options = {}) {
   const normalizedUserId = normalizeUserId(userId);
   const normalizedSocketId = normalizeSocketId(socketId);
   const normalizedPresence = normalizePresencePayload(payload);
   const nowMs = getNowMs(options);
+  const current = livePresenceBySocketId.get(normalizedSocketId) || null;
+  const hiddenStartedAtMs = normalizedPresence.mode === 'hidden'
+    ? (
+      current?.mode === 'hidden'
+      && Number(current.hiddenStartedAtMs) > 0
+        ? Number(current.hiddenStartedAtMs)
+        : nowMs
+    )
+    : 0;
   const nextEntry = {
     userId: normalizedUserId,
     socketId: normalizedSocketId,
     workspace: normalizedPresence.workspace,
     mode: normalizedPresence.mode,
     foregroundSeenAtMs: normalizedPresence.mode === 'foreground' ? nowMs : 0,
+    hiddenStartedAtMs,
     hiddenGraceUntilMs: normalizedPresence.mode === 'hidden'
       ? nowMs + normalizedPresence.hiddenGraceMs
       : 0,
@@ -282,6 +365,7 @@ function invalidateUserProfile(userId) {
 }
 
 async function listActiveProfiles(options = {}) {
+  const nowMs = getNowMs(options);
   const activeUserIds = listActiveUserIds(options);
   const missingUserIds = activeUserIds.filter((userId) => !profileCacheByUserId.has(userId));
 
@@ -290,7 +374,22 @@ async function listActiveProfiles(options = {}) {
   }
 
   return activeUserIds
-    .map((userId) => profileCacheByUserId.get(userId) || null)
+    .map((userId) => {
+      const profile = profileCacheByUserId.get(userId) || null;
+      if (!profile) {
+        return null;
+      }
+
+      const presence = getActivePresenceContextForUser(userId, { nowMs });
+      return {
+        ...profile,
+        presenceMode: presence?.mode || null,
+        hiddenSessionKey: presence?.hiddenSessionKey || null,
+        hiddenStartedAt: presence?.hiddenStartedAtMs
+          ? new Date(presence.hiddenStartedAtMs).toISOString()
+          : null,
+      };
+    })
     .filter(Boolean);
 }
 
@@ -319,9 +418,13 @@ module.exports = {
   refreshUserProfile,
   upsertLivePresence,
   __private: {
+    getActivePresenceContextForUser,
     getNowMs,
     getNumber,
     isEnabled,
+    isPresenceEntryForegroundActive,
+    isPresenceEntryHiddenActive,
+    listActivePresenceEntriesForUser,
     normalizeHiddenGraceMs,
     normalizeMode,
     normalizePresencePayload,

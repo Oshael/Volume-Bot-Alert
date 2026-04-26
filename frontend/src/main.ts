@@ -113,15 +113,12 @@ function isEditingInteractiveField() {
 }
 
 function syncAudioSideEffects(state: AppState) {
-  if (isDocumentHidden) {
-    return;
-  }
-
   for (const alert of state.data.alerts) {
     if (playedAlertIds.has(alert.id) || pendingAlertSoundIds.has(alert.id)) {
       continue;
     }
 
+    const attemptedWhileHidden = isDocumentHidden;
     pendingAlertSoundIds.add(alert.id);
     void playAlertSound(alert, {
       enabled: state.ui.soundEnabled,
@@ -130,7 +127,7 @@ function syncAudioSideEffects(state: AppState) {
       configs: state.data.configs,
     })
       .then((result) => {
-        if (result !== 'blocked') {
+        if (result !== 'blocked' || attemptedWhileHidden) {
           playedAlertIds.add(alert.id);
         }
       })
@@ -144,13 +141,14 @@ function syncAudioSideEffects(state: AppState) {
       continue;
     }
 
+    const attemptedWhileHidden = isDocumentHidden;
     pendingPumpToastSoundIds.add(toast.id);
     void playMigrateSound({
       enabled: state.ui.soundEnabled,
       volume: state.ui.soundVolume,
     })
       .then((result) => {
-        if (result !== 'blocked') {
+        if (result !== 'blocked' || attemptedWhileHidden) {
           playedPumpToastIds.add(toast.id);
         }
       })

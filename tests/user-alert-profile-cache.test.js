@@ -154,12 +154,32 @@ describe('user alert profile cache', () => {
         hiddenGraceMs: 20 * 60 * 1000,
       }, { nowMs: baseNowMs + 60_000 });
 
+      const hiddenProfiles = await userAlertProfileCache.listActiveProfiles({ nowMs: baseNowMs + 61_000 });
+      assert.equal(hiddenProfiles.length, 1);
+      assert.equal(hiddenProfiles[0].presenceMode, 'hidden');
+      assert.equal(hiddenProfiles[0].hiddenSessionKey, `hidden:${baseNowMs + 60_000}`);
+
+      userAlertProfileCache.upsertLivePresence(5, 'socket-1', {
+        workspace: 'live',
+        mode: 'hidden',
+        hiddenGraceMs: 20 * 60 * 1000,
+      }, { nowMs: baseNowMs + 75_000 });
+
+      const hiddenHeartbeatProfiles = await userAlertProfileCache.listActiveProfiles({ nowMs: baseNowMs + 76_000 });
+      assert.equal(hiddenHeartbeatProfiles.length, 1);
+      assert.equal(hiddenHeartbeatProfiles[0].presenceMode, 'hidden');
+      assert.equal(hiddenHeartbeatProfiles[0].hiddenSessionKey, `hidden:${baseNowMs + 60_000}`);
+
       assert.deepEqual(
         userAlertProfileCache.listActiveUserIds({ nowMs: baseNowMs + (10 * 60 * 1000) }),
         [5]
       );
       assert.deepEqual(
         userAlertProfileCache.listActiveUserIds({ nowMs: baseNowMs + (21 * 60 * 1000) }),
+        [5]
+      );
+      assert.deepEqual(
+        userAlertProfileCache.listActiveUserIds({ nowMs: baseNowMs + (22 * 60 * 1000) }),
         []
       );
 

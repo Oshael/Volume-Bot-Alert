@@ -1028,6 +1028,49 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].payload.priceChange1h, 32);
   });
 
+  it('coalesces backend dedupe keys for hidden-session monitored alerts so repeated hidden emits do not fan out rows', async () => {
+    const hiddenSessionKey = 'hidden:1713268800000';
+    const profile = {
+      userId: 72,
+      presenceMode: 'hidden',
+      hiddenSessionKey,
+      ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+      thresholdPct: 50,
+      minVol: 8000,
+      minMcap: 30000,
+      maxMcap: 0,
+    };
+    const context = createDeps({
+      profiles: [profile],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 250000,
+        last_vol_5m: 12000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_5m: 18000,
+        last_vol_24h: 350000,
+        last_mcap: 300000,
+      },
+    }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(
+      context.eventWrites[0].dedupeKey,
+      `72:monitored-vol:${TOKEN_ADDRESS}:${hiddenSessionKey}`
+    );
+  });
+
   it('suppresses surge alerts for tokens below 30k market cap', async () => {
     const nowMs = Date.UTC(2026, 3, 17, 19, 17, 48);
     const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
@@ -1604,6 +1647,65 @@ describe('user alert matcher', () => {
         last_vol_24h: 1370000,
         last_token_created_at_ms: createdAt,
         last_price_change_6h: 5587,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('suppresses repeated surge emits while the same hidden session stays active even if the candidate advances enough to repeat', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 20, 4, 0);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const loadedAt = new Date(nowMs - (25 * 60 * 1000)).toISOString();
+    const hiddenSessionKey = `hidden:${nowMs - (5 * 60 * 1000)}`;
+    const context = createDeps({
+      profiles: [{
+        userId: 73,
+        loadedAt,
+        presenceMode: 'hidden',
+        hiddenSessionKey,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 40,
+      }],
+      stateByRule: {
+        'recent-surge-1h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (2 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 80,
+          lastAlertedValue: 80,
+          metadata: {
+            lastDecision: 'rearmed',
+            lastHiddenSessionKey: hiddenSessionKey,
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_1h: 70,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_mcap: 300000,
+        last_vol_24h: 350000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 140,
       },
     }, { now: new Date(nowMs), deps: context.deps });
 
