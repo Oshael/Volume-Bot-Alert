@@ -13,7 +13,7 @@ const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
 const SURGE_MIN_MCAP = 30_000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
-const SURGE_POST_ALERT_REPEAT_STEP_PCT = 50;
+const SURGE_POST_ALERT_REPEAT_GROWTH_PCT = 60;
 const SURGE_6H_REPEAT_COOLDOWN_MS = 20 * 60 * 1000;
 const SURGE_6H_REPEAT_MCAP_GROWTH_PCT = 15;
 const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
@@ -579,8 +579,23 @@ function getRequiredSurgeRepeatAdvancePct(candidate, state) {
     sameSessionPrimedHot,
     requiredAdvancePct: sameSessionPrimedHot && primedProofStepPct != null
       ? primedProofStepPct
-      : SURGE_POST_ALERT_REPEAT_STEP_PCT,
+      : SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
   };
+}
+
+function hasRequiredSurgePctAdvance(candidate, state) {
+  const lastAlertedPct = toNumberOrNull(state?.lastAlertedPct);
+  const nextPct = toNumberOrNull(candidate?.pct);
+  if (lastAlertedPct == null || nextPct == null) {
+    return false;
+  }
+
+  const { sameSessionPrimedHot, requiredAdvancePct } = getRequiredSurgeRepeatAdvancePct(candidate, state);
+  const requiredNextPct = sameSessionPrimedHot
+    ? lastAlertedPct + requiredAdvancePct
+    : lastAlertedPct * (1 + (requiredAdvancePct / 100));
+
+  return nextPct >= requiredNextPct;
 }
 
 function hasRequiredSixHourSurgeMcapAdvance(candidate, state) {
@@ -599,14 +614,8 @@ function canRepeatSurgeInSession(candidate, state) {
     return true;
   }
 
-  const lastAlertedPct = toNumberOrNull(state?.lastAlertedPct);
-  const nextPct = toNumberOrNull(candidate?.pct);
-  if (lastAlertedPct == null || nextPct == null) {
-    return false;
-  }
-
-  const { sameSessionPrimedHot, requiredAdvancePct } = getRequiredSurgeRepeatAdvancePct(candidate, state);
-  if (nextPct < lastAlertedPct + requiredAdvancePct) {
+  const { sameSessionPrimedHot } = getRequiredSurgeRepeatAdvancePct(candidate, state);
+  if (!hasRequiredSurgePctAdvance(candidate, state)) {
     return false;
   }
 
@@ -1027,7 +1036,7 @@ module.exports = {
   SURGE_CROSS_WINDOW_COOLDOWN_MS,
   SURGE_MIN_MCAP,
   SURGE_STARTUP_SUPPRESS_MS,
-  SURGE_POST_ALERT_REPEAT_STEP_PCT,
+  SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
   SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW,
   METEORA_ALERT_COOLDOWN_MS,
   METEORA_STARTUP_SUPPRESS_MS,
@@ -1054,6 +1063,7 @@ module.exports = {
     canRepeatSurgeInSession,
     buildEventDedupeKey,
     getAnchoredRepeatPct,
+    hasRequiredSurgePctAdvance,
     hasSatisfiedRepeatAdvance,
     hasAdvancedRepeatValue,
     hasRecentRelatedSurgeAlert,

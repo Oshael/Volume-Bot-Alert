@@ -1399,7 +1399,7 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites[0].ruleKey, 'recent-surge-1h');
   });
 
-  it('suppresses repeated surge alerts in the same session unless the price change advances by 50pp', async () => {
+  it('suppresses repeated surge alerts in the same session unless the price change grows 60% from the last alert', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);
     const createdAt = nowMs - (281 * 24 * 60 * 60 * 1000);
@@ -1439,7 +1439,7 @@ describe('user alert matcher', () => {
         last_mcap: 148000,
         last_vol_24h: 285000,
         last_token_created_at_ms: createdAt,
-        last_price_change_6h: 100,
+        last_price_change_6h: 159,
       },
     }, { now: new Date(nowMs), deps: context.deps });
 
@@ -1648,7 +1648,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].ruleKey, 'old-week-surge-6h');
   });
 
-  it('allows a same-session surge repeat after a 50pp price-change advance', async () => {
+  it('allows a same-session surge repeat after 60% relative price-change growth', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 45, 0);
     const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
@@ -1690,7 +1690,7 @@ describe('user alert matcher', () => {
         last_mcap: 500000,
         last_vol_24h: 299000,
         last_token_created_at_ms: createdAt,
-        last_price_change_6h: 151,
+        last_price_change_6h: 160,
       },
     }, { now: new Date(nowMs), deps: context.deps });
 
@@ -1741,7 +1741,7 @@ describe('user alert matcher', () => {
         last_mcap: 560000,
         last_vol_24h: 299000,
         last_token_created_at_ms: createdAt,
-        last_price_change_6h: 151,
+        last_price_change_6h: 160,
       },
     }, { now: new Date(nowMs), deps: context.deps });
 
@@ -1792,7 +1792,7 @@ describe('user alert matcher', () => {
         last_mcap: 500000,
         last_vol_24h: 299000,
         last_token_created_at_ms: createdAt,
-        last_price_change_6h: 151,
+        last_price_change_6h: 160,
       },
     }, { now: new Date(nowMs), deps: context.deps });
 
