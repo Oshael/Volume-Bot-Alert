@@ -145,12 +145,16 @@ export function bindSparklineHover(
     const address = String(wrap.dataset.address || '').trim();
     const entry = sparklineByLookupKey[lookupKey];
     const series = normalizeSparklineSeries(entry?.series);
+    const displaySeries = buildDisplaySparklineSeries(series, {
+      expanded: wrap.classList.contains('sparkline-wrap-expanded'),
+      variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
+    });
     const hover = wrap.querySelector<HTMLElement>('.sparkline-hover');
     const line = wrap.querySelector<HTMLElement>('.sparkline-hover-line');
     const dot = wrap.querySelector<HTMLElement>('.sparkline-hover-dot');
     const tooltip = wrap.querySelector<HTMLElement>('.sparkline-hover-tooltip');
 
-    if (!entry || series.length < 2 || !hover || !line || !dot || !tooltip) {
+    if (!entry || series.length < 2 || displaySeries.length < 2 || !hover || !line || !dot || !tooltip) {
       continue;
     }
 
@@ -190,7 +194,7 @@ export function bindSparklineHover(
       }
 
       activeIndex = index;
-      const point = resolveSparklineHoverPoint(series, index, wrap);
+      const point = resolveSparklineHoverPoint(displaySeries, index, wrap);
       const tooltipLeft = Math.max(10, Math.min(rect.width - 10, point.x));
 
       line.style.left = `${point.x}px`;
@@ -774,6 +778,78 @@ function normalizeSparklineSeries(series: number[] | null | undefined) {
   return Array.isArray(series) ? series.filter((value) => Number.isFinite(value)) : [];
 }
 
+function computeMedian(values: number[]) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return null;
+  }
+
+  const sorted = values.slice().sort((left, right) => left - right);
+  const middleIndex = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middleIndex - 1] + sorted[middleIndex]) / 2;
+  }
+
+  return sorted[middleIndex];
+}
+
+function isIsolatedSparklineSpike(series: number[], spikeIndex: number) {
+  if (!Array.isArray(series) || series.length < 8 || spikeIndex <= 0 || spikeIndex >= series.length - 1) {
+    return false;
+  }
+
+  const spikeValue = series[spikeIndex];
+  const previousValue = series[spikeIndex - 1];
+  const nextValue = series[spikeIndex + 1];
+  if (!(spikeValue > 0) || !(previousValue > 0) || !(nextValue > 0)) {
+    return false;
+  }
+
+  const neighborBaseline = (previousValue + nextValue) / 2;
+  if (!(neighborBaseline > 0) || spikeValue < neighborBaseline * 4) {
+    return false;
+  }
+
+  const median = computeMedian(series);
+  if (median == null || median <= 0 || spikeValue < median * 5) {
+    return false;
+  }
+
+  let secondHighest = -Infinity;
+  for (let index = 0; index < series.length; index += 1) {
+    if (index === spikeIndex) {
+      continue;
+    }
+    secondHighest = Math.max(secondHighest, series[index]);
+  }
+
+  return Number.isFinite(secondHighest) && secondHighest < spikeValue * 0.6;
+}
+
+function buildDisplaySparklineSeries(series: number[], _options: SparklineRenderOptions = {}) {
+  if (!Array.isArray(series) || series.length < 8) {
+    return series;
+  }
+
+  let spikeIndex = -1;
+  let spikeValue = -Infinity;
+  for (let index = 0; index < series.length; index += 1) {
+    if (series[index] > spikeValue) {
+      spikeValue = series[index];
+      spikeIndex = index;
+    }
+  }
+
+  if (!isIsolatedSparklineSpike(series, spikeIndex)) {
+    return series;
+  }
+
+  const previousValue = series[spikeIndex - 1];
+  const nextValue = series[spikeIndex + 1];
+  const normalized = series.slice();
+  normalized[spikeIndex] = previousValue + ((nextValue - previousValue) / 2);
+  return normalized;
+}
+
 function resolveSparklineDimensions(options: SparklineRenderOptions = {}) {
   if (options.expanded) {
     return {
@@ -965,16 +1041,17 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
     return renderSparklinePlaceholder(entry);
   }
   const series = normalizeSparklineSeries(entry.series);
-  if (series.length < 2) {
+  const displaySeries = buildDisplaySparklineSeries(series, options);
+  if (series.length < 2 || displaySeries.length < 2) {
     return renderSparklinePlaceholder(entry);
   }
 
   const dimensions = resolveSparklineDimensions(options);
-  const start = series[0];
-  const end = series[series.length - 1];
+  const start = displaySeries[0];
+  const end = displaySeries[displaySeries.length - 1];
   const trendClass = end > start ? 'up' : end < start ? 'down' : 'flat';
-  const polyline = buildSparklinePolyline(series, options);
-  const areaPolyline = options.areaFill ? buildSparklineAreaPolyline(series, options) : '';
+  const polyline = buildSparklinePolyline(displaySeries, options);
+  const areaPolyline = options.areaFill ? buildSparklineAreaPolyline(displaySeries, options) : '';
   const wrapMeta = buildSparklineWrapMeta(entry, address, options, buildSparklineTitle(entry, series));
 
   return `
