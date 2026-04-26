@@ -1028,7 +1028,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].payload.priceChange1h, 32);
   });
 
-  it('coalesces backend dedupe keys for hidden-session monitored alerts so repeated hidden emits do not fan out rows', async () => {
+  it('coalesces backend dedupe keys for hidden monitored alerts so repeated hidden emits do not fan out rows', async () => {
     const hiddenSessionKey = 'hidden:1713268800000';
     const profile = {
       userId: 72,
@@ -1067,7 +1067,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 1);
     assert.equal(
       context.eventWrites[0].dedupeKey,
-      `72:monitored-vol:${TOKEN_ADDRESS}:${hiddenSessionKey}`
+      `72:monitored-vol:${TOKEN_ADDRESS}:hidden`
     );
   });
 

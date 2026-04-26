@@ -803,19 +803,17 @@ function shouldSuppressMeteoraSessionRepeat(candidate, state, profile) {
 }
 
 function shouldSuppressHiddenSessionRepeat(state, profile) {
-  const hiddenSessionKey = toProfileHiddenSessionKey(profile);
-  if (toProfilePresenceMode(profile) !== 'hidden' || !hiddenSessionKey) {
+  if (toProfilePresenceMode(profile) !== 'hidden') {
     return false;
   }
 
   return toTimestampMs(state?.lastAlertedAt) != null
-    && toTextOrNull(state?.metadata?.lastHiddenSessionKey) === hiddenSessionKey;
+    && toTextOrNull(state?.metadata?.lastPresenceMode) === 'hidden';
 }
 
 function buildEventDedupeKey(profile, tokenAfter, candidate) {
-  const hiddenSessionKey = toProfileHiddenSessionKey(profile);
-  if (toProfilePresenceMode(profile) === 'hidden' && hiddenSessionKey) {
-    return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${hiddenSessionKey}`;
+  if (toProfilePresenceMode(profile) === 'hidden') {
+    return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:hidden`;
   }
 
   return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${candidate.fingerprint}`;

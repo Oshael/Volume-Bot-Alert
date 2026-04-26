@@ -49,6 +49,8 @@ let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
 let lastLivePresenceSignature: string | null = null;
+let suppressCatchupAlertAudioUntil = 0;
+let suppressCatchupAlertCreatedBefore = 0;
 
 const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.monitored-list, .lateralized-list, .pump-list, .pump-migration-strip, .alerts-list';
 const TABLE_INTERACTION_LOCK_ZONE_SELECTOR = [
@@ -115,6 +117,14 @@ function isEditingInteractiveField() {
 function syncAudioSideEffects(state: AppState) {
   for (const alert of state.data.alerts) {
     if (playedAlertIds.has(alert.id) || pendingAlertSoundIds.has(alert.id)) {
+      continue;
+    }
+
+    if (!isDocumentHidden
+      && suppressCatchupAlertAudioUntil > Date.now()
+      && Number(alert.createdAt) > 0
+      && Number(alert.createdAt) <= suppressCatchupAlertCreatedBefore) {
+      playedAlertIds.add(alert.id);
       continue;
     }
 
@@ -664,6 +674,10 @@ document.addEventListener('visibilitychange', () => {
   clearHiddenRuntimeStopTimer();
   controller.setDocumentHidden(false);
   const hiddenDurationMs = hiddenSinceAt ? Date.now() - hiddenSinceAt : 0;
+  if (hiddenSinceAt) {
+    suppressCatchupAlertCreatedBefore = Date.now();
+    suppressCatchupAlertAudioUntil = Date.now() + 2_000;
+  }
   const shouldAutoStopOnReturn = hiddenMonitoringWasActive && hiddenDurationMs >= HIDDEN_RUNTIME_STOP_MS;
   hiddenSinceAt = null;
   const shouldReloadAfterHidden = hiddenAutoStopTriggered || shouldAutoStopOnReturn;
