@@ -14,6 +14,8 @@ const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
 const SURGE_MIN_MCAP = 30_000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_POST_ALERT_REPEAT_STEP_PCT = 50;
+const SURGE_6H_REPEAT_COOLDOWN_MS = 20 * 60 * 1000;
+const SURGE_6H_REPEAT_MCAP_GROWTH_PCT = 15;
 const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
   '1H': 5,
   '6H': 10,
@@ -264,7 +266,7 @@ function buildSurgeCandidate(input) {
     label: `PCHANGE ${surgeWindow}`,
     pct: currentPct,
     lastAlertedValue: currentPct,
-    cooldownMs: 0,
+    cooldownMs: surgeWindow === '6H' ? SURGE_6H_REPEAT_COOLDOWN_MS : 0,
     repeatStepPct: null,
     fingerprint: buildFingerprint([ruleKey, previousPct, currentPct, signals.currentMcap, signals.volume24h]),
     crossedThreshold,
@@ -555,6 +557,32 @@ function isSameSurgeSessionState(candidate, state, profile) {
   return Boolean(profileLoadedAt && stateSessionStartedAt && profileLoadedAt === stateSessionStartedAt);
 }
 
+function getRequiredSurgeRepeatAdvancePct(candidate, state) {
+  const sameSessionPrimedHot = toTextOrNull(state?.metadata?.lastDecision) === 'primed-hot'
+    && toTimestampMs(state?.lastAlertedAt) == null;
+  const primedProofStepPct = toNumberOrNull(
+    SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW[candidate?.payload?.surgeWindow]
+  );
+
+  return {
+    sameSessionPrimedHot,
+    requiredAdvancePct: sameSessionPrimedHot && primedProofStepPct != null
+      ? primedProofStepPct
+      : SURGE_POST_ALERT_REPEAT_STEP_PCT,
+  };
+}
+
+function hasRequiredSixHourSurgeMcapAdvance(candidate, state) {
+  const lastAlertedMcap = toNumberOrNull(state?.metadata?.lastAlertedMcap);
+  const nextMcap = toNumberOrNull(candidate?.payload?.mcap);
+  if (!(lastAlertedMcap > 0) || !(nextMcap > 0)) {
+    return false;
+  }
+
+  const requiredNextMcap = lastAlertedMcap * (1 + (SURGE_6H_REPEAT_MCAP_GROWTH_PCT / 100));
+  return nextMcap >= requiredNextMcap;
+}
+
 function canRepeatSurgeInSession(candidate, state) {
   if (candidate?.kind !== 'old-surge') {
     return true;
@@ -566,16 +594,16 @@ function canRepeatSurgeInSession(candidate, state) {
     return false;
   }
 
-  const sameSessionPrimedHot = toTextOrNull(state?.metadata?.lastDecision) === 'primed-hot'
-    && toTimestampMs(state?.lastAlertedAt) == null;
-  const primedProofStepPct = toNumberOrNull(
-    SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW[candidate?.payload?.surgeWindow]
-  );
-  const requiredAdvancePct = sameSessionPrimedHot && primedProofStepPct != null
-    ? primedProofStepPct
-    : SURGE_POST_ALERT_REPEAT_STEP_PCT;
+  const { sameSessionPrimedHot, requiredAdvancePct } = getRequiredSurgeRepeatAdvancePct(candidate, state);
+  if (nextPct < lastAlertedPct + requiredAdvancePct) {
+    return false;
+  }
 
-  return nextPct >= lastAlertedPct + requiredAdvancePct;
+  if (sameSessionPrimedHot || candidate?.payload?.surgeWindow !== '6H') {
+    return true;
+  }
+
+  return hasRequiredSixHourSurgeMcapAdvance(candidate, state);
 }
 
 function isSameSessionMeteoraPrimedState(candidate, state, profile) {
@@ -690,6 +718,7 @@ async function primeCandidate(profile, tokenAfter, candidate, nowMs, deps) {
     metadata: {
       ageBucket: candidate.payload?.ageBucket || null,
       label: candidate.label,
+      lastAlertedMcap: toNumberOrNull(candidate.payload?.mcap),
       lastDecision: 'primed-hot',
       primedAt: new Date(nowMs).toISOString(),
       sessionStartedAt: toProfileLoadedAtIso(profile),
@@ -737,6 +766,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
       metadata: {
         lastDecision: 'triggered',
         lastEventId: event?.id || null,
+        lastAlertedMcap: toNumberOrNull(candidate.payload?.mcap),
         lastHiddenSessionKey: toProfileHiddenSessionKey(profile),
         lastPresenceMode: toProfilePresenceMode(profile),
         label: candidate.label,
