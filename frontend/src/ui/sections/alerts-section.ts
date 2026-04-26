@@ -12,6 +12,7 @@ const ALERT_CONTENT_BUFFER_PX = 20;
 const ALERT_CHART_MIN_WIDTH_PX = 200;
 const ALERT_RAIL_EXTRA_WIDTH_PX = 12;
 const ALERT_RAIL_GAP_FALLBACK_PX = 36;
+const ALERT_SCROLL_BRIDGE_DELAY_MS = 400;
 
 type AlertRowView = {
   element: HTMLElement;
@@ -73,6 +74,50 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   return view.section;
 }
 
+function bindAlertsScrollBridge(list: HTMLElement) {
+  if (list.dataset.scrollBridgeBound === 'true') {
+    return;
+  }
+
+  list.dataset.scrollBridgeBound = 'true';
+  let topEdgeEnteredAt = 0;
+  list.addEventListener('wheel', (event) => {
+    if (!(event.deltaY < 0)) {
+      topEdgeEnteredAt = 0;
+      return;
+    }
+
+    if (list.scrollTop > 0) {
+      topEdgeEnteredAt = 0;
+      return;
+    }
+
+    const documentScrollElement = list.ownerDocument.scrollingElement;
+    if (!(documentScrollElement instanceof HTMLElement)) {
+      return;
+    }
+
+    if (documentScrollElement.scrollTop <= 0) {
+      return;
+    }
+
+    const now = Date.now();
+    if (topEdgeEnteredAt <= 0) {
+      topEdgeEnteredAt = now;
+      event.preventDefault();
+      return;
+    }
+
+    if ((now - topEdgeEnteredAt) < ALERT_SCROLL_BRIDGE_DELAY_MS) {
+      event.preventDefault();
+      return;
+    }
+
+    event.preventDefault();
+    documentScrollElement.scrollTop = Math.max(0, documentScrollElement.scrollTop + event.deltaY);
+  }, { passive: false });
+}
+
 function getOrCreateAlertsSectionView(controller: AppController) {
   if (alertsSectionView) {
     return alertsSectionView;
@@ -112,6 +157,8 @@ function getOrCreateAlertsSectionView(controller: AppController) {
   if (!list || !count || !searchInput || !searchWrap || !pageJumpInput || !pageTotal || !prevButton || !nextButton) {
     throw new Error('Alerts section view failed to initialize.');
   }
+
+  bindAlertsScrollBridge(list);
 
   const emptyState = buildEmptyState();
   alertsSectionView = {
