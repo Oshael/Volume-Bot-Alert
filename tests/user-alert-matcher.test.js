@@ -655,7 +655,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].payload.meteoraBaselineTvl24h, 10000);
     assert.equal(
       context.triggeredWrites[0].cooldownUntil.toISOString(),
-      '2026-04-16T12:10:00.000Z'
+      '2026-04-16T12:30:00.000Z'
     );
   });
 
@@ -823,11 +823,101 @@ describe('user alert matcher', () => {
     assert.equal(first.fingerprint, second.fingerprint);
   });
 
-  it('preserves meteora cooldown on rearm so a fast pool/state flap cannot re-alert immediately', async () => {
-    const cooldownUntil = '2026-04-16T12:10:00.000Z';
-    const rearmContext = createDeps({
+  it('suppresses a post-alert meteora repeat until change1h advances by 50pp and tvl grows 15%', async () => {
+    const context = createDeps({
       profiles: [{
         userId: 10,
+        loadedAt: '2026-04-16T11:00:00.000Z',
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 28400,
+        baselineTvl1h: 11269.84,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: '2026-04-16T12:00:00.000Z',
+          lastAlertedPct: 60,
+          lastAlertedValue: 25000,
+          cooldownUntil: '2026-04-16T11:59:00.000Z',
+          metadata: {
+            lastDecision: 'triggered',
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 370000,
+        last_mcap: 302000,
+      },
+    }, { now: '2026-04-16T12:31:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('emits a post-alert meteora repeat after change1h advances by 50pp and tvl grows 15%', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 10,
+        loadedAt: '2026-04-16T11:00:00.000Z',
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 29000,
+        baselineTvl1h: 11153.85,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: '2026-04-16T12:00:00.000Z',
+          lastAlertedPct: 60,
+          lastAlertedValue: 25000,
+          cooldownUntil: '2026-04-16T11:59:00.000Z',
+          metadata: {
+            lastDecision: 'triggered',
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 390000,
+        last_mcap: 310000,
+      },
+    }, { now: '2026-04-16T12:31:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'meteora-surge');
+  });
+
+  it('preserves meteora cooldown on rearm so a fast pool/state flap cannot re-alert immediately', async () => {
+    const cooldownUntil = '2026-04-16T12:30:00.000Z';
+    const rearmContext = createDeps({
+      profiles: [{
+        userId: 11,
         loadedAt: '2026-04-16T11:00:00.000Z',
         ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
         meteoraAlert1hThreshold: 50,
@@ -865,7 +955,7 @@ describe('user alert matcher', () => {
 
     const suppressContext = createDeps({
       profiles: [{
-        userId: 10,
+        userId: 11,
         loadedAt: '2026-04-16T11:00:00.000Z',
         ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
         meteoraAlert1hThreshold: 50,
@@ -900,6 +990,51 @@ describe('user alert matcher', () => {
     assert.equal(suppressResult.emitted, 0);
     assert.equal(suppressResult.suppressed, 1);
     assert.equal(suppressContext.eventWrites.length, 0);
+  });
+
+  it('allows a fresh meteora alert after rearm from falling below threshold', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 12,
+        loadedAt: '2026-04-16T11:00:00.000Z',
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: false, meteoraSurge: true },
+        meteoraAlert1hThreshold: 50,
+      }],
+      meteoraRows: [{
+        tokenAddress: TOKEN_ADDRESS,
+        hasPool: true,
+        currentTvl: 25200,
+        baselineTvl1h: 15750,
+        baselineTvl24h: 10000,
+        bestPoolAddress: 'pool_meteora_primary',
+      }],
+      stateByRule: {
+        'meteora-surge': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: '2026-04-16T12:00:00.000Z',
+          lastAlertedPct: 60,
+          lastAlertedValue: 25000,
+          cooldownUntil: null,
+          metadata: {
+            lastDecision: 'rearmed',
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_vol_24h: 355000,
+        last_mcap: 301000,
+      },
+    }, { now: '2026-04-16T12:45:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'meteora-surge');
   });
 
   it('matches multiple active users from a single signal computation for the same token update', async () => {

@@ -20,9 +20,11 @@ const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
   '1H': 5,
   '6H': 10,
 });
-const METEORA_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const METEORA_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 const METEORA_STARTUP_SUPPRESS_MS = 60 * 1000;
 const METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT = 10;
+const METEORA_POST_ALERT_REPEAT_STEP_PCT = 50;
+const METEORA_REPEAT_TVL_GROWTH_PCT = 15;
 const METEORA_FINGERPRINT_CHANGE_BUCKET_PCT = 5;
 const METEORA_FINGERPRINT_TVL_BUCKET_USD = 10_000;
 const MATCHER_RULE_KEYS = Object.freeze([
@@ -621,7 +623,7 @@ function isSameSessionMeteoraPrimedState(candidate, state, profile) {
 }
 
 function canRepeatMeteoraInSession(candidate, state, profile) {
-  if (!isSameSessionMeteoraPrimedState(candidate, state, profile)) {
+  if (candidate?.kind !== 'meteora-surge' || !state) {
     return false;
   }
 
@@ -631,7 +633,28 @@ function canRepeatMeteoraInSession(candidate, state, profile) {
     return false;
   }
 
-  return nextPct >= lastAlertedPct + METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT;
+  const sameSessionPrimedHot = isSameSessionMeteoraPrimedState(candidate, state, profile)
+    && toTimestampMs(state?.lastAlertedAt) == null;
+  const requiredAdvancePct = sameSessionPrimedHot
+    ? METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT
+    : METEORA_POST_ALERT_REPEAT_STEP_PCT;
+
+  if (nextPct < lastAlertedPct + requiredAdvancePct) {
+    return false;
+  }
+
+  if (sameSessionPrimedHot) {
+    return true;
+  }
+
+  const lastAlertedTvl = toNumberOrNull(state?.lastAlertedValue);
+  const nextTvl = toNumberOrNull(candidate?.lastAlertedValue);
+  if (!(lastAlertedTvl > 0) || !(nextTvl > 0)) {
+    return false;
+  }
+
+  const requiredNextTvl = lastAlertedTvl * (1 + (METEORA_REPEAT_TVL_GROWTH_PCT / 100));
+  return nextTvl >= requiredNextTvl;
 }
 
 function getAnchoredRepeatPct(candidate, state) {
@@ -827,7 +850,9 @@ function shouldSuppressSurgeSessionRepeat(candidate, state, profile) {
 }
 
 function shouldSuppressMeteoraSessionRepeat(candidate, state, profile) {
-  return isSameSessionMeteoraPrimedState(candidate, state, profile)
+  return candidate?.kind === 'meteora-surge'
+    && state?.status === 'triggered'
+    && state?.rearmRequired === true
     && toNumberOrNull(state?.lastAlertedPct) != null
     && !canRepeatMeteoraInSession(candidate, state, profile);
 }
