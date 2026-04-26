@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-22` after the manual/routed sparkline rollout expanded to `Chart` columns backed by a `14d` / `336`-point window, filled-area mini charts, frozen per-alert alert-card mini chart snapshots, alert pagination, approximate hover inspection, a compact expanded hologram popup for routed/manual rows, `1m` refresh cadence, and age-adaptive chart granularity (`1m` / `5m` / `15m` / `30m`).
+Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, backend-alert card upsert on repeated event ids, and stricter `6H` surge repeat gates (`20m` cooldown plus `+50pp` / `+15% MCAP`).
 
 ## Current Deployment Topology
 
@@ -581,6 +581,10 @@ Used for:
 Current API shape:
 - client uses the current DLMM Datapi pools endpoint, not the legacy `pair/all_by_groups` route
 - worker queries `token_x` and `token_y` sides separately per token and merges the results
+- current `meteora-surge` alerting layer on top of this data now includes:
+  - hot-token priming instead of always alerting immediately on session start
+  - `10m` repeat cooldown
+  - fingerprint bucketing by `change1h` and TVL instead of drifting `mcap` / `volume24h`
 
 ## Source Of Truth By Area
 
@@ -795,7 +799,8 @@ Important:
   - live polling is paused
   - PumpFun frontend runtime is no longer mounted
   - backend alert events can still be accepted into alert state
-  - backend alert sounds can still play while hidden
+  - backend alert sounds are attempted while hidden, but the stronger guarantee is that returning to the tab should not replay a burst of catch-up alert sounds
+  - repeated hidden user-scoped backend alerts now coalesce per `user + rule + token` instead of endlessly accumulating duplicate backend rows during the same hidden period
   - returning to the tab schedules a monitored refresh with unseen alert-feed catch-up
 - if the tab stays hidden/unfocused for `20m`, the frontend stops the runtime and forces a reload when the user returns
 - manual-token restore is intentionally independent of dashboard success; `GET /api/config` alone is sufficient to recover the per-user manual list
@@ -1776,7 +1781,11 @@ Rules:
   - old-week `6H`
 - backend anti-spam behavior:
   - if a token is already hot when the current matcher session begins, the rule can be primed instead of alerting immediately
-  - same-session repeat requires another `+50` percentage points
+  - `1H` same-session repeat still requires another `+50` percentage points after the first emitted alert
+  - `6H` repeat is now stricter after the first emitted alert:
+    - `20m` cooldown
+    - another `+50` percentage points
+    - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` surge variants in the same age bucket cross-block each other for `1h`
   - surge requires `mcap >= 30k`
 
@@ -1828,11 +1837,13 @@ Persistence and delivery:
 - per-user per-rule seen/replay progress lives in `alert_delivery_cursors`
 - per-user emitted alert events live in `user_alert_events`
 - `user_alert_events` requires `dedupe_key` and enforces `UNIQUE (user_id, dedupe_key)` so the matcher can stay idempotent per user without relying on browser-local ambiguity
+  - during hidden user-scoped alert delivery, matcher dedupe now intentionally coalesces repeated emits per `user + rule + token`
 - backend feed endpoint:
   - `GET /api/dashboard/alert-events`
 - cursor update endpoint:
   - `POST /api/dashboard/alert-events/cursor`
 - realtime delivery also uses authenticated socket event `alert:event`
+  - if an already-known backend event id is republished with fresher payload, the frontend now updates the existing alert card instead of dropping the refresh
 
 Current user-config scope:
 - monitored `VOL/MCAP`, `HVNC`, split surge variants, and `Meteora` all expose backend-persisted user enable/threshold config

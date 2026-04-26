@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-22` after manual/routed sparkline rollout expanded to a `14d` / `336`-point window, filled-area mini charts, frozen per-alert alert-card mini chart snapshots, alert pagination, approximate hover inspection, a compact expanded hologram popup for routed/manual tables, `1m` refresh cadence, and age-adaptive granularity (`1m` / `5m` / `15m` / `30m`).
+Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, alert-card backend-event upsert, and stricter `6H` surge repeat gates (`20m` cooldown plus `+50pp` / `+15% MCAP`).
 
 ## Current Deployment Topology
 
@@ -546,7 +546,8 @@ Important:
   - live polling is paused
   - PumpFun frontend runtime is no longer mounted
   - backend alert events can still be accepted into alert state
-  - backend alert sounds can still play while hidden
+  - backend alert sounds are attempted while hidden, but the main guarantee is that returning to the tab should no longer replay a flood of accumulated alert sounds
+  - user-scoped backend matcher alerts now coalesce repeated hidden emissions per `user + rule + token` instead of endlessly fanning out backend rows during the same hidden period
   - returning to the tab schedules a monitored refresh with unseen alert-feed catch-up
 - If the browser tab stays hidden/unfocused for `20m`, the frontend stops the runtime and reloads when the user returns to the tab.
 - legacy frontend token storage was removed from the live auth flow
@@ -852,6 +853,9 @@ Current monitored UI behavior:
   - requires inferred `TVL baseline 1h >= 10k`
   - requires `change1h >= meteora-alert-1h-threshold`
   - default threshold is `50%`
+  - hot tokens can be primed on session start instead of emitting immediately
+  - repeat behavior now has a real `10m` cooldown
+  - fingerprinting buckets `change1h` / `TVL` and stops depending on drifting `mcap` / `volume24h`
 
 ### 6. PumpFun metadata enrichment
 - The legacy PumpFun metadata route still exists:
@@ -1264,6 +1268,7 @@ Current security priority order:
   - per-user event idempotency uses mandatory `dedupe_key`
   - the frontend marks backend alert events as seen only after accepting them into the local alert list
   - backend-owned alerts still render inside `/alerts`, but they no longer depend on the local monitored alert engine
+  - if a backend-owned alert event is republished with the same event id and fresher payload, the frontend now upserts the existing alert card instead of silently dropping the update
 - the `Alerts` panel now supports local text search by:
   - symbol
   - name
@@ -1455,7 +1460,10 @@ Current limitation:
   - `age >= 7d` qualifies only for old-week-surge
 - surge now also has backend anti-spam guards:
   - first-seen hot tokens are primed instead of always alerting immediately
-  - same-session repeat requires another `+50` percentage points
+  - `1H` same-session repeat still requires another `+50` percentage points after the first emitted alert
+  - `6H` same-session repeat now also applies a `20m` cooldown and requires:
+    - another `+50` percentage points
+    - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` variants in the same age bucket cross-block each other for `1h`
   - surge requires `mcap >= 30k`
 - semantic note:
