@@ -966,18 +966,32 @@ export function createAppController(): AppController {
     return isHistoryWorkspace();
   }
 
+  function getRequestedPaginationFloor(page: number, perPage: number) {
+    const safePage = Math.max(0, Math.floor(page) || 0);
+    const safePerPage = Math.max(10, Math.floor(perPage) || ROUTED_BUCKET_DEFAULT_PER_PAGE);
+    return (safePage + 1) * safePerPage;
+  }
+
   function getRecentTokenTotalForPagination() {
     if (!usesHistoryBucketBootstrap()) {
       return state.data.recentTokenAddresses.length;
     }
-    return Math.max(state.data.recentTokenAddresses.length, state.bars.recent);
+    return Math.max(
+      state.data.recentTokenAddresses.length,
+      state.bars.recent,
+      getRequestedPaginationFloor(state.ui.recentPage, state.ui.recentPerPage),
+    );
   }
 
   function getOldWeekTokenTotalForPagination() {
     if (!usesHistoryBucketBootstrap()) {
       return state.data.oldWeekTokenAddresses.length;
     }
-    return Math.max(state.data.oldWeekTokenAddresses.length, state.bars.oldWeek);
+    return Math.max(
+      state.data.oldWeekTokenAddresses.length,
+      state.bars.oldWeek,
+      getRequestedPaginationFloor(state.ui.oldWeekPage, state.ui.oldWeekPerPage),
+    );
   }
 
   function shouldRunFrontendAlerts() {
@@ -7357,14 +7371,20 @@ export function createAppController(): AppController {
       emit('alerts');
     },
     setRecentPage(page: number) {
-      state.ui.recentPage = clampPage(page, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
+      const normalizedPage = Math.max(0, Math.floor(page) || 0);
+      state.ui.recentPage = usesHistoryBucketBootstrap()
+        ? normalizedPage
+        : clampPage(normalizedPage, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
       emit('recent');
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
       }
     },
     setOldWeekPage(page: number) {
-      state.ui.oldWeekPage = clampPage(page, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
+      const normalizedPage = Math.max(0, Math.floor(page) || 0);
+      state.ui.oldWeekPage = usesHistoryBucketBootstrap()
+        ? normalizedPage
+        : clampPage(normalizedPage, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
       emit('old-week');
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();

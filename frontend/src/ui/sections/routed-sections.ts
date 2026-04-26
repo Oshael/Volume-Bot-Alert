@@ -6,6 +6,12 @@ const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
 const OLD_WEEK_MIN_AGE_MINUTES = RECENT_MAX_AGE_MINUTES;
 const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
 
+function getRequestedPaginationFloor(page: number, perPage: number) {
+  const safePage = Math.max(0, Math.floor(page) || 0);
+  const safePerPage = Math.max(10, Math.floor(perPage) || 15);
+  return (safePage + 1) * safePerPage;
+}
+
 function normalizeRecentAgeMinutes(value: unknown, fallbackMinutes: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -202,7 +208,11 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   }
   const safeRecentPerPage = Math.max(10, Math.floor(state.ui.recentPerPage) || 15);
   const recentTotalCount = usesServerSlice
-    ? Math.max(filteredRecentTokens.length, state.bars.recent)
+    ? Math.max(
+      filteredRecentTokens.length,
+      state.bars.recent,
+      getRequestedPaginationFloor(state.ui.recentPage, safeRecentPerPage),
+    )
     : filteredRecentTokens.length;
   const recentTotalPages = Math.max(1, Math.ceil(recentTotalCount / safeRecentPerPage));
   const safeRecentPage = Math.min(Math.max(0, Math.floor(state.ui.recentPage) || 0), recentTotalPages - 1);
@@ -457,7 +467,11 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   }
   const safeOldWeekPerPage = Math.max(10, Math.floor(state.ui.oldWeekPerPage) || 15);
   const oldWeekTotalCount = usesServerSlice
-    ? Math.max(filteredOldWeekTokens.length, state.bars.oldWeek)
+    ? Math.max(
+      filteredOldWeekTokens.length,
+      state.bars.oldWeek,
+      getRequestedPaginationFloor(state.ui.oldWeekPage, safeOldWeekPerPage),
+    )
     : filteredOldWeekTokens.length;
   const oldWeekTotalPages = Math.max(1, Math.ceil(oldWeekTotalCount / safeOldWeekPerPage));
   const safeOldWeekPage = Math.min(Math.max(0, Math.floor(state.ui.oldWeekPage) || 0), oldWeekTotalPages - 1);
