@@ -4,9 +4,13 @@ const assert = require('node:assert/strict');
 const tokenAlertSignalBuilder = require('../src/services/token-alert-signal-builder');
 
 describe('token alert signal builder', () => {
+  it('uses a 10 minute max age gate for HVNC', () => {
+    assert.equal(tokenAlertSignalBuilder.HVNC_MAX_AGE_MS, 10 * 60 * 1000);
+  });
+
   it('builds reusable monitored, hvnc, and meteora signals from dashboard-like input', () => {
     const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
-    const createdAt = nowMs - (20 * 60 * 1000);
+    const createdAt = nowMs - (5 * 60 * 1000);
 
     const signals = tokenAlertSignalBuilder.buildTokenAlertSignals({
       address: 'So11111111111111111111111111111111111111112',
@@ -41,7 +45,7 @@ describe('token alert signal builder', () => {
     assert.equal(signals.currentPriceChange6h, 120);
     assert.equal(signals.prevPriceChange6h, 95);
     assert.equal(signals.isMcapDeclining, false);
-    assert.equal(signals.ageMs, 20 * 60 * 1000);
+    assert.equal(signals.ageMs, 5 * 60 * 1000);
     assert.equal(signals.hvncAgeGatePassed, true);
     assert.equal(signals.hvncVolume24hGatePassed, true);
     assert.equal(signals.passesHvncPrereqs, true);
@@ -55,6 +59,40 @@ describe('token alert signal builder', () => {
     assert.equal(signals.meteoraMinTvlGatePassed, true);
     assert.equal(signals.meteoraBaseline1hGatePassed, true);
     assert.equal(signals.passesMeteoraPrereqs, true);
+  });
+
+  it('uses post-migration age instead of pre-migration token age for PumpFun HVNC', () => {
+    const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+
+    const signals = tokenAlertSignalBuilder.buildTokenAlertSignals({
+      address: 'So11111111111111111111111111111111111111112',
+      source: 'pumpfun-migrated',
+      last_token_created_at_ms: nowMs - (2 * 60 * 60 * 1000),
+      migration_grace_until: new Date(nowMs + (5 * 60 * 1000)).toISOString(),
+      last_vol_24h: 350000,
+    }, { nowMs });
+
+    assert.equal(signals.ageMs, 2 * 60 * 60 * 1000);
+    assert.equal(signals.migrationAgeMs, 5 * 60 * 1000);
+    assert.equal(signals.hvncAgeGatePassed, true);
+    assert.equal(signals.passesHvncPrereqs, true);
+  });
+
+  it('does not let pre-migration token age qualify an expired PumpFun HVNC window', () => {
+    const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+
+    const signals = tokenAlertSignalBuilder.buildTokenAlertSignals({
+      address: 'So11111111111111111111111111111111111111112',
+      source: 'pumpfun-migrated',
+      last_token_created_at_ms: nowMs - (5 * 60 * 1000),
+      migration_grace_until: new Date(nowMs - (60 * 1000)).toISOString(),
+      last_vol_24h: 350000,
+    }, { nowMs });
+
+    assert.equal(signals.ageMs, 5 * 60 * 1000);
+    assert.equal(signals.migrationAgeMs, 11 * 60 * 1000);
+    assert.equal(signals.hvncAgeGatePassed, false);
+    assert.equal(signals.passesHvncPrereqs, false);
   });
 
   it('accepts backend-shaped aliases and exposes declining mcap / old-token gates', () => {

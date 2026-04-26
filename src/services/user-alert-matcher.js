@@ -460,6 +460,14 @@ async function loadMeteoraRows(address, profiles, deps) {
   return deps.tokenMeteoraState.listSummaryByAddresses([address]);
 }
 
+function buildMigrationSignalInput(tokenAfter) {
+  return {
+    source: tokenAfter?.source,
+    first_seen_at: tokenAfter?.first_seen_at,
+    migration_grace_until: tokenAfter?.migration_grace_until,
+  };
+}
+
 function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow) {
   const readPriceChange = (token, window) => {
     if (window === '1h') {
@@ -470,6 +478,7 @@ function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow) {
 
   return {
     tokenAddress: String(tokenAfter?.address || '').trim(),
+    ...buildMigrationSignalInput(tokenAfter),
     last_vol_5m: tokenAfter?.last_vol_5m,
     baseline_vol_5m: volumeRow?.baseline_vol_5m ?? tokenBefore?.last_vol_5m ?? null,
     last_mcap: mcapRow?.current_mcap ?? tokenAfter?.last_mcap,

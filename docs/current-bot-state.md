@@ -400,7 +400,7 @@ Important:
     - dumps are suppressed when the window shows pair churn instead of a consistent collapse on the same pair
     - this was added to reduce false dump alerts caused by Dex returning a different pool for the same token
   - dump evaluation now keeps a rule-local pinned pair per token in `token_alert_rule_state.metadata`
-  - pin acquisition / pin switch requires `10` consecutive live observations of the same best pair before the detector trusts that new pair
+  - pin acquisition / pin switch requires `15` consecutive live observations of the same best pair before the detector trusts that new pair
   - while a pair pin is being acquired or switched, dump alerts are intentionally suppressed
   - if the live best pair diverges from the pinned pair while a dump leg is still marked triggered, the old leg is rearmed immediately with reason `pair-switch`
   - rearm happens on recovery to `85%` of the last baseline or after `6h`
@@ -1435,7 +1435,7 @@ Current limitation:
   - `authLimiter`: `10 / 15min / IP`
   - `defaultApiLimiter`: `180 / 15min / user+IP`
   - `dashboardLimiter`: `360 / 15min / user+IP`
-  - `pumpfunMetaLimiter`: `220 / 15min / user+IP`
+  - `pumpfunMetaLimiter`: `300 / 15min / user+IP`
   - `catalogWriteLimiter`: `60 / 15min / user+IP`
   - `catalogReadLimiter`: `120 / 15min / user+IP`
 - Current conclusion:
@@ -1445,6 +1445,9 @@ Current limitation:
 
 ### Backend user-alert matcher model
 - `VOL`, `MCAP`, `HVNC`, `Surge`, and `Meteora` user alerts are now matched in the backend user-alert matcher, not generated primarily in the frontend panel
+- `HVNC` currently requires `volume24h >= hvnc-min-vol`
+  - for normal tokens, the age gate is token age under `10m`
+  - for `pumpfun-migrated` tokens, the age gate is under `10m` after migration capture, not pre-migration token age
 - `monitored-vol` and `monitored-mcap` now use anchored repeat semantics:
   - the first alert uses the current persisted baseline
   - repeat alerts compare against the last alerted value rather than forever reusing the original baseline

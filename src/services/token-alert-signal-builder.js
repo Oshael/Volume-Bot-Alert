@@ -1,4 +1,4 @@
-const HVNC_MAX_AGE_MS = 30 * 60 * 1000;
+const HVNC_MAX_AGE_MS = 10 * 60 * 1000;
 const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
 const METEORA_ALERT_MIN_TVL = 10000;
 const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
@@ -63,6 +63,43 @@ function computeAgeMs(tokenCreatedAt, nowMs) {
   }
 
   const ageMs = nowMs - createdAt;
+  return ageMs >= 0 ? ageMs : null;
+}
+
+function toTimestampMs(value) {
+  if (!value) return null;
+  const numeric = toNumberOrNull(value);
+  if (numeric != null) {
+    return numeric;
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.getTime() : null;
+}
+
+function computeMigrationAgeMs(input, nowMs) {
+  const source = String(input?.source || '').trim().toLowerCase();
+  if (source !== 'pumpfun-migrated') {
+    return null;
+  }
+
+  const explicitMigratedAt = firstNumber(
+    input.migratedAt,
+    input.migrationAt,
+    input.migrated_at_ms,
+    input.migration_at_ms,
+  );
+  const migrationGraceUntilMs = toTimestampMs(input.migrationGraceUntil ?? input.migration_grace_until);
+  const firstSeenAtMs = toTimestampMs(input.firstSeenAt ?? input.first_seen_at);
+  const migratedAtMs = explicitMigratedAt
+    ?? (migrationGraceUntilMs != null ? migrationGraceUntilMs - HVNC_MAX_AGE_MS : null)
+    ?? firstSeenAtMs;
+
+  if (!(migratedAtMs > 0)) {
+    return null;
+  }
+
+  const ageMs = nowMs - migratedAtMs;
   return ageMs >= 0 ? ageMs : null;
 }
 
@@ -175,9 +212,10 @@ function normalizeMeteora(input = {}) {
   };
 }
 
-function normalizeCoreFacts(input = {}) {
+function normalizeCoreFacts(input = {}, nowMs = Date.now()) {
   return {
     address: firstText(input.address, input.tokenAddress),
+    source: firstText(input.source),
     currentVolume5m: firstNumber(
       input.currentVolume5m,
       input.volume5m,
@@ -209,6 +247,7 @@ function normalizeCoreFacts(input = {}) {
       input.tokenCreatedAt,
       input.last_token_created_at_ms,
     ),
+    migrationAgeMs: computeMigrationAgeMs(input, nowMs),
     currentPriceChange1h: firstNumber(
       input.currentPriceChange1h,
       input.priceChange1h,
@@ -232,6 +271,18 @@ function normalizeCoreFacts(input = {}) {
   };
 }
 
+function isPumpfunMigratedSource(source) {
+  return String(source || '').trim().toLowerCase() === 'pumpfun-migrated';
+}
+
+function passesHvncAgeGate(facts, ageMs) {
+  if (isPumpfunMigratedSource(facts.source)) {
+    return facts.migrationAgeMs != null && facts.migrationAgeMs < HVNC_MAX_AGE_MS;
+  }
+
+  return ageMs != null && ageMs < HVNC_MAX_AGE_MS;
+}
+
 function buildSignalFlags(facts, meteora, nowMs) {
   const ageMs = computeAgeMs(facts.tokenCreatedAt, nowMs);
   const vol5mChangePct = computePctChange(facts.currentVolume5m, facts.prevVolume5m);
@@ -241,7 +292,7 @@ function buildSignalFlags(facts, meteora, nowMs) {
     && facts.prevMcap > 0
     && facts.currentMcap > 0
     && facts.currentMcap < facts.prevMcap;
-  const hvncAgeGatePassed = ageMs != null && ageMs < HVNC_MAX_AGE_MS;
+  const hvncAgeGatePassed = passesHvncAgeGate(facts, ageMs);
   const hvncVolume24hGatePassed = facts.volume24h != null && facts.volume24h > 0;
   const passesHvncPrereqs = hvncAgeGatePassed && hvncVolume24hGatePassed;
   const mcapAlertTokenAgeGatePassed = ageMs == null || ageMs >= MCAP_ALERT_MIN_TOKEN_AGE_MS;
@@ -255,6 +306,7 @@ function buildSignalFlags(facts, meteora, nowMs) {
 
   return {
     ageMs,
+    migrationAgeMs: facts.migrationAgeMs,
     vol5mChangePct,
     mcapChangePct,
     isMcapDeclining,
@@ -277,7 +329,7 @@ function buildTokenAlertSignals(input = {}, options = {}) {
     options.now instanceof Date ? options.now.getTime() : null,
     Date.now(),
   );
-  const facts = normalizeCoreFacts(input);
+  const facts = normalizeCoreFacts(input, nowMs);
   const meteora = normalizeMeteora(input);
   const flags = buildSignalFlags(facts, meteora, nowMs);
 
@@ -295,6 +347,7 @@ function buildTokenAlertSignals(input = {}, options = {}) {
     currentPriceChange6h: facts.currentPriceChange6h,
     prevPriceChange6h: facts.prevPriceChange6h,
     ageMs: flags.ageMs,
+    migrationAgeMs: flags.migrationAgeMs,
     vol5mChangePct: flags.vol5mChangePct,
     mcapChangePct: flags.mcapChangePct,
     isMcapDeclining: flags.isMcapDeclining,

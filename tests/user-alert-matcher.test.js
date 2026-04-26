@@ -619,6 +619,31 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites[0].ruleKey, 'hvnc');
   });
 
+  it('emits hvnc for migrated PumpFun tokens during the post-migration window even when token age is older', async () => {
+    const now = Date.UTC(2026, 3, 16, 12, 0, 0);
+    const context = createDeps({
+      profiles: [{
+        userId: 22,
+        ruleEnabled: { monitoredVol: false, monitoredMcap: false, hvnc: true, meteoraSurge: false },
+        hvncMinVol: 300000,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        source: 'pumpfun-migrated',
+        last_vol_24h: 350000,
+        last_token_created_at_ms: now - (2 * 60 * 60 * 1000),
+        migration_grace_until: new Date(now + (5 * 60 * 1000)).toISOString(),
+      },
+    }, { now: new Date(now), deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'hvnc');
+  });
+
   it('emits meteora-surge from stored meteora baselines without frontend recomputation', async () => {
     const context = createDeps({
       profiles: [{

@@ -1758,7 +1758,8 @@ Meaning:
 - High Volume New Coin
 
 Rules:
-- token age under `30m`
+- normal token age under `10m`
+- for `pumpfun-migrated` tokens, age is counted from migration capture, not from pre-migration token creation
 - `volume24h >= hvnc-min-vol`
 - backend matcher emits it as a user-token event
 - still single-fire style unless a new backend lifecycle transition requalifies it
@@ -1820,7 +1821,7 @@ Detection model:
   - dumps are suppressed when the window shows pair churn instead of a consistent collapse on the same pair
   - this was added to reduce false dump alerts caused by Dex returning a different pool for the same token
 - the dump rule now also keeps a rule-local pinned pair per token in `token_alert_rule_state.metadata`
-- pin acquisition or pin switch requires `10` consecutive live best-pair observations before the detector trusts the new pair
+- pin acquisition or pin switch requires `15` consecutive live best-pair observations before the detector trusts the new pair
 - while pin acquisition or switching is in progress, dump alerts are intentionally suppressed for that token
 - if the live best pair diverges from the pinned pair while the old collapse leg is still triggered, the rule rearms immediately with reason `pair-switch`
 
@@ -2033,7 +2034,7 @@ Current defaults:
 - `authLimiter`: `10 / 15min / IP`
 - `defaultApiLimiter`: `180 / 15min / user+IP`
 - `dashboardLimiter`: `360 / 15min / user+IP`
-- `pumpfunMetaLimiter`: `220 / 15min / user+IP`
+- `pumpfunMetaLimiter`: `300 / 15min / user+IP`
 - `catalogWriteLimiter`: `60 / 15min / user+IP`
 - `catalogReadLimiter`: `120 / 15min / user+IP`
 
