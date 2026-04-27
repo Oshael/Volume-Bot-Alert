@@ -296,6 +296,8 @@ Low-activity override:
 
 Migrated-token grace:
 - `pumpfun-migrated` catalog rows now persist `migration_grace_until`
+- migration grace is assigned even when the PumpPortal migration payload does not include a usable initial market cap
+- unevaluated migrated rows are prioritized ahead of normal/low/dormant backlog so they get an initial Dex evaluation promptly
 - for the first `10m` after migration, the worker does not let those tokens fall into the `low-dust` cadence
 - if Dex sees a freshly migrated token below `15k` during that window, it still uses the `low-near` floor (`15s`)
 - if it moves into `30k+` or `100k+`, it follows the normal `normal` / `high-*` cadence immediately

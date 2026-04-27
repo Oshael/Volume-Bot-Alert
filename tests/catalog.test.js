@@ -343,6 +343,30 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('assigns migration grace to PumpFun migrated tokens even without initial market cap', async () => {
+    await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
+    await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
+
+    try {
+      const token = await tokenCatalog.upsertToken({
+        address: VALID_ADDR,
+        chain: 'solana',
+        source: 'pumpfun-migrated',
+        symbol: 'BOOT',
+        isActiveMonitorCandidate: true,
+      });
+
+      assert.equal(token.source, 'pumpfun-migrated');
+      assert.equal(token.is_active_monitor_candidate, true);
+      assert.equal(token.eligible_for_monitoring, false);
+      assert.ok(token.migration_grace_until);
+      assert.ok(new Date(token.migration_grace_until).getTime() > Date.now() + (9 * 60 * 1000));
+      assert.ok(new Date(token.next_evaluation_at).getTime() <= Date.now() + 1000);
+    } finally {
+      await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
+    }
+  });
+
   it('skips hotlink-blocked pumpfun image hosts and falls back to dex metadata', async () => {
     const originalFetch = global.fetch;
     global.fetch = async (url) => {

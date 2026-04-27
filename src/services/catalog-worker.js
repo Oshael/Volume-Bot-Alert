@@ -165,7 +165,7 @@ function isMigrationGraceActive(token, now = Date.now()) {
 }
 
 function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) {
-  return marketCap > 0 && marketCap < 15000 && isMigrationGraceActive(token, now);
+  return marketCap >= 0 && marketCap < 15000 && isMigrationGraceActive(token, now);
 }
 
 function isManualSource(token) {
@@ -379,6 +379,10 @@ function getRateLimitedRetryMs(token) {
 
   if (shouldFastRetryManualBootstrap(token)) {
     return RATE_LIMIT_MANUAL_RECHECK_MS;
+  }
+
+  if (shouldFastRetryMigratedBootstrap(token)) {
+    return RATE_LIMIT_LOW_NEAR_RECHECK_MS;
   }
 
   if (isLowActivityAutoToken(token, lastVol24h)) {

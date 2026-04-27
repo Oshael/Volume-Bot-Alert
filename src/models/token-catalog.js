@@ -3,7 +3,7 @@ const adminBlockedToken = require('./admin-blocked-token');
 const { isValidAddress } = require('./user-token');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
-const PUMPFUN_MIGRATION_MIN_MCAP = 30000;
+const PUMPFUN_MIGRATION_GRACE_MS = 10 * 60 * 1000;
 const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
 const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
 const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
@@ -206,9 +206,9 @@ async function upsertToken(token) {
   const lastTxns24hBuys = toNullableInteger(token.txns24hBuys);
   const lastTxns24hSells = toNullableInteger(token.txns24hSells);
   const lastTokenCreatedAtMs = toNullableInteger(token.tokenCreatedAt);
-  const qualifiesPumpMigrationBoost = source === 'pumpfun-migrated' && lastMcap != null && lastMcap >= PUMPFUN_MIGRATION_MIN_MCAP;
-  const migrationGraceUntil = qualifiesPumpMigrationBoost
-    ? toDateOrNull(token.migrationGraceUntil) || new Date(Date.now() + (10 * 60 * 1000))
+  const isPumpfunMigrated = source === 'pumpfun-migrated';
+  const migrationGraceUntil = isPumpfunMigrated
+    ? toDateOrNull(token.migrationGraceUntil) || new Date(Date.now() + PUMPFUN_MIGRATION_GRACE_MS)
     : null;
 
   const { rows } = await db.query(
@@ -298,7 +298,7 @@ async function upsertToken(token) {
       migrationGraceUntil,
       isActiveMonitorCandidate,
       address,
-      qualifiesPumpMigrationBoost,
+      isPumpfunMigrated,
     ]
   );
 
@@ -342,11 +342,16 @@ async function listDueForEvaluation(limit = 25) {
                   AND COALESCE(last_vol_6h, 0) >= 15000 THEN 1
                 WHEN COALESCE(monitor_priority, 'dormant') = 'high'
                   AND COALESCE(last_mcap, 0) >= 100000 THEN 2
-                WHEN COALESCE(monitor_priority, 'dormant') = 'normal' THEN 3
+                WHEN source = 'pumpfun-migrated'
+                  AND (
+                    last_evaluated_at IS NULL
+                    OR (migration_grace_until IS NOT NULL AND migration_grace_until > NOW() AND last_eligible_at IS NULL)
+                  ) THEN 3
+                WHEN COALESCE(monitor_priority, 'dormant') = 'normal' THEN 4
                 WHEN COALESCE(monitor_priority, 'dormant') = 'low'
-                  AND COALESCE(last_mcap, 0) >= 15000 THEN 4
-                WHEN COALESCE(monitor_priority, 'dormant') = 'low' THEN 5
-                ELSE 6
+                  AND COALESCE(last_mcap, 0) >= 15000 THEN 5
+                WHEN COALESCE(monitor_priority, 'dormant') = 'low' THEN 6
+                ELSE 7
               END ASC,
               next_evaluation_at ASC,
               COALESCE(last_mcap, 0) DESC,

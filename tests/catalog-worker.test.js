@@ -88,6 +88,21 @@ describe('catalog worker drift compensation', () => {
     assert.equal(catalogWorker.__private.getRateLimitedRetryMs(token), 3 * 60 * 1000);
   });
 
+  it('keeps migrated unknown-mcap bootstrap tokens off the dormant retry path during migration grace', () => {
+    const token = {
+      source: 'pumpfun-migrated',
+      monitor_priority: 'dormant',
+      last_mcap: 0,
+      migration_grace_until: new Date(Date.now() + catalogWorker.__private.MIGRATION_GRACE_FLOOR_MS).toISOString(),
+    };
+
+    assert.equal(catalogWorker.__private.isLowDustProtectedByMigrationGrace(token, 0), true);
+    assert.equal(catalogWorker.__private.getThrottleTokenBucket(token), 'low-near');
+    assert.equal(catalogWorker.__private.getDexPriorityHint(token), 'low-near');
+    assert.equal(catalogWorker.__private.getDexUnavailableRetryMs(token), 15 * 1000);
+    assert.equal(catalogWorker.__private.getRateLimitedRetryMs(token), 3 * 60 * 1000);
+  });
+
   it('returns migrated low-dust tokens to normal low-dust handling after grace expires', () => {
     const token = {
       source: 'pumpfun-migrated',

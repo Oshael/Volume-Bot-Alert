@@ -722,6 +722,8 @@ Current monitored UI behavior:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
   - newly added manual tokens get `5s` retry cadence until first classification in normal mode
   - `pumpfun-migrated` tokens now persist `migration_grace_until`
+  - migration grace is assigned even when the PumpPortal migration payload does not include a usable initial market cap
+  - unevaluated migrated rows are prioritized ahead of normal/low/dormant backlog so they get an initial Dex evaluation promptly
   - during the first `10m` after migration, they cannot fall into the `low-dust` cadence even if Dex sees them below `15k`
   - while inside that grace, `<15k` migrated tokens still use at least the `low-near` cadence floor (`15s`), while `30k+` and `100k+` continue following the normal higher-priority buckets
   - the migration bootstrap does not depend on any Dex paid profile/order; tokens can still receive normal Dex market data without paid Dex metadata if Dex already exposes a usable pair
