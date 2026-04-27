@@ -11,7 +11,8 @@ const userAlertProfileCache = require('./user-alert-profile-cache');
 
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
-const SURGE_MIN_MCAP = 30_000;
+const SURGE_1H_MIN_MCAP = 60_000;
+const SURGE_6H_MIN_MCAP = 60_000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_POST_ALERT_REPEAT_GROWTH_PCT = 50;
 const SURGE_6H_REPEAT_COOLDOWN_MS = 20 * 60 * 1000;
@@ -247,11 +248,12 @@ function buildSurgeCandidate(input) {
   const ageGatePassed = ageBucket === 'recent'
     ? signals.recentSurgeAgeGatePassed
     : signals.oldWeekSurgeAgeGatePassed;
+  const minMcap = surgeWindow === '6H' ? SURGE_6H_MIN_MCAP : SURGE_1H_MIN_MCAP;
   const qualifies = Boolean(enabled)
     && ageGatePassed
     && currentPct != null
     && normalizedThresholdPct != null
-    && (toNumberOrNull(signals.currentMcap) || 0) >= SURGE_MIN_MCAP
+    && (toNumberOrNull(signals.currentMcap) || 0) >= minMcap
     && currentPct >= normalizedThresholdPct;
   if (!qualifies) {
     return null;
@@ -1034,7 +1036,8 @@ module.exports = {
   MATCHER_RULE_KEYS,
   STANDARD_ALERT_COOLDOWN_MS,
   SURGE_CROSS_WINDOW_COOLDOWN_MS,
-  SURGE_MIN_MCAP,
+  SURGE_1H_MIN_MCAP,
+  SURGE_6H_MIN_MCAP,
   SURGE_STARTUP_SUPPRESS_MS,
   SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
   SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW,

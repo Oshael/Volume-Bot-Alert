@@ -1788,7 +1788,7 @@ Rules:
     - `+50%` relative PCHANGE growth
     - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` surge variants in the same age bucket cross-block each other for `1h`
-  - surge requires `mcap >= 30k`
+  - surge requires `mcap >= 60k` for both `1H` and `6H`
 
 Badge label in alert card:
 - `RECENT TOKEN SURGE` for `2d <= age < 7d`

@@ -1231,7 +1231,7 @@ describe('user alert matcher', () => {
     );
   });
 
-  it('suppresses surge alerts for tokens below 30k market cap', async () => {
+  it('suppresses 6h surge alerts for tokens below 60k market cap', async () => {
     const nowMs = Date.UTC(2026, 3, 17, 19, 17, 48);
     const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
     const context = createDeps({
@@ -1259,10 +1259,50 @@ describe('user alert matcher', () => {
       tokenAfter: {
         address: TOKEN_ADDRESS,
         symbol: 'YUJI',
-        last_mcap: 15000,
+        last_mcap: 50000,
         last_vol_24h: 10000,
         last_token_created_at_ms: createdAt,
         last_price_change_6h: 149,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 0);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('suppresses 1h surge alerts for tokens below 60k market cap', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 19, 17, 48);
+    const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 74,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 40,
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_1h: 35,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'YUJI',
+        last_mcap: 50000,
+        last_vol_24h: 10000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 45,
       },
     }, { now: new Date(nowMs), deps: context.deps });
 

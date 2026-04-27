@@ -1468,7 +1468,7 @@ Current limitation:
     - `+50%` relative PCHANGE growth
     - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` variants in the same age bucket cross-block each other for `1h`
-  - surge requires `mcap >= 30k`
+  - surge requires `mcap >= 60k` for both `1H` and `6H`
 - semantic note:
   - `prevVolume5mCanonical` remains visual-only for monitored cards
   - alert matching uses backend signal inputs and persisted rule state, not the visual card delta
