@@ -12,6 +12,7 @@ const request = require('supertest');
 const dexscreener = require('../src/services/dexscreener');
 const catalogWorker = require('../src/services/catalog-worker');
 const tokenCatalog = require('../src/models/token-catalog');
+const adminBlockedToken = require('../src/models/admin-blocked-token');
 const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
 const tokenMarketLateralizationRun = require('../src/models/token-market-lateralization-run');
@@ -129,6 +130,8 @@ describe('Catalog routes', () => {
     await verifyEmailFromRegisterResponse(regRes);
     token = await completeLogin(TEST_USER.email, TEST_USER.password);
 
+    await adminBlockedToken.ensureTable();
+    await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
 
     dexscreener.getTokenPairs = async () => (mockDataAvailable ? { pairs: [mockPair] } : null);
@@ -147,6 +150,7 @@ describe('Catalog routes', () => {
     dexscreener.getBestPair = originalGetBestPair;
     dexscreener.clearCache = originalClearCache;
     catalogWorker.__private.evaluateTokenWithData = originalEvaluateTokenWithData;
+    await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]).catch(() => {});
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
     if (server && server.close) server.close();
     await db.pool.end().catch(() => {});
@@ -290,6 +294,53 @@ describe('Catalog routes', () => {
     assert.equal(res.status, 202);
     assert.equal(res.body.reason, 'dex_unavailable');
     assert.equal(typeof res.body.retryAt, 'number');
+  });
+
+  it('keeps admin-blocked tokens suppressed if a delayed catalog evaluation finishes later', async () => {
+    await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
+    await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
+
+    try {
+      await tokenCatalog.upsertToken({
+        address: VALID_ADDR,
+        chain: 'solana',
+        source: 'dexscreener-discovery',
+        symbol: 'TRWUMP',
+        mcap: 87260,
+        isActiveMonitorCandidate: true,
+      });
+      await adminBlockedToken.add({ address: VALID_ADDR, label: 'TRWUMP' });
+      await tokenCatalog.upsertToken({
+        address: VALID_ADDR,
+        chain: 'solana',
+        source: 'admin-blocked',
+        symbol: 'TRWUMP',
+        isActiveMonitorCandidate: false,
+      });
+
+      const delayedEvaluation = await tokenCatalog.applyEvaluationResult(VALID_ADDR, {
+        eligibilityState: 'dex-normal',
+        eligibleForMonitoring: true,
+        suppressedReason: null,
+        monitorPriority: 'normal',
+        nextEvaluationAt: new Date(),
+        mcap: 999999,
+        price: '0.99',
+        vol24h: 500000,
+      });
+
+      assert.equal(delayedEvaluation.source, 'admin-blocked');
+      assert.equal(delayedEvaluation.is_active_monitor_candidate, false);
+      assert.equal(delayedEvaluation.eligible_for_monitoring, false);
+      assert.equal(delayedEvaluation.eligibility_state, 'admin-blocked');
+      assert.equal(delayedEvaluation.suppressed_reason, 'admin_blocked');
+      assert.equal(delayedEvaluation.monitor_priority, 'dormant');
+      assert.equal(Number(delayedEvaluation.last_mcap), 87260);
+      assert.ok(new Date(delayedEvaluation.next_evaluation_at).getTime() > Date.now() + (9 * 365 * 24 * 60 * 60 * 1000));
+    } finally {
+      await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]).catch(() => {});
+      await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
+    }
   });
 
   it('skips hotlink-blocked pumpfun image hosts and falls back to dex metadata', async () => {

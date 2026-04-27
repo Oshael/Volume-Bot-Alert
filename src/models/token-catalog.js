@@ -1104,6 +1104,7 @@ async function reactivateSoftArchivedToken(address, options = {}) {
 }
 
 async function applyEvaluationResult(address, result) {
+  await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
   const eligibleForMonitoring = !!result.eligibleForMonitoring;
@@ -1134,7 +1135,7 @@ async function applyEvaluationResult(address, result) {
   const lastTxns24hSells = toNullableInteger(result.txns24hSells);
   const lastTokenCreatedAtMs = toNullableInteger(result.tokenCreatedAt);
 
-  const { rows } = await db.query(
+  const updateResult = await db.query(
     `UPDATE token_catalog
      SET eligibility_state = $2,
          eligible_for_monitoring = $3,
@@ -1172,6 +1173,12 @@ async function applyEvaluationResult(address, result) {
            ELSE metadata_updated_at
          END
      WHERE address = $1
+       AND COALESCE(source, '') <> 'admin-blocked'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM admin_blocked_tokens ab
+         WHERE ab.address = token_catalog.address
+       )
      RETURNING *`,
     [
       addr,
@@ -1206,7 +1213,38 @@ async function applyEvaluationResult(address, result) {
     ]
   );
 
-  return rows[0] || null;
+  if (updateResult.rows[0]) {
+    return updateResult.rows[0];
+  }
+
+  const blockedNextEvaluationAt = new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000));
+  const blockedResult = await db.query(
+    `UPDATE token_catalog
+     SET source = 'admin-blocked',
+         is_active_monitor_candidate = FALSE,
+         eligible_for_monitoring = FALSE,
+         eligibility_state = 'admin-blocked',
+         suppressed_reason = 'admin_blocked',
+         monitor_priority = 'dormant',
+         last_evaluated_at = NOW(),
+         next_evaluation_at = $2,
+         last_evaluation_error = NULL,
+         evaluation_error_count = 0,
+         metadata_updated_at = NOW()
+     WHERE address = $1
+       AND (
+         source = 'admin-blocked'
+         OR EXISTS (
+           SELECT 1
+           FROM admin_blocked_tokens ab
+           WHERE ab.address = token_catalog.address
+         )
+       )
+     RETURNING *`,
+    [addr, blockedNextEvaluationAt]
+  );
+
+  return blockedResult.rows[0] || null;
 }
 
 async function applyQuarantineCleanup(options = {}) {
