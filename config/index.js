@@ -430,6 +430,12 @@ module.exports = {
     candidateLimit: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_FAST_5X_CANDIDATE_LIMIT || '250', 10) || 250, 500)),
   },
 
+  pumpfunPreMigrationCapture: {
+    enabled: parseBoolean(process.env.PUMPFUN_PRE_MIGRATION_CAPTURE_ENABLED, false),
+    maxTracked: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_PRE_MIGRATION_MAX_TRACKED || '250', 10) || 250, 2000)),
+    trackTtlMs: Math.max(60000, parseInt(process.env.PUMPFUN_PRE_MIGRATION_TRACK_TTL_MS || `${2 * 60 * 60 * 1000}`, 10) || (2 * 60 * 60 * 1000)),
+  },
+
   tokenRiskEnrichmentWorker: {
     scanLimit: Math.max(1, Math.min(parseInt(process.env.TOKEN_RISK_ENRICHMENT_SCAN_LIMIT || '120', 10), 5000)),
     batchLimit: Math.max(1, Math.min(parseInt(process.env.TOKEN_RISK_ENRICHMENT_BATCH_LIMIT || '3', 10), 25)),

@@ -19,6 +19,7 @@ const User = require('../models/user');
 const userAccess = require('../models/user-access');
 const solPrice = require('./sol-price');
 const pumpfun = require('./pumpfun-ws');
+const pumpfunPreMigrationCapture = require('./pumpfun-pre-migration-capture');
 const tokenCatalog = require('../models/token-catalog');
 const userAlertProfileCache = require('./user-alert-profile-cache');
 const { getSocketClientIp, isAllowedOrigin } = require('../utils/request-security');
@@ -389,6 +390,7 @@ function init(httpServer) {
 
 function startServices() {
   solPrice.start();
+  pumpfunPreMigrationCapture.start(config.pumpfunPreMigrationCapture);
 
   accessSweepTimer = setInterval(() => {
     void sweepAccessEligibility();
@@ -397,13 +399,23 @@ function startServices() {
   pumpfun.start((event) => {
     if (!io) return;
 
+    if (event.type === 'create' || event.type === 'trade') {
+      void pumpfunPreMigrationCapture.handleEvent(event).catch((err) => {
+        console.error('[PumpFunPreMigration] Capture error:', err.message);
+      });
+      return;
+    }
+
     if (event.type === 'migrate') {
+      void pumpfunPreMigrationCapture.handleEvent(event).catch((err) => {
+        console.error('[PumpFunPreMigration] Migration cleanup error:', err.message);
+      });
       const catalogToken = buildCatalogTokenFromPump(event.data);
       if (catalogToken) {
         queueCatalogUpsert(catalogToken, 'pumpfun-migrated');
       }
     }
-  });
+  }, config.pumpfunPreMigrationCapture);
 }
 
 function stop() {
@@ -413,6 +425,7 @@ function stop() {
   }
   solPrice.stop();
   pumpfun.stop();
+  pumpfunPreMigrationCapture.stop();
   sessionSockets.clear();
   userSessions.clear();
   ipSockets.clear();
@@ -433,6 +446,7 @@ function getStatus() {
     trackedSocketActionWindows: socketActionState.size,
     liveAlertPresence: userAlertProfileCache.getStatus(),
     pumpfun: pumpfun.getStatus(),
+    pumpfunPreMigrationCapture: pumpfunPreMigrationCapture.getStatus(),
     solPrice: solPrice.getStatus(),
   };
 }
