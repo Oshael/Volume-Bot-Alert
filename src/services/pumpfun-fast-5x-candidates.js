@@ -56,6 +56,28 @@ function mapCandidateRow(row) {
   };
 }
 
+function normalizeOutcomeAlert(alert) {
+  const address = String(alert?.address || '').trim();
+  const alertTriggeredAt = toTimestampOrNull(alert?.alertTriggeredAt || alert?.alert_triggered_at);
+  const alertMcap = toNumberOrNull(alert?.alertMcap ?? alert?.alert_mcap);
+  if (!address || !alertTriggeredAt || !alertMcap || alertMcap <= 0) return null;
+  return {
+    address,
+    alert_triggered_at: alertTriggeredAt.toISOString(),
+    alert_mcap: alertMcap,
+  };
+}
+
+function mapOutcomeRow(row) {
+  return {
+    address: String(row.address || '').trim(),
+    maxMcapSinceAlert: toNumberOrNull(row.max_mcap_since_alert),
+    maxMcapBucketAt: row.max_mcap_bucket_at || null,
+    latestMcapSinceAlert: toNumberOrNull(row.latest_mcap_since_alert),
+    latestBucketAt: row.latest_bucket_at || null,
+  };
+}
+
 async function listPumpfunFast5xCandidates(options = {}) {
   const settings = resolveOptions(options);
   const { rows } = await db.query(
@@ -170,10 +192,45 @@ async function listPumpfunFast5xCandidates(options = {}) {
   return rows.map(mapCandidateRow);
 }
 
+async function listPumpfunFast5xOutcomesSinceAlert(alerts = [], options = {}) {
+  const normalizedAlerts = alerts.map(normalizeOutcomeAlert).filter(Boolean);
+  if (normalizedAlerts.length === 0) return [];
+
+  const now = toTimestampOrNull(options.now) || new Date();
+  const { rows } = await db.query(
+    `WITH alerts AS (
+       SELECT *
+       FROM jsonb_to_recordset($1::jsonb) AS a(
+         address text,
+         alert_triggered_at timestamptz,
+         alert_mcap numeric
+       )
+     )
+     SELECT
+       a.address,
+       MAX(mb.close_mcap) AS max_mcap_since_alert,
+       (ARRAY_AGG(mb.bucket_ts ORDER BY mb.close_mcap DESC, mb.bucket_ts ASC))[1] AS max_mcap_bucket_at,
+       (ARRAY_AGG(mb.close_mcap ORDER BY mb.bucket_ts DESC))[1] AS latest_mcap_since_alert,
+       MAX(mb.bucket_ts) AS latest_bucket_at
+     FROM alerts a
+     JOIN token_market_buckets_1m mb
+       ON mb.token_address = a.address
+      AND mb.bucket_ts >= a.alert_triggered_at
+      AND mb.bucket_ts <= $2::timestamptz
+      AND mb.close_mcap > 0
+     GROUP BY a.address`,
+    [JSON.stringify(normalizedAlerts), now.toISOString()]
+  );
+
+  return rows.map(mapOutcomeRow);
+}
+
 module.exports = {
   listPumpfunFast5xCandidates,
+  listPumpfunFast5xOutcomesSinceAlert,
   __private: {
     mapCandidateRow,
+    mapOutcomeRow,
     resolveOptions,
   },
 };

@@ -52,6 +52,7 @@ describe('PumpFun fast 5x dry-run runtime', () => {
 
   it('evaluates candidates and stores compact pass diagnostics without emitting alerts', async () => {
     const originalListCandidates = candidates.listPumpfunFast5xCandidates;
+    const originalListOutcomes = candidates.listPumpfunFast5xOutcomesSinceAlert;
     candidates.listPumpfunFast5xCandidates = async () => [
       buildCandidate(),
       buildCandidate({
@@ -62,10 +63,17 @@ describe('PumpFun fast 5x dry-run runtime', () => {
         },
       }),
     ];
+    candidates.listPumpfunFast5xOutcomesSinceAlert = async () => [{
+      address: 'So11111111111111111111111111111111111111112',
+      maxMcapSinceAlert: 116_000,
+      maxMcapBucketAt: '2026-04-27T10:12:00.000Z',
+      latestMcapSinceAlert: 90_000,
+      latestBucketAt: '2026-04-27T10:15:00.000Z',
+    }];
 
     try {
       dryRun.start({ enabled: true, dryRun: true, intervalMs: 60_000, candidateLimit: 50 });
-      const summary = await dryRun.runOnce({ force: true });
+      const summary = await dryRun.runOnce({ force: true, now: '2026-04-27T10:15:00.000Z' });
       const status = dryRun.getStatus();
 
       assert.equal(summary.candidates.length, 2);
@@ -78,18 +86,26 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       assert.equal(status.lastPassedCandidates.length, 1);
       assert.equal(status.lastPassedCandidates[0].address, 'So11111111111111111111111111111111111111112');
       assert.ok(status.lastPassedCandidates[0].evidence);
+      assert.equal(status.trackedDetectionCount, 1);
+      assert.equal(status.trackedDetections[0].alertMcap, 58_000);
+      assert.equal(status.trackedDetections[0].maxMcapSinceAlert, 116_000);
+      assert.equal(status.trackedDetections[0].maxXSinceAlert, 2);
+      assert.equal(summary.detections.length, 1);
     } finally {
       candidates.listPumpfunFast5xCandidates = originalListCandidates;
+      candidates.listPumpfunFast5xOutcomesSinceAlert = originalListOutcomes;
     }
   });
 
   it('passes bounded runtime options into the candidate builder', async () => {
     const originalListCandidates = candidates.listPumpfunFast5xCandidates;
+    const originalListOutcomes = candidates.listPumpfunFast5xOutcomesSinceAlert;
     const calls = [];
     candidates.listPumpfunFast5xCandidates = async (options) => {
       calls.push(options);
       return [];
     };
+    candidates.listPumpfunFast5xOutcomesSinceAlert = async () => [];
 
     try {
       dryRun.start({ enabled: true, candidateLimit: 33 });
@@ -105,6 +121,7 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       assert.equal(calls.at(-1).now, '2026-04-27T10:15:00.000Z');
     } finally {
       candidates.listPumpfunFast5xCandidates = originalListCandidates;
+      candidates.listPumpfunFast5xOutcomesSinceAlert = originalListOutcomes;
     }
   });
 
@@ -120,5 +137,6 @@ describe('PumpFun fast 5x dry-run runtime', () => {
     assert.equal(options.dryRun, false);
     assert.equal(options.intervalMs, 10_000);
     assert.equal(options.candidateLimit, 500);
+    assert.equal(options.outcomeWindowMs, 5 * 60 * 60 * 1000);
   });
 });

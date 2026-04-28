@@ -103,4 +103,40 @@ describe('PumpFun fast 5x candidates', () => {
     assert.equal(options.migrationGraceMs, 10 * 60 * 1000);
     assert.ok(options.now instanceof Date);
   });
+
+  it('queries max market cap since alert for tracked dry-run detections', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [{
+          address: 'So11111111111111111111111111111111111111112',
+          max_mcap_since_alert: '116000',
+          max_mcap_bucket_at: '2026-04-27T10:12:00.000Z',
+          latest_mcap_since_alert: '90000',
+          latest_bucket_at: '2026-04-27T10:15:00.000Z',
+        }],
+      };
+    };
+
+    try {
+      const rows = await pumpfunFast5xCandidates.listPumpfunFast5xOutcomesSinceAlert([{
+        address: 'So11111111111111111111111111111111111111112',
+        alertTriggeredAt: '2026-04-27T10:06:00.000Z',
+        alertMcap: 58_000,
+      }], { now: '2026-04-27T10:15:00.000Z' });
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].maxMcapSinceAlert, 116_000);
+      assert.equal(rows[0].latestMcapSinceAlert, 90_000);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].sql, /jsonb_to_recordset/);
+      assert.match(calls[0].sql, /MAX\(mb.close_mcap\)/);
+      assert.equal(JSON.parse(calls[0].params[0])[0].alert_mcap, 58_000);
+      assert.equal(calls[0].params[1], '2026-04-27T10:15:00.000Z');
+    } finally {
+      db.query = originalQuery;
+    }
+  });
 });

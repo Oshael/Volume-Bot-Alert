@@ -316,12 +316,18 @@ describe('Admin panel auth and management', () => {
         totalPassed: 2,
         totalErrors: 0,
         lastError: null,
-        lastPassedCandidates: [{
+        trackedDetectionCount: 1,
+        trackedDetections: [{
           address: 'So11111111111111111111111111111111111111112',
           symbol: 'FAST',
           name: 'Fast Token',
           score: 88.5,
-          evidence: {
+          alertTriggeredAt: '2026-04-27T10:06:00.000Z',
+          alertMcap: 62000,
+          latestMcapSinceAlert: 93000,
+          maxMcapSinceAlert: 124000,
+          maxXSinceAlert: 2,
+          evidenceAtAlert: {
             firstMcap: 24000,
             currentMcap: 62000,
             currentMultiple: 2.58,
@@ -337,6 +343,8 @@ describe('Admin panel auth and management', () => {
         assert.equal(res.body.status.running, true);
         assert.equal(res.body.count, 1);
         assert.equal(res.body.candidates[0].address, 'So11111111111111111111111111111111111111112');
+        assert.equal(res.body.candidates[0].alertMcap, 62000);
+        assert.equal(res.body.candidates[0].maxXSinceAlert, 2);
       } finally {
         pumpfunFast5xDryRun.getStatus = originalGetStatus;
       }
@@ -353,6 +361,7 @@ describe('Admin panel auth and management', () => {
           candidates: [{ address: 'a' }, { address: 'b' }],
           passed: [{ address: 'a' }],
           failedCount: 1,
+          detections: [{ address: 'a' }],
         };
       };
       pumpfunFast5xDryRun.getStatus = () => ({
@@ -367,7 +376,7 @@ describe('Admin panel auth and management', () => {
         assert.equal(res.status, 200);
         assert.deepEqual(capturedOptions, { force: true });
         assert.equal(res.body.refreshed, true);
-        assert.deepEqual(res.body.refreshSummary, { candidates: 2, passed: 1, failed: 1 });
+        assert.deepEqual(res.body.refreshSummary, { candidates: 2, passed: 1, failed: 1, detections: 1 });
       } finally {
         pumpfunFast5xDryRun.runOnce = originalRunOnce;
         pumpfunFast5xDryRun.getStatus = originalGetStatus;
@@ -382,11 +391,17 @@ describe('Admin panel auth and management', () => {
         dryRun: true,
         lastCandidateCount: 1,
         lastPassedCount: 1,
-        lastPassedCandidates: [{
+        trackedDetectionCount: 1,
+        trackedDetections: [{
           address: 'So11111111111111111111111111111111111111112',
           symbol: 'FAST',
           score: 90,
-          evidence: {
+          alertTriggeredAt: '2026-04-27T10:06:00.000Z',
+          alertMcap: 62000,
+          latestMcapSinceAlert: 93000,
+          maxMcapSinceAlert: 124000,
+          maxXSinceAlert: 2,
+          evidenceAtAlert: {
             firstMcap: 24000,
             currentMcap: 62000,
             currentMultiple: 2.58,
@@ -401,8 +416,9 @@ describe('Admin panel auth and management', () => {
         assert.equal(res.status, 200);
         assert.match(res.body, /PumpFun Fast 5x Dry Run/);
         assert.match(res.body, /FAST/);
-        assert.match(res.body, /const POLL_MS = 5000/);
-        assert.ok(res.body.includes("const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run';"));
+        assert.match(res.body, /Max X Since Alert/);
+        assert.match(res.body, /const POLL_MS = 10000/);
+        assert.ok(res.body.includes("const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run?refresh=true';"));
       } finally {
         pumpfunFast5xDryRun.getStatus = originalGetStatus;
       }

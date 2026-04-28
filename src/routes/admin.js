@@ -230,56 +230,90 @@ function formatAdminNumber(value, digits = 0) {
   });
 }
 
-function buildPumpfunFast5xDryRunResponse({ refreshed = false, summary = null } = {}) {
-  const status = pumpfunFast5xDryRun.getStatus();
-  const candidates = Array.isArray(status.lastPassedCandidates)
-    ? status.lastPassedCandidates
-    : [];
+function resolvePumpfunFast5xResponseCandidates(status) {
+  if (Array.isArray(status.trackedDetections) && status.trackedDetections.length > 0) {
+    return status.trackedDetections;
+  }
+  if (Array.isArray(status.lastPassedCandidates)) {
+    return status.lastPassedCandidates;
+  }
+  return [];
+}
 
+function buildPumpfunFast5xStatus(status, candidates) {
   return {
-    refreshed,
-    status: {
-      running: Boolean(status.running),
-      enabled: Boolean(status.enabled),
-      dryRun: Boolean(status.dryRun),
-      intervalMs: status.intervalMs ?? null,
-      candidateLimit: status.candidateLimit ?? null,
-      lastRunAt: status.lastRunAt || null,
-      lastCandidateCount: status.lastCandidateCount ?? 0,
-      lastPassedCount: status.lastPassedCount ?? 0,
-      lastFailedCount: status.lastFailedCount ?? 0,
-      totalRuns: status.totalRuns ?? 0,
-      totalCandidates: status.totalCandidates ?? 0,
-      totalPassed: status.totalPassed ?? 0,
-      totalErrors: status.totalErrors ?? 0,
-      lastError: status.lastError || null,
-    },
-    candidates,
-    count: candidates.length,
-    refreshSummary: summary ? {
-      candidates: summary.candidates.length,
-      passed: summary.passed.length,
-      failed: summary.failedCount,
-    } : null,
+    running: Boolean(status.running),
+    enabled: Boolean(status.enabled),
+    dryRun: Boolean(status.dryRun),
+    intervalMs: status.intervalMs ?? null,
+    candidateLimit: status.candidateLimit ?? null,
+    outcomeWindowMs: status.outcomeWindowMs ?? null,
+    lastRunAt: status.lastRunAt || null,
+    lastCandidateCount: status.lastCandidateCount ?? 0,
+    lastPassedCount: status.lastPassedCount ?? 0,
+    lastFailedCount: status.lastFailedCount ?? 0,
+    trackedDetectionCount: status.trackedDetectionCount ?? candidates.length,
+    totalRuns: status.totalRuns ?? 0,
+    totalCandidates: status.totalCandidates ?? 0,
+    totalPassed: status.totalPassed ?? 0,
+    totalErrors: status.totalErrors ?? 0,
+    lastError: status.lastError || null,
   };
 }
 
+function buildPumpfunFast5xRefreshSummary(summary) {
+  if (!summary) return null;
+  return {
+    candidates: summary.candidates.length,
+    passed: summary.passed.length,
+    failed: summary.failedCount,
+    detections: Array.isArray(summary.detections) ? summary.detections.length : null,
+  };
+}
+
+function buildPumpfunFast5xDryRunResponse({ refreshed = false, summary = null } = {}) {
+  const status = pumpfunFast5xDryRun.getStatus();
+  const candidates = resolvePumpfunFast5xResponseCandidates(status);
+
+  return {
+    refreshed,
+    status: buildPumpfunFast5xStatus(status, candidates),
+    candidates,
+    count: candidates.length,
+    refreshSummary: buildPumpfunFast5xRefreshSummary(summary),
+  };
+}
+
+function getPumpfunFast5xEvidence(candidate) {
+  return candidate.evidenceAtAlert || candidate.evidence || {};
+}
+
+function renderPumpfunFast5xDryRunRow(candidate) {
+  const evidence = getPumpfunFast5xEvidence(candidate);
+  const address = escapeHtml(candidate.address);
+  const dexUrl = `https://dexscreener.com/solana/${address}`;
+  return `<tr>
+    <td><strong>${escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN')}</strong><div class="muted">${address}</div></td>
+    <td>${escapeHtml(candidate.alertTriggeredAt || candidate.currentBucketAt || '')}</td>
+    <td>$${formatAdminNumber(candidate.alertMcap ?? evidence.currentMcap, 0)}</td>
+    <td>$${formatAdminNumber(candidate.latestMcapSinceAlert ?? evidence.currentMcap, 0)}</td>
+    <td>${formatAdminNumber(candidate.maxXSinceAlert, 2)}x</td>
+    <td>$${formatAdminNumber(candidate.maxMcapSinceAlert ?? evidence.p95McapRecent ?? evidence.currentMcap, 0)}</td>
+    <td>${formatAdminNumber(candidate.score, 2)}</td>
+    <td>${formatAdminNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1)}m</td>
+    <td><a href="${dexUrl}" target="_blank" rel="noreferrer">Dex</a></td>
+  </tr>`;
+}
+
+function renderPumpfunFast5xDryRunTable(rows) {
+  return `<table>
+    <thead><tr><th>Token</th><th>Alert At</th><th>Alert MCAP</th><th>Latest MCAP</th><th>Max X Since Alert</th><th>Max MCAP</th><th>Score</th><th>2x Time</th><th>Link</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 function renderPumpfunFast5xDryRunHtml(payload) {
-  const rows = payload.candidates.map((candidate) => {
-    const evidence = candidate.evidence || {};
-    const address = escapeHtml(candidate.address);
-    const dexUrl = `https://dexscreener.com/solana/${address}`;
-    return `<tr>
-      <td><strong>${escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN')}</strong><div class="muted">${address}</div></td>
-      <td>${formatAdminNumber(candidate.score, 2)}</td>
-      <td>$${formatAdminNumber(evidence.firstMcap, 0)}</td>
-      <td>$${formatAdminNumber(evidence.currentMcap, 0)}</td>
-      <td>${formatAdminNumber(evidence.currentMultiple, 2)}x</td>
-      <td>$${formatAdminNumber(evidence.p95Vol5mRecent, 0)}</td>
-      <td>${formatAdminNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1)}m</td>
-      <td><a href="${dexUrl}" target="_blank" rel="noreferrer">Dex</a></td>
-    </tr>`;
-  }).join('');
+  const rows = payload.candidates.map(renderPumpfunFast5xDryRunRow).join('');
 
   return `<!doctype html>
 <html lang="en">
@@ -316,17 +350,15 @@ function renderPumpfunFast5xDryRunHtml(payload) {
     <div class="stat">dryRun: <span data-stat="dryRun">${escapeHtml(payload.status.dryRun)}</span></div>
     <div class="stat">last candidates: <span data-stat="lastCandidateCount">${escapeHtml(payload.status.lastCandidateCount)}</span></div>
     <div class="stat">last passed: <span data-stat="lastPassedCount">${escapeHtml(payload.status.lastPassedCount)}</span></div>
+    <div class="stat">tracked: <span data-stat="trackedDetectionCount">${escapeHtml(payload.status.trackedDetectionCount)}</span></div>
     <div class="stat">last run: <span data-stat="lastRunAt">${escapeHtml(payload.status.lastRunAt || '')}</span></div>
-    <div class="stat">browser refresh: <span data-stat="browserRefresh">5s</span></div>
+    <div class="stat">live refresh: <span data-stat="browserRefresh">10s</span></div>
   </section>
   <div class="muted" data-role="message"></div>
-  <div data-role="table-wrap">${rows ? `<table>
-    <thead><tr><th>Token</th><th>Score</th><th>First MCAP</th><th>Current MCAP</th><th>Current x</th><th>P95 VOL 5M</th><th>2x Time</th><th>Link</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>` : '<div class="empty">No passing dry-run candidates yet. Use Refresh now after enabling the dry-run env.</div>'}</div>
+  <div data-role="table-wrap">${rows ? renderPumpfunFast5xDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page forces a bounded refresh every 10s.</div>'}</div>
   <script>
-    const POLL_MS = 5000;
-    const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run';
+    const POLL_MS = 10000;
+    const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run?refresh=true';
     const tableWrap = document.querySelector('[data-role="table-wrap"]');
     const message = document.querySelector('[data-role="message"]');
 
@@ -353,20 +385,32 @@ function renderPumpfunFast5xDryRunHtml(payload) {
       if (el) el.textContent = String(value ?? '');
     }
 
+    function getEvidence(candidate) {
+      return candidate.evidenceAtAlert || candidate.evidence || {};
+    }
+
     function candidateRow(candidate) {
-      const evidence = candidate.evidence || {};
+      const evidence = getEvidence(candidate);
       const address = escapeHtml(candidate.address);
       const dexUrl = 'https://dexscreener.com/solana/' + address;
       return '<tr>'
         + '<td><strong>' + escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN') + '</strong><div class="muted">' + address + '</div></td>'
+        + '<td>' + escapeHtml(candidate.alertTriggeredAt || candidate.currentBucketAt || '') + '</td>'
+        + '<td>$' + formatNumber(candidate.alertMcap ?? evidence.currentMcap, 0) + '</td>'
+        + '<td>$' + formatNumber(candidate.latestMcapSinceAlert ?? evidence.currentMcap, 0) + '</td>'
+        + '<td>' + formatNumber(candidate.maxXSinceAlert, 2) + 'x</td>'
+        + '<td>$' + formatNumber(candidate.maxMcapSinceAlert ?? evidence.p95McapRecent ?? evidence.currentMcap, 0) + '</td>'
         + '<td>' + formatNumber(candidate.score, 2) + '</td>'
-        + '<td>$' + formatNumber(evidence.firstMcap, 0) + '</td>'
-        + '<td>$' + formatNumber(evidence.currentMcap, 0) + '</td>'
-        + '<td>' + formatNumber(evidence.currentMultiple, 2) + 'x</td>'
-        + '<td>$' + formatNumber(evidence.p95Vol5mRecent, 0) + '</td>'
         + '<td>' + formatNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1) + 'm</td>'
         + '<td><a href="' + dexUrl + '" target="_blank" rel="noreferrer">Dex</a></td>'
         + '</tr>';
+    }
+
+    function renderTable(candidates) {
+      return '<table>'
+        + '<thead><tr><th>Token</th><th>Alert At</th><th>Alert MCAP</th><th>Latest MCAP</th><th>Max X Since Alert</th><th>Max MCAP</th><th>Score</th><th>2x Time</th><th>Link</th></tr></thead>'
+        + '<tbody>' + candidates.map(candidateRow).join('') + '</tbody>'
+        + '</table>';
     }
 
     function render(payload) {
@@ -376,20 +420,18 @@ function renderPumpfunFast5xDryRunHtml(payload) {
       setStat('dryRun', status.dryRun);
       setStat('lastCandidateCount', status.lastCandidateCount);
       setStat('lastPassedCount', status.lastPassedCount);
+      setStat('trackedDetectionCount', status.trackedDetectionCount ?? payload.count ?? 0);
       setStat('lastRunAt', status.lastRunAt || '');
       message.className = 'muted';
       message.textContent = status.lastError ? ('last error: ' + status.lastError) : '';
 
       const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
       if (!candidates.length) {
-        tableWrap.innerHTML = '<div class="empty">No passing dry-run candidates yet. Backend loop updates this view automatically.</div>';
+        tableWrap.innerHTML = '<div class="empty">No passing dry-run candidates yet. This page forces a bounded refresh every 10s.</div>';
         return;
       }
 
-      tableWrap.innerHTML = '<table>'
-        + '<thead><tr><th>Token</th><th>Score</th><th>First MCAP</th><th>Current MCAP</th><th>Current x</th><th>P95 VOL 5M</th><th>2x Time</th><th>Link</th></tr></thead>'
-        + '<tbody>' + candidates.map(candidateRow).join('') + '</tbody>'
-        + '</table>';
+      tableWrap.innerHTML = renderTable(candidates);
     }
 
     async function poll() {
@@ -405,7 +447,7 @@ function renderPumpfunFast5xDryRunHtml(payload) {
       }
     }
 
-    window.setTimeout(poll, POLL_MS);
+    void poll();
   </script>
 </body>
 </html>`;
