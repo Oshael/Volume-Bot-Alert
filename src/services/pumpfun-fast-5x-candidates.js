@@ -1,0 +1,179 @@
+const db = require('../models/db');
+const { DEFAULT_OPTIONS } = require('./pumpfun-fast-5x-signal');
+
+const DEFAULT_MIGRATION_GRACE_MS = 10 * 60 * 1000;
+const DEFAULT_CANDIDATE_LIMIT = 250;
+const MAX_CANDIDATE_LIMIT = 500;
+
+function toNumberOrNull(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function toTimestampOrNull(value) {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function resolveOptions(options = {}) {
+  return {
+    migrationGraceMs: Math.max(1, Number(options.migrationGraceMs) || DEFAULT_MIGRATION_GRACE_MS),
+    maxMigrationAgeMs: Math.max(1, Number(options.maxMigrationAgeMs) || DEFAULT_OPTIONS.maxMigrationAgeMs),
+    limit: Math.max(1, Math.min(Number(options.limit) || DEFAULT_CANDIDATE_LIMIT, MAX_CANDIDATE_LIMIT)),
+    now: toTimestampOrNull(options.now) || new Date(),
+  };
+}
+
+function mapCandidateRow(row) {
+  const firstMcap = toNumberOrNull(row.first_mcap);
+  const currentMcap = toNumberOrNull(row.current_mcap);
+  const p95McapRecent = toNumberOrNull(row.p95_mcap_recent);
+  const p95Vol5mRecent = toNumberOrNull(row.p95_vol_5m_recent);
+  const avgVol5mFirst30m = toNumberOrNull(row.avg_vol_5m_first_30m);
+  const timeTo2xMs = toNumberOrNull(row.time_to_2x_ms);
+  const bucketCoverage = toNumberOrNull(row.mcap_buckets);
+
+  return {
+    address: String(row.address || '').trim(),
+    symbol: row.symbol || '',
+    name: row.name || '',
+    source: String(row.source || '').trim().toLowerCase(),
+    migrationStartedAt: row.migration_started_at || null,
+    currentBucketAt: row.current_bucket_at || null,
+    volumeBucketCount: toNumberOrNull(row.vol_buckets),
+    signalInput: {
+      source: String(row.source || '').trim().toLowerCase(),
+      migrationAgeMs: toNumberOrNull(row.migration_age_ms),
+      firstMcap,
+      currentMcap,
+      p95McapRecent,
+      p95Vol5mRecent,
+      avgVol5mFirst30m,
+      timeTo2xMs,
+      bucketCoverage,
+    },
+  };
+}
+
+async function listPumpfunFast5xCandidates(options = {}) {
+  const settings = resolveOptions(options);
+  const { rows } = await db.query(
+    `WITH base_raw AS (
+       SELECT
+         address,
+         symbol,
+         name,
+         source,
+         CASE
+           WHEN migration_grace_until IS NOT NULL
+             THEN migration_grace_until - ($1::bigint * INTERVAL '1 millisecond')
+           ELSE first_seen_at
+         END AS migration_started_at
+       FROM token_catalog
+       WHERE source = 'pumpfun-migrated'
+         AND first_seen_at >= $4::timestamptz - (($2::bigint + $1::bigint) * INTERVAL '1 millisecond')
+     ),
+     base AS (
+       SELECT *
+       FROM base_raw
+       WHERE migration_started_at IS NOT NULL
+         AND migration_started_at <= $4::timestamptz
+         AND migration_started_at >= $4::timestamptz - ($2::bigint * INTERVAL '1 millisecond')
+       ORDER BY migration_started_at DESC
+       LIMIT $3::int
+     ),
+     mcap_window AS (
+       SELECT
+         b.address,
+         b.symbol,
+         b.name,
+         b.source,
+         b.migration_started_at,
+         mb.bucket_ts,
+         mb.close_mcap,
+         FIRST_VALUE(mb.close_mcap) OVER (
+           PARTITION BY b.address
+           ORDER BY mb.bucket_ts ASC
+           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+         ) AS first_mcap,
+         ROW_NUMBER() OVER (
+           PARTITION BY b.address
+           ORDER BY mb.bucket_ts DESC
+         ) AS rn_current
+       FROM base b
+       JOIN token_market_buckets_1m mb
+         ON mb.token_address = b.address
+        AND mb.bucket_ts >= b.migration_started_at
+        AND mb.bucket_ts <= $4::timestamptz
+        AND mb.close_mcap > 0
+     ),
+     mcap_features AS (
+       SELECT
+         address,
+         MAX(symbol) AS symbol,
+         MAX(name) AS name,
+         MAX(source) AS source,
+         MIN(migration_started_at) AS migration_started_at,
+         MAX(first_mcap) AS first_mcap,
+         MAX(close_mcap) FILTER (WHERE rn_current = 1) AS current_mcap,
+         MAX(bucket_ts) FILTER (WHERE rn_current = 1) AS current_bucket_at,
+         percentile_cont(0.95) WITHIN GROUP (ORDER BY close_mcap::double precision) AS p95_mcap_recent,
+         MIN(bucket_ts) FILTER (WHERE close_mcap >= first_mcap * 2) AS time_to_2x_at,
+         COUNT(*) AS mcap_buckets
+       FROM mcap_window
+       GROUP BY address
+     ),
+     volume_features AS (
+       SELECT
+         b.address,
+         AVG(vb.close_vol_5m) FILTER (
+           WHERE vb.bucket_ts < b.migration_started_at + INTERVAL '30 minutes'
+         ) AS avg_vol_5m_first_30m,
+         percentile_cont(0.95) WITHIN GROUP (ORDER BY vb.close_vol_5m::double precision) AS p95_vol_5m_recent,
+         COUNT(*) AS vol_buckets
+       FROM base b
+       JOIN token_market_volume_buckets_1m vb
+         ON vb.token_address = b.address
+        AND vb.bucket_ts >= b.migration_started_at
+        AND vb.bucket_ts <= $4::timestamptz
+        AND vb.close_vol_5m IS NOT NULL
+       GROUP BY b.address
+     )
+     SELECT
+       mf.address,
+       mf.symbol,
+       mf.name,
+       mf.source,
+       mf.migration_started_at,
+       EXTRACT(EPOCH FROM ($4::timestamptz - mf.migration_started_at)) * 1000 AS migration_age_ms,
+       mf.first_mcap,
+       mf.current_mcap,
+       mf.current_bucket_at,
+       mf.p95_mcap_recent,
+       EXTRACT(EPOCH FROM (mf.time_to_2x_at - mf.migration_started_at)) * 1000 AS time_to_2x_ms,
+       mf.mcap_buckets,
+       vf.avg_vol_5m_first_30m,
+       vf.p95_vol_5m_recent,
+       vf.vol_buckets
+     FROM mcap_features mf
+     LEFT JOIN volume_features vf ON vf.address = mf.address
+     ORDER BY mf.migration_started_at DESC`,
+    [
+      settings.migrationGraceMs,
+      settings.maxMigrationAgeMs,
+      settings.limit,
+      settings.now.toISOString(),
+    ]
+  );
+
+  return rows.map(mapCandidateRow);
+}
+
+module.exports = {
+  listPumpfunFast5xCandidates,
+  __private: {
+    mapCandidateRow,
+    resolveOptions,
+  },
+};
