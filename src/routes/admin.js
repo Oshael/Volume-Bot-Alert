@@ -299,6 +299,7 @@ function renderPumpfunFast5xDryRunHtml(payload) {
     th, td { border-bottom: 1px solid #223044; padding: 10px; text-align: left; vertical-align: top; }
     th { color: #9fb3c8; font-size: 12px; text-transform: uppercase; }
     .empty { border: 1px solid #243244; border-radius: 6px; padding: 18px; background: #111827; color: #93a4b8; }
+    .error { color: #fca5a5; }
   </style>
 </head>
 <body>
@@ -309,18 +310,103 @@ function renderPumpfunFast5xDryRunHtml(payload) {
     </div>
     <a href="?refresh=true">Refresh now</a>
   </header>
-  <section class="stats">
-    <div class="stat">enabled: ${escapeHtml(payload.status.enabled)}</div>
-    <div class="stat">running: ${escapeHtml(payload.status.running)}</div>
-    <div class="stat">dryRun: ${escapeHtml(payload.status.dryRun)}</div>
-    <div class="stat">last candidates: ${escapeHtml(payload.status.lastCandidateCount)}</div>
-    <div class="stat">last passed: ${escapeHtml(payload.status.lastPassedCount)}</div>
-    <div class="stat">last run: ${escapeHtml(payload.status.lastRunAt || '')}</div>
+  <section class="stats" data-role="stats">
+    <div class="stat">enabled: <span data-stat="enabled">${escapeHtml(payload.status.enabled)}</span></div>
+    <div class="stat">running: <span data-stat="running">${escapeHtml(payload.status.running)}</span></div>
+    <div class="stat">dryRun: <span data-stat="dryRun">${escapeHtml(payload.status.dryRun)}</span></div>
+    <div class="stat">last candidates: <span data-stat="lastCandidateCount">${escapeHtml(payload.status.lastCandidateCount)}</span></div>
+    <div class="stat">last passed: <span data-stat="lastPassedCount">${escapeHtml(payload.status.lastPassedCount)}</span></div>
+    <div class="stat">last run: <span data-stat="lastRunAt">${escapeHtml(payload.status.lastRunAt || '')}</span></div>
+    <div class="stat">browser refresh: <span data-stat="browserRefresh">5s</span></div>
   </section>
-  ${rows ? `<table>
+  <div class="muted" data-role="message"></div>
+  <div data-role="table-wrap">${rows ? `<table>
     <thead><tr><th>Token</th><th>Score</th><th>First MCAP</th><th>Current MCAP</th><th>Current x</th><th>P95 VOL 5M</th><th>2x Time</th><th>Link</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table>` : '<div class="empty">No passing dry-run candidates yet. Use Refresh now after enabling the dry-run env.</div>'}
+  </table>` : '<div class="empty">No passing dry-run candidates yet. Use Refresh now after enabling the dry-run env.</div>'}</div>
+  <script>
+    const POLL_MS = 5000;
+    const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run';
+    const tableWrap = document.querySelector('[data-role="table-wrap"]');
+    const message = document.querySelector('[data-role="message"]');
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function formatNumber(value, digits = 0) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '';
+      return num.toLocaleString('en-US', {
+        maximumFractionDigits: digits,
+        minimumFractionDigits: digits,
+      });
+    }
+
+    function setStat(name, value) {
+      const el = document.querySelector('[data-stat="' + name + '"]');
+      if (el) el.textContent = String(value ?? '');
+    }
+
+    function candidateRow(candidate) {
+      const evidence = candidate.evidence || {};
+      const address = escapeHtml(candidate.address);
+      const dexUrl = 'https://dexscreener.com/solana/' + address;
+      return '<tr>'
+        + '<td><strong>' + escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN') + '</strong><div class="muted">' + address + '</div></td>'
+        + '<td>' + formatNumber(candidate.score, 2) + '</td>'
+        + '<td>$' + formatNumber(evidence.firstMcap, 0) + '</td>'
+        + '<td>$' + formatNumber(evidence.currentMcap, 0) + '</td>'
+        + '<td>' + formatNumber(evidence.currentMultiple, 2) + 'x</td>'
+        + '<td>$' + formatNumber(evidence.p95Vol5mRecent, 0) + '</td>'
+        + '<td>' + formatNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1) + 'm</td>'
+        + '<td><a href="' + dexUrl + '" target="_blank" rel="noreferrer">Dex</a></td>'
+        + '</tr>';
+    }
+
+    function render(payload) {
+      const status = payload.status || {};
+      setStat('enabled', status.enabled);
+      setStat('running', status.running);
+      setStat('dryRun', status.dryRun);
+      setStat('lastCandidateCount', status.lastCandidateCount);
+      setStat('lastPassedCount', status.lastPassedCount);
+      setStat('lastRunAt', status.lastRunAt || '');
+      message.className = 'muted';
+      message.textContent = status.lastError ? ('last error: ' + status.lastError) : '';
+
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      if (!candidates.length) {
+        tableWrap.innerHTML = '<div class="empty">No passing dry-run candidates yet. Backend loop updates this view automatically.</div>';
+        return;
+      }
+
+      tableWrap.innerHTML = '<table>'
+        + '<thead><tr><th>Token</th><th>Score</th><th>First MCAP</th><th>Current MCAP</th><th>Current x</th><th>P95 VOL 5M</th><th>2x Time</th><th>Link</th></tr></thead>'
+        + '<tbody>' + candidates.map(candidateRow).join('') + '</tbody>'
+        + '</table>';
+    }
+
+    async function poll() {
+      try {
+        const response = await fetch(jsonUrl, { cache: 'no-store', credentials: 'include' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        render(await response.json());
+      } catch (err) {
+        message.className = 'muted error';
+        message.textContent = 'auto-refresh failed: ' + (err && err.message ? err.message : 'unknown error');
+      } finally {
+        window.setTimeout(poll, POLL_MS);
+      }
+    }
+
+    window.setTimeout(poll, POLL_MS);
+  </script>
 </body>
 </html>`;
 }

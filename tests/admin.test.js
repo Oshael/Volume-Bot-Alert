@@ -401,6 +401,8 @@ describe('Admin panel auth and management', () => {
         assert.equal(res.status, 200);
         assert.match(res.body, /PumpFun Fast 5x Dry Run/);
         assert.match(res.body, /FAST/);
+        assert.match(res.body, /const POLL_MS = 5000/);
+        assert.ok(res.body.includes("const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run';"));
       } finally {
         pumpfunFast5xDryRun.getStatus = originalGetStatus;
       }
