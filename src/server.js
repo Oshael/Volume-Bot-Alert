@@ -38,6 +38,7 @@ const lateralizationWorker = require('./services/lateralization-worker');
 const bidZoneWorker = require('./services/bid-zone-worker');
 const tokenRiskEnrichmentWorker = require('./services/token-risk-enrichment-worker');
 const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-worker');
+const pumpfunFast5xDryRun = require('./services/pumpfun-fast-5x-dry-run');
 const dexscreener = require('./services/dexscreener');
 
 const app = express();
@@ -155,6 +156,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     bidZoneWorker: bidZoneWorker.getStatus(),
     tokenRiskEnrichmentWorker: tokenRiskEnrichmentWorker.getStatus(),
     tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
+    pumpfunFast5xDryRun: pumpfunFast5xDryRun.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
   });
 });
@@ -226,6 +228,7 @@ function startWorkerSet() {
   bidZoneWorker.start();
   tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
   tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
+  pumpfunFast5xDryRun.start(config.pumpfunFast5xAlert);
 }
 
 function bootstrapWebRuntime(httpServer) {
@@ -241,7 +244,9 @@ function bootstrapBackgroundRuntime() {
     return;
   }
 
-  startBackgroundCleanup();
+  if (config.nodeEnv !== 'test') {
+    startBackgroundCleanup();
+  }
 
   if (shouldStartWorkerSet()) {
     startWorkerSet();
