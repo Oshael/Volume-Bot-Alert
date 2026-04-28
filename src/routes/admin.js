@@ -16,6 +16,7 @@ const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/bac
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
+const pumpfunFast5xDryRun = require('../services/pumpfun-fast-5x-dry-run');
 const { isValidAddress } = require('../models/user-token');
 const {
   buildBlockStatusSummary,
@@ -82,6 +83,22 @@ function parseOptionalBooleanQuery(value) {
   }
 
   return { ok: false, error: 'success must be true or false' };
+}
+
+function parseBooleanQueryParam(value, name) {
+  if (value === undefined) {
+    return { ok: true, value: false };
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === '' || normalized === 'false' || normalized === '0') {
+    return { ok: true, value: false };
+  }
+  if (normalized === 'true' || normalized === '1') {
+    return { ok: true, value: true };
+  }
+
+  return { ok: false, error: `${name} must be true or false` };
 }
 
 function parseOptionalIntegerField(value, name, { min, max }) {
@@ -193,6 +210,119 @@ function buildHighCapDumpInspectResponse(addresses, options, detections) {
     qualifyingCount: decorated.filter((item) => item.passesAllGates).length,
     detections: decorated,
   };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function formatAdminNumber(value, digits = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  return num.toLocaleString('en-US', {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  });
+}
+
+function buildPumpfunFast5xDryRunResponse({ refreshed = false, summary = null } = {}) {
+  const status = pumpfunFast5xDryRun.getStatus();
+  const candidates = Array.isArray(status.lastPassedCandidates)
+    ? status.lastPassedCandidates
+    : [];
+
+  return {
+    refreshed,
+    status: {
+      running: Boolean(status.running),
+      enabled: Boolean(status.enabled),
+      dryRun: Boolean(status.dryRun),
+      intervalMs: status.intervalMs ?? null,
+      candidateLimit: status.candidateLimit ?? null,
+      lastRunAt: status.lastRunAt || null,
+      lastCandidateCount: status.lastCandidateCount ?? 0,
+      lastPassedCount: status.lastPassedCount ?? 0,
+      lastFailedCount: status.lastFailedCount ?? 0,
+      totalRuns: status.totalRuns ?? 0,
+      totalCandidates: status.totalCandidates ?? 0,
+      totalPassed: status.totalPassed ?? 0,
+      totalErrors: status.totalErrors ?? 0,
+      lastError: status.lastError || null,
+    },
+    candidates,
+    count: candidates.length,
+    refreshSummary: summary ? {
+      candidates: summary.candidates.length,
+      passed: summary.passed.length,
+      failed: summary.failedCount,
+    } : null,
+  };
+}
+
+function renderPumpfunFast5xDryRunHtml(payload) {
+  const rows = payload.candidates.map((candidate) => {
+    const evidence = candidate.evidence || {};
+    const address = escapeHtml(candidate.address);
+    const dexUrl = `https://dexscreener.com/solana/${address}`;
+    return `<tr>
+      <td><strong>${escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN')}</strong><div class="muted">${address}</div></td>
+      <td>${formatAdminNumber(candidate.score, 2)}</td>
+      <td>$${formatAdminNumber(evidence.firstMcap, 0)}</td>
+      <td>$${formatAdminNumber(evidence.currentMcap, 0)}</td>
+      <td>${formatAdminNumber(evidence.currentMultiple, 2)}x</td>
+      <td>$${formatAdminNumber(evidence.p95Vol5mRecent, 0)}</td>
+      <td>${formatAdminNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1)}m</td>
+      <td><a href="${dexUrl}" target="_blank" rel="noreferrer">Dex</a></td>
+    </tr>`;
+  }).join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PumpFun Fast 5x Dry Run</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #0b0f17; color: #e5edf7; font: 14px system-ui, sans-serif; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 20px; }
+    a, button { color: #67e8f9; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .stat { border: 1px solid #243244; border-radius: 6px; padding: 8px 10px; background: #111827; }
+    .muted { color: #93a4b8; font-size: 12px; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; background: #0f1724; }
+    th, td { border-bottom: 1px solid #223044; padding: 10px; text-align: left; vertical-align: top; }
+    th { color: #9fb3c8; font-size: 12px; text-transform: uppercase; }
+    .empty { border: 1px solid #243244; border-radius: 6px; padding: 18px; background: #111827; color: #93a4b8; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>PumpFun Fast 5x Dry Run</h1>
+      <div class="muted">Admin diagnostic view. No alerts are emitted from this page.</div>
+    </div>
+    <a href="?refresh=true">Refresh now</a>
+  </header>
+  <section class="stats">
+    <div class="stat">enabled: ${escapeHtml(payload.status.enabled)}</div>
+    <div class="stat">running: ${escapeHtml(payload.status.running)}</div>
+    <div class="stat">dryRun: ${escapeHtml(payload.status.dryRun)}</div>
+    <div class="stat">last candidates: ${escapeHtml(payload.status.lastCandidateCount)}</div>
+    <div class="stat">last passed: ${escapeHtml(payload.status.lastPassedCount)}</div>
+    <div class="stat">last run: ${escapeHtml(payload.status.lastRunAt || '')}</div>
+  </section>
+  ${rows ? `<table>
+    <thead><tr><th>Token</th><th>Score</th><th>First MCAP</th><th>Current MCAP</th><th>Current x</th><th>P95 VOL 5M</th><th>2x Time</th><th>Link</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>` : '<div class="empty">No passing dry-run candidates yet. Use Refresh now after enabling the dry-run env.</div>'}
+</body>
+</html>`;
 }
 
 function buildTokenRiskCandidateResponse(candidates, options) {
@@ -541,6 +671,37 @@ router.get('/high-cap-dump-candidates', async (req, res) => {
   } catch (err) {
     console.error('Admin high-cap dump candidates error:', err.message);
     res.status(500).json({ error: 'Failed to inspect high-cap dump candidates' });
+  }
+});
+
+router.get('/pumpfun-fast-5x/dry-run', async (req, res) => {
+  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
+  if (!refresh.ok) return res.status(400).json({ error: refresh.error });
+
+  try {
+    const summary = refresh.value
+      ? await pumpfunFast5xDryRun.runOnce({ force: true })
+      : null;
+    res.json(buildPumpfunFast5xDryRunResponse({ refreshed: refresh.value, summary }));
+  } catch (err) {
+    console.error('Admin PumpFun fast 5x dry-run error:', err.message);
+    res.status(500).json({ error: 'Failed to load PumpFun fast 5x dry-run status' });
+  }
+});
+
+router.get('/pumpfun-fast-5x/dry-run.html', async (req, res) => {
+  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
+  if (!refresh.ok) return res.status(400).send(escapeHtml(refresh.error));
+
+  try {
+    const summary = refresh.value
+      ? await pumpfunFast5xDryRun.runOnce({ force: true })
+      : null;
+    const payload = buildPumpfunFast5xDryRunResponse({ refreshed: refresh.value, summary });
+    res.type('html').send(renderPumpfunFast5xDryRunHtml(payload));
+  } catch (err) {
+    console.error('Admin PumpFun fast 5x dry-run HTML error:', err.message);
+    res.status(500).send('Failed to load PumpFun fast 5x dry-run status');
   }
 });
 

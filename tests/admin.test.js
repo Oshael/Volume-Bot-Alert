@@ -107,6 +107,7 @@ describe('Admin panel auth and management', () => {
   let tokenRiskEnrichmentWorker;
   let tokenRiskReview;
   let tokenMeteoraState;
+  let pumpfunFast5xDryRun;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -126,6 +127,7 @@ describe('Admin panel auth and management', () => {
     tokenRiskEnrichmentWorker = require('../src/services/token-risk-enrichment-worker');
     tokenRiskReview = require('../src/models/token-risk-review');
     tokenMeteoraState = require('../src/models/token-meteora-state');
+    pumpfunFast5xDryRun = require('../src/services/pumpfun-fast-5x-dry-run');
     const { pool } = require('../src/models/db');
 
     await ensureAccessSchema(pool);
@@ -291,7 +293,117 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.runtime);
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.tokenRiskEnrichmentWorker);
+      assert.ok(res.body.pumpfunFast5xDryRun);
       assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
+    });
+  });
+
+  describe('Admin PumpFun Fast 5x Dry Run', () => {
+    it('returns compact dry-run candidates for admin users', async () => {
+      const originalGetStatus = pumpfunFast5xDryRun.getStatus;
+      pumpfunFast5xDryRun.getStatus = () => ({
+        running: true,
+        enabled: true,
+        dryRun: true,
+        intervalMs: 60000,
+        candidateLimit: 250,
+        lastRunAt: '2026-04-27T10:15:00.000Z',
+        lastCandidateCount: 12,
+        lastPassedCount: 1,
+        lastFailedCount: 11,
+        totalRuns: 3,
+        totalCandidates: 24,
+        totalPassed: 2,
+        totalErrors: 0,
+        lastError: null,
+        lastPassedCandidates: [{
+          address: 'So11111111111111111111111111111111111111112',
+          symbol: 'FAST',
+          name: 'Fast Token',
+          score: 88.5,
+          evidence: {
+            firstMcap: 24000,
+            currentMcap: 62000,
+            currentMultiple: 2.58,
+            p95Vol5mRecent: 85000,
+            timeTo2xMs: 240000,
+          },
+        }],
+      });
+
+      try {
+        const res = await request('GET', '/api/admin/pumpfun-fast-5x/dry-run', { token: adminToken });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.status.running, true);
+        assert.equal(res.body.count, 1);
+        assert.equal(res.body.candidates[0].address, 'So11111111111111111111111111111111111111112');
+      } finally {
+        pumpfunFast5xDryRun.getStatus = originalGetStatus;
+      }
+    });
+
+    it('can force a dry-run refresh from the admin route', async () => {
+      const originalRunOnce = pumpfunFast5xDryRun.runOnce;
+      const originalGetStatus = pumpfunFast5xDryRun.getStatus;
+      let capturedOptions = null;
+
+      pumpfunFast5xDryRun.runOnce = async (options) => {
+        capturedOptions = options;
+        return {
+          candidates: [{ address: 'a' }, { address: 'b' }],
+          passed: [{ address: 'a' }],
+          failedCount: 1,
+        };
+      };
+      pumpfunFast5xDryRun.getStatus = () => ({
+        running: false,
+        enabled: false,
+        dryRun: true,
+        lastPassedCandidates: [],
+      });
+
+      try {
+        const res = await request('GET', '/api/admin/pumpfun-fast-5x/dry-run?refresh=true', { token: adminToken });
+        assert.equal(res.status, 200);
+        assert.deepEqual(capturedOptions, { force: true });
+        assert.equal(res.body.refreshed, true);
+        assert.deepEqual(res.body.refreshSummary, { candidates: 2, passed: 1, failed: 1 });
+      } finally {
+        pumpfunFast5xDryRun.runOnce = originalRunOnce;
+        pumpfunFast5xDryRun.getStatus = originalGetStatus;
+      }
+    });
+
+    it('renders a simple browser-readable HTML view', async () => {
+      const originalGetStatus = pumpfunFast5xDryRun.getStatus;
+      pumpfunFast5xDryRun.getStatus = () => ({
+        running: true,
+        enabled: true,
+        dryRun: true,
+        lastCandidateCount: 1,
+        lastPassedCount: 1,
+        lastPassedCandidates: [{
+          address: 'So11111111111111111111111111111111111111112',
+          symbol: 'FAST',
+          score: 90,
+          evidence: {
+            firstMcap: 24000,
+            currentMcap: 62000,
+            currentMultiple: 2.58,
+            p95Vol5mRecent: 85000,
+            timeTo2xMs: 240000,
+          },
+        }],
+      });
+
+      try {
+        const res = await request('GET', '/api/admin/pumpfun-fast-5x/dry-run.html', { token: adminToken });
+        assert.equal(res.status, 200);
+        assert.match(res.body, /PumpFun Fast 5x Dry Run/);
+        assert.match(res.body, /FAST/);
+      } finally {
+        pumpfunFast5xDryRun.getStatus = originalGetStatus;
+      }
     });
   });
 
