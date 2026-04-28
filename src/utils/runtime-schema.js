@@ -712,6 +712,43 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage32-pumpfun-fast-5x-detections',
+    name: 'Stage 32 PumpFun fast 5x detection persistence',
+    repair: 'node src/utils/db-init-stage32.js',
+    tables: [
+      {
+        table: 'pumpfun_fast_5x_detections',
+        columns: [
+          'rule_key',
+          'token_address',
+          'symbol',
+          'name',
+          'migration_started_at',
+          'alert_triggered_at',
+          'alert_mcap',
+          'alert_multiple_from_first_mcap',
+          'score',
+          'reason',
+          'evidence_at_alert',
+          'latest_mcap_since_alert',
+          'latest_bucket_at',
+          'max_mcap_since_alert',
+          'max_mcap_bucket_at',
+          'max_x_since_alert',
+          'first_matched_at',
+          'last_matched_at',
+          'last_updated_at',
+          'matched_runs',
+        ],
+        defaults: {
+          rule_key: "'pumpfun-fast-5x'::character varying",
+          evidence_at_alert: "'{}'::jsonb",
+          matched_runs: '1',
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

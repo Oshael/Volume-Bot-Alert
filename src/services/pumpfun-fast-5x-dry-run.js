@@ -1,5 +1,6 @@
 const candidateBuilder = require('./pumpfun-fast-5x-candidates');
 const { evaluatePumpfunFast5xSignal } = require('./pumpfun-fast-5x-signal');
+const detectionStore = require('../models/pumpfun-fast-5x-detection');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 const MAX_RECENT_PASSES = 20;
@@ -8,6 +9,7 @@ const DEFAULT_OUTCOME_WINDOW_MS = 5 * 60 * 60 * 1000;
 
 let timer = null;
 let running = false;
+let persistedHydrated = false;
 let trackedDetections = new Map();
 let settings = {
   enabled: false,
@@ -145,6 +147,39 @@ function getTrackedDetections() {
     .sort((a, b) => String(b.alertTriggeredAt).localeCompare(String(a.alertTriggeredAt)));
 }
 
+function syncTrackedStatus() {
+  status.trackedDetections = getTrackedDetections();
+  status.trackedDetectionCount = status.trackedDetections.length;
+}
+
+async function hydrateTrackedDetections(now, options = {}) {
+  if (persistedHydrated && !options.force) return;
+  if (trackedDetections.size > 0 && !options.force) {
+    persistedHydrated = true;
+    return;
+  }
+
+  const cutoff = new Date(now.getTime() - settings.outcomeWindowMs);
+  const persisted = await detectionStore.listRecentDetections({
+    since: cutoff,
+    limit: MAX_TRACKED_DETECTIONS,
+  });
+  trackedDetections = new Map(
+    persisted
+      .filter((detection) => detection?.address)
+      .map((detection) => [detection.address, detection])
+  );
+  persistedHydrated = true;
+  syncTrackedStatus();
+}
+
+async function persistTrackedDetections() {
+  const tracked = getTrackedDetections();
+  for (const detection of tracked) {
+    await detectionStore.upsertDetection(detection);
+  }
+}
+
 async function refreshTrackedOutcomes(now) {
   const tracked = getTrackedDetections();
   if (tracked.length === 0) return;
@@ -203,6 +238,7 @@ async function runOnce(options = {}) {
   status.totalRuns += 1;
 
   try {
+    await hydrateTrackedDetections(now);
     const summary = await evaluateOnce(options);
     status.lastCandidateCount = summary.candidates.length;
     status.lastPassedCount = summary.passed.length;
@@ -224,8 +260,8 @@ async function runOnce(options = {}) {
     }
     pruneTrackedDetections(now);
     await refreshTrackedOutcomes(now);
-    status.trackedDetections = getTrackedDetections();
-    status.trackedDetectionCount = status.trackedDetections.length;
+    await persistTrackedDetections();
+    syncTrackedStatus();
 
     if (summary.passed.length > 0) {
       console.log(
@@ -308,6 +344,7 @@ function resetStatus() {
     outcomeWindowMs: DEFAULT_OUTCOME_WINDOW_MS,
   };
   trackedDetections = new Map();
+  persistedHydrated = false;
   status = {
     running: false,
     enabled: false,
@@ -336,5 +373,6 @@ module.exports = {
   __private: {
     resolveOptions,
     resetStatus,
+    hydrateTrackedDetections,
   },
 };

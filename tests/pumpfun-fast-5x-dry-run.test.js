@@ -2,6 +2,7 @@ const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 const candidates = require('../src/services/pumpfun-fast-5x-candidates');
+const detectionStore = require('../src/models/pumpfun-fast-5x-detection');
 const dryRun = require('../src/services/pumpfun-fast-5x-dry-run');
 
 function buildCandidate(overrides = {}) {
@@ -53,6 +54,9 @@ describe('PumpFun fast 5x dry-run runtime', () => {
   it('evaluates candidates and stores compact pass diagnostics without emitting alerts', async () => {
     const originalListCandidates = candidates.listPumpfunFast5xCandidates;
     const originalListOutcomes = candidates.listPumpfunFast5xOutcomesSinceAlert;
+    const originalListDetections = detectionStore.listRecentDetections;
+    const originalUpsertDetection = detectionStore.upsertDetection;
+    const persisted = [];
     candidates.listPumpfunFast5xCandidates = async () => [
       buildCandidate(),
       buildCandidate({
@@ -70,6 +74,11 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       latestMcapSinceAlert: 90_000,
       latestBucketAt: '2026-04-27T10:15:00.000Z',
     }];
+    detectionStore.listRecentDetections = async () => [];
+    detectionStore.upsertDetection = async (detection) => {
+      persisted.push(detection);
+      return detection;
+    };
 
     try {
       dryRun.start({ enabled: true, dryRun: true, intervalMs: 60_000, candidateLimit: 50 });
@@ -91,21 +100,86 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       assert.equal(status.trackedDetections[0].maxMcapSinceAlert, 116_000);
       assert.equal(status.trackedDetections[0].maxXSinceAlert, 2);
       assert.equal(summary.detections.length, 1);
+      assert.equal(persisted.some((item) => item.address === 'So11111111111111111111111111111111111111112'), true);
     } finally {
       candidates.listPumpfunFast5xCandidates = originalListCandidates;
       candidates.listPumpfunFast5xOutcomesSinceAlert = originalListOutcomes;
+      detectionStore.listRecentDetections = originalListDetections;
+      detectionStore.upsertDetection = originalUpsertDetection;
+    }
+  });
+
+  it('hydrates recent persisted detections before refreshing outcomes', async () => {
+    const originalListCandidates = candidates.listPumpfunFast5xCandidates;
+    const originalListOutcomes = candidates.listPumpfunFast5xOutcomesSinceAlert;
+    const originalListDetections = detectionStore.listRecentDetections;
+    const originalUpsertDetection = detectionStore.upsertDetection;
+    const persistedUpdates = [];
+
+    candidates.listPumpfunFast5xCandidates = async () => [];
+    candidates.listPumpfunFast5xOutcomesSinceAlert = async () => [{
+      address: 'So11111111111111111111111111111111111111112',
+      maxMcapSinceAlert: 150_000,
+      maxMcapBucketAt: '2026-04-27T10:30:00.000Z',
+      latestMcapSinceAlert: 120_000,
+      latestBucketAt: '2026-04-27T10:35:00.000Z',
+    }];
+    detectionStore.listRecentDetections = async () => [{
+      address: 'So11111111111111111111111111111111111111112',
+      symbol: 'FAST',
+      name: 'Fast Token',
+      migrationStartedAt: '2026-04-27T10:00:00.000Z',
+      alertTriggeredAt: '2026-04-27T10:06:00.000Z',
+      alertMcap: 50_000,
+      alertMultipleFromFirstMcap: 2,
+      score: 140,
+      reason: 'fast_pump',
+      evidenceAtAlert: { currentMcap: 50_000 },
+      latestMcapSinceAlert: 50_000,
+      latestBucketAt: '2026-04-27T10:06:00.000Z',
+      maxMcapSinceAlert: 50_000,
+      maxMcapBucketAt: '2026-04-27T10:06:00.000Z',
+      maxXSinceAlert: 1,
+      firstMatchedAt: '2026-04-27T10:06:00.000Z',
+      lastMatchedAt: '2026-04-27T10:06:00.000Z',
+      lastUpdatedAt: '2026-04-27T10:06:00.000Z',
+      matchedRuns: 1,
+    }];
+    detectionStore.upsertDetection = async (detection) => {
+      persistedUpdates.push(detection);
+      return detection;
+    };
+
+    try {
+      const summary = await dryRun.runOnce({ force: true, now: '2026-04-27T10:35:00.000Z' });
+
+      assert.equal(summary.passed.length, 0);
+      assert.equal(summary.detections.length, 1);
+      assert.equal(summary.detections[0].maxMcapSinceAlert, 150_000);
+      assert.equal(summary.detections[0].maxXSinceAlert, 3);
+      assert.equal(persistedUpdates.length, 1);
+      assert.equal(persistedUpdates[0].latestMcapSinceAlert, 120_000);
+    } finally {
+      candidates.listPumpfunFast5xCandidates = originalListCandidates;
+      candidates.listPumpfunFast5xOutcomesSinceAlert = originalListOutcomes;
+      detectionStore.listRecentDetections = originalListDetections;
+      detectionStore.upsertDetection = originalUpsertDetection;
     }
   });
 
   it('passes bounded runtime options into the candidate builder', async () => {
     const originalListCandidates = candidates.listPumpfunFast5xCandidates;
     const originalListOutcomes = candidates.listPumpfunFast5xOutcomesSinceAlert;
+    const originalListDetections = detectionStore.listRecentDetections;
+    const originalUpsertDetection = detectionStore.upsertDetection;
     const calls = [];
     candidates.listPumpfunFast5xCandidates = async (options) => {
       calls.push(options);
       return [];
     };
     candidates.listPumpfunFast5xOutcomesSinceAlert = async () => [];
+    detectionStore.listRecentDetections = async () => [];
+    detectionStore.upsertDetection = async (detection) => detection;
 
     try {
       dryRun.start({ enabled: true, candidateLimit: 33 });
@@ -122,6 +196,8 @@ describe('PumpFun fast 5x dry-run runtime', () => {
     } finally {
       candidates.listPumpfunFast5xCandidates = originalListCandidates;
       candidates.listPumpfunFast5xOutcomesSinceAlert = originalListOutcomes;
+      detectionStore.listRecentDetections = originalListDetections;
+      detectionStore.upsertDetection = originalUpsertDetection;
     }
   });
 
