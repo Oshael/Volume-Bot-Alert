@@ -417,8 +417,9 @@ describe('Admin panel auth and management', () => {
         assert.match(res.body, /PumpFun Fast 5x Dry Run/);
         assert.match(res.body, /FAST/);
         assert.match(res.body, /Max X Since Alert/);
-        assert.match(res.body, /const POLL_MS = 10000/);
-        assert.ok(res.body.includes("const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run?refresh=true';"));
+        assert.match(res.body, /http-equiv="refresh"/);
+        assert.ok(res.body.includes('url=/api/admin/pumpfun-fast-5x/dry-run.html?refresh=true'));
+        assert.doesNotMatch(res.body, /<script>/);
       } finally {
         pumpfunFast5xDryRun.getStatus = originalGetStatus;
       }

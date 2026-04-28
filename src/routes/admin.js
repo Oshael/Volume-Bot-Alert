@@ -320,6 +320,7 @@ function renderPumpfunFast5xDryRunHtml(payload) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="10; url=/api/admin/pumpfun-fast-5x/dry-run.html?refresh=true">
   <title>PumpFun Fast 5x Dry Run</title>
   <style>
     body { margin: 0; padding: 24px; background: #0b0f17; color: #e5edf7; font: 14px system-ui, sans-serif; }
@@ -355,100 +356,7 @@ function renderPumpfunFast5xDryRunHtml(payload) {
     <div class="stat">live refresh: <span data-stat="browserRefresh">10s</span></div>
   </section>
   <div class="muted" data-role="message"></div>
-  <div data-role="table-wrap">${rows ? renderPumpfunFast5xDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page forces a bounded refresh every 10s.</div>'}</div>
-  <script>
-    const POLL_MS = 10000;
-    const jsonUrl = '/api/admin/pumpfun-fast-5x/dry-run?refresh=true';
-    const tableWrap = document.querySelector('[data-role="table-wrap"]');
-    const message = document.querySelector('[data-role="message"]');
-
-    function escapeHtml(value) {
-      return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-    }
-
-    function formatNumber(value, digits = 0) {
-      const num = Number(value);
-      if (!Number.isFinite(num)) return '';
-      return num.toLocaleString('en-US', {
-        maximumFractionDigits: digits,
-        minimumFractionDigits: digits,
-      });
-    }
-
-    function setStat(name, value) {
-      const el = document.querySelector('[data-stat="' + name + '"]');
-      if (el) el.textContent = String(value ?? '');
-    }
-
-    function getEvidence(candidate) {
-      return candidate.evidenceAtAlert || candidate.evidence || {};
-    }
-
-    function candidateRow(candidate) {
-      const evidence = getEvidence(candidate);
-      const address = escapeHtml(candidate.address);
-      const dexUrl = 'https://dexscreener.com/solana/' + address;
-      return '<tr>'
-        + '<td><strong>' + escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN') + '</strong><div class="muted">' + address + '</div></td>'
-        + '<td>' + escapeHtml(candidate.alertTriggeredAt || candidate.currentBucketAt || '') + '</td>'
-        + '<td>$' + formatNumber(candidate.alertMcap ?? evidence.currentMcap, 0) + '</td>'
-        + '<td>$' + formatNumber(candidate.latestMcapSinceAlert ?? evidence.currentMcap, 0) + '</td>'
-        + '<td>' + formatNumber(candidate.maxXSinceAlert, 2) + 'x</td>'
-        + '<td>$' + formatNumber(candidate.maxMcapSinceAlert ?? evidence.p95McapRecent ?? evidence.currentMcap, 0) + '</td>'
-        + '<td>' + formatNumber(candidate.score, 2) + '</td>'
-        + '<td>' + formatNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1) + 'm</td>'
-        + '<td><a href="' + dexUrl + '" target="_blank" rel="noreferrer">Dex</a></td>'
-        + '</tr>';
-    }
-
-    function renderTable(candidates) {
-      return '<table>'
-        + '<thead><tr><th>Token</th><th>Alert At</th><th>Alert MCAP</th><th>Latest MCAP</th><th>Max X Since Alert</th><th>Max MCAP</th><th>Score</th><th>2x Time</th><th>Link</th></tr></thead>'
-        + '<tbody>' + candidates.map(candidateRow).join('') + '</tbody>'
-        + '</table>';
-    }
-
-    function render(payload) {
-      const status = payload.status || {};
-      setStat('enabled', status.enabled);
-      setStat('running', status.running);
-      setStat('dryRun', status.dryRun);
-      setStat('lastCandidateCount', status.lastCandidateCount);
-      setStat('lastPassedCount', status.lastPassedCount);
-      setStat('trackedDetectionCount', status.trackedDetectionCount ?? payload.count ?? 0);
-      setStat('lastRunAt', status.lastRunAt || '');
-      message.className = 'muted';
-      message.textContent = status.lastError ? ('last error: ' + status.lastError) : '';
-
-      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
-      if (!candidates.length) {
-        tableWrap.innerHTML = '<div class="empty">No passing dry-run candidates yet. This page forces a bounded refresh every 10s.</div>';
-        return;
-      }
-
-      tableWrap.innerHTML = renderTable(candidates);
-    }
-
-    async function poll() {
-      try {
-        const response = await fetch(jsonUrl, { cache: 'no-store', credentials: 'include' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        render(await response.json());
-      } catch (err) {
-        message.className = 'muted error';
-        message.textContent = 'auto-refresh failed: ' + (err && err.message ? err.message : 'unknown error');
-      } finally {
-        window.setTimeout(poll, POLL_MS);
-      }
-    }
-
-    void poll();
-  </script>
+  <div data-role="table-wrap">${rows ? renderPumpfunFast5xDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page reloads and forces a bounded refresh every 10s.</div>'}</div>
 </body>
 </html>`;
 }
