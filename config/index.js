@@ -430,6 +430,13 @@ module.exports = {
     candidateLimit: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_FAST_5X_CANDIDATE_LIMIT || '250', 10) || 250, 500)),
   },
 
+  pumpfunPostMigrationBlast: {
+    enabled: parseBoolean(process.env.PUMPFUN_POST_MIGRATION_BLAST_ENABLED, false),
+    dryRun: parseBoolean(process.env.PUMPFUN_POST_MIGRATION_BLAST_DRY_RUN, true),
+    intervalMs: Math.max(10000, parseInt(process.env.PUMPFUN_POST_MIGRATION_BLAST_INTERVAL_MS || '60000', 10) || 60000),
+    candidateLimit: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_POST_MIGRATION_BLAST_CANDIDATE_LIMIT || '250', 10) || 250, 500)),
+  },
+
   pumpfunPreMigrationCapture: {
     enabled: parseBoolean(process.env.PUMPFUN_PRE_MIGRATION_CAPTURE_ENABLED, false),
     maxTracked: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_PRE_MIGRATION_MAX_TRACKED || '250', 10) || 250, 2000)),

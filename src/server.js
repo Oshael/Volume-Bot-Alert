@@ -39,6 +39,7 @@ const bidZoneWorker = require('./services/bid-zone-worker');
 const tokenRiskEnrichmentWorker = require('./services/token-risk-enrichment-worker');
 const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-worker');
 const pumpfunFast5xDryRun = require('./services/pumpfun-fast-5x-dry-run');
+const pumpfunPostMigrationBlastDryRun = require('./services/pumpfun-post-migration-blast-dry-run');
 const dexscreener = require('./services/dexscreener');
 
 const app = express();
@@ -157,6 +158,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     tokenRiskEnrichmentWorker: tokenRiskEnrichmentWorker.getStatus(),
     tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
     pumpfunFast5xDryRun: pumpfunFast5xDryRun.getStatus(),
+    pumpfunPostMigrationBlastDryRun: pumpfunPostMigrationBlastDryRun.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
   });
 });
@@ -229,6 +231,7 @@ function startWorkerSet() {
   tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
   tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
   pumpfunFast5xDryRun.start(config.pumpfunFast5xAlert);
+  pumpfunPostMigrationBlastDryRun.start(config.pumpfunPostMigrationBlast);
 }
 
 function bootstrapWebRuntime(httpServer) {
