@@ -152,26 +152,50 @@ function syncTrackedStatus() {
   status.trackedDetectionCount = status.trackedDetections.length;
 }
 
+function getPostAlertHoldMetrics(outcome = {}) {
+  return {
+    lowX15m: outcome.postAlertLowX15m ?? 0,
+    lowX30m: outcome.postAlertLowX30m ?? 0,
+    highX30m: outcome.postAlertHighX30m ?? 0,
+    volToMcap: outcome.postAlertMaxVolToMcap ?? 0,
+  };
+}
+
+function classifyConfirmedContinuation(metrics) {
+  if (metrics.lowX15m < 0.9 || metrics.lowX30m < 0.9) return null;
+  if (metrics.highX30m >= 3) {
+    return { status: 'continuation_parabolic', reason: 'held_0_9_and_expanded_3x_by_30m' };
+  }
+  if (metrics.highX30m >= 2) {
+    return { status: 'continuation_strong', reason: 'held_0_9_and_expanded_2x_by_30m' };
+  }
+  return { status: 'continuation_confirmed', reason: 'held_0_9_and_expanded_1_5x_by_30m' };
+}
+
 function classifyPostAlertHold(outcome = {}) {
+  const metrics = getPostAlertHoldMetrics(outcome);
+
   if (!outcome.postAlertMature15m) {
     return { status: 'pending_15m', reason: 'waiting_for_15m_bucket_coverage' };
   }
-  if ((outcome.postAlertLowX15m ?? 0) < 0.8) {
+  if (metrics.lowX15m < 0.8) {
     return { status: 'failed_drawdown_15m', reason: 'low_x_15m_below_0_8' };
   }
   if (!outcome.postAlertMature30m) {
     return { status: 'held_15m_pending_30m', reason: 'held_15m_waiting_for_30m_expansion' };
   }
-  if ((outcome.postAlertLowX30m ?? 0) < 0.8) {
+  if (metrics.lowX30m < 0.8) {
     return { status: 'failed_drawdown_30m', reason: 'low_x_30m_below_0_8' };
   }
-  if ((outcome.postAlertHighX30m ?? 0) < 1.5) {
+  if (metrics.highX30m < 1.5) {
     return { status: 'held_weak_expansion_30m', reason: 'high_x_30m_below_1_5' };
   }
-  if ((outcome.postAlertMaxVolToMcap ?? 0) < 1.5 || (outcome.postAlertMaxVolToMcap ?? 0) > 3) {
-    return { status: 'held_expanded_volume_outside_band', reason: 'max_vol_to_mcap_outside_1_5_to_3' };
+  const continuation = classifyConfirmedContinuation(metrics);
+  if (continuation) return continuation;
+  if (metrics.volToMcap > 5) {
+    return { status: 'held_high_volume_churn', reason: 'held_0_8_with_volume_above_5x_mcap' };
   }
-  return { status: 'hold_confirmed', reason: 'held_drawdown_and_expanded_with_healthy_volume' };
+  return { status: 'held_soft_continuation', reason: 'held_0_8_and_expanded_1_5x_by_30m' };
 }
 
 async function hydrateTrackedDetections(now, options = {}) {

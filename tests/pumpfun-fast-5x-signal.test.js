@@ -28,6 +28,7 @@ describe('PumpFun fast 5x signal', () => {
     assert.equal(result.passes, true);
     assert.equal(result.reason, 'passed');
     assert.equal(result.evidence.ruleKey, PUMPFUN_FAST_5X_RULE_KEY);
+    assert.equal(result.evidence.alertMcap, 58_000);
     assert.equal(result.evidence.currentMultiple, 2.42);
     assert.equal(result.evidence.p95McapMultiple, 2.58);
     assert.ok(result.score > 80);
@@ -62,10 +63,26 @@ describe('PumpFun fast 5x signal', () => {
     );
   });
 
+  it('rejects alert market caps outside the observed higher-quality range', () => {
+    assert.equal(
+      evaluatePumpfunFast5xSignal(createStrongSignal({ currentMcap: 45_000 })).reason,
+      'alert_mcap_below_min'
+    );
+    assert.equal(
+      evaluatePumpfunFast5xSignal(createStrongSignal({
+        firstMcap: 80_000,
+        currentMcap: 220_000,
+        p95McapRecent: 220_000,
+      })).reason,
+      'alert_mcap_above_max'
+    );
+  });
+
   it('rejects high-volume tokens when market cap did not confirm a 2x move', () => {
     const result = evaluatePumpfunFast5xSignal(createStrongSignal({
-      currentMcap: 39_000,
-      p95McapRecent: 41_000,
+      firstMcap: 30_000,
+      currentMcap: 50_000,
+      p95McapRecent: 51_000,
     }));
 
     assert.equal(result.passes, false);
@@ -74,9 +91,9 @@ describe('PumpFun fast 5x signal', () => {
 
   it('does not let rounded display multiples pass the 2x confirmation gate', () => {
     const result = evaluatePumpfunFast5xSignal(createStrongSignal({
-      firstMcap: 20_000,
-      currentMcap: 39_920,
-      p95McapRecent: 39_920,
+      firstMcap: 30_000,
+      currentMcap: 59_920,
+      p95McapRecent: 59_920,
     }));
 
     assert.equal(result.evidence.currentMultiple, 2);
@@ -117,7 +134,12 @@ describe('PumpFun fast 5x signal', () => {
     assert.equal(highAverage.passes, true);
   });
 
-  it('rejects sparse buckets so dry-run data cannot learn from thin coverage', () => {
+  it('rejects sparse buckets so dry-run data cannot learn from very thin coverage', () => {
+    assert.equal(
+      evaluatePumpfunFast5xSignal(createStrongSignal({ bucketCoverage: 12 })).passes,
+      true
+    );
+
     const result = evaluatePumpfunFast5xSignal(createStrongSignal({
       bucketCoverage: 8,
     }));

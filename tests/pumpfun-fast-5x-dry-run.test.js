@@ -105,7 +105,7 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       assert.equal(status.trackedDetections[0].alertMcap, 58_000);
       assert.equal(status.trackedDetections[0].maxMcapSinceAlert, 116_000);
       assert.equal(status.trackedDetections[0].maxXSinceAlert, 2);
-      assert.equal(status.trackedDetections[0].postAlertHoldStatus, 'hold_confirmed');
+      assert.equal(status.trackedDetections[0].postAlertHoldStatus, 'continuation_confirmed');
       assert.equal(status.trackedDetections[0].postAlertLowX15m, 0.92);
       assert.equal(summary.detections.length, 1);
       assert.equal(persisted.some((item) => item.address === 'So11111111111111111111111111111111111111112'), true);
@@ -235,7 +235,7 @@ describe('PumpFun fast 5x dry-run runtime', () => {
     assert.equal(options.outcomeWindowMs, 5 * 60 * 60 * 1000);
   });
 
-  it('classifies post-alert hold states from drawdown and expansion', () => {
+  it('classifies post-alert continuation states from drawdown and expansion', () => {
     assert.deepEqual(
       dryRun.__private.classifyPostAlertHold({ postAlertMature15m: false }),
       { status: 'pending_15m', reason: 'waiting_for_15m_bucket_coverage' }
@@ -256,7 +256,18 @@ describe('PumpFun fast 5x dry-run runtime', () => {
         postAlertHighX30m: 1.8,
         postAlertMaxVolToMcap: 2,
       }).status,
-      'hold_confirmed'
+      'continuation_confirmed'
+    );
+    assert.equal(
+      dryRun.__private.classifyPostAlertHold({
+        postAlertMature15m: true,
+        postAlertMature30m: true,
+        postAlertLowX15m: 0.92,
+        postAlertLowX30m: 0.91,
+        postAlertHighX30m: 2.2,
+        postAlertMaxVolToMcap: 0.6,
+      }).status,
+      'continuation_strong'
     );
   });
 });

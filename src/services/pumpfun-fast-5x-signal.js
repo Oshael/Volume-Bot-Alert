@@ -4,11 +4,13 @@ const DEFAULT_OPTIONS = Object.freeze({
   maxMigrationAgeMs: 60 * 60 * 1000,
   minFirstMcap: 15_000,
   maxFirstMcap: 80_000,
+  minAlertMcap: 50_000,
+  maxAlertMcap: 200_000,
   maxTimeTo2xMs: 15 * 60 * 1000,
   minP95Vol5m: 40_000,
   minAvgVol5mFirst30m: 40_000,
   minMcapMultiple: 2,
-  minBucketCoverage: 20,
+  minBucketCoverage: 12,
 });
 
 function toFiniteNumber(value) {
@@ -30,6 +32,8 @@ function resolveOptions(options = {}) {
     maxMigrationAgeMs: Math.max(1, Number(options.maxMigrationAgeMs) || DEFAULT_OPTIONS.maxMigrationAgeMs),
     minFirstMcap: Math.max(0, Number(options.minFirstMcap) || DEFAULT_OPTIONS.minFirstMcap),
     maxFirstMcap: Math.max(1, Number(options.maxFirstMcap) || DEFAULT_OPTIONS.maxFirstMcap),
+    minAlertMcap: Math.max(0, Number(options.minAlertMcap) || DEFAULT_OPTIONS.minAlertMcap),
+    maxAlertMcap: Math.max(1, Number(options.maxAlertMcap) || DEFAULT_OPTIONS.maxAlertMcap),
     maxTimeTo2xMs: Math.max(1, Number(options.maxTimeTo2xMs) || DEFAULT_OPTIONS.maxTimeTo2xMs),
     minP95Vol5m: Math.max(0, Number(options.minP95Vol5m) || DEFAULT_OPTIONS.minP95Vol5m),
     minAvgVol5mFirst30m: Math.max(0, Number(options.minAvgVol5mFirst30m) || DEFAULT_OPTIONS.minAvgVol5mFirst30m),
@@ -75,12 +79,14 @@ function buildEvidence(signal, options) {
     signal.p95Vol5mRecent ?? 0,
     signal.avgVol5mFirst30m ?? 0
   );
+  const alertMcap = signal.currentMcap ?? signal.p95McapRecent ?? null;
 
   return {
     ruleKey: PUMPFUN_FAST_5X_RULE_KEY,
     source: signal.source,
     migrationAgeMs: signal.migrationAgeMs,
     firstMcap: signal.firstMcap,
+    alertMcap,
     currentMcap: signal.currentMcap,
     currentMultiple: roundMetric(currentMultiple),
     p95McapRecent: signal.p95McapRecent,
@@ -124,6 +130,13 @@ function getFirstMcapFailure(signal, options) {
   return null;
 }
 
+function getAlertMcapFailure(evidence, options) {
+  if (evidence.alertMcap == null || evidence.alertMcap <= 0) return 'missing_alert_mcap';
+  if (evidence.alertMcap < options.minAlertMcap) return 'alert_mcap_below_min';
+  if (evidence.alertMcap > options.maxAlertMcap) return 'alert_mcap_above_max';
+  return null;
+}
+
 function getCoverageFailure(signal, options) {
   if ((signal.bucketCoverage || 0) < options.minBucketCoverage) return 'insufficient_bucket_coverage';
   return null;
@@ -151,6 +164,7 @@ function getFailureReason(signal, evidence, options) {
     () => getSourceFailure(signal),
     () => getMigrationAgeFailure(signal, options),
     () => getFirstMcapFailure(signal, options),
+    () => getAlertMcapFailure(evidence, options),
     () => getCoverageFailure(signal, options),
     () => getSpeedFailure(signal, options),
     () => getConfirmationFailure(signal, evidence, options),

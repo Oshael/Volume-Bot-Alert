@@ -42,18 +42,24 @@ O status de hold do Fast 5x nao bloqueia a deteccao inicial. Ele e uma classific
 - `held_15m_pending_30m`
 - `failed_drawdown_30m`
 - `held_weak_expansion_30m`
-- `held_expanded_volume_outside_band`
-- `hold_confirmed`
+- `held_high_volume_churn`
+- `held_soft_continuation`
+- `continuation_confirmed`
+- `continuation_strong`
+- `continuation_parabolic`
 
-Gates atuais do `hold_confirmed`:
-- `post_alert_low_x_15m >= 0.8`
-- `post_alert_low_x_30m >= 0.8`
-- `post_alert_high_x_30m >= 1.5`
-- `1.5 <= post_alert_max_vol_to_mcap <= 3`
+Gates atuais de continuacao:
+- gate inicial do Fast 5x agora exige `50k <= alert_mcap <= 200k` para reduzir falsos positivos
+- gate inicial do Fast 5x exige `minBucketCoverage >= 12`, reduzido de 20 para capturar o movimento mais cedo
+- `continuation_confirmed`: `low_15m >= 0.9`, `low_30m >= 0.9`, `high_30m >= 1.5`
+- `continuation_strong`: `low_15m >= 0.9`, `low_30m >= 0.9`, `high_30m >= 2`
+- `continuation_parabolic`: `low_15m >= 0.9`, `low_30m >= 0.9`, `high_30m >= 3`
+- volume baixo nao e filtro negativo quando o preco segura; volume so vira alerta separado quando fica muito alto
 
 Ponto importante:
 - isso e uma classificacao pos-alerta, nao um alerta mais cedo
 - ela serve para separar tokens que seguraram bem depois do Fast 5x de tokens que tiveram churn/venda forte logo apos o alerta
+- a amostra que motivou a regra tinha 132 exemplos; `low_15m >= 0.9` + `low_30m >= 0.9` separou 20 casos com 65% de 2x e 45% de 3x, contra 91 casos de `low_15m < 0.8` com 18.7% de 2x e 11% de 3x
 - nao misturar isso com o Blast inicial, porque o Blast precisa continuar rapido
 
 ### PumpFun Post-Migration Blast
