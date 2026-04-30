@@ -75,6 +75,12 @@ function mapOutcomeRow(row) {
     maxMcapBucketAt: row.max_mcap_bucket_at || null,
     latestMcapSinceAlert: toNumberOrNull(row.latest_mcap_since_alert),
     latestBucketAt: row.latest_bucket_at || null,
+    postAlertLowX15m: toNumberOrNull(row.post_alert_low_x_15m),
+    postAlertLowX30m: toNumberOrNull(row.post_alert_low_x_30m),
+    postAlertHighX30m: toNumberOrNull(row.post_alert_high_x_30m),
+    postAlertMaxVolToMcap: toNumberOrNull(row.post_alert_max_vol_to_mcap),
+    postAlertMature15m: row.post_alert_mature_15m === true,
+    postAlertMature30m: row.post_alert_mature_30m === true,
   };
 }
 
@@ -211,14 +217,40 @@ async function listPumpfunFast5xOutcomesSinceAlert(alerts = [], options = {}) {
        MAX(mb.close_mcap) AS max_mcap_since_alert,
        (ARRAY_AGG(mb.bucket_ts ORDER BY mb.close_mcap DESC, mb.bucket_ts ASC))[1] AS max_mcap_bucket_at,
        (ARRAY_AGG(mb.close_mcap ORDER BY mb.bucket_ts DESC))[1] AS latest_mcap_since_alert,
-       MAX(mb.bucket_ts) AS latest_bucket_at
+       MAX(mb.bucket_ts) AS latest_bucket_at,
+       CASE WHEN a.alert_mcap > 0
+         THEN MIN(mb.low_mcap) FILTER (
+           WHERE mb.bucket_ts <= a.alert_triggered_at + INTERVAL '15 minutes'
+         ) / a.alert_mcap
+       END AS post_alert_low_x_15m,
+       CASE WHEN a.alert_mcap > 0
+         THEN MIN(mb.low_mcap) FILTER (
+           WHERE mb.bucket_ts <= a.alert_triggered_at + INTERVAL '30 minutes'
+         ) / a.alert_mcap
+       END AS post_alert_low_x_30m,
+       CASE WHEN a.alert_mcap > 0
+         THEN MAX(mb.high_mcap) FILTER (
+           WHERE mb.bucket_ts <= a.alert_triggered_at + INTERVAL '30 minutes'
+         ) / a.alert_mcap
+       END AS post_alert_high_x_30m,
+       CASE WHEN a.alert_mcap > 0
+         THEN MAX(vb.close_vol_5m) FILTER (
+           WHERE mb.bucket_ts <= a.alert_triggered_at + INTERVAL '30 minutes'
+         ) / a.alert_mcap
+       END AS post_alert_max_vol_to_mcap,
+       MAX(mb.bucket_ts) >= a.alert_triggered_at + INTERVAL '15 minutes' AS post_alert_mature_15m,
+       MAX(mb.bucket_ts) >= a.alert_triggered_at + INTERVAL '30 minutes' AS post_alert_mature_30m
      FROM alerts a
      JOIN token_market_buckets_1m mb
        ON mb.token_address = a.address
       AND mb.bucket_ts >= a.alert_triggered_at
       AND mb.bucket_ts <= $2::timestamptz
       AND mb.close_mcap > 0
-     GROUP BY a.address`,
+     LEFT JOIN token_market_volume_buckets_1m vb
+       ON vb.token_address = mb.token_address
+      AND vb.bucket_ts = mb.bucket_ts
+      AND vb.source = mb.source
+     GROUP BY a.address, a.alert_triggered_at, a.alert_mcap`,
     [JSON.stringify(normalizedAlerts), now.toISOString()]
   );
 

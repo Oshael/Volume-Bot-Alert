@@ -73,6 +73,12 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       maxMcapBucketAt: '2026-04-27T10:12:00.000Z',
       latestMcapSinceAlert: 90_000,
       latestBucketAt: '2026-04-27T10:15:00.000Z',
+      postAlertLowX15m: 0.92,
+      postAlertLowX30m: 0.9,
+      postAlertHighX30m: 1.8,
+      postAlertMaxVolToMcap: 2.2,
+      postAlertMature15m: true,
+      postAlertMature30m: true,
     }];
     detectionStore.listRecentDetections = async () => [];
     detectionStore.upsertDetection = async (detection) => {
@@ -99,6 +105,8 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       assert.equal(status.trackedDetections[0].alertMcap, 58_000);
       assert.equal(status.trackedDetections[0].maxMcapSinceAlert, 116_000);
       assert.equal(status.trackedDetections[0].maxXSinceAlert, 2);
+      assert.equal(status.trackedDetections[0].postAlertHoldStatus, 'hold_confirmed');
+      assert.equal(status.trackedDetections[0].postAlertLowX15m, 0.92);
       assert.equal(summary.detections.length, 1);
       assert.equal(persisted.some((item) => item.address === 'So11111111111111111111111111111111111111112'), true);
     } finally {
@@ -123,6 +131,12 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       maxMcapBucketAt: '2026-04-27T10:30:00.000Z',
       latestMcapSinceAlert: 120_000,
       latestBucketAt: '2026-04-27T10:35:00.000Z',
+      postAlertLowX15m: 0.5,
+      postAlertLowX30m: 0.45,
+      postAlertHighX30m: 1.2,
+      postAlertMaxVolToMcap: 0.9,
+      postAlertMature15m: true,
+      postAlertMature30m: true,
     }];
     detectionStore.listRecentDetections = async () => [{
       address: 'So11111111111111111111111111111111111111112',
@@ -140,6 +154,9 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       maxMcapSinceAlert: 50_000,
       maxMcapBucketAt: '2026-04-27T10:06:00.000Z',
       maxXSinceAlert: 1,
+      postAlertHoldStatus: null,
+      postAlertHoldReason: null,
+      postAlertHoldEvaluatedAt: null,
       firstMatchedAt: '2026-04-27T10:06:00.000Z',
       lastMatchedAt: '2026-04-27T10:06:00.000Z',
       lastUpdatedAt: '2026-04-27T10:06:00.000Z',
@@ -157,8 +174,10 @@ describe('PumpFun fast 5x dry-run runtime', () => {
       assert.equal(summary.detections.length, 1);
       assert.equal(summary.detections[0].maxMcapSinceAlert, 150_000);
       assert.equal(summary.detections[0].maxXSinceAlert, 3);
+      assert.equal(summary.detections[0].postAlertHoldStatus, 'failed_drawdown_15m');
       assert.equal(persistedUpdates.length, 1);
       assert.equal(persistedUpdates[0].latestMcapSinceAlert, 120_000);
+      assert.equal(persistedUpdates[0].postAlertHoldReason, 'low_x_15m_below_0_8');
     } finally {
       candidates.listPumpfunFast5xCandidates = originalListCandidates;
       candidates.listPumpfunFast5xOutcomesSinceAlert = originalListOutcomes;
@@ -214,5 +233,30 @@ describe('PumpFun fast 5x dry-run runtime', () => {
     assert.equal(options.intervalMs, 10_000);
     assert.equal(options.candidateLimit, 500);
     assert.equal(options.outcomeWindowMs, 5 * 60 * 60 * 1000);
+  });
+
+  it('classifies post-alert hold states from drawdown and expansion', () => {
+    assert.deepEqual(
+      dryRun.__private.classifyPostAlertHold({ postAlertMature15m: false }),
+      { status: 'pending_15m', reason: 'waiting_for_15m_bucket_coverage' }
+    );
+    assert.equal(
+      dryRun.__private.classifyPostAlertHold({
+        postAlertMature15m: true,
+        postAlertLowX15m: 0.7,
+      }).status,
+      'failed_drawdown_15m'
+    );
+    assert.equal(
+      dryRun.__private.classifyPostAlertHold({
+        postAlertMature15m: true,
+        postAlertMature30m: true,
+        postAlertLowX15m: 0.9,
+        postAlertLowX30m: 0.9,
+        postAlertHighX30m: 1.8,
+        postAlertMaxVolToMcap: 2,
+      }).status,
+      'hold_confirmed'
+    );
   });
 });

@@ -152,6 +152,28 @@ function syncTrackedStatus() {
   status.trackedDetectionCount = status.trackedDetections.length;
 }
 
+function classifyPostAlertHold(outcome = {}) {
+  if (!outcome.postAlertMature15m) {
+    return { status: 'pending_15m', reason: 'waiting_for_15m_bucket_coverage' };
+  }
+  if ((outcome.postAlertLowX15m ?? 0) < 0.8) {
+    return { status: 'failed_drawdown_15m', reason: 'low_x_15m_below_0_8' };
+  }
+  if (!outcome.postAlertMature30m) {
+    return { status: 'held_15m_pending_30m', reason: 'held_15m_waiting_for_30m_expansion' };
+  }
+  if ((outcome.postAlertLowX30m ?? 0) < 0.8) {
+    return { status: 'failed_drawdown_30m', reason: 'low_x_30m_below_0_8' };
+  }
+  if ((outcome.postAlertHighX30m ?? 0) < 1.5) {
+    return { status: 'held_weak_expansion_30m', reason: 'high_x_30m_below_1_5' };
+  }
+  if ((outcome.postAlertMaxVolToMcap ?? 0) < 1.5 || (outcome.postAlertMaxVolToMcap ?? 0) > 3) {
+    return { status: 'held_expanded_volume_outside_band', reason: 'max_vol_to_mcap_outside_1_5_to_3' };
+  }
+  return { status: 'hold_confirmed', reason: 'held_drawdown_and_expanded_with_healthy_volume' };
+}
+
 async function hydrateTrackedDetections(now, options = {}) {
   if (persistedHydrated && !options.force) return;
   if (trackedDetections.size > 0 && !options.force) {
@@ -204,6 +226,14 @@ async function refreshTrackedOutcomes(now) {
     detection.maxXSinceAlert = detection.alertMcap > 0
       ? roundMetric(detection.maxMcapSinceAlert / detection.alertMcap)
       : null;
+    detection.postAlertLowX15m = roundMetric(outcome.postAlertLowX15m, 6);
+    detection.postAlertLowX30m = roundMetric(outcome.postAlertLowX30m, 6);
+    detection.postAlertHighX30m = roundMetric(outcome.postAlertHighX30m, 6);
+    detection.postAlertMaxVolToMcap = roundMetric(outcome.postAlertMaxVolToMcap, 6);
+    const hold = classifyPostAlertHold(outcome);
+    detection.postAlertHoldStatus = hold.status;
+    detection.postAlertHoldReason = hold.reason;
+    detection.postAlertHoldEvaluatedAt = now.toISOString();
     detection.lastUpdatedAt = now.toISOString();
   }
 }
@@ -374,5 +404,6 @@ module.exports = {
     resolveOptions,
     resetStatus,
     hydrateTrackedDetections,
+    classifyPostAlertHold,
   },
 };

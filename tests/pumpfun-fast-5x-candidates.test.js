@@ -116,6 +116,12 @@ describe('PumpFun fast 5x candidates', () => {
           max_mcap_bucket_at: '2026-04-27T10:12:00.000Z',
           latest_mcap_since_alert: '90000',
           latest_bucket_at: '2026-04-27T10:15:00.000Z',
+          post_alert_low_x_15m: '0.920000',
+          post_alert_low_x_30m: '0.880000',
+          post_alert_high_x_30m: '1.750000',
+          post_alert_max_vol_to_mcap: '2.100000',
+          post_alert_mature_15m: true,
+          post_alert_mature_30m: false,
         }],
       };
     };
@@ -130,9 +136,15 @@ describe('PumpFun fast 5x candidates', () => {
       assert.equal(rows.length, 1);
       assert.equal(rows[0].maxMcapSinceAlert, 116_000);
       assert.equal(rows[0].latestMcapSinceAlert, 90_000);
+      assert.equal(rows[0].postAlertLowX15m, 0.92);
+      assert.equal(rows[0].postAlertMaxVolToMcap, 2.1);
+      assert.equal(rows[0].postAlertMature15m, true);
+      assert.equal(rows[0].postAlertMature30m, false);
       assert.equal(calls.length, 1);
       assert.match(calls[0].sql, /jsonb_to_recordset/);
       assert.match(calls[0].sql, /MAX\(mb.close_mcap\)/);
+      assert.match(calls[0].sql, /token_market_volume_buckets_1m/);
+      assert.match(calls[0].sql, /MAX\(vb.close_vol_5m\) FILTER/);
       assert.equal(JSON.parse(calls[0].params[0])[0].alert_mcap, 58_000);
       assert.equal(calls[0].params[1], '2026-04-27T10:15:00.000Z');
     } finally {

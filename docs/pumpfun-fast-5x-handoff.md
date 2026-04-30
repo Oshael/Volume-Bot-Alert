@@ -26,7 +26,35 @@ Ele:
 - não emite alerta real quando `PUMPFUN_FAST_5X_DRY_RUN=true`
 - salva os candidatos detectados em `pumpfun_fast_5x_detections`
 - atualiza `latest_mcap_since_alert`, `max_mcap_since_alert` e `max_x_since_alert`
+- agora tambem atualiza metricas de hold pos-alerta na mesma tabela:
+  - `post_alert_low_x_15m`
+  - `post_alert_low_x_30m`
+  - `post_alert_high_x_30m`
+  - `post_alert_max_vol_to_mcap`
+  - `post_alert_hold_status`
+  - `post_alert_hold_reason`
+  - `post_alert_hold_evaluated_at`
 - mostra uma view admin em `/api/admin/pumpfun-fast-5x/dry-run.html?refresh=true`
+
+O status de hold do Fast 5x nao bloqueia a deteccao inicial. Ele e uma classificacao posterior, calculada com buckets depois do alerta:
+- `pending_15m`
+- `failed_drawdown_15m`
+- `held_15m_pending_30m`
+- `failed_drawdown_30m`
+- `held_weak_expansion_30m`
+- `held_expanded_volume_outside_band`
+- `hold_confirmed`
+
+Gates atuais do `hold_confirmed`:
+- `post_alert_low_x_15m >= 0.8`
+- `post_alert_low_x_30m >= 0.8`
+- `post_alert_high_x_30m >= 1.5`
+- `1.5 <= post_alert_max_vol_to_mcap <= 3`
+
+Ponto importante:
+- isso e uma classificacao pos-alerta, nao um alerta mais cedo
+- ela serve para separar tokens que seguraram bem depois do Fast 5x de tokens que tiveram churn/venda forte logo apos o alerta
+- nao misturar isso com o Blast inicial, porque o Blast precisa continuar rapido
 
 ### PumpFun Post-Migration Blast
 
@@ -130,6 +158,11 @@ SELECT
   latest_mcap_since_alert,
   max_mcap_since_alert,
   max_x_since_alert,
+  post_alert_low_x_15m,
+  post_alert_low_x_30m,
+  post_alert_high_x_30m,
+  post_alert_max_vol_to_mcap,
+  post_alert_hold_status,
   score
 FROM pumpfun_fast_5x_detections
 ORDER BY alert_triggered_at DESC;

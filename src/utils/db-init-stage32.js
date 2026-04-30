@@ -18,6 +18,13 @@ const STATEMENTS = [
      max_mcap_since_alert NUMERIC(20, 2),
      max_mcap_bucket_at TIMESTAMPTZ,
      max_x_since_alert NUMERIC(20, 6),
+     post_alert_low_x_15m NUMERIC(20, 6),
+     post_alert_low_x_30m NUMERIC(20, 6),
+     post_alert_high_x_30m NUMERIC(20, 6),
+     post_alert_max_vol_to_mcap NUMERIC(20, 6),
+     post_alert_hold_status VARCHAR(64),
+     post_alert_hold_reason VARCHAR(96),
+     post_alert_hold_evaluated_at TIMESTAMPTZ,
      first_matched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      last_matched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -30,6 +37,20 @@ const STATEMENTS = [
      ON pumpfun_fast_5x_detections(max_x_since_alert DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS idx_pumpfun_fast_5x_detections_updated
      ON pumpfun_fast_5x_detections(last_updated_at DESC)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_low_x_15m NUMERIC(20, 6)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_low_x_30m NUMERIC(20, 6)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_high_x_30m NUMERIC(20, 6)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_max_vol_to_mcap NUMERIC(20, 6)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_hold_status VARCHAR(64)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_hold_reason VARCHAR(96)`,
+  `ALTER TABLE pumpfun_fast_5x_detections
+     ADD COLUMN IF NOT EXISTS post_alert_hold_evaluated_at TIMESTAMPTZ`,
 ];
 
 async function init() {

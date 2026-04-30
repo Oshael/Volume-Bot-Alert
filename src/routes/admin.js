@@ -417,6 +417,7 @@ function renderPumpfunFast5xDryRunRow(candidate) {
     <td>$${formatAdminNumber(candidate.latestMcapSinceAlert ?? evidence.currentMcap, 0)}</td>
     <td>${formatAdminNumber(candidate.maxXSinceAlert, 2)}x</td>
     <td>$${formatAdminNumber(candidate.maxMcapSinceAlert ?? evidence.p95McapRecent ?? evidence.currentMcap, 0)}</td>
+    <td>${escapeHtml(candidate.postAlertHoldStatus || '')}<div class="muted">${escapeHtml(candidate.postAlertHoldReason || '')}</div></td>
     <td>${formatAdminNumber(candidate.score, 2)}</td>
     <td>${formatAdminNumber((Number(evidence.timeTo2xMs) || 0) / 60000, 1)}m</td>
     <td><a href="${dexUrl}" target="_blank" rel="noreferrer">Dex</a></td>
@@ -425,7 +426,7 @@ function renderPumpfunFast5xDryRunRow(candidate) {
 
 function renderPumpfunFast5xDryRunTable(rows) {
   return `<table>
-    <thead><tr><th>Token</th><th>Alert At</th><th>Alert MCAP</th><th>Latest MCAP</th><th>Max X Since Alert</th><th>Max MCAP</th><th>Score</th><th>2x Time</th><th>Link</th></tr></thead>
+    <thead><tr><th>Token</th><th>Alert At</th><th>Alert MCAP</th><th>Latest MCAP</th><th>Max X Since Alert</th><th>Max MCAP</th><th>Hold</th><th>Score</th><th>2x Time</th><th>Link</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
