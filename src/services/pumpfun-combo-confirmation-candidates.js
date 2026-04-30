@@ -95,7 +95,25 @@ function mapOutcomeRow(row) {
 async function listPumpfunComboConfirmationCandidates(options = {}) {
   const settings = resolveOptions(options);
   const { rows } = await db.query(
-    `WITH pre AS (
+    `WITH base AS (
+       SELECT
+         b.token_address,
+         b.symbol,
+         b.name,
+         b.migration_started_at,
+         b.alert_triggered_at,
+         b.alert_mcap,
+         b.score,
+         b.evidence_at_alert
+       FROM pumpfun_post_migration_blast_detections b
+       WHERE b.alert_triggered_at >= $1::timestamptz - ($2::bigint * INTERVAL '1 millisecond')
+         AND b.alert_triggered_at <= $1::timestamptz
+         AND b.alert_mcap >= $3::numeric
+         AND b.alert_mcap <= $4::numeric
+       ORDER BY b.alert_triggered_at DESC
+       LIMIT $5::int
+     ),
+     pre AS (
        SELECT
          mb.token_address,
          COUNT(*) AS pre_buckets,
@@ -106,6 +124,7 @@ async function listPumpfunComboConfirmationCandidates(options = {}) {
          ON vb.token_address = mb.token_address
         AND vb.bucket_ts = mb.bucket_ts
         AND vb.source = 'pumpfun-pre-migration'
+       JOIN base b ON b.token_address = mb.token_address
        WHERE mb.source = 'pumpfun-pre-migration'
        GROUP BY mb.token_address
      )
@@ -125,17 +144,12 @@ async function listPumpfunComboConfirmationCandidates(options = {}) {
        pre.pre_buckets,
        pre.pre_high_mcap,
        pre.max_pre_vol_5m
-     FROM pumpfun_post_migration_blast_detections b
+     FROM base b
      LEFT JOIN pumpfun_fast_5x_detections f
        ON f.token_address = b.token_address
       AND f.rule_key = 'pumpfun-fast-5x'
      LEFT JOIN pre ON pre.token_address = b.token_address
-     WHERE b.alert_triggered_at >= $1::timestamptz - ($2::bigint * INTERVAL '1 millisecond')
-       AND b.alert_triggered_at <= $1::timestamptz
-       AND b.alert_mcap >= $3::numeric
-       AND b.alert_mcap <= $4::numeric
-     ORDER BY b.alert_triggered_at DESC
-     LIMIT $5::int`,
+     ORDER BY b.alert_triggered_at DESC`,
     [
       settings.now.toISOString(),
       settings.maxDetectionAgeMs,
