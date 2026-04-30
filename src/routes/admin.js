@@ -18,6 +18,7 @@ const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const pumpfunFast5xDryRun = require('../services/pumpfun-fast-5x-dry-run');
 const pumpfunPostMigrationBlastDryRun = require('../services/pumpfun-post-migration-blast-dry-run');
+const pumpfunComboConfirmationDryRun = require('../services/pumpfun-combo-confirmation-dry-run');
 const { isValidAddress } = require('../models/user-token');
 const {
   buildBlockStatusSummary,
@@ -347,6 +348,64 @@ function getPumpfunPostMigrationBlastEvidence(candidate) {
   return candidate.evidenceAtAlert || candidate.evidence || {};
 }
 
+function resolvePumpfunComboConfirmationResponseCandidates(status) {
+  if (Array.isArray(status.trackedDetections) && status.trackedDetections.length > 0) {
+    return status.trackedDetections;
+  }
+  if (Array.isArray(status.lastPassedCandidates)) {
+    return status.lastPassedCandidates;
+  }
+  return [];
+}
+
+function buildPumpfunComboConfirmationStatus(status, candidates) {
+  return {
+    running: Boolean(status.running),
+    enabled: Boolean(status.enabled),
+    dryRun: Boolean(status.dryRun),
+    intervalMs: status.intervalMs ?? null,
+    candidateLimit: status.candidateLimit ?? null,
+    outcomeWindowMs: status.outcomeWindowMs ?? null,
+    lastRunAt: status.lastRunAt || null,
+    lastCandidateCount: status.lastCandidateCount ?? 0,
+    lastPassedCount: status.lastPassedCount ?? 0,
+    lastFailedCount: status.lastFailedCount ?? 0,
+    trackedDetectionCount: status.trackedDetectionCount ?? candidates.length,
+    totalRuns: status.totalRuns ?? 0,
+    totalCandidates: status.totalCandidates ?? 0,
+    totalPassed: status.totalPassed ?? 0,
+    totalErrors: status.totalErrors ?? 0,
+    lastError: status.lastError || null,
+  };
+}
+
+function buildPumpfunComboConfirmationRefreshSummary(summary) {
+  if (!summary) return null;
+  return {
+    candidates: summary.candidates.length,
+    passed: summary.passed.length,
+    failed: summary.failedCount,
+    detections: Array.isArray(summary.detections) ? summary.detections.length : null,
+  };
+}
+
+function buildPumpfunComboConfirmationDryRunResponse({ refreshed = false, summary = null } = {}) {
+  const status = pumpfunComboConfirmationDryRun.getStatus();
+  const candidates = resolvePumpfunComboConfirmationResponseCandidates(status);
+
+  return {
+    refreshed,
+    status: buildPumpfunComboConfirmationStatus(status, candidates),
+    candidates,
+    count: candidates.length,
+    refreshSummary: buildPumpfunComboConfirmationRefreshSummary(summary),
+  };
+}
+
+function getPumpfunComboConfirmationEvidence(candidate) {
+  return candidate.evidenceAtTrigger || candidate.evidenceAtAlert || candidate.evidence || {};
+}
+
 function renderPumpfunFast5xDryRunRow(candidate) {
   const evidence = getPumpfunFast5xEvidence(candidate);
   const address = escapeHtml(candidate.address);
@@ -489,6 +548,79 @@ function renderPumpfunPostMigrationBlastDryRunHtml(payload) {
     <div class="stat">live refresh: <span data-stat="browserRefresh">10s</span></div>
   </section>
   <div data-role="table-wrap">${rows ? renderPumpfunPostMigrationBlastDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page reloads and forces a bounded refresh every 10s.</div>'}</div>
+</body>
+</html>`;
+}
+
+function renderPumpfunComboConfirmationDryRunRow(candidate) {
+  const evidence = getPumpfunComboConfirmationEvidence(candidate);
+  const address = escapeHtml(candidate.address);
+  const dexUrl = `https://dexscreener.com/solana/${address}`;
+  return `<tr>
+    <td><strong>${escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN')}</strong><div class="muted">${address}</div></td>
+    <td>${escapeHtml(candidate.alertTriggeredAt || candidate.comboTriggeredAt || candidate.currentBucketAt || '')}</td>
+    <td>$${formatAdminNumber(candidate.alertMcap ?? candidate.comboMcap ?? evidence.blastAlertMcap, 0)}</td>
+    <td>${escapeHtml(candidate.reason || '')}</td>
+    <td>${evidence.hasFastConfirmation ? 'yes' : 'no'}</td>
+    <td>${formatAdminNumber((Number(evidence.fastConfirmationDelayMs) || 0) / 60000, 1)}m</td>
+    <td>$${formatAdminNumber(candidate.latestMcapSinceAlert ?? evidence.blastAlertMcap, 0)}</td>
+    <td>${formatAdminNumber(candidate.maxXSinceAlert, 2)}x</td>
+    <td>$${formatAdminNumber(candidate.maxMcapSinceAlert ?? evidence.blastHighMcapRecent, 0)}</td>
+    <td>${formatAdminNumber(candidate.score, 2)}</td>
+    <td><a href="${dexUrl}" target="_blank" rel="noreferrer">Dex</a></td>
+  </tr>`;
+}
+
+function renderPumpfunComboConfirmationDryRunTable(rows) {
+  return `<table>
+    <thead><tr><th>Token</th><th>Combo At</th><th>Combo MCAP</th><th>Reason</th><th>Fast?</th><th>Fast Delay</th><th>Latest MCAP</th><th>Max X Since Combo</th><th>Max MCAP</th><th>Score</th><th>Link</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderPumpfunComboConfirmationDryRunHtml(payload) {
+  const rows = payload.candidates.map(renderPumpfunComboConfirmationDryRunRow).join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="10; url=/api/admin/pumpfun-combo-confirmation/dry-run.html?refresh=true">
+  <title>PumpFun Combo Confirmation Dry Run</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #0b0f17; color: #e5edf7; font: 14px system-ui, sans-serif; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 20px; }
+    a, button { color: #67e8f9; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .stat { border: 1px solid #243244; border-radius: 6px; padding: 8px 10px; background: #111827; }
+    .muted { color: #93a4b8; font-size: 12px; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; background: #0f1724; }
+    th, td { border-bottom: 1px solid #223044; padding: 10px; text-align: left; vertical-align: top; }
+    th { color: #9fb3c8; font-size: 12px; text-transform: uppercase; }
+    .empty { border: 1px solid #243244; border-radius: 6px; padding: 18px; background: #111827; color: #93a4b8; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>PumpFun Combo Confirmation Dry Run</h1>
+      <div class="muted">Admin diagnostic view for Blast 50k-100k candidates with optional Fast 5x confirmation. No alerts are emitted from this page.</div>
+    </div>
+    <a href="?refresh=true">Refresh now</a>
+  </header>
+  <section class="stats" data-role="stats">
+    <div class="stat">enabled: <span data-stat="enabled">${escapeHtml(payload.status.enabled)}</span></div>
+    <div class="stat">running: <span data-stat="running">${escapeHtml(payload.status.running)}</span></div>
+    <div class="stat">dryRun: <span data-stat="dryRun">${escapeHtml(payload.status.dryRun)}</span></div>
+    <div class="stat">last candidates: <span data-stat="lastCandidateCount">${escapeHtml(payload.status.lastCandidateCount)}</span></div>
+    <div class="stat">last passed: <span data-stat="lastPassedCount">${escapeHtml(payload.status.lastPassedCount)}</span></div>
+    <div class="stat">tracked: <span data-stat="trackedDetectionCount">${escapeHtml(payload.status.trackedDetectionCount)}</span></div>
+    <div class="stat">last run: <span data-stat="lastRunAt">${escapeHtml(payload.status.lastRunAt || '')}</span></div>
+    <div class="stat">live refresh: <span data-stat="browserRefresh">10s</span></div>
+  </section>
+  <div data-role="table-wrap">${rows ? renderPumpfunComboConfirmationDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page reloads and forces a bounded refresh every 10s.</div>'}</div>
 </body>
 </html>`;
 }
@@ -901,6 +1033,37 @@ router.get('/pumpfun-post-migration-blast/dry-run.html', async (req, res) => {
   } catch (err) {
     console.error('Admin PumpFun post-migration blast dry-run HTML error:', err.message);
     res.status(500).send('Failed to load PumpFun post-migration blast dry-run status');
+  }
+});
+
+router.get('/pumpfun-combo-confirmation/dry-run', async (req, res) => {
+  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
+  if (!refresh.ok) return res.status(400).json({ error: refresh.error });
+
+  try {
+    const summary = refresh.value
+      ? await pumpfunComboConfirmationDryRun.runOnce({ force: true })
+      : null;
+    res.json(buildPumpfunComboConfirmationDryRunResponse({ refreshed: refresh.value, summary }));
+  } catch (err) {
+    console.error('Admin PumpFun combo confirmation dry-run error:', err.message);
+    res.status(500).json({ error: 'Failed to load PumpFun combo confirmation dry-run status' });
+  }
+});
+
+router.get('/pumpfun-combo-confirmation/dry-run.html', async (req, res) => {
+  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
+  if (!refresh.ok) return res.status(400).send(escapeHtml(refresh.error));
+
+  try {
+    const summary = refresh.value
+      ? await pumpfunComboConfirmationDryRun.runOnce({ force: true })
+      : null;
+    const payload = buildPumpfunComboConfirmationDryRunResponse({ refreshed: refresh.value, summary });
+    res.type('html').send(renderPumpfunComboConfirmationDryRunHtml(payload));
+  } catch (err) {
+    console.error('Admin PumpFun combo confirmation dry-run HTML error:', err.message);
+    res.status(500).send('Failed to load PumpFun combo confirmation dry-run status');
   }
 });
 
