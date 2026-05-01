@@ -17,7 +17,7 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
@@ -897,6 +897,7 @@ function renderMockTradingHeaderPosition(state: AppState, address: string) {
     <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" title="${escapeHtml(buildMockTradingHeaderPositionTitle(symbol, pnl, pct, position))}">
       ${renderMockTradingHeaderAvatar(imageUrl, symbol)}
       <strong>${escapeHtml(symbol)}</strong>
+      <button type="button" class="workspace-mock-trading-copy copy-button" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract">⧉</button>
       <span>${escapeHtml(fmtMockUsd(pnl, { signed: true }))}</span>
       <span>${escapeHtml(fmtPct(pct))}</span>
     </div>
@@ -1038,6 +1039,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.querySelector<HTMLButtonElement>('[data-action="open-mock-trading-history"]')?.addEventListener('click', () => {
     controller.openMockTradingHistory();
   });
+  bindCopyButtons(section);
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
   section.querySelector<HTMLButtonElement>('[data-action="open-user-settings"]')?.addEventListener('pointerdown', (event) => {
     event.preventDefault();

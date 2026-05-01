@@ -1326,6 +1326,28 @@ a {
   text-overflow: ellipsis;
 }
 
+.workspace-mock-trading-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(224, 234, 246, 0.82);
+  font: inherit;
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+
+.workspace-mock-trading-copy:hover {
+  border-color: rgba(88, 159, 255, 0.42);
+  color: #f4f8ff;
+}
+
 .workspace-mock-trading-summary[data-tone="up"] > span:not(.workspace-mock-trading-label) {
   color: rgba(147, 255, 197, 0.92);
 }
