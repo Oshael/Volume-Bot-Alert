@@ -1262,7 +1262,23 @@ function renderMockTradingLine(position: MockTradingPositionEntry | null) {
   const pnl = position.unrealizedPnlUsd ?? null;
   const pct = position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
   const tone = pnl != null && pnl < 0 ? 'down' : 'up';
-  return `<div class="token-subline mock-trading-line ${tone}">PnL ${fmtMoney(pnl)} (${fmtPct(pct)})</div>`;
+  const takeProfit = position.takeProfitOrders?.length
+    ? ` · ${formatMockTradingTakeProfitSummary(position.takeProfitOrders)}`
+    : '';
+  return `<div class="token-subline mock-trading-line ${tone}">PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}</div>`;
+}
+
+function formatMockTradingTakeProfitSummary(orders: MockTradingPositionEntry['takeProfitOrders'] = []) {
+  const openOrders = Array.isArray(orders) ? orders.filter((order) => order.status === 'open') : [];
+  if (openOrders.length === 0) {
+    return '';
+  }
+  const preview = openOrders
+    .slice(0, 2)
+    .map((order) => `${fmtMoney(order.targetMcapUsd)} / ${fmtPct(order.sellPercent)}`)
+    .join(', ');
+  const extra = openOrders.length > 2 ? ` +${openOrders.length - 2}` : '';
+  return `TP ${preview}${extra}`;
 }
 
 function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: ManualTokenEntry) {

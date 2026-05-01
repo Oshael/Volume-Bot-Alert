@@ -307,10 +307,26 @@ function appendMonitoredMockTradingLine(
   }
   const pnl = mockTradingPosition.unrealizedPnlUsd ?? null;
   const pct = mockTradingPosition.priceReturnPct ?? mockTradingPosition.unrealizedPnlPct ?? null;
+  const takeProfit = mockTradingPosition.takeProfitOrders?.length
+    ? ` · ${formatMockTradingTakeProfitSummary(mockTradingPosition.takeProfitOrders)}`
+    : '';
   const mockLine = document.createElement('div');
   mockLine.className = `panel-row-meta monitored-meta-line mock-trading-line ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
-  mockLine.textContent = `PnL ${fmtMoney(pnl)} (${fmtPct(pct)})`;
+  mockLine.textContent = `PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}`;
   main.append(mockLine);
+}
+
+function formatMockTradingTakeProfitSummary(orders: NonNullable<AppState['data']['mockTradingPositionsByAddress'][string]['takeProfitOrders']>) {
+  const openOrders = orders.filter((order) => order.status === 'open');
+  if (openOrders.length === 0) {
+    return '';
+  }
+  const preview = openOrders
+    .slice(0, 2)
+    .map((order) => `${fmtMoney(order.targetMcapUsd)} / ${fmtPct(order.sellPercent)}`)
+    .join(', ');
+  const extra = openOrders.length > 2 ? ` +${openOrders.length - 2}` : '';
+  return `TP ${preview}${extra}`;
 }
 
 function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {

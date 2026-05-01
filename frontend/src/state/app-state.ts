@@ -189,6 +189,22 @@ export interface MockTradingPositionEntry {
   mcapMultiple?: number | null;
   symbol?: string | null;
   name?: string | null;
+  takeProfitOrder?: MockTradingTakeProfitOrderEntry | null;
+  takeProfitOrders?: MockTradingTakeProfitOrderEntry[];
+}
+
+export interface MockTradingTakeProfitOrderEntry {
+  id: number;
+  userId: number;
+  tokenAddress: string;
+  targetMcapUsd: number;
+  sellPercent: number;
+  status: 'open' | 'triggered' | 'cancelled';
+  triggeredTradeId?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  triggeredAt?: string | null;
+  cancelledAt?: string | null;
 }
 
 export interface MockTradingTradeEntry {

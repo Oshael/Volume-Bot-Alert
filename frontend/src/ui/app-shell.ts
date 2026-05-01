@@ -797,6 +797,7 @@ function serializeMockTradingForView(state: AppState, address: string) {
     serializeRenderedMoneyValue(position?.unrealizedPnlUsd),
     serializeRenderedPctValue(position?.priceReturnPct ?? position?.unrealizedPnlPct),
     serializeRenderedMoneyValue(position?.avgEntryPriceUsd),
+    serializeMockTradingTakeProfitOrdersForView(position),
     tradesKey,
   ]);
 }
@@ -812,6 +813,19 @@ function serializeMockTradingTradesForView(state: AppState, address: string) {
     trade.executedAt,
     serializeRenderedMoneyValue(trade.marketCapUsd),
     serializeRenderedMoneyValue(trade.notionalUsd),
+  ])).join('~');
+}
+
+function serializeMockTradingTakeProfitOrdersForView(position: ReturnType<typeof getMockTradingPositionView>) {
+  const orders = position?.takeProfitOrders || [];
+  if (orders.length === 0) {
+    return '';
+  }
+  return orders.map((order) => serializePrimitiveList([
+    order.id,
+    order.status,
+    serializeRenderedMoneyValue(order.targetMcapUsd),
+    serializeRenderedPctValue(order.sellPercent),
   ])).join('~');
 }
 
@@ -874,6 +888,7 @@ function serializeMockTradingHeaderPositionsForView(state: AppState) {
         serializeRenderedMoneyValue(livePosition.currentValueUsd),
         serializeRenderedMoneyValue(livePosition.unrealizedPnlUsd),
         serializeRenderedPctValue(livePosition.priceReturnPct ?? livePosition.unrealizedPnlPct),
+        serializeMockTradingTakeProfitOrdersForView(livePosition),
       ]);
     })
     .join('~');
@@ -1073,6 +1088,16 @@ function getMockTradingHistoryOverlaySnapshot(state: AppState) {
   if (!state.ui.mockTradingHistoryOpen) {
     return null;
   }
+  const orders = Object.values(state.data.mockTradingPositionsByAddress)
+    .flatMap((position) => position.takeProfitOrders || [])
+    .filter((order) => order.status === 'open')
+    .map((order) => serializePrimitiveList([
+      order.id,
+      order.tokenAddress,
+      serializeRenderedMoneyValue(order.targetMcapUsd),
+      serializeRenderedPctValue(order.sellPercent),
+      order.createdAt,
+    ]));
   const trades = Object.values(state.data.mockTradingTradesByAddress)
     .flat()
     .filter((trade) => trade.side === 'sell')
@@ -1089,6 +1114,7 @@ function getMockTradingHistoryOverlaySnapshot(state: AppState) {
     summary?.account.cashUsd,
     summary?.totalEquityUsd,
     summary?.totalPnlUsd,
+    orders.join('~'),
     trades.join('~'),
   ]);
 }

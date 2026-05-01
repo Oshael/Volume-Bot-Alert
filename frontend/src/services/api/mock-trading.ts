@@ -29,6 +29,22 @@ export interface MockTradingPosition {
   name?: string | null;
   openedAt?: string | null;
   updatedAt?: string | null;
+  takeProfitOrder?: MockTradingTakeProfitOrder | null;
+  takeProfitOrders?: MockTradingTakeProfitOrder[];
+}
+
+export interface MockTradingTakeProfitOrder {
+  id: number;
+  userId: number;
+  tokenAddress: string;
+  targetMcapUsd: number;
+  sellPercent: number;
+  status: 'open' | 'triggered' | 'cancelled';
+  triggeredTradeId?: number | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  triggeredAt?: string | null;
+  cancelledAt?: string | null;
 }
 
 export interface MockTradingTrade {
@@ -85,6 +101,19 @@ function normalizePosition(item: MockTradingPosition): MockTradingPosition {
     priceReturnPct: toNullableNumber(item.priceReturnPct),
     priceMultiple: toNullableNumber(item.priceMultiple),
     mcapMultiple: toNullableNumber(item.mcapMultiple),
+    takeProfitOrder: item.takeProfitOrder ? normalizeTakeProfitOrder(item.takeProfitOrder) : null,
+    takeProfitOrders: Array.isArray(item.takeProfitOrders) ? item.takeProfitOrders.map(normalizeTakeProfitOrder) : [],
+  };
+}
+
+function normalizeTakeProfitOrder(item: MockTradingTakeProfitOrder): MockTradingTakeProfitOrder {
+  return {
+    ...item,
+    id: toNumber(item.id),
+    userId: toNumber(item.userId),
+    targetMcapUsd: toNumber(item.targetMcapUsd),
+    sellPercent: toNumber(item.sellPercent, 100),
+    triggeredTradeId: toNullableNumber(item.triggeredTradeId),
   };
 }
 
@@ -138,10 +167,21 @@ export function fetchMockTradingTrades(token?: string | null, limit = 200) {
     .then((payload) => (Array.isArray(payload.trades) ? payload.trades.map(normalizeTrade) : []));
 }
 
-export function buyMockTradingToken(address: string, notionalUsd: number, token?: string | null) {
+export function buyMockTradingToken(
+  address: string,
+  notionalUsd: number,
+  token?: string | null,
+  takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null },
+) {
+  const body = {
+    address,
+    notionalUsd,
+    takeProfitMcapUsd: takeProfit?.targetMcapUsd ?? undefined,
+    takeProfitSellPercent: takeProfit?.sellPercent ?? undefined,
+  };
   return apiFetch<{ message: string; position: MockTradingPosition }>('/api/admin/mock-trading/buy', {
     method: 'POST',
-    body: JSON.stringify({ address, notionalUsd }),
+    body: JSON.stringify(body),
     token,
   }).then((payload) => ({ ...payload, position: normalizePosition(payload.position) }));
 }
@@ -152,6 +192,34 @@ export function sellMockTradingToken(address: string, percent: number, token?: s
     body: JSON.stringify({ address, percent }),
     token,
   }).then((payload) => ({ ...payload, position: payload.position ? normalizePosition(payload.position) : null }));
+}
+
+export function createMockTradingTakeProfitOrder(
+  address: string,
+  targetMcapUsd: number,
+  sellPercent: number,
+  token?: string | null,
+) {
+  return apiFetch<{ message: string; position: MockTradingPosition; order: MockTradingTakeProfitOrder }>('/api/admin/mock-trading/take-profit-orders', {
+    method: 'POST',
+    body: JSON.stringify({
+      address,
+      takeProfitMcapUsd: targetMcapUsd,
+      takeProfitSellPercent: sellPercent,
+    }),
+    token,
+  }).then((payload) => ({
+    ...payload,
+    position: normalizePosition(payload.position),
+    order: normalizeTakeProfitOrder(payload.order),
+  }));
+}
+
+export function cancelMockTradingTakeProfitOrder(orderId: number, token?: string | null) {
+  return apiFetch<{ message: string; order: MockTradingTakeProfitOrder }>(`/api/admin/mock-trading/take-profit-orders/${orderId}/cancel`, {
+    method: 'POST',
+    token,
+  }).then((payload) => ({ ...payload, order: normalizeTakeProfitOrder(payload.order) }));
 }
 
 export function resetMockTradingPortfolio(startingCashUsd?: number, token?: string | null) {

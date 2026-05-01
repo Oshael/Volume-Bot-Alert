@@ -41,7 +41,7 @@ import {
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
-import { buyMockTradingToken, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
+import { buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -311,8 +311,10 @@ export interface AppController {
   openMockTradingHistory(): void;
   closeMockTradingHistory(): void;
   closeMockTradingTicket(): void;
-  submitMockTradingBuy(address: string, notionalUsd: number): Promise<void>;
+  submitMockTradingBuy(address: string, notionalUsd: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }): Promise<void>;
   submitMockTradingSell(address: string, percent: number): Promise<void>;
+  submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number): Promise<void>;
+  cancelMockTradingTakeProfitOrder(orderId: number): Promise<void>;
   resetMockTradingPortfolio(): Promise<void>;
   removeBlockedToken(address: string): Promise<void>;
   removePumpToken(mint: string): void;
@@ -8378,7 +8380,7 @@ export function createAppController(): AppController {
       state.ui.mockTradingTicket = null;
       emit('overlay');
     },
-    async submitMockTradingBuy(address: string, notionalUsd: number) {
+    async submitMockTradingBuy(address: string, notionalUsd: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }) {
       const token = state.session.token;
       if (!token || state.session.role !== 'admin') {
         setError('Admin access required');
@@ -8391,13 +8393,23 @@ export function createAppController(): AppController {
         emit('overlay');
         return;
       }
+      if (takeProfit?.targetMcapUsd != null && (!Number.isFinite(takeProfit.targetMcapUsd) || takeProfit.targetMcapUsd <= 0)) {
+        setError('Take profit MCAP must be greater than zero');
+        emit('overlay');
+        return;
+      }
+      if (takeProfit?.sellPercent != null && (!Number.isFinite(takeProfit.sellPercent) || takeProfit.sellPercent <= 0 || takeProfit.sellPercent > 100)) {
+        setError('Take profit percent must be between 1 and 100');
+        emit('overlay');
+        return;
+      }
 
       setBusy(true);
       setError(null);
       setNotice('Executing mock buy...');
       emit();
       try {
-        const result = await buyMockTradingToken(address, notionalUsd, token);
+        const result = await buyMockTradingToken(address, notionalUsd, token, takeProfit);
         if (result.position) {
           state.data.mockTradingPositionsByAddress[address] = result.position;
         }
@@ -8440,6 +8452,69 @@ export function createAppController(): AppController {
         setNotice(result.message);
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to execute mock sell');
+      } finally {
+        setBusy(false);
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      }
+    },
+    async submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number) {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+      if (!Number.isFinite(targetMcapUsd) || targetMcapUsd <= 0) {
+        setError('Sell order MCAP must be greater than zero');
+        emit('overlay');
+        return;
+      }
+      if (!Number.isFinite(sellPercent) || sellPercent <= 0 || sellPercent > 100) {
+        setError('Sell order percent must be between 1 and 100');
+        emit('overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Creating mock sell order...');
+      emit('overlay');
+      try {
+        const result = await createMockTradingTakeProfitOrder(address, targetMcapUsd, sellPercent, token);
+        state.data.mockTradingPositionsByAddress[address] = result.position;
+        state.ui.mockTradingTicket = null;
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to create mock sell order');
+      } finally {
+        setBusy(false);
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      }
+    },
+    async cancelMockTradingTakeProfitOrder(orderId: number) {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        setError('Valid sell order id is required');
+        emit('overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Cancelling mock sell order...');
+      emit('overlay');
+      try {
+        const result = await cancelMockTradingTakeProfitOrderRequest(orderId, token);
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to cancel mock sell order');
       } finally {
         setBusy(false);
         emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');

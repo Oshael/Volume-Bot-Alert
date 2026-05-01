@@ -889,23 +889,61 @@ function renderMockTradingHeaderPositions(state: AppState) {
 function renderMockTradingHeaderPosition(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
   const position = getMockTradingPositionView(state, address);
-  const symbol = token?.symbol || position?.symbol || address.slice(0, 6);
+  const symbol = getMockTradingHeaderPositionSymbol(token, position, address);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
   const pnl = position?.unrealizedPnlUsd ?? null;
   const pct = position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null;
-  const tone = pnl != null && pnl < 0 ? 'down' : 'up';
-  const title = `${symbol} open mock position · ${fmtMoney(pnl)} ${fmtPct(pct)}`;
-  const avatar = imageUrl
-    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
-    : `<span class="workspace-mock-trading-position-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
   return `
-    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${tone}" title="${escapeHtml(title)}">
-      ${avatar}
+    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" title="${escapeHtml(buildMockTradingHeaderPositionTitle(symbol, pnl, pct, position))}">
+      ${renderMockTradingHeaderAvatar(imageUrl, symbol)}
       <strong>${escapeHtml(symbol)}</strong>
       <span>${escapeHtml(fmtMockUsd(pnl, { signed: true }))}</span>
       <span>${escapeHtml(fmtPct(pct))}</span>
     </div>
   `;
+}
+
+function getMockTradingHeaderPositionSymbol(
+  token: ReturnType<typeof getTrackedToken>,
+  position: ReturnType<typeof getMockTradingPositionView>,
+  address: string,
+) {
+  return token?.symbol || position?.symbol || address.slice(0, 6);
+}
+
+function getMockTradingPnlTone(pnl?: number | null) {
+  return pnl != null && pnl < 0 ? 'down' : 'up';
+}
+
+function buildMockTradingHeaderPositionTitle(
+  symbol: string,
+  pnl: number | null,
+  pct: number | null,
+  position: ReturnType<typeof getMockTradingPositionView>,
+) {
+  const takeProfitTitle = position?.takeProfitOrders?.length
+    ? ` · ${formatMockTradingTakeProfitSummary(position.takeProfitOrders)}`
+    : '';
+  return `${symbol} open mock position · ${fmtMoney(pnl)} ${fmtPct(pct)}${takeProfitTitle}`;
+}
+
+function renderMockTradingHeaderAvatar(imageUrl: string | null, symbol: string) {
+  return imageUrl
+    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
+    : `<span class="workspace-mock-trading-position-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+}
+
+function formatMockTradingTakeProfitSummary(orders: NonNullable<ReturnType<typeof getMockTradingPositionView>>['takeProfitOrders'] = []) {
+  const openOrders = Array.isArray(orders) ? orders.filter((order) => order.status === 'open') : [];
+  if (openOrders.length === 0) {
+    return '';
+  }
+  const preview = openOrders
+    .slice(0, 2)
+    .map((order) => `${fmtMoney(order.targetMcapUsd)} / ${fmtPct(order.sellPercent)}`)
+    .join(', ');
+  const extra = openOrders.length > 2 ? ` +${openOrders.length - 2}` : '';
+  return `TP ${preview}${extra}`;
 }
 
 function fmtMockUsd(value?: number | null, options: { signed?: boolean } = {}) {
@@ -1250,10 +1288,12 @@ function renderMockTradingTicketModal(state: AppState) {
 }
 
 type MockTradingTradeView = AppState['data']['mockTradingTradesByAddress'][string][number];
+type MockTradingTakeProfitOrderView = NonNullable<AppState['data']['mockTradingPositionsByAddress'][string]['takeProfitOrders']>[number];
 
 function renderMockTradingHistoryModal(state: AppState) {
   const summary = getMockTradingSummaryView(state);
   const sells = getMockTradingSellTrades(state);
+  const openOrders = getMockTradingOpenSellOrders(state);
   const totalRealized = summary?.account.realizedPnlUsd
     ?? sells.reduce((sum, trade) => sum + (trade.realizedPnlUsd || 0), 0);
   const winners = sells.filter((trade) => trade.realizedPnlUsd > 0).length;
@@ -1280,14 +1320,27 @@ function renderMockTradingHistoryModal(state: AppState) {
           ${renderMockTradingHistoryStat('Win rate', fmtPct(winRate), null)}
           ${renderMockTradingHistoryStat('Wins', String(winners), 'up')}
           ${renderMockTradingHistoryStat('Losses', String(losers), losers > 0 ? 'down' : null)}
+          ${renderMockTradingHistoryStat('Orders', String(openOrders.length), null)}
           ${renderMockTradingHistoryStat('Flat', String(flats), null)}
         </div>
         <div class="mock-trading-history-table-wrap">
+          ${openOrders.length > 0 ? renderMockTradingOpenOrdersTable(state, openOrders) : ''}
           ${rows.length > 0 ? renderMockTradingHistoryTable(state, rows) : '<div class="mock-trading-history-empty">No closed mock plays yet.</div>'}
         </div>
       </div>
     </div>
   `;
+}
+
+function getMockTradingOpenSellOrders(state: AppState) {
+  return Object.values(state.data.mockTradingPositionsByAddress)
+    .flatMap((position) => {
+      const orders = position.takeProfitOrders?.length
+        ? position.takeProfitOrders
+        : position.takeProfitOrder ? [position.takeProfitOrder] : [];
+      return orders.filter((order) => order.status === 'open');
+    })
+    .sort((left, right) => left.targetMcapUsd - right.targetMcapUsd || left.id - right.id);
 }
 
 function getMockTradingSellTrades(state: AppState) {
@@ -1308,6 +1361,51 @@ function renderMockTradingHistoryStat(label: string, value: string, tone: 'up' |
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(value)}</strong>
     </div>
+  `;
+}
+
+function renderMockTradingOpenOrdersTable(state: AppState, orders: MockTradingTakeProfitOrderView[]) {
+  return `
+    <table class="mock-trading-history-table mock-trading-orders-table">
+      <thead>
+        <tr>
+          <th>Open sell orders</th>
+          <th>Target MCAP</th>
+          <th>Sell</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orders.map((order) => renderMockTradingOpenOrderRow(state, order)).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderMockTradingOpenOrderRow(state: AppState, order: MockTradingTakeProfitOrderView) {
+  const token = getTrackedToken(state, order.tokenAddress);
+  const position = getMockTradingPositionView(state, order.tokenAddress);
+  const symbol = token?.symbol || position?.symbol || order.tokenAddress.slice(0, 8);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
+  const avatar = imageUrl
+    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
+    : `<span>${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+  return `
+    <tr>
+      <td>
+        <div class="mock-trading-history-token">
+          ${avatar}
+          <strong>${escapeHtml(symbol)}</strong>
+        </div>
+      </td>
+      <td>${escapeHtml(fmtMoney(order.targetMcapUsd))}</td>
+      <td>${escapeHtml(fmtPct(order.sellPercent))}</td>
+      <td>${escapeHtml(formatMockTradeTime(order.createdAt))}</td>
+      <td>
+        <button type="button" class="action-button small" data-action="cancel-mock-take-profit-order" data-order-id="${order.id}" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+      </td>
+    </tr>
   `;
 }
 
@@ -1441,6 +1539,14 @@ function renderMockTradingBuyFields(busy: boolean) {
     <div class="mock-trading-ticket-presets">
       ${[50, 100, 250, 500].map((value) => `<button type="button" data-action="mock-trade-preset" data-value="${value}" ${busy ? 'disabled' : ''}>$${value}</button>`).join('')}
     </div>
+    <label class="mock-trading-ticket-field">
+      <span>Take profit MCAP</span>
+      <input type="number" name="takeProfitMcapUsd" min="1" step="1000" placeholder="optional" inputmode="decimal" ${busy ? 'disabled' : ''} />
+    </label>
+    <label class="mock-trading-ticket-field">
+      <span>TP sell %</span>
+      <input type="number" name="takeProfitSellPercent" min="1" max="100" step="1" value="100" inputmode="decimal" ${busy ? 'disabled' : ''} />
+    </label>
   `;
 }
 
@@ -1453,6 +1559,18 @@ function renderMockTradingSellFields(percent: number | undefined, busy: boolean)
     </label>
     <div class="mock-trading-ticket-presets">
       ${[25, 50, 100].map((item) => `<button type="button" data-action="mock-trade-preset" data-value="${item}" ${busy ? 'disabled' : ''}>${item}%</button>`).join('')}
+    </div>
+    <div class="mock-trading-ticket-order-block">
+      <span>Sell order</span>
+      <label class="mock-trading-ticket-field">
+        <span>Target MCAP</span>
+        <input type="number" name="orderTargetMcapUsd" min="1" step="1000" placeholder="optional" inputmode="decimal" ${busy ? 'disabled' : ''} />
+      </label>
+      <label class="mock-trading-ticket-field">
+        <span>Order sell %</span>
+        <input type="number" name="orderSellPercent" min="1" max="100" step="1" value="${value}" inputmode="decimal" ${busy ? 'disabled' : ''} />
+      </label>
+      <button type="button" class="action-button small" data-action="mock-sell-order-submit" ${busy ? 'disabled' : ''}>Place order</button>
     </div>
   `;
 }
@@ -1589,11 +1707,31 @@ function bindMockTradingTicketModal(section: ParentNode, controller: AppControll
     }
     if (side === 'buy') {
       const notionalUsd = Number(form.querySelector<HTMLInputElement>('input[name="notionalUsd"]')?.value || '0');
-      void controller.submitMockTradingBuy(address, notionalUsd);
+      const targetMcapRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitMcapUsd"]')?.value || '';
+      const sellPercentRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitSellPercent"]')?.value || '';
+      const takeProfit = targetMcapRaw.trim()
+        ? {
+          targetMcapUsd: Number(targetMcapRaw),
+          sellPercent: sellPercentRaw.trim() ? Number(sellPercentRaw) : 100,
+        }
+        : undefined;
+      void controller.submitMockTradingBuy(address, notionalUsd, takeProfit);
       return;
     }
     const percent = Number(form.querySelector<HTMLInputElement>('input[name="percent"]')?.value || '0');
     void controller.submitMockTradingSell(address, percent);
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="mock-sell-order-submit"]')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    const form = (event.currentTarget as HTMLElement).closest<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
+    const address = form?.dataset.address || '';
+    if (!form || !address) {
+      return;
+    }
+    const targetMcapUsd = Number(form.querySelector<HTMLInputElement>('input[name="orderTargetMcapUsd"]')?.value || '0');
+    const sellPercent = Number(form.querySelector<HTMLInputElement>('input[name="orderSellPercent"]')?.value || '0');
+    void controller.submitMockTradingSellOrder(address, targetMcapUsd, sellPercent);
   });
 }
 
@@ -1603,6 +1741,13 @@ function bindMockTradingHistoryModal(section: ParentNode, controller: AppControl
       event.preventDefault();
       event.stopPropagation();
       controller.closeMockTradingHistory();
+    });
+  });
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="cancel-mock-take-profit-order"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const orderId = Number(button.dataset.orderId || '0');
+      void controller.cancelMockTradingTakeProfitOrder(orderId);
     });
   });
 }
