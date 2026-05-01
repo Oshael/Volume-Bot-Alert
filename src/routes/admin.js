@@ -16,7 +16,6 @@ const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/bac
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
-const pumpfunFast5xDryRun = require('../services/pumpfun-fast-5x-dry-run');
 const pumpfunPostMigrationBlastDryRun = require('../services/pumpfun-post-migration-blast-dry-run');
 const pumpfunComboConfirmationDryRun = require('../services/pumpfun-combo-confirmation-dry-run');
 const { isValidAddress } = require('../models/user-token');
@@ -230,64 +229,6 @@ function formatAdminNumber(value, digits = 0) {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   });
-}
-
-function resolvePumpfunFast5xResponseCandidates(status) {
-  if (Array.isArray(status.trackedDetections) && status.trackedDetections.length > 0) {
-    return status.trackedDetections;
-  }
-  if (Array.isArray(status.lastPassedCandidates)) {
-    return status.lastPassedCandidates;
-  }
-  return [];
-}
-
-function buildPumpfunFast5xStatus(status, candidates) {
-  return {
-    running: Boolean(status.running),
-    enabled: Boolean(status.enabled),
-    dryRun: Boolean(status.dryRun),
-    intervalMs: status.intervalMs ?? null,
-    candidateLimit: status.candidateLimit ?? null,
-    outcomeWindowMs: status.outcomeWindowMs ?? null,
-    lastRunAt: status.lastRunAt || null,
-    lastCandidateCount: status.lastCandidateCount ?? 0,
-    lastPassedCount: status.lastPassedCount ?? 0,
-    lastFailedCount: status.lastFailedCount ?? 0,
-    trackedDetectionCount: status.trackedDetectionCount ?? candidates.length,
-    totalRuns: status.totalRuns ?? 0,
-    totalCandidates: status.totalCandidates ?? 0,
-    totalPassed: status.totalPassed ?? 0,
-    totalErrors: status.totalErrors ?? 0,
-    lastError: status.lastError || null,
-  };
-}
-
-function buildPumpfunFast5xRefreshSummary(summary) {
-  if (!summary) return null;
-  return {
-    candidates: summary.candidates.length,
-    passed: summary.passed.length,
-    failed: summary.failedCount,
-    detections: Array.isArray(summary.detections) ? summary.detections.length : null,
-  };
-}
-
-function buildPumpfunFast5xDryRunResponse({ refreshed = false, summary = null } = {}) {
-  const status = pumpfunFast5xDryRun.getStatus();
-  const candidates = resolvePumpfunFast5xResponseCandidates(status);
-
-  return {
-    refreshed,
-    status: buildPumpfunFast5xStatus(status, candidates),
-    candidates,
-    count: candidates.length,
-    refreshSummary: buildPumpfunFast5xRefreshSummary(summary),
-  };
-}
-
-function getPumpfunFast5xEvidence(candidate) {
-  return candidate.evidenceAtAlert || candidate.evidence || {};
 }
 
 function resolvePumpfunPostMigrationBlastResponseCandidates(status) {
@@ -972,37 +913,6 @@ router.get('/high-cap-dump-candidates', async (req, res) => {
   } catch (err) {
     console.error('Admin high-cap dump candidates error:', err.message);
     res.status(500).json({ error: 'Failed to inspect high-cap dump candidates' });
-  }
-});
-
-router.get('/pumpfun-fast-5x/dry-run', async (req, res) => {
-  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
-  if (!refresh.ok) return res.status(400).json({ error: refresh.error });
-
-  try {
-    const summary = refresh.value
-      ? await pumpfunFast5xDryRun.runOnce({ force: true })
-      : null;
-    res.json(buildPumpfunFast5xDryRunResponse({ refreshed: refresh.value, summary }));
-  } catch (err) {
-    console.error('Admin PumpFun fast 5x dry-run error:', err.message);
-    res.status(500).json({ error: 'Failed to load PumpFun fast 5x dry-run status' });
-  }
-});
-
-router.get('/pumpfun-fast-5x/dry-run.html', async (req, res) => {
-  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
-  if (!refresh.ok) return res.status(400).send(escapeHtml(refresh.error));
-
-  try {
-    const summary = refresh.value
-      ? await pumpfunFast5xDryRun.runOnce({ force: true })
-      : null;
-    const payload = buildPumpfunFast5xDryRunResponse({ refreshed: refresh.value, summary });
-    res.type('html').send(renderPumpfunFast5xDryRunHtml(payload));
-  } catch (err) {
-    console.error('Admin PumpFun fast 5x dry-run HTML error:', err.message);
-    res.status(500).send('Failed to load PumpFun fast 5x dry-run status');
   }
 });
 

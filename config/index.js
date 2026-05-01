@@ -423,12 +423,6 @@ module.exports = {
     concurrency: Math.max(1, Math.min(parseInt(process.env.CATALOG_WORKER_CONCURRENCY || '24', 10), 48)),
   },
 
-  pumpfunFast5xAlert: {
-    enabled: parseBoolean(process.env.PUMPFUN_FAST_5X_ALERT_ENABLED, false),
-    dryRun: parseBoolean(process.env.PUMPFUN_FAST_5X_DRY_RUN, true),
-    intervalMs: Math.max(10000, parseInt(process.env.PUMPFUN_FAST_5X_INTERVAL_MS || '60000', 10) || 60000),
-    candidateLimit: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_FAST_5X_CANDIDATE_LIMIT || '250', 10) || 250, 500)),
-  },
 
   pumpfunPostMigrationBlast: {
     enabled: parseBoolean(process.env.PUMPFUN_POST_MIGRATION_BLAST_ENABLED, false),
