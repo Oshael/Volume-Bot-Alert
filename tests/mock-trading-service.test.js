@@ -1,0 +1,143 @@
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+
+const mockTradingService = require('../src/services/mock-trading-service');
+
+const {
+  buildBuyState,
+  buildSellState,
+  mapCatalogPrice,
+  normalizeSellQuantity,
+} = mockTradingService.__private;
+
+function account(overrides = {}) {
+  return {
+    userId: 1,
+    startingCashUsd: mockTradingService.DEFAULT_STARTING_CASH_USD,
+    cashUsd: mockTradingService.DEFAULT_STARTING_CASH_USD,
+    realizedPnlUsd: 0,
+    ...overrides,
+  };
+}
+
+describe('mock trading service calculations', () => {
+  it('builds a first buy position from priceUsd and market cap snapshot', () => {
+    const result = buildBuyState({
+      account: account(),
+      priceUsd: 0.001,
+      marketCapUsd: 100000,
+      notionalUsd: 100,
+    });
+
+    assert.equal(result.account.cashUsd, 900);
+    assert.equal(result.position.quantity, 100000);
+    assert.equal(result.position.avgEntryPriceUsd, 0.001);
+    assert.equal(result.position.avgEntryMcapUsd, 100000);
+    assert.equal(result.position.costBasisUsd, 100);
+    assert.equal(result.trade.realizedPnlUsd, 0);
+    assert.equal(result.trade.priceReturnPct, null);
+  });
+
+  it('updates weighted average entry price and market cap on repeated buys', () => {
+    const result = buildBuyState({
+      account: account({ cashUsd: 900 }),
+      position: {
+        quantity: 100000,
+        avgEntryPriceUsd: 0.001,
+        avgEntryMcapUsd: 100000,
+        costBasisUsd: 100,
+        realizedPnlUsd: 0,
+      },
+      priceUsd: 0.002,
+      marketCapUsd: 200000,
+      notionalUsd: 100,
+    });
+
+    assert.equal(result.account.cashUsd, 800);
+    assert.equal(result.position.quantity, 150000);
+    assert(Math.abs(result.position.avgEntryPriceUsd - 0.0013333333333333333) < 1e-15);
+    assert.equal(result.position.avgEntryMcapUsd, 150000);
+    assert.equal(result.position.costBasisUsd, 200);
+    assert.equal(result.trade.priceMultiple, 2);
+    assert.equal(result.trade.priceReturnPct, 100);
+    assert.equal(result.trade.mcapMultiple, 2);
+  });
+
+  it('calculates partial sell PnL, return percentage, and remaining position', () => {
+    const result = buildSellState({
+      account: account({ cashUsd: 900 }),
+      position: {
+        quantity: 1000000,
+        avgEntryPriceUsd: 0.0001,
+        avgEntryMcapUsd: 100000,
+        costBasisUsd: 100,
+        realizedPnlUsd: 0,
+      },
+      priceUsd: 0.0002,
+      marketCapUsd: 200000,
+      quantity: 500000,
+    });
+
+    assert.equal(result.account.cashUsd, 1000);
+    assert.equal(result.account.realizedPnlUsd, 50);
+    assert.equal(result.position.quantity, 500000);
+    assert.equal(result.position.costBasisUsd, 50);
+    assert.equal(result.position.avgEntryPriceUsd, 0.0001);
+    assert.equal(result.trade.notionalUsd, 100);
+    assert.equal(result.trade.realizedPnlUsd, 50);
+    assert.equal(result.trade.realizedPnlPct, 100);
+    assert.equal(result.trade.priceReturnPct, 100);
+    assert.equal(result.trade.priceMultiple, 2);
+    assert.equal(result.trade.mcapMultiple, 2);
+  });
+
+  it('closes the position on full sell', () => {
+    const result = buildSellState({
+      account: account({ cashUsd: 0 }),
+      position: {
+        quantity: 1000,
+        avgEntryPriceUsd: 1,
+        avgEntryMcapUsd: 100000,
+        costBasisUsd: 1000,
+        realizedPnlUsd: 0,
+      },
+      priceUsd: 0.75,
+      marketCapUsd: 75000,
+      quantity: 1000,
+    });
+
+    assert.equal(result.position, null);
+    assert.equal(result.account.cashUsd, 750);
+    assert.equal(result.account.realizedPnlUsd, -250);
+    assert.equal(result.trade.realizedPnlPct, -25);
+    assert.equal(result.trade.priceReturnPct, -25);
+  });
+
+  it('rejects stale catalog prices', () => {
+    assert.throws(
+      () => mapCatalogPrice(
+        {
+          last_price: '0.001',
+          last_mcap: '100000',
+          last_seen_at: '2026-04-30T12:00:00.000Z',
+          last_evaluated_at: '2026-04-30T12:00:00.000Z',
+        },
+        new Date('2026-04-30T12:06:00.000Z'),
+        5 * 60 * 1000
+      ),
+      /Token price is stale/
+    );
+  });
+
+  it('normalizes percent-based sell quantity and rejects missing positions', () => {
+    assert.equal(
+      normalizeSellQuantity({ quantity: 2000 }, { percent: 25 }),
+      500
+    );
+
+    assert.throws(
+      () => normalizeSellQuantity(null, { percent: 25 }),
+      /No open mock trading position/
+    );
+  });
+});

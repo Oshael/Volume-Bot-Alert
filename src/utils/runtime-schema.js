@@ -824,6 +824,70 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage35-mock-trading',
+    name: 'Stage 35 mock trading tables',
+    repair: 'node src/utils/db-init-stage35.js',
+    tables: [
+      {
+        table: 'mock_trading_accounts',
+        columns: [
+          'user_id',
+          'starting_cash_usd',
+          'cash_usd',
+          'realized_pnl_usd',
+          'created_at',
+          'updated_at',
+        ],
+        defaults: {
+          realized_pnl_usd: '0',
+        },
+      },
+      {
+        table: 'mock_trading_positions',
+        columns: [
+          'user_id',
+          'token_address',
+          'quantity',
+          'avg_entry_price_usd',
+          'avg_entry_mcap_usd',
+          'cost_basis_usd',
+          'realized_pnl_usd',
+          'opened_at',
+          'updated_at',
+        ],
+        defaults: {
+          realized_pnl_usd: '0',
+        },
+      },
+      {
+        table: 'mock_trading_trades',
+        columns: [
+          'id',
+          'user_id',
+          'token_address',
+          'side',
+          'quantity',
+          'price_usd',
+          'market_cap_usd',
+          'notional_usd',
+          'realized_pnl_usd',
+          'realized_pnl_pct',
+          'price_return_pct',
+          'price_multiple',
+          'mcap_multiple',
+          'source',
+          'executed_at',
+          'metadata',
+        ],
+        defaults: {
+          realized_pnl_usd: '0',
+          source: "'token_catalog'::character varying",
+          metadata: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
