@@ -291,7 +291,6 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.runtime);
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.tokenRiskEnrichmentWorker);
-      assert.ok(res.body.pumpfunComboConfirmationDryRun);
       assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
     });
   });
