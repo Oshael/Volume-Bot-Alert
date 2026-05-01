@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -786,7 +786,7 @@ function serializeMeteoraForView(state: AppState, address: string) {
 }
 
 function serializeMockTradingForView(state: AppState, address: string) {
-  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const position = getMockTradingPositionView(state, address);
   const tradesKey = serializeMockTradingTradesForView(state, address);
   if (!position && !tradesKey) {
     return '';
@@ -842,6 +842,7 @@ function serializeRoutedTokenForView(state: AppState, token: ReturnType<typeof g
 }
 
 function getHeaderRenderKey(state: AppState) {
+  const mockTradingSummary = getMockTradingSummaryView(state);
   return serializePrimitiveList([
     state.session.status,
     state.session.username,
@@ -850,12 +851,12 @@ function getHeaderRenderKey(state: AppState) {
     state.runtime.monitoredUpdatedAt,
     state.runtime.monitoredFreshnessLabel,
     state.ui.workspace,
-    state.data.mockTradingSummary?.account.cashUsd,
-    state.data.mockTradingSummary?.openPositionCount,
-    state.data.mockTradingSummary?.openPositionValueUsd,
-    state.data.mockTradingSummary?.totalEquityUsd,
-    state.data.mockTradingSummary?.totalPnlUsd,
-    state.data.mockTradingSummary?.totalPnlPct,
+    mockTradingSummary?.account.cashUsd,
+    mockTradingSummary?.openPositionCount,
+    mockTradingSummary?.openPositionValueUsd,
+    mockTradingSummary?.totalEquityUsd,
+    mockTradingSummary?.totalPnlUsd,
+    mockTradingSummary?.totalPnlPct,
     serializeMockTradingHeaderPositionsForView(state),
   ]);
 }
@@ -864,12 +865,15 @@ function serializeMockTradingHeaderPositionsForView(state: AppState) {
   return Object.values(state.data.mockTradingPositionsByAddress)
     .map((position) => {
       const token = getTrackedToken(state, position.tokenAddress);
+      const livePosition = getMockTradingPositionView(state, position.tokenAddress) || position;
       return serializePrimitiveList([
         position.tokenAddress,
         token?.symbol,
         token?.imageUrl,
-        position.symbol,
-        serializeRenderedMoneyValue(position.currentValueUsd),
+        livePosition.symbol,
+        serializeRenderedMoneyValue(livePosition.currentValueUsd),
+        serializeRenderedMoneyValue(livePosition.unrealizedPnlUsd),
+        serializeRenderedPctValue(livePosition.priceReturnPct ?? livePosition.unrealizedPnlPct),
       ]);
     })
     .join('~');
@@ -1080,10 +1084,11 @@ function getMockTradingHistoryOverlaySnapshot(state: AppState) {
       serializeRenderedMoneyValue(trade.realizedPnlUsd),
       serializeRenderedPctValue(trade.realizedPnlPct ?? trade.priceReturnPct),
     ]));
+  const summary = getMockTradingSummaryView(state);
   return serializePrimitiveList([
-    state.data.mockTradingSummary?.account.cashUsd,
-    state.data.mockTradingSummary?.totalEquityUsd,
-    state.data.mockTradingSummary?.totalPnlUsd,
+    summary?.account.cashUsd,
+    summary?.totalEquityUsd,
+    summary?.totalPnlUsd,
     trades.join('~'),
   ]);
 }

@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
+import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
@@ -148,7 +148,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
           state.data.starredTokens.includes(item.address),
           state.session.role === 'admin',
           state.ui.enabledTradeTerminals,
-          state.data.mockTradingPositionsByAddress[item.address] || null,
+          getMockTradingPositionView(state, item.address),
         ));
       }
     } else {

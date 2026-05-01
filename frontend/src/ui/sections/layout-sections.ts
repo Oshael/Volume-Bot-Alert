@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
+import { getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -856,7 +856,7 @@ function getWorkspaceConnectionState(state: AppState) {
 }
 
 function renderMockTradingHeaderSummary(state: AppState) {
-  const summary = state.session.role === 'admin' ? state.data.mockTradingSummary : null;
+  const summary = state.session.role === 'admin' ? getMockTradingSummaryView(state) : null;
   if (!summary) {
     return '';
   }
@@ -888,7 +888,7 @@ function renderMockTradingHeaderPositions(state: AppState) {
 
 function renderMockTradingHeaderPosition(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
-  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const position = getMockTradingPositionView(state, address);
   const symbol = token?.symbol || position?.symbol || address.slice(0, 6);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
   const pnl = position?.unrealizedPnlUsd ?? null;
@@ -1252,7 +1252,7 @@ function renderMockTradingTicketModal(state: AppState) {
 type MockTradingTradeView = AppState['data']['mockTradingTradesByAddress'][string][number];
 
 function renderMockTradingHistoryModal(state: AppState) {
-  const summary = state.data.mockTradingSummary;
+  const summary = getMockTradingSummaryView(state);
   const sells = getMockTradingSellTrades(state);
   const totalRealized = summary?.account.realizedPnlUsd
     ?? sells.reduce((sum, trade) => sum + (trade.realizedPnlUsd || 0), 0);
@@ -1374,7 +1374,7 @@ function getMockTradingTicketView(state: AppState) {
   }
 
   const token = getTrackedToken(state, ticket.address);
-  const position = state.data.mockTradingPositionsByAddress[ticket.address] || null;
+  const position = getMockTradingPositionView(state, ticket.address);
   const symbol = token?.symbol || token?.label || position?.symbol || ticket.address.slice(0, 8);
   const name = token?.name || position?.name || token?.label || ticket.address;
   return {
@@ -1399,17 +1399,18 @@ function renderMockTradingTicketStats(state: AppState, address: string) {
 function getMockTradingTicketStats(state: AppState, address: string) {
   const market = getMockTradingTicketMarketValues(state, address);
   const pnl = getMockTradingTicketPnlValues(state, address);
+  const summary = getMockTradingSummaryView(state);
   return [
     { label: 'priceUSD', value: fmtMoney(market.priceUsd), tone: null },
     { label: 'MCAP', value: fmtMoney(market.mcapUsd), tone: null },
     { label: 'PnL', value: `${fmtMoney(pnl.usd)} ${fmtPct(pnl.pct)}`, tone: pnl.tone },
-    { label: 'Cash', value: fmtMoney(state.data.mockTradingSummary?.account.cashUsd ?? null), tone: null },
+    { label: 'Cash', value: fmtMoney(summary?.account.cashUsd ?? null), tone: null },
   ];
 }
 
 function getMockTradingTicketMarketValues(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
-  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const position = getMockTradingPositionView(state, address);
   return {
     priceUsd: token?.priceUsd ?? position?.currentPriceUsd ?? null,
     mcapUsd: token?.mcap ?? position?.currentMcapUsd ?? null,
@@ -1417,7 +1418,7 @@ function getMockTradingTicketMarketValues(state: AppState, address: string) {
 }
 
 function getMockTradingTicketPnlValues(state: AppState, address: string) {
-  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const position = getMockTradingPositionView(state, address);
   const usd = position?.unrealizedPnlUsd ?? null;
   return {
     usd,

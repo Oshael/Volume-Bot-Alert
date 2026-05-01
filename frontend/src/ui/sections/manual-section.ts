@@ -1,5 +1,5 @@
 ﻿import type { AppController } from '../../state/app-controller';
-import { getManualTokens, type AppState } from '../../state/app-state';
+import { getManualTokens, getMockTradingPositionsViewByAddress, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, renderManualTokenTable } from './shared';
 import { resolveManualTableRows } from '../../utils/token-table';
 
@@ -107,7 +107,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       {
         showSparkline: true,
         sparklineByAddress: state.data.sparklineByAddress,
-        mockTradingPositionsByAddress: state.data.mockTradingPositionsByAddress,
+        mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),
         mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
       },
     )}

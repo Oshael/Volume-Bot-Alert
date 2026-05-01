@@ -775,6 +775,101 @@ export function getTrackedToken(state: AppState, address: string) {
   return state.data.trackedTokensByAddress[String(address || '').trim()] || null;
 }
 
+function toLiveMockNumber(value: number | null | undefined) {
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+function pickLiveMockMarketValue(primary: number | null | undefined, fallback: number | null | undefined) {
+  const primaryNumber = toLiveMockNumber(primary);
+  if (primaryNumber != null && primaryNumber > 0) {
+    return primaryNumber;
+  }
+  return toLiveMockNumber(fallback);
+}
+
+function buildLiveMockPriceMetrics(position: MockTradingPositionEntry, currentPriceUsd: number | null) {
+  const currentValueUsd = currentPriceUsd == null ? null : position.quantity * currentPriceUsd;
+  const unrealizedPnlUsd = currentValueUsd == null ? null : currentValueUsd - position.costBasisUsd;
+  const unrealizedPnlPct = unrealizedPnlUsd == null || position.costBasisUsd <= 0
+    ? null
+    : (unrealizedPnlUsd / position.costBasisUsd) * 100;
+  const priceMultiple = currentPriceUsd == null || position.avgEntryPriceUsd <= 0
+    ? null
+    : currentPriceUsd / position.avgEntryPriceUsd;
+
+  return {
+    currentValueUsd,
+    unrealizedPnlUsd,
+    unrealizedPnlPct,
+    priceMultiple,
+    priceReturnPct: priceMultiple == null ? null : (priceMultiple - 1) * 100,
+  };
+}
+
+function buildLiveMockMcapMultiple(position: MockTradingPositionEntry, currentMcapUsd: number | null) {
+  return currentMcapUsd == null || !(position.avgEntryMcapUsd && position.avgEntryMcapUsd > 0)
+    ? null
+    : currentMcapUsd / position.avgEntryMcapUsd;
+}
+
+function buildLiveMockTradingPosition(
+  position: MockTradingPositionEntry,
+  token: ManualTokenEntry | null,
+): MockTradingPositionEntry {
+  const currentPriceUsd = pickLiveMockMarketValue(token?.priceUsd, position.currentPriceUsd);
+  const currentMcapUsd = pickLiveMockMarketValue(token?.mcap, position.currentMcapUsd);
+  const priceMetrics = buildLiveMockPriceMetrics(position, currentPriceUsd);
+
+  return {
+    ...position,
+    symbol: token?.symbol || position.symbol || null,
+    name: token?.name || position.name || null,
+    currentPriceUsd,
+    currentMcapUsd,
+    ...priceMetrics,
+    mcapMultiple: buildLiveMockMcapMultiple(position, currentMcapUsd),
+  };
+}
+
+export function getMockTradingPositionView(state: AppState, address: string) {
+  const normalizedAddress = String(address || '').trim();
+  const position = state.data.mockTradingPositionsByAddress[normalizedAddress] || null;
+  if (!position) {
+    return null;
+  }
+  return buildLiveMockTradingPosition(position, getTrackedToken(state, normalizedAddress));
+}
+
+export function getMockTradingPositionsViewByAddress(state: AppState) {
+  return Object.fromEntries(
+    Object.keys(state.data.mockTradingPositionsByAddress).map((address) => [
+      address,
+      getMockTradingPositionView(state, address) as MockTradingPositionEntry,
+    ])
+  );
+}
+
+export function getMockTradingSummaryView(state: AppState) {
+  const summary = state.data.mockTradingSummary;
+  if (!summary) {
+    return null;
+  }
+  const positions = Object.values(getMockTradingPositionsViewByAddress(state));
+  const openPositionValueUsd = positions.reduce((sum, position) => sum + (position.currentValueUsd || 0), 0);
+  const totalEquityUsd = summary.account.cashUsd + openPositionValueUsd;
+  const totalPnlUsd = totalEquityUsd - summary.account.startingCashUsd;
+  return {
+    ...summary,
+    openPositionCount: positions.length,
+    openPositionValueUsd,
+    totalEquityUsd,
+    totalPnlUsd,
+    totalPnlPct: summary.account.startingCashUsd > 0
+      ? (totalPnlUsd / summary.account.startingCashUsd) * 100
+      : null,
+  };
+}
+
 export function getTokenSparkline(state: AppState, address: string) {
   return state.data.sparklineByAddress[String(address || '').trim()] || null;
 }
