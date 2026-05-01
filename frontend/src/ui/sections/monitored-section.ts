@@ -142,7 +142,14 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   if (monitoredList) {
     if (filteredTracked.length) {
       for (const item of pageItems) {
-        monitoredList.append(buildMonitoredRow(item, state.ui.busy, state.data.starredTokens.includes(item.address), state.session.role === 'admin', state.ui.enabledTradeTerminals));
+        monitoredList.append(buildMonitoredRow(
+          item,
+          state.ui.busy,
+          state.data.starredTokens.includes(item.address),
+          state.session.role === 'admin',
+          state.ui.enabledTradeTerminals,
+          state.data.mockTradingPositionsByAddress[item.address] || null,
+        ));
       }
     } else {
       const emptyState = document.createElement('div');
@@ -189,7 +196,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   return section;
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals']) {
+function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
@@ -248,12 +255,10 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
     buildStarButton(item.address, isStarred, busy),
     buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token'),
   );
-
-  if (isAdmin) {
-    actions.append(buildGlyphButton('☠', 'action-glyph danger-glyph', 'admin-block-token', item.address, symbol, busy, 'Admin block permanently'));
-  }
+  appendMonitoredAdminActions(actions, item, symbol, busy, isAdmin, mockTradingPosition);
 
   main.append(titleLine, metaLine, actions);
+  appendMonitoredMockTradingLine(main, mockTradingPosition);
 
   const side = document.createElement('div');
   side.className = 'panel-row-side monitored-side-v68';
@@ -270,6 +275,42 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
 
   article.append(main, side);
   return article;
+}
+
+function appendMonitoredAdminActions(
+  actions: HTMLElement,
+  item: ManualTokenEntry,
+  symbol: string,
+  busy: boolean,
+  isAdmin: boolean,
+  mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null,
+) {
+  if (!isAdmin) {
+    return;
+  }
+
+  actions.append(buildGlyphButton('B', 'action-glyph', 'mock-buy-token', item.address, symbol, busy, 'Mock buy'));
+  if (mockTradingPosition) {
+    const sellButton = buildGlyphButton('S', 'action-glyph', 'mock-sell-token', item.address, symbol, busy, 'Mock sell 100%');
+    sellButton.dataset.percent = '100';
+    actions.append(sellButton);
+  }
+  actions.append(buildGlyphButton('☠', 'action-glyph danger-glyph', 'admin-block-token', item.address, symbol, busy, 'Admin block permanently'));
+}
+
+function appendMonitoredMockTradingLine(
+  main: HTMLElement,
+  mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null,
+) {
+  if (!mockTradingPosition) {
+    return;
+  }
+  const pnl = mockTradingPosition.unrealizedPnlUsd ?? null;
+  const pct = mockTradingPosition.priceReturnPct ?? mockTradingPosition.unrealizedPnlPct ?? null;
+  const mockLine = document.createElement('div');
+  mockLine.className = `panel-row-meta monitored-meta-line mock-trading-line ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
+  mockLine.textContent = `PnL ${fmtMoney(pnl)} (${fmtPct(pct)})`;
+  main.append(mockLine);
 }
 
 function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {

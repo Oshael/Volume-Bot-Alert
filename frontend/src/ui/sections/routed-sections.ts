@@ -301,6 +301,8 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         skipClientSort: usesServerSlice,
         showSparkline: usesServerSlice,
         sparklineByAddress: state.data.sparklineByAddress,
+        mockTradingPositionsByAddress: state.data.mockTradingPositionsByAddress,
+        mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
       },
     )}
   `;
@@ -560,6 +562,8 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         skipClientSort: usesServerSlice,
         showSparkline: usesServerSlice,
         sparklineByAddress: state.data.sparklineByAddress,
+        mockTradingPositionsByAddress: state.data.mockTradingPositionsByAddress,
+        mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
       },
     )}
   `;

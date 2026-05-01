@@ -1253,6 +1253,108 @@ a {
   transform: translateY(0);
 }
 
+.workspace-mock-trading-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.workspace-mock-trading-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  padding: 0 8px;
+  border: 1px solid rgba(88, 159, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(218, 230, 244, 0.88);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.workspace-mock-trading-label {
+  color: rgba(174, 191, 216, 0.72);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.workspace-mock-trading-summary strong {
+  color: #f4f8ff;
+  font-size: 0.74rem;
+}
+
+.workspace-mock-trading-cash {
+  flex: 0 0 auto;
+}
+
+.workspace-mock-trading-position {
+  max-width: 190px;
+  padding-left: 4px;
+}
+
+.workspace-mock-trading-position img,
+.workspace-mock-trading-position-placeholder {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+
+.workspace-mock-trading-position img {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.workspace-mock-trading-position-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(88, 159, 255, 0.16);
+  color: #9bc9ff;
+  font-size: 0.48rem;
+  font-weight: 800;
+}
+
+.workspace-mock-trading-position strong {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+}
+
+.workspace-mock-trading-summary[data-tone="up"] > span:not(.workspace-mock-trading-label) {
+  color: rgba(147, 255, 197, 0.92);
+}
+
+.workspace-mock-trading-summary[data-tone="down"] > span:not(.workspace-mock-trading-label) {
+  color: rgba(255, 133, 156, 0.92);
+}
+
+.workspace-mock-trading-reset {
+  min-height: 23px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(224, 234, 246, 0.9);
+  font: inherit;
+  font-size: 0.64rem;
+  cursor: pointer;
+}
+
+.workspace-mock-trading-reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.workspace-mock-trading-plays {
+  border-color: rgba(147, 255, 197, 0.24);
+}
+
 .workspace-userbar {
   margin-left: auto;
   display: inline-flex;
@@ -1663,6 +1765,14 @@ a {
   width: min(400px, calc(100vw - 24px));
   padding: 20px 24px;
   gap: 14px;
+}
+
+.legacy-auth-panel-mock-trading {
+  width: min(460px, calc(100vw - 24px));
+}
+
+.legacy-auth-panel-mock-trading-history {
+  width: min(760px, calc(100vw - 24px));
 }
 
 .legacy-auth-panel-expanded-sparkline {
@@ -3648,6 +3758,196 @@ a {
   color: #ff97ab;
 }
 
+.mock-trading-ticket-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mock-trading-ticket-stats div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(55, 81, 121, 0.46);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mock-trading-ticket-stats span,
+.mock-trading-ticket-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mock-trading-ticket-stats strong {
+  overflow: hidden;
+  color: #eef4ff;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-trading-ticket-stats div[data-tone="up"] strong {
+  color: rgba(147, 255, 197, 0.94);
+}
+
+.mock-trading-ticket-stats div[data-tone="down"] strong {
+  color: rgba(255, 133, 156, 0.94);
+}
+
+.mock-trading-history-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 2px 0 12px;
+}
+
+.mock-trading-history-stat {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(55, 81, 121, 0.46);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mock-trading-history-stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mock-trading-history-stat strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: #eef4ff;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-trading-history-stat[data-tone="up"] strong,
+.mock-trading-history-table td[data-tone="up"] {
+  color: rgba(147, 255, 197, 0.94);
+}
+
+.mock-trading-history-stat[data-tone="down"] strong,
+.mock-trading-history-table td[data-tone="down"] {
+  color: rgba(255, 133, 156, 0.94);
+}
+
+.mock-trading-history-table-wrap {
+  max-height: min(430px, 54vh);
+  overflow: auto;
+  border: 1px solid rgba(55, 81, 121, 0.46);
+  border-radius: 8px;
+}
+
+.mock-trading-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mock-trading-history-table th,
+.mock-trading-history-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(55, 81, 121, 0.28);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.mock-trading-history-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(9, 13, 20, 0.96);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.mock-trading-history-token {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+}
+
+.mock-trading-history-token img,
+.mock-trading-history-token span {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+}
+
+.mock-trading-history-token img {
+  object-fit: cover;
+}
+
+.mock-trading-history-token span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(88, 159, 255, 0.16);
+  color: #9bc9ff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.mock-trading-history-empty {
+  padding: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mock-trading-ticket-form,
+.mock-trading-ticket-field {
+  display: grid;
+  gap: 10px;
+}
+
+.mock-trading-ticket-field input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(45, 66, 102, 0.8);
+  border-radius: 10px;
+  background: rgba(6, 11, 18, 0.9);
+  color: #eef4ff;
+  padding: 0 14px;
+  font-size: 16px;
+}
+
+.mock-trading-ticket-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mock-trading-ticket-presets button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(88, 159, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(88, 159, 255, 0.08);
+  color: rgba(224, 234, 246, 0.9);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mock-trading-ticket-presets button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .legacy-auth-panel .legacy-password-toggle {
   right: 12px;
   min-height: 24px;
@@ -5197,6 +5497,26 @@ TEMP_LEGACY_BAR_TITLE {
   stroke-linejoin: round;
 }
 
+.token-sparkline-trade-marker {
+  stroke: rgba(3, 6, 12, 0.94);
+  stroke-width: 1.35;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.55));
+  pointer-events: auto;
+}
+
+.token-sparkline-trade-marker.buy {
+  fill: #32f08f;
+}
+
+.token-sparkline-trade-marker.sell {
+  fill: #ff6f8e;
+}
+
+.token-sparkline-expanded .token-sparkline-trade-marker {
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 7px rgba(0, 0, 0, 0.65));
+}
+
 .sparkline-hover {
   position: absolute;
   inset: 0;
@@ -5448,6 +5768,14 @@ TEMP_LEGACY_BAR_TITLE {
   text-overflow: ellipsis;
 }
 
+.mock-trading-line.up {
+  color: var(--green) !important;
+}
+
+.mock-trading-line.down {
+  color: var(--red) !important;
+}
+
 .inline-icon {
   min-height: 20px;
   padding: 1px 6px;
@@ -5545,6 +5873,16 @@ TEMP_LEGACY_BAR_TITLE {
 
   .workspace-route-group {
     width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .workspace-mock-trading-summary {
+    flex: 1 1 220px;
+    justify-content: center;
+  }
+
+  .mock-trading-history-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workspace-layout-reset-tooltip {

@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -41,6 +41,7 @@ import {
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { buyMockTradingToken, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -305,6 +306,14 @@ export interface AppController {
   setBlockedTokenWarningDontShowAgain(enabled: boolean): void;
   confirmBlockedTokenWarning(): Promise<void>;
   adminBlockToken(address: string, label?: string | null): Promise<void>;
+  mockBuyToken(address: string): Promise<void>;
+  mockSellToken(address: string, percent: number): Promise<void>;
+  openMockTradingHistory(): void;
+  closeMockTradingHistory(): void;
+  closeMockTradingTicket(): void;
+  submitMockTradingBuy(address: string, notionalUsd: number): Promise<void>;
+  submitMockTradingSell(address: string, percent: number): Promise<void>;
+  resetMockTradingPortfolio(): Promise<void>;
   removeBlockedToken(address: string): Promise<void>;
   removePumpToken(mint: string): void;
   dismissRecentToken(address: string): void;
@@ -1464,6 +1473,47 @@ export function createAppController(): AppController {
 
   function setNotice(notice: string | null) {
     state.ui.notice = notice;
+  }
+
+  function applyMockTradingPositions(positions: MockTradingPositionEntry[]) {
+    state.data.mockTradingPositionsByAddress = Object.fromEntries(
+      positions.map((position) => [position.tokenAddress, position])
+    );
+  }
+
+  function applyMockTradingTrades(trades: MockTradingTradeEntry[]) {
+    const grouped: Record<string, MockTradingTradeEntry[]> = {};
+    for (const trade of trades) {
+      grouped[trade.tokenAddress] ||= [];
+      grouped[trade.tokenAddress].push(trade);
+    }
+    state.data.mockTradingTradesByAddress = grouped;
+  }
+
+  async function refreshMockTradingState(options?: { emit?: boolean }) {
+    const token = state.session.token;
+    if (!token || state.session.role !== 'admin') {
+      state.data.mockTradingSummary = null;
+      state.data.mockTradingPositionsByAddress = {};
+      state.data.mockTradingTradesByAddress = {};
+      return;
+    }
+
+    try {
+      const [summary, positions, trades] = await Promise.all([
+        fetchMockTradingSummary(token),
+        fetchMockTradingPositions(token),
+        fetchMockTradingTrades(token),
+      ]);
+      state.data.mockTradingSummary = summary;
+      applyMockTradingPositions(positions);
+      applyMockTradingTrades(trades);
+      if (options?.emit) {
+        emit('legacy', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      }
+    } catch (error) {
+      console.warn('[AppController] Failed to refresh mock trading state:', error instanceof Error ? error.message : error);
+    }
   }
 
   function appendEmailDebugNotice(notice: string, emailDebug?: AuthEmailDebug | null) {
@@ -5452,6 +5502,7 @@ export function createAppController(): AppController {
     state.session.emailVerifiedAt = user.emailVerifiedAt ?? null;
     hydrateBarStorage();
     hydrateSoundSettings();
+    void refreshMockTradingState();
     if (!options?.deferWorkspaceSync) {
       syncWorkspaceCapabilities();
       syncHistorySyncState({ runImmediatelyOnGain: true });
@@ -5731,6 +5782,9 @@ export function createAppController(): AppController {
       meteoraByAddress: {},
       sparklineByAddress: {},
       alertSparklineById: {},
+      mockTradingSummary: null,
+      mockTradingPositionsByAddress: {},
+      mockTradingTradesByAddress: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
@@ -5759,6 +5813,7 @@ export function createAppController(): AppController {
     state.ui.recentSearchPending = false;
     state.ui.oldWeekSearchPending = false;
     state.ui.expandedSparklineAddress = null;
+    state.ui.mockTradingTicket = null;
     state.ui.manualStarredOnly = false;
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
@@ -8275,6 +8330,147 @@ export function createAppController(): AppController {
       } finally {
         setBusy(false);
         emit();
+      }
+    },
+    async mockBuyToken(address: string) {
+      if (!state.session.token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+
+      state.ui.mockTradingTicket = { address, side: 'buy' };
+      state.ui.mockTradingHistoryOpen = false;
+      state.ui.expandedSparklineAddress = null;
+      setError(null);
+      emit('overlay');
+    },
+    async mockSellToken(address: string, percent: number) {
+      if (!state.session.token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+
+      state.ui.mockTradingTicket = { address, side: 'sell', percent };
+      state.ui.mockTradingHistoryOpen = false;
+      state.ui.expandedSparklineAddress = null;
+      setError(null);
+      emit('overlay');
+    },
+    openMockTradingHistory() {
+      if (state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+      state.ui.mockTradingHistoryOpen = true;
+      state.ui.mockTradingTicket = null;
+      state.ui.expandedSparklineAddress = null;
+      setError(null);
+      emit('overlay');
+    },
+    closeMockTradingHistory() {
+      state.ui.mockTradingHistoryOpen = false;
+      emit('overlay');
+    },
+    closeMockTradingTicket() {
+      state.ui.mockTradingTicket = null;
+      emit('overlay');
+    },
+    async submitMockTradingBuy(address: string, notionalUsd: number) {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+
+      if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+        setError('Mock buy amount must be greater than zero');
+        emit('overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Executing mock buy...');
+      emit();
+      try {
+        const result = await buyMockTradingToken(address, notionalUsd, token);
+        if (result.position) {
+          state.data.mockTradingPositionsByAddress[address] = result.position;
+        }
+        state.ui.mockTradingTicket = null;
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to execute mock buy');
+      } finally {
+        setBusy(false);
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      }
+    },
+    async submitMockTradingSell(address: string, percent: number) {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+      if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+        setError('Mock sell percent must be between 1 and 100');
+        emit('overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Executing mock sell...');
+      emit();
+      try {
+        const result = await sellMockTradingToken(address, percent, token);
+        if (result.position) {
+          state.data.mockTradingPositionsByAddress[address] = result.position;
+        } else {
+          delete state.data.mockTradingPositionsByAddress[address];
+        }
+        state.ui.mockTradingTicket = null;
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to execute mock sell');
+      } finally {
+        setBusy(false);
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      }
+    },
+    async resetMockTradingPortfolio() {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+      if (typeof window !== 'undefined' && !window.confirm('Reset mock trading portfolio?')) {
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Resetting mock portfolio...');
+      emit('header');
+      try {
+        const result = await resetMockTradingPortfolioRequest(undefined, token);
+        state.data.mockTradingPositionsByAddress = {};
+        state.data.mockTradingTradesByAddress = {};
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to reset mock trading portfolio');
+      } finally {
+        setBusy(false);
+        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     async removeBlockedToken(address: string) {

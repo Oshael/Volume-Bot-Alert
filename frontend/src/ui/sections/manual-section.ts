@@ -107,6 +107,8 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       {
         showSparkline: true,
         sparklineByAddress: state.data.sparklineByAddress,
+        mockTradingPositionsByAddress: state.data.mockTradingPositionsByAddress,
+        mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
       },
     )}
   `;

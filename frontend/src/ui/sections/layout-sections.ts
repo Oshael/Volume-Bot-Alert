@@ -17,7 +17,7 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindSparklineHover, fmtMoney, renderFlash, renderSparklineFigure } from './shared';
+import { bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
@@ -855,6 +855,72 @@ function getWorkspaceConnectionState(state: AppState) {
   return { tone: 'connected', label: 'Connected' };
 }
 
+function renderMockTradingHeaderSummary(state: AppState) {
+  const summary = state.session.role === 'admin' ? state.data.mockTradingSummary : null;
+  if (!summary) {
+    return '';
+  }
+
+  const pnlTone = summary.totalPnlUsd < 0 ? 'down' : 'up';
+  return `
+    <div class="workspace-mock-trading-cluster">
+      <div class="workspace-mock-trading-summary workspace-mock-trading-cash" data-tone="${pnlTone}">
+        <span class="workspace-mock-trading-label">MOCK</span>
+        <strong>Cash ${escapeHtml(fmtMockUsd(summary.account.cashUsd))}</strong>
+        <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-plays" data-action="open-mock-trading-history" ${state.ui.busy ? 'disabled' : ''} title="Open mock trade history">Plays</button>
+        <button type="button" class="workspace-mock-trading-reset" data-action="reset-mock-trading" ${state.ui.busy ? 'disabled' : ''} title="Reset mock portfolio">Reset</button>
+      </div>
+      ${renderMockTradingHeaderPositions(state)}
+    </div>
+  `;
+}
+
+function renderMockTradingHeaderPositions(state: AppState) {
+  const positions = Object.values(state.data.mockTradingPositionsByAddress);
+  if (positions.length === 0) {
+    return '';
+  }
+
+  return positions
+    .map((position) => renderMockTradingHeaderPosition(state, position.tokenAddress))
+    .join('');
+}
+
+function renderMockTradingHeaderPosition(state: AppState, address: string) {
+  const token = getTrackedToken(state, address);
+  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const symbol = token?.symbol || position?.symbol || address.slice(0, 6);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
+  const pnl = position?.unrealizedPnlUsd ?? null;
+  const pct = position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null;
+  const tone = pnl != null && pnl < 0 ? 'down' : 'up';
+  const title = `${symbol} open mock position · ${fmtMoney(pnl)} ${fmtPct(pct)}`;
+  const avatar = imageUrl
+    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
+    : `<span class="workspace-mock-trading-position-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+  return `
+    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${tone}" title="${escapeHtml(title)}">
+      ${avatar}
+      <strong>${escapeHtml(symbol)}</strong>
+      <span>${escapeHtml(fmtMockUsd(pnl, { signed: true }))}</span>
+      <span>${escapeHtml(fmtPct(pct))}</span>
+    </div>
+  `;
+}
+
+function fmtMockUsd(value?: number | null, options: { signed?: boolean } = {}) {
+  if (value == null || !Number.isFinite(value)) {
+    return '-';
+  }
+  const abs = Math.abs(value);
+  const fractionDigits = abs >= 100 ? 0 : 2;
+  const sign = options.signed && value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}$${abs.toLocaleString(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}`;
+}
+
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-topbar workspace-topbar';
@@ -887,6 +953,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
             ${escapeHtml('Isso reseta o layout do bot para as configurações visuais padrões')}
           </div>
         </div>
+        ${renderMockTradingHeaderSummary(state)}
       </div>
       <div class="workspace-userbar">
         <div class="legacy-user-menu workspace-user-menu" data-user-menu>
@@ -927,6 +994,12 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
     controller.setWorkspace('history');
   });
   bindWorkspaceLayoutResetActions(section, controller);
+  section.querySelector<HTMLButtonElement>('[data-action="reset-mock-trading"]')?.addEventListener('click', () => {
+    void controller.resetMockTradingPortfolio();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="open-mock-trading-history"]')?.addEventListener('click', () => {
+    controller.openMockTradingHistory();
+  });
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
   section.querySelector<HTMLButtonElement>('[data-action="open-user-settings"]')?.addEventListener('pointerdown', (event) => {
     event.preventDefault();
@@ -985,11 +1058,10 @@ function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppCo
 }
 
 export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
-  const hasBlockTokenWarning = state.session.status === 'authenticated' && Boolean(state.ui.blockTokenWarning);
+  const overlayMode = resolveWorkspaceOverlayMode(state);
   const expandedSparklineAddress = String(state.ui.expandedSparklineAddress || '').trim();
   const expandedSparkline = expandedSparklineAddress ? getTokenSparkline(state, expandedSparklineAddress) : null;
-  const hasExpandedSparkline = Boolean(expandedSparkline && Array.isArray(expandedSparkline.series) && expandedSparkline.series.length >= 2);
-  if (!isProfileAuthPanel(state.ui.authPanel) && !hasBlockTokenWarning && !hasExpandedSparkline) {
+  if (overlayMode === 'none') {
     return null;
   }
 
@@ -1016,13 +1088,25 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
     return overlay;
   }
 
-  if (hasBlockTokenWarning) {
+  if (overlayMode === 'block-token-warning') {
     overlay.innerHTML = renderBlockTokenWarningModal(state);
     bindBlockTokenWarningModal(overlay, controller);
     return overlay;
   }
 
-  if (hasExpandedSparkline && expandedSparklineAddress) {
+  if (overlayMode === 'mock-trading-ticket') {
+    overlay.innerHTML = renderMockTradingTicketModal(state);
+    bindMockTradingTicketModal(overlay, controller);
+    return overlay;
+  }
+
+  if (overlayMode === 'mock-trading-history') {
+    overlay.innerHTML = renderMockTradingHistoryModal(state);
+    bindMockTradingHistoryModal(overlay, controller);
+    return overlay;
+  }
+
+  if (overlayMode === 'expanded-sparkline' && expandedSparklineAddress) {
     const sparklineEntry = expandedSparkline;
     if (!sparklineEntry) {
       return overlay;
@@ -1036,6 +1120,26 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
   bindProfileModalCloseActions(overlay, controller);
   bindChangePasswordPanel(overlay, controller, state);
   return overlay;
+}
+
+function resolveWorkspaceOverlayMode(state: AppState) {
+  if (isProfileAuthPanel(state.ui.authPanel)) {
+    return 'profile';
+  }
+  if (state.session.status === 'authenticated' && state.ui.blockTokenWarning) {
+    return 'block-token-warning';
+  }
+  if (state.session.status === 'authenticated' && state.session.role === 'admin' && state.ui.mockTradingTicket) {
+    return 'mock-trading-ticket';
+  }
+  if (state.session.status === 'authenticated' && state.session.role === 'admin' && state.ui.mockTradingHistoryOpen) {
+    return 'mock-trading-history';
+  }
+
+  const address = String(state.ui.expandedSparklineAddress || '').trim();
+  const sparkline = address ? getTokenSparkline(state, address) : null;
+  const hasExpandedSparkline = Boolean(sparkline && Array.isArray(sparkline.series) && sparkline.series.length >= 2);
+  return hasExpandedSparkline ? 'expanded-sparkline' : 'none';
 }
 
 function bindProfileModalCloseActions(section: ParentNode, controller: AppController) {
@@ -1114,6 +1218,244 @@ function renderBlockTokenWarningModal(state: AppState) {
   `;
 }
 
+function renderMockTradingTicketModal(state: AppState) {
+  const view = getMockTradingTicketView(state);
+  if (!view) {
+    return '';
+  }
+
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="mock-trading-ticket" data-auth-modal-scope="mock-trading">
+      <div class="legacy-auth-modal-backdrop" data-action="close-mock-trading-ticket"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-mock-trading" data-auth-panel="mock-trading-ticket" role="dialog" aria-modal="true" aria-labelledby="mock-trading-ticket-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="mock-trading-ticket-title">${escapeHtml(view.sideLabel)}</strong>
+            <span>${escapeHtml(view.symbol)} · ${escapeHtml(view.name)}</span>
+          </div>
+          <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-ticket" aria-label="Close dialog">X</button>
+        </div>
+        ${renderMockTradingTicketStats(state, view.address)}
+        ${renderFlash(state)}
+        <form class="mock-trading-ticket-form" data-role="mock-trading-ticket-form" data-address="${escapeHtml(view.address)}" data-side="${view.side}">
+          ${view.side === 'buy' ? renderMockTradingBuyFields(state.ui.busy) : renderMockTradingSellFields(view.percent, state.ui.busy)}
+          <div class="legacy-auth-panel-actions">
+            <button type="button" class="action-button small" data-action="close-mock-trading-ticket" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="action-button primary" ${state.ui.busy ? 'disabled' : ''}>${view.submitLabel}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+type MockTradingTradeView = AppState['data']['mockTradingTradesByAddress'][string][number];
+
+function renderMockTradingHistoryModal(state: AppState) {
+  const summary = state.data.mockTradingSummary;
+  const sells = getMockTradingSellTrades(state);
+  const totalRealized = summary?.account.realizedPnlUsd
+    ?? sells.reduce((sum, trade) => sum + (trade.realizedPnlUsd || 0), 0);
+  const winners = sells.filter((trade) => trade.realizedPnlUsd > 0).length;
+  const losers = sells.filter((trade) => trade.realizedPnlUsd < 0).length;
+  const flats = sells.length - winners - losers;
+  const winRate = sells.length > 0 ? (winners / sells.length) * 100 : null;
+  const rows = sells.slice(0, 30);
+
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="mock-trading-history" data-auth-modal-scope="mock-trading-history">
+      <div class="legacy-auth-modal-backdrop" data-action="close-mock-trading-history"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-mock-trading-history" data-auth-panel="mock-trading-history" role="dialog" aria-modal="true" aria-labelledby="mock-trading-history-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="mock-trading-history-title">Mock plays</strong>
+            <span>Closed sells and realized PnL</span>
+          </div>
+          <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-history" aria-label="Close dialog">X</button>
+        </div>
+        <div class="mock-trading-history-stats">
+          ${renderMockTradingHistoryStat('Cash', fmtMockUsd(summary?.account.cashUsd ?? null), null)}
+          ${renderMockTradingHistoryStat('Equity', fmtMockUsd(summary?.totalEquityUsd ?? null), null)}
+          ${renderMockTradingHistoryStat('Realized', fmtMockUsd(totalRealized, { signed: true }), totalRealized < 0 ? 'down' : 'up')}
+          ${renderMockTradingHistoryStat('Win rate', fmtPct(winRate), null)}
+          ${renderMockTradingHistoryStat('Wins', String(winners), 'up')}
+          ${renderMockTradingHistoryStat('Losses', String(losers), losers > 0 ? 'down' : null)}
+          ${renderMockTradingHistoryStat('Flat', String(flats), null)}
+        </div>
+        <div class="mock-trading-history-table-wrap">
+          ${rows.length > 0 ? renderMockTradingHistoryTable(state, rows) : '<div class="mock-trading-history-empty">No closed mock plays yet.</div>'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getMockTradingSellTrades(state: AppState) {
+  return Object.values(state.data.mockTradingTradesByAddress)
+    .flat()
+    .filter((trade) => trade.side === 'sell')
+    .sort((left, right) => {
+      const rightTime = Date.parse(String(right.executedAt || ''));
+      const leftTime = Date.parse(String(left.executedAt || ''));
+      const timeDelta = (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+      return timeDelta || right.id - left.id;
+    });
+}
+
+function renderMockTradingHistoryStat(label: string, value: string, tone: 'up' | 'down' | null) {
+  return `
+    <div class="mock-trading-history-stat" ${tone ? `data-tone="${tone}"` : ''}>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderMockTradingHistoryTable(state: AppState, trades: MockTradingTradeView[]) {
+  return `
+    <table class="mock-trading-history-table">
+      <thead>
+        <tr>
+          <th>Token</th>
+          <th>Sold</th>
+          <th>Entry return</th>
+          <th>PnL</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${trades.map((trade) => renderMockTradingHistoryRow(state, trade)).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeView) {
+  const token = getTrackedToken(state, trade.tokenAddress);
+  const symbol = token?.symbol || trade.tokenAddress.slice(0, 8);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
+  const tone = trade.realizedPnlUsd < 0 ? 'down' : 'up';
+  const avatar = imageUrl
+    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
+    : `<span>${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+  return `
+    <tr>
+      <td>
+        <div class="mock-trading-history-token">
+          ${avatar}
+          <strong>${escapeHtml(symbol)}</strong>
+        </div>
+      </td>
+      <td>${escapeHtml(fmtMockUsd(trade.notionalUsd))}</td>
+      <td>${escapeHtml(fmtPct(trade.realizedPnlPct ?? trade.priceReturnPct))}</td>
+      <td data-tone="${tone}">${escapeHtml(fmtMockUsd(trade.realizedPnlUsd, { signed: true }))}</td>
+      <td>${escapeHtml(formatMockTradeTime(trade.executedAt))}</td>
+    </tr>
+  `;
+}
+
+function formatMockTradeTime(value?: string | null) {
+  const timestamp = Date.parse(String(value || ''));
+  if (!Number.isFinite(timestamp)) {
+    return '-';
+  }
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getMockTradingTicketView(state: AppState) {
+  const ticket = state.ui.mockTradingTicket;
+  if (!ticket) {
+    return null;
+  }
+
+  const token = getTrackedToken(state, ticket.address);
+  const position = state.data.mockTradingPositionsByAddress[ticket.address] || null;
+  const symbol = token?.symbol || token?.label || position?.symbol || ticket.address.slice(0, 8);
+  const name = token?.name || position?.name || token?.label || ticket.address;
+  return {
+    ...ticket,
+    symbol,
+    name,
+    sideLabel: ticket.side === 'buy' ? 'Mock buy' : 'Mock sell',
+    submitLabel: ticket.side === 'buy' ? 'Buy' : 'Sell',
+  };
+}
+
+function renderMockTradingTicketStats(state: AppState, address: string) {
+  const stats = getMockTradingTicketStats(state, address);
+
+  return `
+    <div class="mock-trading-ticket-stats">
+      ${stats.map(renderMockTradingTicketStat).join('')}
+    </div>
+  `;
+}
+
+function getMockTradingTicketStats(state: AppState, address: string) {
+  const market = getMockTradingTicketMarketValues(state, address);
+  const pnl = getMockTradingTicketPnlValues(state, address);
+  return [
+    { label: 'priceUSD', value: fmtMoney(market.priceUsd), tone: null },
+    { label: 'MCAP', value: fmtMoney(market.mcapUsd), tone: null },
+    { label: 'PnL', value: `${fmtMoney(pnl.usd)} ${fmtPct(pnl.pct)}`, tone: pnl.tone },
+    { label: 'Cash', value: fmtMoney(state.data.mockTradingSummary?.account.cashUsd ?? null), tone: null },
+  ];
+}
+
+function getMockTradingTicketMarketValues(state: AppState, address: string) {
+  const token = getTrackedToken(state, address);
+  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  return {
+    priceUsd: token?.priceUsd ?? position?.currentPriceUsd ?? null,
+    mcapUsd: token?.mcap ?? position?.currentMcapUsd ?? null,
+  };
+}
+
+function getMockTradingTicketPnlValues(state: AppState, address: string) {
+  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const usd = position?.unrealizedPnlUsd ?? null;
+  return {
+    usd,
+    pct: position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null,
+    tone: usd != null && usd < 0 ? 'down' : 'up',
+  };
+}
+
+function renderMockTradingTicketStat(stat: { label: string; value: string; tone: string | null }) {
+  const toneAttr = stat.tone ? ` data-tone="${escapeHtml(stat.tone)}"` : '';
+  return `<div${toneAttr}><span>${escapeHtml(stat.label)}</span><strong>${escapeHtml(stat.value)}</strong></div>`;
+}
+
+function renderMockTradingBuyFields(busy: boolean) {
+  return `
+    <label class="mock-trading-ticket-field">
+      <span>USD amount</span>
+      <input type="number" name="notionalUsd" min="1" step="1" value="100" inputmode="decimal" ${busy ? 'disabled' : ''} />
+    </label>
+    <div class="mock-trading-ticket-presets">
+      ${[50, 100, 250, 500].map((value) => `<button type="button" data-action="mock-trade-preset" data-value="${value}" ${busy ? 'disabled' : ''}>$${value}</button>`).join('')}
+    </div>
+  `;
+}
+
+function renderMockTradingSellFields(percent: number | undefined, busy: boolean) {
+  const value = typeof percent === 'number' && Number.isFinite(percent) ? Math.min(100, Math.max(1, percent)) : 100;
+  return `
+    <label class="mock-trading-ticket-field">
+      <span>Position percent</span>
+      <input type="number" name="percent" min="1" max="100" step="1" value="${value}" inputmode="decimal" ${busy ? 'disabled' : ''} />
+    </label>
+    <div class="mock-trading-ticket-presets">
+      ${[25, 50, 100].map((item) => `<button type="button" data-action="mock-trade-preset" data-value="${item}" ${busy ? 'disabled' : ''}>${item}%</button>`).join('')}
+    </div>
+  `;
+}
+
 function renderExpandedSparklineModal(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
   const sparkline = getTokenSparkline(state, address);
@@ -1142,7 +1484,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
         <div class="expanded-sparkline-chart">
-          ${renderSparklineFigure(sparkline, address, { expanded: true })}
+          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [] })}
         </div>
         <div class="expanded-sparkline-footnote">Updated ${escapeHtml(stats.updatedLabel)}. Hover for approximate market cap and time.</div>
       </div>
@@ -1214,6 +1556,53 @@ function bindBlockTokenWarningModal(section: ParentNode, controller: AppControll
 
   section.querySelector<HTMLButtonElement>('[data-action="confirm-block-token-warning"]')?.addEventListener('click', () => {
     void controller.confirmBlockedTokenWarning();
+  });
+}
+
+function bindMockTradingTicketModal(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLElement>('[data-action="close-mock-trading-ticket"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeMockTradingTicket();
+    });
+  });
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="mock-trade-preset"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const form = button.closest<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
+      const input = form?.querySelector<HTMLInputElement>('input[name="notionalUsd"], input[name="percent"]');
+      if (input) {
+        input.value = button.dataset.value || input.value;
+      }
+    });
+  });
+
+  section.querySelector<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const address = form.dataset.address || '';
+    const side = form.dataset.side;
+    if (!address) {
+      return;
+    }
+    if (side === 'buy') {
+      const notionalUsd = Number(form.querySelector<HTMLInputElement>('input[name="notionalUsd"]')?.value || '0');
+      void controller.submitMockTradingBuy(address, notionalUsd);
+      return;
+    }
+    const percent = Number(form.querySelector<HTMLInputElement>('input[name="percent"]')?.value || '0');
+    void controller.submitMockTradingSell(address, percent);
+  });
+}
+
+function bindMockTradingHistoryModal(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLElement>('[data-action="close-mock-trading-history"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeMockTradingHistory();
+    });
   });
 }
 

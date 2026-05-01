@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MonitoredSortMode, MonitoredSortWindow, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
+import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MeteoraEntry, MockTradingPositionEntry, MockTradingTradeEntry, MonitoredSortMode, MonitoredSortWindow, TokenSparklineEntry, TradeTerminalKey } from '../../state/app-state';
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
@@ -46,6 +46,7 @@ type SparklineRenderOptions = {
   areaFill?: boolean;
   lookupKey?: string;
   variant?: 'default' | 'alert';
+  markers?: MockTradingTradeEntry[];
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -69,6 +70,21 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
       const address = button.dataset.address;
       const label = button.dataset.label || null;
       if (address) void controller.adminBlockToken(address, label);
+    });
+  }
+
+  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="mock-buy-token"]')) {
+    button.addEventListener('click', () => {
+      const address = button.dataset.address;
+      if (address) void controller.mockBuyToken(address);
+    });
+  }
+
+  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="mock-sell-token"]')) {
+    button.addEventListener('click', () => {
+      const address = button.dataset.address;
+      const percent = Number(button.dataset.percent || '100');
+      if (address) void controller.mockSellToken(address, percent);
     });
   }
 
@@ -631,6 +647,10 @@ function paginateAgeBucketRows(
   };
 }
 
+function isAgeBucketEmpty(tokens: ManualTokenEntry[], totalCount: number) {
+  return tokens.length === 0 && totalCount === 0;
+}
+
 export function renderManualTokenTable(
   tokens: ManualTokenEntry[],
   busy: boolean,
@@ -643,6 +663,8 @@ export function renderManualTokenTable(
   options?: {
     showSparkline?: boolean;
     sparklineByAddress?: Record<string, TokenSparklineEntry>;
+    mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
+    mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
   },
 ) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
@@ -659,6 +681,8 @@ export function renderManualTokenTable(
     enabledTradeTerminals,
     showSparkline: options?.showSparkline,
     sparklineByAddress: options?.sparklineByAddress,
+    mockTradingPositionsByAddress: options?.mockTradingPositionsByAddress,
+    mockTradingTradesByAddress: options?.mockTradingTradesByAddress,
   });
 }
 
@@ -679,10 +703,12 @@ export function renderPagedAgeBucketList(
     skipClientSort?: boolean;
     showSparkline?: boolean;
     sparklineByAddress?: Record<string, TokenSparklineEntry>;
+    mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
+    mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
   },
 ) {
   const totalCount = Math.max(0, Number(options?.totalCount) || 0);
-  if (tokens.length === 0 && totalCount === 0) {
+  if (isAgeBucketEmpty(tokens, totalCount)) {
     return getAgeBucketEmptyState(mode);
   }
 
@@ -704,15 +730,24 @@ export function renderPagedAgeBucketList(
       enabledTradeTerminals,
       showSparkline: options?.showSparkline,
       sparklineByAddress: options?.sparklineByAddress,
+      mockTradingPositionsByAddress: options?.mockTradingPositionsByAddress,
+      mockTradingTradesByAddress: options?.mockTradingTradesByAddress,
     })}
+    ${renderAgeBucketFooter(mode, totalPages, safePage)}
+  `;
+}
+
+function renderAgeBucketFooter(mode: 'recent' | 'old-week', totalPages: number, safePage: number) {
+  const actionPrefix = mode === 'recent' ? 'recent' : 'old-week';
+  return `
     <div class="bucket-footer">
       <div class="bucket-page-controls">
-        <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${mode === 'recent' ? 'recent-page-jump' : 'old-week-page-jump'}" /></label>
+        <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${totalPages}" step="1" data-action="${actionPrefix}-page-jump" /></label>
         <span class="bucket-page-total">${totalPages}</span>
       </div>
       <div class="button-row compact bucket-footer-actions">
-        <button type="button" class="action-button small" data-action="${mode === 'recent' ? 'recent-prev' : 'old-week-prev'}" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
-        <button type="button" class="action-button small" data-action="${mode === 'recent' ? 'recent-next' : 'old-week-next'}" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+        <button type="button" class="action-button small" data-action="${actionPrefix}-prev" ${safePage === 0 ? 'disabled' : ''}>Prev</button>
+        <button type="button" class="action-button small" data-action="${actionPrefix}-next" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
       </div>
     </div>
   `;
@@ -731,6 +766,8 @@ function renderTokenTableShell(options: {
   enabledTradeTerminals: TradeTerminalKey[];
   showSparkline?: boolean;
   sparklineByAddress?: Record<string, TokenSparklineEntry>;
+  mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
+  mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
 }) {
   const showSparkline = Boolean(options.showSparkline);
   return `
@@ -767,6 +804,8 @@ function renderTokenTableShell(options: {
             Boolean(options.isAdmin),
             options.enabledTradeTerminals,
             showSparkline ? options.sparklineByAddress?.[item.address] || null : null,
+            options.mockTradingPositionsByAddress?.[item.address] || null,
+            options.mockTradingTradesByAddress?.[item.address] || [],
           )).join('')}
         </tbody>
       </table>
@@ -938,6 +977,100 @@ function buildSparklineAreaPolyline(series: number[], options: SparklineRenderOp
   return `${leftX.toFixed(2)},${bottomY.toFixed(2)} ${linePoints} ${rightX.toFixed(2)},${bottomY.toFixed(2)}`;
 }
 
+function getSparklineTimeWindow(entry: TokenSparklineEntry, totalPoints: number) {
+  const latestTsMs = Date.parse(String(entry.latestBucketAt || ''));
+  const effectiveHours = Number(entry.effectiveHours ?? entry.hours);
+  if (!Number.isFinite(latestTsMs) || !Number.isFinite(effectiveHours) || effectiveHours <= 0 || totalPoints < 2) {
+    return null;
+  }
+
+  const spanMs = effectiveHours * 60 * 60 * 1000;
+  return {
+    startMs: latestTsMs - spanMs,
+    endMs: latestTsMs,
+    spanMs,
+  };
+}
+
+function resolveSparklineMarkerPoint(
+  entry: TokenSparklineEntry,
+  marker: MockTradingTradeEntry,
+  displaySeries: number[],
+  options: SparklineRenderOptions,
+) {
+  const window = getSparklineTimeWindow(entry, displaySeries.length);
+  const executedMs = Date.parse(String(marker.executedAt || ''));
+  if (!window || !Number.isFinite(executedMs) || executedMs < window.startMs || executedMs > window.endMs) {
+    return null;
+  }
+
+  const dimensions = resolveSparklineDimensions(options);
+  const innerWidth = dimensions.width - (dimensions.paddingX * 2);
+  const innerHeight = dimensions.height - (dimensions.paddingY * 2);
+  const min = Math.min(...displaySeries);
+  const max = Math.max(...displaySeries);
+  const range = max - min;
+  const ratio = (executedMs - window.startMs) / window.spanMs;
+  const fallbackIndex = Math.max(0, Math.min(displaySeries.length - 1, Math.round(ratio * (displaySeries.length - 1))));
+  const markerMcap = Number(marker.marketCapUsd);
+  const value = Number.isFinite(markerMcap) && markerMcap > 0 ? markerMcap : displaySeries[fallbackIndex];
+  const normalized = range > 0 ? Math.max(0, Math.min(1, (value - min) / range)) : 0.5;
+
+  return {
+    x: dimensions.paddingX + (innerWidth * ratio),
+    y: dimensions.paddingY + innerHeight - (normalized * innerHeight),
+  };
+}
+
+function formatPriceUsd(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return '-';
+  }
+  if (Math.abs(value) >= 1) {
+    return fmtMoney(value);
+  }
+  return `$${value.toPrecision(4)}`;
+}
+
+function buildSparklineMarkerTitle(marker: MockTradingTradeEntry) {
+  const side = marker.side === 'buy' ? 'Buy' : 'Sell';
+  const executedAt = marker.executedAt ? new Date(marker.executedAt).toLocaleString() : 'time unavailable';
+  return `${side} ${fmtMoney(marker.notionalUsd)} · priceUSD ${formatPriceUsd(marker.priceUsd)} · MCAP ${fmtMoney(marker.marketCapUsd)} · ${executedAt}`;
+}
+
+function renderSparklineTradeMarker(
+  entry: TokenSparklineEntry,
+  marker: MockTradingTradeEntry,
+  displaySeries: number[],
+  options: SparklineRenderOptions,
+) {
+  const point = resolveSparklineMarkerPoint(entry, marker, displaySeries, options);
+  if (!point) {
+    return '';
+  }
+
+  const size = options.expanded ? 7 : 4.5;
+  const title = escapeHtml(buildSparklineMarkerTitle(marker));
+  const x = point.x.toFixed(2);
+  const y = point.y.toFixed(2);
+  const cls = `token-sparkline-trade-marker ${marker.side}`;
+  if (marker.side === 'sell') {
+    const points = `${x},${(point.y - size).toFixed(2)} ${(point.x + size).toFixed(2)},${(point.y + size).toFixed(2)} ${(point.x - size).toFixed(2)},${(point.y + size).toFixed(2)}`;
+    return `<polygon class="${cls}" points="${points}"><title>${title}</title></polygon>`;
+  }
+  return `<circle class="${cls}" cx="${x}" cy="${y}" r="${size.toFixed(2)}"><title>${title}</title></circle>`;
+}
+
+function renderSparklineTradeMarkers(entry: TokenSparklineEntry, displaySeries: number[], options: SparklineRenderOptions) {
+  const markers = Array.isArray(options.markers) ? options.markers : [];
+  if (markers.length === 0 || displaySeries.length < 2) {
+    return '';
+  }
+  return markers
+    .map((marker) => renderSparklineTradeMarker(entry, marker, displaySeries, options))
+    .join('');
+}
+
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
   const parts = [`Mini chart`, `${series.length} pts`];
   parts.push(`${formatSparklineSpan(entry.effectiveHours)} span`);
@@ -1052,6 +1185,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   const trendClass = end > start ? 'up' : end < start ? 'down' : 'flat';
   const polyline = buildSparklinePolyline(displaySeries, options);
   const areaPolyline = options.areaFill ? buildSparklineAreaPolyline(displaySeries, options) : '';
+  const tradeMarkers = renderSparklineTradeMarkers(entry, displaySeries, options);
   const wrapMeta = buildSparklineWrapMeta(entry, address, options, buildSparklineTitle(entry, series));
 
   return `
@@ -1060,6 +1194,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
         ${areaPolyline ? `<polygon class="token-sparkline-area" points="${areaPolyline}"></polygon>` : ''}
         <polyline class="token-sparkline-glow" points="${polyline}"></polyline>
         <polyline class="token-sparkline-line" points="${polyline}"></polyline>
+        ${tradeMarkers}
       </svg>
       <div class="sparkline-hover" aria-hidden="true">
         <span class="sparkline-hover-line"></span>
@@ -1070,8 +1205,8 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   `;
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string) {
-  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true });
+function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string, markers: MockTradingTradeEntry[] = []) {
+  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers });
 }
 
 function resolveTokenMcapDelta(item: ManualTokenEntry) {
@@ -1110,6 +1245,26 @@ function renderTokenAdminAction(isAdmin: boolean, safeAddress: string, safeSymbo
   return `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>`;
 }
 
+function renderMockTradingActions(isAdmin: boolean, safeAddress: string, position: MockTradingPositionEntry | null, busy: boolean) {
+  if (!isAdmin) {
+    return '';
+  }
+  const sell = position
+    ? `<button type="button" class="action-glyph" data-action="mock-sell-token" data-address="${safeAddress}" data-percent="100" ${busy ? 'disabled' : ''} title="Mock sell 100%">S</button>`
+    : '';
+  return `<button type="button" class="action-glyph" data-action="mock-buy-token" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Mock buy">B</button>${sell}`;
+}
+
+function renderMockTradingLine(position: MockTradingPositionEntry | null) {
+  if (!position) {
+    return '';
+  }
+  const pnl = position.unrealizedPnlUsd ?? null;
+  const pct = position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
+  const tone = pnl != null && pnl < 0 ? 'down' : 'up';
+  return `<div class="token-subline mock-trading-line ${tone}">PnL ${fmtMoney(pnl)} (${fmtPct(pct)})</div>`;
+}
+
 function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: ManualTokenEntry) {
   if (mode !== 'manual') {
     return '';
@@ -1118,11 +1273,16 @@ function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: Ma
   return `<td class="num-col">${fmtMoney(item.volume5m)}</td>`;
 }
 
-function renderBucketSparklineCell(mode: 'manual' | 'recent' | 'old-week', sparkline: TokenSparklineEntry | null, address: string) {
-  return `<td class="sparkline-col">${renderSparklineCell(sparkline, address)}</td>`;
+function renderBucketSparklineCell(
+  mode: 'manual' | 'recent' | 'old-week',
+  sparkline: TokenSparklineEntry | null,
+  address: string,
+  markers: MockTradingTradeEntry[] = [],
+) {
+  return `<td class="sparkline-col">${renderSparklineCell(sparkline, address, markers)}</td>`;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null) {
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = []) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -1150,14 +1310,16 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { enabledTradeTerminals })}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
+                ${renderMockTradingActions(isAdmin, safeAddress, mockTradingPosition, busy)}
                 ${renderTokenAdminAction(isAdmin, safeAddress, safeSymbol, busy)}
               </div>
             </div>
             <div class="token-subline">${safeName}</div>
+            ${renderMockTradingLine(mockTradingPosition)}
           </div>
         </div>
       </td>
-      ${renderBucketSparklineCell(mode, sparkline, item.address)}
+      ${renderBucketSparklineCell(mode, sparkline, item.address, mockTradingTrades)}
       <td class="num-col">${age}</td>
       <td class="num-col strong">${fmtMoney(item.mcap)}</td>
       <td class="delta-col">${renderPctSpan(mcapDelta)}</td>

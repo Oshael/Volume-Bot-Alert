@@ -156,6 +156,64 @@ export interface TokenSparklineEntry {
   loading?: boolean;
 }
 
+export interface MockTradingSummaryEntry {
+  account: {
+    userId: number;
+    startingCashUsd: number;
+    cashUsd: number;
+    realizedPnlUsd: number;
+  };
+  openPositionCount: number;
+  openPositionValueUsd: number;
+  totalEquityUsd: number;
+  totalPnlUsd: number;
+  totalPnlPct?: number | null;
+  generatedAt?: string | null;
+}
+
+export interface MockTradingPositionEntry {
+  userId: number;
+  tokenAddress: string;
+  quantity: number;
+  avgEntryPriceUsd: number;
+  avgEntryMcapUsd?: number | null;
+  costBasisUsd: number;
+  realizedPnlUsd: number;
+  currentPriceUsd?: number | null;
+  currentMcapUsd?: number | null;
+  currentValueUsd?: number | null;
+  unrealizedPnlUsd?: number | null;
+  unrealizedPnlPct?: number | null;
+  priceReturnPct?: number | null;
+  priceMultiple?: number | null;
+  mcapMultiple?: number | null;
+  symbol?: string | null;
+  name?: string | null;
+}
+
+export interface MockTradingTradeEntry {
+  id: number;
+  userId: number;
+  tokenAddress: string;
+  side: 'buy' | 'sell';
+  quantity: number;
+  priceUsd: number;
+  marketCapUsd?: number | null;
+  notionalUsd: number;
+  realizedPnlUsd: number;
+  realizedPnlPct?: number | null;
+  priceReturnPct?: number | null;
+  priceMultiple?: number | null;
+  mcapMultiple?: number | null;
+  executedAt?: string | null;
+}
+
+export interface MockTradingTicketState {
+  address: string;
+  side: 'buy' | 'sell';
+  percent?: number;
+}
+
 export interface LateralizedTokenEntry {
   address: string;
   symbol?: string | null;
@@ -464,6 +522,9 @@ export interface AppState {
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
     alertSparklineById: Record<string, TokenSparklineEntry>;
+    mockTradingSummary: MockTradingSummaryEntry | null;
+    mockTradingPositionsByAddress: Record<string, MockTradingPositionEntry>;
+    mockTradingTradesByAddress: Record<string, MockTradingTradeEntry[]>;
     lateralizedTokens: LateralizedTokenEntry[];
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
@@ -491,6 +552,8 @@ export interface AppState {
     recentSearchPending: boolean;
     oldWeekSearchPending: boolean;
     expandedSparklineAddress: string | null;
+    mockTradingTicket: MockTradingTicketState | null;
+    mockTradingHistoryOpen: boolean;
     manualStarredOnly: boolean;
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
@@ -619,6 +682,9 @@ export function createAppState(): AppState {
       meteoraByAddress: {},
       sparklineByAddress: {},
       alertSparklineById: {},
+      mockTradingSummary: null,
+      mockTradingPositionsByAddress: {},
+      mockTradingTradesByAddress: {},
       lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
@@ -646,6 +712,8 @@ export function createAppState(): AppState {
       recentSearchPending: false,
       oldWeekSearchPending: false,
       expandedSparklineAddress: null,
+      mockTradingTicket: null,
+      mockTradingHistoryOpen: false,
       manualStarredOnly: false,
       recentStarredOnly: false,
       oldWeekStarredOnly: false,

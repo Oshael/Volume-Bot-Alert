@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -785,6 +785,36 @@ function serializeMeteoraForView(state: AppState, address: string) {
   ]);
 }
 
+function serializeMockTradingForView(state: AppState, address: string) {
+  const position = state.data.mockTradingPositionsByAddress[address] || null;
+  const tradesKey = serializeMockTradingTradesForView(state, address);
+  if (!position && !tradesKey) {
+    return '';
+  }
+  return serializePrimitiveList([
+    position?.tokenAddress,
+    serializeRenderedMoneyValue(position?.currentValueUsd),
+    serializeRenderedMoneyValue(position?.unrealizedPnlUsd),
+    serializeRenderedPctValue(position?.priceReturnPct ?? position?.unrealizedPnlPct),
+    serializeRenderedMoneyValue(position?.avgEntryPriceUsd),
+    tradesKey,
+  ]);
+}
+
+function serializeMockTradingTradesForView(state: AppState, address: string) {
+  const trades = state.data.mockTradingTradesByAddress[address] || [];
+  if (trades.length === 0) {
+    return '';
+  }
+  return trades.map((trade) => serializePrimitiveList([
+    trade.id,
+    trade.side,
+    trade.executedAt,
+    serializeRenderedMoneyValue(trade.marketCapUsd),
+    serializeRenderedMoneyValue(trade.notionalUsd),
+  ])).join('~');
+}
+
 function serializeRoutedTokenForView(state: AppState, token: ReturnType<typeof getMonitoredTokens>[number]) {
   return serializePrimitiveList([
     token.address,
@@ -807,6 +837,7 @@ function serializeRoutedTokenForView(state: AppState, token: ReturnType<typeof g
     token._isOldWeekRouted,
     serializeSparklineForView(state, token.address),
     serializeMeteoraForView(state, token.address),
+    serializeMockTradingForView(state, token.address),
   ]);
 }
 
@@ -819,7 +850,29 @@ function getHeaderRenderKey(state: AppState) {
     state.runtime.monitoredUpdatedAt,
     state.runtime.monitoredFreshnessLabel,
     state.ui.workspace,
+    state.data.mockTradingSummary?.account.cashUsd,
+    state.data.mockTradingSummary?.openPositionCount,
+    state.data.mockTradingSummary?.openPositionValueUsd,
+    state.data.mockTradingSummary?.totalEquityUsd,
+    state.data.mockTradingSummary?.totalPnlUsd,
+    state.data.mockTradingSummary?.totalPnlPct,
+    serializeMockTradingHeaderPositionsForView(state),
   ]);
+}
+
+function serializeMockTradingHeaderPositionsForView(state: AppState) {
+  return Object.values(state.data.mockTradingPositionsByAddress)
+    .map((position) => {
+      const token = getTrackedToken(state, position.tokenAddress);
+      return serializePrimitiveList([
+        position.tokenAddress,
+        token?.symbol,
+        token?.imageUrl,
+        position.symbol,
+        serializeRenderedMoneyValue(position.currentValueUsd),
+      ]);
+    })
+    .join('~');
 }
 
 function getLegacyRenderKey(state: AppState) {
@@ -863,6 +916,7 @@ function getMonitoredRenderKey(state: AppState) {
     sorts: state.ui.monitoredSorts,
     starred: state.data.starredTokens,
     tokens: getMonitoredTokens(state).map(serializeTrackedTokenForView),
+    mockTrading: getMonitoredTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
   });
 }
 
@@ -885,6 +939,7 @@ function getManualRenderKey(state: AppState) {
     starred: state.data.starredTokens,
     meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
     tokens: getManualTokens(state).map(serializeTrackedTokenForView),
+    mockTrading: getManualTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
     sparklines: filteredManualTokens.map((token) => {
       const sparkline = state.data.sparklineByAddress[token.address];
       const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
@@ -993,6 +1048,8 @@ function getOverlayRenderKey(state: AppState) {
     sessionStatus: state.session.status,
     authPanel: state.ui.authPanel,
     blockTokenWarning: state.ui.blockTokenWarning,
+    mockTradingTicket: getMockTradingTicketOverlaySnapshot(state),
+    mockTradingHistory: getMockTradingHistoryOverlaySnapshot(state),
     expandedSparkline: getExpandedSparklineOverlaySnapshot(state),
     busy: state.ui.busy,
     error: state.ui.error,
@@ -1006,6 +1063,42 @@ function getOverlayRenderKey(state: AppState) {
     botSettingsConfigs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
     blockedTokens: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
   });
+}
+
+function getMockTradingHistoryOverlaySnapshot(state: AppState) {
+  if (!state.ui.mockTradingHistoryOpen) {
+    return null;
+  }
+  const trades = Object.values(state.data.mockTradingTradesByAddress)
+    .flat()
+    .filter((trade) => trade.side === 'sell')
+    .map((trade) => serializePrimitiveList([
+      trade.id,
+      trade.tokenAddress,
+      trade.executedAt,
+      serializeRenderedMoneyValue(trade.notionalUsd),
+      serializeRenderedMoneyValue(trade.realizedPnlUsd),
+      serializeRenderedPctValue(trade.realizedPnlPct ?? trade.priceReturnPct),
+    ]));
+  return serializePrimitiveList([
+    state.data.mockTradingSummary?.account.cashUsd,
+    state.data.mockTradingSummary?.totalEquityUsd,
+    state.data.mockTradingSummary?.totalPnlUsd,
+    trades.join('~'),
+  ]);
+}
+
+function getMockTradingTicketOverlaySnapshot(state: AppState) {
+  const ticket = state.ui.mockTradingTicket;
+  if (!ticket) {
+    return null;
+  }
+  const token = getTrackedToken(state, ticket.address);
+  return {
+    ...ticket,
+    position: serializeMockTradingForView(state, ticket.address),
+    token: token ? serializeTrackedTokenForView(token) : ticket.address,
+  };
 }
 
 function getExpandedSparklineOverlaySnapshot(state: AppState) {
