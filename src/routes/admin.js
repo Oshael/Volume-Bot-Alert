@@ -16,7 +16,6 @@ const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/bac
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
-const pumpfunPostMigrationBlastDryRun = require('../services/pumpfun-post-migration-blast-dry-run');
 const pumpfunComboConfirmationDryRun = require('../services/pumpfun-combo-confirmation-dry-run');
 const { isValidAddress } = require('../models/user-token');
 const {
@@ -231,64 +230,6 @@ function formatAdminNumber(value, digits = 0) {
   });
 }
 
-function resolvePumpfunPostMigrationBlastResponseCandidates(status) {
-  if (Array.isArray(status.trackedDetections) && status.trackedDetections.length > 0) {
-    return status.trackedDetections;
-  }
-  if (Array.isArray(status.lastPassedCandidates)) {
-    return status.lastPassedCandidates;
-  }
-  return [];
-}
-
-function buildPumpfunPostMigrationBlastStatus(status, candidates) {
-  return {
-    running: Boolean(status.running),
-    enabled: Boolean(status.enabled),
-    dryRun: Boolean(status.dryRun),
-    intervalMs: status.intervalMs ?? null,
-    candidateLimit: status.candidateLimit ?? null,
-    outcomeWindowMs: status.outcomeWindowMs ?? null,
-    lastRunAt: status.lastRunAt || null,
-    lastCandidateCount: status.lastCandidateCount ?? 0,
-    lastPassedCount: status.lastPassedCount ?? 0,
-    lastFailedCount: status.lastFailedCount ?? 0,
-    trackedDetectionCount: status.trackedDetectionCount ?? candidates.length,
-    totalRuns: status.totalRuns ?? 0,
-    totalCandidates: status.totalCandidates ?? 0,
-    totalPassed: status.totalPassed ?? 0,
-    totalErrors: status.totalErrors ?? 0,
-    lastError: status.lastError || null,
-  };
-}
-
-function buildPumpfunPostMigrationBlastRefreshSummary(summary) {
-  if (!summary) return null;
-  return {
-    candidates: summary.candidates.length,
-    passed: summary.passed.length,
-    failed: summary.failedCount,
-    detections: Array.isArray(summary.detections) ? summary.detections.length : null,
-  };
-}
-
-function buildPumpfunPostMigrationBlastDryRunResponse({ refreshed = false, summary = null } = {}) {
-  const status = pumpfunPostMigrationBlastDryRun.getStatus();
-  const candidates = resolvePumpfunPostMigrationBlastResponseCandidates(status);
-
-  return {
-    refreshed,
-    status: buildPumpfunPostMigrationBlastStatus(status, candidates),
-    candidates,
-    count: candidates.length,
-    refreshSummary: buildPumpfunPostMigrationBlastRefreshSummary(summary),
-  };
-}
-
-function getPumpfunPostMigrationBlastEvidence(candidate) {
-  return candidate.evidenceAtAlert || candidate.evidence || {};
-}
-
 function resolvePumpfunComboConfirmationResponseCandidates(status) {
   if (Array.isArray(status.trackedDetections) && status.trackedDetections.length > 0) {
     return status.trackedDetections;
@@ -417,79 +358,6 @@ function renderPumpfunFast5xDryRunHtml(payload) {
   </section>
   <div class="muted" data-role="message"></div>
   <div data-role="table-wrap">${rows ? renderPumpfunFast5xDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page reloads and forces a bounded refresh every 10s.</div>'}</div>
-</body>
-</html>`;
-}
-
-function renderPumpfunPostMigrationBlastDryRunRow(candidate) {
-  const evidence = getPumpfunPostMigrationBlastEvidence(candidate);
-  const address = escapeHtml(candidate.address);
-  const dexUrl = `https://dexscreener.com/solana/${address}`;
-  return `<tr>
-    <td><strong>${escapeHtml(candidate.symbol || candidate.name || 'UNKNOWN')}</strong><div class="muted">${address}</div></td>
-    <td>${escapeHtml(candidate.alertTriggeredAt || candidate.currentBucketAt || '')}</td>
-    <td>$${formatAdminNumber(candidate.alertMcap ?? evidence.currentMcap, 0)}</td>
-    <td>$${formatAdminNumber(candidate.latestMcapSinceAlert ?? evidence.currentMcap, 0)}</td>
-    <td>${formatAdminNumber(candidate.maxXSinceAlert, 2)}x</td>
-    <td>$${formatAdminNumber(candidate.maxMcapSinceAlert ?? evidence.highMcapRecent ?? evidence.currentMcap, 0)}</td>
-    <td>${formatAdminNumber(evidence.highMcapRecent, 0)}</td>
-    <td>${formatAdminNumber(evidence.strongestVol5m ?? evidence.maxVol5mRecent, 0)}</td>
-    <td>${formatAdminNumber((Number(evidence.timeToHighMcapMs) || 0) / 60000, 1)}m</td>
-    <td>${formatAdminNumber(candidate.score, 2)}</td>
-    <td><a href="${dexUrl}" target="_blank" rel="noreferrer">Dex</a></td>
-  </tr>`;
-}
-
-function renderPumpfunPostMigrationBlastDryRunTable(rows) {
-  return `<table>
-    <thead><tr><th>Token</th><th>Alert At</th><th>Alert MCAP</th><th>Latest MCAP</th><th>Max X Since Alert</th><th>Max MCAP</th><th>High MCAP</th><th>Vol 5M</th><th>High Time</th><th>Score</th><th>Link</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
-}
-
-function renderPumpfunPostMigrationBlastDryRunHtml(payload) {
-  const rows = payload.candidates.map(renderPumpfunPostMigrationBlastDryRunRow).join('');
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="10; url=/api/admin/pumpfun-post-migration-blast/dry-run.html?refresh=true">
-  <title>PumpFun Post-Migration Blast Dry Run</title>
-  <style>
-    body { margin: 0; padding: 24px; background: #0b0f17; color: #e5edf7; font: 14px system-ui, sans-serif; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }
-    h1 { margin: 0; font-size: 20px; }
-    a, button { color: #67e8f9; }
-    .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-    .stat { border: 1px solid #243244; border-radius: 6px; padding: 8px 10px; background: #111827; }
-    .muted { color: #93a4b8; font-size: 12px; overflow-wrap: anywhere; }
-    table { width: 100%; border-collapse: collapse; background: #0f1724; }
-    th, td { border-bottom: 1px solid #223044; padding: 10px; text-align: left; vertical-align: top; }
-    th { color: #9fb3c8; font-size: 12px; text-transform: uppercase; }
-    .empty { border: 1px solid #243244; border-radius: 6px; padding: 18px; background: #111827; color: #93a4b8; }
-  </style>
-</head>
-<body>
-  <header>
-    <div>
-      <h1>PumpFun Post-Migration Blast Dry Run</h1>
-      <div class="muted">Admin diagnostic view for immediate post-migration blasts. No alerts are emitted from this page.</div>
-    </div>
-    <a href="?refresh=true">Refresh now</a>
-  </header>
-  <section class="stats" data-role="stats">
-    <div class="stat">enabled: <span data-stat="enabled">${escapeHtml(payload.status.enabled)}</span></div>
-    <div class="stat">running: <span data-stat="running">${escapeHtml(payload.status.running)}</span></div>
-    <div class="stat">dryRun: <span data-stat="dryRun">${escapeHtml(payload.status.dryRun)}</span></div>
-    <div class="stat">last candidates: <span data-stat="lastCandidateCount">${escapeHtml(payload.status.lastCandidateCount)}</span></div>
-    <div class="stat">last passed: <span data-stat="lastPassedCount">${escapeHtml(payload.status.lastPassedCount)}</span></div>
-    <div class="stat">tracked: <span data-stat="trackedDetectionCount">${escapeHtml(payload.status.trackedDetectionCount)}</span></div>
-    <div class="stat">last run: <span data-stat="lastRunAt">${escapeHtml(payload.status.lastRunAt || '')}</span></div>
-    <div class="stat">live refresh: <span data-stat="browserRefresh">10s</span></div>
-  </section>
-  <div data-role="table-wrap">${rows ? renderPumpfunPostMigrationBlastDryRunTable(rows) : '<div class="empty">No passing dry-run candidates yet. This page reloads and forces a bounded refresh every 10s.</div>'}</div>
 </body>
 </html>`;
 }
@@ -913,37 +781,6 @@ router.get('/high-cap-dump-candidates', async (req, res) => {
   } catch (err) {
     console.error('Admin high-cap dump candidates error:', err.message);
     res.status(500).json({ error: 'Failed to inspect high-cap dump candidates' });
-  }
-});
-
-router.get('/pumpfun-post-migration-blast/dry-run', async (req, res) => {
-  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
-  if (!refresh.ok) return res.status(400).json({ error: refresh.error });
-
-  try {
-    const summary = refresh.value
-      ? await pumpfunPostMigrationBlastDryRun.runOnce({ force: true })
-      : null;
-    res.json(buildPumpfunPostMigrationBlastDryRunResponse({ refreshed: refresh.value, summary }));
-  } catch (err) {
-    console.error('Admin PumpFun post-migration blast dry-run error:', err.message);
-    res.status(500).json({ error: 'Failed to load PumpFun post-migration blast dry-run status' });
-  }
-});
-
-router.get('/pumpfun-post-migration-blast/dry-run.html', async (req, res) => {
-  const refresh = parseBooleanQueryParam(req.query?.refresh, 'refresh');
-  if (!refresh.ok) return res.status(400).send(escapeHtml(refresh.error));
-
-  try {
-    const summary = refresh.value
-      ? await pumpfunPostMigrationBlastDryRun.runOnce({ force: true })
-      : null;
-    const payload = buildPumpfunPostMigrationBlastDryRunResponse({ refreshed: refresh.value, summary });
-    res.type('html').send(renderPumpfunPostMigrationBlastDryRunHtml(payload));
-  } catch (err) {
-    console.error('Admin PumpFun post-migration blast dry-run HTML error:', err.message);
-    res.status(500).send('Failed to load PumpFun post-migration blast dry-run status');
   }
 });
 

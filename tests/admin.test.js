@@ -107,7 +107,6 @@ describe('Admin panel auth and management', () => {
   let tokenRiskEnrichmentWorker;
   let tokenRiskReview;
   let tokenMeteoraState;
-  let pumpfunPostMigrationBlastDryRun;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -127,7 +126,6 @@ describe('Admin panel auth and management', () => {
     tokenRiskEnrichmentWorker = require('../src/services/token-risk-enrichment-worker');
     tokenRiskReview = require('../src/models/token-risk-review');
     tokenMeteoraState = require('../src/models/token-meteora-state');
-    pumpfunPostMigrationBlastDryRun = require('../src/services/pumpfun-post-migration-blast-dry-run');
     const { pool } = require('../src/models/db');
 
     await ensureAccessSchema(pool);
@@ -293,125 +291,8 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.runtime);
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.tokenRiskEnrichmentWorker);
-      assert.ok(res.body.pumpfunPostMigrationBlastDryRun);
       assert.ok(res.body.pumpfunComboConfirmationDryRun);
       assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
-    });
-  });
-
-  describe('Admin PumpFun Post-Migration Blast Dry Run', () => {
-    it('returns compact dry-run candidates for admin users', async () => {
-      const originalGetStatus = pumpfunPostMigrationBlastDryRun.getStatus;
-      pumpfunPostMigrationBlastDryRun.getStatus = () => ({
-        running: true,
-        enabled: true,
-        dryRun: true,
-        lastCandidateCount: 1,
-        lastPassedCount: 1,
-        trackedDetectionCount: 1,
-        trackedDetections: [{
-          address: '12eM87tTACWpgnwuapFUHDVDXFaZSxJqxBNj1AHB56sy',
-          symbol: 'BLAST',
-          score: 120,
-          alertTriggeredAt: '2026-04-29T00:21:00.000Z',
-          alertMcap: 55767,
-          latestMcapSinceAlert: 250000,
-          maxMcapSinceAlert: 300000,
-          maxXSinceAlert: 5.38,
-          evidenceAtAlert: {
-            firstMcap: 12355,
-            currentMcap: 55767,
-            highMcapRecent: 75588,
-            strongestVol5m: 124518,
-            timeToHighMcapMs: 180000,
-          },
-        }],
-      });
-
-      try {
-        const res = await request('GET', '/api/admin/pumpfun-post-migration-blast/dry-run', { token: adminToken });
-        assert.equal(res.status, 200);
-        assert.equal(res.body.status.running, true);
-        assert.equal(res.body.count, 1);
-        assert.equal(res.body.candidates[0].address, '12eM87tTACWpgnwuapFUHDVDXFaZSxJqxBNj1AHB56sy');
-        assert.equal(res.body.candidates[0].alertMcap, 55767);
-        assert.equal(res.body.candidates[0].maxXSinceAlert, 5.38);
-      } finally {
-        pumpfunPostMigrationBlastDryRun.getStatus = originalGetStatus;
-      }
-    });
-
-    it('can force a dry-run refresh from the admin route', async () => {
-      const originalRunOnce = pumpfunPostMigrationBlastDryRun.runOnce;
-      const originalGetStatus = pumpfunPostMigrationBlastDryRun.getStatus;
-      let capturedOptions = null;
-
-      pumpfunPostMigrationBlastDryRun.runOnce = async (options) => {
-        capturedOptions = options;
-        return {
-          candidates: [{ address: 'a' }, { address: 'b' }],
-          passed: [{ address: 'a' }],
-          failedCount: 1,
-          detections: [{ address: 'a' }],
-        };
-      };
-      pumpfunPostMigrationBlastDryRun.getStatus = () => ({
-        running: false,
-        enabled: false,
-        dryRun: true,
-        lastPassedCandidates: [],
-      });
-
-      try {
-        const res = await request('GET', '/api/admin/pumpfun-post-migration-blast/dry-run?refresh=true', { token: adminToken });
-        assert.equal(res.status, 200);
-        assert.deepEqual(capturedOptions, { force: true });
-        assert.equal(res.body.refreshed, true);
-        assert.deepEqual(res.body.refreshSummary, { candidates: 2, passed: 1, failed: 1, detections: 1 });
-      } finally {
-        pumpfunPostMigrationBlastDryRun.runOnce = originalRunOnce;
-        pumpfunPostMigrationBlastDryRun.getStatus = originalGetStatus;
-      }
-    });
-
-    it('renders a simple browser-readable HTML view', async () => {
-      const originalGetStatus = pumpfunPostMigrationBlastDryRun.getStatus;
-      pumpfunPostMigrationBlastDryRun.getStatus = () => ({
-        running: true,
-        enabled: true,
-        dryRun: true,
-        lastCandidateCount: 1,
-        lastPassedCount: 1,
-        trackedDetectionCount: 1,
-        trackedDetections: [{
-          address: '12eM87tTACWpgnwuapFUHDVDXFaZSxJqxBNj1AHB56sy',
-          symbol: 'BLAST',
-          score: 120,
-          alertTriggeredAt: '2026-04-29T00:21:00.000Z',
-          alertMcap: 55767,
-          latestMcapSinceAlert: 250000,
-          maxMcapSinceAlert: 300000,
-          maxXSinceAlert: 5.38,
-          evidenceAtAlert: {
-            highMcapRecent: 75588,
-            strongestVol5m: 124518,
-            timeToHighMcapMs: 180000,
-          },
-        }],
-      });
-
-      try {
-        const res = await request('GET', '/api/admin/pumpfun-post-migration-blast/dry-run.html', { token: adminToken });
-        assert.equal(res.status, 200);
-        assert.match(res.body, /PumpFun Post-Migration Blast Dry Run/);
-        assert.match(res.body, /BLAST/);
-        assert.match(res.body, /High MCAP/);
-        assert.match(res.body, /http-equiv="refresh"/);
-        assert.ok(res.body.includes('url=/api/admin/pumpfun-post-migration-blast/dry-run.html?refresh=true'));
-        assert.doesNotMatch(res.body, /<script>/);
-      } finally {
-        pumpfunPostMigrationBlastDryRun.getStatus = originalGetStatus;
-      }
     });
   });
 

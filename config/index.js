@@ -424,12 +424,6 @@ module.exports = {
   },
 
 
-  pumpfunPostMigrationBlast: {
-    enabled: parseBoolean(process.env.PUMPFUN_POST_MIGRATION_BLAST_ENABLED, false),
-    dryRun: parseBoolean(process.env.PUMPFUN_POST_MIGRATION_BLAST_DRY_RUN, true),
-    intervalMs: Math.max(10000, parseInt(process.env.PUMPFUN_POST_MIGRATION_BLAST_INTERVAL_MS || '60000', 10) || 60000),
-    candidateLimit: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_POST_MIGRATION_BLAST_CANDIDATE_LIMIT || '250', 10) || 250, 500)),
-  },
 
   pumpfunComboConfirmation: {
     enabled: parseBoolean(process.env.PUMPFUN_COMBO_CONFIRMATION_ENABLED, false),
