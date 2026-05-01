@@ -440,6 +440,12 @@ module.exports = {
     minMcap: Math.max(0, parseInt(process.env.TOKEN_RISK_REVIEW_SYNC_MIN_MCAP || '30000', 10) || 30000),
   },
 
+  mockTradingTakeProfitWorker: {
+    enabled: parseBoolean(process.env.MOCK_TRADING_TAKE_PROFIT_ENABLED, true),
+    intervalMs: Math.max(1000, parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_INTERVAL_MS || '3000', 10) || 3000),
+    batchLimit: Math.max(1, Math.min(parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_BATCH_LIMIT || '25', 10) || 25, 100)),
+  },
+
   catalogWriteRateLimit: {
     windowMs: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_MAX_REQUESTS || '60', 10),

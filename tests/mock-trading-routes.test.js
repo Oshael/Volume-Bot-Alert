@@ -12,6 +12,7 @@ const request = require('supertest');
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
+const takeProfitWorker = require('../src/services/mock-trading-take-profit-worker');
 
 const VALID_ADDR = 'So11111111111111111111111111111111111111112';
 const stamp = Date.now();
@@ -77,6 +78,7 @@ describe('mock trading admin routes', () => {
     userToken = await completeLogin(NORMAL_USER.email, NORMAL_USER.password);
 
     await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
     await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
     await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
@@ -91,6 +93,7 @@ describe('mock trading admin routes', () => {
 
   after(async () => {
     await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]).catch(() => {});
+    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
@@ -148,5 +151,149 @@ describe('mock trading admin routes', () => {
 
     assert.equal(resetRes.status, 200);
     assert.equal(resetRes.body.account.cashUsd, 5000);
+  });
+
+  it('executes a take profit sell while the panel is closed', async () => {
+    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const buyRes = await request(app)
+      .post('/api/admin/mock-trading/buy')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        address: VALID_ADDR,
+        notionalUsd: 100,
+        takeProfitMcapUsd: 200000,
+        takeProfitSellPercent: 100,
+      });
+
+    assert.equal(buyRes.status, 201);
+    assert.equal(buyRes.body.position.takeProfitOrder.targetMcapUsd, 200000);
+    assert.equal(buyRes.body.position.takeProfitOrder.sellPercent, 100);
+
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.002, last_mcap = 200000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const run = await takeProfitWorker.runOnce({ batchLimit: 5 });
+    assert.equal(run.triggered, 1);
+
+    const positionsRes = await request(app)
+      .get('/api/admin/mock-trading/positions')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(positionsRes.status, 200);
+    assert.equal(positionsRes.body.positions.length, 0);
+
+    const tradesRes = await request(app)
+      .get('/api/admin/mock-trading/trades')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(tradesRes.status, 200);
+    const takeProfitSell = tradesRes.body.trades.find((trade) => trade.side === 'sell' && trade.source === 'take_profit');
+    assert.ok(takeProfitSell);
+    assert.equal(takeProfitSell.realizedPnlUsd, 100);
+    assert.equal(takeProfitSell.metadata.takeProfitOrderId, buyRes.body.position.takeProfitOrder.id);
+  });
+
+  it('allows multiple open sell orders per token and cancels one', async () => {
+    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const firstBuyRes = await request(app)
+      .post('/api/admin/mock-trading/buy')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        address: VALID_ADDR,
+        notionalUsd: 100,
+        takeProfitMcapUsd: 200000,
+        takeProfitSellPercent: 50,
+      });
+
+    assert.equal(firstBuyRes.status, 201);
+
+    const secondBuyRes = await request(app)
+      .post('/api/admin/mock-trading/buy')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        address: VALID_ADDR,
+        notionalUsd: 100,
+        takeProfitMcapUsd: 300000,
+        takeProfitSellPercent: 50,
+      });
+
+    assert.equal(secondBuyRes.status, 201);
+    assert.equal(secondBuyRes.body.position.takeProfitOrders.length, 2);
+
+    const cancelRes = await request(app)
+      .post(`/api/admin/mock-trading/take-profit-orders/${firstBuyRes.body.takeProfitOrder.id}/cancel`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+
+    assert.equal(cancelRes.status, 200);
+    assert.equal(cancelRes.body.order.status, 'cancelled');
+
+    const positionsRes = await request(app)
+      .get('/api/admin/mock-trading/positions')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(positionsRes.status, 200);
+    assert.equal(positionsRes.body.positions[0].takeProfitOrders.length, 1);
+    assert.equal(positionsRes.body.positions[0].takeProfitOrders[0].id, secondBuyRes.body.takeProfitOrder.id);
+  });
+
+  it('creates a sell order from an existing position without buying more', async () => {
+    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
+    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const buyRes = await request(app)
+      .post('/api/admin/mock-trading/buy')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ address: VALID_ADDR, notionalUsd: 100 });
+
+    assert.equal(buyRes.status, 201);
+    assert.equal(buyRes.body.position.takeProfitOrders.length, 0);
+
+    const orderRes = await request(app)
+      .post('/api/admin/mock-trading/take-profit-orders')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        address: VALID_ADDR,
+        takeProfitMcapUsd: 250000,
+        takeProfitSellPercent: 25,
+      });
+
+    assert.equal(orderRes.status, 201);
+    assert.equal(orderRes.body.takeProfitOrder.targetMcapUsd, 250000);
+    assert.equal(orderRes.body.takeProfitOrder.sellPercent, 25);
+    assert.equal(orderRes.body.position.takeProfitOrders.length, 1);
+    assert.equal(orderRes.body.position.quantity, buyRes.body.position.quantity);
   });
 });

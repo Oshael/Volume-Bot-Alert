@@ -774,6 +774,28 @@ const SCHEMA_GROUPS = [
           metadata: "'{}'::jsonb",
         },
       },
+      {
+        table: 'mock_trading_take_profit_orders',
+        columns: [
+          'id',
+          'user_id',
+          'token_address',
+          'target_mcap_usd',
+          'sell_percent',
+          'status',
+          'triggered_trade_id',
+          'created_at',
+          'updated_at',
+          'triggered_at',
+          'cancelled_at',
+          'metadata',
+        ],
+        defaults: {
+          sell_percent: '100',
+          status: "'open'::character varying",
+          metadata: "'{}'::jsonb",
+        },
+      },
     ],
   },
 ];

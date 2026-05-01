@@ -65,6 +65,8 @@ router.post('/buy', async (req, res) => {
       userId: req.user.id,
       address: req.body?.address,
       notionalUsd: req.body?.notionalUsd,
+      takeProfitMcapUsd: req.body?.takeProfitMcapUsd,
+      takeProfitSellPercent: req.body?.takeProfitSellPercent,
     });
     res.status(201).json({
       message: 'Mock buy executed',
@@ -89,6 +91,39 @@ router.post('/sell', async (req, res) => {
     });
   } catch (err) {
     handleMockTradingError(res, err, 'Failed to execute mock sell');
+  }
+});
+
+router.post('/take-profit-orders', async (req, res) => {
+  try {
+    const result = await mockTrading.createTakeProfitOrderForPosition({
+      userId: req.user.id,
+      address: req.body?.address,
+      takeProfitMcapUsd: req.body?.takeProfitMcapUsd,
+      takeProfitSellPercent: req.body?.takeProfitSellPercent,
+    });
+    res.status(201).json({
+      message: 'Mock sell order created',
+      order: result.takeProfitOrder,
+      ...result,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to create mock sell order');
+  }
+});
+
+router.post('/take-profit-orders/:id/cancel', async (req, res) => {
+  try {
+    const order = await mockTrading.cancelTakeProfitOrder({
+      userId: req.user.id,
+      orderId: req.params.id,
+    });
+    res.json({
+      message: 'Mock sell order cancelled',
+      order,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to cancel mock sell order');
   }
 });
 

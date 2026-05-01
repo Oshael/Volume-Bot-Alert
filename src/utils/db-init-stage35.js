@@ -49,6 +49,27 @@ const STATEMENTS = [
      ON mock_trading_trades(user_id, token_address, executed_at DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_mock_trading_trades_token_executed
      ON mock_trading_trades(token_address, executed_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS mock_trading_take_profit_orders (
+     id SERIAL PRIMARY KEY,
+     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     token_address VARCHAR(64) NOT NULL,
+     target_mcap_usd NUMERIC(20, 2) NOT NULL CHECK (target_mcap_usd > 0),
+     sell_percent NUMERIC(8, 4) NOT NULL DEFAULT 100 CHECK (sell_percent > 0 AND sell_percent <= 100),
+     status VARCHAR(16) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'triggered', 'cancelled')),
+     triggered_trade_id INTEGER REFERENCES mock_trading_trades(id) ON DELETE SET NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     triggered_at TIMESTAMPTZ,
+     cancelled_at TIMESTAMPTZ,
+     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+   )`,
+  `DROP INDEX IF EXISTS idx_mock_trading_take_profit_orders_open_unique`,
+  `CREATE INDEX IF NOT EXISTS idx_mock_trading_take_profit_orders_open_token
+     ON mock_trading_take_profit_orders(user_id, token_address, updated_at DESC, id DESC)
+     WHERE status = 'open'`,
+  `CREATE INDEX IF NOT EXISTS idx_mock_trading_take_profit_orders_open_target
+     ON mock_trading_take_profit_orders(status, target_mcap_usd, updated_at)
+     WHERE status = 'open'`,
 ];
 
 async function init(options = {}) {
@@ -61,6 +82,7 @@ async function init(options = {}) {
     console.log('   - mock_trading_accounts');
     console.log('   - mock_trading_positions');
     console.log('   - mock_trading_trades');
+    console.log('   - mock_trading_take_profit_orders');
   } catch (err) {
     console.error('Failed to create stage 35 mock trading tables:', err.message);
     process.exit(1);

@@ -43,6 +43,21 @@ function normalizePositiveAmount(value, fieldName) {
   return amount;
 }
 
+function normalizeOptionalPositiveAmount(value, fieldName) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return null;
+  }
+  return normalizePositiveAmount(value, fieldName);
+}
+
+function normalizePercent(value, fieldName = 'percent') {
+  const percent = normalizePositiveAmount(value, fieldName);
+  if (percent > 100) {
+    throw new MockTradingError(`${fieldName} must be between 0 and 100`, 'invalid_percent');
+  }
+  return percent;
+}
+
 function normalizeSellQuantity(position, payload = {}) {
   if (!position || !(position.quantity > 0)) {
     throw new MockTradingError('No open mock trading position', 'position_not_found', 404);
@@ -52,11 +67,30 @@ function normalizeSellQuantity(position, payload = {}) {
     return normalizePositiveAmount(payload.quantity, 'quantity');
   }
 
-  const percent = normalizePositiveAmount(payload.percent, 'percent');
-  if (percent > 100) {
-    throw new MockTradingError('percent must be between 0 and 100', 'invalid_percent');
-  }
+  const percent = normalizePercent(payload.percent, 'percent');
   return position.quantity * (percent / 100);
+}
+
+function normalizeTakeProfitInput(payload = {}, catalog = {}) {
+  const targetMcapUsd = normalizeOptionalPositiveAmount(payload.takeProfitMcapUsd, 'takeProfitMcapUsd');
+  if (targetMcapUsd == null) {
+    return null;
+  }
+
+  const currentMcapUsd = toFiniteNumber(catalog.marketCapUsd, null);
+  if (!(currentMcapUsd > 0)) {
+    throw new MockTradingError('Token does not have a valid market cap for take profit', 'mcap_unavailable');
+  }
+  if (targetMcapUsd <= currentMcapUsd) {
+    throw new MockTradingError('takeProfitMcapUsd must be above the current market cap', 'invalid_take_profit_target');
+  }
+
+  return {
+    targetMcapUsd,
+    sellPercent: payload.takeProfitSellPercent == null || String(payload.takeProfitSellPercent).trim() === ''
+      ? 100
+      : normalizePercent(payload.takeProfitSellPercent, 'takeProfitSellPercent'),
+  };
 }
 
 function formatNumeric(value, decimals = 12) {
@@ -241,7 +275,31 @@ function mapTrade(row) {
   };
 }
 
-function buildPositionView(position, catalog = {}) {
+function mapTakeProfitOrder(row, prefix = '') {
+  if (!row || row[`${prefix}id`] == null) return null;
+  return {
+    id: Number(row[`${prefix}id`]),
+    userId: Number(row[`${prefix}user_id`]),
+    tokenAddress: row[`${prefix}token_address`],
+    targetMcapUsd: toFiniteNumber(row[`${prefix}target_mcap_usd`], 0),
+    sellPercent: toFiniteNumber(row[`${prefix}sell_percent`], 100),
+    status: row[`${prefix}status`] || 'open',
+    triggeredTradeId: row[`${prefix}triggered_trade_id`] == null ? null : Number(row[`${prefix}triggered_trade_id`]),
+    createdAt: row[`${prefix}created_at`] || null,
+    updatedAt: row[`${prefix}updated_at`] || null,
+    triggeredAt: row[`${prefix}triggered_at`] || null,
+    cancelledAt: row[`${prefix}cancelled_at`] || null,
+    metadata: row[`${prefix}metadata`] && typeof row[`${prefix}metadata`] === 'object' ? row[`${prefix}metadata`] : {},
+  };
+}
+
+function mapTakeProfitOrders(rows) {
+  return Array.isArray(rows)
+    ? rows.map((row) => mapTakeProfitOrder(row)).filter(Boolean)
+    : [];
+}
+
+function buildPositionView(position, catalog = {}, takeProfitOrders = []) {
   const currentPriceUsd = toFiniteNumber(catalog.last_price, null);
   const currentMcapUsd = toFiniteNumber(catalog.last_mcap, null);
   const currentValueUsd = currentPriceUsd == null ? null : position.quantity * currentPriceUsd;
@@ -268,6 +326,8 @@ function buildPositionView(position, catalog = {}) {
     priceReturnPct: priceMultiple == null ? null : (priceMultiple - 1) * 100,
     priceMultiple,
     mcapMultiple,
+    takeProfitOrder: takeProfitOrders[0] || null,
+    takeProfitOrders,
   };
 }
 
@@ -364,13 +424,79 @@ async function savePosition(userId, address, position, runner) {
   );
 }
 
+async function createTakeProfitOrder(userId, address, takeProfitOrder, runner) {
+  if (!takeProfitOrder) {
+    return null;
+  }
+
+  const { rows } = await runner.query(
+    `INSERT INTO mock_trading_take_profit_orders (
+       user_id, token_address, target_mcap_usd, sell_percent
+     )
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [
+      userId,
+      address,
+      formatNumeric(takeProfitOrder.targetMcapUsd, 2),
+      formatNumeric(takeProfitOrder.sellPercent, 4),
+    ]
+  );
+  return mapTakeProfitOrder(rows[0]);
+}
+
+async function listOpenTakeProfitOrdersForPosition(userId, address, runner) {
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_take_profit_orders
+     WHERE user_id = $1
+       AND token_address = $2
+       AND status = 'open'
+     ORDER BY target_mcap_usd ASC, id ASC`,
+    [userId, address]
+  );
+  return rows.map((row) => mapTakeProfitOrder(row));
+}
+
+async function cancelOpenTakeProfitOrders(userId, address, runner, reason = 'position_closed') {
+  const { rows } = await runner.query(
+    `UPDATE mock_trading_take_profit_orders
+     SET status = 'cancelled',
+         cancelled_at = NOW(),
+         updated_at = NOW(),
+         metadata = jsonb_set(metadata, '{cancelReason}', to_jsonb($3::text), true)
+     WHERE user_id = $1
+       AND token_address = $2
+       AND status = 'open'
+     RETURNING *`,
+    [userId, address, reason]
+  );
+  return rows.map((row) => mapTakeProfitOrder(row));
+}
+
+async function cancelAllOpenTakeProfitOrders(userId, runner, reason = 'portfolio_reset') {
+  const { rows } = await runner.query(
+    `UPDATE mock_trading_take_profit_orders
+     SET status = 'cancelled',
+         cancelled_at = NOW(),
+         updated_at = NOW(),
+         metadata = jsonb_set(metadata, '{cancelReason}', to_jsonb($2::text), true)
+     WHERE user_id = $1
+       AND status = 'open'
+     RETURNING *`,
+    [userId, reason]
+  );
+  return rows.map((row) => mapTakeProfitOrder(row));
+}
+
 async function insertTrade(userId, address, trade, runner) {
   const { rows } = await runner.query(
     `INSERT INTO mock_trading_trades (
        user_id, token_address, side, quantity, price_usd, market_cap_usd, notional_usd,
-       realized_pnl_usd, realized_pnl_pct, price_return_pct, price_multiple, mcap_multiple
+       realized_pnl_usd, realized_pnl_pct, price_return_pct, price_multiple, mcap_multiple,
+       source, metadata
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING *`,
     [
       userId,
@@ -385,6 +511,8 @@ async function insertTrade(userId, address, trade, runner) {
       formatNumeric(trade.priceReturnPct, 8),
       formatNumeric(trade.priceMultiple, 8),
       formatNumeric(trade.mcapMultiple, 8),
+      trade.source || 'token_catalog',
+      JSON.stringify(trade.metadata || {}),
     ]
   );
   return mapTrade(rows[0]);
@@ -398,13 +526,27 @@ async function buyToken(payload = {}, options = {}) {
   return withTransaction(async (client) => {
     const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
     const catalog = await loadFreshCatalogPrice(address, client, options);
+    const takeProfitInput = normalizeTakeProfitInput(payload, catalog);
     const position = await loadPositionForUpdate(userId, address, client);
     const next = buildBuyState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, notionalUsd });
 
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
     const trade = await insertTrade(userId, address, next.trade, client);
-    return { account: next.account, position: next.position, trade, catalog };
+    const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
+    const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, address, client);
+    return {
+      account: next.account,
+      position: {
+        ...next.position,
+        takeProfitOrder: takeProfitOrder || takeProfitOrders[0] || null,
+        takeProfitOrders,
+      },
+      trade,
+      takeProfitOrder,
+      takeProfitOrders,
+      catalog,
+    };
   });
 }
 
@@ -422,7 +564,42 @@ async function sellToken(payload = {}, options = {}) {
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
     const trade = await insertTrade(userId, address, next.trade, client);
+    if (!next.position) {
+      await cancelOpenTakeProfitOrders(userId, address, client, 'position_closed');
+    }
     return { account: next.account, position: next.position, trade, catalog };
+  });
+}
+
+async function createTakeProfitOrderForPosition(payload = {}, options = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const address = normalizeTokenAddress(payload.address);
+
+  return withTransaction(async (client) => {
+    const position = await loadPositionForUpdate(userId, address, client);
+    if (!position || !(position.quantity > 0)) {
+      throw new MockTradingError('No open mock trading position', 'position_not_found', 404);
+    }
+
+    const catalog = await loadFreshCatalogPrice(address, client, options);
+    const takeProfitInput = normalizeTakeProfitInput(payload, catalog);
+    if (!takeProfitInput) {
+      throw new MockTradingError('Take profit MCAP is required', 'invalid_take_profit_target');
+    }
+
+    const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
+    const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, address, client);
+    return {
+      position: buildPositionView(position, {
+        symbol: catalog.symbol,
+        name: catalog.name,
+        last_price: catalog.priceUsd,
+        last_mcap: catalog.marketCapUsd,
+      }, takeProfitOrders),
+      takeProfitOrder,
+      takeProfitOrders,
+      catalog,
+    };
   });
 }
 
@@ -431,6 +608,7 @@ async function resetAccount(payload = {}) {
   const startingCashUsd = normalizePositiveAmount(payload.startingCashUsd ?? DEFAULT_STARTING_CASH_USD, 'startingCashUsd');
 
   return withTransaction(async (client) => {
+    await cancelAllOpenTakeProfitOrders(userId, client, 'portfolio_reset');
     await client.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [userId]);
     const { rows } = await client.query(
@@ -458,7 +636,21 @@ async function listPositions(userIdValue, runner = db) {
      ORDER BY p.updated_at DESC`,
     [userId]
   );
-  return rows.map((row) => buildPositionView(mapPosition(row), row));
+  const { rows: orderRows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_take_profit_orders
+     WHERE user_id = $1
+       AND status = 'open'
+     ORDER BY token_address ASC, target_mcap_usd ASC, id ASC`,
+    [userId]
+  );
+  const ordersByAddress = new Map();
+  for (const order of mapTakeProfitOrders(orderRows)) {
+    const group = ordersByAddress.get(order.tokenAddress) || [];
+    group.push(order);
+    ordersByAddress.set(order.tokenAddress, group);
+  }
+  return rows.map((row) => buildPositionView(mapPosition(row), row, ordersByAddress.get(row.token_address) || []));
 }
 
 async function getSummary(userIdValue, runner = db) {
@@ -499,17 +691,181 @@ async function listTrades(filters = {}, runner = db) {
   return rows.map(mapTrade);
 }
 
+async function listTriggeredTakeProfitCandidates(limitValue = 25, runner = db) {
+  const limit = Math.max(1, Math.min(Math.trunc(Number(limitValue) || 25), 100));
+  const { rows } = await runner.query(
+    `SELECT o.id
+     FROM mock_trading_take_profit_orders o
+     JOIN mock_trading_positions p
+       ON p.user_id = o.user_id
+      AND p.token_address = o.token_address
+     JOIN token_catalog tc
+       ON tc.address = o.token_address
+     WHERE o.status = 'open'
+       AND tc.last_mcap IS NOT NULL
+       AND tc.last_mcap >= o.target_mcap_usd
+     ORDER BY o.updated_at ASC, o.id ASC
+     LIMIT $1`,
+    [limit]
+  );
+  return rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+}
+
+async function loadTakeProfitOrderForUpdate(orderId, runner) {
+  const id = Number.parseInt(String(orderId || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new MockTradingError('Valid take profit order id is required', 'invalid_order_id');
+  }
+
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_take_profit_orders
+     WHERE id = $1
+     FOR UPDATE`,
+    [id]
+  );
+  return mapTakeProfitOrder(rows[0]);
+}
+
+async function loadTakeProfitOrder(orderId, runner) {
+  const id = Number.parseInt(String(orderId || '').trim(), 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new MockTradingError('Valid take profit order id is required', 'invalid_order_id');
+  }
+
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_take_profit_orders
+     WHERE id = $1`,
+    [id]
+  );
+  return mapTakeProfitOrder(rows[0]);
+}
+
+async function markTakeProfitOrderTriggered(orderId, tradeId, runner) {
+  const { rows } = await runner.query(
+    `UPDATE mock_trading_take_profit_orders
+     SET status = 'triggered',
+         triggered_trade_id = $2,
+         triggered_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [orderId, tradeId]
+  );
+  return mapTakeProfitOrder(rows[0]);
+}
+
+async function cancelTakeProfitOrderById(orderId, runner, reason) {
+  const { rows } = await runner.query(
+    `UPDATE mock_trading_take_profit_orders
+     SET status = 'cancelled',
+         cancelled_at = NOW(),
+         updated_at = NOW(),
+         metadata = jsonb_set(metadata, '{cancelReason}', to_jsonb($2::text), true)
+     WHERE id = $1
+       AND status = 'open'
+     RETURNING *`,
+    [orderId, reason]
+  );
+  return mapTakeProfitOrder(rows[0]);
+}
+
+async function cancelTakeProfitOrder(payload = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const orderId = Number.parseInt(String(payload.orderId || '').trim(), 10);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    throw new MockTradingError('Valid take profit order id is required', 'invalid_order_id');
+  }
+
+  return withTransaction(async (client) => {
+    const order = await loadTakeProfitOrderForUpdate(orderId, client);
+    if (!order || order.userId !== userId) {
+      throw new MockTradingError('Take profit order not found', 'order_not_found', 404);
+    }
+    if (order.status !== 'open') {
+      throw new MockTradingError('Take profit order is not open', 'order_not_open', 409);
+    }
+    const cancelled = await cancelTakeProfitOrderById(orderId, client, 'user_cancelled');
+    if (!cancelled) {
+      throw new MockTradingError('Take profit order is not open', 'order_not_open', 409);
+    }
+    return cancelled;
+  });
+}
+
+async function executeTakeProfitOrder(orderId, options = {}) {
+  return withTransaction(async (client) => {
+    const orderCandidate = await loadTakeProfitOrder(orderId, client);
+    if (!orderCandidate || orderCandidate.status !== 'open') {
+      return { status: 'skipped', reason: 'order_not_open', order: orderCandidate };
+    }
+
+    const account = await ensureAccount(orderCandidate.userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
+    const order = await loadTakeProfitOrderForUpdate(orderId, client);
+    if (!order || order.status !== 'open') {
+      return { status: 'skipped', reason: 'order_not_open', order };
+    }
+
+    const position = await loadPositionForUpdate(order.userId, order.tokenAddress, client);
+    if (!position || !(position.quantity > 0)) {
+      const cancelled = await cancelTakeProfitOrderById(order.id, client, 'position_missing');
+      return { status: 'cancelled', reason: 'position_missing', order: cancelled || order };
+    }
+
+    const catalog = await loadFreshCatalogPrice(order.tokenAddress, client, options);
+    if (!(catalog.marketCapUsd >= order.targetMcapUsd)) {
+      return { status: 'skipped', reason: 'target_not_reached', order, catalog };
+    }
+
+    const quantity = position.quantity * (order.sellPercent / 100);
+    const next = buildSellState({
+      account,
+      position,
+      priceUsd: catalog.priceUsd,
+      marketCapUsd: catalog.marketCapUsd,
+      quantity,
+    });
+    next.trade.source = 'take_profit';
+    next.trade.metadata = {
+      takeProfitOrderId: order.id,
+      targetMcapUsd: order.targetMcapUsd,
+      sellPercent: order.sellPercent,
+      triggerMcapUsd: catalog.marketCapUsd,
+    };
+
+    await saveAccount(next.account, client);
+    await savePosition(order.userId, order.tokenAddress, next.position, client);
+    const trade = await insertTrade(order.userId, order.tokenAddress, next.trade, client);
+    const triggeredOrder = await markTakeProfitOrderTriggered(order.id, trade.id, client);
+
+    return {
+      status: 'triggered',
+      account: next.account,
+      position: next.position,
+      trade,
+      order: triggeredOrder,
+      catalog,
+    };
+  });
+}
+
 module.exports = {
   DEFAULT_PRICE_MAX_AGE_MS,
   DEFAULT_STARTING_CASH_USD,
   MockTradingError,
   buyToken,
+  cancelTakeProfitOrder,
+  createTakeProfitOrderForPosition,
+  executeTakeProfitOrder,
   formatNumeric,
   getSummary,
+  listTriggeredTakeProfitCandidates,
   listPositions,
   listTrades,
   mapAccount,
   mapPosition,
+  mapTakeProfitOrder,
   normalizePositiveAmount,
   normalizeTokenAddress,
   normalizeUserId,
@@ -518,6 +874,7 @@ module.exports = {
   __private: {
     buildBuyState,
     buildSellState,
+    normalizeTakeProfitInput,
     mapCatalogPrice,
     normalizeSellQuantity,
   },

@@ -7,6 +7,7 @@ const {
   buildBuyState,
   buildSellState,
   mapCatalogPrice,
+  normalizeTakeProfitInput,
   normalizeSellQuantity,
 } = mockTradingService.__private;
 
@@ -138,6 +139,26 @@ describe('mock trading service calculations', () => {
     assert.throws(
       () => normalizeSellQuantity(null, { percent: 25 }),
       /No open mock trading position/
+    );
+  });
+
+  it('normalizes take profit input above current market cap', () => {
+    assert.deepEqual(
+      normalizeTakeProfitInput(
+        { takeProfitMcapUsd: 200000, takeProfitSellPercent: 50 },
+        { marketCapUsd: 100000 }
+      ),
+      { targetMcapUsd: 200000, sellPercent: 50 }
+    );
+
+    assert.equal(
+      normalizeTakeProfitInput({}, { marketCapUsd: 100000 }),
+      null
+    );
+
+    assert.throws(
+      () => normalizeTakeProfitInput({ takeProfitMcapUsd: 90000 }, { marketCapUsd: 100000 }),
+      /takeProfitMcapUsd must be above the current market cap/
     );
   });
 });
