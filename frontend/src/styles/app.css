@@ -1291,8 +1291,9 @@ a {
 }
 
 .workspace-mock-trading-position {
-  max-width: 190px;
+  max-width: none;
   padding-left: 4px;
+  padding-right: 9px;
 }
 
 .workspace-mock-trading-position img,
@@ -1320,10 +1321,11 @@ a {
 }
 
 .workspace-mock-trading-position strong {
-  min-width: 0;
-  overflow: hidden;
+  flex: 0 0 auto;
+  min-width: max-content;
+  overflow: visible;
   color: inherit;
-  text-overflow: ellipsis;
+  text-overflow: clip;
 }
 
 .workspace-mock-trading-copy {
@@ -1331,15 +1333,16 @@ a {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.045);
   color: rgba(224, 234, 246, 0.82);
   font: inherit;
-  font-size: 0.66rem;
+  font-size: 0.55rem;
+  line-height: 1;
   cursor: pointer;
 }
 
