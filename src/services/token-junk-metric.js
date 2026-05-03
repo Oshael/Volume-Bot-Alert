@@ -415,8 +415,11 @@ function buildPositiveProfileSignals(input, metrics, options) {
   return signals;
 }
 
+const LEGIT_GUARDRAIL_MIN_POSITIVE_SIGNALS = 3;
+
 function shouldApplyLegitGuardrail(strongSignals, positiveSignals) {
-  return strongSignals.length === 0 && positiveSignals.length >= 4;
+  return strongSignals.length === 0
+    && positiveSignals.length >= LEGIT_GUARDRAIL_MIN_POSITIVE_SIGNALS;
 }
 
 function isStrongLegitBehavioralSignal(signal, strongLegitMarketSupport) {
@@ -678,7 +681,7 @@ function determineSuggestedLabel(input, strongSignals, weakSignals, behavioralSi
   return 'valid';
 }
 
-function applyLegitGuardrail(input, suggestedLabel, strongSignals, weakSignals, behavioralSignals, positiveSignals, metrics) {
+function applyLegitGuardrail(input, suggestedLabel, strongSignals, weakSignals, behavioralSignals, positiveSignals, metrics, options) {
   if (suggestedLabel === 'junk_permanent') {
     return suggestedLabel;
   }
@@ -688,6 +691,14 @@ function applyLegitGuardrail(input, suggestedLabel, strongSignals, weakSignals, 
   }
 
   if (hasNoPoolSuspiciousProbableBundle(input, weakSignals, behavioralSignals, metrics)) {
+    return suggestedLabel;
+  }
+
+  if (
+    hasMicrocapCollapseBundle(input, metrics, options)
+    || hasTerminalMicrocapCollapseBundle(input, metrics)
+    || hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics)
+  ) {
     return suggestedLabel;
   }
 
@@ -762,6 +773,7 @@ function classifyTokenJunk(input = {}, options = {}) {
     behavioralSignals,
     positiveSignals,
     behavioral,
+    normalizedOptions,
   );
   const confidence = determineConfidence(suggestedLabel, strongSignals, weakSignals, behavioralSignals);
 

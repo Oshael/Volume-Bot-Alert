@@ -109,6 +109,24 @@ describe('token junk metric', () => {
     assert.ok(!assessment.reasonCodes.includes('recent_volume_dead'));
   });
 
+  it('demotes junk_probable to valid_but_weak when three positive signals offset weak suspicion', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 5200,
+      volume1h: 24,
+      volume6h: 445,
+      volume24h: 8846,
+      liquidityUsd: 6379,
+      txns24hBuys: 146,
+      txns24hSells: 169,
+      priceChange24h: -160,
+      meteora: { noPool: false, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'valid_but_weak');
+    assert.ok(assessment.reasonCodes.includes('price_dislocation_extreme'));
+    assert.ok(assessment.positiveSignals.includes('tx_flow_healthy'));
+  });
+
   it('still marks extreme buy-sell imbalance tokens as junk_probable even without structural red flags', () => {
     const assessment = classifyTokenJunk({
       mcap: 200093,

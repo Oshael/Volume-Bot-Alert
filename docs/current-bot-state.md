@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, alert-card backend-event upsert, and stricter `6H` surge repeat gates (`20m` cooldown plus `+50%` relative PCHANGE growth / `+15% MCAP`).
+Last reviewed against code and the live deployment model on `2026-05-03` after enabling automatic backend blocklisting for auto `junk_probable` risk reviews.
 
 ## Current Deployment Topology
 
@@ -175,7 +175,7 @@ Important:
 - automatic persistence can create/update only `auto` rows
 - `junk_permanent` is never auto-persisted as `junk_permanent`
   - automatic `junk_permanent` assessments are downgraded to persisted `junk_probable`
-  - auto-ban is still not active
+  - the downgraded `junk_probable` path can now trigger automatic backend blocklisting
 
 ### Automatic persisted labels
 - Background runtime now includes a dedicated sync worker:
@@ -190,6 +190,17 @@ Important:
   - a token assessed as `valid` is only persisted as automatic `valid` after structural coverage exists
   - without structural coverage, automatic `valid` is softened to persisted `valid_but_weak`
   - this prevents the Helius selector from skipping a token too early
+- Automatic blocklist behavior:
+  - after an automatic `junk_probable` review is saved, the sync worker inserts the token into `admin_blocked_tokens`
+  - the row is written with `created_by = NULL`, so operational reads expose it as `blocked_auto`
+  - the catalog row is suppressed as `admin_blocked`, with monitoring disabled and reevaluation pushed far into the future
+  - the automatic review row is removed after blocklisting so blocked tokens do not remain counted as active auto `junk_probable` reviews
+  - existing `manual` review rows are still protected and are not auto-blocked by the sync path
+  - `valid_but_weak` and `valid` never trigger this automatic blocklist path
+- Current junk metric guardrail:
+  - `junk_probable` can be softened to `valid_but_weak` when the token has enough positive profile signals
+  - the current threshold is `3` positive signals, with explicit exceptions for stronger collapse/thin-support bundles
+  - this guardrail was tightened before enabling automatic blocklisting to reduce false positives from weak suspicion bundles
 
 ### Helius structural enrichment
 - Helius/RPC enrichment is a separate background pipeline, not part of the main dashboard route path
@@ -486,6 +497,24 @@ Important:
     - `pumpfun-migrated` catalog upsert
     - immediate Dex evaluation with `migration_grace_until`
   - this does not force Dex to return data and does not bypass market-cap or catalog-worker filters
+
+### PumpFun dry-run experiments
+- Current status: removed from runtime code.
+- Removed experiment families:
+  - `pumpfun-fast-5x`
+  - `pumpfun-post-migration-blast`
+  - `pumpfun-combo-confirmation`
+- Removed surfaces:
+  - runtime workers
+  - admin diagnostic routes
+  - config/env parsing
+  - runtime schema guards and init stages
+  - persistence models
+  - service modules
+  - dedicated tests/docs
+- Important:
+  - existing database tables are not recreated or checked by runtime schema anymore
+  - existing database tables are not dropped automatically by this code removal
 
 ### Meteora
 - Source of truth: backend-persisted current state in `token_meteora_state`
@@ -1234,6 +1263,37 @@ Current security priority order:
 - terminal visibility is now user-configurable through persisted `uiPrefs.enabledTradeTerminals`
 - if multiple terminals are enabled, the selector menu is shown
 - if exactly one terminal is enabled, the button opens that terminal directly
+
+### Admin mock trading
+- Mock trading is admin-only at the backend route layer and the frontend render layer.
+- Backend route prefix:
+  - `/api/admin/mock-trading`
+- Current endpoints:
+  - `GET /summary`
+  - `GET /positions`
+  - `GET /trades`
+  - `POST /buy`
+  - `POST /sell`
+  - `POST /reset`
+- Current persistence:
+  - `mock_trading_accounts`
+  - `mock_trading_positions`
+  - `mock_trading_trades`
+- Execution price comes from `token_catalog.last_price` as `priceUsd`.
+- Trade execution also snapshots `token_catalog.last_mcap` as display/reference MCAP.
+- The default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount.
+- PnL and return percentage are calculated from token quantity and `priceUsd`, not from market cap.
+- The frontend loads the authenticated admin portfolio summary, open positions, and recent trades.
+- Admin token rows expose mock buy/sell controls:
+  - buy opens a ticket with fixed USD presets and a custom USD amount
+  - sell opens a ticket with percentage presets and a custom percent
+  - reset clears only the authenticated admin user's mock portfolio
+- The workspace header cash pill shows only current mock cash, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill.
+- The `Plays` modal summarizes recent closed sell executions, including realized PnL, win/loss counts, win rate, and each profitable/unprofitable play.
+- Manual, Recent, and Old Week mini charts render account-specific buy/sell markers from the admin trade ledger.
+- The expanded sparkline modal renders the same markers.
+- Marker placement is based on `executedAt` inside the sparkline time window and uses trade MCAP when available.
+- Mock trade markers are not stored in or mixed into the global sparkline cache.
 
 ### Workspace header status
 - The workspace header now exposes runtime state through a compact status indicator instead of a manual start/stop button.

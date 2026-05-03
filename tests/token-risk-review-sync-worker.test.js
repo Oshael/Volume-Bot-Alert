@@ -7,6 +7,9 @@ describe('token risk review sync worker', () => {
   it('persists auto labels from the current junk assessment', async () => {
     const saved = [];
     const evidence = [];
+    const blocked = [];
+    const suppressed = [];
+    const removedAutoReviews = [];
     const result = await worker.__private.processRows([
       {
         address: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
@@ -43,6 +46,22 @@ describe('token risk review sync worker', () => {
             source: 'auto',
           };
         },
+        removeAutoReview: async (address) => {
+          removedAutoReviews.push(address);
+          return true;
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (address, payload) => {
+          suppressed.push({ address, payload });
+          return { address, ...payload };
+        },
       },
       tokenJunkEvidenceCaptureService: {
         captureJunkEvidence: async (row, assessment, meteoraSummary) => {
@@ -52,8 +71,13 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
     assert.equal(result.manualProtected, 0);
     assert.equal(saved[0].label, 'junk_probable');
+    assert.equal(blocked[0].address, 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M');
+    assert.match(blocked[0].label, /^auto-junk-probable:/);
+    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
+    assert.deepEqual(removedAutoReviews, ['BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M']);
     assert.match(saved[0].notes, /^auto\/v1_manual_review:/);
     assert.equal(evidence.length, 1);
     assert.equal(evidence[0].assessment.label, 'junk_probable');
@@ -93,9 +117,15 @@ describe('token risk review sync worker', () => {
           source: 'manual',
         }),
       },
+      adminBlockedTokenModel: {
+        add: async () => {
+          throw new Error('manual rows must not be auto-blocked');
+        },
+      },
     });
 
     assert.equal(result.saved, 0);
+    assert.equal(result.autoBlocked, 0);
     assert.equal(result.manualProtected, 1);
   });
 
@@ -135,15 +165,25 @@ describe('token risk review sync worker', () => {
             source: 'auto',
           };
         },
+        removeAutoReview: async () => {
+          throw new Error('valid_but_weak rows must not be auto-blocked');
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async () => {
+          throw new Error('valid_but_weak rows must not be auto-blocked');
+        },
       },
     });
 
     assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 0);
     assert.equal(saved[0].label, 'valid_but_weak');
   });
 
   it('does not fail the sync when junk evidence capture throws', async () => {
     const saved = [];
+    const blocked = [];
     const result = await worker.__private.processRows([
       {
         address: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
@@ -179,6 +219,16 @@ describe('token risk review sync worker', () => {
             source: 'auto',
           };
         },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async () => ({}),
       },
       tokenJunkEvidenceCaptureService: {
         captureJunkEvidence: async () => {
@@ -188,6 +238,8 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(blocked.length, 1);
     assert.equal(saved[0].label, 'junk_probable');
   });
 });

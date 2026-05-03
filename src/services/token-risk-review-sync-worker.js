@@ -1,6 +1,7 @@
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenRiskReview = require('../models/token-risk-review');
+const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenJunkEvidenceCapture = require('./token-junk-evidence-capture');
 const { classifyTokenJunk } = require('./token-junk-metric');
 
@@ -26,9 +27,11 @@ let status = {
   lastCandidateCount: 0,
   lastProcessed: 0,
   lastSaved: 0,
+  lastAutoBlocked: 0,
   lastManualProtected: 0,
   totalProcessed: 0,
   totalSaved: 0,
+  totalAutoBlocked: 0,
   totalManualProtected: 0,
   totalErrors: 0,
   lastError: null,
@@ -124,6 +127,48 @@ async function captureEvidenceSafely(row, assessment, meteoraSummary, deps = {})
   }
 }
 
+function shouldAutoBlockLabel(label) {
+  return String(label || '').trim().toLowerCase() === 'junk_probable';
+}
+
+function buildAutoBlockLabel(assessment) {
+  const reasonCodes = Array.isArray(assessment?.reasonCodes)
+    ? assessment.reasonCodes.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const suffix = reasonCodes.slice(0, 3).join(',');
+  return suffix ? `auto-junk-probable:${suffix}` : 'auto-junk-probable';
+}
+
+async function autoBlockToken(row, assessment, deps = {}) {
+  const address = String(row?.address || '').trim();
+  if (!address) {
+    return false;
+  }
+
+  const blockedTokenModel = deps.adminBlockedTokenModel || adminBlockedToken;
+  const catalogModel = deps.tokenCatalogModel || tokenCatalog;
+  const reviewModel = deps.tokenRiskReviewModel || tokenRiskReview;
+
+  await blockedTokenModel.add({
+    address,
+    label: buildAutoBlockLabel(assessment),
+    createdBy: null,
+  });
+
+  await catalogModel.applyEvaluationResult(address, {
+    eligibilityState: 'admin-blocked',
+    eligibleForMonitoring: false,
+    suppressedReason: 'admin_blocked',
+    nextEvaluationAt: new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000)),
+    monitorPriority: 'dormant',
+    symbol: row?.symbol || null,
+    name: row?.name || null,
+  });
+
+  await reviewModel.removeAutoReview(address);
+  return true;
+}
+
 async function listCandidates(offset, options, deps = {}) {
   const catalogModel = deps.tokenCatalogModel || tokenCatalog;
   const rows = await catalogModel.listAutoRiskReviewCandidates(options.scanLimit, offset, options.minMcap);
@@ -142,6 +187,7 @@ async function processRows(rows = [], deps = {}) {
   const meteoraByAddress = new Map(meteoraRows.map((row) => [String(row.tokenAddress || row.token_address), row]));
 
   let saved = 0;
+  let autoBlocked = 0;
   let manualProtected = 0;
 
   for (const row of rows) {
@@ -169,10 +215,14 @@ async function processRows(rows = [], deps = {}) {
       continue;
     }
 
+    if (shouldAutoBlockLabel(label) && await autoBlockToken(row, assessment, deps)) {
+      autoBlocked += 1;
+    }
+
     saved += 1;
   }
 
-  return { saved, manualProtected };
+  return { saved, autoBlocked, manualProtected };
 }
 
 function schedule(options = {}) {
@@ -210,6 +260,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
     status.lastOffset = offset;
     status.lastProcessed = 0;
     status.lastSaved = 0;
+    status.lastAutoBlocked = 0;
     status.lastManualProtected = 0;
     status.lastError = null;
 
@@ -225,9 +276,11 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastCandidateCount = rows.length;
       status.lastProcessed = rows.length;
       status.lastSaved = result.saved;
+      status.lastAutoBlocked = result.autoBlocked;
       status.lastManualProtected = result.manualProtected;
       status.totalProcessed += rows.length;
       status.totalSaved += result.saved;
+      status.totalAutoBlocked += result.autoBlocked;
       status.totalManualProtected += result.manualProtected;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
@@ -239,6 +292,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         candidateCount: rows.length,
         processed: rows.length,
         saved: result.saved,
+        autoBlocked: result.autoBlocked,
         manualProtected: result.manualProtected,
         nextOffset,
       };
@@ -290,13 +344,16 @@ module.exports = {
   stop,
   __private: {
     buildAutoNotes,
+    autoBlockToken,
     captureEvidenceSafely,
     buildMeteoraMetric,
+    buildAutoBlockLabel,
     hasStructuralCoverage,
     listCandidates,
     normalizeAutoLabel,
     normalizePersistedAutoLabel,
     normalizeOptions,
     processRows,
+    shouldAutoBlockLabel,
   },
 };

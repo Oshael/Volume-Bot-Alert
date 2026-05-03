@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-04-26` after hidden-mode backend alert coalescing/audio catch-up suppression, backend-alert card upsert on repeated event ids, and stricter `6H` surge repeat gates (`20m` cooldown plus `+50%` relative PCHANGE growth / `+15% MCAP`).
+Last reviewed against code and the live deployment model on `2026-05-03` after enabling automatic backend blocklisting for auto `junk_probable` risk reviews.
 
 ## Current Deployment Topology
 
@@ -470,6 +470,7 @@ Role:
 - periodically computes the current runtime token-risk assessment for monitored tokens
 - persists that assessment into `token_risk_reviews`
 - creates an operational label cache that other runtime systems can reuse
+- automatically blocklists tokens that remain automatic `junk_probable`
 
 Important behavior:
 - automatic persisted labels use the existing review labels only:
@@ -478,10 +479,20 @@ Important behavior:
   - `junk_probable`
 - automatic `junk_permanent` is intentionally not persisted as `junk_permanent`
   - it is softened to persisted `junk_probable`
-  - the current runtime still does not auto-ban tokens
+  - the softened `junk_probable` can now enter the automatic backend blocklist path
 - automatic `valid` is only persisted as `valid` after structural coverage exists
   - without structural coverage, automatic `valid` is softened to persisted `valid_but_weak`
   - this avoids skipping Helius too early
+- automatic `junk_probable` now triggers backend blocklisting:
+  - inserts the token into `admin_blocked_tokens`
+  - writes `created_by = NULL`, which surfaces as `blocked_auto`
+  - applies an `admin-blocked` catalog evaluation state
+  - disables active monitoring and pushes the next evaluation far into the future
+  - removes the automatic `token_risk_reviews` row after blocklisting
+- automatic blocklisting does not run for:
+  - existing manual review rows
+  - `valid`
+  - `valid_but_weak`
 
 Manual vs automatic precedence:
 - `token_risk_reviews` now has `source`:
@@ -502,9 +513,20 @@ Practical distinction:
 - `riskReview`
   - persisted review state
   - can be reused by selectors and operators
-- blocklist action remains separate from persisted analysis
+- blocklist action is now automatic for auto `junk_probable`, but still separate for manual labels
   - blocked tokens can surface as `blocked_manual` or `blocked_auto` in effective reads
   - admin blocklisting removes automatic review rows so blocked tokens no longer linger in the automatic `junk_probable` pool
+
+Current junk metric guardrail:
+- `junk_probable` can be softened to `valid_but_weak` when enough positive profile signals offset weak suspicion
+- the active threshold is `3` positive profile signals
+- stronger bundles still bypass that softening, including:
+  - extreme buy/sell imbalance
+  - no-pool suspicious bundles
+  - microcap collapse
+  - terminal microcap collapse
+  - high-cap thin-support bundles
+- this guardrail exists because automatic backend blocklisting now consumes the `junk_probable` output
 
 Execution notes:
 - worker computes per-tier demand and effective budget under the `800/min` cap
@@ -571,6 +593,24 @@ Used for:
 - backend migration capture from PumpPortal
 - `txType: "migrate"` events only
 - connection status for backend observability
+
+### PumpFun dry-run experiments
+Status:
+- removed from runtime code
+- removed experiment families:
+  - `pumpfun-fast-5x`
+  - `pumpfun-post-migration-blast`
+  - `pumpfun-combo-confirmation`
+- removed surfaces:
+  - runtime workers
+  - admin diagnostic routes
+  - config/env parsing
+  - runtime schema guards and init stages
+  - persistence models
+  - service modules
+  - dedicated tests/docs
+- existing database tables are not recreated or checked by runtime schema anymore
+- existing database tables are not dropped automatically by this code removal
 
 ### Meteora
 Files:
@@ -740,6 +780,45 @@ Reasons:
     - `72h` to `< 11d`: `15m`
     - `11d+`: `30m`
   - routed compact search surfaces a visible searching/loading state while the table resolves the query
+
+### Admin mock trading
+- Admin-only backend route prefix:
+  - `/api/admin/mock-trading`
+- Route protection:
+  - authenticated session
+  - `requireAdmin`
+  - trusted-origin check for mutating requests
+- Current endpoints:
+  - `GET /summary`
+  - `GET /positions`
+  - `GET /trades`
+  - `POST /buy`
+  - `POST /sell`
+  - `POST /reset`
+- Current tables:
+  - `mock_trading_accounts`
+  - `mock_trading_positions`
+  - `mock_trading_trades`
+- Execution behavior:
+  - buys and sells execute against `token_catalog.last_price` as `priceUsd`
+  - execution snapshots `token_catalog.last_mcap` as market-cap reference
+  - default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount
+  - open-position value, PnL, and return percentage are calculated from token quantity and `priceUsd`
+  - market cap is display/reference context, not the PnL calculation source
+- Frontend behavior:
+  - admin sessions load summary, open positions, and recent trades
+  - token rows expose admin-only mock buy/sell controls
+  - buy uses a ticket modal with fixed USD presets and a custom amount
+  - sell uses a ticket modal with percent presets and a custom percent
+  - header cash pill shows only current mock cash, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill
+  - `Plays` opens a recent closed-play summary based on sell executions, realized PnL, win/loss counts, and win rate
+  - reset clears only the authenticated admin user's mock portfolio
+- Chart-marker behavior:
+  - Manual, Recent, and Old Week compact sparklines receive account-specific buy/sell markers
+  - the expanded sparkline modal receives the same markers
+  - marker X position is based on trade `executedAt` within the sparkline time window
+  - marker Y position uses trade MCAP when available, otherwise it falls back to the closest sparkline point
+  - markers are passed as render options and are not merged into the global sparkline cache
 
 ### Alerts
 - backend-owned for active alert generation
