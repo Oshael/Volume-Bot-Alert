@@ -182,11 +182,17 @@ function normalizeTickerPeersSnapshot(value) {
     return null;
   }
 
+  const sourcePeerRole = toTextOrNull(value.sourcePeerRole);
   return {
     sourceSymbol: toTextOrNull(value.sourceSymbol),
     normalizedSymbol: toTextOrNull(value.normalizedSymbol),
     count: Math.max(items.length, Number(value.count) || 0),
+    exactCount: toNumberOrNull(value.exactCount),
+    subtickerCount: toNumberOrNull(value.subtickerCount),
     hasSubtickerMatch: Boolean(value.hasSubtickerMatch),
+    sourcePeerRole: ['og', 'mcap_leader', 'peer_warning'].includes(sourcePeerRole) ? sourcePeerRole : null,
+    oldestExactAddress: toTextOrNull(value.oldestExactAddress),
+    highestMcapExactAddress: toTextOrNull(value.highestMcapExactAddress),
     items,
   };
 }

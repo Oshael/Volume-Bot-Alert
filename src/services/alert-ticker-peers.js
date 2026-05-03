@@ -4,6 +4,9 @@ const { isValidAddress } = require('../models/user-token');
 
 const SUBTICKER_MIN_LENGTH = 4;
 const DEFAULT_LIMIT = 8;
+const SOURCE_PEER_ROLE_OG = 'og';
+const SOURCE_PEER_ROLE_MCAP_LEADER = 'mcap_leader';
+const SOURCE_PEER_ROLE_WARNING = 'peer_warning';
 
 function normalizeSymbolKey(value) {
   return String(value || '')
@@ -38,7 +41,48 @@ function mapPeerRow(row) {
   };
 }
 
-async function listTickerPeersBySymbol(symbol, options = {}, runner = db) {
+function normalizeAddressKey(value) {
+  return String(value || '').trim();
+}
+
+function sameAddress(left, right) {
+  return normalizeAddressKey(left) !== '' && normalizeAddressKey(left) === normalizeAddressKey(right);
+}
+
+function mapPeerStatsRow(row) {
+  const exactCount = Number.parseInt(String(row?.exact_count || '0'), 10);
+  const subtickerCount = Number.parseInt(String(row?.subticker_count || '0'), 10);
+  const exactMissingCreatedAtCount = Number.parseInt(String(row?.exact_missing_created_at_count || '0'), 10);
+  const exactMissingMcapCount = Number.parseInt(String(row?.exact_missing_mcap_count || '0'), 10);
+  return {
+    exactCount: Number.isInteger(exactCount) ? exactCount : 0,
+    subtickerCount: Number.isInteger(subtickerCount) ? subtickerCount : 0,
+    exactMissingCreatedAtCount: Number.isInteger(exactMissingCreatedAtCount) ? exactMissingCreatedAtCount : 0,
+    exactMissingMcapCount: Number.isInteger(exactMissingMcapCount) ? exactMissingMcapCount : 0,
+    oldestExactAddress: normalizeAddressKey(row?.oldest_exact_address) || null,
+    highestMcapExactAddress: normalizeAddressKey(row?.highest_mcap_exact_address) || null,
+  };
+}
+
+function resolveSourcePeerRole(address, stats) {
+  if (!stats || stats.exactCount <= 1) {
+    return SOURCE_PEER_ROLE_WARNING;
+  }
+
+  const isOldestExact = sameAddress(address, stats.oldestExactAddress);
+  const isHighestMcapExact = sameAddress(address, stats.highestMcapExactAddress);
+  const hasCompleteExactAgeData = (Number(stats.exactMissingCreatedAtCount) || 0) === 0;
+  const hasCompleteExactMcapData = (Number(stats.exactMissingMcapCount) || 0) === 0;
+  if (isOldestExact && isHighestMcapExact && hasCompleteExactAgeData && hasCompleteExactMcapData) {
+    return SOURCE_PEER_ROLE_OG;
+  }
+  if (isHighestMcapExact && hasCompleteExactMcapData) {
+    return SOURCE_PEER_ROLE_MCAP_LEADER;
+  }
+  return SOURCE_PEER_ROLE_WARNING;
+}
+
+async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
   const normalizedSymbol = normalizeSymbolKey(symbol);
   if (normalizedSymbol.length < 2) {
     return [];
@@ -64,34 +108,63 @@ async function listTickerPeersBySymbol(symbol, options = {}, runner = db) {
        FROM token_catalog
        WHERE symbol IS NOT NULL
          AND btrim(symbol) <> ''
-     )
-     SELECT
-       address,
-       symbol,
-       name,
-       image_url,
-       last_mcap,
-       last_token_created_at_ms,
-       age_ms_at_alert,
-       CASE
-         WHEN normalized_symbol = $1 THEN 'exact'
-         ELSE 'subticker'
-       END AS match_type
-     FROM catalog
-     WHERE normalized_symbol <> ''
-       AND (
-         normalized_symbol = $1
-         OR (
-           char_length($1) >= $2
-           AND char_length(normalized_symbol) >= $2
-           AND (
-             normalized_symbol LIKE $1 || '%'
-             OR $1 LIKE normalized_symbol || '%'
+     ),
+     matches AS (
+       SELECT
+         address,
+         symbol,
+         name,
+         image_url,
+         last_mcap,
+         last_token_created_at_ms,
+         age_ms_at_alert,
+         normalized_symbol,
+         CASE
+           WHEN normalized_symbol = $1 THEN 'exact'
+           ELSE 'subticker'
+         END AS match_type
+       FROM catalog
+       WHERE normalized_symbol <> ''
+         AND (
+           normalized_symbol = $1
+           OR (
+             char_length($1) >= $2
+             AND char_length(normalized_symbol) >= $2
+             AND (
+               normalized_symbol LIKE $1 || '%'
+               OR $1 LIKE normalized_symbol || '%'
+             )
            )
          )
-       )
+     ),
+     stats AS (
+       SELECT
+         COUNT(*) FILTER (WHERE normalized_symbol = $1) AS exact_count,
+         COUNT(*) FILTER (WHERE normalized_symbol <> $1) AS subticker_count,
+         COUNT(*) FILTER (WHERE normalized_symbol = $1 AND last_token_created_at_ms IS NULL) AS exact_missing_created_at_count,
+         COUNT(*) FILTER (WHERE normalized_symbol = $1 AND (last_mcap IS NULL OR last_mcap <= 0)) AS exact_missing_mcap_count,
+         (
+           ARRAY_AGG(address ORDER BY last_token_created_at_ms ASC, address ASC)
+           FILTER (WHERE normalized_symbol = $1 AND last_token_created_at_ms IS NOT NULL)
+         )[1] AS oldest_exact_address,
+         (
+           ARRAY_AGG(address ORDER BY last_mcap DESC, COALESCE(last_token_created_at_ms, 9223372036854775807) ASC, address ASC)
+           FILTER (WHERE normalized_symbol = $1 AND last_mcap IS NOT NULL AND last_mcap > 0)
+         )[1] AS highest_mcap_exact_address
+       FROM matches
+     )
+     SELECT
+       matches.*,
+       stats.exact_count,
+       stats.subticker_count,
+       stats.exact_missing_created_at_count,
+       stats.exact_missing_mcap_count,
+       stats.oldest_exact_address,
+       stats.highest_mcap_exact_address
+     FROM matches
+     CROSS JOIN stats
      ORDER BY
-       CASE WHEN normalized_symbol = $1 THEN 0 ELSE 1 END ASC,
+       CASE WHEN match_type = 'exact' THEN 0 ELSE 1 END ASC,
        COALESCE(last_mcap, 0) DESC,
        COALESCE(last_token_created_at_ms, 0) DESC,
        address ASC
@@ -99,6 +172,11 @@ async function listTickerPeersBySymbol(symbol, options = {}, runner = db) {
     [normalizedSymbol, SUBTICKER_MIN_LENGTH, limit, snapshotTsMs]
   );
 
+  return rows;
+}
+
+async function listTickerPeersBySymbol(symbol, options = {}, runner = db) {
+  const rows = await queryTickerPeerRowsBySymbol(symbol, options, runner);
   return rows.map(mapPeerRow);
 }
 
@@ -121,16 +199,23 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
   }
 
   const snapshotTsMs = toNumberOrNull(options.snapshotTsMs) ?? Date.now();
-  const items = await listTickerPeersBySymbol(symbol, { limit, snapshotTsMs }, runner);
+  const rows = await queryTickerPeerRowsBySymbol(symbol, { limit, snapshotTsMs }, runner);
+  const items = rows.map(mapPeerRow);
   if (items.length <= 1) {
     return null;
   }
 
+  const stats = mapPeerStatsRow(rows[0]);
   return {
     sourceSymbol: symbol,
     normalizedSymbol,
     count: items.length,
+    exactCount: stats.exactCount,
+    subtickerCount: stats.subtickerCount,
     hasSubtickerMatch: items.some((item) => item.matchType === 'subticker'),
+    sourcePeerRole: resolveSourcePeerRole(address, stats),
+    oldestExactAddress: stats.oldestExactAddress,
+    highestMcapExactAddress: stats.highestMcapExactAddress,
     items,
   };
 }
@@ -139,7 +224,10 @@ module.exports = {
   buildTickerPeerSnapshotForAlert,
   listTickerPeersBySymbol,
   __private: {
+    mapPeerStatsRow,
     normalizeLimit,
     normalizeSymbolKey,
+    queryTickerPeerRowsBySymbol,
+    resolveSourcePeerRole,
   },
 };

@@ -160,6 +160,11 @@ describe('backend alert feed service', () => {
             sourceSymbol: 'WSOL',
             normalizedSymbol: 'WSOL',
             count: 2,
+            exactCount: 2,
+            subtickerCount: 0,
+            sourcePeerRole: 'mcap_leader',
+            oldestExactAddress: '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+            highestMcapExactAddress: 'So11111111111111111111111111111111111111112',
             items: [
               {
                 address: 'So11111111111111111111111111111111111111112',
@@ -187,6 +192,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.symbol, 'WSOL');
       assert.equal(payload.dumpPct, -60);
       assert.equal(payload.tickerPeers?.count, 2);
+      assert.equal(payload.tickerPeers?.sourcePeerRole, 'mcap_leader');
+      assert.equal(payload.tickerPeers?.oldestExactAddress, '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
       assert.equal(payload.tickerPeers?.items?.[1]?.ageMsAtAlert, 7200000);
       assert.equal(payload.riskReview, null);
       assert.equal(payload.structuralRisk, null);
@@ -229,6 +236,8 @@ describe('backend alert feed service', () => {
             sourceSymbol: 'WSOL',
             normalizedSymbol: 'WSOL',
             count: 2,
+            exactCount: 1,
+            subtickerCount: 1,
             items: [
               {
                 address: 'So11111111111111111111111111111111111111112',
@@ -246,6 +255,7 @@ describe('backend alert feed service', () => {
               },
             ],
             hasSubtickerMatch: true,
+            sourcePeerRole: 'peer_warning',
           },
         },
         triggeredAt: '2026-04-16T12:05:10.000Z',
@@ -287,6 +297,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].label, 'VOL');
       assert.equal(payload.events[0].tickerPeers?.count, 2);
       assert.equal(payload.events[0].tickerPeers?.hasSubtickerMatch, true);
+      assert.equal(payload.events[0].tickerPeers?.sourcePeerRole, 'peer_warning');
+      assert.equal(payload.events[0].tickerPeers?.subtickerCount, 1);
       assert.equal(payload.events[0].pct, 80);
       assert.equal(payload.events[0].prevVolume5m, 10000);
       assert.equal(payload.events[0].volume5m, 18000);

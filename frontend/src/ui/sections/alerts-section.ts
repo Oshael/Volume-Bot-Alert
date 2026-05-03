@@ -1515,17 +1515,17 @@ function buildTickerPeersControl(alert: AlertEntry) {
     return null;
   }
 
+  const peerRole = resolveTickerPeersBadgeRole(alert.tickerPeers);
   const details = document.createElement('details');
   details.className = 'alert-ticker-peers-panel';
 
   const summary = document.createElement('summary');
   summary.className = 'alert-ticker-peers-badge';
-  summary.title = alert.tickerPeers?.hasSubtickerMatch
-    ? `${count} ticker/subticker peers snapshot`
-    : `${count} ticker peers snapshot`;
+  summary.title = buildTickerPeersBadgeTitle(alert.tickerPeers, count, peerRole);
   const badgeMark = document.createElement('span');
   badgeMark.className = 'alert-ticker-peers-badge-mark';
-  badgeMark.textContent = '!';
+  badgeMark.dataset.peerRole = peerRole;
+  badgeMark.textContent = getTickerPeersBadgeMark(peerRole);
   summary.append(badgeMark);
 
   const list = document.createElement('div');
@@ -1580,6 +1580,42 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
   details.append(summary, list);
   return details;
+}
+
+function resolveTickerPeersBadgeRole(tickerPeers: AlertEntry['tickerPeers']) {
+  if (tickerPeers?.sourcePeerRole === 'og') {
+    return 'og';
+  }
+  if (tickerPeers?.sourcePeerRole === 'mcap_leader') {
+    return 'mcap_leader';
+  }
+  return 'peer_warning';
+}
+
+function getTickerPeersBadgeMark(role: 'og' | 'mcap_leader' | 'peer_warning') {
+  if (role === 'og') {
+    return 'OG';
+  }
+  if (role === 'mcap_leader') {
+    return '🏆';
+  }
+  return '!';
+}
+
+function buildTickerPeersBadgeTitle(
+  tickerPeers: AlertEntry['tickerPeers'],
+  count: number,
+  role: 'og' | 'mcap_leader' | 'peer_warning',
+) {
+  if (role === 'og') {
+    return 'OG ticker peer: oldest and highest market cap among exact ticker matches';
+  }
+  if (role === 'mcap_leader') {
+    return 'Market-cap leader among exact ticker peers';
+  }
+  return tickerPeers?.hasSubtickerMatch
+    ? `${count} ticker/subticker peers snapshot`
+    : `${count} ticker peers snapshot`;
 }
 
 function resolveTickerPeerAgeMs(

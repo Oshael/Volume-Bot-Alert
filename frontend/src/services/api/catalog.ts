@@ -177,7 +177,12 @@ export interface DashboardAlertEvent {
     sourceSymbol?: string | null;
     normalizedSymbol?: string | null;
     count?: number;
+    exactCount?: number | null;
+    subtickerCount?: number | null;
     hasSubtickerMatch?: boolean;
+    sourcePeerRole?: 'og' | 'mcap_leader' | 'peer_warning' | null;
+    oldestExactAddress?: string | null;
+    highestMcapExactAddress?: string | null;
     items?: Array<{
       address: string;
       symbol?: string | null;

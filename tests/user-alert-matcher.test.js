@@ -171,7 +171,12 @@ describe('user alert matcher', () => {
         sourceSymbol: 'WSOL',
         normalizedSymbol: 'WSOL',
         count: 2,
+        exactCount: 2,
+        subtickerCount: 0,
         hasSubtickerMatch: false,
+        sourcePeerRole: 'og',
+        oldestExactAddress: TOKEN_ADDRESS,
+        highestMcapExactAddress: TOKEN_ADDRESS,
         items: [
           {
             address: TOKEN_ADDRESS,
@@ -207,6 +212,7 @@ describe('user alert matcher', () => {
 
     assert.equal(context.eventWrites.length, 1);
     assert.equal(context.eventWrites[0].payload.tickerPeers?.count, 2);
+    assert.equal(context.eventWrites[0].payload.tickerPeers?.sourcePeerRole, 'og');
     assert.equal(context.eventWrites[0].payload.tickerPeers?.items?.[1]?.address, '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
   });
 

@@ -8884,7 +8884,7 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 14px;
+  min-width: 18px;
   margin-left: 2px;
   color: #ff4d5f;
   font-size: 18px;
@@ -8899,7 +8899,18 @@ TEMP_LEGACY_BAR_TITLE {
   color: inherit;
   font-size: inherit;
   font-weight: inherit;
+  letter-spacing: 0;
   line-height: 1;
+}
+
+.alert-ticker-peers-badge-mark[data-peer-role="og"] {
+  color: #f5b342;
+  font-size: 10px;
+}
+
+.alert-ticker-peers-badge-mark[data-peer-role="mcap_leader"] {
+  color: #f5b342;
+  font-size: 15px;
 }
 
 .alert-ticker-peers-panel {
