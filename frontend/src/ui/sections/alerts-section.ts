@@ -1597,7 +1597,7 @@ function getTickerPeersBadgeMark(role: 'og' | 'mcap_leader' | 'peer_warning') {
     return 'OG';
   }
   if (role === 'mcap_leader') {
-    return '🏆';
+    return '#1';
   }
   return '!';
 }

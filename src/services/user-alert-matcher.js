@@ -777,6 +777,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
   const tickerPeers = await (deps.alertTickerPeers || alertTickerPeers).buildTickerPeerSnapshotForAlert({
     address: tokenAfter.address,
     symbol: candidate.payload?.symbol || tokenAfter.symbol || null,
+    name: candidate.payload?.name || tokenAfter.name || null,
   }, { snapshotTsMs: nowMs });
 
   try {

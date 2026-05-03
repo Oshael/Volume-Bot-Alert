@@ -2,7 +2,7 @@ const db = require('../models/db');
 const tokenCatalog = require('../models/token-catalog');
 const { isValidAddress } = require('../models/user-token');
 
-const SUBTICKER_MIN_LENGTH = 4;
+const SUBTICKER_MIN_LENGTH = 3;
 const DEFAULT_LIMIT = 8;
 const SOURCE_PEER_ROLE_OG = 'og';
 const SOURCE_PEER_ROLE_MCAP_LEADER = 'mcap_leader';
@@ -39,6 +39,104 @@ function mapPeerRow(row) {
     ageMsAtAlert: toNumberOrNull(row.age_ms_at_alert),
     matchType: row.match_type === 'subticker' ? 'subticker' : 'exact',
   };
+}
+
+function normalizeContextText(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getContextWords(...values) {
+  const words = new Set();
+  for (const value of values) {
+    for (const word of normalizeContextText(value).split(' ')) {
+      if (word.length >= 3) {
+        words.add(word);
+      }
+    }
+  }
+  return words;
+}
+
+function splitCompactText(value) {
+  const text = normalizeSymbolKey(value);
+  return text.match(/[A-Z]+|[0-9]+/g) || [];
+}
+
+function hasSharedMeaningfulWord(leftWords, rightWords) {
+  for (const word of leftWords) {
+    if (rightWords.has(word)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function compactContainsContext(compactValue, contextWords) {
+  const compact = normalizeSymbolKey(compactValue);
+  if (!compact) {
+    return false;
+  }
+
+  for (const word of contextWords) {
+    if (compact.includes(word)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveSubtickerSuffix(sourceSymbol, peerSymbol) {
+  const source = normalizeSymbolKey(sourceSymbol);
+  const peer = normalizeSymbolKey(peerSymbol);
+  if (!source || !peer || source === peer) {
+    return null;
+  }
+  if (peer.startsWith(source)) {
+    return peer.slice(source.length);
+  }
+  if (source.startsWith(peer)) {
+    return source.slice(peer.length);
+  }
+  return null;
+}
+
+function isContextualSubtickerPeer(source = {}, peer = {}) {
+  const suffix = resolveSubtickerSuffix(source.symbol, peer.symbol);
+  if (!suffix) {
+    return false;
+  }
+
+  const sourceWords = getContextWords(source.symbol, source.name);
+  const peerWords = getContextWords(peer.symbol, peer.name);
+  const suffixWords = getContextWords(...splitCompactText(suffix));
+  if (!sourceWords.size || !peerWords.size) {
+    return true;
+  }
+
+  if (hasSharedMeaningfulWord(sourceWords, suffixWords)) {
+    return true;
+  }
+  if (compactContainsContext(suffix, sourceWords)) {
+    return true;
+  }
+  return false;
+}
+
+function filterContextualTickerPeerRows(rows, source) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    if (row?.match_type !== 'subticker') {
+      return true;
+    }
+    return isContextualSubtickerPeer(source, {
+      symbol: row.symbol,
+      name: row.name,
+    });
+  });
 }
 
 function normalizeAddressKey(value) {
@@ -188,9 +286,13 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
   }
 
   let symbol = String(input.symbol || '').trim();
+  let name = String(input.name || '').trim();
   if (!symbol) {
     const tokenRow = await tokenCatalog.getByAddress(address);
     symbol = String(tokenRow?.symbol || '').trim();
+    if (!name) {
+      name = String(tokenRow?.name || '').trim();
+    }
   }
 
   const normalizedSymbol = normalizeSymbolKey(symbol);
@@ -200,18 +302,20 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
 
   const snapshotTsMs = toNumberOrNull(options.snapshotTsMs) ?? Date.now();
   const rows = await queryTickerPeerRowsBySymbol(symbol, { limit, snapshotTsMs }, runner);
-  const items = rows.map(mapPeerRow);
+  const contextualRows = filterContextualTickerPeerRows(rows, { symbol, name });
+  const items = contextualRows.map(mapPeerRow);
   if (items.length <= 1) {
     return null;
   }
 
   const stats = mapPeerStatsRow(rows[0]);
+  const subtickerCount = contextualRows.filter((row) => row?.match_type === 'subticker').length;
   return {
     sourceSymbol: symbol,
     normalizedSymbol,
     count: items.length,
     exactCount: stats.exactCount,
-    subtickerCount: stats.subtickerCount,
+    subtickerCount,
     hasSubtickerMatch: items.some((item) => item.matchType === 'subticker'),
     sourcePeerRole: resolveSourcePeerRole(address, stats),
     oldestExactAddress: stats.oldestExactAddress,
@@ -225,6 +329,8 @@ module.exports = {
   listTickerPeersBySymbol,
   __private: {
     mapPeerStatsRow,
+    filterContextualTickerPeerRows,
+    isContextualSubtickerPeer,
     normalizeLimit,
     normalizeSymbolKey,
     queryTickerPeerRowsBySymbol,

@@ -8910,7 +8910,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-ticker-peers-badge-mark[data-peer-role="mcap_leader"] {
   color: #f5b342;
-  font-size: 15px;
+  font-size: 10px;
 }
 
 .alert-ticker-peers-panel {

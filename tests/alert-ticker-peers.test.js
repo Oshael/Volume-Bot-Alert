@@ -40,6 +40,35 @@ describe('alert ticker peers', () => {
     assert.equal(role, 'peer_warning');
   });
 
+  it('keeps contextual subticker peers when the extension matches the source name', () => {
+    assert.equal(alertTickerPeers.__private.isContextualSubtickerPeer(
+      { symbol: 'CRYO', name: 'Cry Out Loud' },
+      { symbol: 'CRYOOUTLOUD', name: 'Cry Out Loud' }
+    ), true);
+  });
+
+  it('filters unrelated subticker peers when the extension conflicts with source context', () => {
+    assert.equal(alertTickerPeers.__private.isContextualSubtickerPeer(
+      { symbol: 'CRYO', name: 'Cry Out Loud' },
+      { symbol: 'CRYOTRUMP', name: 'Cry Trump' }
+    ), false);
+  });
+
+  it('allows contextual subticker checks for 3-character source tickers', async () => {
+    const calls = [];
+    const runner = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        return { rows: [] };
+      },
+    };
+
+    await alertTickerPeers.listTickerPeersBySymbol('CRY', { limit: 8 }, runner);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].params[1], 3);
+  });
+
   it('does not promote the source token when exact peer market cap data is incomplete', () => {
     const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
       exactCount: 2,
