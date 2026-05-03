@@ -8904,13 +8904,13 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alert-ticker-peers-badge-mark[data-peer-role="og"] {
-  color: #f5b342;
-  font-size: 10px;
+  color: #3b82f6;
+  font-size: inherit;
 }
 
 .alert-ticker-peers-badge-mark[data-peer-role="mcap_leader"] {
-  color: #f5b342;
-  font-size: 10px;
+  color: #22c55e;
+  font-size: inherit;
 }
 
 .alert-ticker-peers-panel {
