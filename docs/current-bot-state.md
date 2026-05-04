@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-05-03` after enabling automatic backend blocklisting for auto `junk_probable` risk reviews.
+Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN risk backfill, ticker-peer role badges, and young-token volume-window fill.
 
 ## Current Deployment Topology
 
@@ -201,6 +201,61 @@ Important:
   - `junk_probable` can be softened to `valid_but_weak` when the token has enough positive profile signals
   - the current threshold is `3` positive signals, with explicit exceptions for stronger collapse/thin-support bundles
   - this guardrail was tightened before enabling automatic blocklisting to reduce false positives from weak suspicion bundles
+
+### GMGN-assisted junk gates
+- GMGN is now used as a risk source, not only as a discovery source.
+- Young-token volume windows are normalized before catalog/bucket writes:
+  - when a token is `< 6h` old and the upstream has no positive `6h` volume yet, `vol6h` is filled from the largest positive shorter window (`1m`, `5m`, `1h`)
+  - when a token is `< 24h` old and the upstream has no positive `24h` volume yet, `vol24h` is filled from the largest positive shorter/filled window (`1m`, `5m`, `1h`, `6h`)
+  - positive native `6h`/`24h` values are not overwritten
+  - this applies to both GMGN ingestion and Dex catalog reevaluation, so very young active tokens do not display stale `0` long-window volume while shorter-window volume is already known
+- GMGN discovery ingestion can auto-block before catalog upsert when GMGN risk data is decisive:
+  - young low-mcap/extreme-volume gate:
+    - age `< 24h`
+    - mcap `<= 100k`
+    - vol5m `>= 500k`
+    - vol5m/mcap `>= 4`
+  - `token security` top-10 holder rate `>= 70%`
+  - `token info` low mcap/high holder anomaly:
+    - mcap `<= 150k`
+    - holders `>= 1500`
+  - `market kline` 1m staircase-pump pattern:
+    - at least `12` candles
+    - runup `>= 150%`
+    - green candle ratio `>= 85%`
+    - up-step ratio `>= 85%`
+    - at most `2` red candles
+    - max per-step move `<= 20%`
+- GMGN risk lookup is checked for young GMGN candidates under `6h` when any of these are true:
+  - vol1h/mcap `>= 10`
+  - vol24h/mcap `>= 20`
+  - vol1h/mcap `>= 3`
+  - mcap `>= 100k`
+  - vol5m `>= 50k`
+- Young GMGN extreme churn quarantine still exists separately:
+  - age `< 2h`
+  - vol1h/mcap `>= 10` or vol24h/mcap `>= 20`
+  - token is saved and volume buckets are written, but monitoring/alerts are suppressed with `gmgn_needs_risk_enrichment`
+  - after Helius enrichment, concentrated structure is auto-blocked and healthy structure is released back to monitoring
+- The token-risk review sync worker can now use GMGN info for suspicious Dex-discovered tokens:
+  - source is not GMGN and not `user-manual`
+  - age `< 24h`
+  - mcap `<= 500k`
+  - Helius holder count is at least `1000`
+  - suspicious trigger exists: vol24h/mcap `>= 5`, buy/sell imbalance `>= 3`, or abs 24h price change `>= 200%`
+  - if GMGN reports holders `>= 10k` and mcap/holder `<= $50`, the token is auto-blocked as `auto-junk-probable:gmgn_holder_count_mcap_anomaly`
+- The token-risk review sync worker also has a source-agnostic young low-mcap/extreme-volume gate:
+  - age `< 24h`
+  - mcap `<= 100k`
+  - vol5m `>= 500k`
+  - vol5m/mcap `>= 4`
+  - matching rows are auto-blocked as `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
+- Local operational checkpoint on `2026-05-04`:
+  - GMGN risk backfill scanned `97` local candidates
+  - `33` were blocked
+  - `29` by GMGN security top-10 holder rate
+  - `4` by GMGN info low-mcap/high-holder anomaly
+  - `0` by kline pattern in that backfill batch
 
 ### Helius structural enrichment
 - Helius/RPC enrichment is a separate background pipeline, not part of the main dashboard route path
@@ -665,6 +720,7 @@ Current monitored UI behavior:
   - this is visual-only and separate from the monitored alert baseline
 - current low-activity monitored policy in the backend worker:
   - automatic catalog tokens with `volume24h < 5k` are treated as low-activity and are forced onto at least a `3m` recheck floor
+  - for tokens younger than `24h`, missing/zero `volume24h` is first filled from positive shorter windows when available, so active new tokens are not suppressed just because Dex/GMGN has not emitted a native `24h` value yet
   - manual tokens are exempt from this low-activity suppression
   - the monitored dashboard route still defaults to `minMcap = 30k`, but worker cadence no longer assumes all low-activity auto tokens should be refreshed aggressively
 
@@ -848,6 +904,39 @@ Current monitored UI behavior:
   - exception: rows in `cleanup_soft_archive` are reactivated if they reappear in Dex discovery
   - reactivated rows return as `dexscreener-discovery`, clear the archive suppression, and are scheduled for immediate reevaluation
   - discovery is paused while Dex throttle mode is active, including staged recovery
+
+### 4c. GMGN discovery worker
+- Worker: `src/services/gmgn-discovery-worker.js`
+- Default state: disabled unless `GMGN_DISCOVERY_ENABLED=true`
+- Request shape:
+  - `5` trending requests per `2s` window by default
+  - intervals: `1m`, `5m`, `1h`, `6h`, `24h`
+  - default per-request limit: `30`
+- Current behavior:
+  - normalizes GMGN trending rows into catalog snapshots
+  - skips brand-new tokens that appeared only in GMGN `1m` trending, because that surface proved too polluted for catalog discovery
+  - runs new GMGN snapshots through the existing junk classifier before catalog upsert
+  - high-confidence GMGN junk is auto-blocked through `admin_blocked_tokens`
+  - medium-confidence junk from a brand-new GMGN token is skipped without permanent block
+  - consults GMGN `token security`, `token info`, and `market kline` for young/high-activity GMGN candidates before allowing alerts
+  - blocks young low-mcap/extreme-volume GMGN tokens before spending security/info/kline lookups
+  - uses GMGN security/info/kline to block obvious scam profiles before they enter the normal monitored alert flow
+  - quarantines young extreme GMGN churn under `gmgn_needs_risk_enrichment` until structural enrichment resolves it
+  - `user-manual` rows are protected from GMGN auto-blocking
+  - still refreshes existing catalog tokens if they appear in `1m`
+  - writes GMGN market volume into `token_market_volume_buckets_1m`
+  - fills missing young-token `6h`/`24h` volume windows from shorter GMGN volume before catalog, bucket, alert, and panel-state writes
+  - uses normal `monitored-vol` for GMGN `5m` volume jumps
+  - keeps separate `gmgn-vol-1m` support behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled
+  - tracks active/stale GMGN panel membership and schedules DexScreener reevaluation when a token leaves the GMGN panel
+  - GMGN refreshes that resolve to `admin-blocked` are excluded from the accepted panel-token set, so blocked addresses are not kept `active` in `token_gmgn_panel_state`
+- Admin status:
+  - `GET /api/admin/ws-status` exposes `gmgnDiscoveryWorker`
+  - status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, GMGN `1m` alerts, risk/security/info/kline checks, GMGN auto-block counts, and Dex handoff counts
+- Required rollout switches:
+  - `GMGN_API_KEY`
+  - `GMGN_DISCOVERY_ENABLED=true`
+  - stage 17 and stage 36 DB init must be applied before enabling
 
 ### 5. Meteora flow
 - Snapshot worker: `src/services/meteora-snapshot-worker.js`
@@ -1274,11 +1363,15 @@ Current security priority order:
   - `GET /trades`
   - `POST /buy`
   - `POST /sell`
+  - `POST /take-profit-orders`
+  - `POST /take-profit-orders/:id/cancel`
+  - `POST /add-cash`
   - `POST /reset`
 - Current persistence:
   - `mock_trading_accounts`
   - `mock_trading_positions`
   - `mock_trading_trades`
+  - `mock_trading_take_profit_orders`
 - Execution price comes from `token_catalog.last_price` as `priceUsd`.
 - Trade execution also snapshots `token_catalog.last_mcap` as display/reference MCAP.
 - The default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount.
@@ -1287,7 +1380,10 @@ Current security priority order:
 - Admin token rows expose mock buy/sell controls:
   - buy opens a ticket with fixed USD presets and a custom USD amount
   - sell opens a ticket with percentage presets and a custom percent
+  - add cash deposits manual fake USD into the authenticated admin portfolio without clearing positions or trades
   - reset clears only the authenticated admin user's mock portfolio
+- Manual mock cash deposits increase both `cash_usd` and `starting_cash_usd`, so deposits do not inflate the total PnL calculation.
+- Buy/sell tickets are scrollable when their content exceeds the viewport.
 - The workspace header cash pill shows only current mock cash, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill.
 - The `Plays` modal summarizes recent closed sell executions, including realized PnL, win/loss counts, win rate, and each profitable/unprofitable play.
 - Manual, Recent, and Old Week mini charts render account-specific buy/sell markers from the admin trade ledger.
@@ -1366,6 +1462,15 @@ Current security priority order:
   - the separate social link now renders only the emoji:
     - `👥` for X community URLs
     - `👤` for normal X profile URLs
+- current ticker-peer badge behavior:
+  - backend alert snapshots include same-ticker peer metadata from `src/services/alert-ticker-peers.js`
+  - exact ticker peers determine the source role:
+    - `OG` when the alerted token is both the oldest known exact ticker match and the highest-mcap exact ticker match
+    - `#1` when the alerted token is the highest-mcap exact ticker match but not the oldest
+    - `!` for normal duplicate ticker/subticker warning semantics
+  - `OG` renders blue and `#1` renders green, with the same visual scale as the `!` marker
+  - subticker matching now starts at `3` normalized characters
+  - subticker peers are context-filtered by source symbol/name words so unrelated extensions like a meme/trump suffix do not count as peers for a different semantic ticker
 
 ## Persistence Model
 
