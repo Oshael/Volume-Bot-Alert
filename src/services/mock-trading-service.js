@@ -626,6 +626,25 @@ async function resetAccount(payload = {}) {
   });
 }
 
+async function addCash(payload = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const amountUsd = normalizePositiveAmount(payload.amountUsd, 'amountUsd');
+
+  return withTransaction(async (client) => {
+    await ensureAccount(userId, client, { lock: true });
+    const { rows } = await client.query(
+      `UPDATE mock_trading_accounts
+       SET starting_cash_usd = starting_cash_usd + $2,
+           cash_usd = cash_usd + $2,
+           updated_at = NOW()
+       WHERE user_id = $1
+       RETURNING *`,
+      [userId, formatNumeric(amountUsd, 6)]
+    );
+    return mapAccount(rows[0]);
+  });
+}
+
 async function listPositions(userIdValue, runner = db) {
   const userId = normalizeUserId(userIdValue);
   const { rows } = await runner.query(
@@ -854,6 +873,7 @@ module.exports = {
   DEFAULT_PRICE_MAX_AGE_MS,
   DEFAULT_STARTING_CASH_USD,
   MockTradingError,
+  addCash,
   buyToken,
   cancelTakeProfitOrder,
   createTakeProfitOrderForPosition,

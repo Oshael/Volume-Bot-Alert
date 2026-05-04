@@ -151,6 +151,15 @@ describe('mock trading admin routes', () => {
 
     assert.equal(resetRes.status, 200);
     assert.equal(resetRes.body.account.cashUsd, 5000);
+
+    const addCashRes = await request(app)
+      .post('/api/admin/mock-trading/add-cash')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ amountUsd: 250 });
+
+    assert.equal(addCashRes.status, 200);
+    assert.equal(addCashRes.body.account.cashUsd, 5250);
+    assert.equal(addCashRes.body.account.startingCashUsd, 5250);
   });
 
   it('executes a take profit sell while the panel is closed', async () => {

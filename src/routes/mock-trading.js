@@ -142,4 +142,19 @@ router.post('/reset', async (req, res) => {
   }
 });
 
+router.post('/add-cash', async (req, res) => {
+  try {
+    const account = await mockTrading.addCash({
+      userId: req.user.id,
+      amountUsd: req.body?.amountUsd,
+    });
+    res.json({
+      message: 'Mock cash added',
+      account,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to add mock trading cash');
+  }
+});
+
 module.exports = router;

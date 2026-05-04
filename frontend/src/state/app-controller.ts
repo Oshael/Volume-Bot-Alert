@@ -41,7 +41,7 @@ import {
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
-import { buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
+import { addMockTradingCash, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -142,6 +142,7 @@ const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const BACKEND_OWNED_ALERT_RULE_KEYS = [
   HIGH_CAP_DUMP_RULE_KEY,
   'monitored-vol',
+  'gmgn-vol-1m',
   'monitored-mcap',
   'hvnc',
   'recent-surge-1h',
@@ -315,6 +316,7 @@ export interface AppController {
   submitMockTradingSell(address: string, percent: number): Promise<void>;
   submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number): Promise<void>;
   cancelMockTradingTakeProfitOrder(orderId: number): Promise<void>;
+  addMockTradingCash(): Promise<void>;
   resetMockTradingPortfolio(): Promise<void>;
   removeBlockedToken(address: string): Promise<void>;
   removePumpToken(mint: string): void;
@@ -3869,10 +3871,12 @@ export function createAppController(): AppController {
       ),
       tickerPeers: event.tickerPeers ?? null,
       ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      volume1m: toOptionalNumber(event.volume1m),
       volume5m: toOptionalNumber(event.volume5m),
       volume1h: toOptionalNumber(event.volume1h),
       volume6h: toOptionalNumber(event.volume6h),
       volume24h: toOptionalNumber(event.volume24h),
+      prevVolume1m: toOptionalNumber(event.prevVolume1m),
       prevVolume5m: toOptionalNumber(event.prevVolume5m),
       prevMcap: toOptionalNumber(event.prevMcap),
       mcap: toOptionalNumber(event.mcap),
@@ -3907,6 +3911,7 @@ export function createAppController(): AppController {
       mintAddress: address,
       createdAt: getBackendAlertCreatedAt(event.triggeredAt),
       label: toOptionalText(event.label) || `PCHANGE ${surgeWindow}`,
+      tickerPeers: event.tickerPeers ?? null,
       ...buildBackendHighCapDumpAlertMetaFields(event, address),
       priceChange1h: toOptionalNumber(event.priceChange1h),
       priceChange6h: toOptionalNumber(event.priceChange6h),
@@ -8518,6 +8523,41 @@ export function createAppController(): AppController {
       } finally {
         setBusy(false);
         emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      }
+    },
+    async addMockTradingCash() {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+      const rawAmount = typeof window === 'undefined'
+        ? ''
+        : window.prompt('Add mock cash amount in USD', '1000');
+      if (rawAmount == null) {
+        return;
+      }
+      const amountUsd = Number(rawAmount);
+      if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+        setError('Mock cash amount must be greater than zero');
+        emit('header');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Adding mock cash...');
+      emit('header');
+      try {
+        const result = await addMockTradingCash(amountUsd, token);
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to add mock trading cash');
+      } finally {
+        setBusy(false);
+        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
     async resetMockTradingPortfolio() {

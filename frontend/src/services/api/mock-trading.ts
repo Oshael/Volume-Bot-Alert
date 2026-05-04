@@ -239,3 +239,11 @@ export function resetMockTradingPortfolio(startingCashUsd?: number, token?: stri
     },
   }));
 }
+
+export function addMockTradingCash(amountUsd: number, token?: string | null) {
+  return apiFetch<{ message: string }>('/api/admin/mock-trading/add-cash', {
+    method: 'POST',
+    body: JSON.stringify({ amountUsd }),
+    token,
+  });
+}
