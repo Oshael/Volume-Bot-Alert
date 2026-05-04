@@ -1143,6 +1143,8 @@ a {
 .workspace-route-group {
   display: inline-flex;
   align-items: center;
+  flex: 1 1 auto;
+  justify-content: center;
   gap: 8px;
   min-width: 0;
 }
@@ -1256,21 +1258,26 @@ a {
 .workspace-mock-trading-cluster {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  flex: 1 1 360px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  justify-content: center;
+  max-width: 980px;
   min-width: 0;
 }
 
 .workspace-mock-trading-summary {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 31px;
-  padding: 0 8px;
+  box-sizing: border-box;
+  gap: 5px;
+  min-height: 25px;
+  padding: 0 6px;
   border: 1px solid rgba(88, 159, 255, 0.3);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(218, 230, 244, 0.88);
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   white-space: nowrap;
 }
 
@@ -1283,7 +1290,7 @@ a {
 
 .workspace-mock-trading-summary strong {
   color: #f4f8ff;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
 }
 
 .workspace-mock-trading-cash {
@@ -1291,16 +1298,17 @@ a {
 }
 
 .workspace-mock-trading-position {
-  max-width: none;
-  padding-left: 4px;
-  padding-right: 9px;
+  flex: 0 0 auto;
+  max-width: min(290px, 100%);
+  padding-left: 3px;
+  padding-right: 8px;
 }
 
 .workspace-mock-trading-position img,
 .workspace-mock-trading-position-placeholder {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   border-radius: 999px;
 }
 
@@ -1321,27 +1329,41 @@ a {
 }
 
 .workspace-mock-trading-position strong {
-  flex: 0 0 auto;
-  min-width: max-content;
-  overflow: visible;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 92px;
+  overflow: hidden;
   color: inherit;
-  text-overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-mock-trading-position > span:not(.workspace-mock-trading-position-placeholder) {
+  flex: 0 0 auto;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-mock-trading-copy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  padding: 0;
+  flex: 0 0 18px;
+  box-sizing: border-box;
+  width: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px;
+  height: 18px !important;
+  min-height: 18px !important;
+  padding: 0 !important;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.045);
   color: rgba(224, 234, 246, 0.82);
   font: inherit;
-  font-size: 0.55rem;
+  font-size: 0.56rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -1360,14 +1382,14 @@ a {
 }
 
 .workspace-mock-trading-reset {
-  min-height: 23px;
-  padding: 0 8px;
+  min-height: 20px;
+  padding: 0 6px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
   color: rgba(224, 234, 246, 0.9);
   font: inherit;
-  font-size: 0.64rem;
+  font-size: 0.6rem;
   cursor: pointer;
 }
 
@@ -1378,6 +1400,10 @@ a {
 
 .workspace-mock-trading-plays {
   border-color: rgba(147, 255, 197, 0.24);
+}
+
+.workspace-mock-trading-add {
+  border-color: rgba(88, 159, 255, 0.34);
 }
 
 .workspace-userbar {
@@ -1794,6 +1820,9 @@ a {
 
 .legacy-auth-panel-mock-trading {
   width: min(460px, calc(100vw - 24px));
+  max-height: min(88vh, 640px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .legacy-auth-panel-mock-trading-history {

@@ -754,7 +754,7 @@ function renderPublicLandingFeatureTiles() {
     },
     {
       icon: 'history' as const,
-      title: 'Historical Monitor View',
+      title: 'Historical Radar View',
       body: 'Review what happened after the first alert instead of trading off a single raw spike.',
     },
     {
@@ -867,6 +867,7 @@ function renderMockTradingHeaderSummary(state: AppState) {
       <div class="workspace-mock-trading-summary workspace-mock-trading-cash" data-tone="${pnlTone}">
         <span class="workspace-mock-trading-label">MOCK</span>
         <strong>Cash ${escapeHtml(fmtMockUsd(summary.account.cashUsd))}</strong>
+        <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-add" data-action="add-mock-trading-cash" ${state.ui.busy ? 'disabled' : ''} title="Add mock cash">Add</button>
         <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-plays" data-action="open-mock-trading-history" ${state.ui.busy ? 'disabled' : ''} title="Open mock trade history">Plays</button>
         <button type="button" class="workspace-mock-trading-reset" data-action="reset-mock-trading" ${state.ui.busy ? 'disabled' : ''} title="Reset mock portfolio">Reset</button>
       </div>
@@ -897,9 +898,9 @@ function renderMockTradingHeaderPosition(state: AppState, address: string) {
     <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" title="${escapeHtml(buildMockTradingHeaderPositionTitle(symbol, pnl, pct, position))}">
       ${renderMockTradingHeaderAvatar(imageUrl, symbol)}
       <strong>${escapeHtml(symbol)}</strong>
-      <button type="button" class="workspace-mock-trading-copy copy-button" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract">⧉</button>
       <span>${escapeHtml(fmtMockUsd(pnl, { signed: true }))}</span>
       <span>${escapeHtml(fmtPct(pct))}</span>
+      <button type="button" class="workspace-mock-trading-copy copy-button" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract">⧉</button>
     </div>
   `;
 }
@@ -982,7 +983,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
       <div class="workspace-route-group">
         <div class="workspace-route-nav" aria-label="Workspace navigation">
           <a href="${getWorkspaceHref('live')}" class="workspace-route-btn ${isLiveWorkspace ? 'active' : ''}" data-action="open-workspace-live">ALERTS</a>
-          <a href="${getWorkspaceHref('history')}" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">MONITOR</a>
+          <a href="${getWorkspaceHref('history')}" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">RADAR</a>
         </div>
         <div class="workspace-layout-reset" data-role="layout-reset">
           <button type="button" class="workspace-layout-reset-btn" data-action="reset-live-panel-layout" aria-label="Reset bot layout">
@@ -1035,6 +1036,9 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   bindWorkspaceLayoutResetActions(section, controller);
   section.querySelector<HTMLButtonElement>('[data-action="reset-mock-trading"]')?.addEventListener('click', () => {
     void controller.resetMockTradingPortfolio();
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="add-mock-trading-cash"]')?.addEventListener('click', () => {
+    void controller.addMockTradingCash();
   });
   section.querySelector<HTMLButtonElement>('[data-action="open-mock-trading-history"]')?.addEventListener('click', () => {
     controller.openMockTradingHistory();
