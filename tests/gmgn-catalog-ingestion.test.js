@@ -408,6 +408,57 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.snapshot.vol24h, 663000);
   });
 
+  it('does not let GMGN zero out existing positive rolling volume windows', async () => {
+    const catalog = createTokenCatalogStub();
+    const bucketWrites = [];
+    catalog.getByAddress = async (address) => ({
+      address,
+      source: 'dexscreener-discovery',
+      eligibility_state: 'dex-high',
+      eligible_for_monitoring: true,
+      last_vol_1h: 72382.4,
+      last_vol_6h: 953689.09,
+      last_vol_24h: 3932979.94,
+    });
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot(),
+      vol1h: 0,
+      vol6h: 0,
+      vol24h: 3932160,
+      tokenCreatedAt: '2026-04-03T06:00:00.000Z',
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: catalog,
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          bucketWrites.push(payload);
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+    });
+
+    const upsertPayload = catalog.calls.find((call) => call[0] === 'upsertToken')[1];
+    const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
+
+    assert.equal(upsertPayload.vol1h, 72382.4);
+    assert.equal(upsertPayload.vol6h, 953689.09);
+    assert.equal(upsertPayload.vol24h, 3932160);
+    assert.equal(evaluationPayload.vol1h, 72382.4);
+    assert.equal(evaluationPayload.vol6h, 953689.09);
+    assert.equal(evaluationPayload.vol24h, 3932160);
+    assert.equal(bucketWrites[0].vol1h, 72382.4);
+    assert.equal(bucketWrites[0].vol6h, 953689.09);
+    assert.equal(result.snapshot.vol1h, 72382.4);
+    assert.equal(result.snapshot.vol6h, 953689.09);
+  });
+
   it('skips new tokens discovered only in GMGN 1m trending', async () => {
     let upsertCalls = 0;
     let bucketWrites = 0;

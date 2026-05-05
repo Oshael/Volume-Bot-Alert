@@ -168,6 +168,27 @@ function buildVolumeBucketPayload(snapshot, now) {
   };
 }
 
+function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
+  if (!tokenBefore) {
+    return snapshot;
+  }
+
+  const next = { ...snapshot };
+  for (const [snapshotKey, catalogKey] of [
+    ['vol1h', 'last_vol_1h'],
+    ['vol6h', 'last_vol_6h'],
+    ['vol24h', 'last_vol_24h'],
+  ]) {
+    const incoming = toFiniteNumberOrNull(next[snapshotKey]);
+    const previous = toFiniteNumberOrNull(tokenBefore[catalogKey]);
+    if (incoming === 0 && previous != null && previous > 0) {
+      next[snapshotKey] = previous;
+    }
+  }
+
+  return next;
+}
+
 function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
@@ -216,6 +237,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
 function buildEvaluationPayload(snapshot, base) {
   return {
     ...base,
+    debugSource: 'gmgn',
     lastEvaluationError: null,
     evaluationErrorCount: 0,
     symbol: snapshot.symbol || null,
@@ -845,11 +867,14 @@ function shouldKeepTokenInGmgnPanel(result) {
 async function ingestGmgnToken(snapshot, options = {}) {
   const resolved = resolveIngestionOptions(options);
   const now = resolved.now();
-  const filledSnapshot = fillYoungTokenVolumeWindows(snapshot, { now });
-  const address = normalizeAddress(filledSnapshot.address || filledSnapshot.tokenAddress);
+  const address = normalizeAddress(snapshot.address || snapshot.tokenAddress);
   const summary = createEmptyIngestionSummary();
 
   const tokenBefore = await resolved.tokenCatalogModel.getByAddress(address);
+  const filledSnapshot = preserveExistingPositiveVolumeWindows(
+    fillYoungTokenVolumeWindows(snapshot, { now }),
+    tokenBefore
+  );
   const junkGuard = await applyGmgnJunkGuard(address, filledSnapshot, tokenBefore, resolved, summary);
   if (junkGuard?.skipped) {
     return {

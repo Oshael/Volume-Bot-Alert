@@ -343,6 +343,54 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('does not let GMGN evaluation overwrite existing positive volume windows with zero', async () => {
+    await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
+    await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
+
+    try {
+      await tokenCatalog.upsertToken({
+        address: VALID_ADDR,
+        chain: 'solana',
+        source: 'dexscreener-discovery',
+        symbol: 'TRWUMP',
+        mcap: 250000,
+        isActiveMonitorCandidate: true,
+      });
+      await tokenCatalog.applyEvaluationResult(VALID_ADDR, {
+        debugSource: 'dexscreener',
+        eligibilityState: 'dex-high',
+        eligibleForMonitoring: true,
+        suppressedReason: null,
+        monitorPriority: 'high',
+        nextEvaluationAt: new Date(),
+        mcap: 250000,
+        vol1h: 72382.4,
+        vol6h: 953689.09,
+        vol24h: 3932979.94,
+      });
+
+      const gmgnEvaluation = await tokenCatalog.applyEvaluationResult(VALID_ADDR, {
+        debugSource: 'gmgn',
+        eligibilityState: 'gmgn-high',
+        eligibleForMonitoring: true,
+        suppressedReason: null,
+        monitorPriority: 'high',
+        nextEvaluationAt: new Date(),
+        mcap: 250000,
+        vol1h: 0,
+        vol6h: 0,
+        vol24h: 3932160,
+      });
+
+      assert.equal(Number(gmgnEvaluation.last_vol_1h), 72382.4);
+      assert.equal(Number(gmgnEvaluation.last_vol_6h), 953689.09);
+      assert.equal(Number(gmgnEvaluation.last_vol_24h), 3932160);
+    } finally {
+      await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]).catch(() => {});
+      await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
+    }
+  });
+
   it('assigns migration grace to PumpFun migrated tokens even without initial market cap', async () => {
     await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);

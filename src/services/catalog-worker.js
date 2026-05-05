@@ -832,6 +832,7 @@ async function evaluateTokenWithData(token, data) {
   }
 
   const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+    debugSource: 'dexscreener',
     eligibilityState: snapshot.eligibilityState,
     eligibleForMonitoring: snapshot.eligibleForMonitoring,
     suppressedReason: snapshot.suppressedReason,

@@ -11,6 +11,8 @@ const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
 const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
 const HISTORY_BUCKET_SORT_MODES = new Set(['vol', 'mcap', 'pchange', 'age']);
+const VOLUME_WRITE_DEBUG_MIN_PREVIOUS = 30000;
+const VOLUME_WRITE_DEBUG_DROP_RATIO = 0.25;
 
 const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
   vol: Object.freeze({
@@ -635,6 +637,102 @@ function normalizeHistoryBucketName(bucket) {
   return normalized === 'oldWeek' ? 'oldWeek' : 'recent';
 }
 
+function parseVolumeWriteDebugAddresses() {
+  return new Set(String(process.env.CATALOG_VOLUME_WRITE_DEBUG_ADDRESSES || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => isValidAddress(item)));
+}
+
+function buildVolumeWriteDebugChanges(previousRow, result) {
+  return [
+    ['vol1h', 'last_vol_1h'],
+    ['vol6h', 'last_vol_6h'],
+    ['vol24h', 'last_vol_24h'],
+  ]
+    .map(([resultKey, rowKey]) => {
+      const previous = toNullableNumber(previousRow?.[rowKey]);
+      const next = toNullableNumber(result?.[resultKey]);
+      if (next == null) return null;
+      return {
+        field: resultKey,
+        previous,
+        next,
+        dropRatio: previous > 0 ? Math.round((next / previous) * 1000) / 1000 : null,
+      };
+    })
+    .filter(Boolean);
+}
+
+function hasSuspiciousVolumeWriteChange(change) {
+  return change.previous >= VOLUME_WRITE_DEBUG_MIN_PREVIOUS
+    && change.next <= change.previous * VOLUME_WRITE_DEBUG_DROP_RATIO;
+}
+
+async function maybeLogVolumeWriteDebug(address, result) {
+  const watchedAddresses = parseVolumeWriteDebugAddresses();
+  const watched = watchedAddresses.has(address);
+  if (process.env.CATALOG_VOLUME_WRITE_DEBUG !== '1' && !watched) {
+    return;
+  }
+
+  const { rows } = await db.query(
+    `SELECT last_vol_1h, last_vol_6h, last_vol_24h
+     FROM token_catalog
+     WHERE address = $1
+     LIMIT 1`,
+    [address]
+  );
+  const changes = buildVolumeWriteDebugChanges(rows[0] || null, result);
+  if (changes.length === 0) {
+    return;
+  }
+
+  const suspicious = changes.some(hasSuspiciousVolumeWriteChange);
+  if (!watched && !suspicious) {
+    return;
+  }
+
+  console.warn('[CatalogVolumeWriteDebug]', {
+    address,
+    source: result.debugSource || 'unknown',
+    eligibilityState: result.eligibilityState || null,
+    eligibleForMonitoring: result.eligibleForMonitoring ?? null,
+    monitorPriority: result.monitorPriority || null,
+    changes,
+  });
+}
+
+async function preserveGmgnPositiveVolumeWindows(address, result, volumes) {
+  if (String(result.debugSource || '').trim().toLowerCase() !== 'gmgn') {
+    return volumes;
+  }
+  if (volumes.lastVol1h !== 0 && volumes.lastVol6h !== 0 && volumes.lastVol24h !== 0) {
+    return volumes;
+  }
+
+  const { rows } = await db.query(
+    `SELECT last_vol_1h, last_vol_6h, last_vol_24h
+     FROM token_catalog
+     WHERE address = $1
+     LIMIT 1`,
+    [address]
+  );
+  const previous = rows[0] || {};
+  return {
+    ...volumes,
+    lastVol1h: volumes.lastVol1h === 0 && toNullableNumber(previous.last_vol_1h) > 0
+      ? toNullableNumber(previous.last_vol_1h)
+      : volumes.lastVol1h,
+    lastVol6h: volumes.lastVol6h === 0 && toNullableNumber(previous.last_vol_6h) > 0
+      ? toNullableNumber(previous.last_vol_6h)
+      : volumes.lastVol6h,
+    lastVol24h: volumes.lastVol24h === 0 && toNullableNumber(previous.last_vol_24h) > 0
+      ? toNullableNumber(previous.last_vol_24h)
+      : volumes.lastVol24h,
+  };
+}
+
 function normalizeHistoryBucketSorts(input) {
   if (!Array.isArray(input) || input.length === 0) {
     return [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }];
@@ -803,19 +901,8 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
   };
 }
 
-async function listDashboardHistoryBucket(bucket, options = {}) {
-  const normalized = buildHistoryBucketQueryParams(bucket, options);
-  if (!normalized.ok) {
-    return {
-      total: 0,
-      rows: [],
-      page: normalized.params.page,
-      perPage: normalized.params.perPage,
-    };
-  }
-
-  const { params } = normalized;
-  const whereSql = [
+function buildHistoryBucketWhereSql(params) {
+  return [
     'tc.eligible_for_monitoring = TRUE',
     'tc.last_token_created_at_ms IS NOT NULL',
     'tc.last_token_created_at_ms > 0',
@@ -830,8 +917,10 @@ async function listDashboardHistoryBucket(bucket, options = {}) {
     `($${params.ageParams.length + 4}::varchar[] = '{}'::varchar[] OR tc.address <> ALL($${params.ageParams.length + 4}::varchar[]))`,
     `($${params.ageParams.length + 5}::boolean = FALSE OR tc.address = ANY($${params.ageParams.length + 6}::varchar[]))`,
   ];
+}
 
-  const queryParams = [
+function buildHistoryBucketWhereParams(params) {
+  return [
     ...params.ageParams,
     params.minMcap,
     params.maxMcap,
@@ -839,9 +928,31 @@ async function listDashboardHistoryBucket(bucket, options = {}) {
     params.dismissedAddresses,
     params.starredOnly,
     params.starredAddresses,
+  ];
+}
+
+function buildHistoryBucketQueryParamsWithLimit(params) {
+  return [
+    ...buildHistoryBucketWhereParams(params),
     params.perPage,
     params.offset,
   ];
+}
+
+async function listDashboardHistoryBucket(bucket, options = {}) {
+  const normalized = buildHistoryBucketQueryParams(bucket, options);
+  if (!normalized.ok) {
+    return {
+      total: 0,
+      rows: [],
+      page: normalized.params.page,
+      perPage: normalized.params.perPage,
+    };
+  }
+
+  const { params } = normalized;
+  const whereSql = buildHistoryBucketWhereSql(params);
+  const queryParams = buildHistoryBucketQueryParamsWithLimit(params);
 
   const { rows } = await db.query(
     `${DASHBOARD_MONITORED_SELECT_SQL},
@@ -866,6 +977,170 @@ async function listDashboardHistoryBucket(bucket, options = {}) {
     page: params.page,
     perPage: params.perPage,
   };
+}
+
+function getHistoryBucketDiagnosticReasons(row, rankRow, params) {
+  if (!row) {
+    return ['missing_catalog_row'];
+  }
+
+  const reasons = [];
+  appendHistoryEligibilityReason(reasons, row);
+  appendHistoryAgeReasons(reasons, row, params);
+  appendHistoryMcapReasons(reasons, row, params);
+  appendHistorySearchReason(reasons, row, params);
+  appendHistoryUserFilterReasons(reasons, row, params);
+  if (!rankRow && reasons.length === 0) {
+    reasons.push('not_ranked_by_bucket_query');
+  }
+
+  return reasons;
+}
+
+function appendHistoryEligibilityReason(reasons, row) {
+  if (row.eligible_for_monitoring !== true) {
+    reasons.push(`not_eligible:${row.suppressed_reason || row.eligibility_state || 'unknown'}`);
+  }
+}
+
+function appendHistoryAgeReasons(reasons, row, params) {
+  const createdAt = Number(row.last_token_created_at_ms);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) {
+    reasons.push('missing_created_at');
+    return;
+  }
+
+  if (params.ageParams.length === 1) {
+    if (createdAt > params.ageParams[0]) reasons.push('age_too_young');
+    return;
+  }
+
+  if (createdAt < params.ageParams[0]) reasons.push('age_too_old');
+  if (createdAt > params.ageParams[1]) reasons.push('age_too_young');
+}
+
+function appendHistoryMcapReasons(reasons, row, params) {
+  const mcap = Number(row.last_mcap);
+  if (!Number.isFinite(mcap) || mcap < params.minMcap) {
+    reasons.push('mcap_below_min');
+  }
+  if (params.maxMcap > 0 && Number.isFinite(mcap) && mcap > params.maxMcap) {
+    reasons.push('mcap_above_max');
+  }
+}
+
+function appendHistorySearchReason(reasons, row, params) {
+  if (!params.searchPattern) {
+    return;
+  }
+
+  const needle = String(params.searchPattern).replace(/^%|%$/g, '').toLowerCase();
+  const haystack = `${row.symbol || ''} ${row.name || ''} ${row.address || ''}`.toLowerCase();
+  if (!haystack.includes(needle)) {
+    reasons.push('search_mismatch');
+  }
+}
+
+function appendHistoryUserFilterReasons(reasons, row, params) {
+  if (params.dismissedAddresses.includes(row.address)) {
+    reasons.push('dismissed');
+  }
+  if (params.starredOnly && !params.starredAddresses.includes(row.address)) {
+    reasons.push('not_starred');
+  }
+}
+
+function buildHistoryBucketDiagnostic(row, rankRow, params) {
+  const rank = Number(rankRow?.rank) || null;
+  return {
+    address: row?.address || rankRow?.address || null,
+    rank,
+    visibleOnRequestedPage: rank != null && rank > params.offset && rank <= params.offset + params.perPage,
+    reasons: getHistoryBucketDiagnosticReasons(row, rankRow, params),
+    token: row ? {
+      symbol: row.symbol || null,
+      name: row.name || null,
+      eligibleForMonitoring: row.eligible_for_monitoring,
+      eligibilityState: row.eligibility_state || null,
+      suppressedReason: row.suppressed_reason || null,
+      mcap: toNullableNumber(row.last_mcap),
+      volume1h: toNullableNumber(row.last_vol_1h),
+      volume6h: toNullableNumber(row.last_vol_6h),
+      volume24h: toNullableNumber(row.last_vol_24h),
+      priceChange1h: toNullableNumber(row.last_price_change_1h),
+      priceChange6h: toNullableNumber(row.last_price_change_6h),
+      priceChange24h: toNullableNumber(row.last_price_change_24h),
+      tokenCreatedAt: toNullableInteger(row.last_token_created_at_ms),
+      lastSeenAt: row.last_seen_at || null,
+      lastEvaluatedAt: row.last_evaluated_at || null,
+      monitorPriority: row.monitor_priority || null,
+    } : null,
+  };
+}
+
+async function diagnoseDashboardHistoryBucket(bucket, addresses, options = {}) {
+  const uniqueAddresses = Array.from(new Set(
+    (Array.isArray(addresses) ? addresses : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => isValidAddress(item))
+  )).slice(0, 100);
+
+  const normalized = buildHistoryBucketQueryParams(bucket, options);
+  if (!normalized.ok || uniqueAddresses.length === 0) {
+    return [];
+  }
+
+  const { params } = normalized;
+  const whereSql = buildHistoryBucketWhereSql(params);
+  const whereParams = buildHistoryBucketWhereParams(params);
+  const addressParamIndex = whereParams.length + 1;
+
+  const [tokenRowsResult, rankRowsResult] = await Promise.all([
+    db.query(
+      `SELECT
+         address,
+         symbol,
+         name,
+         eligible_for_monitoring,
+         eligibility_state,
+         suppressed_reason,
+         last_mcap,
+         last_vol_1h,
+         last_vol_6h,
+         last_vol_24h,
+         last_price_change_1h,
+         last_price_change_6h,
+         last_price_change_24h,
+         last_token_created_at_ms,
+         last_seen_at,
+         last_evaluated_at,
+         monitor_priority
+       FROM token_catalog
+       WHERE address = ANY($1::varchar[])`,
+      [uniqueAddresses]
+    ),
+    db.query(
+      `WITH ranked AS (
+         SELECT
+           tc.address,
+           ROW_NUMBER() OVER (ORDER BY ${params.orderSql})::int AS rank
+         FROM token_catalog tc
+         WHERE ${whereSql.join('\n           AND ')}
+       )
+       SELECT *
+       FROM ranked
+       WHERE address = ANY($${addressParamIndex}::varchar[])`,
+      [...whereParams, uniqueAddresses]
+    ),
+  ]);
+
+  const rowsByAddress = new Map(tokenRowsResult.rows.map((row) => [row.address, row]));
+  const rankByAddress = new Map(rankRowsResult.rows.map((row) => [row.address, row]));
+  return uniqueAddresses.map((address) => buildHistoryBucketDiagnostic(
+    rowsByAddress.get(address) || { address },
+    rankByAddress.get(address) || null,
+    params
+  ));
 }
 
 async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 30000) {
@@ -1129,9 +1404,12 @@ async function applyEvaluationResult(address, result) {
   const lastPrice = toNullableNumber(result.price);
   const monitorPriority = toNullableText(result.monitorPriority, 32) || 'dormant';
   const lastVol5m = toNullableNumber(result.vol5m);
-  const lastVol1h = toNullableNumber(result.vol1h);
-  const lastVol6h = toNullableNumber(result.vol6h);
-  const lastVol24h = toNullableNumber(result.vol24h);
+  const volumeValues = await preserveGmgnPositiveVolumeWindows(addr, result, {
+    lastVol1h: toNullableNumber(result.vol1h),
+    lastVol6h: toNullableNumber(result.vol6h),
+    lastVol24h: toNullableNumber(result.vol24h),
+  });
+  const { lastVol1h, lastVol6h, lastVol24h } = volumeValues;
   const lastPriceChange1h = toNullableNumber(result.priceChange1h);
   const lastPriceChange6h = toNullableNumber(result.priceChange6h);
   const lastPriceChange24h = toNullableNumber(result.priceChange24h);
@@ -1141,6 +1419,13 @@ async function applyEvaluationResult(address, result) {
   const lastTxns24hBuys = toNullableInteger(result.txns24hBuys);
   const lastTxns24hSells = toNullableInteger(result.txns24hSells);
   const lastTokenCreatedAtMs = toNullableInteger(result.tokenCreatedAt);
+
+  await maybeLogVolumeWriteDebug(addr, {
+    ...result,
+    vol1h: lastVol1h,
+    vol6h: lastVol6h,
+    vol24h: lastVol24h,
+  });
 
   const updateResult = await db.query(
     `UPDATE token_catalog
@@ -1390,6 +1675,7 @@ module.exports = {
   listDashboardMonitored,
   listDashboardMonitoredSlice,
   listDashboardHistoryBucket,
+  diagnoseDashboardHistoryBucket,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,
   listRiskEnrichmentCandidates,
