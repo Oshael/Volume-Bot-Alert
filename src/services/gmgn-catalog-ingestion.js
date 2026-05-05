@@ -29,6 +29,11 @@ const GMGN_LOW_MCAP_EXTREME_VOL_MAX_AGE_HOURS = 24;
 const GMGN_LOW_MCAP_EXTREME_VOL_MAX_MCAP = 100000;
 const GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M = 500000;
 const GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
+const GMGN_NEW_NON_PUMP_MAX_AGE_HOURS = 2;
+const GMGN_NEW_NON_PUMP_MIN_LAUNCH_MCAP = 20000;
+const GMGN_NEW_NON_PUMP_MAX_LAUNCH_MCAP = 100000;
+const GMGN_NEW_NON_PUMP_MIN_VOL_5M = 20000;
+const GMGN_NEW_NON_PUMP_MIN_VOL_5M_TO_MCAP = 1;
 const GMGN_STAIRCASE_MIN_CANDLES = 12;
 const GMGN_STAIRCASE_MIN_RUNUP_RATIO = 1.5;
 const GMGN_STAIRCASE_MIN_GREEN_RATIO = 0.85;
@@ -338,6 +343,11 @@ function isManualToken(row) {
   return normalizeLowerText(row?.source) === 'user-manual';
 }
 
+function isPumpAddress(address) {
+  const normalized = normalizeLowerText(address);
+  return normalized.endsWith('pump') || normalized.endsWith('bags') || normalized.endsWith('brrr');
+}
+
 function isAutomaticGmgnToken(tokenBefore, tokenAfter) {
   return normalizeLowerText(tokenAfter?.source) === 'gmgn'
     && !isManualToken(tokenBefore)
@@ -408,6 +418,26 @@ function isGmgnLowMcapExtremeVolumeRisk(snapshot = {}, now = new Date()) {
     && vol5m >= GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M
     && vol5mToMcap != null
     && vol5mToMcap >= GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP;
+}
+
+function isNewNonPumpHighLaunchMcapRisk(address, snapshot = {}, tokenBefore, now = new Date()) {
+  if (isManualToken(tokenBefore) || isBlockedToken(tokenBefore) || hasDexConfirmation(tokenBefore) || isPumpAddress(address)) {
+    return false;
+  }
+
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  const marketCap = toFiniteNumberOrNull(snapshot.mcap);
+  const vol5m = toFiniteNumberOrNull(snapshot.vol5m);
+  const vol5mToMcap = computeSnapshotVolumeToMcapRatio(vol5m, marketCap);
+  return ageHours != null
+    && ageHours < GMGN_NEW_NON_PUMP_MAX_AGE_HOURS
+    && marketCap != null
+    && marketCap >= GMGN_NEW_NON_PUMP_MIN_LAUNCH_MCAP
+    && marketCap <= GMGN_NEW_NON_PUMP_MAX_LAUNCH_MCAP
+    && vol5m != null
+    && vol5m >= GMGN_NEW_NON_PUMP_MIN_VOL_5M
+    && vol5mToMcap != null
+    && vol5mToMcap >= GMGN_NEW_NON_PUMP_MIN_VOL_5M_TO_MCAP;
 }
 
 function analyzeGmgnKlinePattern(candles = []) {
@@ -491,6 +521,12 @@ function buildGmgnLowMcapExtremeVolumeLabel(snapshot = {}) {
   const marketCap = Math.round(toFiniteNumberOrNull(snapshot.mcap) || 0);
   const vol5m = Math.round(toFiniteNumberOrNull(snapshot.vol5m) || 0);
   return `gmgn-volume:low-mcap-extreme-vol5m:${marketCap}:${vol5m}`;
+}
+
+function buildGmgnNewNonPumpHighLaunchMcapLabel(snapshot = {}) {
+  const marketCap = Math.round(toFiniteNumberOrNull(snapshot.mcap) || 0);
+  const vol5m = Math.round(toFiniteNumberOrNull(snapshot.vol5m) || 0);
+  return `gmgn-origin:new-non-pump-high-launch-mcap:${marketCap}:${vol5m}`;
 }
 
 function buildGmgnKlineAutoBlockLabel(analysis) {
@@ -578,6 +614,26 @@ async function autoBlockGmgnLowMcapExtremeVolumeRisk(address, snapshot, tokenBef
   }
 }
 
+async function autoBlockGmgnNewNonPumpHighLaunchMcapRisk(address, snapshot, tokenBefore, options) {
+  await options.adminBlockedTokenModel.add({
+    address,
+    label: buildGmgnNewNonPumpHighLaunchMcapLabel(snapshot),
+    createdBy: null,
+  });
+
+  if (tokenBefore) {
+    await options.tokenCatalogModel.applyEvaluationResult(address, {
+      eligibilityState: 'admin-blocked',
+      eligibleForMonitoring: false,
+      suppressedReason: 'admin_blocked',
+      nextEvaluationAt: new Date(options.now().getTime() + (10 * 365 * 24 * 60 * 60 * 1000)),
+      monitorPriority: 'dormant',
+      symbol: snapshot.symbol || tokenBefore.symbol || null,
+      name: snapshot.name || tokenBefore.name || null,
+    });
+  }
+}
+
 async function autoBlockGmgnKlineRisk(address, snapshot, tokenBefore, analysis, options) {
   await options.adminBlockedTokenModel.add({
     address,
@@ -643,6 +699,15 @@ async function applyGmgnSecurityRiskGuard(address, snapshot, tokenBefore, option
     return {
       skipped: true,
       skipReason: 'gmgn-low-mcap-extreme-volume-auto-blocked',
+    };
+  }
+
+  if (isNewNonPumpHighLaunchMcapRisk(address, snapshot, tokenBefore, options.now())) {
+    await autoBlockGmgnNewNonPumpHighLaunchMcapRisk(address, snapshot, tokenBefore, options);
+    summary.gmgnNewNonPumpHighLaunchMcapAutoBlocked += 1;
+    return {
+      skipped: true,
+      skipReason: 'gmgn-new-non-pump-high-launch-mcap-auto-blocked',
     };
   }
 
@@ -916,6 +981,7 @@ function createEmptyIngestionSummary() {
     gmgnInfoAutoBlocked: 0,
     gmgnInfoErrors: 0,
     gmgnLowMcapExtremeVolumeAutoBlocked: 0,
+    gmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     gmgnKlineChecks: 0,
     gmgnKlineAutoBlocked: 0,
     gmgnKlineErrors: 0,
@@ -947,6 +1013,7 @@ function mergeIngestionSummary(target, source) {
   target.gmgnInfoAutoBlocked += source.gmgnInfoAutoBlocked;
   target.gmgnInfoErrors += source.gmgnInfoErrors;
   target.gmgnLowMcapExtremeVolumeAutoBlocked += source.gmgnLowMcapExtremeVolumeAutoBlocked;
+  target.gmgnNewNonPumpHighLaunchMcapAutoBlocked += source.gmgnNewNonPumpHighLaunchMcapAutoBlocked;
   target.gmgnKlineChecks += source.gmgnKlineChecks;
   target.gmgnKlineAutoBlocked += source.gmgnKlineAutoBlocked;
   target.gmgnKlineErrors += source.gmgnKlineErrors;

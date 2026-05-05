@@ -467,6 +467,15 @@ GMGN risk gates before catalog/upsert alert flow:
   - vol5m/mcap `>= 4`
   - block label shape:
     - `gmgn-volume:low-mcap-extreme-vol5m:{mcap}:{vol5m}`
+- new automatic GMGN non-pump launch tokens are auto-blocked before catalog upsert, bucket writes, security/info/kline lookups, and alerts:
+  - token is not manual and not Dex-confirmed
+  - CA does not end with `pump`, `bags`, or `brrr`
+  - age `< 2h`
+  - mcap `>= 20k` and `<= 100k`
+  - vol5m `>= 20k`
+  - vol5m/mcap `>= 1`
+  - block label shape:
+    - `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
 - young GMGN candidates under `6h` can trigger GMGN risk-data lookup when any of these are true:
   - vol1h/mcap `>= 10`
   - vol24h/mcap `>= 20`

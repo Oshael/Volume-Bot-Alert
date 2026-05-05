@@ -238,6 +238,15 @@ Important:
   - vol1h/mcap `>= 10` or vol24h/mcap `>= 20`
   - token is saved and volume buckets are written, but monitoring/alerts are suppressed with `gmgn_needs_risk_enrichment`
   - after Helius enrichment, concentrated structure is auto-blocked and healthy structure is released back to monitoring
+- GMGN-origin new non-pump launch gate:
+  - applies before catalog/upsert, bucket writes, security/info/kline lookups, and alert matcher
+  - token is automatic GMGN discovery, not manual, and not Dex-confirmed
+  - CA does not end with `pump`, `bags`, or `brrr`
+  - age `< 2h`
+  - mcap `>= 20k` and `<= 100k`
+  - vol5m `>= 20k`
+  - vol5m/mcap `>= 1`
+  - matching rows are auto-blocked as `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
 - The token-risk review sync worker can now use GMGN info for suspicious Dex-discovered tokens:
   - source is not GMGN and not `user-manual`
   - age `< 24h`
@@ -932,6 +941,7 @@ Current monitored UI behavior:
   - fills missing young-token `6h`/`24h` volume windows from shorter GMGN volume before catalog, bucket, alert, and panel-state writes
   - uses normal `monitored-vol` for GMGN `5m` volume jumps
   - keeps separate `gmgn-vol-1m` support behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled
+  - auto-blocks new automatic GMGN non-pump/non-bags/non-brrr contracts launched from `20k` to `100k` mcap with vol5m/mcap `>= 1` before they write buckets or alert
   - blocks automatic GMGN-origin alert evaluation until the token has DexScreener confirmation or has completed GMGN preliminary review (`token security`, `token info`, and `market kline`) without being auto-blocked
   - the GMGN alert safeguard still allows catalog and GMGN volume-bucket writes; it only stops matcher emission while the token remains raw GMGN-only discovery
   - tracks active/stale GMGN panel membership and schedules DexScreener reevaluation when a token leaves the GMGN panel

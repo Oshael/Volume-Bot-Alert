@@ -32,6 +32,7 @@ function createInitialStatus() {
     lastAutoBlockedJunk: 0,
     lastSkippedJunkSuspect: 0,
     lastJunkAssessments: 0,
+    lastGmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     lastMatcherEvaluations: 0,
     lastMatcherEmitted: 0,
     lastMatcherSkippedGmgnSafeguard: 0,
@@ -51,6 +52,7 @@ function createInitialStatus() {
     totalAutoBlockedJunk: 0,
     totalSkippedJunkSuspect: 0,
     totalJunkAssessments: 0,
+    totalGmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     totalMatcherEvaluations: 0,
     totalMatcherEmitted: 0,
     totalMatcherSkippedGmgnSafeguard: 0,
@@ -120,6 +122,7 @@ function buildRunCounters(result) {
     lastAutoBlockedJunk: toCount(ingestion.autoBlockedJunk),
     lastSkippedJunkSuspect: toCount(ingestion.skippedJunkSuspect),
     lastJunkAssessments: toCount(ingestion.junkAssessments),
+    lastGmgnNewNonPumpHighLaunchMcapAutoBlocked: toCount(ingestion.gmgnNewNonPumpHighLaunchMcapAutoBlocked),
     lastMatcherEvaluations: toCount(ingestion.matcherEvaluations),
     lastMatcherEmitted: toCount(ingestion.matcherEmitted),
     lastMatcherSkippedGmgnSafeguard: toCount(ingestion.matcherSkippedGmgnSafeguard),
@@ -140,6 +143,7 @@ function addTotalsFromCounters(counters) {
   status.totalAutoBlockedJunk += counters.lastAutoBlockedJunk;
   status.totalSkippedJunkSuspect += counters.lastSkippedJunkSuspect;
   status.totalJunkAssessments += counters.lastJunkAssessments;
+  status.totalGmgnNewNonPumpHighLaunchMcapAutoBlocked += counters.lastGmgnNewNonPumpHighLaunchMcapAutoBlocked;
   status.totalMatcherEvaluations += counters.lastMatcherEvaluations;
   status.totalMatcherEmitted += counters.lastMatcherEmitted;
   status.totalMatcherSkippedGmgnSafeguard += counters.lastMatcherSkippedGmgnSafeguard;
