@@ -910,10 +910,12 @@ function getAlertRowRenderKey(
     createdAt: alert.createdAt,
     label: alert.label,
     pct: alert.pct,
+    volume1m: alert.volume1m,
     volume5m: alert.volume5m,
     volume1h: alert.volume1h,
     volume6h: alert.volume6h,
     volume24h: alert.volume24h,
+    prevVolume1m: alert.prevVolume1m,
     prevVolume5m: alert.prevVolume5m,
     prevMcap: alert.prevMcap,
     mcap: alert.mcap,
@@ -1217,11 +1219,14 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
     return;
   }
 
-  const currentVol = fmtMoney(alert.volume5m);
+  const isGmgnVol1m = alert.ruleKey === 'gmgn-vol-1m';
+  const currentVol = fmtMoney(isGmgnVol1m ? alert.volume1m : alert.volume5m);
   const currentMcap = fmtMoney(alert.mcap);
-  const prevVol = alert.prevVolume5m != null ? fmtMoney(alert.prevVolume5m) : null;
+  const prevVolRaw = isGmgnVol1m ? alert.prevVolume1m : alert.prevVolume5m;
+  const prevVol = prevVolRaw != null ? fmtMoney(prevVolRaw) : null;
   const prevMcap = alert.prevMcap != null ? fmtMoney(alert.prevMcap) : null;
   const mcapTone = alert.prevMcap != null && alert.mcap != null && alert.mcap < alert.prevMcap ? 'down' : 'up';
+  const volumeLabel = isGmgnVol1m ? 'VOL 1M' : 'VOL 5M';
 
   if (alert.isOldSurge) {
     container.append(
@@ -1237,8 +1242,8 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 
   container.append(
     prevVol
-      ? buildFlowTransition('VOL 5M', prevVol, currentVol, 'up')
-      : buildMetricPair('VOL 5M', currentVol, 'up'),
+      ? buildFlowTransition(volumeLabel, prevVol, currentVol, 'up')
+      : buildMetricPair(volumeLabel, currentVol, 'up'),
   );
   if (!alert.isHvnc) {
     const gap = document.createElement('span');

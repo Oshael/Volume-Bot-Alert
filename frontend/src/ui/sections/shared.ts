@@ -51,6 +51,8 @@ type SparklineRenderOptions = {
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       if (address) void controller.removeManualToken(address);
@@ -58,6 +60,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="block-token"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       const label = button.dataset.label || null;
@@ -66,6 +70,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="admin-block-token"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       const label = button.dataset.label || null;
@@ -74,6 +80,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="mock-buy-token"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       if (address) void controller.mockBuyToken(address);
@@ -81,6 +89,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="mock-sell-token"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       const percent = Number(button.dataset.percent || '100');
@@ -89,6 +99,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="dismiss-recent"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       if (address) controller.dismissRecentToken(address);
@@ -96,6 +108,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="dismiss-old-week"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       if (address) controller.dismissOldWeekToken(address);
@@ -103,6 +117,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="toggle-star"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       if (!address) return;
@@ -128,6 +144,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
 
 export function bindCopyButtons(section: ParentNode) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="copy-address"]')) {
+    if (button.dataset.copyButtonBound === 'true') continue;
+    button.dataset.copyButtonBound = 'true';
     button.addEventListener('click', async () => {
       const address = button.dataset.address;
       if (!address) return;
@@ -165,14 +183,12 @@ export function bindSparklineHover(
       expanded: wrap.classList.contains('sparkline-wrap-expanded'),
       variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
     });
-    const hover = wrap.querySelector<HTMLElement>('.sparkline-hover');
-    const line = wrap.querySelector<HTMLElement>('.sparkline-hover-line');
-    const dot = wrap.querySelector<HTMLElement>('.sparkline-hover-dot');
-    const tooltip = wrap.querySelector<HTMLElement>('.sparkline-hover-tooltip');
-
-    if (!entry || series.length < 2 || displaySeries.length < 2 || !hover || !line || !dot || !tooltip) {
+    const hoverParts = resolveBindableSparklineHover(wrap, entry, series, displaySeries);
+    if (!hoverParts) {
       continue;
     }
+
+    const { hover, line, dot, tooltip } = hoverParts;
 
     if (wrap.dataset.sparklineExpandable === 'true' && options.controller) {
       wrap.tabIndex = 0;
@@ -236,6 +252,28 @@ export function bindSparklineHover(
     wrap.addEventListener('pointerleave', hide);
     wrap.addEventListener('pointercancel', hide);
   }
+}
+
+function resolveBindableSparklineHover(
+  wrap: HTMLElement,
+  entry: TokenSparklineEntry | undefined,
+  series: number[],
+  displaySeries: number[],
+) {
+  if (!entry || series.length < 2 || displaySeries.length < 2 || wrap.dataset.sparklineHoverBound === 'true') {
+    return null;
+  }
+
+  const hover = wrap.querySelector<HTMLElement>('.sparkline-hover');
+  const line = wrap.querySelector<HTMLElement>('.sparkline-hover-line');
+  const dot = wrap.querySelector<HTMLElement>('.sparkline-hover-dot');
+  const tooltip = wrap.querySelector<HTMLElement>('.sparkline-hover-tooltip');
+  if (!hover || !line || !dot || !tooltip) {
+    return null;
+  }
+
+  wrap.dataset.sparklineHoverBound = 'true';
+  return { hover, line, dot, tooltip };
 }
 
 export function renderTradeTerminalMenu(

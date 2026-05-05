@@ -41,7 +41,7 @@ let lastObservedAuthModalKey: string | null = null;
 let lastObservedRouteKey: string | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
-let listInteractionDepth = 0;
+let currentListInteractionZone: HTMLElement | null = null;
 let restoreRenderQueued = false;
 let isDocumentHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
 let hiddenSinceAt: number | null = isDocumentHidden ? Date.now() : null;
@@ -187,7 +187,12 @@ function isInteractionLocked() {
 }
 
 function isListInteractionLocked() {
-  return listInteractionDepth > 0;
+  if (!currentListInteractionZone?.isConnected) {
+    currentListInteractionZone = null;
+    return false;
+  }
+
+  return true;
 }
 
 function isSortMenuOpen() {
@@ -503,25 +508,21 @@ root.addEventListener('pointerover', (event) => {
     return;
   }
 
-  listInteractionDepth += 1;
+  currentListInteractionZone = interactionZone;
 });
 
 root.addEventListener('pointerout', (event) => {
-  const target = event.target as HTMLElement | null;
-  const interactionZone = resolveListInteractionZone(target);
-  if (!interactionZone) {
+  if (!currentListInteractionZone) {
     return;
   }
 
   const related = event.relatedTarget as HTMLElement | null;
-  if (related && interactionZone.contains(related)) {
+  if (related && currentListInteractionZone.contains(related)) {
     return;
   }
 
-  listInteractionDepth = Math.max(0, listInteractionDepth - 1);
-  if (listInteractionDepth == 0) {
-    window.setTimeout(() => flushPendingRender(), 0);
-  }
+  currentListInteractionZone = null;
+  window.setTimeout(() => flushPendingRender(), 0);
 });
 
 root.addEventListener('focusout', () => {
@@ -567,6 +568,20 @@ function shouldQueueRenderDuringInteraction() {
     || isInteractionLocked()
     || isListInteractionLocked()
     || isSortMenuOpen();
+}
+
+function includesOverlayRegion(dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  return dirtyRegions.has('all') || dirtyRegions.has('overlay');
+}
+
+function buildDeferredRegionsAfterImmediateOverlay(dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  if (dirtyRegions.has('all')) {
+    return new Set<AppRenderRegion>(['all']);
+  }
+
+  const deferred = new Set<AppRenderRegion>(dirtyRegions);
+  deferred.delete('overlay');
+  return deferred.size > 0 ? deferred : null;
 }
 
 function primePlayedAlertsOnAuthentication(state: AppState, sessionJustBecameAuthenticated: boolean) {
@@ -651,6 +666,15 @@ controller.subscribe((state, dirtyRegions) => {
   }
 
   if (shouldQueueRenderDuringInteraction()) {
+    if (includesOverlayRegion(dirtyRegions) && !isEditingInteractiveField()) {
+      performRender(state, new Set<AppRenderRegion>(['overlay']));
+      const deferredRegions = buildDeferredRegionsAfterImmediateOverlay(dirtyRegions);
+      if (deferredRegions) {
+        queuePendingRenderState(state, deferredRegions);
+      }
+      return;
+    }
+
     queuePendingRenderState(state, dirtyRegions);
     return;
   }
@@ -690,7 +714,7 @@ document.addEventListener('visibilitychange', () => {
   }
 
   interactionLockUntil = 0;
-  listInteractionDepth = 0;
+  currentListInteractionZone = null;
   suppressNextFocusFlush = false;
   if (latestState) {
     syncAudioSideEffects(latestState);

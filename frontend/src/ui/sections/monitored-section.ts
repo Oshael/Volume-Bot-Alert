@@ -186,14 +186,31 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
     controller.toggleSectionCollapsed('monitored');
   });
-  searchInput?.addEventListener('input', (event) => {
-    controller.setMonitoredSearchQuery((event.currentTarget as HTMLInputElement).value);
-  });
+  bindMonitoredSearchInput(searchInput, controller);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
   return section;
+}
+
+function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controller: AppController) {
+  if (!searchInput) {
+    return;
+  }
+
+  const syncSearchInput = (event: Event) => {
+    controller.setMonitoredSearchQuery((event.currentTarget as HTMLInputElement).value);
+  };
+
+  searchInput.addEventListener('input', syncSearchInput);
+  searchInput.addEventListener('change', syncSearchInput);
+  searchInput.addEventListener('search', syncSearchInput);
+  searchInput.addEventListener('keyup', syncSearchInput);
+  searchInput.addEventListener('cut', (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    window.setTimeout(() => controller.setMonitoredSearchQuery(input.value), 0);
+  });
 }
 
 function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null) {

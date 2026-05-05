@@ -1123,6 +1123,65 @@ export function createAppController(): AppController {
     return value ?? null;
   }
 
+  function toTrackedFreshnessMs(value: string | null | undefined) {
+    if (!value) {
+      return null;
+    }
+
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function getTrackedFreshnessMs(item: ManualTokenEntry | DashboardMonitoredToken | undefined) {
+    if (!item) {
+      return null;
+    }
+
+    const lastSeenAt = toTrackedFreshnessMs(item.lastSeenAt);
+    const lastEvaluatedAt = toTrackedFreshnessMs(item.lastEvaluatedAt);
+    if (lastSeenAt == null && lastEvaluatedAt == null) {
+      return null;
+    }
+
+    return Math.max(lastSeenAt ?? 0, lastEvaluatedAt ?? 0);
+  }
+
+  function shouldApplyTrackedMarketFields(
+    existingItem: ManualTokenEntry | undefined,
+    dashboardItem: DashboardMonitoredToken | undefined,
+  ) {
+    if (!dashboardItem) {
+      return false;
+    }
+
+    const incomingFreshness = getTrackedFreshnessMs(dashboardItem);
+    const existingFreshness = getTrackedFreshnessMs(existingItem);
+    return incomingFreshness == null || existingFreshness == null || incomingFreshness >= existingFreshness;
+  }
+
+  function selectFreshestTrackedTimestamp(
+    dashboardValue: string | null | undefined,
+    existingValue: string | null | undefined,
+    baseValue: string | null | undefined,
+  ) {
+    const candidates = [dashboardValue, existingValue, baseValue];
+    let selected: string | null = null;
+    let selectedMs: number | null = null;
+
+    for (const value of candidates) {
+      const valueMs = toTrackedFreshnessMs(value);
+      if (valueMs == null) {
+        continue;
+      }
+      if (selectedMs == null || valueMs > selectedMs) {
+        selected = value ?? null;
+        selectedMs = valueMs;
+      }
+    }
+
+    return selected ?? firstDefinedTrackedValue(existingValue, dashboardValue, baseValue);
+  }
+
   function shouldApplyTrackedColdFields(
     existingItem: ManualTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
@@ -1168,18 +1227,23 @@ export function createAppController(): AppController {
     base: ManualTokenEntry,
   ) {
     const nextFields: Partial<ManualTokenEntry> = {};
+    const shouldApplyMarketFields = shouldApplyTrackedMarketFields(existingItem, dashboardItem);
 
     for (const key of TRACKED_MARKET_FIELD_KEYS) {
-      nextFields[key] = firstDefinedTrackedValue(
-        dashboardItem?.[key],
-        existingItem?.[key],
-        base[key],
-      );
+      nextFields[key] = shouldApplyMarketFields
+        ? firstDefinedTrackedValue(dashboardItem?.[key], existingItem?.[key], base[key])
+        : firstDefinedTrackedValue(existingItem?.[key], base[key], dashboardItem?.[key]);
     }
 
     nextFields.prevVolume5m = existingItem?.volume5m != null
       ? existingItem.volume5m
       : firstDefinedTrackedValue(existingItem?.prevVolume5m, base.prevVolume5m);
+    nextFields.lastSeenAt = selectFreshestTrackedTimestamp(dashboardItem?.lastSeenAt, existingItem?.lastSeenAt, base.lastSeenAt);
+    nextFields.lastEvaluatedAt = selectFreshestTrackedTimestamp(
+      dashboardItem?.lastEvaluatedAt,
+      existingItem?.lastEvaluatedAt,
+      base.lastEvaluatedAt,
+    );
 
     return nextFields;
   }
@@ -6004,6 +6068,8 @@ export function createAppController(): AppController {
       prevMcap: toNullableTrackedValue(item.prevMcap),
       mcapDelta: toNullableTrackedValue(item.mcapDelta),
       prevVolume5mCanonical: firstDefinedTrackedValue(item.prevVolume5mCanonical, item.prevVolume5m),
+      lastSeenAt: toNullableTrackedValue(item.lastSeenAt),
+      lastEvaluatedAt: toNullableTrackedValue(item.lastEvaluatedAt),
       meteora: buildCurrentMonitoredMeteoraSnapshot(address),
     } satisfies DashboardMonitoredToken;
   }

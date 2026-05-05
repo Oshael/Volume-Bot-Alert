@@ -14,6 +14,8 @@ export interface AlertEntry {
   tokenCreatedAt?: number | null;
   priceChange1h?: number | null;
   priceChange6h?: number | null;
+  prevVolume1m?: number | null;
+  volume1m?: number | null;
   prevVolume5m?: number | null;
   volume5m?: number | null;
   volume1h?: number | null;
@@ -83,6 +85,8 @@ export interface ManualTokenEntry {
   prevVolume5m?: number | null;
   prevVolume5mCanonical?: number | null;
   prevMcap?: number | null;
+  lastSeenAt?: string | null;
+  lastEvaluatedAt?: string | null;
   lastAlertAt?: number | null;
   deadCycles?: number;
   _hvncFired?: boolean;
