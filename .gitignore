@@ -8,3 +8,5 @@ node_modules/
 frontend/dist/
 Volume-Bot-Alert.git.backup/
 cookies.txt
+playwright-report/
+test-results/
