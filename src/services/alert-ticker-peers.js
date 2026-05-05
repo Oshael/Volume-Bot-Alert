@@ -169,9 +169,8 @@ function resolveSourcePeerRole(address, stats) {
 
   const isOldestExact = sameAddress(address, stats.oldestExactAddress);
   const isHighestMcapExact = sameAddress(address, stats.highestMcapExactAddress);
-  const hasCompleteExactAgeData = (Number(stats.exactMissingCreatedAtCount) || 0) === 0;
   const hasCompleteExactMcapData = (Number(stats.exactMissingMcapCount) || 0) === 0;
-  if (isOldestExact && isHighestMcapExact && hasCompleteExactAgeData && hasCompleteExactMcapData) {
+  if (isOldestExact && isHighestMcapExact && hasCompleteExactMcapData) {
     return SOURCE_PEER_ROLE_OG;
   }
   if (isHighestMcapExact && hasCompleteExactMcapData) {

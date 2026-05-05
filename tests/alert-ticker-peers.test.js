@@ -18,6 +18,19 @@ describe('alert ticker peers', () => {
     assert.equal(role, 'og');
   });
 
+  it('keeps OG when another exact peer is missing created-at but the source is oldest known and highest market cap', () => {
+    const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
+      exactCount: 4,
+      subtickerCount: 0,
+      exactMissingCreatedAtCount: 1,
+      exactMissingMcapCount: 0,
+      oldestExactAddress: SOURCE_ADDRESS,
+      highestMcapExactAddress: SOURCE_ADDRESS,
+    });
+
+    assert.equal(role, 'og');
+  });
+
   it('classifies the source token as market-cap leader when it is not the oldest exact peer', () => {
     const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
       exactCount: 2,
