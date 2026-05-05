@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -188,6 +188,22 @@ type HistorySyncMonitoredSnapshotMessage = {
   ts: number;
 };
 
+type HistoryBootstrapRequestPayload = {
+  starredTokens: string[];
+  recent: DashboardHistoryBucketRequest;
+  oldWeek: DashboardHistoryBucketRequest;
+};
+
+type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>;
+
+type HistorySyncBootstrapSnapshotMessage = {
+  type: 'history-bootstrap-snapshot';
+  tabId: string;
+  requestPayload: HistoryBootstrapRequestPayload;
+  payload: HistoryBootstrapPayload;
+  ts: number;
+};
+
 type HistorySyncLateralizedSnapshotMessage = {
   type: 'lateralized-snapshot';
   tabId: string;
@@ -213,6 +229,7 @@ type HistorySyncMessage =
   | HistorySyncPresenceMessage
   | HistorySyncClosingMessage
   | HistorySyncMonitoredSnapshotMessage
+  | HistorySyncBootstrapSnapshotMessage
   | HistorySyncLateralizedSnapshotMessage
   | HistorySyncBidZoneSnapshotMessage
   | HistorySyncSparklineSnapshotMessage;
@@ -1339,10 +1356,12 @@ export function createAppController(): AppController {
     applyPersistedFrontendAlertFlags(state.data.trackedTokensByAddress);
     state.data.manualTokenAddresses = input.manualTokens.map((item) => item.address);
     state.data.monitoredTokenAddresses = [...input.monitoredMap.keys()];
-    state.data.recentTokenAddresses = [];
-    state.data.oldWeekTokenAddresses = [];
     state.bars.manual = state.data.manualTokenAddresses.length;
-    deriveAgeBuckets();
+    if (!usesHistoryBucketBootstrap()) {
+      state.data.recentTokenAddresses = [];
+      state.data.oldWeekTokenAddresses = [];
+      deriveAgeBuckets();
+    }
 
     if (state.runtime.mode === 'active' && shouldRunFrontendAlerts() && input.alertCandidates.size > 0) {
       for (const token of getMonitoredTokens(state)) {
@@ -3409,6 +3428,10 @@ export function createAppController(): AppController {
   }
 
   function deriveAgeBuckets(options?: { forceRecentList?: boolean; forceOldWeekList?: boolean }) {
+    if (usesHistoryBucketBootstrap()) {
+      return;
+    }
+
     measureRuntimePerf(
       'controller.deriveAgeBuckets',
       isRuntimePerfDebugActive(),
@@ -5178,6 +5201,23 @@ export function createAppController(): AppController {
     });
   }
 
+  function broadcastHistoryBootstrapSnapshot(
+    payload: HistoryBootstrapPayload,
+    requestPayload: HistoryBootstrapRequestPayload,
+  ) {
+    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'history-bootstrap-snapshot',
+      tabId: historySyncTabId,
+      requestPayload,
+      payload,
+      ts: Date.now(),
+    });
+  }
+
   function broadcastHistoryLateralizedSnapshot(payload: LateralizedPayload) {
     if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
       return;
@@ -5231,7 +5271,21 @@ export function createAppController(): AppController {
     }
 
     if (message.type === 'monitored-snapshot') {
+      if (usesHistoryBucketBootstrap()) {
+        return;
+      }
       applyHistoryMonitoredSnapshot(message.tokens || [], message.generatedAt ?? null);
+      return;
+    }
+
+    if (message.type === 'history-bootstrap-snapshot') {
+      if (!isCurrentHistoryBootstrapRequest(message.requestPayload)) {
+        return;
+      }
+
+      clearHistorySearchPending({ emitRegions: false });
+      applyHistoryBootstrapPayload(message.payload);
+      emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
       return;
     }
 
@@ -5288,6 +5342,7 @@ export function createAppController(): AppController {
 
       clearHistorySearchPending({ emitRegions: false });
       applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
+      broadcastHistoryBootstrapSnapshot(payload, requestPayload);
       void refreshHistoryWorkspaceSparklines({ token });
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
@@ -6110,7 +6165,7 @@ export function createAppController(): AppController {
     return normalizeMonitoredSorts(state.ui.monitoredSorts);
   }
 
-  function buildHistoryBootstrapRequest() {
+  function buildHistoryBootstrapRequest(): HistoryBootstrapRequestPayload {
     return {
       starredTokens: [...state.data.starredTokens],
       recent: {
@@ -6140,9 +6195,13 @@ export function createAppController(): AppController {
     };
   }
 
+  function isCurrentHistoryBootstrapRequest(requestPayload: HistoryBootstrapRequestPayload) {
+    return JSON.stringify(requestPayload) === JSON.stringify(buildHistoryBootstrapRequest());
+  }
+
   function buildHistoryBootstrapRequestKey(
     token: string,
-    requestPayload: ReturnType<typeof buildHistoryBootstrapRequest>,
+    requestPayload: HistoryBootstrapRequestPayload,
     manualTokensOverride?: AddressItem[],
   ) {
     return JSON.stringify({
