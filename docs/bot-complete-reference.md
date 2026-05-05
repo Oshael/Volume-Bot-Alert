@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN risk backfill, ticker-peer role badges, and young-token volume-window fill.
+Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -108,6 +108,7 @@ The UI is now centered around two authenticated workspaces:
   - `Manual Tokens`
   - `Alerts`
 - `/monitor`
+  - visible workspace label: `RADAR`
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
   - `Lateralization Coins`
@@ -446,6 +447,11 @@ Catalog/alert behavior:
 - GMGN snapshots use the same young-token `6h`/`24h` volume-window fill as Dex before catalog, bucket, alert, and panel-state writes
 - GMGN `5m` volume jumps use the normal backend `monitored-vol` alert path
 - `gmgn-vol-1m` remains behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled because the 1m feed was too noisy
+- automatic GMGN-origin tokens are now blocked from alert evaluation until one of these is true:
+  - the token already has DexScreener confirmation from the catalog flow (`dex-low`, `dex-normal`, `dex-high`, or a DexScreener pair URL)
+  - the token completed the GMGN preliminary review path (`token security`, `token info`, and `market kline`) without being auto-blocked
+  - the token is a user/manual row
+- this safeguard does not stop catalog or volume-bucket writes; it only prevents the user-alert matcher from emitting while the token is still only a raw GMGN discovery
 - GMGN panel state tracks seen/stale tokens and schedules Dex reevaluation after a token leaves the GMGN panel
 - GMGN refreshes that resolve to `admin-blocked` are excluded from the accepted panel-token set
   - this prevents already-blocked tokens from being marked `active` again in `token_gmgn_panel_state`
@@ -907,6 +913,8 @@ Reasons:
     - `72h` to `< 11d`: `15m`
     - `11d+`: `30m`
   - routed compact search surfaces a visible searching/loading state while the table resolves the query
+  - routed-list interaction locks now clear stale DOM zones after refreshes and allow overlay-only renders through the lock, so chart popups and buy/sell overlays do not get stuck after several live update cycles
+  - shared token action, copy, and sparkline-hover handlers are marked as bound per element to prevent listener accumulation during incremental Recent/Old row patching
 
 ### Admin mock trading
 - Admin-only backend route prefix:
@@ -1037,7 +1045,8 @@ High-level behavior:
 - `history` is still the internal state name for the `/monitor` workspace
 - the header exposes those workspaces as:
   - `ALERTS`
-  - `MONITOR`
+  - `RADAR`
+- only the visible label changed from `MONITOR` to `RADAR`; the route remains `/monitor` to preserve existing links, routing, and internal state assumptions
 
 `/alerts` responsibilities:
 - mounts:
@@ -1541,6 +1550,7 @@ Main behavior:
   - name
   - contract/address
 - the shared compact-search interaction now supports `Enter/Return` to blur/commit the current query
+- monitored search also listens for input/change/search/cut updates so clearing a query cannot leave the panel stuck on the previous ticker
 - the `TOKENS` pill reflects the filtered monitored count
 - only the visible page of cards is rendered, but the full monitored set still stays in memory for alert logic and routed-bar derivation
 - this panel is mounted only in `/alerts`
@@ -2334,6 +2344,7 @@ Current GMGN worker status includes:
 - GMGN risk-enrichment suppression count
 - GMGN security/info/kline check counts, error counts, and auto-block counts
 - alert matcher evaluations and emitted alert counts
+- GMGN alert-safeguard skip counts (`lastMatcherSkippedGmgnSafeguard`, `totalMatcherSkippedGmgnSafeguard`)
 - emitted `gmgn-vol-1m` count
 - GMGN panel seen/stale/handoff counts
 

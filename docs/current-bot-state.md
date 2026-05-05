@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN risk backfill, ticker-peer role badges, and young-token volume-window fill.
+Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -109,6 +109,7 @@ Important:
     - `Manual Tokens`
     - `Alerts`
   - `/monitor`
+    - visible workspace label: `RADAR`
     - `Recent Tokens`
     - `Old Tokens 1 Week+`
     - `Lateralization Coins`
@@ -705,6 +706,9 @@ Current monitored UI behavior:
   - `Manual`, `Recent`, `Old Week`, and `Alerts` now use click-to-open compact search that stays open while focused
   - those compact searches no longer depend purely on transient hover/focus timing
   - compact searches now support `Enter/Return` to blur/commit the current query without clicking outside the input
+  - monitored search now clears stale typed state on input/change/search/cut flows, so deleting a query does not leave the panel filtered by the old ticker
+  - Recent/Old list interaction locks now clear stale DOM zones after refreshes and allow overlay-only renders through the lock, so expanded mini charts and buy/sell overlays keep opening after the page has been live for several refresh cycles
+  - shared token action, copy, and sparkline-hover handlers are bound once per element to prevent duplicate listeners during incremental row patching
 - current card-link behavior:
   - the white token symbol itself now opens Dex Screener
   - the action row now contains:
@@ -928,11 +932,13 @@ Current monitored UI behavior:
   - fills missing young-token `6h`/`24h` volume windows from shorter GMGN volume before catalog, bucket, alert, and panel-state writes
   - uses normal `monitored-vol` for GMGN `5m` volume jumps
   - keeps separate `gmgn-vol-1m` support behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled
+  - blocks automatic GMGN-origin alert evaluation until the token has DexScreener confirmation or has completed GMGN preliminary review (`token security`, `token info`, and `market kline`) without being auto-blocked
+  - the GMGN alert safeguard still allows catalog and GMGN volume-bucket writes; it only stops matcher emission while the token remains raw GMGN-only discovery
   - tracks active/stale GMGN panel membership and schedules DexScreener reevaluation when a token leaves the GMGN panel
   - GMGN refreshes that resolve to `admin-blocked` are excluded from the accepted panel-token set, so blocked addresses are not kept `active` in `token_gmgn_panel_state`
 - Admin status:
   - `GET /api/admin/ws-status` exposes `gmgnDiscoveryWorker`
-  - status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, GMGN `1m` alerts, risk/security/info/kline checks, GMGN auto-block counts, and Dex handoff counts
+  - status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, GMGN alert-safeguard skips, GMGN `1m` alerts, risk/security/info/kline checks, GMGN auto-block counts, and Dex handoff counts
 - Required rollout switches:
   - `GMGN_API_KEY`
   - `GMGN_DISCOVERY_ENABLED=true`
@@ -1511,6 +1517,7 @@ Current security priority order:
 
 ### `/monitor`
 - is the lighter dashboard-analysis workspace
+- is labeled `RADAR` in the workspace header while keeping the `/monitor` route and internal `history` workspace state
 - mounts:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`

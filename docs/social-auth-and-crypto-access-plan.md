@@ -37,7 +37,14 @@ These points are true in the codebase today:
   - orders
   - webhook-driven access crediting
   - local mock checkout for development
-- Google/Discord identity storage and OAuth flows do not exist yet
+- public frontpage and dedicated `/login` route now exist
+- Google/Discord identity storage now exists
+- authenticated social linking now exists
+- linked-only social login now exists
+- limited `/account-security` management now exists
+- social unlink now exists in normal account settings and in limited account-security
+- social-link popup completion now uses a CSP-compatible external bridge script instead of inline callback-page script
+- `User Settings` now preserves modal scroll position across identity link/unlink rerenders
 
 Relevant code anchors:
 
@@ -75,7 +82,15 @@ Today:
 - local mock checkout and backend-driven access confirmation are already working
 - `User Settings` billing still exists as support/admin-facing foundation UI, but it is no longer the primary no-access user journey
 - MoonPay sandbox and real provider validation are still pending
-- Google/Discord identity storage and OAuth flows still do not exist
+- shared-host manual browser validation is now complete for:
+  - Google link
+  - Discord link
+  - Google/Discord unlink in normal `User Settings`
+  - unlink in limited `/account-security`
+  - post-unlink social-login rejection
+  - local-login fallback after unlink
+- current-password step-up is implemented for unlink, but fresh OTP step-up remains a future hardening option
+- domain-cutover validation on the final production host is still pending and should not be assumed complete just because the ngrok-backed flow now passes
 
 ## Approved Product Decisions
 
@@ -206,7 +221,88 @@ Social identity linking for existing accounts
 
 Status:
 
-- not started
+- implemented for the approved scope
+
+Goal:
+
+Allow an already authenticated user with a normal app session to link Google and Discord identities to the existing account without changing the current login policy yet.
+
+Approved scope:
+
+- Google linking
+- Discord linking
+- linking only for existing authenticated accounts
+- no signup social
+- no public social login yet
+- no automatic account merge
+
+Approved flow:
+
+1. user logs into the normal app session
+2. user opens `User Settings`
+3. user clicks `Connect Google` or `Connect Discord`
+4. frontend starts the provider OAuth flow
+5. provider redirects back to backend callback
+6. backend validates provider identity and linking constraints
+7. backend links the provider identity to the currently authenticated user
+8. frontend reloads linked identities state in `User Settings`
+
+Current implementation status inside this phase:
+
+- delivered:
+  - provider config readiness
+  - social identity storage
+  - `GET /api/account/identities`
+  - `User Settings` linked identity visibility
+  - `GET /api/auth/social/:provider/start`
+  - `GET /api/auth/social/:provider/callback`
+  - conflict blocking for provider identity already linked elsewhere
+  - conflict blocking for provider email matching a different local account
+  - unlink flow in normal authenticated account settings
+  - unlink flow in limited `/account-security`
+  - current-password step-up confirmation for unlink
+- remaining polish:
+  - broader provider failure validation across environments
+
+Hard constraints:
+
+- linking must never start from the pre-access flow
+- linking must require an already authenticated normal session
+- multiple providers may be linked to the same account
+- a single provider identity may belong to only one local account
+- no auto-link by matching provider email to an existing account
+- no auto-merge by email
+
+Conflict rules:
+
+- if `provider + provider_user_id` is already linked to another account:
+  - block linking
+- if the provider returns an email that matches a different existing account:
+  - block linking
+- if the provider does not return a usable email:
+  - linking may still proceed, because provider identity uniqueness is based on `provider + provider_user_id`
+
+Required data model:
+
+- `user_id`
+- `provider`
+- `provider_user_id`
+- `provider_email`
+- `provider_display_name`
+- `linked_at`
+- `last_login_at`
+
+Required uniqueness:
+
+- unique on `provider + provider_user_id`
+
+Phase boundary with Phase 4:
+
+- Phase 3 only creates and manages linked identities
+- Phase 3 does not change local `email + password + OTP`
+- the future rule approved for Phase 4 is:
+  - Google/Discord login may complete without OTP if the identity is already linked
+  - local `email + password` login continues to require OTP
 
 ## Phase 4
 
@@ -214,7 +310,218 @@ Login with linked Google and Discord identities
 
 Status:
 
-- not started
+- implemented for the current scope
+
+Current slice delivered:
+
+- `GET /api/auth/social/:provider/login/start`
+- `GET /api/auth/social/:provider/login/callback`
+- social login succeeds only when the provider identity is already linked
+- social login does not create accounts and does not merge by email
+- linked identities with active access enter the normal auth session without OTP
+- linked identities with `inactive` or `expired` enter the dedicated `/access` flow
+- linked identities with `revoked` or `is_active=false` stay blocked
+- login panel now shows `Continue with Google` and `Continue with Discord` for linked accounts only
+
+Remaining validation outside the shipped core:
+
+- final production-host/domain validation after cutover
+
+## Approved UX Direction After Phase 4 Slice
+
+The current rollout direction is now closed and should be treated as the execution target.
+
+### Public Entry And Auth Surface
+
+1. `trendscope.pro/` must become a public frontpage.
+2. That public frontpage should present the bot value proposition first and the plans lower on the page.
+3. The public frontpage must expose `Login` and `Register` actions in the top-right area.
+4. `Login` must navigate to a dedicated auth page instead of opening on top of the public frontpage.
+5. `Register` must navigate to the same auth page with the registration surface already open.
+6. The current social login buttons on the login page must remain there unchanged.
+7. The login page must continue to support:
+   - local login
+   - linked Google login
+   - linked Discord login
+   - password reset
+   - email verification follow-up
+   - invite assistance / access help
+
+### Route Roles
+
+Approved route split:
+
+- `/`
+  - public frontpage
+  - unauthenticated product marketing + plan visibility
+- `/login`
+  - dedicated auth surface
+  - login and register entry
+- `/access`
+  - authenticated pre-access flow only
+  - used after verified-no-access login or verified-no-access email confirmation
+- `/account-security`
+  - used for identity management outside the bot when product access is missing
+
+Critical clarification:
+
+- `/access` must not be repurposed as the anonymous login page
+- `/access` remains the authenticated pre-access surface tied to a concrete user account
+- the public frontpage may visually echo the current pre-access presentation, but it must remain a distinct route and state
+
+### Login And Register Outcome Rules
+
+Approved behavior:
+
+1. Public `Login` action:
+   - sends the user to `/login`
+2. Successful login with valid access:
+   - enter the bot normally
+3. Successful login without valid product access:
+   - enter pre-access auth state
+   - route to `/access`
+4. Public `Register` action:
+   - sends the user to `/login` with the register surface pre-opened
+5. Successful registration:
+   - does not log the user into the bot
+   - shows email verification instructions
+6. Successful email verification for a no-access user:
+   - creates the pre-access auth state
+   - routes into `/access`
+
+### Account Security And Social Unlink Rules
+
+The previous shorthand "unlink with lockout protection" needs a more precise interpretation based on the current repository architecture.
+
+Current code fact:
+
+- accounts are still local-account based and always have local email/password credentials
+- social login is an additional linked method, not the only account entry method
+
+Because of that, the immediate protection goal is not "never let the user remove the last linked provider".
+
+The real requirement is:
+
+- allow identity management outside the paid bot workspace when the account is in a billing-recovery state
+- still protect sensitive unlink actions with explicit re-confirmation
+
+Approved rules:
+
+1. `link` remains available only from the normal authenticated bot session.
+2. `unlink` should become available from:
+   - the normal authenticated bot session
+   - the authenticated pre-access / no-product-access flow
+3. `unlink` must not be available for:
+   - `is_active = false`
+   - `access_status = revoked`
+4. `Access Help` may point users toward this limited account-security surface, but it must not become the full management surface itself.
+5. The account-security surface must allow identity visibility and unlink without exposing normal bot features.
+
+### Step-Up Confirmation For Unlink
+
+Approved current direction:
+
+- unlink should require explicit re-confirmation
+- the first implementation may use `currentPassword`
+- a future iteration may replace or augment this with fresh email OTP if desired
+
+Reasoning:
+
+- this repo already has working current-password verification paths
+- local credentials already exist for every account in the current architecture
+- this keeps the first unlink rollout smaller and more coherent
+
+## Execution Plan
+
+The remaining work should not be landed in one giant integration.
+
+Implementation must be delivered in smaller blocks that are internally coherent and safe to validate independently.
+
+### Block 1
+
+Public frontpage and auth-route split
+
+Status:
+
+- implemented
+
+Scope:
+
+- update docs to the current execution target
+- create the public frontpage on `/`
+- create or formalize `/login` as the dedicated auth route
+- preserve the current social login buttons on the login page
+- keep `/access` as authenticated pre-access only
+- make plans readable on the public frontpage without requiring product access
+
+Non-goals:
+
+- no unlink yet
+- no account-security route yet
+- no backend identity-management changes yet
+
+### Block 2
+
+Pre-access presentation alignment and post-auth navigation cleanup
+
+Status:
+
+- implemented
+
+Scope:
+
+- align the visual relationship between the public frontpage and `/access`
+- ensure register -> verify-email -> `/access` flow feels intentional
+- tighten route handling for `/`, `/login`, and `/access`
+- clean up follow-up notices and redirects
+
+### Block 3
+
+Limited account-security surface for billing-recovery users
+
+Status:
+
+- implemented
+
+Scope:
+
+- add a limited route/surface for account-security outside the bot
+- allow authenticated billing-recovery users to inspect linked identities there
+- keep normal bot-only features excluded from this surface
+
+### Block 4
+
+Social unlink backend + frontend
+
+Status:
+
+- implemented
+
+Scope:
+
+- add unlink endpoint(s)
+- require step-up confirmation for unlink
+- expose unlink actions in:
+  - normal authenticated account settings
+  - limited account-security surface
+- block unlink for revoked/deactivated accounts
+
+### Block 5
+
+Validation, polish, and broader test coverage
+
+Status:
+
+- implemented
+
+Scope:
+
+- broader provider-path validation
+- richer failure UX
+- docs refresh
+- targeted auth/billing/social tests for the new route split and unlink behavior
+- CSP-safe popup-bridge delivery for social link completion
+- `User Settings` scroll-position preservation during identity actions
 
 ## Phase 5
 
