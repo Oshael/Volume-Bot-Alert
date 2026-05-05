@@ -446,6 +446,24 @@ module.exports = {
     batchLimit: Math.max(1, Math.min(parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_BATCH_LIMIT || '25', 10) || 25, 100)),
   },
 
+  gmgnDiscoveryWorker: {
+    enabled: parseBoolean(process.env.GMGN_DISCOVERY_ENABLED, false),
+    intervalMs: Math.max(250, parseInt(process.env.GMGN_DISCOVERY_INTERVAL_MS || process.env.GMGN_REQUEST_WINDOW_MS || '2000', 10) || 2000),
+    apiKeyConfigured: Boolean(String(process.env.GMGN_API_KEY || '').trim()),
+    schedulerOptions: {
+      requestsPerWindow: Math.max(1, Math.min(parseInt(process.env.GMGN_REQUESTS_PER_WINDOW || '5', 10) || 5, 10)),
+      requestWindowMs: Math.max(1000, parseInt(process.env.GMGN_REQUEST_WINDOW_MS || '2000', 10) || 2000),
+      trendingLimit: Math.max(1, Math.min(parseInt(process.env.GMGN_TRENDING_LIMIT || '30', 10) || 30, 100)),
+      backoffMinMs: Math.max(1000, parseInt(process.env.GMGN_BACKOFF_MIN_MS || '5000', 10) || 5000),
+      backoffMaxMs: Math.max(1000, parseInt(process.env.GMGN_BACKOFF_MAX_MS || '60000', 10) || 60000),
+    },
+    ingestionOptions: {
+      activeDexRecheckMs: Math.max(1000, parseInt(process.env.GMGN_ACTIVE_DEX_RECHECK_MS || '30000', 10) || 30000),
+      alertEvaluationMinIntervalMs: Math.max(1000, parseInt(process.env.GMGN_ALERT_EVALUATION_MIN_INTERVAL_MS || '3000', 10) || 3000),
+      staleAfterMs: Math.max(1000, parseInt(process.env.GMGN_PANEL_STALE_AFTER_MS || '15000', 10) || 15000),
+    },
+  },
+
   catalogWriteRateLimit: {
     windowMs: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_MAX_REQUESTS || '60', 10),

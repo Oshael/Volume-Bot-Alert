@@ -40,6 +40,7 @@ const bidZoneWorker = require('./services/bid-zone-worker');
 const tokenRiskEnrichmentWorker = require('./services/token-risk-enrichment-worker');
 const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-worker');
 const mockTradingTakeProfitWorker = require('./services/mock-trading-take-profit-worker');
+const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const dexscreener = require('./services/dexscreener');
 
 const app = express();
@@ -159,6 +160,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     tokenRiskEnrichmentWorker: tokenRiskEnrichmentWorker.getStatus(),
     tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
     mockTradingTakeProfitWorker: mockTradingTakeProfitWorker.getStatus(),
+    gmgnDiscoveryWorker: gmgnDiscoveryWorker.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
   });
 });
@@ -231,6 +233,7 @@ function startWorkerSet() {
   tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
   tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
   mockTradingTakeProfitWorker.start(config.mockTradingTakeProfitWorker);
+  gmgnDiscoveryWorker.start(config.gmgnDiscoveryWorker);
 }
 
 function bootstrapWebRuntime(httpServer) {
