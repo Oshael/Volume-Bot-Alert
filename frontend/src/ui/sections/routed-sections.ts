@@ -686,6 +686,35 @@ function getIndicatorText(section: ParentNode, selector: string) {
   return section.querySelector<HTMLElement>(selector)?.textContent?.trim() ?? null;
 }
 
+function getRoutedSparklineMeta(cell?: HTMLElement) {
+  const wrap = cell?.querySelector<HTMLElement>('.sparkline-wrap');
+  return {
+    address: wrap?.dataset.address ?? null,
+    summary: wrap?.dataset.sparklineSummary ?? null,
+  };
+}
+
+function shouldReplaceRoutedSparklineCell(currentCell: HTMLElement, nextCell: HTMLElement) {
+  const currentMeta = getRoutedSparklineMeta(currentCell);
+  const nextMeta = getRoutedSparklineMeta(nextCell);
+  return currentMeta.summary !== nextMeta.summary || currentMeta.address !== nextMeta.address;
+}
+
+function patchRoutedSparklineCell(
+  currentCell: HTMLElement | undefined,
+  nextCell: HTMLElement | undefined,
+  state: AppState,
+  controller: AppController,
+) {
+  if (!currentCell) {
+    return;
+  }
+  if (nextCell && shouldReplaceRoutedSparklineCell(currentCell, nextCell)) {
+    currentCell.innerHTML = nextCell.innerHTML;
+  }
+  bindSparklineHover(currentCell, state.data.sparklineByAddress, { controller });
+}
+
 function canPatchRoutedSection(currentSection: HTMLElement, nextSection: HTMLElement) {
   const currentKeys = collectRoutedRowKeys(currentSection);
   const nextKeys = collectRoutedRowKeys(nextSection);
@@ -743,15 +772,7 @@ function patchRoutedRow(
 
   bindTokenActions(currentRow, controller);
   bindCopyButtons(currentRow);
-
-  const currentSparklineCell = currentCells[2];
-  const nextSparklineCell = nextCells[2];
-  const currentSummary = currentSparklineCell?.querySelector<HTMLElement>('.sparkline-wrap')?.dataset.sparklineSummary ?? null;
-  const nextSummary = nextSparklineCell?.querySelector<HTMLElement>('.sparkline-wrap')?.dataset.sparklineSummary ?? null;
-  if (currentSummary !== nextSummary && currentSparklineCell && nextSparklineCell) {
-    currentSparklineCell.innerHTML = nextSparklineCell.innerHTML;
-    bindSparklineHover(currentSparklineCell, state.data.sparklineByAddress, { controller });
-  }
+  patchRoutedSparklineCell(currentCells[2], nextCells[2], state, controller);
 
   return true;
 }

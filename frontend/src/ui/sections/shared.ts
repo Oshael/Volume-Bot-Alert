@@ -82,7 +82,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="mock-buy-token"]')) {
     if (button.dataset.tokenActionBound === 'true') continue;
     button.dataset.tokenActionBound = 'true';
-    button.addEventListener('click', () => {
+    bindPointerSafeButton(button, () => {
       const address = button.dataset.address;
       if (address) void controller.mockBuyToken(address);
     });
@@ -91,7 +91,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="mock-sell-token"]')) {
     if (button.dataset.tokenActionBound === 'true') continue;
     button.dataset.tokenActionBound = 'true';
-    button.addEventListener('click', () => {
+    bindPointerSafeButton(button, () => {
       const address = button.dataset.address;
       const percent = Number(button.dataset.percent || '100');
       if (address) void controller.mockSellToken(address, percent);
@@ -142,6 +142,33 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
   }
 }
 
+function bindPointerSafeButton(button: HTMLButtonElement, handler: () => void) {
+  let pointerHandled = false;
+
+  button.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || button.disabled) {
+      return;
+    }
+
+    pointerHandled = true;
+    event.preventDefault();
+    event.stopPropagation();
+    handler();
+    window.setTimeout(() => {
+      pointerHandled = false;
+    }, 350);
+  });
+
+  button.addEventListener('click', (event) => {
+    if (pointerHandled) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    handler();
+  });
+}
+
 export function bindCopyButtons(section: ParentNode) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="copy-address"]')) {
     if (button.dataset.copyButtonBound === 'true') continue;
@@ -183,28 +210,13 @@ export function bindSparklineHover(
       expanded: wrap.classList.contains('sparkline-wrap-expanded'),
       variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
     });
+    bindExpandableSparkline(wrap, address, options.controller);
     const hoverParts = resolveBindableSparklineHover(wrap, entry, series, displaySeries);
     if (!hoverParts) {
       continue;
     }
 
     const { hover, line, dot, tooltip } = hoverParts;
-
-    if (wrap.dataset.sparklineExpandable === 'true' && options.controller) {
-      wrap.tabIndex = 0;
-      wrap.setAttribute('role', 'button');
-      wrap.setAttribute('aria-label', `Expand chart for ${address}`);
-      wrap.addEventListener('click', () => {
-        options.controller?.openExpandedSparkline(address);
-      });
-      wrap.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') {
-          return;
-        }
-        event.preventDefault();
-        options.controller?.openExpandedSparkline(address);
-      });
-    }
 
     let activeIndex = -1;
 
@@ -252,6 +264,48 @@ export function bindSparklineHover(
     wrap.addEventListener('pointerleave', hide);
     wrap.addEventListener('pointercancel', hide);
   }
+}
+
+function bindExpandableSparkline(wrap: HTMLElement, address: string, controller?: AppController) {
+  if (wrap.dataset.sparklineExpandable !== 'true' || !controller || wrap.dataset.sparklineExpandBound === 'true') {
+    return;
+  }
+
+  wrap.dataset.sparklineExpandBound = 'true';
+  wrap.tabIndex = 0;
+  wrap.setAttribute('role', 'button');
+  wrap.setAttribute('aria-label', address ? `Expand chart for ${address}` : 'Expand chart');
+
+  let pointerHandled = false;
+  const open = () => {
+    controller.openExpandedSparkline(address);
+  };
+
+  wrap.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    pointerHandled = true;
+    event.preventDefault();
+    event.stopPropagation();
+    open();
+    window.setTimeout(() => {
+      pointerHandled = false;
+    }, 350);
+  });
+  wrap.addEventListener('click', () => {
+    if (pointerHandled) {
+      return;
+    }
+    open();
+  });
+  wrap.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    open();
+  });
 }
 
 function resolveBindableSparklineHover(

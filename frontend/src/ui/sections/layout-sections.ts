@@ -1703,34 +1703,20 @@ function bindMockTradingTicketModal(section: ParentNode, controller: AppControll
     });
   });
 
-  section.querySelector<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]')?.addEventListener('submit', (event) => {
+  const ticketForm = section.querySelector<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
+  ticketForm?.addEventListener('submit', (event) => {
     event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const address = form.dataset.address || '';
-    const side = form.dataset.side;
-    if (!address) {
-      return;
+    submitMockTradingTicketForm(event.currentTarget as HTMLFormElement, controller);
+  });
+  bindPointerSafeModalButton(ticketForm?.querySelector<HTMLButtonElement>('button[type="submit"]') || null, () => {
+    if (ticketForm) {
+      submitMockTradingTicketForm(ticketForm, controller);
     }
-    if (side === 'buy') {
-      const notionalUsd = Number(form.querySelector<HTMLInputElement>('input[name="notionalUsd"]')?.value || '0');
-      const targetMcapRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitMcapUsd"]')?.value || '';
-      const sellPercentRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitSellPercent"]')?.value || '';
-      const takeProfit = targetMcapRaw.trim()
-        ? {
-          targetMcapUsd: Number(targetMcapRaw),
-          sellPercent: sellPercentRaw.trim() ? Number(sellPercentRaw) : 100,
-        }
-        : undefined;
-      void controller.submitMockTradingBuy(address, notionalUsd, takeProfit);
-      return;
-    }
-    const percent = Number(form.querySelector<HTMLInputElement>('input[name="percent"]')?.value || '0');
-    void controller.submitMockTradingSell(address, percent);
   });
 
-  section.querySelector<HTMLButtonElement>('[data-action="mock-sell-order-submit"]')?.addEventListener('click', (event) => {
-    event.preventDefault();
-    const form = (event.currentTarget as HTMLElement).closest<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
+  const sellOrderButton = section.querySelector<HTMLButtonElement>('[data-action="mock-sell-order-submit"]');
+  bindPointerSafeModalButton(sellOrderButton, () => {
+    const form = sellOrderButton?.closest<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
     const address = form?.dataset.address || '';
     if (!form || !address) {
       return;
@@ -1738,6 +1724,59 @@ function bindMockTradingTicketModal(section: ParentNode, controller: AppControll
     const targetMcapUsd = Number(form.querySelector<HTMLInputElement>('input[name="orderTargetMcapUsd"]')?.value || '0');
     const sellPercent = Number(form.querySelector<HTMLInputElement>('input[name="orderSellPercent"]')?.value || '0');
     void controller.submitMockTradingSellOrder(address, targetMcapUsd, sellPercent);
+  });
+}
+
+function submitMockTradingTicketForm(form: HTMLFormElement, controller: AppController) {
+  const address = form.dataset.address || '';
+  const side = form.dataset.side;
+  if (!address) {
+    return;
+  }
+  if (side === 'buy') {
+    const notionalUsd = Number(form.querySelector<HTMLInputElement>('input[name="notionalUsd"]')?.value || '0');
+    const targetMcapRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitMcapUsd"]')?.value || '';
+    const sellPercentRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitSellPercent"]')?.value || '';
+    const takeProfit = targetMcapRaw.trim()
+      ? {
+        targetMcapUsd: Number(targetMcapRaw),
+        sellPercent: sellPercentRaw.trim() ? Number(sellPercentRaw) : 100,
+      }
+      : undefined;
+    void controller.submitMockTradingBuy(address, notionalUsd, takeProfit);
+    return;
+  }
+
+  const percent = Number(form.querySelector<HTMLInputElement>('input[name="percent"]')?.value || '0');
+  void controller.submitMockTradingSell(address, percent);
+}
+
+function bindPointerSafeModalButton(button: HTMLButtonElement | null, handler: () => void) {
+  if (!button) {
+    return;
+  }
+
+  let pointerHandled = false;
+  button.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || button.disabled) {
+      return;
+    }
+    pointerHandled = true;
+    event.preventDefault();
+    event.stopPropagation();
+    handler();
+    window.setTimeout(() => {
+      pointerHandled = false;
+    }, 350);
+  });
+  button.addEventListener('click', (event) => {
+    if (pointerHandled) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    handler();
   });
 }
 
