@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketDebugPayload, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -160,6 +160,7 @@ const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
 const HISTORY_SYNC_PEER_TTL_MS = 6000;
+const ROUTED_BUCKET_DEBUG_STORAGE_KEY = 'trendscope-routed-bucket-debug';
 const LEGACY_NETWORK_DEBUG_STORAGE_KEYS = [
   'trendscope-network-debug-enabled',
   'trendscope-network-debug-log',
@@ -192,6 +193,10 @@ type HistoryBootstrapRequestPayload = {
   starredTokens: string[];
   recent: DashboardHistoryBucketRequest;
   oldWeek: DashboardHistoryBucketRequest;
+  debug?: {
+    recentPreviousAddresses?: string[];
+    oldWeekPreviousAddresses?: string[];
+  } | null;
 };
 
 type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>;
@@ -5284,7 +5289,7 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(message.payload);
+      applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload);
       emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
       return;
     }
@@ -5341,7 +5346,7 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
+      applyHistoryBootstrapPayload(payload, options?.manualTokensOverride, requestPayload);
       broadcastHistoryBootstrapSnapshot(payload, requestPayload);
       void refreshHistoryWorkspaceSparklines({ token });
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
@@ -6165,6 +6170,183 @@ export function createAppController(): AppController {
     return normalizeMonitoredSorts(state.ui.monitoredSorts);
   }
 
+  function isRoutedBucketDebugEnabled() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      const storageValue = window.localStorage?.getItem(ROUTED_BUCKET_DEBUG_STORAGE_KEY);
+      return params.has('debugRoutedBuckets')
+        || storageValue === '1'
+        || storageValue === 'true'
+        || storageValue === 'on';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function buildRoutedBucketDebugToken(token: Partial<DashboardMonitoredToken & ManualTokenEntry> | null | undefined) {
+    if (!token) {
+      return null;
+    }
+
+    return {
+      address: token.address,
+      symbol: token.symbol ?? token.label ?? null,
+      name: token.name ?? null,
+      mcap: token.mcap ?? null,
+      volume1h: token.volume1h ?? null,
+      volume6h: token.volume6h ?? null,
+      volume24h: token.volume24h ?? null,
+      priceChange1h: token.priceChange1h ?? null,
+      priceChange6h: token.priceChange6h ?? null,
+      priceChange24h: token.priceChange24h ?? null,
+      tokenCreatedAt: token.tokenCreatedAt ?? token.createdAt ?? null,
+      eligibleForMonitoring: token.eligibleForMonitoring ?? null,
+      monitorPriority: token.monitorPriority ?? null,
+      lastSeenAt: token.lastSeenAt ?? null,
+      lastEvaluatedAt: token.lastEvaluatedAt ?? null,
+    };
+  }
+
+  function buildRoutedBucketDiagnosticTokenFields(
+    token: NonNullable<NonNullable<DashboardHistoryBucketDebugPayload['removedDiagnostics']>[number]['token']> | null | undefined,
+  ) {
+    const source = token || {};
+    return {
+      symbol: source.symbol ?? null,
+      mcap: source.mcap ?? null,
+      volume1h: source.volume1h ?? null,
+      volume6h: source.volume6h ?? null,
+      volume24h: source.volume24h ?? null,
+      eligibleForMonitoring: source.eligibleForMonitoring ?? null,
+      eligibilityState: source.eligibilityState ?? null,
+      suppressedReason: source.suppressedReason ?? null,
+      lastEvaluatedAt: source.lastEvaluatedAt ?? null,
+    };
+  }
+
+  function buildRoutedBucketDiagnosticLogRow(item: NonNullable<DashboardHistoryBucketDebugPayload['removedDiagnostics']>[number]) {
+    return {
+      address: item.address,
+      backendRank: item.rank,
+      visibleOnRequestedPage: item.visibleOnRequestedPage,
+      reasons: item.reasons?.join(',') || '',
+      ...buildRoutedBucketDiagnosticTokenFields(item.token),
+    };
+  }
+
+  function logRoutedBucketDiff(
+    bucket: 'recent' | 'oldWeek',
+    previousAddresses: string[],
+    nextTokens: DashboardMonitoredToken[],
+    request: DashboardHistoryBucketRequest,
+    slice: {
+      total?: number;
+      page?: number;
+      perPage?: number;
+      count?: number;
+      generatedAt?: string | null;
+      removedDiagnostics?: DashboardHistoryBucketDebugPayload['removedDiagnostics'];
+    },
+  ) {
+    if (!isRoutedBucketDebugEnabled()) {
+      return;
+    }
+
+    const previousSet = new Set(previousAddresses);
+    const nextAddresses = nextTokens.map((item) => item.address).filter(Boolean);
+    const nextSet = new Set(nextAddresses);
+    const nextByAddress = new Map(nextTokens.map((item) => [item.address, item]));
+    const added = nextAddresses
+      .filter((address) => !previousSet.has(address))
+      .map((address) => ({
+        rank: nextAddresses.indexOf(address) + 1,
+        token: buildRoutedBucketDebugToken(nextByAddress.get(address)),
+      }));
+    const removed = previousAddresses
+      .filter((address) => !nextSet.has(address))
+      .map((address) => ({
+        previousRank: previousAddresses.indexOf(address) + 1,
+        token: buildRoutedBucketDebugToken(state.data.trackedTokensByAddress[address]),
+      }));
+
+    if (added.length === 0 && removed.length === 0) {
+      return;
+    }
+
+    const label = bucket === 'oldWeek' ? 'Old Week' : 'Recent';
+    console.groupCollapsed(
+      `[RoutedBucketDebug] ${label} changed +${added.length}/-${removed.length} page=${slice.page ?? request.page ?? 0} total=${slice.total ?? 'n/a'}`,
+    );
+    console.log('request', {
+      page: request.page,
+      perPage: request.perPage,
+      searchQuery: request.searchQuery,
+      starredOnly: request.starredOnly,
+      sorts: request.sorts,
+      mcapMin: request.mcapMin,
+      mcapMax: request.mcapMax,
+      ageMinMinutes: request.ageMinMinutes,
+      ageMaxMinutes: request.ageMaxMinutes,
+      dismissedCount: request.dismissedAddresses?.length ?? 0,
+    });
+    console.log('slice', {
+      generatedAt: slice.generatedAt,
+      total: slice.total,
+      page: slice.page,
+      perPage: slice.perPage,
+      count: slice.count,
+      nextAddresses,
+    });
+    if (added.length > 0) {
+      console.table(added.map((item) => ({ event: 'added', rank: item.rank, ...item.token })));
+    }
+    if (removed.length > 0) {
+      console.table(removed.map((item) => ({ event: 'removed', rank: item.previousRank, ...item.token })));
+    }
+    const diagnostics = slice.removedDiagnostics;
+    if (Array.isArray(diagnostics) && diagnostics.length > 0) {
+      console.table(diagnostics.map(buildRoutedBucketDiagnosticLogRow));
+    }
+    console.groupEnd();
+  }
+
+  function logHistoryBootstrapDiffs(
+    payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
+    requestPayload: HistoryBootstrapRequestPayload,
+  ) {
+    logRoutedBucketDiff('recent', [...state.data.recentTokenAddresses], payload.recent.tokens, requestPayload.recent, {
+      generatedAt: payload.generatedAt,
+      total: payload.recent.total,
+      page: payload.recent.page,
+      perPage: payload.recent.perPage,
+      count: payload.recent.count,
+      removedDiagnostics: payload.debug?.recent?.removedDiagnostics,
+    });
+    logRoutedBucketDiff('oldWeek', [...state.data.oldWeekTokenAddresses], payload.oldWeek.tokens, requestPayload.oldWeek, {
+      generatedAt: payload.generatedAt,
+      total: payload.oldWeek.total,
+      page: payload.oldWeek.page,
+      perPage: payload.oldWeek.perPage,
+      count: payload.oldWeek.count,
+      removedDiagnostics: payload.debug?.oldWeek?.removedDiagnostics,
+    });
+  }
+
+  function buildHistoryBootstrapDebugRequest() {
+    if (!isRoutedBucketDebugEnabled()) {
+      return null;
+    }
+
+    return {
+      recentPreviousAddresses: [...state.data.recentTokenAddresses],
+      oldWeekPreviousAddresses: [...state.data.oldWeekTokenAddresses],
+    };
+  }
+
   function buildHistoryBootstrapRequest(): HistoryBootstrapRequestPayload {
     return {
       starredTokens: [...state.data.starredTokens],
@@ -6192,11 +6374,21 @@ export function createAppController(): AppController {
         ageMinMinutes: getConfigNumber('old-week-age-min', OLD_WEEK_MIN_AGE_MINUTES),
         ageMaxMinutes: getConfigNumber('old-week-age-max', 0),
       },
+      debug: buildHistoryBootstrapDebugRequest(),
     };
   }
 
   function isCurrentHistoryBootstrapRequest(requestPayload: HistoryBootstrapRequestPayload) {
-    return JSON.stringify(requestPayload) === JSON.stringify(buildHistoryBootstrapRequest());
+    return JSON.stringify(buildComparableHistoryBootstrapRequest(requestPayload))
+      === JSON.stringify(buildComparableHistoryBootstrapRequest(buildHistoryBootstrapRequest()));
+  }
+
+  function buildComparableHistoryBootstrapRequest(requestPayload: HistoryBootstrapRequestPayload) {
+    return {
+      starredTokens: requestPayload.starredTokens,
+      recent: requestPayload.recent,
+      oldWeek: requestPayload.oldWeek,
+    };
   }
 
   function buildHistoryBootstrapRequestKey(
@@ -6206,7 +6398,7 @@ export function createAppController(): AppController {
   ) {
     return JSON.stringify({
       token,
-      requestPayload,
+      requestPayload: buildComparableHistoryBootstrapRequest(requestPayload),
       manualTokensOverride: (manualTokensOverride || []).map((item) => ({
         address: item.address,
         label: item.label ?? null,
@@ -6250,6 +6442,7 @@ export function createAppController(): AppController {
   function applyHistoryBootstrapPayload(
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
     manualTokensOverride?: AddressItem[],
+    requestPayload: HistoryBootstrapRequestPayload = buildHistoryBootstrapRequest(),
   ) {
     const requestedRecentPage = Math.max(0, Number(payload.recent?.page) || 0);
     const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek?.page) || 0);
@@ -6259,6 +6452,7 @@ export function createAppController(): AppController {
       [...recentTokens, ...oldWeekTokens].map((item) => [item.address, item]),
     ).values());
 
+    logHistoryBootstrapDiffs(payload, requestPayload);
     applyMonitoredDashboard(monitoredDashboardTokens, manualTokensOverride, payload.generatedAt ?? null);
     state.data.recentTokenAddresses = recentTokens.map((item) => item.address);
     state.data.oldWeekTokenAddresses = oldWeekTokens.map((item) => item.address);
