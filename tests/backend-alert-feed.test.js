@@ -225,6 +225,8 @@ describe('backend alert feed service', () => {
           symbol: 'WSOL',
           label: 'VOL',
           pct: 80,
+          prevVolume1m: 6000,
+          volume1m: 9000,
           prevVolume5m: 10000,
           volume5m: 18000,
           volume1h: 50000,
@@ -300,6 +302,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].tickerPeers?.sourcePeerRole, 'peer_warning');
       assert.equal(payload.events[0].tickerPeers?.subtickerCount, 1);
       assert.equal(payload.events[0].pct, 80);
+      assert.equal(payload.events[0].prevVolume1m, 6000);
+      assert.equal(payload.events[0].volume1m, 9000);
       assert.equal(payload.events[0].prevVolume5m, 10000);
       assert.equal(payload.events[0].volume5m, 18000);
       assert.equal(payload.events[0].mcap, 300000);
@@ -346,6 +350,7 @@ describe('backend alert feed service', () => {
       assert.deepEqual(capturedRuleKeys, [
         'high-cap-dump-5m',
         'monitored-vol',
+        'gmgn-vol-1m',
         'monitored-mcap',
         'hvnc',
         'recent-surge-1h',
@@ -356,7 +361,7 @@ describe('backend alert feed service', () => {
       ]);
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 1);
-      assert.equal(payload.feeds.length, 9);
+      assert.equal(payload.feeds.length, 10);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
     }

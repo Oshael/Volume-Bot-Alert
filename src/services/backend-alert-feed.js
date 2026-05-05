@@ -212,12 +212,14 @@ function buildDashboardUserAlertIdentityPayload(payload, catalogRow) {
 
 function buildDashboardUserAlertMetricPayload(payload, catalogRow) {
   return {
+    volume1m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume1m')),
     volume5m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume5m')),
     volume1h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume1h')) ?? toNumberOrNull(catalogRow?.last_vol_1h),
     volume6h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume6h')) ?? toNumberOrNull(catalogRow?.last_vol_6h),
     volume24h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'volume24h')) ?? toNumberOrNull(catalogRow?.last_vol_24h),
     priceChange1h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'priceChange1h')) ?? toNumberOrNull(catalogRow?.last_price_change_1h),
     priceChange6h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'priceChange6h')) ?? toNumberOrNull(catalogRow?.last_price_change_6h),
+    prevVolume1m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevVolume1m')),
     prevVolume5m: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevVolume5m')),
     prevMcap: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'prevMcap')),
     mcap: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'mcap')) ?? toNumberOrNull(catalogRow?.last_mcap),

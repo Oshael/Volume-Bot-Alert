@@ -875,9 +875,11 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
   const { rows } = await db.query(
     `SELECT
        tc.address,
+       tc.source,
        tc.symbol,
        tc.name,
        tc.eligible_for_monitoring,
+       tc.suppressed_reason,
        tc.last_mcap,
        tc.last_price,
        tc.last_vol_5m,
@@ -923,7 +925,7 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
        ON ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
        ON tre.token_address = tc.address
-     WHERE tc.eligible_for_monitoring = TRUE
+     WHERE (tc.eligible_for_monitoring = TRUE OR tc.suppressed_reason = 'gmgn_needs_risk_enrichment')
        AND COALESCE(tc.last_mcap, 0) >= $3
      ORDER BY tc.last_seen_at DESC, tc.address ASC
      LIMIT $1

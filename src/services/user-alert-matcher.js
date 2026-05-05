@@ -28,8 +28,14 @@ const METEORA_POST_ALERT_REPEAT_STEP_PCT = 50;
 const METEORA_REPEAT_TVL_GROWTH_PCT = 15;
 const METEORA_FINGERPRINT_CHANGE_BUCKET_PCT = 5;
 const METEORA_FINGERPRINT_TVL_BUCKET_USD = 10_000;
+const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
+const GMGN_VOL_1M_ALERT_THRESHOLD_PCT = 50;
+const GMGN_VOL_1M_ALERT_COOLDOWN_MS = 60 * 1000;
+const GMGN_VOL_1M_REPEAT_STEP_PCT = 50;
+const GMGN_VOL_1M_ALERT_ENABLED = false;
 const MATCHER_RULE_KEYS = Object.freeze([
   'monitored-vol',
+  GMGN_VOL_1M_RULE_KEY,
   'monitored-mcap',
   'hvnc',
   'recent-surge-1h',
@@ -40,6 +46,7 @@ const MATCHER_RULE_KEYS = Object.freeze([
 ]);
 const RULE_ENABLED_FIELD_BY_KEY = Object.freeze({
   'monitored-vol': 'monitoredVol',
+  [GMGN_VOL_1M_RULE_KEY]: 'monitoredVol',
   'monitored-mcap': 'monitoredMcap',
   hvnc: 'hvnc',
   'recent-surge-1h': 'recentSurge1h',
@@ -50,11 +57,13 @@ const RULE_ENABLED_FIELD_BY_KEY = Object.freeze({
 });
 const REARM_PRESERVE_COOLDOWN_RULE_KEYS = new Set([
   'monitored-vol',
+  GMGN_VOL_1M_RULE_KEY,
   'monitored-mcap',
   'meteora-surge',
 ]);
 const ANCHORED_REPEAT_RULE_KEYS = new Set([
   'monitored-vol',
+  GMGN_VOL_1M_RULE_KEY,
   'monitored-mcap',
 ]);
 
@@ -138,6 +147,8 @@ function buildSharedPayload(tokenAfter, signals) {
     imageUrl: toTextOrNull(tokenAfter?.last_image_url),
     twitterUrl: toTextOrNull(tokenAfter?.last_twitter_url),
     tokenCreatedAt: toNumberOrNull(tokenAfter?.last_token_created_at_ms),
+    prevVolume1m: signals.prevVolume1m,
+    volume1m: signals.currentVolume1m,
     prevVolume5m: signals.prevVolume5m,
     volume5m: signals.currentVolume5m,
     volume1h: toNumberOrNull(tokenAfter?.last_vol_1h),
@@ -148,6 +159,19 @@ function buildSharedPayload(tokenAfter, signals) {
     priceChange1h: signals.currentPriceChange1h,
     priceChange6h: signals.currentPriceChange6h,
   };
+}
+
+function readEnvNumber(name, fallback) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readEnvBoolean(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') {
+    return fallback;
+  }
+  return raw === 'true' || raw === '1';
 }
 
 function passesCommonAlertFilters(profile, signals) {
@@ -313,6 +337,43 @@ function buildMonitoredVolCandidate(profile, shared, signals) {
   };
 }
 
+function buildGmgnVol1mCandidate(profile, shared, signals) {
+  if (!readEnvBoolean('GMGN_VOL_1M_ALERT_ENABLED', GMGN_VOL_1M_ALERT_ENABLED)) {
+    return null;
+  }
+
+  const thresholdPct = readEnvNumber('GMGN_VOL_1M_ALERT_THRESHOLD_PCT', GMGN_VOL_1M_ALERT_THRESHOLD_PCT);
+  const qualifies = signals.alertSource === 'gmgn'
+    && signals.hasVol1mBaseline
+    && signals.vol1mChangePct != null
+    && signals.vol1mChangePct >= thresholdPct
+    && passesCommonAlertFilters(profile, signals)
+    && !signals.isMcapDeclining;
+  if (!qualifies) {
+    return null;
+  }
+
+  return {
+    ruleKey: GMGN_VOL_1M_RULE_KEY,
+    kind: 'monitored-vol',
+    label: 'GMGN 1M',
+    pct: signals.vol1mChangePct,
+    lastAlertedValue: signals.currentVolume1m,
+    cooldownMs: readEnvNumber('GMGN_VOL_1M_ALERT_COOLDOWN_MS', GMGN_VOL_1M_ALERT_COOLDOWN_MS),
+    repeatStepPct: readEnvNumber('GMGN_VOL_1M_REPEAT_STEP_PCT', GMGN_VOL_1M_REPEAT_STEP_PCT),
+    fingerprint: buildFingerprint([GMGN_VOL_1M_RULE_KEY, signals.vol1mChangePct, signals.prevVolume1m, signals.currentVolume1m]),
+    payload: {
+      ...shared,
+      source: 'gmgn',
+      gmgnInterval: '1m',
+      thresholdPct,
+      prevVolume1m: signals.prevVolume1m,
+      volume1m: signals.currentVolume1m,
+      volume5m: signals.currentVolume5m,
+    },
+  };
+}
+
 function buildMonitoredMcapCandidate(profile, shared, signals) {
   const qualifies = signals.hasMcapBaseline
     && signals.mcapAlertTokenAgeGatePassed
@@ -402,16 +463,25 @@ function buildRuleCandidate(profile, tokenAfter, signals) {
     candidates.push(buildMeteoraCandidate(profile, shared, signals));
   }
   if (profile?.ruleEnabled?.monitoredVol) {
+    candidates.push(buildGmgnVol1mCandidate(profile, shared, signals));
     candidates.push(buildMonitoredVolCandidate(profile, shared, signals));
   }
   if (profile?.ruleEnabled?.monitoredMcap) {
     candidates.push(buildMonitoredMcapCandidate(profile, shared, signals));
   }
 
+  const qualifiedCandidates = candidates.filter(Boolean);
   return {
-    candidate: candidates.find(Boolean) || null,
-    qualifiedRuleKeys: candidates.filter(Boolean).map((candidate) => candidate.ruleKey),
+    candidate: qualifiedCandidates.find((candidate) => candidate.ruleKey !== GMGN_VOL_1M_RULE_KEY) || qualifiedCandidates[0] || null,
+    candidates: buildLifecycleCandidates(qualifiedCandidates),
+    qualifiedRuleKeys: qualifiedCandidates.map((candidate) => candidate.ruleKey),
   };
+}
+
+function buildLifecycleCandidates(qualifiedCandidates = []) {
+  const primary = qualifiedCandidates.find((candidate) => candidate.ruleKey !== GMGN_VOL_1M_RULE_KEY) || null;
+  const gmgnVol1m = qualifiedCandidates.find((candidate) => candidate.ruleKey === GMGN_VOL_1M_RULE_KEY) || null;
+  return [primary, gmgnVol1m].filter(Boolean);
 }
 
 function buildRearmRuleKeys(profile, qualifiedRuleKeys = []) {
@@ -430,6 +500,11 @@ function needsVolumeBaseline(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.monitoredVol);
 }
 
+function needsGmgnVolume1mBaseline(profiles = [], context = {}) {
+  return context.alertSource === 'gmgn'
+    && profiles.some((profile) => profile?.ruleEnabled?.monitoredVol);
+}
+
 function needsMcapBaseline(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.monitoredMcap);
 }
@@ -438,12 +513,30 @@ function needsMeteoraState(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.meteoraSurge);
 }
 
-async function loadVolumeRows(address, profiles, deps) {
+function mergeVolumeRows(vol5mRow, vol1mRow) {
+  if (!vol5mRow && !vol1mRow) {
+    return null;
+  }
+  return {
+    ...(vol5mRow || {}),
+    ...(vol1mRow || {}),
+    token_address: vol5mRow?.token_address || vol1mRow?.token_address || null,
+  };
+}
+
+async function loadVolumeRows(address, profiles, deps, context = {}) {
   if (!needsVolumeBaseline(profiles)) {
     return [];
   }
 
-  return deps.tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses([address], 5);
+  const [vol5mRows, vol1mRows] = await Promise.all([
+    deps.tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses([address], 5),
+    needsGmgnVolume1mBaseline(profiles, context)
+      ? deps.tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses([address], 1, { volumeWindow: '1m' })
+      : [],
+  ]);
+  const merged = mergeVolumeRows(vol5mRows[0] || null, vol1mRows[0] || null);
+  return merged ? [merged] : [];
 }
 
 async function loadMcapRows(address, profiles, deps) {
@@ -470,27 +563,48 @@ function buildMigrationSignalInput(tokenAfter) {
   };
 }
 
-function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow) {
-  const readPriceChange = (token, window) => {
-    if (window === '1h') {
-      return token?.last_price_change_1h ?? token?.priceChange1h ?? null;
-    }
-    return token?.last_price_change_6h ?? token?.priceChange6h ?? null;
-  };
+function readPriceChange(token, window) {
+  if (window === '1h') {
+    return token?.last_price_change_1h ?? token?.priceChange1h ?? null;
+  }
+  return token?.last_price_change_6h ?? token?.priceChange6h ?? null;
+}
 
+function buildVolumeSignalInput(tokenBefore, tokenAfter, volumeRow) {
   return {
-    tokenAddress: String(tokenAfter?.address || '').trim(),
-    ...buildMigrationSignalInput(tokenAfter),
+    last_vol_1m: volumeRow?.current_vol_1m ?? volumeRow?.current_volume_1m ?? null,
+    baseline_vol_1m: volumeRow?.baseline_vol_1m ?? null,
     last_vol_5m: tokenAfter?.last_vol_5m,
     baseline_vol_5m: volumeRow?.baseline_vol_5m ?? tokenBefore?.last_vol_5m ?? null,
+    last_vol_24h: tokenAfter?.last_vol_24h,
+  };
+}
+
+function buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow) {
+  return {
     last_mcap: mcapRow?.current_mcap ?? tokenAfter?.last_mcap,
     baseline_mcap: mcapRow?.baseline_mcap ?? tokenBefore?.last_mcap ?? null,
-    last_vol_24h: tokenAfter?.last_vol_24h,
-    last_token_created_at_ms: tokenAfter?.last_token_created_at_ms,
+  };
+}
+
+function buildPriceChangeSignalInput(tokenBefore, tokenAfter) {
+  return {
     last_price_change_1h: readPriceChange(tokenAfter, '1h'),
     baseline_price_change_1h: readPriceChange(tokenBefore, '1h'),
     last_price_change_6h: readPriceChange(tokenAfter, '6h'),
     baseline_price_change_6h: readPriceChange(tokenBefore, '6h'),
+  };
+}
+
+function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, context = {}) {
+  return {
+    tokenAddress: String(tokenAfter?.address || '').trim(),
+    alertSource: toTextOrNull(context.alertSource),
+    ...buildMigrationSignalInput(tokenAfter),
+    ...buildVolumeSignalInput(tokenBefore, tokenAfter, volumeRow),
+    ...buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow),
+    last_token_created_at_ms: tokenAfter?.last_token_created_at_ms,
+    ...buildPriceChangeSignalInput(tokenBefore, tokenAfter),
   };
 }
 
@@ -504,9 +618,9 @@ function buildMeteoraSignalInput(meteoraRow) {
   };
 }
 
-function buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, meteoraRow) {
+function buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, meteoraRow, context = {}) {
   return {
-    ...buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow),
+    ...buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, context),
     ...buildMeteoraSignalInput(meteoraRow),
   };
 }
@@ -710,6 +824,8 @@ function buildRepeatAwarePayload(candidate, state) {
 
   if (candidate.ruleKey === 'monitored-vol') {
     payload.prevVolume5m = lastAlertedValue;
+  } else if (candidate.ruleKey === GMGN_VOL_1M_RULE_KEY) {
+    payload.prevVolume1m = lastAlertedValue;
   } else if (candidate.ruleKey === 'monitored-mcap') {
     payload.prevMcap = lastAlertedValue;
   }
@@ -940,8 +1056,8 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   return cooldownActive ? 'suppress' : 'emit';
 }
 
-async function handleRuleLifecycle(profile, tokenAfter, candidate, rearmRuleKeys, nowMs, deps, summary) {
-  if (candidate) {
+async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKeys, nowMs, deps, summary) {
+  for (const candidate of Array.isArray(candidates) ? candidates : [candidates].filter(Boolean)) {
     const rawState = await deps.userAlertRuleState.getState(profile.userId, candidate.ruleKey, tokenAfter.address);
     const state = resolveCandidateState(candidate, rawState, profile);
     const hasRelatedSurgeCooldown = await hasRecentRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps);
@@ -970,10 +1086,10 @@ async function handleRuleLifecycle(profile, tokenAfter, candidate, rearmRuleKeys
   }
 }
 
-async function loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps) {
+async function loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps, context = {}) {
   const address = String(tokenAfter?.address || '').trim();
   const [volumeRows, mcapRows, meteoraRows] = await Promise.all([
-    loadVolumeRows(address, profiles, deps),
+    loadVolumeRows(address, profiles, deps, context),
     loadMcapRows(address, profiles, deps),
     loadMeteoraRows(address, profiles, deps),
   ]);
@@ -983,7 +1099,7 @@ async function loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps) {
   const meteoraRow = meteoraRows[0] || null;
 
   return deps.tokenAlertSignalBuilder.buildTokenAlertSignals(
-    buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, meteoraRow),
+    buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, meteoraRow, context),
     { nowMs }
   );
 }
@@ -1006,6 +1122,7 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
   const tokenAfter = input.tokenAfter || null;
   const tokenBefore = input.tokenBefore || null;
   const nowMs = toTimestampMs(options.now) ?? Date.now();
+  const alertSource = toTextOrNull(options.alertSource || input.alertSource);
 
   if (!tokenAfter?.address) {
     return summary;
@@ -1017,13 +1134,13 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
     return summary;
   }
 
-  const signals = await loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps);
+  const signals = await loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps, { alertSource });
 
   for (const profile of profiles) {
     try {
       const ruleDecision = buildRuleCandidate(profile, tokenAfter, signals);
       const rearmRuleKeys = buildRearmRuleKeys(profile, ruleDecision.qualifiedRuleKeys);
-      await handleRuleLifecycle(profile, tokenAfter, ruleDecision.candidate, rearmRuleKeys, nowMs, deps, summary);
+      await handleRuleLifecycle(profile, tokenAfter, ruleDecision.candidates, rearmRuleKeys, nowMs, deps, summary);
     } catch (error) {
       summary.errors += 1;
       console.error(`[UserAlertMatcher] Failed to evaluate token ${tokenAfter.address} for user ${profile?.userId || 'unknown'}:`, error.message);
@@ -1047,19 +1164,28 @@ module.exports = {
   METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT,
   METEORA_FINGERPRINT_CHANGE_BUCKET_PCT,
   METEORA_FINGERPRINT_TVL_BUCKET_USD,
+  GMGN_VOL_1M_RULE_KEY,
+  GMGN_VOL_1M_ALERT_THRESHOLD_PCT,
+  GMGN_VOL_1M_ALERT_COOLDOWN_MS,
+  GMGN_VOL_1M_REPEAT_STEP_PCT,
   evaluateUpdatedToken,
   __private: {
     bucketMetric,
     buildFingerprint,
     buildHvncCandidate,
     buildMeteoraCandidate,
+    buildGmgnVol1mCandidate,
     buildMonitoredMcapCandidate,
     buildMonitoredVolCandidate,
     buildSurgeCandidate,
     buildSurgeCandidates,
     buildRuleCandidate,
+    buildLifecycleCandidates,
     buildSignalInput,
     buildRepeatAwarePayload,
+    buildVolumeSignalInput,
+    buildMcapSignalInput,
+    buildPriceChangeSignalInput,
     buildSharedPayload,
     buildRearmRuleKeys,
     canRepeatMeteoraInSession,
@@ -1081,6 +1207,8 @@ module.exports = {
     loadSignals,
     loadMeteoraRows,
     loadVolumeRows,
+    mergeVolumeRows,
+    needsGmgnVolume1mBaseline,
     needsMcapBaseline,
     needsMeteoraState,
     needsVolumeBaseline,

@@ -1,5 +1,6 @@
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const MONITORED_VOL_RULE_KEY = 'monitored-vol';
+const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
 const MONITORED_MCAP_RULE_KEY = 'monitored-mcap';
 const HVNC_RULE_KEY = 'hvnc';
 const RECENT_SURGE_1H_RULE_KEY = 'recent-surge-1h';
@@ -32,6 +33,18 @@ const BACKEND_ALERT_RULES = Object.freeze({
     scope: 'user-token',
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
+  }),
+  [GMGN_VOL_1M_RULE_KEY]: Object.freeze({
+    ruleKey: GMGN_VOL_1M_RULE_KEY,
+    kind: 'monitored-vol',
+    displayName: 'GMGN Vol 1M',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({
+      thresholdPct: 50,
+      cooldownMs: 60 * 1000,
+      repeatStepPct: 50,
+    }),
   }),
   [MONITORED_MCAP_RULE_KEY]: Object.freeze({
     ruleKey: MONITORED_MCAP_RULE_KEY,
@@ -121,6 +134,7 @@ function getDefaultDashboardAlertRuleKey() {
 
 module.exports = {
   BACKEND_ALERT_RULES,
+  GMGN_VOL_1M_RULE_KEY,
   HIGH_CAP_DUMP_RULE_KEY,
   HVNC_RULE_KEY,
   METEORA_SURGE_RULE_KEY,

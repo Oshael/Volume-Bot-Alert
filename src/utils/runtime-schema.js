@@ -483,6 +483,7 @@ const SCHEMA_GROUPS = [
         columns: [
           'token_address',
           'bucket_ts',
+          'close_vol_1m',
           'close_vol_5m',
           'close_vol_1h',
           'close_vol_6h',
@@ -794,6 +795,34 @@ const SCHEMA_GROUPS = [
           sell_percent: '100',
           status: "'open'::character varying",
           metadata: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
+  {
+    key: 'stage36-gmgn-panel-state',
+    name: 'Stage 36 GMGN panel state table',
+    repair: 'node src/utils/db-init-stage36.js',
+    tables: [
+      {
+        table: 'token_gmgn_panel_state',
+        columns: [
+          'token_address',
+          'first_seen_at',
+          'last_seen_at',
+          'last_interval',
+          'last_rank',
+          'last_mcap',
+          'last_vol_1m',
+          'last_vol_5m',
+          'last_payload',
+          'status',
+          'dex_handoff_at',
+          'updated_at',
+        ],
+        defaults: {
+          last_payload: "'{}'::jsonb",
+          status: "'active'::character varying",
         },
       },
     ],

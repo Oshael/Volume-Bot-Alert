@@ -33,7 +33,10 @@ function createDeps(overrides = {}) {
         },
       },
       tokenMarketVolumeBucket1m: {
-        async listCurrentAndBaselineByAddresses() {
+        async listCurrentAndBaselineByAddresses(_addresses, _windowMinutes, options) {
+          if (options?.volumeWindow === '1m') {
+            return overrides.volumeRows1m || [];
+          }
           return overrides.volumeRows || [];
         },
       },
@@ -100,6 +103,20 @@ function createDeps(overrides = {}) {
     transactionLog,
     triggeredWrites,
   };
+}
+
+async function withGmgnVol1mAlertsEnabled(callback) {
+  const previous = process.env.GMGN_VOL_1M_ALERT_ENABLED;
+  process.env.GMGN_VOL_1M_ALERT_ENABLED = 'true';
+  try {
+    return await callback();
+  } finally {
+    if (previous == null) {
+      delete process.env.GMGN_VOL_1M_ALERT_ENABLED;
+    } else {
+      process.env.GMGN_VOL_1M_ALERT_ENABLED = previous;
+    }
+  }
 }
 
 describe('user alert matcher', () => {
@@ -214,6 +231,216 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].payload.tickerPeers?.count, 2);
     assert.equal(context.eventWrites[0].payload.tickerPeers?.sourcePeerRole, 'og');
     assert.equal(context.eventWrites[0].payload.tickerPeers?.items?.[1]?.address, '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
+  });
+
+  it('emits a separate GMGN 1m volume alert when the GMGN short window spikes', async () => {
+    await withGmgnVol1mAlertsEnabled(async () => {
+      const profile = {
+        userId: 31,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 80,
+        minVol: 8000,
+        minMcap: 30000,
+        maxMcap: 0,
+      };
+      const context = createDeps({
+        profiles: [profile],
+        volumeRows: [{
+          token_address: TOKEN_ADDRESS,
+          baseline_vol_5m: 15000,
+        }],
+        volumeRows1m: [{
+          token_address: TOKEN_ADDRESS,
+          current_vol_1m: 1600,
+          baseline_vol_1m: 1000,
+        }],
+      });
+
+      const result = await userAlertMatcher.evaluateUpdatedToken({
+        alertSource: 'gmgn',
+        tokenBefore: {
+          address: TOKEN_ADDRESS,
+          last_mcap: 250000,
+          last_vol_5m: 15000,
+        },
+        tokenAfter: {
+          address: TOKEN_ADDRESS,
+          symbol: 'WSOL',
+          last_vol_5m: 18000,
+          last_vol_24h: 350000,
+          last_mcap: 300000,
+        },
+      }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
+
+      assert.equal(result.emitted, 1);
+      assert.equal(context.eventWrites.length, 1);
+      assert.equal(context.eventWrites[0].ruleKey, 'gmgn-vol-1m');
+      assert.equal(context.eventWrites[0].kind, 'monitored-vol');
+      assert.equal(context.eventWrites[0].payload.label, 'GMGN 1M');
+      assert.equal(context.eventWrites[0].payload.source, 'gmgn');
+      assert.equal(context.eventWrites[0].payload.gmgnInterval, '1m');
+      assert.equal(context.eventWrites[0].payload.prevVolume1m, 1000);
+      assert.equal(context.eventWrites[0].payload.volume1m, 1600);
+      assert.equal(context.eventWrites[0].payload.volume5m, 18000);
+      assert.equal(context.triggeredWrites[0].ruleKey, 'gmgn-vol-1m');
+      assert.equal(context.triggeredWrites[0].lastAlertedValue, 1600);
+      assert.equal(context.triggeredWrites[0].lastAlertedPct, 60);
+    });
+  });
+
+  it('keeps GMGN 1m volume alerts disabled by default', async () => {
+    const previous = process.env.GMGN_VOL_1M_ALERT_ENABLED;
+    delete process.env.GMGN_VOL_1M_ALERT_ENABLED;
+    try {
+      const context = createDeps({
+        profiles: [{
+          userId: 34,
+          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+          thresholdPct: 80,
+          minVol: 8000,
+          minMcap: 30000,
+          maxMcap: 0,
+        }],
+        volumeRows: [{
+          token_address: TOKEN_ADDRESS,
+          baseline_vol_5m: 15000,
+        }],
+        volumeRows1m: [{
+          token_address: TOKEN_ADDRESS,
+          current_vol_1m: 3000,
+          baseline_vol_1m: 1000,
+        }],
+      });
+
+      const result = await userAlertMatcher.evaluateUpdatedToken({
+        alertSource: 'gmgn',
+        tokenBefore: {
+          address: TOKEN_ADDRESS,
+          last_mcap: 250000,
+          last_vol_5m: 15000,
+        },
+        tokenAfter: {
+          address: TOKEN_ADDRESS,
+          symbol: 'WSOL',
+          last_vol_5m: 18000,
+          last_vol_24h: 350000,
+          last_mcap: 300000,
+        },
+      }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
+
+      assert.equal(result.emitted, 0);
+      assert.equal(context.eventWrites.length, 0);
+    } finally {
+      if (previous == null) {
+        delete process.env.GMGN_VOL_1M_ALERT_ENABLED;
+      } else {
+        process.env.GMGN_VOL_1M_ALERT_ENABLED = previous;
+      }
+    }
+  });
+
+  it('can emit GMGN 1m and normal monitored-vol alerts from the same GMGN update', async () => {
+    await withGmgnVol1mAlertsEnabled(async () => {
+      const profile = {
+        userId: 32,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 8000,
+        minMcap: 30000,
+        maxMcap: 0,
+      };
+      const context = createDeps({
+        profiles: [profile],
+        volumeRows: [{
+          token_address: TOKEN_ADDRESS,
+          baseline_vol_5m: 10000,
+        }],
+        volumeRows1m: [{
+          token_address: TOKEN_ADDRESS,
+          current_vol_1m: 1600,
+          baseline_vol_1m: 1000,
+        }],
+      });
+
+      const result = await userAlertMatcher.evaluateUpdatedToken({
+        alertSource: 'gmgn',
+        tokenBefore: {
+          address: TOKEN_ADDRESS,
+          last_mcap: 250000,
+        },
+        tokenAfter: {
+          address: TOKEN_ADDRESS,
+          symbol: 'WSOL',
+          last_vol_5m: 18000,
+          last_vol_24h: 350000,
+          last_mcap: 300000,
+        },
+      }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
+
+      assert.equal(result.emitted, 2);
+      assert.deepEqual(context.eventWrites.map((event) => event.ruleKey), [
+        'monitored-vol',
+        'gmgn-vol-1m',
+      ]);
+      assert.deepEqual(context.triggeredWrites.map((write) => write.ruleKey), [
+        'monitored-vol',
+        'gmgn-vol-1m',
+      ]);
+    });
+  });
+
+  it('suppresses GMGN 1m repeats until 1m volume beats the last alerted 1m volume by 50%', async () => {
+    await withGmgnVol1mAlertsEnabled(async () => {
+      const context = createDeps({
+        profiles: [{
+          userId: 33,
+          ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+          thresholdPct: 50,
+          minVol: 8000,
+          minMcap: 30000,
+          maxMcap: 0,
+        }],
+        volumeRows: [{
+          token_address: TOKEN_ADDRESS,
+          baseline_vol_5m: 15000,
+        }],
+        volumeRows1m: [{
+          token_address: TOKEN_ADDRESS,
+          current_vol_1m: 1400,
+          baseline_vol_1m: 500,
+        }],
+        stateByRule: {
+          'gmgn-vol-1m': {
+            status: 'triggered',
+            rearmRequired: true,
+            lastAlertedAt: '2026-04-16T11:58:00.000Z',
+            lastAlertedValue: 1000,
+            lastAlertedPct: 100,
+            cooldownUntil: '2026-04-16T11:59:00.000Z',
+            metadata: {},
+          },
+        },
+      });
+
+      const result = await userAlertMatcher.evaluateUpdatedToken({
+        alertSource: 'gmgn',
+        tokenBefore: {
+          address: TOKEN_ADDRESS,
+          last_mcap: 250000,
+        },
+        tokenAfter: {
+          address: TOKEN_ADDRESS,
+          symbol: 'WSOL',
+          last_vol_5m: 18000,
+          last_vol_24h: 350000,
+          last_mcap: 300000,
+        },
+      }, { now: '2026-04-16T12:00:00.000Z', deps: context.deps, alertSource: 'gmgn' });
+
+      assert.equal(result.emitted, 0);
+      assert.equal(result.suppressed, 1);
+      assert.equal(context.eventWrites.length, 0);
+    });
   });
 
   it('suppresses monitored-vol retriggers until the next alert beats the last alerted volume by the user threshold', async () => {

@@ -216,16 +216,28 @@ function normalizeCoreFacts(input = {}, nowMs = Date.now()) {
   return {
     address: firstText(input.address, input.tokenAddress),
     source: firstText(input.source),
+    alertSource: firstText(input.alertSource),
     currentVolume5m: firstNumber(
       input.currentVolume5m,
       input.volume5m,
       input.last_vol_5m,
+    ),
+    currentVolume1m: firstNumber(
+      input.currentVolume1m,
+      input.volume1m,
+      input.last_vol_1m,
+      input.current_vol_1m,
     ),
     prevVolume5m: firstNumber(
       input.prevVolume5m,
       input.prevVolume5mCanonical,
       input.baselineVolume5m,
       input.baseline_vol_5m,
+    ),
+    prevVolume1m: firstNumber(
+      input.prevVolume1m,
+      input.baselineVolume1m,
+      input.baseline_vol_1m,
     ),
     currentMcap: firstNumber(
       input.currentMcap,
@@ -286,6 +298,7 @@ function passesHvncAgeGate(facts, ageMs) {
 function buildSignalFlags(facts, meteora, nowMs) {
   const ageMs = computeAgeMs(facts.tokenCreatedAt, nowMs);
   const vol5mChangePct = computePctChange(facts.currentVolume5m, facts.prevVolume5m);
+  const vol1mChangePct = computePctChange(facts.currentVolume1m, facts.prevVolume1m);
   const mcapChangePct = computePctChange(facts.currentMcap, facts.prevMcap);
   const isMcapDeclining = facts.prevMcap != null
     && facts.currentMcap != null
@@ -308,6 +321,7 @@ function buildSignalFlags(facts, meteora, nowMs) {
     ageMs,
     migrationAgeMs: facts.migrationAgeMs,
     vol5mChangePct,
+    vol1mChangePct,
     mcapChangePct,
     isMcapDeclining,
     hvncAgeGatePassed,
@@ -335,9 +349,12 @@ function buildTokenAlertSignals(input = {}, options = {}) {
 
   return {
     address: facts.address,
+    alertSource: facts.alertSource,
     generatedAt: new Date(nowMs).toISOString(),
     currentVolume5m: facts.currentVolume5m,
+    currentVolume1m: facts.currentVolume1m,
     prevVolume5m: facts.prevVolume5m,
+    prevVolume1m: facts.prevVolume1m,
     currentMcap: facts.currentMcap,
     prevMcap: facts.prevMcap,
     volume24h: facts.volume24h,
@@ -349,9 +366,11 @@ function buildTokenAlertSignals(input = {}, options = {}) {
     ageMs: flags.ageMs,
     migrationAgeMs: flags.migrationAgeMs,
     vol5mChangePct: flags.vol5mChangePct,
+    vol1mChangePct: flags.vol1mChangePct,
     mcapChangePct: flags.mcapChangePct,
     isMcapDeclining: flags.isMcapDeclining,
     hasVol5mBaseline: facts.prevVolume5m != null && facts.prevVolume5m > 0,
+    hasVol1mBaseline: facts.prevVolume1m != null && facts.prevVolume1m > 0,
     hasMcapBaseline: facts.prevMcap != null && facts.prevMcap > 0,
     mcapAlertTokenAgeGatePassed: flags.mcapAlertTokenAgeGatePassed,
     hvncAgeGatePassed: flags.hvncAgeGatePassed,

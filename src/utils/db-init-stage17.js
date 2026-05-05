@@ -8,6 +8,7 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_market_volume_buckets_1m (
      token_address VARCHAR(64) NOT NULL,
      bucket_ts TIMESTAMPTZ NOT NULL,
+     close_vol_1m NUMERIC(20, 2),
      close_vol_5m NUMERIC(20, 2),
      close_vol_1h NUMERIC(20, 2),
      close_vol_6h NUMERIC(20, 2),
@@ -16,6 +17,8 @@ const STATEMENTS = [
      source VARCHAR(32) NOT NULL DEFAULT 'dexscreener',
      PRIMARY KEY (token_address, bucket_ts)
    )`,
+  `ALTER TABLE token_market_volume_buckets_1m
+     ADD COLUMN IF NOT EXISTS close_vol_1m NUMERIC(20, 2)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_volume_buckets_1m_bucket_ts
      ON token_market_volume_buckets_1m(bucket_ts DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_volume_buckets_1m_addr_bucket_ts

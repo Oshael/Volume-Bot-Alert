@@ -6,6 +6,7 @@ const tokenCatalog = require('../src/models/token-catalog');
 const tokenAlertRuleState = require('../src/models/token-alert-rule-state');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-bucket-1m');
+const adminBlockedToken = require('../src/models/admin-blocked-token');
 const dexscreener = require('../src/services/dexscreener');
 const highCapDumpAlert = require('../src/services/high-cap-dump-alert');
 const userAlertMatcher = require('../src/services/user-alert-matcher');
@@ -182,6 +183,25 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.eligibleForMonitoring, true);
     assert.equal(snapshot.suppressedReason, null);
     assert.ok(nextMs < 3 * 60 * 1000, `expected manual token to keep normal cadence, got ${nextMs}ms`);
+  });
+
+  it('fills young Dex 6h and 24h volume windows from shorter available volume', () => {
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 140000,
+      pairCreatedAt: Date.now() - (25 * 60 * 1000),
+      volume: {
+        m5: 58000,
+        h1: 751000,
+        h6: 0,
+        h24: 0,
+      },
+      priceChange: {},
+    });
+
+    assert.equal(snapshot.vol6h, 751000);
+    assert.equal(snapshot.vol24h, 751000);
+    assert.equal(snapshot.monitorPriority, 'high');
+    assert.equal(snapshot.eligibleForMonitoring, true);
   });
 
   it('treats low-activity auto tokens as low-dust for throttle and as low-activity for Dex cache TTL', () => {
@@ -398,5 +418,113 @@ describe('catalog worker drift compensation', () => {
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       userAlertMatcher.evaluateUpdatedToken = originalEvaluateUpdatedToken;
     }
+  });
+
+  it('suppresses the first young extreme churn alert and auto-blocks on confirmation', async () => {
+    const originalGetBestPair = dexscreener.getBestPair;
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
+    const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const originalGetInitialBucket = tokenMarketBucket1m.getInitialBucketByAddress;
+    const originalAdminBlockAdd = adminBlockedToken.add;
+    const originalEvaluateUpdatedToken = userAlertMatcher.evaluateUpdatedToken;
+    const tokenBefore = {
+      address: TOKEN_A,
+      chain: 'solana',
+      source: 'dexscreener-discovery',
+      last_mcap: 25000,
+      last_vol_5m: 0,
+      eligible_for_monitoring: true,
+      monitor_priority: 'normal',
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      symbol: 'ROAF',
+      name: 'Russian Oil Asset Fund',
+      last_pair_address: 'pair-1',
+      last_vol_5m: 120000,
+      last_mcap: 33000,
+      last_token_created_at_ms: Date.now() - (3 * 60 * 1000),
+    };
+    const blockedToken = {
+      ...updatedToken,
+      source: 'admin-blocked',
+      eligible_for_monitoring: false,
+      eligibility_state: 'admin-blocked',
+      suppressed_reason: 'admin_blocked',
+    };
+    const labels = [];
+    let applyCalls = 0;
+
+    catalogWorker.__private.clearYoungExtremeChurnState(tokenBefore.address);
+    dexscreener.getBestPair = () => ({
+      marketCap: 33000,
+      pairAddress: 'pair-1',
+      priceUsd: '0.0001',
+      url: 'https://dex.example/pair-1',
+      dexId: 'meteora',
+      baseToken: { symbol: 'ROAF', name: 'Russian Oil Asset Fund' },
+      volume: { m5: 120000, h1: 130000, h6: 130000, h24: 130000 },
+      priceChange: { h1: 15, h6: 15, h24: 15 },
+      liquidity: { usd: 50000 },
+      txns: { h1: { buys: 20, sells: 10 }, h24: { buys: 200, sells: 120 } },
+      pairCreatedAt: Date.now() - (3 * 60 * 1000),
+    });
+    tokenCatalog.applyEvaluationResult = async (_address, payload) => {
+      applyCalls += 1;
+      if (applyCalls <= 2) {
+        assert.equal(payload.vol5m, 120000);
+        return updatedToken;
+      }
+
+      assert.equal(payload.eligibilityState, 'admin-blocked');
+      assert.equal(payload.suppressedReason, 'admin_blocked');
+      return blockedToken;
+    };
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => payload;
+    tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => payload;
+    tokenMarketBucket1m.getInitialBucketByAddress = async () => ({
+      openMcap: 33000,
+      closeMcap: 33000,
+    });
+    adminBlockedToken.add = async (payload) => {
+      labels.push(payload.label);
+      return payload;
+    };
+    userAlertMatcher.evaluateUpdatedToken = async () => {
+      throw new Error('matcher should not run for young extreme churn auto-blocks');
+    };
+
+    try {
+      const firstResult = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+      const secondResult = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+
+      assert.equal(firstResult, updatedToken);
+      assert.equal(secondResult, blockedToken);
+      assert.equal(applyCalls, 3);
+      assert.equal(labels.length, 1);
+      assert.match(labels[0], /^catalog-volume:young-extreme-churn:33000:33000:120000:3\.6x$/);
+    } finally {
+      catalogWorker.__private.clearYoungExtremeChurnState(tokenBefore.address);
+      dexscreener.getBestPair = originalGetBestPair;
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
+      tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
+      tokenMarketBucket1m.getInitialBucketByAddress = originalGetInitialBucket;
+      adminBlockedToken.add = originalAdminBlockAdd;
+      userAlertMatcher.evaluateUpdatedToken = originalEvaluateUpdatedToken;
+    }
+  });
+
+  it('does not apply the young extreme churn block to pump-like pairs', () => {
+    const assessment = catalogWorker.__private.assessYoungExtremeChurn(
+      { source: 'dexscreener-discovery' },
+      { dexId: 'pumpfun', pairCreatedAt: Date.now() - 60000 },
+      { marketCap: 33000, vol5m: 120000 },
+      { openMcap: 33000 }
+    );
+
+    assert.equal(assessment.shouldBlock, false);
+    assert.equal(assessment.reason, 'trusted-source');
   });
 });

@@ -836,6 +836,58 @@ async function listHistoryByAddress(address, options = {}) {
   }));
 }
 
+async function getInitialBucketByAddress(address) {
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    throw new Error('Invalid token address format');
+  }
+
+  const { rows } = await db.query(
+    `SELECT
+       token_address,
+       bucket_ts,
+       pair_address,
+       open_mcap,
+       high_mcap,
+       low_mcap,
+       close_mcap,
+       open_price,
+       high_price,
+       low_price,
+       close_price,
+       sample_count,
+       source
+     FROM token_market_buckets_1m
+     WHERE token_address = $1
+     ORDER BY bucket_ts ASC
+     LIMIT 1`,
+    [addr]
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    token_address: row.token_address,
+    ts: row.bucket_ts,
+    pairAddress: row.pair_address || null,
+    mcap: row.close_mcap == null ? null : Number(row.close_mcap),
+    price: row.close_price == null ? null : Number(row.close_price),
+    openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
+    highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
+    lowMcap: row.low_mcap == null ? null : Number(row.low_mcap),
+    closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
+    openPrice: row.open_price == null ? null : Number(row.open_price),
+    highPrice: row.high_price == null ? null : Number(row.high_price),
+    lowPrice: row.low_price == null ? null : Number(row.low_price),
+    closePrice: row.close_price == null ? null : Number(row.close_price),
+    sampleCount: Number(row.sample_count) || 0,
+    source: row.source || 'dexscreener',
+  };
+}
+
 function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   const items = Array.isArray(buckets) ? buckets : [];
   const safeHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_SPARKLINE_HOURS, 24 * 30));
@@ -2126,6 +2178,7 @@ module.exports = {
   computeLateralizedCandidates,
   computeBidZoneCandidates,
   upsertSnapshotBucket,
+  getInitialBucketByAddress,
   listHistoryByAddress,
   listSparklineByAddresses,
   deleteByAddresses,

@@ -1,10 +1,12 @@
 const tokenCatalog = require('../models/token-catalog');
+const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenAlertRuleState = require('../models/token-alert-rule-state');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
 const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
+const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
 const config = require('../../config');
 const { isTraceDiscoveryEnabled, logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
 
@@ -44,9 +46,17 @@ const LOW_NEAR_JITTER_MS = 3 * 1000;
 const LOW_DUST_JITTER_MS = 60 * 1000;
 const DORMANT_JITTER_MS = 2 * 60 * 1000;
 const MIGRATION_GRACE_FLOOR_MS = 10 * 60 * 1000;
+const YOUNG_EXTREME_CHURN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const YOUNG_EXTREME_CHURN_MIN_INITIAL_MCAP = 20000;
+const YOUNG_EXTREME_CHURN_MAX_MCAP = 100000;
+const YOUNG_EXTREME_CHURN_MIN_VOL_5M = 100000;
+const YOUNG_EXTREME_CHURN_MIN_VOL_MCAP_RATIO = 2.8;
+const YOUNG_EXTREME_CHURN_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000;
+const YOUNG_EXTREME_CHURN_REQUIRED_HITS = 2;
 
 let timer = null;
 let running = false;
+const youngExtremeChurnState = new Map();
 let status = {
   running: false,
   lastRunAt: null,
@@ -80,6 +90,10 @@ let status = {
   lastHighCapDumpEmitted: 0,
   lastHighCapDumpRearmed: 0,
   lastHighCapDumpSuppressed: 0,
+  lastYoungExtremeChurnAlertSuppressed: 0,
+  lastYoungExtremeChurnAutoBlocked: 0,
+  totalYoungExtremeChurnAlertSuppressed: 0,
+  totalYoungExtremeChurnAutoBlocked: 0,
 };
 
 function emptyPriorityCounts() {
@@ -149,6 +163,17 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function toTimestampMs(value) {
+  if (value == null) return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function getGraceUntilMs(value) {
   if (!value) return 0;
   if (value instanceof Date) {
@@ -172,6 +197,204 @@ function isManualSource(token) {
   return String(token?.source || '').trim().toLowerCase() === 'user-manual';
 }
 
+function isPumpLikeToken(token, pair) {
+  const source = String(token?.source || '').trim().toLowerCase();
+  const dexId = String(pair?.dexId || '').trim().toLowerCase();
+  return source.includes('pump') || dexId.includes('pump');
+}
+
+function resolveInitialMcap(initialBucket, snapshot) {
+  const candidates = [
+    initialBucket?.openMcap,
+    initialBucket?.closeMcap,
+    initialBucket?.mcap,
+    snapshot?.marketCap,
+  ];
+
+  for (const candidate of candidates) {
+    const value = toNumber(candidate);
+    if (value != null && value > 0) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function buildYoungExtremeChurnLabel(assessment) {
+  return [
+    'catalog-volume:young-extreme-churn',
+    Math.round(assessment.currentMcap),
+    Math.round(assessment.initialMcap),
+    Math.round(assessment.vol5m),
+    `${Math.round(assessment.volMcapRatio * 10) / 10}x`,
+  ].join(':');
+}
+
+function getYoungExtremeChurnState(address, nowMs = Date.now()) {
+  const key = String(address || '').trim();
+  if (!key) {
+    return null;
+  }
+
+  const state = youngExtremeChurnState.get(key);
+  if (!state) {
+    return null;
+  }
+
+  if (nowMs - state.firstSeenAtMs > YOUNG_EXTREME_CHURN_CONFIRMATION_WINDOW_MS) {
+    youngExtremeChurnState.delete(key);
+    return null;
+  }
+
+  return state;
+}
+
+function recordYoungExtremeChurnSuspicion(address, assessment, nowMs = Date.now()) {
+  const key = String(address || '').trim();
+  if (!key) {
+    return { hitCount: 0, confirmed: false };
+  }
+
+  const previous = getYoungExtremeChurnState(key, nowMs);
+  const state = {
+    firstSeenAtMs: previous?.firstSeenAtMs || nowMs,
+    lastSeenAtMs: nowMs,
+    hitCount: (previous?.hitCount || 0) + 1,
+    assessment,
+  };
+  youngExtremeChurnState.set(key, state);
+
+  return {
+    ...state,
+    confirmed: state.hitCount >= YOUNG_EXTREME_CHURN_REQUIRED_HITS,
+  };
+}
+
+function clearYoungExtremeChurnState(address) {
+  youngExtremeChurnState.delete(String(address || '').trim());
+}
+
+function resolveYoungExtremeChurnAgeMs(token, pair, now) {
+  const createdAtMs = toTimestampMs(pair?.pairCreatedAt || token?.last_token_created_at_ms);
+  if (!createdAtMs || now - createdAtMs > YOUNG_EXTREME_CHURN_MAX_AGE_MS) {
+    return null;
+  }
+
+  return now - createdAtMs;
+}
+
+function passesYoungExtremeChurnMarketShape({ currentMcap, initialMcap, vol5m, volMcapRatio }) {
+  return currentMcap <= YOUNG_EXTREME_CHURN_MAX_MCAP
+    && initialMcap >= YOUNG_EXTREME_CHURN_MIN_INITIAL_MCAP
+    && initialMcap <= YOUNG_EXTREME_CHURN_MAX_MCAP
+    && vol5m >= YOUNG_EXTREME_CHURN_MIN_VOL_5M
+    && volMcapRatio >= YOUNG_EXTREME_CHURN_MIN_VOL_MCAP_RATIO;
+}
+
+function assessYoungExtremeChurn(token, pair, snapshot, initialBucket, now = Date.now()) {
+  if (isManualSource(token) || isPumpLikeToken(token, pair)) {
+    return { shouldBlock: false, reason: 'trusted-source' };
+  }
+
+  const ageMs = resolveYoungExtremeChurnAgeMs(token, pair, now);
+  if (ageMs == null) {
+    return { shouldBlock: false, reason: 'age' };
+  }
+
+  const currentMcap = toNumber(snapshot?.marketCap);
+  const vol5m = toNumber(snapshot?.vol5m);
+  const initialMcap = resolveInitialMcap(initialBucket, snapshot);
+  if (currentMcap == null || vol5m == null || initialMcap == null) {
+    return { shouldBlock: false, reason: 'missing-market-data' };
+  }
+
+  const volMcapRatio = currentMcap > 0 ? vol5m / currentMcap : 0;
+  const shouldBlock = passesYoungExtremeChurnMarketShape({
+    currentMcap,
+    initialMcap,
+    vol5m,
+    volMcapRatio,
+  });
+
+  return {
+    shouldBlock,
+    reason: shouldBlock ? 'young-extreme-churn' : 'thresholds',
+    currentMcap,
+    initialMcap,
+    vol5m,
+    volMcapRatio,
+    ageMs,
+  };
+}
+
+async function assessYoungExtremeChurnWithInitialBucket(token, pair, snapshot) {
+  const preliminaryAssessment = assessYoungExtremeChurn(token, pair, snapshot, null);
+  if (!preliminaryAssessment.shouldBlock) {
+    clearYoungExtremeChurnState(token.address);
+    return preliminaryAssessment;
+  }
+
+  const initialBucket = await tokenMarketBucket1m.getInitialBucketByAddress(token.address);
+  const assessment = assessYoungExtremeChurn(token, pair, snapshot, initialBucket);
+  if (!assessment.shouldBlock) {
+    clearYoungExtremeChurnState(token.address);
+  }
+
+  return assessment;
+}
+
+async function applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment) {
+  const confirmation = recordYoungExtremeChurnSuspicion(token.address, assessment);
+  if (!confirmation.confirmed) {
+    status.lastYoungExtremeChurnAlertSuppressed += 1;
+    status.totalYoungExtremeChurnAlertSuppressed += 1;
+    return {
+      blocked: false,
+      suppressAlert: true,
+      assessment,
+      confirmation,
+    };
+  }
+
+  await adminBlockedToken.add({
+    address: token.address,
+    label: buildYoungExtremeChurnLabel(assessment),
+    createdBy: null,
+  });
+
+  const blockedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+    eligibilityState: 'admin-blocked',
+    eligibleForMonitoring: false,
+    suppressedReason: 'admin_blocked',
+    monitorPriority: 'dormant',
+    nextEvaluationAt: new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000)),
+    lastEvaluationError: null,
+    evaluationErrorCount: 0,
+    symbol: updatedToken?.symbol || pair?.baseToken?.symbol || token?.symbol || null,
+    name: updatedToken?.name || pair?.baseToken?.name || token?.name || null,
+  });
+
+  status.lastYoungExtremeChurnAutoBlocked += 1;
+  status.totalYoungExtremeChurnAutoBlocked += 1;
+  clearYoungExtremeChurnState(token.address);
+
+  return {
+    blocked: true,
+    blockedToken: blockedToken || updatedToken,
+    assessment,
+  };
+}
+
+async function autoBlockYoungExtremeChurn(token, updatedToken, pair, snapshot) {
+  const assessment = await assessYoungExtremeChurnWithInitialBucket(token, pair, snapshot);
+  if (!assessment.shouldBlock) {
+    return { blocked: false, assessment };
+  }
+
+  return applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment);
+}
+
 function isLowActivityAutoToken(token, vol24h) {
   const numericVol24h = Number(vol24h);
   return !isManualSource(token)
@@ -186,10 +409,18 @@ function getLowActivityMinimumRecheckMs(token, vol24h) {
 
 function derivePrioritySnapshot(bestPair, token = null) {
   const marketCap = Number(bestPair?.marketCap || bestPair?.fdv || 0);
-  const vol5m = toNumber(bestPair?.volume?.m5);
-  const vol1h = toNumber(bestPair?.volume?.h1);
-  const vol6h = toNumber(bestPair?.volume?.h6);
-  const vol24h = toNumber(bestPair?.volume?.h24);
+  const now = Date.now();
+  const filledVolumes = fillYoungTokenVolumeWindows({
+    tokenCreatedAt: bestPair?.pairCreatedAt,
+    vol5m: toNumber(bestPair?.volume?.m5),
+    vol1h: toNumber(bestPair?.volume?.h1),
+    vol6h: toNumber(bestPair?.volume?.h6),
+    vol24h: toNumber(bestPair?.volume?.h24),
+  }, { now: new Date(now) });
+  const vol5m = filledVolumes.vol5m;
+  const vol1h = filledVolumes.vol1h;
+  const vol6h = filledVolumes.vol6h;
+  const vol24h = filledVolumes.vol24h;
   const pchange1h = toNumber(bestPair?.priceChange?.h1);
   const pchange6h = toNumber(bestPair?.priceChange?.h6);
   const pchange24h = toNumber(bestPair?.priceChange?.h24);
@@ -198,7 +429,6 @@ function derivePrioritySnapshot(bestPair, token = null) {
   const txns1hSells = toNumber(bestPair?.txns?.h1?.sells);
   const txns24hBuys = toNumber(bestPair?.txns?.h24?.buys);
   const txns24hSells = toNumber(bestPair?.txns?.h24?.sells);
-  const now = Date.now();
 
   const applyLowActivityCooldown = (delayMs, randomValue = Math.random()) => {
     const minimumDelayMs = getLowActivityMinimumRecheckMs(token, vol24h);
@@ -647,6 +877,25 @@ async function evaluateTokenWithData(token, data) {
   await tokenMarketBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
   await tokenMarketVolumeBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
 
+  const youngExtremeChurnBlock = await autoBlockYoungExtremeChurn(
+    token,
+    updatedToken,
+    bestPair,
+    snapshot
+  );
+  if (youngExtremeChurnBlock.blocked) {
+    console.warn(
+      `[CatalogWorker] Auto-blocked ${token.address} before alert matcher: ${buildYoungExtremeChurnLabel(youngExtremeChurnBlock.assessment)}`
+    );
+    return youngExtremeChurnBlock.blockedToken;
+  }
+  if (youngExtremeChurnBlock.suppressAlert) {
+    console.warn(
+      `[CatalogWorker] Suppressed alert for young extreme churn candidate ${token.address}: ${buildYoungExtremeChurnLabel(youngExtremeChurnBlock.assessment)}`
+    );
+    return updatedToken;
+  }
+
   try {
     await userAlertMatcher.evaluateUpdatedToken({
       tokenBefore: token,
@@ -828,6 +1077,8 @@ async function runOnce() {
   status.lastHighCapDumpEmitted = 0;
   status.lastHighCapDumpRearmed = 0;
   status.lastHighCapDumpSuppressed = 0;
+  status.lastYoungExtremeChurnAlertSuppressed = 0;
+  status.lastYoungExtremeChurnAutoBlocked = 0;
   status.totalProcessed += due.length;
 
   for (let index = 0; index < due.length; index += DEX_BATCH_LIMIT) {
@@ -947,6 +1198,11 @@ module.exports = {
     isLowActivityAutoToken,
     isManualSource,
     isMigrationGraceActive,
+    assessYoungExtremeChurn,
+    buildYoungExtremeChurnLabel,
+    clearYoungExtremeChurnState,
+    getYoungExtremeChurnState,
+    recordYoungExtremeChurnSuspicion,
     getRateLimitedRetryMs,
     getThrottleTokenBucket,
     getThrottleTokenRank,
