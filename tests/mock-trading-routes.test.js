@@ -84,9 +84,9 @@ describe('mock trading admin routes', () => {
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
     await db.query(
       `INSERT INTO token_catalog (
-         address, chain, symbol, name, source, last_price, last_mcap, last_seen_at, last_evaluated_at
+         address, chain, symbol, name, source, last_image_url, last_price, last_mcap, last_seen_at, last_evaluated_at
        )
-       VALUES ($1, 'solana', 'WSOL', 'Wrapped SOL', 'mock-trading-test', 0.001, 100000, NOW(), NOW())`,
+       VALUES ($1, 'solana', 'WSOL', 'Wrapped SOL', 'mock-trading-test', 'https://example.test/wsol.png', 0.001, 100000, NOW(), NOW())`,
       [VALID_ADDR]
     );
   });
@@ -143,6 +143,24 @@ describe('mock trading admin routes', () => {
     assert.equal(sellRes.status, 200);
     assert.equal(sellRes.body.trade.realizedPnlUsd, 50);
     assert.equal(sellRes.body.trade.realizedPnlPct, 100);
+
+    await db.query(
+      `UPDATE token_catalog
+       SET last_mcap = 25000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const tradesRes = await request(app)
+      .get('/api/admin/mock-trading/trades')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(tradesRes.status, 200);
+    const sellTrade = tradesRes.body.trades.find((trade) => trade.side === 'sell');
+    assert.ok(sellTrade);
+    assert.equal(sellTrade.symbol, 'WSOL');
+    assert.equal(sellTrade.name, 'Wrapped SOL');
+    assert.equal(sellTrade.imageUrl, 'https://example.test/wsol.png');
 
     const resetRes = await request(app)
       .post('/api/admin/mock-trading/reset')

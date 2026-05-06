@@ -1557,15 +1557,13 @@ function renderMockTradingOpenOrderRow(state: AppState, order: MockTradingTakePr
   const position = getMockTradingPositionView(state, order.tokenAddress);
   const symbol = token?.symbol || position?.symbol || order.tokenAddress.slice(0, 8);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
-  const avatar = imageUrl
-    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
-    : `<span>${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
   return `
     <tr>
       <td>
         <div class="mock-trading-history-token">
-          ${avatar}
+          ${renderMockTradingHistoryAvatar(imageUrl, symbol)}
           <strong>${escapeHtml(symbol)}</strong>
+          ${renderMockTradingHistoryCopyButton(order.tokenAddress, symbol)}
         </div>
       </td>
       <td>${escapeHtml(fmtMoney(order.targetMcapUsd))}</td>
@@ -1599,18 +1597,16 @@ function renderMockTradingHistoryTable(state: AppState, trades: MockTradingTrade
 
 function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeView) {
   const token = getTrackedToken(state, trade.tokenAddress);
-  const symbol = token?.symbol || trade.tokenAddress.slice(0, 8);
-  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
+  const symbol = token?.symbol || trade.symbol || trade.tokenAddress.slice(0, 8);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || trade.imageUrl || null);
   const tone = trade.realizedPnlUsd < 0 ? 'down' : 'up';
-  const avatar = imageUrl
-    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
-    : `<span>${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
   return `
     <tr>
       <td>
         <div class="mock-trading-history-token">
-          ${avatar}
+          ${renderMockTradingHistoryAvatar(imageUrl, symbol)}
           <strong>${escapeHtml(symbol)}</strong>
+          ${renderMockTradingHistoryCopyButton(trade.tokenAddress, symbol)}
         </div>
       </td>
       <td>${escapeHtml(fmtMockUsd(trade.notionalUsd))}</td>
@@ -1619,6 +1615,16 @@ function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeVie
       <td>${escapeHtml(formatMockTradeTime(trade.executedAt))}</td>
     </tr>
   `;
+}
+
+function renderMockTradingHistoryAvatar(imageUrl: string | null, symbol: string) {
+  return imageUrl
+    ? `<img src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
+    : `<span>${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+}
+
+function renderMockTradingHistoryCopyButton(address: string, symbol: string) {
+  return `<button type="button" class="workspace-mock-trading-copy copy-button mock-trading-history-copy" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract">⧉</button>`;
 }
 
 function formatMockTradeTime(value?: string | null) {
@@ -1958,6 +1964,8 @@ function bindMockTradingHistoryModal(section: ParentNode, controller: AppControl
       void controller.cancelMockTradingTakeProfitOrder(orderId);
     });
   });
+
+  bindCopyButtons(section);
 }
 
 function bindMockTradingPnlResumeModal(section: ParentNode, controller: AppController) {

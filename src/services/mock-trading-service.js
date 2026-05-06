@@ -247,6 +247,7 @@ function mapCatalogPrice(row, now = new Date(), maxAgeMs = DEFAULT_PRICE_MAX_AGE
     marketCapUsd: toFiniteNumber(row.last_mcap, null),
     symbol: row.symbol || null,
     name: row.name || null,
+    imageUrl: row.last_image_url || null,
     pairAddress: row.last_pair_address || null,
     lastSeenAt: row.last_seen_at || null,
     lastEvaluatedAt: row.last_evaluated_at || null,
@@ -255,10 +256,14 @@ function mapCatalogPrice(row, now = new Date(), maxAgeMs = DEFAULT_PRICE_MAX_AGE
 
 function mapTrade(row) {
   if (!row) return null;
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   return {
     id: Number(row.id),
     userId: Number(row.user_id),
     tokenAddress: row.token_address,
+    symbol: row.trade_symbol || metadata.symbol || null,
+    name: row.trade_name || metadata.name || null,
+    imageUrl: row.trade_image_url || metadata.imageUrl || null,
     side: row.side,
     quantity: toFiniteNumber(row.quantity, 0),
     priceUsd: toFiniteNumber(row.price_usd, 0),
@@ -271,7 +276,7 @@ function mapTrade(row) {
     mcapMultiple: toFiniteNumber(row.mcap_multiple, null),
     source: row.source || 'token_catalog',
     executedAt: row.executed_at || null,
-    metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+    metadata,
   };
 }
 
@@ -364,7 +369,7 @@ async function ensureAccount(userId, runner, { lock = false, startingCashUsd = D
 
 async function loadFreshCatalogPrice(address, runner, options = {}) {
   const { rows } = await runner.query(
-    `SELECT address, symbol, name, last_price, last_mcap, last_pair_address, last_seen_at, last_evaluated_at
+    `SELECT address, symbol, name, last_image_url, last_price, last_mcap, last_pair_address, last_seen_at, last_evaluated_at
      FROM token_catalog
      WHERE address = $1`,
     [address]
@@ -518,6 +523,15 @@ async function insertTrade(userId, address, trade, runner) {
   return mapTrade(rows[0]);
 }
 
+function buildTradeMetadata(catalog, extra = {}) {
+  return {
+    symbol: catalog.symbol || null,
+    name: catalog.name || null,
+    imageUrl: catalog.imageUrl || null,
+    ...extra,
+  };
+}
+
 async function buyToken(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
   const address = normalizeTokenAddress(payload.address);
@@ -532,6 +546,7 @@ async function buyToken(payload = {}, options = {}) {
 
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
+    next.trade.metadata = buildTradeMetadata(catalog, next.trade.metadata);
     const trade = await insertTrade(userId, address, next.trade, client);
     const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
     const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, address, client);
@@ -563,6 +578,7 @@ async function sellToken(payload = {}, options = {}) {
 
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
+    next.trade.metadata = buildTradeMetadata(catalog, next.trade.metadata);
     const trade = await insertTrade(userId, address, next.trade, client);
     if (!next.position) {
       await cancelOpenTakeProfitOrders(userId, address, client, 'position_closed');
@@ -694,16 +710,22 @@ async function listTrades(filters = {}, runner = db) {
   const userId = normalizeUserId(filters.userId);
   const limit = Math.max(1, Math.min(Number(filters.limit) || 50, 200));
   const values = [userId, limit];
-  const clauses = ['user_id = $1'];
+  const clauses = ['mt.user_id = $1'];
   if (filters.address != null && String(filters.address).trim() !== '') {
     values.push(normalizeTokenAddress(filters.address));
-    clauses.push(`token_address = $${values.length}`);
+    clauses.push(`mt.token_address = $${values.length}`);
   }
   const { rows } = await runner.query(
-    `SELECT *
-     FROM mock_trading_trades
+    `SELECT
+       mt.*,
+       COALESCE(NULLIF(mt.metadata->>'symbol', ''), tc.symbol) AS trade_symbol,
+       COALESCE(NULLIF(mt.metadata->>'name', ''), tc.name) AS trade_name,
+       COALESCE(NULLIF(mt.metadata->>'imageUrl', ''), tc.last_image_url) AS trade_image_url
+     FROM mock_trading_trades mt
+     LEFT JOIN token_catalog tc
+       ON tc.address = mt.token_address
      WHERE ${clauses.join(' AND ')}
-     ORDER BY executed_at DESC, id DESC
+     ORDER BY mt.executed_at DESC, mt.id DESC
      LIMIT $2`,
     values
   );
@@ -846,12 +868,12 @@ async function executeTakeProfitOrder(orderId, options = {}) {
       quantity,
     });
     next.trade.source = 'take_profit';
-    next.trade.metadata = {
+    next.trade.metadata = buildTradeMetadata(catalog, {
       takeProfitOrderId: order.id,
       targetMcapUsd: order.targetMcapUsd,
       sellPercent: order.sellPercent,
       triggerMcapUsd: catalog.marketCapUsd,
-    };
+    });
 
     await saveAccount(next.account, client);
     await savePosition(order.userId, order.tokenAddress, next.position, client);

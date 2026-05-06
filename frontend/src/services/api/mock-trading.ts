@@ -51,6 +51,9 @@ export interface MockTradingTrade {
   id: number;
   userId: number;
   tokenAddress: string;
+  symbol?: string | null;
+  name?: string | null;
+  imageUrl?: string | null;
   side: 'buy' | 'sell';
   quantity: number;
   priceUsd: number;

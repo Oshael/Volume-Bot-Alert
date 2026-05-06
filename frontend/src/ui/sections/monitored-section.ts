@@ -331,7 +331,7 @@ function appendMonitoredMockTradingLine(
   mockLine.type = 'button';
   mockLine.dataset.action = 'open-mock-trading-pnl';
   mockLine.dataset.address = mockTradingPosition.tokenAddress;
-  mockLine.className = `panel-row-meta monitored-meta-line mock-trading-line mock-trading-pnl-trigger ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
+  mockLine.className = `panel-row-meta mock-trading-line mock-trading-pnl-trigger ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
   mockLine.title = 'Open PnL resume';
   mockLine.textContent = `PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}`;
   main.append(mockLine);
