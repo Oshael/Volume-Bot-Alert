@@ -39,6 +39,8 @@ const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 });
+const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
+const sparklineHoverBoundElements = new WeakSet<HTMLElement>();
 
 type SparklineRenderOptions = {
   expanded?: boolean;
@@ -266,12 +268,18 @@ export function bindSparklineHover(
   }
 }
 
-function bindExpandableSparkline(wrap: HTMLElement, address: string, controller?: AppController) {
-  if (wrap.dataset.sparklineExpandable !== 'true' || !controller || wrap.dataset.sparklineExpandBound === 'true') {
+function bindExpandableSparkline(
+  wrap: HTMLElement,
+  address: string,
+  controller?: AppController,
+) {
+  const expandable = wrap.dataset.sparklineExpandable === 'true';
+  const alreadyBound = sparklineExpandBoundElements.has(wrap);
+  if (!expandable || !controller || alreadyBound) {
     return;
   }
 
-  wrap.dataset.sparklineExpandBound = 'true';
+  sparklineExpandBoundElements.add(wrap);
   wrap.tabIndex = 0;
   wrap.setAttribute('role', 'button');
   wrap.setAttribute('aria-label', address ? `Expand chart for ${address}` : 'Expand chart');
@@ -293,7 +301,9 @@ function bindExpandableSparkline(wrap: HTMLElement, address: string, controller?
       pointerHandled = false;
     }, 350);
   });
-  wrap.addEventListener('click', () => {
+  wrap.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     if (pointerHandled) {
       return;
     }
@@ -314,7 +324,7 @@ function resolveBindableSparklineHover(
   series: number[],
   displaySeries: number[],
 ) {
-  if (!entry || series.length < 2 || displaySeries.length < 2 || wrap.dataset.sparklineHoverBound === 'true') {
+  if (!entry || series.length < 2 || displaySeries.length < 2 || sparklineHoverBoundElements.has(wrap)) {
     return null;
   }
 
@@ -326,7 +336,7 @@ function resolveBindableSparklineHover(
     return null;
   }
 
-  wrap.dataset.sparklineHoverBound = 'true';
+  sparklineHoverBoundElements.add(wrap);
   return { hover, line, dot, tooltip };
 }
 
