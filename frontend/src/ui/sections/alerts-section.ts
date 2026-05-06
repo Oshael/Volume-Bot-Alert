@@ -1613,7 +1613,7 @@ function buildTickerPeersBadgeTitle(
   role: 'og' | 'mcap_leader' | 'peer_warning',
 ) {
   if (role === 'og') {
-    return 'OG ticker peer: oldest and highest market cap among exact ticker matches';
+    return 'OG ticker peer: oldest known exact ticker match';
   }
   if (role === 'mcap_leader') {
     return 'Market-cap leader among exact ticker peers';

@@ -7,25 +7,25 @@ const SOURCE_ADDRESS = 'So11111111111111111111111111111111111111112';
 const PEER_ADDRESS = '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb';
 
 describe('alert ticker peers', () => {
-  it('classifies the source token as OG when it is oldest and highest market cap exact peer', () => {
+  it('classifies the source token as OG when it is the oldest exact peer', () => {
     const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
       exactCount: 3,
       subtickerCount: 0,
       oldestExactAddress: SOURCE_ADDRESS,
-      highestMcapExactAddress: SOURCE_ADDRESS,
+      highestMcapExactAddress: PEER_ADDRESS,
     });
 
     assert.equal(role, 'og');
   });
 
-  it('keeps OG when another exact peer is missing created-at but the source is oldest known and highest market cap', () => {
+  it('keeps OG when another exact peer is missing created-at but the source is oldest known', () => {
     const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
       exactCount: 4,
       subtickerCount: 0,
       exactMissingCreatedAtCount: 1,
-      exactMissingMcapCount: 0,
+      exactMissingMcapCount: 1,
       oldestExactAddress: SOURCE_ADDRESS,
-      highestMcapExactAddress: SOURCE_ADDRESS,
+      highestMcapExactAddress: PEER_ADDRESS,
     });
 
     assert.equal(role, 'og');
@@ -82,13 +82,13 @@ describe('alert ticker peers', () => {
     assert.equal(calls[0].params[1], 3);
   });
 
-  it('does not promote the source token when exact peer market cap data is incomplete', () => {
+  it('does not promote the source token to market-cap leader when exact peer market cap data is incomplete', () => {
     const role = alertTickerPeers.__private.resolveSourcePeerRole(SOURCE_ADDRESS, {
       exactCount: 2,
       subtickerCount: 0,
       exactMissingCreatedAtCount: 0,
       exactMissingMcapCount: 1,
-      oldestExactAddress: SOURCE_ADDRESS,
+      oldestExactAddress: PEER_ADDRESS,
       highestMcapExactAddress: SOURCE_ADDRESS,
     });
 
