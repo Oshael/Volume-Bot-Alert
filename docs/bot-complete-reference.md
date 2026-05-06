@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
+Last reviewed against code and the live deployment model on `2026-05-05` after adding GMGN-assisted junk gates, the GMGN new non-pump high-launch auto-block gate, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -2352,6 +2352,7 @@ Current GMGN worker status includes:
 - GMGN junk assessments, skipped junk suspects, and GMGN auto-block count
 - GMGN risk-enrichment suppression count
 - GMGN security/info/kline check counts, error counts, and auto-block counts
+- GMGN new non-pump high-launch auto-block counts (`lastGmgnNewNonPumpHighLaunchMcapAutoBlocked`, `totalGmgnNewNonPumpHighLaunchMcapAutoBlocked`)
 - alert matcher evaluations and emitted alert counts
 - GMGN alert-safeguard skip counts (`lastMatcherSkippedGmgnSafeguard`, `totalMatcherSkippedGmgnSafeguard`)
 - emitted `gmgn-vol-1m` count

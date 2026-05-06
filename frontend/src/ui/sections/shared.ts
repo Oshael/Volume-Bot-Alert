@@ -100,6 +100,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     });
   }
 
+  bindMockTradingPnlButtons(section, controller);
+
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="dismiss-recent"]')) {
     if (button.dataset.tokenActionBound === 'true') continue;
     button.dataset.tokenActionBound = 'true';
@@ -140,6 +142,19 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
       }
 
       void controller.toggleStarredToken(address);
+    });
+  }
+}
+
+function bindMockTradingPnlButtons(section: ParentNode, controller: AppController) {
+  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="open-mock-trading-pnl"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const address = button.dataset.address;
+      if (address) controller.openMockTradingPnlResume(address);
     });
   }
 }
@@ -1367,7 +1382,11 @@ function renderMockTradingLine(position: MockTradingPositionEntry | null) {
   const takeProfit = position.takeProfitOrders?.length
     ? ` · ${formatMockTradingTakeProfitSummary(position.takeProfitOrders)}`
     : '';
-  return `<div class="token-subline mock-trading-line ${tone}">PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}</div>`;
+  return `
+    <button type="button" class="token-subline mock-trading-line mock-trading-pnl-trigger ${tone}" data-action="open-mock-trading-pnl" data-address="${escapeHtml(position.tokenAddress)}" title="Open PnL resume">
+      PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}
+    </button>
+  `;
 }
 
 function formatMockTradingTakeProfitSummary(orders: MockTradingPositionEntry['takeProfitOrders'] = []) {

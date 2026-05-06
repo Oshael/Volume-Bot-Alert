@@ -327,8 +327,12 @@ function appendMonitoredMockTradingLine(
   const takeProfit = mockTradingPosition.takeProfitOrders?.length
     ? ` · ${formatMockTradingTakeProfitSummary(mockTradingPosition.takeProfitOrders)}`
     : '';
-  const mockLine = document.createElement('div');
-  mockLine.className = `panel-row-meta monitored-meta-line mock-trading-line ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
+  const mockLine = document.createElement('button');
+  mockLine.type = 'button';
+  mockLine.dataset.action = 'open-mock-trading-pnl';
+  mockLine.dataset.address = mockTradingPosition.tokenAddress;
+  mockLine.className = `panel-row-meta monitored-meta-line mock-trading-line mock-trading-pnl-trigger ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
+  mockLine.title = 'Open PnL resume';
   mockLine.textContent = `PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}`;
   main.append(mockLine);
 }

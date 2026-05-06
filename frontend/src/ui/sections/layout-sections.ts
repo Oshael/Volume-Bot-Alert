@@ -895,7 +895,7 @@ function renderMockTradingHeaderPosition(state: AppState, address: string) {
   const pnl = position?.unrealizedPnlUsd ?? null;
   const pct = position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null;
   return `
-    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" title="${escapeHtml(buildMockTradingHeaderPositionTitle(symbol, pnl, pct, position))}">
+    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" data-action="open-mock-trading-pnl" data-address="${escapeHtml(address)}" role="button" tabindex="0" title="${escapeHtml(buildMockTradingHeaderPositionTitle(symbol, pnl, pct, position))}">
       ${renderMockTradingHeaderAvatar(imageUrl, symbol)}
       <strong>${escapeHtml(symbol)}</strong>
       <span>${escapeHtml(fmtMockUsd(pnl, { signed: true }))}</span>
@@ -1043,6 +1043,25 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.querySelector<HTMLButtonElement>('[data-action="open-mock-trading-history"]')?.addEventListener('click', () => {
     controller.openMockTradingHistory();
   });
+  section.querySelectorAll<HTMLElement>('.workspace-mock-trading-position[data-action="open-mock-trading-pnl"]').forEach((badge) => {
+    const open = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-action="copy-address"]')) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const address = badge.dataset.address;
+      if (address) controller.openMockTradingPnlResume(address);
+    };
+    badge.addEventListener('click', open);
+    badge.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+      open(event);
+    });
+  });
   bindCopyButtons(section);
   section.querySelector<HTMLButtonElement>('[data-action="logout"]')?.addEventListener('click', () => void controller.logout());
   section.querySelector<HTMLButtonElement>('[data-action="open-user-settings"]')?.addEventListener('pointerdown', (event) => {
@@ -1150,6 +1169,12 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
     return overlay;
   }
 
+  if (overlayMode === 'mock-trading-pnl') {
+    overlay.innerHTML = renderMockTradingPnlResumeModal(state);
+    bindMockTradingPnlResumeModal(overlay, controller);
+    return overlay;
+  }
+
   if (overlayMode === 'expanded-sparkline' && expandedSparklineAddress) {
     const sparklineEntry = expandedSparkline;
     if (!sparklineEntry) {
@@ -1178,6 +1203,13 @@ function resolveWorkspaceOverlayMode(state: AppState) {
   }
   if (state.session.status === 'authenticated' && state.session.role === 'admin' && state.ui.mockTradingHistoryOpen) {
     return 'mock-trading-history';
+  }
+  if (
+    state.session.status === 'authenticated'
+    && state.session.role === 'admin'
+    && resolveMockTradingPnlResumeAddress(state)
+  ) {
+    return 'mock-trading-pnl';
   }
 
   const address = String(state.ui.expandedSparklineAddress || '').trim();
@@ -1334,6 +1366,137 @@ function renderMockTradingHistoryModal(state: AppState) {
           ${rows.length > 0 ? renderMockTradingHistoryTable(state, rows) : '<div class="mock-trading-history-empty">No closed mock plays yet.</div>'}
         </div>
       </div>
+    </div>
+  `;
+}
+
+function resolveMockTradingPnlResumeAddress(state: AppState) {
+  const address = String(state.ui.mockTradingPnlAddress || '').trim();
+  return address && state.data.mockTradingPositionsByAddress[address] ? address : null;
+}
+
+function renderMockTradingPnlResumeModal(state: AppState) {
+  const view = getMockTradingPnlResumeView(state);
+  if (!view) {
+    return '';
+  }
+
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="mock-trading-pnl" data-auth-modal-scope="mock-trading-pnl">
+      <div class="legacy-auth-modal-backdrop" data-action="close-mock-trading-pnl"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-mock-trading-pnl" data-auth-panel="mock-trading-pnl" role="dialog" aria-modal="true" aria-labelledby="mock-trading-pnl-title">
+        <div class="mock-trading-pnl-card" data-tone="${view.pnlTone}">
+          <div class="mock-trading-pnl-head">
+            ${renderMockTradingPnlAvatar(view.imageUrl, view.symbol)}
+            <div class="mock-trading-pnl-title">
+              <strong id="mock-trading-pnl-title">${escapeHtml(view.symbol)}</strong>
+              <span>${escapeHtml(view.name)}</span>
+            </div>
+            <button type="button" class="workspace-mock-trading-copy copy-button" data-action="copy-address" data-address="${escapeHtml(view.address)}" title="Copy contract" aria-label="Copy ${escapeHtml(view.symbol)} contract">⧉</button>
+            <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-pnl" aria-label="Close dialog">X</button>
+          </div>
+
+          <div class="mock-trading-pnl-main">
+            <div class="mock-trading-pnl-number">
+              <span>PNL</span>
+              <strong>${escapeHtml(fmtMockUsd(view.totalPnl, { signed: true }))}</strong>
+              <em>${escapeHtml(fmtPct(view.pnlPct))}</em>
+            </div>
+            <div class="mock-trading-pnl-stats">
+              ${renderMockTradingPnlStat('Invested', fmtMockUsd(view.boughtUsd))}
+              ${renderMockTradingPnlStat('Position', fmtMockUsd(view.currentValue))}
+              ${renderMockTradingPnlStat('Sold', fmtMockUsd(view.soldUsd))}
+              ${renderMockTradingPnlStat('Realized', fmtMockUsd(view.realized, { signed: true }), view.realized < 0 ? 'down' : 'up')}
+            </div>
+          </div>
+
+          <div class="mock-trading-pnl-chart">
+            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
+          </div>
+
+          <div class="mock-trading-pnl-trades">
+            ${view.trades.length > 0 ? view.trades.slice(-6).reverse().map(renderMockTradingPnlTrade).join('') : '<div class="mock-trading-history-empty">No mock trades yet.</div>'}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getMockTradingPnlResumeView(state: AppState) {
+  const address = resolveMockTradingPnlResumeAddress(state);
+  const position = address ? getMockTradingPositionView(state, address) : null;
+  if (!address || !position) {
+    return null;
+  }
+
+  const token = getTrackedToken(state, address);
+  const trades = getSortedMockTradingTradesForAddress(state, address);
+  const totals = getMockTradingPnlTotals(position, trades);
+  return {
+    address,
+    trades,
+    ...totals,
+    sparkline: getTokenSparkline(state, address),
+    symbol: token?.symbol || position.symbol || address.slice(0, 8),
+    name: token?.name || position.name || token?.label || address,
+    imageUrl: sanitizeOptionalHttpUrl(token?.imageUrl || null),
+  };
+}
+
+function getSortedMockTradingTradesForAddress(state: AppState, address: string) {
+  return [...(state.data.mockTradingTradesByAddress[address] || [])]
+    .sort((left, right) => String(left.executedAt || '').localeCompare(String(right.executedAt || '')));
+}
+
+function getMockTradingPnlTotals(
+  position: NonNullable<ReturnType<typeof getMockTradingPositionView>>,
+  trades: MockTradingTradeView[],
+) {
+  const boughtUsd = trades.filter((trade) => trade.side === 'buy').reduce((sum, trade) => sum + trade.notionalUsd, 0);
+  const soldUsd = trades.filter((trade) => trade.side === 'sell').reduce((sum, trade) => sum + trade.notionalUsd, 0);
+  const currentValue = position.currentValueUsd ?? null;
+  const unrealized = position.unrealizedPnlUsd ?? null;
+  const realized = position.realizedPnlUsd ?? 0;
+  const totalPnl = realized + (unrealized ?? 0);
+  const pnlPct = boughtUsd > 0 ? (totalPnl / boughtUsd) * 100 : position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
+
+  return {
+    boughtUsd,
+    soldUsd,
+    currentValue,
+    realized,
+    totalPnl,
+    pnlPct,
+    pnlTone: totalPnl < 0 ? 'down' : 'up',
+  };
+}
+
+function renderMockTradingPnlAvatar(imageUrl: string | null, symbol: string) {
+  return imageUrl
+    ? `<img class="mock-trading-pnl-avatar" src="${imageUrl}" alt="${escapeHtml(symbol)}" />`
+    : `<span class="mock-trading-pnl-avatar mock-trading-pnl-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+}
+
+function renderMockTradingPnlStat(label: string, value: string, tone?: 'up' | 'down') {
+  return `
+    <div ${tone ? `data-tone="${tone}"` : ''}>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderMockTradingPnlTrade(trade: MockTradingTradeView) {
+  const tone = trade.side === 'sell' && trade.realizedPnlUsd < 0 ? 'down' : 'up';
+  const value = trade.side === 'buy'
+    ? fmtMockUsd(trade.notionalUsd)
+    : fmtMockUsd(trade.realizedPnlUsd, { signed: true });
+  return `
+    <div class="mock-trading-pnl-trade" data-side="${trade.side}" data-tone="${tone}">
+      <span>${escapeHtml(trade.side.toUpperCase())}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <em>${escapeHtml(formatMockTradeTime(trade.executedAt))}</em>
     </div>
   `;
 }
@@ -1795,6 +1958,26 @@ function bindMockTradingHistoryModal(section: ParentNode, controller: AppControl
       void controller.cancelMockTradingTakeProfitOrder(orderId);
     });
   });
+}
+
+function bindMockTradingPnlResumeModal(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLElement>('[data-action="close-mock-trading-pnl"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeMockTradingPnlResume();
+    });
+  });
+
+  const address = section.querySelector<HTMLElement>('[data-auth-panel="mock-trading-pnl"]')
+    ?.closest<HTMLElement>('[data-auth-modal-scope="mock-trading-pnl"]')
+    ?.querySelector<HTMLElement>('[data-action="copy-address"]')
+    ?.dataset.address || '';
+  const sparkline = address ? getTokenSparkline(controller.state, address) : null;
+  if (address && sparkline) {
+    bindSparklineHover(section, { [address]: sparkline });
+  }
+  bindCopyButtons(section);
 }
 
 function renderLegacyLogin(state: AppState, controller: AppController) {

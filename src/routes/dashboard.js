@@ -238,49 +238,6 @@ function buildHistoryBootstrapPayload(recentResult, oldWeekResult, meteoraByAddr
   };
 }
 
-function buildHistoryDebugAddressList(previousAddresses, nextRows) {
-  const next = new Set(nextRows.map((item) => item.address));
-  return previousAddresses.filter((address) => !next.has(address));
-}
-
-async function buildHistoryBootstrapDebugPayload(req, recent, oldWeek, recentResult, oldWeekResult, starredAddresses) {
-  if (!req.body?.debug || typeof req.body.debug !== 'object' || Array.isArray(req.body.debug)) {
-    return null;
-  }
-
-  const recentPrevious = parseAddressArray(req.body.debug.recentPreviousAddresses, 'debug.recentPreviousAddresses');
-  if (!recentPrevious.ok) {
-    return { error: recentPrevious.error };
-  }
-
-  const oldWeekPrevious = parseAddressArray(req.body.debug.oldWeekPreviousAddresses, 'debug.oldWeekPreviousAddresses');
-  if (!oldWeekPrevious.ok) {
-    return { error: oldWeekPrevious.error };
-  }
-
-  const recentRemoved = buildHistoryDebugAddressList(recentPrevious.value, recentResult.rows);
-  const oldWeekRemoved = buildHistoryDebugAddressList(oldWeekPrevious.value, oldWeekResult.rows);
-  const [recentRemovedDiagnostics, oldWeekRemovedDiagnostics] = await Promise.all([
-    tokenCatalog.diagnoseDashboardHistoryBucket('recent', recentRemoved, {
-      ...recent.value,
-      starredAddresses: starredAddresses.value,
-    }),
-    tokenCatalog.diagnoseDashboardHistoryBucket('oldWeek', oldWeekRemoved, {
-      ...oldWeek.value,
-      starredAddresses: starredAddresses.value,
-    }),
-  ]);
-
-  return {
-    recent: {
-      removedDiagnostics: recentRemovedDiagnostics,
-    },
-    oldWeek: {
-      removedDiagnostics: oldWeekRemovedDiagnostics,
-    },
-  };
-}
-
 router.use(authenticate);
 
 function computePctChange(currentValue, baselineValue) {
@@ -620,13 +577,6 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
       marketMcapBaselineByAddress,
       marketVolumeBaselineByAddress,
     );
-    const debugPayload = await buildHistoryBootstrapDebugPayload(req, recent, oldWeek, recentResult, oldWeekResult, starredAddresses);
-    if (debugPayload?.error) {
-      return res.status(400).json({ error: debugPayload.error });
-    }
-    if (debugPayload) {
-      payload.debug = debugPayload;
-    }
 
     res.json(payload);
   } catch (err) {

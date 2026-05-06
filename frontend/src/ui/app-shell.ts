@@ -1069,6 +1069,7 @@ function getOverlayRenderKey(state: AppState) {
     blockTokenWarning: state.ui.blockTokenWarning,
     mockTradingTicket: getMockTradingTicketOverlaySnapshot(state),
     mockTradingHistory: getMockTradingHistoryOverlaySnapshot(state),
+    mockTradingPnl: getMockTradingPnlOverlaySnapshot(state),
     expandedSparkline: getExpandedSparklineOverlaySnapshot(state),
     busy: state.ui.busy,
     error: state.ui.error,
@@ -1129,6 +1130,24 @@ function getMockTradingTicketOverlaySnapshot(state: AppState) {
     ...ticket,
     position: serializeMockTradingForView(state, ticket.address),
     token: token ? serializeTrackedTokenForView(token) : ticket.address,
+  };
+}
+
+function getMockTradingPnlOverlaySnapshot(state: AppState) {
+  const address = String(state.ui.mockTradingPnlAddress || '').trim();
+  if (!address) {
+    return null;
+  }
+
+  const trades = state.data.mockTradingTradesByAddress[address] || [];
+  const sparkline = state.data.sparklineByAddress[address] || null;
+  const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
+  return {
+    address,
+    position: serializeMockTradingForView(state, address),
+    tradeIds: trades.map((trade) => trade.id).join(','),
+    sparklinePoints: series.length,
+    sparklineLast: series.length > 0 ? series[series.length - 1] : null,
   };
 }
 
@@ -1389,6 +1408,7 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
   const closeSelector = '[data-action="close-profile-modal"]';
   const blockWarningCloseSelector = '[data-action="close-block-token-warning"], [data-action="cancel-block-token-warning"]';
   const expandedSparklineCloseSelector = '[data-action="close-expanded-sparkline"]';
+  const mockTradingPnlCloseSelector = '[data-action="close-mock-trading-pnl"]';
   const shouldCloseProfileModal = (target: HTMLElement | null) => {
     const profileModal = target?.closest<HTMLElement>('[data-auth-modal-scope="profile"]');
     const closeButton = target?.closest<HTMLElement>(closeSelector);
@@ -1410,6 +1430,13 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
 
     return Boolean(sparklineModal && (closeButton || backdrop));
   };
+  const shouldCloseMockTradingPnl = (target: HTMLElement | null) => {
+    const modal = target?.closest<HTMLElement>('[data-auth-modal-scope="mock-trading-pnl"]');
+    const closeButton = target?.closest<HTMLElement>(mockTradingPnlCloseSelector);
+    const backdrop = target?.closest<HTMLElement>('.legacy-auth-modal-backdrop');
+
+    return Boolean(modal && (closeButton || backdrop));
+  };
 
   root.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) {
@@ -1417,6 +1444,12 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
     }
 
     const target = event.target as HTMLElement | null;
+    if (shouldCloseMockTradingPnl(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeMockTradingPnlResume();
+      return;
+    }
     if (shouldCloseExpandedSparkline(target)) {
       event.preventDefault();
       event.stopPropagation();
@@ -1434,6 +1467,12 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
 
   root.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
+    if (shouldCloseMockTradingPnl(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeMockTradingPnlResume();
+      return;
+    }
     if (shouldCloseBlockWarning(target)) {
       event.preventDefault();
       event.stopPropagation();
@@ -1467,6 +1506,13 @@ function wireProfileModals(root: HTMLElement, controller: AppController) {
       return;
     }
     const hasExpandedSparkline = root.querySelector('[data-auth-modal-scope="sparkline"]');
+    const hasMockTradingPnl = root.querySelector('[data-auth-modal-scope="mock-trading-pnl"]');
+    if (hasMockTradingPnl) {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeMockTradingPnlResume();
+      return;
+    }
     if (hasExpandedSparkline) {
       event.preventDefault();
       event.stopPropagation();

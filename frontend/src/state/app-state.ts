@@ -579,6 +579,7 @@ export interface AppState {
     expandedSparklineAddress: string | null;
     mockTradingTicket: MockTradingTicketState | null;
     mockTradingHistoryOpen: boolean;
+    mockTradingPnlAddress: string | null;
     manualStarredOnly: boolean;
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
@@ -739,6 +740,7 @@ export function createAppState(): AppState {
       expandedSparklineAddress: null,
       mockTradingTicket: null,
       mockTradingHistoryOpen: false,
+      mockTradingPnlAddress: null,
       manualStarredOnly: false,
       recentStarredOnly: false,
       oldWeekStarredOnly: false,

@@ -357,7 +357,7 @@ describe('Catalog routes', () => {
         isActiveMonitorCandidate: true,
       });
       await tokenCatalog.applyEvaluationResult(VALID_ADDR, {
-        debugSource: 'dexscreener',
+        evaluationSource: 'dexscreener',
         eligibilityState: 'dex-high',
         eligibleForMonitoring: true,
         suppressedReason: null,
@@ -370,7 +370,7 @@ describe('Catalog routes', () => {
       });
 
       const gmgnEvaluation = await tokenCatalog.applyEvaluationResult(VALID_ADDR, {
-        debugSource: 'gmgn',
+        evaluationSource: 'gmgn',
         eligibilityState: 'gmgn-high',
         eligibleForMonitoring: true,
         suppressedReason: null,

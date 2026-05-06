@@ -110,33 +110,6 @@ export interface DashboardHistoryBucketRequest {
   ageMaxMinutes?: number;
 }
 
-export interface DashboardHistoryBucketDebugPayload {
-  removedDiagnostics?: Array<{
-    address?: string | null;
-    rank?: number | null;
-    visibleOnRequestedPage?: boolean;
-    reasons?: string[];
-    token?: {
-      symbol?: string | null;
-      name?: string | null;
-      eligibleForMonitoring?: boolean | null;
-      eligibilityState?: string | null;
-      suppressedReason?: string | null;
-      mcap?: number | null;
-      volume1h?: number | null;
-      volume6h?: number | null;
-      volume24h?: number | null;
-      priceChange1h?: number | null;
-      priceChange6h?: number | null;
-      priceChange24h?: number | null;
-      tokenCreatedAt?: number | null;
-      lastSeenAt?: string | null;
-      lastEvaluatedAt?: string | null;
-      monitorPriority?: string | null;
-    } | null;
-  }>;
-}
-
 export interface DashboardHistoryBucketSlicePayload {
   total: number;
   page: number;
@@ -149,10 +122,6 @@ export interface DashboardHistoryBootstrapPayload {
   generatedAt?: string | null;
   recent: DashboardHistoryBucketSlicePayload;
   oldWeek: DashboardHistoryBucketSlicePayload;
-  debug?: {
-    recent?: DashboardHistoryBucketDebugPayload;
-    oldWeek?: DashboardHistoryBucketDebugPayload;
-  } | null;
 }
 
 function normalizeDashboardHistoryBucketSlice(
@@ -449,10 +418,6 @@ export function fetchDashboardHistoryBootstrap(
     starredTokens?: string[];
     recent?: DashboardHistoryBucketRequest;
     oldWeek?: DashboardHistoryBucketRequest;
-    debug?: {
-      recentPreviousAddresses?: string[];
-      oldWeekPreviousAddresses?: string[];
-    } | null;
   },
   token?: string | null,
 ) {
@@ -462,14 +427,12 @@ export function fetchDashboardHistoryBootstrap(
       starredTokens: payload.starredTokens ?? [],
       recent: payload.recent ?? {},
       oldWeek: payload.oldWeek ?? {},
-      debug: payload.debug ?? undefined,
     }),
     token,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
     recent: normalizeDashboardHistoryBucketSlice(response.recent),
     oldWeek: normalizeDashboardHistoryBucketSlice(response.oldWeek),
-    debug: response.debug ?? null,
   }));
 }
 

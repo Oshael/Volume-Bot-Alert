@@ -1302,6 +1302,15 @@ a {
   max-width: min(290px, 100%);
   padding-left: 3px;
   padding-right: 8px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.workspace-mock-trading-position:hover,
+.workspace-mock-trading-position:focus-visible {
+  border-color: rgba(88, 159, 255, 0.58);
+  background: rgba(88, 159, 255, 0.08);
+  outline: none;
 }
 
 .workspace-mock-trading-position img,
@@ -3853,6 +3862,186 @@ a {
   color: rgba(255, 133, 156, 0.94);
 }
 
+.legacy-auth-panel-mock-trading-pnl {
+  width: min(620px, calc(100vw - 24px));
+  max-height: min(660px, calc(100vh - 28px));
+  overflow: auto;
+}
+
+.mock-trading-pnl-card {
+  display: grid;
+  gap: 9px;
+}
+
+.mock-trading-pnl-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.mock-trading-pnl-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mock-trading-pnl-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #9bc9ff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mock-trading-pnl-title {
+  min-width: 0;
+}
+
+.mock-trading-pnl-title strong,
+.mock-trading-pnl-title span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-trading-pnl-title strong {
+  color: #f4f8ff;
+  font-size: 18px;
+}
+
+.mock-trading-pnl-title span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mock-trading-pnl-main {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.72fr) minmax(0, 1.28fr);
+  gap: 8px;
+}
+
+.mock-trading-pnl-number,
+.mock-trading-pnl-stats div {
+  min-width: 0;
+  border: 1px solid rgba(55, 81, 121, 0.46);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mock-trading-pnl-number {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 10px;
+}
+
+.mock-trading-pnl-number span,
+.mock-trading-pnl-stats span,
+.mock-trading-pnl-trade span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mock-trading-pnl-number strong {
+  color: rgba(147, 255, 197, 0.94);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.mock-trading-pnl-card[data-tone="down"] .mock-trading-pnl-number strong,
+.mock-trading-pnl-card[data-tone="down"] .mock-trading-pnl-number em {
+  color: rgba(255, 133, 156, 0.94);
+}
+
+.mock-trading-pnl-number em {
+  color: rgba(147, 255, 197, 0.94);
+  font-style: normal;
+  font-size: 14px;
+}
+
+.mock-trading-pnl-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.mock-trading-pnl-stats div {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+}
+
+.mock-trading-pnl-stats strong {
+  overflow: hidden;
+  color: #eef4ff;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-trading-pnl-stats div[data-tone="up"] strong,
+.mock-trading-pnl-trade[data-tone="up"] strong {
+  color: rgba(147, 255, 197, 0.94);
+}
+
+.mock-trading-pnl-stats div[data-tone="down"] strong,
+.mock-trading-pnl-trade[data-tone="down"] strong {
+  color: rgba(255, 133, 156, 0.94);
+}
+
+.mock-trading-pnl-chart {
+  min-height: 136px;
+}
+
+.mock-trading-pnl-chart .sparkline-wrap-expanded {
+  height: 136px;
+  min-height: 136px;
+}
+
+.mock-trading-pnl-chart .token-sparkline-expanded {
+  height: 136px;
+}
+
+.mock-trading-pnl-trades {
+  display: grid;
+  gap: 5px;
+}
+
+.mock-trading-pnl-trade {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(55, 81, 121, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.mock-trading-pnl-trade strong {
+  overflow: hidden;
+  color: #eef4ff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-trading-pnl-trade em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .mock-trading-history-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5844,6 +6033,22 @@ TEMP_LEGACY_BAR_TITLE {
 
 .mock-trading-line.down {
   color: var(--red) !important;
+}
+
+.mock-trading-pnl-trigger {
+  display: inline;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mock-trading-pnl-trigger:hover,
+.mock-trading-pnl-trigger:focus-visible {
+  text-decoration: underline;
+  outline: none;
 }
 
 .inline-icon {

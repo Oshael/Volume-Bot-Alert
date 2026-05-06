@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-05-04` after adding GMGN-assisted junk gates, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
+Last reviewed against code and the live deployment model on `2026-05-05` after adding GMGN-assisted junk gates, the GMGN new non-pump high-launch auto-block gate, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -948,7 +948,7 @@ Current monitored UI behavior:
   - GMGN refreshes that resolve to `admin-blocked` are excluded from the accepted panel-token set, so blocked addresses are not kept `active` in `token_gmgn_panel_state`
 - Admin status:
   - `GET /api/admin/ws-status` exposes `gmgnDiscoveryWorker`
-  - status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, GMGN alert-safeguard skips, GMGN `1m` alerts, risk/security/info/kline checks, GMGN auto-block counts, and Dex handoff counts
+  - status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, GMGN alert-safeguard skips, GMGN `1m` alerts, risk/security/info/kline checks, GMGN new non-pump high-launch auto-block counts, GMGN auto-block counts, and Dex handoff counts
 - Required rollout switches:
   - `GMGN_API_KEY`
   - `GMGN_DISCOVERY_ENABLED=true`

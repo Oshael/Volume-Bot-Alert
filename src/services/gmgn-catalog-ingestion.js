@@ -237,7 +237,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
 function buildEvaluationPayload(snapshot, base) {
   return {
     ...base,
-    debugSource: 'gmgn',
+    evaluationSource: 'gmgn',
     lastEvaluationError: null,
     evaluationErrorCount: 0,
     symbol: snapshot.symbol || null,

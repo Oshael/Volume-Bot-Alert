@@ -328,6 +328,8 @@ export interface AppController {
   mockSellToken(address: string, percent: number): Promise<void>;
   openMockTradingHistory(): void;
   closeMockTradingHistory(): void;
+  openMockTradingPnlResume(address: string): void;
+  closeMockTradingPnlResume(): void;
   closeMockTradingTicket(): void;
   submitMockTradingBuy(address: string, notionalUsd: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }): Promise<void>;
   submitMockTradingSell(address: string, percent: number): Promise<void>;
@@ -6000,6 +6002,8 @@ export function createAppController(): AppController {
     state.ui.oldWeekSearchPending = false;
     state.ui.expandedSparklineAddress = null;
     state.ui.mockTradingTicket = null;
+    state.ui.mockTradingHistoryOpen = false;
+    state.ui.mockTradingPnlAddress = null;
     state.ui.manualStarredOnly = false;
     state.ui.recentStarredOnly = false;
     state.ui.oldWeekStarredOnly = false;
@@ -7521,6 +7525,7 @@ export function createAppController(): AppController {
       }
 
       state.ui.expandedSparklineAddress = normalized;
+      state.ui.mockTradingPnlAddress = null;
       emit('overlay');
     },
     closeExpandedSparkline() {
@@ -8548,6 +8553,7 @@ export function createAppController(): AppController {
       state.ui.mockTradingTicket = { address, side: 'buy' };
       state.ui.mockTradingHistoryOpen = false;
       state.ui.expandedSparklineAddress = null;
+      state.ui.mockTradingPnlAddress = null;
       setError(null);
       emit('overlay');
     },
@@ -8561,6 +8567,7 @@ export function createAppController(): AppController {
       state.ui.mockTradingTicket = { address, side: 'sell', percent };
       state.ui.mockTradingHistoryOpen = false;
       state.ui.expandedSparklineAddress = null;
+      state.ui.mockTradingPnlAddress = null;
       setError(null);
       emit('overlay');
     },
@@ -8573,11 +8580,38 @@ export function createAppController(): AppController {
       state.ui.mockTradingHistoryOpen = true;
       state.ui.mockTradingTicket = null;
       state.ui.expandedSparklineAddress = null;
+      state.ui.mockTradingPnlAddress = null;
       setError(null);
       emit('overlay');
     },
     closeMockTradingHistory() {
       state.ui.mockTradingHistoryOpen = false;
+      emit('overlay');
+    },
+    openMockTradingPnlResume(address: string) {
+      if (state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+
+      const normalized = String(address || '').trim();
+      if (!normalized || !state.data.mockTradingPositionsByAddress[normalized]) {
+        return;
+      }
+
+      state.ui.mockTradingPnlAddress = normalized;
+      state.ui.mockTradingTicket = null;
+      state.ui.mockTradingHistoryOpen = false;
+      state.ui.expandedSparklineAddress = null;
+      setError(null);
+      emit('overlay');
+    },
+    closeMockTradingPnlResume() {
+      if (!state.ui.mockTradingPnlAddress) {
+        return;
+      }
+      state.ui.mockTradingPnlAddress = null;
       emit('overlay');
     },
     closeMockTradingTicket() {
