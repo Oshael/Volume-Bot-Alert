@@ -594,8 +594,9 @@ Important:
   - loop target: `20s`
   - worker compensates for run duration to keep wall-clock cadence closer to `20s`
   - eligible universe:
-    - `last_mcap >= 100k`
-    - or `has_pool = true`
+    - `has_pool = true`
+    - or `last_mcap >= 100k` from a trusted market source
+    - raw `gmgn` catalog rows are not Meteora-eligible by mcap alone unless they have Dex-confirmed eligibility (`dex-low`, `dex-normal`, `dex-high`)
   - priority tiers:
     - `high`: `vol24h >= 100k`
     - `normal`: `15k <= vol24h < 100k`
@@ -986,7 +987,8 @@ Current monitored UI behavior:
   - if a higher tier is underfilled, remaining slots can spill into lower tiers
 - Current eligible universe:
   - `is_active_monitor_candidate = true`
-  - and (`last_mcap >= 100k` or `has_pool = true`)
+  - and (`has_pool = true` or trusted-source `last_mcap >= 100k`)
+  - raw `gmgn` rows are excluded from the mcap-only path unless they have Dex-confirmed eligibility (`dex-low`, `dex-normal`, `dex-high`)
 - Read routes:
   - `GET /api/catalog/meteora/:address/history`
   - `POST /api/catalog/meteora/batch`

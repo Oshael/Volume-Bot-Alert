@@ -554,7 +554,8 @@ Cadence:
 
 Eligibility:
 - `is_active_monitor_candidate = true`
-- and (`last_mcap >= 100k` or `has_pool = true`)
+- and (`has_pool = true` or trusted-source `last_mcap >= 100k`)
+- raw `gmgn` catalog rows are not Meteora-eligible by mcap alone unless they have Dex-confirmed eligibility (`dex-low`, `dex-normal`, `dex-high`)
 
 Priority tiers:
 - `high`: `vol24h >= 100k`

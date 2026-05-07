@@ -7,6 +7,7 @@ const PUMPFUN_MIGRATION_GRACE_MS = 10 * 60 * 1000;
 const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
 const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
 const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
+const DEX_CONFIRMED_ELIGIBILITY_STATES = ['dex-low', 'dex-normal', 'dex-high'];
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
 const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
@@ -148,10 +149,17 @@ function normalizeMeteoraPriorityTier(value) {
 }
 
 function buildMeteoraEligibilityWhereSql(tokenAlias = 'tc', stateAlias = 'ms') {
+  const dexConfirmedStates = DEX_CONFIRMED_ELIGIBILITY_STATES.map((state) => `'${state}'`).join(', ');
   return `${tokenAlias}.is_active_monitor_candidate = TRUE
     AND (
-      COALESCE(${tokenAlias}.last_mcap, 0) >= 100000
-      OR ${stateAlias}.has_pool = TRUE
+      ${stateAlias}.has_pool = TRUE
+      OR (
+        COALESCE(${tokenAlias}.last_mcap, 0) >= 100000
+        AND (
+          COALESCE(${tokenAlias}.source, '') <> 'gmgn'
+          OR ${tokenAlias}.eligibility_state IN (${dexConfirmedStates})
+        )
+      )
     )`;
 }
 

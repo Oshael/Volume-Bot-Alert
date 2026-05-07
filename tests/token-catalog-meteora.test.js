@@ -20,7 +20,9 @@ describe('token catalog Meteora scheduling', () => {
       assert.match(capturedSql, /SELECT COUNT\(\*\)::int AS count/i);
       assert.match(capturedSql, /LEFT JOIN token_meteora_state ms/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= 100000/i);
-      assert.match(capturedSql, /OR ms\.has_pool = TRUE/i);
+      assert.match(capturedSql, /ms\.has_pool = TRUE/i);
+      assert.match(capturedSql, /COALESCE\(tc\.source, ''\) <> 'gmgn'/i);
+      assert.match(capturedSql, /tc\.eligibility_state IN \('dex-low', 'dex-normal', 'dex-high'\)/i);
     } finally {
       db.query = originalQuery;
     }
@@ -76,7 +78,9 @@ describe('token catalog Meteora scheduling', () => {
       assert.match(capturedSql, /LEFT JOIN token_meteora_state ms/i);
       assert.match(capturedSql, /WHERE tc\.is_active_monitor_candidate = TRUE/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= 100000/i);
-      assert.match(capturedSql, /OR ms\.has_pool = TRUE/i);
+      assert.match(capturedSql, /ms\.has_pool = TRUE/i);
+      assert.match(capturedSql, /COALESCE\(tc\.source, ''\) <> 'gmgn'/i);
+      assert.match(capturedSql, /tc\.eligibility_state IN \('dex-low', 'dex-normal', 'dex-high'\)/i);
       assert.match(capturedSql, /AS meteora_priority_tier/i);
       assert.match(capturedSql, /ORDER BY tc\.last_meteora_checked_at ASC NULLS FIRST/i);
       assert.doesNotMatch(capturedSql, /last_evaluated_at DESC/i);
