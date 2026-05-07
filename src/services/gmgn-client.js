@@ -6,6 +6,8 @@ const DEFAULT_CHAIN = 'sol';
 const DEFAULT_INTERVAL = '5m';
 const DEFAULT_LIMIT = 30;
 const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_RISK_LOOKUP_CACHE_TTL_MS = 60 * 1000;
+const DEFAULT_RISK_LOOKUP_CACHE_MAX_ENTRIES = 1000;
 const VALID_CHAINS = new Set(['sol', 'bsc', 'base', 'eth']);
 const VALID_INTERVALS = new Set(['1m', '5m', '1h', '6h', '24h']);
 
@@ -47,6 +49,110 @@ function parsePositiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function createRiskLookupCache(options = {}) {
+  const ttlMs = parseNonNegativeInteger(options.ttlMs, DEFAULT_RISK_LOOKUP_CACHE_TTL_MS);
+  const maxEntries = parsePositiveInteger(options.maxEntries, DEFAULT_RISK_LOOKUP_CACHE_MAX_ENTRIES);
+  const now = options.now || (() => Date.now());
+  const entries = new Map();
+  const stats = {
+    hits: 0,
+    misses: 0,
+    writes: 0,
+    evictions: 0,
+    expired: 0,
+    clears: 0,
+  };
+
+  function pruneExpired(nowMs = now()) {
+    for (const [key, entry] of entries.entries()) {
+      if (!entry || entry.expiresAt <= nowMs) {
+        entries.delete(key);
+        stats.expired += 1;
+      }
+    }
+  }
+
+  function enforceLimit() {
+    while (entries.size > maxEntries) {
+      const oldestKey = entries.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      entries.delete(oldestKey);
+      stats.evictions += 1;
+    }
+  }
+
+  function get(key) {
+    if (ttlMs <= 0) {
+      stats.misses += 1;
+      return undefined;
+    }
+    const nowMs = now();
+    const entry = entries.get(key);
+    if (!entry || entry.expiresAt <= nowMs) {
+      entries.delete(key);
+      stats.misses += 1;
+      if (entry) {
+        stats.expired += 1;
+      }
+      return undefined;
+    }
+    entries.delete(key);
+    entries.set(key, entry);
+    stats.hits += 1;
+    return entry.value;
+  }
+
+  function set(key, value) {
+    if (ttlMs <= 0) {
+      return value;
+    }
+    pruneExpired();
+    entries.set(key, {
+      value,
+      expiresAt: now() + ttlMs,
+    });
+    stats.writes += 1;
+    enforceLimit();
+    return value;
+  }
+
+  function clear() {
+    entries.clear();
+    stats.clears += 1;
+  }
+
+  function getStatus() {
+    pruneExpired();
+    return {
+      enabled: ttlMs > 0,
+      ttlMs,
+      maxEntries,
+      entries: entries.size,
+      ...stats,
+    };
+  }
+
+  return {
+    clear,
+    get,
+    getStatus,
+    set,
+    size: () => entries.size,
+  };
+}
+
+const defaultRiskLookupCache = createRiskLookupCache({
+  ttlMs: parseNonNegativeInteger(process.env.GMGN_RISK_LOOKUP_CACHE_TTL_MS, DEFAULT_RISK_LOOKUP_CACHE_TTL_MS),
+  maxEntries: parsePositiveInteger(process.env.GMGN_RISK_LOOKUP_CACHE_MAX_ENTRIES, DEFAULT_RISK_LOOKUP_CACHE_MAX_ENTRIES),
+});
+
 function normalizeChain(value) {
   const normalized = String(value || DEFAULT_CHAIN).trim().toLowerCase();
   return VALID_CHAINS.has(normalized) ? normalized : DEFAULT_CHAIN;
@@ -67,6 +173,7 @@ function resolveClientOptions(options = {}) {
     cliBin: String(options.cliBin || process.env.GMGN_CLI_BIN || DEFAULT_CLI_BIN).trim() || DEFAULT_CLI_BIN,
     timeoutMs: parsePositiveInteger(options.timeoutMs || process.env.GMGN_CLI_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     execFileImpl: options.execFileImpl || defaultExecFileImpl,
+    riskLookupCache: options.riskLookupCache || defaultRiskLookupCache,
   };
 }
 
@@ -466,6 +573,25 @@ function isRateLimitError(error) {
 function createGmgnClient(options = {}) {
   const resolved = resolveClientOptions(options);
 
+  function buildCacheKey(kind, args) {
+    return JSON.stringify({
+      kind,
+      cliBin: resolved.cliBin,
+      apiKey: resolved.apiKey ? 'configured' : 'empty',
+      args,
+    });
+  }
+
+  async function runCachedCliJson(kind, args, requestOptions, normalize) {
+    const cacheKey = buildCacheKey(kind, args);
+    const cached = resolved.riskLookupCache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const normalized = normalize(await runCliJson(args, requestOptions));
+    return resolved.riskLookupCache.set(cacheKey, normalized);
+  }
+
   async function runCliJson(args, requestOptions = {}) {
     const env = resolved.apiKey
       ? { ...process.env, GMGN_API_KEY: resolved.apiKey }
@@ -512,7 +638,9 @@ function createGmgnClient(options = {}) {
 
     const args = buildTokenSecurityArgs({ ...requestOptions, chain, address });
     try {
-      return normalizeTokenSecurityPayload(await runCliJson(args, requestOptions), { chain, address });
+      return runCachedCliJson('token-security', args, requestOptions, (payload) => (
+        normalizeTokenSecurityPayload(payload, { chain, address })
+      ));
     } catch (error) {
       if (error instanceof GmgnCliError) {
         throw error;
@@ -539,7 +667,9 @@ function createGmgnClient(options = {}) {
 
     const args = buildTokenInfoArgs({ ...requestOptions, chain, address });
     try {
-      return normalizeTokenInfoPayload(await runCliJson(args, requestOptions), { chain, address });
+      return runCachedCliJson('token-info', args, requestOptions, (payload) => (
+        normalizeTokenInfoPayload(payload, { chain, address })
+      ));
     } catch (error) {
       if (error instanceof GmgnCliError) {
         throw error;
@@ -566,7 +696,7 @@ function createGmgnClient(options = {}) {
 
     const args = buildMarketKlineArgs({ ...requestOptions, chain, address });
     try {
-      return normalizeKlinePayload(await runCliJson(args, requestOptions));
+      return runCachedCliJson('market-kline', args, requestOptions, normalizeKlinePayload);
     } catch (error) {
       if (error instanceof GmgnCliError) {
         throw error;
@@ -594,12 +724,16 @@ function createGmgnClient(options = {}) {
 
 module.exports = {
   createGmgnClient,
+  getStatus: () => ({
+    riskLookupCache: defaultRiskLookupCache.getStatus(),
+  }),
   GmgnCliError,
   GmgnRateLimitError,
   __private: {
     buildMarketKlineArgs,
     buildTokenInfoArgs,
     buildTokenSecurityArgs,
+    createRiskLookupCache,
     collectKlineRows,
     buildTrendingArgs,
     collectRankRows,
@@ -615,5 +749,6 @@ module.exports = {
     normalizeTrendingToken,
     parseCliJson,
     resolveClientOptions,
+    defaultRiskLookupCache,
   },
 };

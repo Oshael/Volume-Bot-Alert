@@ -273,6 +273,89 @@ describe('gmgn client', () => {
     ]);
   });
 
+  it('caches risk lookups across client instances', async () => {
+    const calls = [];
+    const cache = gmgn.__private.createRiskLookupCache({ ttlMs: 60000 });
+    const execFileImpl = async (_file, args) => {
+      calls.push(args);
+      return {
+        stdout: JSON.stringify({
+          address: TOKEN_A,
+          holder_count: 1234,
+          market_cap: 56789,
+        }),
+        stderr: '',
+      };
+    };
+    const firstClient = gmgn.createGmgnClient({ execFileImpl, riskLookupCache: cache });
+    const secondClient = gmgn.createGmgnClient({ execFileImpl, riskLookupCache: cache });
+
+    const firstInfo = await firstClient.fetchTokenInfo({ chain: 'sol', address: TOKEN_A });
+    const secondInfo = await secondClient.fetchTokenInfo({ chain: 'sol', address: TOKEN_A });
+
+    assert.equal(calls.length, 1);
+    assert.equal(firstInfo.holderCount, 1234);
+    assert.equal(secondInfo.holderCount, 1234);
+    assert.equal(cache.getStatus().hits, 1);
+    assert.equal(cache.getStatus().misses, 1);
+    assert.equal(cache.getStatus().writes, 1);
+    assert.equal(cache.getStatus().entries, 1);
+  });
+
+  it('expires cached risk lookups after ttl', async () => {
+    let nowMs = 1000;
+    const calls = [];
+    const cache = gmgn.__private.createRiskLookupCache({
+      ttlMs: 100,
+      now: () => nowMs,
+    });
+    const client = gmgn.createGmgnClient({
+      riskLookupCache: cache,
+      execFileImpl: async () => {
+        calls.push(nowMs);
+        return {
+          stdout: JSON.stringify({
+            address: TOKEN_A,
+            top_10_holder_rate: '0.10',
+          }),
+          stderr: '',
+        };
+      },
+    });
+
+    await client.fetchTokenSecurity({ chain: 'sol', address: TOKEN_A });
+    nowMs += 50;
+    await client.fetchTokenSecurity({ chain: 'sol', address: TOKEN_A });
+    nowMs += 51;
+    await client.fetchTokenSecurity({ chain: 'sol', address: TOKEN_A });
+
+    assert.deepEqual(calls, [1000, 1101]);
+  });
+
+  it('does not cache trending lookups', async () => {
+    const calls = [];
+    const cache = gmgn.__private.createRiskLookupCache({ ttlMs: 60000 });
+    const client = gmgn.createGmgnClient({
+      riskLookupCache: cache,
+      execFileImpl: async () => {
+        calls.push(true);
+        return {
+          stdout: JSON.stringify({
+            data: {
+              rank: [{ address: TOKEN_A, volume: String(calls.length) }],
+            },
+          }),
+          stderr: '',
+        };
+      },
+    });
+
+    await client.fetchTrending({ chain: 'sol', interval: '5m' });
+    await client.fetchTrending({ chain: 'sol', interval: '5m' });
+
+    assert.equal(calls.length, 2);
+  });
+
   it('throws a structured rate-limit error from CLI stderr', async () => {
     const client = gmgn.createGmgnClient({
       apiKey: 'test-key',

@@ -292,6 +292,14 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.tokenRiskEnrichmentWorker);
       assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
+      assert.ok(res.body.gmgnDiscoveryWorker);
+      assert.equal(typeof res.body.gmgnDiscoveryWorker.lastGmgnSecurityChecks, 'number');
+      assert.equal(typeof res.body.gmgnDiscoveryWorker.lastGmgnInfoChecks, 'number');
+      assert.equal(typeof res.body.gmgnDiscoveryWorker.lastGmgnKlineChecks, 'number');
+      assert.equal(typeof res.body.gmgnDiscoveryWorker.riskReviewQueue.queuedCount, 'number');
+      assert.ok(res.body.gmgn);
+      assert.equal(typeof res.body.gmgn.riskLookupCache.entries, 'number');
+      assert.equal(typeof res.body.gmgn.riskLookupCache.hits, 'number');
     });
   });
 

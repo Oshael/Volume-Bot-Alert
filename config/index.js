@@ -15,6 +15,14 @@ function parseBoolean(value, fallback = false) {
   return value === 'true' || value === '1';
 }
 
+function parseIntegerInRange(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
+}
+
 function parseJson(value, fallback) {
   const raw = String(value || '').trim();
   if (!raw) {
@@ -461,6 +469,17 @@ module.exports = {
       activeDexRecheckMs: Math.max(1000, parseInt(process.env.GMGN_ACTIVE_DEX_RECHECK_MS || '30000', 10) || 30000),
       alertEvaluationMinIntervalMs: Math.max(1000, parseInt(process.env.GMGN_ALERT_EVALUATION_MIN_INTERVAL_MS || '3000', 10) || 3000),
       staleAfterMs: Math.max(1000, parseInt(process.env.GMGN_PANEL_STALE_AFTER_MS || '15000', 10) || 15000),
+      gmgnRiskLookupTokenLimitPerCycle: parseIntegerInRange(process.env.GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE, 5, 0, 100),
+    },
+    riskReviewQueueOptions: {
+      intervalMs: Math.max(1000, parseInt(process.env.GMGN_RISK_REVIEW_QUEUE_INTERVAL_MS || '10000', 10) || 10000),
+      tokenLimit: parseIntegerInRange(
+        process.env.GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT || process.env.GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE,
+        5,
+        0,
+        100
+      ),
+      passedTtlMs: Math.max(60000, parseInt(process.env.GMGN_PRELIMINARY_REVIEW_TTL_MS || `${10 * 60 * 1000}`, 10) || (10 * 60 * 1000)),
     },
   },
 

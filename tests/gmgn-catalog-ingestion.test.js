@@ -1,7 +1,8 @@
-const { describe, it } = require('node:test');
+const { beforeEach, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const gmgnCatalogIngestion = require('../src/services/gmgn-catalog-ingestion');
+const gmgnRiskReviewQueue = require('../src/services/gmgn-risk-review-queue');
 
 const TOKEN_A = 'So11111111111111111111111111111111111111112';
 const TOKEN_B = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
@@ -139,6 +140,11 @@ function createSafeGmgnSecurityStub() {
 }
 
 describe('gmgn catalog ingestion', () => {
+  beforeEach(() => {
+    gmgnRiskReviewQueue.stop();
+    gmgnRiskReviewQueue.clear();
+  });
+
   it('updates catalog, writes GMGN volume buckets, then evaluates alerts', async () => {
     const callOrder = [];
     const tokenCatalogModel = createTokenCatalogStub();
@@ -334,6 +340,121 @@ describe('gmgn catalog ingestion', () => {
 
     assert.equal(result.summary.matcherSkippedGmgnSafeguard, 0);
     assert.equal(result.summary.matcherEvaluations, 1);
+    assert.equal(matcherCalls, 1);
+  });
+
+  it('limits GMGN preliminary risk lookups per ingestion cycle', async () => {
+    const catalog = createTokenCatalogStub();
+    const matcherCalls = [];
+    let securityCalls = 0;
+    let infoCalls = 0;
+    let klineCalls = 0;
+
+    catalog.getByAddress = async () => null;
+
+    const result = await gmgnCatalogIngestion.ingestGmgnTokens([
+      createSnapshot(TOKEN_A),
+      createSnapshot(TOKEN_B),
+    ], {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      gmgnRiskReviewMode: 'queued',
+      gmgnRiskLookupTokenLimitPerCycle: 1,
+      tokenCatalogModel: catalog,
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {},
+      },
+      gmgnClient: {
+        async fetchTokenSecurity() {
+          securityCalls += 1;
+          return { top10HolderRate: 0.12 };
+        },
+        async fetchTokenInfo() {
+          infoCalls += 1;
+          return { holderCount: 500, marketCap: 250000 };
+        },
+        async fetchMarketKline() {
+          klineCalls += 1;
+          return [
+            { timestampMs: Date.parse('2026-05-03T06:45:00.000Z'), open: 1, high: 1.05, low: 0.99, close: 1.02, volume: 1000 },
+            { timestampMs: Date.parse('2026-05-03T06:46:00.000Z'), open: 1.02, high: 1.03, low: 0.98, close: 0.99, volume: 1200 },
+          ];
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken(payload) {
+          matcherCalls.push(payload.tokenAfter.address);
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.equal(result.gmgnRiskReviewQueued, 2);
+    assert.equal(result.gmgnRiskLookupBudgetUsed, 0);
+    assert.equal(result.gmgnRiskLookupBudgetSkipped, 0);
+    assert.equal(result.gmgnSecurityChecks, 0);
+    assert.equal(result.gmgnInfoChecks, 0);
+    assert.equal(result.gmgnKlineChecks, 0);
+    assert.equal(securityCalls, 0);
+    assert.equal(infoCalls, 0);
+    assert.equal(klineCalls, 0);
+    assert.deepEqual(matcherCalls, []);
+    assert.equal(result.matcherSkippedGmgnSafeguard, 2);
+    assert.equal(result.catalogUpdated, 2);
+    assert.equal(result.volumeBucketsWritten, 2);
+  });
+
+  it('processes queued GMGN risk review independently and evaluates alerts after pass', async () => {
+    let matcherCalls = 0;
+    let securityCalls = 0;
+
+    const result = await gmgnCatalogIngestion.processQueuedGmgnRiskReview({
+      address: TOKEN_A,
+      snapshot: createSnapshot(TOKEN_A),
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress(address) {
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: true,
+            eligibility_state: 'gmgn-high',
+            last_vol_5m: 18000,
+          };
+        },
+      },
+      gmgnClient: {
+        async fetchTokenSecurity() {
+          securityCalls += 1;
+          return { top10HolderRate: 0.12 };
+        },
+        async fetchTokenInfo() {
+          return { holderCount: 500, marketCap: 250000 };
+        },
+        async fetchMarketKline() {
+          return [
+            { timestampMs: Date.parse('2026-05-03T06:45:00.000Z'), open: 1, high: 1.05, low: 0.99, close: 1.02, volume: 1000 },
+            { timestampMs: Date.parse('2026-05-03T06:46:00.000Z'), open: 1.02, high: 1.03, low: 0.98, close: 0.99, volume: 1200 },
+          ];
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          matcherCalls += 1;
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.equal(result.passed, true);
+    assert.equal(result.autoBlocked, false);
+    assert.equal(result.summary.gmgnSecurityChecks, 1);
+    assert.equal(result.summary.gmgnInfoChecks, 1);
+    assert.equal(result.summary.gmgnKlineChecks, 1);
+    assert.equal(result.summary.matcherEvaluations, 1);
+    assert.equal(securityCalls, 1);
     assert.equal(matcherCalls, 1);
   });
 

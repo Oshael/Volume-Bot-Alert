@@ -5,6 +5,7 @@ const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-
 const gmgnClient = require('./gmgn-client');
 const gmgnDiscoveryScheduler = require('./gmgn-discovery-scheduler');
 const gmgnPanelStateManager = require('./gmgn-panel-state-manager');
+const gmgnRiskReviewQueue = require('./gmgn-risk-review-queue');
 const userAlertMatcher = require('./user-alert-matcher');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
@@ -12,6 +13,7 @@ const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
 const DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS = 3000;
 const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
 const DEFAULT_PANEL_STALE_AFTER_MS = 15000;
+const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
@@ -46,6 +48,20 @@ const DEX_CONFIRMED_ELIGIBILITY_STATES = new Set(['dex-low', 'dex-normal', 'dex-
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function createRiskLookupTokenBudget(limit) {
+  const normalizedLimit = parseNonNegativeInteger(limit, DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE);
+  return {
+    limit: normalizedLimit,
+    used: 0,
+    skipped: 0,
+  };
 }
 
 function toFiniteNumberOrNull(value) {
@@ -97,21 +113,35 @@ function normalizeChain(value) {
   return chain === 'sol' ? 'solana' : chain || 'solana';
 }
 
+function resolveTimedOption(optionValue, envName, fallback) {
+  return parsePositiveInteger(optionValue || process.env[envName], fallback);
+}
+
+function resolveRiskReviewMode(options = {}) {
+  if (options.gmgnRiskReviewMode) {
+    return String(options.gmgnRiskReviewMode).trim().toLowerCase();
+  }
+  if (options.gmgnClient) {
+    return 'inline';
+  }
+  return String(process.env.GMGN_RISK_REVIEW_MODE || 'queued').trim().toLowerCase();
+}
+
+function resolveRiskLookupBudget(options = {}) {
+  if (options.gmgnRiskLookupBudget) {
+    return options.gmgnRiskLookupBudget;
+  }
+  return createRiskLookupTokenBudget(
+    options.gmgnRiskLookupTokenLimitPerCycle ?? process.env.GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE
+  );
+}
+
 function resolveIngestionOptions(options = {}) {
   return {
     now: options.now || (() => new Date()),
-    alertEvaluationMinIntervalMs: parsePositiveInteger(
-      options.alertEvaluationMinIntervalMs || process.env.GMGN_ALERT_EVALUATION_MIN_INTERVAL_MS,
-      DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS
-    ),
-    activeDexRecheckMs: parsePositiveInteger(
-      options.activeDexRecheckMs || process.env.GMGN_ACTIVE_DEX_RECHECK_MS,
-      DEFAULT_ACTIVE_DEX_RECHECK_MS
-    ),
-    staleAfterMs: parsePositiveInteger(
-      options.staleAfterMs || process.env.GMGN_PANEL_STALE_AFTER_MS,
-      DEFAULT_PANEL_STALE_AFTER_MS
-    ),
+    alertEvaluationMinIntervalMs: resolveTimedOption(options.alertEvaluationMinIntervalMs, 'GMGN_ALERT_EVALUATION_MIN_INTERVAL_MS', DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS),
+    activeDexRecheckMs: resolveTimedOption(options.activeDexRecheckMs, 'GMGN_ACTIVE_DEX_RECHECK_MS', DEFAULT_ACTIVE_DEX_RECHECK_MS),
+    staleAfterMs: resolveTimedOption(options.staleAfterMs, 'GMGN_PANEL_STALE_AFTER_MS', DEFAULT_PANEL_STALE_AFTER_MS),
     evaluationState: options.evaluationState || defaultEvaluationState,
     tokenCatalogModel: options.tokenCatalogModel || tokenCatalog,
     adminBlockedTokenModel: options.adminBlockedTokenModel || adminBlockedToken,
@@ -120,6 +150,9 @@ function resolveIngestionOptions(options = {}) {
     gmgnClient: options.gmgnClient || gmgnClient.createGmgnClient(options.gmgnClientOptions || {}),
     scheduler: options.scheduler || gmgnDiscoveryScheduler.createGmgnDiscoveryScheduler(options.schedulerOptions || {}),
     panelStateManager: options.panelStateManager || gmgnPanelStateManager,
+    gmgnRiskReviewMode: resolveRiskReviewMode(options),
+    gmgnRiskReviewQueue: options.gmgnRiskReviewQueue || gmgnRiskReviewQueue,
+    gmgnRiskLookupBudget: resolveRiskLookupBudget(options),
   };
 }
 
@@ -329,6 +362,146 @@ function shouldCheckGmgnRiskData(snapshot = {}, now = new Date()) {
     || (vol1hToMcap != null && vol1hToMcap >= GMGN_RISK_LOOKUP_VOL_1H_TO_MCAP_RATIO)
     || (marketCap != null && marketCap >= GMGN_RISK_LOOKUP_MIN_MCAP)
     || (vol5m != null && vol5m >= GMGN_RISK_LOOKUP_MIN_VOL_5M);
+}
+
+function trySpendGmgnRiskLookupBudget(options, summary) {
+  const budget = options.gmgnRiskLookupBudget;
+  if (!budget) {
+    return true;
+  }
+  const limit = parseNonNegativeInteger(budget.limit, DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE);
+  const used = parseNonNegativeInteger(budget.used, 0);
+  if (used >= limit) {
+    budget.skipped = parseNonNegativeInteger(budget.skipped, 0) + 1;
+    summary.gmgnRiskLookupBudgetSkipped += 1;
+    return false;
+  }
+
+  budget.used = used + 1;
+  summary.gmgnRiskLookupBudgetUsed += 1;
+  return true;
+}
+
+function buildFreshPreliminaryReviewGuard(address, options) {
+  if (!options.gmgnRiskReviewQueue?.hasFreshPassedReview?.(address)) {
+    return null;
+  }
+  return {
+    skipped: false,
+    security: { cachedPreliminaryReview: true },
+    info: { cachedPreliminaryReview: true },
+    klineAnalysis: { cachedPreliminaryReview: true },
+  };
+}
+
+function enqueueGmgnRiskReview(address, snapshot, tokenBefore, options, summary) {
+  const result = options.gmgnRiskReviewQueue?.enqueue?.({
+    address,
+    snapshot,
+    tokenBeforeSource: tokenBefore?.source || null,
+    tokenBeforeEligibilityState: tokenBefore?.eligibility_state || null,
+  }) || { queued: false, reason: 'queue-unavailable' };
+
+  if (result.queued) {
+    summary.gmgnRiskReviewQueued += 1;
+  } else if (result.reason === 'already-queued') {
+    summary.gmgnRiskReviewDeduped += 1;
+  } else if (result.reason === 'fresh-passed') {
+    summary.gmgnRiskReviewFreshPassed += 1;
+    return buildFreshPreliminaryReviewGuard(address, options);
+  } else {
+    summary.gmgnRiskReviewQueueErrors += 1;
+    summary.errorMessages.push(`GMGN risk review queue skipped ${address}: ${result.reason || 'unknown'}`);
+  }
+
+  return {
+    skipped: false,
+    skipReason: result.reason || 'gmgn-risk-review-queued',
+    riskReviewQueued: Boolean(result.queued),
+  };
+}
+
+async function runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, options, summary) {
+  let security = null;
+  summary.gmgnSecurityChecks += 1;
+  try {
+    security = await options.gmgnClient.fetchTokenSecurity({
+      chain: normalizeChain(snapshot.chain),
+      address,
+    });
+
+    if (isGmgnSecurityAutoBlockRisk(security)) {
+      await autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options);
+      summary.gmgnSecurityAutoBlocked += 1;
+      return {
+        skipped: true,
+        skipReason: 'gmgn-security-auto-blocked',
+        security,
+      };
+    }
+  } catch (error) {
+    summary.gmgnSecurityErrors += 1;
+    summary.errorMessages.push(`GMGN security check failed for ${address}: ${error.message}`);
+  }
+
+  let info = null;
+  summary.gmgnInfoChecks += 1;
+  try {
+    info = await options.gmgnClient.fetchTokenInfo({
+      chain: normalizeChain(snapshot.chain),
+      address,
+    });
+
+    if (isGmgnInfoAutoBlockRisk(info, snapshot)) {
+      await autoBlockGmgnInfoRisk(address, snapshot, tokenBefore, info, options);
+      summary.gmgnInfoAutoBlocked += 1;
+      return {
+        skipped: true,
+        skipReason: 'gmgn-info-auto-blocked',
+        security,
+        info,
+      };
+    }
+  } catch (error) {
+    summary.gmgnInfoErrors += 1;
+    summary.errorMessages.push(`GMGN token info check failed for ${address}: ${error.message}`);
+  }
+
+  summary.gmgnKlineChecks += 1;
+  try {
+    const createdAtMs = toTimestampMsOrNull(snapshot.tokenCreatedAt) || options.now().getTime();
+    const candles = await options.gmgnClient.fetchMarketKline({
+      chain: normalizeChain(snapshot.chain),
+      address,
+      resolution: '1m',
+      from: Math.max(0, Math.floor((createdAtMs - 60000) / 1000)),
+      to: Math.floor(options.now().getTime() / 1000),
+    });
+    const klineAnalysis = analyzeGmgnKlinePattern(candles);
+
+    if (!isGmgnStaircasePumpRisk(klineAnalysis)) {
+      return {
+        skipped: false,
+        security,
+        info,
+        klineAnalysis,
+      };
+    }
+
+    await autoBlockGmgnKlineRisk(address, snapshot, tokenBefore, klineAnalysis, options);
+    summary.gmgnKlineAutoBlocked += 1;
+    return {
+      skipped: true,
+      skipReason: 'gmgn-kline-auto-blocked',
+      security,
+      info,
+      klineAnalysis,
+    };
+  } catch (error) {
+    summary.gmgnKlineErrors += 1;
+    summary.errorMessages.push(`GMGN kline check failed for ${address}: ${error.message}`);
+    return null;
+  }
 }
 
 function buildGmgnJunkAssessmentInput(snapshot = {}) {
@@ -737,86 +910,25 @@ async function applyGmgnSecurityRiskGuard(address, snapshot, tokenBefore, option
     return null;
   }
 
-  let security = null;
-  summary.gmgnSecurityChecks += 1;
-  try {
-    security = await options.gmgnClient.fetchTokenSecurity({
-      chain: normalizeChain(snapshot.chain),
-      address,
-    });
-
-    if (isGmgnSecurityAutoBlockRisk(security)) {
-      await autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options);
-      summary.gmgnSecurityAutoBlocked += 1;
-      return {
-        skipped: true,
-        skipReason: 'gmgn-security-auto-blocked',
-        security,
-      };
-    }
-  } catch (error) {
-    summary.gmgnSecurityErrors += 1;
-    summary.errorMessages.push(`GMGN security check failed for ${address}: ${error.message}`);
+  const freshGuard = buildFreshPreliminaryReviewGuard(address, options);
+  if (freshGuard) {
+    summary.gmgnRiskReviewFreshPassed += 1;
+    return freshGuard;
   }
 
-  let info = null;
-  summary.gmgnInfoChecks += 1;
-  try {
-    info = await options.gmgnClient.fetchTokenInfo({
-      chain: normalizeChain(snapshot.chain),
-      address,
-    });
-
-    if (isGmgnInfoAutoBlockRisk(info, snapshot)) {
-      await autoBlockGmgnInfoRisk(address, snapshot, tokenBefore, info, options);
-      summary.gmgnInfoAutoBlocked += 1;
-      return {
-        skipped: true,
-        skipReason: 'gmgn-info-auto-blocked',
-        security,
-        info,
-      };
-    }
-  } catch (error) {
-    summary.gmgnInfoErrors += 1;
-    summary.errorMessages.push(`GMGN token info check failed for ${address}: ${error.message}`);
+  if (options.gmgnRiskReviewMode !== 'inline') {
+    return enqueueGmgnRiskReview(address, snapshot, tokenBefore, options, summary);
   }
 
-  summary.gmgnKlineChecks += 1;
-  try {
-    const createdAtMs = toTimestampMsOrNull(snapshot.tokenCreatedAt) || options.now().getTime();
-    const candles = await options.gmgnClient.fetchMarketKline({
-      chain: normalizeChain(snapshot.chain),
-      address,
-      resolution: '1m',
-      from: Math.max(0, Math.floor((createdAtMs - 60000) / 1000)),
-      to: Math.floor(options.now().getTime() / 1000),
-    });
-    const klineAnalysis = analyzeGmgnKlinePattern(candles);
-
-    if (!isGmgnStaircasePumpRisk(klineAnalysis)) {
-      return {
-        skipped: false,
-        security,
-        info,
-        klineAnalysis,
-      };
-    }
-
-    await autoBlockGmgnKlineRisk(address, snapshot, tokenBefore, klineAnalysis, options);
-    summary.gmgnKlineAutoBlocked += 1;
+  if (!trySpendGmgnRiskLookupBudget(options, summary)) {
     return {
-      skipped: true,
-      skipReason: 'gmgn-kline-auto-blocked',
-      security,
-      info,
-      klineAnalysis,
+      skipped: false,
+      skipReason: 'gmgn-risk-lookup-budget-exhausted',
+      riskLookupBudgetSkipped: true,
     };
-  } catch (error) {
-    summary.gmgnKlineErrors += 1;
-    summary.errorMessages.push(`GMGN kline check failed for ${address}: ${error.message}`);
-    return null;
   }
+
+  return runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, options, summary);
 }
 
 async function maybeEvaluateAlerts(tokenBefore, tokenAfter, options, summary) {
@@ -1000,6 +1112,12 @@ function createEmptyIngestionSummary() {
     skippedJunkSuspect: 0,
     junkAssessments: 0,
     gmgnSecurityChecks: 0,
+    gmgnRiskLookupBudgetUsed: 0,
+    gmgnRiskLookupBudgetSkipped: 0,
+    gmgnRiskReviewQueued: 0,
+    gmgnRiskReviewDeduped: 0,
+    gmgnRiskReviewFreshPassed: 0,
+    gmgnRiskReviewQueueErrors: 0,
     gmgnSecurityAutoBlocked: 0,
     gmgnSecurityErrors: 0,
     gmgnInfoChecks: 0,
@@ -1032,6 +1150,12 @@ function mergeIngestionSummary(target, source) {
   target.skippedJunkSuspect += source.skippedJunkSuspect;
   target.junkAssessments += source.junkAssessments;
   target.gmgnSecurityChecks += source.gmgnSecurityChecks;
+  target.gmgnRiskLookupBudgetUsed += source.gmgnRiskLookupBudgetUsed;
+  target.gmgnRiskLookupBudgetSkipped += source.gmgnRiskLookupBudgetSkipped;
+  target.gmgnRiskReviewQueued += source.gmgnRiskReviewQueued;
+  target.gmgnRiskReviewDeduped += source.gmgnRiskReviewDeduped;
+  target.gmgnRiskReviewFreshPassed += source.gmgnRiskReviewFreshPassed;
+  target.gmgnRiskReviewQueueErrors += source.gmgnRiskReviewQueueErrors;
   target.gmgnSecurityAutoBlocked += source.gmgnSecurityAutoBlocked;
   target.gmgnSecurityErrors += source.gmgnSecurityErrors;
   target.gmgnInfoChecks += source.gmgnInfoChecks;
@@ -1051,6 +1175,48 @@ function mergeIngestionSummary(target, source) {
   target.errorMessages.push(...source.errorMessages);
 }
 
+async function processQueuedGmgnRiskReview(task = {}, options = {}) {
+  const resolved = resolveIngestionOptions({
+    ...options,
+    gmgnRiskReviewMode: 'inline',
+  });
+  const address = normalizeAddress(task.address);
+  const snapshot = task.snapshot && typeof task.snapshot === 'object'
+    ? task.snapshot
+    : { address, chain: 'sol' };
+  const summary = createEmptyIngestionSummary();
+  const tokenBefore = await resolved.tokenCatalogModel.getByAddress(address);
+
+  if (!tokenBefore || isBlockedToken(tokenBefore) || isManualToken(tokenBefore)) {
+    return {
+      passed: false,
+      autoBlocked: false,
+      summary,
+    };
+  }
+
+  const guard = await runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, resolved, summary);
+  if (guard?.skipped) {
+    return {
+      passed: false,
+      autoBlocked: true,
+      skipReason: guard.skipReason,
+      summary,
+    };
+  }
+
+  const passed = Boolean(hasCompletedGmgnPreliminaryReview(guard));
+  if (passed && tokenBefore.eligible_for_monitoring !== false) {
+    await maybeEvaluateAlerts(tokenBefore, tokenBefore, resolved, summary);
+  }
+
+  return {
+    passed,
+    autoBlocked: false,
+    summary,
+  };
+}
+
 function resetDefaultEvaluationState() {
   defaultEvaluationState.clear();
 }
@@ -1058,6 +1224,7 @@ function resetDefaultEvaluationState() {
 module.exports = {
   ingestGmgnToken,
   ingestGmgnTokens,
+  processQueuedGmgnRiskReview,
   runGmgnDiscoveryIngestionCycle,
   __private: {
     applyGmgnJunkGuard,
@@ -1073,6 +1240,8 @@ module.exports = {
     buildGmgnJunkAssessmentInput,
     buildGmgnInfoAutoBlockLabel,
     buildGmgnKlineAutoBlockLabel,
+    createRiskLookupTokenBudget,
+    enqueueGmgnRiskReview,
     buildCatalogPayload,
     buildEvaluationPayload,
     buildVolumeBucketPayload,
@@ -1096,6 +1265,7 @@ module.exports = {
     mergeIngestionSummary,
     recordMatcherResult,
     resetDefaultEvaluationState,
+    runGmgnPreliminaryRiskReview,
     resolveEligibilityState,
     resolveCatalogSource,
     resolveIngestionOptions,

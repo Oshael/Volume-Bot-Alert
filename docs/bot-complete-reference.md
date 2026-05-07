@@ -482,6 +482,20 @@ GMGN risk gates before catalog/upsert alert flow:
   - vol1h/mcap `>= 3`
   - mcap `>= 100k`
   - vol5m `>= 50k`
+- successful GMGN risk-data lookups are cached process-wide before another `gmgn-cli` process is spawned:
+  - cached surfaces: `token security`, `token info`, and `market kline`
+  - default TTL: `60s`
+  - `GMGN_RISK_LOOKUP_CACHE_TTL_MS=0` disables this cache
+  - `GMGN_RISK_LOOKUP_CACHE_MAX_ENTRIES` controls the process-local cap
+- GMGN discovery ingestion queues the full preliminary risk lookup bundle outside the 2s trending loop:
+  - default queue interval: `10s`
+  - default queue budget: `5` tokens per queue run
+  - overrides: `GMGN_RISK_REVIEW_QUEUE_INTERVAL_MS`, `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT`
+  - legacy budget alias: `GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE`
+  - `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT=0` pauses deep risk review processing
+  - queue budget exhaustion does not block catalog/bucket persistence by itself
+  - automatic GMGN-only alert emission still requires Dex confirmation or completed preliminary review
+  - successful queued preliminary reviews create a process-local fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
 - GMGN `token security` auto-blocks when top-10 holder rate is `>= 70%`
 - GMGN `token info` auto-blocks low-mcap/high-holder anomalies:
   - mcap `<= 150k`
@@ -2351,12 +2365,18 @@ Current GMGN worker status includes:
 - skipped new `1m`-only discovery count
 - GMGN junk assessments, skipped junk suspects, and GMGN auto-block count
 - GMGN risk-enrichment suppression count
+- GMGN risk lookup budget usage/skips
+- queued/deduped/fresh-passed GMGN risk review handoffs
 - GMGN security/info/kline check counts, error counts, and auto-block counts
+- GMGN low-mcap extreme-volume auto-block counts
 - GMGN new non-pump high-launch auto-block counts (`lastGmgnNewNonPumpHighLaunchMcapAutoBlocked`, `totalGmgnNewNonPumpHighLaunchMcapAutoBlocked`)
 - alert matcher evaluations and emitted alert counts
+- alert matcher debounce/suppression skip counts
 - GMGN alert-safeguard skip counts (`lastMatcherSkippedGmgnSafeguard`, `totalMatcherSkippedGmgnSafeguard`)
 - emitted `gmgn-vol-1m` count
 - GMGN panel seen/stale/handoff counts
+- nested `riskReviewQueue` status with queue depth, fresh passed-review count, processing limit, last/total processed, last/total passed, last/total auto-blocked, and last/total errors
+- top-level `gmgn.riskLookupCache` status with enabled flag, TTL, max entries, current entries, hits, misses, writes, evictions, expired entries, and clears
 
 Current Meteora worker status now includes:
 - total eligible Meteora universe

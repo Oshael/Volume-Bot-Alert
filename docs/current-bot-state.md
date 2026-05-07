@@ -932,6 +932,19 @@ Current monitored UI behavior:
   - high-confidence GMGN junk is auto-blocked through `admin_blocked_tokens`
   - medium-confidence junk from a brand-new GMGN token is skipped without permanent block
   - consults GMGN `token security`, `token info`, and `market kline` for young/high-activity GMGN candidates before allowing alerts
+  - caches successful GMGN `token security`, `token info`, and `market kline` lookups process-wide for a short TTL to avoid repeatedly spawning `gmgn-cli` for the same risk target
+    - default TTL: `60s`
+    - override: `GMGN_RISK_LOOKUP_CACHE_TTL_MS`
+    - cache cap override: `GMGN_RISK_LOOKUP_CACHE_MAX_ENTRIES`
+  - queues GMGN preliminary risk lookup work outside the 2s trending ingestion loop
+    - default queue interval: `10s`
+    - default token budget: `5` queued tokens per queue run
+    - overrides: `GMGN_RISK_REVIEW_QUEUE_INTERVAL_MS`, `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT`
+    - legacy alias: `GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE`
+    - `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT=0` pauses deep risk review processing without disabling trending ingestion
+    - the budget counts tokens that enter the `security`/`info`/`kline` bundle, not each individual CLI call
+    - when a token is only queued, catalog and bucket writes can still happen, but GMGN-only alert emission remains blocked by the preliminary-review safeguard
+    - after a queued token passes preliminary review, the process keeps a short fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
   - blocks young low-mcap/extreme-volume GMGN tokens before spending security/info/kline lookups
   - uses GMGN security/info/kline to block obvious scam profiles before they enter the normal monitored alert flow
   - quarantines young extreme GMGN churn under `gmgn_needs_risk_enrichment` until structural enrichment resolves it
@@ -948,7 +961,9 @@ Current monitored UI behavior:
   - GMGN refreshes that resolve to `admin-blocked` are excluded from the accepted panel-token set, so blocked addresses are not kept `active` in `token_gmgn_panel_state`
 - Admin status:
   - `GET /api/admin/ws-status` exposes `gmgnDiscoveryWorker`
-  - status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, GMGN alert-safeguard skips, GMGN `1m` alerts, risk/security/info/kline checks, GMGN new non-pump high-launch auto-block counts, GMGN auto-block counts, and Dex handoff counts
+  - `gmgnDiscoveryWorker` status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, matcher debounce/suppression skips, GMGN alert-safeguard skips, GMGN `1m` alerts, risk-enrichment suppression count, risk lookup budget usage/skips, queued/deduped/fresh-passed queue handoffs, security/info/kline checks, security/info/kline errors, security/info/kline auto-block counts, GMGN low-mcap extreme-volume auto-block counts, GMGN new non-pump high-launch auto-block counts, GMGN auto-block counts, Dex handoff counts, and nested `riskReviewQueue`
+  - `gmgnDiscoveryWorker.riskReviewQueue` exposes queue running/in-flight state, queued token count, fresh passed-review count, last/total processed, last/total passed, last/total auto-blocked, last/total errors, and queue token limit
+  - top-level `gmgn.riskLookupCache` exposes the process-wide GMGN risk lookup cache state: enabled flag, TTL, max entries, current entries, hits, misses, writes, evictions, expired entries, and clears
 - Required rollout switches:
   - `GMGN_API_KEY`
   - `GMGN_DISCOVERY_ENABLED=true`

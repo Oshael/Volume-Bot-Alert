@@ -41,6 +41,7 @@ const tokenRiskEnrichmentWorker = require('./services/token-risk-enrichment-work
 const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-worker');
 const mockTradingTakeProfitWorker = require('./services/mock-trading-take-profit-worker');
 const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
+const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
 
 const app = express();
@@ -161,6 +162,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
     mockTradingTakeProfitWorker: mockTradingTakeProfitWorker.getStatus(),
     gmgnDiscoveryWorker: gmgnDiscoveryWorker.getStatus(),
+    gmgn: gmgnClient.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
   });
 });

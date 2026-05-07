@@ -57,8 +57,27 @@ describe('gmgn discovery worker', () => {
                 processed: 1,
                 catalogUpdated: 1,
                 volumeBucketsWritten: 1,
+                riskEnrichmentSuppressed: 4,
+                gmgnSecurityChecks: 5,
+                gmgnSecurityAutoBlocked: 1,
+                gmgnSecurityErrors: 2,
+                gmgnInfoChecks: 3,
+                gmgnInfoAutoBlocked: 1,
+                gmgnInfoErrors: 1,
+                gmgnKlineChecks: 2,
+                gmgnKlineAutoBlocked: 1,
+                gmgnKlineErrors: 1,
+                gmgnLowMcapExtremeVolumeAutoBlocked: 1,
+                gmgnRiskLookupBudgetUsed: 5,
+                gmgnRiskLookupBudgetSkipped: 6,
+                gmgnRiskReviewQueued: 7,
+                gmgnRiskReviewDeduped: 8,
+                gmgnRiskReviewFreshPassed: 9,
+                gmgnRiskReviewQueueErrors: 10,
                 matcherEvaluations: 1,
                 matcherEmitted: 2,
+                matcherSkippedDebounce: 1,
+                matcherSkippedSuppressed: 2,
                 matcherSkippedGmgnSafeguard: 3,
                 gmgn1mAlerts: 1,
                 matcherErrors: 0,
@@ -79,6 +98,27 @@ describe('gmgn discovery worker', () => {
     assert.equal(status.lastRawTokens, 2);
     assert.equal(status.lastUniqueTokens, 1);
     assert.equal(status.lastMatcherEmitted, 2);
+    assert.equal(status.lastRiskEnrichmentSuppressed, 4);
+    assert.equal(status.totalRiskEnrichmentSuppressed, 4);
+    assert.equal(status.lastGmgnSecurityChecks, 5);
+    assert.equal(status.totalGmgnSecurityChecks, 5);
+    assert.equal(status.lastGmgnSecurityAutoBlocked, 1);
+    assert.equal(status.lastGmgnSecurityErrors, 2);
+    assert.equal(status.lastGmgnInfoChecks, 3);
+    assert.equal(status.lastGmgnInfoAutoBlocked, 1);
+    assert.equal(status.lastGmgnInfoErrors, 1);
+    assert.equal(status.lastGmgnKlineChecks, 2);
+    assert.equal(status.lastGmgnKlineAutoBlocked, 1);
+    assert.equal(status.lastGmgnKlineErrors, 1);
+    assert.equal(status.lastGmgnLowMcapExtremeVolumeAutoBlocked, 1);
+    assert.equal(status.lastGmgnRiskLookupBudgetUsed, 5);
+    assert.equal(status.lastGmgnRiskLookupBudgetSkipped, 6);
+    assert.equal(status.lastGmgnRiskReviewQueued, 7);
+    assert.equal(status.lastGmgnRiskReviewDeduped, 8);
+    assert.equal(status.lastGmgnRiskReviewFreshPassed, 9);
+    assert.equal(status.lastGmgnRiskReviewQueueErrors, 10);
+    assert.equal(status.lastMatcherSkippedDebounce, 1);
+    assert.equal(status.lastMatcherSkippedSuppressed, 2);
     assert.equal(status.lastMatcherSkippedGmgnSafeguard, 3);
     assert.equal(status.totalMatcherSkippedGmgnSafeguard, 3);
     assert.equal(status.lastGmgn1mAlerts, 1);

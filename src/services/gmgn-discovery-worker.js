@@ -1,5 +1,6 @@
 const config = require('../../config');
 const gmgnCatalogIngestion = require('./gmgn-catalog-ingestion');
+const gmgnRiskReviewQueue = require('./gmgn-risk-review-queue');
 
 const DEFAULT_LOOP_INTERVAL_MS = 2000;
 
@@ -32,9 +33,28 @@ function createInitialStatus() {
     lastAutoBlockedJunk: 0,
     lastSkippedJunkSuspect: 0,
     lastJunkAssessments: 0,
+    lastRiskEnrichmentSuppressed: 0,
+    lastGmgnRiskLookupBudgetUsed: 0,
+    lastGmgnRiskLookupBudgetSkipped: 0,
+    lastGmgnRiskReviewQueued: 0,
+    lastGmgnRiskReviewDeduped: 0,
+    lastGmgnRiskReviewFreshPassed: 0,
+    lastGmgnRiskReviewQueueErrors: 0,
+    lastGmgnSecurityChecks: 0,
+    lastGmgnSecurityAutoBlocked: 0,
+    lastGmgnSecurityErrors: 0,
+    lastGmgnInfoChecks: 0,
+    lastGmgnInfoAutoBlocked: 0,
+    lastGmgnInfoErrors: 0,
+    lastGmgnKlineChecks: 0,
+    lastGmgnKlineAutoBlocked: 0,
+    lastGmgnKlineErrors: 0,
+    lastGmgnLowMcapExtremeVolumeAutoBlocked: 0,
     lastGmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     lastMatcherEvaluations: 0,
     lastMatcherEmitted: 0,
+    lastMatcherSkippedDebounce: 0,
+    lastMatcherSkippedSuppressed: 0,
     lastMatcherSkippedGmgnSafeguard: 0,
     lastGmgn1mAlerts: 0,
     lastMatcherErrors: 0,
@@ -52,9 +72,28 @@ function createInitialStatus() {
     totalAutoBlockedJunk: 0,
     totalSkippedJunkSuspect: 0,
     totalJunkAssessments: 0,
+    totalRiskEnrichmentSuppressed: 0,
+    totalGmgnRiskLookupBudgetUsed: 0,
+    totalGmgnRiskLookupBudgetSkipped: 0,
+    totalGmgnRiskReviewQueued: 0,
+    totalGmgnRiskReviewDeduped: 0,
+    totalGmgnRiskReviewFreshPassed: 0,
+    totalGmgnRiskReviewQueueErrors: 0,
+    totalGmgnSecurityChecks: 0,
+    totalGmgnSecurityAutoBlocked: 0,
+    totalGmgnSecurityErrors: 0,
+    totalGmgnInfoChecks: 0,
+    totalGmgnInfoAutoBlocked: 0,
+    totalGmgnInfoErrors: 0,
+    totalGmgnKlineChecks: 0,
+    totalGmgnKlineAutoBlocked: 0,
+    totalGmgnKlineErrors: 0,
+    totalGmgnLowMcapExtremeVolumeAutoBlocked: 0,
     totalGmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     totalMatcherEvaluations: 0,
     totalMatcherEmitted: 0,
+    totalMatcherSkippedDebounce: 0,
+    totalMatcherSkippedSuppressed: 0,
     totalMatcherSkippedGmgnSafeguard: 0,
     totalGmgn1mAlerts: 0,
     totalPanelHandoffs: 0,
@@ -83,6 +122,7 @@ function normalizeOptions(options = {}) {
     apiKeyConfigured: Boolean(options.apiKeyConfigured),
     schedulerOptions: options.schedulerOptions || {},
     ingestionOptions: options.ingestionOptions || {},
+    riskReviewQueueOptions: options.riskReviewQueueOptions || {},
   };
 }
 
@@ -122,9 +162,28 @@ function buildRunCounters(result) {
     lastAutoBlockedJunk: toCount(ingestion.autoBlockedJunk),
     lastSkippedJunkSuspect: toCount(ingestion.skippedJunkSuspect),
     lastJunkAssessments: toCount(ingestion.junkAssessments),
+    lastRiskEnrichmentSuppressed: toCount(ingestion.riskEnrichmentSuppressed),
+    lastGmgnRiskLookupBudgetUsed: toCount(ingestion.gmgnRiskLookupBudgetUsed),
+    lastGmgnRiskLookupBudgetSkipped: toCount(ingestion.gmgnRiskLookupBudgetSkipped),
+    lastGmgnRiskReviewQueued: toCount(ingestion.gmgnRiskReviewQueued),
+    lastGmgnRiskReviewDeduped: toCount(ingestion.gmgnRiskReviewDeduped),
+    lastGmgnRiskReviewFreshPassed: toCount(ingestion.gmgnRiskReviewFreshPassed),
+    lastGmgnRiskReviewQueueErrors: toCount(ingestion.gmgnRiskReviewQueueErrors),
+    lastGmgnSecurityChecks: toCount(ingestion.gmgnSecurityChecks),
+    lastGmgnSecurityAutoBlocked: toCount(ingestion.gmgnSecurityAutoBlocked),
+    lastGmgnSecurityErrors: toCount(ingestion.gmgnSecurityErrors),
+    lastGmgnInfoChecks: toCount(ingestion.gmgnInfoChecks),
+    lastGmgnInfoAutoBlocked: toCount(ingestion.gmgnInfoAutoBlocked),
+    lastGmgnInfoErrors: toCount(ingestion.gmgnInfoErrors),
+    lastGmgnKlineChecks: toCount(ingestion.gmgnKlineChecks),
+    lastGmgnKlineAutoBlocked: toCount(ingestion.gmgnKlineAutoBlocked),
+    lastGmgnKlineErrors: toCount(ingestion.gmgnKlineErrors),
+    lastGmgnLowMcapExtremeVolumeAutoBlocked: toCount(ingestion.gmgnLowMcapExtremeVolumeAutoBlocked),
     lastGmgnNewNonPumpHighLaunchMcapAutoBlocked: toCount(ingestion.gmgnNewNonPumpHighLaunchMcapAutoBlocked),
     lastMatcherEvaluations: toCount(ingestion.matcherEvaluations),
     lastMatcherEmitted: toCount(ingestion.matcherEmitted),
+    lastMatcherSkippedDebounce: toCount(ingestion.matcherSkippedDebounce),
+    lastMatcherSkippedSuppressed: toCount(ingestion.matcherSkippedSuppressed),
     lastMatcherSkippedGmgnSafeguard: toCount(ingestion.matcherSkippedGmgnSafeguard),
     lastGmgn1mAlerts: toCount(ingestion.gmgn1mAlerts),
     lastMatcherErrors: toCount(ingestion.matcherErrors),
@@ -143,9 +202,28 @@ function addTotalsFromCounters(counters) {
   status.totalAutoBlockedJunk += counters.lastAutoBlockedJunk;
   status.totalSkippedJunkSuspect += counters.lastSkippedJunkSuspect;
   status.totalJunkAssessments += counters.lastJunkAssessments;
+  status.totalRiskEnrichmentSuppressed += counters.lastRiskEnrichmentSuppressed;
+  status.totalGmgnRiskLookupBudgetUsed += counters.lastGmgnRiskLookupBudgetUsed;
+  status.totalGmgnRiskLookupBudgetSkipped += counters.lastGmgnRiskLookupBudgetSkipped;
+  status.totalGmgnRiskReviewQueued += counters.lastGmgnRiskReviewQueued;
+  status.totalGmgnRiskReviewDeduped += counters.lastGmgnRiskReviewDeduped;
+  status.totalGmgnRiskReviewFreshPassed += counters.lastGmgnRiskReviewFreshPassed;
+  status.totalGmgnRiskReviewQueueErrors += counters.lastGmgnRiskReviewQueueErrors;
+  status.totalGmgnSecurityChecks += counters.lastGmgnSecurityChecks;
+  status.totalGmgnSecurityAutoBlocked += counters.lastGmgnSecurityAutoBlocked;
+  status.totalGmgnSecurityErrors += counters.lastGmgnSecurityErrors;
+  status.totalGmgnInfoChecks += counters.lastGmgnInfoChecks;
+  status.totalGmgnInfoAutoBlocked += counters.lastGmgnInfoAutoBlocked;
+  status.totalGmgnInfoErrors += counters.lastGmgnInfoErrors;
+  status.totalGmgnKlineChecks += counters.lastGmgnKlineChecks;
+  status.totalGmgnKlineAutoBlocked += counters.lastGmgnKlineAutoBlocked;
+  status.totalGmgnKlineErrors += counters.lastGmgnKlineErrors;
+  status.totalGmgnLowMcapExtremeVolumeAutoBlocked += counters.lastGmgnLowMcapExtremeVolumeAutoBlocked;
   status.totalGmgnNewNonPumpHighLaunchMcapAutoBlocked += counters.lastGmgnNewNonPumpHighLaunchMcapAutoBlocked;
   status.totalMatcherEvaluations += counters.lastMatcherEvaluations;
   status.totalMatcherEmitted += counters.lastMatcherEmitted;
+  status.totalMatcherSkippedDebounce += counters.lastMatcherSkippedDebounce;
+  status.totalMatcherSkippedSuppressed += counters.lastMatcherSkippedSuppressed;
   status.totalMatcherSkippedGmgnSafeguard += counters.lastMatcherSkippedGmgnSafeguard;
   status.totalGmgn1mAlerts += counters.lastGmgn1mAlerts;
   status.totalPanelHandoffs += counters.lastPanelHandoffCount;
@@ -240,6 +318,10 @@ function start(options = getDefaultOptions()) {
 
   running = true;
   status.running = true;
+  gmgnRiskReviewQueue.start({
+    ...normalized.riskReviewQueueOptions,
+    processor: (task) => gmgnCatalogIngestion.processQueuedGmgnRiskReview(task, normalized.ingestionOptions),
+  });
   schedule(normalized);
   console.log('[GmgnDiscoveryWorker] Started');
 }
@@ -251,10 +333,14 @@ function stop() {
     clearTimeout(timer);
     timer = null;
   }
+  gmgnRiskReviewQueue.stop();
 }
 
 function getStatus() {
-  return { ...status };
+  return {
+    ...status,
+    riskReviewQueue: gmgnRiskReviewQueue.getStatus(),
+  };
 }
 
 function resetStatus() {
