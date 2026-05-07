@@ -323,6 +323,7 @@ function buildPositionView(position, catalog = {}, takeProfitOrders = []) {
     ...position,
     symbol: catalog.symbol || null,
     name: catalog.name || null,
+    imageUrl: catalog.last_image_url || null,
     currentPriceUsd,
     currentMcapUsd,
     currentValueUsd,
@@ -664,7 +665,7 @@ async function addCash(payload = {}) {
 async function listPositions(userIdValue, runner = db) {
   const userId = normalizeUserId(userIdValue);
   const { rows } = await runner.query(
-    `SELECT p.*, tc.symbol, tc.name, tc.last_price, tc.last_mcap
+    `SELECT p.*, tc.symbol, tc.name, tc.last_image_url, tc.last_price, tc.last_mcap
      FROM mock_trading_positions p
      LEFT JOIN token_catalog tc ON tc.address = p.token_address
      WHERE p.user_id = $1

@@ -198,6 +198,7 @@ export interface MockTradingPositionEntry {
   mcapMultiple?: number | null;
   symbol?: string | null;
   name?: string | null;
+  imageUrl?: string | null;
   takeProfitOrder?: MockTradingTakeProfitOrderEntry | null;
   takeProfitOrders?: MockTradingTakeProfitOrderEntry[];
 }
@@ -854,6 +855,7 @@ function buildLiveMockTradingPosition(
     ...position,
     symbol: token?.symbol || position.symbol || null,
     name: token?.name || position.name || null,
+    imageUrl: token?.imageUrl || position.imageUrl || null,
     currentPriceUsd,
     currentMcapUsd,
     ...priceMetrics,

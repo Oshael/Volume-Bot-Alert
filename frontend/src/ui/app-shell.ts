@@ -885,6 +885,7 @@ function serializeMockTradingHeaderPositionsForView(state: AppState) {
         token?.symbol,
         token?.imageUrl,
         livePosition.symbol,
+        livePosition.imageUrl,
         serializeRenderedMoneyValue(livePosition.currentValueUsd),
         serializeRenderedMoneyValue(livePosition.unrealizedPnlUsd),
         serializeRenderedPctValue(livePosition.priceReturnPct ?? livePosition.unrealizedPnlPct),

@@ -891,7 +891,7 @@ function renderMockTradingHeaderPosition(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
   const position = getMockTradingPositionView(state, address);
   const symbol = getMockTradingHeaderPositionSymbol(token, position, address);
-  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || position?.imageUrl || null);
   const pnl = position?.unrealizedPnlUsd ?? null;
   const pct = position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null;
   return `
@@ -1440,7 +1440,7 @@ function getMockTradingPnlResumeView(state: AppState) {
     sparkline: getTokenSparkline(state, address),
     symbol: token?.symbol || position.symbol || address.slice(0, 8),
     name: token?.name || position.name || token?.label || address,
-    imageUrl: sanitizeOptionalHttpUrl(token?.imageUrl || null),
+    imageUrl: sanitizeOptionalHttpUrl(token?.imageUrl || position.imageUrl || null),
   };
 }
 
@@ -1556,7 +1556,7 @@ function renderMockTradingOpenOrderRow(state: AppState, order: MockTradingTakePr
   const token = getTrackedToken(state, order.tokenAddress);
   const position = getMockTradingPositionView(state, order.tokenAddress);
   const symbol = token?.symbol || position?.symbol || order.tokenAddress.slice(0, 8);
-  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || null);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || position?.imageUrl || null);
   return `
     <tr>
       <td>

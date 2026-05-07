@@ -27,6 +27,7 @@ export interface MockTradingPosition {
   mcapMultiple?: number | null;
   symbol?: string | null;
   name?: string | null;
+  imageUrl?: string | null;
   openedAt?: string | null;
   updatedAt?: string | null;
   takeProfitOrder?: MockTradingTakeProfitOrder | null;

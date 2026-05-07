@@ -134,6 +134,7 @@ describe('mock trading admin routes', () => {
     assert.equal(positionsRes.body.positions[0].unrealizedPnlUsd, 100);
     assert.equal(positionsRes.body.positions[0].priceReturnPct, 100);
     assert.equal(positionsRes.body.positions[0].mcapMultiple, 2);
+    assert.equal(positionsRes.body.positions[0].imageUrl, 'https://example.test/wsol.png');
 
     const sellRes = await request(app)
       .post('/api/admin/mock-trading/sell')
