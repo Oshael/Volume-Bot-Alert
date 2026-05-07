@@ -585,6 +585,7 @@ Important:
 - Source of truth: backend-persisted current state in `token_meteora_state`
 - Collection is done by backend worker
 - Historical TVL history remains in `token_meteora_snapshots`
+- Summary reads first load only current state, then consult `token_meteora_snapshots` only for rows with `has_pool = true`, positive current TVL, and a check timestamp.
 - Frontend reads persisted summaries from:
   - `GET /api/dashboard/monitored`
   - `POST /api/catalog/meteora/batch`
@@ -996,6 +997,7 @@ Current monitored UI behavior:
   - embedded `meteora` payload inside `GET /api/dashboard/monitored`
   - explicit batch hydration for tracked tokens outside the monitored dashboard payload
 - Current read path is DB-backed, not upstream-fetch-backed
+- Meteora summary reads are split: current/no-pool rows stay on `token_meteora_state`; historical snapshot baselines are queried only for positive pool rows.
 - Current alert behavior on top of Meteora data:
   - a dedicated `meteora-surge` alert now exists in the backend user-alert matcher
   - it uses the persisted `change1h` Meteora summary from monitored/backend signal inputs

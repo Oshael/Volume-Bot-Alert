@@ -86,47 +86,117 @@ describe('token meteora state model', () => {
     }
   });
 
-  it('lists dashboard summaries from current Meteora state instead of historical snapshots alone', async () => {
+  it('lists dashboard summaries from state and loads history only for positive pool rows', async () => {
     const originalQuery = db.query;
-    let capturedSql = null;
-    let capturedParams = null;
+    const capturedQueries = [];
 
     db.query = async (sql, params) => {
-      capturedSql = sql;
-      capturedParams = params;
+      capturedQueries.push({ sql, params });
+      if (/FROM token_meteora_snapshots/i.test(sql)) {
+        return {
+          rows: [{
+            token_address: 'So11111111111111111111111111111111111111112',
+            last_snapshot_at: '2026-04-05T21:05:00.000Z',
+            baseline_tvl_1h: '40000',
+            baseline_tvl_6h: '20000',
+            baseline_tvl_24h: '10000',
+          }],
+        };
+      }
+
       return {
-        rows: [{
-          token_address: 'So11111111111111111111111111111111111111112',
-          last_checked_at: '2026-04-05T21:05:00.000Z',
-          has_pool: true,
-          current_tvl: '82000',
-          best_pool_address: 'pool_test_123',
-          pool_count: 2,
-          last_error: null,
-          source: 'meteora',
-          updated_at: '2026-04-05T21:05:00.000Z',
-          last_snapshot_at: '2026-04-05T21:05:00.000Z',
-          baseline_tvl_1h: '40000',
-          baseline_tvl_6h: '20000',
-          baseline_tvl_24h: '10000',
-        }],
+        rows: [
+          {
+            token_address: '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+            last_checked_at: '2026-04-05T21:05:00.000Z',
+            has_pool: false,
+            current_tvl: null,
+            best_pool_address: null,
+            pool_count: 0,
+            last_error: null,
+            source: 'meteora',
+            updated_at: '2026-04-05T21:05:00.000Z',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            last_checked_at: '2026-04-05T21:05:00.000Z',
+            has_pool: true,
+            current_tvl: '82000',
+            best_pool_address: 'pool_test_123',
+            pool_count: 2,
+            last_error: null,
+            source: 'meteora',
+            updated_at: '2026-04-05T21:05:00.000Z',
+          },
+        ],
       };
     };
 
     try {
       const rows = await tokenMeteoraState.listSummaryByAddresses([
         'So11111111111111111111111111111111111111112',
+        '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
       ]);
 
-      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112']]);
-      assert.match(capturedSql, /FROM token_meteora_state/i);
-      assert.match(capturedSql, /latest_snapshot/i);
-      assert.doesNotMatch(capturedSql, /after_1h/i);
-      assert.doesNotMatch(capturedSql, /after_6h/i);
-      assert.doesNotMatch(capturedSql, /after_24h/i);
-      assert.equal(rows[0].hasPool, true);
-      assert.equal(rows[0].currentTvl, 82000);
-      assert.equal(rows[0].baselineTvl24h, 10000);
+      assert.equal(capturedQueries.length, 2);
+      assert.deepEqual(capturedQueries[0].params, [[
+        'So11111111111111111111111111111111111111112',
+        '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+      ]]);
+      assert.match(capturedQueries[0].sql, /FROM token_meteora_state/i);
+      assert.doesNotMatch(capturedQueries[0].sql, /token_meteora_snapshots/i);
+      assert.deepEqual(capturedQueries[1].params, [['So11111111111111111111111111111111111111112']]);
+      assert.match(capturedQueries[1].sql, /FROM token_meteora_snapshots/i);
+      assert.match(capturedQueries[1].sql, /LEFT JOIN LATERAL/i);
+      assert.doesNotMatch(capturedQueries[1].sql, /after_1h/i);
+      assert.doesNotMatch(capturedQueries[1].sql, /after_6h/i);
+      assert.doesNotMatch(capturedQueries[1].sql, /after_24h/i);
+
+      const byAddress = new Map(rows.map((row) => [row.tokenAddress, row]));
+      const positivePoolRow = byAddress.get('So11111111111111111111111111111111111111112');
+      const noPoolRow = byAddress.get('34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb');
+      assert.equal(positivePoolRow.hasPool, true);
+      assert.equal(positivePoolRow.currentTvl, 82000);
+      assert.equal(positivePoolRow.baselineTvl24h, 10000);
+      assert.equal(noPoolRow.hasPool, false);
+      assert.equal(noPoolRow.lastSnapshotAt, null);
+      assert.equal(noPoolRow.baselineTvl24h, null);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('skips Meteora snapshot history when no current pool row needs baselines', async () => {
+    const originalQuery = db.query;
+    const capturedQueries = [];
+
+    db.query = async (sql, params) => {
+      capturedQueries.push({ sql, params });
+      assert.doesNotMatch(sql, /token_meteora_snapshots/i);
+      return {
+        rows: [{
+          token_address: '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+          last_checked_at: '2026-04-05T21:05:00.000Z',
+          has_pool: false,
+          current_tvl: null,
+          best_pool_address: null,
+          pool_count: 0,
+          last_error: null,
+          source: 'meteora',
+          updated_at: '2026-04-05T21:05:00.000Z',
+        }],
+      };
+    };
+
+    try {
+      const rows = await tokenMeteoraState.listSummaryByAddresses([
+        '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb',
+      ]);
+
+      assert.equal(capturedQueries.length, 1);
+      assert.equal(rows[0].hasPool, false);
+      assert.equal(rows[0].lastSnapshotAt, null);
+      assert.equal(rows[0].baselineTvl1h, null);
     } finally {
       db.query = originalQuery;
     }

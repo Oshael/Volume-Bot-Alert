@@ -164,9 +164,35 @@ async function recordError(address, error, runner = db) {
   return mapStateRow(rows[0] || null);
 }
 
-async function listSummaryByAddresses(addresses, runner = db) {
-  const normalized = normalizeAddressList(addresses);
-  if (normalized.length === 0) {
+async function listStateSummaryRowsByAddresses(addresses, runner = db) {
+  const { rows } = await runner.query(
+    `SELECT
+       token_address,
+       last_checked_at,
+       has_pool,
+       current_tvl,
+       best_pool_address,
+       pool_count,
+       last_error,
+       source,
+       updated_at
+     FROM token_meteora_state
+     WHERE token_address = ANY($1::varchar[])
+     ORDER BY token_address ASC`,
+    [addresses]
+  );
+
+  return rows;
+}
+
+function shouldLoadSnapshotSummary(row) {
+  return row?.has_pool === true
+    && toNumberOrNull(row.current_tvl) > 0
+    && row.last_checked_at != null;
+}
+
+async function listSnapshotSummaryRowsByAddresses(addresses, runner = db) {
+  if (addresses.length === 0) {
     return [];
   }
 
@@ -174,14 +200,7 @@ async function listSummaryByAddresses(addresses, runner = db) {
     `WITH state AS (
        SELECT
          token_address,
-         last_checked_at,
-         has_pool,
-         current_tvl,
-         best_pool_address,
-         pool_count,
-         last_error,
-         source,
-         updated_at
+         last_checked_at
        FROM token_meteora_state
        WHERE token_address = ANY($1::varchar[])
      ),
@@ -197,30 +216,10 @@ async function listSummaryByAddresses(addresses, runner = db) {
      )
      SELECT
        state.token_address,
-       state.last_checked_at,
-       state.has_pool,
-       state.current_tvl,
-       state.best_pool_address,
-       state.pool_count,
-       state.last_error,
-       state.source,
-       state.updated_at,
        latest_snapshot.last_snapshot_at,
-       CASE
-         WHEN state.has_pool IS TRUE AND state.current_tvl IS NOT NULL
-          THEN before_1h.total_tvl
-        ELSE NULL
-       END AS baseline_tvl_1h,
-       CASE
-         WHEN state.has_pool IS TRUE AND state.current_tvl IS NOT NULL
-          THEN before_6h.total_tvl
-        ELSE NULL
-       END AS baseline_tvl_6h,
-       CASE
-         WHEN state.has_pool IS TRUE AND state.current_tvl IS NOT NULL
-          THEN before_24h.total_tvl
-        ELSE NULL
-       END AS baseline_tvl_24h
+       before_1h.total_tvl AS baseline_tvl_1h,
+       before_6h.total_tvl AS baseline_tvl_6h,
+       before_24h.total_tvl AS baseline_tvl_24h
      FROM state
      LEFT JOIN latest_snapshot
        ON latest_snapshot.token_address = state.token_address
@@ -230,8 +229,7 @@ async function listSummaryByAddresses(addresses, runner = db) {
        WHERE token_address = state.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
-       AND state.last_checked_at IS NOT NULL
-        AND ts <= state.last_checked_at - INTERVAL '1 hour'
+         AND ts <= state.last_checked_at - INTERVAL '1 hour'
       ORDER BY ts DESC
       LIMIT 1
      ) AS before_1h ON TRUE
@@ -241,8 +239,7 @@ async function listSummaryByAddresses(addresses, runner = db) {
        WHERE token_address = state.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
-       AND state.last_checked_at IS NOT NULL
-        AND ts <= state.last_checked_at - INTERVAL '6 hour'
+         AND ts <= state.last_checked_at - INTERVAL '6 hour'
       ORDER BY ts DESC
       LIMIT 1
      ) AS before_6h ON TRUE
@@ -252,16 +249,44 @@ async function listSummaryByAddresses(addresses, runner = db) {
        WHERE token_address = state.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
-       AND state.last_checked_at IS NOT NULL
-        AND ts <= state.last_checked_at - INTERVAL '24 hour'
+         AND ts <= state.last_checked_at - INTERVAL '24 hour'
       ORDER BY ts DESC
       LIMIT 1
      ) AS before_24h ON TRUE
      ORDER BY state.token_address ASC`,
-    [normalized]
+    [addresses]
   );
 
-  return rows.map(mapSummaryRow);
+  return rows;
+}
+
+function mergeSummaryRows(stateRows, snapshotRows) {
+  const snapshotByAddress = new Map(snapshotRows.map((row) => [row.token_address, row]));
+  return stateRows.map((row) => {
+    const snapshotRow = snapshotByAddress.get(row.token_address) || {};
+    return {
+      ...row,
+      last_snapshot_at: snapshotRow.last_snapshot_at || null,
+      baseline_tvl_1h: snapshotRow.baseline_tvl_1h ?? null,
+      baseline_tvl_6h: snapshotRow.baseline_tvl_6h ?? null,
+      baseline_tvl_24h: snapshotRow.baseline_tvl_24h ?? null,
+    };
+  });
+}
+
+async function listSummaryByAddresses(addresses, runner = db) {
+  const normalized = normalizeAddressList(addresses);
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  const stateRows = await listStateSummaryRowsByAddresses(normalized, runner);
+  const snapshotAddresses = stateRows
+    .filter(shouldLoadSnapshotSummary)
+    .map((row) => row.token_address);
+  const snapshotRows = await listSnapshotSummaryRowsByAddresses(snapshotAddresses, runner);
+
+  return mergeSummaryRows(stateRows, snapshotRows).map(mapSummaryRow);
 }
 
 async function getSummaryByAddress(address, runner = db) {
@@ -279,10 +304,12 @@ module.exports = {
   __private: {
     mapStateRow,
     mapSummaryRow,
+    mergeSummaryRows,
     normalizeAddress,
     normalizeAddressList,
     normalizeError,
     normalizeSource,
+    shouldLoadSnapshotSummary,
     toNumberOrNull,
     toTimestampOrNull,
   },

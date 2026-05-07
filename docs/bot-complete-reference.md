@@ -693,6 +693,7 @@ Execution notes:
 - unused slots from an underfilled higher tier can spill into lower tiers
 - current state is persisted in `token_meteora_state`
 - positive checks also append history into `token_meteora_snapshots`
+- summary reads split current state from history: no-pool/current-state rows do not hit `token_meteora_snapshots`; only positive pool rows load latest snapshot and 1h/6h/24h TVL baselines
 
 #### Lateralization worker
 File:
@@ -781,6 +782,7 @@ Used for:
 Current API shape:
 - client uses the current DLMM Datapi pools endpoint, not the legacy `pair/all_by_groups` route
 - worker queries `token_x` and `token_y` sides separately per token and merges the results
+- summary endpoints read `token_meteora_state` first and consult `token_meteora_snapshots` only for positive pool rows that need historical TVL baselines
 - current `meteora-surge` alerting layer on top of this data now includes:
   - hot-token priming instead of always alerting immediately on session start
   - `10m` repeat cooldown
