@@ -496,6 +496,7 @@ GMGN risk gates before catalog/upsert alert flow:
   - queue budget exhaustion does not block catalog/bucket persistence by itself
   - automatic GMGN-only alert emission still requires Dex confirmation or completed preliminary review
   - successful queued preliminary reviews create a process-local fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
+- GMGN ingestion writes mcap/price snapshots to `token_market_buckets_1m` when mcap is available, in addition to volume snapshots in `token_market_volume_buckets_1m`; this lets GMGN/manual refreshes feed the same sparkline source used by Dex-driven catalog refreshes
 - GMGN `token security` auto-blocks when top-10 holder rate is `>= 70%`
 - GMGN `token info` auto-blocks low-mcap/high-holder anomalies:
   - mcap `<= 150k`
@@ -2362,6 +2363,7 @@ Current GMGN worker status includes:
 - last request count and raw/unique token counts
 - rate-limit/backoff state
 - catalog updates and volume bucket writes
+- mcap bucket writes from GMGN ingestion
 - skipped new `1m`-only discovery count
 - GMGN junk assessments, skipped junk suspects, and GMGN auto-block count
 - GMGN risk-enrichment suppression count

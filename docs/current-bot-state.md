@@ -950,6 +950,7 @@ Current monitored UI behavior:
   - quarantines young extreme GMGN churn under `gmgn_needs_risk_enrichment` until structural enrichment resolves it
   - `user-manual` rows are protected from GMGN auto-blocking
   - still refreshes existing catalog tokens if they appear in `1m`
+  - writes GMGN mcap/price snapshots into `token_market_buckets_1m` when GMGN/manual ingestion has mcap data, so the normal sparkline source is fed by the GMGN path too
   - writes GMGN market volume into `token_market_volume_buckets_1m`
   - fills missing young-token `6h`/`24h` volume windows from shorter GMGN volume before catalog, bucket, alert, and panel-state writes
   - uses normal `monitored-vol` for GMGN `5m` volume jumps
@@ -961,7 +962,7 @@ Current monitored UI behavior:
   - GMGN refreshes that resolve to `admin-blocked` are excluded from the accepted panel-token set, so blocked addresses are not kept `active` in `token_gmgn_panel_state`
 - Admin status:
   - `GET /api/admin/ws-status` exposes `gmgnDiscoveryWorker`
-  - `gmgnDiscoveryWorker` status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, bucket writes, matcher evaluations, emitted alerts, matcher debounce/suppression skips, GMGN alert-safeguard skips, GMGN `1m` alerts, risk-enrichment suppression count, risk lookup budget usage/skips, queued/deduped/fresh-passed queue handoffs, security/info/kline checks, security/info/kline errors, security/info/kline auto-block counts, GMGN low-mcap extreme-volume auto-block counts, GMGN new non-pump high-launch auto-block counts, GMGN auto-block counts, Dex handoff counts, and nested `riskReviewQueue`
+  - `gmgnDiscoveryWorker` status includes request count, raw/unique tokens, rate-limit backoff, catalog writes, mcap bucket writes, volume bucket writes, matcher evaluations, emitted alerts, matcher debounce/suppression skips, GMGN alert-safeguard skips, GMGN `1m` alerts, risk-enrichment suppression count, risk lookup budget usage/skips, queued/deduped/fresh-passed queue handoffs, security/info/kline checks, security/info/kline errors, security/info/kline auto-block counts, GMGN low-mcap extreme-volume auto-block counts, GMGN new non-pump high-launch auto-block counts, GMGN auto-block counts, Dex handoff counts, and nested `riskReviewQueue`
   - `gmgnDiscoveryWorker.riskReviewQueue` exposes queue running/in-flight state, queued token count, fresh passed-review count, last/total processed, last/total passed, last/total auto-blocked, last/total errors, and queue token limit
   - top-level `gmgn.riskLookupCache` exposes the process-wide GMGN risk lookup cache state: enabled flag, TTL, max entries, current entries, hits, misses, writes, evictions, expired entries, and clears
 - Required rollout switches:

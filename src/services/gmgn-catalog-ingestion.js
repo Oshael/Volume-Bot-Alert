@@ -1,6 +1,7 @@
 const { isValidAddress } = require('../models/user-token');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenCatalog = require('../models/token-catalog');
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const gmgnClient = require('./gmgn-client');
 const gmgnDiscoveryScheduler = require('./gmgn-discovery-scheduler');
@@ -145,6 +146,7 @@ function resolveIngestionOptions(options = {}) {
     evaluationState: options.evaluationState || defaultEvaluationState,
     tokenCatalogModel: options.tokenCatalogModel || tokenCatalog,
     adminBlockedTokenModel: options.adminBlockedTokenModel || adminBlockedToken,
+    marketBucketModel: options.marketBucketModel || (options.volumeBucketModel ? null : tokenMarketBucket1m),
     volumeBucketModel: options.volumeBucketModel || tokenMarketVolumeBucket1m,
     alertMatcher: options.alertMatcher || userAlertMatcher,
     gmgnClient: options.gmgnClient || gmgnClient.createGmgnClient(options.gmgnClientOptions || {}),
@@ -197,6 +199,17 @@ function buildVolumeBucketPayload(snapshot, now) {
     vol1h: snapshot.vol1h,
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
+    source: 'gmgn',
+  };
+}
+
+function buildMarketBucketPayload(snapshot, now) {
+  return {
+    tokenAddress: normalizeAddress(snapshot.address || snapshot.tokenAddress),
+    ts: now,
+    pairAddress: snapshot.pairAddress || null,
+    mcap: snapshot.mcap,
+    price: snapshot.price,
     source: 'gmgn',
   };
 }
@@ -1035,6 +1048,10 @@ async function ingestGmgnToken(snapshot, options = {}) {
     if (String(tokenAfter.suppressed_reason || '').trim() === GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON) {
       summary.riskEnrichmentSuppressed = 1;
     }
+    if (resolved.marketBucketModel) {
+      await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(filledSnapshot, now));
+      summary.marketBucketsWritten = 1;
+    }
     await resolved.volumeBucketModel.upsertSnapshotBucket(buildVolumeBucketPayload(filledSnapshot, now));
     summary.volumeBucketsWritten = 1;
     if (canEvaluateGmgnAlerts(tokenBefore, tokenAfter, securityGuard)) {
@@ -1103,6 +1120,7 @@ function createEmptyIngestionSummary() {
   return {
     processed: 0,
     catalogUpdated: 0,
+    marketBucketsWritten: 0,
     volumeBucketsWritten: 0,
     matcherEvaluations: 0,
     matcherEmitted: 0,
@@ -1141,6 +1159,7 @@ function createEmptyIngestionSummary() {
 function mergeIngestionSummary(target, source) {
   target.processed += source.processed;
   target.catalogUpdated += source.catalogUpdated;
+  target.marketBucketsWritten += source.marketBucketsWritten;
   target.volumeBucketsWritten += source.volumeBucketsWritten;
   target.matcherEvaluations += source.matcherEvaluations;
   target.matcherEmitted += source.matcherEmitted;
@@ -1244,6 +1263,7 @@ module.exports = {
     enqueueGmgnRiskReview,
     buildCatalogPayload,
     buildEvaluationPayload,
+    buildMarketBucketPayload,
     buildVolumeBucketPayload,
     calculateTokenAgeHours,
     computeSnapshotVolumeToMcapRatio,

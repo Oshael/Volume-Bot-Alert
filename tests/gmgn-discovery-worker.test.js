@@ -56,6 +56,7 @@ describe('gmgn discovery worker', () => {
               ingestion: {
                 processed: 1,
                 catalogUpdated: 1,
+                marketBucketsWritten: 4,
                 volumeBucketsWritten: 1,
                 riskEnrichmentSuppressed: 4,
                 gmgnSecurityChecks: 5,
@@ -97,6 +98,8 @@ describe('gmgn discovery worker', () => {
     assert.equal(status.lastRequests, 5);
     assert.equal(status.lastRawTokens, 2);
     assert.equal(status.lastUniqueTokens, 1);
+    assert.equal(status.lastMarketBucketsWritten, 4);
+    assert.equal(status.totalMarketBucketsWritten, 4);
     assert.equal(status.lastMatcherEmitted, 2);
     assert.equal(status.lastRiskEnrichmentSuppressed, 4);
     assert.equal(status.totalRiskEnrichmentSuppressed, 4);

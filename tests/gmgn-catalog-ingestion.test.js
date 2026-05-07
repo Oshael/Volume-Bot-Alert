@@ -148,6 +148,16 @@ describe('gmgn catalog ingestion', () => {
   it('updates catalog, writes GMGN volume buckets, then evaluates alerts', async () => {
     const callOrder = [];
     const tokenCatalogModel = createTokenCatalogStub();
+    const marketBucketModel = {
+      async upsertSnapshotBucket(payload) {
+        callOrder.push('marketBucket');
+        assert.equal(payload.tokenAddress, TOKEN_A);
+        assert.equal(payload.mcap, 250000);
+        assert.equal(payload.price, 0.25);
+        assert.equal(payload.source, 'gmgn');
+        return payload;
+      },
+    };
     const volumeBucketModel = {
       async upsertSnapshotBucket(payload) {
         callOrder.push('volumeBucket');
@@ -193,6 +203,7 @@ describe('gmgn catalog ingestion', () => {
       now: () => new Date('2026-05-03T07:00:00.000Z'),
       evaluationState: new Map(),
       tokenCatalogModel,
+      marketBucketModel,
       volumeBucketModel,
       alertMatcher,
     });
@@ -200,11 +211,13 @@ describe('gmgn catalog ingestion', () => {
     assert.deepEqual(callOrder, [
       'upsertToken',
       'applyEvaluationResult',
+      'marketBucket',
       'volumeBucket',
       'matcher',
     ]);
     assert.equal(result.summary.processed, 1);
     assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(result.summary.marketBucketsWritten, 1);
     assert.equal(result.summary.volumeBucketsWritten, 1);
     assert.equal(result.summary.matcherEvaluations, 1);
     assert.equal(result.summary.matcherEmitted, 1);

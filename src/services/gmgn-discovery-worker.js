@@ -28,6 +28,7 @@ function createInitialStatus() {
     lastBackoffRemainingMs: 0,
     lastProcessed: 0,
     lastCatalogUpdated: 0,
+    lastMarketBucketsWritten: 0,
     lastVolumeBucketsWritten: 0,
     lastSkipped1mOnlyDiscovery: 0,
     lastAutoBlockedJunk: 0,
@@ -67,6 +68,7 @@ function createInitialStatus() {
     totalErrors: 0,
     totalProcessed: 0,
     totalCatalogUpdated: 0,
+    totalMarketBucketsWritten: 0,
     totalVolumeBucketsWritten: 0,
     totalSkipped1mOnlyDiscovery: 0,
     totalAutoBlockedJunk: 0,
@@ -157,6 +159,7 @@ function buildRunCounters(result) {
     lastBackoffRemainingMs: toCount(discovery.backoffRemainingMs),
     lastProcessed: toCount(ingestion.processed),
     lastCatalogUpdated: toCount(ingestion.catalogUpdated),
+    lastMarketBucketsWritten: toCount(ingestion.marketBucketsWritten),
     lastVolumeBucketsWritten: toCount(ingestion.volumeBucketsWritten),
     lastSkipped1mOnlyDiscovery: toCount(ingestion.skipped1mOnlyDiscovery),
     lastAutoBlockedJunk: toCount(ingestion.autoBlockedJunk),
@@ -197,6 +200,7 @@ function buildRunCounters(result) {
 function addTotalsFromCounters(counters) {
   status.totalProcessed += counters.lastProcessed;
   status.totalCatalogUpdated += counters.lastCatalogUpdated;
+  status.totalMarketBucketsWritten += counters.lastMarketBucketsWritten;
   status.totalVolumeBucketsWritten += counters.lastVolumeBucketsWritten;
   status.totalSkipped1mOnlyDiscovery += counters.lastSkipped1mOnlyDiscovery;
   status.totalAutoBlockedJunk += counters.lastAutoBlockedJunk;
