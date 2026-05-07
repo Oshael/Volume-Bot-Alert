@@ -3,6 +3,7 @@ const { isValidAddress } = require('../models/user-token');
 
 const DEFAULT_STARTING_CASH_USD = 1000;
 const DEFAULT_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
+const STALE_SELL_MAX_MCAP_USD = 30000;
 const EPSILON = 1e-12;
 
 class MockTradingError extends Error {
@@ -227,7 +228,15 @@ function mapPosition(row) {
   };
 }
 
-function mapCatalogPrice(row, now = new Date(), maxAgeMs = DEFAULT_PRICE_MAX_AGE_MS) {
+function isStaleCatalogPriceAllowed(marketCapUsd, options = {}) {
+  const allowStaleBelowMcapUsd = toFiniteNumber(options.allowStaleBelowMcapUsd, null);
+  return allowStaleBelowMcapUsd != null
+    && marketCapUsd != null
+    && marketCapUsd > 0
+    && marketCapUsd < allowStaleBelowMcapUsd;
+}
+
+function mapCatalogPrice(row, now = new Date(), maxAgeMs = DEFAULT_PRICE_MAX_AGE_MS, options = {}) {
   if (!row) {
     throw new MockTradingError('Token is not available in catalog', 'token_not_found', 404);
   }
@@ -235,16 +244,21 @@ function mapCatalogPrice(row, now = new Date(), maxAgeMs = DEFAULT_PRICE_MAX_AGE
   if (!(priceUsd > 0)) {
     throw new MockTradingError('Token does not have a valid priceUsd', 'price_unavailable');
   }
+  const marketCapUsd = toFiniteNumber(row.last_mcap, null);
 
   const freshnessSource = row.last_evaluated_at || row.last_seen_at;
   const freshnessMs = Date.parse(String(freshnessSource || ''));
-  if (!Number.isFinite(freshnessMs) || now.getTime() - freshnessMs > maxAgeMs) {
+  const priceStale = !Number.isFinite(freshnessMs) || now.getTime() - freshnessMs > maxAgeMs;
+  const stalePriceAllowed = priceStale && isStaleCatalogPriceAllowed(marketCapUsd, options);
+  if (priceStale && !stalePriceAllowed) {
     throw new MockTradingError('Token price is stale', 'price_stale');
   }
 
   return {
     priceUsd,
-    marketCapUsd: toFiniteNumber(row.last_mcap, null),
+    marketCapUsd,
+    priceStale,
+    stalePriceAllowed,
     symbol: row.symbol || null,
     name: row.name || null,
     imageUrl: row.last_image_url || null,
@@ -375,7 +389,7 @@ async function loadFreshCatalogPrice(address, runner, options = {}) {
      WHERE address = $1`,
     [address]
   );
-  return mapCatalogPrice(rows[0], options.now || new Date(), options.maxAgeMs || DEFAULT_PRICE_MAX_AGE_MS);
+  return mapCatalogPrice(rows[0], options.now || new Date(), options.maxAgeMs || DEFAULT_PRICE_MAX_AGE_MS, options);
 }
 
 async function loadPositionForUpdate(userId, address, runner) {
@@ -574,7 +588,10 @@ async function sellToken(payload = {}, options = {}) {
     const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
     const position = await loadPositionForUpdate(userId, address, client);
     const quantity = normalizeSellQuantity(position, payload);
-    const catalog = await loadFreshCatalogPrice(address, client, options);
+    const catalog = await loadFreshCatalogPrice(address, client, {
+      ...options,
+      allowStaleBelowMcapUsd: STALE_SELL_MAX_MCAP_USD,
+    });
     const next = buildSellState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, quantity });
 
     await saveAccount(next.account, client);
@@ -895,6 +912,7 @@ async function executeTakeProfitOrder(orderId, options = {}) {
 module.exports = {
   DEFAULT_PRICE_MAX_AGE_MS,
   DEFAULT_STARTING_CASH_USD,
+  STALE_SELL_MAX_MCAP_USD,
   MockTradingError,
   addCash,
   buyToken,

@@ -1410,6 +1410,12 @@ function renderMockTradingPnlResumeModal(state: AppState) {
             </div>
           </div>
 
+          <div class="mock-trading-pnl-actions" data-address="${escapeHtml(view.address)}">
+            <button type="button" class="action-button small" data-action="mock-pnl-sell" data-percent="25" ${state.ui.busy ? 'disabled' : ''}>Sell 25%</button>
+            <button type="button" class="action-button small" data-action="mock-pnl-sell" data-percent="50" ${state.ui.busy ? 'disabled' : ''}>Sell 50%</button>
+            <button type="button" class="action-button small danger" data-action="mock-pnl-sell" data-percent="100" ${state.ui.busy ? 'disabled' : ''}>Sell 100%</button>
+          </div>
+
           <div class="mock-trading-pnl-chart">
             ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
           </div>
@@ -1985,6 +1991,14 @@ function bindMockTradingPnlResumeModal(section: ParentNode, controller: AppContr
   if (address && sparkline) {
     bindSparklineHover(section, { [address]: sparkline });
   }
+  section.querySelectorAll<HTMLButtonElement>('[data-action="mock-pnl-sell"]').forEach((button) => {
+    bindPointerSafeModalButton(button, () => {
+      const percent = Number(button.dataset.percent || '0');
+      const panel = button.closest<HTMLElement>('.mock-trading-pnl-actions');
+      const tokenAddress = panel?.dataset.address || '';
+      void controller.submitMockTradingSell(tokenAddress, percent);
+    });
+  });
   bindCopyButtons(section);
 }
 

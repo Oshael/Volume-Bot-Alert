@@ -8690,6 +8690,9 @@ export function createAppController(): AppController {
           state.data.mockTradingPositionsByAddress[address] = result.position;
         } else {
           delete state.data.mockTradingPositionsByAddress[address];
+          if (state.ui.mockTradingPnlAddress === address) {
+            state.ui.mockTradingPnlAddress = null;
+          }
         }
         state.ui.mockTradingTicket = null;
         setNotice(result.message);

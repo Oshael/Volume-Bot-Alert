@@ -966,6 +966,7 @@ Reasons:
 - Execution behavior:
   - buys and sells execute against `token_catalog.last_price` as `priceUsd`
   - execution snapshots `token_catalog.last_mcap` as market-cap reference
+  - manual sells can use a stale catalog price only when `last_mcap < 30k`; buys and take-profit orders still require fresh catalog price
   - default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount
   - open-position value, PnL, and return percentage are calculated from token quantity and `priceUsd`
   - market cap is display/reference context, not the PnL calculation source
@@ -974,6 +975,7 @@ Reasons:
   - token rows expose admin-only mock buy/sell controls
   - buy uses a ticket modal with fixed USD presets and a custom amount
   - sell uses a ticket modal with percent presets and a custom percent
+  - the PnL resume modal exposes direct sell buttons for 25%, 50%, and 100%
   - admin can manually add fake cash without clearing positions/trades; this increases both `cash_usd` and `starting_cash_usd` so deposits do not inflate total PnL
   - buy/sell ticket modals scroll when their content exceeds the viewport
   - header cash pill shows only current mock cash, add cash, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill

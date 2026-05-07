@@ -130,6 +130,40 @@ describe('mock trading service calculations', () => {
     );
   });
 
+  it('allows stale catalog prices only for low-mcap sell fallback', () => {
+    const catalog = mapCatalogPrice(
+      {
+        last_price: '0.001',
+        last_mcap: '25000',
+        last_seen_at: '2026-04-30T12:00:00.000Z',
+        last_evaluated_at: '2026-04-30T12:00:00.000Z',
+      },
+      new Date('2026-04-30T12:06:00.000Z'),
+      5 * 60 * 1000,
+      { allowStaleBelowMcapUsd: mockTradingService.STALE_SELL_MAX_MCAP_USD }
+    );
+
+    assert.equal(catalog.priceUsd, 0.001);
+    assert.equal(catalog.marketCapUsd, 25000);
+    assert.equal(catalog.priceStale, true);
+    assert.equal(catalog.stalePriceAllowed, true);
+
+    assert.throws(
+      () => mapCatalogPrice(
+        {
+          last_price: '0.001',
+          last_mcap: '30000',
+          last_seen_at: '2026-04-30T12:00:00.000Z',
+          last_evaluated_at: '2026-04-30T12:00:00.000Z',
+        },
+        new Date('2026-04-30T12:06:00.000Z'),
+        5 * 60 * 1000,
+        { allowStaleBelowMcapUsd: mockTradingService.STALE_SELL_MAX_MCAP_USD }
+      ),
+      /Token price is stale/
+    );
+  });
+
   it('normalizes percent-based sell quantity and rejects missing positions', () => {
     assert.equal(
       normalizeSellQuantity({ quantity: 2000 }, { percent: 25 }),

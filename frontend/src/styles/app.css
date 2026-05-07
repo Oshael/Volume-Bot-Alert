@@ -3988,6 +3988,16 @@ a {
   white-space: nowrap;
 }
 
+.mock-trading-pnl-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.mock-trading-pnl-actions .action-button {
+  justify-content: center;
+}
+
 .mock-trading-pnl-stats div[data-tone="up"] strong,
 .mock-trading-pnl-trade[data-tone="up"] strong {
   color: rgba(147, 255, 197, 0.94);

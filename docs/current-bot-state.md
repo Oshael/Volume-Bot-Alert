@@ -1408,12 +1408,14 @@ Current security priority order:
   - `mock_trading_take_profit_orders`
 - Execution price comes from `token_catalog.last_price` as `priceUsd`.
 - Trade execution also snapshots `token_catalog.last_mcap` as display/reference MCAP.
+- Sells can use a stale catalog price only when `last_mcap < 30k`; buys and take-profit orders still require fresh catalog price.
 - The default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount.
 - PnL and return percentage are calculated from token quantity and `priceUsd`, not from market cap.
 - The frontend loads the authenticated admin portfolio summary, open positions, and recent trades.
 - Admin token rows expose mock buy/sell controls:
   - buy opens a ticket with fixed USD presets and a custom USD amount
   - sell opens a ticket with percentage presets and a custom percent
+  - the PnL resume modal also exposes direct sell buttons for 25%, 50%, and 100%
   - add cash deposits manual fake USD into the authenticated admin portfolio without clearing positions or trades
   - reset clears only the authenticated admin user's mock portfolio
 - Manual mock cash deposits increase both `cash_usd` and `starting_cash_usd`, so deposits do not inflate the total PnL calculation.
