@@ -30,6 +30,7 @@ const pendingPumpToastSoundIds = new Set<string>();
 const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
 const PERF_DEBUG_SAMPLE_INTERVAL_MS = 10 * 1000;
+const FOREGROUND_STATE_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -49,6 +50,8 @@ let hiddenRuntimeStopTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenMonitoringWasActive = false;
 let hiddenAutoStopTriggered = false;
 let lastLivePresenceSignature: string | null = null;
+let lastForegroundStateRefreshAt = 0;
+let foregroundStateRefreshInFlight = false;
 let suppressCatchupAlertAudioUntil = 0;
 let suppressCatchupAlertCreatedBefore = 0;
 
@@ -442,6 +445,24 @@ function syncLivePresence(state: AppState | null, options?: { force?: boolean })
   lastLivePresenceSignature = signature;
 }
 
+function refreshForegroundState(options: { force?: boolean } = {}) {
+  if (!latestState || latestState.session.status !== 'authenticated') {
+    return;
+  }
+
+  const now = Date.now();
+  if (foregroundStateRefreshInFlight || (!options.force && now - lastForegroundStateRefreshAt < FOREGROUND_STATE_REFRESH_MIN_INTERVAL_MS)) {
+    return;
+  }
+
+  lastForegroundStateRefreshAt = now;
+  foregroundStateRefreshInFlight = true;
+  void controller.refreshRestoredSessionState(options)
+    .finally(() => {
+      foregroundStateRefreshInFlight = false;
+    });
+}
+
 function resolveListInteractionZone(target: HTMLElement | null) {
   const broadList = target?.closest<HTMLElement>(FULL_LIST_INTERACTION_LOCK_SELECTOR);
   if (broadList) {
@@ -720,7 +741,16 @@ document.addEventListener('visibilitychange', () => {
     syncAudioSideEffects(latestState);
   }
   syncLivePresence(latestState, { force: true });
+  refreshForegroundState({ force: hiddenDurationMs >= 5_000 });
   scheduleRestoreRender();
+});
+
+window.addEventListener('pageshow', (event) => {
+  refreshForegroundState({ force: event.persisted });
+});
+
+window.addEventListener('focus', () => {
+  refreshForegroundState();
 });
 
 window.addEventListener('popstate', () => {

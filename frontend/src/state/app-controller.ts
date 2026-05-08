@@ -135,6 +135,7 @@ const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
 const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
+const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
@@ -367,6 +368,7 @@ export interface AppController {
   toggleStarredToken(address: string): Promise<void>;
   setWorkspace(workspace: WorkspaceView): void;
   syncWorkspaceFromLocation(): void;
+  refreshRestoredSessionState(options?: { force?: boolean }): Promise<void>;
   setDocumentHidden(hidden: boolean): void;
   startMonitoring(): void;
   stopMonitoring(): void;
@@ -673,6 +675,8 @@ export function createAppController(): AppController {
   let historyBootstrapRequestRevision = 0;
   let monitoredBootstrapHydrationRevision = 0;
   let documentHiddenForUi = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  let restoredSessionRefreshInFlight = false;
+  let nextRestoredSessionRefreshAt = 0;
   let startedAt: number | null = null;
   let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let starredPersistRevision = 0;
@@ -6437,6 +6441,40 @@ export function createAppController(): AppController {
     applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
   }
 
+  async function refreshRestoredSessionStateInternal(options: { force?: boolean } = {}) {
+    const token = state.session.token;
+    if (state.session.status !== 'authenticated' || !token) {
+      return;
+    }
+
+    const now = Date.now();
+    if (restoredSessionRefreshInFlight || (!options.force && now < nextRestoredSessionRefreshAt)) {
+      return;
+    }
+
+    restoredSessionRefreshInFlight = true;
+    nextRestoredSessionRefreshAt = now + RESTORED_SESSION_CONFIG_REFRESH_MS;
+
+    try {
+      const payload = await fetchConfig(token);
+      if (state.session.token !== token || state.session.status !== 'authenticated') {
+        return;
+      }
+
+      applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
+      emit('all');
+      void hydrateDashboardMonitoredInternal(token, payload.tokens);
+      void refreshMockTradingState();
+      if (shouldRunHistoryAnalyticsRuntime()) {
+        void refreshBidZoneTokens({ force: true });
+      }
+    } catch (error) {
+      console.warn('[AppController] Failed to refresh restored session state:', error instanceof Error ? error.message : error);
+    } finally {
+      restoredSessionRefreshInFlight = false;
+    }
+  }
+
   async function applyVerifiedEmailPreAccessResult(result: VerifyEmailConfirmResponse) {
     disconnectSocket();
     stopMonitoringTimers();
@@ -7689,6 +7727,9 @@ export function createAppController(): AppController {
         return;
       }
       syncWorkspaceFromLocationInternal();
+    },
+    async refreshRestoredSessionState(options?: { force?: boolean }) {
+      await refreshRestoredSessionStateInternal(options);
     },
     setDocumentHidden(hidden: boolean) {
       documentHiddenForUi = Boolean(hidden);
