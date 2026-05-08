@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-05-05` after adding GMGN-assisted junk gates, the GMGN new non-pump high-launch auto-block gate, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
+Last reviewed against code and the live deployment model on `2026-05-08` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, current rate limit buckets, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -99,8 +99,8 @@ The bot is a Solana monitoring app with:
 - authenticated multi-user frontend
 - Express backend
 - PostgreSQL persistence
-- backend workers for discovery, catalog cleanup, catalog evaluation, minute-bucket market history, Meteora snapshots, and bid-zone snapshots
-- backend-only PumpFun migration capture
+- backend workers for discovery, GMGN ingestion, catalog cleanup, catalog evaluation, minute-bucket market history, Meteora snapshots, token-risk enrichment/review sync, optional bid-zone snapshots, and mock-trading take-profit execution
+- backend-only PumpFun migration and optional pre-migration bucket capture
 
 The UI is now centered around two authenticated workspaces:
 - `/alerts`
@@ -210,7 +210,7 @@ Deployment caveat:
 - current default remains `combined`
 - if the backend is ever scaled to multiple replicas, or another process uses the same production DB, each process will still start the full worker set unless runtime roles are intentionally split
 - that duplicates `catalog`, `cleanup`, `discovery`, `meteora`, and `bid-zone` execution against the same DB/upstreams
-- it also duplicates Helius enrichment and automatic token-risk review sync
+- it also duplicates Helius enrichment, automatic token-risk review sync, GMGN discovery, mock-trading take-profit execution, and any enabled bid-zone worker runs
 - do not horizontally scale the full backend unless it is explicitly separated into web/background runtime roles or stronger coordination is introduced
 
 Admin worker status endpoint:
@@ -225,8 +225,13 @@ Admin worker status endpoint:
   - `catalogCleanupWorker`
   - `meteoraSnapshotWorker`
   - `dexDiscoveryWorker`
+  - `bidZoneWorker`
   - `tokenRiskEnrichmentWorker`
   - `tokenRiskReviewSyncWorker`
+  - `mockTradingTakeProfitWorker`
+  - `gmgnDiscoveryWorker`
+  - `gmgn`
+  - `dexscreener`
 
 ### Backend workers
 
@@ -877,6 +882,10 @@ Endpoint:
   - `page`
   - `perPage`
   - `sorts`
+- `/monitor` routed/history bootstrap uses:
+  - `POST /api/dashboard/history-bootstrap`
+  - backend-side `recent` and `oldWeek` slices with page/perPage, search, starred-only, dismissed-address filtering, sort criteria, MCAP windows, and age windows
+  - the payload reuses monitored-style token rows plus Meteora summaries and MCAP/VOL baselines
 
 Workspace placement:
 - consumed by both `/alerts` and `/monitor`
@@ -942,22 +951,37 @@ Reasons:
   - `mock_trading_positions`
   - `mock_trading_trades`
   - `mock_trading_take_profit_orders`
+- Background execution:
+  - `src/services/mock-trading-take-profit-worker.js`
+  - starts with the background worker set
+  - enabled by default through `MOCK_TRADING_TAKE_PROFIT_ENABLED=true`
+  - default interval is `3s`
+  - default batch limit is `25` open triggered candidates
+  - exposed as `mockTradingTakeProfitWorker` in `GET /api/admin/ws-status`
 - Execution behavior:
   - buys and sells execute against `token_catalog.last_price` as `priceUsd`
   - execution snapshots `token_catalog.last_mcap` as market-cap reference
   - manual sells can use a stale catalog price only when `last_mcap < 30k`; buys and take-profit orders still require fresh catalog price
-  - default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount
+  - current UI converts between mock SOL and the existing internal USD accounting through the backend-persisted admin config `mock-sol-usdc-rate`:
+    - default: `1 SOL = 88 USDC`
+    - a `1 SOL` buy sends `notionalUsd = mock-sol-usdc-rate` to the backend
+    - with the default rate, a `20%` gain on that position is `+17.6` internally and displays as `+0.2 SOL`
+    - no live SOL/USD conversion is used for this simplified mode
+    - backend/API/DB field names still use `*_usd` / `notionalUsd` for compatibility
+  - each executed buy/sell trade snapshots `mockSolUsdcRate` into `mock_trading_trades.metadata`, so finalized trade rows, closed-play realized PnL, and chart markers keep the SOL reading from execution time even if the admin changes `mock-sol-usdc-rate` later
+  - older trades without a rate snapshot fall back to the original default `88`
+  - default starting mock balance still uses the existing internal account default (`1000`), displayed as `1000 / mock-sol-usdc-rate` SOL unless reset behavior is changed later
   - open-position value, PnL, and return percentage are calculated from token quantity and `priceUsd`
   - market cap is display/reference context, not the PnL calculation source
 - Frontend behavior:
   - admin sessions load summary, open positions, and recent trades
   - token rows expose admin-only mock buy/sell controls
-  - buy uses a ticket modal with fixed USD presets and a custom amount
+  - buy uses a ticket modal with fixed SOL presets and a custom SOL amount
   - sell uses a ticket modal with percent presets and a custom percent
   - the PnL resume modal exposes direct sell buttons for 25%, 50%, and 100%
-  - admin can manually add fake cash without clearing positions/trades; this increases both `cash_usd` and `starting_cash_usd` so deposits do not inflate total PnL
+  - admin can manually add mock SOL without clearing positions/trades; this still increases both `cash_usd` and `starting_cash_usd` internally so deposits do not inflate total PnL
   - buy/sell ticket modals scroll when their content exceeds the viewport
-  - header cash pill shows only current mock cash, add cash, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill
+  - header cash pill shows current mock SOL, add, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill
   - `Plays` opens a recent closed-play summary based on sell executions, realized PnL, win/loss counts, and win rate
   - reset clears only the authenticated admin user's mock portfolio
 - Chart-marker behavior:
@@ -1081,6 +1105,7 @@ Multi-tab coordination:
 - one active `/monitor` tab becomes leader
 - only the leader continues the repeating polling loop for:
   - `GET /api/dashboard/monitored`
+  - `POST /api/dashboard/history-bootstrap`
   - `GET /api/catalog/bid-zone`
 - leader also owns routed-chart refresh for:
   - `POST /api/catalog/sparklines`
@@ -1142,8 +1167,7 @@ Current login behavior:
     - same config/bootstrap hydration path
   - pre-access session:
     - `GET /api/pre-access/me`
-    - `GET /api/pre-access/plans`
-    - `GET /api/pre-access/orders`
+    - `GET /api/pre-access/billing/state`
 
 Login access rules:
 - unverified accounts cannot sign in
@@ -1845,6 +1869,7 @@ Important Padre note:
 
 Files:
 - `src/services/pumpfun-ws.js`
+- `src/services/pumpfun-pre-migration-capture.js`
 - `src/services/socket-hub.js`
 - `src/models/token-catalog.js`
 - `src/services/catalog-worker.js`
@@ -1856,6 +1881,16 @@ Behavior:
 - backend no longer subscribes to new-token or per-token trade streams for the frontend
 - Socket.io no longer exposes PumpFun live fanout or PumpFun client subscription events
 - frontend no longer mounts the PumpFun live panel, local PumpFun toasts, or local PumpFun alert generation
+
+Optional pre-migration capture:
+- controlled by `PUMPFUN_PRE_MIGRATION_CAPTURE_ENABLED`
+- default state is disabled
+- when enabled, create/trade observations are tracked in process memory for up to `PUMPFUN_PRE_MIGRATION_MAX_TRACKED` mints
+- default track TTL is `2h`
+- pre-migration observations can write MCAP/price buckets into `token_market_buckets_1m`
+- pre-migration trade volume windows can write into `token_market_volume_buckets_1m`
+- migration events remove the tracked pre-migration state for that mint
+- status is visible as `pumpfunPreMigrationCapture` inside `GET /api/admin/ws-status`
 
 Migration behavior:
 - current expected backend path:
@@ -1882,7 +1917,10 @@ Main alert types:
 - `monitored-vol`
 - `monitored-mcap`
 - `hvnc`
-- `old-surge`
+- `recent-surge-1h`
+- `recent-surge-6h`
+- `old-week-surge-1h`
+- `old-week-surge-6h`
 - `meteora-surge`
 - `high-cap-dump-5m`
 - backend ownership today:
@@ -2045,6 +2083,9 @@ Persistence and delivery:
   - during hidden user-scoped alert delivery, matcher dedupe now intentionally coalesces repeated emits per `user + rule + token`
 - backend feed endpoint:
   - `GET /api/dashboard/alert-events`
+- multi-feed catch-up endpoint:
+  - `GET /api/dashboard/alert-feeds`
+  - this is the current frontend catch-up path for loading multiple backend-owned alert rules together
 - cursor update endpoint:
   - `POST /api/dashboard/alert-events/cursor`
 - realtime delivery also uses authenticated socket event `alert:event`
@@ -2103,16 +2144,22 @@ Current top-row controls include:
 - `Surge Threshold`
 - `Alert Toggles`
 - `Sound By Alert Type`
+- admin-only `Mock SOL rate (USDC)` field backed by `mock-sol-usdc-rate`
 
 Current per-type toggle families:
 - `VOL`
 - `MCAP`
 - `High Volume New Coin`
-- `Surge`
+- `Recent Surge 1H`
+- `Recent Surge 6H`
+- `Old Token Surge 1H`
+- `Old Token Surge 6H`
+- `Meteora 1H`
 - `High Cap Dump 5M`
 
 Persistence:
 - these are backend-persisted user config values
+- `mock-sol-usdc-rate` controls mock SOL display and SOL buy/deposit conversion into internal USD accounting
 - `Sound Alert` is the master sound gate
 - `Sound By Alert Type` is the per-kind sound gate
 
@@ -2205,8 +2252,10 @@ Intentionally not included there:
 A token can enter `token_catalog` from:
 - manual track
 - Dex discovery worker
+- GMGN discovery ingestion
 - PumpFun migrate path
 - config-related upserts for some user overlays
+- admin/manual catalog promote/migrated routes used for operational backfill or migration validation
 
 Important distinction:
 - reevaluation is not discovery
@@ -2226,7 +2275,10 @@ Files:
 
 Limiter buckets:
 - `authLimiter`
+- `authEmailLimiter`
+- `authOtpLimiter`
 - `defaultApiLimiter`
+- `healthLimiter`
 - `dashboardLimiter`
 - `pumpfunMetaLimiter`
 - `catalogWriteLimiter`
@@ -2234,6 +2286,9 @@ Limiter buckets:
 
 Current defaults:
 - `authLimiter`: `10 / 15min / IP`
+- `authEmailLimiter`: `6 / 60min / IP+email/token/session`
+- `authOtpLimiter`: `12 / 15min / IP+challenge`
+- `healthLimiter`: `30 / 1min / IP`
 - `defaultApiLimiter`: `180 / 15min / user+IP`
 - `dashboardLimiter`: `360 / 15min / user+IP`
 - `pumpfunMetaLimiter`: `300 / 15min / user+IP`
@@ -2249,12 +2304,30 @@ Reason for this split:
 ## Important API Endpoints
 
 ### Auth
+- `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/login-otp/resend`
+- `POST /api/auth/login-otp/verify`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `POST /api/auth/logout-all`
 - `POST /api/auth/change-password`
-- `POST /api/auth/register`
+- `POST /api/auth/verify-email/request`
+- `POST /api/auth/verify-email/confirm`
+- `POST /api/auth/password-reset/request`
+- `POST /api/auth/password-reset/confirm`
+
+### Billing / Access
+- `GET /api/billing/plans`
+- `GET /api/billing/state`
+- `GET /api/billing/orders`
+- `POST /api/billing/orders`
+- `POST /api/billing/webhooks/moonpay`
+- `GET /api/pre-access/me`
+- `GET /api/pre-access/billing/state`
+- `POST /api/pre-access/billing/orders`
+- `POST /api/pre-access/complete`
+- `POST /api/pre-access/logout`
 
 ### Config
 - `GET /api/config`
@@ -2266,7 +2339,14 @@ Reason for this split:
 ### Catalog
 - `POST /api/catalog/manual-track`
 - `GET /api/catalog/eligible`
+- `POST /api/catalog/monitored-metadata-batch`
+- `POST /api/catalog/sparklines`
+- `POST /api/catalog/admin-blocklist`
+- `DELETE /api/catalog/admin-blocklist/:address`
 - `GET /api/catalog/history/:address`
+- `GET /api/catalog/bid-zone`
+- `POST /api/catalog/bid-zone/refresh`
+- `POST /api/catalog/meteora/batch`
 - `GET /api/catalog/meteora/:address/history`
 - `GET /api/catalog/pumpfun/:mint/meta`
 - `POST /api/catalog/promote`
@@ -2283,8 +2363,21 @@ Reason for this split:
 
 ### Dashboard
 - `GET /api/dashboard/monitored`
+- `POST /api/dashboard/history-bootstrap`
 - `GET /api/dashboard/alert-events`
+- `GET /api/dashboard/alert-feeds`
 - `POST /api/dashboard/alert-events/cursor`
+
+### Mock Trading
+- `GET /api/admin/mock-trading/summary`
+- `GET /api/admin/mock-trading/positions`
+- `GET /api/admin/mock-trading/trades`
+- `POST /api/admin/mock-trading/buy`
+- `POST /api/admin/mock-trading/sell`
+- `POST /api/admin/mock-trading/take-profit-orders`
+- `POST /api/admin/mock-trading/take-profit-orders/:id/cancel`
+- `POST /api/admin/mock-trading/add-cash`
+- `POST /api/admin/mock-trading/reset`
 
 ### Admin status
 - `GET /api/admin/ws-status`
@@ -2294,9 +2387,31 @@ Reason for this split:
 Admin status endpoint currently exposes:
 - socket hub status
 - catalog worker status
+- catalog cleanup worker status
 - Meteora snapshot worker status
 - Dex discovery worker status
+- bid-zone worker status
+- token-risk enrichment worker status
+- token-risk review sync worker status
+- mock-trading take-profit worker status
 - GMGN discovery worker status
+- GMGN client/risk-cache status
+- DexScreener cache/throttle status
+
+Socket hub nested status includes:
+- authenticated client/session/IP counts
+- live alert presence cache status
+- PumpFun websocket status
+- optional PumpFun pre-migration capture status
+- SOL price status
+
+Current mock-trading take-profit worker status includes:
+- running/in-flight/enabled state
+- last run/completion timestamps
+- configured batch limit and scheduled delay
+- candidate/triggered/skipped/cancelled counts
+- cumulative triggered/skipped/cancelled/error counts
+- last error
 
 Current GMGN worker status includes:
 - enabled/running/in-flight state
@@ -2486,8 +2601,8 @@ When verifying the bot, these are the best quick checks:
 3. `SELECT ... FROM token_catalog ORDER BY last_seen_at DESC`
 - confirm reevaluation is still active
 
-4. login + `START MONITORING`
-- confirm alerts and UI refresh still work
+4. login and open `/alerts`
+- confirm auto-started monitoring, backend alert feed catch-up, and UI refresh still work
 
 5. add manual token + `F5`
 - confirm local manual persistence survives reload

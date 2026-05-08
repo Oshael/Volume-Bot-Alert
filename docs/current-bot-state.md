@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-05-05` after adding GMGN-assisted junk gates, the GMGN new non-pump high-launch auto-block gate, GMGN alert safeguards, GMGN risk backfill, ticker-peer role badges, young-token volume-window fill, and the `/monitor` visible rename to `RADAR`.
+Last reviewed against code and the live deployment model on `2026-05-08` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, current rate limit buckets, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -121,16 +121,23 @@ Important:
   - `Socket.io`
   - `PostgreSQL`
 - Main routes/services:
+  - `src/routes/auth.js`
+  - `src/routes/social-auth.js`
+  - `src/routes/billing.js`
+  - `src/routes/pre-access.js`
   - `src/routes/config.js`
   - `src/routes/catalog.js`
   - `src/routes/dashboard.js`
+  - `src/routes/mock-trading.js`
   - `src/services/catalog-cleanup-worker.js`
   - `src/services/catalog-worker.js`
   - `src/services/dex-discovery-worker.js`
+  - `src/services/gmgn-discovery-worker.js`
   - `src/services/bid-zone-worker.js`
   - `src/services/meteora-snapshot-worker.js`
   - `src/services/token-risk-enrichment-worker.js`
   - `src/services/token-risk-review-sync-worker.js`
+  - `src/services/mock-trading-take-profit-worker.js`
   - `src/services/socket-hub.js`
 - Important deployment caveat:
   - the current production model still assumes one backend process
@@ -145,7 +152,7 @@ Important:
   - current default remains `combined`
   - if the backend is ever scaled to multiple replicas, or a second process points to the same production DB, every process will still start its own workers unless runtime roles are deliberately split
   - that would duplicate `catalog`, `cleanup`, `discovery`, `meteora`, and `bid-zone` work against the same DB/upstreams
-  - it would also duplicate Helius enrichment and automatic token-risk review sync
+  - it would also duplicate Helius enrichment, automatic token-risk review sync, GMGN discovery, mock-trading take-profit execution, and any enabled bid-zone worker runs
   - horizontal scale of the full backend is therefore still not recommended unless the split is intentionally deployed as separate web/background roles
 
 ## Token Risk Runtime
@@ -297,8 +304,18 @@ Important:
 
 ### Operational visibility
 - `GET /api/admin/ws-status` now exposes:
+  - `catalogWorker`
+  - `catalogCleanupWorker`
+  - `meteoraSnapshotWorker`
+  - `dexDiscoveryWorker`
+  - `bidZoneWorker`
   - `tokenRiskEnrichmentWorker`
   - `tokenRiskReviewSyncWorker`
+  - `mockTradingTakeProfitWorker`
+  - `gmgnDiscoveryWorker`
+  - nested Socket.io service status for `pumpfun`, `pumpfunPreMigrationCapture`, `solPrice`, and live alert presence
+  - top-level GMGN client/risk-cache status
+  - DexScreener cache/throttle status
 - `GET /api/dashboard/monitored` now exposes both:
   - `riskReview`
   - `junkAssessment`
@@ -334,7 +351,13 @@ Important:
   - `POST /api/pre-access/billing/orders`
   - `POST /api/pre-access/complete`
   - `POST /api/pre-access/logout`
+  - `GET /api/billing/plans`
+  - `GET /api/billing/state`
+  - `GET /api/billing/orders`
+  - `POST /api/billing/orders`
+  - `POST /api/billing/webhooks/moonpay`
   - `GET /api/account/identities`
+  - `GET /api/account/access`
   - `GET /api/account-security/identities`
   - `POST /api/account-security/identities/:provider/unlink`
   - `GET /api/account-security/billing/orders/:orderId/receipt`
@@ -459,6 +482,7 @@ Important:
   - `src/models/token-alert-event.js`
   - `src/models/token-alert-rule-state.js`
 - Main delivery endpoints:
+  - `GET /api/dashboard/alert-feeds`
   - `GET /api/dashboard/alert-events`
   - `POST /api/dashboard/alert-events/cursor`
 - Current delivery shape:
@@ -530,10 +554,22 @@ Important:
 - Source of truth: backend PumpPortal websocket migration stream
 - Backend websocket subscription methods:
   - `subscribeMigration`
+- Runtime files:
+  - `src/services/pumpfun-ws.js`
+  - `src/services/pumpfun-pre-migration-capture.js`
+  - `src/services/socket-hub.js`
 - Frontend no longer consumes or subscribes to PumpFun live events:
   - no `pump:*` Socket.io fanout
   - no `sol:price` Socket.io fanout for PumpFun UI
   - no frontend `pump:subscribe` / `pump:unsubscribe`
+- Current pre-migration capture is optional and backend-only:
+  - controlled by `PUMPFUN_PRE_MIGRATION_CAPTURE_ENABLED`
+  - tracks create/trade observations for up to `PUMPFUN_PRE_MIGRATION_MAX_TRACKED` mints
+  - default track TTL is `2h`
+  - writes pre-migration MCAP/price buckets into `token_market_buckets_1m`
+  - writes pre-migration volume windows into `token_market_volume_buckets_1m`
+  - removes the tracked state when a migrate event arrives
+  - status is exposed under `pumpfunPreMigrationCapture` inside `GET /api/admin/ws-status`
 - Current post-migration conclusion:
   - the backend must explicitly subscribe to migration events or migrated tokens can skip the `pumpfun-migrated` catalog path and only appear later via `dexscreener-discovery`
   - the expected path is:
@@ -643,6 +679,10 @@ Current login rule:
     - MCAP baseline primarily from `token_market_buckets_1m`
     - canonical `VOL 5M` baseline from `token_market_volume_buckets_1m`
     - latest Meteora summary from `token_meteora_state`
+- `/monitor` routed/history hydration now also uses:
+  - `POST /api/dashboard/history-bootstrap`
+  - this route returns paged `recent` and `oldWeek` slices with backend-side search, starred-only filtering, dismiss filtering, sort criteria, MCAP windows, age windows, Meteora summaries, and MCAP/VOL baselines
+  - the `/monitor` leader tab shares these snapshots through `BroadcastChannel` instead of every monitor tab issuing the same bootstrap requests
 - Current intended effect:
   - frontend no longer depends on per-token Dex socket fetches as the main monitored refresh mechanism
   - frontend refresh should read backend-prepared state instead of causing Dex fetches itself
@@ -1366,21 +1406,36 @@ Current security priority order:
   - `mock_trading_positions`
   - `mock_trading_trades`
   - `mock_trading_take_profit_orders`
+- Background execution:
+  - `src/services/mock-trading-take-profit-worker.js`
+  - starts with the background worker set
+  - enabled by default through `MOCK_TRADING_TAKE_PROFIT_ENABLED=true`
+  - default interval is `3s`
+  - default batch limit is `25` open triggered candidates
+  - exposed as `mockTradingTakeProfitWorker` in `GET /api/admin/ws-status`
 - Execution price comes from `token_catalog.last_price` as `priceUsd`.
 - Trade execution also snapshots `token_catalog.last_mcap` as display/reference MCAP.
 - Sells can use a stale catalog price only when `last_mcap < 30k`; buys and take-profit orders still require fresh catalog price.
-- The default starting fake cash is `$1,000` for new mock accounts and resets that do not pass an explicit amount.
-- PnL and return percentage are calculated from token quantity and `priceUsd`, not from market cap.
+- The current UI converts between mock SOL and the existing internal USD accounting through the backend-persisted admin config `mock-sol-usdc-rate`:
+  - default: `1 SOL = 88 USDC`
+  - a `1 SOL` buy sends `notionalUsd = mock-sol-usdc-rate` to the backend
+  - with the default rate, a `20%` gain on that position is `+17.6` internally and displays as `+0.2 SOL`
+  - no live SOL/USD conversion is used for this simplified mode
+  - backend/API/DB field names still use `*_usd` / `notionalUsd` for compatibility
+- Each executed buy/sell trade snapshots `mockSolUsdcRate` into `mock_trading_trades.metadata`, so finalized trade rows, closed-play realized PnL, and chart markers keep the SOL reading from execution time even if the admin changes `mock-sol-usdc-rate` later.
+- Older trades without a rate snapshot fall back to the original default `88`.
+- The default starting mock balance still uses the existing internal account default (`1000`), displayed as `1000 / mock-sol-usdc-rate` SOL unless reset behavior is changed later.
+- PnL and return percentage are calculated from token quantity and `priceUsd`; the resulting accounting-unit gain/loss is displayed as SOL, and market cap remains display/trigger context.
 - The frontend loads the authenticated admin portfolio summary, open positions, and recent trades.
 - Admin token rows expose mock buy/sell controls:
-  - buy opens a ticket with fixed USD presets and a custom USD amount
+  - buy opens a ticket with fixed SOL presets and a custom SOL amount
   - sell opens a ticket with percentage presets and a custom percent
   - the PnL resume modal also exposes direct sell buttons for 25%, 50%, and 100%
-  - add cash deposits manual fake USD into the authenticated admin portfolio without clearing positions or trades
+  - add cash deposits manual mock SOL into the authenticated admin portfolio without clearing positions or trades
   - reset clears only the authenticated admin user's mock portfolio
-- Manual mock cash deposits increase both `cash_usd` and `starting_cash_usd`, so deposits do not inflate the total PnL calculation.
+- Manual mock SOL deposits still increase both `cash_usd` and `starting_cash_usd` internally, so deposits do not inflate the total PnL calculation.
 - Buy/sell tickets are scrollable when their content exceeds the viewport.
-- The workspace header cash pill shows only current mock cash, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill.
+- The workspace header cash pill shows current mock SOL, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill.
 - The `Plays` modal summarizes recent closed sell executions, including realized PnL, win/loss counts, win rate, and each profitable/unprofitable play.
 - Manual, Recent, and Old Week mini charts render account-specific buy/sell markers from the admin trade ledger.
 - The expanded sparkline modal renders the same markers.
@@ -1415,7 +1470,8 @@ Current security priority order:
     - `high-cap-dump-5m`
 - PumpFun frontend-local alert generation is disabled with the live panel/runtime removal.
 - backend-owned alerts are delivered on:
-  - `GET /api/dashboard/alert-events?mode=unseen`
+  - `GET /api/dashboard/alert-feeds?mode=unseen`
+  - `GET /api/dashboard/alert-events?mode=unseen` for single-rule/compatibility reads
   - authenticated socket event `alert:event`
 - current backend delivery semantics:
   - unseen replay is tracked per user and per rule, not only in browser-local dedupe
@@ -1497,7 +1553,8 @@ Current security priority order:
   - `Monitored Tokens`
   - `Manual Tokens`
   - `Alerts`
-- replays unseen backend-owned alert feeds from `GET /api/dashboard/alert-events`
+- replays unseen backend-owned alert feeds primarily from `GET /api/dashboard/alert-feeds`
+- `GET /api/dashboard/alert-events` remains available for single-rule/after-id reads and compatibility
 - no longer runs PumpFun-local frontend alerting
 - does not mount `Recent`, `Old Week`
 - the live workspace layout is now user-customizable and persisted:
@@ -1511,7 +1568,7 @@ Current security priority order:
 - mounts:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
-  -   - `Bid Zone Coins`
+  - `Bid Zone Coins`
 - still consumes `GET /api/dashboard/monitored` so routed/history surfaces stay current
 - does not run:
   - frontend alerts
@@ -1521,7 +1578,8 @@ Current security priority order:
 - monitor tabs now use `BroadcastChannel` leader election
 - only one active `/monitor` tab keeps the continuous polling loop for:
   - `GET /api/dashboard/monitored`
-  -   - `GET /api/catalog/bid-zone`
+  - `POST /api/dashboard/history-bootstrap`
+  - `GET /api/catalog/bid-zone`
 - the leader also owns routed chart refresh for:
   - `POST /api/catalog/sparklines`
 - follower `/monitor` tabs receive monitored/bid-zone snapshots from the leader instead of duplicating that polling
@@ -1588,13 +1646,19 @@ Current limitation:
 - Backend rate limiting is now split by route behavior through `src/middleware/rate-limit.js`
 - Active limiter buckets:
   - `authLimiter`
+  - `authEmailLimiter`
+  - `authOtpLimiter`
   - `defaultApiLimiter`
+  - `healthLimiter`
   - `dashboardLimiter`
   - `pumpfunMetaLimiter`
   - `catalogWriteLimiter`
   - `catalogReadLimiter`
 - Current defaults:
   - `authLimiter`: `10 / 15min / IP`
+  - `authEmailLimiter`: `6 / 60min / IP+email/token/session`
+  - `authOtpLimiter`: `12 / 15min / IP+challenge`
+  - `healthLimiter`: `30 / 1min / IP`
   - `defaultApiLimiter`: `180 / 15min / user+IP`
   - `dashboardLimiter`: `360 / 15min / user+IP`
   - `pumpfunMetaLimiter`: `300 / 15min / user+IP`
@@ -1652,7 +1716,10 @@ Current limitation:
     - `High Cap Dump 5M`
   - `Sound By Alert Type`
     - the same per-type families above, but for sound playback only
-- These toggles are backend-persisted user configs
+- Admin-only mock trading field:
+  - `Mock SOL rate (USDC)` persists `mock-sol-usdc-rate`
+  - this controls UI SOL display and SOL buy/deposit conversion into the existing internal USD accounting
+- These controls are backend-persisted user configs
 - `Sound Alert` remains the master on/off switch, while `Sound By Alert Type` is the per-kind gate
 - current sound persistence split:
   - sound enable/disable and volume are backend-persisted user configs
