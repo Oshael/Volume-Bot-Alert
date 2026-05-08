@@ -1159,7 +1159,7 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
 
   if (overlayMode === 'mock-trading-ticket') {
     overlay.innerHTML = renderMockTradingTicketModal(state);
-    bindMockTradingTicketModal(overlay, controller);
+    bindMockTradingTicketModal(overlay, controller, state);
     return overlay;
   }
 
@@ -1314,7 +1314,7 @@ function renderMockTradingTicketModal(state: AppState) {
         ${renderMockTradingTicketStats(state, view.address)}
         ${renderFlash(state)}
         <form class="mock-trading-ticket-form" data-role="mock-trading-ticket-form" data-address="${escapeHtml(view.address)}" data-side="${view.side}">
-          ${view.side === 'buy' ? renderMockTradingBuyFields(state.ui.busy) : renderMockTradingSellFields(view.percent, state.ui.busy)}
+          ${view.side === 'buy' ? renderMockTradingBuyFields(state.ui.busy) : renderMockTradingSellFields(state, view.address, view.percent, state.ui.busy)}
           <div class="legacy-auth-panel-actions">
             <button type="button" class="action-button small" data-action="close-mock-trading-ticket" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
             <button type="submit" class="action-button primary" ${state.ui.busy ? 'disabled' : ''}>${view.submitLabel}</button>
@@ -1744,7 +1744,7 @@ function renderMockTradingBuyFields(busy: boolean) {
   `;
 }
 
-function renderMockTradingSellFields(percent: number | undefined, busy: boolean) {
+function renderMockTradingSellFields(state: AppState, address: string, percent: number | undefined, busy: boolean) {
   const value = typeof percent === 'number' && Number.isFinite(percent) ? Math.min(100, Math.max(1, percent)) : 100;
   return `
     <label class="mock-trading-ticket-field">
@@ -1754,6 +1754,7 @@ function renderMockTradingSellFields(percent: number | undefined, busy: boolean)
     <div class="mock-trading-ticket-presets">
       ${[25, 50, 100].map((item) => `<button type="button" data-action="mock-trade-preset" data-value="${item}" ${busy ? 'disabled' : ''}>${item}%</button>`).join('')}
     </div>
+    ${renderMockTradingSellPreview(state, address, value, null, 'now')}
     <div class="mock-trading-ticket-order-block">
       <span>Sell order</span>
       <label class="mock-trading-ticket-field">
@@ -1764,9 +1765,87 @@ function renderMockTradingSellFields(percent: number | undefined, busy: boolean)
         <span>Order sell %</span>
         <input type="number" name="orderSellPercent" min="1" max="100" step="1" value="${value}" inputmode="decimal" ${busy ? 'disabled' : ''} />
       </label>
+      ${renderMockTradingSellPreview(state, address, value, null, 'order')}
       <button type="button" class="action-button small" data-action="mock-sell-order-submit" ${busy ? 'disabled' : ''}>Place order</button>
     </div>
   `;
+}
+
+function renderMockTradingSellPreview(
+  state: AppState,
+  address: string,
+  percent: number,
+  targetMcapUsd: number | null,
+  mode: 'now' | 'order',
+) {
+  const preview = getMockTradingSellPreview(state, address, percent, targetMcapUsd, mode);
+  const role = mode === 'now' ? 'sell-preview' : 'sell-order-preview';
+  const heading = mode === 'now' ? 'Sell preview' : 'Sell order preview';
+  if (!preview.available) {
+    return `
+      <div class="mock-trading-ticket-preview" data-role="${role}">
+        <span>${heading}</span>
+        <p>${escapeHtml(preview.message)}</p>
+      </div>
+    `;
+  }
+
+  const toneAttr = preview.pnlTone ? ` data-tone="${preview.pnlTone}"` : '';
+  return `
+    <div class="mock-trading-ticket-preview" data-role="${role}">
+      <span>${heading}</span>
+      <div><em>Receive</em><strong>${escapeHtml(preview.receiveSol)}</strong></div>
+      <div${toneAttr}><em>Realized PnL</em><strong>${escapeHtml(preview.pnlSol)}</strong></div>
+      <div><em>Remaining</em><strong>${escapeHtml(preview.remainingPct)}</strong></div>
+    </div>
+  `;
+}
+
+function getMockTradingSellPreview(
+  state: AppState,
+  address: string,
+  percent: number,
+  targetMcapUsd: number | null,
+  mode: 'now' | 'order',
+) {
+  const position = getMockTradingPositionView(state, address);
+  if (!position || !(position.quantity > 0)) {
+    return { available: false as const, message: 'No open mock position.' };
+  }
+
+  const safePercent = clampMockTradingPercent(percent);
+  const currentValueUsd = Number(position.currentValueUsd);
+  const costBasisUsd = Number(position.costBasisUsd);
+  if (!(currentValueUsd > 0) || !(costBasisUsd >= 0)) {
+    return { available: false as const, message: 'Position value is not available yet.' };
+  }
+
+  let baseValueUsd = currentValueUsd;
+  if (mode === 'order') {
+    if (!(targetMcapUsd != null && targetMcapUsd > 0)) {
+      return { available: false as const, message: 'Enter a target MCAP to preview the order.' };
+    }
+    const currentMcapUsd = Number(position.currentMcapUsd);
+    if (!(currentMcapUsd > 0)) {
+      return { available: false as const, message: 'Current MCAP is not available for order preview.' };
+    }
+    baseValueUsd = currentValueUsd * (targetMcapUsd / currentMcapUsd);
+  }
+
+  const sellRatio = safePercent / 100;
+  const receiveUsd = baseValueUsd * sellRatio;
+  const pnlUsd = receiveUsd - (costBasisUsd * sellRatio);
+  return {
+    available: true as const,
+    receiveSol: fmtMockUsdForState(state, receiveUsd),
+    pnlSol: fmtMockUsdForState(state, pnlUsd, { signed: true }),
+    pnlTone: pnlUsd < 0 ? 'down' : 'up',
+    remainingPct: `${Math.max(0, 100 - safePercent).toFixed(0)}%`,
+  };
+}
+
+function clampMockTradingPercent(value: number) {
+  return Number.isFinite(value) ? Math.min(100, Math.max(1, value)) : 100;
 }
 
 function renderExpandedSparklineModal(state: AppState, address: string) {
@@ -1872,7 +1951,7 @@ function bindBlockTokenWarningModal(section: ParentNode, controller: AppControll
   });
 }
 
-function bindMockTradingTicketModal(section: ParentNode, controller: AppController) {
+function bindMockTradingTicketModal(section: ParentNode, controller: AppController, state: AppState) {
   section.querySelectorAll<HTMLElement>('[data-action="close-mock-trading-ticket"]').forEach((element) => {
     element.addEventListener('click', (event) => {
       event.preventDefault();
@@ -1888,10 +1967,17 @@ function bindMockTradingTicketModal(section: ParentNode, controller: AppControll
       if (input) {
         input.value = button.dataset.value || input.value;
       }
+      if (form?.dataset.side === 'sell') {
+        updateMockTradingSellPreviews(form, state);
+      }
     });
   });
 
   const ticketForm = section.querySelector<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
+  if (ticketForm?.dataset.side === 'sell') {
+    bindMockTradingSellPreviewInputs(ticketForm, state);
+    updateMockTradingSellPreviews(ticketForm, state);
+  }
   ticketForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     submitMockTradingTicketForm(event.currentTarget as HTMLFormElement, controller);
@@ -1913,6 +1999,33 @@ function bindMockTradingTicketModal(section: ParentNode, controller: AppControll
     const sellPercent = Number(form.querySelector<HTMLInputElement>('input[name="orderSellPercent"]')?.value || '0');
     void controller.submitMockTradingSellOrder(address, targetMcapUsd, sellPercent);
   });
+}
+
+function bindMockTradingSellPreviewInputs(form: HTMLFormElement, state: AppState) {
+  form.querySelectorAll<HTMLInputElement>('input[name="percent"], input[name="orderTargetMcapUsd"], input[name="orderSellPercent"]').forEach((input) => {
+    input.addEventListener('input', () => updateMockTradingSellPreviews(form, state));
+    input.addEventListener('change', () => updateMockTradingSellPreviews(form, state));
+  });
+}
+
+function updateMockTradingSellPreviews(form: HTMLFormElement, state: AppState) {
+  const address = form.dataset.address || '';
+  if (!address) {
+    return;
+  }
+
+  const sellPercent = Number(form.querySelector<HTMLInputElement>('input[name="percent"]')?.value || '0');
+  const orderPercent = Number(form.querySelector<HTMLInputElement>('input[name="orderSellPercent"]')?.value || '0');
+  const targetMcapRaw = form.querySelector<HTMLInputElement>('input[name="orderTargetMcapUsd"]')?.value || '';
+  const targetMcapUsd = targetMcapRaw.trim() ? Number(targetMcapRaw) : null;
+  const sellPreview = form.querySelector<HTMLElement>('[data-role="sell-preview"]');
+  const orderPreview = form.querySelector<HTMLElement>('[data-role="sell-order-preview"]');
+  if (sellPreview) {
+    sellPreview.outerHTML = renderMockTradingSellPreview(state, address, sellPercent, null, 'now');
+  }
+  if (orderPreview) {
+    orderPreview.outerHTML = renderMockTradingSellPreview(state, address, orderPercent, targetMcapUsd, 'order');
+  }
 }
 
 function submitMockTradingTicketForm(form: HTMLFormElement, controller: AppController) {

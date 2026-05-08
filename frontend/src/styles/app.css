@@ -4217,6 +4217,64 @@ a {
   opacity: 0.55;
 }
 
+.mock-trading-ticket-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(88, 159, 255, 0.22);
+  border-radius: 10px;
+  background: rgba(88, 159, 255, 0.06);
+}
+
+.mock-trading-ticket-preview > span,
+.mock-trading-ticket-preview > p {
+  grid-column: 1 / -1;
+}
+
+.mock-trading-ticket-preview > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mock-trading-ticket-preview > p {
+  margin: 0;
+  color: rgba(199, 213, 230, 0.82);
+  font-size: 12px;
+}
+
+.mock-trading-ticket-preview div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mock-trading-ticket-preview em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-trading-ticket-preview strong {
+  color: #eef4ff;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.mock-trading-ticket-preview div[data-tone="up"] strong {
+  color: var(--success);
+}
+
+.mock-trading-ticket-preview div[data-tone="down"] strong {
+  color: var(--danger);
+}
+
 .legacy-auth-panel .legacy-password-toggle {
   right: 12px;
   min-height: 24px;

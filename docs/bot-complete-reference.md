@@ -978,6 +978,7 @@ Reasons:
   - token rows expose admin-only mock buy/sell controls
   - buy uses a ticket modal with fixed SOL presets and a custom SOL amount
   - sell uses a ticket modal with percent presets and a custom percent
+  - sell tickets preview estimated SOL receive, realized PnL, and remaining position for both immediate sells and target-MCAP sell orders
   - the PnL resume modal exposes direct sell buttons for 25%, 50%, and 100%
   - admin can manually add mock SOL without clearing positions/trades; this still increases both `cash_usd` and `starting_cash_usd` internally so deposits do not inflate total PnL
   - buy/sell ticket modals scroll when their content exceeds the viewport

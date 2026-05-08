@@ -1430,6 +1430,7 @@ Current security priority order:
 - Admin token rows expose mock buy/sell controls:
   - buy opens a ticket with fixed SOL presets and a custom SOL amount
   - sell opens a ticket with percentage presets and a custom percent
+  - sell tickets preview estimated SOL receive, realized PnL, and remaining position for both immediate sells and target-MCAP sell orders
   - the PnL resume modal also exposes direct sell buttons for 25%, 50%, and 100%
   - add cash deposits manual mock SOL into the authenticated admin portfolio without clearing positions or trades
   - reset clears only the authenticated admin user's mock portfolio
