@@ -20,6 +20,7 @@ router.use(requireTrustedOrigin);
 const MAX_TOKENS = 200;      // máx tokens manuais por user
 const MAX_BLOCKLIST = 500;   // máx blocklist por user
 const MAX_STARRED = 500;     // max favorites per user
+const ADMIN_ONLY_CONFIG_KEYS = new Set(['chain', 'mock-sol-usdc-rate']);
 
 function normalizeAddressItems(items) {
   const deduped = new Map();
@@ -96,7 +97,9 @@ function stripRestrictedConfigKeys(configs, user) {
   }
 
   const next = { ...configs };
-  delete next.chain;
+  for (const key of ADMIN_ONLY_CONFIG_KEYS) {
+    delete next[key];
+  }
   return next;
 }
 

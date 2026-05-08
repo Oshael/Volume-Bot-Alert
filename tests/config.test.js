@@ -190,6 +190,7 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['old-week-age-max'], 0);
     assert.equal(response.body.configs['old-per-page'], 15);
     assert.equal(response.body.configs['old-week-per-page'], 15);
+    assert.equal(response.body.configs['mock-sol-usdc-rate'], 88);
 
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
     assert.deepEqual(response.body.uiPrefs.monitoredSorts, [{ mode: 'vol', window: '5m' }]);
@@ -334,14 +335,31 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs.chain, 'solana');
   });
 
+  it('strips restricted mock SOL rate updates for non-admin users', async () => {
+    const patchResponse = await request(app)
+      .patch('/api/config')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ configs: { 'mock-sol-usdc-rate': 120 } });
+
+    assert.equal(patchResponse.status, 400);
+    assert.match(patchResponse.body.error, /configs object is required/i);
+
+    const getResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(getResponse.status, 200);
+    assert.equal(getResponse.body.configs['mock-sol-usdc-rate'], 88);
+  });
+
   it('allows admins to update restricted chain config', async () => {
     const patchResponse = await request(app)
       .patch('/api/config')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ configs: { chain: 'ethereum' } });
+      .send({ configs: { chain: 'ethereum', 'mock-sol-usdc-rate': 123.45 } });
 
     assert.equal(patchResponse.status, 200);
-    assert.deepEqual(patchResponse.body.configs, { chain: 'ethereum' });
+    assert.deepEqual(patchResponse.body.configs, { chain: 'ethereum', 'mock-sol-usdc-rate': 123.45 });
 
     const getResponse = await request(app)
       .get('/api/config')
@@ -349,6 +367,7 @@ describe('Config routes', () => {
 
     assert.equal(getResponse.status, 200);
     assert.equal(getResponse.body.configs.chain, 'ethereum');
+    assert.equal(getResponse.body.configs['mock-sol-usdc-rate'], 123.45);
   });
 
   it('fully syncs configs, manual tokens, blocklist, starred tokens and resets omitted config keys to defaults', async () => {

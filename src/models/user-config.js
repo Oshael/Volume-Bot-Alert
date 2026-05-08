@@ -53,6 +53,7 @@ const CONFIG_SCHEMA = {
   'sound-volume':    { type: 'number', min: 0, max: 100, default: 50 },
   'sound-mode':      { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'card-effects-mode': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'mock-sol-usdc-rate': { type: 'number', min: 0.01, max: 1000000, default: 88 },
 };
 
 function validateConfigEntry(key, value) {
