@@ -827,6 +827,22 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage37-meteora-state-baselines',
+    name: 'Stage 37 Meteora state baseline fields',
+    repair: 'node src/utils/db-init-stage37.js',
+    tables: [
+      {
+        table: 'token_meteora_state',
+        columns: [
+          'last_snapshot_at',
+          'baseline_tvl_1h',
+          'baseline_tvl_6h',
+          'baseline_tvl_24h',
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

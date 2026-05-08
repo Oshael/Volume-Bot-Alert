@@ -144,10 +144,12 @@ describe('Meteora snapshot worker scheduling', () => {
     const originalUpsertState = tokenMeteoraState.upsertState;
     const originalRecordError = tokenMeteoraState.recordError;
     const originalInsertSnapshot = tokenMeteoraSnapshot.insertSnapshot;
+    const originalListBaselineTvlsByAddresses = tokenMeteoraSnapshot.listBaselineTvlsByAddresses;
 
     const listCalls = [];
     let markedArgs = null;
     const inserted = [];
+    const baselineCalls = [];
     const upserts = [];
     const recordedErrors = [];
     const transactionLog = [];
@@ -210,6 +212,15 @@ describe('Meteora snapshot worker scheduling', () => {
       inserted.push(payload);
       return payload;
     };
+    tokenMeteoraSnapshot.listBaselineTvlsByAddresses = async (addresses, anchorTs) => {
+      baselineCalls.push({ addresses, anchorTs });
+      return [{
+        token_address: 'So11111111111111111111111111111111111111112',
+        baseline_tvl_1h: '22000',
+        baseline_tvl_6h: '18000',
+        baseline_tvl_24h: '14000',
+      }];
+    };
 
     meteoraSnapshotWorker.start();
     try {
@@ -238,12 +249,21 @@ describe('Meteora snapshot worker scheduling', () => {
       assert.equal(inserted.length, 1);
       assert.equal(inserted[0].tokenAddress, 'So11111111111111111111111111111111111111112');
       assert.ok(inserted[0].ts instanceof Date);
+      assert.equal(baselineCalls.length, 1);
+      assert.deepEqual(baselineCalls[0].addresses, ['So11111111111111111111111111111111111111112']);
+      assert.ok(baselineCalls[0].anchorTs instanceof Date);
       assert.equal(upserts.length, 2);
       assert.equal(upserts[0].tokenAddress, 'So11111111111111111111111111111111111111112');
       assert.equal(upserts[0].hasPool, true);
+      assert.equal(upserts[0].lastSnapshotAt, inserted[0].ts);
+      assert.equal(upserts[0].baselineTvl1h, '22000');
+      assert.equal(upserts[0].baselineTvl6h, '18000');
+      assert.equal(upserts[0].baselineTvl24h, '14000');
       assert.equal(upserts[1].tokenAddress, '11111111111111111111111111111111');
       assert.equal(upserts[1].hasPool, false);
       assert.equal(upserts[1].currentTvl, null);
+      assert.equal(upserts[1].lastSnapshotAt, null);
+      assert.equal(upserts[1].baselineTvl1h, null);
       assert.equal(recordedErrors.length, 1);
       assert.deepEqual(recordedErrors[0], ['34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb', 'HTTP 503']);
       assert.deepEqual(markedArgs[0], [
@@ -263,6 +283,7 @@ describe('Meteora snapshot worker scheduling', () => {
       tokenMeteoraState.upsertState = originalUpsertState;
       tokenMeteoraState.recordError = originalRecordError;
       tokenMeteoraSnapshot.insertSnapshot = originalInsertSnapshot;
+      tokenMeteoraSnapshot.listBaselineTvlsByAddresses = originalListBaselineTvlsByAddresses;
     }
   });
 });

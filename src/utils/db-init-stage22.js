@@ -14,8 +14,20 @@ const STATEMENTS = [
      pool_count INTEGER NOT NULL DEFAULT 0,
      last_error TEXT,
      source VARCHAR(32) NOT NULL DEFAULT 'meteora',
+     last_snapshot_at TIMESTAMPTZ,
+     baseline_tvl_1h NUMERIC(20, 2),
+     baseline_tvl_6h NUMERIC(20, 2),
+     baseline_tvl_24h NUMERIC(20, 2),
      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
    )`,
+  `ALTER TABLE token_meteora_state
+     ADD COLUMN IF NOT EXISTS last_snapshot_at TIMESTAMPTZ`,
+  `ALTER TABLE token_meteora_state
+     ADD COLUMN IF NOT EXISTS baseline_tvl_1h NUMERIC(20, 2)`,
+  `ALTER TABLE token_meteora_state
+     ADD COLUMN IF NOT EXISTS baseline_tvl_6h NUMERIC(20, 2)`,
+  `ALTER TABLE token_meteora_state
+     ADD COLUMN IF NOT EXISTS baseline_tvl_24h NUMERIC(20, 2)`,
   `CREATE INDEX IF NOT EXISTS idx_token_meteora_state_checked_at
      ON token_meteora_state(last_checked_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS idx_token_meteora_state_has_pool

@@ -218,18 +218,41 @@ function normalizeBatch(batch) {
   };
 }
 
+function mapRowsByTokenAddress(rows = []) {
+  return new Map(rows.map((row) => [String(row.token_address || '').trim(), row]));
+}
+
+function buildStatePayload(address, result, checkedAt, snapshot, baseline) {
+  const hasPool = Boolean(result && Number(result.tvl) > 0);
+  return {
+    tokenAddress: address,
+    lastCheckedAt: checkedAt,
+    hasPool,
+    currentTvl: hasPool ? result.tvl : null,
+    bestPoolAddress: hasPool ? result.poolAddress : null,
+    poolCount: hasPool ? result.poolCount : 0,
+    lastError: null,
+    source: 'meteora',
+    lastSnapshotAt: hasPool ? (snapshot?.ts || checkedAt) : null,
+    baselineTvl1h: hasPool ? (baseline?.baseline_tvl_1h ?? null) : null,
+    baselineTvl6h: hasPool ? (baseline?.baseline_tvl_6h ?? null) : null,
+    baselineTvl24h: hasPool ? (baseline?.baseline_tvl_24h ?? null) : null,
+  };
+}
+
 async function persistBatch(checkedAddresses, results, errorsByAddress, checkedAt) {
   const client = await db.getClient();
 
   try {
     await client.query('BEGIN');
 
+    const positiveSnapshotsByAddress = new Map();
     for (const address of checkedAddresses) {
       const result = results[address];
       const hasPool = Boolean(result && Number(result.tvl) > 0);
 
       if (hasPool) {
-        await tokenMeteoraSnapshot.insertSnapshot({
+        const snapshot = await tokenMeteoraSnapshot.insertSnapshot({
           tokenAddress: address,
           ts: checkedAt,
           totalTvl: result.tvl,
@@ -237,19 +260,30 @@ async function persistBatch(checkedAddresses, results, errorsByAddress, checkedA
           poolCount: result.poolCount,
           source: 'meteora',
         }, client);
+        positiveSnapshotsByAddress.set(address, snapshot || { ts: checkedAt });
         status.totalInserted += 1;
       }
+    }
 
-      await tokenMeteoraState.upsertState({
-        tokenAddress: address,
-        lastCheckedAt: checkedAt,
-        hasPool,
-        currentTvl: hasPool ? result.tvl : null,
-        bestPoolAddress: hasPool ? result.poolAddress : null,
-        poolCount: hasPool ? result.poolCount : 0,
-        lastError: null,
-        source: 'meteora',
-      }, client);
+    const positiveAddresses = [...positiveSnapshotsByAddress.keys()];
+    const baselineRows = await tokenMeteoraSnapshot.listBaselineTvlsByAddresses(
+      positiveAddresses,
+      checkedAt,
+      client
+    );
+    const baselinesByAddress = mapRowsByTokenAddress(baselineRows);
+
+    for (const address of checkedAddresses) {
+      await tokenMeteoraState.upsertState(
+        buildStatePayload(
+          address,
+          results[address],
+          checkedAt,
+          positiveSnapshotsByAddress.get(address) || null,
+          baselinesByAddress.get(address) || null
+        ),
+        client
+      );
     }
 
     for (const [address, error] of Object.entries(errorsByAddress)) {
@@ -394,6 +428,8 @@ module.exports = {
     normalizeBatch,
     normalizeDelayMs,
     normalizeTierCounts,
+    buildStatePayload,
+    mapRowsByTokenAddress,
     persistBatch,
     selectCycleTokens,
   },

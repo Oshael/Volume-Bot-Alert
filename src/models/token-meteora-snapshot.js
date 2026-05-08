@@ -27,6 +27,14 @@ function normalizeAddressList(addresses) {
   return normalized;
 }
 
+function normalizeTimestamp(value) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new Error('Invalid Meteora snapshot baseline timestamp');
+  }
+  return parsed;
+}
+
 async function insertSnapshot(snapshot, runner = db) {
   const address = normalizeAddress(snapshot.tokenAddress || snapshot.address);
 
@@ -112,6 +120,60 @@ async function listHistoryByAddresses(addresses, options = {}) {
        AND ts >= NOW() - ($2::int * INTERVAL '1 hour')
      ORDER BY token_address ASC, ts ASC`,
     [normalized, hours]
+  );
+
+  return rows;
+}
+
+async function listBaselineTvlsByAddresses(addresses, anchorTs, runner = db) {
+  const normalized = normalizeAddressList(addresses);
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  const normalizedAnchorTs = normalizeTimestamp(anchorTs);
+  const { rows } = await runner.query(
+    `WITH requested AS (
+       SELECT UNNEST($1::varchar[]) AS token_address
+     )
+     SELECT
+       requested.token_address,
+       before_1h.total_tvl AS baseline_tvl_1h,
+       before_6h.total_tvl AS baseline_tvl_6h,
+       before_24h.total_tvl AS baseline_tvl_24h
+     FROM requested
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = requested.token_address
+         AND total_tvl IS NOT NULL
+         AND total_tvl > 0
+         AND ts <= $2::timestamptz - INTERVAL '1 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_1h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = requested.token_address
+         AND total_tvl IS NOT NULL
+         AND total_tvl > 0
+         AND ts <= $2::timestamptz - INTERVAL '6 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_6h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = requested.token_address
+         AND total_tvl IS NOT NULL
+         AND total_tvl > 0
+         AND ts <= $2::timestamptz - INTERVAL '24 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_24h ON TRUE
+     ORDER BY requested.token_address ASC`,
+    [normalized, normalizedAnchorTs]
   );
 
   return rows;
@@ -226,6 +288,7 @@ module.exports = {
   getLatestByAddresses,
   listHistoryByAddress,
   listHistoryByAddresses,
+  listBaselineTvlsByAddresses,
   listLatestSummaryByAddresses,
   deleteByAddresses,
 };

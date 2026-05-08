@@ -54,6 +54,10 @@ function mapStateRow(row) {
     poolCount: Number(row.pool_count) || 0,
     lastError: normalizeError(row.last_error),
     source: row.source || 'meteora',
+    lastSnapshotAt: row.last_snapshot_at || null,
+    baselineTvl1h: toNumberOrNull(row.baseline_tvl_1h),
+    baselineTvl6h: toNumberOrNull(row.baseline_tvl_6h),
+    baselineTvl24h: toNumberOrNull(row.baseline_tvl_24h),
     updatedAt: row.updated_at || null,
   };
 }
@@ -98,6 +102,10 @@ async function upsertState(payload = {}, runner = db) {
   const poolCount = Math.max(0, Math.floor(Number(payload.poolCount) || 0));
   const lastError = normalizeError(payload.lastError);
   const source = normalizeSource(payload.source);
+  const lastSnapshotAt = toTimestampOrNull(payload.lastSnapshotAt);
+  const baselineTvl1h = toNumberOrNull(payload.baselineTvl1h);
+  const baselineTvl6h = toNumberOrNull(payload.baselineTvl6h);
+  const baselineTvl24h = toNumberOrNull(payload.baselineTvl24h);
 
   const { rows } = await runner.query(
     `INSERT INTO token_meteora_state (
@@ -109,9 +117,13 @@ async function upsertState(payload = {}, runner = db) {
        pool_count,
        last_error,
        source,
+       last_snapshot_at,
+       baseline_tvl_1h,
+       baseline_tvl_6h,
+       baseline_tvl_24h,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
      ON CONFLICT (token_address) DO UPDATE SET
        last_checked_at = EXCLUDED.last_checked_at,
        has_pool = EXCLUDED.has_pool,
@@ -120,6 +132,10 @@ async function upsertState(payload = {}, runner = db) {
        pool_count = EXCLUDED.pool_count,
        last_error = EXCLUDED.last_error,
        source = EXCLUDED.source,
+       last_snapshot_at = EXCLUDED.last_snapshot_at,
+       baseline_tvl_1h = EXCLUDED.baseline_tvl_1h,
+       baseline_tvl_6h = EXCLUDED.baseline_tvl_6h,
+       baseline_tvl_24h = EXCLUDED.baseline_tvl_24h,
        updated_at = NOW()
      RETURNING *`,
     [
@@ -131,6 +147,10 @@ async function upsertState(payload = {}, runner = db) {
       poolCount,
       lastError,
       source,
+      lastSnapshotAt,
+      baselineTvl1h,
+      baselineTvl6h,
+      baselineTvl24h,
     ]
   );
 
@@ -175,6 +195,10 @@ async function listStateSummaryRowsByAddresses(addresses, runner = db) {
        pool_count,
        last_error,
        source,
+       last_snapshot_at,
+       baseline_tvl_1h,
+       baseline_tvl_6h,
+       baseline_tvl_24h,
        updated_at
      FROM token_meteora_state
      WHERE token_address = ANY($1::varchar[])
@@ -185,95 +209,6 @@ async function listStateSummaryRowsByAddresses(addresses, runner = db) {
   return rows;
 }
 
-function shouldLoadSnapshotSummary(row) {
-  return row?.has_pool === true
-    && toNumberOrNull(row.current_tvl) > 0
-    && row.last_checked_at != null;
-}
-
-async function listSnapshotSummaryRowsByAddresses(addresses, runner = db) {
-  if (addresses.length === 0) {
-    return [];
-  }
-
-  const { rows } = await runner.query(
-    `WITH state AS (
-       SELECT
-         token_address,
-         last_checked_at
-       FROM token_meteora_state
-       WHERE token_address = ANY($1::varchar[])
-     ),
-     latest_snapshot AS (
-       SELECT DISTINCT ON (token_address)
-         token_address,
-         ts AS last_snapshot_at
-       FROM token_meteora_snapshots
-       WHERE token_address = ANY($1::varchar[])
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-       ORDER BY token_address, ts DESC
-     )
-     SELECT
-       state.token_address,
-       latest_snapshot.last_snapshot_at,
-       before_1h.total_tvl AS baseline_tvl_1h,
-       before_6h.total_tvl AS baseline_tvl_6h,
-       before_24h.total_tvl AS baseline_tvl_24h
-     FROM state
-     LEFT JOIN latest_snapshot
-       ON latest_snapshot.token_address = state.token_address
-     LEFT JOIN LATERAL (
-       SELECT total_tvl
-       FROM token_meteora_snapshots
-       WHERE token_address = state.token_address
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-         AND ts <= state.last_checked_at - INTERVAL '1 hour'
-      ORDER BY ts DESC
-      LIMIT 1
-     ) AS before_1h ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT total_tvl
-       FROM token_meteora_snapshots
-       WHERE token_address = state.token_address
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-         AND ts <= state.last_checked_at - INTERVAL '6 hour'
-      ORDER BY ts DESC
-      LIMIT 1
-     ) AS before_6h ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT total_tvl
-       FROM token_meteora_snapshots
-       WHERE token_address = state.token_address
-         AND total_tvl IS NOT NULL
-         AND total_tvl > 0
-         AND ts <= state.last_checked_at - INTERVAL '24 hour'
-      ORDER BY ts DESC
-      LIMIT 1
-     ) AS before_24h ON TRUE
-     ORDER BY state.token_address ASC`,
-    [addresses]
-  );
-
-  return rows;
-}
-
-function mergeSummaryRows(stateRows, snapshotRows) {
-  const snapshotByAddress = new Map(snapshotRows.map((row) => [row.token_address, row]));
-  return stateRows.map((row) => {
-    const snapshotRow = snapshotByAddress.get(row.token_address) || {};
-    return {
-      ...row,
-      last_snapshot_at: snapshotRow.last_snapshot_at || null,
-      baseline_tvl_1h: snapshotRow.baseline_tvl_1h ?? null,
-      baseline_tvl_6h: snapshotRow.baseline_tvl_6h ?? null,
-      baseline_tvl_24h: snapshotRow.baseline_tvl_24h ?? null,
-    };
-  });
-}
-
 async function listSummaryByAddresses(addresses, runner = db) {
   const normalized = normalizeAddressList(addresses);
   if (normalized.length === 0) {
@@ -281,12 +216,7 @@ async function listSummaryByAddresses(addresses, runner = db) {
   }
 
   const stateRows = await listStateSummaryRowsByAddresses(normalized, runner);
-  const snapshotAddresses = stateRows
-    .filter(shouldLoadSnapshotSummary)
-    .map((row) => row.token_address);
-  const snapshotRows = await listSnapshotSummaryRowsByAddresses(snapshotAddresses, runner);
-
-  return mergeSummaryRows(stateRows, snapshotRows).map(mapSummaryRow);
+  return stateRows.map(mapSummaryRow);
 }
 
 async function getSummaryByAddress(address, runner = db) {
@@ -304,12 +234,10 @@ module.exports = {
   __private: {
     mapStateRow,
     mapSummaryRow,
-    mergeSummaryRows,
     normalizeAddress,
     normalizeAddressList,
     normalizeError,
     normalizeSource,
-    shouldLoadSnapshotSummary,
     toNumberOrNull,
     toTimestampOrNull,
   },
