@@ -3,6 +3,7 @@ import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, M
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
+import { fmtMockSol, fmtMockSolAmount, resolveMockTradeSolUsdcRate } from '../../utils/mock-trading-display';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -49,6 +50,7 @@ type SparklineRenderOptions = {
   lookupKey?: string;
   variant?: 'default' | 'alert';
   markers?: MockTradingTradeEntry[];
+  mockSolUsdcRate?: number;
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -782,6 +784,7 @@ export function renderManualTokenTable(
     sparklineByAddress?: Record<string, TokenSparklineEntry>;
     mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
     mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
+    mockSolUsdcRate?: number;
   },
 ) {
   if (tokens.length === 0) return '<p class="muted-block">No manual tokens yet.</p>';
@@ -800,6 +803,7 @@ export function renderManualTokenTable(
     sparklineByAddress: options?.sparklineByAddress,
     mockTradingPositionsByAddress: options?.mockTradingPositionsByAddress,
     mockTradingTradesByAddress: options?.mockTradingTradesByAddress,
+    mockSolUsdcRate: options?.mockSolUsdcRate,
   });
 }
 
@@ -822,6 +826,7 @@ export function renderPagedAgeBucketList(
     sparklineByAddress?: Record<string, TokenSparklineEntry>;
     mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
     mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
+    mockSolUsdcRate?: number;
   },
 ) {
   const totalCount = Math.max(0, Number(options?.totalCount) || 0);
@@ -849,6 +854,7 @@ export function renderPagedAgeBucketList(
       sparklineByAddress: options?.sparklineByAddress,
       mockTradingPositionsByAddress: options?.mockTradingPositionsByAddress,
       mockTradingTradesByAddress: options?.mockTradingTradesByAddress,
+      mockSolUsdcRate: options?.mockSolUsdcRate,
     })}
     ${renderAgeBucketFooter(mode, totalPages, safePage)}
   `;
@@ -885,6 +891,7 @@ function renderTokenTableShell(options: {
   sparklineByAddress?: Record<string, TokenSparklineEntry>;
   mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
   mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
+  mockSolUsdcRate?: number;
 }) {
   const showSparkline = Boolean(options.showSparkline);
   return `
@@ -923,6 +930,7 @@ function renderTokenTableShell(options: {
             showSparkline ? options.sparklineByAddress?.[item.address] || null : null,
             options.mockTradingPositionsByAddress?.[item.address] || null,
             options.mockTradingTradesByAddress?.[item.address] || [],
+            options.mockSolUsdcRate,
           )).join('')}
         </tbody>
       </table>
@@ -1152,7 +1160,7 @@ function formatPriceUsd(value?: number | null) {
 function buildSparklineMarkerTitle(marker: MockTradingTradeEntry) {
   const side = marker.side === 'buy' ? 'Buy' : 'Sell';
   const executedAt = marker.executedAt ? new Date(marker.executedAt).toLocaleString() : 'time unavailable';
-  return `${side} ${fmtMoney(marker.notionalUsd)} · priceUSD ${formatPriceUsd(marker.priceUsd)} · MCAP ${fmtMoney(marker.marketCapUsd)} · ${executedAt}`;
+  return `${side} ${fmtMockSolAmount(marker.notionalUsd / resolveMockTradeSolUsdcRate(marker))} · priceUSD ${formatPriceUsd(marker.priceUsd)} · MCAP ${fmtMoney(marker.marketCapUsd)} · ${executedAt}`;
 }
 
 function renderSparklineTradeMarker(
@@ -1322,8 +1330,8 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   `;
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string, markers: MockTradingTradeEntry[] = []) {
-  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers });
+function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
+  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers, mockSolUsdcRate });
 }
 
 function resolveTokenMcapDelta(item: ManualTokenEntry) {
@@ -1372,7 +1380,7 @@ function renderMockTradingActions(isAdmin: boolean, safeAddress: string, positio
   return `<button type="button" class="action-glyph" data-action="mock-buy-token" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Mock buy">B</button>${sell}`;
 }
 
-function renderMockTradingLine(position: MockTradingPositionEntry | null) {
+function renderMockTradingLine(position: MockTradingPositionEntry | null, mockSolUsdcRate?: number) {
   if (!position) {
     return '';
   }
@@ -1384,7 +1392,7 @@ function renderMockTradingLine(position: MockTradingPositionEntry | null) {
     : '';
   return `
     <button type="button" class="token-subline mock-trading-line mock-trading-pnl-trigger ${tone}" data-action="open-mock-trading-pnl" data-address="${escapeHtml(position.tokenAddress)}" title="Open PnL resume">
-      PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}
+      PnL ${fmtMockSol(pnl, { signed: true, usdcRate: mockSolUsdcRate })} (${fmtPct(pct)})${takeProfit}
     </button>
   `;
 }
@@ -1415,11 +1423,12 @@ function renderBucketSparklineCell(
   sparkline: TokenSparklineEntry | null,
   address: string,
   markers: MockTradingTradeEntry[] = [],
+  mockSolUsdcRate?: number,
 ) {
-  return `<td class="sparkline-col">${renderSparklineCell(sparkline, address, markers)}</td>`;
+  return `<td class="sparkline-col">${renderSparklineCell(sparkline, address, markers, mockSolUsdcRate)}</td>`;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = []) {
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -1452,11 +1461,11 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
               </div>
             </div>
             <div class="token-subline">${safeName}</div>
-            ${renderMockTradingLine(mockTradingPosition)}
+            ${renderMockTradingLine(mockTradingPosition, mockSolUsdcRate)}
           </div>
         </div>
       </td>
-      ${renderBucketSparklineCell(mode, sparkline, item.address, mockTradingTrades)}
+      ${renderBucketSparklineCell(mode, sparkline, item.address, mockTradingTrades, mockSolUsdcRate)}
       <td class="num-col">${age}</td>
       <td class="num-col strong">${fmtMoney(item.mcap)}</td>
       <td class="delta-col">${renderPctSpan(mcapDelta)}</td>

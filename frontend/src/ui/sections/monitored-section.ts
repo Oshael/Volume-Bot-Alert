@@ -3,6 +3,7 @@ import { getMockTradingPositionView, getMonitoredTokens, type AppState, type Man
 import { renderManualTokenEntryForm } from './manual-section';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { fmtMockSol, resolveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -141,6 +142,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const monitoredList = section.querySelector<HTMLElement>('.monitored-list');
   if (monitoredList) {
     if (filteredTracked.length) {
+      const mockSolUsdcRate = resolveMockSolUsdcRate(state.data.configs);
       for (const item of pageItems) {
         monitoredList.append(buildMonitoredRow(
           item,
@@ -149,6 +151,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
           state.session.role === 'admin',
           state.ui.enabledTradeTerminals,
           getMockTradingPositionView(state, item.address),
+          mockSolUsdcRate,
         ));
       }
     } else {
@@ -213,7 +216,7 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   });
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null) {
+function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockSolUsdcRate?: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
@@ -275,7 +278,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   appendMonitoredAdminActions(actions, item, symbol, busy, isAdmin, mockTradingPosition);
 
   main.append(titleLine, metaLine, actions);
-  appendMonitoredMockTradingLine(main, mockTradingPosition);
+  appendMonitoredMockTradingLine(main, mockTradingPosition, mockSolUsdcRate);
 
   const side = document.createElement('div');
   side.className = 'panel-row-side monitored-side-v68';
@@ -318,6 +321,7 @@ function appendMonitoredAdminActions(
 function appendMonitoredMockTradingLine(
   main: HTMLElement,
   mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null,
+  mockSolUsdcRate?: number,
 ) {
   if (!mockTradingPosition) {
     return;
@@ -333,7 +337,7 @@ function appendMonitoredMockTradingLine(
   mockLine.dataset.address = mockTradingPosition.tokenAddress;
   mockLine.className = `panel-row-meta mock-trading-line mock-trading-pnl-trigger ${pnl != null && pnl < 0 ? 'down' : 'up'}`;
   mockLine.title = 'Open PnL resume';
-  mockLine.textContent = `PnL ${fmtMoney(pnl)} (${fmtPct(pct)})${takeProfit}`;
+  mockLine.textContent = `PnL ${fmtMockSol(pnl, { signed: true, usdcRate: mockSolUsdcRate })} (${fmtPct(pct)})${takeProfit}`;
   main.append(mockLine);
 }
 

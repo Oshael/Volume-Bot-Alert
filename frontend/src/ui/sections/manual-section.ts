@@ -2,6 +2,7 @@
 import { getManualTokens, getMockTradingPositionsViewByAddress, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, renderManualTokenTable } from './shared';
 import { resolveManualTableRows } from '../../utils/token-table';
+import { resolveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 export function renderManualTokensSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -109,6 +110,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
         sparklineByAddress: state.data.sparklineByAddress,
         mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),
         mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
+        mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs),
       },
     )}
   `;

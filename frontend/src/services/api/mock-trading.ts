@@ -65,7 +65,9 @@ export interface MockTradingTrade {
   priceReturnPct?: number | null;
   priceMultiple?: number | null;
   mcapMultiple?: number | null;
+  mockSolUsdcRate?: number | null;
   executedAt?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface MockTradingSummary {
@@ -153,6 +155,8 @@ function normalizeTrade(item: MockTradingTrade): MockTradingTrade {
     priceReturnPct: toNullableNumber(item.priceReturnPct),
     priceMultiple: toNullableNumber(item.priceMultiple),
     mcapMultiple: toNullableNumber(item.mcapMultiple),
+    mockSolUsdcRate: toNullableNumber(item.mockSolUsdcRate ?? item.metadata?.mockSolUsdcRate),
+    metadata: item.metadata && typeof item.metadata === 'object' ? item.metadata : null,
   };
 }
 

@@ -1,9 +1,11 @@
 const db = require('../models/db');
 const { isValidAddress } = require('../models/user-token');
+const userConfig = require('../models/user-config');
 
 const DEFAULT_STARTING_CASH_USD = 1000;
 const DEFAULT_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
 const STALE_SELL_MAX_MCAP_USD = 30000;
+const MOCK_SOL_USDC_RATE_CONFIG_KEY = 'mock-sol-usdc-rate';
 const EPSILON = 1e-12;
 
 class MockTradingError extends Error {
@@ -57,6 +59,22 @@ function normalizePercent(value, fieldName = 'percent') {
     throw new MockTradingError(`${fieldName} must be between 0 and 100`, 'invalid_percent');
   }
   return percent;
+}
+
+function normalizeMockSolUsdcRate(value) {
+  const fallback = userConfig.CONFIG_SCHEMA[MOCK_SOL_USDC_RATE_CONFIG_KEY]?.default || 88;
+  const rate = Number(value ?? fallback);
+  return Number.isFinite(rate) && rate > 0 ? rate : fallback;
+}
+
+async function loadMockSolUsdcRate(userId, runner) {
+  const { rows } = await runner.query(
+    `SELECT config_value
+     FROM user_configs
+     WHERE user_id = $1 AND config_key = $2`,
+    [userId, MOCK_SOL_USDC_RATE_CONFIG_KEY]
+  );
+  return normalizeMockSolUsdcRate(rows[0]?.config_value);
 }
 
 function normalizeSellQuantity(position, payload = {}) {
@@ -271,6 +289,7 @@ function mapCatalogPrice(row, now = new Date(), maxAgeMs = DEFAULT_PRICE_MAX_AGE
 function mapTrade(row) {
   if (!row) return null;
   const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const mockSolUsdcRate = normalizeMockSolUsdcRate(metadata.mockSolUsdcRate);
   return {
     id: Number(row.id),
     userId: Number(row.user_id),
@@ -288,6 +307,7 @@ function mapTrade(row) {
     priceReturnPct: toFiniteNumber(row.price_return_pct, null),
     priceMultiple: toFiniteNumber(row.price_multiple, null),
     mcapMultiple: toFiniteNumber(row.mcap_multiple, null),
+    mockSolUsdcRate,
     source: row.source || 'token_catalog',
     executedAt: row.executed_at || null,
     metadata,
@@ -555,13 +575,17 @@ async function buyToken(payload = {}, options = {}) {
   return withTransaction(async (client) => {
     const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
     const catalog = await loadFreshCatalogPrice(address, client, options);
+    const mockSolUsdcRate = await loadMockSolUsdcRate(userId, client);
     const takeProfitInput = normalizeTakeProfitInput(payload, catalog);
     const position = await loadPositionForUpdate(userId, address, client);
     const next = buildBuyState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, notionalUsd });
 
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
-    next.trade.metadata = buildTradeMetadata(catalog, next.trade.metadata);
+    next.trade.metadata = buildTradeMetadata(catalog, {
+      ...next.trade.metadata,
+      mockSolUsdcRate,
+    });
     const trade = await insertTrade(userId, address, next.trade, client);
     const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
     const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, address, client);
@@ -592,11 +616,15 @@ async function sellToken(payload = {}, options = {}) {
       ...options,
       allowStaleBelowMcapUsd: STALE_SELL_MAX_MCAP_USD,
     });
+    const mockSolUsdcRate = await loadMockSolUsdcRate(userId, client);
     const next = buildSellState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, quantity });
 
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
-    next.trade.metadata = buildTradeMetadata(catalog, next.trade.metadata);
+    next.trade.metadata = buildTradeMetadata(catalog, {
+      ...next.trade.metadata,
+      mockSolUsdcRate,
+    });
     const trade = await insertTrade(userId, address, next.trade, client);
     if (!next.position) {
       await cancelOpenTakeProfitOrders(userId, address, client, 'position_closed');
@@ -873,6 +901,7 @@ async function executeTakeProfitOrder(orderId, options = {}) {
     }
 
     const catalog = await loadFreshCatalogPrice(order.tokenAddress, client, options);
+    const mockSolUsdcRate = await loadMockSolUsdcRate(order.userId, client);
     if (!(catalog.marketCapUsd >= order.targetMcapUsd)) {
       return { status: 'skipped', reason: 'target_not_reached', order, catalog };
     }
@@ -891,6 +920,7 @@ async function executeTakeProfitOrder(orderId, options = {}) {
       targetMcapUsd: order.targetMcapUsd,
       sellPercent: order.sellPercent,
       triggerMcapUsd: catalog.marketCapUsd,
+      mockSolUsdcRate,
     });
 
     await saveAccount(next.account, client);
@@ -935,8 +965,10 @@ module.exports = {
   __private: {
     buildBuyState,
     buildSellState,
+    mapTrade,
     normalizeTakeProfitInput,
     mapCatalogPrice,
+    normalizeMockSolUsdcRate,
     normalizeSellQuantity,
   },
 };

@@ -18,6 +18,7 @@ import {
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
+import { fmtMockSol, fmtMockSolAmount, MOCK_SOL_USDC_RATE_CONFIG_KEY, resolveMockSolUsdcRate, resolveMockTradeSolUsdcRate } from '../../utils/mock-trading-display';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
@@ -298,7 +299,9 @@ function bindFocusTrap(panel: HTMLElement | null) {
   });
 }
 
-const CONFIG_FIELDS: Array<{ key: string; label: string; type?: 'number' | 'text'; min?: number; placeholder?: string }> = [
+type ConfigField = { key: string; label: string; type?: 'number' | 'text'; min?: number; step?: number; placeholder?: string; adminOnly?: boolean };
+
+const CONFIG_FIELDS: ConfigField[] = [
   { key: 'threshold', label: 'Alert when 5m volume rises (%)', min: 1 },
   { key: 'mcap-threshold', label: 'Alert when MKT CAP rises (%) in 5m', min: 0, placeholder: '0 = disabled' },
   { key: 'min-vol', label: 'Min 5m volume to alert ($)', min: 0 },
@@ -306,6 +309,7 @@ const CONFIG_FIELDS: Array<{ key: string; label: string; type?: 'number' | 'text
   { key: 'max-mcap', label: 'Max market cap to alert ($)', min: 0, placeholder: '0 = no limit' },
   { key: 'meteora-alert-1h-threshold', label: 'Meteora pool alert 1h (%)', min: 0, placeholder: '0 = disabled' },
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
+  { key: MOCK_SOL_USDC_RATE_CONFIG_KEY, label: 'Mock SOL rate (USDC)', min: 0.01, step: 0.01, placeholder: '1 SOL = this USDC', adminOnly: true },
 ];
 
 const ALERT_TOGGLE_FIELDS = [
@@ -866,8 +870,8 @@ function renderMockTradingHeaderSummary(state: AppState) {
     <div class="workspace-mock-trading-cluster">
       <div class="workspace-mock-trading-summary workspace-mock-trading-cash" data-tone="${pnlTone}">
         <span class="workspace-mock-trading-label">MOCK</span>
-        <strong>Cash ${escapeHtml(fmtMockUsd(summary.account.cashUsd))}</strong>
-        <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-add" data-action="add-mock-trading-cash" ${state.ui.busy ? 'disabled' : ''} title="Add mock cash">Add</button>
+        <strong>Cash ${escapeHtml(fmtMockUsdForState(state, summary.account.cashUsd))}</strong>
+        <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-add" data-action="add-mock-trading-cash" ${state.ui.busy ? 'disabled' : ''} title="Add mock SOL">Add</button>
         <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-plays" data-action="open-mock-trading-history" ${state.ui.busy ? 'disabled' : ''} title="Open mock trade history">Plays</button>
         <button type="button" class="workspace-mock-trading-reset" data-action="reset-mock-trading" ${state.ui.busy ? 'disabled' : ''} title="Reset mock portfolio">Reset</button>
       </div>
@@ -895,10 +899,10 @@ function renderMockTradingHeaderPosition(state: AppState, address: string) {
   const pnl = position?.unrealizedPnlUsd ?? null;
   const pct = position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null;
   return `
-    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" data-action="open-mock-trading-pnl" data-address="${escapeHtml(address)}" role="button" tabindex="0" title="${escapeHtml(buildMockTradingHeaderPositionTitle(symbol, pnl, pct, position))}">
+    <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" data-action="open-mock-trading-pnl" data-address="${escapeHtml(address)}" role="button" tabindex="0" title="${escapeHtml(buildMockTradingHeaderPositionTitle(state, symbol, pnl, pct, position))}">
       ${renderMockTradingHeaderAvatar(imageUrl, symbol)}
       <strong>${escapeHtml(symbol)}</strong>
-      <span>${escapeHtml(fmtMockUsd(pnl, { signed: true }))}</span>
+      <span>${escapeHtml(fmtMockUsdForState(state, pnl, { signed: true }))}</span>
       <span>${escapeHtml(fmtPct(pct))}</span>
       <button type="button" class="workspace-mock-trading-copy copy-button" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract">⧉</button>
     </div>
@@ -918,6 +922,7 @@ function getMockTradingPnlTone(pnl?: number | null) {
 }
 
 function buildMockTradingHeaderPositionTitle(
+  state: AppState,
   symbol: string,
   pnl: number | null,
   pct: number | null,
@@ -926,7 +931,7 @@ function buildMockTradingHeaderPositionTitle(
   const takeProfitTitle = position?.takeProfitOrders?.length
     ? ` · ${formatMockTradingTakeProfitSummary(position.takeProfitOrders)}`
     : '';
-  return `${symbol} open mock position · ${fmtMoney(pnl)} ${fmtPct(pct)}${takeProfitTitle}`;
+  return `${symbol} open mock position · ${fmtMockUsdForState(state, pnl)} ${fmtPct(pct)}${takeProfitTitle}`;
 }
 
 function renderMockTradingHeaderAvatar(imageUrl: string | null, symbol: string) {
@@ -948,17 +953,12 @@ function formatMockTradingTakeProfitSummary(orders: NonNullable<ReturnType<typeo
   return `TP ${preview}${extra}`;
 }
 
-function fmtMockUsd(value?: number | null, options: { signed?: boolean } = {}) {
-  if (value == null || !Number.isFinite(value)) {
-    return '-';
-  }
-  const abs = Math.abs(value);
-  const fractionDigits = abs >= 100 ? 0 : 2;
-  const sign = options.signed && value > 0 ? '+' : value < 0 ? '-' : '';
-  return `${sign}$${abs.toLocaleString(undefined, {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  })}`;
+function fmtMockUsd(value?: number | null, options: { signed?: boolean; usdcRate?: number } = {}) {
+  return fmtMockSol(value, options);
+}
+
+function fmtMockUsdForState(state: AppState, value?: number | null, options: { signed?: boolean } = {}) {
+  return fmtMockUsd(value, { ...options, usdcRate: resolveMockSolUsdcRate(state.data.configs) });
 }
 
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
@@ -1338,6 +1338,7 @@ function renderMockTradingHistoryModal(state: AppState) {
   const losers = sells.filter((trade) => trade.realizedPnlUsd < 0).length;
   const flats = sells.length - winners - losers;
   const winRate = sells.length > 0 ? (winners / sells.length) * 100 : null;
+  const totalRealizedSol = sells.reduce((sum, trade) => sum + (trade.realizedPnlUsd || 0) / resolveMockTradeSolUsdcRate(trade), 0);
   const rows = sells.slice(0, 30);
 
   return `
@@ -1352,9 +1353,9 @@ function renderMockTradingHistoryModal(state: AppState) {
           <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-history" aria-label="Close dialog">X</button>
         </div>
         <div class="mock-trading-history-stats">
-          ${renderMockTradingHistoryStat('Cash', fmtMockUsd(summary?.account.cashUsd ?? null), null)}
-          ${renderMockTradingHistoryStat('Equity', fmtMockUsd(summary?.totalEquityUsd ?? null), null)}
-          ${renderMockTradingHistoryStat('Realized', fmtMockUsd(totalRealized, { signed: true }), totalRealized < 0 ? 'down' : 'up')}
+          ${renderMockTradingHistoryStat('Cash', fmtMockUsdForState(state, summary?.account.cashUsd ?? null), null)}
+          ${renderMockTradingHistoryStat('Equity', fmtMockUsdForState(state, summary?.totalEquityUsd ?? null), null)}
+          ${renderMockTradingHistoryStat('Realized', fmtMockSolAmount(totalRealizedSol, { signed: true }), totalRealized < 0 ? 'down' : 'up')}
           ${renderMockTradingHistoryStat('Win rate', fmtPct(winRate), null)}
           ${renderMockTradingHistoryStat('Wins', String(winners), 'up')}
           ${renderMockTradingHistoryStat('Losses', String(losers), losers > 0 ? 'down' : null)}
@@ -1399,14 +1400,14 @@ function renderMockTradingPnlResumeModal(state: AppState) {
           <div class="mock-trading-pnl-main">
             <div class="mock-trading-pnl-number">
               <span>PNL</span>
-              <strong>${escapeHtml(fmtMockUsd(view.totalPnl, { signed: true }))}</strong>
+              <strong>${escapeHtml(fmtMockUsdForState(state, view.totalPnl, { signed: true }))}</strong>
               <em>${escapeHtml(fmtPct(view.pnlPct))}</em>
             </div>
             <div class="mock-trading-pnl-stats">
-              ${renderMockTradingPnlStat('Invested', fmtMockUsd(view.boughtUsd))}
-              ${renderMockTradingPnlStat('Position', fmtMockUsd(view.currentValue))}
-              ${renderMockTradingPnlStat('Sold', fmtMockUsd(view.soldUsd))}
-              ${renderMockTradingPnlStat('Realized', fmtMockUsd(view.realized, { signed: true }), view.realized < 0 ? 'down' : 'up')}
+              ${renderMockTradingPnlStat('Invested', fmtMockSolAmount(view.boughtSol))}
+              ${renderMockTradingPnlStat('Position', fmtMockUsdForState(state, view.currentValue))}
+              ${renderMockTradingPnlStat('Sold', fmtMockSolAmount(view.soldSol))}
+              ${renderMockTradingPnlStat('Realized', fmtMockSolAmount(view.realizedSol, { signed: true }), view.realized < 0 ? 'down' : 'up')}
             </div>
           </div>
 
@@ -1417,7 +1418,7 @@ function renderMockTradingPnlResumeModal(state: AppState) {
           </div>
 
           <div class="mock-trading-pnl-chart">
-            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
+            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades, mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs) }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
           </div>
 
           <div class="mock-trading-pnl-trades">
@@ -1461,17 +1462,29 @@ function getMockTradingPnlTotals(
 ) {
   const boughtUsd = trades.filter((trade) => trade.side === 'buy').reduce((sum, trade) => sum + trade.notionalUsd, 0);
   const soldUsd = trades.filter((trade) => trade.side === 'sell').reduce((sum, trade) => sum + trade.notionalUsd, 0);
+  const boughtSol = trades
+    .filter((trade) => trade.side === 'buy')
+    .reduce((sum, trade) => sum + trade.notionalUsd / resolveMockTradeSolUsdcRate(trade), 0);
+  const soldSol = trades
+    .filter((trade) => trade.side === 'sell')
+    .reduce((sum, trade) => sum + trade.notionalUsd / resolveMockTradeSolUsdcRate(trade), 0);
   const currentValue = position.currentValueUsd ?? null;
   const unrealized = position.unrealizedPnlUsd ?? null;
   const realized = position.realizedPnlUsd ?? 0;
+  const realizedSol = trades
+    .filter((trade) => trade.side === 'sell')
+    .reduce((sum, trade) => sum + trade.realizedPnlUsd / resolveMockTradeSolUsdcRate(trade), 0);
   const totalPnl = realized + (unrealized ?? 0);
   const pnlPct = boughtUsd > 0 ? (totalPnl / boughtUsd) * 100 : position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
 
   return {
     boughtUsd,
+    boughtSol,
     soldUsd,
+    soldSol,
     currentValue,
     realized,
+    realizedSol,
     totalPnl,
     pnlPct,
     pnlTone: totalPnl < 0 ? 'down' : 'up',
@@ -1496,8 +1509,8 @@ function renderMockTradingPnlStat(label: string, value: string, tone?: 'up' | 'd
 function renderMockTradingPnlTrade(trade: MockTradingTradeView) {
   const tone = trade.side === 'sell' && trade.realizedPnlUsd < 0 ? 'down' : 'up';
   const value = trade.side === 'buy'
-    ? fmtMockUsd(trade.notionalUsd)
-    : fmtMockUsd(trade.realizedPnlUsd, { signed: true });
+    ? fmtMockSolAmount(trade.notionalUsd / resolveMockTradeSolUsdcRate(trade))
+    : fmtMockSolAmount(trade.realizedPnlUsd / resolveMockTradeSolUsdcRate(trade), { signed: true });
   return `
     <div class="mock-trading-pnl-trade" data-side="${trade.side}" data-tone="${tone}">
       <span>${escapeHtml(trade.side.toUpperCase())}</span>
@@ -1615,9 +1628,9 @@ function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeVie
           ${renderMockTradingHistoryCopyButton(trade.tokenAddress, symbol)}
         </div>
       </td>
-      <td>${escapeHtml(fmtMockUsd(trade.notionalUsd))}</td>
+      <td>${escapeHtml(fmtMockSolAmount(trade.notionalUsd / resolveMockTradeSolUsdcRate(trade)))}</td>
       <td>${escapeHtml(fmtPct(trade.realizedPnlPct ?? trade.priceReturnPct))}</td>
-      <td data-tone="${tone}">${escapeHtml(fmtMockUsd(trade.realizedPnlUsd, { signed: true }))}</td>
+      <td data-tone="${tone}">${escapeHtml(fmtMockSolAmount(trade.realizedPnlUsd / resolveMockTradeSolUsdcRate(trade), { signed: true }))}</td>
       <td>${escapeHtml(formatMockTradeTime(trade.executedAt))}</td>
     </tr>
   `;
@@ -1682,8 +1695,8 @@ function getMockTradingTicketStats(state: AppState, address: string) {
   return [
     { label: 'priceUSD', value: fmtMoney(market.priceUsd), tone: null },
     { label: 'MCAP', value: fmtMoney(market.mcapUsd), tone: null },
-    { label: 'PnL', value: `${fmtMoney(pnl.usd)} ${fmtPct(pnl.pct)}`, tone: pnl.tone },
-    { label: 'Cash', value: fmtMoney(summary?.account.cashUsd ?? null), tone: null },
+    { label: 'PnL', value: `${fmtMockUsdForState(state, pnl.usd)} ${fmtPct(pnl.pct)}`, tone: pnl.tone },
+    { label: 'Cash', value: fmtMockUsdForState(state, summary?.account.cashUsd ?? null), tone: null },
   ];
 }
 
@@ -1714,11 +1727,11 @@ function renderMockTradingTicketStat(stat: { label: string; value: string; tone:
 function renderMockTradingBuyFields(busy: boolean) {
   return `
     <label class="mock-trading-ticket-field">
-      <span>USD amount</span>
-      <input type="number" name="notionalUsd" min="1" step="1" value="100" inputmode="decimal" ${busy ? 'disabled' : ''} />
+      <span>SOL amount</span>
+      <input type="number" name="notionalSol" min="0.01" step="0.01" value="1" inputmode="decimal" ${busy ? 'disabled' : ''} />
     </label>
     <div class="mock-trading-ticket-presets">
-      ${[50, 100, 250, 500].map((value) => `<button type="button" data-action="mock-trade-preset" data-value="${value}" ${busy ? 'disabled' : ''}>$${value}</button>`).join('')}
+      ${[1, 2, 5, 10].map((value) => `<button type="button" data-action="mock-trade-preset" data-value="${value}" ${busy ? 'disabled' : ''}>${value} SOL</button>`).join('')}
     </div>
     <label class="mock-trading-ticket-field">
       <span>Take profit MCAP</span>
@@ -1784,7 +1797,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
         <div class="expanded-sparkline-chart">
-          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [] })}
+          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs) })}
         </div>
         <div class="expanded-sparkline-footnote">Updated ${escapeHtml(stats.updatedLabel)}. Hover for approximate market cap and time.</div>
       </div>
@@ -1871,7 +1884,7 @@ function bindMockTradingTicketModal(section: ParentNode, controller: AppControll
   section.querySelectorAll<HTMLButtonElement>('[data-action="mock-trade-preset"]').forEach((button) => {
     button.addEventListener('click', () => {
       const form = button.closest<HTMLFormElement>('form[data-role="mock-trading-ticket-form"]');
-      const input = form?.querySelector<HTMLInputElement>('input[name="notionalUsd"], input[name="percent"]');
+      const input = form?.querySelector<HTMLInputElement>('input[name="notionalSol"], input[name="percent"]');
       if (input) {
         input.value = button.dataset.value || input.value;
       }
@@ -1909,7 +1922,7 @@ function submitMockTradingTicketForm(form: HTMLFormElement, controller: AppContr
     return;
   }
   if (side === 'buy') {
-    const notionalUsd = Number(form.querySelector<HTMLInputElement>('input[name="notionalUsd"]')?.value || '0');
+    const notionalSol = Number(form.querySelector<HTMLInputElement>('input[name="notionalSol"]')?.value || '0');
     const targetMcapRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitMcapUsd"]')?.value || '';
     const sellPercentRaw = form.querySelector<HTMLInputElement>('input[name="takeProfitSellPercent"]')?.value || '';
     const takeProfit = targetMcapRaw.trim()
@@ -1918,7 +1931,7 @@ function submitMockTradingTicketForm(form: HTMLFormElement, controller: AppContr
         sellPercent: sellPercentRaw.trim() ? Number(sellPercentRaw) : 100,
       }
       : undefined;
-    void controller.submitMockTradingBuy(address, notionalUsd, takeProfit);
+    void controller.submitMockTradingBuy(address, notionalSol, takeProfit);
     return;
   }
 
@@ -3472,7 +3485,7 @@ function renderBotSettingsModal(state: AppState) {
 
 function renderBotSettingsFields(state: AppState) {
   return `
-    ${CONFIG_FIELDS.map((field) => renderConfigField(state, field)).join('')}
+    ${getVisibleConfigFields(state).map((field) => renderConfigField(state, field)).join('')}
     <div class="config-item config-item-sound">
       <label>Sound alert</label>
       <select name="sound-mode">
@@ -3511,6 +3524,10 @@ function renderBotSettingsFields(state: AppState) {
       ${renderSoundUploadStrip(state)}
     </div>
   `;
+}
+
+function getVisibleConfigFields(state: AppState) {
+  return CONFIG_FIELDS.filter((field) => !field.adminOnly || state.session.role === 'admin');
 }
 
 function renderTradeTerminalPrefsMenu(state: AppState) {
@@ -4720,7 +4737,7 @@ function renderLegacyActions(state: AppState, controller: AppController) {
   return section;
 }
 
-function renderConfigField(_state: AppState, field: { key: string; label: string; type?: 'number' | 'text'; min?: number; placeholder?: string }) {
+function renderConfigField(_state: AppState, field: ConfigField) {
   const type = field.type ?? 'number';
   const safeLabel = escapeHtml(field.label);
   const safeType = escapeHtml(type);
@@ -4730,7 +4747,7 @@ function renderConfigField(_state: AppState, field: { key: string; label: string
   return `
     <div class="config-item">
       <label>${safeLabel}</label>
-      <input type="${safeType}" name="${safeKey}" ${field.min != null ? `min="${field.min}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
+      <input type="${safeType}" name="${safeKey}" ${field.min != null ? `min="${field.min}"` : ''} ${field.step != null ? `step="${field.step}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
     </div>
   `;
 }
@@ -4746,7 +4763,7 @@ function renderAdminChainField(_state: AppState) {
   `;
 }
 
-function resolveConfigInputValue(state: AppState, field: { key: string; type?: 'number' | 'text' }) {
+function resolveConfigInputValue(state: AppState, field: ConfigField) {
   const type = field.type ?? 'number';
   const value = state.data.configs[field.key];
   if (value == null || value === '') {
@@ -4756,7 +4773,7 @@ function resolveConfigInputValue(state: AppState, field: { key: string; type?: '
 }
 
 function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
-  for (const field of CONFIG_FIELDS) {
+  for (const field of getVisibleConfigFields(state)) {
     const input = section.querySelector<HTMLInputElement>(`input[name="${CSS.escape(field.key)}"]`);
     if (!input) {
       continue;
@@ -4818,6 +4835,7 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
     'old-week-surge-1h-threshold': 50,
     'old-week-surge-6h-threshold': 150,
     'meteora-alert-1h-threshold': 50,
+    [MOCK_SOL_USDC_RATE_CONFIG_KEY]: 88,
     'old-mcap-max': 100000000,
     'old-week-mcap-max': 100000000,
   };

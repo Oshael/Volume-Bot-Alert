@@ -6,7 +6,9 @@ const mockTradingService = require('../src/services/mock-trading-service');
 const {
   buildBuyState,
   buildSellState,
+  mapTrade,
   mapCatalogPrice,
+  normalizeMockSolUsdcRate,
   normalizeTakeProfitInput,
   normalizeSellQuantity,
 } = mockTradingService.__private;
@@ -194,5 +196,23 @@ describe('mock trading service calculations', () => {
       () => normalizeTakeProfitInput({ takeProfitMcapUsd: 90000 }, { marketCapUsd: 100000 }),
       /takeProfitMcapUsd must be above the current market cap/
     );
+  });
+
+  it('maps mock SOL rate snapshots from trade metadata', () => {
+    const mapped = mapTrade({
+      id: 1,
+      user_id: 2,
+      token_address: 'So11111111111111111111111111111111111111112',
+      side: 'buy',
+      quantity: '1',
+      price_usd: '2',
+      market_cap_usd: '100000',
+      notional_usd: '123.45',
+      realized_pnl_usd: '0',
+      metadata: { mockSolUsdcRate: 123.45 },
+    });
+
+    assert.equal(mapped.mockSolUsdcRate, 123.45);
+    assert.equal(normalizeMockSolUsdcRate(null), 88);
   });
 });

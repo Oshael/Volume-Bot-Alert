@@ -234,7 +234,9 @@ export interface MockTradingTradeEntry {
   priceReturnPct?: number | null;
   priceMultiple?: number | null;
   mcapMultiple?: number | null;
+  mockSolUsdcRate?: number | null;
   executedAt?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface MockTradingTicketState {

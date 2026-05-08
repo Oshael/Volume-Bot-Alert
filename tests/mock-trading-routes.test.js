@@ -110,6 +110,14 @@ describe('mock trading admin routes', () => {
   });
 
   it('executes buy, reports PnL percentage, sells, and resets', async () => {
+    await db.query(
+      `INSERT INTO user_configs (user_id, config_key, config_value)
+       VALUES ($1, 'mock-sol-usdc-rate', '123.45')
+       ON CONFLICT (user_id, config_key)
+       DO UPDATE SET config_value = EXCLUDED.config_value`,
+      [adminUserId]
+    );
+
     const buyRes = await request(app)
       .post('/api/admin/mock-trading/buy')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -118,6 +126,7 @@ describe('mock trading admin routes', () => {
     assert.equal(buyRes.status, 201);
     assert.equal(buyRes.body.position.quantity, 100000);
     assert.equal(buyRes.body.position.avgEntryMcapUsd, 100000);
+    assert.equal(buyRes.body.trade.mockSolUsdcRate, 123.45);
 
     await db.query(
       `UPDATE token_catalog
@@ -136,6 +145,13 @@ describe('mock trading admin routes', () => {
     assert.equal(positionsRes.body.positions[0].mcapMultiple, 2);
     assert.equal(positionsRes.body.positions[0].imageUrl, 'https://example.test/wsol.png');
 
+    await db.query(
+      `UPDATE user_configs
+       SET config_value = '77'
+       WHERE user_id = $1 AND config_key = 'mock-sol-usdc-rate'`,
+      [adminUserId]
+    );
+
     const sellRes = await request(app)
       .post('/api/admin/mock-trading/sell')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -144,6 +160,7 @@ describe('mock trading admin routes', () => {
     assert.equal(sellRes.status, 200);
     assert.equal(sellRes.body.trade.realizedPnlUsd, 50);
     assert.equal(sellRes.body.trade.realizedPnlPct, 100);
+    assert.equal(sellRes.body.trade.mockSolUsdcRate, 77);
 
     await db.query(
       `UPDATE token_catalog
@@ -162,6 +179,10 @@ describe('mock trading admin routes', () => {
     assert.equal(sellTrade.symbol, 'WSOL');
     assert.equal(sellTrade.name, 'Wrapped SOL');
     assert.equal(sellTrade.imageUrl, 'https://example.test/wsol.png');
+    assert.equal(sellTrade.mockSolUsdcRate, 77);
+    const buyTrade = tradesRes.body.trades.find((trade) => trade.side === 'buy');
+    assert.ok(buyTrade);
+    assert.equal(buyTrade.mockSolUsdcRate, 123.45);
 
     const resetRes = await request(app)
       .post('/api/admin/mock-trading/reset')

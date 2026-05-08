@@ -1,6 +1,7 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionsViewByAddress, getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindTokenActions, fmtConfig, renderPagedAgeBucketList } from './shared';
+import { resolveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
 const OLD_WEEK_MIN_AGE_MINUTES = RECENT_MAX_AGE_MINUTES;
@@ -303,6 +304,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         sparklineByAddress: state.data.sparklineByAddress,
         mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),
         mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
+        mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs),
       },
     )}
   `;
@@ -564,6 +566,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         sparklineByAddress: state.data.sparklineByAddress,
         mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),
         mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
+        mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs),
       },
     )}
   `;

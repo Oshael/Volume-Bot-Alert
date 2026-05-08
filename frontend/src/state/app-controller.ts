@@ -81,6 +81,7 @@ import {
   measureRuntimePerf,
   measureRuntimePerfAsync,
 } from '../utils/runtime-perf-debug';
+import { mockSolToUsd, resolveMockSolUsdcRate } from '../utils/mock-trading-display';
 
 const AUTH_NOTICE_NO_SESSION = 'No saved session. Sign in to continue.';
 const AUTH_NOTICE_RESTORING = 'Restoring session...';
@@ -321,7 +322,7 @@ export interface AppController {
   openMockTradingPnlResume(address: string): void;
   closeMockTradingPnlResume(): void;
   closeMockTradingTicket(): void;
-  submitMockTradingBuy(address: string, notionalUsd: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }): Promise<void>;
+  submitMockTradingBuy(address: string, notionalSol: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }): Promise<void>;
   submitMockTradingSell(address: string, percent: number): Promise<void>;
   submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number): Promise<void>;
   cancelMockTradingTakeProfitOrder(orderId: number): Promise<void>;
@@ -8488,7 +8489,7 @@ export function createAppController(): AppController {
       state.ui.mockTradingTicket = null;
       emit('overlay');
     },
-    async submitMockTradingBuy(address: string, notionalUsd: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }) {
+    async submitMockTradingBuy(address: string, notionalSol: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }) {
       const token = state.session.token;
       if (!token || state.session.role !== 'admin') {
         setError('Admin access required');
@@ -8499,8 +8500,8 @@ export function createAppController(): AppController {
         return;
       }
 
-      if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
-        setError('Mock buy amount must be greater than zero');
+      if (!Number.isFinite(notionalSol) || notionalSol <= 0) {
+        setError('Mock buy SOL amount must be greater than zero');
         emit('overlay');
         return;
       }
@@ -8520,6 +8521,7 @@ export function createAppController(): AppController {
       setNotice('Executing mock buy...');
       emit();
       try {
+        const notionalUsd = mockSolToUsd(notionalSol, resolveMockSolUsdcRate(state.data.configs));
         const result = await buyMockTradingToken(address, notionalUsd, token, takeProfit);
         if (result.position) {
           state.data.mockTradingPositionsByAddress[address] = result.position;
@@ -8649,22 +8651,23 @@ export function createAppController(): AppController {
       }
       const rawAmount = typeof window === 'undefined'
         ? ''
-        : window.prompt('Add mock cash amount in USD', '1000');
+        : window.prompt('Add mock SOL amount', '10');
       if (rawAmount == null) {
         return;
       }
-      const amountUsd = Number(rawAmount);
-      if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-        setError('Mock cash amount must be greater than zero');
+      const amountSol = Number(rawAmount);
+      if (!Number.isFinite(amountSol) || amountSol <= 0) {
+        setError('Mock SOL amount must be greater than zero');
         emit('header');
         return;
       }
 
       setBusy(true);
       setError(null);
-      setNotice('Adding mock cash...');
+      setNotice('Adding mock SOL...');
       emit('header');
       try {
+        const amountUsd = mockSolToUsd(amountSol, resolveMockSolUsdcRate(state.data.configs));
         const result = await addMockTradingCash(amountUsd, token);
         await refreshMockTradingState();
         setNotice(result.message);
