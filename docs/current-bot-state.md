@@ -112,7 +112,6 @@ Important:
     - visible workspace label: `RADAR`
     - `Recent Tokens`
     - `Old Tokens 1 Week+`
-    - `Lateralization Coins`
     - `Bid Zone Coins`
 
 ### Backend
@@ -128,7 +127,7 @@ Important:
   - `src/services/catalog-cleanup-worker.js`
   - `src/services/catalog-worker.js`
   - `src/services/dex-discovery-worker.js`
-  - `src/services/lateralization-worker.js`
+  - `src/services/bid-zone-worker.js`
   - `src/services/meteora-snapshot-worker.js`
   - `src/services/token-risk-enrichment-worker.js`
   - `src/services/token-risk-review-sync-worker.js`
@@ -145,7 +144,7 @@ Important:
     - `idle`
   - current default remains `combined`
   - if the backend is ever scaled to multiple replicas, or a second process points to the same production DB, every process will still start its own workers unless runtime roles are deliberately split
-  - that would duplicate `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` work against the same DB/upstreams
+  - that would duplicate `catalog`, `cleanup`, `discovery`, `meteora`, and `bid-zone` work against the same DB/upstreams
   - it would also duplicate Helius enrichment and automatic token-risk review sync
   - horizontal scale of the full backend is therefore still not recommended unless the split is intentionally deployed as separate web/background roles
 
@@ -484,34 +483,14 @@ Important:
   - users can currently only toggle this alert on/off and mute/unmute its sound
   - threshold, minimum market cap, window length, and rearm are still canonical backend rule settings rather than per-user configs
 
-### Lateralization Coins
-- Source of truth: backend-precomputed lateralization runs
-- Persisted tables:
-  - `lateralization_runs`
-  - `lateralization_results`
-- Main endpoint:
-  - `GET /api/catalog/lateralized`
-- Main worker:
-  - `src/services/lateralization-worker.js`
-- Current behavior:
-  - frontend reads the latest completed persisted run instead of triggering the finder on every request
-  - the panel is now mounted in the `/monitor` workspace alongside `Recent Tokens` and `Old Tokens 1 Week+`
-  - current row info is intentionally compact:
-    - `#rank`
-    - symbol/name
-    - `MCAP`
-    - `AGE`
-    - `VOL 1H`
-    - `VOL 24H`
-
 ### Bid Zone Coins
 - Source of truth: backend-computed on demand from `token_market_buckets_1m`
 - Main endpoint:
   - `GET /api/catalog/bid-zone`
 - Current behavior:
   - frontend reads a separate ranking in `/monitor`
-  - this ranking is intentionally not merged into `Lateralization Coins`
-  - it is designed to catch support-defended accumulation / bid-area setups that the more conservative lateralization model can reject
+  - this is the only heavy history-analysis coin panel currently mounted
+  - it is designed to catch support-defended accumulation / bid-area setups
 - Current model shape:
   - robust support / resistance bands are derived from close-based quantiles
   - score emphasizes:
@@ -739,32 +718,23 @@ Current monitored UI behavior:
   - manual tokens are exempt from this low-activity suppression
   - the monitored dashboard route still defaults to `minMcap = 30k`, but worker cadence no longer assumes all low-activity auto tokens should be refreshed aggressively
 
-### 2a. Lateralization Coins
-- Frontend refresh interval: `60s`
-- Current flow:
-  - frontend calls `GET /api/catalog/lateralized`
-  - backend returns rows from the latest completed `lateralization_runs` / `lateralization_results` pair
-  - normal panel reads no longer execute the full finder inline
-- Current intended effect:
-  - lateralization ranking cost is shifted to the backend worker cadence
-  - panel reads stay stable and cheap relative to the previous on-demand route shape
-- Current UI behavior:
-  - the panel now sits in the `/monitor` workspace as the larger analysis card beside the routed-history surfaces
-  - header shows freshness text from backend `generatedAt`
-  - rows are intentionally thin and ranked, not large cards
-
-### 2b. Bid Zone Coins
+### 2a. Bid Zone Coins
 - Frontend refresh interval: `60s`
 - Current flow:
   - frontend calls `GET /api/catalog/bid-zone`
-  - backend computes the list on demand from `token_market_buckets_1m`
+  - backend returns rows from the latest completed persisted bid-zone snapshot
   - backend payload includes `generatedAt`
+- Worker safety controls:
+  - `BID_ZONE_WORKER_ENABLED` defaults to `false`; enable only when the DB has enough headroom
+  - `BID_ZONE_WORKER_RUN_ON_START`
+  - `BID_ZONE_STATEMENT_TIMEOUT_MS`
+  - `BID_ZONE_CANDIDATE_SCAN_LIMIT`
 - Current intended effect:
-  - catch “support-bid / accumulation-zone” setups separately from the central-range lateralization model
+  - catch “support-bid / accumulation-zone” setups
   - use more robust closes/quantiles instead of raw wick extremes as the main support reference
 - Current UI behavior:
-  - the panel sits beside `Lateralization Coins` inside `/monitor`
-  - rows reuse the same ranked compact visual language, but the rail metrics are support-oriented instead of lateralization-oriented
+  - the panel is the history-analysis coin panel inside `/monitor`
+  - rows use compact ranked visuals with support-oriented rail metrics
 
 ### 3. Manual Tokens
 - Current source of truth:
@@ -1038,38 +1008,26 @@ Current monitored UI behavior:
   - `sampleCount`
   - `source`
 
-### `GET /api/catalog/lateralized`
-- Current state: precomputed read route
-- The route now reads the latest completed persisted run for the requested parameter set
-- Precompute is done by `src/services/lateralization-worker.js`
+### `GET /api/catalog/bid-zone`
+- Current state: precomputed snapshot read route for default monitor parameters
+- The route reads the latest completed persisted bid-zone run for the default parameter set
+- Manual refresh uses `POST /api/catalog/bid-zone/refresh`
 - Worker behavior:
-  - one run on backend boot
-  - periodic recompute every `20m`
-- If no completed run exists yet for that parameter set, the route returns `404`
+  - no immediate boot run by default
+  - scheduled worker is disabled by default; enable with `BID_ZONE_WORKER_ENABLED=true`
+  - heavy candidate SQL is bounded by `BID_ZONE_STATEMENT_TIMEOUT_MS` and `BID_ZONE_CANDIDATE_SCAN_LIMIT`
+- If no completed run exists yet for the default parameter set, the route returns `404`
 - Current route contract:
-  - returns `generatedAt`, `runId`, `requestedHours`, `count`, and `candidates`
-  - also returns run metadata:
-    - `candidateCount`
-    - `resultCount`
-    - `minMcap`
-    - `minVol24h`
+  - returns `generatedAt`, `runId`, `requestedHours`, `count`, `refreshAvailableAt`, and `candidates`
   - each candidate includes:
     - `mcap`, `catalogMcap`, `windowMcap`
     - `volume1h/6h/24h`
-    - `rangePct`, `driftPct`, `coverageRatio`
+    - support/resistance metrics
+    - `recentRangePct`, `closeDriftPct`, `coverageRatio`
     - `windowHoursUsed`, `minimumWindowHours`
     - liquidity/ranking diagnostics such as `liquidityPenalty`
 
-### Current lateralization-finder rule shape
-- Windowing:
-  - `< 1M`: minimum `16h`
-  - `>= 1M`: minimum `32h`
-- Current range / drift bands:
-  - `90k - <1M`: `range <= 50%`, `drift <= 20%`
-  - `1M - <4M`: `range <= 50%`, `drift <= 16%`
-  - `4M+`: `range <= 25%`, `drift <= 14%`
-- Current position rule:
-  - token must sit between `15%` and `85%` of its window range
+### Current bid-zone rule shape
 - Current liquidity rules:
   - `vol24h` remains a hard filter
   - recent-liquidity dead-zone filter removes only tokens with:
@@ -1541,7 +1499,7 @@ Current security priority order:
   - `Alerts`
 - replays unseen backend-owned alert feeds from `GET /api/dashboard/alert-events`
 - no longer runs PumpFun-local frontend alerting
-- does not mount `Recent`, `Old Week`, or `Lateralization`
+- does not mount `Recent`, `Old Week`
 - the live workspace layout is now user-customizable and persisted:
   - panels can be reordered by drag handle
   - `Monitored` and `Alerts` can resize between `1/3`, `2/3`, and `3/3`
@@ -1553,8 +1511,7 @@ Current security priority order:
 - mounts:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
-  - `Lateralization Coins`
-  - `Bid Zone Coins`
+  -   - `Bid Zone Coins`
 - still consumes `GET /api/dashboard/monitored` so routed/history surfaces stay current
 - does not run:
   - frontend alerts
@@ -1564,11 +1521,10 @@ Current security priority order:
 - monitor tabs now use `BroadcastChannel` leader election
 - only one active `/monitor` tab keeps the continuous polling loop for:
   - `GET /api/dashboard/monitored`
-  - `GET /api/catalog/lateralized`
-  - `GET /api/catalog/bid-zone`
+  -   - `GET /api/catalog/bid-zone`
 - the leader also owns routed chart refresh for:
   - `POST /api/catalog/sparklines`
-- follower `/monitor` tabs receive monitored/lateralized/bid-zone snapshots from the leader instead of duplicating that polling
+- follower `/monitor` tabs receive monitored/bid-zone snapshots from the leader instead of duplicating that polling
 - follower `/monitor` tabs also receive routed chart snapshots from the leader
 - this coordination currently applies only to `/monitor`
 - `/alerts` still runs independently per tab because live presence, hidden-light behavior, and backend alert acceptance remain scoped to the active browser tab/session

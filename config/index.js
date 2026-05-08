@@ -431,6 +431,13 @@ module.exports = {
     concurrency: Math.max(1, Math.min(parseInt(process.env.CATALOG_WORKER_CONCURRENCY || '24', 10), 48)),
   },
 
+  bidZoneWorker: {
+    enabled: parseBoolean(process.env.BID_ZONE_WORKER_ENABLED, false),
+    runOnStart: parseBoolean(process.env.BID_ZONE_WORKER_RUN_ON_START, false),
+    statementTimeoutMs: Math.max(1000, parseInt(process.env.BID_ZONE_STATEMENT_TIMEOUT_MS || '15000', 10) || 15000),
+    candidateScanLimit: Math.max(50, Math.min(parseInt(process.env.BID_ZONE_CANDIDATE_SCAN_LIMIT || '400', 10) || 400, 5000)),
+  },
+
   pumpfunPreMigrationCapture: {
     enabled: parseBoolean(process.env.PUMPFUN_PRE_MIGRATION_CAPTURE_ENABLED, false),
     maxTracked: Math.max(1, Math.min(parseInt(process.env.PUMPFUN_PRE_MIGRATION_MAX_TRACKED || '250', 10) || 250, 2000)),

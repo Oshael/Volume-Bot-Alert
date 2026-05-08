@@ -15,7 +15,6 @@ const tokenCatalog = require('../src/models/token-catalog');
 const adminBlockedToken = require('../src/models/admin-blocked-token');
 const tokenMeteoraSnapshot = require('../src/models/token-meteora-snapshot');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
-const tokenMarketLateralizationRun = require('../src/models/token-market-lateralization-run');
 const tokenMarketBidZoneRun = require('../src/models/token-market-bid-zone-run');
 const bidZoneWorker = require('../src/services/bid-zone-worker');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
@@ -617,62 +616,6 @@ describe('Catalog routes', () => {
       assert.deepEqual(res.body.items[0].series, [100, 105, 102]);
     } finally {
       tokenMarketBucket1m.listSparklineByAddresses = originalListSparklineByAddresses;
-    }
-  });
-
-  it('rejects malformed lateralized query params', async () => {
-    const res = await request(app)
-      .get('/api/catalog/lateralized')
-      .set('Authorization', `Bearer ${token}`)
-      .query({ hours: 'abc' });
-
-    assert.equal(res.status, 400);
-    assert.equal(res.body.error, 'hours must be an integer');
-  });
-
-  it('enriches lateralized candidates with catalog metadata', async () => {
-    const originalGetLatest = tokenMarketLateralizationRun.getLatestCompletedRunWithResults;
-    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
-
-    tokenMarketLateralizationRun.getLatestCompletedRunWithResults = async () => ({
-      id: 9,
-      completedAt: '2026-04-15T17:55:00.000Z',
-      requestedHours: 48,
-      minMcap: 90000,
-      minVol24h: 10000,
-      candidateCount: 12,
-      resultCount: 1,
-      candidates: [
-        { address: VALID_ADDR, score: 97.4, volume1h: 4200, volume24h: 182000 },
-      ],
-    });
-    tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
-      assert.deepEqual(addresses, [VALID_ADDR]);
-      return [{
-        address: VALID_ADDR,
-        symbol: 'WSOL',
-        name: 'Wrapped SOL',
-        last_pair_address: 'pair_test_123',
-        last_pair_url: 'https://dexscreener.com/solana/testpair',
-        last_image_url: 'https://example.com/token.png',
-        last_twitter_url: 'https://x.com/wsol',
-        monitor_priority: 'high',
-      }];
-    };
-
-    try {
-      const res = await request(app)
-        .get('/api/catalog/lateralized')
-        .set('Authorization', `Bearer ${token}`);
-
-      assert.equal(res.status, 200);
-      assert.equal(res.body.candidates.length, 1);
-      assert.equal(res.body.candidates[0].symbol, 'WSOL');
-      assert.equal(res.body.candidates[0].pairUrl, 'https://dexscreener.com/solana/testpair');
-      assert.equal(res.body.candidates[0].imageUrl, 'https://example.com/token.png');
-    } finally {
-      tokenMarketLateralizationRun.getLatestCompletedRunWithResults = originalGetLatest;
-      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
     }
   });
 

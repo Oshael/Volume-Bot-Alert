@@ -8,7 +8,6 @@ const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenRiskReview = require('../models/token-risk-review');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
-const tokenMarketLateralizationRun = require('../models/token-market-lateralization-run');
 const tokenMarketBidZoneRun = require('../models/token-market-bid-zone-run');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
@@ -554,30 +553,6 @@ function parseHistoryQuery(query = {}) {
   };
 }
 
-function parseLateralizedQuery(query = {}) {
-  const limit = parseOptionalIntegerQuery(query.limit, 'limit', { min: 1, max: 200 });
-  if (!limit.ok) return limit;
-
-  const hours = parseOptionalIntegerQuery(query.hours, 'hours', { min: 1, max: 48 });
-  if (!hours.ok) return hours;
-
-  const minMcap = parseOptionalIntegerQuery(query.minMcap, 'minMcap', { min: 90000, max: 1000000000 });
-  if (!minMcap.ok) return minMcap;
-
-  const minVol24h = parseOptionalIntegerQuery(query.minVol24h, 'minVol24h', { min: 0, max: 1000000000 });
-  if (!minVol24h.ok) return minVol24h;
-
-  return {
-    ok: true,
-    options: {
-      limit: limit.value,
-      hours: hours.value,
-      minMcap: minMcap.value,
-      minVol24h: minVol24h.value,
-    },
-  };
-}
-
 function parseBidZoneQuery(query = {}) {
   const limit = parseOptionalIntegerQuery(query.limit, 'limit', { min: 1, max: 200 });
   if (!limit.ok) return limit;
@@ -1046,54 +1021,6 @@ router.get('/history/:address', catalogReadLimiter, async (req, res) => {
   } catch (err) {
     console.error('GET /catalog/history/:address error:', err.message);
     res.status(500).json({ error: 'Failed to load token history' });
-  }
-});
-
-router.get('/lateralized', catalogReadLimiter, async (req, res) => {
-  try {
-    const parsedQuery = parseLateralizedQuery(req.query);
-    if (!parsedQuery.ok) {
-      return res.status(400).json({ error: parsedQuery.error });
-    }
-
-    const requestedHours = parsedQuery.options.hours || 6;
-    const minMcap = parsedQuery.options.minMcap || 90000;
-    const minVol24h = parsedQuery.options.minVol24h || 10000;
-    const limit = parsedQuery.options.limit || 50;
-    const run = await tokenMarketLateralizationRun.getLatestCompletedRunWithResults({
-      requestedHours,
-      minMcap,
-      minVol24h,
-    }, {
-      limit,
-    });
-    if (!run) {
-      return res.status(404).json({
-        error: 'No completed lateralization run available for the requested parameters',
-      });
-    }
-
-    const candidates = await enrichDashboardCandidateMetadata(run.candidates);
-
-    res.json({
-      generatedAt: run.completedAt,
-      runId: run.id,
-      hours: run.requestedHours,
-      requestedHours: run.requestedHours,
-      windowPolicy: {
-        sub1mMinHours: 16,
-        gte1mMinHours: 32,
-      },
-      minMcap: run.minMcap,
-      minVol24h: run.minVol24h,
-      count: run.candidates.length,
-      candidateCount: run.candidateCount,
-      resultCount: run.resultCount,
-      candidates,
-    });
-  } catch (err) {
-    console.error('GET /catalog/lateralized error:', err.message);
-    res.status(500).json({ error: 'Failed to load lateralized candidates' });
   }
 });
 

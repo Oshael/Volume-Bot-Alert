@@ -14,7 +14,7 @@ export function renderBidZoneSection(state: AppState, controller: AppController)
     : refreshCooldownLabel === 'ready'
       ? 'REFRESH'
       : `WAIT ${refreshCooldownLabel.toUpperCase()}`;
-  section.className = `panel legacy-panel lateralized-panel bid-zone-panel${isCollapsed ? ' panel-collapsed' : ''}`;
+  section.className = `panel legacy-panel bid-zone-panel${isCollapsed ? ' panel-collapsed' : ''}`;
   const freshness = state.runtime.bidZoneFreshnessLabel !== '-'
     ? `SCAN ${state.runtime.bidZoneFreshnessLabel}`
     : 'SCAN pending';
@@ -22,15 +22,15 @@ export function renderBidZoneSection(state: AppState, controller: AppController)
   section.innerHTML = `
     <div class="panel-header">
       <span>⌖ BID ZONE COINS</span>
-      <div class="lateralized-header-meta">
-        <span class="lateralized-freshness">${freshness}</span>
+      <div class="bid-zone-header-meta">
+        <span class="bid-zone-freshness">${freshness}</span>
         <span class="bid-zone-last-updated">LAST ${lastUpdated}</span>
         <button type="button" class="compact-refresh-button" data-action="refresh-bid-zone" ${refreshDisabled ? 'disabled' : ''}>${refreshLabel}</button>
         <span class="count">${state.data.bidZoneTokens.length}</span>
         <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="bidZone" aria-label="${isCollapsed ? 'Expand bid-zone panel' : 'Collapse bid-zone panel'}"><span class="compact-icon-glyph">${isCollapsed ? '+' : '−'}</span></button>
       </div>
     </div>
-    ${isCollapsed ? '' : '<div class="lateralized-list bid-zone-list"></div>'}
+    ${isCollapsed ? '' : '<div class="bid-zone-list"></div>'}
   `;
 
   section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
@@ -77,20 +77,20 @@ function buildBidZoneRow(
   const view = buildBidZoneRowView(state, item);
 
   const article = document.createElement('article');
-  article.className = `token-row lateralized-token-row bid-zone-token-row${isStarred ? ' token-starred' : ''}`;
+  article.className = `token-row bid-zone-token-row${isStarred ? ' token-starred' : ''}`;
   article.dataset.hoverKey = `bid-zone:${item.address}`;
 
   const rank = document.createElement('div');
-  rank.className = 'lateralized-rank';
+  rank.className = 'bid-zone-rank';
   rank.textContent = `#${index + 1}`;
 
   article.append(rank, buildAvatar(view.symbol, view.imageUrl));
 
   const main = document.createElement('div');
-  main.className = 'lateralized-row-main';
+  main.className = 'bid-zone-row-main';
 
   const titleLine = document.createElement('div');
-  titleLine.className = 'lateralized-title-line';
+  titleLine.className = 'bid-zone-title-line';
 
   const tokenName = document.createElement('span');
   tokenName.className = 'token-name';
@@ -110,7 +110,7 @@ function buildBidZoneRow(
   const actions = buildBidZoneActions(state, item, view, isStarred, busy, isAdmin);
 
   const metaLine = document.createElement('div');
-  metaLine.className = 'lateralized-meta-line';
+  metaLine.className = 'bid-zone-meta-line';
   metaLine.append(
     buildMetaMetric('MCAP', fmtMoney(view.mcap)),
     buildMetaMetric('AGE', view.age),
@@ -119,11 +119,11 @@ function buildBidZoneRow(
   );
 
   const leftStack = document.createElement('div');
-  leftStack.className = 'lateralized-left-stack';
+  leftStack.className = 'bid-zone-left-stack';
   leftStack.append(titleLine, metaLine, actions);
 
   const statsRail = document.createElement('div');
-  statsRail.className = 'lateralized-stats-rail bid-zone-stats-rail';
+  statsRail.className = 'bid-zone-stats-rail';
   statsRail.append(
     buildRailMetric('SCORE', formatScore(item.score)),
     buildRailMetric('SUPPORT', formatSignedPct(item.supportDistancePct)),
@@ -164,7 +164,7 @@ function buildBidZoneActions(
   isAdmin: boolean,
 ) {
   const actions = document.createElement('span');
-  actions.className = 'lateralized-inline-actions';
+  actions.className = 'bid-zone-inline-actions';
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
     buildTradeTerminalMenuElement(item.address, view.tracked?.mintAddress || item.address, view.tracked?.pairAddress || item.pairAddress || null, {
@@ -240,7 +240,7 @@ function buildMetaMetric(label: string, value: string) {
 
 function buildRailMetric(label: string, value: string) {
   const wrapper = document.createElement('div');
-  wrapper.className = 'lateralized-rail-metric';
+  wrapper.className = 'bid-zone-rail-metric';
   const labelEl = document.createElement('span');
   labelEl.className = 'rail-label';
   labelEl.textContent = label;

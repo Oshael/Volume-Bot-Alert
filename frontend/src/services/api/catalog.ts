@@ -240,37 +240,6 @@ export interface TokenSparklinesPayload {
   items: TokenSparklineItem[];
 }
 
-export interface LateralizedCandidate {
-  address: string;
-  symbol?: string | null;
-  name?: string | null;
-  pairAddress?: string | null;
-  pairUrl?: string | null;
-  imageUrl?: string | null;
-  twitterUrl?: string | null;
-  monitorPriority?: string | null;
-  mcap?: number | null;
-  catalogMcap?: number | null;
-  windowMcap?: number | null;
-  volume1h?: number | null;
-  volume6h?: number | null;
-  volume24h?: number | null;
-  rangePct?: number | null;
-  rangeLimitPct?: number | null;
-  driftPct?: number | null;
-  driftLimitPct?: number | null;
-  coverageRatio?: number | null;
-  bucketCount?: number;
-  sampleCount?: number;
-  expectedBucketCount?: number;
-  ageHours?: number | null;
-  currentPositionPct?: number | null;
-  requestedHours?: number;
-  minimumWindowHours?: number;
-  windowHoursUsed?: number;
-  score?: number | null;
-}
-
 export interface BidZoneCandidate {
   address: string;
   symbol?: string | null;
@@ -303,16 +272,6 @@ export interface BidZoneCandidate {
   minimumWindowHours?: number;
   windowHoursUsed?: number;
   score?: number | null;
-}
-
-export interface LateralizedPayload {
-  generatedAt?: string | null;
-  runId?: number;
-  requestedHours?: number;
-  count: number;
-  candidateCount?: number;
-  resultCount?: number;
-  candidates: LateralizedCandidate[];
 }
 
 export interface BidZonePayload {
@@ -557,24 +516,6 @@ export function updateDashboardAlertCursor(
     }),
     token,
   });
-}
-
-export function fetchLateralizedCandidates(token?: string | null, options?: { limit?: number }) {
-  const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set('limit', String(options.limit));
-  }
-  const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  return apiFetch<LateralizedPayload>(`/api/catalog/lateralized${suffix}`, { token })
-    .then((response) => ({
-      generatedAt: response.generatedAt ?? null,
-      runId: response.runId,
-      requestedHours: response.requestedHours,
-      count: Number(response.count) || 0,
-      candidateCount: response.candidateCount,
-      resultCount: response.resultCount,
-      candidates: response.candidates || [],
-    }));
 }
 
 export function fetchBidZoneCandidates(token?: string | null, options?: { limit?: number }) {

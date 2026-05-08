@@ -34,7 +34,6 @@ export interface UiPrefsPayload {
     recent: boolean;
     oldWeek: boolean;
     monitored: boolean;
-    lateralized: boolean;
     bidZone: boolean;
     pumpfun: boolean;
   };

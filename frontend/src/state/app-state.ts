@@ -243,37 +243,6 @@ export interface MockTradingTicketState {
   percent?: number;
 }
 
-export interface LateralizedTokenEntry {
-  address: string;
-  symbol?: string | null;
-  name?: string | null;
-  pairAddress?: string | null;
-  pairUrl?: string | null;
-  imageUrl?: string | null;
-  twitterUrl?: string | null;
-  monitorPriority?: string | null;
-  mcap?: number | null;
-  catalogMcap?: number | null;
-  windowMcap?: number | null;
-  volume1h?: number | null;
-  volume6h?: number | null;
-  volume24h?: number | null;
-  rangePct?: number | null;
-  rangeLimitPct?: number | null;
-  driftPct?: number | null;
-  driftLimitPct?: number | null;
-  coverageRatio?: number | null;
-  bucketCount?: number;
-  sampleCount?: number;
-  expectedBucketCount?: number;
-  ageHours?: number | null;
-  currentPositionPct?: number | null;
-  requestedHours?: number;
-  minimumWindowHours?: number;
-  windowHoursUsed?: number;
-  score?: number | null;
-}
-
 export interface BidZoneTokenEntry {
   address: string;
   symbol?: string | null;
@@ -358,7 +327,7 @@ export interface PumpToastEntry {
   volTotal?: number | null;
 }
 
-export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'lateralized' | 'bidZone' | 'pumpfun';
+export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
 export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
 export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'change-password';
@@ -499,15 +468,12 @@ export interface AppState {
     alertRevision: number;
     monitoredRevision: number;
     routedRevision: number;
-    lateralizedRevision: number;
     bidZoneRevision: number;
     starredRevision: number;
     timeouts: number;
     uptimeLabel: string;
     monitoredUpdatedAt: string | null;
     monitoredFreshnessLabel: string;
-    lateralizedUpdatedAt: string | null;
-    lateralizedFreshnessLabel: string;
     bidZoneUpdatedAt: string | null;
     bidZoneFreshnessLabel: string;
     bidZoneRefreshAvailableAt: string | null;
@@ -522,7 +488,6 @@ export interface AppState {
   };
   panels: {
     monitored: number;
-    lateralized: number;
     bidZone: number;
     pumpfun: number;
     alerts: number;
@@ -554,7 +519,6 @@ export interface AppState {
     mockTradingSummary: MockTradingSummaryEntry | null;
     mockTradingPositionsByAddress: Record<string, MockTradingPositionEntry>;
     mockTradingTradesByAddress: Record<string, MockTradingTradeEntry[]>;
-    lateralizedTokens: LateralizedTokenEntry[];
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
     pumpTokens: PumpTokenEntry[];
@@ -653,15 +617,12 @@ export function createAppState(): AppState {
       alertRevision: 0,
       monitoredRevision: 0,
       routedRevision: 0,
-      lateralizedRevision: 0,
       bidZoneRevision: 0,
       starredRevision: 0,
       timeouts: 0,
       uptimeLabel: '0m',
       monitoredUpdatedAt: null,
       monitoredFreshnessLabel: '-',
-      lateralizedUpdatedAt: null,
-      lateralizedFreshnessLabel: '-',
       bidZoneUpdatedAt: null,
       bidZoneFreshnessLabel: '-',
       bidZoneRefreshAvailableAt: null,
@@ -676,7 +637,6 @@ export function createAppState(): AppState {
     },
     panels: {
       monitored: 0,
-      lateralized: 0,
       bidZone: 0,
       pumpfun: 0,
       alerts: 0,
@@ -715,7 +675,6 @@ export function createAppState(): AppState {
       mockTradingSummary: null,
       mockTradingPositionsByAddress: {},
       mockTradingTradesByAddress: {},
-      lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
       pumpTokens: [],
@@ -775,7 +734,6 @@ export function createAppState(): AppState {
         recent: false,
         oldWeek: false,
         monitored: false,
-        lateralized: false,
         bidZone: false,
         pumpfun: false,
       },

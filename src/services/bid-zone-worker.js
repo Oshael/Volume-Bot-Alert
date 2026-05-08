@@ -10,11 +10,14 @@ const DEFAULT_OPTIONS = Object.freeze({
   minVol1h: tokenMarketBidZoneRun.DEFAULT_MIN_VOL_1H,
   minVol24h: tokenMarketBidZoneRun.DEFAULT_MIN_VOL_24H,
   limit: 50,
+  statementTimeoutMs: 15_000,
+  candidateScanLimit: 400,
 });
 
 let timer = null;
 let running = false;
 let activeRunPromise = null;
+let scheduledOptions = { ...DEFAULT_OPTIONS };
 let manualRefreshCooldownUntil = 0;
 let status = {
   running: false,
@@ -29,6 +32,8 @@ let status = {
   lastMinVol1h: DEFAULT_OPTIONS.minVol1h,
   lastMinVol24h: DEFAULT_OPTIONS.minVol24h,
   lastLimit: DEFAULT_OPTIONS.limit,
+  lastStatementTimeoutMs: DEFAULT_OPTIONS.statementTimeoutMs,
+  lastCandidateScanLimit: DEFAULT_OPTIONS.candidateScanLimit,
   lastCandidateCount: 0,
   lastResultCount: 0,
   totalRuns: 0,
@@ -46,6 +51,8 @@ function normalizeOptions(input = {}) {
     minVol1h: Math.max(0, Number(input.minVol1h) || DEFAULT_OPTIONS.minVol1h),
     minVol24h: Math.max(0, Number(input.minVol24h) || DEFAULT_OPTIONS.minVol24h),
     limit: Math.max(1, Math.min(Number(input.limit) || DEFAULT_OPTIONS.limit, 200)),
+    statementTimeoutMs: Math.max(1000, Number(input.statementTimeoutMs) || DEFAULT_OPTIONS.statementTimeoutMs),
+    candidateScanLimit: Math.max(50, Math.min(Number(input.candidateScanLimit) || DEFAULT_OPTIONS.candidateScanLimit, 5000)),
   };
 }
 
@@ -61,7 +68,7 @@ function schedule() {
   if (!running) return;
   timer = setTimeout(async () => {
     try {
-      await runOnce(DEFAULT_OPTIONS, { triggeredBy: 'worker', ifRunning: 'join' });
+      await runOnce(scheduledOptions, { triggeredBy: 'worker', ifRunning: 'join' });
     } catch (err) {
       console.error('[BidZoneWorker] Scheduled run failed:', err.message);
     } finally {
@@ -101,6 +108,8 @@ async function runOnce(options = {}, meta = {}) {
     status.lastMinVol1h = normalizedOptions.minVol1h;
     status.lastMinVol24h = normalizedOptions.minVol24h;
     status.lastLimit = normalizedOptions.limit;
+    status.lastStatementTimeoutMs = normalizedOptions.statementTimeoutMs;
+    status.lastCandidateScanLimit = normalizedOptions.candidateScanLimit;
 
     try {
       run = await tokenMarketBidZoneRun.startRun({
@@ -186,14 +195,20 @@ async function runManualRefresh(options = {}) {
   };
 }
 
-function start() {
+function start(options = {}) {
   if (running) return;
+  const normalizedOptions = normalizeOptions({ ...DEFAULT_OPTIONS, ...options });
+  scheduledOptions = normalizedOptions;
   running = true;
   status.running = true;
   syncRefreshStatus();
-  void runOnce(DEFAULT_OPTIONS, { triggeredBy: 'worker', ifRunning: 'join' }).catch((err) => {
-    console.error('[BidZoneWorker] Initial run failed:', err.message);
-  });
+  status.lastStatementTimeoutMs = normalizedOptions.statementTimeoutMs;
+  status.lastCandidateScanLimit = normalizedOptions.candidateScanLimit;
+  if (options.runOnStart === true) {
+    void runOnce(normalizedOptions, { triggeredBy: 'worker', ifRunning: 'join' }).catch((err) => {
+      console.error('[BidZoneWorker] Initial run failed:', err.message);
+    });
+  }
   schedule();
   console.log('[BidZoneWorker] Started');
 }

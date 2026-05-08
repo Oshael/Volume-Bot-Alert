@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LateralizedTokenEntry, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchLateralizedCandidates, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type LateralizedPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -119,8 +119,6 @@ const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
-const LATERALIZED_REFRESH_INTERVAL_MS = 60 * 1000;
-const LATERALIZED_PANEL_LIMIT = 24;
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
@@ -204,13 +202,6 @@ type HistorySyncBootstrapSnapshotMessage = {
   ts: number;
 };
 
-type HistorySyncLateralizedSnapshotMessage = {
-  type: 'lateralized-snapshot';
-  tabId: string;
-  payload: LateralizedPayload;
-  ts: number;
-};
-
 type HistorySyncBidZoneSnapshotMessage = {
   type: 'bid-zone-snapshot';
   tabId: string;
@@ -230,7 +221,6 @@ type HistorySyncMessage =
   | HistorySyncClosingMessage
   | HistorySyncMonitoredSnapshotMessage
   | HistorySyncBootstrapSnapshotMessage
-  | HistorySyncLateralizedSnapshotMessage
   | HistorySyncBidZoneSnapshotMessage
   | HistorySyncSparklineSnapshotMessage;
 
@@ -394,7 +384,6 @@ export type AppRenderRegion =
   | 'recent'
   | 'old-week'
   | 'monitored'
-  | 'lateralized'
   | 'bid-zone'
   | 'pumpfun'
   | 'alerts'
@@ -675,7 +664,6 @@ export function createAppController(): AppController {
   let monitoredRefreshInFlight = false;
   let dashboardAlertFeedRefreshInFlight = false;
   let supplementalMeteoraRefreshInFlight = false;
-  let lateralizedRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
   let historyBootstrapRefreshInFlight = false;
@@ -703,7 +691,6 @@ export function createAppController(): AppController {
   let socialLinkPendingProvider: 'google' | 'discord' | null = null;
   let lastMonitoredDashboardError: string | null = null;
   let nextColdFieldRefreshAt = 0;
-  let nextLateralizedRefreshAt = 0;
   let nextBidZoneRefreshAt = 0;
   let nextSparklineRefreshAt = 0;
   let lastSparklineAddressKey = '';
@@ -729,7 +716,6 @@ export function createAppController(): AppController {
     recent: 'recent',
     oldWeek: 'old-week',
     monitored: 'monitored',
-    lateralized: 'lateralized',
     bidZone: 'bid-zone',
     pumpfun: 'pumpfun',
   };
@@ -1042,7 +1028,7 @@ export function createAppController(): AppController {
     return false;
   }
 
-  function shouldRunLateralizedRuntime() {
+  function shouldRunHistoryAnalyticsRuntime() {
     return isHistoryWorkspace();
   }
 
@@ -1881,7 +1867,6 @@ export function createAppController(): AppController {
       recent: false,
       oldWeek: false,
       monitored: false,
-      lateralized: false,
       bidZone: false,
       pumpfun: false,
     };
@@ -2041,7 +2026,6 @@ export function createAppController(): AppController {
         recent: Boolean(state.ui.collapsed.recent),
         oldWeek: Boolean(state.ui.collapsed.oldWeek),
         monitored: Boolean(state.ui.collapsed.monitored),
-        lateralized: Boolean(state.ui.collapsed.lateralized),
         bidZone: Boolean(state.ui.collapsed.bidZone),
         pumpfun: Boolean(state.ui.collapsed.pumpfun),
       },
@@ -2324,7 +2308,6 @@ export function createAppController(): AppController {
       recent: Boolean(collapsed.recent),
       oldWeek: Boolean(collapsed.oldWeek),
       monitored: Boolean(collapsed.monitored),
-      lateralized: Boolean(collapsed.lateralized),
       bidZone: Boolean(collapsed.bidZone),
       pumpfun: Boolean(collapsed.pumpfun),
     };
@@ -2630,7 +2613,6 @@ export function createAppController(): AppController {
   function refreshMonitoredPanelCounts() {
     const visibleCount = getVisibleMonitoredTokens().length;
     state.panels.monitored = visibleCount;
-    state.panels.lateralized = state.data.lateralizedTokens.length;
     state.panels.bidZone = state.data.bidZoneTokens.length;
     state.panels.alerts = state.data.alerts.length;
     state.runtime.alerts = state.data.alerts.length;
@@ -3556,11 +3538,6 @@ export function createAppController(): AppController {
     state.runtime.monitoredFreshnessLabel = formatFreshnessLabel(timestamp);
   }
 
-  function updateLateralizedFreshness(timestamp: string | null) {
-    state.runtime.lateralizedUpdatedAt = timestamp;
-    state.runtime.lateralizedFreshnessLabel = formatFreshnessLabel(timestamp);
-  }
-
   function updateBidZoneFreshness(timestamp: string | null) {
     state.runtime.bidZoneUpdatedAt = timestamp;
     state.runtime.bidZoneFreshnessLabel = formatFreshnessLabel(timestamp);
@@ -3598,57 +3575,8 @@ export function createAppController(): AppController {
     }
   }
 
-  async function refreshLateralizedTokens(options?: { force?: boolean }) {
-    if (!shouldRunLateralizedRuntime()) {
-      state.data.lateralizedTokens = [];
-      state.panels.lateralized = 0;
-      updateLateralizedFreshness(null);
-      return;
-    }
-
-    const token = state.session.token;
-    if (!token || lateralizedRefreshInFlight) {
-      return;
-    }
-
-    const now = Date.now();
-    if (!options?.force && nextLateralizedRefreshAt > now) {
-      return;
-    }
-
-    lateralizedRefreshInFlight = true;
-    try {
-      const payload = await measureRuntimePerfAsync(
-        'api.catalog.lateralized',
-        isRuntimePerfDebugActive(),
-        { limit: LATERALIZED_PANEL_LIMIT, force: Boolean(options?.force) },
-        () => fetchLateralizedCandidates(token, { limit: LATERALIZED_PANEL_LIMIT }),
-      );
-      applyLateralizedPayload(payload);
-      if (isHistoryWorkspace() && isHistorySyncLeader()) {
-        broadcastHistoryLateralizedSnapshot(payload);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      if (
-        message.includes('No completed lateralization run available')
-        || message.includes('Failed to load lateralized candidates')
-        || message.includes('API request failed:')
-      ) {
-        state.data.lateralizedTokens = [];
-        updateLateralizedFreshness(null);
-        state.panels.lateralized = 0;
-        emit('lateralized');
-        return;
-      }
-    } finally {
-      nextLateralizedRefreshAt = Date.now() + LATERALIZED_REFRESH_INTERVAL_MS;
-      lateralizedRefreshInFlight = false;
-    }
-  }
-
   async function refreshBidZoneTokens(options?: { force?: boolean }) {
-    if (!shouldRunLateralizedRuntime()) {
+    if (!shouldRunHistoryAnalyticsRuntime()) {
       state.data.bidZoneTokens = [];
       state.panels.bidZone = 0;
       updateBidZoneFreshness(null);
@@ -4418,11 +4346,11 @@ export function createAppController(): AppController {
 
   function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
     applyMonitoredDashboard(tokens, undefined, generatedAt ?? null);
-    emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+    emit('recent', 'old-week', 'bid-zone', 'header');
   }
 
   function buildCandidateIdentityFields(
-    item: LateralizedPayload['candidates'][number] | BidZonePayload['candidates'][number],
+    item: BidZonePayload['candidates'][number],
   ) {
     return {
       address: item.address,
@@ -4443,7 +4371,7 @@ export function createAppController(): AppController {
   }
 
   function buildCandidateMetricFields(
-    item: LateralizedPayload['candidates'][number] | BidZonePayload['candidates'][number],
+    item: BidZonePayload['candidates'][number],
   ) {
     return {
       coverageRatio: item.coverageRatio ?? null,
@@ -4456,32 +4384,6 @@ export function createAppController(): AppController {
       windowHoursUsed: item.windowHoursUsed ?? 0,
       score: item.score ?? null,
     };
-  }
-
-  function buildLateralizedSpecificFields(item: LateralizedPayload['candidates'][number]) {
-    return {
-      rangePct: item.rangePct ?? null,
-      rangeLimitPct: item.rangeLimitPct ?? null,
-      driftPct: item.driftPct ?? null,
-      driftLimitPct: item.driftLimitPct ?? null,
-      currentPositionPct: item.currentPositionPct ?? null,
-    };
-  }
-
-  function buildLateralizedTokenEntry(item: LateralizedPayload['candidates'][number]): LateralizedTokenEntry {
-    return {
-      ...buildCandidateIdentityFields(item),
-      ...buildCandidateMetricFields(item),
-      ...buildLateralizedSpecificFields(item),
-    };
-  }
-
-  function applyLateralizedPayload(payload: LateralizedPayload) {
-    state.data.lateralizedTokens = (payload.candidates || []).map(buildLateralizedTokenEntry);
-    updateLateralizedFreshness(payload.generatedAt ?? null);
-    state.panels.lateralized = state.data.lateralizedTokens.length;
-    state.runtime.lateralizedRevision += 1;
-    emit('lateralized');
   }
 
   function buildBidZoneSpecificFields(item: BidZonePayload['candidates'][number]) {
@@ -5280,19 +5182,6 @@ export function createAppController(): AppController {
     });
   }
 
-  function broadcastHistoryLateralizedSnapshot(payload: LateralizedPayload) {
-    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
-      return;
-    }
-
-    postHistorySyncMessage({
-      type: 'lateralized-snapshot',
-      tabId: historySyncTabId,
-      payload,
-      ts: Date.now(),
-    });
-  }
-
   function broadcastHistoryBidZoneSnapshot(payload: BidZonePayload) {
     if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
       return;
@@ -5347,12 +5236,7 @@ export function createAppController(): AppController {
 
       clearHistorySearchPending({ emitRegions: false });
       applyHistoryBootstrapPayload(message.payload);
-      emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
-      return;
-    }
-
-    if (message.type === 'lateralized-snapshot') {
-      applyLateralizedPayload(message.payload);
+      emit('recent', 'old-week', 'bid-zone', 'header');
       return;
     }
 
@@ -5410,7 +5294,7 @@ export function createAppController(): AppController {
         setError(null);
       }
       lastMonitoredDashboardError = null;
-      emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+      emit('recent', 'old-week', 'bid-zone', 'header');
     } catch (error) {
       if (
         requestRevision !== historyBootstrapRequestRevision
@@ -5480,7 +5364,7 @@ export function createAppController(): AppController {
       if (isLiveWorkspace()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'header');
       } else if (isHistoryWorkspace()) {
-        emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+        emit('recent', 'old-week', 'bid-zone', 'header');
       } else {
         emit('recent', 'old-week', 'header');
       }
@@ -5509,10 +5393,9 @@ export function createAppController(): AppController {
       refreshMonitoredPanelCounts();
       void refreshMonitoredDashboard();
     }
-    if (shouldRunLateralizedRuntime()) {
-      void refreshLateralizedTokens();
+    if (shouldRunHistoryAnalyticsRuntime()) {
       void refreshBidZoneTokens();
-      emit('header', 'recent', 'old-week', 'lateralized', 'bid-zone');
+      emit('header', 'recent', 'old-week', 'bid-zone');
       return;
     }
     if (isLiveWorkspace()) {
@@ -5648,15 +5531,11 @@ export function createAppController(): AppController {
       emit('pumpfun', 'toasts', 'legacy', 'overlay');
     }
 
-    if (!shouldRunLateralizedRuntime()) {
-      state.data.lateralizedTokens = [];
-      state.panels.lateralized = 0;
-      updateLateralizedFreshness(null);
+    if (!shouldRunHistoryAnalyticsRuntime()) {
       state.data.bidZoneTokens = [];
       state.panels.bidZone = 0;
       updateBidZoneFreshness(null);
     } else {
-      void refreshLateralizedTokens({ force: true });
       void refreshBidZoneTokens({ force: true });
     }
 
@@ -5674,8 +5553,7 @@ export function createAppController(): AppController {
     } else {
       void refreshMonitoredDashboard();
     }
-    if (shouldRunLateralizedRuntime()) {
-      void refreshLateralizedTokens({ force: true });
+    if (shouldRunHistoryAnalyticsRuntime()) {
       void refreshBidZoneTokens({ force: true });
     }
   }
@@ -5925,20 +5803,16 @@ export function createAppController(): AppController {
     state.runtime.alertRevision = 0;
     state.runtime.monitoredRevision = 0;
     state.runtime.routedRevision = 0;
-    state.runtime.lateralizedRevision = 0;
     state.runtime.bidZoneRevision = 0;
     state.runtime.starredRevision = 0;
     state.runtime.monitoredUpdatedAt = null;
     state.runtime.monitoredFreshnessLabel = '-';
-    state.runtime.lateralizedUpdatedAt = null;
-    state.runtime.lateralizedFreshnessLabel = '-';
     state.runtime.bidZoneUpdatedAt = null;
     state.runtime.bidZoneFreshnessLabel = '-';
     state.runtime.bidZoneRefreshAvailableAt = null;
     state.runtime.bidZoneRefreshCooldownLabel = 'ready';
     state.runtime.bidZoneRefreshInFlight = false;
     state.panels.alerts = 0;
-    state.panels.lateralized = 0;
     state.panels.bidZone = 0;
     state.panels.pumpfun = 0;
     state.configSummary = {
@@ -5973,7 +5847,6 @@ export function createAppController(): AppController {
       mockTradingSummary: null,
       mockTradingPositionsByAddress: {},
       mockTradingTradesByAddress: {},
-      lateralizedTokens: [],
       bidZoneTokens: [],
       alerts: [],
       pumpTokens: [],
@@ -5985,7 +5858,6 @@ export function createAppController(): AppController {
     state.bars.oldWeek = 0;
     state.bars.blocklist = 0;
     state.panels.monitored = 0;
-    state.panels.lateralized = 0;
     state.panels.bidZone = 0;
     state.ui.authPanel = 'none';
     state.ui.pendingIdentityUnlinkProvider = null;
@@ -6217,9 +6089,8 @@ export function createAppController(): AppController {
       return;
     }
     if (isHistoryWorkspace()) {
-      void refreshLateralizedTokens({ force: true });
       void refreshBidZoneTokens({ force: true });
-      emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+      emit('recent', 'old-week', 'bid-zone', 'header');
       return;
     }
     emit('recent', 'old-week', 'header');
@@ -6473,9 +6344,8 @@ export function createAppController(): AppController {
           hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false }),
         ]);
         if (isHistoryWorkspace()) {
-          void refreshLateralizedTokens({ force: true });
           void refreshBidZoneTokens({ force: true });
-          emit('recent', 'old-week', 'lateralized', 'bid-zone', 'header');
+          emit('recent', 'old-week', 'bid-zone', 'header');
         } else {
           emit('recent', 'old-week', 'header');
         }
@@ -7171,7 +7041,7 @@ export function createAppController(): AppController {
       emit('legacy', 'overlay');
     },
     async refreshBidZoneSnapshot() {
-      if (!shouldRunLateralizedRuntime() || state.runtime.bidZoneRefreshInFlight || bidZoneRefreshInFlight) {
+      if (!shouldRunHistoryAnalyticsRuntime() || state.runtime.bidZoneRefreshInFlight || bidZoneRefreshInFlight) {
         return;
       }
 
@@ -7733,7 +7603,7 @@ export function createAppController(): AppController {
     setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']) {
       state.ui.enabledTradeTerminals = normalizeTradeTerminals(terminals);
       queueUiPrefsPersist();
-      emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
+      emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'pumpfun', 'alerts', 'overlay');
     },
     setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3) {
       const nextSpan = normalizeResizableLivePanelSpan(span);
@@ -7786,7 +7656,7 @@ export function createAppController(): AppController {
           ? state.data.starredTokens.filter((item) => item !== address)
           : [...state.data.starredTokens, address],
       );
-      emit('manual', 'recent', 'old-week', 'monitored', 'lateralized', 'bid-zone', 'alerts');
+      emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
       queueStarredTokensPersist();
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();

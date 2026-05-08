@@ -99,7 +99,7 @@ The bot is a Solana monitoring app with:
 - authenticated multi-user frontend
 - Express backend
 - PostgreSQL persistence
-- backend workers for discovery, catalog cleanup, catalog evaluation, minute-bucket market history, Meteora snapshots, and lateralization precompute
+- backend workers for discovery, catalog cleanup, catalog evaluation, minute-bucket market history, Meteora snapshots, and bid-zone snapshots
 - backend-only PumpFun migration capture
 
 The UI is now centered around two authenticated workspaces:
@@ -111,7 +111,6 @@ The UI is now centered around two authenticated workspaces:
   - visible workspace label: `RADAR`
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
-  - `Lateralization Coins`
   - `Bid Zone Coins`
 
 The auth/account surface now also includes:
@@ -210,7 +209,7 @@ Deployment caveat:
   - `idle`
 - current default remains `combined`
 - if the backend is ever scaled to multiple replicas, or another process uses the same production DB, each process will still start the full worker set unless runtime roles are intentionally split
-- that duplicates `catalog`, `cleanup`, `discovery`, `meteora`, and `lateralization` execution against the same DB/upstreams
+- that duplicates `catalog`, `cleanup`, `discovery`, `meteora`, and `bid-zone` execution against the same DB/upstreams
 - it also duplicates Helius enrichment and automatic token-risk review sync
 - do not horizontally scale the full backend unless it is explicitly separated into web/background runtime roles or stronger coordination is introduced
 
@@ -226,7 +225,6 @@ Admin worker status endpoint:
   - `catalogCleanupWorker`
   - `meteoraSnapshotWorker`
   - `dexDiscoveryWorker`
-  - `lateralizationWorker`
   - `tokenRiskEnrichmentWorker`
   - `tokenRiskReviewSyncWorker`
 
@@ -695,27 +693,6 @@ Execution notes:
 - positive checks also append history into `token_meteora_snapshots`
 - worker writes `last_snapshot_at` and `1h`/`6h`/`24h` baseline TVLs into `token_meteora_state`, so summary reads no longer hit `token_meteora_snapshots`
 
-#### Lateralization worker
-File:
-- `src/services/lateralization-worker.js`
-
-Role:
-- periodically computes and persists ranked lateralization candidates
-- stores run metadata in `lateralization_runs`
-- stores ranked output rows in `lateralization_results`
-- shifts lateralization cost out of request time and into worker cadence
-
-Cadence:
-- one run on backend boot
-- every `20m` after that
-
-Read path:
-- `GET /api/catalog/lateralized` now reads the latest completed persisted run
-- normal panel reads do not execute the finder inline anymore
-
-Manual trigger:
-- `POST /api/admin/lateralization/runs`
-
 ## Data Sources
 
 ### DexScreener
@@ -1027,10 +1004,6 @@ Reasons:
 - frontend no longer mounts the PumpFun live panel or keeps PumpFun session state active
 - migrated tokens enter the catalog as `pumpfun-migrated` active monitor candidates and then follow the normal catalog-worker eligibility, migration grace, minimum market-cap, and archive rules
 
-### Lateralization panel
-- backend-precomputed
-- mounted in `/monitor`
-
 ## Session Boot Flow
 
 1. frontend attempts cookie-backed restore with `GET /api/auth/me`
@@ -1085,7 +1058,7 @@ High-level behavior:
 - manual token charts are loaded in this workspace
 - replays unseen backend-owned alert feeds from the dashboard alert-events feed
 - no longer runs PumpFun-local frontend alert generation
-- does not mount `Recent`, `Old Week`, or `Lateralization`
+- does not mount `Recent`, `Old Week`, or `Bid Zone`
 - does not mount `Bid Zone`
 - live workspace layout is now user-customizable and persisted:
   - panels can be reordered by drag handle
@@ -1096,7 +1069,6 @@ High-level behavior:
 - mounts:
   - `Recent Tokens`
   - `Old Tokens 1 Week+`
-  - `Lateralization Coins`
   - `Bid Zone Coins`
 - routed token charts are loaded in this workspace
 - still consumes live monitored dashboard state
@@ -1109,11 +1081,10 @@ Multi-tab coordination:
 - one active `/monitor` tab becomes leader
 - only the leader continues the repeating polling loop for:
   - `GET /api/dashboard/monitored`
-  - `GET /api/catalog/lateralized`
   - `GET /api/catalog/bid-zone`
 - leader also owns routed-chart refresh for:
   - `POST /api/catalog/sparklines`
-- follower monitor tabs receive monitored/lateralized/bid-zone/sparkline snapshots from the leader
+- follower monitor tabs receive monitored/bid-zone/sparkline snapshots from the leader
 - this coordination still does **not** apply to `/alerts`, because live presence, hidden-light behavior, and backend alert acceptance remain scoped to the active browser tab/session
 
 Workspace header status:
@@ -1634,42 +1605,6 @@ Important:
   - the small delta below it now uses backend-provided `prevVolume5mCanonical`
   - this is visual-only and does not change the monitored alert engine
 
-## Lateralization Coins
-
-Files:
-- `frontend/src/ui/sections/lateralized-section.ts`
-- `frontend/src/state/app-controller.ts`
-- `src/routes/catalog.js`
-- `src/services/lateralization-worker.js`
-- `src/models/token-market-lateralization-run.js`
-
-Main behavior:
-- frontend polls `GET /api/catalog/lateralized` every `60s`
-- backend returns rows from the latest completed persisted lateralization run
-- backend payload includes `generatedAt`
-- frontend shows a freshness label in the panel header based on that timestamp
-- the panel is rendered in `/monitor` alongside `Recent Tokens` and `Old Tokens 1 Week+`
-- rows are intentionally thin and ranked instead of using large cards
-
-Current row surface:
-- `#rank`
-- symbol + name
-- actions aligned with the monitored visual language
-- `MCAP`
-- `AGE`
-- `VOL 1H`
-- `VOL 24H`
-
-Important:
-- this panel is read-only from the frontend point of view
-- ranking is backend-owned and precomputed
-- `BOX` / `DRIFT` still exist in backend results, but they are no longer foreground UI metrics in the panel
-- the panel can be collapsed
-  - collapse currently affects the UI/render surface only
-  - backend polling still continues while collapsed
-- in `/monitor`, lateralization is also part of the `BroadcastChannel`-shared polling path between tabs
-- the X-search button in this panel also now searches `contract OR $ticker`
-
 ## Bid Zone Coins
 
 Files:
@@ -1677,16 +1612,20 @@ Files:
 - `frontend/src/state/app-controller.ts`
 - `src/routes/catalog.js`
 - `src/models/token-market-bucket-1m.js`
+- `src/services/bid-zone-worker.js`
 
 Main behavior:
 - frontend polls `GET /api/catalog/bid-zone` every `60s`
-- backend computes the ranking on demand from `token_market_buckets_1m`
+- backend returns rows from the latest completed persisted bid-zone snapshot
 - backend payload includes `generatedAt`
+- scheduled worker is disabled by default; enable with `BID_ZONE_WORKER_ENABLED=true`
+- boot run is disabled by default unless `BID_ZONE_WORKER_RUN_ON_START=true`
+- heavy candidate SQL uses `BID_ZONE_STATEMENT_TIMEOUT_MS` and `BID_ZONE_CANDIDATE_SCAN_LIMIT`
 - frontend shows a freshness label in the panel header based on that timestamp
-- the panel is rendered in `/monitor` beside `Lateralization Coins`
+- the panel is rendered in `/monitor`
 
 Current model intent:
-- this is intentionally **not** the same setup as `Lateralization`
+- this is the only heavy history-analysis coin panel currently mounted
 - the ranking is meant for support-defended accumulation / bid-area setups
 - support and resistance are based on close-derived quantile bands rather than raw min/max wick extremes
 - the score currently emphasizes:
@@ -1700,7 +1639,7 @@ Current model intent:
 Current row surface:
 - `#rank`
 - symbol + name
-- actions aligned with the monitored/lateralized visual language
+- actions aligned with the monitored/bid-zone visual language
 - `MCAP`
 - `AGE`
 - `VOL 1H`
@@ -1712,8 +1651,7 @@ Current row surface:
   - `TOUCH`
 
 Important:
-- this list is not persisted into `lateralization_runs` / `lateralization_results`
-- it is a separate on-demand analysis surface so the two setup philosophies stay distinct
+- it is the active support-zone analysis surface in `/monitor`
 - in `/monitor`, bid-zone is also part of the `BroadcastChannel`-shared polling path between tabs
 
 ## Manual Tokens
@@ -2210,7 +2148,6 @@ If no valid pair exists:
 - market bucket history
 - legacy market snapshots
 - Meteora snapshots
-- lateralization runs/results
 
 ### Browser-local and account-scoped
 - dismissed Recent set
@@ -2238,7 +2175,6 @@ Current cross-browser-synced UI state:
   - `recent`
   - `oldWeek`
   - `monitored`
-  - `lateralized`
   - `pumpfun`
 - enabled trade terminals:
   - `axiom`

@@ -2,20 +2,15 @@ const db = require('./db');
 const { isValidAddress } = require('./user-token');
 const { HIGH_CAP_DUMP_RULE_KEY, getBackendAlertRule } = require('../services/backend-alert-rules');
 
-const DEFAULT_LATERALIZATION_MIN_MCAP = 90_000;
-const DEFAULT_LATERALIZATION_MIN_VOL_1H = 1_000;
-const DEFAULT_LATERALIZATION_MIN_VOL_24H = 10_000;
-const DEFAULT_LATERALIZATION_HOURS = 6;
-const DEFAULT_LATERALIZATION_LIMIT = 50;
-const DEFAULT_LATERALIZATION_SUB_1M_CANDIDATE_POOL_LIMIT = 120;
-const DEFAULT_LATERALIZATION_1M_TO_4M_CANDIDATE_POOL_LIMIT = 50;
-const DEFAULT_LATERALIZATION_5M_PLUS_CANDIDATE_POOL_LIMIT = 30;
-const DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO = 0.7;
-const DEFAULT_LATERALIZATION_MIN_BUCKETS = 20;
-const DEFAULT_LATERALIZATION_MIN_POSITION_PCT = 15;
-const DEFAULT_LATERALIZATION_MAX_POSITION_PCT = 85;
-const DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS = 16;
-const DEFAULT_LATERALIZATION_GTE_1M_MIN_HOURS = 32;
+const DEFAULT_ANALYTICS_MIN_MCAP = 90_000;
+const DEFAULT_ANALYTICS_HOURS = 48;
+const DEFAULT_ANALYTICS_SUB_1M_CANDIDATE_POOL_LIMIT = 120;
+const DEFAULT_ANALYTICS_1M_TO_4M_CANDIDATE_POOL_LIMIT = 50;
+const DEFAULT_ANALYTICS_5M_PLUS_CANDIDATE_POOL_LIMIT = 30;
+const DEFAULT_ANALYTICS_CANDIDATE_SCAN_LIMIT = 400;
+const DEFAULT_ANALYTICS_STATEMENT_TIMEOUT_MS = 15_000;
+const DEFAULT_ANALYTICS_SUB_1M_MIN_HOURS = 16;
+const DEFAULT_ANALYTICS_GTE_1M_MIN_HOURS = 32;
 const DEFAULT_BID_ZONE_MIN_MCAP = 90_000;
 const DEFAULT_BID_ZONE_MIN_VOL_1H = 1_000;
 const DEFAULT_BID_ZONE_MIN_VOL_24H = 10_000;
@@ -263,32 +258,12 @@ function countTouchClusters(buckets, supportLevel, options = {}) {
   return clusters;
 }
 
-function getRangeLimitPct(mcap) {
-  const value = Number(mcap);
-  if (!Number.isFinite(value) || value < DEFAULT_LATERALIZATION_MIN_MCAP) {
-    return null;
-  }
-  if (value < 1_000_000) return 50;
-  if (value < 4_000_000) return 50;
-  return 25;
-}
-
-function getDriftLimitPct(mcap) {
-  const value = Number(mcap);
-  if (!Number.isFinite(value) || value < DEFAULT_LATERALIZATION_MIN_MCAP) {
-    return null;
-  }
-  if (value < 1_000_000) return 20;
-  if (value < 4_000_000) return 16;
-  return 14;
-}
-
 function getMinimumWindowHoursForMcap(mcap) {
   const value = Number(mcap);
   if (!Number.isFinite(value) || value < 1_000_000) {
-    return DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS;
+    return DEFAULT_ANALYTICS_SUB_1M_MIN_HOURS;
   }
-  return DEFAULT_LATERALIZATION_GTE_1M_MIN_HOURS;
+  return DEFAULT_ANALYTICS_GTE_1M_MIN_HOURS;
 }
 
 function getCandidatePoolBand(mcap) {
@@ -305,17 +280,25 @@ function getCandidatePoolBand(mcap) {
 function getCandidatePoolBandLimit(band) {
   switch (String(band || '').trim().toLowerCase()) {
     case 'm1_to_4m':
-      return DEFAULT_LATERALIZATION_1M_TO_4M_CANDIDATE_POOL_LIMIT;
+      return DEFAULT_ANALYTICS_1M_TO_4M_CANDIDATE_POOL_LIMIT;
     case 'm4_plus':
-      return DEFAULT_LATERALIZATION_5M_PLUS_CANDIDATE_POOL_LIMIT;
+      return DEFAULT_ANALYTICS_5M_PLUS_CANDIDATE_POOL_LIMIT;
     case 'sub_1m':
     default:
-      return DEFAULT_LATERALIZATION_SUB_1M_CANDIDATE_POOL_LIMIT;
+      return DEFAULT_ANALYTICS_SUB_1M_CANDIDATE_POOL_LIMIT;
   }
 }
 
+function normalizeCandidateScanLimit(value) {
+  return Math.max(50, Math.min(Number(value) || DEFAULT_ANALYTICS_CANDIDATE_SCAN_LIMIT, 5000));
+}
+
+function normalizeStatementTimeoutMs(value) {
+  return Math.max(1000, Number(value) || DEFAULT_ANALYTICS_STATEMENT_TIMEOUT_MS);
+}
+
 function computeExpectedBucketCount(windowHours, createdAtMs, nowMs = Date.now()) {
-  const safeWindowHours = Math.max(1, Number(windowHours) || DEFAULT_LATERALIZATION_HOURS);
+  const safeWindowHours = Math.max(1, Number(windowHours) || DEFAULT_ANALYTICS_HOURS);
   const requestedMinutes = Math.max(1, Math.round(safeWindowHours * 60));
   const createdMs = Number(createdAtMs);
 
@@ -339,7 +322,7 @@ function computeAgeHours(createdAtMs, nowMs = Date.now()) {
 
 function getMcapRankingBonus(mcap) {
   const value = Number(mcap);
-  if (!Number.isFinite(value) || value < DEFAULT_LATERALIZATION_MIN_MCAP) return 0;
+  if (!Number.isFinite(value) || value < DEFAULT_ANALYTICS_MIN_MCAP) return 0;
   if (value >= 150_000 && value <= 500_000) return 18;
   if (value < 150_000) return 12;
   if (value <= 1_000_000) return 10;
@@ -347,41 +330,11 @@ function getMcapRankingBonus(mcap) {
   return 5;
 }
 
-function getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h) {
-  const value = Number(currentMcap);
-  if (!Number.isFinite(value) || value < 1_000_000) {
-    return 0;
-  }
-
-  let bonus = 0;
-  const range = Number(rangePct);
-  const drift = Number(driftPct);
-  const vol1 = Number(vol1h);
-  const vol24 = Number(vol24h);
-
-  if (Number.isFinite(range)) {
-    if (value < 4_000_000 && range <= 20) bonus += 4;
-    else if (value >= 4_000_000 && range <= 12) bonus += 5;
-  }
-
-  if (Number.isFinite(drift)) {
-    if (value < 4_000_000 && drift <= 6) bonus += 2;
-    else if (value >= 4_000_000 && drift <= 4) bonus += 3;
-  }
-
-  if (Number.isFinite(vol1) && Number.isFinite(vol24)) {
-    if (vol1 >= 5000) bonus += 2;
-    if (vol24 >= 100000) bonus += 2;
-  }
-
-  return bonus;
-}
-
 function getLiquidityRankingAdjustment(vol1h, vol6h, options = {}) {
   const value1h = Number(vol1h);
   const value6h = Number(vol6h);
   const ageHours = Number(options.ageHours);
-  const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
+  const neutralThreshold = Math.max(250, Number(options.neutralThreshold) || DEFAULT_BID_ZONE_MIN_VOL_1H);
 
   let penalty = 0;
   if (!Number.isFinite(value1h) || value1h < 200) {
@@ -573,132 +526,6 @@ function scoreBidZoneCandidate(row, options = {}) {
     liquidityPenalty,
     volume1hPenalty: liquidityPenalty,
     recentMedianCloseMcap: roundMetric(recentMedianCloseMcap, 2),
-  };
-}
-
-function scoreLateralizedCandidate(row, options = {}) {
-  const nowMs = Number(options.nowMs) || Date.now();
-  const windowHours = Math.max(1, Number(options.hours) || DEFAULT_LATERALIZATION_HOURS);
-  const currentMcap = Number(row.last_mcap_window ?? row.last_mcap);
-  const maxHighMcap = Number(row.max_high_mcap);
-  const minLowMcap = Number(row.min_low_mcap);
-  const avgCloseMcap = Number(row.avg_close_mcap);
-  const firstMcap = Number(row.first_mcap);
-  const lastMcapWindow = Number(row.last_mcap_window);
-  const stddevMcap = Number(row.close_mcap_stddev);
-  const vol1h = Number(row.last_vol_1h);
-  const vol6h = Number(row.last_vol_6h);
-  const vol24h = Number(row.last_vol_24h);
-  const bucketCount = Number(row.bucket_count) || 0;
-  const sampleCount = Number(row.sample_count) || 0;
-  const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
-
-  const rangeLimitPct = getRangeLimitPct(currentMcap);
-  const driftLimitPct = getDriftLimitPct(currentMcap);
-  const rangePct = Number.isFinite(maxHighMcap) && Number.isFinite(minLowMcap) && avgCloseMcap > 0
-    ? ((maxHighMcap - minLowMcap) / avgCloseMcap) * 100
-    : null;
-  const driftPct = Number.isFinite(firstMcap) && firstMcap > 0 && Number.isFinite(lastMcapWindow)
-    ? (Math.abs(lastMcapWindow - firstMcap) / firstMcap) * 100
-    : null;
-  const volatilityPct = Number.isFinite(stddevMcap) && avgCloseMcap > 0
-    ? (stddevMcap / avgCloseMcap) * 100
-    : null;
-  const turnoverPct = Number.isFinite(vol24h) && currentMcap > 0
-    ? (vol24h / currentMcap) * 100
-    : null;
-
-  const ageHours = computeAgeHours(row.last_token_created_at_ms, nowMs);
-  const expectedBucketCount = computeExpectedBucketCount(windowHours, row.last_token_created_at_ms, nowMs);
-  const coverageRatio = expectedBucketCount > 0 ? bucketCount / expectedBucketCount : 0;
-  const minCoverageRatio = Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO;
-  const minBuckets = Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS);
-  const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
-  const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
-  const minPositionPct = Number(options.minPositionPct) || DEFAULT_LATERALIZATION_MIN_POSITION_PCT;
-  const maxPositionPct = Number(options.maxPositionPct) || DEFAULT_LATERALIZATION_MAX_POSITION_PCT;
-  const liquidityPenalty = getLiquidityRankingAdjustment(vol1h, vol6h, {
-    neutralThreshold: minVol1h,
-    ageHours,
-  });
-  const passesRecentLiquidity = passesDeadLiquidityFilter(vol1h, vol6h);
-
-  const rangeSpan = Number.isFinite(maxHighMcap) && Number.isFinite(minLowMcap)
-    ? (maxHighMcap - minLowMcap)
-    : null;
-  const centerPosition = Number.isFinite(rangeSpan) && rangeSpan > 0 && Number.isFinite(lastMcapWindow)
-    ? (lastMcapWindow - minLowMcap) / rangeSpan
-    : 0.5;
-  const centerBonus = (1 - clamp01(Math.abs(centerPosition - 0.5) / 0.5)) * 8;
-  const rangeScore = rangeLimitPct != null && rangePct != null
-    ? clamp01(1 - (rangePct / rangeLimitPct)) * 40
-    : 0;
-  const driftScore = driftLimitPct != null && driftPct != null
-    ? clamp01(1 - (driftPct / driftLimitPct)) * 25
-    : 0;
-  const coverageScore = clamp01(coverageRatio) * 15;
-  const volatilityCeilingPct = rangeLimitPct != null ? Math.max(8, rangeLimitPct / 2) : 12;
-  const volatilityScore = volatilityPct != null
-    ? clamp01(1 - (volatilityPct / volatilityCeilingPct)) * 8
-    : 0;
-  const turnoverScore = turnoverPct != null
-    ? clamp01(turnoverPct / 40) * 10
-    : 0;
-
-  const score = rangeScore
-    + driftScore
-    + coverageScore
-    + volatilityScore
-    + turnoverScore
-    + centerBonus
-    + getMcapRankingBonus(currentMcap)
-    + getHighCapQualityBonus(currentMcap, rangePct, driftPct, vol1h, vol24h)
-    + getActiveLiquidityBonus(vol1h, vol6h)
-    + getEarlyBidZoneBonus(ageHours, currentMcap)
-    + getStaleLowCapPenalty(ageHours, currentMcap)
-    + liquidityPenalty
-    + getAgeRankingBonus(ageHours);
-
-  const currentPositionPct = centerPosition * 100;
-  const passesPosition = Number.isFinite(currentPositionPct)
-    && currentPositionPct >= minPositionPct
-    && currentPositionPct <= maxPositionPct;
-
-  const passes = (
-    Number.isFinite(currentMcap)
-    && currentMcap >= minMcap
-    && rangeLimitPct != null
-    && driftLimitPct != null
-    && rangePct != null
-    && driftPct != null
-    && rangePct <= rangeLimitPct
-    && driftPct <= driftLimitPct
-    && coverageRatio >= minCoverageRatio
-    && bucketCount >= minBuckets
-    && passesRecentLiquidity
-    && vol24h >= minVol24h
-    && passesPosition
-  );
-
-  return {
-    passes,
-    score: roundMetric(score, 2),
-    rangeLimitPct,
-    driftLimitPct,
-    rangePct: roundMetric(rangePct, 2),
-    driftPct: roundMetric(driftPct, 2),
-    volatilityPct: roundMetric(volatilityPct, 2),
-    turnoverPct: roundMetric(turnoverPct, 2),
-    ageHours: roundMetric(ageHours, 2),
-    expectedBucketCount,
-    coverageRatio: roundMetric(coverageRatio, 4),
-    currentPositionPct: roundMetric(currentPositionPct, 2),
-    bucketCount,
-    sampleCount,
-    passesPosition,
-    passesRecentLiquidity,
-    liquidityPenalty,
-    volume1hPenalty: liquidityPenalty,
   };
 }
 
@@ -1464,250 +1291,42 @@ async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
   return rows.map((row) => buildHighCapDumpDetection(row, options));
 }
 
-async function computeLateralizedCandidates(options = {}) {
-  const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_LATERALIZATION_HOURS, 48));
-  const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
-  const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
-  const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
-  const maxLookbackHours = Math.max(
-    requestedHours,
-    DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS,
-    DEFAULT_LATERALIZATION_GTE_1M_MIN_HOURS
-  );
-  const nowMs = Number(options.nowMs) || Date.now();
-
-  const { rows } = await db.query(
-    `WITH ranked_candidates AS (
-       SELECT
-         address,
-         symbol,
-         name,
-         last_mcap,
-         last_vol_1h,
-         last_vol_6h,
-         last_vol_24h,
-         last_token_created_at_ms,
-         monitor_priority,
-         CASE
-           WHEN COALESCE(last_mcap, 0) < 1000000 THEN 'sub_1m'
-           WHEN COALESCE(last_mcap, 0) < 4000000 THEN 'm1_to_4m'
-           ELSE 'm4_plus'
-         END AS mcap_band,
-         ROW_NUMBER() OVER (
-           PARTITION BY CASE
-             WHEN COALESCE(last_mcap, 0) < 1000000 THEN 'sub_1m'
-             WHEN COALESCE(last_mcap, 0) < 4000000 THEN 'm1_to_4m'
-             ELSE 'm4_plus'
-           END
-           ORDER BY
-             COALESCE(last_vol_24h, 0) DESC,
-             COALESCE(last_vol_1h, 0) DESC,
-             COALESCE(last_mcap, 0) DESC,
-             last_seen_at DESC
-         ) AS band_rank
-       FROM token_catalog
-       WHERE eligible_for_monitoring = TRUE
-         AND is_active_monitor_candidate = TRUE
-         AND COALESCE(last_mcap, 0) >= $1
-         AND COALESCE(last_vol_24h, 0) >= $2
-     ),
-     catalog_candidates AS (
-       SELECT
-         ranked.address,
-         ranked.symbol,
-         ranked.name,
-         ranked.last_mcap,
-         ranked.last_vol_1h,
-         ranked.last_vol_6h,
-         ranked.last_vol_24h,
-         ranked.last_token_created_at_ms,
-         ranked.monitor_priority
-       FROM ranked_candidates ranked
-       WHERE ranked.band_rank <= CASE ranked.mcap_band
-         WHEN 'sub_1m' THEN $3::bigint
-         WHEN 'm1_to_4m' THEN $4::bigint
-         ELSE $5::bigint
-       END
-     )
-     SELECT
-       c.address AS token_address,
-       c.symbol,
-       c.name,
-       c.last_mcap,
-       c.last_vol_1h,
-       c.last_vol_6h,
-       c.last_vol_24h,
-       c.last_token_created_at_ms,
-       c.monitor_priority,
-       b.bucket_ts,
-       b.open_mcap,
-       b.high_mcap,
-       b.low_mcap,
-       b.close_mcap,
-       b.sample_count
-     FROM catalog_candidates c
-     INNER JOIN token_market_buckets_1m b
-       ON b.token_address = c.address
-     WHERE b.bucket_ts >= NOW() - ($6::int * INTERVAL '1 hour')
-     ORDER BY c.address ASC, b.bucket_ts ASC`,
-    [
-      minMcap,
-      minVol24h,
-      getCandidatePoolBandLimit('sub_1m'),
-      getCandidatePoolBandLimit('m1_to_4m'),
-      getCandidatePoolBandLimit('m4_plus'),
-      maxLookbackHours,
-    ]
-  );
-
-  const grouped = new Map();
-  for (const row of rows) {
-    const address = row.token_address;
-    if (!grouped.has(address)) {
-      grouped.set(address, {
-        address,
-        symbol: row.symbol || null,
-        name: row.name || null,
-        monitorPriority: row.monitor_priority || 'dormant',
-        catalogMcap: row.last_mcap == null ? null : Number(row.last_mcap),
-        volume1h: row.last_vol_1h == null ? null : Number(row.last_vol_1h),
-        volume6h: row.last_vol_6h == null ? null : Number(row.last_vol_6h),
-        volume24h: row.last_vol_24h == null ? null : Number(row.last_vol_24h),
-        lastTokenCreatedAtMs: row.last_token_created_at_ms == null ? null : Number(row.last_token_created_at_ms),
-        buckets: [],
-      });
-    }
-
-    grouped.get(address).buckets.push({
-      bucketTsMs: new Date(row.bucket_ts).getTime(),
-      bucketTs: row.bucket_ts,
-      openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
-      highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
-      lowMcap: row.low_mcap == null ? null : Number(row.low_mcap),
-      closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
-      sampleCount: Number(row.sample_count) || 0,
-    });
-  }
-
-  return Array.from(grouped.values())
-    .map((candidate) => {
-      const allBuckets = candidate.buckets;
-      if (!allBuckets.length) {
-        return null;
-      }
-
-      const latestBucket = allBuckets[allBuckets.length - 1];
-      const latestWindowMcap = latestBucket.closeMcap == null ? latestBucket.openMcap : latestBucket.closeMcap;
-      const minimumWindowHours = getMinimumWindowHoursForMcap(latestWindowMcap);
-      const effectiveWindowHours = Math.max(requestedHours, minimumWindowHours);
-      const cutoffMs = nowMs - (effectiveWindowHours * 60 * 60 * 1000);
-      const scopedBuckets = allBuckets.filter((bucket) => bucket.bucketTsMs >= cutoffMs);
-      if (!scopedBuckets.length) {
-        return null;
-      }
-
-      const firstBucket = scopedBuckets.find((bucket) => bucket.openMcap != null || bucket.closeMcap != null) || null;
-      const closeValues = scopedBuckets
-        .map((bucket) => bucket.closeMcap)
-        .filter((value) => Number.isFinite(value));
-      const avgCloseMcap = closeValues.length
-        ? closeValues.reduce((sum, value) => sum + value, 0) / closeValues.length
-        : null;
-      const maxHighMcap = scopedBuckets.reduce((max, bucket) => {
-        return bucket.highMcap != null && (max == null || bucket.highMcap > max) ? bucket.highMcap : max;
-      }, null);
-      const minLowMcap = scopedBuckets.reduce((min, bucket) => {
-        return bucket.lowMcap != null && (min == null || bucket.lowMcap < min) ? bucket.lowMcap : min;
-      }, null);
-      const row = {
-        last_mcap: candidate.catalogMcap,
-        last_mcap_window: latestWindowMcap,
-        max_high_mcap: maxHighMcap,
-        min_low_mcap: minLowMcap,
-        avg_close_mcap: avgCloseMcap,
-        first_mcap: firstBucket ? (firstBucket.openMcap == null ? firstBucket.closeMcap : firstBucket.openMcap) : null,
-        close_mcap_stddev: computeSampleStddev(closeValues),
-        last_vol_1h: candidate.volume1h,
-        last_vol_24h: candidate.volume24h,
-        last_vol_6h: candidate.volume6h,
-        bucket_count: scopedBuckets.length,
-        sample_count: scopedBuckets.reduce((sum, bucket) => sum + bucket.sampleCount, 0),
-        last_token_created_at_ms: candidate.lastTokenCreatedAtMs,
-      };
-      const metrics = scoreLateralizedCandidate(row, {
-        ...options,
-        hours: effectiveWindowHours,
-        nowMs,
-        minMcap,
-        minVol1h,
-        minVol24h,
-      });
-
-      return {
-        address: candidate.address,
-        symbol: candidate.symbol,
-        name: candidate.name,
-        monitorPriority: candidate.monitorPriority,
-        mcap: latestWindowMcap == null ? null : Number(latestWindowMcap),
-        catalogMcap: candidate.catalogMcap,
-        windowMcap: latestWindowMcap == null ? null : Number(latestWindowMcap),
-        volume1h: candidate.volume1h,
-        volume6h: candidate.volume6h,
-        volume24h: candidate.volume24h,
-        firstBucketAt: scopedBuckets[0]?.bucketTs || null,
-        lastBucketAt: scopedBuckets[scopedBuckets.length - 1]?.bucketTs || null,
-        score: metrics.score,
-        liquidityPenalty: metrics.liquidityPenalty,
-        rangePct: metrics.rangePct,
-        rangeLimitPct: metrics.rangeLimitPct,
-        driftPct: metrics.driftPct,
-        driftLimitPct: metrics.driftLimitPct,
-        volatilityPct: metrics.volatilityPct,
-        turnoverPct: metrics.turnoverPct,
-        coverageRatio: metrics.coverageRatio,
-        bucketCount: metrics.bucketCount,
-        sampleCount: metrics.sampleCount,
-        expectedBucketCount: metrics.expectedBucketCount,
-        ageHours: metrics.ageHours,
-        currentPositionPct: metrics.currentPositionPct,
-        volume1hPenalty: metrics.volume1hPenalty,
-        requestedHours,
-        minimumWindowHours,
-        windowHoursUsed: effectiveWindowHours,
-        reasons: {
-          passesMcap: latestWindowMcap != null && Number(latestWindowMcap) >= minMcap,
-          passesRange: metrics.rangePct != null && metrics.rangeLimitPct != null && metrics.rangePct <= metrics.rangeLimitPct,
-          passesDrift: metrics.driftPct != null && metrics.driftLimitPct != null && metrics.driftPct <= metrics.driftLimitPct,
-          passesCoverage: metrics.coverageRatio != null && metrics.coverageRatio >= (Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO),
-          passesRecentLiquidity: metrics.passesRecentLiquidity,
-          liquidityPenalty: metrics.liquidityPenalty,
-          volume1hPenalty: metrics.volume1hPenalty,
-          passesLiquidity: candidate.volume24h != null && Number(candidate.volume24h) >= minVol24h,
-          passesPosition: metrics.passesPosition,
-        },
-      };
-    })
-    .filter(Boolean)
-    .filter((item) => item.reasons.passesMcap && item.reasons.passesRange && item.reasons.passesDrift && item.reasons.passesCoverage && item.reasons.passesRecentLiquidity && item.reasons.passesLiquidity && item.reasons.passesPosition && item.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS)))
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      if ((a.rangePct ?? Number.POSITIVE_INFINITY) !== (b.rangePct ?? Number.POSITIVE_INFINITY)) {
-        return (a.rangePct ?? Number.POSITIVE_INFINITY) - (b.rangePct ?? Number.POSITIVE_INFINITY);
-      }
-      return (b.coverageRatio ?? 0) - (a.coverageRatio ?? 0);
-    });
-}
-
 async function computeBidZoneCandidates(options = {}) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_BID_ZONE_HOURS, 48));
   const minMcap = Math.max(DEFAULT_BID_ZONE_MIN_MCAP, Number(options.minMcap) || DEFAULT_BID_ZONE_MIN_MCAP);
   const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_BID_ZONE_MIN_VOL_1H);
   const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_BID_ZONE_MIN_VOL_24H);
-  const maxLookbackHours = Math.max(requestedHours, DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS, DEFAULT_LATERALIZATION_GTE_1M_MIN_HOURS);
+  const maxLookbackHours = Math.max(requestedHours, DEFAULT_ANALYTICS_SUB_1M_MIN_HOURS, DEFAULT_ANALYTICS_GTE_1M_MIN_HOURS);
   const nowMs = Number(options.nowMs) || Date.now();
+  const candidateScanLimit = normalizeCandidateScanLimit(options.candidateScanLimit);
+  const statementTimeoutMs = normalizeStatementTimeoutMs(options.statementTimeoutMs);
 
-  const { rows } = await db.query(
-    `WITH ranked_candidates AS (
+  const { rows } = await db.queryWithStatementTimeout(
+    `WITH active_candidates AS (
+       SELECT
+         address,
+         symbol,
+         name,
+         last_mcap,
+         last_vol_1h,
+         last_vol_6h,
+         last_vol_24h,
+         last_token_created_at_ms,
+         monitor_priority,
+         last_seen_at
+       FROM token_catalog
+       WHERE eligible_for_monitoring = TRUE
+         AND is_active_monitor_candidate = TRUE
+         AND COALESCE(last_mcap, 0) >= $1
+         AND COALESCE(last_vol_24h, 0) >= $2
+       ORDER BY
+         COALESCE(last_vol_24h, 0) DESC,
+         COALESCE(last_vol_1h, 0) DESC,
+         COALESCE(last_mcap, 0) DESC,
+         last_seen_at DESC
+       LIMIT $7::bigint
+     ),
+     ranked_candidates AS (
        SELECT
          address,
          symbol,
@@ -1735,11 +1354,7 @@ async function computeBidZoneCandidates(options = {}) {
              COALESCE(last_mcap, 0) DESC,
              last_seen_at DESC
          ) AS band_rank
-       FROM token_catalog
-       WHERE eligible_for_monitoring = TRUE
-         AND is_active_monitor_candidate = TRUE
-         AND COALESCE(last_mcap, 0) >= $1
-         AND COALESCE(last_vol_24h, 0) >= $2
+       FROM active_candidates
      ),
      catalog_candidates AS (
        SELECT
@@ -1787,7 +1402,9 @@ async function computeBidZoneCandidates(options = {}) {
       getCandidatePoolBandLimit('m1_to_4m'),
       getCandidatePoolBandLimit('m4_plus'),
       maxLookbackHours,
-    ]
+      candidateScanLimit,
+    ],
+    statementTimeoutMs
   );
 
   const grouped = new Map();
@@ -1958,216 +1575,6 @@ async function computeBidZoneCandidates(options = {}) {
     });
 }
 
-async function debugLateralizedCandidateByAddress(address, options = {}) {
-  const addr = String(address || '').trim();
-  if (!isValidAddress(addr)) {
-    throw new Error('Invalid token address format');
-  }
-
-  const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_LATERALIZATION_HOURS, 48));
-  const minMcap = Math.max(DEFAULT_LATERALIZATION_MIN_MCAP, Number(options.minMcap) || DEFAULT_LATERALIZATION_MIN_MCAP);
-  const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_LATERALIZATION_MIN_VOL_1H);
-  const minVol24h = Math.max(0, Number(options.minVol24h) || DEFAULT_LATERALIZATION_MIN_VOL_24H);
-  const nowMs = Number(options.nowMs) || Date.now();
-
-  const { rows } = await db.query(
-    `WITH ranked_candidates AS (
-       SELECT
-         tc.*,
-         CASE
-           WHEN COALESCE(tc.last_mcap, 0) < 1000000 THEN 'sub_1m'
-           WHEN COALESCE(tc.last_mcap, 0) < 4000000 THEN 'm1_to_4m'
-           ELSE 'm4_plus'
-         END AS mcap_band,
-         ROW_NUMBER() OVER (
-           PARTITION BY CASE
-             WHEN COALESCE(tc.last_mcap, 0) < 1000000 THEN 'sub_1m'
-             WHEN COALESCE(tc.last_mcap, 0) < 4000000 THEN 'm1_to_4m'
-             ELSE 'm4_plus'
-           END
-           ORDER BY
-             COALESCE(tc.last_vol_24h, 0) DESC,
-             COALESCE(tc.last_vol_1h, 0) DESC,
-             COALESCE(tc.last_mcap, 0) DESC,
-             tc.last_seen_at DESC
-         ) AS band_rank
-       FROM token_catalog tc
-       WHERE tc.eligible_for_monitoring = TRUE
-         AND tc.is_active_monitor_candidate = TRUE
-         AND COALESCE(tc.last_mcap, 0) >= $2
-         AND COALESCE(tc.last_vol_24h, 0) >= $3
-     )
-     SELECT
-       tc.address,
-       tc.symbol,
-       tc.name,
-       tc.monitor_priority,
-       tc.eligible_for_monitoring,
-       tc.is_active_monitor_candidate,
-       tc.last_mcap,
-       tc.last_vol_1h,
-       tc.last_vol_6h,
-       tc.last_vol_24h,
-       tc.last_token_created_at_ms,
-       tc.last_seen_at,
-       ranked.mcap_band,
-       ranked.band_rank
-     FROM token_catalog tc
-     LEFT JOIN ranked_candidates ranked
-       ON ranked.address = tc.address
-     WHERE tc.address = $1
-     LIMIT 1`,
-    [addr, minMcap, minVol24h]
-  );
-
-  const token = rows[0] || null;
-  if (!token) {
-    return {
-      address: addr,
-      found: false,
-      error: 'Token not found in token_catalog',
-    };
-  }
-
-  const catalogMcap = toNumberOrNull(token.last_mcap);
-  const band = token.mcap_band || getCandidatePoolBand(catalogMcap);
-  const bandLimit = getCandidatePoolBandLimit(band);
-  const minimumWindowHours = getMinimumWindowHoursForMcap(catalogMcap);
-  const effectiveWindowHours = Math.max(requestedHours, minimumWindowHours);
-  const maxLookbackHours = Math.max(
-    requestedHours,
-    DEFAULT_LATERALIZATION_SUB_1M_MIN_HOURS,
-    DEFAULT_LATERALIZATION_GTE_1M_MIN_HOURS
-  );
-  const history = await listHistoryByAddress(addr, {
-    hours: maxLookbackHours,
-    limit: maxLookbackHours * 60,
-  });
-  const cutoffMs = nowMs - (effectiveWindowHours * 60 * 60 * 1000);
-  const scopedBuckets = history.filter((bucket) => new Date(bucket.ts).getTime() >= cutoffMs);
-  const latestBucket = scopedBuckets[scopedBuckets.length - 1] || null;
-  const latestWindowMcap = latestBucket
-    ? (latestBucket.closeMcap == null ? latestBucket.openMcap : latestBucket.closeMcap)
-    : null;
-  const firstBucket = scopedBuckets.find((bucket) => bucket.openMcap != null || bucket.closeMcap != null) || null;
-  const closeValues = scopedBuckets
-    .map((bucket) => bucket.closeMcap)
-    .filter((value) => Number.isFinite(value));
-  const avgCloseMcap = closeValues.length
-    ? closeValues.reduce((sum, value) => sum + value, 0) / closeValues.length
-    : null;
-  const maxHighMcap = scopedBuckets.reduce((max, bucket) => {
-    return bucket.highMcap != null && (max == null || bucket.highMcap > max) ? bucket.highMcap : max;
-  }, null);
-  const minLowMcap = scopedBuckets.reduce((min, bucket) => {
-    return bucket.lowMcap != null && (min == null || bucket.lowMcap < min) ? bucket.lowMcap : min;
-  }, null);
-
-  const row = {
-    last_mcap: catalogMcap,
-    last_mcap_window: latestWindowMcap,
-    max_high_mcap: maxHighMcap,
-    min_low_mcap: minLowMcap,
-    avg_close_mcap: avgCloseMcap,
-    first_mcap: firstBucket ? (firstBucket.openMcap == null ? firstBucket.closeMcap : firstBucket.openMcap) : null,
-    close_mcap_stddev: computeSampleStddev(closeValues),
-    last_vol_1h: toNumberOrNull(token.last_vol_1h),
-    last_vol_6h: toNumberOrNull(token.last_vol_6h),
-    last_vol_24h: toNumberOrNull(token.last_vol_24h),
-    bucket_count: scopedBuckets.length,
-    sample_count: scopedBuckets.reduce((sum, bucket) => sum + bucket.sampleCount, 0),
-    last_token_created_at_ms: token.last_token_created_at_ms == null ? null : Number(token.last_token_created_at_ms),
-  };
-
-  const metrics = scoreLateralizedCandidate(row, {
-    ...options,
-    hours: effectiveWindowHours,
-    nowMs,
-    minMcap,
-    minVol1h,
-    minVol24h,
-  });
-
-  const reasons = {
-    passesMcap: latestWindowMcap != null && Number(latestWindowMcap) >= minMcap,
-    passesRange: metrics.rangePct != null && metrics.rangeLimitPct != null && metrics.rangePct <= metrics.rangeLimitPct,
-    passesDrift: metrics.driftPct != null && metrics.driftLimitPct != null && metrics.driftPct <= metrics.driftLimitPct,
-    passesCoverage: metrics.coverageRatio != null && metrics.coverageRatio >= (Number(options.minCoverageRatio) || DEFAULT_LATERALIZATION_MIN_COVERAGE_RATIO),
-    passesRecentLiquidity: metrics.passesRecentLiquidity,
-    liquidityPenalty: metrics.liquidityPenalty,
-    volume1hPenalty: metrics.volume1hPenalty,
-    passesLiquidity: row.last_vol_24h != null && Number(row.last_vol_24h) >= minVol24h,
-    passesPosition: metrics.passesPosition,
-  };
-
-  const passesAllFilters = reasons.passesMcap
-    && reasons.passesRange
-    && reasons.passesDrift
-    && reasons.passesCoverage
-    && reasons.passesRecentLiquidity
-    && reasons.passesLiquidity
-    && reasons.passesPosition
-    && metrics.bucketCount >= (Math.max(3, Number(options.minBuckets) || DEFAULT_LATERALIZATION_MIN_BUCKETS));
-
-  return {
-    address: addr,
-    found: true,
-    token: {
-      symbol: token.symbol || null,
-      name: token.name || null,
-      monitorPriority: token.monitor_priority || 'dormant',
-      eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
-      isActiveMonitorCandidate: Boolean(token.is_active_monitor_candidate),
-      mcap: catalogMcap,
-      volume1h: toNumberOrNull(token.last_vol_1h),
-      volume6h: toNumberOrNull(token.last_vol_6h),
-      volume24h: toNumberOrNull(token.last_vol_24h),
-      lastTokenCreatedAtMs: token.last_token_created_at_ms == null ? null : Number(token.last_token_created_at_ms),
-      lastSeenAt: token.last_seen_at || null,
-    },
-    pool: {
-      mcapBand: band,
-      bandRank: Number.isFinite(Number(token.band_rank)) ? Number(token.band_rank) : null,
-      bandLimit,
-      passesCandidatePool: Number.isFinite(Number(token.band_rank)) ? Number(token.band_rank) <= bandLimit : false,
-    },
-    window: {
-      requestedHours,
-      minimumWindowHours,
-      effectiveWindowHours,
-      maxLookbackHours,
-      scopedBucketCount: scopedBuckets.length,
-      expectedBucketCount: metrics.expectedBucketCount,
-      firstBucketAt: scopedBuckets[0]?.ts || null,
-      lastBucketAt: scopedBuckets[scopedBuckets.length - 1]?.ts || null,
-    },
-    metrics: {
-      score: metrics.score,
-      rangePct: metrics.rangePct,
-      rangeLimitPct: metrics.rangeLimitPct,
-      driftPct: metrics.driftPct,
-      driftLimitPct: metrics.driftLimitPct,
-      coverageRatio: metrics.coverageRatio,
-      currentPositionPct: metrics.currentPositionPct,
-      ageHours: metrics.ageHours,
-      bucketCount: metrics.bucketCount,
-      sampleCount: metrics.sampleCount,
-      liquidityPenalty: metrics.liquidityPenalty,
-      volume1hPenalty: metrics.volume1hPenalty,
-      latestWindowMcap,
-      catalogMcap,
-    },
-    reasons,
-    passesAllFilters,
-  };
-}
-
-async function listLateralizedCandidates(options = {}) {
-  const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_LATERALIZATION_LIMIT, 200));
-  const candidates = await computeLateralizedCandidates(options);
-  return candidates.slice(0, limit);
-}
-
 async function listBidZoneCandidates(options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_BID_ZONE_LIMIT, 200));
   const candidates = await computeBidZoneCandidates(options);
@@ -2175,7 +1582,6 @@ async function listBidZoneCandidates(options = {}) {
 }
 
 module.exports = {
-  computeLateralizedCandidates,
   computeBidZoneCandidates,
   upsertSnapshotBucket,
   getInitialBucketByAddress,
@@ -2184,9 +1590,7 @@ module.exports = {
   deleteByAddresses,
   listCurrentAndBaselineByAddresses,
   listHighCapDumpDetectionsByAddresses,
-  listLateralizedCandidates,
   listBidZoneCandidates,
-  debugLateralizedCandidateByAddress,
   __private: {
     buildHighCapDumpDetection,
     computeAgeHours,
@@ -2195,22 +1599,20 @@ module.exports = {
     computeExpectedBucketCount,
     getAgeRankingBonus,
     getBucketDate,
-    getDriftLimitPct,
-    getHighCapQualityBonus,
     getActiveLiquidityBonus,
     getCandidatePoolBand,
     getCandidatePoolBandLimit,
     getEarlyBidZoneBonus,
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
-    getRangeLimitPct,
     getStaleLowCapPenalty,
     isHighCapDumpPairWindowConsistent,
     getLiquidityRankingAdjustment,
     passesDeadLiquidityFilter,
+    normalizeCandidateScanLimit,
+    normalizeStatementTimeoutMs,
     computeSampleStddev,
     scoreBidZoneCandidate,
-    scoreLateralizedCandidate,
     buildSparklineSeriesFromBuckets,
     buildDenseSparklineMinuteSeries,
     downsampleSparklineSeries,

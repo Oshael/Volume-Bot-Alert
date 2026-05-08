@@ -27,16 +27,44 @@ pool.on('error', (err) => {
   console.error('Unexpected database pool error:', err.message);
 });
 
-// Convenience: run a query
-async function query(text, params) {
-  const start = Date.now();
-  const res = await pool.query(text, params);
-  const duration = Date.now() - start;
+function logSlowQuery(text, duration) {
   if (config.db.logSlowQueries && duration > config.db.slowQueryLogMs) {
     const compactSql = String(text || '').replace(/\s+/g, ' ').trim();
     console.warn(`Slow query (${duration}ms):`, compactSql.slice(0, 140));
   }
+}
+
+// Convenience: run a query
+async function query(text, params) {
+  const start = Date.now();
+  const res = await pool.query(text, params);
+  logSlowQuery(text, Date.now() - start);
   return res;
+}
+
+async function queryWithStatementTimeout(text, params, timeoutMs = 0) {
+  const safeTimeoutMs = Math.max(0, Math.trunc(Number(timeoutMs) || 0));
+  if (safeTimeoutMs <= 0) {
+    return query(text, params);
+  }
+
+  const client = await pool.connect();
+  const start = Date.now();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL statement_timeout = '${safeTimeoutMs}ms'`);
+    const res = await client.query(text, params);
+    await client.query('COMMIT');
+    logSlowQuery(text, Date.now() - start);
+    return res;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Convenience: get a client for transactions
@@ -44,4 +72,4 @@ async function getClient() {
   return pool.connect();
 }
 
-module.exports = { pool, query, getClient };
+module.exports = { pool, query, queryWithStatementTimeout, getClient };

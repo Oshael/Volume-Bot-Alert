@@ -26,8 +26,7 @@
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
     "market-volume-buckets:backfill": "node src/utils/backfill-market-volume-buckets-1m.js",
     "market-snapshots:drop": "node src/utils/drop-market-snapshots.js --confirm-drop",
-    "invite:create": "node src/utils/create-invite.js",
-    "lateralization:debug": "node src/utils/debug-lateralization.js"
+    "invite:create": "node src/utils/create-invite.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

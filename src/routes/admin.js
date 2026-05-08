@@ -6,7 +6,6 @@ const Session = require('../models/session');
 const userAccess = require('../models/user-access');
 const { query } = require('../models/db');
 const socketHub = require('../services/socket-hub');
-const lateralizationWorker = require('../services/lateralization-worker');
 const { classifyTokenJunk } = require('../services/token-junk-metric');
 const tokenRiskCandidateSelector = require('../services/token-risk-candidate-selector');
 const tokenRiskEnrichmentWorker = require('../services/token-risk-enrichment-worker');
@@ -312,45 +311,6 @@ router.get('/users/online', async (req, res) => {
   } catch (err) {
     console.error('Admin online users error:', err);
     res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/lateralization/runs', async (req, res) => {
-  const hours = parseOptionalIntegerField(req.body?.hours, 'hours', { min: 1, max: 48 });
-  if (!hours.ok) return res.status(400).json({ error: hours.error });
-
-  const minMcap = parseOptionalIntegerField(req.body?.minMcap, 'minMcap', { min: 90000, max: 1000000000 });
-  if (!minMcap.ok) return res.status(400).json({ error: minMcap.error });
-
-  const minVol24h = parseOptionalIntegerField(req.body?.minVol24h, 'minVol24h', { min: 0, max: 1000000000 });
-  if (!minVol24h.ok) return res.status(400).json({ error: minVol24h.error });
-
-  const limit = parseOptionalIntegerField(req.body?.limit, 'limit', { min: 1, max: 200 });
-  if (!limit.ok) return res.status(400).json({ error: limit.error });
-
-  const notes = typeof req.body?.notes === 'string'
-    ? req.body.notes.trim().slice(0, 500)
-    : '';
-
-  try {
-    const result = await lateralizationWorker.runOnce({
-      hours: hours.value,
-      minMcap: minMcap.value,
-      minVol24h: minVol24h.value,
-      limit: limit.value,
-    }, {
-      triggeredBy: 'admin',
-      notes,
-    });
-
-    res.status(201).json(result);
-  } catch (err) {
-    if (err.message === 'Lateralization worker already has an active run') {
-      return res.status(409).json({ error: err.message });
-    }
-
-    console.error('Admin lateralization run error:', err.message);
-    res.status(500).json({ error: 'Failed to compute lateralization run' });
   }
 });
 

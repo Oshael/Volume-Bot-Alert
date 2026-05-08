@@ -52,7 +52,7 @@ let lastLivePresenceSignature: string | null = null;
 let suppressCatchupAlertAudioUntil = 0;
 let suppressCatchupAlertCreatedBefore = 0;
 
-const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.monitored-list, .lateralized-list, .pump-list, .pump-migration-strip, .alerts-list';
+const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.monitored-list, .bid-zone-list, .pump-list, .pump-migration-strip, .alerts-list';
 const TABLE_INTERACTION_LOCK_ZONE_SELECTOR = [
   '.token-actions-inline',
   '.action-col',
@@ -272,7 +272,7 @@ function getRestorePriorityRegions(state: AppState) {
   }
 
   if (state.ui.workspace === 'history') {
-    return ['header', 'overlay', 'legacy', 'recent', 'old-week', 'lateralized', 'bid-zone'] satisfies AppRenderRegion[];
+    return ['header', 'overlay', 'legacy', 'recent', 'old-week', 'bid-zone'] satisfies AppRenderRegion[];
   }
 
   return ['header', 'overlay', 'legacy'] satisfies AppRenderRegion[];

@@ -1,6 +1,6 @@
 const db = require('./db');
 
-const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'lateralized', 'bidZone', 'pumpfun'];
+const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
 const MONITORED_SORT_MODES = ['vol', 'mcap', 'age'];
 const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
@@ -17,7 +17,6 @@ const DEFAULT_UI_PREFS = {
     recent: false,
     oldWeek: false,
     monitored: false,
-    lateralized: false,
     bidZone: false,
     pumpfun: false,
   },
@@ -255,7 +254,6 @@ function normalizePrefs(raw) {
     recent: Boolean(collapsed.recent),
     oldWeek: Boolean(collapsed.oldWeek),
     monitored: Boolean(collapsed.monitored),
-    lateralized: Boolean(collapsed.lateralized),
     bidZone: Boolean(collapsed.bidZone),
     pumpfun: Boolean(collapsed.pumpfun),
   };

@@ -54,6 +54,21 @@ describe('bid-zone worker', () => {
     assert.equal(completedPayload.candidates.length, 2);
   });
 
+  it('starts without immediately running the heavy candidate query by default', async () => {
+    let computeCalls = 0;
+    tokenMarketBucket1m.computeBidZoneCandidates = async () => {
+      computeCalls += 1;
+      return [];
+    };
+
+    bidZoneWorker.start({ statementTimeoutMs: 8000, candidateScanLimit: 90 });
+
+    assert.equal(computeCalls, 0);
+    assert.equal(bidZoneWorker.getStatus().running, true);
+    assert.equal(bidZoneWorker.getStatus().lastStatementTimeoutMs, 8000);
+    assert.equal(bidZoneWorker.getStatus().lastCandidateScanLimit, 90);
+  });
+
   it('enforces a global cooldown for manual refreshes', async () => {
     await bidZoneWorker.runManualRefresh({ limit: 2 });
 
