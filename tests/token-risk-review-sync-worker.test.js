@@ -4,6 +4,11 @@ const assert = require('node:assert/strict');
 const worker = require('../src/services/token-risk-review-sync-worker');
 
 describe('token risk review sync worker', () => {
+  it('uses 15k as the default auto-risk review market-cap floor', () => {
+    assert.equal(worker.DEFAULT_MIN_MCAP, 15000);
+    assert.equal(worker.__private.normalizeOptions({}).minMcap, 15000);
+  });
+
   it('persists auto labels from the current junk assessment', async () => {
     const saved = [];
     const evidence = [];
@@ -518,6 +523,194 @@ describe('token risk review sync worker', () => {
     assert.match(saved[0].notes, /new_low_mcap_extreme_vol5m_churn/);
     assert.equal(blocked[0].address, address);
     assert.equal(blocked[0].label, 'auto-junk-probable:new_low_mcap_extreme_vol5m_churn');
+    assert.equal(suppressed.find(([name]) => name === 'applyEvaluationResult')[2].suppressedReason, 'admin_blocked');
+  });
+
+  it('auto-blocks GMGN low-cap tokens with dead recent volume and microscopic liquidity support', async () => {
+    const saved = [];
+    const blocked = [];
+    const suppressed = [];
+    const address = '5wdq5LvJapSxLspVd5KCi6ZeLx9d9JjxDuth1PLqRNgM';
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        eligibility_state: 'dex-unavailable',
+        suppressed_reason: 'dex_unavailable',
+        symbol: 'KARDS',
+        name: 'Kards Kollektors',
+        last_mcap: 103282,
+        last_vol_5m: 0,
+        last_vol_1h: 0,
+        last_vol_6h: 0,
+        last_vol_24h: 7029.36,
+        last_liquidity_usd: 41.87,
+        last_txns_24h_buys: 27,
+        last_txns_24h_sells: 28,
+        risk_holder_count: 201,
+        risk_top_10_pct: 36.01,
+        risk_top_20_pct: 46.07,
+        risk_mint_authority_active: false,
+        risk_freeze_authority_active: false,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [{
+          tokenAddress: address,
+          hasPool: false,
+          currentTvl: null,
+          poolCount: 0,
+        }],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+        removeAutoReview: async (tokenAddress) => {
+          suppressed.push(['removeAutoReview', tokenAddress]);
+          return true;
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (tokenAddress, payload) => {
+          suppressed.push(['applyEvaluationResult', tokenAddress, payload]);
+          return { tokenAddress, ...payload };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /gmgn_low_mcap_thin_support/);
+    assert.equal(blocked[0].address, address);
+    assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_low_mcap_thin_support');
+    assert.equal(suppressed.find(([name]) => name === 'applyEvaluationResult')[2].suppressedReason, 'admin_blocked');
+  });
+
+  it('auto-blocks GMGN thin-support junk down to 15k mcap', async () => {
+    const saved = [];
+    const blocked = [];
+    const address = 'HXcf9kYh1NvvcZZgyxDCsgYevMwnhRr36JXzu1YmUzAh';
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        eligibility_state: 'dex-unavailable',
+        suppressed_reason: 'dex_unavailable',
+        symbol: 'VIRUSCOIN',
+        last_mcap: 18000,
+        last_vol_5m: 0,
+        last_vol_1h: 0,
+        last_vol_6h: 0,
+        last_vol_24h: 800,
+        last_liquidity_usd: 90,
+        risk_review_source: 'auto',
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (tokenAddress, payload) => ({ tokenAddress, ...payload }),
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_low_mcap_thin_support');
+  });
+
+  it('auto-blocks GMGN low-cap 24h churn when liquidity support is microscopic', async () => {
+    const saved = [];
+    const blocked = [];
+    const suppressed = [];
+    const address = '428PxrkSRNHFFuSrN5YUTcQ4g5mKn1iCeek2s29xucL9';
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        eligibility_state: 'dex-normal',
+        symbol: 'CUCK',
+        name: 'Cool Unbothered Confident King',
+        last_mcap: 98905,
+        last_vol_5m: 0,
+        last_vol_1h: 0,
+        last_vol_6h: 0,
+        last_vol_24h: 4722184.72,
+        last_liquidity_usd: 192.78,
+        last_txns_24h_buys: 16370,
+        last_txns_24h_sells: 15855,
+        risk_holder_count: 1000,
+        risk_top_10_pct: 51.70,
+        risk_top_20_pct: 65.37,
+        risk_mint_authority_active: false,
+        risk_freeze_authority_active: false,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+        removeAutoReview: async (tokenAddress) => {
+          suppressed.push(['removeAutoReview', tokenAddress]);
+          return true;
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (tokenAddress, payload) => {
+          suppressed.push(['applyEvaluationResult', tokenAddress, payload]);
+          return { tokenAddress, ...payload };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /gmgn_low_mcap_extreme_24h_churn_thin_liquidity/);
+    assert.equal(blocked[0].address, address);
+    assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity');
     assert.equal(suppressed.find(([name]) => name === 'applyEvaluationResult')[2].suppressedReason, 'admin_blocked');
   });
 });

@@ -654,6 +654,23 @@ Important behavior:
   - vol5m/mcap `>= 4`
   - matching rows are auto-blocked with:
     - `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
+- GMGN low-cap thin-support gates:
+  - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
+  - source must be GMGN and not protected by a manual review
+  - thin-support dead-volume gate:
+    - mcap `15k-150k`
+    - liquidity `<= $1k` or liquidity/mcap `<= 1%`
+    - volume `1h <= 100` and `6h <= 100`
+    - no Meteora pool support
+    - matching rows are auto-blocked with:
+      - `auto-junk-probable:gmgn_low_mcap_thin_support`
+  - extreme 24h churn with thin liquidity:
+    - mcap `15k-100k`
+    - vol24h/mcap `>= 20`
+    - 24h txns `>= 1000`
+    - liquidity `<= $1k` or liquidity/mcap `<= 1%`
+    - matching rows are auto-blocked with:
+      - `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
 
 Manual vs automatic precedence:
 - `token_risk_reviews` now has `source`:

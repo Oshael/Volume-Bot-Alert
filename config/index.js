@@ -452,7 +452,7 @@ module.exports = {
 
   tokenRiskReviewSyncWorker: {
     scanLimit: Math.max(1, Math.min(parseInt(process.env.TOKEN_RISK_REVIEW_SYNC_SCAN_LIMIT || '200', 10), 5000)),
-    minMcap: Math.max(0, parseInt(process.env.TOKEN_RISK_REVIEW_SYNC_MIN_MCAP || '30000', 10) || 30000),
+    minMcap: Math.max(0, parseInt(process.env.TOKEN_RISK_REVIEW_SYNC_MIN_MCAP || '15000', 10) || 15000),
   },
 
   mockTradingTakeProfitWorker: {

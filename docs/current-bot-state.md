@@ -266,6 +266,20 @@ Important:
   - vol5m `>= 500k`
   - vol5m/mcap `>= 4`
   - matching rows are auto-blocked as `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
+- GMGN low-cap thin-support gates now run inside the token-risk review sync worker before the generic junk metric:
+  - GMGN token, non-manual review
+  - mcap `15k-150k`
+  - liquidity `<= $1k` or liquidity/mcap `<= 1%`
+  - recent volume is dead (`1h <= 100` and `6h <= 100`)
+  - no Meteora pool support
+  - matching rows are auto-blocked as `auto-junk-probable:gmgn_low_mcap_thin_support`
+- GMGN low-cap extreme 24h churn with thin liquidity is also auto-blocked:
+  - GMGN token, non-manual review
+  - mcap `15k-100k`
+  - vol24h/mcap `>= 20`
+  - 24h txns `>= 1000`
+  - liquidity `<= $1k` or liquidity/mcap `<= 1%`
+  - matching rows are auto-blocked as `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
 - Local operational checkpoint on `2026-05-04`:
   - GMGN risk backfill scanned `97` local candidates
   - `33` were blocked

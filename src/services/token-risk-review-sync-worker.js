@@ -8,7 +8,7 @@ const { classifyTokenJunk } = require('./token-junk-metric');
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_SCAN_LIMIT = 200;
-const DEFAULT_MIN_MCAP = 30000;
+const DEFAULT_MIN_MCAP = 15000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
 const GMGN_CONCENTRATED_TOP_10_PCT = 90;
 const GMGN_CONCENTRATED_TOP_20_PCT = 95;
@@ -25,6 +25,13 @@ const NEW_LOW_MCAP_EXTREME_VOL_MAX_AGE_HOURS = 24;
 const NEW_LOW_MCAP_EXTREME_VOL_MAX_MCAP = 100000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M = 500000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
+const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP = 150000;
+const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_USD = 1000;
+const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_TO_MCAP = 0.01;
+const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME = 100;
+const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MAX_MCAP = 100000;
+const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP = 20;
+const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H = 1000;
 
 let timer = null;
 let running = false;
@@ -143,6 +150,36 @@ function isGmgnSource(row) {
   return String(row?.source || '').trim().toLowerCase() === 'gmgn';
 }
 
+function isManualReviewProtected(row = {}) {
+  return String(row?.risk_review_source || '').trim().toLowerCase() === 'manual';
+}
+
+function hasGmgnThinLiquidity(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
+  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
+
+  return liquidityUsd != null
+    && (
+      liquidityUsd <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_USD
+      || (liquidityToMcap != null && liquidityToMcap <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_TO_MCAP)
+    );
+}
+
+function hasGmgnDeadRecentVolume(row = {}) {
+  const vol1h = toFiniteNumberOrNull(row.last_vol_1h);
+  const vol6h = toFiniteNumberOrNull(row.last_vol_6h);
+  return (vol1h ?? 0) <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME
+    && (vol6h ?? 0) <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME;
+}
+
+function hasNoMeteoraPool(summaryRow) {
+  if (!summaryRow) {
+    return true;
+  }
+  return summaryRow.hasPool !== true || !((Number(summaryRow.currentTvl) || 0) > 0);
+}
+
 function isDexGmgnHolderAnomalySourceEligible(row = {}) {
   const source = String(row?.source || '').trim().toLowerCase();
   if (isGmgnSource(row) || source === 'user-manual') {
@@ -216,6 +253,79 @@ function buildNewLowMcapExtremeVolumeAssessment(row = {}) {
     marketCap,
     volume5m: vol5m,
     vol5mToMcapRatio: vol5mToMcap,
+  };
+}
+
+function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  if (
+    !isGmgnSource(row)
+    || isManualReviewProtected(row)
+    || !(marketCap >= DEFAULT_MIN_MCAP)
+    || marketCap > GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP
+    || !hasGmgnThinLiquidity(row)
+    || !hasGmgnDeadRecentVolume(row)
+    || !hasNoMeteoraPool(meteoraSummary)
+  ) {
+    return null;
+  }
+
+  return {
+    label: 'junk_probable',
+    confidence: 'high',
+    manualReviewRequired: true,
+    autoBlock: false,
+    mode: 'gmgn_low_mcap_thin_support_gate',
+    strongSignalCount: 1,
+    reasonCodes: ['gmgn_low_mcap_thin_support'],
+    strongSignals: ['gmgn_low_mcap_thin_support'],
+    weakSignals: [],
+    behavioralSignals: [],
+    positiveSignals: [],
+    marketCap,
+    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
+    volume1h: toFiniteNumberOrNull(row.last_vol_1h),
+    volume6h: toFiniteNumberOrNull(row.last_vol_6h),
+  };
+}
+
+function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const vol24h = toFiniteNumberOrNull(row.last_vol_24h);
+  const vol24hToMcap = computeRatio(vol24h, marketCap);
+  const txns24h = (toFiniteNumberOrNull(row.last_txns_24h_buys) || 0)
+    + (toFiniteNumberOrNull(row.last_txns_24h_sells) || 0);
+
+  if (
+    !isGmgnSource(row)
+    || isManualReviewProtected(row)
+    || !(marketCap >= DEFAULT_MIN_MCAP)
+    || marketCap > GMGN_LOW_MCAP_EXTREME_24H_CHURN_MAX_MCAP
+    || vol24hToMcap == null
+    || vol24hToMcap < GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP
+    || txns24h < GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H
+    || !hasGmgnThinLiquidity(row)
+  ) {
+    return null;
+  }
+
+  return {
+    label: 'junk_probable',
+    confidence: 'high',
+    manualReviewRequired: true,
+    autoBlock: false,
+    mode: 'gmgn_low_mcap_extreme_24h_churn_gate',
+    strongSignalCount: 1,
+    reasonCodes: ['gmgn_low_mcap_extreme_24h_churn_thin_liquidity'],
+    strongSignals: ['gmgn_low_mcap_extreme_24h_churn_thin_liquidity'],
+    weakSignals: [],
+    behavioralSignals: [],
+    positiveSignals: [],
+    marketCap,
+    volume24h: vol24h,
+    vol24hToMcapRatio: vol24hToMcap,
+    txns24hTotal: txns24h,
+    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
   };
 }
 
@@ -449,6 +559,18 @@ async function listCandidates(offset, options, deps = {}) {
   return rows;
 }
 
+async function assessRiskReviewRow(row, meteoraSummary, deps = {}) {
+  return buildGmgnRiskGateAssessment(row)
+    || buildNewLowMcapExtremeVolumeAssessment(row)
+    || buildGmgnLowMcapExtreme24hChurnAssessment(row)
+    || buildGmgnLowMcapThinSupportAssessment(row, meteoraSummary)
+    || await assessDexGmgnHolderAnomaly(row, deps)
+    || classifyTokenJunk({
+      ...row,
+      meteora: buildMeteoraMetric(meteoraSummary),
+    });
+}
+
 async function processRows(rows = [], deps = {}) {
   const meteoraModel = deps.tokenMeteoraStateModel || tokenMeteoraState;
   const reviewModel = deps.tokenRiskReviewModel || tokenRiskReview;
@@ -463,13 +585,7 @@ async function processRows(rows = [], deps = {}) {
 
   for (const row of rows) {
     const meteoraSummary = meteoraByAddress.get(row.address) || null;
-    const assessment = buildGmgnRiskGateAssessment(row)
-      || buildNewLowMcapExtremeVolumeAssessment(row)
-      || await assessDexGmgnHolderAnomaly(row, deps)
-      || classifyTokenJunk({
-      ...row,
-      meteora: buildMeteoraMetric(meteoraSummary),
-    });
+    const assessment = await assessRiskReviewRow(row, meteoraSummary, deps);
 
     const label = normalizePersistedAutoLabel(row, assessment);
     if (!label) {
@@ -624,7 +740,10 @@ module.exports = {
   stop,
   __private: {
     buildAutoNotes,
+    assessRiskReviewRow,
     autoBlockToken,
+    buildGmgnLowMcapExtreme24hChurnAssessment,
+    buildGmgnLowMcapThinSupportAssessment,
     buildGmgnRiskGateAssessment,
     buildGmgnRiskReleasePayload,
     captureEvidenceSafely,
