@@ -91,6 +91,8 @@ function buildRuntimePerfSample(state: AppState) {
     manual: state.data.manualTokenAddresses.length,
     recent: state.data.recentTokenAddresses.length,
     oldWeek: state.data.oldWeekTokenAddresses.length,
+    recentHead: state.data.recentTokenAddresses.slice(0, 8),
+    oldWeekHead: state.data.oldWeekTokenAddresses.slice(0, 8),
     alerts: state.data.alerts.length,
     pumpTokens: state.data.pumpTokens.length,
     pumpToasts: state.data.pumpToasts.length,
@@ -99,6 +101,25 @@ function buildRuntimePerfSample(state: AppState) {
     pendingRender: Boolean(pendingState),
     pendingRegions: pendingDirtyRegions ? formatDirtyRegions(pendingDirtyRegions) : '',
   };
+}
+
+function recordRestoreLifecycleDebug(label: string, meta: Record<string, unknown> = {}) {
+  const active = latestState ? isRuntimePerfDebugActive(latestState) : isRuntimePerfDebugEnabled();
+  if (!active) {
+    return;
+  }
+
+  recordRuntimePerfDebugEntry({
+    ts: Date.now(),
+    kind: 'sample',
+    label,
+    meta: {
+      ...(latestState ? buildRuntimePerfSample(latestState) : {}),
+      visibilityState: document.visibilityState,
+      ...meta,
+    },
+    memory: readRuntimePerfMemory(),
+  }, active);
 }
 
 observeRuntimeLongTasks(() => isRuntimePerfDebugActive());
@@ -447,17 +468,41 @@ function syncLivePresence(state: AppState | null, options?: { force?: boolean })
 
 function refreshForegroundState(options: { force?: boolean } = {}) {
   if (!latestState || latestState.session.status !== 'authenticated') {
+    recordRestoreLifecycleDebug('restore.refresh-foreground.skip-unauthenticated', {
+      force: Boolean(options.force),
+      hasState: Boolean(latestState),
+      sessionStatus: latestState?.session.status ?? null,
+    });
     return;
   }
 
   const now = Date.now();
   if (foregroundStateRefreshInFlight || (!options.force && now - lastForegroundStateRefreshAt < FOREGROUND_STATE_REFRESH_MIN_INTERVAL_MS)) {
+    recordRestoreLifecycleDebug('restore.refresh-foreground.skip-throttled', {
+      force: Boolean(options.force),
+      inFlight: foregroundStateRefreshInFlight,
+      elapsedMs: now - lastForegroundStateRefreshAt,
+    });
     return;
   }
 
   lastForegroundStateRefreshAt = now;
   foregroundStateRefreshInFlight = true;
+  recordRestoreLifecycleDebug('restore.refresh-foreground.start', {
+    force: Boolean(options.force),
+  });
   void controller.refreshRestoredSessionState(options)
+    .then(() => {
+      recordRestoreLifecycleDebug('restore.refresh-foreground.complete', {
+        force: Boolean(options.force),
+      });
+    })
+    .catch((error) => {
+      recordRestoreLifecycleDebug('restore.refresh-foreground.error', {
+        force: Boolean(options.force),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    })
     .finally(() => {
       foregroundStateRefreshInFlight = false;
     });
@@ -728,6 +773,11 @@ document.addEventListener('visibilitychange', () => {
   const shouldReloadAfterHidden = hiddenAutoStopTriggered || shouldAutoStopOnReturn;
   hiddenMonitoringWasActive = false;
   hiddenAutoStopTriggered = false;
+  recordRestoreLifecycleDebug('restore.visibility.visible', {
+    hiddenDurationMs,
+    shouldReloadAfterHidden,
+    shouldAutoStopOnReturn,
+  });
   if (shouldReloadAfterHidden) {
     controller.stopMonitoring();
     window.location.reload();
@@ -746,6 +796,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('pageshow', (event) => {
+  recordRestoreLifecycleDebug('restore.pageshow', {
+    persisted: event.persisted,
+  });
   refreshForegroundState({ force: event.persisted });
 });
 

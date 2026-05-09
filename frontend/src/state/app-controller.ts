@@ -80,6 +80,8 @@ import {
   isRuntimePerfDebugEnabled,
   measureRuntimePerf,
   measureRuntimePerfAsync,
+  readRuntimePerfMemory,
+  recordRuntimePerfDebugEntry,
 } from '../utils/runtime-perf-debug';
 import { mockSolToUsd, resolveMockSolUsdcRate } from '../utils/mock-trading-display';
 
@@ -1480,6 +1482,45 @@ export function createAppController(): AppController {
 
   function isRuntimePerfDebugActive() {
     return state.session.role === 'admin' && isRuntimePerfDebugEnabled();
+  }
+
+  function summarizeDashboardDebugTokens(tokens: DashboardMonitoredToken[] = []) {
+    return tokens.slice(0, 8).map((item) => ({
+      address: item.address,
+      symbol: item.symbol ?? '',
+      mcap: item.mcap ?? null,
+    }));
+  }
+
+  function formatDebugErrorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function recordRestoreControllerDebug(label: string, meta: Record<string, unknown> = {}) {
+    const active = isRuntimePerfDebugActive();
+    if (!active) {
+      return;
+    }
+
+    recordRuntimePerfDebugEntry({
+      ts: Date.now(),
+      kind: 'sample',
+      label,
+      meta: {
+        workspace: state.ui.workspace,
+        sessionStatus: state.session.status,
+        trackedTokens: Object.keys(state.data.trackedTokensByAddress).length,
+        monitored: state.data.monitoredTokenAddresses.length,
+        recent: state.data.recentTokenAddresses.length,
+        oldWeek: state.data.oldWeekTokenAddresses.length,
+        barsRecent: state.bars.recent,
+        barsOldWeek: state.bars.oldWeek,
+        recentHead: state.data.recentTokenAddresses.slice(0, 8),
+        oldWeekHead: state.data.oldWeekTokenAddresses.slice(0, 8),
+        ...meta,
+      },
+      memory: readRuntimePerfMemory(),
+    }, active);
   }
 
   function emit(...regions: AppRenderRegion[]) {
@@ -6217,6 +6258,15 @@ export function createAppController(): AppController {
     state.ui.oldWeekPage = requestedOldWeekPage;
     state.runtime.routedRevision += 1;
     syncRoutedPagination();
+    recordRestoreControllerDebug('controller.history-bootstrap.apply', {
+      generatedAt: payload.generatedAt ?? null,
+      recentReturned: recentTokens.length,
+      oldWeekReturned: oldWeekTokens.length,
+      recentTotal: state.bars.recent,
+      oldWeekTotal: state.bars.oldWeek,
+      recentPayloadHead: summarizeDashboardDebugTokens(recentTokens),
+      oldWeekPayloadHead: summarizeDashboardDebugTokens(oldWeekTokens),
+    });
   }
 
   function buildMonitoredDashboardPayload(
@@ -6338,6 +6388,10 @@ export function createAppController(): AppController {
   }
 
   async function hydrateDashboardMonitoredInternal(token: string, manualTokens: AddressItem[]) {
+    recordRestoreControllerDebug('controller.dashboard-hydrate.start', {
+      manualTokens: manualTokens.length,
+      usesHistoryBootstrap: usesHistoryBucketBootstrap(),
+    });
     try {
       if (usesHistoryBucketBootstrap()) {
         await Promise.all([
@@ -6354,6 +6408,9 @@ export function createAppController(): AppController {
         } else {
           emit('recent', 'old-week', 'header');
         }
+        recordRestoreControllerDebug('controller.dashboard-hydrate.history.complete', {
+          manualTokens: manualTokens.length,
+        });
         return;
       }
 
@@ -6381,8 +6438,19 @@ export function createAppController(): AppController {
       void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
       emitMonitoredWorkspaceRegions();
       queueSupplementalMeteoraRefresh(token, aggregatedTokens);
+      recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
+        generatedAt,
+        returned: firstPage.tokens.length,
+        total: firstPage.total,
+        hasMore: firstPage.hasMore,
+        payloadHead: summarizeDashboardDebugTokens(firstPage.tokens),
+      });
 
       if (!firstPage.hasMore || aggregatedTokens.length >= firstPage.total) {
+        recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
+          total: aggregatedTokens.length,
+          payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
+        });
         return;
       }
 
@@ -6419,14 +6487,28 @@ export function createAppController(): AppController {
         queueSupplementalMeteoraRefresh(token, aggregatedTokens);
         await new Promise((resolve) => window.setTimeout(resolve, 0));
       }
-    } catch {
+      recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
+        total: aggregatedTokens.length,
+        payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
+      });
+    } catch (error) {
+      recordRestoreControllerDebug('controller.dashboard-hydrate.error', {
+        message: formatDebugErrorMessage(error),
+      });
     }
   }
 
   async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
+    recordRestoreControllerDebug('controller.config-reload.start', {
+      deferDashboard: Boolean(options?.deferDashboard),
+    });
     const payload = await fetchConfig(token);
 
     applyConfig(payload, []);
+    recordRestoreControllerDebug('controller.config-reload.apply-empty-dashboard', {
+      deferDashboard: Boolean(options?.deferDashboard),
+      manualTokens: payload.tokens.length,
+    });
 
     if (options?.deferDashboard) {
       void hydrateDashboardMonitoredInternal(token, payload.tokens);
@@ -6449,11 +6531,20 @@ export function createAppController(): AppController {
 
     const now = Date.now();
     if (restoredSessionRefreshInFlight || (!options.force && now < nextRestoredSessionRefreshAt)) {
+      recordRestoreControllerDebug('controller.restored-refresh.skip', {
+        force: Boolean(options.force),
+        inFlight: restoredSessionRefreshInFlight,
+        waitMs: Math.max(0, nextRestoredSessionRefreshAt - now),
+      });
       return;
     }
 
     restoredSessionRefreshInFlight = true;
     nextRestoredSessionRefreshAt = now + RESTORED_SESSION_CONFIG_REFRESH_MS;
+    recordRestoreControllerDebug('controller.restored-refresh.start', {
+      force: Boolean(options.force),
+      preservedSnapshot: getCurrentMonitoredDashboardSnapshot().length,
+    });
 
     try {
       const payload = await fetchConfig(token);
@@ -6464,6 +6555,10 @@ export function createAppController(): AppController {
       applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
       emit('all');
       void hydrateDashboardMonitoredInternal(token, payload.tokens);
+      recordRestoreControllerDebug('controller.restored-refresh.apply-preserved-snapshot', {
+        force: Boolean(options.force),
+        manualTokens: payload.tokens.length,
+      });
       void refreshMockTradingState();
       if (shouldRunHistoryAnalyticsRuntime()) {
         void refreshBidZoneTokens({ force: true });
