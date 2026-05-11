@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticate, requireAdmin, requireTrustedOrigin } = require('../middleware/auth');
 const mockTrading = require('../services/mock-trading-service');
+const solUsdPrice = require('../services/sol-usd-price-service');
 
 const router = express.Router();
 
@@ -27,6 +28,10 @@ router.get('/summary', async (req, res) => {
   } catch (err) {
     handleMockTradingError(res, err, 'Failed to load mock trading summary');
   }
+});
+
+router.get('/sol-price', async (req, res) => {
+  res.json(solUsdPrice.getStatus());
 });
 
 router.get('/positions', async (req, res) => {
@@ -65,6 +70,7 @@ router.post('/buy', async (req, res) => {
       userId: req.user.id,
       address: req.body?.address,
       notionalUsd: req.body?.notionalUsd,
+      notionalSol: req.body?.notionalSol,
       takeProfitMcapUsd: req.body?.takeProfitMcapUsd,
       takeProfitSellPercent: req.body?.takeProfitSellPercent,
     });
@@ -144,13 +150,14 @@ router.post('/reset', async (req, res) => {
 
 router.post('/add-cash', async (req, res) => {
   try {
-    const account = await mockTrading.addCash({
+    const result = await mockTrading.addCash({
       userId: req.user.id,
       amountUsd: req.body?.amountUsd,
+      amountSol: req.body?.amountSol,
     });
     res.json({
       message: 'Mock cash added',
-      account,
+      ...result,
     });
   } catch (err) {
     handleMockTradingError(res, err, 'Failed to add mock trading cash');

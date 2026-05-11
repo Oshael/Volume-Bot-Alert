@@ -1,6 +1,7 @@
 const db = require('../models/db');
 const { isValidAddress } = require('../models/user-token');
 const userConfig = require('../models/user-config');
+const solUsdPrice = require('./sol-usd-price-service');
 
 const DEFAULT_STARTING_CASH_USD = 1000;
 const DEFAULT_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -67,14 +68,37 @@ function normalizeMockSolUsdcRate(value) {
   return Number.isFinite(rate) && rate > 0 ? rate : fallback;
 }
 
-async function loadMockSolUsdcRate(userId, runner) {
-  const { rows } = await runner.query(
-    `SELECT config_value
-     FROM user_configs
-     WHERE user_id = $1 AND config_key = $2`,
-    [userId, MOCK_SOL_USDC_RATE_CONFIG_KEY]
-  );
-  return normalizeMockSolUsdcRate(rows[0]?.config_value);
+function resolveFreshMockSolUsdQuote(options = {}) {
+  const service = options.solUsdPriceService || solUsdPrice;
+  const quote = service.getFreshQuote();
+  return {
+    provider: quote.provider || 'coinmarketcap',
+    priceUsd: normalizeMockSolUsdcRate(quote.priceUsd),
+    lastUpdatedAt: quote.lastUpdatedAt || null,
+    ageSeconds: toFiniteNumber(quote.ageSeconds, null),
+  };
+}
+
+function buildMockSolRateMetadata(quote) {
+  return {
+    mockSolUsdcRate: quote.priceUsd,
+    mockSolUsdcRateSource: quote.provider,
+    mockSolUsdcRateUpdatedAt: quote.lastUpdatedAt,
+  };
+}
+
+function normalizeNotionalUsdInput(payload = {}, quote) {
+  if (payload.notionalSol != null && String(payload.notionalSol).trim() !== '') {
+    return normalizePositiveAmount(payload.notionalSol, 'notionalSol') * quote.priceUsd;
+  }
+  return normalizePositiveAmount(payload.notionalUsd, 'notionalUsd');
+}
+
+function normalizeAddCashUsdInput(payload = {}, quote) {
+  if (payload.amountSol != null && String(payload.amountSol).trim() !== '') {
+    return normalizePositiveAmount(payload.amountSol, 'amountSol') * quote.priceUsd;
+  }
+  return normalizePositiveAmount(payload.amountUsd, 'amountUsd');
 }
 
 function normalizeSellQuantity(position, payload = {}) {
@@ -308,6 +332,8 @@ function mapTrade(row) {
     priceMultiple: toFiniteNumber(row.price_multiple, null),
     mcapMultiple: toFiniteNumber(row.mcap_multiple, null),
     mockSolUsdcRate,
+    mockSolUsdcRateSource: metadata.mockSolUsdcRateSource || null,
+    mockSolUsdcRateUpdatedAt: metadata.mockSolUsdcRateUpdatedAt || null,
     source: row.source || 'token_catalog',
     executedAt: row.executed_at || null,
     metadata,
@@ -570,12 +596,12 @@ function buildTradeMetadata(catalog, extra = {}) {
 async function buyToken(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
   const address = normalizeTokenAddress(payload.address);
-  const notionalUsd = normalizePositiveAmount(payload.notionalUsd, 'notionalUsd');
+  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
+  const notionalUsd = normalizeNotionalUsdInput(payload, mockSolUsdQuote);
 
   return withTransaction(async (client) => {
     const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
     const catalog = await loadFreshCatalogPrice(address, client, options);
-    const mockSolUsdcRate = await loadMockSolUsdcRate(userId, client);
     const takeProfitInput = normalizeTakeProfitInput(payload, catalog);
     const position = await loadPositionForUpdate(userId, address, client);
     const next = buildBuyState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, notionalUsd });
@@ -584,7 +610,7 @@ async function buyToken(payload = {}, options = {}) {
     await savePosition(userId, address, next.position, client);
     next.trade.metadata = buildTradeMetadata(catalog, {
       ...next.trade.metadata,
-      mockSolUsdcRate,
+      ...buildMockSolRateMetadata(mockSolUsdQuote),
     });
     const trade = await insertTrade(userId, address, next.trade, client);
     const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
@@ -600,6 +626,7 @@ async function buyToken(payload = {}, options = {}) {
       takeProfitOrder,
       takeProfitOrders,
       catalog,
+      solUsdPrice: mockSolUsdQuote,
     };
   });
 }
@@ -607,6 +634,7 @@ async function buyToken(payload = {}, options = {}) {
 async function sellToken(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
   const address = normalizeTokenAddress(payload.address);
+  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
 
   return withTransaction(async (client) => {
     const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
@@ -616,20 +644,19 @@ async function sellToken(payload = {}, options = {}) {
       ...options,
       allowStaleBelowMcapUsd: STALE_SELL_MAX_MCAP_USD,
     });
-    const mockSolUsdcRate = await loadMockSolUsdcRate(userId, client);
     const next = buildSellState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, quantity });
 
     await saveAccount(next.account, client);
     await savePosition(userId, address, next.position, client);
     next.trade.metadata = buildTradeMetadata(catalog, {
       ...next.trade.metadata,
-      mockSolUsdcRate,
+      ...buildMockSolRateMetadata(mockSolUsdQuote),
     });
     const trade = await insertTrade(userId, address, next.trade, client);
     if (!next.position) {
       await cancelOpenTakeProfitOrders(userId, address, client, 'position_closed');
     }
-    return { account: next.account, position: next.position, trade, catalog };
+    return { account: next.account, position: next.position, trade, catalog, solUsdPrice: mockSolUsdQuote };
   });
 }
 
@@ -688,9 +715,10 @@ async function resetAccount(payload = {}) {
   });
 }
 
-async function addCash(payload = {}) {
+async function addCash(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
-  const amountUsd = normalizePositiveAmount(payload.amountUsd, 'amountUsd');
+  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
+  const amountUsd = normalizeAddCashUsdInput(payload, mockSolUsdQuote);
 
   return withTransaction(async (client) => {
     await ensureAccount(userId, client, { lock: true });
@@ -703,7 +731,11 @@ async function addCash(payload = {}) {
        RETURNING *`,
       [userId, formatNumeric(amountUsd, 6)]
     );
-    return mapAccount(rows[0]);
+    return {
+      account: mapAccount(rows[0]),
+      solUsdPrice: mockSolUsdQuote,
+      amountUsd,
+    };
   });
 }
 
@@ -748,6 +780,7 @@ async function getSummary(userIdValue, runner = db) {
     totalEquityUsd,
     totalPnlUsd,
     totalPnlPct: account.startingCashUsd > 0 ? (totalPnlUsd / account.startingCashUsd) * 100 : null,
+    solUsdPrice: solUsdPrice.getStatus(),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -882,6 +915,7 @@ async function cancelTakeProfitOrder(payload = {}) {
 }
 
 async function executeTakeProfitOrder(orderId, options = {}) {
+  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
   return withTransaction(async (client) => {
     const orderCandidate = await loadTakeProfitOrder(orderId, client);
     if (!orderCandidate || orderCandidate.status !== 'open') {
@@ -901,7 +935,6 @@ async function executeTakeProfitOrder(orderId, options = {}) {
     }
 
     const catalog = await loadFreshCatalogPrice(order.tokenAddress, client, options);
-    const mockSolUsdcRate = await loadMockSolUsdcRate(order.userId, client);
     if (!(catalog.marketCapUsd >= order.targetMcapUsd)) {
       return { status: 'skipped', reason: 'target_not_reached', order, catalog };
     }
@@ -920,7 +953,7 @@ async function executeTakeProfitOrder(orderId, options = {}) {
       targetMcapUsd: order.targetMcapUsd,
       sellPercent: order.sellPercent,
       triggerMcapUsd: catalog.marketCapUsd,
-      mockSolUsdcRate,
+      ...buildMockSolRateMetadata(mockSolUsdQuote),
     });
 
     await saveAccount(next.account, client);
@@ -935,6 +968,7 @@ async function executeTakeProfitOrder(orderId, options = {}) {
       trade,
       order: triggeredOrder,
       catalog,
+      solUsdPrice: mockSolUsdQuote,
     };
   });
 }
@@ -966,6 +1000,8 @@ module.exports = {
     buildBuyState,
     buildSellState,
     mapTrade,
+    normalizeAddCashUsdInput,
+    normalizeNotionalUsdInput,
     normalizeTakeProfitInput,
     mapCatalogPrice,
     normalizeMockSolUsdcRate,

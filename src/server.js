@@ -42,6 +42,7 @@ const mockTradingTakeProfitWorker = require('./services/mock-trading-take-profit
 const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
+const solUsdPrice = require('./services/sol-usd-price-service');
 
 const app = express();
 let server = null;
@@ -159,6 +160,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     tokenRiskEnrichmentWorker: tokenRiskEnrichmentWorker.getStatus(),
     tokenRiskReviewSyncWorker: tokenRiskReviewSyncWorker.getStatus(),
     mockTradingTakeProfitWorker: mockTradingTakeProfitWorker.getStatus(),
+    solUsdPrice: solUsdPrice.getStatus(),
     gmgnDiscoveryWorker: gmgnDiscoveryWorker.getStatus(),
     gmgn: gmgnClient.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
@@ -182,9 +184,20 @@ function bootstrapRuntime(httpServer) {
   }
 
   bootstrapWebRuntime(httpServer);
+  bootstrapSolUsdPriceRuntime();
   bootstrapBackgroundRuntime();
 
   bootstrapped = true;
+}
+
+function bootstrapSolUsdPriceRuntime() {
+  if (config.nodeEnv === 'test') {
+    return;
+  }
+
+  solUsdPrice.start().catch((err) => {
+    console.error('[SOL/USD] Failed to start CoinMarketCap price service:', err.message);
+  });
 }
 
 async function runCleanupCycle() {

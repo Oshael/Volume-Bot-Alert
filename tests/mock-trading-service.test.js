@@ -7,8 +7,10 @@ const {
   buildBuyState,
   buildSellState,
   mapTrade,
+  normalizeAddCashUsdInput,
   mapCatalogPrice,
   normalizeMockSolUsdcRate,
+  normalizeNotionalUsdInput,
   normalizeTakeProfitInput,
   normalizeSellQuantity,
 } = mockTradingService.__private;
@@ -214,5 +216,13 @@ describe('mock trading service calculations', () => {
 
     assert.equal(mapped.mockSolUsdcRate, 123.45);
     assert.equal(normalizeMockSolUsdcRate(null), 88);
+  });
+
+  it('converts SOL-denominated mock trading inputs to internal USD amounts', () => {
+    const quote = { priceUsd: 200 };
+
+    assert.equal(normalizeNotionalUsdInput({ notionalSol: 1.25 }, quote), 250);
+    assert.equal(normalizeAddCashUsdInput({ amountSol: 0.5 }, quote), 100);
+    assert.equal(normalizeNotionalUsdInput({ notionalUsd: 75 }, quote), 75);
   });
 });

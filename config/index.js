@@ -461,6 +461,18 @@ module.exports = {
     batchLimit: Math.max(1, Math.min(parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_BATCH_LIMIT || '25', 10) || 25, 100)),
   },
 
+  solUsdPrice: {
+    provider: (process.env.SOL_PRICE_PROVIDER || 'coinmarketcap').trim().toLowerCase(),
+    apiKey: (process.env.COINMARKETCAP_API_KEY || '').trim(),
+    assetId: (process.env.SOL_CMC_ASSET_ID || '5426').trim(),
+    convert: (process.env.SOL_PRICE_CONVERT || 'USD').trim().toUpperCase(),
+    pollIntervalMs: Math.max(30000, parseInt(process.env.SOL_PRICE_POLL_INTERVAL_MS || '264500', 10) || 264500),
+    staleAfterMs: Math.max(30000, parseInt(process.env.SOL_PRICE_STALE_AFTER_MS || '300000', 10) || 300000),
+    requestTimeoutMs: Math.max(1000, parseInt(process.env.SOL_PRICE_REQUEST_TIMEOUT_MS || '10000', 10) || 10000),
+    minBackoffMs: Math.max(1000, parseInt(process.env.SOL_PRICE_MIN_BACKOFF_MS || '60000', 10) || 60000),
+    maxBackoffMs: Math.max(1000, parseInt(process.env.SOL_PRICE_MAX_BACKOFF_MS || '1800000', 10) || 1800000),
+  },
+
   gmgnDiscoveryWorker: {
     enabled: parseBoolean(process.env.GMGN_DISCOVERY_ENABLED, false),
     intervalMs: Math.max(250, parseInt(process.env.GMGN_DISCOVERY_INTERVAL_MS || process.env.GMGN_REQUEST_WINDOW_MS || '2000', 10) || 2000),

@@ -4,15 +4,46 @@ process.env.EMAIL_PROVIDER = 'local';
 process.env.EMAIL_FROM = 'tests@trendscope.local';
 process.env.APP_BASE_URL = 'http://localhost:5173';
 process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
+process.env.COINMARKETCAP_API_KEY = 'mock-trading-routes-cmc-key';
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 
+const originalFetch = global.fetch;
+let currentSolUsd = 123.45;
+global.fetch = async (url) => {
+  const rawUrl = String(url);
+  if (rawUrl.startsWith('https://pro-api.coinmarketcap.com/v3/cryptocurrency/quotes/latest')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{
+          id: 5426,
+          symbol: 'SOL',
+          quote: {
+            USD: {
+              price: currentSolUsd,
+              last_updated: new Date().toISOString(),
+            },
+          },
+        }],
+        status: { error_code: 0, timestamp: new Date().toISOString() },
+      }),
+    };
+  }
+  if (originalFetch) {
+    return originalFetch(url);
+  }
+  throw new Error(`Unexpected fetch URL: ${rawUrl}`);
+};
+
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
 const takeProfitWorker = require('../src/services/mock-trading-take-profit-worker');
+const solUsdPrice = require('../src/services/sol-usd-price-service');
 
 const VALID_ADDR = 'So11111111111111111111111111111111111111112';
 const stamp = Date.now();
@@ -61,6 +92,13 @@ async function ensureMockTradingSchema() {
   await stage35.init({ closePool: false });
 }
 
+async function setSolUsdPrice(price) {
+  currentSolUsd = price;
+  const status = await solUsdPrice.fetchOnce();
+  assert.equal(status.priceUsd, price);
+  assert.equal(status.stale, false);
+}
+
 describe('mock trading admin routes', () => {
   let adminToken;
   let userToken;
@@ -89,6 +127,7 @@ describe('mock trading admin routes', () => {
        VALUES ($1, 'solana', 'WSOL', 'Wrapped SOL', 'mock-trading-test', 'https://example.test/wsol.png', 0.001, 100000, NOW(), NOW())`,
       [VALID_ADDR]
     );
+    await setSolUsdPrice(123.45);
   });
 
   after(async () => {
@@ -97,6 +136,7 @@ describe('mock trading admin routes', () => {
     await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
+    global.fetch = originalFetch;
     if (server && server.close) server.close();
     await db.pool.end().catch(() => {});
   });
@@ -110,23 +150,27 @@ describe('mock trading admin routes', () => {
   });
 
   it('executes buy, reports PnL percentage, sells, and resets', async () => {
-    await db.query(
-      `INSERT INTO user_configs (user_id, config_key, config_value)
-       VALUES ($1, 'mock-sol-usdc-rate', '123.45')
-       ON CONFLICT (user_id, config_key)
-       DO UPDATE SET config_value = EXCLUDED.config_value`,
-      [adminUserId]
-    );
+    await setSolUsdPrice(100);
+
+    const solPriceRes = await request(app)
+      .get('/api/admin/mock-trading/sol-price')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(solPriceRes.status, 200);
+    assert.equal(solPriceRes.body.priceUsd, 100);
 
     const buyRes = await request(app)
       .post('/api/admin/mock-trading/buy')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ address: VALID_ADDR, notionalUsd: 100 });
+      .send({ address: VALID_ADDR, notionalSol: 1 });
 
     assert.equal(buyRes.status, 201);
     assert.equal(buyRes.body.position.quantity, 100000);
     assert.equal(buyRes.body.position.avgEntryMcapUsd, 100000);
-    assert.equal(buyRes.body.trade.mockSolUsdcRate, 123.45);
+    assert.equal(buyRes.body.trade.notionalUsd, 100);
+    assert.equal(buyRes.body.trade.mockSolUsdcRate, 100);
+    assert.equal(buyRes.body.trade.mockSolUsdcRateSource, 'coinmarketcap');
+    assert.equal(buyRes.body.trade.metadata.mockSolUsdcRateSource, 'coinmarketcap');
 
     await db.query(
       `UPDATE token_catalog
@@ -145,12 +189,14 @@ describe('mock trading admin routes', () => {
     assert.equal(positionsRes.body.positions[0].mcapMultiple, 2);
     assert.equal(positionsRes.body.positions[0].imageUrl, 'https://example.test/wsol.png');
 
-    await db.query(
-      `UPDATE user_configs
-       SET config_value = '77'
-       WHERE user_id = $1 AND config_key = 'mock-sol-usdc-rate'`,
-      [adminUserId]
-    );
+    const summaryRes = await request(app)
+      .get('/api/admin/mock-trading/summary')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(summaryRes.status, 200);
+    assert.equal(summaryRes.body.solUsdPrice.priceUsd, 100);
+
+    await setSolUsdPrice(200);
 
     const sellRes = await request(app)
       .post('/api/admin/mock-trading/sell')
@@ -160,7 +206,7 @@ describe('mock trading admin routes', () => {
     assert.equal(sellRes.status, 200);
     assert.equal(sellRes.body.trade.realizedPnlUsd, 50);
     assert.equal(sellRes.body.trade.realizedPnlPct, 100);
-    assert.equal(sellRes.body.trade.mockSolUsdcRate, 77);
+    assert.equal(sellRes.body.trade.mockSolUsdcRate, 200);
 
     await db.query(
       `UPDATE token_catalog
@@ -179,10 +225,10 @@ describe('mock trading admin routes', () => {
     assert.equal(sellTrade.symbol, 'WSOL');
     assert.equal(sellTrade.name, 'Wrapped SOL');
     assert.equal(sellTrade.imageUrl, 'https://example.test/wsol.png');
-    assert.equal(sellTrade.mockSolUsdcRate, 77);
+    assert.equal(sellTrade.mockSolUsdcRate, 200);
     const buyTrade = tradesRes.body.trades.find((trade) => trade.side === 'buy');
     assert.ok(buyTrade);
-    assert.equal(buyTrade.mockSolUsdcRate, 123.45);
+    assert.equal(buyTrade.mockSolUsdcRate, 100);
 
     const resetRes = await request(app)
       .post('/api/admin/mock-trading/reset')
@@ -195,9 +241,10 @@ describe('mock trading admin routes', () => {
     const addCashRes = await request(app)
       .post('/api/admin/mock-trading/add-cash')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ amountUsd: 250 });
+      .send({ amountSol: 1.25 });
 
     assert.equal(addCashRes.status, 200);
+    assert.equal(addCashRes.body.amountUsd, 250);
     assert.equal(addCashRes.body.account.cashUsd, 5250);
     assert.equal(addCashRes.body.account.startingCashUsd, 5250);
   });
@@ -213,6 +260,7 @@ describe('mock trading admin routes', () => {
        WHERE address = $1`,
       [VALID_ADDR]
     );
+    await setSolUsdPrice(111);
 
     const buyRes = await request(app)
       .post('/api/admin/mock-trading/buy')
@@ -234,6 +282,7 @@ describe('mock trading admin routes', () => {
        WHERE address = $1`,
       [VALID_ADDR]
     );
+    await setSolUsdPrice(222);
 
     const run = await takeProfitWorker.runOnce({ batchLimit: 5 });
     assert.equal(run.triggered, 1);
@@ -253,6 +302,8 @@ describe('mock trading admin routes', () => {
     const takeProfitSell = tradesRes.body.trades.find((trade) => trade.side === 'sell' && trade.source === 'take_profit');
     assert.ok(takeProfitSell);
     assert.equal(takeProfitSell.realizedPnlUsd, 100);
+    assert.equal(takeProfitSell.mockSolUsdcRate, 222);
+    assert.equal(takeProfitSell.metadata.mockSolUsdcRateSource, 'coinmarketcap');
     assert.equal(takeProfitSell.metadata.takeProfitOrderId, buyRes.body.position.takeProfitOrder.id);
   });
 
