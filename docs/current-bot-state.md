@@ -1415,6 +1415,7 @@ Current security priority order:
   - `POST /take-profit-orders/:id/cancel`
   - `POST /add-cash`
   - `POST /reset`
+  - `GET /sol-price`
 - Current persistence:
   - `mock_trading_accounts`
   - `mock_trading_positions`
@@ -1430,15 +1431,16 @@ Current security priority order:
 - Execution price comes from `token_catalog.last_price` as `priceUsd`.
 - Trade execution also snapshots `token_catalog.last_mcap` as display/reference MCAP.
 - Sells can use a stale catalog price only when `last_mcap < 30k`; buys and take-profit orders still require fresh catalog price.
-- The current UI converts between mock SOL and the existing internal USD accounting through the backend-persisted admin config `mock-sol-usdc-rate`:
-  - default: `1 SOL = 88 USDC`
-  - a `1 SOL` buy sends `notionalUsd = mock-sol-usdc-rate` to the backend
-  - with the default rate, a `20%` gain on that position is `+17.6` internally and displays as `+0.2 SOL`
-  - no live SOL/USD conversion is used for this simplified mode
+- Mock trading uses a backend CoinMarketCap SOL/USD quote service for SOL display and SOL-denominated buy/deposit conversion:
+  - CoinMarketCap asset id: `5426` (Solana)
+  - default poll interval: `264500ms`, about `9,800` requests per 30-day window
+  - stale window: `300000ms`
+  - browser code receives read-only quote status and never receives the CMC API key
+  - a `1 SOL` buy sends `notionalSol = 1` to the backend, and the backend converts to internal USD with the latest non-stale CMC quote
   - backend/API/DB field names still use `*_usd` / `notionalUsd` for compatibility
-- Each executed buy/sell trade snapshots `mockSolUsdcRate` into `mock_trading_trades.metadata`, so finalized trade rows, closed-play realized PnL, and chart markers keep the SOL reading from execution time even if the admin changes `mock-sol-usdc-rate` later.
+- Each executed buy/sell/take-profit trade snapshots the active CMC-backed `mockSolUsdcRate` into `mock_trading_trades.metadata`, so finalized trade rows, closed-play realized PnL, and chart markers keep the SOL reading from execution time even if SOL/USD moves later.
 - Older trades without a rate snapshot fall back to the original default `88`.
-- The default starting mock balance still uses the existing internal account default (`1000`), displayed as `1000 / mock-sol-usdc-rate` SOL unless reset behavior is changed later.
+- The default starting mock balance still uses the existing internal account default (`1000`), displayed as `1000 / live SOL/USD` SOL.
 - PnL and return percentage are calculated from token quantity and `priceUsd`; the resulting accounting-unit gain/loss is displayed as SOL, and market cap remains display/trigger context.
 - The frontend loads the authenticated admin portfolio summary, open positions, and recent trades.
 - Admin token rows expose mock buy/sell controls:
@@ -1450,7 +1452,7 @@ Current security priority order:
   - reset clears only the authenticated admin user's mock portfolio
 - Manual mock SOL deposits still increase both `cash_usd` and `starting_cash_usd` internally, so deposits do not inflate the total PnL calculation.
 - Buy/sell tickets are scrollable when their content exceeds the viewport.
-- The workspace header cash pill shows current mock SOL, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill.
+- The workspace header cash pill shows current mock SOL, read-only SOL/USD quote status, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill.
 - The `Plays` modal summarizes recent closed sell executions, including realized PnL, win/loss counts, win rate, and each profitable/unprofitable play.
 - Manual, Recent, and Old Week mini charts render account-specific buy/sell markers from the admin trade ledger.
 - The expanded sparkline modal renders the same markers.
@@ -1731,9 +1733,9 @@ Current limitation:
     - `High Cap Dump 5M`
   - `Sound By Alert Type`
     - the same per-type families above, but for sound playback only
-- Admin-only mock trading field:
-  - `Mock SOL rate (USDC)` persists `mock-sol-usdc-rate`
-  - this controls UI SOL display and SOL buy/deposit conversion into the existing internal USD accounting
+- Mock trading SOL/USD conversion is no longer editable in the admin config UI:
+  - the backend uses the CoinMarketCap SOL/USD quote service
+  - legacy `mock-sol-usdc-rate` can remain in persistence for older data/fallback compatibility, but the current UI does not expose an editable field for it
 - These controls are backend-persisted user configs
 - `Sound Alert` remains the master on/off switch, while `Sound By Alert Type` is the per-kind gate
 - current sound persistence split:
