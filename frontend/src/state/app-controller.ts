@@ -83,7 +83,7 @@ import {
   readRuntimePerfMemory,
   recordRuntimePerfDebugEntry,
 } from '../utils/runtime-perf-debug';
-import { mockSolToUsd, resolveMockSolUsdcRate } from '../utils/mock-trading-display';
+import { hasFreshMockSolRate } from '../utils/mock-trading-display';
 
 const AUTH_NOTICE_NO_SESSION = 'No saved session. Sign in to continue.';
 const AUTH_NOTICE_RESTORING = 'Restoring session...';
@@ -118,6 +118,26 @@ const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
 const RECENT_MAX_AGE_MINUTES = OLD_WEEK_MIN_AGE_MINUTES;
 const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
+
+function getMockTradingBuyValidationError(
+  state: AppState,
+  notionalSol: number,
+  takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null },
+) {
+  if (!Number.isFinite(notionalSol) || notionalSol <= 0) {
+    return 'Mock buy SOL amount must be greater than zero';
+  }
+  if (!hasFreshMockSolRate(state.data.mockTradingSummary)) {
+    return 'Fresh SOL/USD price is unavailable';
+  }
+  if (takeProfit?.targetMcapUsd != null && (!Number.isFinite(takeProfit.targetMcapUsd) || takeProfit.targetMcapUsd <= 0)) {
+    return 'Take profit MCAP must be greater than zero';
+  }
+  if (takeProfit?.sellPercent != null && (!Number.isFinite(takeProfit.sellPercent) || takeProfit.sellPercent <= 0 || takeProfit.sellPercent > 100)) {
+    return 'Take profit percent must be between 1 and 100';
+  }
+  return null;
+}
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
@@ -8636,18 +8656,9 @@ export function createAppController(): AppController {
         return;
       }
 
-      if (!Number.isFinite(notionalSol) || notionalSol <= 0) {
-        setError('Mock buy SOL amount must be greater than zero');
-        emit('overlay');
-        return;
-      }
-      if (takeProfit?.targetMcapUsd != null && (!Number.isFinite(takeProfit.targetMcapUsd) || takeProfit.targetMcapUsd <= 0)) {
-        setError('Take profit MCAP must be greater than zero');
-        emit('overlay');
-        return;
-      }
-      if (takeProfit?.sellPercent != null && (!Number.isFinite(takeProfit.sellPercent) || takeProfit.sellPercent <= 0 || takeProfit.sellPercent > 100)) {
-        setError('Take profit percent must be between 1 and 100');
+      const validationError = getMockTradingBuyValidationError(state, notionalSol, takeProfit);
+      if (validationError) {
+        setError(validationError);
         emit('overlay');
         return;
       }
@@ -8657,8 +8668,7 @@ export function createAppController(): AppController {
       setNotice('Executing mock buy...');
       emit();
       try {
-        const notionalUsd = mockSolToUsd(notionalSol, resolveMockSolUsdcRate(state.data.configs));
-        const result = await buyMockTradingToken(address, notionalUsd, token, takeProfit);
+        const result = await buyMockTradingToken(address, notionalSol, token, takeProfit);
         if (result.position) {
           state.data.mockTradingPositionsByAddress[address] = result.position;
         }
@@ -8797,14 +8807,18 @@ export function createAppController(): AppController {
         emit('header');
         return;
       }
+      if (!hasFreshMockSolRate(state.data.mockTradingSummary)) {
+        setError('Fresh SOL/USD price is unavailable');
+        emit('header');
+        return;
+      }
 
       setBusy(true);
       setError(null);
       setNotice('Adding mock SOL...');
       emit('header');
       try {
-        const amountUsd = mockSolToUsd(amountSol, resolveMockSolUsdcRate(state.data.configs));
-        const result = await addMockTradingCash(amountUsd, token);
+        const result = await addMockTradingCash(amountSol, token);
         await refreshMockTradingState();
         setNotice(result.message);
       } catch (error) {

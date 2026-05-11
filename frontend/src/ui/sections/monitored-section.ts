@@ -3,7 +3,7 @@ import { getMockTradingPositionView, getMonitoredTokens, type AppState, type Man
 import { renderManualTokenEntryForm } from './manual-section';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
-import { fmtMockSol, resolveMockSolUsdcRate } from '../../utils/mock-trading-display';
+import { fmtMockSol, resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -142,7 +142,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const monitoredList = section.querySelector<HTMLElement>('.monitored-list');
   if (monitoredList) {
     if (filteredTracked.length) {
-      const mockSolUsdcRate = resolveMockSolUsdcRate(state.data.configs);
+      const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
       for (const item of pageItems) {
         monitoredList.append(buildMonitoredRow(
           item,

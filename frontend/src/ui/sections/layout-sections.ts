@@ -18,7 +18,7 @@ import {
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
-import { fmtMockSol, fmtMockSolAmount, MOCK_SOL_USDC_RATE_CONFIG_KEY, resolveMockSolUsdcRate, resolveMockTradeSolUsdcRate } from '../../utils/mock-trading-display';
+import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate } from '../../utils/mock-trading-display';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
@@ -309,7 +309,6 @@ const CONFIG_FIELDS: ConfigField[] = [
   { key: 'max-mcap', label: 'Max market cap to alert ($)', min: 0, placeholder: '0 = no limit' },
   { key: 'meteora-alert-1h-threshold', label: 'Meteora pool alert 1h (%)', min: 0, placeholder: '0 = disabled' },
   { key: 'hvnc-min-vol', label: 'High Vol New Coin min total vol ($)', min: 0 },
-  { key: MOCK_SOL_USDC_RATE_CONFIG_KEY, label: 'Mock SOL rate (USDC)', min: 0.01, step: 0.01, placeholder: '1 SOL = this USDC', adminOnly: true },
 ];
 
 const ALERT_TOGGLE_FIELDS = [
@@ -870,6 +869,7 @@ function renderMockTradingHeaderSummary(state: AppState) {
     <div class="workspace-mock-trading-cluster">
       <div class="workspace-mock-trading-summary workspace-mock-trading-cash" data-tone="${pnlTone}">
         <span class="workspace-mock-trading-label">MOCK</span>
+        ${renderMockSolPriceStatus(state)}
         <strong>Cash ${escapeHtml(fmtMockUsdForState(state, summary.account.cashUsd))}</strong>
         <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-add" data-action="add-mock-trading-cash" ${state.ui.busy ? 'disabled' : ''} title="Add mock SOL">Add</button>
         <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-plays" data-action="open-mock-trading-history" ${state.ui.busy ? 'disabled' : ''} title="Open mock trade history">Plays</button>
@@ -958,7 +958,18 @@ function fmtMockUsd(value?: number | null, options: { signed?: boolean; usdcRate
 }
 
 function fmtMockUsdForState(state: AppState, value?: number | null, options: { signed?: boolean } = {}) {
-  return fmtMockUsd(value, { ...options, usdcRate: resolveMockSolUsdcRate(state.data.configs) });
+  return fmtMockUsd(value, { ...options, usdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs) });
+}
+
+function renderMockSolPriceStatus(state: AppState) {
+  const quote = state.data.mockTradingSummary?.solUsdPrice;
+  const price = Number(quote?.priceUsd);
+  if (!Number.isFinite(price) || price <= 0) {
+    return '<span class="workspace-mock-trading-label">SOL unavailable</span>';
+  }
+
+  const label = quote?.stale ? `SOL stale $${price.toFixed(2)}` : `SOL $${price.toFixed(2)}`;
+  return `<span class="workspace-mock-trading-label">${escapeHtml(label)}</span>`;
 }
 
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
@@ -1418,7 +1429,7 @@ function renderMockTradingPnlResumeModal(state: AppState) {
           </div>
 
           <div class="mock-trading-pnl-chart">
-            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades, mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs) }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
+            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades, mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs) }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
           </div>
 
           <div class="mock-trading-pnl-trades">
@@ -1876,7 +1887,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
         <div class="expanded-sparkline-chart">
-          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveMockSolUsdcRate(state.data.configs) })}
+          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs) })}
         </div>
         <div class="expanded-sparkline-footnote">Updated ${escapeHtml(stats.updatedLabel)}. Hover for approximate market cap and time.</div>
       </div>
@@ -4948,7 +4959,6 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
     'old-week-surge-1h-threshold': 50,
     'old-week-surge-6h-threshold': 150,
     'meteora-alert-1h-threshold': 50,
-    [MOCK_SOL_USDC_RATE_CONFIG_KEY]: 88,
     'old-mcap-max': 100000000,
     'old-week-mcap-max': 100000000,
   };

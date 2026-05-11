@@ -70,6 +70,15 @@ export interface MockTradingTrade {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface MockTradingSolUsdPrice {
+  provider?: string | null;
+  priceUsd?: number | null;
+  stale?: boolean | null;
+  lastUpdatedAt?: string | null;
+  ageSeconds?: number | null;
+  lastError?: string | null;
+}
+
 export interface MockTradingSummary {
   account: MockTradingAccount;
   openPositionCount: number;
@@ -77,6 +86,7 @@ export interface MockTradingSummary {
   totalEquityUsd: number;
   totalPnlUsd: number;
   totalPnlPct?: number | null;
+  solUsdPrice?: MockTradingSolUsdPrice | null;
   generatedAt?: string | null;
 }
 
@@ -138,6 +148,16 @@ function normalizeSummary(payload: MockTradingSummary): MockTradingSummary {
     totalEquityUsd: toNumber(payload.totalEquityUsd),
     totalPnlUsd: toNumber(payload.totalPnlUsd),
     totalPnlPct: toNullableNumber(payload.totalPnlPct),
+    solUsdPrice: payload.solUsdPrice ? normalizeSolUsdPrice(payload.solUsdPrice) : null,
+  };
+}
+
+function normalizeSolUsdPrice(payload: MockTradingSolUsdPrice): MockTradingSolUsdPrice {
+  return {
+    ...payload,
+    priceUsd: toNullableNumber(payload.priceUsd),
+    stale: payload.stale === true,
+    ageSeconds: toNullableNumber(payload.ageSeconds),
   };
 }
 
@@ -177,13 +197,13 @@ export function fetchMockTradingTrades(token?: string | null, limit = 200) {
 
 export function buyMockTradingToken(
   address: string,
-  notionalUsd: number,
+  notionalSol: number,
   token?: string | null,
   takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null },
 ) {
   const body = {
     address,
-    notionalUsd,
+    notionalSol,
     takeProfitMcapUsd: takeProfit?.targetMcapUsd ?? undefined,
     takeProfitSellPercent: takeProfit?.sellPercent ?? undefined,
   };
@@ -248,10 +268,10 @@ export function resetMockTradingPortfolio(startingCashUsd?: number, token?: stri
   }));
 }
 
-export function addMockTradingCash(amountUsd: number, token?: string | null) {
+export function addMockTradingCash(amountSol: number, token?: string | null) {
   return apiFetch<{ message: string }>('/api/admin/mock-trading/add-cash', {
     method: 'POST',
-    body: JSON.stringify({ amountUsd }),
+    body: JSON.stringify({ amountSol }),
     token,
   });
 }

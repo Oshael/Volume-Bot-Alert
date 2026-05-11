@@ -177,6 +177,14 @@ export interface MockTradingSummaryEntry {
   totalEquityUsd: number;
   totalPnlUsd: number;
   totalPnlPct?: number | null;
+  solUsdPrice?: {
+    provider?: string | null;
+    priceUsd?: number | null;
+    stale?: boolean | null;
+    lastUpdatedAt?: string | null;
+    ageSeconds?: number | null;
+    lastError?: string | null;
+  } | null;
   generatedAt?: string | null;
 }
 

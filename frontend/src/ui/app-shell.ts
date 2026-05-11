@@ -860,6 +860,8 @@ function getHeaderRenderKey(state: AppState) {
     mockTradingSummary?.totalEquityUsd,
     mockTradingSummary?.totalPnlUsd,
     mockTradingSummary?.totalPnlPct,
+    mockTradingSummary?.solUsdPrice?.priceUsd,
+    mockTradingSummary?.solUsdPrice?.stale,
     serializeMockTradingHeaderPositionsForView(state),
   ]);
 }
