@@ -14,7 +14,7 @@ Use this document for:
 
 Use `docs/current-bot-state.md` as the shorter canonical snapshot.
 
-Last reviewed against code and the live deployment model on `2026-05-08` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, current rate limit buckets, and the `/monitor` visible rename to `RADAR`.
+Last reviewed against code and the live deployment model on `2026-05-11` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, mock-trading wallets, current rate limit buckets, and the `/monitor` visible rename to `RADAR`.
 
 ## Current Deployment Topology
 
@@ -954,6 +954,11 @@ Reasons:
   - `requireAdmin`
   - trusted-origin check for mutating requests
 - Current endpoints:
+  - `GET /wallets`
+  - `POST /wallets`
+  - `PATCH /wallets/:walletId`
+  - `POST /wallets/:walletId/default`
+  - `POST /wallets/:walletId/archive`
   - `GET /summary`
   - `GET /positions`
   - `GET /trades`
@@ -965,10 +970,21 @@ Reasons:
   - `POST /reset`
   - `GET /sol-price`
 - Current tables:
+  - `mock_trading_wallets`
   - `mock_trading_accounts`
   - `mock_trading_positions`
   - `mock_trading_trades`
   - `mock_trading_take_profit_orders`
+- Wallet model:
+  - mock trading state is scoped to user-created mock wallets
+  - legacy or existing mock trading rows are backfilled into a default wallet named `Main`
+  - backend calls without `walletId` resolve to the user's default active wallet for compatibility
+  - one wallet owns one account row through `mock_trading_accounts.wallet_id`
+  - open positions are keyed by `wallet_id + token_address`, so the same token can be held separately in multiple wallets
+  - trades and take-profit orders store `wallet_id`, and list/summary/trade endpoints filter by the selected wallet
+  - order cancellation resolves the active/default wallet and rejects orders outside that wallet
+  - archiving a non-default wallet hides it from the active wallet list and cancels its open take-profit orders
+  - the current UI blocks archiving the default wallet and the last visible wallet
 - Background execution:
   - `src/services/mock-trading-take-profit-worker.js`
   - starts with the background worker set
@@ -976,6 +992,8 @@ Reasons:
   - default interval is `3s`
   - default batch limit is `25` open triggered candidates
   - exposed as `mockTradingTakeProfitWorker` in `GET /api/admin/ws-status`
+  - triggered candidates join open orders to open positions by `wallet_id + token_address`
+  - archived wallets are excluded from triggered candidate discovery
 - Execution behavior:
   - buys and sells execute against `token_catalog.last_price` as `priceUsd`
   - execution snapshots `token_catalog.last_mcap` as market-cap reference
@@ -989,23 +1007,28 @@ Reasons:
     - backend/API/DB field names still use `*_usd` / `notionalUsd` for compatibility
   - each executed buy/sell/take-profit trade snapshots the active CMC-backed `mockSolUsdcRate` into `mock_trading_trades.metadata`, so finalized trade rows, closed-play realized PnL, and chart markers keep the SOL reading from execution time even if SOL/USD moves later
   - older trades without a rate snapshot fall back to the original default `88`
-  - default starting mock balance still uses the existing internal account default (`1000`), displayed as `1000 / live SOL/USD` SOL
+  - the auto-created default mock wallet still uses the existing internal account default (`1000`), displayed as `1000 / live SOL/USD` SOL; newly created non-default wallets start with `0` cash until the admin deposits mock SOL
   - open-position value, PnL, and return percentage are calculated from token quantity and `priceUsd`
   - market cap is display/reference context, not the PnL calculation source
 - Frontend behavior:
-  - admin sessions load summary, open positions, and recent trades
+  - admin sessions load the wallet list, active-wallet summary, active-wallet open positions, and active-wallet recent trades
+  - the mock trading header includes an active wallet selector
+  - compact header controls support create, rename, set default, and archive for mock wallets
+  - wallet create/rename/archive currently use native browser `prompt`/`confirm` flows
+  - switching wallet closes wallet-specific overlays and refreshes summary/positions/trades for the selected wallet
   - token rows expose admin-only mock buy/sell controls
   - buy uses a ticket modal with fixed SOL presets and a custom SOL amount
   - sell uses a ticket modal with percent presets and a custom percent
   - sell tickets preview estimated SOL receive, realized PnL, and remaining position for both immediate sells and target-MCAP sell orders
   - the PnL resume modal exposes direct sell buttons for 25%, 50%, and 100%
-  - admin can manually add mock SOL without clearing positions/trades; this still increases both `cash_usd` and `starting_cash_usd` internally so deposits do not inflate total PnL
+  - admin can manually add mock SOL to the active wallet without clearing positions/trades; this still increases both `cash_usd` and `starting_cash_usd` internally so deposits do not inflate total PnL
   - buy/sell ticket modals scroll when their content exceeds the viewport
-  - header cash pill shows current mock SOL, read-only SOL/USD quote status, add, a `Plays` button, and reset; each open position still gets a separate image/ticker/PnL pill
-  - `Plays` opens a recent closed-play summary based on sell executions, realized PnL, win/loss counts, and win rate
-  - reset clears only the authenticated admin user's mock portfolio
+  - header cash pill shows the active wallet selector, current mock SOL, read-only SOL/USD quote status, add, a `Plays` button, and reset; each active-wallet open position still gets a separate image/ticker/PnL pill
+  - buy/sell ticket, `Plays`, and PnL modals show the active wallet name
+  - `Plays` opens an active-wallet closed-play summary based on sell executions, realized PnL, win/loss counts, and win rate
+  - reset clears only the active wallet's mock portfolio
 - Chart-marker behavior:
-  - Manual, Recent, and Old Week compact sparklines receive account-specific buy/sell markers
+  - Manual, Recent, and Old Week compact sparklines receive active-wallet buy/sell markers
   - the expanded sparkline modal receives the same markers
   - marker X position is based on trade `executedAt` within the sparkline time window
   - marker Y position uses trade MCAP when available, otherwise it falls back to the closest sparkline point
@@ -2389,6 +2412,11 @@ Reason for this split:
 - `POST /api/dashboard/alert-events/cursor`
 
 ### Mock Trading
+- `GET /api/admin/mock-trading/wallets`
+- `POST /api/admin/mock-trading/wallets`
+- `PATCH /api/admin/mock-trading/wallets/:walletId`
+- `POST /api/admin/mock-trading/wallets/:walletId/default`
+- `POST /api/admin/mock-trading/wallets/:walletId/archive`
 - `GET /api/admin/mock-trading/summary`
 - `GET /api/admin/mock-trading/positions`
 - `GET /api/admin/mock-trading/trades`
