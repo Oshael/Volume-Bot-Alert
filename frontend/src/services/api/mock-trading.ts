@@ -2,6 +2,7 @@ import { apiFetch } from './base';
 
 export interface MockTradingAccount {
   userId: number;
+  walletId?: number | null;
   startingCashUsd: number;
   cashUsd: number;
   realizedPnlUsd: number;
@@ -11,6 +12,7 @@ export interface MockTradingAccount {
 
 export interface MockTradingPosition {
   userId: number;
+  walletId?: number | null;
   tokenAddress: string;
   quantity: number;
   avgEntryPriceUsd: number;
@@ -37,6 +39,7 @@ export interface MockTradingPosition {
 export interface MockTradingTakeProfitOrder {
   id: number;
   userId: number;
+  walletId?: number | null;
   tokenAddress: string;
   targetMcapUsd: number;
   sellPercent: number;
@@ -51,6 +54,7 @@ export interface MockTradingTakeProfitOrder {
 export interface MockTradingTrade {
   id: number;
   userId: number;
+  walletId?: number | null;
   tokenAddress: string;
   symbol?: string | null;
   name?: string | null;
@@ -81,6 +85,7 @@ export interface MockTradingSolUsdPrice {
 
 export interface MockTradingSummary {
   account: MockTradingAccount;
+  wallet?: MockTradingWallet | null;
   openPositionCount: number;
   openPositionValueUsd: number;
   totalEquityUsd: number;
@@ -88,6 +93,17 @@ export interface MockTradingSummary {
   totalPnlPct?: number | null;
   solUsdPrice?: MockTradingSolUsdPrice | null;
   generatedAt?: string | null;
+}
+
+export interface MockTradingWallet {
+  id: number;
+  userId: number;
+  name: string;
+  sortOrder: number;
+  isDefault: boolean;
+  archivedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 function toNumber(value: unknown, fallback = 0) {
@@ -104,6 +120,7 @@ function normalizePosition(item: MockTradingPosition): MockTradingPosition {
   return {
     ...item,
     userId: toNumber(item.userId),
+    walletId: toNullableNumber(item.walletId),
     quantity: toNumber(item.quantity),
     avgEntryPriceUsd: toNumber(item.avgEntryPriceUsd),
     avgEntryMcapUsd: toNullableNumber(item.avgEntryMcapUsd),
@@ -127,6 +144,7 @@ function normalizeTakeProfitOrder(item: MockTradingTakeProfitOrder): MockTrading
     ...item,
     id: toNumber(item.id),
     userId: toNumber(item.userId),
+    walletId: toNullableNumber(item.walletId),
     targetMcapUsd: toNumber(item.targetMcapUsd),
     sellPercent: toNumber(item.sellPercent, 100),
     triggeredTradeId: toNullableNumber(item.triggeredTradeId),
@@ -139,10 +157,12 @@ function normalizeSummary(payload: MockTradingSummary): MockTradingSummary {
     account: {
       ...payload.account,
       userId: toNumber(payload.account?.userId),
+      walletId: toNullableNumber(payload.account?.walletId),
       startingCashUsd: toNumber(payload.account?.startingCashUsd),
       cashUsd: toNumber(payload.account?.cashUsd),
       realizedPnlUsd: toNumber(payload.account?.realizedPnlUsd),
     },
+    wallet: payload.wallet ? normalizeWallet(payload.wallet) : null,
     openPositionCount: toNumber(payload.openPositionCount),
     openPositionValueUsd: toNumber(payload.openPositionValueUsd),
     totalEquityUsd: toNumber(payload.totalEquityUsd),
@@ -166,6 +186,7 @@ function normalizeTrade(item: MockTradingTrade): MockTradingTrade {
     ...item,
     id: toNumber(item.id),
     userId: toNumber(item.userId),
+    walletId: toNullableNumber(item.walletId),
     quantity: toNumber(item.quantity),
     priceUsd: toNumber(item.priceUsd),
     marketCapUsd: toNullableNumber(item.marketCapUsd),
@@ -180,18 +201,82 @@ function normalizeTrade(item: MockTradingTrade): MockTradingTrade {
   };
 }
 
-export function fetchMockTradingSummary(token?: string | null) {
-  return apiFetch<MockTradingSummary>('/api/admin/mock-trading/summary', { token }).then(normalizeSummary);
+function normalizeWallet(item: MockTradingWallet): MockTradingWallet {
+  return {
+    ...item,
+    id: toNumber(item.id),
+    userId: toNumber(item.userId),
+    name: String(item.name || 'Main'),
+    sortOrder: toNumber(item.sortOrder),
+    isDefault: item.isDefault === true,
+  };
 }
 
-export function fetchMockTradingPositions(token?: string | null) {
-  return apiFetch<{ positions: MockTradingPosition[] }>('/api/admin/mock-trading/positions', { token })
+function buildWalletQuery(walletId?: number | null) {
+  const id = toNullableNumber(walletId);
+  return id == null ? '' : `walletId=${encodeURIComponent(String(id))}`;
+}
+
+function appendQuery(path: string, queryParts: string[]) {
+  const query = queryParts.filter(Boolean).join('&');
+  return query ? `${path}?${query}` : path;
+}
+
+function withWalletBody<T extends Record<string, unknown>>(body: T, walletId?: number | null) {
+  const id = toNullableNumber(walletId);
+  return id == null ? body : { ...body, walletId: id };
+}
+
+export function fetchMockTradingWallets(token?: string | null) {
+  return apiFetch<{ wallets: MockTradingWallet[] }>('/api/admin/mock-trading/wallets', { token })
+    .then((payload) => (Array.isArray(payload.wallets) ? payload.wallets.map(normalizeWallet) : []));
+}
+
+export function createMockTradingWallet(name: string, token?: string | null) {
+  return apiFetch<{ message: string; wallet: MockTradingWallet }>('/api/admin/mock-trading/wallets', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+    token,
+  }).then((payload) => ({ ...payload, wallet: normalizeWallet(payload.wallet) }));
+}
+
+export function updateMockTradingWallet(walletId: number, name: string, token?: string | null) {
+  return apiFetch<{ message: string; wallet: MockTradingWallet }>(`/api/admin/mock-trading/wallets/${encodeURIComponent(String(walletId))}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+    token,
+  }).then((payload) => ({ ...payload, wallet: normalizeWallet(payload.wallet) }));
+}
+
+export function archiveMockTradingWallet(walletId: number, token?: string | null) {
+  return apiFetch<{ message: string; wallet: MockTradingWallet }>(`/api/admin/mock-trading/wallets/${encodeURIComponent(String(walletId))}/archive`, {
+    method: 'POST',
+    token,
+  }).then((payload) => ({ ...payload, wallet: normalizeWallet(payload.wallet) }));
+}
+
+export function setDefaultMockTradingWallet(walletId: number, token?: string | null) {
+  return apiFetch<{ message: string; wallet: MockTradingWallet }>(`/api/admin/mock-trading/wallets/${encodeURIComponent(String(walletId))}/default`, {
+    method: 'POST',
+    token,
+  }).then((payload) => ({ ...payload, wallet: normalizeWallet(payload.wallet) }));
+}
+
+export function fetchMockTradingSummary(token?: string | null, walletId?: number | null) {
+  return apiFetch<MockTradingSummary>(appendQuery('/api/admin/mock-trading/summary', [buildWalletQuery(walletId)]), { token }).then(normalizeSummary);
+}
+
+export function fetchMockTradingPositions(token?: string | null, walletId?: number | null) {
+  return apiFetch<{ positions: MockTradingPosition[] }>(appendQuery('/api/admin/mock-trading/positions', [buildWalletQuery(walletId)]), { token })
     .then((payload) => (Array.isArray(payload.positions) ? payload.positions.map(normalizePosition) : []));
 }
 
-export function fetchMockTradingTrades(token?: string | null, limit = 200) {
+export function fetchMockTradingTrades(token?: string | null, limit = 200, walletId?: number | null) {
   const safeLimit = Math.max(1, Math.min(Math.round(limit), 200));
-  return apiFetch<{ trades: MockTradingTrade[] }>(`/api/admin/mock-trading/trades?limit=${safeLimit}`, { token })
+  return apiFetch<{ trades: MockTradingTrade[] }>(
+    appendQuery('/api/admin/mock-trading/trades', [`limit=${safeLimit}`, buildWalletQuery(walletId)]),
+    { token }
+  )
     .then((payload) => (Array.isArray(payload.trades) ? payload.trades.map(normalizeTrade) : []));
 }
 
@@ -200,13 +285,14 @@ export function buyMockTradingToken(
   notionalSol: number,
   token?: string | null,
   takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null },
+  walletId?: number | null,
 ) {
-  const body = {
+  const body = withWalletBody({
     address,
     notionalSol,
     takeProfitMcapUsd: takeProfit?.targetMcapUsd ?? undefined,
     takeProfitSellPercent: takeProfit?.sellPercent ?? undefined,
-  };
+  }, walletId);
   return apiFetch<{ message: string; position: MockTradingPosition }>('/api/admin/mock-trading/buy', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -214,10 +300,10 @@ export function buyMockTradingToken(
   }).then((payload) => ({ ...payload, position: normalizePosition(payload.position) }));
 }
 
-export function sellMockTradingToken(address: string, percent: number, token?: string | null) {
+export function sellMockTradingToken(address: string, percent: number, token?: string | null, walletId?: number | null) {
   return apiFetch<{ message: string; position: MockTradingPosition | null }>('/api/admin/mock-trading/sell', {
     method: 'POST',
-    body: JSON.stringify({ address, percent }),
+    body: JSON.stringify(withWalletBody({ address, percent }, walletId)),
     token,
   }).then((payload) => ({ ...payload, position: payload.position ? normalizePosition(payload.position) : null }));
 }
@@ -227,14 +313,15 @@ export function createMockTradingTakeProfitOrder(
   targetMcapUsd: number,
   sellPercent: number,
   token?: string | null,
+  walletId?: number | null,
 ) {
   return apiFetch<{ message: string; position: MockTradingPosition; order: MockTradingTakeProfitOrder }>('/api/admin/mock-trading/take-profit-orders', {
     method: 'POST',
-    body: JSON.stringify({
+    body: JSON.stringify(withWalletBody({
       address,
       takeProfitMcapUsd: targetMcapUsd,
       takeProfitSellPercent: sellPercent,
-    }),
+    }, walletId)),
     token,
   }).then((payload) => ({
     ...payload,
@@ -243,15 +330,16 @@ export function createMockTradingTakeProfitOrder(
   }));
 }
 
-export function cancelMockTradingTakeProfitOrder(orderId: number, token?: string | null) {
+export function cancelMockTradingTakeProfitOrder(orderId: number, token?: string | null, walletId?: number | null) {
   return apiFetch<{ message: string; order: MockTradingTakeProfitOrder }>(`/api/admin/mock-trading/take-profit-orders/${orderId}/cancel`, {
     method: 'POST',
+    body: JSON.stringify(withWalletBody({}, walletId)),
     token,
   }).then((payload) => ({ ...payload, order: normalizeTakeProfitOrder(payload.order) }));
 }
 
-export function resetMockTradingPortfolio(startingCashUsd?: number, token?: string | null) {
-  const body = startingCashUsd == null ? {} : { startingCashUsd };
+export function resetMockTradingPortfolio(startingCashUsd?: number, token?: string | null, walletId?: number | null) {
+  const body = withWalletBody(startingCashUsd == null ? {} : { startingCashUsd }, walletId);
   return apiFetch<{ message: string; account: MockTradingAccount }>('/api/admin/mock-trading/reset', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -261,6 +349,7 @@ export function resetMockTradingPortfolio(startingCashUsd?: number, token?: stri
     account: {
       ...payload.account,
       userId: toNumber(payload.account?.userId),
+      walletId: toNullableNumber(payload.account?.walletId),
       startingCashUsd: toNumber(payload.account?.startingCashUsd),
       cashUsd: toNumber(payload.account?.cashUsd),
       realizedPnlUsd: toNumber(payload.account?.realizedPnlUsd),
@@ -268,10 +357,10 @@ export function resetMockTradingPortfolio(startingCashUsd?: number, token?: stri
   }));
 }
 
-export function addMockTradingCash(amountSol: number, token?: string | null) {
+export function addMockTradingCash(amountSol: number, token?: string | null, walletId?: number | null) {
   return apiFetch<{ message: string }>('/api/admin/mock-trading/add-cash', {
     method: 'POST',
-    body: JSON.stringify({ amountSol }),
+    body: JSON.stringify(withWalletBody({ amountSol }, walletId)),
     token,
   });
 }

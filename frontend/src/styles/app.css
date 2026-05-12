@@ -1297,6 +1297,171 @@ a {
   flex: 0 0 auto;
 }
 
+.workspace-mock-wallet {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-mock-wallet-select-wrap {
+  flex: 0 0 auto;
+}
+
+.workspace-mock-wallet-select {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 6px;
+  box-sizing: border-box !important;
+  width: 112px !important;
+  max-width: 112px;
+  min-width: 74px;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 8px !important;
+  border: 1px solid rgba(147, 255, 197, 0.28);
+  border-radius: 8px;
+  background: rgba(6, 13, 22, 0.72);
+  color: rgba(244, 248, 255, 0.96);
+  font: inherit !important;
+  font-size: 0.72rem !important;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1 !important;
+  text-transform: none !important;
+  cursor: pointer;
+}
+
+.workspace-mock-wallet-select > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-mock-wallet-caret {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  line-height: 1;
+  opacity: 0.86;
+}
+
+.workspace-mock-wallet-menu {
+  min-width: 112px;
+  max-width: 164px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.workspace-mock-wallet-select-wrap:focus-within .workspace-mock-wallet-menu {
+  display: none !important;
+}
+
+.workspace-mock-wallet-select-wrap.open .workspace-mock-wallet-menu {
+  display: flex !important;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-mock-wallet-option {
+  display: flex !important;
+  align-items: center;
+  width: 100%;
+  min-height: 24px !important;
+  padding: 4px 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px !important;
+  background: transparent;
+  color: rgba(230, 238, 248, 0.86);
+  font-family: 'Inter', 'Saira', system-ui, sans-serif !important;
+  font-size: 0.7rem !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  text-align: left;
+  text-transform: none !important;
+  cursor: pointer;
+}
+
+.workspace-mock-wallet-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-mock-wallet-option.active {
+  border-color: rgba(88, 159, 255, 0.42);
+  background: rgba(88, 159, 255, 0.1);
+  color: rgba(244, 248, 255, 0.96);
+}
+
+.workspace-mock-wallet-option:hover:not(:disabled) {
+  border-color: rgba(88, 159, 255, 0.5);
+  background: rgba(88, 159, 255, 0.12);
+}
+
+.workspace-mock-wallet-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  width: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(230, 238, 248, 0.92);
+  font-family: 'Inter', 'Saira', system-ui, sans-serif !important;
+  font-size: 0.9rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+  line-height: 1 !important;
+  text-transform: none !important;
+  cursor: pointer;
+  box-shadow: none;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.workspace-mock-wallet-btn span {
+  display: block;
+  line-height: 1;
+  transform: translateY(-0.5px);
+}
+
+.workspace-mock-wallet-btn[data-action="rename-mock-trading-wallet"] span {
+  font-size: 0.74rem;
+}
+
+.workspace-mock-wallet-btn[data-action="default-mock-trading-wallet"] span {
+  font-size: 0.78rem;
+}
+
+.workspace-mock-wallet-btn:hover:not(:disabled),
+.workspace-mock-wallet-select:hover:not(:disabled),
+.workspace-mock-wallet-select:focus-visible {
+  border-color: rgba(88, 159, 255, 0.5);
+  background: rgba(88, 159, 255, 0.08);
+  outline: none;
+}
+
+.workspace-mock-wallet-btn.danger:hover:not(:disabled) {
+  border-color: rgba(255, 133, 156, 0.48);
+  color: rgba(255, 174, 190, 0.96);
+}
+
+.workspace-mock-wallet-btn:disabled,
+.workspace-mock-wallet-select:disabled,
+.workspace-mock-wallet-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .workspace-mock-trading-position {
   flex: 0 0 auto;
   max-width: min(290px, 100%);

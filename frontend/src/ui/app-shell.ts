@@ -862,8 +862,18 @@ function getHeaderRenderKey(state: AppState) {
     mockTradingSummary?.totalPnlPct,
     mockTradingSummary?.solUsdPrice?.priceUsd,
     mockTradingSummary?.solUsdPrice?.stale,
+    state.ui.activeMockTradingWalletId,
+    serializeMockTradingWalletsForView(state),
     serializeMockTradingHeaderPositionsForView(state),
   ]);
+}
+
+function serializeMockTradingWalletsForView(state: AppState) {
+  return state.data.mockTradingWallets.map((wallet) => serializePrimitiveList([
+    wallet.id,
+    wallet.name,
+    wallet.isDefault,
+  ])).join('~');
 }
 
 function serializeMockTradingHeaderPositionsForView(state: AppState) {
@@ -1090,6 +1100,8 @@ function getMockTradingHistoryOverlaySnapshot(state: AppState) {
     ]));
   const summary = getMockTradingSummaryView(state);
   return serializePrimitiveList([
+    state.ui.activeMockTradingWalletId,
+    serializeMockTradingWalletsForView(state),
     summary?.account.cashUsd,
     summary?.totalEquityUsd,
     summary?.totalPnlUsd,
@@ -1106,6 +1118,8 @@ function getMockTradingTicketOverlaySnapshot(state: AppState) {
   const token = getTrackedToken(state, ticket.address);
   return {
     ...ticket,
+    activeWalletId: state.ui.activeMockTradingWalletId,
+    wallets: serializeMockTradingWalletsForView(state),
     position: serializeMockTradingForView(state, ticket.address),
     token: token ? serializeTrackedTokenForView(token) : ticket.address,
   };
@@ -1122,6 +1136,8 @@ function getMockTradingPnlOverlaySnapshot(state: AppState) {
   const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
   return {
     address,
+    activeWalletId: state.ui.activeMockTradingWalletId,
+    wallets: serializeMockTradingWalletsForView(state),
     position: serializeMockTradingForView(state, address),
     tradeIds: trades.map((trade) => trade.id).join(','),
     sparklinePoints: series.length,

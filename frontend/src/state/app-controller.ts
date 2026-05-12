@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -41,7 +41,7 @@ import {
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
-import { addMockTradingCash, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken } from '../services/api/mock-trading';
+import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -340,6 +340,11 @@ export interface AppController {
   adminBlockToken(address: string, label?: string | null): Promise<void>;
   mockBuyToken(address: string): Promise<void>;
   mockSellToken(address: string, percent: number): Promise<void>;
+  setActiveMockTradingWallet(walletId: number): Promise<void>;
+  createMockTradingWallet(name: string): Promise<void>;
+  updateMockTradingWallet(walletId: number, name: string): Promise<void>;
+  archiveMockTradingWallet(walletId: number): Promise<void>;
+  setDefaultMockTradingWallet(walletId: number): Promise<void>;
   openMockTradingHistory(): void;
   closeMockTradingHistory(): void;
   openMockTradingPnlResume(address: string): void;
@@ -1616,6 +1621,43 @@ export function createAppController(): AppController {
     state.ui.notice = notice;
   }
 
+  function resolveMockTradingActiveWalletId(wallets: MockTradingWalletEntry[]) {
+    if (wallets.length === 0) {
+      return null;
+    }
+    const currentId = state.ui.activeMockTradingWalletId;
+    if (currentId != null && wallets.some((wallet) => wallet.id === currentId)) {
+      return currentId;
+    }
+    return wallets.find((wallet) => wallet.isDefault)?.id ?? wallets[0]?.id ?? null;
+  }
+
+  function applyMockTradingWallets(wallets: MockTradingWalletEntry[]) {
+    state.data.mockTradingWallets = wallets;
+    state.ui.activeMockTradingWalletId = resolveMockTradingActiveWalletId(wallets);
+  }
+
+  function clearMockTradingState() {
+    state.data.mockTradingWallets = [];
+    state.data.mockTradingSummary = null;
+    state.data.mockTradingPositionsByAddress = {};
+    state.data.mockTradingTradesByAddress = {};
+    state.ui.activeMockTradingWalletId = null;
+    state.ui.mockTradingTicket = null;
+    state.ui.mockTradingHistoryOpen = false;
+    state.ui.mockTradingPnlAddress = null;
+  }
+
+  function getMockTradingAdminToken() {
+    const token = state.session.token;
+    if (!token || state.session.role !== 'admin') {
+      setError('Admin access required');
+      emit();
+      return null;
+    }
+    return token;
+  }
+
   function applyMockTradingPositions(positions: MockTradingPositionEntry[]) {
     state.data.mockTradingPositionsByAddress = Object.fromEntries(
       positions.map((position) => [position.tokenAddress, position])
@@ -1634,19 +1676,23 @@ export function createAppController(): AppController {
   async function refreshMockTradingState(options?: { emit?: boolean }) {
     const token = state.session.token;
     if (!token || state.session.role !== 'admin') {
-      state.data.mockTradingSummary = null;
-      state.data.mockTradingPositionsByAddress = {};
-      state.data.mockTradingTradesByAddress = {};
+      clearMockTradingState();
       return;
     }
 
     try {
+      const wallets = await fetchMockTradingWallets(token);
+      applyMockTradingWallets(wallets);
+      const walletId = state.ui.activeMockTradingWalletId;
       const [summary, positions, trades] = await Promise.all([
-        fetchMockTradingSummary(token),
-        fetchMockTradingPositions(token),
-        fetchMockTradingTrades(token),
+        fetchMockTradingSummary(token, walletId),
+        fetchMockTradingPositions(token, walletId),
+        fetchMockTradingTrades(token, 200, walletId),
       ]);
       state.data.mockTradingSummary = summary;
+      if (summary.wallet?.id != null) {
+        state.ui.activeMockTradingWalletId = summary.wallet.id;
+      }
       applyMockTradingPositions(positions);
       applyMockTradingTrades(trades);
       if (options?.emit) {
@@ -5910,6 +5956,7 @@ export function createAppController(): AppController {
       meteoraByAddress: {},
       sparklineByAddress: {},
       alertSparklineById: {},
+      mockTradingWallets: [],
       mockTradingSummary: null,
       mockTradingPositionsByAddress: {},
       mockTradingTradesByAddress: {},
@@ -5939,6 +5986,7 @@ export function createAppController(): AppController {
     state.ui.recentSearchPending = false;
     state.ui.oldWeekSearchPending = false;
     state.ui.expandedSparklineAddress = null;
+    state.ui.activeMockTradingWalletId = null;
     state.ui.mockTradingTicket = null;
     state.ui.mockTradingHistoryOpen = false;
     state.ui.mockTradingPnlAddress = null;
@@ -8598,6 +8646,148 @@ export function createAppController(): AppController {
       setError(null);
       emit('overlay');
     },
+    async setActiveMockTradingWallet(walletId: number) {
+      if (!getMockTradingAdminToken()) {
+        return;
+      }
+      if (!Number.isInteger(walletId) || !state.data.mockTradingWallets.some((wallet) => wallet.id === walletId)) {
+        setError('Valid mock trading wallet is required');
+        emit('header', 'overlay');
+        return;
+      }
+      if (state.ui.activeMockTradingWalletId === walletId) {
+        return;
+      }
+
+      state.ui.activeMockTradingWalletId = walletId;
+      if (state.data.mockTradingSummary) {
+        state.data.mockTradingSummary = {
+          ...state.data.mockTradingSummary,
+          wallet: state.data.mockTradingWallets.find((wallet) => wallet.id === walletId) || state.data.mockTradingSummary.wallet || null,
+        };
+      }
+      state.data.mockTradingPositionsByAddress = {};
+      state.data.mockTradingTradesByAddress = {};
+      state.ui.mockTradingTicket = null;
+      state.ui.mockTradingHistoryOpen = false;
+      state.ui.mockTradingPnlAddress = null;
+      setError(null);
+      emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      await refreshMockTradingState({ emit: true });
+      emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+    },
+    async createMockTradingWallet(name: string) {
+      const token = getMockTradingAdminToken();
+      if (!token || state.ui.busy) {
+        return;
+      }
+      const safeName = String(name || '').trim();
+      if (!safeName) {
+        setError('Wallet name is required');
+        emit('header', 'overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Creating mock wallet...');
+      emit('header', 'overlay');
+      try {
+        const result = await createMockTradingWalletRequest(safeName, token);
+        state.ui.activeMockTradingWalletId = result.wallet.id;
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to create mock trading wallet');
+      } finally {
+        setBusy(false);
+        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      }
+    },
+    async updateMockTradingWallet(walletId: number, name: string) {
+      const token = getMockTradingAdminToken();
+      if (!token || state.ui.busy) {
+        return;
+      }
+      const safeName = String(name || '').trim();
+      if (!Number.isInteger(walletId) || walletId <= 0 || !safeName) {
+        setError('Valid wallet id and name are required');
+        emit('header', 'overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Updating mock wallet...');
+      emit('header', 'overlay');
+      try {
+        const result = await updateMockTradingWalletRequest(walletId, safeName, token);
+        state.data.mockTradingWallets = state.data.mockTradingWallets.map((wallet) => (
+          wallet.id === result.wallet.id ? result.wallet : wallet
+        ));
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to update mock trading wallet');
+      } finally {
+        setBusy(false);
+        emit('header', 'overlay');
+      }
+    },
+    async archiveMockTradingWallet(walletId: number) {
+      const token = getMockTradingAdminToken();
+      if (!token || state.ui.busy) {
+        return;
+      }
+      if (!Number.isInteger(walletId) || walletId <= 0) {
+        setError('Valid wallet id is required');
+        emit('header', 'overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Archiving mock wallet...');
+      emit('header', 'overlay');
+      try {
+        const result = await archiveMockTradingWalletRequest(walletId, token);
+        if (state.ui.activeMockTradingWalletId === result.wallet.id) {
+          state.ui.activeMockTradingWalletId = null;
+        }
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to archive mock trading wallet');
+      } finally {
+        setBusy(false);
+        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      }
+    },
+    async setDefaultMockTradingWallet(walletId: number) {
+      const token = getMockTradingAdminToken();
+      if (!token || state.ui.busy) {
+        return;
+      }
+      if (!Number.isInteger(walletId) || walletId <= 0) {
+        setError('Valid wallet id is required');
+        emit('header', 'overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Updating default mock wallet...');
+      emit('header', 'overlay');
+      try {
+        const result = await setDefaultMockTradingWalletRequest(walletId, token);
+        await refreshMockTradingState();
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to update default mock trading wallet');
+      } finally {
+        setBusy(false);
+        emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
+      }
+    },
     openMockTradingHistory() {
       if (state.session.role !== 'admin') {
         setError('Admin access required');
@@ -8668,7 +8858,7 @@ export function createAppController(): AppController {
       setNotice('Executing mock buy...');
       emit();
       try {
-        const result = await buyMockTradingToken(address, notionalSol, token, takeProfit);
+        const result = await buyMockTradingToken(address, notionalSol, token, takeProfit, state.ui.activeMockTradingWalletId);
         if (result.position) {
           state.data.mockTradingPositionsByAddress[address] = result.position;
         }
@@ -8703,7 +8893,7 @@ export function createAppController(): AppController {
       setNotice('Executing mock sell...');
       emit();
       try {
-        const result = await sellMockTradingToken(address, percent, token);
+        const result = await sellMockTradingToken(address, percent, token, state.ui.activeMockTradingWalletId);
         if (result.position) {
           state.data.mockTradingPositionsByAddress[address] = result.position;
         } else {
@@ -8748,7 +8938,7 @@ export function createAppController(): AppController {
       setNotice('Creating mock sell order...');
       emit('overlay');
       try {
-        const result = await createMockTradingTakeProfitOrder(address, targetMcapUsd, sellPercent, token);
+        const result = await createMockTradingTakeProfitOrder(address, targetMcapUsd, sellPercent, token, state.ui.activeMockTradingWalletId);
         state.data.mockTradingPositionsByAddress[address] = result.position;
         state.ui.mockTradingTicket = null;
         setNotice(result.message);
@@ -8778,7 +8968,7 @@ export function createAppController(): AppController {
       setNotice('Cancelling mock sell order...');
       emit('overlay');
       try {
-        const result = await cancelMockTradingTakeProfitOrderRequest(orderId, token);
+        const result = await cancelMockTradingTakeProfitOrderRequest(orderId, token, state.ui.activeMockTradingWalletId);
         await refreshMockTradingState();
         setNotice(result.message);
       } catch (error) {
@@ -8818,7 +9008,7 @@ export function createAppController(): AppController {
       setNotice('Adding mock SOL...');
       emit('header');
       try {
-        const result = await addMockTradingCash(amountSol, token);
+        const result = await addMockTradingCash(amountSol, token, state.ui.activeMockTradingWalletId);
         await refreshMockTradingState();
         setNotice(result.message);
       } catch (error) {
@@ -8844,7 +9034,7 @@ export function createAppController(): AppController {
       setNotice('Resetting mock portfolio...');
       emit('header');
       try {
-        const result = await resetMockTradingPortfolioRequest(undefined, token);
+        const result = await resetMockTradingPortfolioRequest(undefined, token, state.ui.activeMockTradingWalletId);
         state.data.mockTradingPositionsByAddress = {};
         state.data.mockTradingTradesByAddress = {};
         await refreshMockTradingState();

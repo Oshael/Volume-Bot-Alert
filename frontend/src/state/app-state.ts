@@ -168,10 +168,12 @@ export interface TokenSparklineEntry {
 export interface MockTradingSummaryEntry {
   account: {
     userId: number;
+    walletId?: number | null;
     startingCashUsd: number;
     cashUsd: number;
     realizedPnlUsd: number;
   };
+  wallet?: MockTradingWalletEntry | null;
   openPositionCount: number;
   openPositionValueUsd: number;
   totalEquityUsd: number;
@@ -188,8 +190,20 @@ export interface MockTradingSummaryEntry {
   generatedAt?: string | null;
 }
 
+export interface MockTradingWalletEntry {
+  id: number;
+  userId: number;
+  name: string;
+  sortOrder: number;
+  isDefault: boolean;
+  archivedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface MockTradingPositionEntry {
   userId: number;
+  walletId?: number | null;
   tokenAddress: string;
   quantity: number;
   avgEntryPriceUsd: number;
@@ -214,6 +228,7 @@ export interface MockTradingPositionEntry {
 export interface MockTradingTakeProfitOrderEntry {
   id: number;
   userId: number;
+  walletId?: number | null;
   tokenAddress: string;
   targetMcapUsd: number;
   sellPercent: number;
@@ -228,6 +243,7 @@ export interface MockTradingTakeProfitOrderEntry {
 export interface MockTradingTradeEntry {
   id: number;
   userId: number;
+  walletId?: number | null;
   tokenAddress: string;
   symbol?: string | null;
   name?: string | null;
@@ -526,6 +542,7 @@ export interface AppState {
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
     alertSparklineById: Record<string, TokenSparklineEntry>;
+    mockTradingWallets: MockTradingWalletEntry[];
     mockTradingSummary: MockTradingSummaryEntry | null;
     mockTradingPositionsByAddress: Record<string, MockTradingPositionEntry>;
     mockTradingTradesByAddress: Record<string, MockTradingTradeEntry[]>;
@@ -555,6 +572,7 @@ export interface AppState {
     recentSearchPending: boolean;
     oldWeekSearchPending: boolean;
     expandedSparklineAddress: string | null;
+    activeMockTradingWalletId: number | null;
     mockTradingTicket: MockTradingTicketState | null;
     mockTradingHistoryOpen: boolean;
     mockTradingPnlAddress: string | null;
@@ -682,6 +700,7 @@ export function createAppState(): AppState {
       meteoraByAddress: {},
       sparklineByAddress: {},
       alertSparklineById: {},
+      mockTradingWallets: [],
       mockTradingSummary: null,
       mockTradingPositionsByAddress: {},
       mockTradingTradesByAddress: {},
@@ -711,6 +730,7 @@ export function createAppState(): AppState {
       recentSearchPending: false,
       oldWeekSearchPending: false,
       expandedSparklineAddress: null,
+      activeMockTradingWalletId: null,
       mockTradingTicket: null,
       mockTradingHistoryOpen: false,
       mockTradingPnlAddress: null,

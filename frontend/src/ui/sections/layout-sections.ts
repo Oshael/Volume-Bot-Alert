@@ -869,6 +869,7 @@ function renderMockTradingHeaderSummary(state: AppState) {
     <div class="workspace-mock-trading-cluster">
       <div class="workspace-mock-trading-summary workspace-mock-trading-cash" data-tone="${pnlTone}">
         <span class="workspace-mock-trading-label">MOCK</span>
+        ${renderMockTradingWalletControls(state)}
         ${renderMockSolPriceStatus(state)}
         <strong>Cash ${escapeHtml(fmtMockUsdForState(state, summary.account.cashUsd))}</strong>
         <button type="button" class="workspace-mock-trading-reset workspace-mock-trading-add" data-action="add-mock-trading-cash" ${state.ui.busy ? 'disabled' : ''} title="Add mock SOL">Add</button>
@@ -877,6 +878,64 @@ function renderMockTradingHeaderSummary(state: AppState) {
       </div>
       ${renderMockTradingHeaderPositions(state)}
     </div>
+  `;
+}
+
+function getActiveMockTradingWallet(state: AppState) {
+  const activeId = state.ui.activeMockTradingWalletId ?? state.data.mockTradingSummary?.wallet?.id ?? null;
+  return state.data.mockTradingWallets.find((wallet) => wallet.id === activeId)
+    || state.data.mockTradingSummary?.wallet
+    || state.data.mockTradingWallets.find((wallet) => wallet.isDefault)
+    || state.data.mockTradingWallets[0]
+    || null;
+}
+
+function getActiveMockTradingWalletName(state: AppState) {
+  return getActiveMockTradingWallet(state)?.name || 'Main';
+}
+
+function renderMockTradingWalletLabel(wallet: AppState['data']['mockTradingWallets'][number] | null) {
+  return `${escapeHtml(wallet?.name || 'Main')}${wallet?.isDefault ? ' *' : ''}`;
+}
+
+function renderMockTradingWalletOption(
+  wallet: AppState['data']['mockTradingWallets'][number],
+  activeId: number | null,
+  busy: boolean,
+) {
+  return `
+    <button type="button" class="workspace-mock-wallet-option ${wallet.id === activeId ? 'active' : ''}" data-action="select-mock-trading-wallet" data-wallet-id="${wallet.id}" ${busy ? 'disabled' : ''}>
+      <span>${renderMockTradingWalletLabel(wallet)}</span>
+    </button>
+  `;
+}
+
+function renderMockTradingWalletControls(state: AppState) {
+  const wallets = state.data.mockTradingWallets;
+  const activeWallet = getActiveMockTradingWallet(state);
+  if (wallets.length === 0 && !activeWallet) {
+    return '';
+  }
+
+  const activeId = activeWallet?.id ?? null;
+  const defaultDisabled = !activeWallet || activeWallet.isDefault || state.ui.busy;
+  const archiveDisabled = !activeWallet || activeWallet.isDefault || wallets.length <= 1 || state.ui.busy;
+  return `
+    <span class="workspace-mock-wallet">
+      <span class="sort-menu-wrap workspace-mock-wallet-select-wrap" data-sort-wrap>
+        <button type="button" class="workspace-mock-wallet-select" data-sort-toggle="mock-wallet" ${state.ui.busy ? 'disabled' : ''} aria-label="Mock trading wallet">
+          <span>${renderMockTradingWalletLabel(activeWallet)}</span>
+          <span class="workspace-mock-wallet-caret">⌄</span>
+        </button>
+        <span class="sort-menu-dropdown workspace-mock-wallet-menu">
+          ${wallets.map((wallet) => renderMockTradingWalletOption(wallet, activeId, state.ui.busy)).join('')}
+        </span>
+      </span>
+      <button type="button" class="workspace-mock-wallet-btn" data-action="create-mock-trading-wallet" ${state.ui.busy ? 'disabled' : ''} title="Create mock wallet" aria-label="Create mock wallet"><span>+</span></button>
+      <button type="button" class="workspace-mock-wallet-btn" data-action="rename-mock-trading-wallet" ${!activeWallet || state.ui.busy ? 'disabled' : ''} title="Rename mock wallet" aria-label="Rename mock wallet"><span>✎</span></button>
+      <button type="button" class="workspace-mock-wallet-btn" data-action="default-mock-trading-wallet" ${defaultDisabled ? 'disabled' : ''} title="Set as default mock wallet" aria-label="Set as default mock wallet"><span>★</span></button>
+      <button type="button" class="workspace-mock-wallet-btn danger" data-action="archive-mock-trading-wallet" ${archiveDisabled ? 'disabled' : ''} title="Archive mock wallet" aria-label="Archive mock wallet"><span>×</span></button>
+    </span>
   `;
 }
 
@@ -1054,6 +1113,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   section.querySelector<HTMLButtonElement>('[data-action="open-mock-trading-history"]')?.addEventListener('click', () => {
     controller.openMockTradingHistory();
   });
+  bindMockTradingWalletHeaderControls(section, controller, state);
   section.querySelectorAll<HTMLElement>('.workspace-mock-trading-position[data-action="open-mock-trading-pnl"]').forEach((badge) => {
     const open = (event: Event) => {
       const target = event.target as HTMLElement | null;
@@ -1239,6 +1299,58 @@ function bindProfileModalCloseActions(section: ParentNode, controller: AppContro
   });
 }
 
+function bindMockTradingWalletHeaderControls(section: ParentNode, controller: AppController, state: AppState) {
+  section.querySelectorAll<HTMLButtonElement>('[data-action="select-mock-trading-wallet"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const walletId = Number(button.dataset.walletId || '0');
+      button.closest<HTMLElement>('[data-sort-wrap]')?.classList.remove('open');
+      void controller.setActiveMockTradingWallet(walletId);
+    });
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="create-mock-trading-wallet"]')?.addEventListener('click', () => {
+    const name = promptMockTradingWalletName('New mock wallet name');
+    if (name) {
+      void controller.createMockTradingWallet(name);
+    }
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="rename-mock-trading-wallet"]')?.addEventListener('click', () => {
+    const wallet = getActiveMockTradingWallet(state);
+    if (!wallet) {
+      return;
+    }
+    const name = promptMockTradingWalletName('Rename mock wallet', wallet.name);
+    if (name && name !== wallet.name) {
+      void controller.updateMockTradingWallet(wallet.id, name);
+    }
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="default-mock-trading-wallet"]')?.addEventListener('click', () => {
+    const wallet = getActiveMockTradingWallet(state);
+    if (wallet) {
+      void controller.setDefaultMockTradingWallet(wallet.id);
+    }
+  });
+
+  section.querySelector<HTMLButtonElement>('[data-action="archive-mock-trading-wallet"]')?.addEventListener('click', () => {
+    const wallet = getActiveMockTradingWallet(state);
+    if (!wallet || (typeof window !== 'undefined' && !window.confirm(`Archive mock wallet "${wallet.name}"?`))) {
+      return;
+    }
+    void controller.archiveMockTradingWallet(wallet.id);
+  });
+}
+
+function promptMockTradingWalletName(label: string, value = '') {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const name = window.prompt(label, value);
+  const normalized = String(name || '').trim();
+  return normalized || null;
+}
+
 function renderProfileModalShell(options: {
   panel: ProfileAuthPanel;
   title: string;
@@ -1318,7 +1430,7 @@ function renderMockTradingTicketModal(state: AppState) {
         <div class="legacy-auth-panel-head">
           <div>
             <strong id="mock-trading-ticket-title">${escapeHtml(view.sideLabel)}</strong>
-            <span>${escapeHtml(view.symbol)} · ${escapeHtml(view.name)}</span>
+            <span>${escapeHtml(view.symbol)} · ${escapeHtml(view.name)} · ${escapeHtml(getActiveMockTradingWalletName(state))}</span>
           </div>
           <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-ticket" aria-label="Close dialog">X</button>
         </div>
@@ -1359,7 +1471,7 @@ function renderMockTradingHistoryModal(state: AppState) {
         <div class="legacy-auth-panel-head">
           <div>
             <strong id="mock-trading-history-title">Mock plays</strong>
-            <span>Closed sells and realized PnL</span>
+            <span>${escapeHtml(getActiveMockTradingWalletName(state))} · Closed sells and realized PnL</span>
           </div>
           <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-history" aria-label="Close dialog">X</button>
         </div>
@@ -1402,7 +1514,7 @@ function renderMockTradingPnlResumeModal(state: AppState) {
             ${renderMockTradingPnlAvatar(view.imageUrl, view.symbol)}
             <div class="mock-trading-pnl-title">
               <strong id="mock-trading-pnl-title">${escapeHtml(view.symbol)}</strong>
-              <span>${escapeHtml(view.name)}</span>
+              <span>${escapeHtml(view.name)} · ${escapeHtml(getActiveMockTradingWalletName(state))}</span>
             </div>
             <button type="button" class="workspace-mock-trading-copy copy-button" data-action="copy-address" data-address="${escapeHtml(view.address)}" title="Copy contract" aria-label="Copy ${escapeHtml(view.symbol)} contract">⧉</button>
             <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-pnl" aria-label="Close dialog">X</button>
