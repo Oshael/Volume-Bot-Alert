@@ -21,9 +21,87 @@ function handleMockTradingError(res, err, fallbackMessage) {
   return res.status(500).json({ error: fallbackMessage });
 }
 
+function getWalletId(req) {
+  return req.body?.walletId ?? req.query?.walletId;
+}
+
+router.get('/wallets', async (req, res) => {
+  try {
+    const wallets = await mockTrading.listWallets(req.user.id);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      count: wallets.length,
+      wallets,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to load mock trading wallets');
+  }
+});
+
+router.post('/wallets', async (req, res) => {
+  try {
+    const wallet = await mockTrading.createWallet({
+      userId: req.user.id,
+      name: req.body?.name,
+    });
+    res.status(201).json({
+      message: 'Mock trading wallet created',
+      wallet,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to create mock trading wallet');
+  }
+});
+
+router.patch('/wallets/:walletId', async (req, res) => {
+  try {
+    const wallet = await mockTrading.updateWallet({
+      userId: req.user.id,
+      walletId: req.params.walletId,
+      name: req.body?.name,
+    });
+    res.json({
+      message: 'Mock trading wallet updated',
+      wallet,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to update mock trading wallet');
+  }
+});
+
+router.post('/wallets/:walletId/default', async (req, res) => {
+  try {
+    const wallet = await mockTrading.setDefaultWallet({
+      userId: req.user.id,
+      walletId: req.params.walletId,
+    });
+    res.json({
+      message: 'Mock trading default wallet updated',
+      wallet,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to update mock trading default wallet');
+  }
+});
+
+router.post('/wallets/:walletId/archive', async (req, res) => {
+  try {
+    const wallet = await mockTrading.archiveWallet({
+      userId: req.user.id,
+      walletId: req.params.walletId,
+    });
+    res.json({
+      message: 'Mock trading wallet archived',
+      wallet,
+    });
+  } catch (err) {
+    handleMockTradingError(res, err, 'Failed to archive mock trading wallet');
+  }
+});
+
 router.get('/summary', async (req, res) => {
   try {
-    const summary = await mockTrading.getSummary(req.user.id);
+    const summary = await mockTrading.getSummary(req.user.id, { walletId: getWalletId(req) });
     res.json(summary);
   } catch (err) {
     handleMockTradingError(res, err, 'Failed to load mock trading summary');
@@ -36,7 +114,7 @@ router.get('/sol-price', async (req, res) => {
 
 router.get('/positions', async (req, res) => {
   try {
-    const positions = await mockTrading.listPositions(req.user.id);
+    const positions = await mockTrading.listPositions(req.user.id, { walletId: getWalletId(req) });
     res.json({
       generatedAt: new Date().toISOString(),
       count: positions.length,
@@ -51,6 +129,7 @@ router.get('/trades', async (req, res) => {
   try {
     const trades = await mockTrading.listTrades({
       userId: req.user.id,
+      walletId: getWalletId(req),
       address: req.query?.address,
       limit: req.query?.limit,
     });
@@ -68,6 +147,7 @@ router.post('/buy', async (req, res) => {
   try {
     const result = await mockTrading.buyToken({
       userId: req.user.id,
+      walletId: getWalletId(req),
       address: req.body?.address,
       notionalUsd: req.body?.notionalUsd,
       notionalSol: req.body?.notionalSol,
@@ -87,6 +167,7 @@ router.post('/sell', async (req, res) => {
   try {
     const result = await mockTrading.sellToken({
       userId: req.user.id,
+      walletId: getWalletId(req),
       address: req.body?.address,
       quantity: req.body?.quantity,
       percent: req.body?.percent,
@@ -104,6 +185,7 @@ router.post('/take-profit-orders', async (req, res) => {
   try {
     const result = await mockTrading.createTakeProfitOrderForPosition({
       userId: req.user.id,
+      walletId: getWalletId(req),
       address: req.body?.address,
       takeProfitMcapUsd: req.body?.takeProfitMcapUsd,
       takeProfitSellPercent: req.body?.takeProfitSellPercent,
@@ -122,6 +204,7 @@ router.post('/take-profit-orders/:id/cancel', async (req, res) => {
   try {
     const order = await mockTrading.cancelTakeProfitOrder({
       userId: req.user.id,
+      walletId: getWalletId(req),
       orderId: req.params.id,
     });
     res.json({
@@ -137,6 +220,7 @@ router.post('/reset', async (req, res) => {
   try {
     const account = await mockTrading.resetAccount({
       userId: req.user.id,
+      walletId: getWalletId(req),
       startingCashUsd: req.body?.startingCashUsd,
     });
     res.json({
@@ -152,6 +236,7 @@ router.post('/add-cash', async (req, res) => {
   try {
     const result = await mockTrading.addCash({
       userId: req.user.id,
+      walletId: getWalletId(req),
       amountUsd: req.body?.amountUsd,
       amountSol: req.body?.amountSol,
     });

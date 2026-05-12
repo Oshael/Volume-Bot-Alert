@@ -661,9 +661,27 @@ const SCHEMA_GROUPS = [
     repair: 'node src/utils/db-init-stage35.js',
     tables: [
       {
+        table: 'mock_trading_wallets',
+        columns: [
+          'id',
+          'user_id',
+          'name',
+          'sort_order',
+          'is_default',
+          'archived_at',
+          'created_at',
+          'updated_at',
+        ],
+        defaults: {
+          sort_order: '0',
+          is_default: 'false',
+        },
+      },
+      {
         table: 'mock_trading_accounts',
         columns: [
           'user_id',
+          'wallet_id',
           'starting_cash_usd',
           'cash_usd',
           'realized_pnl_usd',
@@ -678,6 +696,7 @@ const SCHEMA_GROUPS = [
         table: 'mock_trading_positions',
         columns: [
           'user_id',
+          'wallet_id',
           'token_address',
           'quantity',
           'avg_entry_price_usd',
@@ -696,6 +715,7 @@ const SCHEMA_GROUPS = [
         columns: [
           'id',
           'user_id',
+          'wallet_id',
           'token_address',
           'side',
           'quantity',
@@ -722,6 +742,7 @@ const SCHEMA_GROUPS = [
         columns: [
           'id',
           'user_id',
+          'wallet_id',
           'token_address',
           'target_mcap_usd',
           'sell_percent',

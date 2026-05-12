@@ -42,6 +42,7 @@ global.fetch = async (url) => {
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
+const mockTrading = require('../src/services/mock-trading-service');
 const takeProfitWorker = require('../src/services/mock-trading-take-profit-worker');
 const solUsdPrice = require('../src/services/sol-usd-price-service');
 
@@ -99,6 +100,14 @@ async function setSolUsdPrice(price) {
   assert.equal(status.stale, false);
 }
 
+async function clearAdminMockTrading(adminUserId) {
+  await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
+  await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
+  await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
+  await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+  await db.query('DELETE FROM mock_trading_wallets WHERE user_id = $1', [adminUserId]);
+}
+
 describe('mock trading admin routes', () => {
   let adminToken;
   let userToken;
@@ -115,10 +124,7 @@ describe('mock trading admin routes', () => {
     await registerUser(NORMAL_USER, invite.code);
     userToken = await completeLogin(NORMAL_USER.email, NORMAL_USER.password);
 
-    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await clearAdminMockTrading(adminUserId);
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
     await db.query(
       `INSERT INTO token_catalog (
@@ -135,6 +141,7 @@ describe('mock trading admin routes', () => {
     await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]).catch(() => {});
+    await db.query('DELETE FROM mock_trading_wallets WHERE user_id = $1', [adminUserId]).catch(() => {});
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
     global.fetch = originalFetch;
     if (server && server.close) server.close();
@@ -250,10 +257,7 @@ describe('mock trading admin routes', () => {
   });
 
   it('executes a take profit sell while the panel is closed', async () => {
-    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await clearAdminMockTrading(adminUserId);
     await db.query(
       `UPDATE token_catalog
        SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
@@ -308,10 +312,7 @@ describe('mock trading admin routes', () => {
   });
 
   it('allows multiple open sell orders per token and cancels one', async () => {
-    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await clearAdminMockTrading(adminUserId);
     await db.query(
       `UPDATE token_catalog
        SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
@@ -362,10 +363,7 @@ describe('mock trading admin routes', () => {
   });
 
   it('creates a sell order from an existing position without buying more', async () => {
-    await db.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_take_profit_orders WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [adminUserId]);
-    await db.query('DELETE FROM mock_trading_accounts WHERE user_id = $1', [adminUserId]);
+    await clearAdminMockTrading(adminUserId);
     await db.query(
       `UPDATE token_catalog
        SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
@@ -395,5 +393,244 @@ describe('mock trading admin routes', () => {
     assert.equal(orderRes.body.takeProfitOrder.sellPercent, 25);
     assert.equal(orderRes.body.position.takeProfitOrders.length, 1);
     assert.equal(orderRes.body.position.quantity, buyRes.body.position.quantity);
+  });
+
+  it('scopes admin mock trading routes by wallet', async () => {
+    await clearAdminMockTrading(adminUserId);
+    await setSolUsdPrice(150);
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const walletsRes = await request(app)
+      .get('/api/admin/mock-trading/wallets')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(walletsRes.status, 200);
+    assert.equal(walletsRes.body.count, 1);
+    assert.equal(walletsRes.body.wallets[0].name, 'Main');
+    assert.equal(walletsRes.body.wallets[0].isDefault, true);
+    const mainWallet = walletsRes.body.wallets[0];
+
+    const secondWalletRes = await request(app)
+      .post('/api/admin/mock-trading/wallets')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: `Route Wallet ${stamp}` });
+
+    assert.equal(secondWalletRes.status, 201);
+    assert.equal(secondWalletRes.body.wallet.isDefault, false);
+    const secondWallet = secondWalletRes.body.wallet;
+
+    const newWalletSummaryRes = await request(app)
+      .get(`/api/admin/mock-trading/summary?walletId=${secondWallet.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(newWalletSummaryRes.status, 200);
+    assert.equal(newWalletSummaryRes.body.wallet.id, secondWallet.id);
+    assert.equal(newWalletSummaryRes.body.account.cashUsd, 0);
+    assert.equal(newWalletSummaryRes.body.account.startingCashUsd, 0);
+
+    const renameRes = await request(app)
+      .patch(`/api/admin/mock-trading/wallets/${secondWallet.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: `Route Wallet Renamed ${stamp}` });
+
+    assert.equal(renameRes.status, 200);
+    assert.equal(renameRes.body.wallet.name, `Route Wallet Renamed ${stamp}`);
+
+    const archivedWalletRes = await request(app)
+      .post('/api/admin/mock-trading/wallets')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: `Route Wallet Archive ${stamp}` });
+
+    assert.equal(archivedWalletRes.status, 201);
+
+    const archiveRes = await request(app)
+      .post(`/api/admin/mock-trading/wallets/${archivedWalletRes.body.wallet.id}/archive`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+
+    assert.equal(archiveRes.status, 200);
+    assert.ok(archiveRes.body.wallet.archivedAt);
+
+    const defaultRes = await request(app)
+      .post(`/api/admin/mock-trading/wallets/${secondWallet.id}/default`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+
+    assert.equal(defaultRes.status, 200);
+    assert.equal(defaultRes.body.wallet.id, secondWallet.id);
+    assert.equal(defaultRes.body.wallet.isDefault, true);
+
+    const defaultSummaryRes = await request(app)
+      .get('/api/admin/mock-trading/summary')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(defaultSummaryRes.status, 200);
+    assert.equal(defaultSummaryRes.body.wallet.id, secondWallet.id);
+    assert.equal(defaultSummaryRes.body.account.cashUsd, 0);
+
+    const secondAddCashRes = await request(app)
+      .post('/api/admin/mock-trading/add-cash')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ walletId: secondWallet.id, amountUsd: 300 });
+
+    assert.equal(secondAddCashRes.status, 200);
+    assert.equal(secondAddCashRes.body.account.cashUsd, 300);
+    assert.equal(secondAddCashRes.body.account.startingCashUsd, 300);
+
+    const mainBuyRes = await request(app)
+      .post('/api/admin/mock-trading/buy')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ walletId: mainWallet.id, address: VALID_ADDR, notionalUsd: 100 });
+
+    assert.equal(mainBuyRes.status, 201);
+    assert.equal(mainBuyRes.body.wallet.id, mainWallet.id);
+    assert.equal(mainBuyRes.body.position.quantity, 100000);
+
+    const secondBuyRes = await request(app)
+      .post('/api/admin/mock-trading/buy')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ walletId: secondWallet.id, address: VALID_ADDR, notionalUsd: 200 });
+
+    assert.equal(secondBuyRes.status, 201);
+    assert.equal(secondBuyRes.body.wallet.id, secondWallet.id);
+    assert.equal(secondBuyRes.body.position.quantity, 200000);
+
+    const mainSellRes = await request(app)
+      .post('/api/admin/mock-trading/sell')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ walletId: mainWallet.id, address: VALID_ADDR, percent: 100 });
+
+    assert.equal(mainSellRes.status, 200);
+    assert.equal(mainSellRes.body.wallet.id, mainWallet.id);
+
+    const mainPositionsRes = await request(app)
+      .get(`/api/admin/mock-trading/positions?walletId=${mainWallet.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    const secondPositionsRes = await request(app)
+      .get(`/api/admin/mock-trading/positions?walletId=${secondWallet.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(mainPositionsRes.status, 200);
+    assert.equal(mainPositionsRes.body.positions.length, 0);
+    assert.equal(secondPositionsRes.status, 200);
+    assert.equal(secondPositionsRes.body.positions.length, 1);
+    assert.equal(secondPositionsRes.body.positions[0].quantity, 200000);
+
+    const orderRes = await request(app)
+      .post('/api/admin/mock-trading/take-profit-orders')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        walletId: secondWallet.id,
+        address: VALID_ADDR,
+        takeProfitMcapUsd: 200000,
+        takeProfitSellPercent: 100,
+      });
+
+    assert.equal(orderRes.status, 201);
+    assert.equal(orderRes.body.takeProfitOrder.walletId, secondWallet.id);
+
+    const wrongWalletCancelRes = await request(app)
+      .post(`/api/admin/mock-trading/take-profit-orders/${orderRes.body.takeProfitOrder.id}/cancel`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ walletId: mainWallet.id });
+
+    assert.equal(wrongWalletCancelRes.status, 404);
+
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.002, last_mcap = 200000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const run = await takeProfitWorker.runOnce({ batchLimit: 5 });
+    assert.equal(run.triggered, 1);
+
+    const secondAfterTakeProfitRes = await request(app)
+      .get(`/api/admin/mock-trading/positions?walletId=${secondWallet.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(secondAfterTakeProfitRes.status, 200);
+    assert.equal(secondAfterTakeProfitRes.body.positions.length, 0);
+
+    const secondTradesRes = await request(app)
+      .get(`/api/admin/mock-trading/trades?walletId=${secondWallet.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    assert.equal(secondTradesRes.status, 200);
+    assert.equal(secondTradesRes.body.trades.length, 2);
+    assert.equal(secondTradesRes.body.trades.every((trade) => trade.walletId === secondWallet.id), true);
+    assert.ok(secondTradesRes.body.trades.some((trade) => trade.side === 'sell' && trade.source === 'take_profit'));
+  });
+
+  it('keeps the same token isolated across mock trading wallets in the service layer', async () => {
+    await clearAdminMockTrading(adminUserId);
+    await setSolUsdPrice(150);
+    await db.query(
+      `UPDATE token_catalog
+       SET last_price = 0.001, last_mcap = 100000, last_seen_at = NOW(), last_evaluated_at = NOW()
+       WHERE address = $1`,
+      [VALID_ADDR]
+    );
+
+    const [mainWallet] = await mockTrading.listWallets(adminUserId);
+    const secondWallet = await mockTrading.createWallet({
+      userId: adminUserId,
+      name: `Wallet ${stamp}`,
+    });
+    const emptySecondSummary = await mockTrading.getSummary(adminUserId, { walletId: secondWallet.id });
+
+    assert.equal(emptySecondSummary.account.cashUsd, 0);
+    assert.equal(emptySecondSummary.account.startingCashUsd, 0);
+
+    await mockTrading.addCash({
+      userId: adminUserId,
+      walletId: secondWallet.id,
+      amountUsd: 300,
+    });
+
+    await mockTrading.buyToken({
+      userId: adminUserId,
+      walletId: mainWallet.id,
+      address: VALID_ADDR,
+      notionalUsd: 100,
+    });
+    await mockTrading.buyToken({
+      userId: adminUserId,
+      walletId: secondWallet.id,
+      address: VALID_ADDR,
+      notionalUsd: 200,
+    });
+
+    const mainBeforeSell = await mockTrading.getSummary(adminUserId, { walletId: mainWallet.id });
+    const secondBeforeSell = await mockTrading.getSummary(adminUserId, { walletId: secondWallet.id });
+
+    assert.equal(mainBeforeSell.wallet.id, mainWallet.id);
+    assert.equal(mainBeforeSell.account.cashUsd, 900);
+    assert.equal(mainBeforeSell.openPositionCount, 1);
+    assert.equal(secondBeforeSell.wallet.id, secondWallet.id);
+    assert.equal(secondBeforeSell.account.cashUsd, 100);
+    assert.equal(secondBeforeSell.openPositionCount, 1);
+
+    await mockTrading.sellToken({
+      userId: adminUserId,
+      walletId: mainWallet.id,
+      address: VALID_ADDR,
+      percent: 100,
+    });
+
+    const mainPositions = await mockTrading.listPositions(adminUserId, { walletId: mainWallet.id });
+    const secondPositions = await mockTrading.listPositions(adminUserId, { walletId: secondWallet.id });
+    const secondTrades = await mockTrading.listTrades({ userId: adminUserId, walletId: secondWallet.id });
+
+    assert.equal(mainPositions.length, 0);
+    assert.equal(secondPositions.length, 1);
+    assert.equal(secondPositions[0].quantity, 200000);
+    assert.equal(secondTrades.every((trade) => trade.walletId === secondWallet.id), true);
   });
 });

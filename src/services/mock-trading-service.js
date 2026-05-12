@@ -7,6 +7,7 @@ const DEFAULT_STARTING_CASH_USD = 1000;
 const DEFAULT_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
 const STALE_SELL_MAX_MCAP_USD = 30000;
 const MOCK_SOL_USDC_RATE_CONFIG_KEY = 'mock-sol-usdc-rate';
+const DEFAULT_WALLET_NAME = 'Main';
 const EPSILON = 1e-12;
 
 class MockTradingError extends Error {
@@ -37,6 +38,28 @@ function normalizeTokenAddress(value) {
     throw new MockTradingError('Invalid token address', 'invalid_token_address');
   }
   return address;
+}
+
+function normalizeOptionalWalletId(value) {
+  if (value == null || String(value).trim() === '') {
+    return null;
+  }
+  const walletId = Number.parseInt(String(value).trim(), 10);
+  if (!Number.isInteger(walletId) || walletId <= 0) {
+    throw new MockTradingError('Valid wallet id is required', 'invalid_wallet_id');
+  }
+  return walletId;
+}
+
+function normalizeWalletName(value) {
+  const name = String(value || '').trim();
+  if (!name) {
+    throw new MockTradingError('Wallet name is required', 'invalid_wallet_name');
+  }
+  if (name.length > 80) {
+    throw new MockTradingError('Wallet name must be 80 characters or fewer', 'invalid_wallet_name');
+  }
+  return name;
 }
 
 function normalizePositiveAmount(value, fieldName) {
@@ -247,6 +270,7 @@ function mapAccount(row) {
   if (!row) return null;
   return {
     userId: Number(row.user_id),
+    walletId: row.wallet_id == null ? null : Number(row.wallet_id),
     startingCashUsd: toFiniteNumber(row.starting_cash_usd, 0),
     cashUsd: toFiniteNumber(row.cash_usd, 0),
     realizedPnlUsd: toFiniteNumber(row.realized_pnl_usd, 0),
@@ -259,6 +283,7 @@ function mapPosition(row) {
   if (!row) return null;
   return {
     userId: Number(row.user_id),
+    walletId: row.wallet_id == null ? null : Number(row.wallet_id),
     tokenAddress: row.token_address,
     quantity: toFiniteNumber(row.quantity, 0),
     avgEntryPriceUsd: toFiniteNumber(row.avg_entry_price_usd, 0),
@@ -317,6 +342,7 @@ function mapTrade(row) {
   return {
     id: Number(row.id),
     userId: Number(row.user_id),
+    walletId: row.wallet_id == null ? null : Number(row.wallet_id),
     tokenAddress: row.token_address,
     symbol: row.trade_symbol || metadata.symbol || null,
     name: row.trade_name || metadata.name || null,
@@ -345,6 +371,7 @@ function mapTakeProfitOrder(row, prefix = '') {
   return {
     id: Number(row[`${prefix}id`]),
     userId: Number(row[`${prefix}user_id`]),
+    walletId: row[`${prefix}wallet_id`] == null ? null : Number(row[`${prefix}wallet_id`]),
     tokenAddress: row[`${prefix}token_address`],
     targetMcapUsd: toFiniteNumber(row[`${prefix}target_mcap_usd`], 0),
     sellPercent: toFiniteNumber(row[`${prefix}sell_percent`], 100),
@@ -355,6 +382,20 @@ function mapTakeProfitOrder(row, prefix = '') {
     triggeredAt: row[`${prefix}triggered_at`] || null,
     cancelledAt: row[`${prefix}cancelled_at`] || null,
     metadata: row[`${prefix}metadata`] && typeof row[`${prefix}metadata`] === 'object' ? row[`${prefix}metadata`] : {},
+  };
+}
+
+function mapWallet(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    name: row.name || DEFAULT_WALLET_NAME,
+    sortOrder: Number(row.sort_order) || 0,
+    isDefault: row.is_default === true,
+    archivedAt: row.archived_at || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
   };
 }
 
@@ -412,18 +453,118 @@ async function withTransaction(task) {
   }
 }
 
-async function ensureAccount(userId, runner, { lock = false, startingCashUsd = DEFAULT_STARTING_CASH_USD } = {}) {
+function splitOptionsAndRunner(options = {}, runner = db) {
+  if (options && typeof options.query === 'function') {
+    return [{}, options];
+  }
+  return [options || {}, runner || db];
+}
+
+async function findActiveWallet(userId, walletId, runner) {
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_wallets
+     WHERE user_id = $1
+       AND id = $2
+       AND archived_at IS NULL`,
+    [userId, walletId]
+  );
+  return mapWallet(rows[0]);
+}
+
+async function ensureDefaultWallet(userId, runner) {
+  const { rows: defaultRows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_wallets
+     WHERE user_id = $1
+       AND is_default = true
+       AND archived_at IS NULL
+     ORDER BY id ASC
+     LIMIT 1`,
+    [userId]
+  );
+  const existingDefault = mapWallet(defaultRows[0]);
+  if (existingDefault) {
+    return existingDefault;
+  }
+
+  const { rows: activeRows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_wallets
+     WHERE user_id = $1
+       AND archived_at IS NULL
+     ORDER BY sort_order ASC, id ASC
+     LIMIT 1`,
+    [userId]
+  );
+  const firstActive = mapWallet(activeRows[0]);
+  if (firstActive) {
+    const { rows } = await runner.query(
+      `UPDATE mock_trading_wallets
+       SET is_default = true,
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND id = $2
+       RETURNING *`,
+      [userId, firstActive.id]
+    );
+    return mapWallet(rows[0]);
+  }
+
+  const { rows } = await runner.query(
+    `INSERT INTO mock_trading_wallets (user_id, name, sort_order, is_default)
+     VALUES ($1, $2, 0, true)
+     ON CONFLICT DO NOTHING
+     RETURNING *`,
+    [userId, DEFAULT_WALLET_NAME]
+  );
+  if (rows[0]) {
+    return mapWallet(rows[0]);
+  }
+
+  const { rows: retryRows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_wallets
+     WHERE user_id = $1
+       AND is_default = true
+       AND archived_at IS NULL
+     ORDER BY id ASC
+     LIMIT 1`,
+    [userId]
+  );
+  const wallet = mapWallet(retryRows[0]);
+  if (!wallet) {
+    throw new MockTradingError('Unable to resolve mock trading wallet', 'wallet_unavailable', 500);
+  }
+  return wallet;
+}
+
+async function resolveWalletScope(userId, walletIdValue, runner) {
+  const walletId = normalizeOptionalWalletId(walletIdValue);
+  if (walletId == null) {
+    return ensureDefaultWallet(userId, runner);
+  }
+
+  const wallet = await findActiveWallet(userId, walletId, runner);
+  if (!wallet) {
+    throw new MockTradingError('Mock trading wallet not found', 'wallet_not_found', 404);
+  }
+  return wallet;
+}
+
+async function ensureAccount(userId, walletId, runner, { lock = false, startingCashUsd = DEFAULT_STARTING_CASH_USD } = {}) {
   await runner.query(
-    `INSERT INTO mock_trading_accounts (user_id, starting_cash_usd, cash_usd)
-     VALUES ($1, $2, $2)
-     ON CONFLICT (user_id) DO NOTHING`,
-    [userId, formatNumeric(startingCashUsd, 6)]
+    `INSERT INTO mock_trading_accounts (user_id, wallet_id, starting_cash_usd, cash_usd)
+     VALUES ($1, $2, $3, $3)
+     ON CONFLICT (wallet_id) DO NOTHING`,
+    [userId, walletId, formatNumeric(startingCashUsd, 6)]
   );
   const { rows } = await runner.query(
     `SELECT *
      FROM mock_trading_accounts
-     WHERE user_id = $1${lock ? ' FOR UPDATE' : ''}`,
-    [userId]
+     WHERE user_id = $1
+       AND wallet_id = $2${lock ? ' FOR UPDATE' : ''}`,
+    [userId, walletId]
   );
   return mapAccount(rows[0]);
 }
@@ -438,13 +579,15 @@ async function loadFreshCatalogPrice(address, runner, options = {}) {
   return mapCatalogPrice(rows[0], options.now || new Date(), options.maxAgeMs || DEFAULT_PRICE_MAX_AGE_MS, options);
 }
 
-async function loadPositionForUpdate(userId, address, runner) {
+async function loadPositionForUpdate(userId, walletId, address, runner) {
   const { rows } = await runner.query(
     `SELECT *
      FROM mock_trading_positions
-     WHERE user_id = $1 AND token_address = $2
+     WHERE user_id = $1
+       AND wallet_id = $2
+       AND token_address = $3
      FOR UPDATE`,
-    [userId, address]
+    [userId, walletId, address]
   );
   return mapPosition(rows[0]);
 }
@@ -455,23 +598,27 @@ async function saveAccount(account, runner) {
      SET cash_usd = $2,
          realized_pnl_usd = $3,
          updated_at = NOW()
-     WHERE user_id = $1`,
-    [account.userId, formatNumeric(account.cashUsd, 6), formatNumeric(account.realizedPnlUsd, 6)]
+     WHERE user_id = $1
+       AND wallet_id = $4`,
+    [account.userId, formatNumeric(account.cashUsd, 6), formatNumeric(account.realizedPnlUsd, 6), account.walletId]
   );
 }
 
-async function savePosition(userId, address, position, runner) {
+async function savePosition(userId, walletId, address, position, runner) {
   if (!position) {
-    await runner.query('DELETE FROM mock_trading_positions WHERE user_id = $1 AND token_address = $2', [userId, address]);
+    await runner.query(
+      'DELETE FROM mock_trading_positions WHERE user_id = $1 AND wallet_id = $2 AND token_address = $3',
+      [userId, walletId, address]
+    );
     return;
   }
 
   await runner.query(
     `INSERT INTO mock_trading_positions (
-       user_id, token_address, quantity, avg_entry_price_usd, avg_entry_mcap_usd, cost_basis_usd, realized_pnl_usd
+       user_id, wallet_id, token_address, quantity, avg_entry_price_usd, avg_entry_mcap_usd, cost_basis_usd, realized_pnl_usd
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (user_id, token_address) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (wallet_id, token_address) DO UPDATE SET
        quantity = EXCLUDED.quantity,
        avg_entry_price_usd = EXCLUDED.avg_entry_price_usd,
        avg_entry_mcap_usd = EXCLUDED.avg_entry_mcap_usd,
@@ -480,6 +627,7 @@ async function savePosition(userId, address, position, runner) {
        updated_at = NOW()`,
     [
       userId,
+      walletId,
       address,
       formatNumeric(position.quantity, 18),
       formatNumeric(position.avgEntryPriceUsd, 12),
@@ -490,19 +638,20 @@ async function savePosition(userId, address, position, runner) {
   );
 }
 
-async function createTakeProfitOrder(userId, address, takeProfitOrder, runner) {
+async function createTakeProfitOrder(userId, walletId, address, takeProfitOrder, runner) {
   if (!takeProfitOrder) {
     return null;
   }
 
   const { rows } = await runner.query(
     `INSERT INTO mock_trading_take_profit_orders (
-       user_id, token_address, target_mcap_usd, sell_percent
+       user_id, wallet_id, token_address, target_mcap_usd, sell_percent
      )
-     VALUES ($1, $2, $3, $4)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [
       userId,
+      walletId,
       address,
       formatNumeric(takeProfitOrder.targetMcapUsd, 2),
       formatNumeric(takeProfitOrder.sellPercent, 4),
@@ -511,20 +660,38 @@ async function createTakeProfitOrder(userId, address, takeProfitOrder, runner) {
   return mapTakeProfitOrder(rows[0]);
 }
 
-async function listOpenTakeProfitOrdersForPosition(userId, address, runner) {
+async function listOpenTakeProfitOrdersForPosition(userId, walletId, address, runner) {
   const { rows } = await runner.query(
     `SELECT *
      FROM mock_trading_take_profit_orders
      WHERE user_id = $1
-       AND token_address = $2
+       AND wallet_id = $2
+       AND token_address = $3
        AND status = 'open'
      ORDER BY target_mcap_usd ASC, id ASC`,
-    [userId, address]
+    [userId, walletId, address]
   );
   return rows.map((row) => mapTakeProfitOrder(row));
 }
 
-async function cancelOpenTakeProfitOrders(userId, address, runner, reason = 'position_closed') {
+async function cancelOpenTakeProfitOrders(userId, walletId, address, runner, reason = 'position_closed') {
+  const { rows } = await runner.query(
+    `UPDATE mock_trading_take_profit_orders
+     SET status = 'cancelled',
+         cancelled_at = NOW(),
+         updated_at = NOW(),
+         metadata = jsonb_set(metadata, '{cancelReason}', to_jsonb($4::text), true)
+     WHERE user_id = $1
+       AND wallet_id = $2
+       AND token_address = $3
+       AND status = 'open'
+     RETURNING *`,
+    [userId, walletId, address, reason]
+  );
+  return rows.map((row) => mapTakeProfitOrder(row));
+}
+
+async function cancelAllOpenTakeProfitOrders(userId, walletId, runner, reason = 'portfolio_reset') {
   const { rows } = await runner.query(
     `UPDATE mock_trading_take_profit_orders
      SET status = 'cancelled',
@@ -532,40 +699,26 @@ async function cancelOpenTakeProfitOrders(userId, address, runner, reason = 'pos
          updated_at = NOW(),
          metadata = jsonb_set(metadata, '{cancelReason}', to_jsonb($3::text), true)
      WHERE user_id = $1
-       AND token_address = $2
+       AND wallet_id = $2
        AND status = 'open'
      RETURNING *`,
-    [userId, address, reason]
+    [userId, walletId, reason]
   );
   return rows.map((row) => mapTakeProfitOrder(row));
 }
 
-async function cancelAllOpenTakeProfitOrders(userId, runner, reason = 'portfolio_reset') {
-  const { rows } = await runner.query(
-    `UPDATE mock_trading_take_profit_orders
-     SET status = 'cancelled',
-         cancelled_at = NOW(),
-         updated_at = NOW(),
-         metadata = jsonb_set(metadata, '{cancelReason}', to_jsonb($2::text), true)
-     WHERE user_id = $1
-       AND status = 'open'
-     RETURNING *`,
-    [userId, reason]
-  );
-  return rows.map((row) => mapTakeProfitOrder(row));
-}
-
-async function insertTrade(userId, address, trade, runner) {
+async function insertTrade(userId, walletId, address, trade, runner) {
   const { rows } = await runner.query(
     `INSERT INTO mock_trading_trades (
-       user_id, token_address, side, quantity, price_usd, market_cap_usd, notional_usd,
+       user_id, wallet_id, token_address, side, quantity, price_usd, market_cap_usd, notional_usd,
        realized_pnl_usd, realized_pnl_pct, price_return_pct, price_multiple, mcap_multiple,
        source, metadata
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING *`,
     [
       userId,
+      walletId,
       address,
       trade.side,
       formatNumeric(trade.quantity, 18),
@@ -593,6 +746,147 @@ function buildTradeMetadata(catalog, extra = {}) {
   };
 }
 
+async function listWallets(userIdValue, runner = db) {
+  const userId = normalizeUserId(userIdValue);
+  await ensureDefaultWallet(userId, runner);
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM mock_trading_wallets
+     WHERE user_id = $1
+       AND archived_at IS NULL
+     ORDER BY sort_order ASC, id ASC`,
+    [userId]
+  );
+  return rows.map(mapWallet);
+}
+
+async function createWallet(payload = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const name = normalizeWalletName(payload.name);
+
+  return withTransaction(async (client) => {
+    await ensureDefaultWallet(userId, client);
+    const { rows } = await client.query(
+      `INSERT INTO mock_trading_wallets (user_id, name, sort_order, is_default)
+       VALUES (
+         $1,
+         $2,
+         COALESCE((SELECT MAX(sort_order) + 1 FROM mock_trading_wallets WHERE user_id = $1), 0),
+         false
+       )
+       RETURNING *`,
+      [userId, name]
+    ).catch((err) => {
+      if (err?.code === '23505') {
+        throw new MockTradingError('A mock trading wallet with this name already exists', 'wallet_name_exists', 409);
+      }
+      throw err;
+    });
+    const wallet = mapWallet(rows[0]);
+    await ensureAccount(userId, wallet.id, client, { startingCashUsd: 0 });
+    return wallet;
+  });
+}
+
+async function updateWallet(payload = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const walletId = normalizeOptionalWalletId(payload.walletId);
+  if (walletId == null) {
+    throw new MockTradingError('Valid wallet id is required', 'invalid_wallet_id');
+  }
+  const name = normalizeWalletName(payload.name);
+
+  return withTransaction(async (client) => {
+    const wallet = await resolveWalletScope(userId, walletId, client);
+    const { rows } = await client.query(
+      `UPDATE mock_trading_wallets
+       SET name = $3,
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND id = $2
+         AND archived_at IS NULL
+       RETURNING *`,
+      [userId, wallet.id, name]
+    ).catch((err) => {
+      if (err?.code === '23505') {
+        throw new MockTradingError('A mock trading wallet with this name already exists', 'wallet_name_exists', 409);
+      }
+      throw err;
+    });
+    return mapWallet(rows[0]);
+  });
+}
+
+async function setDefaultWallet(payload = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const walletId = normalizeOptionalWalletId(payload.walletId);
+  if (walletId == null) {
+    throw new MockTradingError('Valid wallet id is required', 'invalid_wallet_id');
+  }
+
+  return withTransaction(async (client) => {
+    const wallet = await resolveWalletScope(userId, walletId, client);
+    await client.query(
+      `UPDATE mock_trading_wallets
+       SET is_default = false,
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND is_default = true`,
+      [userId]
+    );
+    const { rows } = await client.query(
+      `UPDATE mock_trading_wallets
+       SET is_default = true,
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND id = $2
+         AND archived_at IS NULL
+       RETURNING *`,
+      [userId, wallet.id]
+    );
+    return mapWallet(rows[0]);
+  });
+}
+
+async function archiveWallet(payload = {}) {
+  const userId = normalizeUserId(payload.userId);
+  const walletId = normalizeOptionalWalletId(payload.walletId);
+  if (walletId == null) {
+    throw new MockTradingError('Valid wallet id is required', 'invalid_wallet_id');
+  }
+
+  return withTransaction(async (client) => {
+    const wallet = await resolveWalletScope(userId, walletId, client);
+    if (wallet.isDefault) {
+      throw new MockTradingError('Default mock trading wallet cannot be archived', 'default_wallet_archive_forbidden', 409);
+    }
+
+    const { rows: countRows } = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM mock_trading_wallets
+       WHERE user_id = $1
+         AND archived_at IS NULL`,
+      [userId]
+    );
+    if (Number(countRows[0]?.count || 0) <= 1) {
+      throw new MockTradingError('Cannot archive the last mock trading wallet', 'last_wallet_archive_forbidden', 409);
+    }
+
+    await cancelAllOpenTakeProfitOrders(userId, wallet.id, client, 'wallet_archived');
+    const { rows } = await client.query(
+      `UPDATE mock_trading_wallets
+       SET archived_at = NOW(),
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND id = $2
+         AND archived_at IS NULL
+       RETURNING *`,
+      [userId, wallet.id]
+    );
+    return mapWallet(rows[0]);
+  });
+}
+
 async function buyToken(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
   const address = normalizeTokenAddress(payload.address);
@@ -600,23 +894,25 @@ async function buyToken(payload = {}, options = {}) {
   const notionalUsd = normalizeNotionalUsdInput(payload, mockSolUsdQuote);
 
   return withTransaction(async (client) => {
-    const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
+    const wallet = await resolveWalletScope(userId, payload.walletId, client);
+    const account = await ensureAccount(userId, wallet.id, client, { lock: true, startingCashUsd: options.startingCashUsd });
     const catalog = await loadFreshCatalogPrice(address, client, options);
     const takeProfitInput = normalizeTakeProfitInput(payload, catalog);
-    const position = await loadPositionForUpdate(userId, address, client);
+    const position = await loadPositionForUpdate(userId, wallet.id, address, client);
     const next = buildBuyState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, notionalUsd });
 
     await saveAccount(next.account, client);
-    await savePosition(userId, address, next.position, client);
+    await savePosition(userId, wallet.id, address, next.position, client);
     next.trade.metadata = buildTradeMetadata(catalog, {
       ...next.trade.metadata,
       ...buildMockSolRateMetadata(mockSolUsdQuote),
     });
-    const trade = await insertTrade(userId, address, next.trade, client);
-    const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
-    const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, address, client);
+    const trade = await insertTrade(userId, wallet.id, address, next.trade, client);
+    const takeProfitOrder = await createTakeProfitOrder(userId, wallet.id, address, takeProfitInput, client);
+    const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, wallet.id, address, client);
     return {
       account: next.account,
+      wallet,
       position: {
         ...next.position,
         takeProfitOrder: takeProfitOrder || takeProfitOrders[0] || null,
@@ -637,8 +933,9 @@ async function sellToken(payload = {}, options = {}) {
   const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
 
   return withTransaction(async (client) => {
-    const account = await ensureAccount(userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
-    const position = await loadPositionForUpdate(userId, address, client);
+    const wallet = await resolveWalletScope(userId, payload.walletId, client);
+    const account = await ensureAccount(userId, wallet.id, client, { lock: true, startingCashUsd: options.startingCashUsd });
+    const position = await loadPositionForUpdate(userId, wallet.id, address, client);
     const quantity = normalizeSellQuantity(position, payload);
     const catalog = await loadFreshCatalogPrice(address, client, {
       ...options,
@@ -647,16 +944,16 @@ async function sellToken(payload = {}, options = {}) {
     const next = buildSellState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, quantity });
 
     await saveAccount(next.account, client);
-    await savePosition(userId, address, next.position, client);
+    await savePosition(userId, wallet.id, address, next.position, client);
     next.trade.metadata = buildTradeMetadata(catalog, {
       ...next.trade.metadata,
       ...buildMockSolRateMetadata(mockSolUsdQuote),
     });
-    const trade = await insertTrade(userId, address, next.trade, client);
+    const trade = await insertTrade(userId, wallet.id, address, next.trade, client);
     if (!next.position) {
-      await cancelOpenTakeProfitOrders(userId, address, client, 'position_closed');
+      await cancelOpenTakeProfitOrders(userId, wallet.id, address, client, 'position_closed');
     }
-    return { account: next.account, position: next.position, trade, catalog, solUsdPrice: mockSolUsdQuote };
+    return { account: next.account, wallet, position: next.position, trade, catalog, solUsdPrice: mockSolUsdQuote };
   });
 }
 
@@ -665,7 +962,8 @@ async function createTakeProfitOrderForPosition(payload = {}, options = {}) {
   const address = normalizeTokenAddress(payload.address);
 
   return withTransaction(async (client) => {
-    const position = await loadPositionForUpdate(userId, address, client);
+    const wallet = await resolveWalletScope(userId, payload.walletId, client);
+    const position = await loadPositionForUpdate(userId, wallet.id, address, client);
     if (!position || !(position.quantity > 0)) {
       throw new MockTradingError('No open mock trading position', 'position_not_found', 404);
     }
@@ -676,9 +974,10 @@ async function createTakeProfitOrderForPosition(payload = {}, options = {}) {
       throw new MockTradingError('Take profit MCAP is required', 'invalid_take_profit_target');
     }
 
-    const takeProfitOrder = await createTakeProfitOrder(userId, address, takeProfitInput, client);
-    const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, address, client);
+    const takeProfitOrder = await createTakeProfitOrder(userId, wallet.id, address, takeProfitInput, client);
+    const takeProfitOrders = await listOpenTakeProfitOrdersForPosition(userId, wallet.id, address, client);
     return {
+      wallet,
       position: buildPositionView(position, {
         symbol: catalog.symbol,
         name: catalog.name,
@@ -697,19 +996,20 @@ async function resetAccount(payload = {}) {
   const startingCashUsd = normalizePositiveAmount(payload.startingCashUsd ?? DEFAULT_STARTING_CASH_USD, 'startingCashUsd');
 
   return withTransaction(async (client) => {
-    await cancelAllOpenTakeProfitOrders(userId, client, 'portfolio_reset');
-    await client.query('DELETE FROM mock_trading_trades WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM mock_trading_positions WHERE user_id = $1', [userId]);
+    const wallet = await resolveWalletScope(userId, payload.walletId, client);
+    await cancelAllOpenTakeProfitOrders(userId, wallet.id, client, 'portfolio_reset');
+    await client.query('DELETE FROM mock_trading_trades WHERE user_id = $1 AND wallet_id = $2', [userId, wallet.id]);
+    await client.query('DELETE FROM mock_trading_positions WHERE user_id = $1 AND wallet_id = $2', [userId, wallet.id]);
     const { rows } = await client.query(
-      `INSERT INTO mock_trading_accounts (user_id, starting_cash_usd, cash_usd, realized_pnl_usd)
-       VALUES ($1, $2, $2, 0)
-       ON CONFLICT (user_id) DO UPDATE SET
+      `INSERT INTO mock_trading_accounts (user_id, wallet_id, starting_cash_usd, cash_usd, realized_pnl_usd)
+       VALUES ($1, $2, $3, $3, 0)
+       ON CONFLICT (wallet_id) DO UPDATE SET
          starting_cash_usd = EXCLUDED.starting_cash_usd,
          cash_usd = EXCLUDED.cash_usd,
          realized_pnl_usd = 0,
          updated_at = NOW()
        RETURNING *`,
-      [userId, formatNumeric(startingCashUsd, 6)]
+      [userId, wallet.id, formatNumeric(startingCashUsd, 6)]
     );
     return mapAccount(rows[0]);
   });
@@ -721,41 +1021,48 @@ async function addCash(payload = {}, options = {}) {
   const amountUsd = normalizeAddCashUsdInput(payload, mockSolUsdQuote);
 
   return withTransaction(async (client) => {
-    await ensureAccount(userId, client, { lock: true });
+    const wallet = await resolveWalletScope(userId, payload.walletId, client);
+    await ensureAccount(userId, wallet.id, client, { lock: true });
     const { rows } = await client.query(
       `UPDATE mock_trading_accounts
        SET starting_cash_usd = starting_cash_usd + $2,
            cash_usd = cash_usd + $2,
            updated_at = NOW()
        WHERE user_id = $1
+         AND wallet_id = $3
        RETURNING *`,
-      [userId, formatNumeric(amountUsd, 6)]
+      [userId, formatNumeric(amountUsd, 6), wallet.id]
     );
     return {
       account: mapAccount(rows[0]),
+      wallet,
       solUsdPrice: mockSolUsdQuote,
       amountUsd,
     };
   });
 }
 
-async function listPositions(userIdValue, runner = db) {
+async function listPositions(userIdValue, options = {}, runner = db) {
   const userId = normalizeUserId(userIdValue);
-  const { rows } = await runner.query(
+  const [resolvedOptions, resolvedRunner] = splitOptionsAndRunner(options, runner);
+  const wallet = await resolveWalletScope(userId, resolvedOptions.walletId, resolvedRunner);
+  const { rows } = await resolvedRunner.query(
     `SELECT p.*, tc.symbol, tc.name, tc.last_image_url, tc.last_price, tc.last_mcap
      FROM mock_trading_positions p
      LEFT JOIN token_catalog tc ON tc.address = p.token_address
      WHERE p.user_id = $1
+       AND p.wallet_id = $2
      ORDER BY p.updated_at DESC`,
-    [userId]
+    [userId, wallet.id]
   );
-  const { rows: orderRows } = await runner.query(
+  const { rows: orderRows } = await resolvedRunner.query(
     `SELECT *
      FROM mock_trading_take_profit_orders
      WHERE user_id = $1
+       AND wallet_id = $2
        AND status = 'open'
      ORDER BY token_address ASC, target_mcap_usd ASC, id ASC`,
-    [userId]
+    [userId, wallet.id]
   );
   const ordersByAddress = new Map();
   for (const order of mapTakeProfitOrders(orderRows)) {
@@ -766,15 +1073,18 @@ async function listPositions(userIdValue, runner = db) {
   return rows.map((row) => buildPositionView(mapPosition(row), row, ordersByAddress.get(row.token_address) || []));
 }
 
-async function getSummary(userIdValue, runner = db) {
+async function getSummary(userIdValue, options = {}, runner = db) {
   const userId = normalizeUserId(userIdValue);
-  const account = await ensureAccount(userId, runner);
-  const positions = await listPositions(userId, runner);
+  const [resolvedOptions, resolvedRunner] = splitOptionsAndRunner(options, runner);
+  const wallet = await resolveWalletScope(userId, resolvedOptions.walletId, resolvedRunner);
+  const account = await ensureAccount(userId, wallet.id, resolvedRunner);
+  const positions = await listPositions(userId, { walletId: wallet.id }, resolvedRunner);
   const openPositionValueUsd = positions.reduce((sum, position) => sum + (position.currentValueUsd || 0), 0);
   const totalEquityUsd = account.cashUsd + openPositionValueUsd;
   const totalPnlUsd = totalEquityUsd - account.startingCashUsd;
   return {
     account,
+    wallet,
     openPositionCount: positions.length,
     openPositionValueUsd,
     totalEquityUsd,
@@ -787,9 +1097,10 @@ async function getSummary(userIdValue, runner = db) {
 
 async function listTrades(filters = {}, runner = db) {
   const userId = normalizeUserId(filters.userId);
+  const wallet = await resolveWalletScope(userId, filters.walletId, runner);
   const limit = Math.max(1, Math.min(Number(filters.limit) || 50, 200));
-  const values = [userId, limit];
-  const clauses = ['mt.user_id = $1'];
+  const values = [userId, wallet.id, limit];
+  const clauses = ['mt.user_id = $1', 'mt.wallet_id = $2'];
   if (filters.address != null && String(filters.address).trim() !== '') {
     values.push(normalizeTokenAddress(filters.address));
     clauses.push(`mt.token_address = $${values.length}`);
@@ -805,7 +1116,7 @@ async function listTrades(filters = {}, runner = db) {
        ON tc.address = mt.token_address
      WHERE ${clauses.join(' AND ')}
      ORDER BY mt.executed_at DESC, mt.id DESC
-     LIMIT $2`,
+     LIMIT $3`,
     values
   );
   return rows.map(mapTrade);
@@ -816,8 +1127,13 @@ async function listTriggeredTakeProfitCandidates(limitValue = 25, runner = db) {
   const { rows } = await runner.query(
     `SELECT o.id
      FROM mock_trading_take_profit_orders o
+     JOIN mock_trading_wallets w
+       ON w.user_id = o.user_id
+      AND w.id = o.wallet_id
+      AND w.archived_at IS NULL
      JOIN mock_trading_positions p
        ON p.user_id = o.user_id
+      AND p.wallet_id = o.wallet_id
       AND p.token_address = o.token_address
      JOIN token_catalog tc
        ON tc.address = o.token_address
@@ -893,14 +1209,16 @@ async function cancelTakeProfitOrderById(orderId, runner, reason) {
 
 async function cancelTakeProfitOrder(payload = {}) {
   const userId = normalizeUserId(payload.userId);
+  const walletId = normalizeOptionalWalletId(payload.walletId);
   const orderId = Number.parseInt(String(payload.orderId || '').trim(), 10);
   if (!Number.isInteger(orderId) || orderId <= 0) {
     throw new MockTradingError('Valid take profit order id is required', 'invalid_order_id');
   }
 
   return withTransaction(async (client) => {
+    const wallet = await resolveWalletScope(userId, walletId, client);
     const order = await loadTakeProfitOrderForUpdate(orderId, client);
-    if (!order || order.userId !== userId) {
+    if (!order || order.userId !== userId || order.walletId !== wallet.id) {
       throw new MockTradingError('Take profit order not found', 'order_not_found', 404);
     }
     if (order.status !== 'open') {
@@ -922,13 +1240,13 @@ async function executeTakeProfitOrder(orderId, options = {}) {
       return { status: 'skipped', reason: 'order_not_open', order: orderCandidate };
     }
 
-    const account = await ensureAccount(orderCandidate.userId, client, { lock: true, startingCashUsd: options.startingCashUsd });
+    const account = await ensureAccount(orderCandidate.userId, orderCandidate.walletId, client, { lock: true, startingCashUsd: options.startingCashUsd });
     const order = await loadTakeProfitOrderForUpdate(orderId, client);
     if (!order || order.status !== 'open') {
       return { status: 'skipped', reason: 'order_not_open', order };
     }
 
-    const position = await loadPositionForUpdate(order.userId, order.tokenAddress, client);
+    const position = await loadPositionForUpdate(order.userId, order.walletId, order.tokenAddress, client);
     if (!position || !(position.quantity > 0)) {
       const cancelled = await cancelTakeProfitOrderById(order.id, client, 'position_missing');
       return { status: 'cancelled', reason: 'position_missing', order: cancelled || order };
@@ -957,8 +1275,8 @@ async function executeTakeProfitOrder(orderId, options = {}) {
     });
 
     await saveAccount(next.account, client);
-    await savePosition(order.userId, order.tokenAddress, next.position, client);
-    const trade = await insertTrade(order.userId, order.tokenAddress, next.trade, client);
+    await savePosition(order.userId, order.walletId, order.tokenAddress, next.position, client);
+    const trade = await insertTrade(order.userId, order.walletId, order.tokenAddress, next.trade, client);
     const triggeredOrder = await markTakeProfitOrderTriggered(order.id, trade.id, client);
 
     return {
@@ -974,35 +1292,45 @@ async function executeTakeProfitOrder(orderId, options = {}) {
 }
 
 module.exports = {
+  DEFAULT_WALLET_NAME,
   DEFAULT_PRICE_MAX_AGE_MS,
   DEFAULT_STARTING_CASH_USD,
   STALE_SELL_MAX_MCAP_USD,
   MockTradingError,
   addCash,
+  archiveWallet,
   buyToken,
   cancelTakeProfitOrder,
+  createWallet,
   createTakeProfitOrderForPosition,
   executeTakeProfitOrder,
   formatNumeric,
   getSummary,
+  listWallets,
   listTriggeredTakeProfitCandidates,
   listPositions,
   listTrades,
   mapAccount,
   mapPosition,
+  mapWallet,
   mapTakeProfitOrder,
   normalizePositiveAmount,
   normalizeTokenAddress,
   normalizeUserId,
   resetAccount,
   sellToken,
+  setDefaultWallet,
+  updateWallet,
   __private: {
     buildBuyState,
     buildSellState,
+    ensureDefaultWallet,
     mapTrade,
+    normalizeOptionalWalletId,
     normalizeAddCashUsdInput,
     normalizeNotionalUsdInput,
     normalizeTakeProfitInput,
+    resolveWalletScope,
     mapCatalogPrice,
     normalizeMockSolUsdcRate,
     normalizeSellQuantity,
