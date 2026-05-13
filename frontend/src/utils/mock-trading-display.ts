@@ -21,9 +21,9 @@ export function resolveLiveMockSolUsdcRate(
   return resolveMockSolUsdcRate(summary?.solUsdPrice ?? fallbackConfigs);
 }
 
-export function hasFreshMockSolRate(summary?: { solUsdPrice?: MockSolRateSource | null } | null) {
+export function hasUsableMockSolRate(summary?: { solUsdPrice?: MockSolRateSource | null } | null) {
   const rate = Number(summary?.solUsdPrice?.priceUsd);
-  return Number.isFinite(rate) && rate > 0 && summary?.solUsdPrice?.stale !== true;
+  return Number.isFinite(rate) && rate > 0;
 }
 
 export function mockSolToUsd(value: number, usdcRate = DEFAULT_MOCK_SOL_USDC_RATE) {

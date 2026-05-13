@@ -12,6 +12,7 @@ const {
   normalizeMockSolUsdcRate,
   normalizeNotionalUsdInput,
   normalizeTakeProfitInput,
+  resolveMockSolUsdQuote,
   normalizeSellQuantity,
 } = mockTradingService.__private;
 
@@ -224,5 +225,51 @@ describe('mock trading service calculations', () => {
     assert.equal(normalizeNotionalUsdInput({ notionalSol: 1.25 }, quote), 250);
     assert.equal(normalizeAddCashUsdInput({ amountSol: 0.5 }, quote), 100);
     assert.equal(normalizeNotionalUsdInput({ notionalUsd: 75 }, quote), 75);
+  });
+
+  it('uses a recent stale SOL/USD quote for mock trading conversions', () => {
+    const quote = resolveMockSolUsdQuote({
+      solUsdPriceService: {
+        getFreshQuote() {
+          throw new Error('Fresh SOL/USD price is unavailable');
+        },
+        getStatus() {
+          return {
+            provider: 'coinmarketcap',
+            priceUsd: 150,
+            lastUpdatedAt: '2026-05-13T00:00:00.000Z',
+            ageSeconds: 20 * 60,
+            stale: true,
+          };
+        },
+      },
+      mockSolUsdMaxStaleMs: mockTradingService.DEFAULT_MOCK_SOL_USD_MAX_STALE_MS,
+    });
+
+    assert.equal(quote.priceUsd, 150);
+    assert.equal(quote.stale, true);
+    assert.equal(normalizeNotionalUsdInput({ notionalSol: 2 }, quote), 300);
+  });
+
+  it('rejects SOL/USD quotes beyond the mock trading stale fallback window', () => {
+    assert.throws(
+      () => resolveMockSolUsdQuote({
+        solUsdPriceService: {
+          getFreshQuote() {
+            throw new Error('Fresh SOL/USD price is unavailable');
+          },
+          getStatus() {
+            return {
+              provider: 'coinmarketcap',
+              priceUsd: 150,
+              ageSeconds: 2 * 60 * 60,
+              stale: true,
+            };
+          },
+        },
+        mockSolUsdMaxStaleMs: mockTradingService.DEFAULT_MOCK_SOL_USD_MAX_STALE_MS,
+      }),
+      /Fresh SOL\/USD price is unavailable/
+    );
   });
 });

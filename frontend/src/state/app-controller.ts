@@ -83,7 +83,7 @@ import {
   readRuntimePerfMemory,
   recordRuntimePerfDebugEntry,
 } from '../utils/runtime-perf-debug';
-import { hasFreshMockSolRate } from '../utils/mock-trading-display';
+import { hasUsableMockSolRate } from '../utils/mock-trading-display';
 import {
   getBrowserNotificationStatus,
   loadBrowserNotificationSettings,
@@ -133,8 +133,8 @@ function getMockTradingBuyValidationError(
   if (!Number.isFinite(notionalSol) || notionalSol <= 0) {
     return 'Mock buy SOL amount must be greater than zero';
   }
-  if (!hasFreshMockSolRate(state.data.mockTradingSummary)) {
-    return 'Fresh SOL/USD price is unavailable';
+  if (!hasUsableMockSolRate(state.data.mockTradingSummary)) {
+    return 'SOL/USD price is unavailable';
   }
   if (takeProfit?.targetMcapUsd != null && (!Number.isFinite(takeProfit.targetMcapUsd) || takeProfit.targetMcapUsd <= 0)) {
     return 'Take profit MCAP must be greater than zero';
@@ -9079,8 +9079,8 @@ export function createAppController(): AppController {
         emit('header');
         return;
       }
-      if (!hasFreshMockSolRate(state.data.mockTradingSummary)) {
-        setError('Fresh SOL/USD price is unavailable');
+      if (!hasUsableMockSolRate(state.data.mockTradingSummary)) {
+        setError('SOL/USD price is unavailable');
         emit('header');
         return;
       }

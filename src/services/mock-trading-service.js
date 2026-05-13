@@ -5,6 +5,7 @@ const solUsdPrice = require('./sol-usd-price-service');
 
 const DEFAULT_STARTING_CASH_USD = 1000;
 const DEFAULT_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
+const DEFAULT_MOCK_SOL_USD_MAX_STALE_MS = 60 * 60 * 1000;
 const STALE_SELL_MAX_MCAP_USD = 30000;
 const MOCK_SOL_USDC_RATE_CONFIG_KEY = 'mock-sol-usdc-rate';
 const DEFAULT_WALLET_NAME = 'Main';
@@ -91,15 +92,55 @@ function normalizeMockSolUsdcRate(value) {
   return Number.isFinite(rate) && rate > 0 ? rate : fallback;
 }
 
-function resolveFreshMockSolUsdQuote(options = {}) {
-  const service = options.solUsdPriceService || solUsdPrice;
-  const quote = service.getFreshQuote();
+function parsePositiveInteger(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
+}
+
+function resolveMockSolUsdMaxStaleMs(options = {}) {
+  return parsePositiveInteger(
+    options.mockSolUsdMaxStaleMs ?? process.env.MOCK_TRADING_SOL_USD_MAX_STALE_MS,
+    DEFAULT_MOCK_SOL_USD_MAX_STALE_MS,
+    30 * 1000,
+    24 * 60 * 60 * 1000
+  );
+}
+
+function buildMockSolUsdQuote(status, stale = false) {
   return {
-    provider: quote.provider || 'coinmarketcap',
-    priceUsd: normalizeMockSolUsdcRate(quote.priceUsd),
-    lastUpdatedAt: quote.lastUpdatedAt || null,
-    ageSeconds: toFiniteNumber(quote.ageSeconds, null),
+    provider: status?.provider || 'coinmarketcap',
+    priceUsd: normalizeMockSolUsdcRate(status?.priceUsd),
+    lastUpdatedAt: status?.lastUpdatedAt || null,
+    ageSeconds: toFiniteNumber(status?.ageSeconds, null),
+    stale,
   };
+}
+
+function isFreshSolQuoteUnavailableError(error) {
+  return error?.code === 'fresh_price_unavailable'
+    || String(error?.message || '').includes('Fresh SOL/USD price is unavailable');
+}
+
+function resolveMockSolUsdQuote(options = {}) {
+  const service = options.solUsdPriceService || solUsdPrice;
+  try {
+    return buildMockSolUsdQuote(service.getFreshQuote(), false);
+  } catch (error) {
+    if (!isFreshSolQuoteUnavailableError(error)) {
+      throw error;
+    }
+    const status = typeof service.getStatus === 'function' ? service.getStatus() : null;
+    const priceUsd = toFiniteNumber(status?.priceUsd, null);
+    const ageSeconds = toFiniteNumber(status?.ageSeconds, null);
+    const maxStaleMs = resolveMockSolUsdMaxStaleMs(options);
+    if (priceUsd > 0 && ageSeconds != null && ageSeconds * 1000 <= maxStaleMs) {
+      return buildMockSolUsdQuote(status, true);
+    }
+    throw error;
+  }
 }
 
 function buildMockSolRateMetadata(quote) {
@@ -107,6 +148,8 @@ function buildMockSolRateMetadata(quote) {
     mockSolUsdcRate: quote.priceUsd,
     mockSolUsdcRateSource: quote.provider,
     mockSolUsdcRateUpdatedAt: quote.lastUpdatedAt,
+    mockSolUsdcRateStale: quote.stale === true,
+    mockSolUsdcRateAgeSeconds: quote.ageSeconds,
   };
 }
 
@@ -890,7 +933,7 @@ async function archiveWallet(payload = {}) {
 async function buyToken(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
   const address = normalizeTokenAddress(payload.address);
-  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
+  const mockSolUsdQuote = resolveMockSolUsdQuote(options);
   const notionalUsd = normalizeNotionalUsdInput(payload, mockSolUsdQuote);
 
   return withTransaction(async (client) => {
@@ -930,7 +973,7 @@ async function buyToken(payload = {}, options = {}) {
 async function sellToken(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
   const address = normalizeTokenAddress(payload.address);
-  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
+  const mockSolUsdQuote = resolveMockSolUsdQuote(options);
 
   return withTransaction(async (client) => {
     const wallet = await resolveWalletScope(userId, payload.walletId, client);
@@ -1017,7 +1060,7 @@ async function resetAccount(payload = {}) {
 
 async function addCash(payload = {}, options = {}) {
   const userId = normalizeUserId(payload.userId);
-  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
+  const mockSolUsdQuote = resolveMockSolUsdQuote(options);
   const amountUsd = normalizeAddCashUsdInput(payload, mockSolUsdQuote);
 
   return withTransaction(async (client) => {
@@ -1233,7 +1276,7 @@ async function cancelTakeProfitOrder(payload = {}) {
 }
 
 async function executeTakeProfitOrder(orderId, options = {}) {
-  const mockSolUsdQuote = resolveFreshMockSolUsdQuote(options);
+  const mockSolUsdQuote = resolveMockSolUsdQuote(options);
   return withTransaction(async (client) => {
     const orderCandidate = await loadTakeProfitOrder(orderId, client);
     if (!orderCandidate || orderCandidate.status !== 'open') {
@@ -1293,6 +1336,7 @@ async function executeTakeProfitOrder(orderId, options = {}) {
 
 module.exports = {
   DEFAULT_WALLET_NAME,
+  DEFAULT_MOCK_SOL_USD_MAX_STALE_MS,
   DEFAULT_PRICE_MAX_AGE_MS,
   DEFAULT_STARTING_CASH_USD,
   STALE_SELL_MAX_MCAP_USD,
@@ -1330,6 +1374,7 @@ module.exports = {
     normalizeAddCashUsdInput,
     normalizeNotionalUsdInput,
     normalizeTakeProfitInput,
+    resolveMockSolUsdQuote,
     resolveWalletScope,
     mapCatalogPrice,
     normalizeMockSolUsdcRate,
