@@ -17,10 +17,16 @@ const STATEMENTS = [
      source VARCHAR(32) NOT NULL DEFAULT 'dexscreener',
      PRIMARY KEY (token_address, bucket_ts)
    )`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS pair_address VARCHAR(64)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_bucket_ts
      ON token_market_buckets_1m(bucket_ts DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_addr_bucket_ts
-     ON token_market_buckets_1m(token_address, bucket_ts DESC)`
+     ON token_market_buckets_1m(token_address, bucket_ts DESC)`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_market_buckets_1m_sparkline_cover
+     ON token_market_buckets_1m(token_address, bucket_ts DESC)
+     INCLUDE (pair_address, close_mcap)
+     WHERE close_mcap IS NOT NULL`
 ];
 
 async function init() {

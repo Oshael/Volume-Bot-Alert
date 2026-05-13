@@ -24,6 +24,7 @@
     "db:schema-check": "node src/utils/check-runtime-schema.js",
     "db:schema-check:test": "NODE_ENV=test node src/utils/check-runtime-schema.js --test-profile",
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
+    "market-buckets-agg:backfill": "node src/utils/backfill-market-buckets-agg.js",
     "market-volume-buckets:backfill": "node src/utils/backfill-market-volume-buckets-1m.js",
     "market-snapshots:drop": "node src/utils/drop-market-snapshots.js --confirm-drop",
     "invite:create": "node src/utils/create-invite.js"

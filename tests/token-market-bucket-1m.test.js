@@ -1,10 +1,14 @@
-const { describe, it } = require('node:test');
+const { beforeEach, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const db = require('../src/models/db');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 
 describe('token market 1m bucket helpers', () => {
+  beforeEach(() => {
+    tokenMarketBucket1m.__private.clearSparklineCache();
+  });
+
   it('rounds timestamps down to the start of the minute in UTC', () => {
     const bucketDate = tokenMarketBucket1m.__private.getBucketDate('2026-03-24T04:18:59.999Z');
     assert.equal(bucketDate.toISOString(), '2026-03-24T04:18:00.000Z');
@@ -13,6 +17,165 @@ describe('token market 1m bucket helpers', () => {
   it('preserves exact minute boundaries', () => {
     const bucketDate = tokenMarketBucket1m.__private.getBucketDate('2026-03-24T04:18:00.000Z');
     assert.equal(bucketDate.toISOString(), '2026-03-24T04:18:00.000Z');
+  });
+
+  it('rounds timestamps down to supported aggregate bucket starts', () => {
+    const fiveMinute = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 5);
+    const fifteenMinute = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 15);
+    const thirtyMinute = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 30);
+
+    assert.equal(fiveMinute.toISOString(), '2026-03-24T04:15:00.000Z');
+    assert.equal(fifteenMinute.toISOString(), '2026-03-24T04:15:00.000Z');
+    assert.equal(thirtyMinute.toISOString(), '2026-03-24T04:00:00.000Z');
+    assert.throws(
+      () => tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 10),
+      /Invalid aggregate granularity/
+    );
+  });
+
+  it('builds current and previous source bucket dates for aggregate refresh', () => {
+    const dates = tokenMarketBucket1m.__private.getAggregateRefreshBucketDates('2026-03-24T04:20:59.999Z');
+
+    assert.deepEqual(dates.map((date) => date.toISOString()), [
+      '2026-03-24T04:20:00.000Z',
+      '2026-03-24T04:19:00.000Z',
+    ]);
+  });
+
+  it('recomputes aggregate buckets only when a new 1m source bucket is inserted', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (calls.length === 1) {
+        return {
+          rows: [
+            {
+              token_address: 'So11111111111111111111111111111111111111112',
+              bucket_ts: '2026-03-24T04:18:00.000Z',
+              sample_count: 1,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+
+    try {
+      const row = await tokenMarketBucket1m.upsertSnapshotBucket({
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        pairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+        ts: '2026-03-24T04:18:59.999Z',
+        mcap: 123456,
+        price: 0.1234,
+        source: 'gmgn',
+      });
+
+      assert.equal(row.token_address, 'So11111111111111111111111111111111111111112');
+      assert.equal(calls.length, 2);
+      assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+      assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
+      assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
+      assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
+      assert.deepEqual(calls[1].params.map((value) => (
+        value instanceof Date ? value.toISOString() : value
+      )), [
+        'So11111111111111111111111111111111111111112',
+        5,
+        '2026-03-24T04:15:00.000Z',
+        15,
+        '2026-03-24T04:15:00.000Z',
+        30,
+        '2026-03-24T04:00:00.000Z',
+      ]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('does not recompute aggregate buckets for repeated writes inside the same 1m bucket', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-03-24T04:18:00.000Z',
+            sample_count: 2,
+          },
+        ],
+      };
+    };
+
+    try {
+      const row = await tokenMarketBucket1m.upsertSnapshotBucket({
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        pairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+        ts: '2026-03-24T04:18:20.000Z',
+        mcap: 123457,
+        price: 0.1235,
+        source: 'gmgn',
+      });
+
+      assert.equal(row.sample_count, 2);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('includes the previous aggregate window when a new minute crosses a 5m boundary', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (calls.length === 1) {
+        return {
+          rows: [
+            {
+              token_address: 'So11111111111111111111111111111111111111112',
+              bucket_ts: '2026-03-24T04:20:00.000Z',
+              sample_count: 1,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+
+    try {
+      await tokenMarketBucket1m.upsertSnapshotBucket({
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        pairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+        ts: '2026-03-24T04:20:00.000Z',
+        mcap: 123456,
+        price: 0.1234,
+        source: 'gmgn',
+      });
+
+      assert.equal(calls.length, 2);
+      assert.deepEqual(calls[1].params.map((value) => (
+        value instanceof Date ? value.toISOString() : value
+      )), [
+        'So11111111111111111111111111111111111111112',
+        5,
+        '2026-03-24T04:20:00.000Z',
+        15,
+        '2026-03-24T04:15:00.000Z',
+        30,
+        '2026-03-24T04:00:00.000Z',
+        5,
+        '2026-03-24T04:15:00.000Z',
+      ]);
+    } finally {
+      db.query = originalQuery;
+    }
   });
 
   it('marks a wick-based high-cap dump using the baseline market cap gate', () => {
@@ -308,6 +471,276 @@ describe('token market 1m bucket helpers', () => {
       assert.deepEqual(rows[1].series, []);
       assert.equal(rows[1].coverageRatio, 0);
       assert.equal(rows[1].granularityMinutes, 30);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('uses aggregate buckets for supported sparkline granularities when coverage is sufficient', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-05T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '100',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '160',
+          },
+        ],
+      };
+    };
+
+    try {
+      const rows = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], {
+        hours: 14 * 24,
+        points: 336,
+        granularityMinutes: 30,
+      });
+
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].sql, /FROM token_market_buckets_agg/);
+      assert.doesNotMatch(calls[0].sql, /spark_bucket_ts/);
+      assert.deepEqual(calls[0].params, [[
+        'So11111111111111111111111111111111111111112',
+      ], 14 * 24, 30]);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].bucketCount, 2);
+      assert.equal(rows[0].granularityMinutes, 30);
+      assert.equal(rows[0].effectiveHours, 336);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('falls back to 1m sparkline rows when aggregate coverage is too short', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (calls.length === 1) {
+        return {
+          rows: [
+            {
+              token_address: 'So11111111111111111111111111111111111111112',
+              bucket_ts: '2026-04-19T12:00:00.000Z',
+              pair_address: 'So11111111111111111111111111111111111111112',
+              close_mcap: '160',
+            },
+          ],
+        };
+      }
+
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-05T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '100',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '160',
+          },
+        ],
+      };
+    };
+
+    try {
+      const metrics = [];
+      const rows = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], {
+        hours: 14 * 24,
+        points: 336,
+        granularityMinutes: 30,
+        onMetrics: (entry) => metrics.push(entry),
+      });
+
+      assert.equal(calls.length, 2);
+      assert.match(calls[0].sql, /FROM token_market_buckets_agg/);
+      assert.match(calls[1].sql, /FROM token_market_buckets_1m/);
+      assert.match(calls[1].sql, /spark_bucket_ts/);
+      assert.deepEqual(calls[1].params, [[
+        'So11111111111111111111111111111111111111112',
+      ], 14 * 24, 30]);
+      assert.equal(rows[0].effectiveHours, 336);
+      assert.equal(rows[0].bucketCount, 2);
+      assert.equal(metrics[0].source, '1m-fallback');
+      assert.equal(metrics[0].aggregateRows, 1);
+      assert.equal(metrics[0].fallbackRows, 2);
+      assert.equal(metrics[0].fallbackAddresses, 1);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('caches repeated sparkline requests for the same batch options', async () => {
+    const originalQuery = db.query;
+    let queryCount = 0;
+
+    db.query = async () => {
+      queryCount += 1;
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-05T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '100',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '160',
+          },
+        ],
+      };
+    };
+
+    try {
+      const metrics = [];
+      const first = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], {
+        hours: 14 * 24,
+        points: 336,
+        granularityMinutes: 30,
+        onMetrics: (entry) => metrics.push(entry),
+      });
+      const second = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], {
+        hours: 14 * 24,
+        points: 336,
+        granularityMinutes: 30,
+        onMetrics: (entry) => metrics.push(entry),
+      });
+
+      assert.equal(queryCount, 1);
+      assert.deepEqual(second, first);
+      assert.equal(metrics[0].cacheHit, false);
+      assert.equal(metrics[1].cacheHit, true);
+      assert.equal(metrics[1].queryDurationMs, 0);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('invalidates cached sparkline entries for updated addresses', async () => {
+    const key = tokenMarketBucket1m.__private.getSparklineCacheKey([
+      'So11111111111111111111111111111111111111112',
+      'So11111111111111111111111111111111111111113',
+    ], {
+      hours: 1,
+      points: 60,
+      granularityMinutes: 30,
+    });
+
+    assert.equal(typeof key, 'string');
+
+    const originalQuery = db.query;
+    let queryCount = 0;
+
+    db.query = async () => {
+      queryCount += 1;
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '160',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111113',
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111113',
+            close_mcap: '260',
+          },
+        ],
+      };
+    };
+
+    try {
+      await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+      ], {
+        hours: 1,
+        points: 60,
+        granularityMinutes: 30,
+      });
+      await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+      ], {
+        hours: 1,
+        points: 60,
+        granularityMinutes: 30,
+      });
+      assert.equal(queryCount, 1);
+
+      const deleted = tokenMarketBucket1m.__private.invalidateSparklineCacheForAddresses([
+        'So11111111111111111111111111111111111111113',
+      ]);
+      assert.equal(deleted, 1);
+
+      await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+      ], {
+        hours: 1,
+        points: 60,
+        granularityMinutes: 30,
+      });
+      assert.equal(queryCount, 2);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('deletes aggregate buckets with source 1m buckets during cleanup', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [], rowCount: calls.length === 2 ? 2 : 4 };
+    };
+
+    try {
+      const deleted = await tokenMarketBucket1m.deleteByAddresses([
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+        'invalid',
+      ]);
+
+      assert.equal(deleted, 2);
+      assert.equal(calls.length, 2);
+      assert.match(calls[0].sql, /DELETE FROM token_market_buckets_agg/);
+      assert.match(calls[1].sql, /DELETE FROM token_market_buckets_1m/);
+      assert.deepEqual(calls[0].params, [[
+        'So11111111111111111111111111111111111111112',
+        'So11111111111111111111111111111111111111113',
+      ]]);
+      assert.deepEqual(calls[1].params, calls[0].params);
     } finally {
       db.query = originalQuery;
     }

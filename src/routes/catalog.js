@@ -19,6 +19,12 @@ const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 const { logTrace } = require('../utils/pump-migrate-trace');
+const {
+  attachResponsePerfHeaders,
+  isEnabled: isPerfMetricsEnabled,
+  logRequestPerf,
+  nowMs,
+} = require('../utils/perf-metrics');
 const bidZoneWorker = require('../services/bid-zone-worker');
 
 const MONITORED_MIN_MCAP = 30000;
@@ -243,23 +249,59 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
   }
 
   try {
+    const startedAt = nowMs();
+    let modelMetrics = null;
+    const sparklineOptions = {
+      hours: parsed.value.hours,
+      points: parsed.value.points,
+      granularityMinutes: parsed.value.granularityMinutes,
+    };
+    if (isPerfMetricsEnabled()) {
+      sparklineOptions.onMetrics = (metrics) => {
+        modelMetrics = metrics;
+      };
+    }
+
     const items = await tokenMarketBucket1m.listSparklineByAddresses(
       parsed.value.addresses,
-      {
-        hours: parsed.value.hours,
-        points: parsed.value.points,
-        granularityMinutes: parsed.value.granularityMinutes,
-      }
+      sparklineOptions
     );
 
-    res.json({
+    const payload = {
       generatedAt: new Date().toISOString(),
       hours: parsed.value.hours,
       points: parsed.value.points,
       granularityMinutes: parsed.value.granularityMinutes,
       count: items.length,
       items,
+    };
+    const totalDurationMs = nowMs() - startedAt;
+    const perf = attachResponsePerfHeaders(res, 'catalog.sparklines', payload, {
+      total: totalDurationMs,
+      query: modelMetrics?.queryDurationMs,
+      build: modelMetrics?.buildDurationMs,
     });
+    logRequestPerf(req, 'catalog.sparklines', {
+      addresses: parsed.value.addresses.length,
+      uniqueAddresses: modelMetrics?.addresses,
+      rows: modelMetrics?.rows,
+      source: modelMetrics?.source,
+      cacheHit: modelMetrics?.cacheHit,
+      aggregateRows: modelMetrics?.aggregateRows,
+      fallbackRows: modelMetrics?.fallbackRows,
+      fallbackAddresses: modelMetrics?.fallbackAddresses,
+      items: items.length,
+      hours: parsed.value.hours,
+      points: parsed.value.points,
+      granularityMinutes: parsed.value.granularityMinutes,
+      queryMs: modelMetrics?.queryDurationMs,
+      buildMs: modelMetrics?.buildDurationMs,
+      modelMs: modelMetrics?.totalDurationMs,
+      totalMs: totalDurationMs,
+      responseBytes: perf.responseBytes,
+    });
+
+    res.json(payload);
   } catch (err) {
     console.error('POST /catalog/sparklines error:', err.message);
     res.status(500).json({ error: 'Failed to load token sparklines' });
