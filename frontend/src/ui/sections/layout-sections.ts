@@ -3729,6 +3729,7 @@ function renderBotSettingsFields(state: AppState) {
         <option value="off">Disabled</option>
       </select>
     </div>
+    ${renderBrowserNotificationControl(state)}
     <div class="config-item config-item-sound">
       <label>Card effects</label>
       <select name="card-effects-mode">
@@ -3758,6 +3759,39 @@ function renderBotSettingsFields(state: AppState) {
         <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" />
       </div>
       ${renderSoundUploadStrip(state)}
+    </div>
+  `;
+}
+
+function getBrowserNotificationStatusLabel(state: AppState) {
+  const notificationState = state.ui.browserNotifications;
+  if (notificationState.permission === 'unsupported') {
+    return 'Not supported';
+  }
+  if (notificationState.permission === 'denied') {
+    return 'Blocked';
+  }
+  if (notificationState.enabled && notificationState.permission === 'granted') {
+    return 'Allowed';
+  }
+  return 'Off';
+}
+
+function renderBrowserNotificationControl(state: AppState) {
+  const notificationState = state.ui.browserNotifications;
+  const status = getBrowserNotificationStatusLabel(state);
+  const canEnable = notificationState.permission === 'default' || notificationState.permission === 'granted';
+  const isEnabled = notificationState.enabled && notificationState.permission === 'granted';
+  const action = isEnabled ? 'disable-browser-notifications' : 'enable-browser-notifications';
+  const buttonText = isEnabled ? 'Enabled' : status;
+  const disabled = !isEnabled && !canEnable;
+
+  return `
+    <div class="config-item config-item-sound">
+      <label>Browser Notifications</label>
+      <div class="legacy-browser-notification-control">
+        <button type="button" class="old-filter-btn config-menu-button legacy-browser-notification-button ${isEnabled ? 'active' : ''}" data-action="${action}" ${disabled ? 'disabled' : ''}>${escapeHtml(buttonText)}</button>
+      </div>
     </div>
   `;
 }
@@ -4149,6 +4183,12 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
   configSection.querySelector<HTMLSelectElement>('select[name="sound-mode"]')?.addEventListener('change', (event) => {
     controller.setSoundEnabled((event.currentTarget as HTMLSelectElement).value !== 'off');
+  });
+  configSection.querySelector<HTMLButtonElement>('[data-action="enable-browser-notifications"]')?.addEventListener('click', () => {
+    void controller.enableBrowserNotifications();
+  });
+  configSection.querySelector<HTMLButtonElement>('[data-action="disable-browser-notifications"]')?.addEventListener('click', () => {
+    controller.disableBrowserNotifications();
   });
 
   const volumeInput = configSection.querySelector<HTMLInputElement>('input[name="sound-volume"]');

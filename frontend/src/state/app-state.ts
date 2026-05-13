@@ -594,6 +594,11 @@ export interface AppState {
     livePanelLayout: LivePanelLayout;
     soundEnabled: boolean;
     soundVolume: number;
+    browserNotifications: {
+      enabled: boolean;
+      permission: 'unsupported' | 'default' | 'granted' | 'denied';
+      notifyWhenVisible: boolean;
+    };
     collapsed: Record<CollapsibleSectionKey, boolean>;
     workspace: WorkspaceView;
   };
@@ -759,6 +764,11 @@ export function createAppState(): AppState {
       },
       soundEnabled: true,
       soundVolume: 0.05,
+      browserNotifications: {
+        enabled: false,
+        permission: 'unsupported',
+        notifyWhenVisible: false,
+      },
       collapsed: {
         manual: false,
         recent: false,

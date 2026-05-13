@@ -1069,6 +1069,7 @@ function getOverlayRenderKey(state: AppState) {
     accessSource: state.session.accessSource,
     userSettings: getUserSettingsOverlaySnapshot(state),
     botSettingsConfigs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
+    browserNotifications: state.ui.authPanel === 'bot-settings' ? state.ui.browserNotifications : null,
     blockedTokens: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
   });
 }

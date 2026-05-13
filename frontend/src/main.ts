@@ -1,6 +1,7 @@
 import './styles/local-fonts.css';
 import './styles/app.css';
 import { playAlertSound, playMigrateSound, primeAlertAudio } from './services/alerts/sound';
+import { maybeNotifyAlert, resetBrowserNotificationSession } from './services/alerts/browser-notifications';
 import { updateLivePresence } from './services/socket/client';
 import { isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
@@ -24,6 +25,7 @@ const root: HTMLDivElement = rootElement;
 
 const controller = createAppController();
 const playedAlertIds = new Set<string>();
+const handledBrowserNotificationAlertIds = new Set<string>();
 const playedPumpToastIds = new Set<string>();
 const pendingAlertSoundIds = new Set<string>();
 const pendingPumpToastSoundIds = new Set<string>();
@@ -54,6 +56,9 @@ let lastForegroundStateRefreshAt = 0;
 let foregroundStateRefreshInFlight = false;
 let suppressCatchupAlertAudioUntil = 0;
 let suppressCatchupAlertCreatedBefore = 0;
+let browserNotificationActiveSince = Date.now();
+let lastBrowserNotificationRuntimeActive = false;
+let lastBrowserNotificationsEnabled = false;
 
 const FULL_LIST_INTERACTION_LOCK_SELECTOR = '.monitored-list, .bid-zone-list, .pump-list, .pump-migration-strip, .alerts-list';
 const TABLE_INTERACTION_LOCK_ZONE_SELECTOR = [
@@ -206,6 +211,63 @@ function syncAudioSideEffects(state: AppState) {
   }
 }
 
+function syncBrowserNotificationSideEffects(state: AppState) {
+  const runtimeActive = state.session.status === 'authenticated' && state.runtime.mode === 'active';
+  const notificationsEnabled = state.ui.browserNotifications.enabled;
+
+  if (!runtimeActive) {
+    lastBrowserNotificationRuntimeActive = false;
+    return;
+  }
+
+  if (!lastBrowserNotificationRuntimeActive) {
+    browserNotificationActiveSince = Date.now();
+    for (const alert of state.data.alerts) {
+      handledBrowserNotificationAlertIds.add(alert.id);
+    }
+  }
+  lastBrowserNotificationRuntimeActive = true;
+
+  if (!notificationsEnabled) {
+    lastBrowserNotificationsEnabled = false;
+    return;
+  }
+
+  if (!lastBrowserNotificationsEnabled) {
+    for (const alert of state.data.alerts) {
+      handledBrowserNotificationAlertIds.add(alert.id);
+    }
+    lastBrowserNotificationsEnabled = true;
+    return;
+  }
+
+  for (const alert of state.data.alerts) {
+    if (handledBrowserNotificationAlertIds.has(alert.id)) {
+      continue;
+    }
+
+    if (Number(alert.createdAt) > 0 && Number(alert.createdAt) <= browserNotificationActiveSince) {
+      handledBrowserNotificationAlertIds.add(alert.id);
+      continue;
+    }
+
+    maybeNotifyAlert(alert, {
+      enabled: notificationsEnabled,
+      notifyWhenVisible: state.ui.browserNotifications.notifyWhenVisible,
+      documentHidden: isDocumentHidden,
+      configs: state.data.configs,
+    });
+    handledBrowserNotificationAlertIds.add(alert.id);
+  }
+
+  const liveIds = new Set(state.data.alerts.map((alert) => alert.id));
+  for (const id of [...handledBrowserNotificationAlertIds]) {
+    if (!liveIds.has(id)) {
+      handledBrowserNotificationAlertIds.delete(id);
+    }
+  }
+}
+
 function isInteractionLocked() {
   return Date.now() < interactionLockUntil;
 }
@@ -221,6 +283,10 @@ function isListInteractionLocked() {
 
 function isSortMenuOpen() {
   return Boolean(root.querySelector('[data-sort-wrap].open'));
+}
+
+function getBotSettingsBrowserNotificationsRenderKey(state: AppState) {
+  return state.ui.authPanel === 'bot-settings' ? state.ui.browserNotifications : null;
 }
 
 function getAuthModalRenderKey(state: AppState) {
@@ -256,6 +322,7 @@ function getAuthModalRenderKey(state: AppState) {
     billingOrders: state.ui.authPanel === 'user-settings' ? state.billing.orders : null,
     billingPendingPlanKey: state.ui.authPanel === 'user-settings' ? state.billing.pendingPlanKey : null,
     billingError: state.ui.authPanel === 'user-settings' ? state.billing.error : null,
+    browserNotifications: getBotSettingsBrowserNotificationsRenderKey(state),
   });
 }
 
@@ -655,8 +722,13 @@ function primePlayedAlertsOnAuthentication(state: AppState, sessionJustBecameAut
     return;
   }
 
+  resetBrowserNotificationSession();
+  browserNotificationActiveSince = Date.now();
+  lastBrowserNotificationRuntimeActive = state.runtime.mode === 'active';
+  lastBrowserNotificationsEnabled = state.ui.browserNotifications.enabled;
   for (const alert of state.data.alerts) {
     playedAlertIds.add(alert.id);
+    handledBrowserNotificationAlertIds.add(alert.id);
   }
 }
 
@@ -701,6 +773,7 @@ controller.subscribe((state, dirtyRegions) => {
   syncLivePresence(state);
   primePlayedAlertsOnAuthentication(state, sessionJustBecameAuthenticated);
   syncAudioSideEffects(state);
+  syncBrowserNotificationSideEffects(state);
 
   if (isDocumentHidden) {
     hiddenPendingState = state;

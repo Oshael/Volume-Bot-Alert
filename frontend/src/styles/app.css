@@ -4693,6 +4693,22 @@ textarea:focus {
   cursor: pointer;
 }
 
+.legacy-browser-notification-control {
+  display: flex;
+  width: 100%;
+}
+
+.legacy-browser-notification-button {
+  justify-content: flex-start;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.legacy-browser-notification-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .legacy-action-row {
   display: grid;
   gap: 10px;

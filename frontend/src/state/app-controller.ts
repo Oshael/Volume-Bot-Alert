@@ -84,6 +84,12 @@ import {
   recordRuntimePerfDebugEntry,
 } from '../utils/runtime-perf-debug';
 import { hasFreshMockSolRate } from '../utils/mock-trading-display';
+import {
+  getBrowserNotificationStatus,
+  loadBrowserNotificationSettings,
+  requestBrowserNotificationPermission,
+  saveBrowserNotificationSettings,
+} from '../services/alerts/browser-notifications';
 
 const AUTH_NOTICE_NO_SESSION = 'No saved session. Sign in to continue.';
 const AUTH_NOTICE_RESTORING = 'Restoring session...';
@@ -392,6 +398,8 @@ export interface AppController {
   resetLivePanelLayout(): void;
   setSoundEnabled(enabled: boolean): void;
   setSoundVolume(volume: number): void;
+  enableBrowserNotifications(): Promise<void>;
+  disableBrowserNotifications(): void;
   toggleStarredToken(address: string): Promise<void>;
   setWorkspace(workspace: WorkspaceView): void;
   syncWorkspaceFromLocation(): void;
@@ -685,6 +693,7 @@ export function createAppController(): AppController {
   clearLegacyNetworkDebugStorage();
   const listeners = new Set<(state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) => void>();
   hydrateSoundSettings();
+  hydrateBrowserNotificationSettings();
   let authSubmitInFlight = false;
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
@@ -2230,6 +2239,23 @@ export function createAppController(): AppController {
     saveSoundSettings(getStorageScope(), {
       enabled: state.ui.soundEnabled,
       volume: state.ui.soundVolume,
+    });
+  }
+
+  function hydrateBrowserNotificationSettings() {
+    const settings = loadBrowserNotificationSettings(getStorageScope());
+    const permission = getBrowserNotificationStatus();
+    state.ui.browserNotifications = {
+      enabled: settings.enabled && permission === 'granted',
+      permission,
+      notifyWhenVisible: settings.notifyWhenVisible,
+    };
+  }
+
+  function persistBrowserNotificationSettings() {
+    saveBrowserNotificationSettings(getStorageScope(), {
+      enabled: state.ui.browserNotifications.enabled,
+      notifyWhenVisible: state.ui.browserNotifications.notifyWhenVisible,
     });
   }
 
@@ -5718,6 +5744,7 @@ export function createAppController(): AppController {
     state.session.emailVerifiedAt = user.emailVerifiedAt ?? null;
     hydrateBarStorage();
     hydrateSoundSettings();
+    hydrateBrowserNotificationSettings();
     void refreshMockTradingState();
     if (!options?.deferWorkspaceSync) {
       syncWorkspaceCapabilities();
@@ -6054,6 +6081,7 @@ export function createAppController(): AppController {
       uiPrefsPersistTimer = null;
     }
     hydrateSoundSettings();
+    hydrateBrowserNotificationSettings();
     state.ui.collapsed = getDefaultCollapsedSections();
     replaceStarredTokens([], { resetRevision: true });
     historyBootstrapRequestRevision = 0;
@@ -7326,6 +7354,9 @@ export function createAppController(): AppController {
         state.ui.error = null;
         state.ui.notice = null;
       }
+      if (panel === 'bot-settings') {
+        hydrateBrowserNotificationSettings();
+      }
       state.ui.authPanel = panel;
       if (panel === 'register' && typeof window !== 'undefined' && state.session.status === 'anonymous' && isLoginRoutePath(window.location.pathname)) {
         navigateToLogin('register');
@@ -7908,6 +7939,19 @@ export function createAppController(): AppController {
       state.data.configs['sound-volume'] = Math.round(nextVolume * 100);
       persistSoundSettings();
       void persistUiConfigs({ 'sound-volume': Math.round(nextVolume * 100) });
+      emit('overlay');
+    },
+    async enableBrowserNotifications() {
+      const permission = await requestBrowserNotificationPermission();
+      state.ui.browserNotifications.permission = permission;
+      state.ui.browserNotifications.enabled = permission === 'granted';
+      persistBrowserNotificationSettings();
+      emit('overlay');
+    },
+    disableBrowserNotifications() {
+      state.ui.browserNotifications.permission = getBrowserNotificationStatus();
+      state.ui.browserNotifications.enabled = false;
+      persistBrowserNotificationSettings();
       emit('overlay');
     },
     setWorkspace(workspace: WorkspaceView) {
