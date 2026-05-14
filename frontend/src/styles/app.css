@@ -8983,6 +8983,77 @@ TEMP_LEGACY_BAR_TITLE {
   padding: 2px 6px;
 }
 
+.alerts-panel[data-alerts-layout="compact"] .panel-header,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-panel .panel-header {
+  padding: 8px 10px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alerts-panel-header-controls,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-panel-header-controls {
+  gap: 4px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alerts-page-controls,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-page-controls {
+  gap: 3px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .action-button.small,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-panel .action-button.small {
+  min-height: 26px;
+  padding: 0 7px;
+  font-size: 9px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alerts-page-field,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-page-field {
+  min-height: 26px;
+  gap: 3px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alerts-page-field input,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-page-field input {
+  width: 34px;
+  min-height: 24px;
+  padding: 1px 4px;
+  font-size: 9px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alerts-page-controls .bucket-page-total,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-page-controls .bucket-page-total {
+  min-width: 26px;
+  min-height: 24px;
+  padding: 1px 5px;
+  font-size: 9px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .compact-search,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-panel .compact-search {
+  width: 28px;
+  min-width: 28px;
+  height: 26px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .compact-search-toggle,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-panel .compact-search-toggle {
+  width: 26px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alerts-panel-count,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alerts-panel-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+}
+
 .alerts-list {
   padding: 8px;
   overflow-x: hidden;
