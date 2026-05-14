@@ -93,10 +93,9 @@ export function resolveMockTradingPositionPnl(
     const currentValueUsd = position.currentValueUsd ?? 0;
     const unrecoveredInitialUsd = Math.max(0, boughtUsd - soldUsd);
     const pnlUsd = currentValueUsd - unrecoveredInitialUsd;
-    const pctBasisUsd = unrecoveredInitialUsd > 0 ? unrecoveredInitialUsd : boughtUsd;
     return {
       pnlUsd,
-      pnlPct: pctBasisUsd > 0 ? (pnlUsd / pctBasisUsd) * 100 : null,
+      pnlPct: (pnlUsd / boughtUsd) * 100,
     };
   }
 
