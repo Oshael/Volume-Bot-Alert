@@ -1529,6 +1529,7 @@ function renderMockTradingPnlResumeModal(state: AppState) {
               ${renderMockTradingPnlStat('Invested', fmtMockSolAmount(view.boughtSol))}
               ${renderMockTradingPnlStat('Bought @', fmtMoney(view.entryMcap))}
               ${renderMockTradingPnlStat('Position', fmtMockUsdForState(state, view.currentValue))}
+              ${renderMockTradingPnlStat('MCAP', fmtMoney(view.currentMcap))}
               ${renderMockTradingPnlStat('Sold', fmtMockSolAmount(view.soldSol))}
             </div>
           </div>
@@ -1571,7 +1572,18 @@ function getMockTradingPnlResumeView(state: AppState) {
     name: token?.name || position.name || token?.label || address,
     imageUrl: sanitizeOptionalHttpUrl(token?.imageUrl || position.imageUrl || null),
     entryMcap: position.avgEntryMcapUsd ?? getMockTradingAverageBuyMcap(trades),
+    currentMcap: resolveMockTradingCurrentMcap(position, token),
   };
+}
+
+function resolveMockTradingCurrentMcap(
+  position: NonNullable<ReturnType<typeof getMockTradingPositionView>>,
+  token: ReturnType<typeof getTrackedToken>,
+) {
+  if (position.currentMcapUsd != null) {
+    return position.currentMcapUsd;
+  }
+  return token?.mcap ?? null;
 }
 
 function getSortedMockTradingTradesForAddress(state: AppState, address: string) {
