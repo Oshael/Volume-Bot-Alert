@@ -537,6 +537,44 @@ function hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics) 
     );
 }
 
+function hasHighImbalanceLowVolumeBundle(hasHighImbalance, hasLowVolumeMismatch, txns24hTotal) {
+  return hasHighImbalance && hasLowVolumeMismatch && txns24hTotal >= 80;
+}
+
+function hasNoPoolConcentratedDislocationBundle(hasLowLiquidityMismatch, hasWeakConcentration, hasPriceDislocation) {
+  return hasLowLiquidityMismatch && hasWeakConcentration && hasPriceDislocation;
+}
+
+function hasNoPoolLowEfficiencyBundle({
+  hasLowVolumeMismatch,
+  hasLowLiquidityMismatch,
+  hasLowVolume24h,
+  hasWeakConcentration,
+  txns24hTotal,
+}) {
+  return hasLowVolumeMismatch
+    && hasLowLiquidityMismatch
+    && (
+      hasLowVolume24h
+      || hasWeakConcentration
+      || txns24hTotal >= 60
+    );
+}
+
+function hasNoPoolDeadWeakHolderBundle({
+  hasRecentVolumeDead,
+  hasLowVolume24h,
+  txns24hTotal,
+  holderCount,
+  top20Pct,
+}) {
+  return hasRecentVolumeDead
+    && hasLowVolume24h
+    && txns24hTotal <= 30
+    && holderCount <= 250
+    && top20Pct <= 80;
+}
+
 function hasWeakButLegitMicrocapProfile(input, metrics, strongSignals, weakSignals, behavioralSignals) {
   return strongSignals.length === 0
     && weakSignals.length === 0
@@ -589,29 +627,34 @@ function hasNoPoolSuspiciousProbableBundle(input, weakSignals, behavioralSignals
   const hasLowVolume24h = behavioralSignals.includes('volume24h_too_low');
   const hasRecentVolumeDead = behavioralSignals.includes('recent_volume_dead');
   const hasHighImbalance = behavioralSignals.includes('buy_sell_imbalance_high');
+  const hasPriceDislocation = behavioralSignals.includes('price_dislocation_extreme');
   const hasWeakConcentration = weakSignals.includes('holder_concentration_high');
 
-  if (hasHighImbalance && hasLowVolumeMismatch && txns24hTotal >= 80) {
+  if (hasHighImbalanceLowVolumeBundle(hasHighImbalance, hasLowVolumeMismatch, txns24hTotal)) {
     return true;
   }
 
-  if (
-    hasLowVolumeMismatch
-    && hasLowLiquidityMismatch
-    && (
-      hasLowVolume24h
-      || hasWeakConcentration
-      || txns24hTotal >= 60
-    )
-  ) {
+  if (hasNoPoolConcentratedDislocationBundle(hasLowLiquidityMismatch, hasWeakConcentration, hasPriceDislocation)) {
     return true;
   }
 
-  return hasRecentVolumeDead
-    && hasLowVolume24h
-    && txns24hTotal <= 30
-    && holderCount <= 250
-    && top20Pct <= 80;
+  if (hasNoPoolLowEfficiencyBundle({
+    hasLowVolumeMismatch,
+    hasLowLiquidityMismatch,
+    hasLowVolume24h,
+    hasWeakConcentration,
+    txns24hTotal,
+  })) {
+    return true;
+  }
+
+  return hasNoPoolDeadWeakHolderBundle({
+    hasRecentVolumeDead,
+    hasLowVolume24h,
+    txns24hTotal,
+    holderCount,
+    top20Pct,
+  });
 }
 
 function buildBehavioralSignals(input, options) {

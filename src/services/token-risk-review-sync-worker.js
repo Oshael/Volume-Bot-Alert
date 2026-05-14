@@ -32,6 +32,13 @@ const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME = 100;
 const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MAX_MCAP = 100000;
 const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP = 20;
 const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H = 1000;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_AGE_HOURS = 6;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_MCAP = 100000;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_USD = 100;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_TO_MCAP = 0.002;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_VOL_1H_TO_MCAP = 2;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_TXNS_24H = 1000;
+const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_PRICE_CHANGE_24H = 200;
 
 let timer = null;
 let running = false;
@@ -329,6 +336,84 @@ function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}) {
   };
 }
 
+function hasYoungLowCapHighChurnBaseProfile(row = {}) {
+  const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  return isGmgnSource(row)
+    && !isManualReviewProtected(row)
+    && ageHours != null
+    && ageHours < GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_AGE_HOURS
+    && marketCap >= DEFAULT_MIN_MCAP
+    && marketCap <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_MCAP;
+}
+
+function hasYoungLowCapThinLiquidity(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
+  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
+  return liquidityUsd != null
+    && (
+      liquidityUsd <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_USD
+      || (liquidityToMcap != null && liquidityToMcap <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_TO_MCAP)
+    );
+}
+
+function hasYoungLowCapHighChurnMarket(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const vol1hToMcap = computeRatio(row.last_vol_1h, marketCap);
+  const priceChange24h = Math.abs(toFiniteNumberOrNull(row.last_price_change_24h) || 0);
+  const txns24h = (toFiniteNumberOrNull(row.last_txns_24h_buys) || 0)
+    + (toFiniteNumberOrNull(row.last_txns_24h_sells) || 0);
+
+  return vol1hToMcap != null
+    && vol1hToMcap >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_VOL_1H_TO_MCAP
+    && txns24h >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_TXNS_24H
+    && priceChange24h >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_PRICE_CHANGE_24H;
+}
+
+function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
+  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
+  const vol1h = toFiniteNumberOrNull(row.last_vol_1h);
+  const vol1hToMcap = computeRatio(vol1h, marketCap);
+  const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
+  const priceChange24h = Math.abs(toFiniteNumberOrNull(row.last_price_change_24h) || 0);
+  const txns24h = (toFiniteNumberOrNull(row.last_txns_24h_buys) || 0)
+    + (toFiniteNumberOrNull(row.last_txns_24h_sells) || 0);
+
+  if (
+    !hasYoungLowCapHighChurnBaseProfile(row)
+    || !hasYoungLowCapThinLiquidity(row)
+    || !hasYoungLowCapHighChurnMarket(row)
+    || !hasNoMeteoraPool(meteoraSummary)
+  ) {
+    return null;
+  }
+
+  return {
+    label: 'junk_probable',
+    confidence: 'high',
+    manualReviewRequired: true,
+    autoBlock: false,
+    mode: 'gmgn_young_low_cap_high_churn_gate',
+    strongSignalCount: 1,
+    reasonCodes: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
+    strongSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
+    weakSignals: [],
+    behavioralSignals: [],
+    positiveSignals: [],
+    marketCap,
+    ageHours,
+    volume1h: vol1h,
+    vol1hToMcapRatio: vol1hToMcap,
+    txns24hTotal: txns24h,
+    priceChange24h,
+    liquidityUsd,
+    liquidityToMcapRatio: liquidityToMcap,
+  };
+}
+
 function buildDexGmgnHolderAnomalyAssessment(row = {}, info = {}) {
   const gmgnHolderCount = toFiniteNumberOrNull(info.holderCount);
   const gmgnMarketCap = toFiniteNumberOrNull(info.marketCap) ?? toFiniteNumberOrNull(row.last_mcap);
@@ -563,6 +648,7 @@ async function assessRiskReviewRow(row, meteoraSummary, deps = {}) {
   return buildGmgnRiskGateAssessment(row)
     || buildNewLowMcapExtremeVolumeAssessment(row)
     || buildGmgnLowMcapExtreme24hChurnAssessment(row)
+    || buildGmgnYoungLowCapHighChurnAssessment(row, meteoraSummary)
     || buildGmgnLowMcapThinSupportAssessment(row, meteoraSummary)
     || await assessDexGmgnHolderAnomaly(row, deps)
     || classifyTokenJunk({
@@ -744,6 +830,7 @@ module.exports = {
     autoBlockToken,
     buildGmgnLowMcapExtreme24hChurnAssessment,
     buildGmgnLowMcapThinSupportAssessment,
+    buildGmgnYoungLowCapHighChurnAssessment,
     buildGmgnRiskGateAssessment,
     buildGmgnRiskReleasePayload,
     captureEvidenceSafely,

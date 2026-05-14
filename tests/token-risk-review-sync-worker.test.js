@@ -186,6 +186,65 @@ describe('token risk review sync worker', () => {
     assert.equal(saved[0].label, 'valid_but_weak');
   });
 
+  it('auto-blocks young GMGN low-cap high-churn tokens with near-zero liquidity', async () => {
+    const saved = [];
+    const blocked = [];
+    const suppressed = [];
+    const createdAtMs = Date.now() - (60 * 60 * 1000);
+    const result = await worker.__private.processRows([
+      {
+        address: 'EAshzB35kVsN5hwupFsZxLA5swj1vgEDcScbiV3KK5ic',
+        source: 'gmgn',
+        last_mcap: 60912,
+        last_vol_1h: 153812.79,
+        last_vol_6h: 153812.79,
+        last_vol_24h: 153812.79,
+        last_liquidity_usd: 6.81,
+        last_txns_24h_buys: 3000,
+        last_txns_24h_sells: 1498,
+        last_price_change_24h: 666,
+        last_token_created_at_ms: createdAtMs,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return {
+            tokenAddress: payload.tokenAddress,
+            label: payload.label,
+            source: 'auto',
+          };
+        },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (address, payload) => {
+          suppressed.push({ address, payload });
+          return { address, ...payload };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /gmgn_young_low_cap_high_churn_gate/);
+    assert.match(blocked[0].label, /gmgn_young_low_cap_high_churn_thin_liquidity/);
+    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
+  });
+
   it('does not fail the sync when junk evidence capture throws', async () => {
     const saved = [];
     const blocked = [];

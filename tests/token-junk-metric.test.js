@@ -306,6 +306,28 @@ describe('token junk metric', () => {
     assert.ok(assessment.reasonCodes.includes('liquidity_to_mcap_too_low'));
   });
 
+  it('promotes no-pool concentrated dislocation tokens with near-zero liquidity', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 1010714,
+      volume1h: 0,
+      volume6h: 0,
+      volume24h: 148473.26,
+      liquidityUsd: 0.01,
+      txns24hBuys: 1459,
+      txns24hSells: 700,
+      priceChange24h: 12647,
+      holderCount: 1000,
+      top10Pct: 83.05,
+      top20Pct: 88.64,
+      meteora: { noPool: true, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('holder_concentration_high'));
+    assert.ok(assessment.reasonCodes.includes('liquidity_to_mcap_too_low'));
+    assert.ok(assessment.reasonCodes.includes('price_dislocation_extreme'));
+  });
+
   it('promotes no-pool dead micro-activity bundles only when holder profile is weak enough', () => {
     const assessment = classifyTokenJunk({
       mcap: 396997,
