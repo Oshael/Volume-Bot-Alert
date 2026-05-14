@@ -1455,13 +1455,11 @@ function renderMockTradingHistoryModal(state: AppState) {
   const summary = getMockTradingSummaryView(state);
   const sells = getMockTradingSellTrades(state);
   const openOrders = getMockTradingOpenSellOrders(state);
-  const totalRealized = summary?.account.realizedPnlUsd
-    ?? sells.reduce((sum, trade) => sum + (trade.realizedPnlUsd || 0), 0);
-  const winners = sells.filter((trade) => trade.realizedPnlUsd > 0).length;
-  const losers = sells.filter((trade) => trade.realizedPnlUsd < 0).length;
+  const sellOutcomes = buildMockTradingHistorySellOutcomes(state);
+  const winners = sells.filter((trade) => (sellOutcomes.get(trade.id)?.pnlUsd ?? trade.realizedPnlUsd) > 0).length;
+  const losers = sells.filter((trade) => (sellOutcomes.get(trade.id)?.pnlUsd ?? trade.realizedPnlUsd) < 0).length;
   const flats = sells.length - winners - losers;
   const winRate = sells.length > 0 ? (winners / sells.length) * 100 : null;
-  const totalRealizedSol = sells.reduce((sum, trade) => sum + (trade.realizedPnlUsd || 0) / resolveMockTradeSolUsdcRate(trade), 0);
   const rows = sells.slice(0, 30);
 
   return `
@@ -1471,14 +1469,13 @@ function renderMockTradingHistoryModal(state: AppState) {
         <div class="legacy-auth-panel-head">
           <div>
             <strong id="mock-trading-history-title">Mock plays</strong>
-            <span>${escapeHtml(getActiveMockTradingWalletName(state))} · Closed sells and realized PnL</span>
+            <span>${escapeHtml(getActiveMockTradingWalletName(state))} · Closed sells and position PnL</span>
           </div>
           <button type="button" class="legacy-profile-modal-close" data-action="close-mock-trading-history" aria-label="Close dialog">X</button>
         </div>
         <div class="mock-trading-history-stats">
           ${renderMockTradingHistoryStat('Cash', fmtMockUsdForState(state, summary?.account.cashUsd ?? null), null)}
           ${renderMockTradingHistoryStat('Equity', fmtMockUsdForState(state, summary?.totalEquityUsd ?? null), null)}
-          ${renderMockTradingHistoryStat('Realized', fmtMockSolAmount(totalRealizedSol, { signed: true }), totalRealized < 0 ? 'down' : 'up')}
           ${renderMockTradingHistoryStat('Win rate', fmtPct(winRate), null)}
           ${renderMockTradingHistoryStat('Wins', String(winners), 'up')}
           ${renderMockTradingHistoryStat('Losses', String(losers), losers > 0 ? 'down' : null)}
@@ -1487,7 +1484,7 @@ function renderMockTradingHistoryModal(state: AppState) {
         </div>
         <div class="mock-trading-history-table-wrap">
           ${openOrders.length > 0 ? renderMockTradingOpenOrdersTable(state, openOrders) : ''}
-          ${rows.length > 0 ? renderMockTradingHistoryTable(state, rows) : '<div class="mock-trading-history-empty">No closed mock plays yet.</div>'}
+          ${rows.length > 0 ? renderMockTradingHistoryTable(state, rows, sellOutcomes) : '<div class="mock-trading-history-empty">No closed mock plays yet.</div>'}
         </div>
       </div>
     </div>
@@ -1528,9 +1525,9 @@ function renderMockTradingPnlResumeModal(state: AppState) {
             </div>
             <div class="mock-trading-pnl-stats">
               ${renderMockTradingPnlStat('Invested', fmtMockSolAmount(view.boughtSol))}
+              ${renderMockTradingPnlStat('Bought @', fmtMoney(view.entryMcap))}
               ${renderMockTradingPnlStat('Position', fmtMockUsdForState(state, view.currentValue))}
               ${renderMockTradingPnlStat('Sold', fmtMockSolAmount(view.soldSol))}
-              ${renderMockTradingPnlStat('Realized', fmtMockSolAmount(view.realizedSol, { signed: true }), view.realized < 0 ? 'down' : 'up')}
             </div>
           </div>
 
@@ -1571,6 +1568,7 @@ function getMockTradingPnlResumeView(state: AppState) {
     symbol: token?.symbol || position.symbol || address.slice(0, 8),
     name: token?.name || position.name || token?.label || address,
     imageUrl: sanitizeOptionalHttpUrl(token?.imageUrl || position.imageUrl || null),
+    entryMcap: position.avgEntryMcapUsd ?? getMockTradingAverageBuyMcap(trades),
   };
 }
 
@@ -1592,13 +1590,9 @@ function getMockTradingPnlTotals(
     .filter((trade) => trade.side === 'sell')
     .reduce((sum, trade) => sum + trade.notionalUsd / resolveMockTradeSolUsdcRate(trade), 0);
   const currentValue = position.currentValueUsd ?? null;
-  const unrealized = position.unrealizedPnlUsd ?? null;
-  const realized = position.realizedPnlUsd ?? 0;
-  const realizedSol = trades
-    .filter((trade) => trade.side === 'sell')
-    .reduce((sum, trade) => sum + trade.realizedPnlUsd / resolveMockTradeSolUsdcRate(trade), 0);
-  const totalPnl = realized + (unrealized ?? 0);
-  const pnlPct = boughtUsd > 0 ? (totalPnl / boughtUsd) * 100 : position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
+  const totalOutcome = soldUsd + (currentValue ?? 0);
+  const netPnl = totalOutcome - boughtUsd;
+  const pnlPct = boughtUsd > 0 ? (netPnl / boughtUsd) * 100 : position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
 
   return {
     boughtUsd,
@@ -1606,11 +1600,10 @@ function getMockTradingPnlTotals(
     soldUsd,
     soldSol,
     currentValue,
-    realized,
-    realizedSol,
-    totalPnl,
+    netPnl,
+    totalPnl: netPnl,
     pnlPct,
-    pnlTone: totalPnl < 0 ? 'down' : 'up',
+    pnlTone: netPnl < 0 ? 'down' : 'up',
   };
 }
 
@@ -1641,6 +1634,81 @@ function renderMockTradingPnlTrade(trade: MockTradingTradeView) {
       <em>${escapeHtml(formatMockTradeTime(trade.executedAt))}</em>
     </div>
   `;
+}
+
+function getMockTradingAverageBuyMcap(trades: MockTradingTradeView[]) {
+  let weightedMcap = 0;
+  let weight = 0;
+
+  for (const trade of trades) {
+    if (trade.side !== 'buy' || !(trade.marketCapUsd && trade.marketCapUsd > 0) || !(trade.notionalUsd > 0)) {
+      continue;
+    }
+    weightedMcap += trade.marketCapUsd * trade.notionalUsd;
+    weight += trade.notionalUsd;
+  }
+
+  return weight > 0 ? weightedMcap / weight : null;
+}
+
+function weightedMockTradingMcap(leftValue: number | null, leftWeight: number, rightValue: number | null, rightWeight: number) {
+  if (leftValue == null && rightValue == null) return null;
+  if (leftValue == null) return rightValue;
+  if (rightValue == null) return leftValue;
+  const totalWeight = leftWeight + rightWeight;
+  return totalWeight > 0 ? ((leftValue * leftWeight) + (rightValue * rightWeight)) / totalWeight : rightValue;
+}
+
+function buildMockTradingSellOutcomesForTrades(trades: MockTradingTradeView[]) {
+  const outcomes = new Map<number, { entryMcapUsd: number | null; pnlUsd: number }>();
+  let boughtUsd = 0;
+  let soldUsd = 0;
+  let quantity = 0;
+  let costBasisUsd = 0;
+  let entryMcapUsd: number | null = null;
+
+  for (const trade of trades.slice().sort((left, right) => String(left.executedAt || '').localeCompare(String(right.executedAt || '')) || left.id - right.id)) {
+    if (trade.side === 'buy') {
+      boughtUsd += trade.notionalUsd;
+      entryMcapUsd = weightedMockTradingMcap(entryMcapUsd, costBasisUsd, trade.marketCapUsd ?? null, trade.notionalUsd);
+      costBasisUsd += trade.notionalUsd;
+      quantity += trade.quantity;
+      continue;
+    }
+
+    const quantityBeforeSell = quantity;
+    soldUsd += trade.notionalUsd;
+    quantity = Math.max(0, quantity - trade.quantity);
+    const remainingValueUsd = quantity * trade.priceUsd;
+    const totalOutcomeUsd = soldUsd + remainingValueUsd;
+    const netPnlUsd = totalOutcomeUsd - boughtUsd;
+    outcomes.set(trade.id, {
+      entryMcapUsd,
+      pnlUsd: netPnlUsd,
+    });
+
+    if (quantityBeforeSell > 0 && costBasisUsd > 0) {
+      const soldRatio = Math.min(1, trade.quantity / quantityBeforeSell);
+      costBasisUsd = Math.max(0, costBasisUsd * (1 - soldRatio));
+    }
+    if (quantity <= 0.000000001) {
+      quantity = 0;
+      costBasisUsd = 0;
+      entryMcapUsd = null;
+    }
+  }
+
+  return outcomes;
+}
+
+function buildMockTradingHistorySellOutcomes(state: AppState) {
+  const outcomes = new Map<number, { entryMcapUsd: number | null; pnlUsd: number }>();
+  for (const trades of Object.values(state.data.mockTradingTradesByAddress)) {
+    for (const [tradeId, outcome] of buildMockTradingSellOutcomesForTrades(trades)) {
+      outcomes.set(tradeId, outcome);
+    }
+  }
+  return outcomes;
 }
 
 function getMockTradingOpenSellOrders(state: AppState) {
@@ -1718,30 +1786,32 @@ function renderMockTradingOpenOrderRow(state: AppState, order: MockTradingTakePr
   `;
 }
 
-function renderMockTradingHistoryTable(state: AppState, trades: MockTradingTradeView[]) {
+function renderMockTradingHistoryTable(state: AppState, trades: MockTradingTradeView[], sellOutcomes: Map<number, { entryMcapUsd: number | null; pnlUsd: number }>) {
   return `
     <table class="mock-trading-history-table">
       <thead>
         <tr>
           <th>Token</th>
+          <th>Bought @</th>
           <th>Sold</th>
-          <th>Entry return</th>
           <th>PnL</th>
           <th>Time</th>
         </tr>
       </thead>
       <tbody>
-        ${trades.map((trade) => renderMockTradingHistoryRow(state, trade)).join('')}
+        ${trades.map((trade) => renderMockTradingHistoryRow(state, trade, sellOutcomes)).join('')}
       </tbody>
     </table>
   `;
 }
 
-function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeView) {
+function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeView, sellOutcomes: Map<number, { entryMcapUsd: number | null; pnlUsd: number }>) {
   const token = getTrackedToken(state, trade.tokenAddress);
   const symbol = token?.symbol || trade.symbol || trade.tokenAddress.slice(0, 8);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || trade.imageUrl || null);
-  const tone = trade.realizedPnlUsd < 0 ? 'down' : 'up';
+  const outcome = sellOutcomes.get(trade.id);
+  const pnlUsd = outcome?.pnlUsd ?? trade.realizedPnlUsd;
+  const tone = pnlUsd < 0 ? 'down' : 'up';
   return `
     <tr>
       <td>
@@ -1751,9 +1821,9 @@ function renderMockTradingHistoryRow(state: AppState, trade: MockTradingTradeVie
           ${renderMockTradingHistoryCopyButton(trade.tokenAddress, symbol)}
         </div>
       </td>
+      <td>${escapeHtml(fmtMoney(outcome?.entryMcapUsd ?? null))}</td>
       <td>${escapeHtml(fmtMockSolAmount(trade.notionalUsd / resolveMockTradeSolUsdcRate(trade)))}</td>
-      <td>${escapeHtml(fmtPct(trade.realizedPnlPct ?? trade.priceReturnPct))}</td>
-      <td data-tone="${tone}">${escapeHtml(fmtMockSolAmount(trade.realizedPnlUsd / resolveMockTradeSolUsdcRate(trade), { signed: true }))}</td>
+      <td data-tone="${tone}">${escapeHtml(fmtMockSolAmount(pnlUsd / resolveMockTradeSolUsdcRate(trade), { signed: true }))}</td>
       <td>${escapeHtml(formatMockTradeTime(trade.executedAt))}</td>
     </tr>
   `;
