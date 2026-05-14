@@ -512,6 +512,7 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
 
   monitoredItem.dataset.span = String(monitoredSpan);
   renderFrame.alertsSlot.dataset.span = String(alertsSpan);
+  syncAlertsPanelLayoutPreset(renderFrame.alertsSlot, alertsSpan);
 
   const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(previewOrder, spanMap, state);
   if (collapsedStackLayout) {
@@ -548,6 +549,15 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', true);
   syncLivePanelResizeFrame(monitoredItem, 'monitored', true);
   syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', true);
+}
+
+function syncAlertsPanelLayoutPreset(alertsSlot: HTMLElement, span: 1 | 2 | 3) {
+  const alertsPanel = alertsSlot.querySelector<HTMLElement>('.alerts-panel');
+  if (!alertsPanel) {
+    return;
+  }
+  alertsPanel.dataset.alertsSpan = String(span);
+  alertsPanel.dataset.alertsLayout = span === 1 ? 'compact' : 'wide';
 }
 
 function updateRenderSlot(slot: HTMLElement, nextKey: string, build: () => Node[]) {

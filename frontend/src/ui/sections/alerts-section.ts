@@ -439,6 +439,14 @@ function syncAlertLayoutMetrics(row: HTMLElement) {
     return;
   }
 
+  const alertsPanel = row.closest<HTMLElement>('.alerts-panel');
+  const alertsSlot = row.closest<HTMLElement>('.live-panel-item[data-panel-key="alerts"]');
+  if (alertsPanel?.dataset.alertsLayout === 'compact' || alertsSlot?.dataset.span === '1') {
+    body.style.removeProperty('--alert-content-width');
+    body.style.removeProperty('--alert-rail-min-width');
+    return;
+  }
+
   const railComputed = window.getComputedStyle(rail);
   const railGap = parsePixelValue(railComputed.columnGap || railComputed.gap, ALERT_RAIL_GAP_FALLBACK_PX);
   const contentWidth = Math.ceil(content.scrollWidth);
@@ -1017,11 +1025,11 @@ function buildAlertRowContent(
   const tokenName = document.createElement('span');
   tokenName.className = 'alert-token-name';
   tokenName.textContent = safeName;
-  tokenLine.append(' ', tokenName);
   const tickerPeersControl = buildTickerPeersControl(alert);
   if (tickerPeersControl) {
     tokenLine.append(' ', tickerPeersControl);
   }
+  tokenLine.append(' ', tokenName);
   top.append(tokenLine);
 
   const flowLine = document.createElement('div');
@@ -1270,7 +1278,11 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
     ]);
   } else {
+    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap';
+    const compactMcap = shouldShowCompactMcap ? buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up', '', 'current-mcap') : null;
+    compactMcap?.classList.add('compact-only-metric');
     const row = appendMetricRow(container, [
+      compactMcap,
       buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
       buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
       buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
@@ -1324,6 +1336,7 @@ function appendMetricRow(container: HTMLElement, items: Array<HTMLElement | null
 
 function buildMetricPair(label: string, value: string, toneClass: string, labelClass = '', valueClass = '') {
   const wrapper = document.createElement('span');
+  wrapper.className = getAlertMetricClass(label);
   const labelEl = document.createElement('span');
   labelEl.className = ['label', labelClass].filter(Boolean).join(' ');
   labelEl.textContent = label;
@@ -1336,6 +1349,7 @@ function buildMetricPair(label: string, value: string, toneClass: string, labelC
 
 function buildFlowTransition(label: string, previous: string, next: string, toneClass: string, labelClass = '', valueClass = '') {
   const wrapper = document.createElement('span');
+  wrapper.className = getAlertMetricClass(label);
   const labelEl = document.createElement('span');
   labelEl.className = ['label', labelClass].filter(Boolean).join(' ');
   labelEl.textContent = label;
@@ -1345,6 +1359,17 @@ function buildFlowTransition(label: string, previous: string, next: string, tone
   valueEl.textContent = next;
   wrapper.append(valueEl);
   return wrapper;
+}
+
+function getAlertMetricClass(label: string) {
+  const normalized = String(label || '').trim().toLowerCase();
+  if (normalized.startsWith('vol')) {
+    return 'alert-flow-vol';
+  }
+  if (normalized === 'mcap') {
+    return 'alert-flow-mcap';
+  }
+  return '';
 }
 
 function buildInlineLink(label: string, href: string) {
