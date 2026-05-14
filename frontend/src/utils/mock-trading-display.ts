@@ -91,10 +91,12 @@ export function resolveMockTradingPositionPnl(
   if (boughtUsd > 0) {
     const soldUsd = sumMockTradingTradeNotional(trades, 'sell');
     const currentValueUsd = position.currentValueUsd ?? 0;
-    const pnlUsd = soldUsd + currentValueUsd - boughtUsd;
+    const unrecoveredInitialUsd = Math.max(0, boughtUsd - soldUsd);
+    const pnlUsd = currentValueUsd - unrecoveredInitialUsd;
+    const pctBasisUsd = unrecoveredInitialUsd > 0 ? unrecoveredInitialUsd : boughtUsd;
     return {
       pnlUsd,
-      pnlPct: (pnlUsd / boughtUsd) * 100,
+      pnlPct: pctBasisUsd > 0 ? (pnlUsd / pctBasisUsd) * 100 : null,
     };
   }
 
