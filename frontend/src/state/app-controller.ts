@@ -7279,13 +7279,22 @@ export function createAppController(): AppController {
       }
     }
 
-    const trackResult = await trackManualToken(address, token);
-    await reloadConfigPreservingMonitoredSnapshot(token);
+    let trackResult: Awaited<ReturnType<typeof trackManualToken>> | null = null;
+    let followupError: unknown = null;
+    try {
+      trackResult = await trackManualToken(address, token);
+      await reloadConfigPreservingMonitoredSnapshot(token);
+    } catch (error) {
+      followupError = error;
+      console.warn('[ManualTokens] Manual token saved, but catalog tracking refresh failed:', error);
+    }
+
     void hydrateManualTokenDashboardFields(address, token, {
       retryDelaysMs: trackResult?.bootstrapState === 'evaluated'
         ? [0]
         : [0, 750, 2000],
     });
+    return { followupError };
   }
 
   return {
@@ -8579,8 +8588,8 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        await syncManualTokenToBackend(normalizedAddress, label, token);
-        setNotice('Token added');
+        const syncResult = await syncManualTokenToBackend(normalizedAddress, label, token);
+        setNotice(syncResult.followupError ? 'Token added; metadata refresh pending' : 'Token added');
       } catch (error) {
         revertOptimisticManualToken(normalizedAddress, optimisticSnapshot);
         setError(error instanceof Error ? error.message : 'Failed to persist manual token');
