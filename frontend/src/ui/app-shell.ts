@@ -898,9 +898,11 @@ function serializeMockTradingHeaderPositionsForView(state: AppState) {
         livePosition.symbol,
         livePosition.imageUrl,
         serializeRenderedMoneyValue(livePosition.currentValueUsd),
+        serializeRenderedMoneyValue(livePosition.realizedPnlUsd),
         serializeRenderedMoneyValue(livePosition.unrealizedPnlUsd),
         serializeRenderedPctValue(livePosition.priceReturnPct ?? livePosition.unrealizedPnlPct),
         serializeMockTradingTakeProfitOrdersForView(livePosition),
+        serializeMockTradingTradesForView(state, position.tokenAddress),
       ]);
     })
     .join('~');

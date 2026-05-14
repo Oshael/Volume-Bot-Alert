@@ -58,3 +58,55 @@ export function fmtMockSol(value?: number | null, options: { signed?: boolean; u
     : DEFAULT_MOCK_SOL_USDC_RATE;
   return fmtMockSolAmount(value / usdcRate, options);
 }
+
+export interface MockTradingPnlPositionSnapshot {
+  costBasisUsd?: number | null;
+  currentValueUsd?: number | null;
+  realizedPnlUsd?: number | null;
+  unrealizedPnlUsd?: number | null;
+  priceReturnPct?: number | null;
+  unrealizedPnlPct?: number | null;
+}
+
+export interface MockTradingPnlTradeSnapshot {
+  side: 'buy' | 'sell';
+  notionalUsd: number;
+}
+
+function sumMockTradingTradeNotional(trades: MockTradingPnlTradeSnapshot[] = [], side: 'buy' | 'sell') {
+  return trades
+    .filter((trade) => trade.side === side)
+    .reduce((sum, trade) => sum + (Number.isFinite(trade.notionalUsd) ? trade.notionalUsd : 0), 0);
+}
+
+export function resolveMockTradingPositionPnl(
+  position?: MockTradingPnlPositionSnapshot | null,
+  trades: MockTradingPnlTradeSnapshot[] = [],
+) {
+  if (!position) {
+    return { pnlUsd: null, pnlPct: null };
+  }
+
+  const boughtUsd = sumMockTradingTradeNotional(trades, 'buy');
+  if (boughtUsd > 0) {
+    const soldUsd = sumMockTradingTradeNotional(trades, 'sell');
+    const currentValueUsd = position.currentValueUsd ?? 0;
+    const pnlUsd = soldUsd + currentValueUsd - boughtUsd;
+    return {
+      pnlUsd,
+      pnlPct: (pnlUsd / boughtUsd) * 100,
+    };
+  }
+
+  const unrealizedPnlUsd = position.unrealizedPnlUsd
+    ?? (position.currentValueUsd != null && position.costBasisUsd != null
+      ? position.currentValueUsd - position.costBasisUsd
+      : null);
+  const realizedPnlUsd = position.realizedPnlUsd ?? 0;
+  const pnlUsd = unrealizedPnlUsd == null ? null : realizedPnlUsd + unrealizedPnlUsd;
+
+  return {
+    pnlUsd,
+    pnlPct: position.priceReturnPct ?? position.unrealizedPnlPct ?? null,
+  };
+}

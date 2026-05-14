@@ -18,7 +18,7 @@ import {
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
-import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate } from '../../utils/mock-trading-display';
+import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
@@ -955,8 +955,10 @@ function renderMockTradingHeaderPosition(state: AppState, address: string) {
   const position = getMockTradingPositionView(state, address);
   const symbol = getMockTradingHeaderPositionSymbol(token, position, address);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl || position?.imageUrl || null);
-  const pnl = position?.unrealizedPnlUsd ?? null;
-  const pct = position?.priceReturnPct ?? position?.unrealizedPnlPct ?? null;
+  const { pnlUsd: pnl, pnlPct: pct } = resolveMockTradingPositionPnl(
+    position,
+    state.data.mockTradingTradesByAddress[address] || [],
+  );
   return `
     <div class="workspace-mock-trading-summary workspace-mock-trading-position" data-tone="${getMockTradingPnlTone(pnl)}" data-action="open-mock-trading-pnl" data-address="${escapeHtml(address)}" role="button" tabindex="0" title="${escapeHtml(buildMockTradingHeaderPositionTitle(state, symbol, pnl, pct, position))}">
       ${renderMockTradingHeaderAvatar(imageUrl, symbol)}

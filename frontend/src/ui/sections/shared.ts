@@ -3,7 +3,7 @@ import type { AppState, BucketSortCriterion, BucketSortMode, BucketSortWindow, M
 import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
-import { fmtMockSol, fmtMockSolAmount, resolveMockTradeSolUsdcRate } from '../../utils/mock-trading-display';
+import { fmtMockSol, fmtMockSolAmount, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -1380,12 +1380,11 @@ function renderMockTradingActions(isAdmin: boolean, safeAddress: string, positio
   return `<button type="button" class="action-glyph" data-action="mock-buy-token" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Mock buy">B</button>${sell}`;
 }
 
-function renderMockTradingLine(position: MockTradingPositionEntry | null, mockSolUsdcRate?: number) {
+function renderMockTradingLine(position: MockTradingPositionEntry | null, trades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
   if (!position) {
     return '';
   }
-  const pnl = position.unrealizedPnlUsd ?? null;
-  const pct = position.priceReturnPct ?? position.unrealizedPnlPct ?? null;
+  const { pnlUsd: pnl, pnlPct: pct } = resolveMockTradingPositionPnl(position, trades);
   const tone = pnl != null && pnl < 0 ? 'down' : 'up';
   const takeProfit = position.takeProfitOrders?.length
     ? ` · ${formatMockTradingTakeProfitSummary(position.takeProfitOrders)}`
@@ -1461,7 +1460,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
               </div>
             </div>
             <div class="token-subline">${safeName}</div>
-            ${renderMockTradingLine(mockTradingPosition, mockSolUsdcRate)}
+            ${renderMockTradingLine(mockTradingPosition, mockTradingTrades, mockSolUsdcRate)}
           </div>
         </div>
       </td>

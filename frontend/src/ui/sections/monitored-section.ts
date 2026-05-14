@@ -3,7 +3,7 @@ import { getMockTradingPositionView, getMonitoredTokens, type AppState, type Man
 import { renderManualTokenEntryForm } from './manual-section';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
-import { fmtMockSol, resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
+import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -151,6 +151,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
           state.session.role === 'admin',
           state.ui.enabledTradeTerminals,
           getMockTradingPositionView(state, item.address),
+          state.data.mockTradingTradesByAddress[item.address],
           mockSolUsdcRate,
         ));
       }
@@ -216,7 +217,7 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   });
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockSolUsdcRate?: number) {
+function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
@@ -278,7 +279,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   appendMonitoredAdminActions(actions, item, symbol, busy, isAdmin, mockTradingPosition);
 
   main.append(titleLine, metaLine, actions);
-  appendMonitoredMockTradingLine(main, mockTradingPosition, mockSolUsdcRate);
+  appendMonitoredMockTradingLine(main, mockTradingPosition, mockTradingTrades, mockSolUsdcRate);
 
   const side = document.createElement('div');
   side.className = 'panel-row-side monitored-side-v68';
@@ -321,13 +322,13 @@ function appendMonitoredAdminActions(
 function appendMonitoredMockTradingLine(
   main: HTMLElement,
   mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null,
+  mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [],
   mockSolUsdcRate?: number,
 ) {
   if (!mockTradingPosition) {
     return;
   }
-  const pnl = mockTradingPosition.unrealizedPnlUsd ?? null;
-  const pct = mockTradingPosition.priceReturnPct ?? mockTradingPosition.unrealizedPnlPct ?? null;
+  const { pnlUsd: pnl, pnlPct: pct } = resolveMockTradingPositionPnl(mockTradingPosition, mockTradingTrades);
   const takeProfit = mockTradingPosition.takeProfitOrders?.length
     ? ` · ${formatMockTradingTakeProfitSummary(mockTradingPosition.takeProfitOrders)}`
     : '';
