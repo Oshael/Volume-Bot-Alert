@@ -537,6 +537,18 @@ function hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics) 
     );
 }
 
+function hasHighCapImbalancedThinLiquidityBundle(input, behavioralSignals, metrics) {
+  return input.meteora?.noPool === true
+    && (input.marketCap ?? 0) >= 1000000
+    && behavioralSignals.includes('meteora_absent_above_400k_mcap')
+    && behavioralSignals.includes('liquidity_to_mcap_too_low')
+    && behavioralSignals.includes('buy_sell_imbalance_high')
+    && (metrics.txns24hTotal ?? 0) >= 1000
+    && (metrics.buySellImbalanceRatio24h ?? 0) >= 4
+    && (metrics.liquidityToMcapRatio ?? Number.POSITIVE_INFINITY) <= 0.06
+    && (metrics.volToMcapRatio ?? Number.POSITIVE_INFINITY) <= 0.2;
+}
+
 function hasHighImbalanceLowVolumeBundle(hasHighImbalance, hasLowVolumeMismatch, txns24hTotal) {
   return hasHighImbalance && hasLowVolumeMismatch && txns24hTotal >= 80;
 }
@@ -596,6 +608,7 @@ function hasProbableLabelTriggers(input, strongSignals, weakSignals, behavioralS
     || hasUnavailableZeroMarketBundle(input, metrics, behavioralSignals)
     || hasTerminalMicrocapCollapseBundle(input, metrics)
     || hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics)
+    || hasHighCapImbalancedThinLiquidityBundle(input, behavioralSignals, metrics)
     || hasMicrocapDeadMarketBundle(input, metrics, options)
     || hasMicrocapCollapseBundle(input, metrics, options)
     || hasDislocationSuspiciousLowCapBundle(input, options, behavioralSignals)
@@ -741,6 +754,7 @@ function applyLegitGuardrail(input, suggestedLabel, strongSignals, weakSignals, 
     hasMicrocapCollapseBundle(input, metrics, options)
     || hasTerminalMicrocapCollapseBundle(input, metrics)
     || hasHighCapThinSupportProbableBundle(input, behavioralSignals, metrics)
+    || hasHighCapImbalancedThinLiquidityBundle(input, behavioralSignals, metrics)
   ) {
     return suggestedLabel;
   }

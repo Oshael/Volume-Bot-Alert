@@ -328,6 +328,47 @@ describe('token junk metric', () => {
     assert.ok(assessment.reasonCodes.includes('price_dislocation_extreme'));
   });
 
+  it('promotes low-cap GMGN dislocation tokens with near-zero liquidity', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 77889,
+      volume1h: 0,
+      volume6h: 39430.03,
+      volume24h: 39430.03,
+      liquidityUsd: 1.94,
+      txns24hBuys: 131,
+      txns24hSells: 139,
+      priceChange24h: 606,
+      meteora: { noPool: true, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('price_dislocation_extreme'));
+  });
+
+  it('promotes no-pool high-cap buy-imbalanced thin-liquidity tokens', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 2909891,
+      volume1h: 21421.03,
+      volume6h: 106665.84,
+      volume24h: 335096.79,
+      liquidityUsd: 144799.60,
+      txns24hBuys: 8100,
+      txns24hSells: 1796,
+      priceChange24h: 14.94,
+      holderCount: 478,
+      top10Pct: 18.13,
+      top20Pct: 31.72,
+      mintAuthorityActive: false,
+      freezeAuthorityActive: false,
+      meteora: { noPool: true, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'junk_probable');
+    assert.ok(assessment.reasonCodes.includes('meteora_absent_above_400k_mcap'));
+    assert.ok(assessment.reasonCodes.includes('liquidity_to_mcap_too_low'));
+    assert.ok(assessment.reasonCodes.includes('buy_sell_imbalance_high'));
+  });
+
   it('promotes no-pool dead micro-activity bundles only when holder profile is weak enough', () => {
     const assessment = classifyTokenJunk({
       mcap: 396997,
