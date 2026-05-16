@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const db = require('../models/db');
+const dexscreener = require('../services/dexscreener');
 const config = require('../../config');
 
 const DEFAULT_LIMIT = 40;
@@ -11,6 +12,7 @@ function parseArgs(argv) {
   const options = {
     addresses: [],
     json: false,
+    dexCheck: false,
     limit: DEFAULT_LIMIT,
     minMcap: DEFAULT_MIN_MCAP,
   };
@@ -19,6 +21,8 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === '--json') {
       options.json = true;
+    } else if (arg === '--dex-check') {
+      options.dexCheck = true;
     } else if (arg === '--address' || arg === '-a') {
       const value = argv[index + 1];
       if (value) {
@@ -208,6 +212,89 @@ function decorateSuspects(rows) {
   }));
 }
 
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readPairIdentity(pair = {}) {
+  const baseToken = pair.baseToken || {};
+  const quoteToken = pair.quoteToken || {};
+  return {
+    dexId: pair.dexId || null,
+    pairAddress: pair.pairAddress || null,
+    url: pair.url || null,
+    baseAddress: baseToken.address || null,
+    quoteAddress: quoteToken.address || null,
+  };
+}
+
+function readPairMarket(pair = {}) {
+  const liquidity = pair.liquidity || {};
+  return {
+    mcap: toNumber(pair.marketCap ?? pair.fdv),
+    liquidityUsd: toNumber(liquidity.usd),
+  };
+}
+
+function readPairVolumes(pair = {}) {
+  const volume = pair.volume || {};
+  return {
+    volumeM5: toNumber(volume.m5),
+    volumeH1: toNumber(volume.h1),
+    volumeH6: toNumber(volume.h6),
+    volumeH24: toNumber(volume.h24),
+  };
+}
+
+function readPairTxns(pair = {}) {
+  const txns = pair.txns || {};
+  const m5 = txns.m5 || {};
+  const h1 = txns.h1 || {};
+  return {
+    txnsM5Buys: toNumber(m5.buys),
+    txnsM5Sells: toNumber(m5.sells),
+    txnsH1Buys: toNumber(h1.buys),
+    txnsH1Sells: toNumber(h1.sells),
+  };
+}
+
+function normalizePairVolume(pair) {
+  return {
+    ...readPairIdentity(pair),
+    ...readPairMarket(pair),
+    ...readPairVolumes(pair),
+    ...readPairTxns(pair),
+  };
+}
+
+async function queryDexPairSnapshots(addresses) {
+  if (!addresses.length) {
+    return [];
+  }
+
+  dexscreener.clearCache();
+  const dataByAddress = await dexscreener.batchGetTokens(addresses, {
+    chain: 'solana',
+    delayMs: 0,
+  });
+
+  return addresses.map((address) => {
+    const data = dataByAddress.get(address) || null;
+    const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
+    const bestPair = dexscreener.getBestPair(data, 'solana');
+    return {
+      address,
+      pairCount: pairs.length,
+      selected: normalizePairVolume(bestPair),
+      topPairsByM5: pairs
+        .map(normalizePairVolume)
+        .sort((left, right) => (Number(right.volumeM5) || 0) - (Number(left.volumeM5) || 0))
+        .slice(0, 5),
+    };
+  });
+}
+
 function printReport(payload) {
   console.log('VOL 5M debug report');
   console.log(JSON.stringify(payload.runtime, null, 2));
@@ -241,6 +328,10 @@ async function main() {
     dueSummary,
     suspects: decorateSuspects(suspectRows),
   };
+
+  if (options.dexCheck) {
+    payload.dexPairs = await queryDexPairSnapshots(payload.suspects.map((item) => item.address));
+  }
 
   if (options.json) {
     console.log(JSON.stringify(payload, null, 2));
