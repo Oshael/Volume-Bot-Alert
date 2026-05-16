@@ -1046,6 +1046,49 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(blockWrites[0].label, 'gmgn-origin:new-non-pump-high-launch-mcap:21000:32000');
   });
 
+  it('does not auto-block non-pump launches when GMGN 5m volume mirrors 1m volume', async () => {
+    const catalog = createTokenCatalogStub();
+    const blockWrites = [];
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot('2CqJo99Xwww753TfXDGjxUeVKPazn1sEwDZf4576Fcmm'),
+      tokenCreatedAt: '2026-05-03T06:45:00.000Z',
+      mcap: 36527,
+      vol1m: 64383.8,
+      vol5m: 67744,
+      vol1h: 67744,
+      vol6h: 67744,
+      vol24h: 67744,
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add(payload) {
+          blockWrites.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        ...catalog,
+        async getByAddress(address) {
+          catalog.calls.push(['getByAddress', address]);
+          return null;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {},
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.notEqual(result.skipped, true);
+    assert.equal(blockWrites.length, 0);
+  });
+
   it('does not auto-block new pump-suffix GMGN tokens by the non-pump launch mcap rule', async () => {
     const catalog = createTokenCatalogStub();
     const blockWrites = [];

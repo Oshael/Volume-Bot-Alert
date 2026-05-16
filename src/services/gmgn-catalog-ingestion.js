@@ -633,6 +633,22 @@ function isGmgnLowMcapExtremeVolumeRisk(snapshot = {}, now = new Date()) {
     && vol5mToMcap >= GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP;
 }
 
+function hasReliableGmgnFiveMinuteVolume(snapshot = {}) {
+  const vol1m = toFiniteNumberOrNull(snapshot.vol1m);
+  const vol5m = toFiniteNumberOrNull(snapshot.vol5m);
+  const vol1h = toFiniteNumberOrNull(snapshot.vol1h);
+  if (!(vol5m > 0)) {
+    return false;
+  }
+  if (vol1m != null && vol1m >= vol5m * 0.9) {
+    return false;
+  }
+  if (vol1h != null && vol5m > vol1h) {
+    return false;
+  }
+  return true;
+}
+
 function isNewNonPumpHighLaunchMcapRisk(address, snapshot = {}, tokenBefore, now = new Date()) {
   if (isManualToken(tokenBefore) || isBlockedToken(tokenBefore) || hasDexConfirmation(tokenBefore) || isPumpAddress(address)) {
     return false;
@@ -648,6 +664,7 @@ function isNewNonPumpHighLaunchMcapRisk(address, snapshot = {}, tokenBefore, now
     && marketCap >= GMGN_NEW_NON_PUMP_MIN_LAUNCH_MCAP
     && marketCap <= GMGN_NEW_NON_PUMP_MAX_LAUNCH_MCAP
     && vol5m != null
+    && hasReliableGmgnFiveMinuteVolume(snapshot)
     && vol5m >= GMGN_NEW_NON_PUMP_MIN_VOL_5M
     && vol5mToMcap != null
     && vol5mToMcap >= GMGN_NEW_NON_PUMP_MIN_VOL_5M_TO_MCAP;
