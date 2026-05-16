@@ -487,6 +487,24 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:03:00.000Z');
   });
 
+  it('does not defer an existing Dex recheck when GMGN refreshes a Dex-confirmed token', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      createSnapshot(),
+      {
+        source: 'gmgn',
+        eligibility_state: 'dex-high',
+        last_pair_url: 'https://dexscreener.com/solana/testpair',
+        next_evaluation_at: new Date('2026-05-03T07:00:05.000Z'),
+      },
+      {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:00:05.000Z');
+  });
+
   it('preserves manual catalog source while still treating the bucket source as GMGN', () => {
     const payload = gmgnCatalogIngestion.__private.buildCatalogPayload(
       createSnapshot(),

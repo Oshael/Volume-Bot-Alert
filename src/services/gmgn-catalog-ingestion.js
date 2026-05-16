@@ -243,7 +243,11 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
 function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
-  const nextEvaluationAt = new Date(options.now().getTime() + options.activeDexRecheckMs);
+  const now = options.now();
+  const nextEvaluationAt = resolveGmgnNextEvaluationAt(
+    tokenBefore,
+    new Date(now.getTime() + options.activeDexRecheckMs)
+  );
   const isManual = String(tokenBefore?.source || '').trim().toLowerCase() === 'user-manual';
 
   if (!(marketCap > 0)) {
@@ -262,11 +266,14 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
       eligibleForMonitoring: false,
       suppressedReason: 'low_activity_24h',
       monitorPriority: 'low',
-      nextEvaluationAt: new Date(options.now().getTime() + LOW_ACTIVITY_RECHECK_MS),
+      nextEvaluationAt: resolveGmgnNextEvaluationAt(
+        tokenBefore,
+        new Date(now.getTime() + LOW_ACTIVITY_RECHECK_MS)
+      ),
     });
   }
 
-  if (!isManual && shouldSuppressGmgnForRiskEnrichment(snapshot, options.now())) {
+  if (!isManual && shouldSuppressGmgnForRiskEnrichment(snapshot, now)) {
     return buildEvaluationPayload(snapshot, {
       eligibilityState: 'gmgn-needs-risk-enrichment',
       eligibleForMonitoring: false,
@@ -585,6 +592,26 @@ function hasDexConfirmation(row) {
   const state = normalizeLowerText(row?.eligibility_state || row?.eligibilityState);
   return DEX_CONFIRMED_ELIGIBILITY_STATES.has(state)
     || isDexscreenerPairUrl(row?.last_pair_url || row?.pairUrl);
+}
+
+function toValidDateOrNull(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function resolveGmgnNextEvaluationAt(tokenBefore, fallbackNextEvaluationAt) {
+  if (!hasDexConfirmation(tokenBefore)) {
+    return fallbackNextEvaluationAt;
+  }
+
+  const existingNextEvaluationAt = toValidDateOrNull(
+    tokenBefore?.next_evaluation_at || tokenBefore?.nextEvaluationAt
+  );
+  if (!existingNextEvaluationAt || existingNextEvaluationAt > fallbackNextEvaluationAt) {
+    return fallbackNextEvaluationAt;
+  }
+
+  return existingNextEvaluationAt;
 }
 
 function hasCompletedGmgnPreliminaryReview(securityGuard) {
