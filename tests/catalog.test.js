@@ -342,6 +342,53 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('reactivates catalog evaluation after an admin-blocked token is unblocked', async () => {
+    await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
+    await db.query('DELETE FROM user_tokens WHERE address = $1', [VALID_ADDR]);
+    await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);
+
+    try {
+      await db.query(
+        `INSERT INTO user_tokens (user_id, address, label)
+         SELECT id, $1, 'TRWUMP'
+         FROM users
+         WHERE email = $2
+         ON CONFLICT DO NOTHING`,
+        [VALID_ADDR, TEST_USER.email]
+      );
+      await tokenCatalog.upsertToken({
+        address: VALID_ADDR,
+        chain: 'solana',
+        source: 'user-manual',
+        symbol: 'TRWUMP',
+        mcap: 87260,
+        isActiveMonitorCandidate: true,
+      });
+      await adminBlockedToken.add({ address: VALID_ADDR, label: 'TRWUMP' });
+      await tokenCatalog.applyEvaluationResult(VALID_ADDR, {
+        eligibilityState: 'admin-blocked',
+        eligibleForMonitoring: false,
+        suppressedReason: 'admin_blocked',
+        monitorPriority: 'dormant',
+        nextEvaluationAt: new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000)),
+      });
+
+      await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
+      const reactivated = await tokenCatalog.reactivateAdminBlockedToken(VALID_ADDR);
+
+      assert.equal(reactivated.source, 'user-manual');
+      assert.equal(reactivated.is_active_monitor_candidate, true);
+      assert.equal(reactivated.eligible_for_monitoring, false);
+      assert.equal(reactivated.eligibility_state, 'pending');
+      assert.equal(reactivated.suppressed_reason, null);
+      assert.ok(new Date(reactivated.next_evaluation_at).getTime() <= Date.now());
+    } finally {
+      await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]).catch(() => {});
+      await db.query('DELETE FROM user_tokens WHERE address = $1', [VALID_ADDR]).catch(() => {});
+      await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]).catch(() => {});
+    }
+  });
+
   it('does not let GMGN evaluation overwrite existing positive volume windows with zero', async () => {
     await db.query('DELETE FROM admin_blocked_tokens WHERE address = $1', [VALID_ADDR]);
     await db.query('DELETE FROM token_catalog WHERE address = $1', [VALID_ADDR]);

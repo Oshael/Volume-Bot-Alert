@@ -1171,6 +1171,42 @@ async function reactivateSoftArchivedToken(address, options = {}) {
   return rows[0] || null;
 }
 
+async function reactivateAdminBlockedToken(address) {
+  await adminBlockedToken.ensureTable();
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    throw new Error('Invalid token address format');
+  }
+
+  const { rows } = await db.query(
+    `UPDATE token_catalog
+     SET source = CASE
+           WHEN EXISTS (SELECT 1 FROM user_tokens ut WHERE ut.address = $1) THEN 'user-manual'
+           WHEN source = 'admin-blocked' THEN 'dexscreener-discovery'
+           ELSE source
+         END,
+         is_active_monitor_candidate = TRUE,
+         eligible_for_monitoring = FALSE,
+         eligibility_state = 'pending',
+         suppressed_reason = NULL,
+         monitor_priority = 'dormant',
+         next_evaluation_at = NOW(),
+         last_evaluation_error = NULL,
+         evaluation_error_count = 0,
+         metadata_updated_at = NOW()
+     WHERE address = $1
+       AND NOT EXISTS (
+         SELECT 1
+         FROM admin_blocked_tokens ab
+         WHERE ab.address = token_catalog.address
+       )
+     RETURNING *`,
+    [addr]
+  );
+
+  return rows[0] || null;
+}
+
 async function applyEvaluationResult(address, result) {
   await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
@@ -1460,6 +1496,7 @@ module.exports = {
   markMeteoraChecked,
   scheduleImmediateEvaluation,
   reactivateSoftArchivedToken,
+  reactivateAdminBlockedToken,
   applyEvaluationResult,
   applyQuarantineCleanup,
   applySoftArchiveCleanup,

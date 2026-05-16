@@ -186,7 +186,7 @@ describe('token risk review sync worker', () => {
     assert.equal(saved[0].label, 'valid_but_weak');
   });
 
-  it('auto-blocks young GMGN low-cap high-churn tokens with near-zero liquidity', async () => {
+  it('keeps young GMGN low-cap high-churn tokens in review instead of auto-blocking', async () => {
     const saved = [];
     const blocked = [];
     const suppressed = [];
@@ -238,11 +238,11 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
-    assert.equal(result.autoBlocked, 1);
-    assert.equal(saved[0].label, 'junk_probable');
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(saved[0].label, 'valid_but_weak');
     assert.match(saved[0].notes, /gmgn_young_low_cap_high_churn_gate/);
-    assert.match(blocked[0].label, /gmgn_young_low_cap_high_churn_thin_liquidity/);
-    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
+    assert.equal(blocked.length, 0);
+    assert.equal(suppressed.length, 0);
   });
 
   it('does not fail the sync when junk evidence capture throws', async () => {

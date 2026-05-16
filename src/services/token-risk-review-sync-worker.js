@@ -392,16 +392,16 @@ function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null
   }
 
   return {
-    label: 'junk_probable',
-    confidence: 'high',
+    label: 'valid_but_weak',
+    confidence: 'medium',
     manualReviewRequired: true,
     autoBlock: false,
     mode: 'gmgn_young_low_cap_high_churn_gate',
-    strongSignalCount: 1,
+    strongSignalCount: 0,
     reasonCodes: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
-    strongSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
-    weakSignals: [],
-    behavioralSignals: [],
+    strongSignals: [],
+    weakSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
+    behavioralSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
     positiveSignals: [],
     marketCap,
     ageHours,

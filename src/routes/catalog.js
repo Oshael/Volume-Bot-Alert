@@ -363,7 +363,7 @@ router.delete('/admin-blocklist/:address', catalogWriteLimiter, requireAdmin, as
       return res.status(404).json({ error: 'Token is not in the admin blocklist' });
     }
 
-    await tokenCatalog.scheduleImmediateEvaluation(address).catch(() => null);
+    await tokenCatalog.reactivateAdminBlockedToken(address).catch(() => null);
 
     res.json({ message: 'Token removed from admin blocklist', address });
   } catch (err) {
