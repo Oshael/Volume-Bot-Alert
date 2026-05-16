@@ -341,10 +341,57 @@ function classifyDexPairSnapshot(item, batchM5, directM5) {
   if (item.pairCount === 0 && item.directPairCount > 0) {
     return 'batch-endpoint-empty-direct-has-pairs';
   }
+  if (item.pairCount > 0 && item.directPairCount === 0) {
+    return 'direct-endpoint-empty-batch-has-pairs';
+  }
   if (batchM5 !== directM5) {
     return 'batch-direct-vol5m-differs';
   }
   return 'batch-direct-match';
+}
+
+function summarizeCatalogVsDex(suspects, dexPairs) {
+  const suspectByAddress = new Map(suspects.map((item) => [item.address, item]));
+  return dexPairs.map((item) => {
+    const suspect = suspectByAddress.get(item.address) || {};
+    const batchM5 = item.selected?.volumeM5 ?? null;
+    const catalogM5 = toNumber(suspect.catalog_vol5m);
+    const bucketM5 = toNumber(suspect.latest_bucket_vol5m);
+    return {
+      address: item.address,
+      symbol: suspect.symbol || null,
+      reason: suspect.reason || null,
+      catalogM5,
+      bucketM5,
+      batchM5,
+      catalogBatchDelta: getNumericDelta(batchM5, catalogM5),
+      bucketBatchDelta: getNumericDelta(batchM5, bucketM5),
+      diagnosis: classifyCatalogVsDex(catalogM5, bucketM5, batchM5, item),
+    };
+  });
+}
+
+function getNumericDelta(left, right) {
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
+    return null;
+  }
+  return Math.round((left - right) * 100) / 100;
+}
+
+function classifyCatalogVsDex(catalogM5, bucketM5, batchM5, dexPair) {
+  if (!(dexPair.pairCount > 0)) {
+    return 'no-batch-pair';
+  }
+  if (!Number.isFinite(batchM5)) {
+    return 'batch-missing-vol5m';
+  }
+  if (Math.abs(batchM5 - catalogM5) <= 1 && Math.abs(batchM5 - bucketM5) <= 1) {
+    return 'db-matches-live-dex';
+  }
+  if (Math.abs(catalogM5 - bucketM5) <= 1) {
+    return 'catalog-and-bucket-behind-live-dex';
+  }
+  return 'catalog-bucket-differ-from-live-dex';
 }
 
 function printReport(payload) {
@@ -384,6 +431,7 @@ async function main() {
   if (options.dexCheck) {
     payload.dexPairs = await queryDexPairSnapshots(payload.suspects.map((item) => item.address));
     payload.dexPairSummary = summarizeDexPairs(payload.dexPairs);
+    payload.catalogVsDexSummary = summarizeCatalogVsDex(payload.suspects, payload.dexPairs);
   }
 
   if (options.json) {
