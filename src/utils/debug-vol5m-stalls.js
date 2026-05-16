@@ -217,28 +217,31 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function readPairIdentity(pair = {}) {
-  const baseToken = pair.baseToken || {};
-  const quoteToken = pair.quoteToken || {};
+function readPairIdentity(pair) {
+  const safePair = pair || {};
+  const baseToken = safePair.baseToken || {};
+  const quoteToken = safePair.quoteToken || {};
   return {
-    dexId: pair.dexId || null,
-    pairAddress: pair.pairAddress || null,
-    url: pair.url || null,
+    dexId: safePair.dexId || null,
+    pairAddress: safePair.pairAddress || null,
+    url: safePair.url || null,
     baseAddress: baseToken.address || null,
     quoteAddress: quoteToken.address || null,
   };
 }
 
-function readPairMarket(pair = {}) {
-  const liquidity = pair.liquidity || {};
+function readPairMarket(pair) {
+  const safePair = pair || {};
+  const liquidity = safePair.liquidity || {};
   return {
-    mcap: toNumber(pair.marketCap ?? pair.fdv),
+    mcap: toNumber(safePair.marketCap ?? safePair.fdv),
     liquidityUsd: toNumber(liquidity.usd),
   };
 }
 
-function readPairVolumes(pair = {}) {
-  const volume = pair.volume || {};
+function readPairVolumes(pair) {
+  const safePair = pair || {};
+  const volume = safePair.volume || {};
   return {
     volumeM5: toNumber(volume.m5),
     volumeH1: toNumber(volume.h1),
@@ -247,8 +250,9 @@ function readPairVolumes(pair = {}) {
   };
 }
 
-function readPairTxns(pair = {}) {
-  const txns = pair.txns || {};
+function readPairTxns(pair) {
+  const safePair = pair || {};
+  const txns = safePair.txns || {};
   const m5 = txns.m5 || {};
   const h1 = txns.h1 || {};
   return {
@@ -260,6 +264,9 @@ function readPairTxns(pair = {}) {
 }
 
 function normalizePairVolume(pair) {
+  if (!pair) {
+    return null;
+  }
   return {
     ...readPairIdentity(pair),
     ...readPairMarket(pair),
