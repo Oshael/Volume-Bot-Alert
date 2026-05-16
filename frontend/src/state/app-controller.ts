@@ -148,6 +148,7 @@ const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
+const MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS = 3 * 1000;
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
@@ -701,6 +702,8 @@ export function createAppController(): AppController {
   let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
+  let mockTradingRefreshInFlight = false;
+  let nextMockTradingMarketRefreshAt = 0;
   let dashboardAlertFeedRefreshInFlight = false;
   let supplementalMeteoraRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
@@ -710,6 +713,7 @@ export function createAppController(): AppController {
   let queuedHistoryBootstrapRefresh: HistoryBootstrapRefreshOptions | null = null;
   let historyBootstrapRequestRevision = 0;
   let monitoredBootstrapHydrationRevision = 0;
+  let configReloadRevision = 0;
   let documentHiddenForUi = typeof document !== 'undefined' && document.visibilityState === 'hidden';
   let restoredSessionRefreshInFlight = false;
   let nextRestoredSessionRefreshAt = 0;
@@ -1657,6 +1661,13 @@ export function createAppController(): AppController {
     state.ui.mockTradingPnlAddress = null;
   }
 
+  function invalidateWorkspaceHydrationRequests() {
+    configReloadRevision += 1;
+    historyBootstrapRequestRevision += 1;
+    monitoredBootstrapHydrationRevision += 1;
+    resetManualMetadataBatchState();
+  }
+
   function getMockTradingAdminToken() {
     const token = state.session.token;
     if (!token || state.session.role !== 'admin') {
@@ -1688,9 +1699,16 @@ export function createAppController(): AppController {
       clearMockTradingState();
       return;
     }
+    if (mockTradingRefreshInFlight) {
+      return;
+    }
 
+    mockTradingRefreshInFlight = true;
     try {
       const wallets = await fetchMockTradingWallets(token);
+      if (state.session.token !== token || state.session.role !== 'admin') {
+        return;
+      }
       applyMockTradingWallets(wallets);
       const walletId = state.ui.activeMockTradingWalletId;
       const [summary, positions, trades] = await Promise.all([
@@ -1698,6 +1716,9 @@ export function createAppController(): AppController {
         fetchMockTradingPositions(token, walletId),
         fetchMockTradingTrades(token, 200, walletId),
       ]);
+      if (state.session.token !== token || state.session.role !== 'admin') {
+        return;
+      }
       state.data.mockTradingSummary = summary;
       if (summary.wallet?.id != null) {
         state.ui.activeMockTradingWalletId = summary.wallet.id;
@@ -1709,7 +1730,21 @@ export function createAppController(): AppController {
       }
     } catch (error) {
       console.warn('[AppController] Failed to refresh mock trading state:', error instanceof Error ? error.message : error);
+    } finally {
+      mockTradingRefreshInFlight = false;
     }
+  }
+
+  function refreshMockTradingStateForMarketPoll() {
+    if (state.session.role !== 'admin' || !state.session.token) {
+      return;
+    }
+    const now = Date.now();
+    if (now < nextMockTradingMarketRefreshAt) {
+      return;
+    }
+    nextMockTradingMarketRefreshAt = now + MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS;
+    void refreshMockTradingState({ emit: true });
   }
 
   function appendEmailDebugNotice(notice: string, emailDebug?: AuthEmailDebug | null) {
@@ -5466,6 +5501,7 @@ export function createAppController(): AppController {
       applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
       broadcastHistoryBootstrapSnapshot(payload, requestPayload);
       void refreshHistoryWorkspaceSparklines({ token });
+      refreshMockTradingStateForMarketPoll();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
@@ -5528,6 +5564,7 @@ export function createAppController(): AppController {
         address: item.address,
         label: item.label ?? null,
       })), { emitOnComplete: false });
+      refreshMockTradingStateForMarketPoll();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
@@ -6633,10 +6670,15 @@ export function createAppController(): AppController {
   }
 
   async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
+    const requestRevision = configReloadRevision + 1;
+    configReloadRevision = requestRevision;
     recordRestoreControllerDebug('controller.config-reload.start', {
       deferDashboard: Boolean(options?.deferDashboard),
     });
     const payload = await fetchConfig(token);
+    if (requestRevision !== configReloadRevision || state.session.token !== token || state.session.status !== 'authenticated') {
+      return;
+    }
 
     applyConfig(payload, []);
     recordRestoreControllerDebug('controller.config-reload.apply-empty-dashboard', {
@@ -6653,7 +6695,12 @@ export function createAppController(): AppController {
   }
 
   async function reloadConfigPreservingMonitoredSnapshot(token: string) {
+    const requestRevision = configReloadRevision + 1;
+    configReloadRevision = requestRevision;
     const payload = await fetchConfig(token);
+    if (requestRevision !== configReloadRevision || state.session.token !== token || state.session.status !== 'authenticated') {
+      return;
+    }
     applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
   }
 
@@ -6681,8 +6728,9 @@ export function createAppController(): AppController {
     });
 
     try {
+      const requestRevision = configReloadRevision;
       const payload = await fetchConfig(token);
-      if (state.session.token !== token || state.session.status !== 'authenticated') {
+      if (requestRevision !== configReloadRevision || state.session.token !== token || state.session.status !== 'authenticated') {
         return;
       }
 
@@ -8582,6 +8630,7 @@ export function createAppController(): AppController {
       setError(null);
       setNotice('Adding manual token...');
 
+      invalidateWorkspaceHydrationRequests();
       const optimisticSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress);
       const nextManual = buildOptimisticManualToken(normalizedAddress, label);
       applyOptimisticManualToken(normalizedAddress, nextManual);
@@ -8613,6 +8662,7 @@ export function createAppController(): AppController {
       emit();
 
       try {
+        invalidateWorkspaceHydrationRequests();
         state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
         const currentTracked = state.data.trackedTokensByAddress[address];
         if (currentTracked) {
