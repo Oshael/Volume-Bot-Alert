@@ -281,25 +281,70 @@ async function queryDexPairSnapshots(addresses) {
   }
 
   dexscreener.clearCache();
-  const dataByAddress = await dexscreener.batchGetTokens(addresses, {
+  const batchDataByAddress = await dexscreener.batchGetTokens(addresses, {
     chain: 'solana',
     delayMs: 0,
   });
 
-  return addresses.map((address) => {
-    const data = dataByAddress.get(address) || null;
-    const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
-    const bestPair = dexscreener.getBestPair(data, 'solana');
-    return {
+  const snapshots = [];
+  for (const address of addresses) {
+    const batchData = batchDataByAddress.get(address) || null;
+    const batchPairs = Array.isArray(batchData?.pairs) ? batchData.pairs : [];
+    const batchBestPair = dexscreener.getBestPair(batchData, 'solana');
+
+    dexscreener.clearCache(address);
+    const directData = await dexscreener.getTokenPairs(address, { priority: 'high' });
+    const directPairs = Array.isArray(directData?.pairs) ? directData.pairs : [];
+    const directBestPair = dexscreener.getBestPair(directData, 'solana');
+
+    snapshots.push({
       address,
-      pairCount: pairs.length,
-      selected: normalizePairVolume(bestPair),
-      topPairsByM5: pairs
-        .map(normalizePairVolume)
-        .sort((left, right) => (Number(right.volumeM5) || 0) - (Number(left.volumeM5) || 0))
-        .slice(0, 5),
+      pairCount: batchPairs.length,
+      selected: normalizePairVolume(batchBestPair),
+      topPairsByM5: normalizeTopPairsByM5(batchPairs),
+      directPairCount: directPairs.length,
+      directSelected: normalizePairVolume(directBestPair),
+      directTopPairsByM5: normalizeTopPairsByM5(directPairs),
+    });
+  }
+
+  return snapshots;
+}
+
+function normalizeTopPairsByM5(pairs) {
+  return pairs
+    .map(normalizePairVolume)
+    .filter(Boolean)
+    .sort((left, right) => (Number(right.volumeM5) || 0) - (Number(left.volumeM5) || 0))
+    .slice(0, 5);
+}
+
+function summarizeDexPairs(dexPairs) {
+  return dexPairs.map((item) => {
+    const batchM5 = item.selected?.volumeM5 ?? null;
+    const directM5 = item.directSelected?.volumeM5 ?? null;
+    return {
+      address: item.address,
+      batchPairCount: item.pairCount,
+      directPairCount: item.directPairCount,
+      batchM5,
+      directM5,
+      diagnosis: classifyDexPairSnapshot(item, batchM5, directM5),
     };
   });
+}
+
+function classifyDexPairSnapshot(item, batchM5, directM5) {
+  if (item.pairCount === 0 && item.directPairCount === 0) {
+    return 'dex-has-no-pairs';
+  }
+  if (item.pairCount === 0 && item.directPairCount > 0) {
+    return 'batch-endpoint-empty-direct-has-pairs';
+  }
+  if (batchM5 !== directM5) {
+    return 'batch-direct-vol5m-differs';
+  }
+  return 'batch-direct-match';
 }
 
 function printReport(payload) {
@@ -338,6 +383,7 @@ async function main() {
 
   if (options.dexCheck) {
     payload.dexPairs = await queryDexPairSnapshots(payload.suspects.map((item) => item.address));
+    payload.dexPairSummary = summarizeDexPairs(payload.dexPairs);
   }
 
   if (options.json) {
