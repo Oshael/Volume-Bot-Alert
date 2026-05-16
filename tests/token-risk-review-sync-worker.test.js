@@ -186,7 +186,7 @@ describe('token risk review sync worker', () => {
     assert.equal(saved[0].label, 'valid_but_weak');
   });
 
-  it('keeps young GMGN low-cap high-churn tokens in review instead of auto-blocking', async () => {
+  it('auto-blocks young GMGN low-cap high-churn tokens with truly microscopic liquidity', async () => {
     const saved = [];
     const blocked = [];
     const suppressed = [];
@@ -238,9 +238,125 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /gmgn_young_low_cap_high_churn_gate/);
+    assert.match(blocked[0].label, /gmgn_young_low_cap_high_churn_thin_liquidity/);
+    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
+  });
+
+  it('does not auto-block young GMGN high-churn tokens on liquidity ratio alone', async () => {
+    const saved = [];
+    const blocked = [];
+    const suppressed = [];
+    const createdAtMs = Date.now() - (60 * 60 * 1000);
+    const result = await worker.__private.processRows([
+      {
+        address: '379BCjzGPuFvqTHcpJPU8m9ZUjh8bXoCPV4hG8Ljpump',
+        source: 'gmgn',
+        last_mcap: 50000,
+        last_vol_1h: 130000,
+        last_vol_6h: 130000,
+        last_vol_24h: 130000,
+        last_liquidity_usd: 500,
+        last_txns_24h_buys: 1600,
+        last_txns_24h_sells: 900,
+        last_price_change_24h: 400,
+        last_token_created_at_ms: createdAtMs,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return {
+            tokenAddress: payload.tokenAddress,
+            label: payload.label,
+            source: 'auto',
+          };
+        },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (address, payload) => {
+          suppressed.push({ address, payload });
+          return { address, ...payload };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
     assert.equal(result.autoBlocked, 0);
     assert.equal(saved[0].label, 'valid_but_weak');
-    assert.match(saved[0].notes, /gmgn_young_low_cap_high_churn_gate/);
+    assert.equal(blocked.length, 0);
+    assert.equal(suppressed.length, 0);
+  });
+
+  it('does not treat zero GMGN liquidity as confirmed thin liquidity for young high-churn tokens', async () => {
+    const saved = [];
+    const blocked = [];
+    const suppressed = [];
+    const createdAtMs = Date.now() - (60 * 60 * 1000);
+    const result = await worker.__private.processRows([
+      {
+        address: '379BCjzGPuFvqTHcpJPU8m9ZUjh8bXoCPV4hG8Ljpump',
+        source: 'gmgn',
+        last_mcap: 30403.12,
+        last_vol_1h: 73540.69,
+        last_vol_6h: 73540.69,
+        last_vol_24h: 73540.69,
+        last_liquidity_usd: 0,
+        last_txns_24h_buys: 1100,
+        last_txns_24h_sells: 540,
+        last_price_change_24h: 250,
+        last_token_created_at_ms: createdAtMs,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return {
+            tokenAddress: payload.tokenAddress,
+            label: payload.label,
+            source: 'auto',
+          };
+        },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (address, payload) => {
+          suppressed.push({ address, payload });
+          return { address, ...payload };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(saved[0].label, 'valid_but_weak');
     assert.equal(blocked.length, 0);
     assert.equal(suppressed.length, 0);
   });

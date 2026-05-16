@@ -351,11 +351,10 @@ function hasYoungLowCapThinLiquidity(row = {}) {
   const marketCap = toFiniteNumberOrNull(row.last_mcap);
   const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
   const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
-  return liquidityUsd != null
-    && (
-      liquidityUsd <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_USD
-      || (liquidityToMcap != null && liquidityToMcap <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_TO_MCAP)
-    );
+  return liquidityUsd > 0
+    && liquidityUsd <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_USD
+    && liquidityToMcap != null
+    && liquidityToMcap <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_TO_MCAP;
 }
 
 function hasYoungLowCapHighChurnMarket(row = {}) {
@@ -392,16 +391,16 @@ function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null
   }
 
   return {
-    label: 'valid_but_weak',
-    confidence: 'medium',
+    label: 'junk_probable',
+    confidence: 'high',
     manualReviewRequired: true,
     autoBlock: false,
     mode: 'gmgn_young_low_cap_high_churn_gate',
-    strongSignalCount: 0,
+    strongSignalCount: 1,
     reasonCodes: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
-    strongSignals: [],
-    weakSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
-    behavioralSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
+    strongSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
+    weakSignals: [],
+    behavioralSignals: [],
     positiveSignals: [],
     marketCap,
     ageHours,
