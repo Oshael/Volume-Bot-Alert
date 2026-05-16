@@ -163,7 +163,7 @@ describe('gmgn catalog ingestion', () => {
         callOrder.push('volumeBucket');
         assert.equal(payload.tokenAddress, TOKEN_A);
         assert.equal(payload.vol1m, 4000);
-        assert.equal(payload.vol5m, 18000);
+        assert.equal(payload.vol5m, 10000);
         assert.equal(payload.source, 'gmgn');
         return payload;
       },
@@ -591,6 +591,56 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(bucketWrites[0].vol6h, 953689.09);
     assert.equal(result.snapshot.vol1h, 72382.4);
     assert.equal(result.snapshot.vol6h, 953689.09);
+  });
+
+  it('keeps Dex-confirmed 5m volume when GMGN reports inconsistent interval volume', async () => {
+    const catalog = createTokenCatalogStub();
+    const bucketWrites = [];
+    catalog.getByAddress = async (address) => ({
+      address,
+      source: 'user-manual',
+      eligibility_state: 'dex-normal',
+      eligible_for_monitoring: true,
+      last_pair_url: 'https://dexscreener.com/solana/testpair',
+      last_vol_5m: 4300,
+      last_vol_1h: 64000,
+    });
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot(),
+      vol1m: 64000,
+      vol5m: 64000,
+      vol1h: 64000,
+      vol6h: 64000,
+      vol24h: 64000,
+      tokenCreatedAt: '2026-05-03T06:30:00.000Z',
+      gmgnIntervals: ['1m', '5m', '1h', '6h', '24h'],
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: catalog,
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          bucketWrites.push(payload);
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+    });
+
+    const upsertPayload = catalog.calls.find((call) => call[0] === 'upsertToken')[1];
+    const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
+
+    assert.equal(upsertPayload.source, 'user-manual');
+    assert.equal(upsertPayload.vol5m, 4300);
+    assert.equal(evaluationPayload.vol5m, 4300);
+    assert.equal(bucketWrites[0].vol5m, 4300);
+    assert.equal(result.snapshot.vol5m, 4300);
+    assert.equal(result.snapshot.vol1m, 64000);
   });
 
   it('skips new tokens discovered only in GMGN 1m trending', async () => {

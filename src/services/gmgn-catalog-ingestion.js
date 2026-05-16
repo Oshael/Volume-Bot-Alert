@@ -220,6 +220,11 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
   }
 
   const next = { ...snapshot };
+  const previousVol5m = toFiniteNumberOrNull(tokenBefore.last_vol_5m);
+  if (hasDexConfirmation(tokenBefore) && previousVol5m != null && previousVol5m > 0) {
+    next.vol5m = previousVol5m;
+  }
+
   for (const [snapshotKey, catalogKey] of [
     ['vol1h', 'last_vol_1h'],
     ['vol6h', 'last_vol_6h'],
