@@ -5,6 +5,7 @@ const config = require('../../config');
 
 const DEFAULT_LIMIT = 40;
 const DEFAULT_MIN_MCAP = 30000;
+const QUERY_TIMEOUT_MS = 20_000;
 
 function parseArgs(argv) {
   const options = {
@@ -57,26 +58,25 @@ function buildAddressFilter(addresses, startParamIndex) {
 
 async function queryRuntimeSummary(options) {
   const addressFilter = buildAddressFilter(options.addresses, 2);
-  const { rows } = await db.query(
+  const { rows } = await db.queryWithStatementTimeout(
     `WITH eligible AS (
        SELECT tc.*
        FROM token_catalog tc
        WHERE tc.eligible_for_monitoring = TRUE
          AND COALESCE(tc.last_mcap, 0) >= $1
          ${addressFilter.sql}
-     ), latest_volume AS (
-       SELECT DISTINCT ON (token_address)
-         token_address,
-         bucket_ts,
-         close_vol_5m
-       FROM token_market_volume_buckets_1m
-       ORDER BY token_address, bucket_ts DESC
      ), joined AS (
        SELECT
          eligible.*,
          latest_volume.bucket_ts AS latest_volume_bucket_ts
        FROM eligible
-       LEFT JOIN latest_volume ON latest_volume.token_address = eligible.address
+       LEFT JOIN LATERAL (
+         SELECT bucket_ts, close_vol_5m
+         FROM token_market_volume_buckets_1m
+         WHERE token_address = eligible.address
+         ORDER BY bucket_ts DESC
+         LIMIT 1
+       ) latest_volume ON TRUE
      )
      SELECT
        COUNT(*)::int AS eligible_count,
@@ -93,12 +93,13 @@ async function queryRuntimeSummary(options) {
        MAX(latest_volume_bucket_ts) AS newest_volume_bucket
      FROM joined`,
     [options.minMcap, ...addressFilter.params],
+    QUERY_TIMEOUT_MS,
   );
   return rows[0] || {};
 }
 
 async function queryDueSummary() {
-  const { rows } = await db.query(
+  const { rows } = await db.queryWithStatementTimeout(
     `SELECT
        COALESCE(monitor_priority, 'dormant') AS priority,
        COUNT(*)::int AS due_count,
@@ -108,31 +109,47 @@ async function queryDueSummary() {
        AND next_evaluation_at <= NOW()
      GROUP BY COALESCE(monitor_priority, 'dormant')
      ORDER BY priority`,
+    [],
+    QUERY_TIMEOUT_MS,
   );
   return rows;
 }
 
 async function querySuspects(options) {
   const addressFilter = buildAddressFilter(options.addresses, 3);
-  const { rows } = await db.query(
-    `WITH latest_volume AS (
-       SELECT DISTINCT ON (token_address)
-         token_address,
-         bucket_ts,
-         close_vol_5m,
-         sample_count,
-         source
-       FROM token_market_volume_buckets_1m
-       ORDER BY token_address, bucket_ts DESC
+  const { rows } = await db.queryWithStatementTimeout(
+    `WITH eligible AS (
+       SELECT tc.*
+       FROM token_catalog tc
+       WHERE tc.eligible_for_monitoring = TRUE
+         AND COALESCE(tc.last_mcap, 0) >= $1
+         ${addressFilter.sql}
+     ), latest_volume AS (
+       SELECT
+         eligible.address AS token_address,
+         volume_bucket.bucket_ts,
+         volume_bucket.close_vol_5m,
+         volume_bucket.sample_count,
+         volume_bucket.source
+       FROM eligible
+       LEFT JOIN LATERAL (
+         SELECT bucket_ts, close_vol_5m, sample_count, source
+         FROM token_market_volume_buckets_1m
+         WHERE token_address = eligible.address
+         ORDER BY bucket_ts DESC
+         LIMIT 1
+       ) volume_bucket ON TRUE
      ), recent_volume AS (
        SELECT
-         token_address,
-         COUNT(*) FILTER (WHERE bucket_ts >= NOW() - INTERVAL '15 minutes')::int AS buckets_15m,
-         COUNT(DISTINCT close_vol_5m) FILTER (WHERE bucket_ts >= NOW() - INTERVAL '15 minutes')::int AS distinct_vol5m_15m,
-         MIN(close_vol_5m) FILTER (WHERE bucket_ts >= NOW() - INTERVAL '15 minutes') AS min_vol5m_15m,
-         MAX(close_vol_5m) FILTER (WHERE bucket_ts >= NOW() - INTERVAL '15 minutes') AS max_vol5m_15m
-       FROM token_market_volume_buckets_1m
-       GROUP BY token_address
+         buckets.token_address,
+         COUNT(*)::int AS buckets_15m,
+         COUNT(DISTINCT buckets.close_vol_5m)::int AS distinct_vol5m_15m,
+         MIN(buckets.close_vol_5m) AS min_vol5m_15m,
+         MAX(buckets.close_vol_5m) AS max_vol5m_15m
+       FROM token_market_volume_buckets_1m buckets
+       JOIN eligible ON eligible.address = buckets.token_address
+       WHERE buckets.bucket_ts >= NOW() - INTERVAL '15 minutes'
+       GROUP BY buckets.token_address
      )
      SELECT
        tc.address,
@@ -159,12 +176,9 @@ async function querySuspects(options) {
        tc.evaluation_error_count,
        tc.last_evaluation_error,
        tc.suppressed_reason
-     FROM token_catalog tc
+     FROM eligible tc
      LEFT JOIN latest_volume lv ON lv.token_address = tc.address
      LEFT JOIN recent_volume rv ON rv.token_address = tc.address
-     WHERE tc.eligible_for_monitoring = TRUE
-       AND COALESCE(tc.last_mcap, 0) >= $1
-       ${addressFilter.sql}
      ORDER BY
        CASE WHEN lv.bucket_ts IS NULL OR lv.bucket_ts < NOW() - INTERVAL '5 minutes' THEN 0 ELSE 1 END,
        CASE WHEN tc.last_evaluated_at IS NULL OR tc.last_evaluated_at < NOW() - INTERVAL '5 minutes' THEN 0 ELSE 1 END,
@@ -172,6 +186,7 @@ async function querySuspects(options) {
        COALESCE(tc.last_mcap, 0) DESC
      LIMIT $2`,
     [options.minMcap, options.limit, ...addressFilter.params],
+    QUERY_TIMEOUT_MS,
   );
   return rows;
 }
