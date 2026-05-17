@@ -204,6 +204,19 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.eligibleForMonitoring, true);
   });
 
+  it('normalizes missing Dex volume windows to zero so stale volume is cleared', () => {
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 140000,
+      volume: {},
+      priceChange: {},
+    });
+
+    assert.equal(snapshot.vol5m, 0);
+    assert.equal(snapshot.vol1h, 0);
+    assert.equal(snapshot.vol6h, 0);
+    assert.equal(snapshot.vol24h, 0);
+  });
+
   it('treats low-activity auto tokens as low-dust for throttle and as low-activity for Dex cache TTL', () => {
     const token = {
       source: 'dexscreener-discovery',

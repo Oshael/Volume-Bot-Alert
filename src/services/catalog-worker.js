@@ -163,6 +163,11 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function toVolumeNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+}
+
 function toTimestampMs(value) {
   if (value == null) return null;
   const numeric = Number(value);
@@ -412,10 +417,10 @@ function derivePrioritySnapshot(bestPair, token = null) {
   const now = Date.now();
   const filledVolumes = fillYoungTokenVolumeWindows({
     tokenCreatedAt: bestPair?.pairCreatedAt,
-    vol5m: toNumber(bestPair?.volume?.m5),
-    vol1h: toNumber(bestPair?.volume?.h1),
-    vol6h: toNumber(bestPair?.volume?.h6),
-    vol24h: toNumber(bestPair?.volume?.h24),
+    vol5m: toVolumeNumber(bestPair?.volume?.m5),
+    vol1h: toVolumeNumber(bestPair?.volume?.h1),
+    vol6h: toVolumeNumber(bestPair?.volume?.h6),
+    vol24h: toVolumeNumber(bestPair?.volume?.h24),
   }, { now: new Date(now) });
   const vol5m = filledVolumes.vol5m;
   const vol1h = filledVolumes.vol1h;
