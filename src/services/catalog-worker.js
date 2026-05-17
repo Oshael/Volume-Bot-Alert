@@ -7,6 +7,10 @@ const dexscreener = require('./dexscreener');
 const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const {
+  AUTO_BLOCK_LABEL_PREFIXES,
+  buildPrefixedAutoBlockLabel,
+} = require('./auto-block-rule-labels');
 const config = require('../../config');
 const { isTraceDiscoveryEnabled, logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
 
@@ -227,13 +231,12 @@ function resolveInitialMcap(initialBucket, snapshot) {
 }
 
 function buildYoungExtremeChurnLabel(assessment) {
-  return [
-    'catalog-volume:young-extreme-churn',
+  return buildPrefixedAutoBlockLabel(AUTO_BLOCK_LABEL_PREFIXES.CATALOG_YOUNG_EXTREME_CHURN, [
     Math.round(assessment.currentMcap),
     Math.round(assessment.initialMcap),
     Math.round(assessment.vol5m),
     `${Math.round(assessment.volMcapRatio * 10) / 10}x`,
-  ].join(':');
+  ]);
 }
 
 function getYoungExtremeChurnState(address, nowMs = Date.now()) {

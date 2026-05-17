@@ -10,6 +10,11 @@ const gmgnRiskReviewQueue = require('./gmgn-risk-review-queue');
 const userAlertMatcher = require('./user-alert-matcher');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const {
+  AUTO_BLOCK_LABEL_PREFIXES,
+  buildCommaSuffixAutoBlockLabel,
+  buildPrefixedAutoBlockLabel,
+} = require('./auto-block-rule-labels');
 
 const DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS = 3000;
 const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
@@ -755,8 +760,7 @@ function buildGmgnAutoBlockLabel(assessment) {
   const reasonCodes = Array.isArray(assessment?.reasonCodes)
     ? assessment.reasonCodes.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
-  const suffix = reasonCodes.slice(0, 3).join(',');
-  return suffix ? `gmgn-auto-junk:${suffix}` : 'gmgn-auto-junk';
+  return buildCommaSuffixAutoBlockLabel(AUTO_BLOCK_LABEL_PREFIXES.GMGN_AUTO_JUNK, reasonCodes);
 }
 
 function buildGmgnSecurityAutoBlockLabel(security) {
@@ -765,30 +769,39 @@ function buildGmgnSecurityAutoBlockLabel(security) {
     return 'gmgn-security:auto-risk';
   }
   const pct = Math.round(top10HolderRate * 10000) / 100;
-  return `gmgn-security:top10-holder-rate-${pct}%`;
+  return `${AUTO_BLOCK_LABEL_PREFIXES.GMGN_SECURITY_TOP10_HOLDER_RATE}-${pct}%`;
 }
 
 function buildGmgnInfoAutoBlockLabel(info, snapshot = {}) {
   const holderCount = Math.round(toFiniteNumberOrNull(info?.holderCount) || 0);
   const marketCap = Math.round(toFiniteNumberOrNull(info?.marketCap) ?? toFiniteNumberOrNull(snapshot.mcap) ?? 0);
-  return `gmgn-info:low-mcap-high-holders:${marketCap}:${holderCount}`;
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.GMGN_INFO_LOW_MCAP_HIGH_HOLDERS,
+    [marketCap, holderCount]
+  );
 }
 
 function buildGmgnLowMcapExtremeVolumeLabel(snapshot = {}) {
   const marketCap = Math.round(toFiniteNumberOrNull(snapshot.mcap) || 0);
   const vol5m = Math.round(toFiniteNumberOrNull(snapshot.vol5m) || 0);
-  return `gmgn-volume:low-mcap-extreme-vol5m:${marketCap}:${vol5m}`;
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.GMGN_VOLUME_LOW_MCAP_EXTREME_VOL5M,
+    [marketCap, vol5m]
+  );
 }
 
 function buildGmgnNewNonPumpHighLaunchMcapLabel(snapshot = {}) {
   const marketCap = Math.round(toFiniteNumberOrNull(snapshot.mcap) || 0);
   const vol5m = Math.round(toFiniteNumberOrNull(snapshot.vol5m) || 0);
-  return `gmgn-origin:new-non-pump-high-launch-mcap:${marketCap}:${vol5m}`;
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.GMGN_NEW_NON_PUMP_HIGH_LAUNCH_MCAP,
+    [marketCap, vol5m]
+  );
 }
 
 function buildGmgnKlineAutoBlockLabel(analysis) {
   const runupPct = Math.round((toFiniteNumberOrNull(analysis?.runupRatio) || 0) * 100);
-  return `gmgn-kline:staircase-pump:${runupPct}%`;
+  return buildPrefixedAutoBlockLabel(AUTO_BLOCK_LABEL_PREFIXES.GMGN_KLINE_STAIRCASE_PUMP, [`${runupPct}%`]);
 }
 
 async function autoBlockGmgnJunk(address, snapshot, tokenBefore, assessment, options) {

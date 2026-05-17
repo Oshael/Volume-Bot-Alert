@@ -5,6 +5,11 @@ const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenJunkEvidenceCapture = require('./token-junk-evidence-capture');
 const gmgnClient = require('./gmgn-client');
 const { classifyTokenJunk } = require('./token-junk-metric');
+const {
+  AUTO_BLOCK_LABEL_PREFIXES,
+  AUTO_BLOCK_REASON_CODES,
+  buildCommaSuffixAutoBlockLabel,
+} = require('./auto-block-rule-labels');
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_SCAN_LIMIT = 200;
@@ -254,8 +259,8 @@ function buildNewLowMcapExtremeVolumeAssessment(row = {}) {
     autoBlock: false,
     mode: 'low_mcap_extreme_volume_gate',
     strongSignalCount: 1,
-    reasonCodes: ['new_low_mcap_extreme_vol5m_churn'],
-    strongSignals: ['new_low_mcap_extreme_vol5m_churn'],
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.NEW_LOW_MCAP_EXTREME_VOL5M_CHURN],
+    strongSignals: [AUTO_BLOCK_REASON_CODES.NEW_LOW_MCAP_EXTREME_VOL5M_CHURN],
     weakSignals: [],
     behavioralSignals: [],
     positiveSignals: [],
@@ -286,8 +291,8 @@ function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null) 
     autoBlock: false,
     mode: 'gmgn_low_mcap_thin_support_gate',
     strongSignalCount: 1,
-    reasonCodes: ['gmgn_low_mcap_thin_support'],
-    strongSignals: ['gmgn_low_mcap_thin_support'],
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_THIN_SUPPORT],
+    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_THIN_SUPPORT],
     weakSignals: [],
     behavioralSignals: [],
     positiveSignals: [],
@@ -322,8 +327,8 @@ function buildGmgnConfirmedMicroLiquidityAssessment(row = {}) {
     autoBlock: false,
     mode: 'gmgn_confirmed_micro_liquidity_gate',
     strongSignalCount: 1,
-    reasonCodes: ['gmgn_confirmed_micro_liquidity'],
-    strongSignals: ['gmgn_confirmed_micro_liquidity'],
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_CONFIRMED_MICRO_LIQUIDITY],
+    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_CONFIRMED_MICRO_LIQUIDITY],
     weakSignals: [],
     behavioralSignals: [],
     positiveSignals: [],
@@ -360,8 +365,8 @@ function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}) {
     autoBlock: false,
     mode: 'gmgn_low_mcap_extreme_24h_churn_gate',
     strongSignalCount: 1,
-    reasonCodes: ['gmgn_low_mcap_extreme_24h_churn_thin_liquidity'],
-    strongSignals: ['gmgn_low_mcap_extreme_24h_churn_thin_liquidity'],
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_EXTREME_24H_CHURN_THIN_LIQUIDITY],
+    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_EXTREME_24H_CHURN_THIN_LIQUIDITY],
     weakSignals: [],
     behavioralSignals: [],
     positiveSignals: [],
@@ -434,8 +439,8 @@ function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null
     autoBlock: false,
     mode: 'gmgn_young_low_cap_high_churn_gate',
     strongSignalCount: 1,
-    reasonCodes: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
-    strongSignals: ['gmgn_young_low_cap_high_churn_thin_liquidity'],
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_YOUNG_LOW_CAP_HIGH_CHURN_THIN_LIQUIDITY],
+    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_YOUNG_LOW_CAP_HIGH_CHURN_THIN_LIQUIDITY],
     weakSignals: [],
     behavioralSignals: [],
     positiveSignals: [],
@@ -470,8 +475,8 @@ function buildDexGmgnHolderAnomalyAssessment(row = {}, info = {}) {
     autoBlock: false,
     mode: 'gmgn_info_holder_anomaly',
     strongSignalCount: 1,
-    reasonCodes: ['gmgn_holder_count_mcap_anomaly'],
-    strongSignals: ['gmgn_holder_count_mcap_anomaly'],
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_HOLDER_COUNT_MCAP_ANOMALY],
+    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_HOLDER_COUNT_MCAP_ANOMALY],
     weakSignals: [],
     behavioralSignals: [],
     positiveSignals: [],
@@ -520,7 +525,10 @@ function buildGmgnRiskGateAssessment(row) {
   }
 
   const reasonCodes = hasGmgnConcentratedStructure(row)
-    ? ['gmgn_young_extreme_churn', 'gmgn_concentrated_structure']
+    ? [
+        AUTO_BLOCK_REASON_CODES.GMGN_YOUNG_EXTREME_CHURN,
+        AUTO_BLOCK_REASON_CODES.GMGN_CONCENTRATED_STRUCTURE,
+      ]
     : [];
 
   return {
@@ -586,8 +594,7 @@ function buildAutoBlockLabel(assessment) {
   const reasonCodes = Array.isArray(assessment?.reasonCodes)
     ? assessment.reasonCodes.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
-  const suffix = reasonCodes.slice(0, 3).join(',');
-  return suffix ? `auto-junk-probable:${suffix}` : 'auto-junk-probable';
+  return buildCommaSuffixAutoBlockLabel(AUTO_BLOCK_LABEL_PREFIXES.RISK_REVIEW_AUTO_JUNK_PROBABLE, reasonCodes);
 }
 
 function resolveGmgnEligibilityState(marketCap) {
