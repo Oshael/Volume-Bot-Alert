@@ -194,6 +194,8 @@ const LEGACY_NETWORK_DEBUG_STORAGE_KEYS = [
   'trendscope-network-debug-log',
 ];
 
+type DashboardAlertFeedMode = 'all' | 'unseen';
+
 type HistorySyncPresenceMessage = {
   type: 'presence';
   tabId: string;
@@ -4172,6 +4174,7 @@ export function createAppController(): AppController {
     }
 
     try {
+      flushAlertsPersist();
       await updateDashboardAlertCursor({
         ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
         lastSeenEventId,
@@ -4589,7 +4592,11 @@ export function createAppController(): AppController {
     emit('bid-zone');
   }
 
-  function loadDashboardAlertFeedsForWorkspace(token: string, includeAlertFeed?: boolean) {
+  function loadDashboardAlertFeedsForWorkspace(
+    token: string,
+    includeAlertFeed?: boolean,
+    mode: DashboardAlertFeedMode = 'unseen',
+  ) {
     const shouldLoadDashboardAlerts = includeAlertFeed ?? isLiveWorkspace();
     if (!shouldLoadDashboardAlerts) {
       return Promise.resolve(null);
@@ -4597,7 +4604,7 @@ export function createAppController(): AppController {
 
     return fetchDashboardAlertFeeds(token, {
       limit: BACKEND_ALERT_FEED_LIMIT,
-      mode: 'unseen',
+      mode,
       ruleKeys: [...BACKEND_OWNED_ALERT_RULE_KEYS],
     }).catch(() => null);
   }
@@ -4628,6 +4635,7 @@ export function createAppController(): AppController {
   function queueDashboardAlertFeedRefresh(
     token: string,
     includeAlertFeed?: boolean,
+    mode: DashboardAlertFeedMode = 'unseen',
   ) {
     if (isLiveWorkspaceHiddenForUiWork()) {
       return;
@@ -4638,7 +4646,7 @@ export function createAppController(): AppController {
     }
 
     dashboardAlertFeedRefreshInFlight = true;
-    void loadDashboardAlertFeedsForWorkspace(token, includeAlertFeed)
+    void loadDashboardAlertFeedsForWorkspace(token, includeAlertFeed, mode)
       .then((dashboardAlertFeeds) => {
         if (state.session.token !== token || !isAuthenticatedSession()) {
           return;
@@ -5526,7 +5534,7 @@ export function createAppController(): AppController {
     }
   }
 
-  async function refreshMonitoredDashboard(options?: { includeAlertFeed?: boolean }) {
+  async function refreshMonitoredDashboard(options?: { includeAlertFeed?: boolean; alertFeedMode?: DashboardAlertFeedMode }) {
     const token = state.session.token;
     if (!token) {
       return;
@@ -5570,7 +5578,7 @@ export function createAppController(): AppController {
       }
       lastMonitoredDashboardError = null;
       queueSupplementalMeteoraRefresh(token, monitoredDashboard.tokens);
-      queueDashboardAlertFeedRefresh(token, options?.includeAlertFeed);
+      queueDashboardAlertFeedRefresh(token, options?.includeAlertFeed, options?.alertFeedMode);
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
         broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
       }
@@ -6609,6 +6617,7 @@ export function createAppController(): AppController {
       void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
       emitMonitoredWorkspaceRegions();
       queueSupplementalMeteoraRefresh(token, aggregatedTokens);
+      queueDashboardAlertFeedRefresh(token, true, 'all');
       recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
         generatedAt,
         returned: firstPage.tokens.length,
@@ -8054,7 +8063,7 @@ export function createAppController(): AppController {
           if (documentHiddenForUi || state.session.status !== 'authenticated' || state.runtime.mode !== 'active' || !isLiveWorkspace()) {
             return;
           }
-          void refreshMonitoredDashboard({ includeAlertFeed: true });
+          void refreshMonitoredDashboard({ includeAlertFeed: true, alertFeedMode: 'all' });
         }, 250);
       }
     },

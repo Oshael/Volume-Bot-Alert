@@ -495,7 +495,6 @@ function buildDesiredLivePresence(state: AppState | null) {
   if (
     !state
     || state.session.status !== 'authenticated'
-    || state.ui.workspace !== 'live'
     || state.runtime.mode !== 'active'
   ) {
     return {
