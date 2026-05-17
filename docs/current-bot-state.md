@@ -252,6 +252,11 @@ Important:
   - mcap `>= 20k` and `<= 100k`
   - vol5m `>= 20k`
   - vol5m/mcap `>= 1`
+  - GMGN `5m` volume must pass sanity checks before this gate can auto-block:
+    - `vol5m > 0`
+    - `vol1m` must be less than `90%` of `vol5m`
+    - `vol5m` must not be greater than `vol1h`
+  - this avoids auto-blocking raw GMGN launches when the upstream mirrors the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair
   - matching rows are auto-blocked as `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
 - The token-risk review sync worker can now use GMGN info for suspicious Dex-discovered tokens:
   - source is not GMGN and not `user-manual`
@@ -280,6 +285,20 @@ Important:
   - 24h txns `>= 1000`
   - liquidity `<= $1k` or liquidity/mcap `<= 1%`
   - matching rows are auto-blocked as `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
+- GMGN young low-cap high-churn thin-liquidity review gate:
+  - GMGN token, non-manual review
+  - age `< 6h`
+  - mcap `15k-100k`
+  - vol1h/mcap `>= 2`
+  - 24h txns `>= 1000`
+  - absolute 24h price change `>= 200%`
+  - no Meteora pool support
+  - liquidity must be positive and truly microscopic:
+    - `liquidityUsd > 0`
+    - `liquidityUsd <= $100`
+    - liquidity/mcap `<= 0.2%`
+  - `liquidityUsd = 0` from GMGN is treated as ambiguous/missing rather than confirmed thin liquidity
+  - matching rows are auto-blocked as `auto-junk-probable:gmgn_young_low_cap_high_churn_thin_liquidity`
 - Local operational checkpoint on `2026-05-04`:
   - GMGN risk backfill scanned `97` local candidates
   - `33` were blocked
@@ -641,11 +660,14 @@ Important:
 ### Market history / MCAP baselines
 - Source of truth:
   - backend-persisted `token_market_buckets_1m` for the primary MCAP baseline path
+  - backend-persisted `token_market_buckets_agg` for sparkline reads at `5m`, `15m`, and `30m`
   - backend-persisted `token_market_volume_buckets_1m` for the canonical visual `VOL 5M` baseline used by `Monitored`
 - Primary model:
   - `src/models/token-market-bucket-1m.js`
 - Important current note:
-  - `token_market_buckets_1m` remains the main pre-aggregated market-history path
+  - `token_market_buckets_1m` remains the base market-history source and the fallback for `1m`/low-coverage sparkline reads
+  - `token_market_buckets_agg` is populated incrementally from new `1m` buckets and by `npm run market-buckets-agg:backfill`
+  - aggregate writes run only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute the aggregate windows
   - fresh raw `token_market_snapshots` are no longer the normal monitored baseline path
   - the dashboard route now builds the canonical visual `VOL 5M` baseline from `token_market_volume_buckets_1m`
   - legacy `token_market_snapshots` still exist mainly for historical/backfill compatibility and cleanup behavior
@@ -979,9 +1001,10 @@ Current monitored UI behavior:
   - writes GMGN mcap/price snapshots into `token_market_buckets_1m` when GMGN/manual ingestion has mcap data, so the normal sparkline source is fed by the GMGN path too
   - writes GMGN market volume into `token_market_volume_buckets_1m`
   - fills missing young-token `6h`/`24h` volume windows from shorter GMGN volume before catalog, bucket, alert, and panel-state writes
+  - for tokens with Dex confirmation, GMGN refreshes preserve the existing Dex-derived `5m` volume instead of overwriting it with raw GMGN interval volume
   - uses normal `monitored-vol` for GMGN `5m` volume jumps
   - keeps separate `gmgn-vol-1m` support behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled
-  - auto-blocks new automatic GMGN non-pump/non-bags/non-brrr contracts launched from `20k` to `100k` mcap with vol5m/mcap `>= 1` before they write buckets or alert
+  - auto-blocks new automatic GMGN non-pump/non-bags/non-brrr contracts launched from `20k` to `100k` mcap with reliable vol5m/mcap `>= 1` before they write buckets or alert
   - blocks automatic GMGN-origin alert evaluation until the token has DexScreener confirmation or has completed GMGN preliminary review (`token security`, `token info`, and `market kline`) without being auto-blocked
   - the GMGN alert safeguard still allows catalog and GMGN volume-bucket writes; it only stops matcher emission while the token remains raw GMGN-only discovery
   - tracks active/stale GMGN panel membership and schedules DexScreener reevaluation when a token leaves the GMGN panel
@@ -1330,7 +1353,9 @@ Current security priority order:
   - alerts feed rows now render their own static mini charts
 - Current sparkline behavior for `Manual Tokens`:
   - source endpoint: `POST /api/catalog/sparklines`
-  - source data: aggregated from `token_market_buckets_1m`
+  - source data: `token_market_buckets_1m` for `1m`; `token_market_buckets_agg` for `5m`, `15m`, and `30m`
+  - backend falls back to `token_market_buckets_1m` when aggregate coverage is empty or too short
+  - backend keeps a short in-memory sparkline cache with default TTL `30s`, invalidated by token writes/removals
   - only the current visible manual table rows are considered
   - current manual cap is `30` charted rows
   - the visible-row selection respects current manual search, starred-only toggle, and manual sort order
@@ -1371,8 +1396,10 @@ Current security priority order:
 - Current routed chart behavior:
   - `/monitor` routed tables now include a `Chart` column
   - source endpoint: `POST /api/catalog/sparklines`
-  - source data: aggregated from `token_market_buckets_1m`
-  - current routed cap is `50` total charted rows across `Recent` + `Old Tokens 1 Week+`
+  - source data: `token_market_buckets_1m` for `1m`; `token_market_buckets_agg` for `5m`, `15m`, and `30m`
+  - backend falls back to `token_market_buckets_1m` when aggregate coverage is empty or too short
+  - backend sparkline metrics include `source`, `cacheHit`, `aggregateRows`, `fallbackRows`, and `fallbackAddresses`
+  - current routed cap is `100` total charted rows across `Recent` + `Old Tokens 1 Week+`
   - selection is neutral/interleaved rather than permanently prioritizing one side
   - refresh cadence is `1m`
   - requested span is `14d`
@@ -1560,6 +1587,42 @@ Current security priority order:
   - subticker matching now starts at `3` normalized characters
   - subticker peers are context-filtered by source symbol/name words so unrelated extensions like a meme/trump suffix do not count as peers for a different semantic ticker
 
+### Browser Notifications V1
+- Native browser notifications are now supported for authenticated frontend sessions while the web app is open in at least one browser tab.
+- This is not closed-tab push:
+  - no Service Worker push
+  - no Push API subscription storage
+  - no VAPID/backend push delivery
+- Frontend files:
+  - `frontend/src/services/alerts/browser-notifications.ts`
+  - `frontend/src/main.ts`
+  - `frontend/src/state/app-controller.ts`
+  - `frontend/src/state/app-state.ts`
+  - `frontend/src/ui/sections/layout-sections.ts`
+- The Bot Settings modal includes a local `Browser Notifications` control near sound/card effect settings.
+- Permission is requested only from a user click/tap on the control.
+- Settings are browser-local and account-scoped through:
+  - `trendscope_browser_notifications_v1:<user-scope>`
+- Notification eligibility:
+  - authenticated session
+  - runtime mode `active`
+  - browser notification setting enabled
+  - browser permission `granted`
+  - existing alert kind config still enabled
+  - alert not already handled in this page session
+  - document hidden/backgrounded by default
+- Historical/catch-up alerts are intentionally marked as handled when:
+  - the user authenticates
+  - runtime becomes active
+  - the user enables browser notifications
+- Notification content:
+  - title includes alert family and symbol
+  - body includes percent, MCAP transition when available, volume transition/window label when available, and address fragment
+  - token image is used as the notification icon when it is a safe `http/https` URL, otherwise the app favicon is used
+- Current browser/OS limitations:
+  - notification duration, text color, origin label, and icon render size are controlled by the browser/operating system
+  - the origin label appears as `localhost:<port>` in local dev and as the production site origin in production
+
 ## Persistence Model
 
 ### Backend-persisted per account
@@ -1581,6 +1644,7 @@ Current security priority order:
 - alert cards
 - alert mini-chart snapshot cache keyed by `alert.id`
 - custom sound assets
+- browser notification setting per account/browser scope
 
 ## Workspace Split And Multi-Tab Behavior
 

@@ -448,6 +448,7 @@ Catalog/alert behavior:
 - existing catalog tokens can still be refreshed by GMGN `1m`
 - GMGN volume writes go into `token_market_volume_buckets_1m`
 - GMGN snapshots use the same young-token `6h`/`24h` volume-window fill as Dex before catalog, bucket, alert, and panel-state writes
+- when a token already has Dex confirmation, GMGN refreshes preserve the existing Dex-derived `vol5m` instead of overwriting it with raw GMGN interval volume
 - GMGN `5m` volume jumps use the normal backend `monitored-vol` alert path
 - `gmgn-vol-1m` remains behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled because the 1m feed was too noisy
 - automatic GMGN-origin tokens are now blocked from alert evaluation until one of these is true:
@@ -477,6 +478,11 @@ GMGN risk gates before catalog/upsert alert flow:
   - mcap `>= 20k` and `<= 100k`
   - vol5m `>= 20k`
   - vol5m/mcap `>= 1`
+  - GMGN `5m` volume must pass sanity checks:
+    - `vol5m > 0`
+    - `vol1m < 90%` of `vol5m`
+    - `vol5m <= vol1h`
+  - this prevents raw GMGN launches from being auto-blocked when the upstream mirrors nearly the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair
   - block label shape:
     - `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
 - young GMGN candidates under `6h` can trigger GMGN risk-data lookup when any of these are true:
@@ -500,6 +506,9 @@ GMGN risk gates before catalog/upsert alert flow:
   - automatic GMGN-only alert emission still requires Dex confirmation or completed preliminary review
   - successful queued preliminary reviews create a process-local fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
 - GMGN ingestion writes mcap/price snapshots to `token_market_buckets_1m` when mcap is available, in addition to volume snapshots in `token_market_volume_buckets_1m`; this lets GMGN/manual refreshes feed the same sparkline source used by Dex-driven catalog refreshes
+- Sparkline history uses `token_market_buckets_1m` as the base source and `token_market_buckets_agg` as the fast read source for `5m`, `15m`, and `30m` granularities.
+- `token_market_buckets_agg` can be populated historically with `npm run market-buckets-agg:backfill -- --days 14 --batchSize <n>`.
+- Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows.
 - GMGN `token security` auto-blocks when top-10 holder rate is `>= 70%`
 - GMGN `token info` auto-blocks low-mcap/high-holder anomalies:
   - mcap `<= 150k`
@@ -671,6 +680,20 @@ Important behavior:
     - liquidity `<= $1k` or liquidity/mcap `<= 1%`
     - matching rows are auto-blocked with:
       - `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
+  - young low-cap high-churn thin-liquidity gate:
+    - age `< 6h`
+    - mcap `15k-100k`
+    - vol1h/mcap `>= 2`
+    - 24h txns `>= 1000`
+    - absolute 24h price change `>= 200%`
+    - no Meteora pool support
+    - liquidity must be positive and truly microscopic:
+      - `liquidityUsd > 0`
+      - `liquidityUsd <= $100`
+      - liquidity/mcap `<= 0.2%`
+    - `liquidityUsd = 0` from GMGN is treated as ambiguous/missing rather than confirmed thin liquidity
+    - matching rows are auto-blocked with:
+      - `auto-junk-probable:gmgn_young_low_cap_high_churn_thin_liquidity`
 
 Manual vs automatic precedence:
 - `token_risk_reviews` now has `source`:
@@ -863,7 +886,9 @@ Important:
   - charts are loaded only for the visible manual table rows after manual search/filter/sort resolution
   - current manual chart cap is `30` rows
   - source endpoint is `POST /api/catalog/sparklines`
-  - backend reads from `token_market_buckets_1m` and aggregates to the requested chart granularity
+  - backend reads `token_market_buckets_1m` for `1m` and `token_market_buckets_agg` for `5m`, `15m`, and `30m`
+  - backend falls back to `token_market_buckets_1m` when aggregate coverage is empty or too short
+  - backend keeps a short in-memory sparkline cache with default TTL `30s`, invalidated by token writes/removals
   - refresh cadence is `1m`
   - requested span is `14d`
   - requested point budget is `336`
@@ -926,9 +951,11 @@ Reasons:
   - the header text is `Chart`, while the tooltip labels the visual as `Mini chart`
 - current routed chart behavior:
   - source endpoint: `POST /api/catalog/sparklines`
-  - source data: `token_market_buckets_1m`
+  - source data: `token_market_buckets_1m` for `1m`; `token_market_buckets_agg` for `5m`, `15m`, and `30m`
+  - backend falls back to `token_market_buckets_1m` when aggregate coverage is empty or too short
+  - backend sparkline metrics include `source`, `cacheHit`, `aggregateRows`, `fallbackRows`, and `fallbackAddresses`
   - only visible routed rows are fetched
-  - current routed chart cap is `50` total rows across `Recent Tokens` + `Old Tokens 1 Week+`
+  - current routed chart cap is `100` total rows across `Recent Tokens` + `Old Tokens 1 Week+`
   - the routed selector is neutral/interleaved rather than permanently prioritizing recent or old-week
   - refresh cadence is `1m`
   - requested span is `14d`
@@ -1065,6 +1092,7 @@ Reasons:
   - hover inspection shows approximate market cap plus approximate bucket time for the selected point
   - alert mini charts are intentionally not expandable; only routed/manual tables open the compact hologram popup
   - the current request profile still uses the same `14d` / `336`-point sparkline window with age-adaptive granularity
+  - alert mini charts use the same backend sparkline endpoint and can benefit from the aggregate `5m`/`15m`/`30m` source plus `1m` fallback
 
 ### PumpFun migration state
 - backend-only PumpPortal migration stream
@@ -1953,6 +1981,7 @@ Files:
 - `frontend/src/state/app-controller.ts`
 - `frontend/src/ui/sections/alerts-section.ts`
 - `frontend/src/services/alerts/sound.ts`
+- `frontend/src/services/alerts/browser-notifications.ts`
 - `src/services/high-cap-dump-alert.js`
 - `src/services/backend-alert-feed.js`
 
@@ -2144,6 +2173,85 @@ Important current behavior:
 - backend alert matching does not depend on the `/alerts` DOM being mounted
 - `/alerts` consumes backend event feeds and realtime socket pushes
 - PumpFun-local frontend alerts are disabled; migrated PumpFun tokens now flow through the backend catalog/monitored path.
+
+## Browser Notifications
+
+Files:
+- `frontend/src/services/alerts/browser-notifications.ts`
+- `frontend/src/main.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/state/app-state.ts`
+- `frontend/src/ui/sections/layout-sections.ts`
+- `frontend/src/ui/app-shell.ts`
+
+Scope:
+- Native browser notifications are implemented only for the existing authenticated web app session.
+- The app must be open in at least one browser tab.
+- This is not closed-tab push notification support.
+- Out of scope for the current implementation:
+  - Service Worker push
+  - Push API subscriptions
+  - VAPID keys
+  - backend push delivery
+  - subscription schema/storage
+
+Settings and permission:
+- Bot Settings includes a compact `Browser Notifications` control near sound/card effect settings.
+- Permission is requested only from a direct user gesture.
+- The UI can show:
+  - `Enabled`
+  - `Off`
+  - `Blocked`
+  - `Not supported`
+- If the browser permission is denied/blocked, the app cannot reopen the permission prompt by itself; the user must change site/browser permissions.
+- Settings are browser-local and account-scoped rather than backend `user_configs`.
+- Current storage key shape:
+  - `trendscope_browser_notifications_v1:<user-scope>`
+- Stored settings currently include:
+  - `enabled`
+  - `notifyWhenVisible`
+
+Notification eligibility:
+- user is authenticated
+- runtime mode is `active`
+- browser notification setting is enabled
+- browser permission is `granted`
+- existing alert kind config still allows the alert
+- alert id has not already been handled in the page session
+- document is hidden/backgrounded by default
+
+Catch-up and duplicate behavior:
+- Existing alerts are marked as handled when the user authenticates.
+- Existing alerts are marked as handled when runtime first becomes active.
+- Existing alerts are marked as handled when browser notifications are enabled.
+- This avoids native notifications for historical REST/feed catch-up rows.
+- The notification service also keeps an in-memory notified id set and uses `tag = alert:<alert.id>`.
+
+Notification content:
+- title is generated from alert family and symbol:
+  - `VOL alert: SYMBOL`
+  - `MCAP alert: SYMBOL`
+  - `HVNC: SYMBOL`
+  - `RECENT 1H surge: SYMBOL`
+  - `OLD 6H surge: SYMBOL`
+  - `METEORA 1H: SYMBOL`
+  - `HIGH CAP DUMP: SYMBOL`
+- body includes:
+  - percent
+  - MCAP transition when `prevMcap`/baseline exists
+  - volume transition/window label when available
+  - address fragment
+- Volume labels are explicit:
+  - `VOL 1M` for GMGN 1m volume alerts
+  - `VOL 5M` for standard monitored volume context
+  - `VOL 1H` / `VOL 6H` for surge alerts
+- Token `imageUrl` is used as the native notification icon when it is a safe `http/https` URL; otherwise the app favicon is used.
+- The implementation does not send mini chart/sparkline images to native notifications.
+
+Browser/OS limitations:
+- Text color, notification duration, origin label, and rendered icon size are controlled by the browser/operating system.
+- The origin label appears as `localhost:<port>` during local Vite development and as the production site origin in production.
+- macOS/Chrome system notification settings and Focus/Do Not Disturb can prevent display even when the site permission says notifications are allowed.
 
 ## Sounds
 
