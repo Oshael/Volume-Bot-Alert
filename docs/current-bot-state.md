@@ -293,6 +293,11 @@ Important:
   - current GMGN payload has `burn_status = burn`, `creator_close = false`, and `creator_token_status = creator_hold`
   - GMGN ingestion suppresses matching tokens as `gmgn_burn_creator_hold_pending_review` with `eligible_for_monitoring = false`, so they do not enter monitored alerts while GMGN security/info/kline fast-ban checks run
   - if the queued preliminary review passes, the catalog row is released back to normal GMGN eligibility
+- GMGN custom-LP cooldown:
+  - automatic GMGN token, token age `< 6h`
+  - current GMGN payload has a custom pool/route field (`launchpad`, `launchpad_platform`, `migrated_pool_exchange`, or `pool_type_str`)
+  - GMGN ingestion suppresses matching tokens as `gmgn_custom_lp_cooldown` with `eligible_for_monitoring = false` and `next_evaluation_at = now + 15m`, so they cannot enter monitored during the first 15 minutes after detection
+  - matching tokens are still queued for GMGN security/info/kline checks during the cooldown, so fast-ban rules can block them before release
 - GMGN low-cap thin-support gates now run inside the token-risk review sync worker before the generic junk metric:
   - GMGN token, non-manual review
   - mcap `15k-150k`

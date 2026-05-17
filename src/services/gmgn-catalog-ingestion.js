@@ -22,8 +22,10 @@ const DEFAULT_PANEL_STALE_AFTER_MS = 15000;
 const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
+const GMGN_CUSTOM_LP_COOLDOWN_MS = 15 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
 const GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON = 'gmgn_burn_creator_hold_pending_review';
+const GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON = 'gmgn_custom_lp_cooldown';
 const GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON = 'gmgn_unprotected_liquidity_pending';
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
@@ -106,6 +108,26 @@ function readGmgnLiquidityProtectionFields(snapshot = {}) {
     creatorClose: toBooleanOrNull(raw.creator_close ?? raw.creatorClose),
     creatorTokenStatus: String(raw.creator_token_status ?? raw.creatorTokenStatus ?? '').trim().toLowerCase(),
   };
+}
+
+function readGmgnPoolRouteFields(snapshot = {}) {
+  const raw = snapshot.raw && typeof snapshot.raw === 'object' ? snapshot.raw : snapshot;
+  return {
+    launchpad: String(raw.launchpad ?? raw.launchpadPlatform ?? '').trim(),
+    launchpadPlatform: String(raw.launchpad_platform ?? raw.launchpadPlatform ?? '').trim(),
+    migratedPoolExchange: String(raw.migrated_pool_exchange ?? raw.migratedPoolExchange ?? '').trim(),
+    poolTypeStr: String(raw.pool_type_str ?? raw.poolTypeStr ?? '').trim(),
+  };
+}
+
+function hasGmgnCustomLpSignal(snapshot = {}) {
+  const fields = readGmgnPoolRouteFields(snapshot);
+  return Boolean(
+    fields.launchpad
+    || fields.launchpadPlatform
+    || fields.migratedPoolExchange
+    || fields.poolTypeStr
+  );
 }
 
 function hasGmgnUnprotectedLiquiditySignal(snapshot = {}) {
@@ -303,6 +325,19 @@ function hasPassedGmgnBurnCreatorHoldReview(context = {}) {
     || hasCompletedGmgnPreliminaryReview(context.securityGuard);
 }
 
+function isCurrentSuppressionActive(tokenBefore, reason, now = new Date()) {
+  if (String(tokenBefore?.suppressed_reason || '').trim() !== reason) {
+    return false;
+  }
+  const nextEvaluationAt = toValidDateOrNull(tokenBefore?.next_evaluation_at || tokenBefore?.nextEvaluationAt);
+  return !nextEvaluationAt || nextEvaluationAt > now;
+}
+
+function resolveSuppressionNextEvaluationAt(tokenBefore, fallbackNextEvaluationAt) {
+  return toValidDateOrNull(tokenBefore?.next_evaluation_at || tokenBefore?.nextEvaluationAt)
+    || fallbackNextEvaluationAt;
+}
+
 function deriveGmgnEvaluation(snapshot, tokenBefore, options, context = {}) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
@@ -330,6 +365,17 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, context = {}) {
       suppressedReason: GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
       monitorPriority: resolveMonitorPriority(marketCap),
       nextEvaluationAt,
+    });
+  }
+
+  if (!isManual && shouldApplyGmgnCustomLpCooldown(snapshot, tokenBefore, now)) {
+    const cooldownUntil = new Date(now.getTime() + GMGN_CUSTOM_LP_COOLDOWN_MS);
+    return buildEvaluationPayload(snapshot, {
+      eligibilityState: 'gmgn-custom-lp-cooldown',
+      eligibleForMonitoring: false,
+      suppressedReason: GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON,
+      monitorPriority: resolveMonitorPriority(marketCap),
+      nextEvaluationAt: resolveSuppressionNextEvaluationAt(tokenBefore, cooldownUntil),
     });
   }
 
@@ -466,6 +512,18 @@ function shouldRequireGmgnBurnCreatorHoldReview(snapshot = {}, now = new Date())
     && hasGmgnBurnCreatorHoldSignal(snapshot);
 }
 
+function shouldApplyGmgnCustomLpCooldown(snapshot = {}, tokenBefore = null, now = new Date()) {
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  const previousReason = String(tokenBefore?.suppressed_reason || '').trim();
+  return ageHours != null
+    && ageHours < GMGN_RISK_LOOKUP_MAX_AGE_HOURS
+    && hasGmgnCustomLpSignal(snapshot)
+    && (
+      previousReason !== GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON
+      || isCurrentSuppressionActive(tokenBefore, GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON, now)
+    );
+}
+
 function shouldCheckGmgnRiskData(snapshot = {}, now = new Date()) {
   const ageHours = calculateTokenAgeHours(snapshot, now);
   if (ageHours == null || ageHours >= GMGN_RISK_LOOKUP_MAX_AGE_HOURS) {
@@ -473,6 +531,10 @@ function shouldCheckGmgnRiskData(snapshot = {}, now = new Date()) {
   }
 
   if (hasGmgnBurnCreatorHoldSignal(snapshot)) {
+    return true;
+  }
+
+  if (hasGmgnCustomLpSignal(snapshot)) {
     return true;
   }
 
@@ -1515,13 +1577,19 @@ module.exports = {
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
     GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON,
+    GMGN_CUSTOM_LP_COOLDOWN_MS,
+    GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
     GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
     GMGN_ALERT_SAFEGUARD_REASON,
     hasGmgnBurnCreatorHoldSignal,
+    hasGmgnCustomLpSignal,
     hasGmgnUnprotectedLiquiditySignal,
     hasPassedGmgnBurnCreatorHoldReview,
+    isCurrentSuppressionActive,
+    readGmgnPoolRouteFields,
     readGmgnLiquidityProtectionFields,
+    resolveSuppressionNextEvaluationAt,
     getGmgnIntervals,
     hasCompletedGmgnPreliminaryReview,
     hasDexConfirmation,
@@ -1542,6 +1610,7 @@ module.exports = {
     shouldSkipNewGmgnDiscovery,
     shouldKeepTokenInGmgnPanel,
     shouldCheckGmgnRiskData,
+    shouldApplyGmgnCustomLpCooldown,
     shouldRequireGmgnBurnCreatorHoldReview,
     shouldSuppressGmgnForRiskEnrichment,
     shouldEvaluateAlerts,

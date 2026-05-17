@@ -690,6 +690,11 @@ Important behavior:
   - forces the token through GMGN preliminary checks (`token security`, `token info`, and `market kline`) before monitoring
   - while the queued review is pending, the catalog row stays suppressed as `gmgn_burn_creator_hold_pending_review` with `eligible_for_monitoring = false`
   - after the preliminary review passes, the row is released through the normal GMGN eligibility path
+- GMGN custom-LP cooldown:
+  - applies to automatic GMGN tokens younger than `6h`
+  - triggers when the GMGN payload has `launchpad`, `launchpad_platform`, `migrated_pool_exchange`, or `pool_type_str`
+  - suppresses matching tokens as `gmgn_custom_lp_cooldown` with `eligible_for_monitoring = false` and `next_evaluation_at = now + 15m`
+  - the token is still queued for GMGN preliminary checks during the cooldown, allowing fast-ban rules to block it before it can enter monitoring
 - GMGN low-cap thin-support gates:
   - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - source must be GMGN and not protected by a manual review

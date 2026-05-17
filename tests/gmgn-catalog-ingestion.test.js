@@ -544,6 +544,54 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:03:00.000Z');
   });
 
+  it('suppresses young GMGN custom-LP tokens for a 15 minute cooldown', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot(),
+        raw: {
+          launchpad: 'meteora_virtual_curve',
+          launchpad_platform: 'meteora_virtual_curve',
+          migrated_pool_exchange: 'meteora_damm_v2',
+        },
+      },
+      { source: 'gmgn' },
+      {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.eligibilityState, 'gmgn-custom-lp-cooldown');
+    assert.equal(evaluation.eligibleForMonitoring, false);
+    assert.equal(evaluation.suppressedReason, 'gmgn_custom_lp_cooldown');
+    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:15:00.000Z');
+  });
+
+  it('releases young GMGN custom-LP tokens after the 15 minute cooldown expires', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot(),
+        raw: {
+          launchpad: 'meteora_virtual_curve',
+          launchpad_platform: 'meteora_virtual_curve',
+          migrated_pool_exchange: 'meteora_damm_v2',
+        },
+      },
+      {
+        source: 'gmgn',
+        suppressed_reason: 'gmgn_custom_lp_cooldown',
+        next_evaluation_at: new Date('2026-05-03T07:14:00.000Z'),
+      },
+      {
+        now: () => new Date('2026-05-03T07:15:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.eligibleForMonitoring, true);
+    assert.equal(evaluation.suppressedReason, null);
+  });
+
   it('does not defer an existing Dex recheck when GMGN refreshes a Dex-confirmed token', () => {
     const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
       createSnapshot(),
@@ -970,6 +1018,80 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(calls[2][1].gmgnBurnStatus, 'none');
     assert.equal(calls[2][1].gmgnCreatorClose, true);
     assert.equal(calls[2][1].gmgnCreatorTokenStatus, 'creator_close');
+  });
+
+  it('keeps young GMGN custom-LP tokens out of monitored during cooldown while queuing fast checks', async () => {
+    const calls = [];
+    const snapshot = {
+      ...createSnapshot(),
+      mcap: 898966,
+      liquidityUsd: 17582,
+      tokenCreatedAt: '2026-05-03T06:45:00.000Z',
+      raw: {
+        launchpad: 'meteora_virtual_curve',
+        launchpad_platform: 'meteora_virtual_curve',
+        migrated_pool_exchange: 'meteora_damm_v2',
+        burn_status: 'burn',
+        creator_close: true,
+        creator_token_status: 'creator_close',
+      },
+    };
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken(snapshot, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken(payload) {
+          calls.push(['upsertToken', payload]);
+          return { address: payload.address, source: payload.source };
+        },
+        async applyEvaluationResult(address, payload) {
+          calls.push(['applyEvaluationResult', address, payload]);
+          assert.equal(payload.eligibilityState, 'gmgn-custom-lp-cooldown');
+          assert.equal(payload.eligibleForMonitoring, false);
+          assert.equal(payload.suppressedReason, 'gmgn_custom_lp_cooldown');
+          assert.equal(payload.nextEvaluationAt.toISOString(), '2026-05-03T07:15:00.000Z');
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: false,
+            suppressed_reason: payload.suppressedReason,
+            next_evaluation_at: payload.nextEvaluationAt,
+            last_vol_5m: payload.vol5m,
+          };
+        },
+      },
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['marketBucket', payload]);
+          return payload;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['volumeBucket', payload]);
+          return payload;
+        },
+      },
+      gmgnRiskReviewQueue: {
+        hasFreshPassedReview: () => false,
+        enqueue: () => ({ queued: true, reason: 'queued' }),
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('custom-LP cooldown tokens must not alert');
+        },
+      },
+    });
+
+    assert.equal(result.summary.gmgnRiskReviewQueued, 1);
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(result.summary.matcherEvaluations, 0);
+    assert.equal(result.summary.matcherSkippedSuppressed + result.summary.matcherSkippedGmgnSafeguard, 1);
+    assert.deepEqual(calls.map(([name]) => name), ['upsertToken', 'applyEvaluationResult', 'marketBucket', 'volumeBucket']);
   });
 
   it('suppresses young GMGN burn creator-hold tokens until preliminary ban checks pass', async () => {
