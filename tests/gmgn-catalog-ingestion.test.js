@@ -840,6 +840,81 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(calls[0][1].isActiveMonitorCandidate, true);
   });
 
+  it('suppresses GMGN tokens born with unprotected liquidity before monitoring or alerts', async () => {
+    const calls = [];
+    const snapshot = {
+      ...createSnapshot(),
+      mcap: 40877,
+      liquidityUsd: 64486,
+      tokenCreatedAt: '2026-05-03T06:45:00.000Z',
+      raw: {
+        lock_percent: 0,
+        burn_ratio: 0,
+        burn_status: 'none',
+        creator_close: true,
+        creator_token_status: 'creator_close',
+      },
+    };
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken(snapshot, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken(payload) {
+          calls.push(['upsertToken', payload]);
+          return { address: payload.address, source: payload.source };
+        },
+        async applyEvaluationResult(address, payload) {
+          calls.push(['applyEvaluationResult', address, payload]);
+          assert.equal(payload.eligibilityState, 'gmgn-unprotected-liquidity-pending');
+          assert.equal(payload.eligibleForMonitoring, false);
+          assert.equal(payload.suppressedReason, 'gmgn_unprotected_liquidity_pending');
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: false,
+            suppressed_reason: payload.suppressedReason,
+            last_vol_5m: payload.vol5m,
+          };
+        },
+      },
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['marketBucket', payload]);
+          return payload;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['volumeBucket', payload]);
+          return payload;
+        },
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('unprotected-liquidity pending GMGN tokens must not alert');
+        },
+      },
+    });
+
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(result.summary.marketBucketsWritten, 1);
+    assert.equal(result.summary.volumeBucketsWritten, 1);
+    assert.equal(result.summary.matcherEvaluations, 0);
+    assert.equal(result.summary.matcherSkippedSuppressed + result.summary.matcherSkippedGmgnSafeguard, 1);
+    assert.deepEqual(calls.map(([name]) => name), ['upsertToken', 'applyEvaluationResult', 'marketBucket', 'volumeBucket']);
+    assert.equal(calls[0][1].isActiveMonitorCandidate, false);
+    assert.equal(calls[2][1].gmgnLockPercent, 0);
+    assert.equal(calls[2][1].gmgnBurnRatio, 0);
+    assert.equal(calls[2][1].gmgnBurnStatus, 'none');
+    assert.equal(calls[2][1].gmgnCreatorClose, true);
+    assert.equal(calls[2][1].gmgnCreatorTokenStatus, 'creator_close');
+  });
+
   it('auto-blocks young extreme GMGN tokens when token security shows concentrated top holders', async () => {
     const blockWrites = [];
     let upsertCalls = 0;

@@ -43,6 +43,28 @@ function toNumberOrNull(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function toBooleanOrNull(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+  if (value == null || value === '') {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no'].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function toTextOrNull(value, maxLength = 64) {
+  const normalized = String(value || '').trim();
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
 function getBucketDate(value = new Date()) {
   const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
   if (!Number.isFinite(date.getTime())) {
@@ -696,6 +718,11 @@ async function upsertSnapshotBucket(snapshot) {
   const mcap = toNumberOrNull(snapshot.mcap);
   const price = toNumberOrNull(snapshot.price);
   const liquidityUsd = toNumberOrNull(snapshot.liquidityUsd);
+  const gmgnLockPercent = toNumberOrNull(snapshot.gmgnLockPercent);
+  const gmgnBurnRatio = toNumberOrNull(snapshot.gmgnBurnRatio);
+  const gmgnBurnStatus = toTextOrNull(snapshot.gmgnBurnStatus, 32);
+  const gmgnCreatorClose = toBooleanOrNull(snapshot.gmgnCreatorClose);
+  const gmgnCreatorTokenStatus = toTextOrNull(snapshot.gmgnCreatorTokenStatus, 64);
   const pairAddress = isValidAddress(String(snapshot.pairAddress || '').trim())
     ? String(snapshot.pairAddress).trim()
     : null;
@@ -715,6 +742,11 @@ async function upsertSnapshotBucket(snapshot) {
        low_price,
        close_price,
        close_liquidity_usd,
+       gmgn_lock_percent,
+       gmgn_burn_ratio,
+       gmgn_burn_status,
+       gmgn_creator_close,
+       gmgn_creator_token_status,
        sample_count,
        source
      )
@@ -723,8 +755,9 @@ async function upsertSnapshotBucket(snapshot) {
        $4, $4, $4, $4,
        $5, $5, $5, $5,
        $6,
+       $7, $8, $9, $10, $11,
        1,
-       $7
+       $12
      )
      ON CONFLICT (token_address, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_1m.pair_address),
@@ -751,10 +784,28 @@ async function upsertSnapshotBucket(snapshot) {
        END,
        close_price = COALESCE(EXCLUDED.close_price, token_market_buckets_1m.close_price),
        close_liquidity_usd = COALESCE(EXCLUDED.close_liquidity_usd, token_market_buckets_1m.close_liquidity_usd),
+       gmgn_lock_percent = COALESCE(EXCLUDED.gmgn_lock_percent, token_market_buckets_1m.gmgn_lock_percent),
+       gmgn_burn_ratio = COALESCE(EXCLUDED.gmgn_burn_ratio, token_market_buckets_1m.gmgn_burn_ratio),
+       gmgn_burn_status = COALESCE(EXCLUDED.gmgn_burn_status, token_market_buckets_1m.gmgn_burn_status),
+       gmgn_creator_close = COALESCE(EXCLUDED.gmgn_creator_close, token_market_buckets_1m.gmgn_creator_close),
+       gmgn_creator_token_status = COALESCE(EXCLUDED.gmgn_creator_token_status, token_market_buckets_1m.gmgn_creator_token_status),
        sample_count = token_market_buckets_1m.sample_count + 1,
        source = COALESCE(EXCLUDED.source, token_market_buckets_1m.source)
      RETURNING *`,
-    [address, bucketTs, pairAddress, mcap, price, liquidityUsd, source]
+    [
+      address,
+      bucketTs,
+      pairAddress,
+      mcap,
+      price,
+      liquidityUsd,
+      gmgnLockPercent,
+      gmgnBurnRatio,
+      gmgnBurnStatus,
+      gmgnCreatorClose,
+      gmgnCreatorTokenStatus,
+      source,
+    ]
   );
 
   const row = rows[0];
@@ -799,6 +850,63 @@ async function listRecentLiquiditySamplesByAddresses(addresses, limit = 5) {
        token_address,
        bucket_ts,
        close_liquidity_usd,
+       sample_count,
+       source
+     FROM ranked
+     WHERE rn <= $2
+     ORDER BY token_address ASC, bucket_ts DESC`,
+    [unique, safeLimit]
+  );
+
+  return rows;
+}
+
+async function listRecentGmgnLiquidityProtectionSamplesByAddresses(addresses, limit = 4) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+  const { rows } = await db.query(
+    `WITH ranked AS (
+       SELECT
+         token_address,
+         bucket_ts,
+         gmgn_lock_percent,
+         gmgn_burn_ratio,
+         gmgn_burn_status,
+         gmgn_creator_close,
+         gmgn_creator_token_status,
+         sample_count,
+         source,
+         ROW_NUMBER() OVER (
+           PARTITION BY token_address
+           ORDER BY bucket_ts DESC
+         ) AS rn
+       FROM token_market_buckets_1m
+       WHERE token_address = ANY($1::varchar[])
+         AND source = 'gmgn'
+         AND gmgn_lock_percent IS NOT NULL
+         AND gmgn_burn_ratio IS NOT NULL
+         AND gmgn_burn_status IS NOT NULL
+         AND gmgn_creator_close IS NOT NULL
+         AND gmgn_creator_token_status IS NOT NULL
+     )
+     SELECT
+       token_address,
+       bucket_ts,
+       gmgn_lock_percent,
+       gmgn_burn_ratio,
+       gmgn_burn_status,
+       gmgn_creator_close,
+       gmgn_creator_token_status,
        sample_count,
        source
      FROM ranked
@@ -2055,6 +2163,7 @@ module.exports = {
   listHistoryByAddress,
   listSparklineByAddresses,
   listRecentLiquiditySamplesByAddresses,
+  listRecentGmgnLiquidityProtectionSamplesByAddresses,
   deleteByAddresses,
   listCurrentAndBaselineByAddresses,
   listHighCapDumpDetectionsByAddresses,

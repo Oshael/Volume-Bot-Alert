@@ -30,6 +30,7 @@ describe('auto-block rule labels', () => {
       GMGN_HOLDER_COUNT_MCAP_ANOMALY: 'gmgn_holder_count_mcap_anomaly',
       GMGN_LOW_MCAP_EXTREME_24H_CHURN_THIN_LIQUIDITY: 'gmgn_low_mcap_extreme_24h_churn_thin_liquidity',
       GMGN_LOW_MCAP_THIN_SUPPORT: 'gmgn_low_mcap_thin_support',
+      GMGN_UNPROTECTED_LIQUIDITY: 'gmgn_unprotected_liquidity',
       GMGN_YOUNG_EXTREME_CHURN: 'gmgn_young_extreme_churn',
       GMGN_YOUNG_LOW_CAP_HIGH_CHURN_THIN_LIQUIDITY: 'gmgn_young_low_cap_high_churn_thin_liquidity',
       LOW_LIQUIDITY_UNDER_1K: 'low_liquidity_under_1k',

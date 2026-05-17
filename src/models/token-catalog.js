@@ -1024,13 +1024,14 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
            (tc.eligible_for_monitoring = TRUE OR tc.suppressed_reason = 'gmgn_needs_risk_enrichment')
            AND COALESCE(tc.last_mcap, 0) >= $3
          )
-	         OR (
-	           tc.last_liquidity_usd IS NOT NULL
-	           AND tc.last_liquidity_usd < 1000
-	           AND tc.last_token_created_at_ms IS NOT NULL
-	           AND tc.last_token_created_at_ms >= ((EXTRACT(EPOCH FROM NOW()) - (6 * 60 * 60)) * 1000)
-	         )
-	       )
+         OR tc.suppressed_reason = 'gmgn_unprotected_liquidity_pending'
+         OR (
+           tc.last_liquidity_usd IS NOT NULL
+           AND tc.last_liquidity_usd < 1000
+           AND tc.last_token_created_at_ms IS NOT NULL
+           AND tc.last_token_created_at_ms >= ((EXTRACT(EPOCH FROM NOW()) - (6 * 60 * 60)) * 1000)
+         )
+       )
      ORDER BY CASE
                 WHEN trr.source = 'auto'
                  AND tc.last_evaluated_at IS NOT NULL

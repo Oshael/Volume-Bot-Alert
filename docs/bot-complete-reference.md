@@ -675,6 +675,15 @@ Important behavior:
   - the candidate selector includes these low-liquidity rows even when they do not meet the normal active monitoring/mcap scan path
   - matching rows are auto-blocked with:
     - `auto-junk-probable:low_liquidity_under_1k`
+- GMGN unprotected-liquidity hard ban:
+  - runs before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
+  - source must be GMGN and not protected by a manual review
+  - token age `<= 6h`
+  - current GMGN payload must show `lock_percent = 0`, `burn_ratio = 0`, `burn_status = none`, `creator_close = true`, and `creator_token_status = creator_close`
+  - GMGN ingestion suppresses tokens born with this status as `gmgn_unprotected_liquidity_pending`, with `eligible_for_monitoring = false` and `is_active_monitor_candidate = false`
+  - requires the latest `4` stored GMGN `token_market_buckets_1m` samples to repeat those liquidity-protection fields before auto-blocking
+  - matching rows are auto-blocked with:
+    - `auto-junk-probable:gmgn_unprotected_liquidity`
 - GMGN low-cap thin-support gates:
   - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - source must be GMGN and not protected by a manual review

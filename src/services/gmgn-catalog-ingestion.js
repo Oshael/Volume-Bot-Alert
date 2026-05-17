@@ -23,6 +23,7 @@ const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
+const GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON = 'gmgn_unprotected_liquidity_pending';
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
 const GMGN_YOUNG_VOL_1H_TO_MCAP_RATIO = 10;
@@ -76,6 +77,43 @@ function toFiniteNumberOrNull(value) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toBooleanOrNull(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+  if (value == null || value === '') {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no'].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function readGmgnLiquidityProtectionFields(snapshot = {}) {
+  const raw = snapshot.raw && typeof snapshot.raw === 'object' ? snapshot.raw : snapshot;
+  return {
+    lockPercent: toFiniteNumberOrNull(raw.lock_percent ?? raw.lockPercent),
+    burnRatio: toFiniteNumberOrNull(raw.burn_ratio ?? raw.burnRatio),
+    burnStatus: String(raw.burn_status ?? raw.burnStatus ?? '').trim().toLowerCase(),
+    creatorClose: toBooleanOrNull(raw.creator_close ?? raw.creatorClose),
+    creatorTokenStatus: String(raw.creator_token_status ?? raw.creatorTokenStatus ?? '').trim().toLowerCase(),
+  };
+}
+
+function hasGmgnUnprotectedLiquiditySignal(snapshot = {}) {
+  const fields = readGmgnLiquidityProtectionFields(snapshot);
+  return fields.lockPercent === 0
+    && fields.burnRatio === 0
+    && fields.burnStatus === 'none'
+    && fields.creatorClose === true
+    && fields.creatorTokenStatus === 'creator_close';
 }
 
 function toTimestampMsOrNull(value) {
@@ -191,7 +229,7 @@ function buildCatalogPayload(snapshot, tokenBefore = null) {
     priceChange24h: snapshot.priceChange24h,
     liquidityUsd: snapshot.liquidityUsd,
     tokenCreatedAt: toTimestampMsOrNull(snapshot.tokenCreatedAt),
-    isActiveMonitorCandidate: true,
+    isActiveMonitorCandidate: !hasGmgnUnprotectedLiquiditySignal(snapshot),
   };
 }
 
@@ -209,6 +247,7 @@ function buildVolumeBucketPayload(snapshot, now) {
 }
 
 function buildMarketBucketPayload(snapshot, now) {
+  const gmgnLiquidityProtection = readGmgnLiquidityProtectionFields(snapshot);
   return {
     tokenAddress: normalizeAddress(snapshot.address || snapshot.tokenAddress),
     ts: now,
@@ -216,6 +255,11 @@ function buildMarketBucketPayload(snapshot, now) {
     mcap: snapshot.mcap,
     price: snapshot.price,
     liquidityUsd: snapshot.liquidityUsd,
+    gmgnLockPercent: gmgnLiquidityProtection.lockPercent,
+    gmgnBurnRatio: gmgnLiquidityProtection.burnRatio,
+    gmgnBurnStatus: gmgnLiquidityProtection.burnStatus || null,
+    gmgnCreatorClose: gmgnLiquidityProtection.creatorClose,
+    gmgnCreatorTokenStatus: gmgnLiquidityProtection.creatorTokenStatus || null,
     source: 'gmgn',
   };
 }
@@ -262,6 +306,16 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
       eligibleForMonitoring: false,
       suppressedReason: 'mcap_unavailable',
       monitorPriority: 'dormant',
+      nextEvaluationAt,
+    });
+  }
+
+  if (!isManual && hasGmgnUnprotectedLiquiditySignal(snapshot)) {
+    return buildEvaluationPayload(snapshot, {
+      eligibilityState: 'gmgn-unprotected-liquidity-pending',
+      eligibleForMonitoring: false,
+      suppressedReason: GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
+      monitorPriority: resolveMonitorPriority(marketCap),
       nextEvaluationAt,
     });
   }
@@ -1414,7 +1468,10 @@ module.exports = {
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
+    GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
     GMGN_ALERT_SAFEGUARD_REASON,
+    hasGmgnUnprotectedLiquiditySignal,
+    readGmgnLiquidityProtectionFields,
     getGmgnIntervals,
     hasCompletedGmgnPreliminaryReview,
     hasDexConfirmation,

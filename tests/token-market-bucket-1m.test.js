@@ -70,6 +70,11 @@ describe('token market 1m bucket helpers', () => {
         mcap: 123456,
         price: 0.1234,
         liquidityUsd: 987.65,
+        gmgnLockPercent: 0,
+        gmgnBurnRatio: 0,
+        gmgnBurnStatus: 'none',
+        gmgnCreatorClose: true,
+        gmgnCreatorTokenStatus: 'creator_close',
         source: 'gmgn',
       });
 
@@ -77,7 +82,13 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(calls.length, 2);
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
       assert.match(calls[0].sql, /close_liquidity_usd/);
+      assert.match(calls[0].sql, /gmgn_lock_percent/);
       assert.equal(calls[0].params[5], 987.65);
+      assert.equal(calls[0].params[6], 0);
+      assert.equal(calls[0].params[7], 0);
+      assert.equal(calls[0].params[8], 'none');
+      assert.equal(calls[0].params[9], true);
+      assert.equal(calls[0].params[10], 'creator_close');
       assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
       assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
       assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
@@ -124,6 +135,44 @@ describe('token market 1m bucket helpers', () => {
       assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], 5]);
       assert.match(capturedSql, /close_liquidity_usd IS NOT NULL/);
       assert.match(capturedSql, /ROW_NUMBER\(\) OVER/);
+      assert.equal(rows.length, 1);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('lists recent GMGN liquidity-protection samples by address', async () => {
+    const originalQuery = db.query;
+    let capturedSql = null;
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-03-24T04:18:00.000Z',
+            gmgn_lock_percent: '0',
+            gmgn_burn_ratio: '0',
+            gmgn_burn_status: 'none',
+            gmgn_creator_close: true,
+            gmgn_creator_token_status: 'creator_close',
+          },
+        ],
+      };
+    };
+
+    try {
+      const rows = await tokenMarketBucket1m.listRecentGmgnLiquidityProtectionSamplesByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], 4);
+
+      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], 4]);
+      assert.match(capturedSql, /source = 'gmgn'/);
+      assert.match(capturedSql, /gmgn_lock_percent IS NOT NULL/);
+      assert.match(capturedSql, /gmgn_creator_token_status IS NOT NULL/);
       assert.equal(rows.length, 1);
     } finally {
       db.query = originalQuery;

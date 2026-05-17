@@ -11,6 +11,19 @@ function buildLiquiditySamples(address, values) {
   }));
 }
 
+function buildGmgnUnprotectedLiquiditySamples(address, count = 4, overrides = {}) {
+  return Array.from({ length: count }, (_, index) => ({
+    token_address: address,
+    bucket_ts: new Date(Date.now() - (index * 60 * 1000)).toISOString(),
+    gmgn_lock_percent: 0,
+    gmgn_burn_ratio: 0,
+    gmgn_burn_status: 'none',
+    gmgn_creator_close: true,
+    gmgn_creator_token_status: 'creator_close',
+    ...overrides,
+  }));
+}
+
 describe('token risk review sync worker', () => {
   it('uses 15k as the default auto-risk review market-cap floor', () => {
     assert.equal(worker.DEFAULT_MIN_MCAP, 15000);
@@ -140,6 +153,123 @@ describe('token risk review sync worker', () => {
     assert.equal(result.saved, 0);
     assert.equal(result.autoBlocked, 0);
     assert.equal(result.manualProtected, 1);
+  });
+
+  it('auto-blocks young GMGN tokens after 4 unprotected-liquidity bucket confirmations', async () => {
+    const address = 'NkriyfsMn6duSttoac1QU58EyWpP1M81sCfq6eDxovF';
+    const saved = [];
+    const blocked = [];
+
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        symbol: 'WOOD',
+        last_mcap: 29266,
+        last_liquidity_usd: 29280,
+        last_vol_1h: 50000,
+        last_vol_24h: 50000,
+        last_token_created_at_ms: Date.now() - (60 * 60 * 1000),
+        suppressed_reason: 'gmgn_unprotected_liquidity_pending',
+        risk_review_source: null,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => [],
+        listRecentGmgnLiquidityProtectionSamplesByAddresses: async () => (
+          buildGmgnUnprotectedLiquiditySamples(address, 4)
+        ),
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { ...payload, source: 'auto' };
+        },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (tokenAddress, payload) => ({ tokenAddress, ...payload }),
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /gmgn_unprotected_liquidity/);
+    assert.equal(blocked[0].address, address);
+    assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_unprotected_liquidity');
+  });
+
+  it('waits for 4 unprotected-liquidity buckets before auto-blocking GMGN tokens', async () => {
+    const address = 'NkriyfsMn6duSttoac1QU58EyWpP1M81sCfq6eDxovF';
+    const saved = [];
+
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        last_mcap: 29266,
+        last_liquidity_usd: 29280,
+        last_token_created_at_ms: Date.now() - (60 * 60 * 1000),
+        suppressed_reason: 'gmgn_unprotected_liquidity_pending',
+        risk_review_source: null,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => [],
+        listRecentGmgnLiquidityProtectionSamplesByAddresses: async () => (
+          buildGmgnUnprotectedLiquiditySamples(address, 3)
+        ),
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { ...payload, source: 'auto' };
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async () => {
+          throw new Error('token must not be blocked before 4 confirmations');
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(saved[0].label, 'valid_but_weak');
+    assert.match(saved[0].notes, /gmgn_unprotected_liquidity_pending_confirmation/);
+  });
+
+  it('does not apply the GMGN unprotected-liquidity gate after 6 hours of token age', () => {
+    const address = 'NkriyfsMn6duSttoac1QU58EyWpP1M81sCfq6eDxovF';
+    const assessment = worker.__private.buildGmgnUnprotectedLiquidityAssessment({
+      address,
+      source: 'gmgn',
+      last_mcap: 29266,
+      last_liquidity_usd: 29280,
+      last_token_created_at_ms: Date.now() - (7 * 60 * 60 * 1000),
+      risk_review_source: null,
+    }, buildGmgnUnprotectedLiquiditySamples(address, 4));
+
+    assert.equal(assessment, null);
   });
 
   it('keeps auto-valid tokens as valid_but_weak until structural coverage exists', async () => {

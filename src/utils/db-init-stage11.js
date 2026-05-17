@@ -14,6 +14,11 @@ const STATEMENTS = [
      low_price NUMERIC(20, 12),
      close_price NUMERIC(20, 12),
      close_liquidity_usd NUMERIC(20, 2),
+     gmgn_lock_percent NUMERIC(20, 8),
+     gmgn_burn_ratio NUMERIC(20, 8),
+     gmgn_burn_status VARCHAR(32),
+     gmgn_creator_close BOOLEAN,
+     gmgn_creator_token_status VARCHAR(64),
      sample_count INTEGER NOT NULL DEFAULT 1,
      source VARCHAR(32) NOT NULL DEFAULT 'dexscreener',
      PRIMARY KEY (token_address, bucket_ts)
@@ -22,6 +27,16 @@ const STATEMENTS = [
      ADD COLUMN IF NOT EXISTS pair_address VARCHAR(64)`,
   `ALTER TABLE token_market_buckets_1m
      ADD COLUMN IF NOT EXISTS close_liquidity_usd NUMERIC(20, 2)`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS gmgn_lock_percent NUMERIC(20, 8)`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS gmgn_burn_ratio NUMERIC(20, 8)`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS gmgn_burn_status VARCHAR(32)`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS gmgn_creator_close BOOLEAN`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS gmgn_creator_token_status VARCHAR(64)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_bucket_ts
      ON token_market_buckets_1m(bucket_ts DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_addr_bucket_ts

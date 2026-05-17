@@ -281,6 +281,13 @@ Important:
   - requires the latest `5` stored `token_market_buckets_1m.close_liquidity_usd` samples to also be `< $1k`
   - matching rows are auto-blocked as `auto-junk-probable:low_liquidity_under_1k`
   - the candidate selector includes these low-liquidity rows even when they do not meet the normal active monitoring/mcap scan path
+- GMGN unprotected-liquidity hard ban:
+  - GMGN token, non-manual review
+  - token age `<= 6h`
+  - current GMGN payload has `lock_percent = 0`, `burn_ratio = 0`, `burn_status = none`, `creator_close = true`, and `creator_token_status = creator_close`
+  - tokens born with this status are written as `gmgn_unprotected_liquidity_pending`, `eligible_for_monitoring = false`, and `is_active_monitor_candidate = false`, so they do not enter monitored alerts while confirmation is pending
+  - requires the latest `4` stored GMGN `token_market_buckets_1m` liquidity-protection samples to repeat the same signal
+  - matching rows are auto-blocked as `auto-junk-probable:gmgn_unprotected_liquidity`
 - GMGN low-cap thin-support gates now run inside the token-risk review sync worker before the generic junk metric:
   - GMGN token, non-manual review
   - mcap `15k-150k`
