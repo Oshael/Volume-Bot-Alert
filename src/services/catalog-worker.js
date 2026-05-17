@@ -940,6 +940,7 @@ async function evaluateTokenWithData(token, data) {
     vol1h: snapshot.vol1h,
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
+    liquidityUsd: snapshot.liquidityUsd,
     source: 'dexscreener',
   };
 

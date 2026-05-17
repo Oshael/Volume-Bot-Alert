@@ -3,6 +3,14 @@ const assert = require('node:assert/strict');
 
 const worker = require('../src/services/token-risk-review-sync-worker');
 
+function buildLiquiditySamples(address, values) {
+  return values.map((value, index) => ({
+    token_address: address,
+    bucket_ts: new Date(Date.now() - (index * 60 * 1000)).toISOString(),
+    close_liquidity_usd: value,
+  }));
+}
+
 describe('token risk review sync worker', () => {
   it('uses 15k as the default auto-risk review market-cap floor', () => {
     assert.equal(worker.DEFAULT_MIN_MCAP, 15000);
@@ -191,9 +199,10 @@ describe('token risk review sync worker', () => {
     const blocked = [];
     const suppressed = [];
     const createdAtMs = Date.now() - (60 * 60 * 1000);
+    const address = 'EAshzB35kVsN5hwupFsZxLA5swj1vgEDcScbiV3KK5ic';
     const result = await worker.__private.processRows([
       {
-        address: 'EAshzB35kVsN5hwupFsZxLA5swj1vgEDcScbiV3KK5ic',
+        address,
         source: 'gmgn',
         last_mcap: 60912,
         last_vol_1h: 153812.79,
@@ -208,6 +217,9 @@ describe('token risk review sync worker', () => {
     ], {
       tokenMeteoraStateModel: {
         listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [6.81, 6.81, 6.81, 6.81, 6.81]),
       },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {
@@ -245,14 +257,15 @@ describe('token risk review sync worker', () => {
     assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
   });
 
-  it('does not auto-block young GMGN high-churn tokens on liquidity ratio alone', async () => {
+  it('auto-blocks any automatic token with liquidity below 1k', async () => {
     const saved = [];
     const blocked = [];
     const suppressed = [];
     const createdAtMs = Date.now() - (60 * 60 * 1000);
+    const address = '379BCjzGPuFvqTHcpJPU8m9ZUjh8bXoCPV4hG8Ljpump';
     const result = await worker.__private.processRows([
       {
-        address: '379BCjzGPuFvqTHcpJPU8m9ZUjh8bXoCPV4hG8Ljpump',
+        address,
         source: 'gmgn',
         last_mcap: 50000,
         last_vol_1h: 130000,
@@ -268,6 +281,9 @@ describe('token risk review sync worker', () => {
       tokenMeteoraStateModel: {
         listSummaryByAddresses: async () => [],
       },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [500, 600, 700, 800, 900]),
+      },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {
           saved.push(payload);
@@ -297,20 +313,22 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
-    assert.equal(result.autoBlocked, 0);
-    assert.equal(saved[0].label, 'valid_but_weak');
-    assert.equal(blocked.length, 0);
-    assert.equal(suppressed.length, 0);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /global_low_liquidity_gate/);
+    assert.equal(blocked[0].label, 'auto-junk-probable:low_liquidity_under_1k');
+    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
   });
 
-  it('does not treat zero GMGN liquidity as confirmed thin liquidity for young high-churn tokens', async () => {
+  it('auto-blocks automatic tokens with zero liquidity', async () => {
     const saved = [];
     const blocked = [];
     const suppressed = [];
     const createdAtMs = Date.now() - (60 * 60 * 1000);
+    const address = '379BCjzGPuFvqTHcpJPU8m9ZUjh8bXoCPV4hG8Ljpump';
     const result = await worker.__private.processRows([
       {
-        address: '379BCjzGPuFvqTHcpJPU8m9ZUjh8bXoCPV4hG8Ljpump',
+        address,
         source: 'gmgn',
         last_mcap: 30403.12,
         last_vol_1h: 73540.69,
@@ -326,6 +344,9 @@ describe('token risk review sync worker', () => {
       tokenMeteoraStateModel: {
         listSummaryByAddresses: async () => [],
       },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [0, 0, 0, 0, 0]),
+      },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {
           saved.push(payload);
@@ -355,10 +376,151 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /global_low_liquidity_gate/);
+    assert.equal(blocked[0].label, 'auto-junk-probable:low_liquidity_under_1k');
+    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
+  });
+
+  it('requires five confirmed low-liquidity buckets before the hard ban', () => {
+    const address = 'So11111111111111111111111111111111111111112';
+    const createdAtMs = Date.now() - (60 * 60 * 1000);
+
+    assert.equal(
+      worker.__private.buildGlobalLowLiquidityAssessment(
+        { address, last_liquidity_usd: 500, last_token_created_at_ms: createdAtMs, risk_review_source: 'auto' },
+        buildLiquiditySamples(address, [500, 500, 500, 500])
+      ),
+      null
+    );
+
+    assert.equal(
+      worker.__private.buildGlobalLowLiquidityAssessment(
+        { address, last_liquidity_usd: 500, last_token_created_at_ms: createdAtMs, risk_review_source: 'auto' },
+        buildLiquiditySamples(address, [500, 500, 1200, 500, 500])
+      ),
+      null
+    );
+  });
+
+  it('does not apply the global low-liquidity hard ban after six hours', () => {
+    const address = 'So11111111111111111111111111111111111111112';
+    const oldCreatedAtMs = Date.now() - (7 * 60 * 60 * 1000);
+
+    assert.equal(
+      worker.__private.buildGlobalLowLiquidityAssessment(
+        { address, last_liquidity_usd: 500, last_token_created_at_ms: oldCreatedAtMs, risk_review_source: 'auto' },
+        buildLiquiditySamples(address, [500, 500, 500, 500, 500])
+      ),
+      null
+    );
+  });
+
+  it('does not let generic junk fallback auto-block low-liquidity tokens before five buckets', async () => {
+    const saved = [];
+    const blocked = [];
+    const address = '726MVtUgSjsHZvyaaYQw4jg59UBBfJE9MZqj2qw8Rvbu';
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        eligibility_state: 'dex-normal',
+        last_mcap: 80000,
+        last_vol_5m: 5000,
+        last_vol_1h: 20000,
+        last_vol_6h: 45000,
+        last_vol_24h: 90000,
+        last_liquidity_usd: 75,
+        last_txns_24h_buys: 120,
+        last_txns_24h_sells: 95,
+        last_token_created_at_ms: Date.now() - (60 * 60 * 1000),
+        risk_review_source: 'auto',
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [75, 75, 75, 75]),
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
     assert.equal(result.autoBlocked, 0);
     assert.equal(saved[0].label, 'valid_but_weak');
+    assert.match(saved[0].notes, /low_liquidity_pending_confirmation/);
     assert.equal(blocked.length, 0);
-    assert.equal(suppressed.length, 0);
+  });
+
+  it('applies the low-liquidity ban outside GMGN sources', async () => {
+    const saved = [];
+    const blocked = [];
+    const address = 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M';
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'dexscreener',
+        last_mcap: 250000,
+        last_vol_1h: 500,
+        last_vol_6h: 1200,
+        last_vol_24h: 3000,
+        last_liquidity_usd: 999.99,
+        last_token_created_at_ms: Date.now() - (60 * 60 * 1000),
+        risk_review_source: 'auto',
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [999.99, 800, 750, 700, 650]),
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return {
+            tokenAddress: payload.tokenAddress,
+            label: payload.label,
+            source: 'auto',
+          };
+        },
+        removeAutoReview: async () => true,
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (tokenAddress, payload) => ({ tokenAddress, ...payload }),
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.equal(blocked[0].address, address);
+    assert.equal(blocked[0].label, 'auto-junk-probable:low_liquidity_under_1k');
   });
 
   it('does not fail the sync when junk evidence capture throws', async () => {
@@ -737,6 +899,9 @@ describe('token risk review sync worker', () => {
           poolCount: 0,
         }],
       },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [41.87, 41.87, 41.87, 41.87, 41.87]),
+      },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {
           saved.push(payload);
@@ -796,6 +961,9 @@ describe('token risk review sync worker', () => {
       tokenMeteoraStateModel: {
         listSummaryByAddresses: async () => [],
       },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [90, 90, 90, 90, 90]),
+      },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {
           saved.push(payload);
@@ -847,6 +1015,9 @@ describe('token risk review sync worker', () => {
     ], {
       tokenMeteoraStateModel: {
         listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [75, 75, 75, 75, 75]),
       },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {
@@ -917,6 +1088,9 @@ describe('token risk review sync worker', () => {
     ], {
       tokenMeteoraStateModel: {
         listSummaryByAddresses: async () => [],
+      },
+      tokenMarketBucket1mModel: {
+        listRecentLiquiditySamplesByAddresses: async () => buildLiquiditySamples(address, [192.78, 192.78, 192.78, 192.78, 192.78]),
       },
       tokenRiskReviewModel: {
         upsertAutoReview: async (payload) => {

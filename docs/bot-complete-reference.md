@@ -666,6 +666,15 @@ Important behavior:
   - vol5m/mcap `>= 4`
   - matching rows are auto-blocked with:
     - `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
+- Source-agnostic low-liquidity hard ban:
+  - runs before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
+  - applies to non-manual reviews from any source
+  - token age `<= 6h`
+  - `last_liquidity_usd < $1k`, including `0`
+  - requires the latest `5` stored `token_market_buckets_1m.close_liquidity_usd` samples to also be `< $1k`
+  - the candidate selector includes these low-liquidity rows even when they do not meet the normal active monitoring/mcap scan path
+  - matching rows are auto-blocked with:
+    - `auto-junk-probable:low_liquidity_under_1k`
 - GMGN low-cap thin-support gates:
   - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - source must be GMGN and not protected by a manual review

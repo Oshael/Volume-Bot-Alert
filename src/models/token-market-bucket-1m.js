@@ -695,6 +695,7 @@ async function upsertSnapshotBucket(snapshot) {
   const bucketTs = getBucketDate(snapshot.ts || new Date());
   const mcap = toNumberOrNull(snapshot.mcap);
   const price = toNumberOrNull(snapshot.price);
+  const liquidityUsd = toNumberOrNull(snapshot.liquidityUsd);
   const pairAddress = isValidAddress(String(snapshot.pairAddress || '').trim())
     ? String(snapshot.pairAddress).trim()
     : null;
@@ -713,6 +714,7 @@ async function upsertSnapshotBucket(snapshot) {
        high_price,
        low_price,
        close_price,
+       close_liquidity_usd,
        sample_count,
        source
      )
@@ -720,8 +722,9 @@ async function upsertSnapshotBucket(snapshot) {
        $1, $2, $3,
        $4, $4, $4, $4,
        $5, $5, $5, $5,
+       $6,
        1,
-       $6
+       $7
      )
      ON CONFLICT (token_address, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_1m.pair_address),
@@ -747,10 +750,11 @@ async function upsertSnapshotBucket(snapshot) {
          ELSE LEAST(token_market_buckets_1m.low_price, EXCLUDED.low_price)
        END,
        close_price = COALESCE(EXCLUDED.close_price, token_market_buckets_1m.close_price),
+       close_liquidity_usd = COALESCE(EXCLUDED.close_liquidity_usd, token_market_buckets_1m.close_liquidity_usd),
        sample_count = token_market_buckets_1m.sample_count + 1,
        source = COALESCE(EXCLUDED.source, token_market_buckets_1m.source)
      RETURNING *`,
-    [address, bucketTs, pairAddress, mcap, price, source]
+    [address, bucketTs, pairAddress, mcap, price, liquidityUsd, source]
   );
 
   const row = rows[0];
@@ -760,6 +764,50 @@ async function upsertSnapshotBucket(snapshot) {
   invalidateSparklineCacheForAddresses([address]);
 
   return row;
+}
+
+async function listRecentLiquiditySamplesByAddresses(addresses, limit = 5) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 20));
+  const { rows } = await db.query(
+    `WITH ranked AS (
+       SELECT
+         token_address,
+         bucket_ts,
+         close_liquidity_usd,
+         sample_count,
+         source,
+         ROW_NUMBER() OVER (
+           PARTITION BY token_address
+           ORDER BY bucket_ts DESC
+         ) AS rn
+       FROM token_market_buckets_1m
+       WHERE token_address = ANY($1::varchar[])
+         AND close_liquidity_usd IS NOT NULL
+     )
+     SELECT
+       token_address,
+       bucket_ts,
+       close_liquidity_usd,
+       sample_count,
+       source
+     FROM ranked
+     WHERE rn <= $2
+     ORDER BY token_address ASC, bucket_ts DESC`,
+    [unique, safeLimit]
+  );
+
+  return rows;
 }
 
 async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
@@ -2006,6 +2054,7 @@ module.exports = {
   getInitialBucketByAddress,
   listHistoryByAddress,
   listSparklineByAddresses,
+  listRecentLiquiditySamplesByAddresses,
   deleteByAddresses,
   listCurrentAndBaselineByAddresses,
   listHighCapDumpDetectionsByAddresses,

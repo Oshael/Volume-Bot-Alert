@@ -17,6 +17,7 @@ const AUTO_BLOCK_REASON_CODES = Object.freeze({
   GMGN_LOW_MCAP_THIN_SUPPORT: 'gmgn_low_mcap_thin_support',
   GMGN_YOUNG_EXTREME_CHURN: 'gmgn_young_extreme_churn',
   GMGN_YOUNG_LOW_CAP_HIGH_CHURN_THIN_LIQUIDITY: 'gmgn_young_low_cap_high_churn_thin_liquidity',
+  LOW_LIQUIDITY_UNDER_1K: 'low_liquidity_under_1k',
   NEW_LOW_MCAP_EXTREME_VOL5M_CHURN: 'new_low_mcap_extreme_vol5m_churn',
 });
 

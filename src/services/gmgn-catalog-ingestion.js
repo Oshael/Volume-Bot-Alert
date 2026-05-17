@@ -215,6 +215,7 @@ function buildMarketBucketPayload(snapshot, now) {
     pairAddress: snapshot.pairAddress || null,
     mcap: snapshot.mcap,
     price: snapshot.price,
+    liquidityUsd: snapshot.liquidityUsd,
     source: 'gmgn',
   };
 }

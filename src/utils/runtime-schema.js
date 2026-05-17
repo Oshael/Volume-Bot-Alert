@@ -233,6 +233,7 @@ const SCHEMA_GROUPS = [
           'high_price',
           'low_price',
           'close_price',
+          'close_liquidity_usd',
           'sample_count',
           'source',
         ],

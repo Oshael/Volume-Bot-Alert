@@ -274,6 +274,13 @@ Important:
   - vol5m `>= 500k`
   - vol5m/mcap `>= 4`
   - matching rows are auto-blocked as `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
+- The token-risk review sync worker also has a source-agnostic low-liquidity hard ban:
+  - non-manual review
+  - token age `<= 6h`
+  - `last_liquidity_usd < $1k`, including `0`
+  - requires the latest `5` stored `token_market_buckets_1m.close_liquidity_usd` samples to also be `< $1k`
+  - matching rows are auto-blocked as `auto-junk-probable:low_liquidity_under_1k`
+  - the candidate selector includes these low-liquidity rows even when they do not meet the normal active monitoring/mcap scan path
 - GMGN low-cap thin-support gates now run inside the token-risk review sync worker before the generic junk metric:
   - GMGN token, non-manual review
   - mcap `15k-150k`

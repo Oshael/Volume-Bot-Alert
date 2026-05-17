@@ -67,7 +67,10 @@ describe('token catalog auto risk review candidates', () => {
       assert.match(capturedSql, /LEFT JOIN token_risk_reviews/i);
       assert.match(capturedSql, /LEFT JOIN admin_blocked_tokens ab/i);
       assert.match(capturedSql, /LEFT JOIN token_risk_enrichment/i);
+      assert.match(capturedSql, /ab\.address IS NULL/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= \$3/i);
+      assert.match(capturedSql, /tc\.last_liquidity_usd < 1000/i);
+      assert.match(capturedSql, /tc\.last_token_created_at_ms >=/i);
       assert.match(capturedSql, /trr\.source = 'auto'/i);
       assert.match(capturedSql, /trr\.updated_at < tc\.last_evaluated_at/i);
       assert.equal(rows.length, 1);

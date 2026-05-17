@@ -13,12 +13,15 @@ const STATEMENTS = [
      high_price NUMERIC(20, 12),
      low_price NUMERIC(20, 12),
      close_price NUMERIC(20, 12),
+     close_liquidity_usd NUMERIC(20, 2),
      sample_count INTEGER NOT NULL DEFAULT 1,
      source VARCHAR(32) NOT NULL DEFAULT 'dexscreener',
      PRIMARY KEY (token_address, bucket_ts)
    )`,
   `ALTER TABLE token_market_buckets_1m
      ADD COLUMN IF NOT EXISTS pair_address VARCHAR(64)`,
+  `ALTER TABLE token_market_buckets_1m
+     ADD COLUMN IF NOT EXISTS close_liquidity_usd NUMERIC(20, 2)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_bucket_ts
      ON token_market_buckets_1m(bucket_ts DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_addr_bucket_ts

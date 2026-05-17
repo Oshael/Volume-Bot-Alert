@@ -69,12 +69,15 @@ describe('token market 1m bucket helpers', () => {
         ts: '2026-03-24T04:18:59.999Z',
         mcap: 123456,
         price: 0.1234,
+        liquidityUsd: 987.65,
         source: 'gmgn',
       });
 
       assert.equal(row.token_address, 'So11111111111111111111111111111111111111112');
       assert.equal(calls.length, 2);
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+      assert.match(calls[0].sql, /close_liquidity_usd/);
+      assert.equal(calls[0].params[5], 987.65);
       assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
       assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
       assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
@@ -89,6 +92,39 @@ describe('token market 1m bucket helpers', () => {
         30,
         '2026-03-24T04:00:00.000Z',
       ]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('lists recent liquidity samples by address', async () => {
+    const originalQuery = db.query;
+    let capturedSql = null;
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-03-24T04:18:00.000Z',
+            close_liquidity_usd: '900.00',
+          },
+        ],
+      };
+    };
+
+    try {
+      const rows = await tokenMarketBucket1m.listRecentLiquiditySamplesByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], 5);
+
+      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], 5]);
+      assert.match(capturedSql, /close_liquidity_usd IS NOT NULL/);
+      assert.match(capturedSql, /ROW_NUMBER\(\) OVER/);
+      assert.equal(rows.length, 1);
     } finally {
       db.query = originalQuery;
     }
