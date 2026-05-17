@@ -637,6 +637,78 @@ function buildGmgnRiskReleasePayload(row = {}) {
   };
 }
 
+function buildRiskReviewMarketSnapshot(row = {}) {
+  return {
+    mcap: toFiniteNumberOrNull(row.last_mcap),
+    price: toFiniteNumberOrNull(row.last_price),
+    vol5m: toFiniteNumberOrNull(row.last_vol_5m),
+    vol1h: toFiniteNumberOrNull(row.last_vol_1h),
+    vol6h: toFiniteNumberOrNull(row.last_vol_6h),
+    vol24h: toFiniteNumberOrNull(row.last_vol_24h),
+    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
+    txns1hBuys: toFiniteNumberOrNull(row.last_txns_1h_buys),
+    txns1hSells: toFiniteNumberOrNull(row.last_txns_1h_sells),
+    txns24hBuys: toFiniteNumberOrNull(row.last_txns_24h_buys),
+    txns24hSells: toFiniteNumberOrNull(row.last_txns_24h_sells),
+    priceChange1h: toFiniteNumberOrNull(row.last_price_change_1h),
+    priceChange6h: toFiniteNumberOrNull(row.last_price_change_6h),
+    priceChange24h: toFiniteNumberOrNull(row.last_price_change_24h),
+    tokenCreatedAtMs: toFiniteNumberOrNull(row.last_token_created_at_ms),
+  };
+}
+
+function buildRiskReviewCatalogSnapshot(row = {}) {
+  return {
+    address: row.address || null,
+    symbol: row.symbol || null,
+    name: row.name || null,
+    source: row.source || null,
+    eligibilityState: row.eligibility_state || null,
+    suppressedReason: row.suppressed_reason || null,
+    riskReviewLabel: row.risk_review_label || null,
+    riskReviewSource: row.risk_review_source || null,
+  };
+}
+
+function buildRiskReviewRiskSnapshot(row = {}) {
+  return {
+    holderCount: toFiniteNumberOrNull(row.risk_holder_count),
+    top10Pct: toFiniteNumberOrNull(row.risk_top_10_pct),
+    top20Pct: toFiniteNumberOrNull(row.risk_top_20_pct),
+    mintAuthorityActive: row.risk_mint_authority_active === true,
+    freezeAuthorityActive: row.risk_freeze_authority_active === true,
+    reasonCodes: Array.isArray(row.risk_reason_codes) ? row.risk_reason_codes : [],
+  };
+}
+
+function buildRiskReviewMeteoraSnapshot(meteoraSummary = null) {
+  if (!meteoraSummary) {
+    return {};
+  }
+  return {
+    hasPool: meteoraSummary.hasPool,
+    currentTvl: toFiniteNumberOrNull(meteoraSummary.currentTvl),
+    poolCount: Number(meteoraSummary.poolCount) || 0,
+    bestPoolAddress: meteoraSummary.bestPoolAddress || null,
+    source: meteoraSummary.source || null,
+    updatedAt: meteoraSummary.updatedAt || null,
+  };
+}
+
+function buildRiskReviewBlockEvidence(row, assessment, meteoraSummary) {
+  const label = buildAutoBlockLabel(assessment);
+  return {
+    pipeline: 'risk-review-sync',
+    source: row?.source || null,
+    catalogSnapshot: buildRiskReviewCatalogSnapshot(row),
+    marketSnapshot: buildRiskReviewMarketSnapshot(row),
+    riskSnapshot: buildRiskReviewRiskSnapshot(row),
+    meteoraSnapshot: buildRiskReviewMeteoraSnapshot(meteoraSummary),
+    assessment: assessment || {},
+    ruleMatches: [{ label, mode: assessment?.mode || null, reasonCodes: assessment?.reasonCodes || [] }],
+  };
+}
+
 async function releaseGmgnRiskSuppression(row, deps = {}) {
   if (!isGmgnRiskEnrichmentSuppressed(row)) {
     return false;
@@ -647,7 +719,7 @@ async function releaseGmgnRiskSuppression(row, deps = {}) {
   return true;
 }
 
-async function autoBlockToken(row, assessment, deps = {}) {
+async function autoBlockToken(row, assessment, deps = {}, meteoraSummary = null) {
   const address = String(row?.address || '').trim();
   if (!address) {
     return false;
@@ -661,6 +733,7 @@ async function autoBlockToken(row, assessment, deps = {}) {
     address,
     label: buildAutoBlockLabel(assessment),
     createdBy: null,
+    evidence: buildRiskReviewBlockEvidence(row, assessment, meteoraSummary),
   });
 
   await catalogModel.applyEvaluationResult(address, {
@@ -735,7 +808,7 @@ async function processRows(rows = [], deps = {}) {
       continue;
     }
 
-    if (shouldAutoBlockLabel(label) && await autoBlockToken(row, assessment, deps)) {
+    if (shouldAutoBlockLabel(label) && await autoBlockToken(row, assessment, deps, meteoraSummary)) {
       autoBlocked += 1;
     } else if (label === 'valid' && await releaseGmgnRiskSuppression(row, deps)) {
       released += 1;

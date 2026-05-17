@@ -466,7 +466,7 @@ describe('catalog worker drift compensation', () => {
       eligibility_state: 'admin-blocked',
       suppressed_reason: 'admin_blocked',
     };
-    const labels = [];
+    const blockWrites = [];
     let applyCalls = 0;
 
     catalogWorker.__private.clearYoungExtremeChurnState(tokenBefore.address);
@@ -501,7 +501,7 @@ describe('catalog worker drift compensation', () => {
       closeMcap: 33000,
     });
     adminBlockedToken.add = async (payload) => {
-      labels.push(payload.label);
+      blockWrites.push(payload);
       return payload;
     };
     userAlertMatcher.evaluateUpdatedToken = async () => {
@@ -515,8 +515,11 @@ describe('catalog worker drift compensation', () => {
       assert.equal(firstResult, updatedToken);
       assert.equal(secondResult, blockedToken);
       assert.equal(applyCalls, 3);
-      assert.equal(labels.length, 1);
-      assert.match(labels[0], /^catalog-volume:young-extreme-churn:33000:33000:120000:3\.6x$/);
+      assert.equal(blockWrites.length, 1);
+      assert.match(blockWrites[0].label, /^catalog-volume:young-extreme-churn:33000:33000:120000:3\.6x$/);
+      assert.equal(blockWrites[0].evidence.pipeline, 'catalog-worker:young-extreme-churn');
+      assert.equal(blockWrites[0].evidence.marketSnapshot.currentMcap, 33000);
+      assert.equal(blockWrites[0].evidence.marketSnapshot.vol5m, 120000);
     } finally {
       catalogWorker.__private.clearYoungExtremeChurnState(tokenBefore.address);
       dexscreener.getBestPair = originalGetBestPair;

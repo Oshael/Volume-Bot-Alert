@@ -839,6 +839,41 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage39-admin-block-evidence',
+    name: 'Stage 39 admin block evidence snapshots',
+    repair: 'node src/utils/db-init-stage39.js',
+    tables: [
+      {
+        table: 'admin_block_evidence',
+        columns: [
+          'id',
+          'token_address',
+          'ban_label',
+          'created_by',
+          'pipeline',
+          'source',
+          'catalog_snapshot',
+          'market_snapshot',
+          'risk_snapshot',
+          'meteora_snapshot',
+          'gmgn_snapshot',
+          'assessment',
+          'rule_matches',
+          'created_at',
+        ],
+        defaults: {
+          catalog_snapshot: "'{}'::jsonb",
+          market_snapshot: "'{}'::jsonb",
+          risk_snapshot: "'{}'::jsonb",
+          meteora_snapshot: "'{}'::jsonb",
+          gmgn_snapshot: "'{}'::jsonb",
+          assessment: "'{}'::jsonb",
+          rule_matches: "'[]'::jsonb",
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

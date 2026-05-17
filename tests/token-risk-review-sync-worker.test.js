@@ -881,6 +881,10 @@ describe('token risk review sync worker', () => {
     assert.match(saved[0].notes, /gmgn_confirmed_micro_liquidity/);
     assert.equal(blocked[0].address, address);
     assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_confirmed_micro_liquidity');
+    assert.equal(blocked[0].evidence.pipeline, 'risk-review-sync');
+    assert.equal(blocked[0].evidence.marketSnapshot.mcap, 80000);
+    assert.equal(blocked[0].evidence.marketSnapshot.liquidityUsd, 75);
+    assert.deepEqual(blocked[0].evidence.ruleMatches[0].reasonCodes, ['gmgn_confirmed_micro_liquidity']);
     assert.equal(suppressed.find(([name]) => name === 'applyEvaluationResult')[2].suppressedReason, 'admin_blocked');
   });
 

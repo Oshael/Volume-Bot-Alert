@@ -1062,6 +1062,10 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.gmgnNewNonPumpHighLaunchMcapAutoBlocked, 1);
     assert.equal(blockWrites.length, 1);
     assert.equal(blockWrites[0].label, 'gmgn-origin:new-non-pump-high-launch-mcap:60000:250000');
+    assert.equal(blockWrites[0].evidence.pipeline, 'gmgn-ingestion:new-non-pump-high-launch-mcap');
+    assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 60000);
+    assert.equal(blockWrites[0].evidence.marketSnapshot.vol5m, 250000);
+    assert.equal(blockWrites[0].evidence.gmgnSnapshot.rawSnapshot.address, 'nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES');
   });
 
   it('does not auto-block moderate low-mcap non-pump GMGN launches by the high-launch rule', async () => {

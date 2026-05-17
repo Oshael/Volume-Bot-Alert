@@ -462,6 +462,7 @@ Catalog/alert behavior:
 
 GMGN risk gates before catalog/upsert alert flow:
 - high-confidence GMGN junk from the existing classifier is auto-blocked through `admin_blocked_tokens`
+- GMGN, catalog-worker, and risk-review auto-block paths also write ban-time evidence into `admin_block_evidence`; this is separate from operational blocklist reads so the block table stays lightweight
 - medium-confidence junk from a brand-new GMGN token is skipped without permanent block
 - `user-manual` rows are protected from GMGN auto-blocking
 - young low-mcap/extreme-volume GMGN tokens are auto-blocked before security/info/kline lookups:
@@ -631,6 +632,8 @@ Important behavior:
   - this avoids skipping Helius too early
 - automatic `junk_probable` now triggers backend blocklisting:
   - inserts the token into `admin_blocked_tokens`
+  - writes a best-effort audit row into `admin_block_evidence`
+    - captures the auto-ban pipeline, ban label, catalog snapshot, market snapshot, risk/enrichment snapshot, Meteora snapshot, GMGN snapshot when present, assessment payload, and rule match metadata
   - writes `created_by = NULL`, which surfaces as `blocked_auto`
   - applies an `admin-blocked` catalog evaluation state
   - disables active monitoring and pushes the next evaluation far into the future

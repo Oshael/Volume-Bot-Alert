@@ -804,11 +804,74 @@ function buildGmgnKlineAutoBlockLabel(analysis) {
   return buildPrefixedAutoBlockLabel(AUTO_BLOCK_LABEL_PREFIXES.GMGN_KLINE_STAIRCASE_PUMP, [`${runupPct}%`]);
 }
 
+function buildGmgnMarketSnapshot(snapshot = {}) {
+  return {
+    mcap: toFiniteNumberOrNull(snapshot.mcap),
+    price: toFiniteNumberOrNull(snapshot.price),
+    vol1m: toFiniteNumberOrNull(snapshot.vol1m),
+    vol5m: toFiniteNumberOrNull(snapshot.vol5m),
+    vol1h: toFiniteNumberOrNull(snapshot.vol1h),
+    vol6h: toFiniteNumberOrNull(snapshot.vol6h),
+    vol24h: toFiniteNumberOrNull(snapshot.vol24h),
+    liquidityUsd: toFiniteNumberOrNull(snapshot.liquidityUsd),
+    priceChange1h: toFiniteNumberOrNull(snapshot.priceChange1h),
+    priceChange6h: toFiniteNumberOrNull(snapshot.priceChange6h),
+    priceChange24h: toFiniteNumberOrNull(snapshot.priceChange24h),
+    txns1hBuys: toFiniteNumberOrNull(snapshot.txns1hBuys),
+    txns1hSells: toFiniteNumberOrNull(snapshot.txns1hSells),
+    txns24hBuys: toFiniteNumberOrNull(snapshot.txns24hBuys),
+    txns24hSells: toFiniteNumberOrNull(snapshot.txns24hSells),
+    tokenCreatedAt: snapshot.tokenCreatedAt || null,
+  };
+}
+
+function firstPresentValue(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== '') {
+      return value;
+    }
+  }
+  return null;
+}
+
+function buildGmgnCatalogSnapshot(address, snapshot = {}, tokenBefore = null) {
+  return {
+    address,
+    symbol: firstPresentValue(snapshot.symbol, tokenBefore?.symbol),
+    name: firstPresentValue(snapshot.name, tokenBefore?.name),
+    source: firstPresentValue(tokenBefore?.source),
+    eligibilityState: firstPresentValue(tokenBefore?.eligibility_state, tokenBefore?.eligibilityState),
+    suppressedReason: firstPresentValue(tokenBefore?.suppressed_reason, tokenBefore?.suppressedReason),
+    pairUrl: firstPresentValue(snapshot.pairUrl, tokenBefore?.last_pair_url),
+  };
+}
+
+function buildGmgnBlockEvidence(address, label, pipeline, snapshot, tokenBefore, details = {}) {
+  return {
+    pipeline,
+    source: 'gmgn',
+    catalogSnapshot: buildGmgnCatalogSnapshot(address, snapshot, tokenBefore),
+    marketSnapshot: buildGmgnMarketSnapshot(snapshot),
+    gmgnSnapshot: {
+      rawSnapshot: snapshot || {},
+      security: details.security || null,
+      info: details.info || null,
+      klineAnalysis: details.klineAnalysis || null,
+    },
+    assessment: details.assessment || {},
+    ruleMatches: [{ label, pipeline }],
+  };
+}
+
 async function autoBlockGmgnJunk(address, snapshot, tokenBefore, assessment, options) {
+  const label = buildGmgnAutoBlockLabel(assessment);
   await options.adminBlockedTokenModel.add({
     address,
-    label: buildGmgnAutoBlockLabel(assessment),
+    label,
     createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:junk-classifier', snapshot, tokenBefore, {
+      assessment,
+    }),
   });
 
   if (tokenBefore) {
@@ -825,10 +888,14 @@ async function autoBlockGmgnJunk(address, snapshot, tokenBefore, assessment, opt
 }
 
 async function autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options) {
+  const label = buildGmgnSecurityAutoBlockLabel(security);
   await options.adminBlockedTokenModel.add({
     address,
-    label: buildGmgnSecurityAutoBlockLabel(security),
+    label,
     createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:security', snapshot, tokenBefore, {
+      security,
+    }),
   });
 
   if (tokenBefore) {
@@ -845,10 +912,14 @@ async function autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, securit
 }
 
 async function autoBlockGmgnInfoRisk(address, snapshot, tokenBefore, info, options) {
+  const label = buildGmgnInfoAutoBlockLabel(info, snapshot);
   await options.adminBlockedTokenModel.add({
     address,
-    label: buildGmgnInfoAutoBlockLabel(info, snapshot),
+    label,
     createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:info', snapshot, tokenBefore, {
+      info,
+    }),
   });
 
   if (tokenBefore) {
@@ -865,10 +936,12 @@ async function autoBlockGmgnInfoRisk(address, snapshot, tokenBefore, info, optio
 }
 
 async function autoBlockGmgnLowMcapExtremeVolumeRisk(address, snapshot, tokenBefore, options) {
+  const label = buildGmgnLowMcapExtremeVolumeLabel(snapshot);
   await options.adminBlockedTokenModel.add({
     address,
-    label: buildGmgnLowMcapExtremeVolumeLabel(snapshot),
+    label,
     createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:low-mcap-extreme-volume', snapshot, tokenBefore),
   });
 
   if (tokenBefore) {
@@ -885,10 +958,12 @@ async function autoBlockGmgnLowMcapExtremeVolumeRisk(address, snapshot, tokenBef
 }
 
 async function autoBlockGmgnNewNonPumpHighLaunchMcapRisk(address, snapshot, tokenBefore, options) {
+  const label = buildGmgnNewNonPumpHighLaunchMcapLabel(snapshot);
   await options.adminBlockedTokenModel.add({
     address,
-    label: buildGmgnNewNonPumpHighLaunchMcapLabel(snapshot),
+    label,
     createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:new-non-pump-high-launch-mcap', snapshot, tokenBefore),
   });
 
   if (tokenBefore) {
@@ -905,10 +980,14 @@ async function autoBlockGmgnNewNonPumpHighLaunchMcapRisk(address, snapshot, toke
 }
 
 async function autoBlockGmgnKlineRisk(address, snapshot, tokenBefore, analysis, options) {
+  const label = buildGmgnKlineAutoBlockLabel(analysis);
   await options.adminBlockedTokenModel.add({
     address,
-    label: buildGmgnKlineAutoBlockLabel(analysis),
+    label,
     createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:kline', snapshot, tokenBefore, {
+      klineAnalysis: analysis,
+    }),
   });
 
   if (tokenBefore) {

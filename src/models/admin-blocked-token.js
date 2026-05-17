@@ -1,5 +1,6 @@
 const db = require('./db');
 const { isValidAddress } = require('./user-token');
+const adminBlockEvidence = require('./admin-block-evidence');
 
 let ensureTablePromise = null;
 
@@ -29,7 +30,24 @@ function normalizeLabel(label) {
   return label == null ? null : String(label).trim() || null;
 }
 
-async function add({ address, label = null, createdBy = null }) {
+async function captureEvidenceSafely({ address, label, createdBy, evidence }) {
+  if (!evidence || typeof evidence !== 'object') {
+    return null;
+  }
+  try {
+    return await adminBlockEvidence.createEvidence({
+      ...evidence,
+      tokenAddress: address,
+      banLabel: label,
+      createdBy,
+    });
+  } catch (err) {
+    console.error(`[AdminBlockedToken] Failed to capture block evidence for ${address}:`, err.message);
+    return null;
+  }
+}
+
+async function add({ address, label = null, createdBy = null, evidence = null }) {
   await ensureTable();
   const normalizedAddress = normalizeAddress(address);
   if (!isValidAddress(normalizedAddress)) {
@@ -44,6 +62,13 @@ async function add({ address, label = null, createdBy = null }) {
      RETURNING *`,
     [normalizedAddress, normalizeLabel(label), createdBy || null]
   );
+
+  await captureEvidenceSafely({
+    address: normalizedAddress,
+    label: normalizeLabel(label),
+    createdBy: createdBy || null,
+    evidence,
+  });
 
   return rows[0] || null;
 }
@@ -88,4 +113,9 @@ module.exports = {
   remove,
   hasAddress,
   listByAddresses,
+  __private: {
+    captureEvidenceSafely,
+    normalizeAddress,
+    normalizeLabel,
+  },
 };

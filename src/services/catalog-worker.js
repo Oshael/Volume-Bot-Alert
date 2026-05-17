@@ -239,6 +239,65 @@ function buildYoungExtremeChurnLabel(assessment) {
   ]);
 }
 
+function readNestedNumber(source, containerKey, valueKey) {
+  return toNumber(source?.[containerKey]?.[valueKey]);
+}
+
+function resolveSnapshotVolume(snapshot, pair, snapshotKey, pairKey) {
+  const snapshotValue = toNumber(snapshot?.[snapshotKey]);
+  return snapshotValue == null ? readNestedNumber(pair, 'volume', pairKey) : snapshotValue;
+}
+
+function firstPresentValue(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== '') {
+      return value;
+    }
+  }
+  return null;
+}
+
+function buildYoungExtremeChurnCatalogSnapshot(token, updatedToken, pair) {
+  return {
+    source: firstPresentValue(token?.source),
+    address: firstPresentValue(token?.address),
+    symbol: firstPresentValue(updatedToken?.symbol, pair?.baseToken?.symbol, token?.symbol),
+    name: firstPresentValue(updatedToken?.name, pair?.baseToken?.name, token?.name),
+    eligibilityState: firstPresentValue(token?.eligibility_state),
+    monitorPriority: firstPresentValue(token?.monitor_priority),
+  };
+}
+
+function buildYoungExtremeChurnMarketSnapshot(token, pair, snapshot, assessment) {
+  return {
+    currentMcap: assessment.currentMcap,
+    initialMcap: assessment.initialMcap,
+    vol5m: assessment.vol5m,
+    volMcapRatio: assessment.volMcapRatio,
+    marketCap: toNumber(snapshot?.marketCap),
+    price: toNumber(snapshot?.priceUsd),
+    pairAddress: pair?.pairAddress || null,
+    pairCreatedAt: pair?.pairCreatedAt || token?.last_token_created_at_ms || null,
+    liquidityUsd: readNestedNumber(pair, 'liquidity', 'usd'),
+    vol1h: resolveSnapshotVolume(snapshot, pair, 'vol1h', 'h1'),
+    vol6h: resolveSnapshotVolume(snapshot, pair, 'vol6h', 'h6'),
+    vol24h: resolveSnapshotVolume(snapshot, pair, 'vol24h', 'h24'),
+  };
+}
+
+function buildYoungExtremeChurnBlockEvidence(token, updatedToken, pair, snapshot, assessment) {
+  const label = buildYoungExtremeChurnLabel(assessment);
+  return {
+    pipeline: 'catalog-worker:young-extreme-churn',
+    source: token?.source || null,
+    catalogSnapshot: buildYoungExtremeChurnCatalogSnapshot(token, updatedToken, pair),
+    marketSnapshot: buildYoungExtremeChurnMarketSnapshot(token, pair, snapshot, assessment),
+    assessment,
+    ruleMatches: [{ label, reason: assessment.reason || 'young-extreme-churn' }],
+    gmgnSnapshot: {},
+  };
+}
+
 function getYoungExtremeChurnState(address, nowMs = Date.now()) {
   const key = String(address || '').trim();
   if (!key) {
@@ -352,7 +411,7 @@ async function assessYoungExtremeChurnWithInitialBucket(token, pair, snapshot) {
   return assessment;
 }
 
-async function applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment) {
+async function applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment, snapshot = {}) {
   const confirmation = recordYoungExtremeChurnSuspicion(token.address, assessment);
   if (!confirmation.confirmed) {
     status.lastYoungExtremeChurnAlertSuppressed += 1;
@@ -369,6 +428,7 @@ async function applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment
     address: token.address,
     label: buildYoungExtremeChurnLabel(assessment),
     createdBy: null,
+    evidence: buildYoungExtremeChurnBlockEvidence(token, updatedToken, pair, snapshot, assessment),
   });
 
   const blockedToken = await tokenCatalog.applyEvaluationResult(token.address, {
@@ -400,7 +460,7 @@ async function autoBlockYoungExtremeChurn(token, updatedToken, pair, snapshot) {
     return { blocked: false, assessment };
   }
 
-  return applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment);
+  return applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment, snapshot);
 }
 
 function isLowActivityAutoToken(token, vol24h) {

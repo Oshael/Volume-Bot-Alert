@@ -199,6 +199,9 @@ Important:
   - this prevents the Helius selector from skipping a token too early
 - Automatic blocklist behavior:
   - after an automatic `junk_probable` review is saved, the sync worker inserts the token into `admin_blocked_tokens`
+  - automatic block writes also capture a full audit snapshot in `admin_block_evidence`
+    - the evidence stores pipeline, ban label, catalog fields, market fields, risk/enrichment fields, Meteora summary, GMGN payload when available, assessment, and rule match metadata
+    - evidence capture is best-effort and does not block the ban if the audit insert fails
   - the row is written with `created_by = NULL`, so operational reads expose it as `blocked_auto`
   - the catalog row is suppressed as `admin_blocked`, with monitoring disabled and reevaluation pushed far into the future
   - the automatic review row is removed after blocklisting so blocked tokens do not remain counted as active auto `junk_probable` reviews
@@ -1014,6 +1017,7 @@ Current monitored UI behavior:
   - uses normal `monitored-vol` for GMGN `5m` volume jumps
   - keeps separate `gmgn-vol-1m` support behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled
   - auto-blocks new automatic GMGN non-pump/non-bags/non-brrr contracts launched from `50k` to `100k` mcap only when reliable early volume is extreme (`vol5m >= 200k` and vol5m/mcap `>= 4`) before they write buckets or alert
+  - every GMGN/catalog/risk-review automatic block now sends the ban-time snapshot to `admin_block_evidence` for future backtests and false-positive review
   - blocks automatic GMGN-origin alert evaluation until the token has DexScreener confirmation or has completed GMGN preliminary review (`token security`, `token info`, and `market kline`) without being auto-blocked
   - the GMGN alert safeguard still allows catalog and GMGN volume-bucket writes; it only stops matcher emission while the token remains raw GMGN-only discovery
   - tracks active/stale GMGN panel membership and schedules DexScreener reevaluation when a token leaves the GMGN panel
