@@ -5978,7 +5978,7 @@ export function createAppController(): AppController {
   async function refreshAuthenticatedBootstrapState() {
     await Promise.all([
       refreshAccountAccessState(COOKIE_SESSION_MARKER),
-      reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true }),
+      reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true, alertFeedMode: 'all' }),
     ]);
     refreshDeferredAuthenticatedAncillaryState(COOKIE_SESSION_MARKER);
   }
@@ -6566,7 +6566,11 @@ export function createAppController(): AppController {
     refreshPumpPanelCounts();
   }
 
-  async function hydrateDashboardMonitoredInternal(token: string, manualTokens: AddressItem[]) {
+  async function hydrateDashboardMonitoredInternal(
+    token: string,
+    manualTokens: AddressItem[],
+    alertFeedMode: DashboardAlertFeedMode,
+  ) {
     recordRestoreControllerDebug('controller.dashboard-hydrate.start', {
       manualTokens: manualTokens.length,
       usesHistoryBootstrap: usesHistoryBucketBootstrap(),
@@ -6617,7 +6621,7 @@ export function createAppController(): AppController {
       void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
       emitMonitoredWorkspaceRegions();
       queueSupplementalMeteoraRefresh(token, aggregatedTokens);
-      queueDashboardAlertFeedRefresh(token, true, 'all');
+      queueDashboardAlertFeedRefresh(token, true, alertFeedMode);
       recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
         generatedAt,
         returned: firstPage.tokens.length,
@@ -6678,7 +6682,7 @@ export function createAppController(): AppController {
     }
   }
 
-  async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
+  async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean; alertFeedMode?: DashboardAlertFeedMode }) {
     const requestRevision = configReloadRevision + 1;
     configReloadRevision = requestRevision;
     recordRestoreControllerDebug('controller.config-reload.start', {
@@ -6696,11 +6700,11 @@ export function createAppController(): AppController {
     });
 
     if (options?.deferDashboard) {
-      void hydrateDashboardMonitoredInternal(token, payload.tokens);
+      void hydrateDashboardMonitoredInternal(token, payload.tokens, options.alertFeedMode ?? 'unseen');
       return;
     }
 
-    await hydrateDashboardMonitoredInternal(token, payload.tokens);
+    await hydrateDashboardMonitoredInternal(token, payload.tokens, options?.alertFeedMode ?? 'unseen');
   }
 
   async function reloadConfigPreservingMonitoredSnapshot(token: string) {
@@ -6745,7 +6749,7 @@ export function createAppController(): AppController {
 
       applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
       emit('all');
-      void hydrateDashboardMonitoredInternal(token, payload.tokens);
+      void hydrateDashboardMonitoredInternal(token, payload.tokens, 'unseen');
       recordRestoreControllerDebug('controller.restored-refresh.apply-preserved-snapshot', {
         force: Boolean(options.force),
         manualTokens: payload.tokens.length,
@@ -7934,7 +7938,7 @@ export function createAppController(): AppController {
         void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
           address: item.address,
           label: item.label ?? null,
-        })));
+        })), 'unseen');
       }
     },
     setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']) {
@@ -8063,7 +8067,7 @@ export function createAppController(): AppController {
           if (documentHiddenForUi || state.session.status !== 'authenticated' || state.runtime.mode !== 'active' || !isLiveWorkspace()) {
             return;
           }
-          void refreshMonitoredDashboard({ includeAlertFeed: true, alertFeedMode: 'all' });
+          void refreshMonitoredDashboard({ includeAlertFeed: true });
         }, 250);
       }
     },
@@ -8173,7 +8177,7 @@ export function createAppController(): AppController {
         await refreshAccountAccessState(COOKIE_SESSION_MARKER);
         await refreshBillingState(COOKIE_SESSION_MARKER);
         await refreshIdentityState(COOKIE_SESSION_MARKER);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true, alertFeedMode: 'all' });
         syncWorkspaceFromLocationInternal({ canonicalize: true });
         state.ui.loginErrorCount = 0;
         setNotice(AUTH_NOTICE_LOGIN_SUCCESS);
@@ -8250,7 +8254,7 @@ export function createAppController(): AppController {
           await refreshAccountAccessState(COOKIE_SESSION_MARKER);
           await refreshBillingState(COOKIE_SESSION_MARKER);
           await refreshIdentityState(COOKIE_SESSION_MARKER);
-          await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+          await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true, alertFeedMode: 'all' });
           syncWorkspaceFromLocationInternal({ canonicalize: true });
           state.ui.loginErrorCount = 0;
           setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
