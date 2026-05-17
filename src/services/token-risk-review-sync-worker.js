@@ -29,6 +29,8 @@ const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP = 150000;
 const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_USD = 1000;
 const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_TO_MCAP = 0.01;
 const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME = 100;
+const GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_USD = 100;
+const GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_TO_MCAP = 0.002;
 const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MAX_MCAP = 100000;
 const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP = 20;
 const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H = 1000;
@@ -293,6 +295,41 @@ function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null) 
     liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
     volume1h: toFiniteNumberOrNull(row.last_vol_1h),
     volume6h: toFiniteNumberOrNull(row.last_vol_6h),
+  };
+}
+
+function buildGmgnConfirmedMicroLiquidityAssessment(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
+  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
+
+  if (
+    !isGmgnSource(row)
+    || isManualReviewProtected(row)
+    || !(marketCap >= DEFAULT_MIN_MCAP)
+    || !(liquidityUsd > 0)
+    || liquidityUsd > GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_USD
+    || liquidityToMcap == null
+    || liquidityToMcap > GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_TO_MCAP
+  ) {
+    return null;
+  }
+
+  return {
+    label: 'junk_probable',
+    confidence: 'high',
+    manualReviewRequired: true,
+    autoBlock: false,
+    mode: 'gmgn_confirmed_micro_liquidity_gate',
+    strongSignalCount: 1,
+    reasonCodes: ['gmgn_confirmed_micro_liquidity'],
+    strongSignals: ['gmgn_confirmed_micro_liquidity'],
+    weakSignals: [],
+    behavioralSignals: [],
+    positiveSignals: [],
+    marketCap,
+    liquidityUsd,
+    liquidityToMcapRatio: liquidityToMcap,
   };
 }
 
@@ -649,6 +686,7 @@ async function assessRiskReviewRow(row, meteoraSummary, deps = {}) {
     || buildGmgnLowMcapExtreme24hChurnAssessment(row)
     || buildGmgnYoungLowCapHighChurnAssessment(row, meteoraSummary)
     || buildGmgnLowMcapThinSupportAssessment(row, meteoraSummary)
+    || buildGmgnConfirmedMicroLiquidityAssessment(row)
     || await assessDexGmgnHolderAnomaly(row, deps)
     || classifyTokenJunk({
       ...row,

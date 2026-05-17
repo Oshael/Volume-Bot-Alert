@@ -823,6 +823,67 @@ describe('token risk review sync worker', () => {
     assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_low_mcap_thin_support');
   });
 
+  it('auto-blocks GMGN tokens on confirmed microscopic liquidity alone', async () => {
+    const saved = [];
+    const blocked = [];
+    const suppressed = [];
+    const address = '726MVtUgSjsHZvyaaYQw4jg59UBBfJE9MZqj2qw8Rvbu';
+    const result = await worker.__private.processRows([
+      {
+        address,
+        source: 'gmgn',
+        eligibility_state: 'dex-normal',
+        symbol: 'MICRO',
+        last_mcap: 80000,
+        last_vol_5m: 5000,
+        last_vol_1h: 20000,
+        last_vol_6h: 45000,
+        last_vol_24h: 90000,
+        last_liquidity_usd: 75,
+        last_txns_24h_buys: 120,
+        last_txns_24h_sells: 95,
+        risk_review_source: 'auto',
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+        removeAutoReview: async (tokenAddress) => {
+          suppressed.push(['removeAutoReview', tokenAddress]);
+          return true;
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (tokenAddress, payload) => {
+          suppressed.push(['applyEvaluationResult', tokenAddress, payload]);
+          return { tokenAddress, ...payload };
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.match(saved[0].notes, /gmgn_confirmed_micro_liquidity/);
+    assert.equal(blocked[0].address, address);
+    assert.equal(blocked[0].label, 'auto-junk-probable:gmgn_confirmed_micro_liquidity');
+    assert.equal(suppressed.find(([name]) => name === 'applyEvaluationResult')[2].suppressedReason, 'admin_blocked');
+  });
+
   it('auto-blocks GMGN low-cap 24h churn when liquidity support is microscopic', async () => {
     const saved = [];
     const blocked = [];

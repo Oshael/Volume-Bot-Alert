@@ -475,14 +475,14 @@ GMGN risk gates before catalog/upsert alert flow:
   - token is not manual and not Dex-confirmed
   - CA does not end with `pump`, `bags`, or `brrr`
   - age `< 2h`
-  - mcap `>= 20k` and `<= 100k`
-  - vol5m `>= 20k`
-  - vol5m/mcap `>= 1`
+  - mcap `>= 50k` and `<= 100k`
+  - vol5m `>= 200k`
+  - vol5m/mcap `>= 4`
   - GMGN `5m` volume must pass sanity checks:
     - `vol5m > 0`
     - `vol1m < 90%` of `vol5m`
     - `vol5m <= vol1h`
-  - this prevents raw GMGN launches from being auto-blocked when the upstream mirrors nearly the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair
+  - this prevents raw GMGN launches from being auto-blocked when the upstream mirrors nearly the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair, and avoids hard-banning moderate low-mcap launch traction such as ~25k mcap / ~45k vol5m
   - block label shape:
     - `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
 - young GMGN candidates under `6h` can trigger GMGN risk-data lookup when any of these are true:
@@ -666,6 +666,16 @@ Important behavior:
 - GMGN low-cap thin-support gates:
   - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - source must be GMGN and not protected by a manual review
+  - confirmed microscopic-liquidity gate:
+    - mcap `>= 15k`
+    - liquidity must be positive and confirmed:
+      - `liquidityUsd > 0`
+      - `liquidityUsd <= $100`
+      - liquidity/mcap `<= 0.2%`
+    - does not require churn, dead volume, or missing Meteora pool confirmation
+    - `liquidityUsd = 0` is still treated as ambiguous/missing rather than confirmed microscopic liquidity
+    - matching rows are auto-blocked with:
+      - `auto-junk-probable:gmgn_confirmed_micro_liquidity`
   - thin-support dead-volume gate:
     - mcap `15k-150k`
     - liquidity `<= $1k` or liquidity/mcap `<= 1%`

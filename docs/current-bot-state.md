@@ -249,14 +249,14 @@ Important:
   - token is automatic GMGN discovery, not manual, and not Dex-confirmed
   - CA does not end with `pump`, `bags`, or `brrr`
   - age `< 2h`
-  - mcap `>= 20k` and `<= 100k`
-  - vol5m `>= 20k`
-  - vol5m/mcap `>= 1`
+  - mcap `>= 50k` and `<= 100k`
+  - vol5m `>= 200k`
+  - vol5m/mcap `>= 4`
   - GMGN `5m` volume must pass sanity checks before this gate can auto-block:
     - `vol5m > 0`
     - `vol1m` must be less than `90%` of `vol5m`
     - `vol5m` must not be greater than `vol1h`
-  - this avoids auto-blocking raw GMGN launches when the upstream mirrors the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair
+  - this avoids auto-blocking raw GMGN launches when the upstream mirrors the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair, and avoids hard-banning moderate low-mcap launch traction such as ~25k mcap / ~45k vol5m
   - matching rows are auto-blocked as `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
 - The token-risk review sync worker can now use GMGN info for suspicious Dex-discovered tokens:
   - source is not GMGN and not `user-manual`
@@ -278,6 +278,15 @@ Important:
   - recent volume is dead (`1h <= 100` and `6h <= 100`)
   - no Meteora pool support
   - matching rows are auto-blocked as `auto-junk-probable:gmgn_low_mcap_thin_support`
+- GMGN confirmed microscopic-liquidity gate now auto-blocks without requiring churn/dead-volume confirmation:
+  - GMGN token, non-manual review
+  - mcap `>= 15k`
+  - liquidity must be positive and confirmed:
+    - `liquidityUsd > 0`
+    - `liquidityUsd <= $100`
+    - liquidity/mcap `<= 0.2%`
+  - `liquidityUsd = 0` remains treated as ambiguous/missing rather than confirmed microscopic liquidity
+  - matching rows are auto-blocked as `auto-junk-probable:gmgn_confirmed_micro_liquidity`
 - GMGN low-cap extreme 24h churn with thin liquidity is also auto-blocked:
   - GMGN token, non-manual review
   - mcap `15k-100k`
@@ -1004,7 +1013,7 @@ Current monitored UI behavior:
   - for tokens with Dex confirmation, GMGN refreshes preserve the existing Dex-derived `5m` volume instead of overwriting it with raw GMGN interval volume
   - uses normal `monitored-vol` for GMGN `5m` volume jumps
   - keeps separate `gmgn-vol-1m` support behind `GMGN_VOL_1M_ALERT_ENABLED`; default is disabled
-  - auto-blocks new automatic GMGN non-pump/non-bags/non-brrr contracts launched from `20k` to `100k` mcap with reliable vol5m/mcap `>= 1` before they write buckets or alert
+  - auto-blocks new automatic GMGN non-pump/non-bags/non-brrr contracts launched from `50k` to `100k` mcap only when reliable early volume is extreme (`vol5m >= 200k` and vol5m/mcap `>= 4`) before they write buckets or alert
   - blocks automatic GMGN-origin alert evaluation until the token has DexScreener confirmation or has completed GMGN preliminary review (`token security`, `token info`, and `market kline`) without being auto-blocked
   - the GMGN alert safeguard still allows catalog and GMGN volume-bucket writes; it only stops matcher emission while the token remains raw GMGN-only discovery
   - tracks active/stale GMGN panel membership and schedules DexScreener reevaluation when a token leaves the GMGN panel
