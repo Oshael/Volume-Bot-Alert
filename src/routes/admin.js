@@ -11,6 +11,7 @@ const tokenRiskCandidateSelector = require('../services/token-risk-candidate-sel
 const tokenRiskEnrichmentWorker = require('../services/token-risk-enrichment-worker');
 const tokenRiskEnrichment = require('../models/token-risk-enrichment');
 const tokenRiskReview = require('../models/token-risk-review');
+const monitoredTokenExitEvent = require('../models/monitored-token-exit-event');
 const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/backend-alert-rules');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenCatalog = require('../models/token-catalog');
@@ -125,6 +126,19 @@ function parseAddressListQuery(value, { maxItems = 50 } = {}) {
   }
 
   return { ok: true, value: unique };
+}
+
+function parseOptionalAddressQuery(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return { ok: true, value: undefined };
+  }
+
+  const address = String(value).trim();
+  if (!isValidAddress(address)) {
+    return { ok: false, error: 'Invalid token address' };
+  }
+
+  return { ok: true, value: address };
 }
 
 function parseHighCapDumpInspectOptions(query = {}) {
@@ -265,6 +279,33 @@ function parseAccessSource(value) {
 router.use(authenticate);
 router.use(requireAdmin);
 router.use(requireTrustedOrigin);
+
+router.get('/monitored-exit-events', async (req, res) => {
+  const limit = parseLogsLimit(req.query?.limit);
+  if (limit == null) {
+    return res.status(400).json({ error: 'limit must be a positive integer' });
+  }
+
+  const address = parseOptionalAddressQuery(req.query?.address);
+  if (!address.ok) {
+    return res.status(400).json({ error: address.error });
+  }
+
+  try {
+    const events = await monitoredTokenExitEvent.listRecent({
+      limit,
+      address: address.value,
+      exitReason: req.query?.reason,
+    });
+    res.json({
+      events,
+      count: events.length,
+    });
+  } catch (err) {
+    console.error('Admin monitored exit events error:', err.message);
+    res.status(500).json({ error: 'Failed to load monitored exit events' });
+  }
+});
 
 // ============================================================
 // USERS

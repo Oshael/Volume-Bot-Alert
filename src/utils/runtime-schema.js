@@ -874,6 +874,31 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage40-monitored-token-exit-events',
+    name: 'Stage 40 monitored token exit events',
+    repair: 'node src/utils/db-init-stage40.js',
+    tables: [
+      {
+        table: 'monitored_token_exit_events',
+        columns: [
+          'id',
+          'token_address',
+          'exit_reason',
+          'exit_source',
+          'previous_snapshot',
+          'current_snapshot',
+          'details',
+          'created_at',
+        ],
+        defaults: {
+          previous_snapshot: "'{}'::jsonb",
+          current_snapshot: "'{}'::jsonb",
+          details: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

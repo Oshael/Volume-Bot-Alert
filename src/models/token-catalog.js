@@ -1,5 +1,6 @@
 ﻿const db = require('./db');
 const adminBlockedToken = require('./admin-blocked-token');
+const monitoredTokenExitEvent = require('./monitored-token-exit-event');
 const { isValidAddress } = require('./user-token');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 
@@ -177,6 +178,47 @@ function emptyMeteoraPriorityCounts() {
     normal: 0,
     low: 0,
   };
+}
+
+async function getMonitoredExitSnapshot(address) {
+  const { rows } = await db.query(
+    `SELECT
+       address,
+       source,
+       is_active_monitor_candidate,
+       eligibility_state,
+       eligible_for_monitoring,
+       suppressed_reason,
+       monitor_priority,
+       last_mcap,
+       last_liquidity_usd,
+       last_vol_5m,
+       last_vol_1h,
+       last_vol_6h,
+       last_vol_24h,
+       last_seen_at,
+       last_evaluated_at,
+       next_evaluation_at,
+       evaluation_error_count,
+       last_evaluation_error
+     FROM token_catalog
+     WHERE address = $1
+     LIMIT 1`,
+    [address]
+  );
+  return rows[0] || null;
+}
+
+async function recordMonitoredExit(previousRow, currentRow, context = {}) {
+  try {
+    await monitoredTokenExitEvent.recordIfExited(previousRow, currentRow, {
+      pipeline: context.pipeline || 'token-catalog.applyEvaluationResult',
+      evaluationSource: context.evaluationSource,
+      exitSource: context.exitSource || context.evaluationSource,
+    });
+  } catch (err) {
+    console.warn('[TokenCatalog] Failed to record monitored token exit:', err instanceof Error ? err.message : err);
+  }
 }
 
 function normalizeRiskCandidateLimit(value, fallback = 250) {
@@ -1210,6 +1252,7 @@ async function reactivateAdminBlockedToken(address) {
 async function applyEvaluationResult(address, result) {
   await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
+  const previousMonitoringRow = await getMonitoredExitSnapshot(addr);
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
   const eligibleForMonitoring = !!result.eligibleForMonitoring;
   const suppressedReason = toNullableText(result.suppressedReason);
@@ -1321,6 +1364,9 @@ async function applyEvaluationResult(address, result) {
   );
 
   if (updateResult.rows[0]) {
+    await recordMonitoredExit(previousMonitoringRow, updateResult.rows[0], {
+      evaluationSource: result.evaluationSource || result.source,
+    });
     return updateResult.rows[0];
   }
 
@@ -1350,6 +1396,12 @@ async function applyEvaluationResult(address, result) {
      RETURNING *`,
     [addr, blockedNextEvaluationAt]
   );
+
+  if (blockedResult.rows[0]) {
+    await recordMonitoredExit(previousMonitoringRow, blockedResult.rows[0], {
+      evaluationSource: 'admin-blocked',
+    });
+  }
 
   return blockedResult.rows[0] || null;
 }

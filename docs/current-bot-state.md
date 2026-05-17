@@ -505,6 +505,12 @@ Important:
 - Active endpoint for monitored hydration:
   - `GET /api/dashboard/monitored`
 - This is the endpoint the frontend currently uses for the shared monitored set.
+- Backend-only exit diagnostics:
+  - exits are recorded in `monitored_token_exit_events` when a token was in the default monitored set and an evaluation update makes it leave
+  - default monitored membership is tracked as `eligible_for_monitoring = TRUE` and `last_mcap >= 30000`
+  - common `exit_reason` values include `low_activity_24h`, `mcap_unavailable`, `dex_unavailable`, `dex_pair_missing`, `admin_blocked`, `evaluation_error`, and `mcap_below_monitored_min`
+  - admin API: `GET /api/admin/monitored-exit-events?limit=100`
+  - CLI: `node src/utils/list-monitored-exit-events.js --limit=100`
 - Important token-risk caveat:
   - being present in `Monitored` does not imply that the token has already received Helius enrichment
   - monitored membership and Helius structural enrichment are related but separate runtime steps
