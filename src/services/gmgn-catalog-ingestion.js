@@ -23,6 +23,7 @@ const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
+const GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON = 'gmgn_burn_creator_hold_pending_review';
 const GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON = 'gmgn_unprotected_liquidity_pending';
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
@@ -114,6 +115,13 @@ function hasGmgnUnprotectedLiquiditySignal(snapshot = {}) {
     && fields.burnStatus === 'none'
     && fields.creatorClose === true
     && fields.creatorTokenStatus === 'creator_close';
+}
+
+function hasGmgnBurnCreatorHoldSignal(snapshot = {}) {
+  const fields = readGmgnLiquidityProtectionFields(snapshot);
+  return fields.burnStatus === 'burn'
+    && fields.creatorClose === false
+    && fields.creatorTokenStatus === 'creator_hold';
 }
 
 function toTimestampMsOrNull(value) {
@@ -290,7 +298,12 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
   return next;
 }
 
-function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
+function hasPassedGmgnBurnCreatorHoldReview(context = {}) {
+  return context.preliminaryReviewPassed === true
+    || hasCompletedGmgnPreliminaryReview(context.securityGuard);
+}
+
+function deriveGmgnEvaluation(snapshot, tokenBefore, options, context = {}) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
   const now = options.now();
@@ -315,6 +328,20 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
       eligibilityState: 'gmgn-unprotected-liquidity-pending',
       eligibleForMonitoring: false,
       suppressedReason: GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
+      monitorPriority: resolveMonitorPriority(marketCap),
+      nextEvaluationAt,
+    });
+  }
+
+  if (
+    !isManual
+    && shouldRequireGmgnBurnCreatorHoldReview(snapshot, now)
+    && !hasPassedGmgnBurnCreatorHoldReview(context)
+  ) {
+    return buildEvaluationPayload(snapshot, {
+      eligibilityState: 'gmgn-burn-creator-hold-pending-review',
+      eligibleForMonitoring: false,
+      suppressedReason: GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON,
       monitorPriority: resolveMonitorPriority(marketCap),
       nextEvaluationAt,
     });
@@ -432,10 +459,21 @@ function shouldSuppressGmgnForRiskEnrichment(snapshot = {}, now = new Date()) {
     || (vol24hToMcap != null && vol24hToMcap >= GMGN_YOUNG_VOL_24H_TO_MCAP_RATIO);
 }
 
+function shouldRequireGmgnBurnCreatorHoldReview(snapshot = {}, now = new Date()) {
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  return ageHours != null
+    && ageHours < GMGN_RISK_LOOKUP_MAX_AGE_HOURS
+    && hasGmgnBurnCreatorHoldSignal(snapshot);
+}
+
 function shouldCheckGmgnRiskData(snapshot = {}, now = new Date()) {
   const ageHours = calculateTokenAgeHours(snapshot, now);
   if (ageHours == null || ageHours >= GMGN_RISK_LOOKUP_MAX_AGE_HOURS) {
     return false;
+  }
+
+  if (hasGmgnBurnCreatorHoldSignal(snapshot)) {
+    return true;
   }
 
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
@@ -1236,7 +1274,7 @@ async function ingestGmgnToken(snapshot, options = {}) {
   await resolved.tokenCatalogModel.upsertToken(buildCatalogPayload(filledSnapshot, tokenBefore));
   const tokenAfter = await resolved.tokenCatalogModel.applyEvaluationResult(
     address,
-    deriveGmgnEvaluation(filledSnapshot, tokenBefore, resolved)
+    deriveGmgnEvaluation(filledSnapshot, tokenBefore, resolved, { securityGuard })
   );
 
   summary.catalogUpdated = tokenAfter ? 1 : 0;
@@ -1421,8 +1459,17 @@ async function processQueuedGmgnRiskReview(task = {}, options = {}) {
   }
 
   const passed = Boolean(hasCompletedGmgnPreliminaryReview(guard));
-  if (passed && tokenBefore.eligible_for_monitoring !== false) {
-    await maybeEvaluateAlerts(tokenBefore, tokenBefore, resolved, summary);
+  let tokenAfter = tokenBefore;
+  if (passed && String(tokenBefore.suppressed_reason || '').trim() === GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON) {
+    tokenAfter = await resolved.tokenCatalogModel.applyEvaluationResult(
+      address,
+      deriveGmgnEvaluation(snapshot, tokenBefore, resolved, { preliminaryReviewPassed: true })
+    ) || tokenBefore;
+    summary.catalogUpdated = tokenAfter === tokenBefore ? 0 : 1;
+  }
+
+  if (passed && tokenAfter.eligible_for_monitoring !== false) {
+    await maybeEvaluateAlerts(tokenBefore, tokenAfter, resolved, summary);
   }
 
   return {
@@ -1467,10 +1514,13 @@ module.exports = {
     canEvaluateGmgnAlerts,
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
+    GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
     GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
     GMGN_ALERT_SAFEGUARD_REASON,
+    hasGmgnBurnCreatorHoldSignal,
     hasGmgnUnprotectedLiquiditySignal,
+    hasPassedGmgnBurnCreatorHoldReview,
     readGmgnLiquidityProtectionFields,
     getGmgnIntervals,
     hasCompletedGmgnPreliminaryReview,
@@ -1492,6 +1542,7 @@ module.exports = {
     shouldSkipNewGmgnDiscovery,
     shouldKeepTokenInGmgnPanel,
     shouldCheckGmgnRiskData,
+    shouldRequireGmgnBurnCreatorHoldReview,
     shouldSuppressGmgnForRiskEnrichment,
     shouldEvaluateAlerts,
     toTimestampMsOrNull,

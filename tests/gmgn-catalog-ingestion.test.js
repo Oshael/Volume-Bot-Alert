@@ -471,6 +471,63 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(matcherCalls, 1);
   });
 
+  it('releases burn-creator-hold GMGN pending tokens after queued preliminary review passes', async () => {
+    const applied = [];
+    let matcherCalls = 0;
+    const snapshot = {
+      ...createSnapshot(TOKEN_A),
+      raw: {
+        burn_status: 'burn',
+        creator_close: false,
+        creator_token_status: 'creator_hold',
+      },
+    };
+
+    const result = await gmgnCatalogIngestion.processQueuedGmgnRiskReview({
+      address: TOKEN_A,
+      snapshot,
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress(address) {
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: false,
+            suppressed_reason: 'gmgn_burn_creator_hold_pending_review',
+            eligibility_state: 'gmgn-burn-creator-hold-pending-review',
+            last_vol_5m: 18000,
+          };
+        },
+        async applyEvaluationResult(address, payload) {
+          applied.push({ address, payload });
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: payload.eligibleForMonitoring,
+            suppressed_reason: payload.suppressedReason,
+            eligibility_state: payload.eligibilityState,
+          };
+        },
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          matcherCalls += 1;
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.equal(result.passed, true);
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(applied.length, 1);
+    assert.equal(applied[0].payload.eligibleForMonitoring, true);
+    assert.equal(applied[0].payload.suppressedReason, null);
+    assert.equal(matcherCalls, 1);
+  });
+
   it('suppresses low-activity automatic GMGN tokens using the existing 24h volume guard', () => {
     const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
       { ...createSnapshot(), vol24h: 1200 },
@@ -913,6 +970,76 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(calls[2][1].gmgnBurnStatus, 'none');
     assert.equal(calls[2][1].gmgnCreatorClose, true);
     assert.equal(calls[2][1].gmgnCreatorTokenStatus, 'creator_close');
+  });
+
+  it('suppresses young GMGN burn creator-hold tokens until preliminary ban checks pass', async () => {
+    const calls = [];
+    const snapshot = {
+      ...createSnapshot(),
+      mcap: 29266,
+      liquidityUsd: 23.13,
+      tokenCreatedAt: '2026-05-03T06:45:00.000Z',
+      raw: {
+        burn_status: 'burn',
+        creator_close: false,
+        creator_token_status: 'creator_hold',
+      },
+    };
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken(snapshot, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken(payload) {
+          calls.push(['upsertToken', payload]);
+          return { address: payload.address, source: payload.source };
+        },
+        async applyEvaluationResult(address, payload) {
+          calls.push(['applyEvaluationResult', address, payload]);
+          assert.equal(payload.eligibilityState, 'gmgn-burn-creator-hold-pending-review');
+          assert.equal(payload.eligibleForMonitoring, false);
+          assert.equal(payload.suppressedReason, 'gmgn_burn_creator_hold_pending_review');
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: false,
+            suppressed_reason: payload.suppressedReason,
+            last_vol_5m: payload.vol5m,
+          };
+        },
+      },
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['marketBucket', payload]);
+          return payload;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['volumeBucket', payload]);
+          return payload;
+        },
+      },
+      gmgnRiskReviewQueue: {
+        hasFreshPassedReview: () => false,
+        enqueue: () => ({ queued: true, reason: 'queued' }),
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('burn creator-hold pending GMGN tokens must not alert');
+        },
+      },
+    });
+
+    assert.equal(result.summary.gmgnRiskReviewQueued, 1);
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(result.summary.matcherEvaluations, 0);
+    assert.equal(result.summary.matcherSkippedSuppressed + result.summary.matcherSkippedGmgnSafeguard, 1);
+    assert.deepEqual(calls.map(([name]) => name), ['upsertToken', 'applyEvaluationResult', 'marketBucket', 'volumeBucket']);
+    assert.equal(calls[0][1].isActiveMonitorCandidate, true);
   });
 
   it('auto-blocks young extreme GMGN tokens when token security shows concentrated top holders', async () => {

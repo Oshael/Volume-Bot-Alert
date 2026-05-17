@@ -684,6 +684,12 @@ Important behavior:
   - requires the latest `4` stored GMGN `token_market_buckets_1m` samples to repeat those liquidity-protection fields before auto-blocking
   - matching rows are auto-blocked with:
     - `auto-junk-probable:gmgn_unprotected_liquidity`
+- GMGN burn/creator-hold preliminary safeguard:
+  - applies to automatic GMGN tokens younger than `6h`
+  - current GMGN payload must show `burn_status = burn`, `creator_close = false`, and `creator_token_status = creator_hold`
+  - forces the token through GMGN preliminary checks (`token security`, `token info`, and `market kline`) before monitoring
+  - while the queued review is pending, the catalog row stays suppressed as `gmgn_burn_creator_hold_pending_review` with `eligible_for_monitoring = false`
+  - after the preliminary review passes, the row is released through the normal GMGN eligibility path
 - GMGN low-cap thin-support gates:
   - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - source must be GMGN and not protected by a manual review
