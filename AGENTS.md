@@ -49,3 +49,5 @@ Prioridade de higiene:
 - Ao detectar funcao-hub, branching excessivo ou arquivo concentrando responsabilidades demais, quebre o problema cedo.
 
 Deixe claro antes de fazer mudanças grandes e me dê uma estimativa de quantas linhas adicionais de mudanças pedidas/sugeridas serão adicionadas no código antes de de fato aplicar alguma coisa. Esse aviso é apenas para mudanças realmente grandes, de possíveis 450 linhas ou mais de código. E nunca em hipotese alguma faça uma mudança grande de uma vez, sempre quebre em blocos menores de 300 linhas cada bloco mais ou menos(Não precisa ser literalmente esse valor, estou dando um teto médio do quanto cada bloco teria, pode ser menos ou um pouquinho mais.)
+
+Me faça perguntas até que você tenha certeza de que você entendeu o que eu pedi, não adivinhe o que eu quero.
