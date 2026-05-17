@@ -5978,7 +5978,7 @@ export function createAppController(): AppController {
   async function refreshAuthenticatedBootstrapState() {
     await Promise.all([
       refreshAccountAccessState(COOKIE_SESSION_MARKER),
-      reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true, alertFeedMode: 'all' }),
+      reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true }),
     ]);
     refreshDeferredAuthenticatedAncillaryState(COOKIE_SESSION_MARKER);
   }
@@ -8177,7 +8177,7 @@ export function createAppController(): AppController {
         await refreshAccountAccessState(COOKIE_SESSION_MARKER);
         await refreshBillingState(COOKIE_SESSION_MARKER);
         await refreshIdentityState(COOKIE_SESSION_MARKER);
-        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true, alertFeedMode: 'all' });
+        await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
         syncWorkspaceFromLocationInternal({ canonicalize: true });
         state.ui.loginErrorCount = 0;
         setNotice(AUTH_NOTICE_LOGIN_SUCCESS);
@@ -8254,7 +8254,7 @@ export function createAppController(): AppController {
           await refreshAccountAccessState(COOKIE_SESSION_MARKER);
           await refreshBillingState(COOKIE_SESSION_MARKER);
           await refreshIdentityState(COOKIE_SESSION_MARKER);
-          await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true, alertFeedMode: 'all' });
+          await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
           syncWorkspaceFromLocationInternal({ canonicalize: true });
           state.ui.loginErrorCount = 0;
           setNotice(result.message || AUTH_NOTICE_LOGIN_SUCCESS);
