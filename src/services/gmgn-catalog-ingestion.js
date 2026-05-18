@@ -371,6 +371,11 @@ function resolveGmgnEarlyLpCooldownReason(snapshot = {}) {
 }
 
 function resolveGmgnEarlyLpCooldownState(snapshot = {}, tokenBefore = null, now = new Date()) {
+  const address = snapshot.address || snapshot.tokenAddress || tokenBefore?.address || tokenBefore?.token_address;
+  if (isPumpAddress(address)) {
+    return null;
+  }
+
   const ageHours = calculateTokenAgeHours(snapshot, now);
   if (ageHours == null || ageHours >= GMGN_RISK_LOOKUP_MAX_AGE_HOURS) {
     return null;

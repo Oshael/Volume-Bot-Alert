@@ -656,6 +656,53 @@ describe('gmgn catalog ingestion', () => {
     assert.notEqual(evaluation.suppressedReason, 'gmgn_low_liquidity_unlocked_cooldown');
   });
 
+  it('does not quarantine pump, BAGS, or brrr suffix tokens during the GMGN early LP cooldown', () => {
+    const cases = [
+      {
+        address: '3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump',
+        raw: {
+          launchpad: 'pump',
+          launchpad_platform: 'Pump.fun',
+          migrated_pool_exchange: 'pump_amm',
+        },
+      },
+      {
+        address: 'BAGSoDxpPMzKz1VQDeeHTHSXbH6AGU1fLqJrtHTBAGS',
+        liquidityUsd: 0.000126465,
+        raw: {
+          lock_percent: 0,
+          burn_ratio: 0,
+        },
+      },
+      {
+        address: 'BRRRoDxpPMzKz1VQDeeHTHSXbH6AGU1fLqJrtHTbrrr',
+        liquidityUsd: 0.000126465,
+        raw: {
+          lock_percent: 0,
+          burn_ratio: 0,
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+        {
+          ...createSnapshot(testCase.address),
+          liquidityUsd: testCase.liquidityUsd ?? 17582,
+          raw: testCase.raw,
+        },
+        { source: 'gmgn' },
+        {
+          now: () => new Date('2026-05-03T07:00:00.000Z'),
+          activeDexRecheckMs: 30000,
+        }
+      );
+
+      assert.notEqual(evaluation.suppressedReason, 'gmgn_custom_lp_cooldown');
+      assert.notEqual(evaluation.suppressedReason, 'gmgn_low_liquidity_unlocked_cooldown');
+    }
+  });
+
   it('does not defer an existing Dex recheck when GMGN refreshes a Dex-confirmed token', () => {
     const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
       createSnapshot(),
