@@ -26,7 +26,9 @@ const GMGN_CUSTOM_LP_COOLDOWN_MS = 15 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
 const GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON = 'gmgn_burn_creator_hold_pending_review';
 const GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON = 'gmgn_custom_lp_cooldown';
+const GMGN_LOW_LIQUIDITY_UNLOCKED_COOLDOWN_SUPPRESSION_REASON = 'gmgn_low_liquidity_unlocked_cooldown';
 const GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON = 'gmgn_unprotected_liquidity_pending';
+const GMGN_LOW_LIQUIDITY_UNLOCKED_COOLDOWN_MAX_LIQUIDITY_USD = 1000;
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
 const GMGN_YOUNG_VOL_1H_TO_MCAP_RATIO = 10;
@@ -128,6 +130,26 @@ function hasGmgnCustomLpSignal(snapshot = {}) {
     || fields.migratedPoolExchange
     || fields.poolTypeStr
   );
+}
+
+function readGmgnLiquidityUsd(snapshot = {}) {
+  const raw = snapshot.raw && typeof snapshot.raw === 'object' ? snapshot.raw : {};
+  return toFiniteNumberOrNull(
+    snapshot.liquidityUsd
+    ?? snapshot.liquidity_usd
+    ?? raw.liquidity
+    ?? raw.liquidity_usd
+    ?? raw.liquidityUsd
+  );
+}
+
+function hasGmgnLowLiquidityUnlockedSignal(snapshot = {}) {
+  const fields = readGmgnLiquidityProtectionFields(snapshot);
+  const liquidityUsd = readGmgnLiquidityUsd(snapshot);
+  return liquidityUsd != null
+    && liquidityUsd < GMGN_LOW_LIQUIDITY_UNLOCKED_COOLDOWN_MAX_LIQUIDITY_USD
+    && fields.lockPercent === 0
+    && fields.burnRatio === 0;
 }
 
 function hasGmgnUnprotectedLiquiditySignal(snapshot = {}) {
@@ -338,6 +360,54 @@ function resolveSuppressionNextEvaluationAt(tokenBefore, fallbackNextEvaluationA
     || fallbackNextEvaluationAt;
 }
 
+function resolveGmgnEarlyLpCooldownReason(snapshot = {}) {
+  if (hasGmgnLowLiquidityUnlockedSignal(snapshot)) {
+    return GMGN_LOW_LIQUIDITY_UNLOCKED_COOLDOWN_SUPPRESSION_REASON;
+  }
+  if (hasGmgnCustomLpSignal(snapshot)) {
+    return GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON;
+  }
+  return null;
+}
+
+function resolveGmgnEarlyLpCooldownState(snapshot = {}, tokenBefore = null, now = new Date()) {
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  if (ageHours == null || ageHours >= GMGN_RISK_LOOKUP_MAX_AGE_HOURS) {
+    return null;
+  }
+
+  const matchingReason = resolveGmgnEarlyLpCooldownReason(snapshot);
+  if (!matchingReason) {
+    return null;
+  }
+
+  const previousReason = String(tokenBefore?.suppressed_reason || '').trim();
+  if (previousReason === matchingReason) {
+    if (!isCurrentSuppressionActive(tokenBefore, matchingReason, now)) {
+      return null;
+    }
+    return {
+      reason: matchingReason,
+      nextEvaluationAt: resolveSuppressionNextEvaluationAt(
+        tokenBefore,
+        new Date(now.getTime() + GMGN_CUSTOM_LP_COOLDOWN_MS)
+      ),
+    };
+  }
+
+  return {
+    reason: matchingReason,
+    nextEvaluationAt: new Date(now.getTime() + GMGN_CUSTOM_LP_COOLDOWN_MS),
+  };
+}
+
+function resolveGmgnEarlyLpCooldownEligibilityState(reason) {
+  if (reason === GMGN_LOW_LIQUIDITY_UNLOCKED_COOLDOWN_SUPPRESSION_REASON) {
+    return 'gmgn-low-liquidity-unlocked-cooldown';
+  }
+  return 'gmgn-custom-lp-cooldown';
+}
+
 function deriveGmgnEvaluation(snapshot, tokenBefore, options, context = {}) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
@@ -368,14 +438,14 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, context = {}) {
     });
   }
 
-  if (!isManual && shouldApplyGmgnCustomLpCooldown(snapshot, tokenBefore, now)) {
-    const cooldownUntil = new Date(now.getTime() + GMGN_CUSTOM_LP_COOLDOWN_MS);
+  const earlyLpCooldown = isManual ? null : resolveGmgnEarlyLpCooldownState(snapshot, tokenBefore, now);
+  if (earlyLpCooldown) {
     return buildEvaluationPayload(snapshot, {
-      eligibilityState: 'gmgn-custom-lp-cooldown',
+      eligibilityState: resolveGmgnEarlyLpCooldownEligibilityState(earlyLpCooldown.reason),
       eligibleForMonitoring: false,
-      suppressedReason: GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON,
+      suppressedReason: earlyLpCooldown.reason,
       monitorPriority: resolveMonitorPriority(marketCap),
-      nextEvaluationAt: resolveSuppressionNextEvaluationAt(tokenBefore, cooldownUntil),
+      nextEvaluationAt: earlyLpCooldown.nextEvaluationAt,
     });
   }
 
@@ -513,15 +583,8 @@ function shouldRequireGmgnBurnCreatorHoldReview(snapshot = {}, now = new Date())
 }
 
 function shouldApplyGmgnCustomLpCooldown(snapshot = {}, tokenBefore = null, now = new Date()) {
-  const ageHours = calculateTokenAgeHours(snapshot, now);
-  const previousReason = String(tokenBefore?.suppressed_reason || '').trim();
-  return ageHours != null
-    && ageHours < GMGN_RISK_LOOKUP_MAX_AGE_HOURS
-    && hasGmgnCustomLpSignal(snapshot)
-    && (
-      previousReason !== GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON
-      || isCurrentSuppressionActive(tokenBefore, GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON, now)
-    );
+  const cooldown = resolveGmgnEarlyLpCooldownState(snapshot, tokenBefore, now);
+  return cooldown?.reason === GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON;
 }
 
 function shouldCheckGmgnRiskData(snapshot = {}, now = new Date()) {
@@ -535,6 +598,10 @@ function shouldCheckGmgnRiskData(snapshot = {}, now = new Date()) {
   }
 
   if (hasGmgnCustomLpSignal(snapshot)) {
+    return true;
+  }
+
+  if (hasGmgnLowLiquidityUnlockedSignal(snapshot)) {
     return true;
   }
 
@@ -1579,16 +1646,20 @@ module.exports = {
     GMGN_BURN_CREATOR_HOLD_SUPPRESSION_REASON,
     GMGN_CUSTOM_LP_COOLDOWN_MS,
     GMGN_CUSTOM_LP_COOLDOWN_SUPPRESSION_REASON,
+    GMGN_LOW_LIQUIDITY_UNLOCKED_COOLDOWN_SUPPRESSION_REASON,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
     GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON,
     GMGN_ALERT_SAFEGUARD_REASON,
     hasGmgnBurnCreatorHoldSignal,
     hasGmgnCustomLpSignal,
+    hasGmgnLowLiquidityUnlockedSignal,
     hasGmgnUnprotectedLiquiditySignal,
     hasPassedGmgnBurnCreatorHoldReview,
     isCurrentSuppressionActive,
     readGmgnPoolRouteFields,
+    readGmgnLiquidityUsd,
     readGmgnLiquidityProtectionFields,
+    resolveGmgnEarlyLpCooldownState,
     resolveSuppressionNextEvaluationAt,
     getGmgnIntervals,
     hasCompletedGmgnPreliminaryReview,

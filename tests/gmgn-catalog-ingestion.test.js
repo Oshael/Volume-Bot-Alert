@@ -567,6 +567,29 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:15:00.000Z');
   });
 
+  it('suppresses young GMGN low-liquidity unlocked tokens for a 15 minute cooldown', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot(),
+        liquidityUsd: 0.000126465,
+        raw: {
+          lock_percent: 0,
+          burn_ratio: 0,
+        },
+      },
+      { source: 'gmgn' },
+      {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.eligibilityState, 'gmgn-low-liquidity-unlocked-cooldown');
+    assert.equal(evaluation.eligibleForMonitoring, false);
+    assert.equal(evaluation.suppressedReason, 'gmgn_low_liquidity_unlocked_cooldown');
+    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:15:00.000Z');
+  });
+
   it('releases young GMGN custom-LP tokens after the 15 minute cooldown expires', () => {
     const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
       {
@@ -590,6 +613,47 @@ describe('gmgn catalog ingestion', () => {
 
     assert.equal(evaluation.eligibleForMonitoring, true);
     assert.equal(evaluation.suppressedReason, null);
+  });
+
+  it('releases young GMGN low-liquidity unlocked tokens after the 15 minute cooldown expires', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot(),
+        liquidityUsd: 0.000126465,
+        raw: {
+          lock_percent: 0,
+          burn_ratio: 0,
+        },
+      },
+      {
+        source: 'gmgn',
+        suppressed_reason: 'gmgn_low_liquidity_unlocked_cooldown',
+        next_evaluation_at: new Date('2026-05-03T07:14:00.000Z'),
+      },
+      {
+        now: () => new Date('2026-05-03T07:15:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.eligibleForMonitoring, true);
+    assert.equal(evaluation.suppressedReason, null);
+  });
+
+  it('does not treat low-liquidity GMGN tokens as unlocked without explicit lock and burn fields', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot(),
+        liquidityUsd: 0.000126465,
+      },
+      { source: 'gmgn' },
+      {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.notEqual(evaluation.suppressedReason, 'gmgn_low_liquidity_unlocked_cooldown');
   });
 
   it('does not defer an existing Dex recheck when GMGN refreshes a Dex-confirmed token', () => {
@@ -1083,6 +1147,79 @@ describe('gmgn catalog ingestion', () => {
       alertMatcher: {
         async evaluateUpdatedToken() {
           throw new Error('custom-LP cooldown tokens must not alert');
+        },
+      },
+    });
+
+    assert.equal(result.summary.gmgnRiskReviewQueued, 1);
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(result.summary.matcherEvaluations, 0);
+    assert.equal(result.summary.matcherSkippedSuppressed + result.summary.matcherSkippedGmgnSafeguard, 1);
+    assert.deepEqual(calls.map(([name]) => name), ['upsertToken', 'applyEvaluationResult', 'marketBucket', 'volumeBucket']);
+  });
+
+  it('keeps young GMGN low-liquidity unlocked tokens out of monitored during cooldown while queuing fast checks', async () => {
+    const calls = [];
+    const snapshot = {
+      ...createSnapshot(),
+      mcap: 108883,
+      liquidityUsd: 0.000126465,
+      tokenCreatedAt: '2026-05-03T06:48:00.000Z',
+      raw: {
+        lock_percent: 0,
+        burn_ratio: 0,
+        burn_status: 'none',
+        creator_close: false,
+        creator_token_status: 'creator_hold',
+      },
+    };
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken(snapshot, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken(payload) {
+          calls.push(['upsertToken', payload]);
+          return { address: payload.address, source: payload.source };
+        },
+        async applyEvaluationResult(address, payload) {
+          calls.push(['applyEvaluationResult', address, payload]);
+          assert.equal(payload.eligibilityState, 'gmgn-low-liquidity-unlocked-cooldown');
+          assert.equal(payload.eligibleForMonitoring, false);
+          assert.equal(payload.suppressedReason, 'gmgn_low_liquidity_unlocked_cooldown');
+          assert.equal(payload.nextEvaluationAt.toISOString(), '2026-05-03T07:15:00.000Z');
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: false,
+            suppressed_reason: payload.suppressedReason,
+            next_evaluation_at: payload.nextEvaluationAt,
+            last_vol_5m: payload.vol5m,
+          };
+        },
+      },
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['marketBucket', payload]);
+          return payload;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          calls.push(['volumeBucket', payload]);
+          return payload;
+        },
+      },
+      gmgnRiskReviewQueue: {
+        hasFreshPassedReview: () => false,
+        enqueue: () => ({ queued: true, reason: 'queued' }),
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('low-liquidity unlocked cooldown tokens must not alert');
         },
       },
     });
