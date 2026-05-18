@@ -30,22 +30,6 @@ const NEW_LOW_MCAP_EXTREME_VOL_MAX_AGE_HOURS = 24;
 const NEW_LOW_MCAP_EXTREME_VOL_MAX_MCAP = 100000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M = 500000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
-const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP = 150000;
-const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_USD = 1000;
-const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_TO_MCAP = 0.01;
-const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME = 100;
-const GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_USD = 100;
-const GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_TO_MCAP = 0.002;
-const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MAX_MCAP = 100000;
-const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP = 20;
-const GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H = 1000;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_AGE_HOURS = 6;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_MCAP = 100000;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_USD = 100;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_TO_MCAP = 0.002;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_VOL_1H_TO_MCAP = 2;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_TXNS_24H = 1000;
-const GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_PRICE_CHANGE_24H = 200;
 
 let timer = null;
 let running = false;
@@ -164,36 +148,6 @@ function isGmgnSource(row) {
   return String(row?.source || '').trim().toLowerCase() === 'gmgn';
 }
 
-function isManualReviewProtected(row = {}) {
-  return String(row?.risk_review_source || '').trim().toLowerCase() === 'manual';
-}
-
-function hasGmgnThinLiquidity(row = {}) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
-  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
-
-  return liquidityUsd != null
-    && (
-      liquidityUsd <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_USD
-      || (liquidityToMcap != null && liquidityToMcap <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_TO_MCAP)
-    );
-}
-
-function hasGmgnDeadRecentVolume(row = {}) {
-  const vol1h = toFiniteNumberOrNull(row.last_vol_1h);
-  const vol6h = toFiniteNumberOrNull(row.last_vol_6h);
-  return (vol1h ?? 0) <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME
-    && (vol6h ?? 0) <= GMGN_LOW_MCAP_THIN_SUPPORT_MAX_RECENT_VOLUME;
-}
-
-function hasNoMeteoraPool(summaryRow) {
-  if (!summaryRow) {
-    return true;
-  }
-  return summaryRow.hasPool !== true || !((Number(summaryRow.currentTvl) || 0) > 0);
-}
-
 function isDexGmgnHolderAnomalySourceEligible(row = {}) {
   const source = String(row?.source || '').trim().toLowerCase();
   if (isGmgnSource(row) || source === 'user-manual') {
@@ -267,191 +221,6 @@ function buildNewLowMcapExtremeVolumeAssessment(row = {}) {
     marketCap,
     volume5m: vol5m,
     vol5mToMcapRatio: vol5mToMcap,
-  };
-}
-
-function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  if (
-    !isGmgnSource(row)
-    || isManualReviewProtected(row)
-    || !(marketCap >= DEFAULT_MIN_MCAP)
-    || marketCap > GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP
-    || !hasGmgnThinLiquidity(row)
-    || !hasGmgnDeadRecentVolume(row)
-    || !hasNoMeteoraPool(meteoraSummary)
-  ) {
-    return null;
-  }
-
-  return {
-    label: 'junk_probable',
-    confidence: 'high',
-    manualReviewRequired: true,
-    autoBlock: false,
-    mode: 'gmgn_low_mcap_thin_support_gate',
-    strongSignalCount: 1,
-    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_THIN_SUPPORT],
-    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_THIN_SUPPORT],
-    weakSignals: [],
-    behavioralSignals: [],
-    positiveSignals: [],
-    marketCap,
-    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
-    volume1h: toFiniteNumberOrNull(row.last_vol_1h),
-    volume6h: toFiniteNumberOrNull(row.last_vol_6h),
-  };
-}
-
-function buildGmgnConfirmedMicroLiquidityAssessment(row = {}) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
-  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
-
-  if (
-    !isGmgnSource(row)
-    || isManualReviewProtected(row)
-    || !(marketCap >= DEFAULT_MIN_MCAP)
-    || !(liquidityUsd > 0)
-    || liquidityUsd > GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_USD
-    || liquidityToMcap == null
-    || liquidityToMcap > GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_TO_MCAP
-  ) {
-    return null;
-  }
-
-  return {
-    label: 'junk_probable',
-    confidence: 'high',
-    manualReviewRequired: true,
-    autoBlock: false,
-    mode: 'gmgn_confirmed_micro_liquidity_gate',
-    strongSignalCount: 1,
-    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_CONFIRMED_MICRO_LIQUIDITY],
-    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_CONFIRMED_MICRO_LIQUIDITY],
-    weakSignals: [],
-    behavioralSignals: [],
-    positiveSignals: [],
-    marketCap,
-    liquidityUsd,
-    liquidityToMcapRatio: liquidityToMcap,
-  };
-}
-
-function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  const vol24h = toFiniteNumberOrNull(row.last_vol_24h);
-  const vol24hToMcap = computeRatio(vol24h, marketCap);
-  const txns24h = (toFiniteNumberOrNull(row.last_txns_24h_buys) || 0)
-    + (toFiniteNumberOrNull(row.last_txns_24h_sells) || 0);
-
-  if (
-    !isGmgnSource(row)
-    || isManualReviewProtected(row)
-    || !(marketCap >= DEFAULT_MIN_MCAP)
-    || marketCap > GMGN_LOW_MCAP_EXTREME_24H_CHURN_MAX_MCAP
-    || vol24hToMcap == null
-    || vol24hToMcap < GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP
-    || txns24h < GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H
-    || !hasGmgnThinLiquidity(row)
-  ) {
-    return null;
-  }
-
-  return {
-    label: 'junk_probable',
-    confidence: 'high',
-    manualReviewRequired: true,
-    autoBlock: false,
-    mode: 'gmgn_low_mcap_extreme_24h_churn_gate',
-    strongSignalCount: 1,
-    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_EXTREME_24H_CHURN_THIN_LIQUIDITY],
-    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_LOW_MCAP_EXTREME_24H_CHURN_THIN_LIQUIDITY],
-    weakSignals: [],
-    behavioralSignals: [],
-    positiveSignals: [],
-    marketCap,
-    volume24h: vol24h,
-    vol24hToMcapRatio: vol24hToMcap,
-    txns24hTotal: txns24h,
-    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
-  };
-}
-
-function hasYoungLowCapHighChurnBaseProfile(row = {}) {
-  const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  return isGmgnSource(row)
-    && !isManualReviewProtected(row)
-    && ageHours != null
-    && ageHours < GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_AGE_HOURS
-    && marketCap >= DEFAULT_MIN_MCAP
-    && marketCap <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_MCAP;
-}
-
-function hasYoungLowCapThinLiquidity(row = {}) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
-  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
-  return liquidityUsd > 0
-    && liquidityUsd <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_USD
-    && liquidityToMcap != null
-    && liquidityToMcap <= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MAX_LIQUIDITY_TO_MCAP;
-}
-
-function hasYoungLowCapHighChurnMarket(row = {}) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  const vol1hToMcap = computeRatio(row.last_vol_1h, marketCap);
-  const priceChange24h = Math.abs(toFiniteNumberOrNull(row.last_price_change_24h) || 0);
-  const txns24h = (toFiniteNumberOrNull(row.last_txns_24h_buys) || 0)
-    + (toFiniteNumberOrNull(row.last_txns_24h_sells) || 0);
-
-  return vol1hToMcap != null
-    && vol1hToMcap >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_VOL_1H_TO_MCAP
-    && txns24h >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_TXNS_24H
-    && priceChange24h >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_PRICE_CHANGE_24H;
-}
-
-function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
-  const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
-  const vol1h = toFiniteNumberOrNull(row.last_vol_1h);
-  const vol1hToMcap = computeRatio(vol1h, marketCap);
-  const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
-  const priceChange24h = Math.abs(toFiniteNumberOrNull(row.last_price_change_24h) || 0);
-  const txns24h = (toFiniteNumberOrNull(row.last_txns_24h_buys) || 0)
-    + (toFiniteNumberOrNull(row.last_txns_24h_sells) || 0);
-
-  if (
-    !hasYoungLowCapHighChurnBaseProfile(row)
-    || !hasYoungLowCapThinLiquidity(row)
-    || !hasYoungLowCapHighChurnMarket(row)
-    || !hasNoMeteoraPool(meteoraSummary)
-  ) {
-    return null;
-  }
-
-  return {
-    label: 'junk_probable',
-    confidence: 'high',
-    manualReviewRequired: true,
-    autoBlock: false,
-    mode: 'gmgn_young_low_cap_high_churn_gate',
-    strongSignalCount: 1,
-    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_YOUNG_LOW_CAP_HIGH_CHURN_THIN_LIQUIDITY],
-    strongSignals: [AUTO_BLOCK_REASON_CODES.GMGN_YOUNG_LOW_CAP_HIGH_CHURN_THIN_LIQUIDITY],
-    weakSignals: [],
-    behavioralSignals: [],
-    positiveSignals: [],
-    marketCap,
-    ageHours,
-    volume1h: vol1h,
-    vol1hToMcapRatio: vol1hToMcap,
-    txns24hTotal: txns24h,
-    priceChange24h,
-    liquidityUsd,
-    liquidityToMcapRatio: liquidityToMcap,
   };
 }
 
@@ -763,10 +532,6 @@ async function listCandidates(offset, options, deps = {}) {
 async function assessRiskReviewRow(row, meteoraSummary, deps = {}) {
   return buildGmgnRiskGateAssessment(row)
     || buildNewLowMcapExtremeVolumeAssessment(row)
-    || buildGmgnLowMcapExtreme24hChurnAssessment(row)
-    || buildGmgnYoungLowCapHighChurnAssessment(row, meteoraSummary)
-    || buildGmgnLowMcapThinSupportAssessment(row, meteoraSummary)
-    || buildGmgnConfirmedMicroLiquidityAssessment(row)
     || await assessDexGmgnHolderAnomaly(row, deps)
     || classifyTokenJunk({
       ...row,
@@ -945,9 +710,6 @@ module.exports = {
     buildAutoNotes,
     assessRiskReviewRow,
     autoBlockToken,
-    buildGmgnLowMcapExtreme24hChurnAssessment,
-    buildGmgnLowMcapThinSupportAssessment,
-    buildGmgnYoungLowCapHighChurnAssessment,
     buildGmgnRiskGateAssessment,
     buildGmgnRiskReleasePayload,
     captureEvidenceSafely,

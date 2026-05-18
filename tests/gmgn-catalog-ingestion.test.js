@@ -704,6 +704,143 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(matcherCalls, 0);
   });
 
+  it('auto-blocks young GMGN-only tokens with liquidity under 1k before bucket writes', async () => {
+    const blockWrites = [];
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot('nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES'),
+      tokenCreatedAt: '2026-05-03T06:35:00.000Z',
+      mcap: 84550.6,
+      liquidityUsd: 721.2,
+      vol5m: 18000,
+      vol1h: 60000,
+      vol6h: 90000,
+      vol24h: 120000,
+      gmgnInterval: '5m',
+      gmgnIntervals: ['5m'],
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add(payload) {
+          blockWrites.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken() {
+          throw new Error('low-liquidity spam block must happen before catalog upsert');
+        },
+        async applyEvaluationResult() {
+          throw new Error('brand-new low-liquidity spam block must happen before catalog evaluation');
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {
+          throw new Error('blocked low-liquidity GMGN tokens must not write buckets');
+        },
+      },
+      gmgnClient: {
+        async fetchTokenSecurity() {
+          throw new Error('low-liquidity spam block must not depend on GMGN security lookup');
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('blocked low-liquidity GMGN tokens must not alert');
+        },
+      },
+    });
+
+    assert.equal(result.skipped, true);
+    assert.equal(result.skipReason, 'gmgn-low-liquidity-spam-auto-blocked');
+    assert.equal(result.summary.gmgnLowLiquiditySpamAutoBlocked, 1);
+    assert.equal(blockWrites.length, 1);
+    assert.equal(blockWrites[0].label, 'gmgn-liquidity:under-1k-spam:721:84551');
+    assert.equal(blockWrites[0].evidence.pipeline, 'gmgn-ingestion:low-liquidity-spam');
+    assert.equal(blockWrites[0].evidence.marketSnapshot.liquidityUsd, 721.2);
+    assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 84550.6);
+  });
+
+  it('does not auto-block Dex-confirmed or known-launch-suffix tokens with liquidity under 1k', async () => {
+    const cases = [
+      {
+        address: TOKEN_A,
+        tokenBefore: {
+          address: TOKEN_A,
+          source: 'dexscreener-discovery',
+          eligibility_state: 'dex-high',
+          last_pair_url: 'https://dexscreener.com/solana/testpair',
+        },
+      },
+      {
+        address: '3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump',
+        tokenBefore: null,
+      },
+    ];
+
+    for (const { address, tokenBefore } of cases) {
+      let upsertCalls = 0;
+      const blockWrites = [];
+      const result = await gmgnCatalogIngestion.ingestGmgnToken({
+        ...createSnapshot(address),
+        tokenCreatedAt: '2026-05-03T06:35:00.000Z',
+        mcap: 84550.6,
+        liquidityUsd: 721.2,
+        vol5m: 18000,
+        vol1h: 60000,
+        vol6h: 90000,
+        vol24h: 120000,
+      }, {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        evaluationState: new Map(),
+        adminBlockedTokenModel: {
+          async add(payload) {
+            blockWrites.push(payload);
+            return payload;
+          },
+        },
+        tokenCatalogModel: {
+          async getByAddress() {
+            return tokenBefore;
+          },
+          async upsertToken(payload) {
+            upsertCalls += 1;
+            return { address: payload.address, source: payload.source };
+          },
+          async applyEvaluationResult(tokenAddress, payload) {
+            return {
+              address: tokenAddress,
+              source: payload.source || 'gmgn',
+              eligible_for_monitoring: payload.eligibleForMonitoring,
+              eligibility_state: payload.eligibilityState,
+              last_vol_5m: payload.vol5m,
+              last_pair_url: tokenBefore?.last_pair_url || null,
+            };
+          },
+        },
+        volumeBucketModel: {
+          async upsertSnapshotBucket() {
+            return {};
+          },
+        },
+        gmgnClient: createSafeGmgnSecurityStub(),
+        alertMatcher: {
+          async evaluateUpdatedToken() {
+            return { emitted: 0, events: [] };
+          },
+        },
+      });
+
+      assert.equal(result.skipped, undefined);
+      assert.equal(result.summary.gmgnLowLiquiditySpamAutoBlocked, 0);
+      assert.equal(blockWrites.length, 0);
+      assert.equal(upsertCalls, 1);
+    }
+  });
+
   it('auto-blocks high-confidence GMGN junk before catalog upsert', async () => {
     const blockWrites = [];
     let upsertCalls = 0;

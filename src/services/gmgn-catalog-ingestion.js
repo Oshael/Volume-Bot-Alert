@@ -37,6 +37,9 @@ const GMGN_LOW_MCAP_EXTREME_VOL_MAX_AGE_HOURS = 24;
 const GMGN_LOW_MCAP_EXTREME_VOL_MAX_MCAP = 100000;
 const GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M = 500000;
 const GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
+const GMGN_LOW_LIQUIDITY_SPAM_MAX_AGE_HOURS = 2;
+const GMGN_LOW_LIQUIDITY_SPAM_MAX_LIQUIDITY_USD = 1000;
+const GMGN_LOW_LIQUIDITY_SPAM_MAX_MCAP = 150000;
 const GMGN_NEW_NON_PUMP_MAX_AGE_HOURS = 2;
 const GMGN_NEW_NON_PUMP_MIN_LAUNCH_MCAP = 50000;
 const GMGN_NEW_NON_PUMP_MAX_LAUNCH_MCAP = 100000;
@@ -569,6 +572,10 @@ function isManualToken(row) {
 }
 
 function isPumpAddress(address) {
+  return hasKnownLaunchSuffix(address);
+}
+
+function hasKnownLaunchSuffix(address) {
   const normalized = normalizeLowerText(address);
   return normalized.endsWith('pump') || normalized.endsWith('bags') || normalized.endsWith('brrr');
 }
@@ -663,6 +670,24 @@ function isGmgnLowMcapExtremeVolumeRisk(snapshot = {}, now = new Date()) {
     && vol5m >= GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M
     && vol5mToMcap != null
     && vol5mToMcap >= GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP;
+}
+
+function isGmgnLowLiquiditySpamRisk(address, snapshot = {}, tokenBefore = null, now = new Date()) {
+  if (isManualToken(tokenBefore) || isBlockedToken(tokenBefore) || hasDexConfirmation(tokenBefore)) {
+    return false;
+  }
+  if (hasKnownLaunchSuffix(address)) {
+    return false;
+  }
+
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  const liquidityUsd = toFiniteNumberOrNull(snapshot.liquidityUsd);
+  const marketCap = toFiniteNumberOrNull(snapshot.mcap);
+  return ageHours != null
+    && ageHours < GMGN_LOW_LIQUIDITY_SPAM_MAX_AGE_HOURS
+    && liquidityUsd != null
+    && liquidityUsd < GMGN_LOW_LIQUIDITY_SPAM_MAX_LIQUIDITY_USD
+    && (marketCap == null || marketCap < GMGN_LOW_LIQUIDITY_SPAM_MAX_MCAP);
 }
 
 function hasReliableGmgnFiveMinuteVolume(snapshot = {}) {
@@ -787,6 +812,15 @@ function buildGmgnLowMcapExtremeVolumeLabel(snapshot = {}) {
   return buildPrefixedAutoBlockLabel(
     AUTO_BLOCK_LABEL_PREFIXES.GMGN_VOLUME_LOW_MCAP_EXTREME_VOL5M,
     [marketCap, vol5m]
+  );
+}
+
+function buildGmgnLowLiquiditySpamLabel(snapshot = {}) {
+  const liquidityUsd = Math.round(toFiniteNumberOrNull(snapshot.liquidityUsd) || 0);
+  const marketCap = Math.round(toFiniteNumberOrNull(snapshot.mcap) || 0);
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.GMGN_LIQUIDITY_UNDER_1K_SPAM,
+    [liquidityUsd, marketCap]
   );
 }
 
@@ -942,6 +976,28 @@ async function autoBlockGmgnLowMcapExtremeVolumeRisk(address, snapshot, tokenBef
     label,
     createdBy: null,
     evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:low-mcap-extreme-volume', snapshot, tokenBefore),
+  });
+
+  if (tokenBefore) {
+    await options.tokenCatalogModel.applyEvaluationResult(address, {
+      eligibilityState: 'admin-blocked',
+      eligibleForMonitoring: false,
+      suppressedReason: 'admin_blocked',
+      nextEvaluationAt: new Date(options.now().getTime() + (10 * 365 * 24 * 60 * 60 * 1000)),
+      monitorPriority: 'dormant',
+      symbol: snapshot.symbol || tokenBefore.symbol || null,
+      name: snapshot.name || tokenBefore.name || null,
+    });
+  }
+}
+
+async function autoBlockGmgnLowLiquiditySpamRisk(address, snapshot, tokenBefore, options) {
+  const label = buildGmgnLowLiquiditySpamLabel(snapshot);
+  await options.adminBlockedTokenModel.add({
+    address,
+    label,
+    createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:low-liquidity-spam', snapshot, tokenBefore),
   });
 
   if (tokenBefore) {
@@ -1164,6 +1220,18 @@ async function ingestGmgnToken(snapshot, options = {}) {
     };
   }
 
+  if (isGmgnLowLiquiditySpamRisk(address, filledSnapshot, tokenBefore, now)) {
+    await autoBlockGmgnLowLiquiditySpamRisk(address, filledSnapshot, tokenBefore, resolved);
+    summary.gmgnLowLiquiditySpamAutoBlocked += 1;
+    return {
+      summary,
+      tokenBefore,
+      tokenAfter: null,
+      skipped: true,
+      skipReason: 'gmgn-low-liquidity-spam-auto-blocked',
+    };
+  }
+
   const securityGuard = await applyGmgnSecurityRiskGuard(address, filledSnapshot, tokenBefore, resolved, summary);
   if (securityGuard?.skipped) {
     return {
@@ -1282,6 +1350,7 @@ function createEmptyIngestionSummary() {
     gmgnInfoChecks: 0,
     gmgnInfoAutoBlocked: 0,
     gmgnInfoErrors: 0,
+    gmgnLowLiquiditySpamAutoBlocked: 0,
     gmgnLowMcapExtremeVolumeAutoBlocked: 0,
     gmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     gmgnKlineChecks: 0,
@@ -1321,6 +1390,7 @@ function mergeIngestionSummary(target, source) {
   target.gmgnInfoChecks += source.gmgnInfoChecks;
   target.gmgnInfoAutoBlocked += source.gmgnInfoAutoBlocked;
   target.gmgnInfoErrors += source.gmgnInfoErrors;
+  target.gmgnLowLiquiditySpamAutoBlocked += source.gmgnLowLiquiditySpamAutoBlocked;
   target.gmgnLowMcapExtremeVolumeAutoBlocked += source.gmgnLowMcapExtremeVolumeAutoBlocked;
   target.gmgnNewNonPumpHighLaunchMcapAutoBlocked += source.gmgnNewNonPumpHighLaunchMcapAutoBlocked;
   target.gmgnKlineChecks += source.gmgnKlineChecks;
@@ -1394,12 +1464,14 @@ module.exports = {
     autoBlockGmgnJunk,
     autoBlockGmgnInfoRisk,
     autoBlockGmgnKlineRisk,
+    autoBlockGmgnLowLiquiditySpamRisk,
     autoBlockGmgnSecurityRisk,
     buildGmgnAutoBlockLabel,
     buildGmgnSecurityAutoBlockLabel,
     buildGmgnJunkAssessmentInput,
     buildGmgnInfoAutoBlockLabel,
     buildGmgnKlineAutoBlockLabel,
+    buildGmgnLowLiquiditySpamLabel,
     createRiskLookupTokenBudget,
     enqueueGmgnRiskReview,
     buildCatalogPayload,
@@ -1417,11 +1489,13 @@ module.exports = {
     getGmgnIntervals,
     hasCompletedGmgnPreliminaryReview,
     hasDexConfirmation,
+    hasKnownLaunchSuffix,
     isOneMinuteOnlyDiscovery,
     isHighConfidenceJunkAssessment,
     isJunkAssessment,
     isGmgnSecurityAutoBlockRisk,
     isGmgnInfoAutoBlockRisk,
+    isGmgnLowLiquiditySpamRisk,
     isGmgnStaircasePumpRisk,
     mergeIngestionSummary,
     recordMatcherResult,

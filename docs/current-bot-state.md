@@ -274,43 +274,15 @@ Important:
   - vol5m `>= 500k`
   - vol5m/mcap `>= 4`
   - matching rows are auto-blocked as `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
-- GMGN low-cap thin-support gates now run inside the token-risk review sync worker before the generic junk metric:
-  - GMGN token, non-manual review
-  - mcap `15k-150k`
-  - liquidity `<= $1k` or liquidity/mcap `<= 1%`
-  - recent volume is dead (`1h <= 100` and `6h <= 100`)
-  - no Meteora pool support
-  - matching rows are auto-blocked as `auto-junk-probable:gmgn_low_mcap_thin_support`
-- GMGN confirmed microscopic-liquidity gate now auto-blocks without requiring churn/dead-volume confirmation:
-  - GMGN token, non-manual review
-  - mcap `>= 15k`
-  - liquidity must be positive and confirmed:
-    - `liquidityUsd > 0`
-    - `liquidityUsd <= $100`
-    - liquidity/mcap `<= 0.2%`
-  - `liquidityUsd = 0` remains treated as ambiguous/missing rather than confirmed microscopic liquidity
-  - matching rows are auto-blocked as `auto-junk-probable:gmgn_confirmed_micro_liquidity`
-- GMGN low-cap extreme 24h churn with thin liquidity is also auto-blocked:
-  - GMGN token, non-manual review
-  - mcap `15k-100k`
-  - vol24h/mcap `>= 20`
-  - 24h txns `>= 1000`
-  - liquidity `<= $1k` or liquidity/mcap `<= 1%`
-  - matching rows are auto-blocked as `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
-- GMGN young low-cap high-churn thin-liquidity review gate:
-  - GMGN token, non-manual review
-  - age `< 6h`
-  - mcap `15k-100k`
-  - vol1h/mcap `>= 2`
-  - 24h txns `>= 1000`
-  - absolute 24h price change `>= 200%`
-  - no Meteora pool support
-  - liquidity must be positive and truly microscopic:
-    - `liquidityUsd > 0`
-    - `liquidityUsd <= $100`
-    - liquidity/mcap `<= 0.2%`
-  - `liquidityUsd = 0` from GMGN is treated as ambiguous/missing rather than confirmed thin liquidity
-  - matching rows are auto-blocked as `auto-junk-probable:gmgn_young_low_cap_high_churn_thin_liquidity`
+- GMGN low-liquidity spam gate now runs in ingestion before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher:
+  - automatic GMGN discovery only
+  - token is not manual, not already admin-blocked, and not Dex-confirmed
+  - CA does not end with `pump`, `bags`, or `brrr`
+  - age is known and below `2h`
+  - GMGN current liquidity is known and below `$1,000`
+  - market cap is missing or below `$150,000`
+  - matching rows are auto-blocked as `gmgn-liquidity:under-1k-spam:{liquidityUsd}:{mcap}`
+  - this replaces the heavier token-risk review GMGN liquidity hard-bans (`gmgn_confirmed_micro_liquidity`, `gmgn_low_mcap_thin_support`, `gmgn_low_mcap_extreme_24h_churn_thin_liquidity`, and `gmgn_young_low_cap_high_churn_thin_liquidity`)
 - Local operational checkpoint on `2026-05-04`:
   - GMGN risk backfill scanned `97` local candidates
   - `33` were blocked

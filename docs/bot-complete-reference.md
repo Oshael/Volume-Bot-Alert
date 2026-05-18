@@ -666,47 +666,21 @@ Important behavior:
   - vol5m/mcap `>= 4`
   - matching rows are auto-blocked with:
     - `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
-- GMGN low-cap thin-support gates:
-  - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
-  - source must be GMGN and not protected by a manual review
-  - confirmed microscopic-liquidity gate:
-    - mcap `>= 15k`
-    - liquidity must be positive and confirmed:
-      - `liquidityUsd > 0`
-      - `liquidityUsd <= $100`
-      - liquidity/mcap `<= 0.2%`
-    - does not require churn, dead volume, or missing Meteora pool confirmation
-    - `liquidityUsd = 0` is still treated as ambiguous/missing rather than confirmed microscopic liquidity
-    - matching rows are auto-blocked with:
-      - `auto-junk-probable:gmgn_confirmed_micro_liquidity`
-  - thin-support dead-volume gate:
-    - mcap `15k-150k`
-    - liquidity `<= $1k` or liquidity/mcap `<= 1%`
-    - volume `1h <= 100` and `6h <= 100`
-    - no Meteora pool support
-    - matching rows are auto-blocked with:
-      - `auto-junk-probable:gmgn_low_mcap_thin_support`
-  - extreme 24h churn with thin liquidity:
-    - mcap `15k-100k`
-    - vol24h/mcap `>= 20`
-    - 24h txns `>= 1000`
-    - liquidity `<= $1k` or liquidity/mcap `<= 1%`
-    - matching rows are auto-blocked with:
-      - `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
-  - young low-cap high-churn thin-liquidity gate:
-    - age `< 6h`
-    - mcap `15k-100k`
-    - vol1h/mcap `>= 2`
-    - 24h txns `>= 1000`
-    - absolute 24h price change `>= 200%`
-    - no Meteora pool support
-    - liquidity must be positive and truly microscopic:
-      - `liquidityUsd > 0`
-      - `liquidityUsd <= $100`
-      - liquidity/mcap `<= 0.2%`
-    - `liquidityUsd = 0` from GMGN is treated as ambiguous/missing rather than confirmed thin liquidity
-    - matching rows are auto-blocked with:
-      - `auto-junk-probable:gmgn_young_low_cap_high_churn_thin_liquidity`
+- GMGN low-liquidity spam gate:
+  - runs in GMGN ingestion before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher
+  - automatic GMGN discovery only
+  - token must not be manual, already admin-blocked, or Dex-confirmed
+  - CA must not end with `pump`, `bags`, or `brrr`
+  - age must be known and below `2h`
+  - GMGN current liquidity must be known and below `$1,000`
+  - market cap must be missing or below `$150,000`
+  - matching rows are auto-blocked with:
+    - `gmgn-liquidity:under-1k-spam:{liquidityUsd}:{mcap}`
+  - this replaces the removed token-risk review GMGN liquidity hard-bans:
+    - `auto-junk-probable:gmgn_confirmed_micro_liquidity`
+    - `auto-junk-probable:gmgn_low_mcap_thin_support`
+    - `auto-junk-probable:gmgn_low_mcap_extreme_24h_churn_thin_liquidity`
+    - `auto-junk-probable:gmgn_young_low_cap_high_churn_thin_liquidity`
 
 Manual vs automatic precedence:
 - `token_risk_reviews` now has `source`:
