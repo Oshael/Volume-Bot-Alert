@@ -41,6 +41,27 @@ const STATEMENTS = [
      ON token_market_buckets_1m(bucket_ts DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_1m_addr_bucket_ts
      ON token_market_buckets_1m(token_address, bucket_ts DESC)`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_market_buckets_1m_liquidity_recent
+     ON token_market_buckets_1m(token_address, bucket_ts DESC)
+     INCLUDE (close_liquidity_usd, sample_count, source)
+     WHERE close_liquidity_usd IS NOT NULL`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_market_buckets_1m_gmgn_lp_recent
+     ON token_market_buckets_1m(token_address, bucket_ts DESC)
+     INCLUDE (
+       gmgn_lock_percent,
+       gmgn_burn_ratio,
+       gmgn_burn_status,
+       gmgn_creator_close,
+       gmgn_creator_token_status,
+       sample_count,
+       source
+     )
+     WHERE source = 'gmgn'
+       AND gmgn_lock_percent IS NOT NULL
+       AND gmgn_burn_ratio IS NOT NULL
+       AND gmgn_burn_status IS NOT NULL
+       AND gmgn_creator_close IS NOT NULL
+       AND gmgn_creator_token_status IS NOT NULL`,
   `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_market_buckets_1m_sparkline_cover
      ON token_market_buckets_1m(token_address, bucket_ts DESC)
      INCLUDE (pair_address, close_mcap)

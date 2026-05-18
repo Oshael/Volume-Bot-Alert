@@ -134,7 +134,8 @@ describe('token market 1m bucket helpers', () => {
 
       assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112'], 5]);
       assert.match(capturedSql, /close_liquidity_usd IS NOT NULL/);
-      assert.match(capturedSql, /ROW_NUMBER\(\) OVER/);
+      assert.match(capturedSql, /CROSS JOIN LATERAL/);
+      assert.match(capturedSql, /LIMIT \$2/);
       assert.equal(rows.length, 1);
     } finally {
       db.query = originalQuery;
@@ -173,6 +174,8 @@ describe('token market 1m bucket helpers', () => {
       assert.match(capturedSql, /source = 'gmgn'/);
       assert.match(capturedSql, /gmgn_lock_percent IS NOT NULL/);
       assert.match(capturedSql, /gmgn_creator_token_status IS NOT NULL/);
+      assert.match(capturedSql, /CROSS JOIN LATERAL/);
+      assert.match(capturedSql, /LIMIT \$2/);
       assert.equal(rows.length, 1);
     } finally {
       db.query = originalQuery;

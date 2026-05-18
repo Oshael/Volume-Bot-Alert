@@ -831,30 +831,30 @@ async function listRecentLiquiditySamplesByAddresses(addresses, limit = 5) {
 
   const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 20));
   const { rows } = await db.query(
-    `WITH ranked AS (
+    `WITH requested(token_address) AS (
+       SELECT DISTINCT token_address
+       FROM unnest($1::varchar[]) AS requested(token_address)
+     )
+     SELECT
+       requested.token_address,
+       recent.bucket_ts,
+       recent.close_liquidity_usd,
+       recent.sample_count,
+       recent.source
+     FROM requested
+     CROSS JOIN LATERAL (
        SELECT
-         token_address,
          bucket_ts,
          close_liquidity_usd,
          sample_count,
-         source,
-         ROW_NUMBER() OVER (
-           PARTITION BY token_address
-           ORDER BY bucket_ts DESC
-         ) AS rn
+         source
        FROM token_market_buckets_1m
-       WHERE token_address = ANY($1::varchar[])
+       WHERE token_address = requested.token_address
          AND close_liquidity_usd IS NOT NULL
-     )
-     SELECT
-       token_address,
-       bucket_ts,
-       close_liquidity_usd,
-       sample_count,
-       source
-     FROM ranked
-     WHERE rn <= $2
-     ORDER BY token_address ASC, bucket_ts DESC`,
+       ORDER BY bucket_ts DESC
+       LIMIT $2
+     ) recent
+     ORDER BY requested.token_address ASC, recent.bucket_ts DESC`,
     [unique, safeLimit]
   );
 
@@ -875,9 +875,23 @@ async function listRecentGmgnLiquidityProtectionSamplesByAddresses(addresses, li
 
   const safeLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
   const { rows } = await db.query(
-    `WITH ranked AS (
+    `WITH requested(token_address) AS (
+       SELECT DISTINCT token_address
+       FROM unnest($1::varchar[]) AS requested(token_address)
+     )
+     SELECT
+       requested.token_address,
+       recent.bucket_ts,
+       recent.gmgn_lock_percent,
+       recent.gmgn_burn_ratio,
+       recent.gmgn_burn_status,
+       recent.gmgn_creator_close,
+       recent.gmgn_creator_token_status,
+       recent.sample_count,
+       recent.source
+     FROM requested
+     CROSS JOIN LATERAL (
        SELECT
-         token_address,
          bucket_ts,
          gmgn_lock_percent,
          gmgn_burn_ratio,
@@ -885,33 +899,19 @@ async function listRecentGmgnLiquidityProtectionSamplesByAddresses(addresses, li
          gmgn_creator_close,
          gmgn_creator_token_status,
          sample_count,
-         source,
-         ROW_NUMBER() OVER (
-           PARTITION BY token_address
-           ORDER BY bucket_ts DESC
-         ) AS rn
+         source
        FROM token_market_buckets_1m
-       WHERE token_address = ANY($1::varchar[])
+       WHERE token_address = requested.token_address
          AND source = 'gmgn'
          AND gmgn_lock_percent IS NOT NULL
          AND gmgn_burn_ratio IS NOT NULL
          AND gmgn_burn_status IS NOT NULL
          AND gmgn_creator_close IS NOT NULL
          AND gmgn_creator_token_status IS NOT NULL
-     )
-     SELECT
-       token_address,
-       bucket_ts,
-       gmgn_lock_percent,
-       gmgn_burn_ratio,
-       gmgn_burn_status,
-       gmgn_creator_close,
-       gmgn_creator_token_status,
-       sample_count,
-       source
-     FROM ranked
-     WHERE rn <= $2
-     ORDER BY token_address ASC, bucket_ts DESC`,
+       ORDER BY bucket_ts DESC
+       LIMIT $2
+     ) recent
+     ORDER BY requested.token_address ASC, recent.bucket_ts DESC`,
     [unique, safeLimit]
   );
 
