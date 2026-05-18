@@ -26,6 +26,7 @@
     "market-buckets:backfill": "node src/utils/backfill-market-buckets-1m.js",
     "market-buckets-agg:backfill": "node src/utils/backfill-market-buckets-agg.js",
     "market-volume-buckets:backfill": "node src/utils/backfill-market-volume-buckets-1m.js",
+    "diagnostics:vps-load": "node src/utils/collect-vps-load-diagnostics.js",
     "market-snapshots:drop": "node src/utils/drop-market-snapshots.js --confirm-drop",
     "invite:create": "node src/utils/create-invite.js"
   },
