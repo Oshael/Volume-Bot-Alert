@@ -543,7 +543,11 @@ describe('token market 1m bucket helpers', () => {
       });
 
       assert.match(capturedSql, /FROM token_market_buckets_1m/);
-      assert.match(capturedSql, /token_address = ANY\(\$1::varchar\[\]\)/);
+      assert.match(capturedSql, /unnest\(\$1::varchar\[\]\)/);
+      assert.match(capturedSql, /token_address = requested\.token_address/);
+      assert.match(capturedSql, /CROSS JOIN LATERAL/);
+      assert.match(capturedSql, /DISTINCT ON/);
+      assert.doesNotMatch(capturedSql, /ROW_NUMBER\(\) OVER/);
       assert.match(capturedSql, /bucket_ts >= NOW\(\) - \(\$2::int \* INTERVAL '1 hour'\)/);
       assert.match(capturedSql, /spark_bucket_ts/);
       assert.deepEqual(capturedParams, [[
@@ -664,6 +668,9 @@ describe('token market 1m bucket helpers', () => {
       assert.match(calls[0].sql, /FROM token_market_buckets_agg/);
       assert.match(calls[1].sql, /FROM token_market_buckets_1m/);
       assert.match(calls[1].sql, /spark_bucket_ts/);
+      assert.match(calls[1].sql, /CROSS JOIN LATERAL/);
+      assert.match(calls[1].sql, /DISTINCT ON/);
+      assert.doesNotMatch(calls[1].sql, /ROW_NUMBER\(\) OVER/);
       assert.deepEqual(calls[1].params, [[
         'So11111111111111111111111111111111111111112',
       ], 14 * 24, 30]);

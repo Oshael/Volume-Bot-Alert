@@ -27,6 +27,10 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_agg_lookup
      ON token_market_buckets_agg(token_address, granularity_minutes, bucket_ts DESC)
      WHERE close_mcap IS NOT NULL`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_token_market_buckets_agg_sparkline_cover
+     ON token_market_buckets_agg(token_address, granularity_minutes, bucket_ts DESC)
+     INCLUDE (pair_address, close_mcap)
+     WHERE close_mcap IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_agg_bucket_ts
      ON token_market_buckets_agg(granularity_minutes, bucket_ts DESC)`,
 ];

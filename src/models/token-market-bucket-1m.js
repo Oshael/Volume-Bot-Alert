@@ -1474,42 +1474,39 @@ async function listSparklineByAddresses(addresses, options = {}) {
 
 async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes) {
   const { rows } = await db.query(
-    `WITH raw AS (
-       SELECT
-         token_address,
-         pair_address,
-         bucket_ts,
-         close_mcap,
-         date_trunc('hour', bucket_ts)
-           + (
-             FLOOR(EXTRACT(MINUTE FROM bucket_ts) / $3::numeric)
-             * ($3::int * INTERVAL '1 minute')
-           ) AS spark_bucket_ts
-       FROM token_market_buckets_1m
-       WHERE token_address = ANY($1::varchar[])
-         AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
-         AND close_mcap IS NOT NULL
-     ),
-     ranked AS (
-       SELECT
-         token_address,
-         spark_bucket_ts,
-         pair_address,
-         close_mcap,
-         ROW_NUMBER() OVER (
-           PARTITION BY token_address, spark_bucket_ts
-           ORDER BY bucket_ts DESC
-         ) AS rn_close
-       FROM raw
+    `WITH requested(token_address) AS (
+       SELECT DISTINCT token_address
+       FROM unnest($1::varchar[]) AS requested(token_address)
      )
      SELECT
-       token_address,
-       spark_bucket_ts AS bucket_ts,
-       pair_address,
-       close_mcap
-     FROM ranked
-     WHERE rn_close = 1
-     ORDER BY token_address ASC, bucket_ts ASC`,
+       requested.token_address,
+       recent.spark_bucket_ts AS bucket_ts,
+       recent.pair_address,
+       recent.close_mcap
+     FROM requested
+     CROSS JOIN LATERAL (
+       SELECT DISTINCT ON (raw.spark_bucket_ts)
+         raw.spark_bucket_ts,
+         raw.pair_address,
+         raw.close_mcap
+       FROM (
+         SELECT
+           pair_address,
+           bucket_ts,
+           close_mcap,
+           date_trunc('hour', bucket_ts)
+             + (
+               FLOOR(EXTRACT(MINUTE FROM bucket_ts) / $3::numeric)
+               * ($3::int * INTERVAL '1 minute')
+             ) AS spark_bucket_ts
+         FROM token_market_buckets_1m
+         WHERE token_address = requested.token_address
+           AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
+           AND close_mcap IS NOT NULL
+       ) raw
+       ORDER BY raw.spark_bucket_ts ASC, raw.bucket_ts DESC
+     ) recent
+     ORDER BY requested.token_address ASC, recent.spark_bucket_ts ASC`,
     [addresses, hours, granularityMinutes]
   );
 
@@ -1518,17 +1515,29 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
 
 async function queryAggregateSparklineRows(addresses, hours, granularityMinutes, points) {
   const { rows: aggregateRows } = await db.query(
-    `SELECT
-       token_address,
-       bucket_ts,
-       pair_address,
-       close_mcap
-     FROM token_market_buckets_agg
-     WHERE token_address = ANY($1::varchar[])
-       AND granularity_minutes = $3::int
-       AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
-       AND close_mcap IS NOT NULL
-     ORDER BY token_address ASC, bucket_ts ASC`,
+    `WITH requested(token_address) AS (
+       SELECT DISTINCT token_address
+       FROM unnest($1::varchar[]) AS requested(token_address)
+     )
+     SELECT
+       requested.token_address,
+       recent.bucket_ts,
+       recent.pair_address,
+       recent.close_mcap
+     FROM requested
+     CROSS JOIN LATERAL (
+       SELECT
+         bucket_ts,
+         pair_address,
+         close_mcap
+       FROM token_market_buckets_agg
+       WHERE token_address = requested.token_address
+         AND granularity_minutes = $3::int
+         AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
+         AND close_mcap IS NOT NULL
+       ORDER BY bucket_ts ASC
+     ) recent
+     ORDER BY requested.token_address ASC, recent.bucket_ts ASC`,
     [addresses, hours, granularityMinutes]
   );
 
