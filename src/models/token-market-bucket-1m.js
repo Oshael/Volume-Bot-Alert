@@ -1270,7 +1270,9 @@ async function listSparklineByAddresses(addresses, options = {}) {
 
   const queryStartedAt = Date.now();
   const queryResult = shouldUseAggregateSparklines(safeGranularityMinutes)
-    ? await queryAggregateSparklineRows(unique, safeHours, safeGranularityMinutes, safePoints)
+    ? await queryAggregateSparklineRows(unique, safeHours, safeGranularityMinutes, safePoints, {
+      allowOneMinuteFallback: options.allowOneMinuteFallback === true,
+    })
     : {
       rows: await queryOneMinuteSparklineRows(unique, safeHours, safeGranularityMinutes),
       source: '1m',
@@ -1360,7 +1362,7 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
   return rows;
 }
 
-async function queryAggregateSparklineRows(addresses, hours, granularityMinutes, points) {
+async function queryAggregateSparklineRows(addresses, hours, granularityMinutes, points, options = {}) {
   const { rows: aggregateRows } = await db.query(
     `SELECT
        token_address,
@@ -1392,6 +1394,16 @@ async function queryAggregateSparklineRows(addresses, hours, granularityMinutes,
       aggregateRows: aggregateRows.length,
       fallbackRows: 0,
       fallbackAddresses: 0,
+    };
+  }
+
+  if (options.allowOneMinuteFallback !== true) {
+    return {
+      rows: aggregateRows,
+      source: 'aggregate-missing-coverage',
+      aggregateRows: aggregateRows.length,
+      fallbackRows: 0,
+      fallbackAddresses: fallbackAddresses.length,
     };
   }
 

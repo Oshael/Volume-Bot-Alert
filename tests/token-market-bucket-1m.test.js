@@ -452,6 +452,7 @@ describe('token market 1m bucket helpers', () => {
       ], {
         hours: 14 * 24,
         points: 336,
+        granularityMinutes: 1,
       });
 
       assert.match(capturedSql, /FROM token_market_buckets_1m/);
@@ -461,16 +462,16 @@ describe('token market 1m bucket helpers', () => {
       assert.deepEqual(capturedParams, [[
         'So11111111111111111111111111111111111111112',
         'So11111111111111111111111111111111111111113',
-      ], 14 * 24, 30]);
+      ], 14 * 24, 1]);
       assert.equal(rows.length, 2);
       assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
       assert.equal(rows[0].series.length, 336);
       assert(rows[0].effectiveHours > 0);
-      assert.equal(rows[0].granularityMinutes, 30);
+      assert.equal(rows[0].granularityMinutes, 1);
       assert.equal(rows[1].address, 'So11111111111111111111111111111111111111113');
       assert.deepEqual(rows[1].series, []);
       assert.equal(rows[1].coverageRatio, 0);
-      assert.equal(rows[1].granularityMinutes, 30);
+      assert.equal(rows[1].granularityMinutes, 1);
     } finally {
       db.query = originalQuery;
     }
@@ -524,7 +525,49 @@ describe('token market 1m bucket helpers', () => {
     }
   });
 
-  it('falls back to 1m sparkline rows when aggregate coverage is too short', async () => {
+  it('does not fall back to 1m sparkline rows by default when aggregate coverage is too short', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '160',
+          },
+        ],
+      };
+    };
+
+    try {
+      const metrics = [];
+      const rows = await tokenMarketBucket1m.listSparklineByAddresses([
+        'So11111111111111111111111111111111111111112',
+      ], {
+        hours: 14 * 24,
+        points: 336,
+        granularityMinutes: 30,
+        onMetrics: (entry) => metrics.push(entry),
+      });
+
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].sql, /FROM token_market_buckets_agg/);
+      assert.doesNotMatch(calls[0].sql, /FROM token_market_buckets_1m/);
+      assert.equal(rows[0].bucketCount, 1);
+      assert.equal(metrics[0].source, 'aggregate-missing-coverage');
+      assert.equal(metrics[0].aggregateRows, 1);
+      assert.equal(metrics[0].fallbackRows, 0);
+      assert.equal(metrics[0].fallbackAddresses, 1);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('falls back to 1m sparkline rows when aggregate coverage is too short and fallback is explicitly enabled', async () => {
     const originalQuery = db.query;
     const calls = [];
 
@@ -569,6 +612,7 @@ describe('token market 1m bucket helpers', () => {
         hours: 14 * 24,
         points: 336,
         granularityMinutes: 30,
+        allowOneMinuteFallback: true,
         onMetrics: (entry) => metrics.push(entry),
       });
 
