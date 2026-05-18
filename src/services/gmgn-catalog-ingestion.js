@@ -1417,7 +1417,10 @@ async function ingestGmgnToken(snapshot, options = {}) {
       summary.riskEnrichmentSuppressed = 1;
     }
     if (resolved.marketBucketModel) {
-      await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(filledSnapshot, now));
+      await resolved.marketBucketModel.upsertSnapshotBucket(
+        buildMarketBucketPayload(filledSnapshot, now),
+        { skipAggregateRefresh: true }
+      );
       summary.marketBucketsWritten = 1;
     }
     await resolved.volumeBucketModel.upsertSnapshotBucket(buildVolumeBucketPayload(filledSnapshot, now));

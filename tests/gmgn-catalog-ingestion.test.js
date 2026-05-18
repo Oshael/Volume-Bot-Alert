@@ -149,12 +149,13 @@ describe('gmgn catalog ingestion', () => {
     const callOrder = [];
     const tokenCatalogModel = createTokenCatalogStub();
     const marketBucketModel = {
-      async upsertSnapshotBucket(payload) {
+      async upsertSnapshotBucket(payload, options) {
         callOrder.push('marketBucket');
         assert.equal(payload.tokenAddress, TOKEN_A);
         assert.equal(payload.mcap, 250000);
         assert.equal(payload.price, 0.25);
         assert.equal(payload.source, 'gmgn');
+        assert.deepEqual(options, { skipAggregateRefresh: true });
         return payload;
       },
     };

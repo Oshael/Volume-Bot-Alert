@@ -217,6 +217,40 @@ describe('token market 1m bucket helpers', () => {
     }
   });
 
+  it('can skip aggregate refresh while still writing the 1m source bucket', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-03-24T04:18:00.000Z',
+            sample_count: 1,
+          },
+        ],
+      };
+    };
+
+    try {
+      const row = await tokenMarketBucket1m.upsertSnapshotBucket({
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        ts: '2026-03-24T04:18:20.000Z',
+        mcap: 123457,
+        price: 0.1235,
+        source: 'gmgn',
+      }, { skipAggregateRefresh: true });
+
+      assert.equal(row.sample_count, 1);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('includes the previous aggregate window when a new minute crosses a 5m boundary', async () => {
     const originalQuery = db.query;
     const calls = [];

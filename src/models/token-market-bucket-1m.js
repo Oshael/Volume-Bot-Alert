@@ -708,7 +708,7 @@ function scoreBidZoneCandidate(row, options = {}) {
   };
 }
 
-async function upsertSnapshotBucket(snapshot) {
+async function upsertSnapshotBucket(snapshot, options = {}) {
   const address = String(snapshot.tokenAddress || snapshot.address || '').trim();
   if (!isValidAddress(address)) {
     throw new Error('Invalid token address format');
@@ -809,7 +809,7 @@ async function upsertSnapshotBucket(snapshot) {
   );
 
   const row = rows[0];
-  if (shouldRefreshAggregatesForUpsertedBucket(row)) {
+  if (!options.skipAggregateRefresh && shouldRefreshAggregatesForUpsertedBucket(row)) {
     await upsertAggregateBucketsForSourceBucket(address, getAggregateRefreshBucketDates(bucketTs));
   }
   invalidateSparklineCacheForAddresses([address]);
