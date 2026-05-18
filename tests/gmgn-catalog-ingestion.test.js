@@ -1125,11 +1125,11 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.matcherSkippedSuppressed + result.summary.matcherSkippedGmgnSafeguard, 1);
     assert.deepEqual(calls.map(([name]) => name), ['upsertToken', 'applyEvaluationResult', 'marketBucket', 'volumeBucket']);
     assert.equal(calls[0][1].isActiveMonitorCandidate, false);
-    assert.equal(calls[2][1].gmgnLockPercent, 0);
-    assert.equal(calls[2][1].gmgnBurnRatio, 0);
-    assert.equal(calls[2][1].gmgnBurnStatus, 'none');
-    assert.equal(calls[2][1].gmgnCreatorClose, true);
-    assert.equal(calls[2][1].gmgnCreatorTokenStatus, 'creator_close');
+    assert.equal(calls[2][1].gmgnLockPercent, undefined);
+    assert.equal(calls[2][1].gmgnBurnRatio, undefined);
+    assert.equal(calls[2][1].gmgnBurnStatus, undefined);
+    assert.equal(calls[2][1].gmgnCreatorClose, undefined);
+    assert.equal(calls[2][1].gmgnCreatorTokenStatus, undefined);
   });
 
   it('keeps young GMGN custom-LP tokens out of monitored during cooldown while queuing fast checks', async () => {

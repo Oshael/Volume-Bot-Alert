@@ -299,7 +299,6 @@ function buildVolumeBucketPayload(snapshot, now) {
 }
 
 function buildMarketBucketPayload(snapshot, now) {
-  const gmgnLiquidityProtection = readGmgnLiquidityProtectionFields(snapshot);
   return {
     tokenAddress: normalizeAddress(snapshot.address || snapshot.tokenAddress),
     ts: now,
@@ -307,11 +306,6 @@ function buildMarketBucketPayload(snapshot, now) {
     mcap: snapshot.mcap,
     price: snapshot.price,
     liquidityUsd: snapshot.liquidityUsd,
-    gmgnLockPercent: gmgnLiquidityProtection.lockPercent,
-    gmgnBurnRatio: gmgnLiquidityProtection.burnRatio,
-    gmgnBurnStatus: gmgnLiquidityProtection.burnStatus || null,
-    gmgnCreatorClose: gmgnLiquidityProtection.creatorClose,
-    gmgnCreatorTokenStatus: gmgnLiquidityProtection.creatorTokenStatus || null,
     source: 'gmgn',
   };
 }

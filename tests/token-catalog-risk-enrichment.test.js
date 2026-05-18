@@ -70,8 +70,11 @@ describe('token catalog auto risk review candidates', () => {
       assert.match(capturedSql, /ab\.address IS NULL/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= \$3/i);
       assert.match(capturedSql, /tc\.suppressed_reason = 'gmgn_unprotected_liquidity_pending'/i);
+      assert.match(capturedSql, /tc\.suppressed_reason = 'low_liquidity_fast_check'/i);
+      assert.match(capturedSql, /tc\.next_evaluation_at <= NOW\(\)/i);
       assert.match(capturedSql, /tc\.last_liquidity_usd < 1000/i);
       assert.match(capturedSql, /tc\.last_token_created_at_ms >=/i);
+      assert.match(capturedSql, /NOW\(\) - INTERVAL '2 minutes'/i);
       assert.match(capturedSql, /trr\.source = 'auto'/i);
       assert.match(capturedSql, /trr\.updated_at < tc\.last_evaluated_at/i);
       assert.equal(rows.length, 1);

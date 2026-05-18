@@ -669,19 +669,23 @@ Important behavior:
 - Source-agnostic low-liquidity hard ban:
   - runs before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - applies to non-manual reviews from any source
-  - token age `<= 6h`
+  - token age `<= 2h`
+  - market snapshot must be fresh, with `last_seen_at` or `last_evaluated_at` no older than `2m`
+  - mcap must be present and `>= 15k`
   - `last_liquidity_usd < $1k`, including `0`
-  - requires the latest `5` stored `token_market_buckets_1m.close_liquidity_usd` samples to also be `< $1k`
-  - the candidate selector includes these low-liquidity rows even when they do not meet the normal active monitoring/mcap scan path
+  - first fresh hit suppresses the token as `low_liquidity_fast_check`, sets `eligible_for_monitoring = false`, and schedules `next_evaluation_at = now + 60s`
+  - the hard ban only fires if the second due check has a fresh market snapshot at or after `next_evaluation_at` and is still below `$1k`
+  - if the token recovers above `$1k`, loses sane data, or ages past `2h`, the fast-check suppression is released instead of hard-banning
+  - the candidate selector includes young low-liquidity rows and due `low_liquidity_fast_check` rows even when they do not meet the normal active monitoring/mcap scan path
   - matching rows are auto-blocked with:
     - `auto-junk-probable:low_liquidity_under_1k`
 - GMGN unprotected-liquidity hard ban:
   - runs before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback
   - source must be GMGN and not protected by a manual review
-  - token age `<= 6h`
+  - token age `<= 2h`
   - current GMGN payload must show `lock_percent = 0`, `burn_ratio = 0`, `burn_status = none`, `creator_close = true`, and `creator_token_status = creator_close`
   - GMGN ingestion suppresses tokens born with this status as `gmgn_unprotected_liquidity_pending`, with `eligible_for_monitoring = false` and `is_active_monitor_candidate = false`
-  - requires the latest `4` stored GMGN `token_market_buckets_1m` samples to repeat those liquidity-protection fields before auto-blocking
+  - GMGN liquidity-protection fields are not stored in `token_market_buckets_1m`; the auto-ban uses the pending catalog state from the current GMGN payload
   - matching rows are auto-blocked with:
     - `auto-junk-probable:gmgn_unprotected_liquidity`
 - GMGN burn/creator-hold preliminary safeguard:

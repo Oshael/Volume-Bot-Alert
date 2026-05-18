@@ -276,17 +276,21 @@ Important:
   - matching rows are auto-blocked as `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
 - The token-risk review sync worker also has a source-agnostic low-liquidity hard ban:
   - non-manual review
-  - token age `<= 6h`
+  - token age `<= 2h`
+  - market snapshot must be fresh, with `last_seen_at` or `last_evaluated_at` no older than `2m`
+  - mcap must be present and `>= 15k`
   - `last_liquidity_usd < $1k`, including `0`
-  - requires the latest `5` stored `token_market_buckets_1m.close_liquidity_usd` samples to also be `< $1k`
+  - first fresh hit suppresses the token as `low_liquidity_fast_check`, sets `eligible_for_monitoring = false`, and schedules `next_evaluation_at = now + 60s`
+  - the hard ban only fires if the second due check has a fresh market snapshot at or after `next_evaluation_at` and is still below `$1k`
+  - if the token recovers above `$1k`, loses sane data, or ages past `2h`, the fast-check suppression is released instead of hard-banning
   - matching rows are auto-blocked as `auto-junk-probable:low_liquidity_under_1k`
-  - the candidate selector includes these low-liquidity rows even when they do not meet the normal active monitoring/mcap scan path
+  - the candidate selector includes young low-liquidity rows and due `low_liquidity_fast_check` rows even when they do not meet the normal active monitoring/mcap scan path
 - GMGN unprotected-liquidity hard ban:
   - GMGN token, non-manual review
-  - token age `<= 6h`
+  - token age `<= 2h`
   - current GMGN payload has `lock_percent = 0`, `burn_ratio = 0`, `burn_status = none`, `creator_close = true`, and `creator_token_status = creator_close`
-  - tokens born with this status are written as `gmgn_unprotected_liquidity_pending`, `eligible_for_monitoring = false`, and `is_active_monitor_candidate = false`, so they do not enter monitored alerts while confirmation is pending
-  - requires the latest `4` stored GMGN `token_market_buckets_1m` liquidity-protection samples to repeat the same signal
+  - tokens born with this status are written as `gmgn_unprotected_liquidity_pending`, `eligible_for_monitoring = false`, and `is_active_monitor_candidate = false`, so they do not enter monitored alerts before the sync worker blocks them
+  - GMGN liquidity-protection fields are not stored in `token_market_buckets_1m`; the auto-ban uses the pending catalog state from the current GMGN payload
   - matching rows are auto-blocked as `auto-junk-probable:gmgn_unprotected_liquidity`
 - GMGN burn/creator-hold preliminary safeguard:
   - GMGN token, non-manual review, token age `< 6h`

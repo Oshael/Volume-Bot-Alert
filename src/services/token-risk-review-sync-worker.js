@@ -2,7 +2,6 @@ const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenRiskReview = require('../models/token-risk-review');
 const adminBlockedToken = require('../models/admin-blocked-token');
-const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenJunkEvidenceCapture = require('./token-junk-evidence-capture');
 const gmgnClient = require('./gmgn-client');
 const { classifyTokenJunk } = require('./token-junk-metric');
@@ -33,10 +32,11 @@ const NEW_LOW_MCAP_EXTREME_VOL_MAX_MCAP = 100000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M = 500000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
 const GLOBAL_LOW_LIQUIDITY_AUTO_BLOCK_MAX_USD = 1000;
-const GLOBAL_LOW_LIQUIDITY_CONFIRMATION_BUCKETS = 5;
-const GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS = 6;
-const GMGN_UNPROTECTED_LIQUIDITY_CONFIRMATION_BUCKETS = 4;
-const GMGN_UNPROTECTED_LIQUIDITY_MAX_AGE_HOURS = 6;
+const GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS = 2;
+const LOW_LIQUIDITY_FAST_CHECK_SUPPRESSION_REASON = 'low_liquidity_fast_check';
+const LOW_LIQUIDITY_FAST_CHECK_RECHECK_MS = 60 * 1000;
+const LOW_LIQUIDITY_SNAPSHOT_MAX_AGE_MS = 2 * 60 * 1000;
+const GMGN_UNPROTECTED_LIQUIDITY_MAX_AGE_HOURS = 2;
 const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP = 150000;
 const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_USD = 1000;
 const GMGN_LOW_MCAP_THIN_SUPPORT_MAX_LIQUIDITY_TO_MCAP = 0.01;
@@ -144,23 +144,6 @@ function toFiniteNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function toBooleanOrNull(value) {
-  if (value === true || value === false) {
-    return value;
-  }
-  if (value == null || value === '') {
-    return null;
-  }
-  const normalized = String(value).trim().toLowerCase();
-  if (['true', 't', '1', 'yes'].includes(normalized)) {
-    return true;
-  }
-  if (['false', 'f', '0', 'no'].includes(normalized)) {
-    return false;
-  }
-  return null;
-}
-
 function calculateAgeHoursFromMs(timestampMs) {
   const createdAtMs = toFiniteNumberOrNull(timestampMs);
   if (!(createdAtMs > 0)) {
@@ -173,6 +156,18 @@ function calculateAgeHoursFromMs(timestampMs) {
   }
 
   return (nowMs - createdAtMs) / (60 * 60 * 1000);
+}
+
+function toTimestampMs(value) {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function computeRatio(numerator, denominator) {
@@ -294,19 +289,6 @@ function buildNewLowMcapExtremeVolumeAssessment(row = {}) {
   };
 }
 
-function hasConfirmedLowLiquiditySamples(samples = []) {
-  if (!Array.isArray(samples) || samples.length < GLOBAL_LOW_LIQUIDITY_CONFIRMATION_BUCKETS) {
-    return false;
-  }
-
-  return samples
-    .slice(0, GLOBAL_LOW_LIQUIDITY_CONFIRMATION_BUCKETS)
-    .every((sample) => {
-      const liquidityUsd = toFiniteNumberOrNull(sample?.close_liquidity_usd ?? sample?.closeLiquidityUsd);
-      return liquidityUsd != null && liquidityUsd < GLOBAL_LOW_LIQUIDITY_AUTO_BLOCK_MAX_USD;
-    });
-}
-
 function isGlobalLowLiquidityAgeEligible(row = {}) {
   const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
   return ageHours != null && ageHours <= GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS;
@@ -319,8 +301,54 @@ function needsLowLiquidityConfirmation(row = {}) {
     && isGlobalLowLiquidityAgeEligible(row);
 }
 
-function hasRequiredLowLiquidityConfirmation(row = {}, samples = []) {
-  return !needsLowLiquidityConfirmation(row) || hasConfirmedLowLiquiditySamples(samples);
+function isLowLiquidityFastCheckSuppressed(row = {}) {
+  return String(row?.suppressed_reason || '').trim() === LOW_LIQUIDITY_FAST_CHECK_SUPPRESSION_REASON;
+}
+
+function getLatestMarketSnapshotAtMs(row = {}) {
+  const lastSeenAt = toTimestampMs(row.last_seen_at);
+  const lastEvaluatedAt = toTimestampMs(row.last_evaluated_at);
+  return Math.max(lastSeenAt || 0, lastEvaluatedAt || 0) || null;
+}
+
+function hasFreshLowLiquiditySnapshot(row = {}, nowMs = Date.now()) {
+  const latestSnapshotAtMs = getLatestMarketSnapshotAtMs(row);
+  return latestSnapshotAtMs != null
+    && latestSnapshotAtMs <= nowMs
+    && nowMs - latestSnapshotAtMs <= LOW_LIQUIDITY_SNAPSHOT_MAX_AGE_MS;
+}
+
+function hasFreshLowLiquidityRecheckSnapshot(row = {}, nowMs = Date.now()) {
+  const latestSnapshotAtMs = getLatestMarketSnapshotAtMs(row);
+  const nextEvaluationAtMs = toTimestampMs(row.next_evaluation_at);
+  return hasFreshLowLiquiditySnapshot(row, nowMs)
+    && (nextEvaluationAtMs == null || latestSnapshotAtMs >= nextEvaluationAtMs);
+}
+
+function hasSaneLowLiquidityBanData(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
+  return !isManualReviewProtected(row)
+    && String(row?.source || '').trim() !== ''
+    && marketCap != null
+    && marketCap >= DEFAULT_MIN_MCAP
+    && liquidityUsd != null
+    && liquidityUsd < GLOBAL_LOW_LIQUIDITY_AUTO_BLOCK_MAX_USD
+    && isGlobalLowLiquidityAgeEligible(row);
+}
+
+function isLowLiquidityFastCheckDue(row = {}, nowMs = Date.now()) {
+  const nextEvaluationAtMs = toTimestampMs(row.next_evaluation_at);
+  return nextEvaluationAtMs == null || nextEvaluationAtMs <= nowMs;
+}
+
+function hasRequiredLowLiquidityConfirmation(row = {}) {
+  return !needsLowLiquidityConfirmation(row)
+    || (
+      isLowLiquidityFastCheckSuppressed(row)
+      && isLowLiquidityFastCheckDue(row)
+      && hasFreshLowLiquidityRecheckSnapshot(row)
+    );
 }
 
 function isGmgnUnprotectedLiquidityAgeEligible(row = {}) {
@@ -328,50 +356,45 @@ function isGmgnUnprotectedLiquidityAgeEligible(row = {}) {
   return ageHours != null && ageHours <= GMGN_UNPROTECTED_LIQUIDITY_MAX_AGE_HOURS;
 }
 
-function hasGmgnUnprotectedLiquiditySample(sample = {}) {
-  const lockPercent = toFiniteNumberOrNull(sample.gmgn_lock_percent ?? sample.gmgnLockPercent);
-  const burnRatio = toFiniteNumberOrNull(sample.gmgn_burn_ratio ?? sample.gmgnBurnRatio);
-  const burnStatus = String(sample.gmgn_burn_status ?? sample.gmgnBurnStatus ?? '').trim().toLowerCase();
-  const creatorClose = toBooleanOrNull(sample.gmgn_creator_close ?? sample.gmgnCreatorClose);
-  const creatorTokenStatus = String(
-    sample.gmgn_creator_token_status ?? sample.gmgnCreatorTokenStatus ?? ''
-  ).trim().toLowerCase();
-
-  return lockPercent === 0
-    && burnRatio === 0
-    && burnStatus === 'none'
-    && creatorClose === true
-    && creatorTokenStatus === 'creator_close';
-}
-
-function hasConfirmedGmgnUnprotectedLiquiditySamples(samples = []) {
-  if (!Array.isArray(samples) || samples.length < GMGN_UNPROTECTED_LIQUIDITY_CONFIRMATION_BUCKETS) {
-    return false;
-  }
-
-  return samples
-    .slice(0, GMGN_UNPROTECTED_LIQUIDITY_CONFIRMATION_BUCKETS)
-    .every((sample) => hasGmgnUnprotectedLiquiditySample(sample));
-}
-
-function shouldWaitForGmgnUnprotectedLiquidityConfirmation(row = {}) {
+function hasGmgnUnprotectedLiquidityPendingSignal(row = {}) {
   return isGmgnSource(row)
     && !isManualReviewProtected(row)
     && isGmgnUnprotectedLiquidityAgeEligible(row)
     && String(row?.suppressed_reason || '').trim() === GMGN_UNPROTECTED_LIQUIDITY_SUPPRESSION_REASON;
 }
 
-function buildGlobalLowLiquidityAssessment(row = {}, liquiditySamples = []) {
+function buildGlobalLowLiquidityAssessment(row = {}) {
   const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
   const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
+  const isFastCheckSuppressed = isLowLiquidityFastCheckSuppressed(row);
   if (
-    isManualReviewProtected(row)
-    || liquidityUsd == null
-    || liquidityUsd >= GLOBAL_LOW_LIQUIDITY_AUTO_BLOCK_MAX_USD
-    || ageHours == null
-    || ageHours > GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS
-    || !hasConfirmedLowLiquiditySamples(liquiditySamples)
+    isFastCheckSuppressed
+    && (
+      liquidityUsd == null
+      || liquidityUsd >= GLOBAL_LOW_LIQUIDITY_AUTO_BLOCK_MAX_USD
+      || ageHours == null
+      || ageHours > GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS
+    )
   ) {
+    return buildLowLiquidityFastCheckRecoveryAssessment(row);
+  }
+
+  if (
+    !hasSaneLowLiquidityBanData(row)
+    || !hasFreshLowLiquiditySnapshot(row)
+  ) {
+    return null;
+  }
+
+  if (!isFastCheckSuppressed) {
+    return buildLowLiquidityFastCheckPendingAssessment(row);
+  }
+
+  if (!isLowLiquidityFastCheckDue(row)) {
+    return null;
+  }
+
+  if (!hasFreshLowLiquidityRecheckSnapshot(row)) {
     return null;
   }
 
@@ -391,20 +414,57 @@ function buildGlobalLowLiquidityAssessment(row = {}, liquiditySamples = []) {
     marketCap,
     liquidityUsd,
     ageHours,
-    confirmationBuckets: GLOBAL_LOW_LIQUIDITY_CONFIRMATION_BUCKETS,
     maxAgeHours: GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS,
     liquidityToMcapRatio: computeRatio(liquidityUsd, marketCap),
   };
 }
 
-function buildGmgnUnprotectedLiquidityAssessment(row = {}, samples = []) {
+function buildLowLiquidityFastCheckPendingAssessment(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap);
+  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
+  return {
+    label: 'valid',
+    confidence: 'low',
+    manualReviewRequired: false,
+    autoBlock: false,
+    mode: 'low_liquidity_fast_check_pending',
+    strongSignalCount: 0,
+    reasonCodes: [AUTO_BLOCK_REASON_CODES.LOW_LIQUIDITY_UNDER_1K],
+    strongSignals: [],
+    weakSignals: [AUTO_BLOCK_REASON_CODES.LOW_LIQUIDITY_UNDER_1K],
+    behavioralSignals: [],
+    positiveSignals: [],
+    marketCap,
+    liquidityUsd,
+    recheckMs: LOW_LIQUIDITY_FAST_CHECK_RECHECK_MS,
+    maxAgeHours: GLOBAL_LOW_LIQUIDITY_MAX_AGE_HOURS,
+    liquidityToMcapRatio: computeRatio(liquidityUsd, marketCap),
+  };
+}
+
+function buildLowLiquidityFastCheckRecoveryAssessment(row = {}) {
+  return {
+    label: 'valid',
+    confidence: 'medium',
+    manualReviewRequired: false,
+    autoBlock: false,
+    mode: 'low_liquidity_fast_check_recovered',
+    strongSignalCount: 0,
+    reasonCodes: [],
+    strongSignals: [],
+    weakSignals: [],
+    behavioralSignals: [],
+    positiveSignals: ['low_liquidity_recovered'],
+    marketCap: toFiniteNumberOrNull(row.last_mcap),
+    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
+  };
+}
+
+function buildGmgnUnprotectedLiquidityAssessment(row = {}) {
   const ageHours = calculateAgeHoursFromMs(row.last_token_created_at_ms);
   if (
-    !isGmgnSource(row)
-    || isManualReviewProtected(row)
+    !hasGmgnUnprotectedLiquidityPendingSignal(row)
     || ageHours == null
-    || ageHours > GMGN_UNPROTECTED_LIQUIDITY_MAX_AGE_HOURS
-    || !hasConfirmedGmgnUnprotectedLiquiditySamples(samples)
   ) {
     return null;
   }
@@ -424,71 +484,18 @@ function buildGmgnUnprotectedLiquidityAssessment(row = {}, samples = []) {
     marketCap: toFiniteNumberOrNull(row.last_mcap),
     liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
     ageHours,
-    confirmationBuckets: GMGN_UNPROTECTED_LIQUIDITY_CONFIRMATION_BUCKETS,
     maxAgeHours: GMGN_UNPROTECTED_LIQUIDITY_MAX_AGE_HOURS,
   };
 }
 
-function buildGmgnUnprotectedLiquidityPendingConfirmationAssessment(row = {}, samples = []) {
-  if (
-    !shouldWaitForGmgnUnprotectedLiquidityConfirmation(row)
-    || hasConfirmedGmgnUnprotectedLiquiditySamples(samples)
-  ) {
-    return null;
-  }
-
-  return {
-    label: 'valid',
-    confidence: 'low',
-    manualReviewRequired: false,
-    autoBlock: false,
-    mode: 'gmgn_unprotected_liquidity_pending_confirmation',
-    strongSignalCount: 0,
-    reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_UNPROTECTED_LIQUIDITY],
-    strongSignals: [],
-    weakSignals: [AUTO_BLOCK_REASON_CODES.GMGN_UNPROTECTED_LIQUIDITY],
-    behavioralSignals: [],
-    positiveSignals: [],
-    marketCap: toFiniteNumberOrNull(row.last_mcap),
-    liquidityUsd: toFiniteNumberOrNull(row.last_liquidity_usd),
-    confirmationBuckets: GMGN_UNPROTECTED_LIQUIDITY_CONFIRMATION_BUCKETS,
-  };
-}
-
-function buildLowLiquidityPendingConfirmationAssessment(row = {}, liquiditySamples = []) {
-  const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
-  if (!needsLowLiquidityConfirmation(row) || hasConfirmedLowLiquiditySamples(liquiditySamples)) {
-    return null;
-  }
-
-  const marketCap = toFiniteNumberOrNull(row.last_mcap);
-  return {
-    label: 'valid',
-    confidence: 'low',
-    manualReviewRequired: false,
-    autoBlock: false,
-    mode: 'low_liquidity_pending_confirmation',
-    strongSignalCount: 0,
-    reasonCodes: [AUTO_BLOCK_REASON_CODES.LOW_LIQUIDITY_UNDER_1K],
-    strongSignals: [],
-    weakSignals: [AUTO_BLOCK_REASON_CODES.LOW_LIQUIDITY_UNDER_1K],
-    behavioralSignals: [],
-    positiveSignals: [],
-    marketCap,
-    liquidityUsd,
-    confirmationBuckets: GLOBAL_LOW_LIQUIDITY_CONFIRMATION_BUCKETS,
-    liquidityToMcapRatio: computeRatio(liquidityUsd, marketCap),
-  };
-}
-
-function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null, liquiditySamples = []) {
+function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null) {
   const marketCap = toFiniteNumberOrNull(row.last_mcap);
   if (
     !isGmgnSource(row)
     || isManualReviewProtected(row)
     || !(marketCap >= DEFAULT_MIN_MCAP)
     || marketCap > GMGN_LOW_MCAP_THIN_SUPPORT_MAX_MCAP
-    || !hasRequiredLowLiquidityConfirmation(row, liquiditySamples)
+    || !hasRequiredLowLiquidityConfirmation(row)
     || !hasGmgnThinLiquidity(row)
     || !hasGmgnDeadRecentVolume(row)
     || !hasNoMeteoraPool(meteoraSummary)
@@ -515,7 +522,7 @@ function buildGmgnLowMcapThinSupportAssessment(row = {}, meteoraSummary = null, 
   };
 }
 
-function buildGmgnConfirmedMicroLiquidityAssessment(row = {}, liquiditySamples = []) {
+function buildGmgnConfirmedMicroLiquidityAssessment(row = {}) {
   const marketCap = toFiniteNumberOrNull(row.last_mcap);
   const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
   const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
@@ -524,7 +531,7 @@ function buildGmgnConfirmedMicroLiquidityAssessment(row = {}, liquiditySamples =
     !isGmgnSource(row)
     || isManualReviewProtected(row)
     || !(marketCap >= DEFAULT_MIN_MCAP)
-    || !hasRequiredLowLiquidityConfirmation(row, liquiditySamples)
+    || !hasRequiredLowLiquidityConfirmation(row)
     || !(liquidityUsd > 0)
     || liquidityUsd > GMGN_CONFIRMED_MICRO_LIQUIDITY_MAX_USD
     || liquidityToMcap == null
@@ -551,7 +558,7 @@ function buildGmgnConfirmedMicroLiquidityAssessment(row = {}, liquiditySamples =
   };
 }
 
-function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}, liquiditySamples = []) {
+function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}) {
   const marketCap = toFiniteNumberOrNull(row.last_mcap);
   const vol24h = toFiniteNumberOrNull(row.last_vol_24h);
   const vol24hToMcap = computeRatio(vol24h, marketCap);
@@ -566,7 +573,7 @@ function buildGmgnLowMcapExtreme24hChurnAssessment(row = {}, liquiditySamples = 
     || vol24hToMcap == null
     || vol24hToMcap < GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_VOL_24H_TO_MCAP
     || txns24h < GMGN_LOW_MCAP_EXTREME_24H_CHURN_MIN_TXNS_24H
-    || !hasRequiredLowLiquidityConfirmation(row, liquiditySamples)
+    || !hasRequiredLowLiquidityConfirmation(row)
     || !hasGmgnThinLiquidity(row)
   ) {
     return null;
@@ -626,7 +633,7 @@ function hasYoungLowCapHighChurnMarket(row = {}) {
     && priceChange24h >= GMGN_YOUNG_LOW_CAP_HIGH_CHURN_MIN_PRICE_CHANGE_24H;
 }
 
-function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null, liquiditySamples = []) {
+function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null) {
   const marketCap = toFiniteNumberOrNull(row.last_mcap);
   const liquidityUsd = toFiniteNumberOrNull(row.last_liquidity_usd);
   const liquidityToMcap = computeRatio(liquidityUsd, marketCap);
@@ -639,7 +646,7 @@ function buildGmgnYoungLowCapHighChurnAssessment(row = {}, meteoraSummary = null
 
   if (
     !hasYoungLowCapHighChurnBaseProfile(row)
-    || !hasRequiredLowLiquidityConfirmation(row, liquiditySamples)
+    || !hasRequiredLowLiquidityConfirmation(row)
     || !hasYoungLowCapThinLiquidity(row)
     || !hasYoungLowCapHighChurnMarket(row)
     || !hasNoMeteoraPool(meteoraSummary)
@@ -824,14 +831,20 @@ function resolveGmgnMonitorPriority(marketCap) {
   return 'low';
 }
 
-function buildGmgnRiskReleasePayload(row = {}) {
-  const marketCap = toFiniteNumberOrNull(row.last_mcap) || 0;
+function resolveDexEligibilityState(marketCap) {
+  if (marketCap >= 100000) return 'dex-high';
+  if (marketCap >= 30000) return 'dex-normal';
+  return 'dex-low';
+}
+
+function resolveDexMonitorPriority(marketCap) {
+  if (marketCap >= 100000) return 'high';
+  if (marketCap >= 30000) return 'normal';
+  return 'low';
+}
+
+function buildCatalogMetricPayload(row = {}) {
   return {
-    eligibilityState: resolveGmgnEligibilityState(marketCap),
-    eligibleForMonitoring: true,
-    suppressedReason: null,
-    nextEvaluationAt: new Date(Date.now() + 30000),
-    monitorPriority: resolveGmgnMonitorPriority(marketCap),
     symbol: row.symbol || null,
     name: row.name || null,
     mcap: row.last_mcap,
@@ -849,6 +862,48 @@ function buildGmgnRiskReleasePayload(row = {}) {
     txns24hBuys: row.last_txns_24h_buys,
     txns24hSells: row.last_txns_24h_sells,
     tokenCreatedAt: row.last_token_created_at_ms,
+  };
+}
+
+function buildGmgnRiskReleasePayload(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap) || 0;
+  return {
+    eligibilityState: resolveGmgnEligibilityState(marketCap),
+    eligibleForMonitoring: true,
+    suppressedReason: null,
+    nextEvaluationAt: new Date(Date.now() + 30000),
+    monitorPriority: resolveGmgnMonitorPriority(marketCap),
+    ...buildCatalogMetricPayload(row),
+  };
+}
+
+function buildLowLiquidityFastCheckPendingPayload(row = {}) {
+  return {
+    eligibilityState: 'low-liquidity-fast-check',
+    eligibleForMonitoring: false,
+    suppressedReason: LOW_LIQUIDITY_FAST_CHECK_SUPPRESSION_REASON,
+    nextEvaluationAt: new Date(Date.now() + LOW_LIQUIDITY_FAST_CHECK_RECHECK_MS),
+    monitorPriority: 'dormant',
+    ...buildCatalogMetricPayload(row),
+  };
+}
+
+function buildLowLiquidityFastCheckRecoveryPayload(row = {}) {
+  const marketCap = toFiniteNumberOrNull(row.last_mcap) || 0;
+  const eligibilityState = isGmgnSource(row)
+    ? resolveGmgnEligibilityState(marketCap)
+    : resolveDexEligibilityState(marketCap);
+  const monitorPriority = isGmgnSource(row)
+    ? resolveGmgnMonitorPriority(marketCap)
+    : resolveDexMonitorPriority(marketCap);
+
+  return {
+    eligibilityState,
+    eligibleForMonitoring: true,
+    suppressedReason: null,
+    nextEvaluationAt: new Date(Date.now() + 30000),
+    monitorPriority,
+    ...buildCatalogMetricPayload(row),
   };
 }
 
@@ -934,6 +989,23 @@ async function releaseGmgnRiskSuppression(row, deps = {}) {
   return true;
 }
 
+async function applyLowLiquidityFastCheckState(row, assessment, deps = {}) {
+  const mode = String(assessment?.mode || '').trim();
+  if (
+    mode !== 'low_liquidity_fast_check_pending'
+    && mode !== 'low_liquidity_fast_check_recovered'
+  ) {
+    return false;
+  }
+
+  const catalogModel = deps.tokenCatalogModel || tokenCatalog;
+  const payload = mode === 'low_liquidity_fast_check_pending'
+    ? buildLowLiquidityFastCheckPendingPayload(row)
+    : buildLowLiquidityFastCheckRecoveryPayload(row);
+  await catalogModel.applyEvaluationResult(row.address, payload);
+  return true;
+}
+
 async function autoBlockToken(row, assessment, deps = {}, meteoraSummary = null) {
   const address = String(row?.address || '').trim();
   if (!address) {
@@ -975,70 +1047,16 @@ async function listCandidates(offset, options, deps = {}) {
   return rows;
 }
 
-async function listLowLiquiditySamplesByAddress(addresses, deps = {}) {
-  const bucketModel = deps.tokenMarketBucket1mModel;
-  if (!bucketModel?.listRecentLiquiditySamplesByAddresses) {
-    return new Map();
-  }
-
-  const rows = await bucketModel.listRecentLiquiditySamplesByAddresses(
-    addresses,
-    GLOBAL_LOW_LIQUIDITY_CONFIRMATION_BUCKETS
-  );
-  return rows.reduce((acc, sample) => {
-    const address = String(sample?.tokenAddress || sample?.token_address || '').trim();
-    if (!address) {
-      return acc;
-    }
-    if (!acc.has(address)) {
-      acc.set(address, []);
-    }
-    acc.get(address).push(sample);
-    return acc;
-  }, new Map());
-}
-
-async function listGmgnUnprotectedLiquiditySamplesByAddress(addresses, deps = {}) {
-  const bucketModel = deps.tokenMarketBucket1mModel;
-  if (!bucketModel?.listRecentGmgnLiquidityProtectionSamplesByAddresses) {
-    return new Map();
-  }
-
-  const rows = await bucketModel.listRecentGmgnLiquidityProtectionSamplesByAddresses(
-    addresses,
-    GMGN_UNPROTECTED_LIQUIDITY_CONFIRMATION_BUCKETS
-  );
-  return rows.reduce((acc, sample) => {
-    const address = String(sample?.tokenAddress || sample?.token_address || '').trim();
-    if (!address) {
-      return acc;
-    }
-    if (!acc.has(address)) {
-      acc.set(address, []);
-    }
-    acc.get(address).push(sample);
-    return acc;
-  }, new Map());
-}
-
-async function assessRiskReviewRow(
-  row,
-  meteoraSummary,
-  deps = {},
-  liquiditySamples = [],
-  gmgnUnprotectedLiquiditySamples = []
-) {
+async function assessRiskReviewRow(row, meteoraSummary, deps = {}) {
   return buildGmgnRiskGateAssessment(row)
-    || buildGmgnUnprotectedLiquidityAssessment(row, gmgnUnprotectedLiquiditySamples)
+    || buildGmgnUnprotectedLiquidityAssessment(row)
     || buildNewLowMcapExtremeVolumeAssessment(row)
-    || buildGmgnLowMcapExtreme24hChurnAssessment(row, liquiditySamples)
-    || buildGmgnYoungLowCapHighChurnAssessment(row, meteoraSummary, liquiditySamples)
-    || buildGmgnLowMcapThinSupportAssessment(row, meteoraSummary, liquiditySamples)
-    || buildGmgnConfirmedMicroLiquidityAssessment(row, liquiditySamples)
-    || buildGlobalLowLiquidityAssessment(row, liquiditySamples)
+    || buildGmgnLowMcapExtreme24hChurnAssessment(row)
+    || buildGmgnYoungLowCapHighChurnAssessment(row, meteoraSummary)
+    || buildGmgnLowMcapThinSupportAssessment(row, meteoraSummary)
+    || buildGmgnConfirmedMicroLiquidityAssessment(row)
+    || buildGlobalLowLiquidityAssessment(row)
     || await assessDexGmgnHolderAnomaly(row, deps)
-    || buildGmgnUnprotectedLiquidityPendingConfirmationAssessment(row, gmgnUnprotectedLiquiditySamples)
-    || buildLowLiquidityPendingConfirmationAssessment(row, liquiditySamples)
     || classifyTokenJunk({
       ...row,
       meteora: buildMeteoraMetric(meteoraSummary),
@@ -1051,8 +1069,6 @@ async function processRows(rows = [], deps = {}) {
   const addresses = rows.map((row) => row.address).filter(Boolean);
   const meteoraRows = await meteoraModel.listSummaryByAddresses(addresses);
   const meteoraByAddress = new Map(meteoraRows.map((row) => [String(row.tokenAddress || row.token_address), row]));
-  const lowLiquiditySamplesByAddress = await listLowLiquiditySamplesByAddress(addresses, deps);
-  const gmgnUnprotectedLiquiditySamplesByAddress = await listGmgnUnprotectedLiquiditySamplesByAddress(addresses, deps);
 
   let saved = 0;
   let autoBlocked = 0;
@@ -1061,15 +1077,7 @@ async function processRows(rows = [], deps = {}) {
 
   for (const row of rows) {
     const meteoraSummary = meteoraByAddress.get(row.address) || null;
-    const liquiditySamples = lowLiquiditySamplesByAddress.get(row.address) || [];
-    const gmgnUnprotectedLiquiditySamples = gmgnUnprotectedLiquiditySamplesByAddress.get(row.address) || [];
-    const assessment = await assessRiskReviewRow(
-      row,
-      meteoraSummary,
-      deps,
-      liquiditySamples,
-      gmgnUnprotectedLiquiditySamples
-    );
+    const assessment = await assessRiskReviewRow(row, meteoraSummary, deps);
 
     const label = normalizePersistedAutoLabel(row, assessment);
     if (!label) {
@@ -1089,7 +1097,9 @@ async function processRows(rows = [], deps = {}) {
       continue;
     }
 
-    if (shouldAutoBlockLabel(label) && await autoBlockToken(row, assessment, deps, meteoraSummary)) {
+    if (await applyLowLiquidityFastCheckState(row, assessment, deps)) {
+      released += assessment.mode === 'low_liquidity_fast_check_recovered' ? 1 : 0;
+    } else if (shouldAutoBlockLabel(label) && await autoBlockToken(row, assessment, deps, meteoraSummary)) {
       autoBlocked += 1;
     } else if (label === 'valid' && await releaseGmgnRiskSuppression(row, deps)) {
       released += 1;
@@ -1128,10 +1138,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
   activeRunPromise = (async () => {
     const startedAtMs = Date.now();
     const offset = nextOffset;
-    const processDeps = {
-      tokenMarketBucket1mModel: tokenMarketBucket1m,
-      ...deps,
-    };
+    const processDeps = deps;
 
     status.inFlight = true;
     status.lastRunAt = new Date(startedAtMs).toISOString();
@@ -1233,7 +1240,6 @@ module.exports = {
     buildGmgnLowMcapExtreme24hChurnAssessment,
     buildGmgnLowMcapThinSupportAssessment,
     buildGmgnUnprotectedLiquidityAssessment,
-    buildGmgnUnprotectedLiquidityPendingConfirmationAssessment,
     buildGmgnYoungLowCapHighChurnAssessment,
     buildGmgnRiskGateAssessment,
     buildGmgnRiskReleasePayload,
@@ -1241,16 +1247,13 @@ module.exports = {
     buildMeteoraMetric,
     buildAutoBlockLabel,
     buildGlobalLowLiquidityAssessment,
-    buildLowLiquidityPendingConfirmationAssessment,
-    hasConfirmedLowLiquiditySamples,
-    hasConfirmedGmgnUnprotectedLiquiditySamples,
+    buildLowLiquidityFastCheckPendingAssessment,
+    buildLowLiquidityFastCheckRecoveryAssessment,
     hasRequiredLowLiquidityConfirmation,
     hasGmgnConcentratedStructure,
     hasStructuralCoverage,
     isGmgnRiskEnrichmentSuppressed,
     listCandidates,
-    listGmgnUnprotectedLiquiditySamplesByAddress,
-    listLowLiquiditySamplesByAddress,
     normalizeAutoLabel,
     normalizePersistedAutoLabel,
     normalizeOptions,

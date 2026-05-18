@@ -995,6 +995,7 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
        tc.monitor_priority,
        tc.last_seen_at,
        tc.last_evaluated_at,
+       tc.next_evaluation_at,
        trr.label AS risk_review_label,
        trr.source AS risk_review_source,
        trr.notes AS risk_review_notes,
@@ -1026,10 +1027,18 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
          )
          OR tc.suppressed_reason = 'gmgn_unprotected_liquidity_pending'
          OR (
+           tc.suppressed_reason = 'low_liquidity_fast_check'
+           AND tc.next_evaluation_at <= NOW()
+         )
+         OR (
            tc.last_liquidity_usd IS NOT NULL
            AND tc.last_liquidity_usd < 1000
            AND tc.last_token_created_at_ms IS NOT NULL
-           AND tc.last_token_created_at_ms >= ((EXTRACT(EPOCH FROM NOW()) - (6 * 60 * 60)) * 1000)
+           AND tc.last_token_created_at_ms >= ((EXTRACT(EPOCH FROM NOW()) - (2 * 60 * 60)) * 1000)
+           AND GREATEST(
+             COALESCE(tc.last_seen_at, '-infinity'::timestamptz),
+             COALESCE(tc.last_evaluated_at, '-infinity'::timestamptz)
+           ) >= NOW() - INTERVAL '2 minutes'
          )
        )
      ORDER BY CASE
