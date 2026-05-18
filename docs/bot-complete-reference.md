@@ -695,12 +695,14 @@ Important behavior:
   - excludes tokens whose mint ends with `pump`, `bags`, or `brrr`
   - triggers when the GMGN payload has `launchpad`, `launchpad_platform`, `migrated_pool_exchange`, or `pool_type_str`
   - suppresses matching tokens as `gmgn_custom_lp_cooldown` with `eligible_for_monitoring = false` and `next_evaluation_at = now + 15m`
+  - Dex refreshes preserve the active GMGN cooldown while still writing market buckets/latest metrics, so Dex cannot reopen the token as `dex-*` before the cooldown expires
   - the token is still queued for GMGN preliminary checks during the cooldown, allowing fast-ban rules to block it before it can enter monitoring
 - GMGN low-liquidity unlocked cooldown:
   - applies to automatic GMGN tokens younger than `6h`
   - excludes tokens whose mint ends with `pump`, `bags`, or `brrr`
   - triggers when the GMGN payload has current liquidity `< $1k`, `lock_percent = 0`, and `burn_ratio = 0`
   - suppresses matching tokens as `gmgn_low_liquidity_unlocked_cooldown` with `eligible_for_monitoring = false` and `next_evaluation_at = now + 15m`
+  - Dex refreshes preserve the active GMGN cooldown while still writing market buckets/latest metrics, so Dex cannot reopen the token as `dex-*` before the cooldown expires
   - this is a monitoring quarantine only; the token is still queued for GMGN preliminary checks and can be blocked by the existing ban rules before release
 - GMGN low-cap thin-support gates:
   - run before the Dex-to-GMGN holder anomaly check and before the normal junk metric fallback

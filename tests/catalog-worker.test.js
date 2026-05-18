@@ -433,6 +433,102 @@ describe('catalog worker drift compensation', () => {
     }
   });
 
+  it('preserves active GMGN cooldown suppression when Dex confirms a token', async () => {
+    const originalGetBestPair = dexscreener.getBestPair;
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
+    const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const originalEvaluateUpdatedToken = userAlertMatcher.evaluateUpdatedToken;
+    const nextEvaluationAt = new Date(Date.now() + 10 * 60 * 1000);
+    const calls = [];
+    const tokenBefore = {
+      address: TOKEN_A,
+      chain: 'solana',
+      source: 'gmgn',
+      eligibility_state: 'gmgn-custom-lp-cooldown',
+      eligible_for_monitoring: false,
+      suppressed_reason: 'gmgn_custom_lp_cooldown',
+      next_evaluation_at: nextEvaluationAt,
+      monitor_priority: 'normal',
+      last_mcap: 52656,
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      last_mcap: 52656.4,
+      last_liquidity_usd: 18658.4,
+    };
+
+    dexscreener.getBestPair = () => ({
+      marketCap: 52656.4,
+      pairAddress: 'pair-1',
+      priceUsd: '0.0000526564',
+      url: 'https://dex.example/pair-1',
+      baseToken: { symbol: 'SURFER', name: 'The Trump Whale' },
+      info: { imageUrl: 'https://img.example/surfer.png', socials: [] },
+      volume: { m5: 1000, h1: 10000, h6: 20000, h24: 30000 },
+      priceChange: { h1: 10, h6: 20, h24: 30 },
+      liquidity: { usd: 18658.4 },
+      txns: { h1: { buys: 10, sells: 8 }, h24: { buys: 100, sells: 80 } },
+      pairCreatedAt: Date.now() - 13 * 60 * 1000,
+    });
+    tokenCatalog.applyEvaluationResult = async (_address, payload) => {
+      calls.push('applyEvaluationResult');
+      assert.equal(payload.eligibilityState, 'gmgn-custom-lp-cooldown');
+      assert.equal(payload.eligibleForMonitoring, false);
+      assert.equal(payload.suppressedReason, 'gmgn_custom_lp_cooldown');
+      assert.equal(payload.nextEvaluationAt, nextEvaluationAt);
+      assert.equal(payload.liquidityUsd, 18658.4);
+      return updatedToken;
+    };
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => {
+      calls.push('marketBucket');
+      assert.equal(payload.liquidityUsd, 18658.4);
+      return payload;
+    };
+    tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => {
+      calls.push('volumeBucket');
+      return payload;
+    };
+    userAlertMatcher.evaluateUpdatedToken = async () => {
+      throw new Error('Dex must not alert while GMGN cooldown is active');
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+
+      assert.equal(result, updatedToken);
+      assert.deepEqual(calls, ['applyEvaluationResult', 'marketBucket', 'volumeBucket']);
+    } finally {
+      dexscreener.getBestPair = originalGetBestPair;
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
+      tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
+      userAlertMatcher.evaluateUpdatedToken = originalEvaluateUpdatedToken;
+    }
+  });
+
+  it('lets Dex release an expired GMGN timed cooldown', () => {
+    const result = catalogWorker.__private.preserveGmgnSuppressionForDexEvaluation(
+      {
+        eligibilityState: 'dex-normal',
+        eligibleForMonitoring: true,
+        suppressedReason: null,
+        monitorPriority: 'normal',
+        nextEvaluationAt: new Date('2026-05-03T07:00:05.000Z'),
+      },
+      {
+        eligibility_state: 'gmgn-custom-lp-cooldown',
+        suppressed_reason: 'gmgn_custom_lp_cooldown',
+        next_evaluation_at: new Date('2026-05-03T07:00:00.000Z'),
+      },
+      new Date('2026-05-03T07:00:01.000Z')
+    );
+
+    assert.equal(result.eligibilityState, 'dex-normal');
+    assert.equal(result.eligibleForMonitoring, true);
+    assert.equal(result.suppressedReason, null);
+  });
+
   it('suppresses the first young extreme churn alert and auto-blocks on confirmation', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;

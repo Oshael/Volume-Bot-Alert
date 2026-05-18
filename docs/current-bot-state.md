@@ -298,12 +298,14 @@ Important:
   - tokens with mint suffix `pump`, `bags`, or `brrr` are excluded from this quarantine
   - current GMGN payload has a custom pool/route field (`launchpad`, `launchpad_platform`, `migrated_pool_exchange`, or `pool_type_str`)
   - GMGN ingestion suppresses matching tokens as `gmgn_custom_lp_cooldown` with `eligible_for_monitoring = false` and `next_evaluation_at = now + 15m`, so they cannot enter monitored during the first 15 minutes after detection
+  - Dex refreshes may still update market buckets and latest metrics, but they preserve the active GMGN cooldown instead of reopening the token as `dex-*`
   - matching tokens are still queued for GMGN security/info/kline checks during the cooldown, so fast-ban rules can block them before release
 - GMGN low-liquidity unlocked cooldown:
   - automatic GMGN token, token age `< 6h`
   - tokens with mint suffix `pump`, `bags`, or `brrr` are excluded from this quarantine
   - current GMGN payload has current liquidity `< $1k`, `lock_percent = 0`, and `burn_ratio = 0`
   - GMGN ingestion suppresses matching tokens as `gmgn_low_liquidity_unlocked_cooldown` with `eligible_for_monitoring = false` and `next_evaluation_at = now + 15m`, so they cannot enter monitored while fast-ban confirmation has time to run
+  - Dex refreshes may still update market buckets and latest metrics, but they preserve the active GMGN cooldown instead of reopening the token as `dex-*`
   - the cooldown does not auto-ban by itself; matching tokens are still queued for GMGN security/info/kline checks and can be blocked by the existing ban rules before release
 - GMGN low-cap thin-support gates now run inside the token-risk review sync worker before the generic junk metric:
   - GMGN token, non-manual review

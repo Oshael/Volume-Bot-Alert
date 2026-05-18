@@ -57,6 +57,16 @@ const YOUNG_EXTREME_CHURN_MIN_VOL_5M = 100000;
 const YOUNG_EXTREME_CHURN_MIN_VOL_MCAP_RATIO = 2.8;
 const YOUNG_EXTREME_CHURN_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000;
 const YOUNG_EXTREME_CHURN_REQUIRED_HITS = 2;
+const GMGN_DEX_PRESERVED_SUPPRESSION_REASONS = new Set([
+  'gmgn_custom_lp_cooldown',
+  'gmgn_low_liquidity_unlocked_cooldown',
+  'gmgn_unprotected_liquidity_pending',
+  'gmgn_burn_creator_hold_pending_review',
+]);
+const GMGN_DEX_PRESERVED_TIMED_SUPPRESSION_REASONS = new Set([
+  'gmgn_custom_lp_cooldown',
+  'gmgn_low_liquidity_unlocked_cooldown',
+]);
 
 let timer = null;
 let running = false;
@@ -183,6 +193,12 @@ function toTimestampMs(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toDateOrNull(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
 function getGraceUntilMs(value) {
   if (!value) return 0;
   if (value instanceof Date) {
@@ -204,6 +220,44 @@ function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) 
 
 function isManualSource(token) {
   return String(token?.source || '').trim().toLowerCase() === 'user-manual';
+}
+
+function getActiveGmgnDexPreservedSuppression(token, now = new Date()) {
+  const reason = String(token?.suppressed_reason || '').trim();
+  if (!GMGN_DEX_PRESERVED_SUPPRESSION_REASONS.has(reason)) {
+    return null;
+  }
+
+  const nextEvaluationAt = toDateOrNull(token?.next_evaluation_at);
+  if (
+    GMGN_DEX_PRESERVED_TIMED_SUPPRESSION_REASONS.has(reason)
+    && nextEvaluationAt
+    && nextEvaluationAt <= now
+  ) {
+    return null;
+  }
+
+  return {
+    reason,
+    eligibilityState: String(token?.eligibility_state || '').trim() || 'gmgn-suppressed',
+    nextEvaluationAt,
+  };
+}
+
+function preserveGmgnSuppressionForDexEvaluation(result, token, now = new Date()) {
+  const activeSuppression = getActiveGmgnDexPreservedSuppression(token, now);
+  if (!activeSuppression) {
+    return result;
+  }
+
+  return {
+    ...result,
+    eligibilityState: activeSuppression.eligibilityState,
+    eligibleForMonitoring: false,
+    suppressedReason: activeSuppression.reason,
+    monitorPriority: token?.monitor_priority || result.monitorPriority,
+    nextEvaluationAt: activeSuppression.nextEvaluationAt || result.nextEvaluationAt,
+  };
 }
 
 function isPumpLikeToken(token, pair) {
@@ -899,7 +953,7 @@ async function evaluateTokenWithData(token, data) {
     });
   }
 
-  const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+  const dexEvaluationResult = preserveGmgnSuppressionForDexEvaluation({
     evaluationSource: 'dexscreener',
     eligibilityState: snapshot.eligibilityState,
     eligibleForMonitoring: snapshot.eligibleForMonitoring,
@@ -929,7 +983,9 @@ async function evaluateTokenWithData(token, data) {
     txns24hBuys: snapshot.txns24hBuys,
     txns24hSells: snapshot.txns24hSells,
     tokenCreatedAt: toNumber(bestPair.pairCreatedAt),
-  });
+  }, token);
+
+  const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, dexEvaluationResult);
 
   const marketSnapshotPayload = {
     tokenAddress: token.address,
@@ -966,6 +1022,16 @@ async function evaluateTokenWithData(token, data) {
     return updatedToken;
   }
 
+  await maybeEvaluateDexAlertMatcher(token, updatedToken);
+
+  return updatedToken;
+}
+
+async function maybeEvaluateDexAlertMatcher(token, updatedToken) {
+  if (getActiveGmgnDexPreservedSuppression(token)) {
+    return;
+  }
+
   try {
     await userAlertMatcher.evaluateUpdatedToken({
       tokenBefore: token,
@@ -974,8 +1040,6 @@ async function evaluateTokenWithData(token, data) {
   } catch (error) {
     console.error(`[CatalogWorker] Failed to evaluate per-user alerts for ${token.address}:`, error.message);
   }
-
-  return updatedToken;
 }
 
 function createEmptyHighCapDumpAlertSummary() {
@@ -1261,6 +1325,7 @@ module.exports = {
     LOW_ACTIVITY_JITTER_MS,
     LOW_ACTIVITY_RECHECK_MS,
     applyLowActivityCooldownForVol24h,
+    getActiveGmgnDexPreservedSuppression,
     getDexUnavailableRetryMs,
     getDexPriorityHint,
     getGraceUntilMs,
@@ -1280,6 +1345,8 @@ module.exports = {
     isTokenAllowedByThrottle,
     normalizeDelayMs,
     prioritizeTokensForThrottle,
+    preserveGmgnSuppressionForDexEvaluation,
+    maybeEvaluateDexAlertMatcher,
     processHighCapDumpAlertsForAddresses,
     readPinnedPairAddressFromState,
     evaluateTokenWithData,
