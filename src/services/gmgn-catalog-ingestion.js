@@ -23,6 +23,8 @@ const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
+const GMGN_NON_LAUNCH_GRACE_SUPPRESSION_REASON = 'gmgn_non_launch_grace_period';
+const GMGN_NON_LAUNCH_GRACE_MS = 15 * 60 * 1000;
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
 const GMGN_YOUNG_VOL_1H_TO_MCAP_RATIO = 10;
@@ -252,11 +254,22 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
   const now = options.now();
+  const nonLaunchGraceUntil = resolveGmgnNonLaunchGraceUntil(snapshot, tokenBefore, now);
   const nextEvaluationAt = resolveGmgnNextEvaluationAt(
     tokenBefore,
     new Date(now.getTime() + options.activeDexRecheckMs)
   );
   const isManual = String(tokenBefore?.source || '').trim().toLowerCase() === 'user-manual';
+
+  if (nonLaunchGraceUntil) {
+    return buildEvaluationPayload(snapshot, {
+      eligibilityState: 'gmgn-non-launch-grace',
+      eligibleForMonitoring: false,
+      suppressedReason: GMGN_NON_LAUNCH_GRACE_SUPPRESSION_REASON,
+      monitorPriority: resolveMonitorPriority(marketCap),
+      nextEvaluationAt: resolveGmgnNextEvaluationAt(tokenBefore, nonLaunchGraceUntil),
+    });
+  }
 
   if (!(marketCap > 0)) {
     return buildEvaluationPayload(snapshot, {
@@ -366,6 +379,26 @@ function isOneMinuteOnlyDiscovery(snapshot = {}) {
 
 function shouldSkipNewGmgnDiscovery(snapshot, tokenBefore) {
   return !tokenBefore && isOneMinuteOnlyDiscovery(snapshot);
+}
+
+function resolveGmgnNonLaunchGraceUntil(snapshot = {}, tokenBefore = null, now = new Date()) {
+  if (isManualToken(tokenBefore) || isBlockedToken(tokenBefore) || hasDexConfirmation(tokenBefore)) {
+    return null;
+  }
+
+  const address = snapshot.address || snapshot.tokenAddress || tokenBefore?.address;
+  if (!address || hasKnownLaunchSuffix(address)) {
+    return null;
+  }
+
+  const createdAtMs = toTimestampMsOrNull(snapshot.tokenCreatedAt);
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!(createdAtMs > 0) || !(nowMs >= createdAtMs)) {
+    return null;
+  }
+
+  const graceUntilMs = createdAtMs + GMGN_NON_LAUNCH_GRACE_MS;
+  return graceUntilMs > nowMs ? new Date(graceUntilMs) : null;
 }
 
 function shouldSuppressGmgnForRiskEnrichment(snapshot = {}, now = new Date()) {
@@ -1485,6 +1518,7 @@ module.exports = {
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
+    GMGN_NON_LAUNCH_GRACE_SUPPRESSION_REASON,
     GMGN_ALERT_SAFEGUARD_REASON,
     getGmgnIntervals,
     hasCompletedGmgnPreliminaryReview,
@@ -1502,6 +1536,7 @@ module.exports = {
     resetDefaultEvaluationState,
     runGmgnPreliminaryRiskReview,
     resolveEligibilityState,
+    resolveGmgnNonLaunchGraceUntil,
     resolveCatalogSource,
     resolveIngestionOptions,
     resolveMonitorPriority,

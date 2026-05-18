@@ -486,6 +486,12 @@ GMGN risk gates before catalog/upsert alert flow:
   - this prevents raw GMGN launches from being auto-blocked when the upstream mirrors nearly the same volume into `1m`, `5m`, and longer windows before Dex confirms the pair, and avoids hard-banning moderate low-mcap launch traction such as ~25k mcap / ~45k vol5m
   - block label shape:
     - `gmgn-origin:new-non-pump-high-launch-mcap:{mcap}:{vol5m}`
+- new automatic GMGN discoveries that do not end with `pump`, `bags`, or `brrr` are suppressed from monitored/alerts for the first `15m` after token creation:
+  - applies only when age is known and still below `15m`
+  - does not apply to manual, admin-blocked, or Dex-confirmed rows
+  - writes `eligibility_state = gmgn-non-launch-grace`
+  - writes `suppressed_reason = gmgn_non_launch_grace_period`
+  - schedules `next_evaluation_at` for the end of the 15-minute grace window
 - young GMGN candidates under `6h` can trigger GMGN risk-data lookup when any of these are true:
   - vol1h/mcap `>= 10`
   - vol24h/mcap `>= 20`

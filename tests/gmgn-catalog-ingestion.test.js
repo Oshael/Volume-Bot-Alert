@@ -314,6 +314,50 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(matcherCalls, 0);
   });
 
+  it('suppresses new non-launch GMGN tokens from monitoring for the first 15 minutes', async () => {
+    let matcherCalls = 0;
+    const catalog = createTokenCatalogStub();
+    catalog.getByAddress = async (address) => {
+      catalog.calls.push(['getByAddress', address]);
+      return null;
+    };
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot('nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES'),
+      tokenCreatedAt: '2026-05-03T06:55:00.000Z',
+      mcap: 50000,
+      liquidityUsd: 90000,
+      vol5m: 18000,
+      vol1h: 60000,
+      vol24h: 120000,
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: catalog,
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {
+          return {};
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          matcherCalls += 1;
+          return {};
+        },
+      },
+    });
+
+    const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(result.summary.volumeBucketsWritten, 1);
+    assert.equal(result.summary.matcherEvaluations, 0);
+    assert.equal(result.summary.matcherSkippedGmgnSafeguard, 1);
+    assert.equal(evaluationPayload.eligibilityState, 'gmgn-non-launch-grace');
+    assert.equal(evaluationPayload.eligibleForMonitoring, false);
+    assert.equal(evaluationPayload.suppressedReason, 'gmgn_non_launch_grace_period');
+    assert.equal(evaluationPayload.nextEvaluationAt.toISOString(), '2026-05-03T07:10:00.000Z');
+    assert.equal(matcherCalls, 0);
+  });
+
   it('allows GMGN alert evaluation after preliminary GMGN risk checks pass', async () => {
     let matcherCalls = 0;
 
@@ -503,6 +547,37 @@ describe('gmgn catalog ingestion', () => {
     );
 
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:00:05.000Z');
+  });
+
+  it('does not apply the GMGN non-launch grace period to known launch suffixes or Dex-confirmed tokens', () => {
+    const now = () => new Date('2026-05-03T07:00:00.000Z');
+    const pumpEvaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot('3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump'),
+        tokenCreatedAt: '2026-05-03T06:55:00.000Z',
+        mcap: 50000,
+      },
+      null,
+      { now, activeDexRecheckMs: 30000 }
+    );
+    const dexEvaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      {
+        ...createSnapshot(),
+        tokenCreatedAt: '2026-05-03T06:55:00.000Z',
+        mcap: 50000,
+      },
+      {
+        source: 'dexscreener-discovery',
+        eligibility_state: 'dex-normal',
+        last_pair_url: 'https://dexscreener.com/solana/testpair',
+      },
+      { now, activeDexRecheckMs: 30000 }
+    );
+
+    assert.equal(pumpEvaluation.eligibilityState, 'gmgn-normal');
+    assert.equal(pumpEvaluation.eligibleForMonitoring, true);
+    assert.equal(dexEvaluation.eligibilityState, 'gmgn-normal');
+    assert.equal(dexEvaluation.eligibleForMonitoring, true);
   });
 
   it('preserves manual catalog source while still treating the bucket source as GMGN', () => {

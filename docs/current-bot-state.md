@@ -242,6 +242,12 @@ Important:
   - vol1h/mcap `>= 3`
   - mcap `>= 100k`
   - vol5m `>= 50k`
+- New automatic GMGN discoveries that do not end with `pump`, `bags`, or `brrr` are kept out of monitored/alerts for the first `15m` after token creation:
+  - applies only while token age is known and below `15m`
+  - does not apply to manual, admin-blocked, or Dex-confirmed rows
+  - stores `eligibility_state = gmgn-non-launch-grace`
+  - stores `suppressed_reason = gmgn_non_launch_grace_period`
+  - schedules `next_evaluation_at` for the end of the 15-minute grace window
 - Young GMGN extreme churn quarantine still exists separately:
   - age `< 2h`
   - vol1h/mcap `>= 10` or vol24h/mcap `>= 20`

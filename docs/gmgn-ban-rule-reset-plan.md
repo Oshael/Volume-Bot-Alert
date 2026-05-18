@@ -240,6 +240,37 @@ Reasoning:
 - This classifier produced fewer bans than the GMGN spam rules and is useful for non-GMGN or later-stage tokens.
 - It should not become the primary path for high-volume GMGN low-liquidity spam.
 
+## Non-Ban Guardrail: GMGN Non-Launch 15-Minute Grace
+
+State:
+
+- `eligibility_state = gmgn-non-launch-grace`
+- `suppressed_reason = gmgn_non_launch_grace_period`
+
+Conditions:
+
+- source is GMGN ingestion
+- token is automatic, not manual
+- token is not already admin-blocked
+- token has no existing Dex confirmation
+- token age is known and below `15m`
+- address does not use a known launch suffix:
+  - `pump`
+  - `bags`
+  - `brrr`
+
+Action:
+
+- keep the token out of monitored
+- prevent alerts while the grace window is active
+- schedule `next_evaluation_at` for token creation time plus `15m`
+- keep normal catalog/bucket writes so later review has market context
+
+Reasoning:
+
+- Most GMGN non-launch trash is either auto-blocked or becomes obviously weak within the first few minutes.
+- This is a temporary suppression, not a permanent ban, so it reduces alert noise without blocking legitimate late-confirming tokens.
+
 ## Rules Not To Reapply In The First Pass
 
 Do not recreate these as separate risk-review hard bans immediately after reset:
