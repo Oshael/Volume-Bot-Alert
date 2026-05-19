@@ -1,10 +1,9 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
-import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isAlertInArrivalWindow, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
+import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
-const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 const ALERT_FX_SETTLE_MS = 1_600;
 const ALERTS_PER_PAGE = 40;
 const ALERT_CONTENT_MAX_WIDTH_PX = 640;
@@ -323,7 +322,6 @@ function reconcileAlertRows(
 
   for (const alert of filteredAlerts) {
     const fxState = getOrCreateAlertFxState(view, alert, renderNow);
-    logAlertArrivalDebug(alert, fxState, renderNow);
     const isStarred = state.data.starredTokens.includes(alert.address);
     const sparkline = state.data.alertSparklineById[alert.id] || null;
     const renderKey = getAlertRowRenderKey(
@@ -485,14 +483,6 @@ function queuePendingAlertEnterFx(
   }
 
   pendingEnterFx.push({ row, fxState });
-}
-
-function isAlertsRenderDebugEnabled() {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return false;
-  }
-
-  return window.localStorage.getItem(ALERTS_RENDER_DEBUG_STORAGE_KEY) === '1';
 }
 
 function syncAlertFxStates(view: AlertsSectionView, alerts: AlertEntry[], now: number) {
@@ -851,28 +841,6 @@ function getAlertFxOverlayProfile(tier: AlertFxTier) {
         removeAfterMs: 1_560,
       } as const;
   }
-}
-
-function logAlertArrivalDebug(alert: AlertEntry, fxState: AlertFxState, now: number) {
-  if (!isAlertsRenderDebugEnabled()) {
-    return;
-  }
-
-  const ageMs = now - Number(alert.createdAt || 0);
-  if (!Number.isFinite(ageMs) || ageMs > 5_000) {
-    return;
-  }
-
-  console.debug('[alerts-debug] arrival-check', {
-    id: alert.id,
-    kind: alert.kind,
-    address: alert.address,
-    ageMs,
-    isInArrivalWindow: isAlertInArrivalWindow(alert, now),
-    fxPhase: fxState.phase,
-    fxTier: fxState.tier,
-    enteredAt: fxState.enteredAt,
-  });
 }
 
 function removeAlertRowImmediately(view: AlertsSectionView, button: HTMLButtonElement) {

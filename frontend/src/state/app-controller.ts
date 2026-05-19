@@ -149,6 +149,7 @@ const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS = 3 * 1000;
+const MOCK_TRADING_ACTIVE_WALLET_KEY = 'mock_trading_active_wallet';
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
@@ -1645,12 +1646,17 @@ export function createAppController(): AppController {
     if (currentId != null && wallets.some((wallet) => wallet.id === currentId)) {
       return currentId;
     }
+    const persistedId = loadPersistedMockTradingActiveWalletId();
+    if (persistedId != null && wallets.some((wallet) => wallet.id === persistedId)) {
+      return persistedId;
+    }
     return wallets.find((wallet) => wallet.isDefault)?.id ?? wallets[0]?.id ?? null;
   }
 
   function applyMockTradingWallets(wallets: MockTradingWalletEntry[]) {
     state.data.mockTradingWallets = wallets;
     state.ui.activeMockTradingWalletId = resolveMockTradingActiveWalletId(wallets);
+    persistMockTradingActiveWalletId(state.ui.activeMockTradingWalletId);
   }
 
   function clearMockTradingState() {
@@ -1725,6 +1731,7 @@ export function createAppController(): AppController {
       state.data.mockTradingSummary = summary;
       if (summary.wallet?.id != null) {
         state.ui.activeMockTradingWalletId = summary.wallet.id;
+        persistMockTradingActiveWalletId(summary.wallet.id);
       }
       applyMockTradingPositions(positions);
       applyMockTradingTrades(trades);
@@ -2265,6 +2272,42 @@ export function createAppController(): AppController {
 
   function getStorageScope() {
     return state.session.email || state.session.username || 'anonymous';
+  }
+
+  function getMockTradingActiveWalletStorageKey() {
+    return `frontend_vite:${getStorageScope()}:${MOCK_TRADING_ACTIVE_WALLET_KEY}`;
+  }
+
+  function loadPersistedMockTradingActiveWalletId() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return null;
+    }
+    try {
+      const raw = window.localStorage.getItem(getMockTradingActiveWalletStorageKey());
+      if (raw == null) {
+        return null;
+      }
+      const walletId = Number(raw);
+      return Number.isInteger(walletId) && walletId > 0 ? walletId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistMockTradingActiveWalletId(walletId: number | null) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    try {
+      const key = getMockTradingActiveWalletStorageKey();
+      if (walletId == null) {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, String(walletId));
+      }
+    } catch {
+      // Ignore local persistence failures.
+    }
   }
 
   function hydrateSoundSettings() {
@@ -8904,6 +8947,7 @@ export function createAppController(): AppController {
       }
 
       state.ui.activeMockTradingWalletId = walletId;
+      persistMockTradingActiveWalletId(walletId);
       if (state.data.mockTradingSummary) {
         state.data.mockTradingSummary = {
           ...state.data.mockTradingSummary,
@@ -8939,6 +8983,7 @@ export function createAppController(): AppController {
       try {
         const result = await createMockTradingWalletRequest(safeName, token);
         state.ui.activeMockTradingWalletId = result.wallet.id;
+        persistMockTradingActiveWalletId(result.wallet.id);
         await refreshMockTradingState();
         setNotice(result.message);
       } catch (error) {
@@ -8996,6 +9041,7 @@ export function createAppController(): AppController {
         const result = await archiveMockTradingWalletRequest(walletId, token);
         if (state.ui.activeMockTradingWalletId === result.wallet.id) {
           state.ui.activeMockTradingWalletId = null;
+          persistMockTradingActiveWalletId(null);
         }
         await refreshMockTradingState();
         setNotice(result.message);

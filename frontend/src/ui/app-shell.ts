@@ -164,7 +164,6 @@ const APP_BID_ZONE_SLOT_SELECTOR = '[data-app-render-slot="bid-zone"]';
 const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
 const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
 const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
-const ALERTS_RENDER_DEBUG_STORAGE_KEY = 'trendscope-alert-render-debug-enabled';
 const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
 const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
 
@@ -233,7 +232,6 @@ export function renderAppShell(
       updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
       updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
       updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
-      logAlertsRenderDebug(renderFrame.alertsSlot, state, dirtyRegions);
       updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
     } else {
       updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
@@ -608,96 +606,6 @@ function updateRegionSlot(
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
   return values.map((value) => value == null ? '' : String(value)).join('~');
-}
-
-function isAlertsRenderDebugEnabled() {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return false;
-  }
-
-  return window.localStorage.getItem(ALERTS_RENDER_DEBUG_STORAGE_KEY) === '1';
-}
-
-function buildAlertsRenderSnapshot(state: AppState) {
-  return {
-    busy: state.ui.busy,
-    role: state.session.role,
-    tradeTerminals: [...state.ui.enabledTradeTerminals],
-    search: state.ui.alertSearchQuery || '',
-    starredCount: state.data.starredTokens.length,
-    topAlertIds: state.data.alerts.slice(0, 5).map((alert) => alert.id),
-    topAlerts: state.data.alerts.slice(0, 3).map((alert) => ({
-      id: alert.id,
-      kind: alert.kind,
-      address: alert.address,
-      createdAt: alert.createdAt,
-      pct: alert.pct,
-      mcap: alert.mcap,
-      volume5m: alert.volume5m,
-      volume1h: alert.volume1h,
-      volume6h: alert.volume6h,
-      volume24h: alert.volume24h,
-    })),
-    count: state.data.alerts.length,
-  };
-}
-
-function readPreviousAlertsDebugSnapshot(slot: HTMLElement) {
-  const previousSnapshotRaw = slot.dataset.alertsDebugSnapshot;
-  if (!previousSnapshotRaw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(previousSnapshotRaw) as ReturnType<typeof buildAlertsRenderSnapshot>;
-  } catch {
-    return null;
-  }
-}
-
-function collectAlertsDebugChangedFields(
-  previousSnapshot: ReturnType<typeof buildAlertsRenderSnapshot> | null,
-  nextSnapshot: ReturnType<typeof buildAlertsRenderSnapshot>,
-) {
-  const changedFields: string[] = [];
-
-  if (!previousSnapshot || previousSnapshot.busy !== nextSnapshot.busy) changedFields.push('busy');
-  if (!previousSnapshot || previousSnapshot.role !== nextSnapshot.role) changedFields.push('role');
-  if (!previousSnapshot || JSON.stringify(previousSnapshot.tradeTerminals) !== JSON.stringify(nextSnapshot.tradeTerminals)) changedFields.push('tradeTerminals');
-  if (!previousSnapshot || previousSnapshot.search !== nextSnapshot.search) changedFields.push('search');
-  if (!previousSnapshot || previousSnapshot.starredCount !== nextSnapshot.starredCount) changedFields.push('starredCount');
-  if (!previousSnapshot || previousSnapshot.count !== nextSnapshot.count) changedFields.push('count');
-  if (!previousSnapshot || JSON.stringify(previousSnapshot.topAlertIds) !== JSON.stringify(nextSnapshot.topAlertIds)) changedFields.push('topAlertIds');
-  if (!previousSnapshot || JSON.stringify(previousSnapshot.topAlerts) !== JSON.stringify(nextSnapshot.topAlerts)) changedFields.push('topAlerts');
-
-  return changedFields;
-}
-
-function logAlertsRenderDebug(slot: HTMLElement, state: AppState, dirtyRegions: ReadonlySet<AppRenderRegion>) {
-  if (!isAlertsRenderDebugEnabled()) {
-    return;
-  }
-
-  const nextSnapshot = buildAlertsRenderSnapshot(state);
-  const nextKey = getAlertsRenderKey(state);
-  const previousKey = slot.dataset.renderKey || '';
-  const previousSnapshot = readPreviousAlertsDebugSnapshot(slot);
-  const changedFields = collectAlertsDebugChangedFields(previousSnapshot, nextSnapshot);
-  const shouldRefresh = shouldRefreshRegion(slot, 'alerts', dirtyRegions);
-  const keyChanged = previousKey !== nextKey;
-  if (dirtyRegions.has('alerts') || keyChanged || changedFields.length > 0) {
-    console.debug('[alerts-debug] region', {
-      dirtyRegions: [...dirtyRegions],
-      shouldRefresh,
-      keyChanged,
-      changedFields,
-      previousTopAlertIds: previousSnapshot?.topAlertIds || [],
-      nextTopAlertIds: nextSnapshot.topAlertIds,
-      nextCount: nextSnapshot.count,
-    });
-  }
-
-  slot.dataset.alertsDebugSnapshot = JSON.stringify(nextSnapshot);
 }
 
 function serializeTrackedTokenForView(token: ReturnType<typeof getMonitoredTokens>[number]) {
