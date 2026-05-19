@@ -50,6 +50,7 @@ function createInitialStatus() {
     lastGmgnKlineChecks: 0,
     lastGmgnKlineAutoBlocked: 0,
     lastGmgnKlineErrors: 0,
+    lastGmgnBadLiquidityStatusAutoBlocked: 0,
     lastGmgnLowMcapExtremeVolumeAutoBlocked: 0,
     lastGmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     lastMatcherEvaluations: 0,
@@ -90,6 +91,7 @@ function createInitialStatus() {
     totalGmgnKlineChecks: 0,
     totalGmgnKlineAutoBlocked: 0,
     totalGmgnKlineErrors: 0,
+    totalGmgnBadLiquidityStatusAutoBlocked: 0,
     totalGmgnLowMcapExtremeVolumeAutoBlocked: 0,
     totalGmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
     totalMatcherEvaluations: 0,
@@ -181,6 +183,7 @@ function buildRunCounters(result) {
     lastGmgnKlineChecks: toCount(ingestion.gmgnKlineChecks),
     lastGmgnKlineAutoBlocked: toCount(ingestion.gmgnKlineAutoBlocked),
     lastGmgnKlineErrors: toCount(ingestion.gmgnKlineErrors),
+    lastGmgnBadLiquidityStatusAutoBlocked: toCount(ingestion.gmgnBadLiquidityStatusAutoBlocked),
     lastGmgnLowMcapExtremeVolumeAutoBlocked: toCount(ingestion.gmgnLowMcapExtremeVolumeAutoBlocked),
     lastGmgnNewNonPumpHighLaunchMcapAutoBlocked: toCount(ingestion.gmgnNewNonPumpHighLaunchMcapAutoBlocked),
     lastMatcherEvaluations: toCount(ingestion.matcherEvaluations),
@@ -222,6 +225,7 @@ function addTotalsFromCounters(counters) {
   status.totalGmgnKlineChecks += counters.lastGmgnKlineChecks;
   status.totalGmgnKlineAutoBlocked += counters.lastGmgnKlineAutoBlocked;
   status.totalGmgnKlineErrors += counters.lastGmgnKlineErrors;
+  status.totalGmgnBadLiquidityStatusAutoBlocked += counters.lastGmgnBadLiquidityStatusAutoBlocked;
   status.totalGmgnLowMcapExtremeVolumeAutoBlocked += counters.lastGmgnLowMcapExtremeVolumeAutoBlocked;
   status.totalGmgnNewNonPumpHighLaunchMcapAutoBlocked += counters.lastGmgnNewNonPumpHighLaunchMcapAutoBlocked;
   status.totalMatcherEvaluations += counters.lastMatcherEvaluations;

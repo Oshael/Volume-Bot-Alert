@@ -517,6 +517,13 @@ GMGN risk gates before catalog/upsert alert flow:
 - `token_market_buckets_agg` can be populated historically with `npm run market-buckets-agg:backfill -- --days 14 --batchSize <n>`.
 - Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows.
 - `MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED=false` disables the inline aggregate recompute after `1m` bucket writes. This is a pressure relief switch for small VPS incidents; aggregate sparklines can lag until a backfill/rebuild catches up.
+- GMGN bad-liquidity-status mcap-band auto-blocks automatic GMGN tokens before catalog/bucket/security work when:
+  - the token is not manual, not already admin-blocked, and not Dex-confirmed
+  - the CA does not end with `pump`, `bags`, `brrr`, or `bonk`
+  - token age is known and below `2h`
+  - GMGN mcap is between `$20,000` and `$150,000`
+  - at least `2` of the `5` GMGN liquidity-protection fields are bad: `lock_percent = 0`, `burn_ratio = 0`, `burn_status = none`, `creator_close = true`, `creator_token_status = creator_close`
+  - matching rows are auto-blocked as `gmgn-liquidity:bad-status-mcap-band:{mcap}:{badCount}bad:{signals...}`
 - GMGN `token security` auto-blocks when top-10 holder rate is `>= 70%`
 - GMGN `token info` auto-blocks low-mcap/high-holder anomalies:
   - mcap `<= 150k`
@@ -2578,6 +2585,7 @@ Current GMGN worker status includes:
 - GMGN risk lookup budget usage/skips
 - queued/deduped/fresh-passed GMGN risk review handoffs
 - GMGN security/info/kline check counts, error counts, and auto-block counts
+- GMGN bad-liquidity-status mcap-band auto-block counts (`lastGmgnBadLiquidityStatusAutoBlocked`, `totalGmgnBadLiquidityStatusAutoBlocked`)
 - GMGN low-mcap extreme-volume auto-block counts
 - GMGN new non-pump high-launch auto-block counts (`lastGmgnNewNonPumpHighLaunchMcapAutoBlocked`, `totalGmgnNewNonPumpHighLaunchMcapAutoBlocked`)
 - alert matcher evaluations and emitted alert counts

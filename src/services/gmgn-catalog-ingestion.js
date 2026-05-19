@@ -42,6 +42,9 @@ const GMGN_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
 const GMGN_LOW_LIQUIDITY_SPAM_MAX_AGE_HOURS = 2;
 const GMGN_LOW_LIQUIDITY_SPAM_MAX_LIQUIDITY_USD = 1000;
 const GMGN_LOW_LIQUIDITY_SPAM_MAX_MCAP = 150000;
+const GMGN_BAD_LIQUIDITY_STATUS_MIN_MCAP = 20000;
+const GMGN_BAD_LIQUIDITY_STATUS_MAX_MCAP = 150000;
+const GMGN_BAD_LIQUIDITY_STATUS_MIN_BAD_SIGNALS = 2;
 const GMGN_NEW_NON_PUMP_MAX_AGE_HOURS = 2;
 const GMGN_NEW_NON_PUMP_MIN_LAUNCH_MCAP = 50000;
 const GMGN_NEW_NON_PUMP_MAX_LAUNCH_MCAP = 100000;
@@ -81,6 +84,45 @@ function toFiniteNumberOrNull(value) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toBooleanOrNull(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+  if (value == null || value === '') {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no'].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function readGmgnLiquidityProtectionFields(snapshot = {}) {
+  const raw = snapshot.raw && typeof snapshot.raw === 'object' ? snapshot.raw : snapshot;
+  return {
+    lockPercent: toFiniteNumberOrNull(raw.lock_percent ?? raw.lockPercent),
+    burnRatio: toFiniteNumberOrNull(raw.burn_ratio ?? raw.burnRatio),
+    burnStatus: normalizeLowerText(raw.burn_status ?? raw.burnStatus),
+    creatorClose: toBooleanOrNull(raw.creator_close ?? raw.creatorClose),
+    creatorTokenStatus: normalizeLowerText(raw.creator_token_status ?? raw.creatorTokenStatus),
+  };
+}
+
+function getBadGmgnLiquidityStatusSignals(snapshot = {}) {
+  const fields = readGmgnLiquidityProtectionFields(snapshot);
+  const signals = [];
+  if (fields.lockPercent === 0) signals.push('lock_zero');
+  if (fields.burnRatio === 0) signals.push('burn_ratio_zero');
+  if (fields.burnStatus === 'none') signals.push('burn_status_none');
+  if (fields.creatorClose === true) signals.push('creator_close');
+  if (fields.creatorTokenStatus === 'creator_close') signals.push('creator_token_status_close');
+  return signals;
 }
 
 function toTimestampMsOrNull(value) {
@@ -610,7 +652,10 @@ function isPumpAddress(address) {
 
 function hasKnownLaunchSuffix(address) {
   const normalized = normalizeLowerText(address);
-  return normalized.endsWith('pump') || normalized.endsWith('bags') || normalized.endsWith('brrr');
+  return normalized.endsWith('pump')
+    || normalized.endsWith('bags')
+    || normalized.endsWith('brrr')
+    || normalized.endsWith('bonk');
 }
 
 function isAutomaticGmgnToken(tokenBefore, tokenAfter) {
@@ -728,6 +773,29 @@ function isGmgnLowLiquiditySpamRisk(address, snapshot = {}, tokenBefore = null, 
     && liquidityUsd != null
     && liquidityUsd < GMGN_LOW_LIQUIDITY_SPAM_MAX_LIQUIDITY_USD
     && (marketCap == null || marketCap < GMGN_LOW_LIQUIDITY_SPAM_MAX_MCAP);
+}
+
+function isGmgnBadLiquidityStatusMcapBandRisk(address, snapshot = {}, tokenBefore = null, now = new Date()) {
+  if (isManualToken(tokenBefore) || isBlockedToken(tokenBefore) || hasDexConfirmation(tokenBefore)) {
+    return false;
+  }
+  if (hasKnownLaunchSuffix(address)) {
+    return false;
+  }
+
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  if (ageHours == null || ageHours >= GMGN_LOW_LIQUIDITY_SPAM_MAX_AGE_HOURS) {
+    return false;
+  }
+
+  const marketCap = toFiniteNumberOrNull(snapshot.mcap);
+  if (marketCap == null
+    || marketCap < GMGN_BAD_LIQUIDITY_STATUS_MIN_MCAP
+    || marketCap > GMGN_BAD_LIQUIDITY_STATUS_MAX_MCAP) {
+    return false;
+  }
+
+  return getBadGmgnLiquidityStatusSignals(snapshot).length >= GMGN_BAD_LIQUIDITY_STATUS_MIN_BAD_SIGNALS;
 }
 
 function hasReliableGmgnFiveMinuteVolume(snapshot = {}) {
@@ -861,6 +929,15 @@ function buildGmgnLowLiquiditySpamLabel(snapshot = {}) {
   return buildPrefixedAutoBlockLabel(
     AUTO_BLOCK_LABEL_PREFIXES.GMGN_LIQUIDITY_UNDER_1K_SPAM,
     [liquidityUsd, marketCap]
+  );
+}
+
+function buildGmgnBadLiquidityStatusMcapBandLabel(snapshot = {}) {
+  const marketCap = Math.round(toFiniteNumberOrNull(snapshot.mcap) || 0);
+  const badSignals = getBadGmgnLiquidityStatusSignals(snapshot);
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.GMGN_LIQUIDITY_BAD_STATUS_MCAP_BAND,
+    [marketCap, `${badSignals.length}bad`, ...badSignals.slice(0, 3)]
   );
 }
 
@@ -1038,6 +1115,28 @@ async function autoBlockGmgnLowLiquiditySpamRisk(address, snapshot, tokenBefore,
     label,
     createdBy: null,
     evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:low-liquidity-spam', snapshot, tokenBefore),
+  });
+
+  if (tokenBefore) {
+    await options.tokenCatalogModel.applyEvaluationResult(address, {
+      eligibilityState: 'admin-blocked',
+      eligibleForMonitoring: false,
+      suppressedReason: 'admin_blocked',
+      nextEvaluationAt: new Date(options.now().getTime() + (10 * 365 * 24 * 60 * 60 * 1000)),
+      monitorPriority: 'dormant',
+      symbol: snapshot.symbol || tokenBefore.symbol || null,
+      name: snapshot.name || tokenBefore.name || null,
+    });
+  }
+}
+
+async function autoBlockGmgnBadLiquidityStatusMcapBandRisk(address, snapshot, tokenBefore, options) {
+  const label = buildGmgnBadLiquidityStatusMcapBandLabel(snapshot);
+  await options.adminBlockedTokenModel.add({
+    address,
+    label,
+    createdBy: null,
+    evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:bad-liquidity-status-mcap-band', snapshot, tokenBefore),
   });
 
   if (tokenBefore) {
@@ -1272,6 +1371,18 @@ async function ingestGmgnToken(snapshot, options = {}) {
     };
   }
 
+  if (isGmgnBadLiquidityStatusMcapBandRisk(address, filledSnapshot, tokenBefore, now)) {
+    await autoBlockGmgnBadLiquidityStatusMcapBandRisk(address, filledSnapshot, tokenBefore, resolved);
+    summary.gmgnBadLiquidityStatusAutoBlocked += 1;
+    return {
+      summary,
+      tokenBefore,
+      tokenAfter: null,
+      skipped: true,
+      skipReason: 'gmgn-bad-liquidity-status-auto-blocked',
+    };
+  }
+
   const securityGuard = await applyGmgnSecurityRiskGuard(address, filledSnapshot, tokenBefore, resolved, summary);
   if (securityGuard?.skipped) {
     return {
@@ -1392,6 +1503,7 @@ function createEmptyIngestionSummary() {
     gmgnInfoChecks: 0,
     gmgnInfoAutoBlocked: 0,
     gmgnInfoErrors: 0,
+    gmgnBadLiquidityStatusAutoBlocked: 0,
     gmgnLowLiquiditySpamAutoBlocked: 0,
     gmgnLowMcapExtremeVolumeAutoBlocked: 0,
     gmgnNewNonPumpHighLaunchMcapAutoBlocked: 0,
@@ -1432,6 +1544,7 @@ function mergeIngestionSummary(target, source) {
   target.gmgnInfoChecks += source.gmgnInfoChecks;
   target.gmgnInfoAutoBlocked += source.gmgnInfoAutoBlocked;
   target.gmgnInfoErrors += source.gmgnInfoErrors;
+  target.gmgnBadLiquidityStatusAutoBlocked += source.gmgnBadLiquidityStatusAutoBlocked;
   target.gmgnLowLiquiditySpamAutoBlocked += source.gmgnLowLiquiditySpamAutoBlocked;
   target.gmgnLowMcapExtremeVolumeAutoBlocked += source.gmgnLowMcapExtremeVolumeAutoBlocked;
   target.gmgnNewNonPumpHighLaunchMcapAutoBlocked += source.gmgnNewNonPumpHighLaunchMcapAutoBlocked;
@@ -1506,6 +1619,7 @@ module.exports = {
     autoBlockGmgnJunk,
     autoBlockGmgnInfoRisk,
     autoBlockGmgnKlineRisk,
+    autoBlockGmgnBadLiquidityStatusMcapBandRisk,
     autoBlockGmgnLowLiquiditySpamRisk,
     autoBlockGmgnSecurityRisk,
     buildGmgnAutoBlockLabel,
@@ -1513,6 +1627,7 @@ module.exports = {
     buildGmgnJunkAssessmentInput,
     buildGmgnInfoAutoBlockLabel,
     buildGmgnKlineAutoBlockLabel,
+    buildGmgnBadLiquidityStatusMcapBandLabel,
     buildGmgnLowLiquiditySpamLabel,
     createRiskLookupTokenBudget,
     enqueueGmgnRiskReview,
@@ -1539,6 +1654,7 @@ module.exports = {
     isJunkAssessment,
     isGmgnSecurityAutoBlockRisk,
     isGmgnInfoAutoBlockRisk,
+    isGmgnBadLiquidityStatusMcapBandRisk,
     isGmgnLowLiquiditySpamRisk,
     isGmgnStaircasePumpRisk,
     mergeIngestionSummary,
@@ -1547,6 +1663,8 @@ module.exports = {
     runGmgnPreliminaryRiskReview,
     resolveEligibilityState,
     resolveGmgnNonLaunchGraceUntil,
+    getBadGmgnLiquidityStatusSignals,
+    readGmgnLiquidityProtectionFields,
     resolveCatalogSource,
     resolveIngestionOptions,
     resolveMonitorPriority,

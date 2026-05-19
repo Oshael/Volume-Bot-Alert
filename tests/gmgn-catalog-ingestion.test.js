@@ -843,6 +843,153 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 84550.6);
   });
 
+  it('auto-blocks GMGN-only mid-cap tokens with multiple bad liquidity statuses before expensive checks', async () => {
+    const blockWrites = [];
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot('nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES'),
+      tokenCreatedAt: '2026-05-03T06:35:00.000Z',
+      mcap: 84550.6,
+      liquidityUsd: 2500,
+      vol5m: 18000,
+      vol1h: 60000,
+      vol6h: 90000,
+      vol24h: 120000,
+      gmgnInterval: '5m',
+      gmgnIntervals: ['5m'],
+      raw: {
+        lock_percent: 0,
+        burn_ratio: 0,
+        burn_status: 'none',
+      },
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add(payload) {
+          blockWrites.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken() {
+          throw new Error('bad-liquidity-status block must happen before catalog upsert');
+        },
+        async applyEvaluationResult() {
+          throw new Error('brand-new bad-liquidity-status block must happen before catalog evaluation');
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {
+          throw new Error('blocked bad-liquidity-status GMGN tokens must not write buckets');
+        },
+      },
+      gmgnClient: {
+        async fetchTokenSecurity() {
+          throw new Error('bad-liquidity-status block must not depend on GMGN security lookup');
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('blocked bad-liquidity-status GMGN tokens must not alert');
+        },
+      },
+    });
+
+    assert.equal(result.skipped, true);
+    assert.equal(result.skipReason, 'gmgn-bad-liquidity-status-auto-blocked');
+    assert.equal(result.summary.gmgnBadLiquidityStatusAutoBlocked, 1);
+    assert.equal(blockWrites.length, 1);
+    assert.equal(
+      blockWrites[0].label,
+      'gmgn-liquidity:bad-status-mcap-band:84551:3bad:lock_zero:burn_ratio_zero:burn_status_none'
+    );
+    assert.equal(blockWrites[0].evidence.pipeline, 'gmgn-ingestion:bad-liquidity-status-mcap-band');
+    assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 84550.6);
+  });
+
+  it('does not auto-block GMGN bad liquidity statuses outside mcap band or known launch suffixes', async () => {
+    const cases = [
+      {
+        address: 'nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES',
+        mcap: 19999,
+      },
+      {
+        address: 'nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES',
+        mcap: 150001,
+      },
+      {
+        address: '3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump',
+        mcap: 84550.6,
+      },
+      {
+        address: '3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2bonk',
+        mcap: 84550.6,
+      },
+      {
+        address: 'nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES',
+        mcap: 84550.6,
+        tokenCreatedAt: '2026-05-03T04:59:59.000Z',
+      },
+    ];
+
+    for (const { address, mcap, tokenCreatedAt = '2026-05-03T06:35:00.000Z' } of cases) {
+      let upsertCalls = 0;
+      const blockWrites = [];
+      const result = await gmgnCatalogIngestion.ingestGmgnToken({
+        ...createSnapshot(address),
+        tokenCreatedAt,
+        mcap,
+        liquidityUsd: 2500,
+        vol5m: 18000,
+        vol1h: 60000,
+        vol6h: 90000,
+        vol24h: 120000,
+        raw: {
+          lock_percent: 0,
+          burn_ratio: 0,
+          burn_status: 'none',
+        },
+      }, {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        evaluationState: new Map(),
+        adminBlockedTokenModel: {
+          async add(payload) {
+            blockWrites.push(payload);
+            return payload;
+          },
+        },
+        tokenCatalogModel: {
+          async getByAddress() {
+            return null;
+          },
+          async upsertToken(payload) {
+            upsertCalls += 1;
+            return { address: payload.address, source: payload.source };
+          },
+          async applyEvaluationResult(addressValue, payload) {
+            return {
+              address: addressValue,
+              source: 'gmgn',
+              eligible_for_monitoring: payload.eligibleForMonitoring,
+              suppressed_reason: payload.suppressedReason,
+              last_vol_5m: payload.vol5m,
+            };
+          },
+        },
+        volumeBucketModel: { async upsertSnapshotBucket() {} },
+        gmgnClient: createSafeGmgnSecurityStub(),
+        alertMatcher: { async evaluateUpdatedToken() { return { emitted: 0, events: [] }; } },
+      });
+
+      assert.equal(result.summary.gmgnBadLiquidityStatusAutoBlocked, 0);
+      assert.equal(blockWrites.length, 0);
+      assert.equal(upsertCalls, 1);
+    }
+  });
+
   it('does not auto-block Dex-confirmed or known-launch-suffix tokens with liquidity under 1k', async () => {
     const cases = [
       {

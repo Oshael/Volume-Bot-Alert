@@ -3,6 +3,7 @@ const AUTO_BLOCK_LABEL_PREFIXES = Object.freeze({
   GMGN_AUTO_JUNK: 'gmgn-auto-junk',
   GMGN_INFO_LOW_MCAP_HIGH_HOLDERS: 'gmgn-info:low-mcap-high-holders',
   GMGN_KLINE_STAIRCASE_PUMP: 'gmgn-kline:staircase-pump',
+  GMGN_LIQUIDITY_BAD_STATUS_MCAP_BAND: 'gmgn-liquidity:bad-status-mcap-band',
   GMGN_LIQUIDITY_UNDER_1K_SPAM: 'gmgn-liquidity:under-1k-spam',
   GMGN_NEW_NON_PUMP_HIGH_LAUNCH_MCAP: 'gmgn-origin:new-non-pump-high-launch-mcap',
   GMGN_SECURITY_TOP10_HOLDER_RATE: 'gmgn-security:top10-holder-rate',

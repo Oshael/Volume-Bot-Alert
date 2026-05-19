@@ -283,12 +283,25 @@ Important:
 - GMGN low-liquidity spam gate now runs in ingestion before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher:
   - automatic GMGN discovery only
   - token is not manual, not already admin-blocked, and not Dex-confirmed
-  - CA does not end with `pump`, `bags`, or `brrr`
+  - CA does not end with `pump`, `bags`, `brrr`, or `bonk`
   - age is known and below `2h`
   - GMGN current liquidity is known and below `$1,000`
   - market cap is missing or below `$150,000`
   - matching rows are auto-blocked as `gmgn-liquidity:under-1k-spam:{liquidityUsd}:{mcap}`
   - this replaces the heavier token-risk review GMGN liquidity hard-bans (`gmgn_confirmed_micro_liquidity`, `gmgn_low_mcap_thin_support`, `gmgn_low_mcap_extreme_24h_churn_thin_liquidity`, and `gmgn_young_low_cap_high_churn_thin_liquidity`)
+- GMGN bad-liquidity-status mcap-band gate is a separate ingestion hard-ban before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher:
+  - automatic GMGN discovery only
+  - token is not manual, not already admin-blocked, and not Dex-confirmed
+  - CA does not end with `pump`, `bags`, `brrr`, or `bonk`
+  - age is known and below `2h`
+  - current GMGN market cap is `>= $20,000` and `<= $150,000`
+  - at least `2` of the `5` GMGN liquidity-protection fields are bad:
+    - `lock_percent = 0`
+    - `burn_ratio = 0`
+    - `burn_status = none`
+    - `creator_close = true`
+    - `creator_token_status = creator_close`
+  - matching rows are auto-blocked as `gmgn-liquidity:bad-status-mcap-band:{mcap}:{badCount}bad:{signals...}`
 - Local operational checkpoint on `2026-05-04`:
   - GMGN risk backfill scanned `97` local candidates
   - `33` were blocked

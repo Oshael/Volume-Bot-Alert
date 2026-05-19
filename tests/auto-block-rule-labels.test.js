@@ -16,6 +16,7 @@ describe('auto-block rule labels', () => {
       GMGN_AUTO_JUNK: 'gmgn-auto-junk',
       GMGN_INFO_LOW_MCAP_HIGH_HOLDERS: 'gmgn-info:low-mcap-high-holders',
       GMGN_KLINE_STAIRCASE_PUMP: 'gmgn-kline:staircase-pump',
+      GMGN_LIQUIDITY_BAD_STATUS_MCAP_BAND: 'gmgn-liquidity:bad-status-mcap-band',
       GMGN_LIQUIDITY_UNDER_1K_SPAM: 'gmgn-liquidity:under-1k-spam',
       GMGN_NEW_NON_PUMP_HIGH_LAUNCH_MCAP: 'gmgn-origin:new-non-pump-high-launch-mcap',
       GMGN_SECURITY_TOP10_HOLDER_RATE: 'gmgn-security:top10-holder-rate',
@@ -54,6 +55,17 @@ describe('auto-block rule labels', () => {
         mcap: 84550.6,
       }),
       'gmgn-liquidity:under-1k-spam:721:84551'
+    );
+    assert.equal(
+      gmgnCatalogIngestion.__private.buildGmgnBadLiquidityStatusMcapBandLabel({
+        mcap: 84550.6,
+        raw: {
+          lock_percent: 0,
+          burn_ratio: 0,
+          burn_status: 'none',
+        },
+      }),
+      'gmgn-liquidity:bad-status-mcap-band:84551:3bad:lock_zero:burn_ratio_zero:burn_status_none'
     );
     assert.equal(
       gmgnCatalogIngestion.__private.buildGmgnKlineAutoBlockLabel({ runupRatio: 1.55 }),
