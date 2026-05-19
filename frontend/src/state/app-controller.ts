@@ -108,7 +108,7 @@ const EVM_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const HVNC_MAX_AGE_MS = 10 * 60 * 1000;
+const HVNC_MAX_AGE_MS = 5 * 60 * 1000;
 const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
 const PUMP_WINDOW_MS = 5 * 60 * 1000;
 const PUMP_VOLUME_BUCKET_MS = 5 * 1000;
@@ -4271,7 +4271,7 @@ export function createAppController(): AppController {
     return isAlertKindEnabled('hvnc')
       && !token._hvncFired
       && hvncMinVol > 0
-      && ageMs < HVNC_MAX_AGE_MS
+      && ageMs <= HVNC_MAX_AGE_MS
       && (token.volume24h ?? 0) >= hvncMinVol;
   }
 

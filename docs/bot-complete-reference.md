@@ -2073,8 +2073,8 @@ Meaning:
 - High Volume New Coin
 
 Rules:
-- normal token age under `10m`
-- for `pumpfun-migrated` tokens, age is counted from migration capture, not from pre-migration token creation
+- normal token age up to `5m`
+- for `pumpfun-migrated` tokens, age is counted up to `5m` from migration capture, not from pre-migration token creation
 - `volume24h >= hvnc-min-vol`
 - backend matcher emits it as a user-token event
 - still single-fire style unless a new backend lifecycle transition requalifies it

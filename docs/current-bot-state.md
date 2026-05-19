@@ -1783,8 +1783,8 @@ Current limitation:
 ### Backend user-alert matcher model
 - `VOL`, `MCAP`, `HVNC`, `Surge`, and `Meteora` user alerts are now matched in the backend user-alert matcher, not generated primarily in the frontend panel
 - `HVNC` currently requires `volume24h >= hvnc-min-vol`
-  - for normal tokens, the age gate is token age under `10m`
-  - for `pumpfun-migrated` tokens, the age gate is under `10m` after migration capture, not pre-migration token age
+  - for normal tokens, the age gate is token age up to `5m`
+  - for `pumpfun-migrated` tokens, the age gate is up to `5m` after migration capture, not pre-migration token age
 - `monitored-vol` and `monitored-mcap` now use anchored repeat semantics:
   - the first alert uses the current persisted baseline
   - repeat alerts compare against the last alerted value rather than forever reusing the original baseline

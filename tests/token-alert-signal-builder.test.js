@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const tokenAlertSignalBuilder = require('../src/services/token-alert-signal-builder');
 
 describe('token alert signal builder', () => {
-  it('uses a 10 minute max age gate for HVNC', () => {
-    assert.equal(tokenAlertSignalBuilder.HVNC_MAX_AGE_MS, 10 * 60 * 1000);
+  it('uses a 5 minute max age gate for HVNC', () => {
+    assert.equal(tokenAlertSignalBuilder.HVNC_MAX_AGE_MS, 5 * 60 * 1000);
   });
 
   it('builds reusable monitored, hvnc, and meteora signals from dashboard-like input', () => {
@@ -76,6 +76,20 @@ describe('token alert signal builder', () => {
     assert.equal(signals.migrationAgeMs, 5 * 60 * 1000);
     assert.equal(signals.hvncAgeGatePassed, true);
     assert.equal(signals.passesHvncPrereqs, true);
+  });
+
+  it('rejects normal HVNC tokens older than 5 minutes', () => {
+    const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+
+    const signals = tokenAlertSignalBuilder.buildTokenAlertSignals({
+      address: 'So11111111111111111111111111111111111111112',
+      volume24h: 350000,
+      tokenCreatedAt: nowMs - (5 * 60 * 1000) - 1,
+    }, { nowMs });
+
+    assert.equal(signals.ageMs, (5 * 60 * 1000) + 1);
+    assert.equal(signals.hvncAgeGatePassed, false);
+    assert.equal(signals.passesHvncPrereqs, false);
   });
 
   it('does not let pre-migration token age qualify an expired PumpFun HVNC window', () => {

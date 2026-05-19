@@ -1,4 +1,6 @@
-const HVNC_MAX_AGE_MS = 10 * 60 * 1000;
+const HVNC_MAX_AGE_MS = 5 * 60 * 1000;
+// Keep this aligned with token-catalog's persisted PumpFun migration grace window.
+const PUMPFUN_MIGRATION_GRACE_MS = 10 * 60 * 1000;
 const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
 const METEORA_ALERT_MIN_TVL = 10000;
 const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
@@ -92,7 +94,7 @@ function computeMigrationAgeMs(input, nowMs) {
   const migrationGraceUntilMs = toTimestampMs(input.migrationGraceUntil ?? input.migration_grace_until);
   const firstSeenAtMs = toTimestampMs(input.firstSeenAt ?? input.first_seen_at);
   const migratedAtMs = explicitMigratedAt
-    ?? (migrationGraceUntilMs != null ? migrationGraceUntilMs - HVNC_MAX_AGE_MS : null)
+    ?? (migrationGraceUntilMs != null ? migrationGraceUntilMs - PUMPFUN_MIGRATION_GRACE_MS : null)
     ?? firstSeenAtMs;
 
   if (!(migratedAtMs > 0)) {
@@ -289,10 +291,10 @@ function isPumpfunMigratedSource(source) {
 
 function passesHvncAgeGate(facts, ageMs) {
   if (isPumpfunMigratedSource(facts.source)) {
-    return facts.migrationAgeMs != null && facts.migrationAgeMs < HVNC_MAX_AGE_MS;
+    return facts.migrationAgeMs != null && facts.migrationAgeMs <= HVNC_MAX_AGE_MS;
   }
 
-  return ageMs != null && ageMs < HVNC_MAX_AGE_MS;
+  return ageMs != null && ageMs <= HVNC_MAX_AGE_MS;
 }
 
 function buildSignalFlags(facts, meteora, nowMs) {
