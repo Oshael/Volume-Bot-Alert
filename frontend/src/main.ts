@@ -33,6 +33,7 @@ const HIDDEN_RUNTIME_STOP_MS = 20 * 60 * 1000;
 const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
 const PERF_DEBUG_SAMPLE_INTERVAL_MS = 10 * 1000;
 const FOREGROUND_STATE_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
+const SESSION_RESTORE_CATCHUP_AUDIO_SUPPRESSION_MS = 15_000;
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -721,6 +722,8 @@ function primePlayedAlertsOnAuthentication(state: AppState, sessionJustBecameAut
     return;
   }
 
+  suppressCatchupAlertCreatedBefore = Date.now();
+  suppressCatchupAlertAudioUntil = Date.now() + SESSION_RESTORE_CATCHUP_AUDIO_SUPPRESSION_MS;
   resetBrowserNotificationSession();
   browserNotificationActiveSince = Date.now();
   lastBrowserNotificationRuntimeActive = state.runtime.mode === 'active';
