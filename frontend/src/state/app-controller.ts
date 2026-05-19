@@ -195,6 +195,8 @@ const LEGACY_NETWORK_DEBUG_STORAGE_KEYS = [
   'trendscope-network-debug-log',
 ];
 const ALERT_FEED_DEBUG_STORAGE_KEY = 'trendscope-alert-feed-debug-enabled';
+const ALERT_FEED_DEBUG_LOG_STORAGE_KEY = 'trendscope-alert-feed-debug-log';
+const ALERT_FEED_DEBUG_LOG_LIMIT = 80;
 
 type DashboardAlertFeedMode = 'all' | 'unseen';
 
@@ -795,6 +797,33 @@ export function createAppController(): AppController {
     }
   }
 
+  function readAlertFeedDebugLog() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return [];
+    }
+
+    try {
+      const raw = window.localStorage.getItem(ALERT_FEED_DEBUG_LOG_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function appendAlertFeedDebugLog(entry: Record<string, unknown>) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+
+    try {
+      const nextLog = [...readAlertFeedDebugLog(), entry].slice(-ALERT_FEED_DEBUG_LOG_LIMIT);
+      window.localStorage.setItem(ALERT_FEED_DEBUG_LOG_STORAGE_KEY, JSON.stringify(nextLog));
+    } catch {
+      // Ignore debug persistence failures.
+    }
+  }
+
   function summarizeDebugAlertEntry(alert: AlertEntry) {
     return {
       id: alert.id,
@@ -830,13 +859,24 @@ export function createAppController(): AppController {
       return;
     }
 
-    console.debug(`[alert-feed-debug] ${label}`, {
+    const entry = {
+      ts: Date.now(),
+      label,
       workspace: state.ui.workspace,
       sessionStatus: state.session.status,
       alertCount: state.data.alerts.length,
       topAlerts: summarizeDebugAlerts(state.data.alerts, 5),
+      visibilityState: typeof document !== 'undefined' ? document.visibilityState : null,
+      documentHiddenForUi,
+      viewport: typeof window !== 'undefined'
+        ? { width: window.innerWidth, height: window.innerHeight }
+        : null,
+      path: typeof window !== 'undefined' ? window.location.pathname : null,
       ...meta,
-    });
+    };
+
+    appendAlertFeedDebugLog(entry);
+    console.debug(`[alert-feed-debug] ${label}`, entry);
   }
 
   function stopSocialLinkSync() {
