@@ -167,6 +167,7 @@ const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
 const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
+const BOOTSTRAP_ALERT_FEED_MODE = 'all';
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const BACKEND_OWNED_ALERT_RULE_KEYS = [
   HIGH_CAP_DUMP_RULE_KEY,
@@ -6785,11 +6786,11 @@ export function createAppController(): AppController {
     });
 
     if (options?.deferDashboard) {
-      void hydrateDashboardMonitoredInternal(token, payload.tokens, options.alertFeedMode ?? 'unseen');
+      void hydrateDashboardMonitoredInternal(token, payload.tokens, options.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE);
       return;
     }
 
-    await hydrateDashboardMonitoredInternal(token, payload.tokens, options?.alertFeedMode ?? 'unseen');
+    await hydrateDashboardMonitoredInternal(token, payload.tokens, options?.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE);
   }
 
   async function reloadConfigPreservingMonitoredSnapshot(token: string) {
