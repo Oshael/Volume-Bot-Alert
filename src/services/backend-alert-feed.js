@@ -24,6 +24,10 @@ function toNumberOrNull(value) {
 }
 
 function toTextOrNull(value) {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString();
+  }
+
   const text = typeof value === 'string' ? value.trim() : '';
   return text || null;
 }

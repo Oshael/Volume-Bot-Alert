@@ -167,7 +167,7 @@ const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
 const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
-const BOOTSTRAP_ALERT_FEED_MODE = 'all';
+const BOOTSTRAP_ALERT_FEED_MODE = 'unseen';
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const BACKEND_OWNED_ALERT_RULE_KEYS = [
   HIGH_CAP_DUMP_RULE_KEY,
@@ -194,9 +194,6 @@ const LEGACY_NETWORK_DEBUG_STORAGE_KEYS = [
   'trendscope-network-debug-enabled',
   'trendscope-network-debug-log',
 ];
-const ALERT_FEED_DEBUG_STORAGE_KEY = 'trendscope-alert-feed-debug-enabled';
-const ALERT_FEED_DEBUG_LOG_STORAGE_KEY = 'trendscope-alert-feed-debug-log';
-const ALERT_FEED_DEBUG_LOG_LIMIT = 80;
 
 type DashboardAlertFeedMode = 'all' | 'unseen';
 
@@ -783,100 +780,6 @@ export function createAppController(): AppController {
     } catch {
       // Ignore local persistence failures.
     }
-  }
-
-  function isAlertFeedDebugEnabled() {
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return false;
-    }
-
-    try {
-      return window.localStorage.getItem(ALERT_FEED_DEBUG_STORAGE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  }
-
-  function readAlertFeedDebugLog() {
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return [];
-    }
-
-    try {
-      const raw = window.localStorage.getItem(ALERT_FEED_DEBUG_LOG_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
-  function appendAlertFeedDebugLog(entry: Record<string, unknown>) {
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return;
-    }
-
-    try {
-      const nextLog = [...readAlertFeedDebugLog(), entry].slice(-ALERT_FEED_DEBUG_LOG_LIMIT);
-      window.localStorage.setItem(ALERT_FEED_DEBUG_LOG_STORAGE_KEY, JSON.stringify(nextLog));
-    } catch {
-      // Ignore debug persistence failures.
-    }
-  }
-
-  function summarizeDebugAlertEntry(alert: AlertEntry) {
-    return {
-      id: alert.id,
-      kind: alert.kind,
-      ruleKey: alert.ruleKey ?? null,
-      address: alert.address,
-      createdAt: alert.createdAt,
-      label: alert.label ?? null,
-    };
-  }
-
-  function summarizeDebugAlertEvent(event: DashboardAlertEvent) {
-    return {
-      id: event.id,
-      kind: event.kind ?? null,
-      ruleKey: event.ruleKey ?? null,
-      address: event.address,
-      triggeredAt: event.triggeredAt,
-      label: event.label ?? null,
-    };
-  }
-
-  function summarizeDebugAlerts(alerts: AlertEntry[], limit = 8) {
-    return alerts.slice(0, limit).map((alert) => summarizeDebugAlertEntry(alert));
-  }
-
-  function summarizeDebugAlertEvents(events: DashboardAlertEvent[], limit = 8) {
-    return events.slice(0, limit).map((event) => summarizeDebugAlertEvent(event));
-  }
-
-  function logAlertFeedDebug(label: string, meta: Record<string, unknown> = {}) {
-    if (!isAlertFeedDebugEnabled()) {
-      return;
-    }
-
-    const entry = {
-      ts: Date.now(),
-      label,
-      workspace: state.ui.workspace,
-      sessionStatus: state.session.status,
-      alertCount: state.data.alerts.length,
-      topAlerts: summarizeDebugAlerts(state.data.alerts, 5),
-      visibilityState: typeof document !== 'undefined' ? document.visibilityState : null,
-      documentHiddenForUi,
-      viewport: typeof window !== 'undefined'
-        ? { width: window.innerWidth, height: window.innerHeight }
-        : null,
-      path: typeof window !== 'undefined' ? window.location.pathname : null,
-      ...meta,
-    };
-
-    appendAlertFeedDebugLog(entry);
-    console.debug(`[alert-feed-debug] ${label}`, entry);
   }
 
   function stopSocialLinkSync() {
@@ -2663,11 +2566,6 @@ export function createAppController(): AppController {
     alertsPersistScope = null;
     saveAlerts(scope, state.data.alerts);
     saveAlertSparklineCache(scope, state.data.alertSparklineById);
-    logAlertFeedDebug('storage.flush-alerts', {
-      scope,
-      savedCount: state.data.alerts.length,
-      savedTopAlerts: summarizeDebugAlerts(state.data.alerts),
-    });
   }
 
   function scheduleAlertsPersist() {
@@ -2705,11 +2603,6 @@ export function createAppController(): AppController {
     clearOldWeekRemovalLogStorage(scope);
     state.data.alerts = loadAlerts(scope);
     state.data.alertSparklineById = loadAlertSparklineCache(scope);
-    logAlertFeedDebug('storage.hydrate-alerts', {
-      scope,
-      loadedCount: state.data.alerts.length,
-      loadedTopAlerts: summarizeDebugAlerts(state.data.alerts),
-    });
     pruneAlertSparklineCache();
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision = state.data.alerts.length > 0 ? 1 : 0;
@@ -4707,32 +4600,14 @@ export function createAppController(): AppController {
   ) {
     const shouldLoadDashboardAlerts = includeAlertFeed ?? isLiveWorkspace();
     if (!shouldLoadDashboardAlerts) {
-      logAlertFeedDebug('feed.request.skipped', {
-        includeAlertFeed,
-        mode,
-        reason: 'not-live-workspace',
-      });
       return Promise.resolve(null);
     }
-
-    logAlertFeedDebug('feed.request.start', {
-      includeAlertFeed,
-      mode,
-      limit: BACKEND_ALERT_FEED_LIMIT,
-      ruleKeys: [...BACKEND_OWNED_ALERT_RULE_KEYS],
-    });
 
     return fetchDashboardAlertFeeds(token, {
       limit: BACKEND_ALERT_FEED_LIMIT,
       mode,
       ruleKeys: [...BACKEND_OWNED_ALERT_RULE_KEYS],
-    }).catch((error) => {
-      logAlertFeedDebug('feed.request.error', {
-        mode,
-        message: formatDebugErrorMessage(error),
-      });
-      return null;
-    });
+    }).catch(() => null);
   }
 
   function applyDashboardAlertFeedRefreshSuccess(
@@ -4740,42 +4615,13 @@ export function createAppController(): AppController {
     dashboardAlertFeeds: Awaited<ReturnType<typeof loadDashboardAlertFeedsForWorkspace>>,
   ) {
     if (!dashboardAlertFeeds?.feeds?.length) {
-      logAlertFeedDebug('feed.apply.empty', {
-        responseMode: dashboardAlertFeeds?.mode ?? null,
-        feedCount: dashboardAlertFeeds?.feeds?.length ?? 0,
-      });
       return;
     }
 
-    const beforeAlerts = state.data.alerts;
     const events = dashboardAlertFeeds.feeds
       .flatMap((feed) => feed?.events || [])
       .sort((a, b) => getBackendAlertCreatedAt(a.triggeredAt) - getBackendAlertCreatedAt(b.triggeredAt));
-    logAlertFeedDebug('feed.apply.before-sync', {
-      responseMode: dashboardAlertFeeds.mode ?? null,
-      feedCount: dashboardAlertFeeds.feeds.length,
-      feeds: dashboardAlertFeeds.feeds.map((feed) => ({
-        ruleKey: feed.ruleKey ?? null,
-        kind: feed.kind ?? null,
-        mode: feed.mode ?? null,
-        count: feed.count ?? 0,
-        eventCount: feed.events?.length ?? 0,
-        firstEvent: feed.events?.[0] ? summarizeDebugAlertEvent(feed.events[0]) : null,
-        lastEvent: feed.events?.length ? summarizeDebugAlertEvent(feed.events[feed.events.length - 1]) : null,
-      })),
-      mergedEventCount: events.length,
-      mergedOldestEvents: summarizeDebugAlertEvents(events),
-      mergedNewestEvents: summarizeDebugAlertEvents([...events].reverse()),
-      beforeCount: beforeAlerts.length,
-      beforeTopAlerts: summarizeDebugAlerts(beforeAlerts),
-    });
     const addedEvents = syncBackendAlertEvents(events);
-    logAlertFeedDebug('feed.apply.after-sync', {
-      responseMode: dashboardAlertFeeds.mode ?? null,
-      addedEvents,
-      afterCount: state.data.alerts.length,
-      afterTopAlerts: summarizeDebugAlerts(state.data.alerts),
-    });
 
     for (const feed of dashboardAlertFeeds.feeds) {
       if (!feed?.events?.length) {
@@ -7951,16 +7797,9 @@ export function createAppController(): AppController {
       if (state.data.alerts.length === 0) {
         return;
       }
-      logAlertFeedDebug('alerts.clear-all.before', {
-        beforeCount: state.data.alerts.length,
-        beforeTopAlerts: summarizeDebugAlerts(state.data.alerts),
-      });
       state.data.alerts = [];
       syncAlertState();
       flushAlertsPersist();
-      logAlertFeedDebug('alerts.clear-all.after', {
-        afterCount: state.data.alerts.length,
-      });
       setNotice('All alerts cleared.');
       emit('alerts', 'legacy', 'overlay');
       flushEmit();

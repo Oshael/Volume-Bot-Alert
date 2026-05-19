@@ -37,7 +37,7 @@ describe('backend alert feed service', () => {
         currentCloseMcap: 4100000,
         dumpPct: -60,
         thresholdPct: 50,
-        triggeredAt: '2026-04-05T18:05:05.000Z',
+        triggeredAt: new Date('2026-04-05T18:05:05.000Z'),
       }];
     };
     tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
@@ -85,6 +85,7 @@ describe('backend alert feed service', () => {
       assert.equal(payload.count, 1);
       assert.equal(payload.events[0].kind, 'high-cap-dump-5m');
       assert.equal(payload.events[0].address, 'So11111111111111111111111111111111111111112');
+      assert.equal(payload.events[0].triggeredAt, '2026-04-05T18:05:05.000Z');
       assert.equal(payload.events[0].symbol, 'WSOL');
       assert.equal(payload.events[0].dumpPct, -60);
       assert.equal(payload.events[0].blockStatus.label, 'blocked_manual');
@@ -260,7 +261,7 @@ describe('backend alert feed service', () => {
             sourcePeerRole: 'peer_warning',
           },
         },
-        triggeredAt: '2026-04-16T12:05:10.000Z',
+        triggeredAt: new Date('2026-04-16T12:05:10.000Z'),
       }];
     };
     tokenCatalog.listDashboardMetadataByAddresses = async () => [{
