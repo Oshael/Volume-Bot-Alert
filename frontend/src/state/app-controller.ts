@@ -4618,13 +4618,16 @@ export function createAppController(): AppController {
       return;
     }
 
-    let addedEvents = 0;
+    const events = dashboardAlertFeeds.feeds
+      .flatMap((feed) => feed?.events || [])
+      .sort((a, b) => getBackendAlertCreatedAt(a.triggeredAt) - getBackendAlertCreatedAt(b.triggeredAt));
+    const addedEvents = syncBackendAlertEvents(events);
+
     for (const feed of dashboardAlertFeeds.feeds) {
       if (!feed?.events?.length) {
         continue;
       }
 
-      addedEvents += syncBackendAlertEvents(feed.events);
       void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
     }
 
