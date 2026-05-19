@@ -3930,6 +3930,20 @@ function renderBlockedTokensModal(state: AppState) {
     labelId: 'blocked-tokens-title',
     panelClass: 'legacy-auth-panel-blocklist',
     content: `
+      ${state.session.role === 'admin' ? `
+        <form class="blocked-token-admin-unblock-form" data-role="admin-unblock-token-form">
+          <input
+            type="text"
+            name="adminBlockedAddress"
+            class="legacy-input blocked-token-admin-unblock-input"
+            placeholder="Token contract"
+            autocomplete="off"
+            spellcheck="false"
+            ${state.ui.busy ? 'disabled' : ''}
+          />
+          <button type="submit" class="legacy-user-dd-item blocked-token-admin-unblock-submit" ${state.ui.busy ? 'disabled' : ''}>Unblock Backend</button>
+        </form>
+      ` : ''}
       <div class="blocked-tokens-modal-list">
         ${state.data.blocklist.length === 0 ? `
           <div class="blocked-token-empty">No blocked tokens right now.</div>
@@ -4354,6 +4368,12 @@ function bindBlockedTokensPanel(section: ParentNode, controller: AppController) 
   }
 
   bindFocusTrap(panel);
+  section.querySelector<HTMLFormElement>('form[data-role="admin-unblock-token-form"]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    void controller.adminUnblockToken(String(data.get('adminBlockedAddress') || ''));
+  });
   section.querySelectorAll<HTMLButtonElement>('[data-action="remove-blocked"]').forEach((button) => {
     button.addEventListener('click', () => {
       const address = button.dataset.address;

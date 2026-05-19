@@ -48,6 +48,13 @@ export function adminBlockToken(address: string, label?: string | null, token?: 
   });
 }
 
+export function adminUnblockToken(address: string, token?: string | null) {
+  return apiFetch<{ message: string; address: string }>(`/api/catalog/admin-blocklist/${encodeURIComponent(address)}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
 export interface EligibleCatalogToken {
   address: string;
   symbol?: string | null;

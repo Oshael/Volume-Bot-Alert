@@ -1736,6 +1736,36 @@ a {
   max-height: min(78vh, 720px);
 }
 
+.blocked-token-admin-unblock-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.blocked-token-admin-unblock-input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid rgba(45, 66, 102, 0.8);
+  border-radius: 8px;
+  background: rgba(6, 11, 18, 0.9);
+  color: #eef4ff;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.blocked-token-admin-unblock-input:focus {
+  border-color: rgba(93, 242, 225, 0.72);
+  box-shadow: 0 0 0 3px rgba(93, 242, 225, 0.12);
+  outline: none;
+}
+
+.blocked-token-admin-unblock-submit {
+  justify-content: center;
+  min-height: 42px;
+  white-space: nowrap;
+}
+
 .blocked-tokens-modal-list {
   display: grid;
   gap: 10px;
@@ -1819,6 +1849,12 @@ a {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   text-align: center;
+}
+
+@media (max-width: 620px) {
+  .blocked-token-admin-unblock-form {
+    grid-template-columns: 1fr;
+  }
 }
 
 .status-value {

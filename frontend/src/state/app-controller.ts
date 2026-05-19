@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -349,6 +349,7 @@ export interface AppController {
   setBlockedTokenWarningDontShowAgain(enabled: boolean): void;
   confirmBlockedTokenWarning(): Promise<void>;
   adminBlockToken(address: string, label?: string | null): Promise<void>;
+  adminUnblockToken(address: string): Promise<void>;
   mockBuyToken(address: string): Promise<void>;
   mockSellToken(address: string, percent: number): Promise<void>;
   setActiveMockTradingWallet(walletId: number): Promise<void>;
@@ -8903,6 +8904,43 @@ export function createAppController(): AppController {
       } finally {
         setBusy(false);
         emit();
+      }
+    },
+    async adminUnblockToken(address: string) {
+      const token = state.session.token;
+      const normalized = String(address || '').trim();
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      if (state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit();
+        return;
+      }
+
+      if (!isValidTokenAddressFormat(normalized)) {
+        setError('Enter a valid token contract address');
+        emit('overlay');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Removing backend block and scheduling Dex refresh...');
+      emit('overlay');
+
+      try {
+        const result = await adminUnblockTokenRequest(normalized, token);
+        setNotice(`${result.message}. Dex evaluation was queued.`);
+        void refreshMonitoredDashboard({ includeAlertFeed: true });
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to remove token from backend blocklist');
+      } finally {
+        setBusy(false);
+        emit('overlay', 'monitored', 'manual', 'recent', 'old-week', 'header');
       }
     },
     async mockBuyToken(address: string) {
