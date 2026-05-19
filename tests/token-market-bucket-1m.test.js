@@ -1,6 +1,7 @@
 const { beforeEach, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
+const config = require('../config');
 const db = require('../src/models/db');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 
@@ -125,6 +126,43 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(calls.length, 1);
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
     } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('can skip inline aggregate recompute when disabled by runtime config', async () => {
+    const originalQuery = db.query;
+    const originalAggregateOnWriteEnabled = config.marketBuckets.aggregateOnWriteEnabled;
+    const calls = [];
+
+    config.marketBuckets.aggregateOnWriteEnabled = false;
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-03-24T04:18:00.000Z',
+            sample_count: 1,
+          },
+        ],
+      };
+    };
+
+    try {
+      await tokenMarketBucket1m.upsertSnapshotBucket({
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        pairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+        ts: '2026-03-24T04:18:59.999Z',
+        mcap: 123456,
+        price: 0.1234,
+        source: 'dexscreener',
+      });
+
+      assert.equal(calls.length, 1);
+      assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+    } finally {
+      config.marketBuckets.aggregateOnWriteEnabled = originalAggregateOnWriteEnabled;
       db.query = originalQuery;
     }
   });

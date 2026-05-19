@@ -664,6 +664,7 @@ Important:
   - `token_market_buckets_1m` remains the base market-history source and the fallback for `1m`/low-coverage sparkline reads
   - `token_market_buckets_agg` is populated incrementally from new `1m` buckets and by `npm run market-buckets-agg:backfill`
   - aggregate writes run only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute the aggregate windows
+  - `MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED=false` can temporarily disable inline aggregate recompute when the database is under write pressure
   - fresh raw `token_market_snapshots` are no longer the normal monitored baseline path
   - the dashboard route now builds the canonical visual `VOL 5M` baseline from `token_market_volume_buckets_1m`
   - legacy `token_market_snapshots` still exist mainly for historical/backfill compatibility and cleanup behavior

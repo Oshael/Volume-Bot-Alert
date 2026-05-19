@@ -1,6 +1,7 @@
 const db = require('./db');
 const { isValidAddress } = require('./user-token');
 const { HIGH_CAP_DUMP_RULE_KEY, getBackendAlertRule } = require('../services/backend-alert-rules');
+const config = require('../../config');
 
 const DEFAULT_ANALYTICS_MIN_MCAP = 90_000;
 const DEFAULT_ANALYTICS_HOURS = 48;
@@ -754,7 +755,7 @@ async function upsertSnapshotBucket(snapshot) {
   );
 
   const row = rows[0];
-  if (shouldRefreshAggregatesForUpsertedBucket(row)) {
+  if (config.marketBuckets.aggregateOnWriteEnabled && shouldRefreshAggregatesForUpsertedBucket(row)) {
     await upsertAggregateBucketsForSourceBucket(address, getAggregateRefreshBucketDates(bucketTs));
   }
   invalidateSparklineCacheForAddresses([address]);

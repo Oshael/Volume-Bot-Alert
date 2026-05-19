@@ -516,6 +516,7 @@ GMGN risk gates before catalog/upsert alert flow:
 - Sparkline history uses `token_market_buckets_1m` as the base source and `token_market_buckets_agg` as the fast read source for `5m`, `15m`, and `30m` granularities.
 - `token_market_buckets_agg` can be populated historically with `npm run market-buckets-agg:backfill -- --days 14 --batchSize <n>`.
 - Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows.
+- `MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED=false` disables the inline aggregate recompute after `1m` bucket writes. This is a pressure relief switch for small VPS incidents; aggregate sparklines can lag until a backfill/rebuild catches up.
 - GMGN `token security` auto-blocks when top-10 holder rate is `>= 70%`
 - GMGN `token info` auto-blocks low-mcap/high-holder anomalies:
   - mcap `<= 150k`

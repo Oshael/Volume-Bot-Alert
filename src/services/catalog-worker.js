@@ -14,13 +14,9 @@ const {
 const config = require('../../config');
 const { isTraceDiscoveryEnabled, logTrace, shouldTraceAddress } = require('../utils/pump-migrate-trace');
 
-const LOOP_INTERVAL_MS = 2000;
-const DEX_REQUEST_BUDGET_PER_MINUTE = 300;
 const DEX_TOKENS_PER_REQUEST = 30;
-const MAX_TOKEN_BUDGET_PER_CYCLE = Math.max(
-  DEX_TOKENS_PER_REQUEST,
-  Math.floor((DEX_REQUEST_BUDGET_PER_MINUTE * LOOP_INTERVAL_MS) / 60000) * DEX_TOKENS_PER_REQUEST
-);
+const LOOP_INTERVAL_MS = config.catalogWorker.loopIntervalMs;
+const MAX_TOKEN_BUDGET_PER_CYCLE = config.catalogWorker.tokenBudgetPerCycle;
 const CONCURRENCY = config.catalogWorker.concurrency;
 const DEX_BATCH_LIMIT = DEX_TOKENS_PER_REQUEST;
 const DORMANT_RECHECK_MS = 30 * 60 * 1000;
@@ -73,7 +69,7 @@ let status = {
   lastLoopOverrunMs: 0,
   lastScheduledDelayMs: LOOP_INTERVAL_MS,
   lastTokenBudget: MAX_TOKEN_BUDGET_PER_CYCLE,
-  lastDexRequestBudget: Math.floor(MAX_TOKEN_BUDGET_PER_CYCLE / DEX_TOKENS_PER_REQUEST),
+  lastDexRequestBudget: Math.ceil(MAX_TOKEN_BUDGET_PER_CYCLE / DEX_TOKENS_PER_REQUEST),
   lastDexBatchCount: 0,
   lastProcessBatchCount: 0,
   lastRateLimitActive: false,

@@ -428,7 +428,13 @@ module.exports = {
   },
 
   catalogWorker: {
-    concurrency: Math.max(1, Math.min(parseInt(process.env.CATALOG_WORKER_CONCURRENCY || '24', 10), 48)),
+    concurrency: Math.max(1, Math.min(parseInt(process.env.CATALOG_WORKER_CONCURRENCY || '6', 10), 24)),
+    loopIntervalMs: parseIntegerInRange(process.env.CATALOG_WORKER_LOOP_INTERVAL_MS, 5000, 1000, 60000),
+    tokenBudgetPerCycle: parseIntegerInRange(process.env.CATALOG_WORKER_TOKEN_BUDGET_PER_CYCLE, 30, 1, 300),
+  },
+
+  marketBuckets: {
+    aggregateOnWriteEnabled: parseBoolean(process.env.MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED, true),
   },
 
   bidZoneWorker: {
