@@ -6566,6 +6566,168 @@ export function createAppController(): AppController {
     refreshPumpPanelCounts();
   }
 
+  function applyPagedMonitoredHydrationSnapshot(input: {
+    token: string;
+    manualTokens: AddressItem[];
+    tokens: DashboardMonitoredToken[];
+    snapshotComplete: boolean;
+    preserveExistingUntilComplete: boolean;
+    generatedAt?: string | null;
+  }) {
+    if (input.preserveExistingUntilComplete && !input.snapshotComplete) {
+      return false;
+    }
+
+    applyMonitoredDashboard(input.tokens, input.manualTokens, input.generatedAt);
+    emitMonitoredWorkspaceRegions();
+    queueSupplementalMeteoraRefresh(input.token, input.tokens);
+    return true;
+  }
+
+  function isMonitoredHydrationPageComplete(input: {
+    page: number;
+    totalPages: number;
+    loadedCount: number;
+    total: number;
+    hasMore: boolean;
+  }) {
+    return input.page >= input.totalPages - 1 || input.loadedCount >= input.total || !input.hasMore;
+  }
+
+  async function fetchMonitoredHydrationPage(input: {
+    token: string;
+    page: number;
+    perPage: number;
+    sorts: MonitoredSortCriterion[];
+  }) {
+    return measureRuntimePerfAsync(
+      'api.dashboard.monitored',
+      isRuntimePerfDebugActive(),
+      { workspace: state.ui.workspace, mode: 'bootstrap-page', page: input.page, perPage: input.perPage },
+      () => fetchDashboardMonitored(input.token, {
+        page: input.page,
+        perPage: input.perPage,
+        sorts: input.sorts,
+      }),
+    );
+  }
+
+  function isMonitoredHydrationCurrent(requestRevision: number, token: string) {
+    return requestRevision === monitoredBootstrapHydrationRevision && state.session.token === token;
+  }
+
+  async function hydratePagedDashboardMonitored(
+    token: string,
+    manualTokens: AddressItem[],
+    alertFeedMode: DashboardAlertFeedMode,
+  ) {
+    const requestRevision = monitoredBootstrapHydrationRevision + 1;
+    monitoredBootstrapHydrationRevision = requestRevision;
+    const firstPageSize = Math.max(1, state.ui.monitoredPerPage || 30);
+    const bootstrapSorts = getMonitoredBootstrapSorts();
+    const preserveExistingUntilComplete = getCurrentMonitoredDashboardSnapshot().length > 0;
+    const firstPage = await fetchMonitoredHydrationPage({
+      token,
+      page: 0,
+      perPage: firstPageSize,
+      sorts: bootstrapSorts,
+    });
+    if (!isMonitoredHydrationCurrent(requestRevision, token)) {
+      return;
+    }
+
+    let aggregatedTokens = [...(firstPage.tokens || [])];
+    const generatedAt = firstPage.generatedAt ?? null;
+    const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || firstPageSize, 1));
+    const firstPageComplete = isMonitoredHydrationPageComplete({
+      page: 0,
+      totalPages,
+      loadedCount: aggregatedTokens.length,
+      total: firstPage.total,
+      hasMore: firstPage.hasMore,
+    });
+    applyPagedMonitoredHydrationSnapshot({
+      token,
+      manualTokens,
+      tokens: aggregatedTokens,
+      snapshotComplete: firstPageComplete,
+      preserveExistingUntilComplete,
+      generatedAt,
+    });
+    void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
+    queueDashboardAlertFeedRefresh(token, true, alertFeedMode);
+    recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
+      generatedAt,
+      returned: firstPage.tokens.length,
+      total: firstPage.total,
+      hasMore: firstPage.hasMore,
+      payloadHead: summarizeDashboardDebugTokens(firstPage.tokens),
+    });
+
+    if (firstPageComplete) {
+      recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
+        total: aggregatedTokens.length,
+        payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
+      });
+      return;
+    }
+
+    for (let page = 1; page < totalPages; page += 1) {
+      if (!isMonitoredHydrationCurrent(requestRevision, token)) {
+        return;
+      }
+
+      const nextPage = await fetchMonitoredHydrationPage({
+        token,
+        page,
+        perPage: firstPageSize,
+        sorts: bootstrapSorts,
+      });
+      if (!isMonitoredHydrationCurrent(requestRevision, token)) {
+        return;
+      }
+
+      if (nextPage.tokens.length === 0) {
+        applyPagedMonitoredHydrationSnapshot({
+          token,
+          manualTokens,
+          tokens: aggregatedTokens,
+          snapshotComplete: true,
+          preserveExistingUntilComplete,
+          generatedAt,
+        });
+        break;
+      }
+
+      aggregatedTokens = Array.from(new Map(
+        [...aggregatedTokens, ...nextPage.tokens].map((item) => [item.address, item]),
+      ).values());
+      const snapshotComplete = isMonitoredHydrationPageComplete({
+        page,
+        totalPages,
+        loadedCount: aggregatedTokens.length,
+        total: firstPage.total,
+        hasMore: nextPage.hasMore,
+      });
+      const applied = applyPagedMonitoredHydrationSnapshot({
+        token,
+        manualTokens,
+        tokens: aggregatedTokens,
+        snapshotComplete,
+        preserveExistingUntilComplete,
+        generatedAt,
+      });
+      if (applied) {
+        void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+    recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
+      total: aggregatedTokens.length,
+      payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
+    });
+  }
+
   async function hydrateDashboardMonitoredInternal(
     token: string,
     manualTokens: AddressItem[],
@@ -6597,84 +6759,7 @@ export function createAppController(): AppController {
         return;
       }
 
-      const requestRevision = monitoredBootstrapHydrationRevision + 1;
-      monitoredBootstrapHydrationRevision = requestRevision;
-      const firstPageSize = Math.max(1, state.ui.monitoredPerPage || 30);
-      const bootstrapSorts = getMonitoredBootstrapSorts();
-      const firstPage = await measureRuntimePerfAsync(
-        'api.dashboard.monitored',
-        isRuntimePerfDebugActive(),
-        { workspace: state.ui.workspace, mode: 'bootstrap-page', page: 0, perPage: firstPageSize },
-        () => fetchDashboardMonitored(token, {
-          page: 0,
-          perPage: firstPageSize,
-          sorts: bootstrapSorts,
-        }),
-      );
-      if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
-        return;
-      }
-
-      let aggregatedTokens = [...(firstPage.tokens || [])];
-      const generatedAt = firstPage.generatedAt ?? null;
-      applyMonitoredDashboard(aggregatedTokens, manualTokens, generatedAt);
-      void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-      emitMonitoredWorkspaceRegions();
-      queueSupplementalMeteoraRefresh(token, aggregatedTokens);
-      queueDashboardAlertFeedRefresh(token, true, alertFeedMode);
-      recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
-        generatedAt,
-        returned: firstPage.tokens.length,
-        total: firstPage.total,
-        hasMore: firstPage.hasMore,
-        payloadHead: summarizeDashboardDebugTokens(firstPage.tokens),
-      });
-
-      if (!firstPage.hasMore || aggregatedTokens.length >= firstPage.total) {
-        recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
-          total: aggregatedTokens.length,
-          payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
-        });
-        return;
-      }
-
-      const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || firstPageSize, 1));
-      for (let page = 1; page < totalPages; page += 1) {
-        if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
-          return;
-        }
-
-        const nextPage = await measureRuntimePerfAsync(
-          'api.dashboard.monitored',
-          isRuntimePerfDebugActive(),
-          { workspace: state.ui.workspace, mode: 'bootstrap-page', page, perPage: firstPageSize },
-          () => fetchDashboardMonitored(token, {
-            page,
-            perPage: firstPageSize,
-            sorts: bootstrapSorts,
-          }),
-        );
-        if (requestRevision !== monitoredBootstrapHydrationRevision || state.session.token !== token) {
-          return;
-        }
-
-        if (nextPage.tokens.length === 0) {
-          break;
-        }
-
-        aggregatedTokens = Array.from(new Map(
-          [...aggregatedTokens, ...nextPage.tokens].map((item) => [item.address, item]),
-        ).values());
-        applyMonitoredDashboard(aggregatedTokens, manualTokens);
-        void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-        emitMonitoredWorkspaceRegions();
-        queueSupplementalMeteoraRefresh(token, aggregatedTokens);
-        await new Promise((resolve) => window.setTimeout(resolve, 0));
-      }
-      recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
-        total: aggregatedTokens.length,
-        payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
-      });
+      await hydratePagedDashboardMonitored(token, manualTokens, alertFeedMode);
     } catch (error) {
       recordRestoreControllerDebug('controller.dashboard-hydrate.error', {
         message: formatDebugErrorMessage(error),
@@ -6693,8 +6778,8 @@ export function createAppController(): AppController {
       return;
     }
 
-    applyConfig(payload, []);
-    recordRestoreControllerDebug('controller.config-reload.apply-empty-dashboard', {
+    applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
+    recordRestoreControllerDebug('controller.config-reload.apply-preserved-dashboard', {
       deferDashboard: Boolean(options?.deferDashboard),
       manualTokens: payload.tokens.length,
     });
