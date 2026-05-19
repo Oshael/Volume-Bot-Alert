@@ -676,6 +676,13 @@ function canEvaluateGmgnAlerts(tokenBefore, tokenAfter, securityGuard) {
     || hasCompletedGmgnPreliminaryReview(securityGuard);
 }
 
+function canPersistGmgnMarketBuckets(tokenBefore, tokenAfter, securityGuard) {
+  if (!tokenAfter || isBlockedToken(tokenAfter) || tokenAfter.eligible_for_monitoring === false) {
+    return false;
+  }
+  return canEvaluateGmgnAlerts(tokenBefore, tokenAfter, securityGuard);
+}
+
 function isGmgnSecurityAutoBlockRisk(security) {
   const top10HolderRate = toFiniteNumberOrNull(security?.top10HolderRate);
   return top10HolderRate != null && top10HolderRate >= GMGN_SECURITY_TOP_10_HOLDER_RATE_BLOCK_THRESHOLD;
@@ -1290,12 +1297,14 @@ async function ingestGmgnToken(snapshot, options = {}) {
     if (String(tokenAfter.suppressed_reason || '').trim() === GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON) {
       summary.riskEnrichmentSuppressed = 1;
     }
-    if (resolved.marketBucketModel) {
-      await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(filledSnapshot, now));
-      summary.marketBucketsWritten = 1;
+    if (canPersistGmgnMarketBuckets(tokenBefore, tokenAfter, securityGuard)) {
+      if (resolved.marketBucketModel) {
+        await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(filledSnapshot, now));
+        summary.marketBucketsWritten = 1;
+      }
+      await resolved.volumeBucketModel.upsertSnapshotBucket(buildVolumeBucketPayload(filledSnapshot, now));
+      summary.volumeBucketsWritten = 1;
     }
-    await resolved.volumeBucketModel.upsertSnapshotBucket(buildVolumeBucketPayload(filledSnapshot, now));
-    summary.volumeBucketsWritten = 1;
     if (canEvaluateGmgnAlerts(tokenBefore, tokenAfter, securityGuard)) {
       await maybeEvaluateAlerts(tokenBefore, tokenAfter, resolved, summary);
     } else {
@@ -1515,6 +1524,7 @@ module.exports = {
     computeSnapshotVolumeToMcapRatio,
     createEmptyIngestionSummary,
     canEvaluateGmgnAlerts,
+    canPersistGmgnMarketBuckets,
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
