@@ -137,6 +137,79 @@ describe('dexscreener rate-limit helpers', () => {
     }
   });
 
+  it('prefers the single-token endpoint when the batch endpoint only returns a stale launchlab pair', async () => {
+    const address = 'CKTCDmUcgFXhLq6u2CZZxSNkkbut8e1F2MvgWHiYbonk';
+    const staleLaunchlabPair = {
+      chainId: 'solana',
+      dexId: 'launchlab',
+      pairAddress: 'CFqKvuRnQGW519UCpdG2rB3c4XqWU3MRPtyzdKiUE2jH',
+      baseToken: { address },
+      quoteToken: { address: 'So11111111111111111111111111111111111111112' },
+      marketCap: 34649.11,
+      fdv: 34649.11,
+      priceUsd: '0.00003464',
+      volume: { h24: 33644.64, h6: 0, h1: 0, m5: 0 },
+      txns: {
+        m5: { buys: 0, sells: 0 },
+        h1: { buys: 0, sells: 0 },
+        h24: { buys: 0, sells: 0 },
+      },
+    };
+    const bestLivePair = {
+      chainId: 'solana',
+      dexId: 'raydium',
+      pairAddress: 'DL8CtmmV3emMPREvVrphgxQNAw9gs3QuZ7yQXkuK1MRz',
+      baseToken: { address },
+      quoteToken: { address: 'So11111111111111111111111111111111111111112' },
+      marketCap: 1988,
+      fdv: 1988,
+      priceUsd: '0.000001988',
+      liquidity: { usd: 3579.88 },
+      volume: { h24: 73981.04, h6: 0.28, h1: 0.03, m5: 0 },
+      txns: {
+        m5: { buys: 0, sells: 0 },
+        h1: { buys: 1, sells: 0 },
+        h24: { buys: 801, sells: 868 },
+      },
+    };
+
+    const originalFetch = global.fetch;
+    const seenUrls = [];
+    global.fetch = async (url) => {
+      seenUrls.push(String(url));
+      if (String(url).includes(`/tokens/v1/solana/${address}`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [staleLaunchlabPair],
+        };
+      }
+
+      if (String(url).includes(`/latest/dex/tokens/${address}`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ pairs: [bestLivePair, staleLaunchlabPair] }),
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    };
+
+    try {
+      const results = await dexscreener.__private.fetchTokenPairsBatchUncached([address], { chain: 'solana' });
+      const payload = results.get(address);
+      const bestPair = dexscreener.getBestPair(payload, 'solana');
+
+      assert.ok(seenUrls.some((url) => url.includes(`/tokens/v1/solana/${address}`)));
+      assert.ok(seenUrls.some((url) => url.includes(`/latest/dex/tokens/${address}`)));
+      assert.equal(bestPair?.pairAddress, bestLivePair.pairAddress);
+      assert.equal(payload?.pairs?.length, 2);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('prefers a pair with meaningful recent activity over a more liquid but stale pair', () => {
     const activePair = {
       chainId: 'solana',

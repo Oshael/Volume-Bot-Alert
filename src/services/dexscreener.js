@@ -586,8 +586,17 @@ function isPairOnRequestedChain(pair, chain = 'solana') {
   return String(pair?.chainId || '').trim().toLowerCase() === String(chain || 'solana').trim().toLowerCase();
 }
 
+function getPairDexId(pair) {
+  return String(pair?.dexId || '').trim().toLowerCase();
+}
+
 function isPumpfunPair(pair) {
-  return String(pair?.dexId || '').trim().toLowerCase() === 'pumpfun';
+  return getPairDexId(pair) === 'pumpfun';
+}
+
+function isLaunchVenuePair(pair) {
+  const dexId = getPairDexId(pair);
+  return dexId === 'pumpfun' || dexId === 'launchlab';
 }
 
 function isPairForRequestedAddress(pair, address) {
@@ -606,12 +615,37 @@ function isLowConfidencePumpfunPair(pair) {
   const volume1h = toFiniteNumberOrZero(pair?.volume?.h1);
   const volume6h = toFiniteNumberOrZero(pair?.volume?.h6);
   const marketCap = toFiniteNumberOrZero(pair?.marketCap || pair?.fdv);
+  const checks = [
+    isPumpfunPair(pair),
+    liquidityUsd <= 1000,
+    volume1h <= 0,
+    volume6h <= 0,
+    marketCap > 0,
+    marketCap < 250000,
+  ];
 
-  return liquidityUsd <= 1000
-    && volume1h <= 0
-    && volume6h <= 0
-    && marketCap > 0
-    && marketCap < 250000;
+  return checks.every(Boolean);
+}
+
+function isStaleLaunchVenueBatchPair(pair) {
+  const liquidityUsd = toFiniteNumberOrZero(pair?.liquidity?.usd);
+  const volume5m = toFiniteNumberOrZero(pair?.volume?.m5);
+  const volume1h = toFiniteNumberOrZero(pair?.volume?.h1);
+  const txns5m = getPairTxnCount(pair, 'm5');
+  const txns1h = getPairTxnCount(pair, 'h1');
+  const marketCap = toFiniteNumberOrZero(pair?.marketCap || pair?.fdv);
+  const checks = [
+    isLaunchVenuePair(pair),
+    liquidityUsd <= 0,
+    volume5m <= 0,
+    volume1h <= 0,
+    txns5m <= 0,
+    txns1h <= 0,
+    marketCap > 0,
+    marketCap < 250000,
+  ];
+
+  return checks.every(Boolean);
 }
 
 function shouldFallbackSuspiciousBatchPair(address, payload, chain = 'solana') {
@@ -624,15 +658,11 @@ function shouldFallbackSuspiciousBatchPair(address, payload, chain = 'solana') {
     return false;
   }
 
-  if (!isPumpfunPair(pair)) {
-    return false;
-  }
-
   if (!isPairForRequestedAddress(pair, address)) {
     return false;
   }
 
-  return isLowConfidencePumpfunPair(pair);
+  return isLowConfidencePumpfunPair(pair) || isStaleLaunchVenueBatchPair(pair);
 }
 
 async function fetchTokenPairsBatchUncached(addresses, options = {}) {
