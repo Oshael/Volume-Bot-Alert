@@ -74,6 +74,52 @@ describe('catalog worker drift compensation', () => {
     assert.equal(retryMs, 3 * 60 * 1000);
   });
 
+  it('identifies stale GMGN dex-unavailable zombies without catching manual or transient rows', () => {
+    assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+      source: 'gmgn',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 122550,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 300,
+    }), true);
+
+    assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+      source: 'user-manual',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 122550,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 300,
+    }), false);
+
+    assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+      source: 'gmgn',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 122550,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 12,
+    }), false);
+
+    assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+      source: 'gmgn',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 122550,
+      last_vol_5m: 7500,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 300,
+    }), false);
+  });
+
   it('keeps migrated low-dust tokens on the low-near path during migration grace', () => {
     const token = {
       source: 'pumpfun-migrated',
@@ -430,6 +476,117 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       userAlertMatcher.evaluateUpdatedToken = originalEvaluateUpdatedToken;
+    }
+  });
+
+  it('demotes persistent GMGN dex-unavailable zombies instead of preserving high priority', async () => {
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const tokenBefore = {
+      address: TOKEN_A,
+      chain: 'solana',
+      source: 'gmgn',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 122550,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 300,
+    };
+    const demotedToken = { ...tokenBefore, monitor_priority: 'dormant', eligible_for_monitoring: false };
+    catalogWorker.__private.setDefaultGmgnClientForTest({
+      fetchTokenInfo: async () => ({
+        address: tokenBefore.address,
+        liquidityUsd: 2500,
+        marketCap: 122550,
+      }),
+    });
+
+    tokenCatalog.applyEvaluationResult = async (address, payload) => {
+      assert.equal(address, tokenBefore.address);
+      assert.equal(payload.eligibilityState, 'gmgn-dex-unavailable-zombie');
+      assert.equal(payload.eligibleForMonitoring, false);
+      assert.equal(payload.suppressedReason, 'gmgn_dex_unavailable_zombie');
+      assert.equal(payload.monitorPriority, 'dormant');
+      assert.equal(payload.lastEvaluationError, 'dex_unavailable');
+      assert.equal(payload.evaluationErrorCount, 301);
+      assert.ok(payload.nextEvaluationAt instanceof Date);
+      return demotedToken;
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, null);
+
+      assert.equal(result, demotedToken);
+    } finally {
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      catalogWorker.__private.setDefaultGmgnClientForTest(null);
+    }
+  });
+
+  it('admin-blocks persistent GMGN dex-unavailable zombies when fresh GMGN liquidity is under 1k', async () => {
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalAdminBlockAdd = adminBlockedToken.add;
+    const blockWrites = [];
+    const tokenBefore = {
+      address: TOKEN_A,
+      chain: 'solana',
+      source: 'gmgn',
+      symbol: 'BRUCE',
+      name: 'Bruce',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 122550,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 300,
+    };
+    const blockedToken = { ...tokenBefore, monitor_priority: 'dormant', eligible_for_monitoring: false };
+
+    catalogWorker.__private.setDefaultGmgnClientForTest({
+      fetchTokenInfo: async (request) => {
+        assert.equal(request.address, tokenBefore.address);
+        return {
+          address: tokenBefore.address,
+          symbol: 'BRUCE',
+          name: 'Bruce',
+          liquidityUsd: 721.2,
+          marketCap: 84551,
+          price: 0.00001,
+        };
+      },
+    });
+    adminBlockedToken.add = async (payload) => {
+      blockWrites.push(payload);
+      return payload;
+    };
+    tokenCatalog.applyEvaluationResult = async (address, payload) => {
+      assert.equal(address, tokenBefore.address);
+      assert.equal(payload.eligibilityState, 'admin-blocked');
+      assert.equal(payload.eligibleForMonitoring, false);
+      assert.equal(payload.suppressedReason, 'admin_blocked');
+      assert.equal(payload.monitorPriority, 'dormant');
+      assert.equal(payload.lastEvaluationError, null);
+      assert.equal(payload.evaluationErrorCount, 0);
+      assert.ok(payload.nextEvaluationAt instanceof Date);
+      return blockedToken;
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, null);
+
+      assert.equal(result, blockedToken);
+      assert.equal(blockWrites.length, 1);
+      assert.equal(blockWrites[0].address, tokenBefore.address);
+      assert.equal(blockWrites[0].label, 'gmgn-liquidity:under-1k-spam:721:84551');
+      assert.equal(blockWrites[0].evidence.pipeline, 'catalog-worker:gmgn-dex-unavailable-low-liquidity');
+      assert.equal(blockWrites[0].evidence.marketSnapshot.liquidityUsd, 721.2);
+      assert.equal(blockWrites[0].evidence.gmgnSnapshot.info.liquidityUsd, 721.2);
+    } finally {
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      adminBlockedToken.add = originalAdminBlockAdd;
+      catalogWorker.__private.setDefaultGmgnClientForTest(null);
     }
   });
 

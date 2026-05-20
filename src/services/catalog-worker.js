@@ -4,6 +4,7 @@ const tokenAlertRuleState = require('../models/token-alert-rule-state');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
+const gmgnClient = require('./gmgn-client');
 const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
@@ -53,9 +54,14 @@ const YOUNG_EXTREME_CHURN_MIN_VOL_5M = 100000;
 const YOUNG_EXTREME_CHURN_MIN_VOL_MCAP_RATIO = 2.8;
 const YOUNG_EXTREME_CHURN_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000;
 const YOUNG_EXTREME_CHURN_REQUIRED_HITS = 2;
+const GMGN_DEX_UNAVAILABLE_ZOMBIE_MIN_ERROR_COUNT = 300;
+const GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON = 'gmgn_dex_unavailable_zombie';
+const GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD = 1000;
+const GMGN_DEX_UNAVAILABLE_ZOMBIE_BLOCK_YEARS = 10;
 
 let timer = null;
 let running = false;
+let defaultGmgnClient = null;
 const youngExtremeChurnState = new Map();
 let status = {
   running: false,
@@ -202,6 +208,38 @@ function isManualSource(token) {
   return String(token?.source || '').trim().toLowerCase() === 'user-manual';
 }
 
+function isGmgnDexUnavailableZombie(token) {
+  if (!token || isManualSource(token)) {
+    return false;
+  }
+
+  const source = String(token.source || '').trim().toLowerCase();
+  if (source !== 'gmgn') {
+    return false;
+  }
+
+  const errorCount = Number(token.evaluation_error_count || 0);
+  if (errorCount < GMGN_DEX_UNAVAILABLE_ZOMBIE_MIN_ERROR_COUNT) {
+    return false;
+  }
+
+  const previousSuppression = String(token.suppressed_reason || '').trim().toLowerCase();
+  const previousError = String(token.last_evaluation_error || '').trim().toLowerCase();
+  if (previousSuppression !== 'dex_unavailable' && previousError !== 'dex_unavailable') {
+    return false;
+  }
+
+  const vol5m = Number(token.last_vol_5m || 0);
+  if (vol5m > 0) {
+    return false;
+  }
+
+  const priority = String(token.monitor_priority || '').trim().toLowerCase();
+  const marketCap = Number(token.last_mcap || 0);
+  return Boolean(token.eligible_for_monitoring)
+    && (priority === 'high' || priority === 'normal' || marketCap >= 30000);
+}
+
 function isPumpLikeToken(token, pair) {
   const source = String(token?.source || '').trim().toLowerCase();
   const dexId = String(pair?.dexId || '').trim().toLowerCase();
@@ -233,6 +271,26 @@ function buildYoungExtremeChurnLabel(assessment) {
     Math.round(assessment.vol5m),
     `${Math.round(assessment.volMcapRatio * 10) / 10}x`,
   ]);
+}
+
+function getDefaultGmgnClient() {
+  if (!defaultGmgnClient) {
+    defaultGmgnClient = gmgnClient.createGmgnClient();
+  }
+  return defaultGmgnClient;
+}
+
+function setDefaultGmgnClientForTest(client) {
+  defaultGmgnClient = client || null;
+}
+
+function buildGmgnDexUnavailableLowLiquidityLabel(snapshot = {}) {
+  const liquidityUsd = Math.round(toNumber(snapshot.liquidityUsd) || 0);
+  const marketCap = Math.round(toNumber(snapshot.mcap) || 0);
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.GMGN_LIQUIDITY_UNDER_1K_SPAM,
+    [liquidityUsd, marketCap]
+  );
 }
 
 function readNestedNumber(source, containerKey, valueKey) {
@@ -291,6 +349,46 @@ function buildYoungExtremeChurnBlockEvidence(token, updatedToken, pair, snapshot
     assessment,
     ruleMatches: [{ label, reason: assessment.reason || 'young-extreme-churn' }],
     gmgnSnapshot: {},
+  };
+}
+
+function buildGmgnDexUnavailableLowLiquidityEvidence(token, gmgnInfo, snapshot, label) {
+  return {
+    pipeline: 'catalog-worker:gmgn-dex-unavailable-low-liquidity',
+    source: 'gmgn',
+    catalogSnapshot: {
+      source: firstPresentValue(token?.source),
+      address: firstPresentValue(token?.address),
+      symbol: firstPresentValue(gmgnInfo?.symbol, token?.symbol),
+      name: firstPresentValue(gmgnInfo?.name, token?.name),
+      eligibilityState: firstPresentValue(token?.eligibility_state),
+      suppressedReason: firstPresentValue(token?.suppressed_reason),
+      monitorPriority: firstPresentValue(token?.monitor_priority),
+      evaluationErrorCount: Number(token?.evaluation_error_count || 0),
+    },
+    marketSnapshot: snapshot,
+    gmgnSnapshot: {
+      info: gmgnInfo || null,
+    },
+    assessment: {
+      reason: GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON,
+      liquidityUsd: snapshot.liquidityUsd,
+      thresholdUsd: GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD,
+    },
+    ruleMatches: [{ label, pipeline: 'catalog-worker:gmgn-dex-unavailable-low-liquidity' }],
+  };
+}
+
+function buildGmgnDexUnavailableMarketSnapshot(token, gmgnInfo) {
+  return {
+    mcap: toNumber(gmgnInfo?.marketCap) ?? toNumber(token?.last_mcap),
+    price: toNumber(gmgnInfo?.price) ?? toNumber(token?.last_price),
+    liquidityUsd: toNumber(gmgnInfo?.liquidityUsd),
+    vol5m: toNumber(token?.last_vol_5m),
+    vol1h: toNumber(token?.last_vol_1h),
+    vol6h: toNumber(token?.last_vol_6h),
+    vol24h: toNumber(token?.last_vol_24h),
+    tokenCreatedAt: gmgnInfo?.tokenCreatedAt || token?.last_token_created_at_ms || null,
   };
 }
 
@@ -807,30 +905,94 @@ function prioritizeTokensForThrottle(tokens, throttleState = { mode: 'normal' },
     .slice(0, safeLimit);
 }
 
+async function evaluateDexUnavailableToken(token, traceInitialEval) {
+  if (isGmgnDexUnavailableZombie(token)) {
+    const blockedToken = await maybeAutoBlockGmgnDexUnavailableLowLiquidity(token);
+    if (blockedToken) {
+      return blockedToken;
+    }
+
+    status.totalIneligible++;
+    return tokenCatalog.applyEvaluationResult(token.address, {
+      eligibilityState: 'gmgn-dex-unavailable-zombie',
+      eligibleForMonitoring: false,
+      suppressedReason: GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON,
+      monitorPriority: 'dormant',
+      nextEvaluationAt: new Date(Date.now() + addPriorityJitter(DORMANT_RECHECK_MS, DORMANT_JITTER_MS)),
+      lastEvaluationError: 'dex_unavailable',
+      evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
+    });
+  }
+
+  const retryMs = getDexUnavailableRetryMs(token);
+  if (traceInitialEval) {
+    logTrace('catalog_eval_result', {
+      tokenAddress: token.address,
+      source: token.source || null,
+      result: 'dex-unavailable',
+      previousEligibilityState: token.eligibility_state || null,
+      previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
+      nextEvaluationAt: new Date(Date.now() + retryMs).toISOString(),
+    }, { level: 'warn' });
+  }
+  return tokenCatalog.applyEvaluationResult(token.address, {
+    eligibilityState: 'dex-unavailable',
+    eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
+    suppressedReason: 'dex_unavailable',
+    monitorPriority: token.monitor_priority || 'dormant',
+    nextEvaluationAt: new Date(Date.now() + retryMs),
+    lastEvaluationError: 'dex_unavailable',
+    evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
+  });
+}
+
+async function fetchGmgnZombieTokenInfo(token, client = getDefaultGmgnClient()) {
+  return client.fetchTokenInfo({
+    chain: token?.chain || 'solana',
+    address: token?.address,
+  });
+}
+
+async function maybeAutoBlockGmgnDexUnavailableLowLiquidity(token) {
+  let gmgnInfo = null;
+  try {
+    gmgnInfo = await fetchGmgnZombieTokenInfo(token);
+  } catch (error) {
+    console.warn(`[CatalogWorker] Failed to fetch GMGN liquidity for dex-unavailable zombie ${token.address}: ${error.message}`);
+    return null;
+  }
+
+  const snapshot = buildGmgnDexUnavailableMarketSnapshot(token, gmgnInfo);
+  if (!(snapshot.liquidityUsd != null && snapshot.liquidityUsd < GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD)) {
+    return null;
+  }
+
+  const label = buildGmgnDexUnavailableLowLiquidityLabel(snapshot);
+  await adminBlockedToken.add({
+    address: token.address,
+    label,
+    createdBy: null,
+    evidence: buildGmgnDexUnavailableLowLiquidityEvidence(token, gmgnInfo, snapshot, label),
+  });
+
+  return tokenCatalog.applyEvaluationResult(token.address, {
+    eligibilityState: 'admin-blocked',
+    eligibleForMonitoring: false,
+    suppressedReason: 'admin_blocked',
+    monitorPriority: 'dormant',
+    nextEvaluationAt: new Date(Date.now() + (GMGN_DEX_UNAVAILABLE_ZOMBIE_BLOCK_YEARS * 365 * 24 * 60 * 60 * 1000)),
+    lastEvaluationError: null,
+    evaluationErrorCount: 0,
+    symbol: gmgnInfo?.symbol || token?.symbol || null,
+    name: gmgnInfo?.name || token?.name || null,
+  });
+}
+
 async function evaluateTokenWithData(token, data) {
   const traceInitialEval = shouldTraceInitialEvalOnly(token);
 
   if (!data) {
-    const retryMs = getDexUnavailableRetryMs(token);
-    if (traceInitialEval) {
-      logTrace('catalog_eval_result', {
-        tokenAddress: token.address,
-        source: token.source || null,
-        result: 'dex-unavailable',
-        previousEligibilityState: token.eligibility_state || null,
-        previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
-        nextEvaluationAt: new Date(Date.now() + retryMs).toISOString(),
-      }, { level: 'warn' });
-    }
-    return tokenCatalog.applyEvaluationResult(token.address, {
-      eligibilityState: 'dex-unavailable',
-      eligibleForMonitoring: Boolean(token.eligible_for_monitoring),
-      suppressedReason: 'dex_unavailable',
-      monitorPriority: token.monitor_priority || 'dormant',
-      nextEvaluationAt: new Date(Date.now() + retryMs),
-      lastEvaluationError: 'dex_unavailable',
-      evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
-    });
+    return evaluateDexUnavailableToken(token, traceInitialEval);
   }
 
   const bestPair = dexscreener.getBestPair(data, token.chain || 'solana');
@@ -1261,6 +1423,8 @@ module.exports = {
     getGraceUntilMs,
     isLowDustProtectedByMigrationGrace,
     isLowActivityAutoToken,
+    isGmgnDexUnavailableZombie,
+    setDefaultGmgnClientForTest,
     isManualSource,
     isMigrationGraceActive,
     assessYoungExtremeChurn,
