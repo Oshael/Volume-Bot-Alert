@@ -76,10 +76,18 @@ export function clearOldWeekRemovalLogStorage(scope: string) {
   removeScopedItem(scope, OLD_WEEK_REMOVAL_LOG_KEY);
 }
 
+function getAlertCreatedAt(entry: AlertEntry) {
+  const createdAt = Number(entry.createdAt || 0);
+  return Number.isFinite(createdAt) ? createdAt : 0;
+}
+
 function pruneAlerts(entries: AlertEntry[]) {
   return entries
     .filter((entry) => entry && typeof entry.id === 'string' && entry.id.trim())
-    .slice(0, 120);
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => getAlertCreatedAt(right.entry) - getAlertCreatedAt(left.entry) || left.index - right.index)
+    .slice(0, 120)
+    .map(({ entry }) => entry);
 }
 
 function normalizeSparklineCacheEntry(address: string, value: unknown): TokenSparklineEntry | null {
