@@ -1639,6 +1639,75 @@ export function createAppController(): AppController {
     }
   }
 
+  function summarizeAlertDebugSlim(summary: ReturnType<typeof summarizeAlertDebug> | null | undefined) {
+    if (!summary) {
+      return null;
+    }
+
+    return {
+      count: summary.count,
+      newest: summary.newest.slice(0, 3),
+      oldest: summary.oldest.slice(-2),
+    };
+  }
+
+  function summarizeStoredAlertsDebugSlim(storage: ReturnType<typeof readStoredAlertsDebug>) {
+    return {
+      scope: storage.scope,
+      key: storage.key,
+      available: storage.available,
+      exists: 'exists' in storage ? storage.exists : undefined,
+      rawLength: 'rawLength' in storage ? storage.rawLength : undefined,
+      parsedType: 'parsedType' in storage ? storage.parsedType : undefined,
+      parseError: 'parseError' in storage ? storage.parseError : undefined,
+      parsed: 'parsed' in storage ? summarizeAlertDebugSlim(storage.parsed) : undefined,
+    };
+  }
+
+  function summarizeMissingAlertsSlim(value: unknown) {
+    return Array.isArray(value)
+      ? value.slice(0, 20)
+      : [];
+  }
+
+  function compactAlertDebugMeta(label: string, meta: Record<string, unknown>) {
+    const scope = String(meta.storageScope || getStorageScope());
+    const storage = summarizeStoredAlertsDebugSlim(readStoredAlertsDebug(scope));
+    const current = summarizeAlertDebugSlim(meta.current as ReturnType<typeof summarizeAlertDebug> | null | undefined);
+    const before = summarizeAlertDebugSlim(meta.before as ReturnType<typeof summarizeAlertDebug> | null | undefined);
+    const after = summarizeAlertDebugSlim(meta.after as ReturnType<typeof summarizeAlertDebug> | null | undefined);
+    const loaded = summarizeAlertDebugSlim(meta.loaded as ReturnType<typeof summarizeAlertDebug> | null | undefined);
+    const saved = summarizeAlertDebugSlim(meta.saved as ReturnType<typeof summarizeAlertDebug> | null | undefined);
+    const missingNewestFromBefore = summarizeMissingAlertsSlim(meta.missingNewestFromBefore);
+
+    return {
+      ts: new Date().toISOString(),
+      label: `alerts.${label}`,
+      workspace: meta.workspace,
+      sessionStatus: meta.sessionStatus,
+      runtimeMode: meta.runtimeMode,
+      storageScope: scope,
+      current,
+      before,
+      after,
+      loaded,
+      saved,
+      storage,
+      removedCount: meta.removedCount,
+      missingCount: missingNewestFromBefore.length,
+      missingNewestFromBefore,
+      added: meta.added,
+      addedEvents: meta.addedEvents,
+      mode: meta.mode,
+      blocklistCount: meta.blocklistCount,
+      feedCount: meta.feedCount,
+      backendEventsCount: (meta.backendEvents as { count?: unknown } | null | undefined)?.count,
+      builtEntriesCount: (meta.builtEntries as { count?: unknown } | null | undefined)?.count,
+      mergedEventsCount: (meta.mergedEvents as { count?: unknown } | null | undefined)?.count,
+      sparklineCacheCount: meta.sparklineCacheCount,
+    };
+  }
+
   function readAlertDebugLog() {
     if (typeof window === 'undefined' || !window.localStorage) {
       return [];
@@ -1661,7 +1730,11 @@ export function createAppController(): AppController {
     try {
       window.localStorage.setItem(ALERT_DEBUG_LOG_KEY, JSON.stringify(entries.slice(0, ALERT_DEBUG_MAX_ENTRIES)));
     } catch {
-      // Alert debug should never affect the app runtime.
+      try {
+        window.localStorage.setItem(ALERT_DEBUG_LOG_KEY, JSON.stringify(entries.slice(0, 80)));
+      } catch {
+        // Alert debug should never affect the app runtime.
+      }
     }
   }
 
@@ -1709,12 +1782,7 @@ export function createAppController(): AppController {
 
   function recordAlertForensics(label: string, meta: Record<string, unknown>) {
     try {
-      const entry = {
-        ts: new Date().toISOString(),
-        label: `alerts.${label}`,
-        ...meta,
-        storage: readStoredAlertsDebug(String(meta.storageScope || getStorageScope())),
-      };
+      const entry = compactAlertDebugMeta(label, meta);
       writeAlertDebugLog([entry, ...readAlertDebugLog()]);
     } catch {
       // Alert debug should never affect the app runtime.
