@@ -2726,6 +2726,15 @@ export function createAppController(): AppController {
     }, ALERT_STORAGE_DEBOUNCE_MS);
   }
 
+  function persistAlertsImmediately() {
+    if (typeof window !== 'undefined') {
+      ensureAlertsPersistLifecycle();
+      alertsPersistScope = getStorageScope();
+    }
+
+    flushAlertsPersist();
+  }
+
   function persistBarStorage() {
     const scope = getStorageScope();
     saveDismissedRecent(scope, state.data.dismissedRecent);
@@ -2767,7 +2776,7 @@ export function createAppController(): AppController {
     state.runtime.alerts = state.data.alerts.length;
     state.runtime.alertRevision += 1;
     state.panels.alerts = state.data.alerts.length;
-    scheduleAlertsPersist();
+    persistAlertsImmediately();
   }
 
   function removeAlertsForAddress(address: string) {
