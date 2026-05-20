@@ -77,6 +77,8 @@ import {
   rememberPreviousPassword,
 } from '../utils/password-history';
 import {
+  getRuntimePerfDebugArchives,
+  getRuntimePerfDebugLog,
   isRuntimePerfDebugEnabled,
   measureRuntimePerf,
   measureRuntimePerfAsync,
@@ -187,6 +189,8 @@ const ROUTED_BUCKET_DEFAULT_PER_PAGE = 15;
 const ALERTS_MAX_ENTRIES = 120;
 const ALERTS_PER_PAGE = 40;
 const ALERT_STORAGE_DEBOUNCE_MS = 250;
+const ALERT_DEBUG_LOG_KEY = 'trendscope-alert-debug-log';
+const ALERT_DEBUG_MAX_ENTRIES = 500;
 const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
@@ -1587,6 +1591,162 @@ export function createAppController(): AppController {
     };
   }
 
+  function getAlertStorageKey(scope: string) {
+    return `frontend_vite:${scope}:alerts`;
+  }
+
+  function readStoredAlertsDebug(scope: string = getStorageScope()) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return {
+        scope,
+        key: getAlertStorageKey(scope),
+        available: false,
+      };
+    }
+
+    const key = getAlertStorageKey(scope);
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) {
+        return {
+          scope,
+          key,
+          available: true,
+          exists: false,
+          rawLength: 0,
+          parsed: null,
+        };
+      }
+
+      const parsed = JSON.parse(raw);
+      return {
+        scope,
+        key,
+        available: true,
+        exists: true,
+        rawLength: raw.length,
+        parsed: Array.isArray(parsed) ? summarizeAlertDebug(parsed as AlertEntry[]) : null,
+        parsedType: Array.isArray(parsed) ? 'array' : typeof parsed,
+      };
+    } catch (error) {
+      return {
+        scope,
+        key,
+        available: true,
+        exists: true,
+        parseError: formatDebugErrorMessage(error),
+      };
+    }
+  }
+
+  function readAlertDebugLog() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return [];
+    }
+
+    try {
+      const raw = window.localStorage.getItem(ALERT_DEBUG_LOG_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writeAlertDebugLog(entries: unknown[]) {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(ALERT_DEBUG_LOG_KEY, JSON.stringify(entries.slice(0, ALERT_DEBUG_MAX_ENTRIES)));
+    } catch {
+      // Alert debug should never affect the app runtime.
+    }
+  }
+
+  function clearAlertDebugLog() {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem(ALERT_DEBUG_LOG_KEY);
+    } catch {
+      // Ignore localStorage failures while debugging.
+    }
+  }
+
+  function readAlertPerfDebugEntries() {
+    const isAlertEntry = (entry: { label?: unknown }) => String(entry.label || '').startsWith('alerts.');
+    return {
+      active: getRuntimePerfDebugLog().filter(isAlertEntry),
+      archives: getRuntimePerfDebugArchives()
+        .map((archive) => ({
+          ...archive,
+          entries: archive.entries.filter(isAlertEntry),
+        }))
+        .filter((archive) => archive.entries.length > 0),
+    };
+  }
+
+  function buildAlertDebugSnapshot() {
+    const scope = getStorageScope();
+    return {
+      ts: new Date().toISOString(),
+      enabled: isRuntimePerfDebugEnabled(),
+      workspace: state.ui.workspace,
+      sessionStatus: state.session.status,
+      sessionRole: state.session.role,
+      runtimeMode: state.runtime.mode,
+      storageScope: scope,
+      memory: summarizeAlertDebug(),
+      storage: readStoredAlertsDebug(scope),
+      pendingPersist: Boolean(alertsPersistTimer),
+      pendingPersistScope: alertsPersistScope,
+    };
+  }
+
+  function recordAlertForensics(label: string, meta: Record<string, unknown>) {
+    try {
+      const entry = {
+        ts: new Date().toISOString(),
+        label: `alerts.${label}`,
+        ...meta,
+        storage: readStoredAlertsDebug(String(meta.storageScope || getStorageScope())),
+      };
+      writeAlertDebugLog([entry, ...readAlertDebugLog()]);
+    } catch {
+      // Alert debug should never affect the app runtime.
+    }
+  }
+
+  function installAlertDebugConsole() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    (window as Window & {
+      trendscopeAlertDebug?: {
+        clear: () => void;
+        dump: () => unknown[];
+        dumpAll: () => Record<string, unknown>;
+        isEnabled: () => boolean;
+        snapshot: () => Record<string, unknown>;
+      };
+    }).trendscopeAlertDebug = {
+      clear: clearAlertDebugLog,
+      dump: readAlertDebugLog,
+      dumpAll: () => ({
+        snapshot: buildAlertDebugSnapshot(),
+        alertLog: readAlertDebugLog(),
+        perfAlertLog: readAlertPerfDebugEntries(),
+      }),
+      isEnabled: isRuntimePerfDebugEnabled,
+      snapshot: buildAlertDebugSnapshot,
+    };
+  }
+
   function summarizeDashboardAlertEventsDebug(events: DashboardAlertEvent[] = []) {
     const sorted = [...events].sort((a, b) => getBackendAlertCreatedAt(b.triggeredAt) - getBackendAlertCreatedAt(a.triggeredAt));
     return {
@@ -1613,7 +1773,7 @@ export function createAppController(): AppController {
     return [...before]
       .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
       .filter((alert) => !afterIds.has(alert.id))
-      .slice(0, 12)
+      .slice(0, 80)
       .map((alert) => ({
         id: alert.id,
         kind: alert.kind,
@@ -1630,20 +1790,23 @@ export function createAppController(): AppController {
       return;
     }
 
+    const debugMeta = {
+      workspace: state.ui.workspace,
+      sessionStatus: state.session.status,
+      runtimeMode: state.runtime.mode,
+      storageScope: getStorageScope(),
+      current: summarizeAlertDebug(),
+      ...meta,
+    };
+
     recordRuntimePerfDebugEntry({
       ts: Date.now(),
       kind: 'sample',
       label: `alerts.${label}`,
-      meta: {
-        workspace: state.ui.workspace,
-        sessionStatus: state.session.status,
-        runtimeMode: state.runtime.mode,
-        storageScope: getStorageScope(),
-        current: summarizeAlertDebug(),
-        ...meta,
-      },
+      meta: debugMeta,
       memory: readRuntimePerfMemory(),
     }, active);
+    recordAlertForensics(label, debugMeta);
   }
 
   function recordAlertMutationDebug(label: string, before: AlertEntry[], meta: Record<string, unknown> = {}) {
@@ -7700,6 +7863,8 @@ export function createAppController(): AppController {
     });
     return { followupError };
   }
+
+  installAlertDebugConsole();
 
   return {
     state,
