@@ -4015,7 +4015,13 @@ export function createAppController(): AppController {
     if (shouldSuppressDuplicateAlert(entry)) {
       return false;
     }
-    state.data.alerts = [entry, ...state.data.alerts].slice(0, ALERTS_MAX_ENTRIES);
+    const nextAlerts = [entry, ...state.data.alerts]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, ALERTS_MAX_ENTRIES);
+    if (!nextAlerts.some((item) => item.id === entry.id)) {
+      return false;
+    }
+    state.data.alerts = nextAlerts;
     syncAlertState();
     queueAlertSparklineRefresh(entry.id, entry.address);
     emit('alerts', 'legacy');
