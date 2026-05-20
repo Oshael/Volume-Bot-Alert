@@ -1721,6 +1721,62 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
+  it('suppresses a repeated 1h surge after reload when prior triggered state is from an older session', async () => {
+    const previousLoadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 7, 42, 0);
+    const loadedAt = new Date(nowMs - (2 * 60 * 1000)).toISOString();
+    const createdAt = nowMs - (10 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 62,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: true,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        oldWeekSurge1hThresholdPct: 50,
+      }],
+      stateByRule: {
+        'old-week-surge-1h': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedAt: new Date(nowMs - (90 * 1000)).toISOString(),
+          lastAlertedPct: 80,
+          lastAlertedValue: 80,
+          metadata: {
+            lastDecision: 'triggered',
+            sessionStartedAt: previousLoadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_1h: 42,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'Pork',
+        last_mcap: 148000,
+        last_vol_24h: 285000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 90,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
   it('suppresses a primed 1h surge until the same-session price change advances by 5pp', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);

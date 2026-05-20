@@ -970,7 +970,18 @@ async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps) {
 
 function resolveCandidateState(candidate, rawState, profile) {
   if (candidate?.kind === 'old-surge') {
-    return isSameSurgeSessionState(candidate, rawState, profile) ? rawState : null;
+    if (!rawState) {
+      return null;
+    }
+
+    if (isSameSurgeSessionState(candidate, rawState, profile)) {
+      return rawState;
+    }
+
+    const lastDecision = toTextOrNull(rawState?.metadata?.lastDecision);
+    const wasOnlyPrimed = lastDecision === 'primed-hot'
+      && toTimestampMs(rawState?.lastAlertedAt) == null;
+    return wasOnlyPrimed ? null : rawState;
   }
   if (candidate?.kind === 'meteora-surge'
     && toTextOrNull(rawState?.metadata?.lastDecision) === 'primed-hot'
