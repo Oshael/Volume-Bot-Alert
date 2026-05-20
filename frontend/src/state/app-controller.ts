@@ -1566,6 +1566,97 @@ export function createAppController(): AppController {
     }, active);
   }
 
+  function summarizeAlertDebug(entries: AlertEntry[] = state.data.alerts) {
+    const sorted = [...entries].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+    const summarize = (alert: AlertEntry) => ({
+      id: alert.id,
+      kind: alert.kind,
+      ruleKey: alert.ruleKey || null,
+      address: alert.address,
+      symbol: alert.symbol || null,
+      createdAt: Number(alert.createdAt || 0),
+      createdAtIso: Number.isFinite(Number(alert.createdAt || 0))
+        ? new Date(Number(alert.createdAt || 0)).toISOString()
+        : null,
+    });
+
+    return {
+      count: entries.length,
+      newest: sorted.slice(0, 8).map(summarize),
+      oldest: sorted.slice(-4).map(summarize),
+    };
+  }
+
+  function summarizeDashboardAlertEventsDebug(events: DashboardAlertEvent[] = []) {
+    const sorted = [...events].sort((a, b) => getBackendAlertCreatedAt(b.triggeredAt) - getBackendAlertCreatedAt(a.triggeredAt));
+    return {
+      count: events.length,
+      newest: sorted.slice(0, 8).map((event) => ({
+        id: Number(event.id) || null,
+        kind: event.kind || null,
+        ruleKey: event.ruleKey || null,
+        address: event.address || null,
+        triggeredAt: event.triggeredAt || null,
+      })),
+      oldest: sorted.slice(-4).map((event) => ({
+        id: Number(event.id) || null,
+        kind: event.kind || null,
+        ruleKey: event.ruleKey || null,
+        address: event.address || null,
+        triggeredAt: event.triggeredAt || null,
+      })),
+    };
+  }
+
+  function getMissingAlertDebug(before: AlertEntry[], after: AlertEntry[]) {
+    const afterIds = new Set(after.map((alert) => alert.id));
+    return [...before]
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+      .filter((alert) => !afterIds.has(alert.id))
+      .slice(0, 12)
+      .map((alert) => ({
+        id: alert.id,
+        kind: alert.kind,
+        ruleKey: alert.ruleKey || null,
+        address: alert.address,
+        symbol: alert.symbol || null,
+        createdAt: Number(alert.createdAt || 0),
+      }));
+  }
+
+  function recordAlertDebug(label: string, meta: Record<string, unknown> = {}) {
+    const active = isRuntimePerfDebugActive();
+    if (!active) {
+      return;
+    }
+
+    recordRuntimePerfDebugEntry({
+      ts: Date.now(),
+      kind: 'sample',
+      label: `alerts.${label}`,
+      meta: {
+        workspace: state.ui.workspace,
+        sessionStatus: state.session.status,
+        runtimeMode: state.runtime.mode,
+        storageScope: getStorageScope(),
+        current: summarizeAlertDebug(),
+        ...meta,
+      },
+      memory: readRuntimePerfMemory(),
+    }, active);
+  }
+
+  function recordAlertMutationDebug(label: string, before: AlertEntry[], meta: Record<string, unknown> = {}) {
+    const after = state.data.alerts;
+    recordAlertDebug(label, {
+      before: summarizeAlertDebug(before),
+      after: summarizeAlertDebug(after),
+      removedCount: Math.max(0, before.length - after.length),
+      missingNewestFromBefore: getMissingAlertDebug(before, after),
+      ...meta,
+    });
+  }
+
   function emit(...regions: AppRenderRegion[]) {
     queueDirtyRegions(regions);
     if (emitScheduled) {
@@ -2610,6 +2701,11 @@ export function createAppController(): AppController {
     alertsPersistScope = null;
     saveAlerts(scope, state.data.alerts);
     saveAlertSparklineCache(scope, state.data.alertSparklineById);
+    recordAlertDebug('persist.flush', {
+      scope,
+      saved: summarizeAlertDebug(),
+      sparklineCacheCount: Object.keys(state.data.alertSparklineById).length,
+    });
   }
 
   function scheduleAlertsPersist() {
@@ -2641,6 +2737,7 @@ export function createAppController(): AppController {
 
   function hydrateBarStorage() {
     const scope = getStorageScope();
+    const beforeAlerts = state.data.alerts.slice();
     state.data.dismissedRecent = loadDismissedRecent(scope);
     state.data.dismissedOldWeek = loadDismissedOldWeek(scope);
     clearRecentRemovalLogStorage(scope);
@@ -2653,6 +2750,11 @@ export function createAppController(): AppController {
     state.panels.alerts = state.data.alerts.length;
     syncAlertPagination();
     queueMissingAlertSparklineRefresh();
+    recordAlertMutationDebug('hydrate.local-storage', beforeAlerts, {
+      scope,
+      loaded: summarizeAlertDebug(state.data.alerts),
+      sparklineCacheCount: Object.keys(state.data.alertSparklineById).length,
+    });
   }
 
   function isBlocked(address: string) {
@@ -2669,8 +2771,10 @@ export function createAppController(): AppController {
   }
 
   function removeAlertsForAddress(address: string) {
+    const beforeAlerts = state.data.alerts.slice();
     state.data.alerts = state.data.alerts.filter((item) => item.address !== address);
     syncAlertState();
+    recordAlertMutationDebug('remove.address', beforeAlerts, { address });
   }
 
   function captureRemovedTokenSnapshot(address: string) {
@@ -2726,6 +2830,7 @@ export function createAppController(): AppController {
 
   function restorePumpAndAlertCollections(snapshot: ReturnType<typeof captureRemovedTokenSnapshot>) {
     const { address } = snapshot;
+    const beforeAlerts = state.data.alerts.slice();
 
     for (const item of snapshot.removedPumpTokens) {
       const exists = state.data.pumpTokens.some((current) => current.mint === item.mint);
@@ -2754,6 +2859,10 @@ export function createAppController(): AppController {
       }
     }
     syncAlertState();
+    recordAlertMutationDebug('restore.removed-token-snapshot', beforeAlerts, {
+      address,
+      restoredAlerts: snapshot.removedAlerts.length,
+    });
 
     if (snapshot.wasDismissedRecent && !state.data.dismissedRecent.includes(address)) {
       state.data.dismissedRecent = [...state.data.dismissedRecent, address];
@@ -3681,7 +3790,11 @@ export function createAppController(): AppController {
     refreshTrackedTokenStore();
     state.data.pumpTokens = state.data.pumpTokens.filter((item) => !blocked.has(item.mint));
     state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => !blocked.has(item.mint));
+    const beforeAlerts = state.data.alerts.slice();
     state.data.alerts = state.data.alerts.filter((item) => !blocked.has(item.address));
+    recordAlertMutationDebug('filter.blocked-addresses', beforeAlerts, {
+      blockedCount: blocked.size,
+    });
     state.data.dismissedRecent = state.data.dismissedRecent.filter((address) => !blocked.has(address));
     state.data.dismissedOldWeek = state.data.dismissedOldWeek.filter((address) => !blocked.has(address));
     state.bars.manual = state.data.manualTokenAddresses.length;
@@ -4007,22 +4120,42 @@ export function createAppController(): AppController {
 
   function pushAlert(entry: AlertEntry) {
     if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
+      recordAlertDebug('push.skip-disabled-or-blocked', {
+        entry: summarizeAlertDebug([entry]),
+        blocked: isBlocked(entry.address),
+        enabled: isAlertEntryEnabled(entry),
+      });
       return false;
     }
     if (state.data.alerts.some((item) => item.id === entry.id)) {
+      recordAlertDebug('push.skip-duplicate-id', {
+        entry: summarizeAlertDebug([entry]),
+      });
       return false;
     }
     if (shouldSuppressDuplicateAlert(entry)) {
+      recordAlertDebug('push.skip-fingerprint', {
+        entry: summarizeAlertDebug([entry]),
+      });
       return false;
     }
+    const beforeAlerts = state.data.alerts.slice();
     const nextAlerts = [entry, ...state.data.alerts]
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, ALERTS_MAX_ENTRIES);
     if (!nextAlerts.some((item) => item.id === entry.id)) {
+      recordAlertDebug('push.drop-by-cap', {
+        entry: summarizeAlertDebug([entry]),
+        before: summarizeAlertDebug(beforeAlerts),
+        afterCandidate: summarizeAlertDebug(nextAlerts),
+      });
       return false;
     }
     state.data.alerts = nextAlerts;
     syncAlertState();
+    recordAlertMutationDebug('push.apply', beforeAlerts, {
+      entry: summarizeAlertDebug([entry]),
+    });
     queueAlertSparklineRefresh(entry.id, entry.address);
     emit('alerts', 'legacy');
     return true;
@@ -4034,6 +4167,11 @@ export function createAppController(): AppController {
 
   function upsertBackendAlertEntry(entry: AlertEntry) {
     if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
+      recordAlertDebug('backend.upsert.skip-disabled-or-blocked', {
+        entry: summarizeAlertDebug([entry]),
+        blocked: isBlocked(entry.address),
+        enabled: isAlertEntryEnabled(entry),
+      });
       return false;
     }
 
@@ -4044,14 +4182,21 @@ export function createAppController(): AppController {
 
     const existing = state.data.alerts[existingIndex];
     if (areAlertEntriesEquivalent(existing, entry)) {
+      recordAlertDebug('backend.upsert.noop-equivalent', {
+        entry: summarizeAlertDebug([entry]),
+      });
       return false;
     }
 
+    const beforeAlerts = state.data.alerts.slice();
     const nextAlerts = state.data.alerts.slice();
     nextAlerts[existingIndex] = entry;
     nextAlerts.sort((a, b) => b.createdAt - a.createdAt);
     state.data.alerts = nextAlerts.slice(0, ALERTS_MAX_ENTRIES);
     syncAlertState();
+    recordAlertMutationDebug('backend.upsert.update-existing', beforeAlerts, {
+      entry: summarizeAlertDebug([entry]),
+    });
     queueAlertSparklineRefresh(entry.id, entry.address);
     return true;
   }
@@ -4192,6 +4337,7 @@ export function createAppController(): AppController {
   }
 
   function syncBackendAlertEvents(events: DashboardAlertEvent[] = []) {
+    const beforeAlerts = state.data.alerts.slice();
     const nextAlerts = events
       .map((item) => buildBackendAlertEntry(item))
       .filter((item): item is AlertEntry => Boolean(item))
@@ -4204,6 +4350,11 @@ export function createAppController(): AppController {
       }
     }
 
+    recordAlertMutationDebug('backend.sync-events', beforeAlerts, {
+      backendEvents: summarizeDashboardAlertEventsDebug(events),
+      builtEntries: summarizeAlertDebug(nextAlerts),
+      added,
+    });
     return added;
   }
 
@@ -4221,16 +4372,33 @@ export function createAppController(): AppController {
   async function markDashboardAlertEventsSeen(token: string, events: DashboardAlertEvent[], ruleKey?: string | null) {
     const lastSeenEventId = getMaxBackendAlertEventId(events);
     if (!lastSeenEventId) {
+      recordAlertDebug('backend.mark-seen.skip-no-event-id', {
+        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        events: summarizeDashboardAlertEventsDebug(events),
+      });
       return;
     }
 
     try {
       flushAlertsPersist();
+      recordAlertDebug('backend.mark-seen.start', {
+        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        lastSeenEventId,
+        events: summarizeDashboardAlertEventsDebug(events),
+      });
       await updateDashboardAlertCursor({
         ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
         lastSeenEventId,
       }, token);
+      recordAlertDebug('backend.mark-seen.complete', {
+        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        lastSeenEventId,
+      });
     } catch {
+      recordAlertDebug('backend.mark-seen.error', {
+        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        lastSeenEventId,
+      });
     }
   }
 
@@ -4665,12 +4833,29 @@ export function createAppController(): AppController {
     dashboardAlertFeeds: Awaited<ReturnType<typeof loadDashboardAlertFeedsForWorkspace>>,
   ) {
     if (!dashboardAlertFeeds?.feeds?.length) {
+      recordAlertDebug('backend.feed.empty', {
+        mode: dashboardAlertFeeds?.mode ?? null,
+        feedCount: dashboardAlertFeeds?.feeds?.length ?? 0,
+      });
       return;
     }
 
+    const beforeAlerts = state.data.alerts.slice();
     const events = dashboardAlertFeeds.feeds
       .flatMap((feed) => feed?.events || [])
       .sort((a, b) => getBackendAlertCreatedAt(a.triggeredAt) - getBackendAlertCreatedAt(b.triggeredAt));
+    recordAlertDebug('backend.feed.apply-start', {
+      mode: dashboardAlertFeeds.mode ?? null,
+      feedCount: dashboardAlertFeeds.feeds.length,
+      feeds: dashboardAlertFeeds.feeds.map((feed) => ({
+        ruleKey: feed?.ruleKey || null,
+        mode: feed?.mode || null,
+        count: Number(feed?.count) || 0,
+        cursor: feed?.cursor || null,
+        events: summarizeDashboardAlertEventsDebug(feed?.events || []),
+      })),
+      mergedEvents: summarizeDashboardAlertEventsDebug(events),
+    });
     const addedEvents = syncBackendAlertEvents(events);
 
     for (const feed of dashboardAlertFeeds.feeds) {
@@ -4684,6 +4869,11 @@ export function createAppController(): AppController {
     if (addedEvents > 0) {
       emit('alerts', 'header', 'legacy');
     }
+    recordAlertMutationDebug('backend.feed.apply-complete', beforeAlerts, {
+      mode: dashboardAlertFeeds.mode ?? null,
+      addedEvents,
+      mergedEvents: summarizeDashboardAlertEventsDebug(events),
+    });
   }
 
   function queueDashboardAlertFeedRefresh(
@@ -5757,14 +5947,24 @@ export function createAppController(): AppController {
       },
       onAlertEvent(payload) {
         if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
+          recordAlertDebug('socket.event.skip-inactive', {
+            payload: summarizeDashboardAlertEventsDebug([payload]),
+          });
           return;
         }
         const sessionToken = state.session.token;
         if (!sessionToken) {
+          recordAlertDebug('socket.event.skip-no-session-token', {
+            payload: summarizeDashboardAlertEventsDebug([payload]),
+          });
           return;
         }
 
         const hiddenForUiWork = isLiveWorkspaceHiddenForUiWork();
+        recordAlertDebug('socket.event.received', {
+          hiddenForUiWork,
+          payload: summarizeDashboardAlertEventsDebug([payload]),
+        });
         const added = syncBackendAlertEvents([payload]);
         if (added > 0) {
           void markDashboardAlertEventsSeen(sessionToken, [payload], payload.ruleKey || payload.kind || HIGH_CAP_DUMP_RULE_KEY);
@@ -6613,8 +6813,12 @@ export function createAppController(): AppController {
     persistSoundSettings();
     state.data.blocklist = sortAddresses(payload.blocklist);
     replaceStarredTokens(payload.starredTokens.map((item) => item.address));
+    const beforeAlerts = state.data.alerts.slice();
     state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
     syncAlertState();
+    recordAlertMutationDebug('config.apply-blocklist-filter', beforeAlerts, {
+      blocklistCount: state.data.blocklist.length,
+    });
     state.bars.blocklist = payload.blocklist.length;
     applyMonitoredDashboard(monitoredDashboardTokens, payload.tokens);
     refreshPumpPanelCounts();
@@ -7847,9 +8051,11 @@ export function createAppController(): AppController {
       if (state.data.alerts.length === 0) {
         return;
       }
+      const beforeAlerts = state.data.alerts.slice();
       state.data.alerts = [];
       syncAlertState();
       flushAlertsPersist();
+      recordAlertMutationDebug('user.clear-all', beforeAlerts);
       setNotice('All alerts cleared.');
       emit('alerts', 'legacy', 'overlay');
       flushEmit();
@@ -7859,8 +8065,10 @@ export function createAppController(): AppController {
       if (nextAlerts.length === state.data.alerts.length) {
         return;
       }
+      const beforeAlerts = state.data.alerts.slice();
       state.data.alerts = nextAlerts;
       syncAlertState();
+      recordAlertMutationDebug('user.remove-one', beforeAlerts, { id });
       emit('alerts');
       flushEmit();
     },
