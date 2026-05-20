@@ -25,6 +25,7 @@ const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
 const GMGN_NON_LAUNCH_GRACE_SUPPRESSION_REASON = 'gmgn_non_launch_grace_period';
 const GMGN_NON_LAUNCH_GRACE_MS = 15 * 60 * 1000;
+const GMGN_ONE_MINUTE_ONLY_OLD_TOKEN_MIN_AGE_HOURS = 24;
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
 const GMGN_YOUNG_VOL_1H_TO_MCAP_RATIO = 10;
@@ -419,8 +420,15 @@ function isOneMinuteOnlyDiscovery(snapshot = {}) {
   return intervals.length > 0 && intervals.every((interval) => interval === '1m');
 }
 
-function shouldSkipNewGmgnDiscovery(snapshot, tokenBefore) {
-  return !tokenBefore && isOneMinuteOnlyDiscovery(snapshot);
+function isOldEnoughForOneMinuteOnlyDiscovery(snapshot, now = new Date()) {
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  return ageHours != null && ageHours >= GMGN_ONE_MINUTE_ONLY_OLD_TOKEN_MIN_AGE_HOURS;
+}
+
+function shouldSkipNewGmgnDiscovery(snapshot, tokenBefore, now = new Date()) {
+  return !tokenBefore
+    && isOneMinuteOnlyDiscovery(snapshot)
+    && !isOldEnoughForOneMinuteOnlyDiscovery(snapshot, now);
 }
 
 function resolveGmgnNonLaunchGraceUntil(snapshot = {}, tokenBefore = null, now = new Date()) {
@@ -1348,7 +1356,7 @@ async function ingestGmgnToken(snapshot, options = {}) {
     };
   }
 
-  if (shouldSkipNewGmgnDiscovery(filledSnapshot, tokenBefore)) {
+  if (shouldSkipNewGmgnDiscovery(filledSnapshot, tokenBefore, now)) {
     summary.skipped1mOnlyDiscovery = 1;
     return {
       summary,

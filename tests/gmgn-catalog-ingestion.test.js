@@ -783,6 +783,60 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(matcherCalls, 0);
   });
 
+  it('allows old unknown tokens discovered only in GMGN 1m trending into catalog flow', async () => {
+    let upsertCalls = 0;
+    let evaluationCalls = 0;
+    let bucketWrites = 0;
+    let matcherCalls = 0;
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot(),
+      tokenCreatedAt: '2026-05-02T06:59:59.000Z',
+      vol5m: null,
+      gmgnInterval: '1m',
+      gmgnIntervals: ['1m'],
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken() {
+          upsertCalls += 1;
+        },
+        async applyEvaluationResult(address, payload) {
+          evaluationCalls += 1;
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: payload.eligibleForMonitoring,
+            eligibility_state: payload.eligibilityState,
+            suppressed_reason: payload.suppressedReason,
+          };
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {
+          bucketWrites += 1;
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          matcherCalls += 1;
+        },
+      },
+    });
+
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.summary.skipped1mOnlyDiscovery, 0);
+    assert.equal(result.summary.matcherSkippedGmgnSafeguard, 1);
+    assert.equal(upsertCalls, 1);
+    assert.equal(evaluationCalls, 1);
+    assert.equal(bucketWrites, 0);
+    assert.equal(matcherCalls, 0);
+  });
+
   it('auto-blocks young GMGN-only tokens with liquidity under 1k before bucket writes', async () => {
     const blockWrites = [];
     const result = await gmgnCatalogIngestion.ingestGmgnToken({
