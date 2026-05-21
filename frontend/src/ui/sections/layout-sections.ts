@@ -1938,7 +1938,7 @@ function renderMockTradingBuyFields(busy: boolean) {
       <input type="number" name="notionalSol" min="0.01" step="0.01" value="1" inputmode="decimal" ${busy ? 'disabled' : ''} />
     </label>
     <div class="mock-trading-ticket-presets">
-      ${[1, 2, 5, 10].map((value) => `<button type="button" data-action="mock-trade-preset" data-value="${value}" ${busy ? 'disabled' : ''}>${value} SOL</button>`).join('')}
+      ${[0.3, 0.5, 1, 2].map((value) => `<button type="button" data-action="mock-trade-preset" data-value="${value}" ${busy ? 'disabled' : ''}>${value} SOL</button>`).join('')}
     </div>
     <label class="mock-trading-ticket-field">
       <span>Take profit MCAP</span>
