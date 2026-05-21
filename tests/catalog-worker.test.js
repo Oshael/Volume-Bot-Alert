@@ -83,7 +83,7 @@ describe('catalog worker drift compensation', () => {
       last_vol_5m: 0,
       suppressed_reason: 'dex_unavailable',
       last_evaluation_error: 'dex_unavailable',
-      evaluation_error_count: 300,
+      evaluation_error_count: 30,
     }), true);
 
     assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
@@ -94,7 +94,7 @@ describe('catalog worker drift compensation', () => {
       last_vol_5m: 0,
       suppressed_reason: 'dex_unavailable',
       last_evaluation_error: 'dex_unavailable',
-      evaluation_error_count: 300,
+      evaluation_error_count: 30,
     }), false);
 
     assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
@@ -105,7 +105,7 @@ describe('catalog worker drift compensation', () => {
       last_vol_5m: 0,
       suppressed_reason: 'dex_unavailable',
       last_evaluation_error: 'dex_unavailable',
-      evaluation_error_count: 12,
+      evaluation_error_count: 29,
     }), false);
 
     assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
@@ -116,8 +116,44 @@ describe('catalog worker drift compensation', () => {
       last_vol_5m: 7500,
       suppressed_reason: 'dex_unavailable',
       last_evaluation_error: 'dex_unavailable',
-      evaluation_error_count: 300,
+      evaluation_error_count: 30,
     }), false);
+
+    assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+      source: 'gmgn',
+      eligible_for_monitoring: false,
+      monitor_priority: 'low',
+      last_mcap: 4398,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 30,
+    }), true);
+
+    assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+      source: 'dexscreener-discovery',
+      eligible_for_monitoring: false,
+      monitor_priority: 'low',
+      last_mcap: 91929,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 30,
+    }), true);
+
+    for (const suffix of ['pump', 'bonk', 'brrr', 'bags']) {
+      assert.equal(catalogWorker.__private.isGmgnDexUnavailableZombie({
+        address: `2gXeM4einZoLMSQ5K7s6rHzCAeksU2hRFouBpqSo${suffix}`,
+        source: 'gmgn',
+        eligible_for_monitoring: false,
+        monitor_priority: 'low',
+        last_mcap: 91929,
+        last_vol_5m: 0,
+        suppressed_reason: 'dex_unavailable',
+        last_evaluation_error: 'dex_unavailable',
+        evaluation_error_count: 30,
+      }), false);
+    }
   });
 
   it('keeps migrated low-dust tokens on the low-near path during migration grace', () => {

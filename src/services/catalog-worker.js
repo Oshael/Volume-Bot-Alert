@@ -54,7 +54,7 @@ const YOUNG_EXTREME_CHURN_MIN_VOL_5M = 100000;
 const YOUNG_EXTREME_CHURN_MIN_VOL_MCAP_RATIO = 2.8;
 const YOUNG_EXTREME_CHURN_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000;
 const YOUNG_EXTREME_CHURN_REQUIRED_HITS = 2;
-const GMGN_DEX_UNAVAILABLE_ZOMBIE_MIN_ERROR_COUNT = 300;
+const GMGN_DEX_UNAVAILABLE_ZOMBIE_MIN_ERROR_COUNT = 30;
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON = 'gmgn_dex_unavailable_zombie';
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD = 1000;
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_BLOCK_YEARS = 10;
@@ -208,13 +208,20 @@ function isManualSource(token) {
   return String(token?.source || '').trim().toLowerCase() === 'user-manual';
 }
 
+const LAUNCH_ADDRESS_SUFFIXES = ['pump', 'bonk', 'brrr', 'bags'];
+
+function hasKnownLaunchAddressSuffix(token) {
+  const address = String(token?.address || '').trim().toLowerCase();
+  return LAUNCH_ADDRESS_SUFFIXES.some((suffix) => address.endsWith(suffix));
+}
+
 function isGmgnDexUnavailableZombie(token) {
-  if (!token || isManualSource(token)) {
+  if (!token || isManualSource(token) || hasKnownLaunchAddressSuffix(token)) {
     return false;
   }
 
   const source = String(token.source || '').trim().toLowerCase();
-  if (source !== 'gmgn') {
+  if (source === 'admin-blocked') {
     return false;
   }
 
@@ -234,10 +241,7 @@ function isGmgnDexUnavailableZombie(token) {
     return false;
   }
 
-  const priority = String(token.monitor_priority || '').trim().toLowerCase();
-  const marketCap = Number(token.last_mcap || 0);
-  return Boolean(token.eligible_for_monitoring)
-    && (priority === 'high' || priority === 'normal' || marketCap >= 30000);
+  return true;
 }
 
 function isPumpLikeToken(token, pair) {
