@@ -6,7 +6,6 @@ const solUsdPrice = require('./sol-usd-price-service');
 const DEFAULT_STARTING_CASH_USD = 1000;
 const DEFAULT_PRICE_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_MOCK_SOL_USD_MAX_STALE_MS = 60 * 60 * 1000;
-const STALE_SELL_MAX_MCAP_USD = 30000;
 const MOCK_SOL_USDC_RATE_CONFIG_KEY = 'mock-sol-usdc-rate';
 const DEFAULT_WALLET_NAME = 'Main';
 const EPSILON = 1e-12;
@@ -339,6 +338,9 @@ function mapPosition(row) {
 }
 
 function isStaleCatalogPriceAllowed(marketCapUsd, options = {}) {
+  if (options.allowStalePrice === true) {
+    return true;
+  }
   const allowStaleBelowMcapUsd = toFiniteNumber(options.allowStaleBelowMcapUsd, null);
   return allowStaleBelowMcapUsd != null
     && marketCapUsd != null
@@ -982,7 +984,7 @@ async function sellToken(payload = {}, options = {}) {
     const quantity = normalizeSellQuantity(position, payload);
     const catalog = await loadFreshCatalogPrice(address, client, {
       ...options,
-      allowStaleBelowMcapUsd: STALE_SELL_MAX_MCAP_USD,
+      allowStalePrice: true,
     });
     const next = buildSellState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, quantity });
 
@@ -1339,7 +1341,6 @@ module.exports = {
   DEFAULT_MOCK_SOL_USD_MAX_STALE_MS,
   DEFAULT_PRICE_MAX_AGE_MS,
   DEFAULT_STARTING_CASH_USD,
-  STALE_SELL_MAX_MCAP_USD,
   MockTradingError,
   addCash,
   archiveWallet,
