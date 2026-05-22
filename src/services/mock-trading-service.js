@@ -941,7 +941,10 @@ async function buyToken(payload = {}, options = {}) {
   return withTransaction(async (client) => {
     const wallet = await resolveWalletScope(userId, payload.walletId, client);
     const account = await ensureAccount(userId, wallet.id, client, { lock: true, startingCashUsd: options.startingCashUsd });
-    const catalog = await loadFreshCatalogPrice(address, client, options);
+    const catalog = await loadFreshCatalogPrice(address, client, {
+      ...options,
+      allowStalePrice: true,
+    });
     const takeProfitInput = normalizeTakeProfitInput(payload, catalog);
     const position = await loadPositionForUpdate(userId, wallet.id, address, client);
     const next = buildBuyState({ account, position, priceUsd: catalog.priceUsd, marketCapUsd: catalog.marketCapUsd, notionalUsd });

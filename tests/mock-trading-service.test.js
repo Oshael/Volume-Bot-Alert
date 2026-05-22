@@ -135,7 +135,7 @@ describe('mock trading service calculations', () => {
     );
   });
 
-  it('allows stale catalog prices when explicitly requested for manual sells', () => {
+  it('allows stale catalog prices when explicitly requested for manual trades', () => {
     const catalog = mapCatalogPrice(
       {
         last_price: '0.001',
