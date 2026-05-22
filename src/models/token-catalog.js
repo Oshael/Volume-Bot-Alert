@@ -1022,6 +1022,7 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
        ON tre.token_address = tc.address
      WHERE (tc.eligible_for_monitoring = TRUE OR tc.suppressed_reason = 'gmgn_needs_risk_enrichment')
        AND COALESCE(tc.last_mcap, 0) >= $3
+       AND COALESCE(trr.label, '') <> 'valid'
      ORDER BY CASE
                 WHEN trr.source = 'auto'
                  AND tc.last_evaluated_at IS NOT NULL

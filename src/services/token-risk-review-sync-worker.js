@@ -51,11 +51,13 @@ let status = {
   lastSaved: 0,
   lastAutoBlocked: 0,
   lastManualProtected: 0,
+  lastValidProtected: 0,
   lastReleased: 0,
   totalProcessed: 0,
   totalSaved: 0,
   totalAutoBlocked: 0,
   totalManualProtected: 0,
+  totalValidProtected: 0,
   totalReleased: 0,
   totalErrors: 0,
   lastError: null,
@@ -359,6 +361,10 @@ function shouldAutoBlockLabel(label) {
   return String(label || '').trim().toLowerCase() === 'junk_probable';
 }
 
+function hasPersistedValidReview(row) {
+  return String(row?.risk_review_label || '').trim().toLowerCase() === 'valid';
+}
+
 function buildAutoBlockLabel(assessment) {
   const reasonCodes = Array.isArray(assessment?.reasonCodes)
     ? assessment.reasonCodes.map((item) => String(item || '').trim()).filter(Boolean)
@@ -549,9 +555,15 @@ async function processRows(rows = [], deps = {}) {
   let saved = 0;
   let autoBlocked = 0;
   let manualProtected = 0;
+  let validProtected = 0;
   let released = 0;
 
   for (const row of rows) {
+    if (hasPersistedValidReview(row)) {
+      validProtected += 1;
+      continue;
+    }
+
     const meteoraSummary = meteoraByAddress.get(row.address) || null;
     const assessment = await assessRiskReviewRow(row, meteoraSummary, deps);
 
@@ -582,7 +594,7 @@ async function processRows(rows = [], deps = {}) {
     saved += 1;
   }
 
-  return { saved, autoBlocked, manualProtected, released };
+  return { saved, autoBlocked, manualProtected, validProtected, released };
 }
 
 function schedule(options = {}) {
@@ -622,6 +634,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
     status.lastSaved = 0;
     status.lastAutoBlocked = 0;
     status.lastManualProtected = 0;
+    status.lastValidProtected = 0;
     status.lastReleased = 0;
     status.lastError = null;
 
@@ -639,11 +652,13 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastSaved = result.saved;
       status.lastAutoBlocked = result.autoBlocked;
       status.lastManualProtected = result.manualProtected;
+      status.lastValidProtected = result.validProtected;
       status.lastReleased = result.released;
       status.totalProcessed += rows.length;
       status.totalSaved += result.saved;
       status.totalAutoBlocked += result.autoBlocked;
       status.totalManualProtected += result.manualProtected;
+      status.totalValidProtected += result.validProtected;
       status.totalReleased += result.released;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
@@ -657,6 +672,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         saved: result.saved,
         autoBlocked: result.autoBlocked,
         manualProtected: result.manualProtected,
+        validProtected: result.validProtected,
         released: result.released,
         nextOffset,
       };
@@ -725,5 +741,6 @@ module.exports = {
     processRows,
     releaseGmgnRiskSuppression,
     shouldAutoBlockLabel,
+    hasPersistedValidReview,
   },
 };

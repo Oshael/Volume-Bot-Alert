@@ -134,6 +134,52 @@ describe('token risk review sync worker', () => {
     assert.equal(result.manualProtected, 1);
   });
 
+  it('does not demote a persisted valid review to junk_probable', async () => {
+    const result = await worker.__private.processRows([
+      {
+        address: 'So11111111111111111111111111111111111111112',
+        last_mcap: 1200000,
+        last_vol_1h: 100,
+        last_vol_6h: 500,
+        last_vol_24h: 800,
+        last_liquidity_usd: 1000,
+        last_txns_24h_buys: 2,
+        last_txns_24h_sells: 30,
+        risk_holder_count: 20,
+        risk_top_10_pct: 92,
+        risk_top_20_pct: 98,
+        risk_mint_authority_active: true,
+        risk_freeze_authority_active: false,
+        risk_review_label: 'valid',
+        risk_review_source: 'auto',
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async () => {
+          throw new Error('valid reviews must not be recalculated');
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async () => {
+          throw new Error('valid reviews must not be auto-blocked');
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {
+          throw new Error('valid reviews must not capture junk evidence');
+        },
+      },
+    });
+
+    assert.equal(result.saved, 0);
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(result.manualProtected, 0);
+    assert.equal(result.validProtected, 1);
+  });
+
   it('keeps auto-valid tokens as valid_but_weak until structural coverage exists', async () => {
     const saved = [];
     const result = await worker.__private.processRows([
