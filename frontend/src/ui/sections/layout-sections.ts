@@ -1641,10 +1641,14 @@ function renderMockTradingPnlTrade(trade: MockTradingTradeView) {
   const value = trade.side === 'buy'
     ? fmtMockSolAmount(trade.notionalUsd / resolveMockTradeSolUsdcRate(trade))
     : fmtMockSolAmount(trade.realizedPnlUsd / resolveMockTradeSolUsdcRate(trade), { signed: true });
+  const marketCap = trade.marketCapUsd && trade.marketCapUsd > 0 ? `MCAP ${fmtMoney(trade.marketCapUsd)}` : 'MCAP -';
   return `
     <div class="mock-trading-pnl-trade" data-side="${trade.side}" data-tone="${tone}">
       <span>${escapeHtml(trade.side.toUpperCase())}</span>
-      <strong>${escapeHtml(value)}</strong>
+      <strong>
+        ${escapeHtml(value)}
+        <small>${escapeHtml(marketCap)}</small>
+      </strong>
       <em>${escapeHtml(formatMockTradeTime(trade.executedAt))}</em>
     </div>
   `;

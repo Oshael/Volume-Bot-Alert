@@ -4240,8 +4240,20 @@ a {
 }
 
 .mock-trading-pnl-trade strong {
+  display: grid;
+  gap: 2px;
   overflow: hidden;
   color: #eef4ff;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-trading-pnl-trade small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
