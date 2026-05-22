@@ -24,6 +24,13 @@ function normalizeMinMcap(value) {
   return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
 }
 
+function toTimestampMsOrNull(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  const ms = date.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function parseOptionalEventId(value, name) {
   if (value === undefined || value === null || String(value).trim() === '') {
     return { ok: true, value: undefined };
@@ -329,6 +336,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     priceChange6h: toNumberOrNull(item.last_price_change_6h),
     priceChange24h: toNumberOrNull(item.last_price_change_24h),
     tokenCreatedAt: toNumberOrNull(item.last_token_created_at_ms),
+    catalogFirstSeenAt: toTimestampMsOrNull(item.first_seen_at),
     prevMcap: marketBaseline.prevMcap,
     mcapDelta: marketBaseline.mcapDelta,
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,

@@ -72,6 +72,7 @@ export interface ManualTokenEntry {
   manual?: boolean;
   _userManual?: boolean;
   createdAt?: number | null;
+  catalogFirstSeenAt?: number | null;
   mcap?: number | null;
   priceUsd?: number | null;
   volume5m?: number | null;

@@ -1132,7 +1132,8 @@ export function createAppController(): AppController {
     }
 
     const hasCreatedAt = typeof token.createdAt === 'number' && token.createdAt > 0;
-    return !token.symbol || !token.pairUrl || !hasCreatedAt;
+    const hasCatalogFirstSeenAt = typeof token.catalogFirstSeenAt === 'number' && token.catalogFirstSeenAt > 0;
+    return !token.symbol || !token.pairUrl || !hasCreatedAt || !hasCatalogFirstSeenAt;
   }
 
   function replaceTrackedTokenReferences(address: string, nextToken: ManualTokenEntry) {
@@ -1267,16 +1268,19 @@ export function createAppController(): AppController {
     coldRefreshDue: boolean,
   ) {
     const shouldApplyColdFields = shouldApplyTrackedColdFields(existingItem, dashboardItem, coldRefreshDue);
+    const existing: Partial<ManualTokenEntry> = existingItem || {};
+    const dashboard: Partial<DashboardMonitoredToken> = dashboardItem || {};
 
     return {
-      mintAddress: firstDefinedTrackedValue(existingItem?.mintAddress, dashboardItem?.address, base.address),
-      pairAddress: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.pairAddress, existingItem?.pairAddress, base.pairAddress),
-      pairUrl: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.pairUrl, existingItem?.pairUrl, base.pairUrl),
-      imageUrl: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.imageUrl, existingItem?.imageUrl, base.imageUrl),
-      twitterUrl: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.twitterUrl, existingItem?.twitterUrl, base.twitterUrl),
-      symbol: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.symbol, existingItem?.symbol, base.symbol),
-      name: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.name, existingItem?.name, base.name),
-      createdAt: selectTrackedColdField(shouldApplyColdFields, dashboardItem?.tokenCreatedAt, existingItem?.createdAt, base.createdAt),
+      mintAddress: firstDefinedTrackedValue(existing.mintAddress, dashboard.address, base.address),
+      pairAddress: selectTrackedColdField(shouldApplyColdFields, dashboard.pairAddress, existing.pairAddress, base.pairAddress),
+      pairUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.pairUrl, existing.pairUrl, base.pairUrl),
+      imageUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.imageUrl, existing.imageUrl, base.imageUrl),
+      twitterUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.twitterUrl, existing.twitterUrl, base.twitterUrl),
+      symbol: selectTrackedColdField(shouldApplyColdFields, dashboard.symbol, existing.symbol, base.symbol),
+      name: selectTrackedColdField(shouldApplyColdFields, dashboard.name, existing.name, base.name),
+      createdAt: selectTrackedColdField(shouldApplyColdFields, dashboard.tokenCreatedAt, existing.createdAt, base.createdAt),
+      catalogFirstSeenAt: selectTrackedColdField(shouldApplyColdFields, dashboard.catalogFirstSeenAt, existing.catalogFirstSeenAt, base.catalogFirstSeenAt),
     };
   }
 
@@ -5206,13 +5210,13 @@ export function createAppController(): AppController {
     return selected;
   }
 
-  function resolveSparklineGranularityMinutes(createdAt?: number | null, referenceTs = Date.now()) {
-    const createdAtMs = Number(createdAt);
-    if (!Number.isFinite(createdAtMs) || createdAtMs <= 0 || createdAtMs > referenceTs) {
+  function resolveSparklineGranularityMinutes(anchorAt?: number | null, referenceTs = Date.now()) {
+    const anchorAtMs = Number(anchorAt);
+    if (!Number.isFinite(anchorAtMs) || anchorAtMs <= 0 || anchorAtMs > referenceTs) {
       return SPARKLINE_GRANULARITY_FALLBACK_MINUTES;
     }
 
-    const ageMs = Math.max(0, referenceTs - createdAtMs);
+    const ageMs = Math.max(0, referenceTs - anchorAtMs);
     if (ageMs < SPARKLINE_AGE_1M_MAX_MS) {
       return 1;
     }
@@ -5241,7 +5245,8 @@ export function createAppController(): AppController {
 
     for (const address of selectedAddresses) {
       const trackedToken = getTrackedToken(state, address);
-      const granularityMinutes = resolveSparklineGranularityMinutes(trackedToken?.createdAt ?? null, referenceTs);
+      const sparklineAnchorAt = trackedToken?.catalogFirstSeenAt ?? trackedToken?.createdAt ?? null;
+      const granularityMinutes = resolveSparklineGranularityMinutes(sparklineAnchorAt, referenceTs);
       const batch = grouped.get(granularityMinutes);
       if (batch?.includes(address)) {
         continue;
@@ -5263,13 +5268,18 @@ export function createAppController(): AppController {
   }
 
   function resolveAlertSparklineCreatedAt(alertId: string, address: string) {
+    const trackedToken = getTrackedToken(state, address);
+    const catalogFirstSeenAt = Number(trackedToken?.catalogFirstSeenAt);
+    if (Number.isFinite(catalogFirstSeenAt) && catalogFirstSeenAt > 0) {
+      return catalogFirstSeenAt;
+    }
+
     const matchingAlert = state.data.alerts.find((item) => item.id === alertId);
     const alertCreatedAt = Number(matchingAlert?.tokenCreatedAt);
     if (Number.isFinite(alertCreatedAt) && alertCreatedAt > 0) {
       return alertCreatedAt;
     }
 
-    const trackedToken = getTrackedToken(state, address);
     const trackedCreatedAt = Number(trackedToken?.createdAt);
     if (Number.isFinite(trackedCreatedAt) && trackedCreatedAt > 0) {
       return trackedCreatedAt;

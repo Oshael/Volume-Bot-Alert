@@ -77,6 +77,7 @@ const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
    tc.last_image_url,
    tc.last_twitter_url,
    tc.monitor_priority,
+   tc.first_seen_at,
    tc.last_seen_at,
    tc.last_evaluated_at,
    trr.label AS risk_review_label,
@@ -116,6 +117,7 @@ const DASHBOARD_MONITORED_LEAN_SELECT_SQL = `SELECT
    tc.last_image_url,
    tc.last_twitter_url,
    tc.monitor_priority,
+   tc.first_seen_at,
    tc.last_seen_at,
    tc.last_evaluated_at`;
 

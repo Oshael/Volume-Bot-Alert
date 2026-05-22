@@ -497,6 +497,7 @@ describe('Dashboard routes', () => {
             last_image_url: 'https://example.com/token.png',
             last_twitter_url: 'https://x.com/wsol',
             monitor_priority: 'normal',
+            first_seen_at: '2026-04-15T21:00:00.000Z',
             last_seen_at: '2026-04-15T21:10:00.000Z',
             last_evaluated_at: '2026-04-15T21:09:00.000Z',
             risk_review_label: null,
@@ -543,6 +544,7 @@ describe('Dashboard routes', () => {
           last_image_url: 'https://example.com/token2.png',
           last_twitter_url: 'https://x.com/bonk',
           monitor_priority: 'normal',
+          first_seen_at: '2026-04-15T20:00:00.000Z',
           last_seen_at: '2026-04-15T20:10:00.000Z',
           last_evaluated_at: '2026-04-15T20:09:00.000Z',
           risk_review_label: null,
@@ -644,6 +646,7 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.recent.total, 41);
       assert.equal(res.body.recent.page, 1);
       assert.equal(res.body.recent.tokens.length, 1);
+      assert.equal(res.body.recent.tokens[0].catalogFirstSeenAt, Date.parse('2026-04-15T21:00:00.000Z'));
       assert.equal(res.body.oldWeek.total, 11);
       assert.equal(res.body.oldWeek.tokens[0].symbol, 'BONK');
     } finally {
