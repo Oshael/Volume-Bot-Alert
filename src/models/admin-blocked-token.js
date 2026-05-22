@@ -107,39 +107,43 @@ async function listByAddresses(addresses = []) {
   return rows;
 }
 
-async function listAddressesWithCleanupArtifacts(limit = 50) {
+async function listAddressesWithCleanupArtifacts(limit = 50, options = {}) {
   await ensureTable();
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
+  const minBlockedAgeMs = Math.max(0, Number(options.minBlockedAgeMs) || 0);
   const { rows } = await db.query(
     `SELECT ab.address
      FROM admin_blocked_tokens ab
-     WHERE EXISTS (
-         SELECT 1
-         FROM token_market_buckets_1m buckets
-         WHERE buckets.token_address = ab.address
-         LIMIT 1
-       )
-       OR EXISTS (
-         SELECT 1
-         FROM token_market_buckets_agg buckets
-         WHERE buckets.token_address = ab.address
-         LIMIT 1
-       )
-       OR EXISTS (
-         SELECT 1
-         FROM token_market_volume_buckets_1m buckets
-         WHERE buckets.token_address = ab.address
-         LIMIT 1
-       )
-       OR EXISTS (
-         SELECT 1
-         FROM token_meteora_snapshots snapshots
-         WHERE snapshots.token_address = ab.address
-         LIMIT 1
+     WHERE ab.created_at <= NOW() - ($2 * INTERVAL '1 millisecond')
+       AND (
+         EXISTS (
+           SELECT 1
+           FROM token_market_buckets_1m buckets
+           WHERE buckets.token_address = ab.address
+           LIMIT 1
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM token_market_buckets_agg buckets
+           WHERE buckets.token_address = ab.address
+           LIMIT 1
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM token_market_volume_buckets_1m buckets
+           WHERE buckets.token_address = ab.address
+           LIMIT 1
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM token_meteora_snapshots snapshots
+           WHERE snapshots.token_address = ab.address
+           LIMIT 1
+         )
        )
      ORDER BY ab.created_at ASC, ab.address ASC
      LIMIT $1`,
-    [safeLimit]
+    [safeLimit, minBlockedAgeMs]
   );
   return rows.map((row) => row.address).filter(Boolean);
 }

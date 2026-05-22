@@ -11,6 +11,7 @@ const BLOCKED_ARTIFACT_LOOP_INTERVAL_MS = 60 * 1000;
 const BLOCKED_ARTIFACT_IDLE_INTERVAL_MS = 15 * 60 * 1000;
 const ARCHIVE_LIMIT = 400;
 const BLOCKED_ARTIFACT_LIMIT = 50;
+const BLOCKED_ARTIFACT_MIN_BLOCKED_AGE_MS = 24 * 60 * 60 * 1000;
 const QUARANTINE_RECHECK_MS = 6 * 60 * 60 * 1000;
 const SOFT_ARCHIVE_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
 const ARCHIVE_STATE_KEY = 'catalog_cleanup_soft_archive_last_run_at';
@@ -165,7 +166,9 @@ async function runBlockedArtifactCleanupOnce() {
   status.lastBlockedArtifactRunAt = new Date().toISOString();
 
   try {
-    const blockedAddresses = await adminBlockedToken.listAddressesWithCleanupArtifacts(BLOCKED_ARTIFACT_LIMIT);
+    const blockedAddresses = await adminBlockedToken.listAddressesWithCleanupArtifacts(BLOCKED_ARTIFACT_LIMIT, {
+      minBlockedAgeMs: BLOCKED_ARTIFACT_MIN_BLOCKED_AGE_MS,
+    });
     const summary = await deleteBlockedArtifactsForAddresses(blockedAddresses);
 
     status.blockedArtifactTokens = summary.blockedArtifactTokens;
