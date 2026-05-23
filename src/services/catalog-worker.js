@@ -41,6 +41,7 @@ const RATE_LIMIT_LOW_NEAR_RECHECK_MS = 3 * 60 * 1000;
 const RATE_LIMIT_LOW_DUST_RECHECK_MS = 2 * 60 * 1000;
 const RATE_LIMIT_MANUAL_RECHECK_MS = 15 * 1000;
 const DEX_BATCH_DELAY_MS = 100;
+const MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS = 3 * 1000;
 const THROTTLE_LIST_LIMIT_MULTIPLIER = 8;
 const THROTTLE_LIST_LIMIT_CAP = 2500;
 const LOW_NEAR_JITTER_MS = 3 * 1000;
@@ -394,6 +395,187 @@ function buildGmgnDexUnavailableMarketSnapshot(token, gmgnInfo) {
     vol24h: toNumber(token?.last_vol_24h),
     tokenCreatedAt: gmgnInfo?.tokenCreatedAt || token?.last_token_created_at_ms || null,
   };
+}
+
+function resolveGmgnManualPreMigrationPriority(marketCap) {
+  if (marketCap >= 100000) return 'high';
+  if (marketCap >= 30000) return 'normal';
+  return 'low';
+}
+
+function resolveGmgnManualPreMigrationState(marketCap) {
+  if (marketCap >= 100000) return 'gmgn-high';
+  if (marketCap >= 30000) return 'gmgn-normal';
+  return 'gmgn-low';
+}
+
+function hasManualPreMigrationGmgnMarketData(marketCap, price) {
+  return marketCap > 0 || price > 0;
+}
+
+function buildManualPreMigrationGmgnVolumes(gmgnInfo, now) {
+  return fillYoungTokenVolumeWindows({
+    tokenCreatedAt: gmgnInfo?.tokenCreatedAt,
+    vol1m: toNumber(gmgnInfo?.vol1m),
+    vol5m: toNumber(gmgnInfo?.vol5m),
+    vol1h: toNumber(gmgnInfo?.vol1h),
+    vol6h: toNumber(gmgnInfo?.vol6h),
+    vol24h: toNumber(gmgnInfo?.vol24h),
+  }, { now });
+}
+
+function buildManualPreMigrationGmgnMetadata(token, gmgnInfo) {
+  return {
+    symbol: firstPresentValue(gmgnInfo?.symbol, token?.symbol),
+    name: firstPresentValue(gmgnInfo?.name, token?.name),
+    pairAddress: firstPresentValue(gmgnInfo?.pairAddress),
+    pairUrl: firstPresentValue(gmgnInfo?.pairUrl),
+    imageUrl: firstPresentValue(gmgnInfo?.imageUrl),
+    tokenCreatedAt: firstPresentValue(gmgnInfo?.tokenCreatedAt, token?.last_token_created_at_ms),
+  };
+}
+
+function buildManualPreMigrationGmgnPriceChanges(gmgnInfo) {
+  return {
+    priceChange1h: toNumber(gmgnInfo?.priceChange1h),
+    priceChange6h: toNumber(gmgnInfo?.priceChange6h),
+    priceChange24h: toNumber(gmgnInfo?.priceChange24h),
+  };
+}
+
+function hasGmgnLaunchpadSignal(gmgnInfo = {}) {
+  return Boolean(
+    gmgnInfo.launchpad
+    || gmgnInfo.launchpadPlatform
+    || gmgnInfo.launchpadStatus != null
+    || gmgnInfo.launchpadProgress != null
+  );
+}
+
+function hasGmgnMigrationSignal(gmgnInfo = {}) {
+  return Boolean(
+    gmgnInfo.openTimestamp
+    || gmgnInfo.migratedTimestamp
+    || gmgnInfo.migratedPool
+  );
+}
+
+function shouldUseGmgnPreMigrationInfo(gmgnInfo = {}) {
+  return hasGmgnLaunchpadSignal(gmgnInfo)
+    && !hasGmgnMigrationSignal(gmgnInfo);
+}
+
+function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) {
+  const marketCap = toNumber(gmgnInfo?.marketCap);
+  const price = toNumber(gmgnInfo?.price);
+  if (!hasManualPreMigrationGmgnMarketData(marketCap, price)) {
+    return null;
+  }
+
+  const filledVolumes = buildManualPreMigrationGmgnVolumes(gmgnInfo, now);
+  const metadata = buildManualPreMigrationGmgnMetadata(token, gmgnInfo);
+  const priceChanges = buildManualPreMigrationGmgnPriceChanges(gmgnInfo);
+
+  return {
+    address: token.address,
+    ...metadata,
+    mcap: marketCap,
+    price,
+    vol1m: filledVolumes.vol1m,
+    vol5m: filledVolumes.vol5m,
+    vol1h: filledVolumes.vol1h,
+    vol6h: filledVolumes.vol6h,
+    vol24h: filledVolumes.vol24h,
+    ...priceChanges,
+    liquidityUsd: toNumber(gmgnInfo?.liquidityUsd),
+  };
+}
+
+async function evaluateManualPreMigrationWithGmgn(token, traceInitialEval) {
+  if (!isManualSource(token)) {
+    return null;
+  }
+
+  let gmgnInfo = null;
+  try {
+    gmgnInfo = await getDefaultGmgnClient().fetchTokenInfo({
+      chain: token?.chain || 'solana',
+      address: token?.address,
+      skipCache: true,
+    });
+  } catch (error) {
+    console.warn(`[CatalogWorker] Failed to fetch GMGN pre-migration info for manual token ${token.address}: ${error.message}`);
+    return null;
+  }
+
+  if (!shouldUseGmgnPreMigrationInfo(gmgnInfo)) {
+    return null;
+  }
+
+  const now = new Date();
+  const snapshot = buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now);
+  if (!snapshot) {
+    return null;
+  }
+
+  const marketCap = snapshot.mcap || 0;
+  const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
+    evaluationSource: 'gmgn',
+    eligibilityState: resolveGmgnManualPreMigrationState(marketCap),
+    eligibleForMonitoring: marketCap > 0,
+    suppressedReason: marketCap > 0 ? null : 'mcap_unavailable',
+    monitorPriority: resolveGmgnManualPreMigrationPriority(marketCap),
+    nextEvaluationAt: new Date(Date.now() + MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS),
+    lastEvaluationError: null,
+    evaluationErrorCount: 0,
+    symbol: snapshot.symbol,
+    name: snapshot.name,
+    pairAddress: snapshot.pairAddress,
+    pairUrl: snapshot.pairUrl,
+    imageUrl: snapshot.imageUrl,
+    mcap: snapshot.mcap,
+    price: snapshot.price,
+    vol5m: snapshot.vol5m,
+    vol1h: snapshot.vol1h,
+    vol6h: snapshot.vol6h,
+    vol24h: snapshot.vol24h,
+    priceChange1h: snapshot.priceChange1h,
+    priceChange6h: snapshot.priceChange6h,
+    priceChange24h: snapshot.priceChange24h,
+    liquidityUsd: snapshot.liquidityUsd,
+    tokenCreatedAt: toTimestampMs(snapshot.tokenCreatedAt),
+  });
+
+  await tokenMarketBucket1m.upsertSnapshotBucket({
+    tokenAddress: token.address,
+    pairAddress: snapshot.pairAddress,
+    mcap: snapshot.mcap,
+    price: snapshot.price,
+    source: 'gmgn',
+  });
+  await tokenMarketVolumeBucket1m.upsertSnapshotBucket({
+    tokenAddress: token.address,
+    vol1m: snapshot.vol1m,
+    vol5m: snapshot.vol5m,
+    vol1h: snapshot.vol1h,
+    vol6h: snapshot.vol6h,
+    vol24h: snapshot.vol24h,
+    source: 'gmgn',
+  });
+
+  if (traceInitialEval) {
+    logTrace('catalog_eval_result', {
+      tokenAddress: token.address,
+      source: token.source || null,
+      result: 'gmgn-manual-launchpad-pre-migration',
+      marketCap,
+      nextEvaluationAt: new Date(Date.now() + MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS).toISOString(),
+    });
+  }
+
+  status.totalEligible += marketCap > 0 ? 1 : 0;
+  status.totalIneligible += marketCap > 0 ? 0 : 1;
+  return updatedToken;
 }
 
 function getYoungExtremeChurnState(address, nowMs = Date.now()) {
@@ -994,6 +1176,11 @@ async function maybeAutoBlockGmgnDexUnavailableLowLiquidity(token) {
 
 async function evaluateTokenWithData(token, data) {
   const traceInitialEval = shouldTraceInitialEvalOnly(token);
+
+  const gmgnManualPreMigrationToken = await evaluateManualPreMigrationWithGmgn(token, traceInitialEval);
+  if (gmgnManualPreMigrationToken) {
+    return gmgnManualPreMigrationToken;
+  }
 
   if (!data) {
     return evaluateDexUnavailableToken(token, traceInitialEval);

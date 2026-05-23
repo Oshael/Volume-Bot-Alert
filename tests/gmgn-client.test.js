@@ -244,6 +244,60 @@ describe('gmgn client', () => {
     assert.equal(info.tokenCreatedAt, '2026-05-04T01:54:53.000Z');
   });
 
+  it('normalizes PumpFun pre-bonding token info price and volume fields', () => {
+    const info = gmgn.__private.normalizeTokenInfoPayload({
+      address: 'HXTSHe2N53pKS9e41jbcFDAsxx6qPeRGzpsEUkY3pump',
+      symbol: 'Starships',
+      name: 'Starships Are Meant To Fly',
+      logo: 'https://gmgn.ai/example.webp',
+      biggest_pool_address: 'AAYLLw7gW2GYs8kUx5MrCuhntW9otZH8Lnbvp7gka1gV',
+      launchpad: 'pump',
+      launchpad_platform: 'Pump.fun',
+      launchpad_status: 0,
+      launchpad_progress: 0.5294436621846021,
+      open_timestamp: 0,
+      migrated_timestamp: 0,
+      migrated_pool: '',
+      creation_timestamp: 1779505038,
+      circulating_supply: '999999853',
+      liquidity: '8643.0348388404',
+      price: {
+        price: '0.0000066159149',
+        price_1h: '0.0000026003261',
+        volume_1m: '1015.61377896',
+        volume_5m: '4363.13630873',
+        volume_1h: '51278.17474696',
+        volume_6h: '51278.17474696',
+        volume_24h: '51278.17474696',
+      },
+      link: {
+        gmgn: 'https://gmgn.ai/sol/token/HXTSHe2N53pKS9e41jbcFDAsxx6qPeRGzpsEUkY3pump',
+      },
+      stat: {
+        top_10_holder_rate: '0.2694',
+      },
+    }, { chain: 'sol' });
+
+    assert.equal(info.symbol, 'Starships');
+    assert.equal(info.imageUrl, 'https://gmgn.ai/example.webp');
+    assert.equal(info.pairAddress, 'AAYLLw7gW2GYs8kUx5MrCuhntW9otZH8Lnbvp7gka1gV');
+    assert.equal(info.price, 0.0000066159149);
+    assert.equal(Math.round(info.marketCap), 6616);
+    assert.equal(info.liquidityUsd, 8643.0348388404);
+    assert.equal(info.vol1m, 1015.61377896);
+    assert.equal(info.vol5m, 4363.13630873);
+    assert.equal(info.vol24h, 51278.17474696);
+    assert.equal(info.top10HolderRate, 0.2694);
+    assert.equal(info.launchpad, 'pump');
+    assert.equal(info.launchpadPlatform, 'Pump.fun');
+    assert.equal(info.launchpadStatus, 0);
+    assert.equal(info.launchpadProgress, 0.5294436621846021);
+    assert.equal(info.openTimestamp, null);
+    assert.equal(info.migratedTimestamp, null);
+    assert.equal(info.migratedPool, null);
+    assert.ok(info.priceChange1h > 154);
+  });
+
   it('normalizes market kline rows', async () => {
     const client = gmgn.createGmgnClient({
       apiKey: 'test-key',
@@ -354,6 +408,31 @@ describe('gmgn client', () => {
     await client.fetchTrending({ chain: 'sol', interval: '5m' });
 
     assert.equal(calls.length, 2);
+  });
+
+  it('can bypass token info cache for fresh pre-bonding lookups', async () => {
+    const calls = [];
+    const cache = gmgn.__private.createRiskLookupCache({ ttlMs: 60000 });
+    const client = gmgn.createGmgnClient({
+      riskLookupCache: cache,
+      execFileImpl: async () => {
+        calls.push(true);
+        return {
+          stdout: JSON.stringify({
+            address: TOKEN_A,
+            holder_count: 1234,
+            market_cap: 56789,
+          }),
+          stderr: '',
+        };
+      },
+    });
+
+    await client.fetchTokenInfo({ chain: 'sol', address: TOKEN_A, skipCache: true });
+    await client.fetchTokenInfo({ chain: 'sol', address: TOKEN_A, skipCache: true });
+
+    assert.equal(calls.length, 2);
+    assert.equal(cache.getStatus().writes, 0);
   });
 
   it('throws a structured rate-limit error from CLI stderr', async () => {

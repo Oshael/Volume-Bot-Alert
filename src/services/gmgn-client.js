@@ -412,14 +412,23 @@ function normalizeTokenSecurityPayload(payload, context = {}) {
 }
 
 function computeMarketCapFromInfo(row) {
-  const direct = readNumber(row, ['market_cap', 'marketCap', 'mcap', 'fdv']);
+  const direct = readNumber(row, ['usd_market_cap', 'market_cap', 'marketCap', 'mcap', 'fdv']);
   if (direct != null) {
     return direct;
   }
 
-  const price = readNumber(row, ['price', 'priceUsd', 'price_usd']);
+  const price = readNumber(row, [['price', 'price'], 'priceUsd', 'price_usd', 'price']);
   const supply = readNumber(row, ['circulating_supply', 'circulatingSupply', 'total_supply', 'totalSupply']);
   return price != null && supply != null ? price * supply : null;
+}
+
+function computePriceChangePct(current, previous) {
+  const currentPrice = toFiniteNumber(current);
+  const previousPrice = toFiniteNumber(previous);
+  if (!(currentPrice > 0) || !(previousPrice > 0)) {
+    return null;
+  }
+  return ((currentPrice - previousPrice) / previousPrice) * 100;
 }
 
 function normalizeTokenInfoPayload(payload, context = {}) {
@@ -433,15 +442,31 @@ function normalizeTokenInfoPayload(payload, context = {}) {
     return null;
   }
 
+  const price = readNumber(row, [['price', 'price'], 'priceUsd', 'price_usd', 'price']);
+  const price1h = readNumber(row, [['price', 'price_1h'], 'price_1h']);
+  const price6h = readNumber(row, [['price', 'price_6h'], 'price_6h']);
+  const price24h = readNumber(row, [['price', 'price_24h'], 'price_24h']);
+
   return {
     address,
     chain: normalizeChain(readTrimmedString(row, ['chain']) || context.chain),
     symbol: readTrimmedString(row, ['symbol']),
     name: readTrimmedString(row, ['name']),
+    imageUrl: readTrimmedString(row, ['logo', 'imageUrl', 'logoUrl', 'icon']),
+    pairAddress: readTrimmedString(row, ['biggest_pool_address', ['pool', 'pool_address'], 'pairAddress', 'poolAddress', 'pool_address']),
+    pairUrl: readTrimmedString(row, [['link', 'gmgn'], 'pairUrl', 'url']),
     holderCount: readNumber(row, ['holder_count', 'holderCount', ['stat', 'holder_count']]),
     marketCap: computeMarketCapFromInfo(row),
     liquidityUsd: readNumber(row, ['liquidity', 'liquidityUsd', 'liquidity_usd', ['pool', 'liquidity']]),
-    price: readNumber(row, ['price', 'priceUsd', 'price_usd']),
+    price,
+    vol1m: readNumber(row, [['price', 'volume_1m'], 'volume_1m']),
+    vol5m: readNumber(row, [['price', 'volume_5m'], 'volume_5m']),
+    vol1h: readNumber(row, [['price', 'volume_1h'], 'volume_1h']),
+    vol6h: readNumber(row, [['price', 'volume_6h'], 'volume_6h']),
+    vol24h: readNumber(row, [['price', 'volume_24h'], 'volume_24h']),
+    priceChange1h: computePriceChangePct(price, price1h),
+    priceChange6h: computePriceChangePct(price, price6h),
+    priceChange24h: computePriceChangePct(price, price24h),
     tokenCreatedAt: normalizeTimestamp(readFirst(row, ['creation_timestamp', 'created_at', 'open_timestamp'])),
     top10HolderRate: normalizeRate(readFirst(row, [
       'top_10_holder_rate',
@@ -452,6 +477,13 @@ function normalizeTokenInfoPayload(payload, context = {}) {
     bundlerWalletCount: readNumber(row, [['wallet_tags_stat', 'bundler_wallets']]),
     botDegenRate: normalizeRate(readFirst(row, [['stat', 'bot_degen_rate']])),
     freshWalletRate: normalizeRate(readFirst(row, [['stat', 'fresh_wallet_rate']])),
+    launchpad: readTrimmedString(row, ['launchpad']),
+    launchpadPlatform: readTrimmedString(row, ['launchpad_platform', 'launchpadPlatform']),
+    launchpadStatus: readNumber(row, ['launchpad_status']),
+    launchpadProgress: readNumber(row, ['launchpad_progress', 'progress']),
+    openTimestamp: normalizeTimestamp(readFirst(row, ['open_timestamp', 'openTimestamp'])),
+    migratedTimestamp: normalizeTimestamp(readFirst(row, ['migrated_timestamp', 'migratedTimestamp'])),
+    migratedPool: readTrimmedString(row, ['migrated_pool', 'migratedPool']),
     raw: row,
   };
 }
@@ -583,6 +615,10 @@ function createGmgnClient(options = {}) {
   }
 
   async function runCachedCliJson(kind, args, requestOptions, normalize) {
+    if (requestOptions.skipCache === true || requestOptions.cache === false) {
+      return normalize(await runCliJson(args, requestOptions));
+    }
+
     const cacheKey = buildCacheKey(kind, args);
     const cached = resolved.riskLookupCache.get(cacheKey);
     if (cached !== undefined) {
