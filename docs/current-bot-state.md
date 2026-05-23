@@ -8,7 +8,7 @@ It is based on the active backend/frontend code, with older migration notes used
 For the full technical/behavior reference, see:
 - `docs/bot-complete-reference.md`
 
-Last reviewed against code and the live deployment model on `2026-05-11` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, mock-trading wallets, current rate limit buckets, and the `/monitor` visible rename to `RADAR`.
+Last reviewed against code and the live deployment model on `2026-05-23` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, mock-trading wallets, current rate limit buckets, the `/monitor` visible rename to `RADAR`, manual GMGN fallback behavior, GMGN dex-unavailable zombie handling, selected mock wallet persistence, and floating Quick Buy.
 
 ## Current Deployment Topology
 
@@ -838,7 +838,8 @@ Current monitored UI behavior:
   5. backend schedules immediate catalog evaluation
   6. `POST /api/catalog/manual-track` now also attempts an eager Dex evaluation immediately instead of depending only on the background worker loop
   7. if that eager evaluation fails, the token still falls back to the normal scheduled worker evaluation path
-  8. frontend reloads canonical state with:
+  8. launchpad-style manual tokens can continue receiving GMGN token-info fallback snapshots while Dex has not produced a usable pair yet; once Dex has a pair, Dex becomes the evaluation source
+  9. frontend reloads canonical state with:
      - `GET /api/config`
      - `GET /api/dashboard/monitored`
 
@@ -876,7 +877,9 @@ Current monitored UI behavior:
   - `dormant`: `30m`
 - Important hardening already present:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
+  - persistent automatic GMGN rows that keep returning `dex_unavailable`, have `VOL 5M = 0`, and have already accumulated at least `300` consecutive evaluation errors trigger a fresh GMGN token-info liquidity lookup; if fresh liquidity is below `$1,000`, the token is admin-blocked as `gmgn-liquidity:under-1k-spam:*`, otherwise it is demoted to `eligibility_state = gmgn-dex-unavailable-zombie`, `eligible_for_monitoring = false`, `monitor_priority = dormant`, and `suppressed_reason = gmgn_dex_unavailable_zombie`
   - newly added manual tokens get `5s` retry cadence until first classification in normal mode
+  - manual launchpad tokens request fresh GMGN token-info before Dex evaluation; Dex still takes over when it returns a usable pair, but if Dex has no pair/data yet the worker keeps using GMGN as a manual fallback and writes both market and volume buckets
   - `pumpfun-migrated` tokens now persist `migration_grace_until`
   - migration grace is assigned even when the PumpPortal migration payload does not include a usable initial market cap
   - unevaluated migrated rows are prioritized ahead of normal/low/dormant backlog so they get an initial Dex evaluation promptly
@@ -1509,12 +1512,23 @@ Current security priority order:
 - Buy/sell tickets are scrollable when their content exceeds the viewport.
 - The workspace header cash pill shows the active wallet selector, read-only SOL/USD quote status, current mock SOL, add, `Plays`, and reset; each open position in the active wallet gets a separate image/ticker/PnL pill.
 - Header wallet controls currently support create, rename, set default, and archive through compact controls backed by browser `prompt`/`confirm` for V1.
+- The selected mock wallet is persisted per browser/user in local storage, so `F5` restores the last selected wallet when it still exists; if it was archived/removed, the UI falls back to the default/first active wallet.
 - Buy/sell tickets, the `Plays` modal, and the PnL resume modal show the active wallet name.
 - The `Plays` modal summarizes recent closed sell executions for the active wallet, including realized PnL, win/loss counts, win rate, and each profitable/unprofitable play.
 - Manual, Recent, and Old Week mini charts render buy/sell markers from the active wallet's admin trade ledger only.
 - The expanded sparkline modal renders the same active-wallet markers.
 - Marker placement is based on `executedAt` inside the sparkline time window and uses trade MCAP when available.
 - Mock trade markers are not stored in or mixed into the global sparkline cache.
+
+### Floating Quick Buy
+- Admin-only, independent floating widget rendered outside the routed tab/panel layout.
+- It can be reopened from the admin user menu through `Quick Buy`; closing it only hides the widget.
+- The widget is draggable by its header and is hidden on the account-security route.
+- It accepts one contract/address and uses a fixed `0.3 SOL` mock buy size.
+- Submission works by clicking `0.3 SOL` or pressing `Enter` / `NumpadEnter` in the address field.
+- The flow adds the token to `Manual Tokens`, persists/tracks it through the existing manual catalog path, then waits for a GMGN/catalog MCAP snapshot in tracked state.
+- Once MCAP exists, it executes a mock buy in the active mock wallet and then resets the floating widget after a short success state.
+- The floating widget only shows status/log text; ongoing tracking, position state, and buy markers live in the existing Manual Tokens/mock trading surfaces.
 
 ### Workspace header status
 - The workspace header now exposes runtime state through a compact status indicator instead of a manual start/stop button.
