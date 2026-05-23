@@ -1039,6 +1039,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
   const connectionState = getWorkspaceConnectionState(state);
+  const quickBuyMenuItem = renderQuickBuyMenuItem(state);
   section.innerHTML = `
     <div class="workspace-topbar-inner">
       <div class="workspace-brand">
@@ -1078,6 +1079,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
           </button>
           <div class="legacy-user-dropdown workspace-user-dropdown">
             <button type="button" class="legacy-user-dd-item" data-action="open-user-settings"><span class="workspace-menu-icon">👤</span><span>User Settings</span></button>
+            ${quickBuyMenuItem}
             <button type="button" class="legacy-user-dd-item" data-action="open-bot-settings"><span class="workspace-menu-icon workspace-menu-icon-gear">⚙</span><span>Bot Settings</span></button>
             <button type="button" class="legacy-user-dd-item" data-action="open-blocked-tokens"><span class="workspace-menu-icon workspace-menu-icon-danger">✖</span><span class="workspace-menu-label">Blocked Tokens</span></button>
             <button type="button" class="legacy-user-dd-item workspace-user-dd-item-danger" data-action="logout"><span class="workspace-menu-icon workspace-menu-icon-danger">⏻</span><span>Logout</span></button>
@@ -1143,6 +1145,12 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
     controller.openAuthPanel('user-settings');
     section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
   });
+  section.querySelector<HTMLButtonElement>('[data-action="open-floating-quick-buy"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    controller.openFloatingQuickBuy();
+    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+  });
   section.querySelector<HTMLButtonElement>('[data-action="open-bot-settings"]')?.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1155,13 +1163,20 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
     controller.openAuthPanel('blocked-tokens');
     section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
   });
-  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-user-settings"]):not([data-action="open-bot-settings"]):not([data-action="open-blocked-tokens"]):not([data-action="logout"])').forEach((button) => {
+  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-user-settings"]):not([data-action="open-floating-quick-buy"]):not([data-action="open-bot-settings"]):not([data-action="open-blocked-tokens"]):not([data-action="logout"])').forEach((button) => {
     button.addEventListener('click', () => {
       section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
     });
   });
 
   return section;
+}
+
+function renderQuickBuyMenuItem(state: AppState) {
+  if (state.session.role !== 'admin') {
+    return '';
+  }
+  return '<button type="button" class="legacy-user-dd-item" data-action="open-floating-quick-buy"><span class="workspace-menu-icon">⚡</span><span>Quick Buy</span></button>';
 }
 
 function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppController) {

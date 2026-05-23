@@ -270,6 +270,24 @@ export interface MockTradingTicketState {
   percent?: number;
 }
 
+export type FloatingQuickBuyStatus = 'idle' | 'tracking' | 'waiting_market' | 'buying' | 'bought' | 'error';
+
+export interface FloatingQuickBuyState {
+  address: string;
+  notionalSol: number;
+  status: FloatingQuickBuyStatus;
+  message: string | null;
+  error: string | null;
+  armedAt: number | null;
+  armedCycle: number;
+  updatedAt: number | null;
+  executedAt: number | null;
+  lastPriceUsd: number | null;
+  lastMcap: number | null;
+  manualTracked: boolean;
+  buyAttempted: boolean;
+}
+
 export interface BidZoneTokenEntry {
   address: string;
   symbol?: string | null;
@@ -575,6 +593,8 @@ export interface AppState {
     expandedSparklineAddress: string | null;
     activeMockTradingWalletId: number | null;
     mockTradingTicket: MockTradingTicketState | null;
+    floatingQuickBuy: FloatingQuickBuyState;
+    floatingQuickBuyVisible: boolean;
     mockTradingHistoryOpen: boolean;
     mockTradingPnlAddress: string | null;
     manualStarredOnly: boolean;
@@ -738,6 +758,22 @@ export function createAppState(): AppState {
       expandedSparklineAddress: null,
       activeMockTradingWalletId: null,
       mockTradingTicket: null,
+      floatingQuickBuy: {
+        address: '',
+        notionalSol: 0.3,
+        status: 'idle',
+        message: null,
+        error: null,
+        armedAt: null,
+        armedCycle: 0,
+        updatedAt: null,
+        executedAt: null,
+        lastPriceUsd: null,
+        lastMcap: null,
+        manualTracked: false,
+        buyAttempted: false,
+      },
+      floatingQuickBuyVisible: true,
       mockTradingHistoryOpen: false,
       mockTradingPnlAddress: null,
       manualStarredOnly: false,

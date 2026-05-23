@@ -1580,6 +1580,210 @@ a {
   border-color: rgba(88, 159, 255, 0.34);
 }
 
+.floating-quick-buy {
+  position: fixed;
+  top: 86px;
+  right: 18px;
+  z-index: 110;
+  width: min(340px, calc(100vw - 20px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(76, 116, 156, 0.66);
+  border-radius: 8px;
+  background: rgba(8, 13, 20, 0.96);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(8, 218, 255, 0.08) inset;
+}
+
+.floating-quick-buy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-quick-buy-head:active {
+  cursor: grabbing;
+}
+
+.floating-quick-buy-title,
+.floating-quick-buy-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.floating-quick-buy-title strong {
+  color: #dbeaff;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.floating-quick-buy-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #7a8fa8;
+  box-shadow: 0 0 12px rgba(122, 143, 168, 0.5);
+}
+
+.floating-quick-buy[data-status="active"] .floating-quick-buy-dot {
+  background: #00d4ff;
+  box-shadow: 0 0 14px rgba(0, 212, 255, 0.58);
+}
+
+.floating-quick-buy[data-status="success"] .floating-quick-buy-dot {
+  background: #00ff88;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.52);
+}
+
+.floating-quick-buy[data-status="error"] .floating-quick-buy-dot {
+  background: #ff3c5f;
+  box-shadow: 0 0 14px rgba(255, 60, 95, 0.54);
+}
+
+.floating-quick-buy-icon {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
+  max-width: 26px;
+  max-height: 26px;
+  flex: 0 0 26px;
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid rgba(76, 116, 156, 0.58);
+  border-radius: 6px;
+  background: rgba(12, 18, 28, 0.92);
+  color: #dbeaff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.floating-quick-buy-close {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  max-height: 18px;
+  flex: 0 0 18px;
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.floating-quick-buy-icon:hover:not(:disabled),
+.floating-quick-buy-icon:focus-visible {
+  border-color: rgba(0, 212, 255, 0.72);
+  color: #7de3ff;
+}
+
+.floating-quick-buy-icon:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.floating-quick-buy-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.floating-quick-buy-form input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid rgba(76, 116, 156, 0.58);
+  border-radius: 6px;
+  background: rgba(4, 8, 13, 0.94);
+  color: #e7f3ff;
+  padding: 0 10px;
+  font-size: 12px;
+  outline: none;
+}
+
+.floating-quick-buy-form input:focus {
+  border-color: rgba(0, 212, 255, 0.78);
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.18);
+}
+
+.floating-quick-buy-form button {
+  height: 34px;
+  min-width: 74px;
+  border: 1px solid rgba(255, 204, 0, 0.58);
+  border-radius: 6px;
+  background: rgba(50, 38, 8, 0.88);
+  color: #ffe58a;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.floating-quick-buy-form button:hover:not(:disabled),
+.floating-quick-buy-form button:focus-visible {
+  border-color: rgba(255, 204, 0, 0.86);
+  color: #fff1b5;
+}
+
+.floating-quick-buy-form button:disabled,
+.floating-quick-buy-form input:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.floating-quick-buy-status {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(76, 116, 156, 0.38);
+  border-radius: 6px;
+  background: rgba(10, 16, 24, 0.84);
+  padding: 4px 8px;
+  color: #9fb5cc;
+  font-size: 11px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.floating-quick-buy-status[data-tone="active"] {
+  border-color: rgba(0, 212, 255, 0.42);
+  color: #7de3ff;
+}
+
+.floating-quick-buy-status[data-tone="success"] {
+  border-color: rgba(0, 255, 136, 0.42);
+  color: #8effc4;
+}
+
+.floating-quick-buy-status[data-tone="error"] {
+  border-color: rgba(255, 60, 95, 0.48);
+  color: #ff9bae;
+}
+
+@media (max-width: 520px) {
+  .floating-quick-buy {
+    top: 72px;
+    right: 10px;
+    width: calc(100vw - 20px);
+  }
+
+  .floating-quick-buy-form {
+    grid-template-columns: minmax(0, 1fr) 68px;
+  }
+}
+
 .workspace-userbar {
   margin-left: auto;
   display: inline-flex;

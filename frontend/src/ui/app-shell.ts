@@ -7,6 +7,8 @@ import { renderManualTokensSection } from './sections/manual-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
 import { resolveManualTableRows } from '../utils/token-table';
+import { bindCopyButtons } from './sections/shared';
+import { escapeHtml } from './sections/html-safety';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -127,6 +129,13 @@ type LivePanelReorderPendingDraft = {
   startY: number;
 };
 
+type FloatingQuickBuyDragDraft = {
+  widget: HTMLElement;
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
+};
+
 type AppRenderFrame = {
   frame: HTMLElement;
   headerSlot: HTMLElement;
@@ -143,6 +152,7 @@ type AppRenderFrame = {
   pumpfunSlot: HTMLElement;
   alertsSlot: HTMLElement;
   overlaySlot: HTMLElement;
+  floatingQuickBuySlot: HTMLElement;
 };
 
 const APP_RENDER_FRAME_SELECTOR = '[data-app-render-frame]';
@@ -164,8 +174,11 @@ const APP_BID_ZONE_SLOT_SELECTOR = '[data-app-render-slot="bid-zone"]';
 const APP_PUMPFUN_SLOT_SELECTOR = '[data-app-render-slot="pumpfun"]';
 const APP_ALERTS_SLOT_SELECTOR = '[data-app-render-slot="alerts"]';
 const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
+const APP_FLOATING_QUICK_BUY_SLOT_SELECTOR = '[data-app-render-slot="floating-quick-buy"]';
 const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
 const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
+
+let floatingQuickBuyPosition: { left: number; top: number } | null = null;
 
 export function renderAppShell(
   root: HTMLElement,
@@ -273,6 +286,10 @@ export function renderAppShell(
       : null;
     return profileOverlay ? [profileOverlay] : [];
   });
+  updateRegionSlot(renderFrame.floatingQuickBuySlot, 'overlay', dirtyRegions, getFloatingQuickBuyRenderKey(state, isAccountSecurityRoute), () => {
+    const widget = renderFloatingQuickBuyWidget(state, controller, isAccountSecurityRoute);
+    return widget ? [widget] : [];
+  });
   syncProfileModalScrollLock(state);
   applyLoginDraft(root, loginDraft, state);
   applyLoginFocus(root, state);
@@ -301,6 +318,7 @@ export function renderAppShell(
   wireSectionCollapseToggles(root, controller);
   wireLivePanelReorder(root, controller);
   wireLivePanelResize(root, controller);
+  wireFloatingQuickBuy(root);
   applyHoverState(root);
 }
 
@@ -322,6 +340,7 @@ function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null 
     pumpfunSlot: existingFrame?.querySelector<HTMLElement>(APP_PUMPFUN_SLOT_SELECTOR),
     alertsSlot: existingFrame?.querySelector<HTMLElement>(APP_ALERTS_SLOT_SELECTOR),
     overlaySlot: existingFrame?.querySelector<HTMLElement>(APP_OVERLAY_SLOT_SELECTOR),
+    floatingQuickBuySlot: existingFrame?.querySelector<HTMLElement>(APP_FLOATING_QUICK_BUY_SLOT_SELECTOR),
   };
 
   if (Object.values(existingRenderFrame).every(Boolean)) {
@@ -367,8 +386,9 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
   shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, manualSlot, panels);
 
   const overlaySlot = createRenderSlot('overlay');
+  const floatingQuickBuySlot = createRenderSlot('floating-quick-buy');
 
-  frame.append(headerSlot, shell, overlaySlot);
+  frame.append(headerSlot, shell, overlaySlot, floatingQuickBuySlot);
   root.replaceChildren(frame);
 
   return {
@@ -387,6 +407,7 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
     pumpfunSlot,
     alertsSlot,
     overlaySlot,
+    floatingQuickBuySlot,
   };
 }
 
@@ -766,6 +787,7 @@ function getHeaderRenderKey(state: AppState) {
   const mockTradingSummary = getMockTradingSummaryView(state);
   return serializePrimitiveList([
     state.session.status,
+    state.session.role,
     state.session.username,
     state.session.email,
     state.runtime.mode,
@@ -814,6 +836,128 @@ function serializeMockTradingHeaderPositionsForView(state: AppState) {
       ]);
     })
     .join('~');
+}
+
+function getFloatingQuickBuyRenderKey(state: AppState, isAccountSecurityRoute: boolean) {
+  if (state.session.status !== 'authenticated' || state.session.role !== 'admin' || isAccountSecurityRoute || !state.ui.floatingQuickBuyVisible) {
+    return 'hidden';
+  }
+
+  const quickBuy = state.ui.floatingQuickBuy;
+  return JSON.stringify({
+    visible: state.ui.floatingQuickBuyVisible,
+    address: quickBuy.address,
+    status: quickBuy.status,
+    message: quickBuy.message,
+    error: quickBuy.error,
+    notionalSol: quickBuy.notionalSol,
+    manualTracked: quickBuy.manualTracked,
+    buyAttempted: quickBuy.buyAttempted,
+    busy: state.ui.busy,
+    walletId: state.ui.activeMockTradingWalletId,
+    walletCount: state.data.mockTradingWallets.length,
+  });
+}
+
+function getFloatingQuickBuyStatusText(state: AppState) {
+  const quickBuy = state.ui.floatingQuickBuy;
+  if (quickBuy.error) {
+    return quickBuy.error;
+  }
+  if (quickBuy.message) {
+    return quickBuy.message;
+  }
+
+  switch (quickBuy.status) {
+    case 'tracking':
+      return 'Adding token';
+    case 'waiting_market':
+      return 'Waiting for market';
+    case 'buying':
+      return 'Buying';
+    case 'bought':
+      return 'Bought';
+    case 'error':
+      return 'Action failed';
+    case 'idle':
+    default:
+      return 'Ready';
+  }
+}
+
+function getFloatingQuickBuyTone(status: AppState['ui']['floatingQuickBuy']['status']) {
+  if (status === 'bought') return 'success';
+  if (status === 'error') return 'error';
+  if (status === 'buying' || status === 'waiting_market' || status === 'tracking') return 'active';
+  return 'idle';
+}
+
+function applyFloatingQuickBuyPosition(widget: HTMLElement) {
+  if (!floatingQuickBuyPosition) {
+    widget.style.left = '';
+    widget.style.top = '';
+    widget.style.right = '';
+    return;
+  }
+
+  widget.style.left = `${floatingQuickBuyPosition.left}px`;
+  widget.style.top = `${floatingQuickBuyPosition.top}px`;
+  widget.style.right = 'auto';
+}
+
+function renderFloatingQuickBuyWidget(
+  state: AppState,
+  controller: AppController,
+  isAccountSecurityRoute: boolean,
+) {
+  if (state.session.status !== 'authenticated' || state.session.role !== 'admin' || isAccountSecurityRoute || !state.ui.floatingQuickBuyVisible) {
+    return null;
+  }
+
+  const quickBuy = state.ui.floatingQuickBuy;
+  const statusTone = getFloatingQuickBuyTone(quickBuy.status);
+  const statusText = getFloatingQuickBuyStatusText(state);
+  const addressValue = quickBuy.address || '';
+  const canSubmit = quickBuy.status !== 'buying';
+  const copyButton = addressValue
+    ? `<button type="button" class="floating-quick-buy-icon copy-button" data-action="copy-address" data-address="${escapeHtml(addressValue)}" title="Copy contract" aria-label="Copy contract">⧉</button>`
+    : '';
+
+  const widget = document.createElement('aside');
+  widget.className = 'floating-quick-buy';
+  widget.dataset.floatingQuickBuy = 'true';
+  widget.dataset.status = statusTone;
+  widget.innerHTML = `
+    <div class="floating-quick-buy-head" data-floating-quick-buy-handle="true">
+      <div class="floating-quick-buy-title">
+        <span class="floating-quick-buy-dot" aria-hidden="true"></span>
+        <strong>QUICK BUY</strong>
+      </div>
+      <div class="floating-quick-buy-actions">
+        ${copyButton}
+        <button type="button" class="floating-quick-buy-icon floating-quick-buy-close" data-action="close-floating-quick-buy" data-floating-quick-buy-no-drag="true" title="Close quick buy" aria-label="Close quick buy">×</button>
+      </div>
+    </div>
+    <form class="floating-quick-buy-form" data-role="floating-quick-buy-form">
+      <input type="text" name="quickBuyAddress" value="${escapeHtml(addressValue)}" placeholder="Token address (CA)..." autocomplete="off" spellcheck="false" ${quickBuy.status === 'buying' ? 'disabled' : ''} />
+      <button type="submit" ${canSubmit ? '' : 'disabled'}>0.3 SOL</button>
+    </form>
+    <div class="floating-quick-buy-status" data-tone="${statusTone}">
+      <span>${escapeHtml(statusText)}</span>
+    </div>
+  `;
+  applyFloatingQuickBuyPosition(widget);
+  widget.querySelector<HTMLFormElement>('[data-role="floating-quick-buy-form"]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const input = form.querySelector<HTMLInputElement>('input[name="quickBuyAddress"]');
+    void controller.armFloatingQuickBuy(input?.value || '');
+  });
+  widget.querySelector<HTMLButtonElement>('[data-action="close-floating-quick-buy"]')?.addEventListener('click', () => {
+    controller.closeFloatingQuickBuy();
+  });
+  bindCopyButtons(widget);
+  return widget;
 }
 
 function getLegacyRenderKey(state: AppState) {
@@ -1184,6 +1328,8 @@ let livePanelResizePendingDraft: LivePanelResizePendingDraft | null = null;
 let livePanelReorderWired = false;
 let livePanelReorderDraft: LivePanelReorderDraft | null = null;
 let livePanelReorderPendingDraft: LivePanelReorderPendingDraft | null = null;
+let floatingQuickBuyWired = false;
+let floatingQuickBuyDragDraft: FloatingQuickBuyDragDraft | null = null;
 
 function wireHoverPersistence(root: HTMLElement) {
   if (hoverWired) return;
@@ -2356,6 +2502,88 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
 
     releaseLivePanelPointerCapture(livePanelResizePendingDraft.item, event.pointerId);
     livePanelResizePendingDraft = null;
+  });
+}
+
+function clampFloatingQuickBuyPosition(widget: HTMLElement, left: number, top: number) {
+  const margin = 8;
+  const maxLeft = Math.max(margin, window.innerWidth - widget.offsetWidth - margin);
+  const maxTop = Math.max(margin, window.innerHeight - widget.offsetHeight - margin);
+  return {
+    left: Math.min(Math.max(margin, left), maxLeft),
+    top: Math.min(Math.max(margin, top), maxTop),
+  };
+}
+
+function moveFloatingQuickBuy(widget: HTMLElement, left: number, top: number) {
+  floatingQuickBuyPosition = clampFloatingQuickBuyPosition(widget, left, top);
+  applyFloatingQuickBuyPosition(widget);
+}
+
+function wireFloatingQuickBuy(root: HTMLElement) {
+  if (floatingQuickBuyWired) return;
+  floatingQuickBuyWired = true;
+
+  root.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-floating-quick-buy-no-drag="true"], button, input, a')) {
+      return;
+    }
+    const handle = target?.closest<HTMLElement>('[data-floating-quick-buy-handle="true"]');
+    const widget = handle?.closest<HTMLElement>('[data-floating-quick-buy="true"]');
+    if (!handle || !widget) {
+      return;
+    }
+
+    const rect = widget.getBoundingClientRect();
+    widget.setPointerCapture(event.pointerId);
+    floatingQuickBuyDragDraft = {
+      widget,
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+    moveFloatingQuickBuy(widget, rect.left, rect.top);
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  root.addEventListener('pointermove', (event) => {
+    if (!floatingQuickBuyDragDraft || event.pointerId !== floatingQuickBuyDragDraft.pointerId) {
+      return;
+    }
+
+    moveFloatingQuickBuy(
+      floatingQuickBuyDragDraft.widget,
+      event.clientX - floatingQuickBuyDragDraft.offsetX,
+      event.clientY - floatingQuickBuyDragDraft.offsetY,
+    );
+    event.preventDefault();
+  });
+
+  const endDrag = (event: PointerEvent) => {
+    if (!floatingQuickBuyDragDraft || event.pointerId !== floatingQuickBuyDragDraft.pointerId) {
+      return;
+    }
+    if (floatingQuickBuyDragDraft.widget.hasPointerCapture(event.pointerId)) {
+      floatingQuickBuyDragDraft.widget.releasePointerCapture(event.pointerId);
+    }
+    floatingQuickBuyDragDraft = null;
+  };
+
+  root.addEventListener('pointerup', endDrag);
+  root.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('resize', () => {
+    const widget = root.querySelector<HTMLElement>('[data-floating-quick-buy="true"]');
+    if (!widget || !floatingQuickBuyPosition) {
+      return;
+    }
+    moveFloatingQuickBuy(widget, floatingQuickBuyPosition.left, floatingQuickBuyPosition.top);
   });
 }
 

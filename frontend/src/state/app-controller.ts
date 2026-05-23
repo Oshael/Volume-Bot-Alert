@@ -151,6 +151,8 @@ const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS = 3 * 1000;
+const FLOATING_QUICK_BUY_NOTIONAL_SOL = 0.3;
+const FLOATING_QUICK_BUY_DASHBOARD_REFRESH_INTERVAL_MS = MONITORED_REFRESH_INTERVAL_MS;
 const MOCK_TRADING_ACTIVE_WALLET_KEY = 'mock_trading_active_wallet';
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
@@ -370,6 +372,10 @@ export interface AppController {
   submitMockTradingSell(address: string, percent: number): Promise<void>;
   submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number): Promise<void>;
   cancelMockTradingTakeProfitOrder(orderId: number): Promise<void>;
+  openFloatingQuickBuy(): void;
+  closeFloatingQuickBuy(): void;
+  armFloatingQuickBuy(address: string): Promise<void>;
+  cancelFloatingQuickBuy(): void;
   addMockTradingCash(): Promise<void>;
   resetMockTradingPortfolio(): Promise<void>;
   removeBlockedToken(address: string): Promise<void>;
@@ -713,6 +719,10 @@ export function createAppController(): AppController {
   let monitoredRefreshInFlight = false;
   let mockTradingRefreshInFlight = false;
   let nextMockTradingMarketRefreshAt = 0;
+  let floatingQuickBuyExecutionInFlight = false;
+  let floatingQuickBuyDashboardRefreshInFlight = false;
+  let nextFloatingQuickBuyDashboardRefreshAt = 0;
+  let floatingQuickBuyResetTimer: ReturnType<typeof setTimeout> | null = null;
   let dashboardAlertFeedRefreshInFlight = false;
   let supplementalMeteoraRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
@@ -2082,6 +2092,236 @@ export function createAppController(): AppController {
     }
     nextMockTradingMarketRefreshAt = now + MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS;
     void refreshMockTradingState({ emit: true });
+  }
+
+  function buildIdleFloatingQuickBuyState(): AppState['ui']['floatingQuickBuy'] {
+    return {
+      address: '',
+      notionalSol: FLOATING_QUICK_BUY_NOTIONAL_SOL,
+      status: 'idle',
+      message: null,
+      error: null,
+      armedAt: null,
+      armedCycle: state.runtime.cycle,
+      updatedAt: Date.now(),
+      executedAt: null,
+      lastPriceUsd: null,
+      lastMcap: null,
+      manualTracked: false,
+      buyAttempted: false,
+    };
+  }
+
+  function resetFloatingQuickBuyState() {
+    if (floatingQuickBuyResetTimer) {
+      clearTimeout(floatingQuickBuyResetTimer);
+      floatingQuickBuyResetTimer = null;
+    }
+    state.ui.floatingQuickBuy = buildIdleFloatingQuickBuyState();
+    nextFloatingQuickBuyDashboardRefreshAt = 0;
+    floatingQuickBuyExecutionInFlight = false;
+    floatingQuickBuyDashboardRefreshInFlight = false;
+  }
+
+  function updateFloatingQuickBuyState(patch: Partial<AppState['ui']['floatingQuickBuy']>) {
+    state.ui.floatingQuickBuy = {
+      ...state.ui.floatingQuickBuy,
+      ...patch,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function scheduleFloatingQuickBuySuccessReset(address: string) {
+    if (floatingQuickBuyResetTimer) {
+      clearTimeout(floatingQuickBuyResetTimer);
+    }
+    floatingQuickBuyResetTimer = setTimeout(() => {
+      floatingQuickBuyResetTimer = null;
+      if (state.ui.floatingQuickBuy.address !== address || state.ui.floatingQuickBuy.status !== 'bought') {
+        return;
+      }
+      resetFloatingQuickBuyState();
+      emit('overlay');
+    }, 1800);
+  }
+
+  function isFloatingQuickBuyWaitingForMarket() {
+    const status = state.ui.floatingQuickBuy.status;
+    return status === 'tracking' || status === 'waiting_market';
+  }
+
+  function getFloatingQuickBuyMarketSnapshot(address: string) {
+    const token = state.data.trackedTokensByAddress[address];
+    const priceUsd = Number(token?.priceUsd);
+    const mcap = Number(token?.mcap);
+    if (!Number.isFinite(mcap) || mcap <= 0) {
+      return null;
+    }
+    return {
+      priceUsd: Number.isFinite(priceUsd) && priceUsd > 0 ? priceUsd : null,
+      mcap,
+    };
+  }
+
+  async function addManualTokenForFloatingQuickBuy(address: string, token: string) {
+    if (state.data.manualTokenAddresses.includes(address)) {
+      await trackManualToken(address, token);
+      await hydrateManualTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
+      return;
+    }
+
+    invalidateWorkspaceHydrationRequests();
+    const optimisticSnapshot = captureOptimisticManualTokenSnapshot(address);
+    const nextManual = buildOptimisticManualToken(address, null);
+    applyOptimisticManualToken(address, nextManual);
+    emit('manual', 'monitored', 'header');
+
+    try {
+      await syncManualTokenToBackend(address, null, token);
+      await hydrateManualTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
+    } catch (error) {
+      revertOptimisticManualToken(address, optimisticSnapshot);
+      throw error;
+    }
+  }
+
+  async function executeFloatingQuickBuyIfReady() {
+    const quickBuy = state.ui.floatingQuickBuy;
+    const token = state.session.token;
+    if (
+      !token
+      || state.session.role !== 'admin'
+      || floatingQuickBuyExecutionInFlight
+      || !isFloatingQuickBuyWaitingForMarket()
+      || quickBuy.buyAttempted
+    ) {
+      return;
+    }
+    if (!quickBuy.address) {
+      return;
+    }
+
+    const market = getFloatingQuickBuyMarketSnapshot(quickBuy.address);
+    if (!market) {
+      updateFloatingQuickBuyState({
+        status: 'waiting_market',
+        message: 'Waiting for MCAP update',
+        error: null,
+      });
+      emit('overlay');
+      return;
+    }
+
+    updateFloatingQuickBuyState({
+      lastPriceUsd: market.priceUsd,
+      lastMcap: market.mcap,
+    });
+
+    if (state.data.mockTradingPositionsByAddress[quickBuy.address]) {
+      updateFloatingQuickBuyState({
+        status: 'error',
+        error: 'Active wallet already has an open mock position for this token',
+        message: null,
+      });
+      emit('overlay', 'header');
+      return;
+    }
+    const validationError = getMockTradingBuyValidationError(state, quickBuy.notionalSol);
+    if (validationError) {
+      updateFloatingQuickBuyState({
+        status: 'error',
+        error: validationError,
+        message: null,
+      });
+      emit('overlay', 'header');
+      return;
+    }
+
+    floatingQuickBuyExecutionInFlight = true;
+    updateFloatingQuickBuyState({
+      status: 'buying',
+      buyAttempted: true,
+      message: 'Executing quick buy...',
+      error: null,
+    });
+    emit('overlay', 'header');
+
+    try {
+      const result = await buyMockTradingToken(
+        quickBuy.address,
+        quickBuy.notionalSol,
+        token,
+        undefined,
+        state.ui.activeMockTradingWalletId,
+      );
+      if (state.session.token !== token || state.ui.floatingQuickBuy.address !== quickBuy.address) {
+        return;
+      }
+      if (result.position) {
+        state.data.mockTradingPositionsByAddress[quickBuy.address] = result.position;
+      }
+      updateFloatingQuickBuyState({
+        status: 'bought',
+        message: result.message,
+        error: null,
+        executedAt: Date.now(),
+        lastPriceUsd: market.priceUsd,
+        lastMcap: market.mcap,
+      });
+      setNotice(result.message);
+      scheduleFloatingQuickBuySuccessReset(quickBuy.address);
+      void refreshMockTradingState({ emit: true });
+    } catch (error) {
+      if (state.ui.floatingQuickBuy.address !== quickBuy.address) {
+        return;
+      }
+      updateFloatingQuickBuyState({
+        status: 'error',
+        buyAttempted: false,
+        error: error instanceof Error ? error.message : 'Failed to execute quick buy',
+        message: null,
+      });
+    } finally {
+      floatingQuickBuyExecutionInFlight = false;
+      emit('header', 'overlay', 'manual', 'monitored');
+    }
+  }
+
+  function shouldRefreshFloatingQuickBuyDashboard() {
+    if (!state.session.token || state.session.role !== 'admin' || !isFloatingQuickBuyWaitingForMarket()) {
+      return false;
+    }
+    if (isLiveWorkspace() || floatingQuickBuyDashboardRefreshInFlight) {
+      return false;
+    }
+    return Date.now() >= nextFloatingQuickBuyDashboardRefreshAt;
+  }
+
+  async function refreshFloatingQuickBuyDashboardSnapshot() {
+    const token = state.session.token;
+    if (!token || !shouldRefreshFloatingQuickBuyDashboard()) {
+      return;
+    }
+
+    floatingQuickBuyDashboardRefreshInFlight = true;
+    nextFloatingQuickBuyDashboardRefreshAt = Date.now() + FLOATING_QUICK_BUY_DASHBOARD_REFRESH_INTERVAL_MS;
+    try {
+      const monitoredDashboard = await fetchDashboardMonitored(token);
+      if (state.session.token !== token || state.session.role !== 'admin') {
+        return;
+      }
+      applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      await executeFloatingQuickBuyIfReady();
+      emit('manual', 'monitored', 'header');
+    } catch (error) {
+      updateFloatingQuickBuyState({
+        status: 'waiting_market',
+        error: error instanceof Error ? error.message : 'Failed to refresh quick buy market data',
+      });
+      emit('overlay');
+    } finally {
+      floatingQuickBuyDashboardRefreshInFlight = false;
+    }
   }
 
   function appendEmailDebugNotice(notice: string, emailDebug?: AuthEmailDebug | null) {
@@ -5995,6 +6235,7 @@ export function createAppController(): AppController {
       broadcastHistoryBootstrapSnapshot(payload, requestPayload);
       void refreshHistoryWorkspaceSparklines({ token });
       refreshMockTradingStateForMarketPoll();
+      await executeFloatingQuickBuyIfReady();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
@@ -6058,6 +6299,7 @@ export function createAppController(): AppController {
         label: item.label ?? null,
       })), { emitOnComplete: false });
       refreshMockTradingStateForMarketPoll();
+      await executeFloatingQuickBuyIfReady();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
@@ -6098,6 +6340,9 @@ export function createAppController(): AppController {
       sweepMinMcapRemove();
       refreshMonitoredPanelCounts();
       void refreshMonitoredDashboard();
+    }
+    if (shouldRefreshFloatingQuickBuyDashboard()) {
+      void refreshFloatingQuickBuyDashboardSnapshot();
     }
     if (shouldRunHistoryAnalyticsRuntime()) {
       void refreshBidZoneTokens();
@@ -6593,6 +6838,8 @@ export function createAppController(): AppController {
     state.ui.expandedSparklineAddress = null;
     state.ui.activeMockTradingWalletId = null;
     state.ui.mockTradingTicket = null;
+    resetFloatingQuickBuyState();
+    state.ui.floatingQuickBuyVisible = true;
     state.ui.mockTradingHistoryOpen = false;
     state.ui.mockTradingPnlAddress = null;
     state.ui.manualStarredOnly = false;
@@ -9762,6 +10009,101 @@ export function createAppController(): AppController {
         setBusy(false);
         emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
       }
+    },
+    async armFloatingQuickBuy(address: string) {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit('overlay');
+        return;
+      }
+
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress) {
+        updateFloatingQuickBuyState({
+          status: 'error',
+          error: 'Token address is required',
+          message: null,
+        });
+        emit('overlay');
+        return;
+      }
+      if (!isValidTokenAddressFormat(normalizedAddress)) {
+        updateFloatingQuickBuyState({
+          status: 'error',
+          address: normalizedAddress,
+          error: 'Invalid token address format',
+          message: null,
+        });
+        emit('overlay');
+        return;
+      }
+
+      state.ui.floatingQuickBuyVisible = true;
+      state.ui.floatingQuickBuy = {
+        address: normalizedAddress,
+        notionalSol: FLOATING_QUICK_BUY_NOTIONAL_SOL,
+        status: 'tracking',
+        message: 'Adding token to Manual Tokens...',
+        error: null,
+        armedAt: Date.now(),
+        armedCycle: state.runtime.cycle,
+        updatedAt: Date.now(),
+        executedAt: null,
+        lastPriceUsd: null,
+        lastMcap: null,
+        manualTracked: false,
+        buyAttempted: false,
+      };
+      nextFloatingQuickBuyDashboardRefreshAt = 0;
+      setError(null);
+      emit('overlay', 'manual', 'header');
+
+      try {
+        await addManualTokenForFloatingQuickBuy(normalizedAddress, token);
+        if (state.session.token !== token || state.session.role !== 'admin' || state.ui.floatingQuickBuy.address !== normalizedAddress) {
+          return;
+        }
+        if (state.ui.floatingQuickBuy.buyAttempted || state.ui.floatingQuickBuy.status === 'bought') {
+          return;
+        }
+        updateFloatingQuickBuyState({
+          status: 'waiting_market',
+          manualTracked: true,
+          message: 'Waiting for GMGN/catalog MCAP update',
+          error: null,
+        });
+        await executeFloatingQuickBuyIfReady();
+      } catch (error) {
+        if (state.ui.floatingQuickBuy.address !== normalizedAddress) {
+          return;
+        }
+        updateFloatingQuickBuyState({
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Failed to prepare quick buy token',
+          message: null,
+        });
+      } finally {
+        emit('overlay', 'manual', 'monitored', 'header');
+      }
+    },
+    cancelFloatingQuickBuy() {
+      if (state.ui.floatingQuickBuy.status === 'idle') {
+        return;
+      }
+      resetFloatingQuickBuyState();
+      emit('overlay', 'header');
+    },
+    openFloatingQuickBuy() {
+      if (state.session.role !== 'admin') {
+        return;
+      }
+      state.ui.floatingQuickBuyVisible = true;
+      emit('overlay');
+    },
+    closeFloatingQuickBuy() {
+      state.ui.floatingQuickBuyVisible = false;
+      emit('overlay');
     },
     async addMockTradingCash() {
       const token = state.session.token;
