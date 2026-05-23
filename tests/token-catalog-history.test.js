@@ -7,6 +7,33 @@ const db = require('../src/models/db');
 const tokenCatalog = require('../src/models/token-catalog');
 
 describe('token-catalog history bucket queries', () => {
+  it('prioritizes manual due tokens before automatic due backlog', async () => {
+    const originalQuery = db.query;
+    const captured = {
+      sql: '',
+      params: null,
+    };
+
+    db.query = async (sql, params) => {
+      captured.sql = String(sql);
+      captured.params = params;
+      return { rows: [] };
+    };
+
+    try {
+      const result = await tokenCatalog.listDueForEvaluation(25);
+
+      assert.deepEqual(result, []);
+      assert.match(captured.sql, /ORDER BY CASE\s+WHEN source = 'user-manual'\s+OR EXISTS \(\s+SELECT 1\s+FROM user_tokens ut\s+WHERE ut\.address = token_catalog\.address\s+\) THEN 0\s+ELSE 1\s+END ASC,/);
+      assert.ok(
+        captured.sql.indexOf("source = 'user-manual'") < captured.sql.indexOf("COALESCE(monitor_priority, 'dormant') = 'high'")
+      );
+      assert.deepEqual(captured.params, [25]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('builds a valid SQL statement for dashboard history buckets', async () => {
     const originalQuery = db.query;
     const captured = {

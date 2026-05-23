@@ -949,11 +949,6 @@ function appendLiveSparklineMcap(series: number[], liveMcap?: number | null) {
     return series;
   }
 
-  const last = series[series.length - 1];
-  if (Number.isFinite(last) && Math.abs(last - value) < 0.000001) {
-    return series;
-  }
-
   return [...series, value];
 }
 

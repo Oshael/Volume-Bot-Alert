@@ -6274,7 +6274,7 @@ export function createAppController(): AppController {
       void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
         address: item.address,
         label: item.label ?? null,
-      })), { emitOnComplete: false });
+      })), { emitOnComplete: isLiveWorkspace() });
       return;
     }
 
@@ -6297,7 +6297,7 @@ export function createAppController(): AppController {
       void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
         address: item.address,
         label: item.label ?? null,
-      })), { emitOnComplete: false });
+      })), { emitOnComplete: isLiveWorkspace() });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {

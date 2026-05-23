@@ -386,6 +386,15 @@ async function listDueForEvaluation(limit = 25) {
      WHERE is_active_monitor_candidate = TRUE
        AND next_evaluation_at <= NOW()
      ORDER BY CASE
+                WHEN source = 'user-manual'
+                  OR EXISTS (
+                    SELECT 1
+                    FROM user_tokens ut
+                    WHERE ut.address = token_catalog.address
+                  ) THEN 0
+                ELSE 1
+              END ASC,
+              CASE
                 WHEN COALESCE(monitor_priority, 'dormant') = 'high'
                   AND COALESCE(last_mcap, 0) >= 100000
                   AND COALESCE(last_vol_6h, 0) >= 30000 THEN 0
