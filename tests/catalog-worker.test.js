@@ -678,6 +678,96 @@ describe('catalog worker drift compensation', () => {
     }
   });
 
+  it('keeps using GMGN for manual launchpad tokens after migration when Dex has no pair yet', async () => {
+    const originalGetBestPair = dexscreener.getBestPair;
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
+    const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const writes = [];
+    const tokenBefore = {
+      address: TOKEN_B,
+      chain: 'solana',
+      source: 'user-manual',
+      eligible_for_monitoring: true,
+      monitor_priority: 'normal',
+      last_mcap: 6400,
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      last_mcap: 12400,
+      last_vol_5m: 9200,
+    };
+
+    catalogWorker.__private.setDefaultGmgnClientForTest({
+      fetchTokenInfo: async (request) => {
+        assert.equal(request.address, TOKEN_B);
+        assert.equal(request.skipCache, true);
+        return {
+          address: TOKEN_B,
+          symbol: 'STAR',
+          name: 'Starships',
+          pairAddress: 'AAYLLw7gW2GYs8kUx5MrCuhntW9otZH8Lnbvp7gka1gV',
+          pairUrl: `https://gmgn.ai/sol/token/${TOKEN_B}`,
+          launchpad: 'pump',
+          launchpadPlatform: 'Pump.fun',
+          migratedTimestamp: '2026-05-23T00:00:00.000Z',
+          migratedPool: 'pool-migrated',
+          marketCap: 12400,
+          price: 0.0000124,
+          vol1m: 2100,
+          vol5m: 9200,
+          vol1h: 22000,
+          vol6h: 22000,
+          vol24h: 22000,
+          liquidityUsd: 10400,
+          tokenCreatedAt: '2026-05-23T00:00:00.000Z',
+        };
+      },
+    });
+    dexscreener.getBestPair = () => null;
+    tokenCatalog.applyEvaluationResult = async (address, payload) => {
+      writes.push(['catalog', payload]);
+      assert.equal(address, TOKEN_B);
+      assert.equal(payload.evaluationSource, 'gmgn');
+      assert.equal(payload.eligibilityState, 'gmgn-low');
+      assert.equal(payload.eligibleForMonitoring, true);
+      assert.equal(payload.monitorPriority, 'low');
+      assert.equal(payload.mcap, 12400);
+      assert.equal(payload.vol5m, 9200);
+      assert.equal(payload.lastEvaluationError, null);
+      assert.equal(payload.evaluationErrorCount, 0);
+      assert.ok(payload.nextEvaluationAt instanceof Date);
+      return updatedToken;
+    };
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => {
+      writes.push(['market', payload]);
+      assert.equal(payload.tokenAddress, TOKEN_B);
+      assert.equal(payload.source, 'gmgn');
+      assert.equal(payload.mcap, 12400);
+      return payload;
+    };
+    tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => {
+      writes.push(['volume', payload]);
+      assert.equal(payload.tokenAddress, TOKEN_B);
+      assert.equal(payload.source, 'gmgn');
+      assert.equal(payload.vol5m, 9200);
+      return payload;
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+
+      assert.equal(result, updatedToken);
+      assert.deepEqual(writes.map(([kind]) => kind), ['catalog', 'market', 'volume']);
+    } finally {
+      dexscreener.getBestPair = originalGetBestPair;
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
+      tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
+      catalogWorker.__private.setDefaultGmgnClientForTest(null);
+    }
+  });
+
   it('demotes persistent GMGN dex-unavailable zombies instead of preserving high priority', async () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const tokenBefore = {

@@ -444,6 +444,9 @@ function buildManualPreMigrationGmgnPriceChanges(gmgnInfo) {
 }
 
 function hasGmgnLaunchpadSignal(gmgnInfo = {}) {
+  if (!gmgnInfo || typeof gmgnInfo !== 'object') {
+    return false;
+  }
   return Boolean(
     gmgnInfo.launchpad
     || gmgnInfo.launchpadPlatform
@@ -453,6 +456,9 @@ function hasGmgnLaunchpadSignal(gmgnInfo = {}) {
 }
 
 function hasGmgnMigrationSignal(gmgnInfo = {}) {
+  if (!gmgnInfo || typeof gmgnInfo !== 'object') {
+    return false;
+  }
   return Boolean(
     gmgnInfo.openTimestamp
     || gmgnInfo.migratedTimestamp
@@ -463,6 +469,10 @@ function hasGmgnMigrationSignal(gmgnInfo = {}) {
 function shouldUseGmgnPreMigrationInfo(gmgnInfo = {}) {
   return hasGmgnLaunchpadSignal(gmgnInfo)
     && !hasGmgnMigrationSignal(gmgnInfo);
+}
+
+function shouldUseGmgnManualFallbackInfo(gmgnInfo = {}) {
+  return hasGmgnLaunchpadSignal(gmgnInfo);
 }
 
 function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) {
@@ -491,32 +501,30 @@ function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) 
   };
 }
 
-async function evaluateManualPreMigrationWithGmgn(token, traceInitialEval) {
+async function fetchManualGmgnTokenInfo(token) {
   if (!isManualSource(token)) {
     return null;
   }
 
-  let gmgnInfo = null;
   try {
-    gmgnInfo = await getDefaultGmgnClient().fetchTokenInfo({
+    return await getDefaultGmgnClient().fetchTokenInfo({
       chain: token?.chain || 'solana',
       address: token?.address,
       skipCache: true,
     });
   } catch (error) {
-    console.warn(`[CatalogWorker] Failed to fetch GMGN pre-migration info for manual token ${token.address}: ${error.message}`);
+    console.warn(`[CatalogWorker] Failed to fetch GMGN info for manual token ${token.address}: ${error.message}`);
     return null;
   }
+}
 
-  if (!shouldUseGmgnPreMigrationInfo(gmgnInfo)) {
-    return null;
-  }
-
-  const now = new Date();
-  const snapshot = buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now);
+async function applyManualGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval, resultLabel) {
+  const snapshot = buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, new Date());
   if (!snapshot) {
     return null;
   }
+
+  const nextEvaluationAt = new Date(Date.now() + MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS);
 
   const marketCap = snapshot.mcap || 0;
   const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
@@ -525,7 +533,7 @@ async function evaluateManualPreMigrationWithGmgn(token, traceInitialEval) {
     eligibleForMonitoring: marketCap > 0,
     suppressedReason: marketCap > 0 ? null : 'mcap_unavailable',
     monitorPriority: resolveGmgnManualPreMigrationPriority(marketCap),
-    nextEvaluationAt: new Date(Date.now() + MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS),
+    nextEvaluationAt,
     lastEvaluationError: null,
     evaluationErrorCount: 0,
     symbol: snapshot.symbol,
@@ -567,15 +575,44 @@ async function evaluateManualPreMigrationWithGmgn(token, traceInitialEval) {
     logTrace('catalog_eval_result', {
       tokenAddress: token.address,
       source: token.source || null,
-      result: 'gmgn-manual-launchpad-pre-migration',
+      result: resultLabel,
       marketCap,
-      nextEvaluationAt: new Date(Date.now() + MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS).toISOString(),
+      nextEvaluationAt: nextEvaluationAt.toISOString(),
     });
   }
 
   status.totalEligible += marketCap > 0 ? 1 : 0;
   status.totalIneligible += marketCap > 0 ? 0 : 1;
   return updatedToken;
+}
+
+async function evaluateManualPreMigrationWithGmgn(token, gmgnInfo, traceInitialEval) {
+  if (!shouldUseGmgnPreMigrationInfo(gmgnInfo)) {
+    return null;
+  }
+  return applyManualGmgnInfoSnapshot(
+    token,
+    gmgnInfo,
+    traceInitialEval,
+    'gmgn-manual-launchpad-pre-migration'
+  );
+}
+
+async function evaluateManualGmgnFallback(token, gmgnInfo, traceInitialEval, dexResult) {
+  if (!shouldUseGmgnManualFallbackInfo(gmgnInfo)) {
+    return null;
+  }
+  return applyManualGmgnInfoSnapshot(
+    token,
+    gmgnInfo,
+    traceInitialEval,
+    `gmgn-manual-fallback-${dexResult}`
+  );
+}
+
+async function evaluateDexUnavailableWithManualFallback(token, gmgnInfo, traceInitialEval) {
+  const gmgnFallbackToken = await evaluateManualGmgnFallback(token, gmgnInfo, traceInitialEval, 'dex-unavailable');
+  return gmgnFallbackToken || evaluateDexUnavailableToken(token, traceInitialEval);
 }
 
 function getYoungExtremeChurnState(address, nowMs = Date.now()) {
@@ -1174,44 +1211,54 @@ async function maybeAutoBlockGmgnDexUnavailableLowLiquidity(token) {
   });
 }
 
+async function evaluateDexMissingToken(token, gmgnInfo, traceInitialEval) {
+  const gmgnFallbackToken = await evaluateManualGmgnFallback(token, gmgnInfo, traceInitialEval, 'dex-missing');
+  if (gmgnFallbackToken) {
+    return gmgnFallbackToken;
+  }
+
+  status.totalIneligible++;
+  const nextRetryMs = shouldFastRetryManualBootstrap(token)
+    ? MANUAL_BOOTSTRAP_RECHECK_MS
+    : DORMANT_RECHECK_MS;
+  if (traceInitialEval) {
+    logTrace('catalog_eval_result', {
+      tokenAddress: token.address,
+      source: token.source || null,
+      result: 'dex-missing',
+      previousEligibilityState: token.eligibility_state || null,
+      previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
+      nextEvaluationAt: new Date(Date.now() + nextRetryMs).toISOString(),
+    }, { level: 'warn' });
+  }
+  return tokenCatalog.applyEvaluationResult(token.address, {
+    eligibilityState: 'dex-missing',
+    eligibleForMonitoring: false,
+    suppressedReason: 'dex_pair_missing',
+    monitorPriority: 'dormant',
+    nextEvaluationAt: new Date(Date.now() + nextRetryMs),
+    lastEvaluationError: null,
+    evaluationErrorCount: 0,
+  });
+}
+
 async function evaluateTokenWithData(token, data) {
   const traceInitialEval = shouldTraceInitialEvalOnly(token);
+  const manualGmgnInfo = await fetchManualGmgnTokenInfo(token);
 
-  const gmgnManualPreMigrationToken = await evaluateManualPreMigrationWithGmgn(token, traceInitialEval);
+  const gmgnManualPreMigrationToken = await evaluateManualPreMigrationWithGmgn(token, manualGmgnInfo, traceInitialEval);
   if (gmgnManualPreMigrationToken) {
     return gmgnManualPreMigrationToken;
   }
 
   if (!data) {
-    return evaluateDexUnavailableToken(token, traceInitialEval);
+    return evaluateDexUnavailableWithManualFallback(token, manualGmgnInfo, traceInitialEval);
   }
 
   const bestPair = dexscreener.getBestPair(data, token.chain || 'solana');
 
   if (!bestPair) {
-    status.totalIneligible++;
-    const nextRetryMs = shouldFastRetryManualBootstrap(token)
-      ? MANUAL_BOOTSTRAP_RECHECK_MS
-      : DORMANT_RECHECK_MS;
-    if (traceInitialEval) {
-      logTrace('catalog_eval_result', {
-        tokenAddress: token.address,
-        source: token.source || null,
-        result: 'dex-missing',
-        previousEligibilityState: token.eligibility_state || null,
-        previousMarketCap: token.last_mcap == null ? null : Number(token.last_mcap),
-        nextEvaluationAt: new Date(Date.now() + nextRetryMs).toISOString(),
-      }, { level: 'warn' });
-    }
-    return tokenCatalog.applyEvaluationResult(token.address, {
-      eligibilityState: 'dex-missing',
-      eligibleForMonitoring: false,
-      suppressedReason: 'dex_pair_missing',
-      monitorPriority: 'dormant',
-      nextEvaluationAt: new Date(Date.now() + nextRetryMs),
-      lastEvaluationError: null,
-      evaluationErrorCount: 0,
-    });
+    return evaluateDexMissingToken(token, manualGmgnInfo, traceInitialEval);
   }
 
   const snapshot = derivePrioritySnapshot(bestPair, token);
