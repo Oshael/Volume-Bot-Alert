@@ -947,11 +947,24 @@ function renderFloatingQuickBuyWidget(
     </div>
   `;
   applyFloatingQuickBuyPosition(widget);
-  widget.querySelector<HTMLFormElement>('[data-role="floating-quick-buy-form"]')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const input = form.querySelector<HTMLInputElement>('input[name="quickBuyAddress"]');
+  const form = widget.querySelector<HTMLFormElement>('[data-role="floating-quick-buy-form"]');
+  const submitQuickBuy = () => {
+    if (quickBuy.status === 'buying') {
+      return;
+    }
+    const input = form?.querySelector<HTMLInputElement>('input[name="quickBuyAddress"]');
     void controller.armFloatingQuickBuy(input?.value || '');
+  };
+  form?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitQuickBuy();
+  });
+  form?.querySelector<HTMLInputElement>('input[name="quickBuyAddress"]')?.addEventListener('keydown', (event) => {
+    if ((event.key !== 'Enter' && event.key !== 'NumpadEnter') || event.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    submitQuickBuy();
   });
   widget.querySelector<HTMLButtonElement>('[data-action="close-floating-quick-buy"]')?.addEventListener('click', () => {
     controller.closeFloatingQuickBuy();
