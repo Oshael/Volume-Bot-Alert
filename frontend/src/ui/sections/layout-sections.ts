@@ -1556,7 +1556,7 @@ function renderMockTradingPnlResumeModal(state: AppState) {
           </div>
 
           <div class="mock-trading-pnl-chart">
-            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades, mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs) }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
+            ${view.sparkline ? renderSparklineFigure(view.sparkline, view.address, { expanded: true, areaFill: true, markers: view.trades, mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs), liveMcap: view.currentMcap }) : '<div class="mock-trading-history-empty">No chart snapshot available yet.</div>'}
           </div>
 
           <div class="mock-trading-pnl-trades">
@@ -2102,7 +2102,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
         <div class="expanded-sparkline-chart">
-          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs) })}
+          ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs), liveMcap: token?.mcap ?? null })}
         </div>
         <div class="expanded-sparkline-footnote">Updated ${escapeHtml(stats.updatedLabel)}. Hover for approximate market cap and time.</div>
       </div>

@@ -853,6 +853,19 @@ function pickLiveMockMarketValue(primary: number | null | undefined, fallback: n
   return toLiveMockNumber(fallback);
 }
 
+function deriveLiveMockPriceFromMcap(position: MockTradingPositionEntry, currentMcapUsd: number | null) {
+  if (
+    currentMcapUsd == null
+    || currentMcapUsd <= 0
+    || !(position.avgEntryMcapUsd && position.avgEntryMcapUsd > 0)
+    || !(position.avgEntryPriceUsd > 0)
+  ) {
+    return null;
+  }
+
+  return position.avgEntryPriceUsd * (currentMcapUsd / position.avgEntryMcapUsd);
+}
+
 function buildLiveMockPriceMetrics(position: MockTradingPositionEntry, currentPriceUsd: number | null) {
   const currentValueUsd = currentPriceUsd == null ? null : position.quantity * currentPriceUsd;
   const unrealizedPnlUsd = currentValueUsd == null ? null : currentValueUsd - position.costBasisUsd;
@@ -882,8 +895,9 @@ function buildLiveMockTradingPosition(
   position: MockTradingPositionEntry,
   token: ManualTokenEntry | null,
 ): MockTradingPositionEntry {
-  const currentPriceUsd = pickLiveMockMarketValue(token?.priceUsd, position.currentPriceUsd);
   const currentMcapUsd = pickLiveMockMarketValue(token?.mcap, position.currentMcapUsd);
+  const currentPriceUsd = deriveLiveMockPriceFromMcap(position, currentMcapUsd)
+    ?? pickLiveMockMarketValue(token?.priceUsd, position.currentPriceUsd);
   const priceMetrics = buildLiveMockPriceMetrics(position, currentPriceUsd);
 
   return {

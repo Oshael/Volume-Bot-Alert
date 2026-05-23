@@ -51,6 +51,7 @@ type SparklineRenderOptions = {
   variant?: 'default' | 'alert';
   markers?: MockTradingTradeEntry[];
   mockSolUsdcRate?: number;
+  liveMcap?: number | null;
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -942,6 +943,20 @@ function normalizeSparklineSeries(series: number[] | null | undefined) {
   return Array.isArray(series) ? series.filter((value) => Number.isFinite(value)) : [];
 }
 
+function appendLiveSparklineMcap(series: number[], liveMcap?: number | null) {
+  const value = Number(liveMcap);
+  if (!Number.isFinite(value) || value <= 0 || series.length < 2) {
+    return series;
+  }
+
+  const last = series[series.length - 1];
+  if (Number.isFinite(last) && Math.abs(last - value) < 0.000001) {
+    return series;
+  }
+
+  return [...series, value];
+}
+
 function computeMedian(values: number[]) {
   if (!Array.isArray(values) || values.length === 0) {
     return null;
@@ -1298,7 +1313,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   if (!entry) {
     return renderSparklinePlaceholder(entry);
   }
-  const series = normalizeSparklineSeries(entry.series);
+  const series = appendLiveSparklineMcap(normalizeSparklineSeries(entry.series), options.liveMcap);
   const displaySeries = buildDisplaySparklineSeries(series, options);
   if (series.length < 2 || displaySeries.length < 2) {
     return renderSparklinePlaceholder(entry);
@@ -1330,8 +1345,8 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   `;
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
-  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers, mockSolUsdcRate });
+function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number, liveMcap?: number | null) {
+  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers, mockSolUsdcRate, liveMcap });
 }
 
 function resolveTokenMcapDelta(item: ManualTokenEntry) {
@@ -1420,11 +1435,11 @@ function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: Ma
 function renderBucketSparklineCell(
   mode: 'manual' | 'recent' | 'old-week',
   sparkline: TokenSparklineEntry | null,
-  address: string,
+  item: ManualTokenEntry,
   markers: MockTradingTradeEntry[] = [],
   mockSolUsdcRate?: number,
 ) {
-  return `<td class="sparkline-col">${renderSparklineCell(sparkline, address, markers, mockSolUsdcRate)}</td>`;
+  return `<td class="sparkline-col">${renderSparklineCell(sparkline, item.address, markers, mockSolUsdcRate, item.mcap)}</td>`;
 }
 
 function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
@@ -1464,7 +1479,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
           </div>
         </div>
       </td>
-      ${renderBucketSparklineCell(mode, sparkline, item.address, mockTradingTrades, mockSolUsdcRate)}
+      ${renderBucketSparklineCell(mode, sparkline, item, mockTradingTrades, mockSolUsdcRate)}
       <td class="num-col">${age}</td>
       <td class="num-col strong">${fmtMoney(item.mcap)}</td>
       <td class="delta-col">${renderPctSpan(mcapDelta)}</td>

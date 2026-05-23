@@ -964,6 +964,76 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 84550.6);
   });
 
+  it('does not auto-block user manual addresses even when the catalog source is still GMGN', async () => {
+    let blockCalls = 0;
+    let upsertPayload = null;
+    let marketBucketWrites = 0;
+    let volumeBucketWrites = 0;
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot('Cu7FMijRAWqKuDxALX1xbJferuD8vAhWzFfkdGoQ7R76'),
+      tokenCreatedAt: '2026-05-23T20:21:44.000Z',
+      mcap: 30851.7,
+      liquidityUsd: 18571.9,
+      vol1m: 13907.4,
+      vol5m: 23919.6,
+      vol1h: 23919.6,
+      vol6h: 23919.6,
+      vol24h: 23919.6,
+      gmgnInterval: '5m',
+      gmgnIntervals: ['5m'],
+      raw: {
+        lock_percent: 0,
+        burn_ratio: 0,
+        creator_close: true,
+        creator_token_status: 'creator_close',
+      },
+    }, {
+      now: () => new Date('2026-05-23T20:35:35.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add() {
+          blockCalls += 1;
+        },
+      },
+      tokenCatalogModel: {
+        async getByAddress(address) {
+          return { address, source: 'gmgn' };
+        },
+        async hasUserManualAddress() {
+          return true;
+        },
+        async upsertToken(payload) {
+          upsertPayload = payload;
+          return { address: payload.address, source: payload.source };
+        },
+        async applyEvaluationResult(address, payload) {
+          return { address, source: 'user-manual', last_vol_5m: payload.vol5m };
+        },
+      },
+      marketBucketModel: {
+        async upsertSnapshotBucket() {
+          marketBucketWrites += 1;
+          return {};
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {
+          volumeBucketWrites += 1;
+          return {};
+        },
+      },
+      alertMatcher: { async evaluateUpdatedToken() { return {}; } },
+    });
+
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.summary.gmgnBadLiquidityStatusAutoBlocked, 0);
+    assert.equal(blockCalls, 0);
+    assert.equal(upsertPayload.source, 'user-manual');
+    assert.equal(marketBucketWrites, 1);
+    assert.equal(volumeBucketWrites, 1);
+  });
+
   it('does not auto-block GMGN bad liquidity statuses outside mcap band or known launch suffixes', async () => {
     const cases = [
       {

@@ -466,7 +466,7 @@ GMGN risk gates before catalog/upsert alert flow:
 - high-confidence GMGN junk from the existing classifier is auto-blocked through `admin_blocked_tokens`
 - GMGN, catalog-worker, and risk-review auto-block paths also write ban-time evidence into `admin_block_evidence`; this is separate from operational blocklist reads so the block table stays lightweight
 - medium-confidence junk from a brand-new GMGN token is skipped without permanent block
-- `user-manual` rows are protected from GMGN auto-blocking
+- `user-manual` rows and addresses present in the backend `user_tokens` manual-token table are protected from GMGN auto-blocking, even if a GMGN ingestion cycle sees the catalog row before its source has been rewritten to `user-manual`
 - young low-mcap/extreme-volume GMGN tokens are auto-blocked before security/info/kline lookups:
   - age `< 24h`
   - mcap `<= 100k`
@@ -520,7 +520,7 @@ GMGN risk gates before catalog/upsert alert flow:
 - Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows.
 - `MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED=false` disables the inline aggregate recompute after `1m` bucket writes. This is a pressure relief switch for small VPS incidents; aggregate sparklines can lag until a backfill/rebuild catches up.
 - GMGN bad-liquidity-status mcap-band auto-blocks automatic GMGN tokens before catalog/bucket/security work when:
-  - the token is not manual, not already admin-blocked, and not Dex-confirmed
+  - the token is not manual, not already admin-blocked, and not Dex-confirmed; manual protection checks both `token_catalog.source = user-manual` and the persisted `user_tokens` table
   - the CA does not end with `pump`, `bags`, `brrr`, or `bonk`
   - token age is known and below `2h`
   - GMGN mcap is between `$20,000` and `$150,000`
@@ -685,7 +685,7 @@ Important behavior:
 - GMGN low-liquidity spam gate:
   - runs in GMGN ingestion before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher
   - automatic GMGN discovery only
-  - token must not be manual, already admin-blocked, or Dex-confirmed
+  - token must not be manual, already admin-blocked, or Dex-confirmed; manual protection checks both `token_catalog.source = user-manual` and the persisted `user_tokens` table
   - CA must not end with `pump`, `bags`, or `brrr`
   - age must be known and below `2h`
   - GMGN current liquidity must be known and below `$1,000`

@@ -450,9 +450,23 @@ function mapTakeProfitOrders(rows) {
     : [];
 }
 
+function derivePositionPriceFromMcap(position, currentMcapUsd) {
+  if (
+    currentMcapUsd == null
+    || !(currentMcapUsd > 0)
+    || !(position?.avgEntryMcapUsd > 0)
+    || !(position?.avgEntryPriceUsd > 0)
+  ) {
+    return null;
+  }
+
+  return position.avgEntryPriceUsd * (currentMcapUsd / position.avgEntryMcapUsd);
+}
+
 function buildPositionView(position, catalog = {}, takeProfitOrders = []) {
-  const currentPriceUsd = toFiniteNumber(catalog.last_price, null);
   const currentMcapUsd = toFiniteNumber(catalog.last_mcap, null);
+  const catalogPriceUsd = toFiniteNumber(catalog.last_price, null);
+  const currentPriceUsd = derivePositionPriceFromMcap(position, currentMcapUsd) ?? catalogPriceUsd;
   const currentValueUsd = currentPriceUsd == null ? null : position.quantity * currentPriceUsd;
   const unrealizedPnlUsd = currentValueUsd == null ? null : currentValueUsd - position.costBasisUsd;
   const unrealizedPnlPct = unrealizedPnlUsd == null || position.costBasisUsd <= 0
@@ -1383,5 +1397,7 @@ module.exports = {
     mapCatalogPrice,
     normalizeMockSolUsdcRate,
     normalizeSellQuantity,
+    buildPositionView,
+    derivePositionPriceFromMcap,
   },
 };

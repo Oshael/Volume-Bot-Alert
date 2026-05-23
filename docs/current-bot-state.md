@@ -282,7 +282,7 @@ Important:
   - matching rows are auto-blocked as `auto-junk-probable:new_low_mcap_extreme_vol5m_churn`
 - GMGN low-liquidity spam gate now runs in ingestion before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher:
   - automatic GMGN discovery only
-  - token is not manual, not already admin-blocked, and not Dex-confirmed
+  - token is not manual, not already admin-blocked, and not Dex-confirmed; manual protection checks both `token_catalog.source = user-manual` and the persisted `user_tokens` table
   - CA does not end with `pump`, `bags`, `brrr`, or `bonk`
   - age is known and below `2h`
   - GMGN current liquidity is known and below `$1,000`
@@ -291,7 +291,7 @@ Important:
   - this replaces the heavier token-risk review GMGN liquidity hard-bans (`gmgn_confirmed_micro_liquidity`, `gmgn_low_mcap_thin_support`, `gmgn_low_mcap_extreme_24h_churn_thin_liquidity`, and `gmgn_young_low_cap_high_churn_thin_liquidity`)
 - GMGN bad-liquidity-status mcap-band gate is a separate ingestion hard-ban before catalog upsert, bucket writes, security/info/kline lookups, and alert matcher:
   - automatic GMGN discovery only
-  - token is not manual, not already admin-blocked, and not Dex-confirmed
+  - token is not manual, not already admin-blocked, and not Dex-confirmed; manual protection checks both `token_catalog.source = user-manual` and the persisted `user_tokens` table
   - CA does not end with `pump`, `bags`, `brrr`, or `bonk`
   - age is known and below `2h`
   - current GMGN market cap is `>= $20,000` and `<= $150,000`
@@ -1009,7 +1009,7 @@ Current monitored UI behavior:
   - blocks young low-mcap/extreme-volume GMGN tokens before spending security/info/kline lookups
   - uses GMGN security/info/kline to block obvious scam profiles before they enter the normal monitored alert flow
   - quarantines young extreme GMGN churn under `gmgn_needs_risk_enrichment` until structural enrichment resolves it
-  - `user-manual` rows are protected from GMGN auto-blocking
+  - `user-manual` rows and addresses present in the backend `user_tokens` manual-token table are protected from GMGN auto-blocking, even if a GMGN ingestion cycle sees the catalog row before its source has been rewritten to `user-manual`
   - still refreshes existing catalog tokens if they appear in `1m`
   - writes GMGN mcap/price snapshots into `token_market_buckets_1m` when GMGN/manual ingestion has mcap data, so the normal sparkline source is fed by the GMGN path too
   - writes GMGN market volume into `token_market_volume_buckets_1m`

@@ -213,16 +213,16 @@ function resolveIngestionOptions(options = {}) {
 
 const defaultEvaluationState = new Map();
 
-function resolveCatalogSource(tokenBefore) {
+function resolveCatalogSource(tokenBefore, options = {}) {
   const previousSource = String(tokenBefore?.source || '').trim().toLowerCase();
-  return previousSource === 'user-manual' ? 'user-manual' : 'gmgn';
+  return previousSource === 'user-manual' || options.manualProtected === true ? 'user-manual' : 'gmgn';
 }
 
-function buildCatalogPayload(snapshot, tokenBefore = null) {
+function buildCatalogPayload(snapshot, tokenBefore = null, options = {}) {
   return {
     address: normalizeAddress(snapshot.address || snapshot.tokenAddress),
     chain: normalizeChain(snapshot.chain),
-    source: resolveCatalogSource(tokenBefore),
+    source: resolveCatalogSource(tokenBefore, options),
     symbol: snapshot.symbol || null,
     name: snapshot.name || null,
     pairAddress: snapshot.pairAddress || null,
@@ -652,6 +652,22 @@ function isHighConfidenceJunkAssessment(assessment) {
 
 function isManualToken(row) {
   return normalizeLowerText(row?.source) === 'user-manual';
+}
+
+async function isManualTokenProtected(address, tokenBefore, options) {
+  if (isManualToken(tokenBefore)) {
+    return true;
+  }
+
+  if (typeof options.tokenCatalogModel?.hasUserManualAddress !== 'function') {
+    return false;
+  }
+
+  try {
+    return await options.tokenCatalogModel.hasUserManualAddress(address);
+  } catch (_) {
+    return false;
+  }
 }
 
 function isPumpAddress(address) {
@@ -1206,8 +1222,8 @@ async function autoBlockGmgnKlineRisk(address, snapshot, tokenBefore, analysis, 
   }
 }
 
-async function applyGmgnJunkGuard(address, snapshot, tokenBefore, options, summary) {
-  if (isManualToken(tokenBefore)) {
+async function applyGmgnJunkGuard(address, snapshot, tokenBefore, options, summary, manualProtected = false) {
+  if (manualProtected || isManualToken(tokenBefore)) {
     return null;
   }
 
@@ -1240,8 +1256,8 @@ async function applyGmgnJunkGuard(address, snapshot, tokenBefore, options, summa
   return null;
 }
 
-async function applyGmgnSecurityRiskGuard(address, snapshot, tokenBefore, options, summary) {
-  if (isManualToken(tokenBefore)) {
+async function applyGmgnSecurityRiskGuard(address, snapshot, tokenBefore, options, summary, manualProtected = false) {
+  if (manualProtected || isManualToken(tokenBefore)) {
     return null;
   }
 
@@ -1333,70 +1349,45 @@ function shouldKeepTokenInGmgnPanel(result) {
     && !isBlockedToken(result.tokenAfter);
 }
 
-async function ingestGmgnToken(snapshot, options = {}) {
-  const resolved = resolveIngestionOptions(options);
-  const now = resolved.now();
-  const address = normalizeAddress(snapshot.address || snapshot.tokenAddress);
-  const summary = createEmptyIngestionSummary();
-
-  const tokenBefore = await resolved.tokenCatalogModel.getByAddress(address);
-  const filledSnapshot = preserveExistingPositiveVolumeWindows(
-    fillYoungTokenVolumeWindows(snapshot, { now }),
-    tokenBefore
-  );
-  const junkGuard = await applyGmgnJunkGuard(address, filledSnapshot, tokenBefore, resolved, summary);
+async function applyPreCatalogGmgnGuards(address, snapshot, tokenBefore, options, summary, manualProtected, now) {
+  const junkGuard = await applyGmgnJunkGuard(address, snapshot, tokenBefore, options, summary, manualProtected);
   if (junkGuard?.skipped) {
     return {
-      summary,
-      tokenBefore,
-      tokenAfter: null,
       skipped: true,
       skipReason: junkGuard.skipReason,
       junkAssessment: junkGuard.assessment,
     };
   }
 
-  if (shouldSkipNewGmgnDiscovery(filledSnapshot, tokenBefore, now)) {
+  if (shouldSkipNewGmgnDiscovery(snapshot, tokenBefore, now)) {
     summary.skipped1mOnlyDiscovery = 1;
     return {
-      summary,
-      tokenBefore,
-      tokenAfter: null,
       skipped: true,
       skipReason: 'gmgn-1m-only-discovery',
     };
   }
 
-  if (isGmgnLowLiquiditySpamRisk(address, filledSnapshot, tokenBefore, now)) {
-    await autoBlockGmgnLowLiquiditySpamRisk(address, filledSnapshot, tokenBefore, resolved);
+  if (!manualProtected && isGmgnLowLiquiditySpamRisk(address, snapshot, tokenBefore, now)) {
+    await autoBlockGmgnLowLiquiditySpamRisk(address, snapshot, tokenBefore, options);
     summary.gmgnLowLiquiditySpamAutoBlocked += 1;
     return {
-      summary,
-      tokenBefore,
-      tokenAfter: null,
       skipped: true,
       skipReason: 'gmgn-low-liquidity-spam-auto-blocked',
     };
   }
 
-  if (isGmgnBadLiquidityStatusMcapBandRisk(address, filledSnapshot, tokenBefore, now)) {
-    await autoBlockGmgnBadLiquidityStatusMcapBandRisk(address, filledSnapshot, tokenBefore, resolved);
+  if (!manualProtected && isGmgnBadLiquidityStatusMcapBandRisk(address, snapshot, tokenBefore, now)) {
+    await autoBlockGmgnBadLiquidityStatusMcapBandRisk(address, snapshot, tokenBefore, options);
     summary.gmgnBadLiquidityStatusAutoBlocked += 1;
     return {
-      summary,
-      tokenBefore,
-      tokenAfter: null,
       skipped: true,
       skipReason: 'gmgn-bad-liquidity-status-auto-blocked',
     };
   }
 
-  const securityGuard = await applyGmgnSecurityRiskGuard(address, filledSnapshot, tokenBefore, resolved, summary);
+  const securityGuard = await applyGmgnSecurityRiskGuard(address, snapshot, tokenBefore, options, summary, manualProtected);
   if (securityGuard?.skipped) {
     return {
-      summary,
-      tokenBefore,
-      tokenAfter: null,
       skipped: true,
       skipReason: securityGuard.skipReason,
       gmgnSecurity: securityGuard.security,
@@ -1405,7 +1396,49 @@ async function ingestGmgnToken(snapshot, options = {}) {
     };
   }
 
-  await resolved.tokenCatalogModel.upsertToken(buildCatalogPayload(filledSnapshot, tokenBefore));
+  return {
+    skipped: false,
+    securityGuard,
+  };
+}
+
+async function ingestGmgnToken(snapshot, options = {}) {
+  const resolved = resolveIngestionOptions(options);
+  const now = resolved.now();
+  const address = normalizeAddress(snapshot.address || snapshot.tokenAddress);
+  const summary = createEmptyIngestionSummary();
+
+  const tokenBefore = await resolved.tokenCatalogModel.getByAddress(address);
+  const manualProtected = await isManualTokenProtected(address, tokenBefore, resolved);
+  const filledSnapshot = preserveExistingPositiveVolumeWindows(
+    fillYoungTokenVolumeWindows(snapshot, { now }),
+    tokenBefore
+  );
+  const guardResult = await applyPreCatalogGmgnGuards(
+    address,
+    filledSnapshot,
+    tokenBefore,
+    resolved,
+    summary,
+    manualProtected,
+    now
+  );
+  if (guardResult.skipped) {
+    return {
+      summary,
+      tokenBefore,
+      tokenAfter: null,
+      skipped: true,
+      skipReason: guardResult.skipReason,
+      junkAssessment: guardResult.junkAssessment,
+      gmgnSecurity: guardResult.gmgnSecurity,
+      gmgnInfo: guardResult.gmgnInfo,
+      gmgnKlineAnalysis: guardResult.gmgnKlineAnalysis,
+    };
+  }
+  const { securityGuard } = guardResult;
+
+  await resolved.tokenCatalogModel.upsertToken(buildCatalogPayload(filledSnapshot, tokenBefore, { manualProtected }));
   const tokenAfter = await resolved.tokenCatalogModel.applyEvaluationResult(
     address,
     deriveGmgnEvaluation(filledSnapshot, tokenBefore, resolved)
@@ -1640,6 +1673,7 @@ module.exports = {
     createRiskLookupTokenBudget,
     enqueueGmgnRiskReview,
     buildCatalogPayload,
+    isManualTokenProtected,
     buildEvaluationPayload,
     buildMarketBucketPayload,
     buildVolumeBucketPayload,

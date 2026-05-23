@@ -14,6 +14,7 @@ const {
   normalizeTakeProfitInput,
   resolveMockSolUsdQuote,
   normalizeSellQuantity,
+  buildPositionView,
 } = mockTradingService.__private;
 
 function account(overrides = {}) {
@@ -117,6 +118,32 @@ describe('mock trading service calculations', () => {
     assert.equal(result.account.realizedPnlUsd, -250);
     assert.equal(result.trade.realizedPnlPct, -25);
     assert.equal(result.trade.priceReturnPct, -25);
+  });
+
+  it('derives open-position PnL from MCAP when catalog price is stale across source changes', () => {
+    const position = buildPositionView({
+      userId: 1,
+      walletId: 1,
+      tokenAddress: 'Token111111111111111111111111111111111111111',
+      quantity: 100000,
+      avgEntryPriceUsd: 0.001,
+      avgEntryMcapUsd: 100000,
+      costBasisUsd: 100,
+      realizedPnlUsd: 0,
+      openedAt: null,
+      updatedAt: null,
+    }, {
+      symbol: 'HASAN',
+      name: 'The Dad That Stepped Up',
+      last_price: '0.001',
+      last_mcap: '200000',
+    });
+
+    assert.equal(position.currentPriceUsd, 0.002);
+    assert.equal(position.currentValueUsd, 200);
+    assert.equal(position.unrealizedPnlUsd, 100);
+    assert.equal(position.priceReturnPct, 100);
+    assert.equal(position.mcapMultiple, 2);
   });
 
   it('rejects stale catalog prices', () => {

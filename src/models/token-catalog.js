@@ -1532,9 +1532,26 @@ async function applyAutomatedCleanup(options = {}) {
   };
 }
 
+async function hasUserManualAddress(address) {
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    return false;
+  }
+
+  const { rows } = await db.query(
+    `SELECT 1
+     FROM user_tokens
+     WHERE address = $1
+     LIMIT 1`,
+    [addr]
+  );
+  return rows.length > 0;
+}
+
 module.exports = {
   upsertToken,
   getByAddress,
+  hasUserManualAddress,
   listRecent,
   listDueForEvaluation,
   countDueForEvaluationSummary,
