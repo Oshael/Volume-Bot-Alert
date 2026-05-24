@@ -39,7 +39,7 @@ describe('gmgn discovery scheduler', () => {
     ]);
   });
 
-  it('runs one scheduled cycle with five spaced requests and de-duped output', async () => {
+  it('runs one scheduled cycle with default 1m/5m spaced requests and de-duped output', async () => {
     const calls = [];
     const sleeps = [];
     const scheduler = schedulerModule.createGmgnDiscoveryScheduler({
@@ -63,14 +63,14 @@ describe('gmgn discovery scheduler', () => {
 
     assert.equal(result.skipped, false);
     assert.equal(result.rateLimited, false);
-    assert.equal(result.requests, 5);
-    assert.equal(calls.length, 5);
-    assert.deepEqual(calls.map((call) => call.interval), ['1m', '5m', '1h', '6h', '24h']);
-    assert.deepEqual(sleeps, [400, 400, 400, 400]);
-    assert.equal(result.tokens.length, 10);
+    assert.equal(result.requests, 2);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map((call) => call.interval), ['1m', '5m']);
+    assert.deepEqual(sleeps, [1000]);
+    assert.equal(result.tokens.length, 4);
     assert.equal(result.uniqueTokens.length, 2);
     assert.equal(result.uniqueTokens[0].gmgnInterval, '1m');
-    assert.deepEqual(result.uniqueTokens[0].gmgnIntervals, ['1m', '5m', '1h', '6h', '24h']);
+    assert.deepEqual(result.uniqueTokens[0].gmgnIntervals, ['1m', '5m']);
   });
 
   it('backs off on GMGN rate limits without throwing', async () => {

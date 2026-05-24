@@ -434,13 +434,10 @@ Default state:
 - requires `GMGN_API_KEY`
 
 Request shape:
-- default request budget is `5` trending requests per `2s` window
+- default request budget is `2` trending requests per `2s` window
 - intervals:
   - `1m`
   - `5m`
-  - `1h`
-  - `6h`
-  - `24h`
 - default per-request limit is `30`
 - GMGN `1m` discovery is intentionally not trusted as a brand-new-token source
 

@@ -983,8 +983,8 @@ Current monitored UI behavior:
 - Worker: `src/services/gmgn-discovery-worker.js`
 - Default state: disabled unless `GMGN_DISCOVERY_ENABLED=true`
 - Request shape:
-  - `5` trending requests per `2s` window by default
-  - intervals: `1m`, `5m`, `1h`, `6h`, `24h`
+  - `2` trending requests per `2s` window by default
+  - intervals: `1m`, `5m`
   - default per-request limit: `30`
 - Current behavior:
   - normalizes GMGN trending rows into catalog snapshots

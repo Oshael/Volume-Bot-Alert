@@ -484,7 +484,7 @@ module.exports = {
     intervalMs: Math.max(250, parseInt(process.env.GMGN_DISCOVERY_INTERVAL_MS || process.env.GMGN_REQUEST_WINDOW_MS || '2000', 10) || 2000),
     apiKeyConfigured: Boolean(String(process.env.GMGN_API_KEY || '').trim()),
     schedulerOptions: {
-      requestsPerWindow: Math.max(1, Math.min(parseInt(process.env.GMGN_REQUESTS_PER_WINDOW || '5', 10) || 5, 10)),
+      requestsPerWindow: Math.max(1, Math.min(parseInt(process.env.GMGN_REQUESTS_PER_WINDOW || '2', 10) || 2, 10)),
       requestWindowMs: Math.max(1000, parseInt(process.env.GMGN_REQUEST_WINDOW_MS || '2000', 10) || 2000),
       trendingLimit: Math.max(1, Math.min(parseInt(process.env.GMGN_TRENDING_LIMIT || '30', 10) || 30, 100)),
       backoffMinMs: Math.max(1000, parseInt(process.env.GMGN_BACKOFF_MIN_MS || '5000', 10) || 5000),

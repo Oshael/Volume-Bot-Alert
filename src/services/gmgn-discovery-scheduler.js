@@ -1,12 +1,13 @@
 const gmgnClient = require('./gmgn-client');
 
-const DEFAULT_INTERVALS = ['1m', '5m', '1h', '6h', '24h'];
-const DEFAULT_REQUESTS_PER_WINDOW = 5;
+const DEFAULT_INTERVALS = ['1m', '5m'];
+const DEFAULT_REQUESTS_PER_WINDOW = 2;
 const DEFAULT_REQUEST_WINDOW_MS = 2000;
 const DEFAULT_TRENDING_LIMIT = 30;
 const DEFAULT_CHAIN = 'sol';
 const DEFAULT_BACKOFF_MIN_MS = 5000;
 const DEFAULT_BACKOFF_MAX_MS = 60000;
+const MAX_INTERVALS_PER_WINDOW = 5;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,7 +21,7 @@ function parsePositiveInteger(value, fallback) {
 function normalizeIntervals(value) {
   if (Array.isArray(value)) {
     const normalized = value.map((item) => gmgnClient.__private.normalizeInterval(item));
-    return [...new Set(normalized)].slice(0, DEFAULT_REQUESTS_PER_WINDOW);
+    return [...new Set(normalized)].slice(0, MAX_INTERVALS_PER_WINDOW);
   }
   return DEFAULT_INTERVALS;
 }
