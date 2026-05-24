@@ -20,9 +20,15 @@ safe_name() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.:-' '_'
 }
 
+ensure_parent_dir() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+}
+
 run_cmd() {
   local file="$1"
   shift
+  ensure_parent_dir "$file"
   {
     printf '\n===== %s | %s =====\n' "$(timestamp)" "$*"
     "$@"
@@ -34,6 +40,7 @@ run_cmd() {
 run_shell() {
   local file="$1"
   local command="$2"
+  ensure_parent_dir "$file"
   {
     printf '\n===== %s | %s =====\n' "$(timestamp)" "$command"
     bash -lc "$command"
@@ -80,6 +87,7 @@ psql_env_prefix() {
 run_psql() {
   local file="$1"
   local sql="$2"
+  ensure_parent_dir "$file"
 
   if ! command -v psql >/dev/null 2>&1; then
     printf '\n===== %s | psql unavailable =====\n' "$(timestamp)" >>"$file"
@@ -169,6 +177,7 @@ collect_http_snapshot() {
   local file="$dir/samples/http-$(printf '%03d' "$sample").txt"
 
   if ! command -v curl >/dev/null 2>&1; then
+    ensure_parent_dir "$file"
     echo "curl unavailable" >"$file"
     return
   fi
