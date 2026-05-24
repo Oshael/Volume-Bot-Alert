@@ -7,10 +7,10 @@ const workerRuntimeState = require('../models/worker-runtime-state');
 
 const QUARANTINE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
 const ARCHIVE_LOOP_INTERVAL_MS = 48 * 60 * 60 * 1000;
-const BLOCKED_ARTIFACT_LOOP_INTERVAL_MS = 60 * 1000;
-const BLOCKED_ARTIFACT_IDLE_INTERVAL_MS = 15 * 60 * 1000;
+const BLOCKED_ARTIFACT_LOOP_INTERVAL_MS = 15 * 60 * 1000;
+const BLOCKED_ARTIFACT_IDLE_INTERVAL_MS = 60 * 60 * 1000;
 const ARCHIVE_LIMIT = 400;
-const BLOCKED_ARTIFACT_LIMIT = 50;
+const BLOCKED_ARTIFACT_LIMIT = 25;
 const BLOCKED_ARTIFACT_MIN_BLOCKED_AGE_MS = 24 * 60 * 60 * 1000;
 const QUARANTINE_RECHECK_MS = 6 * 60 * 60 * 1000;
 const SOFT_ARCHIVE_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
@@ -63,6 +63,12 @@ function computeArchiveDelayMs(lastRunAt, nowMs = Date.now()) {
   }
 
   return Math.max(0, ARCHIVE_LOOP_INTERVAL_MS - Math.max(0, nowMs - lastRunMs));
+}
+
+function computeBlockedArtifactDelayMs(summary = null) {
+  return summary?.blockedArtifactTokens > 0
+    ? BLOCKED_ARTIFACT_LOOP_INTERVAL_MS
+    : BLOCKED_ARTIFACT_IDLE_INTERVAL_MS;
 }
 
 async function runQuarantineOnce() {
@@ -202,9 +208,7 @@ function scheduleQuarantine() {
 
 function scheduleBlockedArtifactCleanup() {
   if (!running) return;
-  const delayMs = status.lastBlockedArtifactSummary?.blockedArtifactTokens > 0
-    ? BLOCKED_ARTIFACT_LOOP_INTERVAL_MS
-    : BLOCKED_ARTIFACT_IDLE_INTERVAL_MS;
+  const delayMs = computeBlockedArtifactDelayMs(status.lastBlockedArtifactSummary);
   status.nextBlockedArtifactRunAt = new Date(Date.now() + delayMs).toISOString();
   blockedArtifactTimer = setTimeout(async () => {
     try {
@@ -212,7 +216,7 @@ function scheduleBlockedArtifactCleanup() {
     } finally {
       scheduleBlockedArtifactCleanup();
     }
-  }, BLOCKED_ARTIFACT_LOOP_INTERVAL_MS);
+  }, delayMs);
 }
 
 function scheduleArchive() {
@@ -293,6 +297,7 @@ module.exports = {
   runBlockedArtifactCleanupOnce,
   __private: {
     computeArchiveDelayMs,
+    computeBlockedArtifactDelayMs,
     deleteBlockedArtifactsForAddresses,
     toIsoStringOrNull,
   },

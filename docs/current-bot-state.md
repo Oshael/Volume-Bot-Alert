@@ -838,7 +838,7 @@ Current monitored UI behavior:
   5. backend schedules immediate catalog evaluation
   6. `POST /api/catalog/manual-track` now also attempts an eager Dex evaluation immediately instead of depending only on the background worker loop
   7. if that eager evaluation fails, the token still falls back to the normal scheduled worker evaluation path
-  8. launchpad-style manual tokens can continue receiving GMGN token-info fallback snapshots while Dex has not produced a usable pair yet; once Dex has a pair, Dex becomes the evaluation source
+  8. launchpad-style manual tokens can continue receiving GMGN token-info snapshots while they are pending/pre-migration or while Dex has not produced a usable pair yet; once a manual token is Dex-confirmed, GMGN token-info becomes fallback instead of a required pre-Dex lookup
   9. frontend reloads canonical state with:
      - `GET /api/config`
      - `GET /api/dashboard/monitored`
@@ -873,13 +873,14 @@ Current monitored UI behavior:
   - `normal`: `4s`
   - `normal` boosted by `PCHANGE`: `3s`
   - `low-near`: `15s`
-  - `low-dust`: `10m`
+  - `low-dust`: `10m` for automatic low-cap tokens; `user-manual` low-cap Dex rows use the `15s` low-near floor so bought/manual tokens do not visually freeze below `15k`
   - `dormant`: `30m`
 - Important hardening already present:
   - `dex-unavailable` preserves existing eligibility/priority instead of collapsing directly into `dex-missing`
   - persistent automatic GMGN rows that keep returning `dex_unavailable`, have `VOL 5M = 0`, and have already accumulated at least `300` consecutive evaluation errors trigger a fresh GMGN token-info liquidity lookup; if fresh liquidity is below `$1,000`, the token is admin-blocked as `gmgn-liquidity:under-1k-spam:*`, otherwise it is demoted to `eligibility_state = gmgn-dex-unavailable-zombie`, `eligible_for_monitoring = false`, `monitor_priority = dormant`, and `suppressed_reason = gmgn_dex_unavailable_zombie`
   - newly added manual tokens get `5s` retry cadence until first classification in normal mode
-  - manual launchpad tokens request fresh GMGN token-info before Dex evaluation; Dex still takes over when it returns a usable pair, but if Dex has no pair/data yet the worker keeps using GMGN as a manual fallback and writes both market and volume buckets
+  - manual launchpad tokens request fresh GMGN token-info before Dex evaluation only while pending, already in a `gmgn-*` state, or missing/unavailable on Dex; Dex-confirmed manual rows do not spawn GMGN token-info before each Dex evaluation
+  - manual GMGN token-info lookups are single-flighted per address and globally capped at `3` concurrent lookups to avoid a burst of `gmgn-cli token info` child processes
   - `pumpfun-migrated` tokens now persist `migration_grace_until`
   - migration grace is assigned even when the PumpPortal migration payload does not include a usable initial market cap
   - unevaluated migrated rows are prioritized ahead of normal/low/dormant backlog so they get an initial Dex evaluation promptly
@@ -942,10 +943,15 @@ Current monitored UI behavior:
   - `quarantine`: every `15m`
   - `soft archive`: every `48h`
   - the soft-archive timer anchor is persisted in DB under `catalog_cleanup_soft_archive_last_run_at`, so restarts do not reset the `48h` wait
+  - blocked-token artifact cleanup:
+    - every `15m` while artifact backlog remains
+    - every `60m` after a run finds no blocked artifacts
+    - deletes up to `25` blocked-token artifact sets per run
 - Purpose:
   - quarantine weak discovery tokens
   - soft archive stale/low-value tokens
   - keep low-signal catalog entries from competing with hot monitored tokens
+  - gradually remove history artifacts for admin-blocked tokens without competing with hot-path workers
 - Current rule shape:
   - protected user-linked tokens are excluded
   - `dexscreener-discovery` weak tokens go to `quarantine`

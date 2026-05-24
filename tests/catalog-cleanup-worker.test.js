@@ -31,6 +31,20 @@ describe('catalog cleanup worker archive scheduling', () => {
     assert.equal(cleanupWorker.__private.computeArchiveDelayMs(threeDaysAgo, now), 0);
   });
 
+  it('slows blocked artifact cleanup when the previous run found no artifacts', () => {
+    assert.equal(
+      cleanupWorker.__private.computeBlockedArtifactDelayMs({ blockedArtifactTokens: 0 }),
+      60 * 60 * 1000
+    );
+  });
+
+  it('keeps blocked artifact cleanup on a bounded maintenance cadence when artifacts remain', () => {
+    assert.equal(
+      cleanupWorker.__private.computeBlockedArtifactDelayMs({ blockedArtifactTokens: 25 }),
+      15 * 60 * 1000
+    );
+  });
+
   it('deletes blocked token artifacts from all cleanup-owned history tables', async () => {
     const originalMarketDelete = tokenMarketBucket1m.deleteByAddresses;
     const originalVolumeDelete = tokenMarketVolumeBucket1m.deleteByAddresses;
