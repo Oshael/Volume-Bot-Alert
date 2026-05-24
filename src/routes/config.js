@@ -148,6 +148,7 @@ router.put('/', async (req, res) => {
     let normalizedTokens = null;
     let normalizedBlocklist = null;
     let normalizedStarred = null;
+    let removedManualTokenCandidates = [];
 
     // Validate everything first so the request is all-or-nothing.
     if (configs && typeof configs === 'object') {
@@ -224,6 +225,15 @@ router.put('/', async (req, res) => {
       }
 
       if (normalizedTokens) {
+        const previousTokens = await client.query(
+          'SELECT address FROM user_tokens WHERE user_id = $1',
+          [req.user.id]
+        );
+        const nextTokenAddresses = new Set(normalizedTokens.map((item) => item.address));
+        removedManualTokenCandidates = previousTokens.rows
+          .map((row) => String(row.address || '').trim())
+          .filter((address) => address && !nextTokenAddresses.has(address));
+
         await client.query('DELETE FROM user_tokens WHERE user_id = $1', [req.user.id]);
         for (const tokenItem of normalizedTokens) {
           await client.query(
@@ -270,6 +280,7 @@ router.put('/', async (req, res) => {
       upsertCatalogItemsAndSchedule(normalizedTokens, 'user-manual'),
       upsertCatalogItems(normalizedBlocklist, 'blocklist'),
       upsertCatalogItems(normalizedStarred, 'starred'),
+      ...removedManualTokenCandidates.map((address) => tokenCatalog.demoteFormerManualAddress(address)),
     ]);
     userAlertProfileCache.invalidateUserProfile(req.user.id);
     const result = {
@@ -412,6 +423,8 @@ router.delete('/tokens/:address', async (req, res) => {
     if (!removed) {
       return res.status(404).json({ error: 'Token not found' });
     }
+
+    await tokenCatalog.demoteFormerManualAddress(address);
 
     res.json({ message: 'Token removed' });
   } catch (err) {

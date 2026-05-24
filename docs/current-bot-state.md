@@ -847,6 +847,7 @@ Current monitored UI behavior:
   - manual token list is a backend-persisted per-user overlay
   - manual token also acts as a catalog-ingestion path
   - `_userManual` is the protection flag for `min-mcap-remove`
+  - removing a manual token now demotes the global catalog row from `user-manual` back to `dexscreener-discovery` when no user still has that address pinned
   - restoring manual tokens must not depend on dashboard success; `GET /api/config` alone is enough to restore the list across browsers/devices
   - tracked-state rebuild now consumes `payload.tokens` from `GET /api/config` directly, which fixed the previous reload/device-sync bug
 - Current UI additions:
@@ -880,6 +881,7 @@ Current monitored UI behavior:
   - persistent automatic GMGN rows that keep returning `dex_unavailable`, have `VOL 5M = 0`, and have already accumulated at least `300` consecutive evaluation errors trigger a fresh GMGN token-info liquidity lookup; if fresh liquidity is below `$1,000`, the token is admin-blocked as `gmgn-liquidity:under-1k-spam:*`, otherwise it is demoted to `eligibility_state = gmgn-dex-unavailable-zombie`, `eligible_for_monitoring = false`, `monitor_priority = dormant`, and `suppressed_reason = gmgn_dex_unavailable_zombie`
   - newly added manual tokens get `5s` retry cadence until first classification in normal mode
   - manual launchpad tokens request fresh GMGN token-info before Dex evaluation only while pending, already in a `gmgn-*` state, or missing/unavailable on Dex; Dex-confirmed manual rows do not spawn GMGN token-info before each Dex evaluation
+  - stale catalog rows with `source = user-manual` are checked against the live `user_tokens` table before any manual GMGN token-info lookup; if no user still has that address pinned, the row is demoted to `dexscreener-discovery` and GMGN is skipped
   - manual GMGN token-info lookups are single-flighted per address and globally capped at `3` concurrent lookups to avoid a burst of `gmgn-cli token info` child processes
   - `pumpfun-migrated` tokens now persist `migration_grace_until`
   - migration grace is assigned even when the PumpPortal migration payload does not include a usable initial market cap

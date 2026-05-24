@@ -1557,10 +1557,34 @@ async function hasUserManualAddress(address) {
   return rows.length > 0;
 }
 
+async function demoteFormerManualAddress(address) {
+  const addr = String(address || '').trim();
+  if (!isValidAddress(addr)) {
+    return null;
+  }
+
+  const { rows } = await db.query(
+    `UPDATE token_catalog tc
+     SET source = 'dexscreener-discovery',
+         metadata_updated_at = NOW()
+     WHERE tc.address = $1
+       AND tc.source = 'user-manual'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM user_tokens ut
+         WHERE ut.address = tc.address
+       )
+     RETURNING *`,
+    [addr]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   upsertToken,
   getByAddress,
   hasUserManualAddress,
+  demoteFormerManualAddress,
   listRecent,
   listDueForEvaluation,
   countDueForEvaluationSummary,

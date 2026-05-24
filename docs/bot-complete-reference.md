@@ -341,6 +341,7 @@ Special handling:
 - persistent automatic GMGN rows that keep returning `dex_unavailable`, have `VOL 5M = 0`, and have already accumulated at least `300` consecutive evaluation errors trigger a fresh GMGN token-info liquidity lookup; if fresh liquidity is below `$1,000`, the token is admin-blocked as `gmgn-liquidity:under-1k-spam:*`, otherwise it is demoted to `gmgn-dex-unavailable-zombie` / `gmgn_dex_unavailable_zombie` with dormant priority
 - new manual tokens retry quickly until first real classification
 - manual launchpad tokens request fresh GMGN token-info before Dex evaluation only while pending, already in a `gmgn-*` state, or missing/unavailable on Dex; Dex-confirmed manual rows use GMGN token-info as fallback instead of spawning it before every Dex evaluation
+- stale `token_catalog.source = user-manual` rows are verified against the live `user_tokens` table before manual GMGN token-info lookup; rows no longer pinned by any user are demoted to `dexscreener-discovery` and GMGN is skipped
 - manual GMGN token-info lookups are single-flighted per address and capped at `3` concurrent lookups, while low-mcap `user-manual` Dex rows use the `15s` low-near floor instead of the automatic `10m` low-dust cadence
 - market reevaluation writes `token_market_buckets_1m`
 - fresh raw `token_market_snapshots` are no longer written by the catalog worker
@@ -1786,6 +1787,7 @@ Behavior:
 - `POST /api/catalog/manual-track` now also attempts an eager Dex evaluation immediately instead of waiting only for the catalog worker loop
 - if that eager evaluation fails, the token still falls back to the normal scheduled worker evaluation path
 - launchpad-style manual tokens can continue receiving GMGN token-info snapshots while pending/pre-migration or while Dex has not produced a usable pair yet; once a manual token is Dex-confirmed, GMGN token-info becomes fallback instead of a required pre-Dex lookup
+- removing a manual token demotes the global catalog row from `user-manual` back to `dexscreener-discovery` when no user still has that address pinned
 
 Rules:
 - `_userManual = true`

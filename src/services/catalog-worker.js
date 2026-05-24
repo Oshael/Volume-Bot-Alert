@@ -67,6 +67,7 @@ let defaultGmgnClient = null;
 const youngExtremeChurnState = new Map();
 const manualGmgnTokenInfoInflight = new Map();
 const manualGmgnTokenInfoQueue = [];
+const liveManualAddressCache = new Map();
 let manualGmgnTokenInfoActive = 0;
 let status = {
   running: false,
@@ -557,12 +558,38 @@ function drainManualGmgnTokenInfoQueue() {
   }
 }
 
+async function hasLiveManualAddressForGmgn(address) {
+  const normalized = String(address || '').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const cached = liveManualAddressCache.get(normalized);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const value = await tokenCatalog.hasUserManualAddress(normalized);
+  liveManualAddressCache.set(normalized, {
+    value,
+    expiresAt: Date.now() + 30 * 1000,
+  });
+  if (!value && typeof tokenCatalog.demoteFormerManualAddress === 'function') {
+    await tokenCatalog.demoteFormerManualAddress(normalized);
+  }
+  return value;
+}
+
 async function fetchManualGmgnTokenInfo(token) {
   if (!isManualSource(token)) {
     return null;
   }
 
   const address = String(token?.address || '').trim();
+  if (!await hasLiveManualAddressForGmgn(address)) {
+    return null;
+  }
+
   const chain = token?.chain || 'solana';
   const cacheKey = `${String(chain).trim().toLowerCase()}:${address}`;
   const inflight = manualGmgnTokenInfoInflight.get(cacheKey);
@@ -1729,6 +1756,13 @@ function stop() {
   }
 }
 
+function clearManualGmgnCachesForTest() {
+  liveManualAddressCache.clear();
+  manualGmgnTokenInfoInflight.clear();
+  manualGmgnTokenInfoQueue.length = 0;
+  manualGmgnTokenInfoActive = 0;
+}
+
 function getStatus() {
   return { ...status };
 }
@@ -1760,6 +1794,7 @@ module.exports = {
     assessYoungExtremeChurn,
     buildYoungExtremeChurnLabel,
     clearYoungExtremeChurnState,
+    clearManualGmgnCachesForTest,
     getYoungExtremeChurnState,
     recordYoungExtremeChurnSuspicion,
     getRateLimitedRetryMs,

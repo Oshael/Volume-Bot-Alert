@@ -14,6 +14,19 @@ const userAlertMatcher = require('../src/services/user-alert-matcher');
 const TOKEN_A = 'So11111111111111111111111111111111111111112';
 const TOKEN_B = 'So11111111111111111111111111111111111111113';
 
+function stubLiveManualAddress(value = true) {
+  const originalHasUserManualAddress = tokenCatalog.hasUserManualAddress;
+  const originalDemoteFormerManualAddress = tokenCatalog.demoteFormerManualAddress;
+  tokenCatalog.hasUserManualAddress = async () => value;
+  tokenCatalog.demoteFormerManualAddress = async () => null;
+  catalogWorker.__private.clearManualGmgnCachesForTest();
+  return () => {
+    tokenCatalog.hasUserManualAddress = originalHasUserManualAddress;
+    tokenCatalog.demoteFormerManualAddress = originalDemoteFormerManualAddress;
+    catalogWorker.__private.clearManualGmgnCachesForTest();
+  };
+}
+
 describe('catalog worker drift compensation', () => {
   it('reduces the next delay when the cycle finishes early', () => {
     assert.equal(catalogWorker.__private.computeNextDelayMs(1300), 700);
@@ -572,6 +585,7 @@ describe('catalog worker drift compensation', () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const restoreLiveManual = stubLiveManualAddress(true);
     const writes = [];
     const tokenBefore = {
       address: TOKEN_B,
@@ -664,6 +678,7 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
+      restoreLiveManual();
     }
   });
 
@@ -672,6 +687,7 @@ describe('catalog worker drift compensation', () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const restoreLiveManual = stubLiveManualAddress(true);
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
@@ -733,6 +749,7 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
+      restoreLiveManual();
     }
   });
 
@@ -741,6 +758,7 @@ describe('catalog worker drift compensation', () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const restoreLiveManual = stubLiveManualAddress(true);
     const tokenBefore = {
       address: TOKEN_B,
       chain: 'solana',
@@ -793,6 +811,56 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
+      restoreLiveManual();
+    }
+  });
+
+  it('does not use GMGN for catalog rows that are no longer live manual tokens', async () => {
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalHasUserManualAddress = tokenCatalog.hasUserManualAddress;
+    const originalDemoteFormerManualAddress = tokenCatalog.demoteFormerManualAddress;
+    let demotedAddress = null;
+    const tokenBefore = {
+      address: TOKEN_B,
+      chain: 'solana',
+      source: 'user-manual',
+      eligibility_state: 'pending',
+      eligible_for_monitoring: false,
+      monitor_priority: 'dormant',
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      source: 'dexscreener-discovery',
+      eligibility_state: 'dex-unavailable',
+    };
+
+    catalogWorker.__private.clearManualGmgnCachesForTest();
+    tokenCatalog.hasUserManualAddress = async () => false;
+    tokenCatalog.demoteFormerManualAddress = async (address) => {
+      demotedAddress = address;
+      return { ...tokenBefore, source: 'dexscreener-discovery' };
+    };
+    catalogWorker.__private.setDefaultGmgnClientForTest({
+      fetchTokenInfo: async () => {
+        throw new Error('stale manual catalog rows must not call GMGN token info');
+      },
+    });
+    tokenCatalog.applyEvaluationResult = async (_address, payload) => {
+      assert.equal(payload.eligibilityState, 'dex-unavailable');
+      return updatedToken;
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, null);
+
+      assert.equal(result, updatedToken);
+      assert.equal(demotedAddress, TOKEN_B);
+    } finally {
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenCatalog.hasUserManualAddress = originalHasUserManualAddress;
+      tokenCatalog.demoteFormerManualAddress = originalDemoteFormerManualAddress;
+      catalogWorker.__private.setDefaultGmgnClientForTest(null);
+      catalogWorker.__private.clearManualGmgnCachesForTest();
     }
   });
 
@@ -801,6 +869,7 @@ describe('catalog worker drift compensation', () => {
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
     const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
     const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const restoreLiveManual = stubLiveManualAddress(true);
     const writes = [];
     const tokenBefore = {
       address: TOKEN_B,
@@ -883,6 +952,7 @@ describe('catalog worker drift compensation', () => {
       tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
       tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
       catalogWorker.__private.setDefaultGmgnClientForTest(null);
+      restoreLiveManual();
     }
   });
 
