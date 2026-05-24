@@ -41,7 +41,8 @@ const RATE_LIMIT_LOW_NEAR_RECHECK_MS = 3 * 60 * 1000;
 const RATE_LIMIT_LOW_DUST_RECHECK_MS = 2 * 60 * 1000;
 const RATE_LIMIT_MANUAL_RECHECK_MS = 15 * 1000;
 const DEX_BATCH_DELAY_MS = 100;
-const MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS = 3 * 1000;
+const MANUAL_PRE_MIGRATION_GMGN_RECHECK_MS = 5 * 1000;
+const MANUAL_GMGN_TOKEN_INFO_CONCURRENCY = 3;
 const THROTTLE_LIST_LIMIT_MULTIPLIER = 8;
 const THROTTLE_LIST_LIMIT_CAP = 2500;
 const LOW_NEAR_JITTER_MS = 3 * 1000;
@@ -64,6 +65,9 @@ let timer = null;
 let running = false;
 let defaultGmgnClient = null;
 const youngExtremeChurnState = new Map();
+const manualGmgnTokenInfoInflight = new Map();
+const manualGmgnTokenInfoQueue = [];
+let manualGmgnTokenInfoActive = 0;
 let status = {
   running: false,
   lastRunAt: null,
@@ -207,6 +211,34 @@ function isLowDustProtectedByMigrationGrace(token, marketCap, now = Date.now()) 
 
 function isManualSource(token) {
   return String(token?.source || '').trim().toLowerCase() === 'user-manual';
+}
+
+function isGmgnManualState(token) {
+  return String(token?.eligibility_state || '').trim().toLowerCase().startsWith('gmgn-');
+}
+
+function hasDexPairSnapshot(token) {
+  const pairUrl = String(token?.last_pair_url || '').trim().toLowerCase();
+  return Boolean(token?.last_pair_address)
+    || pairUrl.includes('dexscreener.com');
+}
+
+function shouldCheckManualGmgnBeforeDex(token) {
+  if (!isManualSource(token)) {
+    return false;
+  }
+
+  const eligibilityState = String(token?.eligibility_state || '').trim().toLowerCase();
+  const suppressedReason = String(token?.suppressed_reason || '').trim().toLowerCase();
+  const marketCap = Number(token?.last_mcap || 0);
+
+  return eligibilityState === 'pending'
+    || isGmgnManualState(token)
+    || eligibilityState === 'dex-missing'
+    || eligibilityState === 'dex-unavailable'
+    || suppressedReason === 'dex_pair_missing'
+    || suppressedReason === 'dex_unavailable'
+    || (!hasDexPairSnapshot(token) && hasKnownLaunchAddressSuffix(token) && marketCap < 30000);
 }
 
 const LAUNCH_ADDRESS_SUFFIXES = ['pump', 'bonk', 'brrr', 'bags'];
@@ -501,17 +533,59 @@ function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) 
   };
 }
 
+function runManualGmgnTokenInfoTask(task) {
+  return new Promise((resolve, reject) => {
+    manualGmgnTokenInfoQueue.push({ task, resolve, reject });
+    drainManualGmgnTokenInfoQueue();
+  });
+}
+
+function drainManualGmgnTokenInfoQueue() {
+  while (
+    manualGmgnTokenInfoActive < MANUAL_GMGN_TOKEN_INFO_CONCURRENCY
+    && manualGmgnTokenInfoQueue.length > 0
+  ) {
+    const next = manualGmgnTokenInfoQueue.shift();
+    manualGmgnTokenInfoActive += 1;
+    Promise.resolve()
+      .then(next.task)
+      .then(next.resolve, next.reject)
+      .finally(() => {
+        manualGmgnTokenInfoActive = Math.max(0, manualGmgnTokenInfoActive - 1);
+        drainManualGmgnTokenInfoQueue();
+      });
+  }
+}
+
 async function fetchManualGmgnTokenInfo(token) {
   if (!isManualSource(token)) {
     return null;
   }
 
+  const address = String(token?.address || '').trim();
+  const chain = token?.chain || 'solana';
+  const cacheKey = `${String(chain).trim().toLowerCase()}:${address}`;
+  const inflight = manualGmgnTokenInfoInflight.get(cacheKey);
+  if (inflight) {
+    try {
+      return await inflight;
+    } catch (error) {
+      console.warn(`[CatalogWorker] Failed to fetch GMGN info for manual token ${token.address}: ${error.message}`);
+      return null;
+    }
+  }
+
+  const request = runManualGmgnTokenInfoTask(() => getDefaultGmgnClient().fetchTokenInfo({
+    chain,
+    address,
+    skipCache: true,
+  })).finally(() => {
+    manualGmgnTokenInfoInflight.delete(cacheKey);
+  });
+  manualGmgnTokenInfoInflight.set(cacheKey, request);
+
   try {
-    return await getDefaultGmgnClient().fetchTokenInfo({
-      chain: token?.chain || 'solana',
-      address: token?.address,
-      skipCache: true,
-    });
+    return await request;
   } catch (error) {
     console.warn(`[CatalogWorker] Failed to fetch GMGN info for manual token ${token.address}: ${error.message}`);
     return null;
@@ -867,7 +941,9 @@ function derivePrioritySnapshot(bestPair, token = null) {
   }
 
   if (marketCap < 30000) {
-    const nextLowMs = marketCap >= 15000 || isLowDustProtectedByMigrationGrace(token, marketCap, now)
+    const nextLowMs = marketCap >= 15000
+      || isManualSource(token)
+      || isLowDustProtectedByMigrationGrace(token, marketCap, now)
       ? addPriorityJitter(LOW_NEAR_RECHECK_MS, LOW_NEAR_JITTER_MS)
       : addPriorityJitter(LOW_DUST_RECHECK_MS, LOW_DUST_JITTER_MS);
 
@@ -1259,7 +1335,9 @@ async function evaluateDexMissingToken(token, gmgnInfo, traceInitialEval) {
 
 async function evaluateTokenWithData(token, data) {
   const traceInitialEval = shouldTraceInitialEvalOnly(token);
-  const manualGmgnInfo = await fetchManualGmgnTokenInfo(token);
+  let manualGmgnInfo = shouldCheckManualGmgnBeforeDex(token)
+    ? await fetchManualGmgnTokenInfo(token)
+    : null;
 
   const gmgnManualPreMigrationToken = await evaluateManualPreMigrationWithGmgn(token, manualGmgnInfo, traceInitialEval);
   if (gmgnManualPreMigrationToken) {
@@ -1267,12 +1345,18 @@ async function evaluateTokenWithData(token, data) {
   }
 
   if (!data) {
+    if (!manualGmgnInfo) {
+      manualGmgnInfo = await fetchManualGmgnTokenInfo(token);
+    }
     return evaluateDexUnavailableWithManualFallback(token, manualGmgnInfo, traceInitialEval);
   }
 
   const bestPair = dexscreener.getBestPair(data, token.chain || 'solana');
 
   if (!bestPair) {
+    if (!manualGmgnInfo) {
+      manualGmgnInfo = await fetchManualGmgnTokenInfo(token);
+    }
     return evaluateDexMissingToken(token, manualGmgnInfo, traceInitialEval);
   }
 
@@ -1671,6 +1755,7 @@ module.exports = {
     isGmgnDexUnavailableZombie,
     setDefaultGmgnClientForTest,
     isManualSource,
+    shouldCheckManualGmgnBeforeDex,
     isMigrationGraceActive,
     assessYoungExtremeChurn,
     buildYoungExtremeChurnLabel,

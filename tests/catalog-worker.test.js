@@ -302,6 +302,23 @@ describe('catalog worker drift compensation', () => {
     assert.ok(nextMs < 3 * 60 * 1000, `expected manual token to keep normal cadence, got ${nextMs}ms`);
   });
 
+  it('keeps low-mcap manual tokens on fast Dex cadence', () => {
+    const now = Date.now();
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 9000,
+      volume: { h24: 1000 },
+      priceChange: {},
+    }, {
+      source: 'user-manual',
+    });
+
+    const nextMs = snapshot.nextEvaluationAt.getTime() - now;
+    assert.equal(snapshot.monitorPriority, 'low');
+    assert.equal(snapshot.eligibleForMonitoring, true);
+    assert.equal(snapshot.suppressedReason, null);
+    assert.ok(nextMs >= 15 * 1000 && nextMs < 20 * 1000, `expected fast manual low-mcap cadence, got ${nextMs}ms`);
+  });
+
   it('fills young Dex 6h and 24h volume windows from shorter available volume', () => {
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({
       marketCap: 140000,
@@ -560,6 +577,7 @@ describe('catalog worker drift compensation', () => {
       address: TOKEN_B,
       chain: 'solana',
       source: 'user-manual',
+      eligibility_state: 'pending',
       eligible_for_monitoring: false,
       monitor_priority: 'dormant',
     };
@@ -614,7 +632,7 @@ describe('catalog worker drift compensation', () => {
       assert.equal(payload.vol5m, 4363.13);
       assert.equal(payload.liquidityUsd, 8643.03);
       assert.ok(payload.nextEvaluationAt instanceof Date);
-      assert.ok(nextDelayMs > 0 && nextDelayMs <= 3000);
+      assert.ok(nextDelayMs > 0 && nextDelayMs <= 5000);
       return updatedToken;
     };
     tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => {
@@ -658,6 +676,7 @@ describe('catalog worker drift compensation', () => {
       address: TOKEN_B,
       chain: 'solana',
       source: 'user-manual',
+      eligibility_state: 'gmgn-low',
       eligible_for_monitoring: true,
       monitor_priority: 'normal',
     };
@@ -669,14 +688,18 @@ describe('catalog worker drift compensation', () => {
     let dexUsed = false;
 
     catalogWorker.__private.setDefaultGmgnClientForTest({
-      fetchTokenInfo: async () => ({
-        address: TOKEN_B,
-        launchpad: 'pump',
-        launchpadPlatform: 'Pump.fun',
-        migratedTimestamp: '2026-05-23T00:00:00.000Z',
-        migratedPool: 'pool-migrated',
-        marketCap: 6400,
-      }),
+      fetchTokenInfo: async (request) => {
+        assert.equal(request.address, TOKEN_B);
+        assert.equal(request.skipCache, true);
+        return {
+          address: TOKEN_B,
+          launchpad: 'pump',
+          launchpadPlatform: 'Pump.fun',
+          migratedTimestamp: '2026-05-23T00:00:00.000Z',
+          migratedPool: 'pool-migrated',
+          marketCap: 6400,
+        };
+      },
     });
     dexscreener.getBestPair = () => {
       dexUsed = true;
@@ -704,6 +727,66 @@ describe('catalog worker drift compensation', () => {
 
       assert.equal(result, updatedToken);
       assert.equal(dexUsed, true);
+    } finally {
+      dexscreener.getBestPair = originalGetBestPair;
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
+      tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
+      catalogWorker.__private.setDefaultGmgnClientForTest(null);
+    }
+  });
+
+  it('does not call GMGN before Dex for migrated manual tokens with a Dex pair snapshot', async () => {
+    const originalGetBestPair = dexscreener.getBestPair;
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
+    const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const tokenBefore = {
+      address: TOKEN_B,
+      chain: 'solana',
+      source: 'user-manual',
+      eligibility_state: 'dex-low',
+      eligible_for_monitoring: true,
+      monitor_priority: 'low',
+      last_mcap: 12000,
+      last_pair_address: 'pair-1',
+      last_pair_url: 'https://dexscreener.com/solana/pair-1',
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      last_mcap: 14000,
+    };
+
+    catalogWorker.__private.setDefaultGmgnClientForTest({
+      fetchTokenInfo: async () => {
+        throw new Error('GMGN should not be called before Dex for a Dex-confirmed manual token');
+      },
+    });
+    dexscreener.getBestPair = () => ({
+      marketCap: 14000,
+      priceUsd: '0.000014',
+      pairAddress: 'pair-1',
+      url: 'https://dexscreener.com/solana/pair-1',
+      baseToken: { symbol: 'STAR', name: 'Starships' },
+      volume: { m5: 9000, h1: 12000, h6: 12000, h24: 12000 },
+      priceChange: {},
+      liquidity: { usd: 8000 },
+    });
+    tokenCatalog.applyEvaluationResult = async (_address, payload) => {
+      const nextDelayMs = payload.nextEvaluationAt.getTime() - Date.now();
+      assert.equal(payload.evaluationSource, 'dexscreener');
+      assert.equal(payload.eligibilityState, 'dex-low');
+      assert.equal(payload.mcap, 14000);
+      assert.ok(nextDelayMs >= 15 * 1000 && nextDelayMs < 20 * 1000);
+      return updatedToken;
+    };
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => payload;
+    tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => payload;
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+
+      assert.equal(result, updatedToken);
     } finally {
       dexscreener.getBestPair = originalGetBestPair;
       tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
