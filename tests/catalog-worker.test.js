@@ -28,6 +28,41 @@ describe('catalog worker drift compensation', () => {
     assert.equal(catalogWorker.__private.normalizeDelayMs(Number.NaN), 2000);
   });
 
+  it('keeps already monitored tokens eligible when evaluation fails transiently', () => {
+    const nowMs = Date.parse('2026-05-24T17:52:00Z');
+    const result = catalogWorker.__private.buildEvaluationErrorResult({
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      evaluation_error_count: 2,
+    }, new Error('dex timeout'), nowMs);
+
+    assert.equal(result.eligibilityState, 'evaluation-error');
+    assert.equal(result.eligibleForMonitoring, true);
+    assert.equal(result.suppressedReason, null);
+    assert.equal(result.monitorPriority, 'high');
+    assert.equal(result.lastEvaluationError, 'dex timeout');
+    assert.equal(result.evaluationErrorCount, 3);
+    assert.ok(result.nextEvaluationAt instanceof Date);
+    assert.ok(result.nextEvaluationAt.getTime() > nowMs);
+  });
+
+  it('keeps non-monitored tokens suppressed when evaluation fails before eligibility', () => {
+    const nowMs = Date.parse('2026-05-24T17:52:00Z');
+    const result = catalogWorker.__private.buildEvaluationErrorResult({
+      eligible_for_monitoring: false,
+      evaluation_error_count: 0,
+    }, new Error('bad response'), nowMs);
+
+    assert.equal(result.eligibilityState, 'evaluation-error');
+    assert.equal(result.eligibleForMonitoring, false);
+    assert.equal(result.suppressedReason, 'evaluation_error');
+    assert.equal(result.monitorPriority, 'dormant');
+    assert.equal(result.lastEvaluationError, 'bad response');
+    assert.equal(result.evaluationErrorCount, 1);
+    assert.ok(result.nextEvaluationAt instanceof Date);
+    assert.ok(result.nextEvaluationAt.getTime() > nowMs);
+  });
+
   it('adds bounded jitter to low-priority delays', () => {
     assert.equal(catalogWorker.__private.addPriorityJitter(15000, 3000, 0), 15000);
     assert.equal(catalogWorker.__private.addPriorityJitter(15000, 3000, 1), 18000);

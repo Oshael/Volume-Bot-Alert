@@ -1112,6 +1112,21 @@ function getThrottleTokenRank(token, throttleState = { mode: 'normal' }) {
   return 6;
 }
 
+function buildEvaluationErrorResult(token = {}, error = null, nowMs = Date.now()) {
+  const wasEligible = token.eligible_for_monitoring === true;
+  const previousPriority = token.monitor_priority || null;
+
+  return {
+    eligibilityState: 'evaluation-error',
+    eligibleForMonitoring: wasEligible,
+    suppressedReason: wasEligible ? null : 'evaluation_error',
+    monitorPriority: previousPriority || (wasEligible ? 'normal' : 'dormant'),
+    nextEvaluationAt: new Date(nowMs + ERROR_RECHECK_MS),
+    lastEvaluationError: error?.message || String(error || 'evaluation_error'),
+    evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
+  };
+}
+
 function prioritizeTokensForThrottle(tokens, throttleState = { mode: 'normal' }, limit = MAX_TOKEN_BUDGET_PER_CYCLE) {
   const safeLimit = Math.max(1, Number(limit) || MAX_TOKEN_BUDGET_PER_CYCLE);
   return [...(Array.isArray(tokens) ? tokens : [])]
@@ -1573,15 +1588,7 @@ async function runOnce() {
           await evaluateTokenWithData(token, dataByAddress.get(token.address) || null);
         } catch (err) {
           status.totalErrors++;
-          await tokenCatalog.applyEvaluationResult(token.address, {
-            eligibilityState: 'evaluation-error',
-            eligibleForMonitoring: false,
-            suppressedReason: 'evaluation_error',
-            monitorPriority: 'dormant',
-            nextEvaluationAt: new Date(Date.now() + ERROR_RECHECK_MS),
-            lastEvaluationError: err.message,
-            evaluationErrorCount: (token.evaluation_error_count || 0) + 1,
-          });
+          await tokenCatalog.applyEvaluationResult(token.address, buildEvaluationErrorResult(token, err));
           console.error(`[CatalogWorker] Failed to evaluate ${token.address}:`, err.message);
         }
       }));
@@ -1673,6 +1680,7 @@ module.exports = {
     getRateLimitedRetryMs,
     getThrottleTokenBucket,
     getThrottleTokenRank,
+    buildEvaluationErrorResult,
     MIGRATION_GRACE_FLOOR_MS,
     isTokenAllowedByThrottle,
     normalizeDelayMs,
