@@ -39,6 +39,37 @@ describe('backfill aggregate market buckets', () => {
     assert.equal(parsed.lookbackHours, null);
   });
 
+  it('supports date-window mode with throttling options', () => {
+    const parsed = backfillBucketsAgg.__private.parseCliArgs([
+      '--startDate',
+      '2026-03-22',
+      '--endDate',
+      '2026-03-24',
+      '--windowHours',
+      '24',
+      '--sleepMs',
+      '500',
+      '--statementTimeoutMs',
+      '30000',
+      '--granularity',
+      '30',
+    ]);
+
+    assert.equal(parsed.startDate.toISOString(), '2026-03-22T00:00:00.000Z');
+    assert.equal(parsed.endDate.toISOString(), '2026-03-24T00:00:00.000Z');
+    assert.equal(parsed.windowHours, 24);
+    assert.equal(parsed.sleepMs, 500);
+    assert.equal(parsed.statementTimeoutMs, 30000);
+    assert.deepEqual(parsed.granularities, [30]);
+  });
+
+  it('requires startDate and endDate together', () => {
+    assert.throws(
+      () => backfillBucketsAgg.__private.parseCliArgs(['--startDate', '2026-03-22']),
+      /startDate and endDate must be provided together/
+    );
+  });
+
   it('rejects unsupported granularities', () => {
     assert.throws(
       () => backfillBucketsAgg.__private.parseCliArgs(['--granularity', '10']),
@@ -74,6 +105,34 @@ describe('backfill aggregate market buckets', () => {
       assert.deepEqual(capturedParams, [[
         'So11111111111111111111111111111111111111112',
       ], 15, 72]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('builds windowed aggregate backfill SQL without address pagination', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return { rows: [], rowCount: 11 };
+    };
+
+    try {
+      const start = new Date('2026-03-22T00:00:00.000Z');
+      const end = new Date('2026-03-23T00:00:00.000Z');
+      const rowCount = await backfillBucketsAgg.__private.backfillAggregateBucketsForWindow(30, start, end);
+
+      assert.equal(rowCount, 11);
+      assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
+      assert.match(capturedSql, /FROM token_market_buckets_1m b/);
+      assert.match(capturedSql, /b\.bucket_ts >= \$2::timestamptz/);
+      assert.match(capturedSql, /b\.bucket_ts < \$3::timestamptz/);
+      assert.doesNotMatch(capturedSql, /token_address = ANY/);
+      assert.deepEqual(capturedParams, [30, start, end]);
     } finally {
       db.query = originalQuery;
     }
