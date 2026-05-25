@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
+import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -1211,7 +1211,7 @@ function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppCo
 export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
   const overlayMode = resolveWorkspaceOverlayMode(state);
   const expandedSparklineAddress = String(state.ui.expandedSparklineAddress || '').trim();
-  const expandedSparkline = expandedSparklineAddress ? getTokenSparkline(state, expandedSparklineAddress) : null;
+  const expandedSparkline = expandedSparklineAddress ? getExpandedTokenSparkline(state, expandedSparklineAddress) : null;
   if (overlayMode === 'none') {
     return null;
   }
@@ -1301,7 +1301,7 @@ function resolveWorkspaceOverlayMode(state: AppState) {
   }
 
   const address = String(state.ui.expandedSparklineAddress || '').trim();
-  const sparkline = address ? getTokenSparkline(state, address) : null;
+  const sparkline = address ? getExpandedTokenSparkline(state, address) : null;
   const hasExpandedSparkline = Boolean(sparkline && Array.isArray(sparkline.series) && sparkline.series.length >= 2);
   return hasExpandedSparkline ? 'expanded-sparkline' : 'none';
 }
@@ -2076,7 +2076,7 @@ function clampMockTradingPercent(value: number) {
 
 function renderExpandedSparklineModal(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
-  const sparkline = getTokenSparkline(state, address);
+  const sparkline = getExpandedTokenSparkline(state, address);
   if (!sparkline) {
     return '';
   }
@@ -2101,10 +2101,10 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           </div>
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
-        <div class="expanded-sparkline-chart">
+        <div class="expanded-sparkline-chart${sparkline.loading ? ' is-loading' : ''}">
           ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs), liveMcap: token?.mcap ?? null })}
         </div>
-        <div class="expanded-sparkline-footnote">Updated ${escapeHtml(stats.updatedLabel)}. Hover for approximate market cap and time.</div>
+        <div class="expanded-sparkline-footnote">${sparkline.loading ? 'Loading full available history.' : `Updated ${escapeHtml(stats.updatedLabel)}.`} Hover for approximate market cap and time.</div>
       </div>
     </div>
   `;

@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -1229,10 +1229,11 @@ function getExpandedSparklineOverlaySnapshot(state: AppState) {
     return null;
   }
 
-  const sparkline = state.data.sparklineByAddress[address] || null;
+  const sparkline = getExpandedTokenSparkline(state, address);
   const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
   return {
     address,
+    loading: Boolean(sparkline?.loading),
     points: series.length,
     seriesKey: series.map((value) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : value)).join('|'),
   };

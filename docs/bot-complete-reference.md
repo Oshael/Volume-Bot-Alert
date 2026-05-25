@@ -449,6 +449,14 @@ Request shape:
   - `1m`
   - `5m`
 - default per-request limit is `30`
+- `GMGN_TRENDING_LIMIT` applies per request/interval, so `20` can return up to `20` `1m` rows plus up to `20` `5m` rows before address dedupe
+- `GMGN_DISCOVERY_INTERVAL_MS` controls how often a full discovery cycle starts; values near `5000ms` still spawn frequent `gmgn-cli market trending` subprocesses and can be CPU-heavy on small VPS hosts
+- safer CPU profile for an enabled GMGN worker:
+  - `GMGN_DISCOVERY_INTERVAL_MS=30000`
+  - `GMGN_REQUEST_WINDOW_MS=10000`
+  - `GMGN_REQUESTS_PER_WINDOW=2`
+  - `GMGN_TRENDING_LIMIT=20`
+- when host CPU appears saturated, check Linux CPU `st`/steal time and active `gmgn-cli market trending` processes before attributing load to Postgres cleanup
 - GMGN `1m` discovery is intentionally not trusted as a brand-new-token source
 
 Catalog/alert behavior:
@@ -905,7 +913,8 @@ Important:
   - the chart tooltip now labels the visual as `Mini chart`
   - compact mini charts render a translucent filled area under the line
   - hover inspection shows approximate market cap plus approximate bucket time for the selected point
-  - clicking a manual mini chart opens a compact expanded hologram popup for that same series
+  - clicking a manual mini chart opens a compact expanded hologram popup and loads a separate full-available-history sparkline for that token
+  - the expanded popup stays as a compressed sparkline, not candles
   - the expanded popup keeps the chart-focused layout and does not render projection/feixe lines
   - the visual span is `14d` max, but tokens younger than `14d` render only their real available lifespan
   - current age-adaptive granularity:
@@ -972,7 +981,8 @@ Reasons:
   - requested point budget is `336`
   - compact mini charts render a translucent filled area under the line
   - hover inspection shows approximate market cap plus approximate bucket time for the selected point
-  - clicking a routed mini chart opens the same compact expanded hologram popup used in `Manual Tokens`
+  - clicking a routed mini chart opens the same compact expanded hologram popup used in `Manual Tokens` and loads a separate full-available-history sparkline for that token
+  - the expanded popup stays as a compressed sparkline, not candles
   - visual span is `14d` max, with younger-token compression to the real available lifespan
   - current age-adaptive granularity:
     - `< 24h`: `1m`

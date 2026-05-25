@@ -137,6 +137,26 @@ function parseSparklineBatchRequest(body = {}) {
   };
 }
 
+function parseExpandedSparklineRequest(body = {}) {
+  const address = String(body.address || '').trim();
+  if (!isValidAddress(address)) {
+    return { ok: false, error: 'Invalid token address' };
+  }
+
+  const points = parseOptionalIntegerBodyField(body.points, 'points', { min: 120, max: 1000 });
+  if (!points.ok) {
+    return points;
+  }
+
+  return {
+    ok: true,
+    value: {
+      address,
+      points: points.value || 720,
+    },
+  };
+}
+
 router.use(authenticate);
 router.use(requireTrustedOrigin);
 
@@ -305,6 +325,30 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
   } catch (err) {
     console.error('POST /catalog/sparklines error:', err.message);
     res.status(500).json({ error: 'Failed to load token sparklines' });
+  }
+});
+
+router.post('/sparklines/expanded', catalogReadLimiter, async (req, res) => {
+  const parsed = parseExpandedSparklineRequest(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  try {
+    const item = await tokenMarketBucket1m.listExpandedSparklineByAddress(
+      parsed.value.address,
+      { points: parsed.value.points }
+    );
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      points: parsed.value.points,
+      count: item ? 1 : 0,
+      item,
+    });
+  } catch (err) {
+    console.error('POST /catalog/sparklines/expanded error:', err.message);
+    res.status(500).json({ error: 'Failed to load expanded token sparkline' });
   }
 });
 

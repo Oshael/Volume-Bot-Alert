@@ -158,6 +158,7 @@ export interface TokenSparklineEntry {
   coverageRatio?: number | null;
   effectiveHours?: number | null;
   granularityMinutes?: number | null;
+  firstBucketAt?: string | null;
   latestBucketAt?: string | null;
   generatedAt?: string | null;
   hours?: number;
@@ -560,6 +561,7 @@ export interface AppState {
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
+    expandedSparklineByAddress: Record<string, TokenSparklineEntry>;
     alertSparklineById: Record<string, TokenSparklineEntry>;
     mockTradingWallets: MockTradingWalletEntry[];
     mockTradingSummary: MockTradingSummaryEntry | null;
@@ -725,6 +727,7 @@ export function createAppState(): AppState {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
+      expandedSparklineByAddress: {},
       alertSparklineById: {},
       mockTradingWallets: [],
       mockTradingSummary: null,
@@ -953,6 +956,11 @@ export function getMockTradingSummaryView(state: AppState) {
 
 export function getTokenSparkline(state: AppState, address: string) {
   return state.data.sparklineByAddress[String(address || '').trim()] || null;
+}
+
+export function getExpandedTokenSparkline(state: AppState, address: string) {
+  const normalized = String(address || '').trim();
+  return state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || null;
 }
 
 export function getManualTokens(state: AppState) {

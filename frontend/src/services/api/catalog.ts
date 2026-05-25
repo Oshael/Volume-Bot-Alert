@@ -235,6 +235,7 @@ export interface TokenSparklineItem {
   coverageRatio?: number | null;
   effectiveHours?: number | null;
   granularityMinutes?: number | null;
+  firstBucketAt?: string | null;
   latestBucketAt?: string | null;
   series: number[];
 }
@@ -246,6 +247,13 @@ export interface TokenSparklinesPayload {
   granularityMinutes?: number | null;
   count: number;
   items: TokenSparklineItem[];
+}
+
+export interface ExpandedTokenSparklinePayload {
+  generatedAt?: string | null;
+  points?: number;
+  count: number;
+  item: TokenSparklineItem | null;
 }
 
 export interface BidZoneCandidate {
@@ -430,11 +438,44 @@ export function fetchTokenSparklines(
       coverageRatio: item.coverageRatio ?? null,
       effectiveHours: item.effectiveHours ?? null,
       granularityMinutes: Number(item.granularityMinutes) || Number(response.granularityMinutes) || 30,
+      firstBucketAt: item.firstBucketAt ?? null,
       latestBucketAt: item.latestBucketAt ?? null,
       series: Array.isArray(item.series)
         ? item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))
         : [],
     })) : [],
+  }));
+}
+
+export function fetchExpandedTokenSparkline(
+  address: string,
+  options?: { points?: number },
+  token?: string | null,
+) {
+  return apiFetch<ExpandedTokenSparklinePayload>('/api/catalog/sparklines/expanded', {
+    method: 'POST',
+    body: JSON.stringify({
+      address,
+      points: options?.points ?? 720,
+    }),
+    token,
+  }).then((response) => ({
+    generatedAt: response.generatedAt ?? null,
+    points: Number(response.points) || 720,
+    count: Number(response.count) || 0,
+    item: response.item ? {
+      address: response.item.address,
+      pairAddress: response.item.pairAddress ?? null,
+      bucketCount: Number(response.item.bucketCount) || 0,
+      coverageRatio: response.item.coverageRatio ?? null,
+      effectiveHours: response.item.effectiveHours ?? null,
+      granularityMinutes: Number(response.item.granularityMinutes) || 30,
+      firstBucketAt: response.item.firstBucketAt ?? null,
+      latestBucketAt: response.item.latestBucketAt ?? null,
+      series: Array.isArray(response.item.series)
+        ? response.item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+        : [],
+    } : null,
   }));
 }
 

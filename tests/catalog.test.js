@@ -666,6 +666,50 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('returns expanded sparkline for one requested address', async () => {
+    const originalListExpandedSparklineByAddress = tokenMarketBucket1m.listExpandedSparklineByAddress;
+    let capturedAddress = null;
+    let capturedOptions = null;
+
+    tokenMarketBucket1m.listExpandedSparklineByAddress = async (address, options) => {
+      capturedAddress = address;
+      capturedOptions = options;
+      return {
+        address: VALID_ADDR,
+        pairAddress: 'pair_test_123',
+        bucketCount: 1000,
+        coverageRatio: 0.98,
+        effectiveHours: 456,
+        granularityMinutes: 30,
+        firstBucketAt: '2026-04-01T00:00:00.000Z',
+        latestBucketAt: '2026-04-20T00:00:00.000Z',
+        series: [100, 140, 120],
+      };
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          address: VALID_ADDR,
+          points: 720,
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(capturedAddress, VALID_ADDR);
+      assert.deepEqual(capturedOptions, { points: 720 });
+      assert.equal(res.body.points, 720);
+      assert.equal(res.body.count, 1);
+      assert.equal(res.body.item.address, VALID_ADDR);
+      assert.equal(res.body.item.firstBucketAt, '2026-04-01T00:00:00.000Z');
+      assert.equal(res.body.item.granularityMinutes, 30);
+      assert.deepEqual(res.body.item.series, [100, 140, 120]);
+    } finally {
+      tokenMarketBucket1m.listExpandedSparklineByAddress = originalListExpandedSparklineByAddress;
+    }
+  });
+
   it('serves stored bid-zone snapshots for default monitor parameters', async () => {
     const originalGetLatest = tokenMarketBidZoneRun.getLatestCompletedRunWithResults;
     const originalGetStatus = bidZoneWorker.getStatus;

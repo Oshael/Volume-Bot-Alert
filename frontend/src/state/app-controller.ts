@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -159,6 +159,7 @@ const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
+const EXPANDED_SPARKLINE_POINT_COUNT = 720;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
@@ -727,6 +728,7 @@ export function createAppController(): AppController {
   let supplementalMeteoraRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
+  const expandedSparklineRequests = new Set<string>();
   let historyBootstrapRefreshInFlight = false;
   let historyBootstrapInFlightRequestKey = '';
   let queuedHistoryBootstrapRefresh: HistoryBootstrapRefreshOptions | null = null;
@@ -5603,16 +5605,8 @@ export function createAppController(): AppController {
 
   function buildWorkspaceSparklineLoadingEntry(address: string, existing?: TokenSparklineEntry) {
     return {
+      ...(existing || { address, series: [] }),
       address,
-      pairAddress: existing?.pairAddress ?? null,
-      bucketCount: existing?.bucketCount ?? 0,
-      coverageRatio: existing?.coverageRatio ?? null,
-      effectiveHours: existing?.effectiveHours ?? null,
-      granularityMinutes: existing?.granularityMinutes ?? null,
-      latestBucketAt: existing?.latestBucketAt ?? null,
-      generatedAt: existing?.generatedAt ?? null,
-      hours: existing?.hours,
-      points: existing?.points,
       series: [],
       loading: true,
     } satisfies TokenSparklineEntry;
@@ -5697,6 +5691,7 @@ export function createAppController(): AppController {
       coverageRatio: item.coverageRatio ?? null,
       effectiveHours: item.effectiveHours ?? null,
       granularityMinutes: item.granularityMinutes ?? payload.granularityMinutes ?? SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
+      firstBucketAt: item.firstBucketAt ?? null,
       latestBucketAt: item.latestBucketAt ?? null,
       generatedAt: payload.generatedAt ?? null,
       hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
@@ -5728,6 +5723,101 @@ export function createAppController(): AppController {
       return;
     }
     emit('manual', 'recent', 'old-week');
+  }
+
+  function buildExpandedSparklineCacheEntry(
+    item: TokenSparklinesPayload['items'][number] | null | undefined,
+    generatedAt?: string | null,
+    points?: number | null,
+  ) {
+    const address = String(item?.address || '').trim();
+    if (!address) {
+      return null;
+    }
+
+    const series = normalizeAlertSparklineSeries(item?.series);
+    return {
+      address,
+      pairAddress: item?.pairAddress ?? null,
+      bucketCount: Number(item?.bucketCount) || 0,
+      coverageRatio: toOptionalSparklineNumber(item?.coverageRatio),
+      effectiveHours: toOptionalSparklineNumber(item?.effectiveHours),
+      granularityMinutes: resolveSparklineCount(item?.granularityMinutes, SPARKLINE_GRANULARITY_FALLBACK_MINUTES),
+      firstBucketAt: toOptionalSparklineString(item?.firstBucketAt),
+      latestBucketAt: toOptionalSparklineString(item?.latestBucketAt),
+      generatedAt: toOptionalSparklineString(generatedAt),
+      points: resolveSparklineCount(points, EXPANDED_SPARKLINE_POINT_COUNT),
+      series,
+      loading: false,
+    } satisfies TokenSparklineEntry;
+  }
+
+  function setExpandedSparklineLoading(address: string) {
+    const compact = state.data.sparklineByAddress[address];
+    const existing = state.data.expandedSparklineByAddress[address];
+    if (existing?.loading) {
+      return;
+    }
+
+    state.data.expandedSparklineByAddress = {
+      ...state.data.expandedSparklineByAddress,
+      [address]: {
+        ...(existing || compact || { address, series: [] }),
+        address,
+        loading: true,
+      },
+    };
+  }
+
+  async function refreshExpandedSparkline(address: string, token?: string | null) {
+    const normalized = String(address || '').trim();
+    const requestToken = token ?? state.session.token;
+    if (!normalized || !requestToken || expandedSparklineRequests.has(normalized)) {
+      return;
+    }
+
+    expandedSparklineRequests.add(normalized);
+    try {
+      const payload = await fetchExpandedTokenSparkline(normalized, {
+        points: EXPANDED_SPARKLINE_POINT_COUNT,
+      }, requestToken);
+      if (state.session.token !== requestToken || state.ui.expandedSparklineAddress !== normalized) {
+        return;
+      }
+
+      const entry = buildExpandedSparklineCacheEntry(payload.item, payload.generatedAt, payload.points);
+      if (!entry || !hasRenderableSparklineSeries(entry)) {
+        state.data.expandedSparklineByAddress = {
+          ...state.data.expandedSparklineByAddress,
+          [normalized]: {
+            ...(state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || { address: normalized, series: [] }),
+            loading: false,
+          },
+        };
+        emit('overlay');
+        return;
+      }
+
+      state.data.expandedSparklineByAddress = {
+        ...state.data.expandedSparklineByAddress,
+        [normalized]: entry,
+      };
+      emit('overlay');
+    } catch (error) {
+      if (state.ui.expandedSparklineAddress === normalized) {
+        state.data.expandedSparklineByAddress = {
+          ...state.data.expandedSparklineByAddress,
+          [normalized]: {
+            ...(state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || { address: normalized, series: [] }),
+            loading: false,
+          },
+        };
+        emit('overlay');
+      }
+      console.warn('[AppController] Failed to refresh expanded sparkline:', error instanceof Error ? error.message : error);
+    } finally {
+      expandedSparklineRequests.delete(normalized);
+    }
   }
 
   function broadcastHistorySparklineSnapshot(payload: TokenSparklinesPayload) {
@@ -5791,6 +5881,7 @@ export function createAppController(): AppController {
         item?.granularityMinutes ?? payload.granularityMinutes,
         SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
       ),
+      firstBucketAt: toOptionalSparklineString(item?.firstBucketAt),
       latestBucketAt: toOptionalSparklineString(item?.latestBucketAt),
       generatedAt: toOptionalSparklineString(payload.generatedAt),
       hours: resolveSparklineCount(payload.hours, SPARKLINE_WINDOW_HOURS),
@@ -6805,6 +6896,7 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
+      expandedSparklineByAddress: {},
       alertSparklineById: {},
       mockTradingWallets: [],
       mockTradingSummary: null,
@@ -8568,14 +8660,16 @@ export function createAppController(): AppController {
         return;
       }
 
-      const sparkline = state.data.sparklineByAddress[normalized];
+      const sparkline = getExpandedTokenSparkline(state, normalized);
       if (!hasRenderableSparklineSeries(sparkline)) {
         return;
       }
 
       state.ui.expandedSparklineAddress = normalized;
       state.ui.mockTradingPnlAddress = null;
+      setExpandedSparklineLoading(normalized);
       emit('overlay');
+      void refreshExpandedSparkline(normalized);
     },
     closeExpandedSparkline() {
       if (!state.ui.expandedSparklineAddress) {

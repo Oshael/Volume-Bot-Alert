@@ -563,6 +563,64 @@ describe('token market 1m bucket helpers', () => {
     }
   });
 
+  it('builds expanded sparkline from all available market buckets for one address', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (calls.length === 1) {
+        return {
+          rows: [
+            {
+              first_bucket_at: '2026-04-01T00:00:00.000Z',
+              latest_bucket_at: '2026-04-20T00:00:00.000Z',
+              bucket_count: 5000,
+            },
+          ],
+        };
+      }
+
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-01T00:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '100',
+          },
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            bucket_ts: '2026-04-20T00:00:00.000Z',
+            pair_address: 'So11111111111111111111111111111111111111112',
+            close_mcap: '220',
+          },
+        ],
+      };
+    };
+
+    try {
+      const row = await tokenMarketBucket1m.listExpandedSparklineByAddress(
+        'So11111111111111111111111111111111111111112',
+        { points: 720 }
+      );
+
+      assert.equal(calls.length, 2);
+      assert.match(calls[0].sql, /MIN\(bucket_ts\) AS first_bucket_at/);
+      assert.deepEqual(calls[0].params, ['So11111111111111111111111111111111111111112']);
+      assert.match(calls[1].sql, /FROM token_market_buckets_1m/);
+      assert.doesNotMatch(calls[1].sql, /NOW\(\) -/);
+      assert.deepEqual(calls[1].params, ['So11111111111111111111111111111111111111112', 30]);
+      assert.equal(row.address, 'So11111111111111111111111111111111111111112');
+      assert.equal(row.granularityMinutes, 30);
+      assert.equal(row.firstBucketAt, '2026-04-01T00:00:00.000Z');
+      assert.equal(row.latestBucketAt, '2026-04-20T00:00:00.000Z');
+      assert.equal(row.series.length, 720);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('does not fall back to 1m sparkline rows by default when aggregate coverage is too short', async () => {
     const originalQuery = db.query;
     const calls = [];

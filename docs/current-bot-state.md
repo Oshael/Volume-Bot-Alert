@@ -997,6 +997,14 @@ Current monitored UI behavior:
   - `2` trending requests per `2s` window by default
   - intervals: `1m`, `5m`
   - default per-request limit: `30`
+  - `GMGN_TRENDING_LIMIT` applies per request/interval, so `20` can return up to `20` `1m` rows plus up to `20` `5m` rows before address dedupe
+  - `GMGN_DISCOVERY_INTERVAL_MS` controls how often a full discovery cycle starts; values near `5000ms` still spawn frequent `gmgn-cli market trending` subprocesses and can be CPU-heavy on small VPS hosts
+  - safer CPU profile for an enabled GMGN worker:
+    - `GMGN_DISCOVERY_INTERVAL_MS=30000`
+    - `GMGN_REQUEST_WINDOW_MS=10000`
+    - `GMGN_REQUESTS_PER_WINDOW=2`
+    - `GMGN_TRENDING_LIMIT=20`
+  - when host CPU appears saturated, check Linux CPU `st`/steal time and active `gmgn-cli market trending` processes before attributing load to Postgres cleanup
 - Current behavior:
   - normalizes GMGN trending rows into catalog snapshots
   - skips brand-new tokens that appeared only in GMGN `1m` trending, because that surface proved too polluted for catalog discovery
@@ -1391,7 +1399,8 @@ Current security priority order:
   - chart tooltip now identifies the visual as `Mini chart`
   - compact mini charts render a translucent filled area under the line
   - hover shows approximate market cap + approximate bucket time for the inspected point
-  - clicking a manual-row mini chart opens a compact expanded hologram popup for the same series
+  - clicking a manual-row mini chart opens a compact expanded hologram popup and loads a separate full-available-history sparkline for that token
+  - the expanded popup remains a sparkline, not a candle chart, and compresses the available bucket history into a bounded point budget
   - the expanded popup is chart-only; it no longer uses projection/feixe lines from the clicked row
   - max chart window is `14d`, but younger tokens use their real available lifespan instead of rendering a long empty left side
   - current age-adaptive chart granularity:
@@ -1431,7 +1440,8 @@ Current security priority order:
   - requested point budget is `336`
   - compact mini charts render a translucent filled area under the line
   - hover shows approximate market cap + approximate bucket time for the inspected point
-  - clicking a routed mini chart opens the same compact expanded hologram popup used by manual tokens
+  - clicking a routed mini chart opens the same compact expanded hologram popup used by manual tokens and loads a separate full-available-history sparkline for that token
+  - the expanded popup remains a sparkline, not a candle chart, and compresses the available bucket history into a bounded point budget
   - max chart window is `14d`
   - younger tokens compress to their real lifespan inside that `14d` ceiling
   - current age-adaptive chart granularity:

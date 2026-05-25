@@ -2406,6 +2406,10 @@ a {
   z-index: 1;
 }
 
+.expanded-sparkline-chart.is-loading .sparkline-wrap {
+  opacity: 0.64;
+}
+
 .expanded-sparkline-footnote {
   color: #7593af;
   font-size: 9px;
