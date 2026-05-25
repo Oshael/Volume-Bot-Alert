@@ -30,6 +30,36 @@ function normalizeLabel(label) {
   return label == null ? null : String(label).trim() || null;
 }
 
+function isAutomaticBlockRequest(createdBy) {
+  return createdBy == null || String(createdBy).trim() === '';
+}
+
+function buildProtectedAutoBlockError(address, protection) {
+  const err = new Error(`Automatic admin block prevented for protected token ${address}`);
+  err.code = 'PROTECTED_RISK_REVIEW_AUTO_BLOCK';
+  err.tokenAddress = address;
+  err.riskReviewLabel = protection?.label || null;
+  err.riskReviewSource = protection?.source || null;
+  return err;
+}
+
+async function getAutoBlockProtection(address) {
+  const { rows } = await db.query(
+    `SELECT label, source
+     FROM token_risk_reviews
+     WHERE token_address = $1
+     LIMIT 1`,
+    [address]
+  );
+  const row = rows[0] || null;
+  const label = String(row?.label || '').trim().toLowerCase();
+  const source = String(row?.source || '').trim().toLowerCase();
+  if (label === 'valid' || source === 'manual') {
+    return { label, source };
+  }
+  return null;
+}
+
 async function captureEvidenceSafely({ address, label, createdBy, evidence }) {
   if (!evidence || typeof evidence !== 'object') {
     return null;
@@ -52,6 +82,13 @@ async function add({ address, label = null, createdBy = null, evidence = null })
   const normalizedAddress = normalizeAddress(address);
   if (!isValidAddress(normalizedAddress)) {
     throw new Error('Invalid token address');
+  }
+
+  if (isAutomaticBlockRequest(createdBy)) {
+    const protection = await getAutoBlockProtection(normalizedAddress);
+    if (protection) {
+      throw buildProtectedAutoBlockError(normalizedAddress, protection);
+    }
   }
 
   const { rows } = await db.query(
@@ -114,7 +151,11 @@ async function listAddressesWithCleanupArtifacts(limit = 50, options = {}) {
   const { rows } = await db.query(
     `SELECT ab.address
      FROM admin_blocked_tokens ab
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = ab.address
      WHERE ab.created_at <= NOW() - ($2 * INTERVAL '1 millisecond')
+       AND COALESCE(LOWER(trr.label), '') <> 'valid'
+       AND COALESCE(LOWER(trr.source), '') <> 'manual'
        AND (
          EXISTS (
            SELECT 1
@@ -156,7 +197,10 @@ module.exports = {
   listByAddresses,
   listAddressesWithCleanupArtifacts,
   __private: {
+    buildProtectedAutoBlockError,
     captureEvidenceSafely,
+    getAutoBlockProtection,
+    isAutomaticBlockRequest,
     normalizeAddress,
     normalizeLabel,
   },
