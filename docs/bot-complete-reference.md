@@ -362,7 +362,10 @@ Cadence:
 - blocked-token artifact cleanup:
   - every `15m` while artifact backlog remains
   - every `60m` after a run finds no blocked artifacts
-  - deletes up to `25` blocked-token artifact sets per run
+  - processes `1` blocked address per run by default
+  - deletes in bounded chunks of `250` rows per table by default, with a `2000ms` statement timeout per chunk
+  - runs table cleanup sequentially instead of in parallel, so cleanup cannot fan out into multiple long-running bucket deletes
+  - tuning env vars: `CATALOG_CLEANUP_BLOCKED_ARTIFACT_ADDRESS_LIMIT`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_CHUNK_LIMIT`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_INTERVAL_MS`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_IDLE_INTERVAL_MS`
 
 Cleanup policy:
 - protected tokens are excluded:
@@ -390,7 +393,7 @@ Operational effect:
   - deletes persisted `token_market_buckets_1m`
   - deletes legacy `token_market_snapshots`
   - deletes `token_meteora_snapshots` for archived addresses
-- blocked-token artifact cleanup removes market buckets, volume buckets, and Meteora snapshots for old admin-blocked addresses on a bounded maintenance cadence
+- blocked-token artifact cleanup removes market buckets, volume buckets, aggregate market buckets, and Meteora snapshots for old admin-blocked addresses on a bounded incremental maintenance cadence
 
 #### Dex discovery worker
 File:

@@ -283,6 +283,30 @@ async function deleteByAddresses(addresses) {
   return result.rowCount || 0;
 }
 
+async function deleteChunkByAddress(address, options = {}) {
+  const normalized = String(address || '').trim();
+  if (!isValidAddress(normalized)) {
+    return 0;
+  }
+
+  const limit = Math.max(1, Math.min(Math.trunc(Number(options.limit) || 250), 1000));
+  const statementTimeoutMs = Math.max(0, Math.trunc(Number(options.statementTimeoutMs) || 0));
+  const result = await db.queryWithStatementTimeout(
+    `WITH doomed AS (
+       SELECT ctid
+       FROM token_meteora_snapshots
+       WHERE token_address = $1
+       LIMIT $2
+     )
+     DELETE FROM token_meteora_snapshots
+     WHERE ctid IN (SELECT ctid FROM doomed)`,
+    [normalized, limit],
+    statementTimeoutMs
+  );
+
+  return result.rowCount || 0;
+}
+
 module.exports = {
   insertSnapshot,
   getLatestByAddresses,
@@ -291,4 +315,5 @@ module.exports = {
   listBaselineTvlsByAddresses,
   listLatestSummaryByAddresses,
   deleteByAddresses,
+  deleteChunkByAddress,
 };

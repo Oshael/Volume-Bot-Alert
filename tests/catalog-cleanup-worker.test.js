@@ -46,26 +46,29 @@ describe('catalog cleanup worker archive scheduling', () => {
   });
 
   it('deletes blocked token artifacts from all cleanup-owned history tables', async () => {
-    const originalMarketDelete = tokenMarketBucket1m.deleteByAddresses;
-    const originalVolumeDelete = tokenMarketVolumeBucket1m.deleteByAddresses;
-    const originalMeteoraDelete = tokenMeteoraSnapshot.deleteByAddresses;
+    const originalMarketDelete = tokenMarketBucket1m.deleteChunkByAddress;
+    const originalVolumeDelete = tokenMarketVolumeBucket1m.deleteChunkByAddress;
+    const originalMeteoraDelete = tokenMeteoraSnapshot.deleteChunkByAddress;
     const calls = [];
     const addresses = [
       'So11111111111111111111111111111111111111112',
       'So11111111111111111111111111111111111111113',
     ];
 
-    tokenMarketBucket1m.deleteByAddresses = async (items) => {
-      calls.push(['market', items]);
-      return 12;
+    tokenMarketBucket1m.deleteChunkByAddress = async (address, options) => {
+      calls.push(['market', address, options]);
+      return {
+        deletedMarketBucketsAgg: 3,
+        deletedMarketBuckets1m: 6,
+      };
     };
-    tokenMarketVolumeBucket1m.deleteByAddresses = async (items) => {
-      calls.push(['volume', items]);
-      return 10;
+    tokenMarketVolumeBucket1m.deleteChunkByAddress = async (address, options) => {
+      calls.push(['volume', address, options]);
+      return 5;
     };
-    tokenMeteoraSnapshot.deleteByAddresses = async (items) => {
-      calls.push(['meteora', items]);
-      return 2;
+    tokenMeteoraSnapshot.deleteChunkByAddress = async (address, options) => {
+      calls.push(['meteora', address, options]);
+      return 1;
     };
 
     try {
@@ -73,19 +76,27 @@ describe('catalog cleanup worker archive scheduling', () => {
 
       assert.deepEqual(summary, {
         blockedArtifactTokens: 2,
+        deletedMarketBucketsAgg: 6,
         deletedMarketBuckets1m: 12,
         deletedMarketVolumeBuckets1m: 10,
         deletedMeteoraSnapshots: 2,
       });
-      assert.equal(calls.length, 3);
-      assert.deepEqual(calls.map(([name]) => name).sort(), ['market', 'meteora', 'volume']);
-      for (const [, items] of calls) {
-        assert.deepEqual(items, addresses);
+      assert.deepEqual(calls.map(([name, address]) => [name, address]), [
+        ['market', addresses[0]],
+        ['volume', addresses[0]],
+        ['meteora', addresses[0]],
+        ['market', addresses[1]],
+        ['volume', addresses[1]],
+        ['meteora', addresses[1]],
+      ]);
+      for (const [, , options] of calls) {
+        assert.equal(options.limit, 250);
+        assert.equal(options.statementTimeoutMs, 2000);
       }
     } finally {
-      tokenMarketBucket1m.deleteByAddresses = originalMarketDelete;
-      tokenMarketVolumeBucket1m.deleteByAddresses = originalVolumeDelete;
-      tokenMeteoraSnapshot.deleteByAddresses = originalMeteoraDelete;
+      tokenMarketBucket1m.deleteChunkByAddress = originalMarketDelete;
+      tokenMarketVolumeBucket1m.deleteChunkByAddress = originalVolumeDelete;
+      tokenMeteoraSnapshot.deleteChunkByAddress = originalMeteoraDelete;
     }
   });
 });

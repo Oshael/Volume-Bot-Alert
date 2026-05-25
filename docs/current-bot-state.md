@@ -948,7 +948,10 @@ Current monitored UI behavior:
   - blocked-token artifact cleanup:
     - every `15m` while artifact backlog remains
     - every `60m` after a run finds no blocked artifacts
-    - deletes up to `25` blocked-token artifact sets per run
+    - processes `1` blocked address per run by default
+    - deletes in bounded chunks of `250` rows per table by default, with a `2000ms` statement timeout per chunk
+    - runs bucket, volume, and Meteora cleanup sequentially instead of in parallel
+    - tuning env vars: `CATALOG_CLEANUP_BLOCKED_ARTIFACT_ADDRESS_LIMIT`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_CHUNK_LIMIT`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_INTERVAL_MS`, `CATALOG_CLEANUP_BLOCKED_ARTIFACT_IDLE_INTERVAL_MS`
 - Purpose:
   - quarantine weak discovery tokens
   - soft archive stale/low-value tokens

@@ -5,12 +5,37 @@ const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-
 const tokenMeteoraSnapshot = require('../models/token-meteora-snapshot');
 const workerRuntimeState = require('../models/worker-runtime-state');
 
+function readIntEnv(name, fallback, min, max) {
+  const parsed = Math.trunc(Number(process.env[name]));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(parsed, max));
+}
+
 const QUARANTINE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
 const ARCHIVE_LOOP_INTERVAL_MS = 48 * 60 * 60 * 1000;
-const BLOCKED_ARTIFACT_LOOP_INTERVAL_MS = 15 * 60 * 1000;
-const BLOCKED_ARTIFACT_IDLE_INTERVAL_MS = 60 * 60 * 1000;
+const BLOCKED_ARTIFACT_LOOP_INTERVAL_MS = readIntEnv(
+  'CATALOG_CLEANUP_BLOCKED_ARTIFACT_INTERVAL_MS',
+  15 * 60 * 1000,
+  10 * 1000,
+  60 * 60 * 1000
+);
+const BLOCKED_ARTIFACT_IDLE_INTERVAL_MS = readIntEnv(
+  'CATALOG_CLEANUP_BLOCKED_ARTIFACT_IDLE_INTERVAL_MS',
+  60 * 60 * 1000,
+  60 * 1000,
+  24 * 60 * 60 * 1000
+);
 const ARCHIVE_LIMIT = 400;
-const BLOCKED_ARTIFACT_LIMIT = 25;
+const BLOCKED_ARTIFACT_ADDRESS_LIMIT = readIntEnv('CATALOG_CLEANUP_BLOCKED_ARTIFACT_ADDRESS_LIMIT', 1, 1, 25);
+const BLOCKED_ARTIFACT_CHUNK_LIMIT = readIntEnv('CATALOG_CLEANUP_BLOCKED_ARTIFACT_CHUNK_LIMIT', 250, 25, 1000);
+const BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS = readIntEnv(
+  'CATALOG_CLEANUP_BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS',
+  2000,
+  250,
+  30 * 1000
+);
 const BLOCKED_ARTIFACT_MIN_BLOCKED_AGE_MS = 24 * 60 * 60 * 1000;
 const QUARANTINE_RECHECK_MS = 6 * 60 * 60 * 1000;
 const SOFT_ARCHIVE_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
@@ -41,6 +66,7 @@ let status = {
   totalDeletedMeteoraSnapshots: 0,
   totalBlockedArtifactTokens: 0,
   totalDeletedBlockedMarketBuckets1m: 0,
+  totalDeletedBlockedMarketBucketsAgg: 0,
   totalDeletedBlockedMarketVolumeBuckets1m: 0,
   totalDeletedBlockedMeteoraSnapshots: 0,
   totalErrors: 0,
@@ -146,20 +172,33 @@ async function deleteBlockedArtifactsForAddresses(addresses) {
   if (!blockedAddresses.length) {
     return {
       blockedArtifactTokens: 0,
+      deletedMarketBucketsAgg: 0,
       deletedMarketBuckets1m: 0,
       deletedMarketVolumeBuckets1m: 0,
       deletedMeteoraSnapshots: 0,
     };
   }
 
-  const [deletedMarketBuckets1m, deletedMarketVolumeBuckets1m, deletedMeteoraSnapshots] = await Promise.all([
-    tokenMarketBucket1m.deleteByAddresses(blockedAddresses),
-    tokenMarketVolumeBucket1m.deleteByAddresses(blockedAddresses),
-    tokenMeteoraSnapshot.deleteByAddresses(blockedAddresses),
-  ]);
+  let deletedMarketBucketsAgg = 0;
+  let deletedMarketBuckets1m = 0;
+  let deletedMarketVolumeBuckets1m = 0;
+  let deletedMeteoraSnapshots = 0;
+  const options = {
+    limit: BLOCKED_ARTIFACT_CHUNK_LIMIT,
+    statementTimeoutMs: BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS,
+  };
+
+  for (const address of blockedAddresses) {
+    const marketSummary = await tokenMarketBucket1m.deleteChunkByAddress(address, options);
+    deletedMarketBucketsAgg += marketSummary.deletedMarketBucketsAgg || 0;
+    deletedMarketBuckets1m += marketSummary.deletedMarketBuckets1m || 0;
+    deletedMarketVolumeBuckets1m += await tokenMarketVolumeBucket1m.deleteChunkByAddress(address, options);
+    deletedMeteoraSnapshots += await tokenMeteoraSnapshot.deleteChunkByAddress(address, options);
+  }
 
   return {
     blockedArtifactTokens: blockedAddresses.length,
+    deletedMarketBucketsAgg,
     deletedMarketBuckets1m,
     deletedMarketVolumeBuckets1m,
     deletedMeteoraSnapshots,
@@ -172,7 +211,7 @@ async function runBlockedArtifactCleanupOnce() {
   status.lastBlockedArtifactRunAt = new Date().toISOString();
 
   try {
-    const blockedAddresses = await adminBlockedToken.listAddressesWithCleanupArtifacts(BLOCKED_ARTIFACT_LIMIT, {
+    const blockedAddresses = await adminBlockedToken.listAddressesWithCleanupArtifacts(BLOCKED_ARTIFACT_ADDRESS_LIMIT, {
       minBlockedAgeMs: BLOCKED_ARTIFACT_MIN_BLOCKED_AGE_MS,
     });
     const summary = await deleteBlockedArtifactsForAddresses(blockedAddresses);
@@ -180,13 +219,14 @@ async function runBlockedArtifactCleanupOnce() {
     status.blockedArtifactTokens = summary.blockedArtifactTokens;
     status.totalBlockedArtifactTokens += summary.blockedArtifactTokens;
     status.totalDeletedBlockedMarketBuckets1m += summary.deletedMarketBuckets1m;
+    status.totalDeletedBlockedMarketBucketsAgg += summary.deletedMarketBucketsAgg;
     status.totalDeletedBlockedMarketVolumeBuckets1m += summary.deletedMarketVolumeBuckets1m;
     status.totalDeletedBlockedMeteoraSnapshots += summary.deletedMeteoraSnapshots;
     status.lastBlockedArtifactSummary = summary;
 
     if (summary.blockedArtifactTokens > 0) {
       console.log(
-        `[CatalogCleanupWorker] BlockedArtifactTokens=${summary.blockedArtifactTokens} deletedMarketBuckets1m=${summary.deletedMarketBuckets1m} deletedMarketVolumeBuckets1m=${summary.deletedMarketVolumeBuckets1m} deletedMeteoraSnapshots=${summary.deletedMeteoraSnapshots} limit=${BLOCKED_ARTIFACT_LIMIT} loop=blocked-artifacts intervalMs=${BLOCKED_ARTIFACT_LOOP_INTERVAL_MS}`
+        `[CatalogCleanupWorker] BlockedArtifactTokens=${summary.blockedArtifactTokens} deletedMarketBucketsAgg=${summary.deletedMarketBucketsAgg} deletedMarketBuckets1m=${summary.deletedMarketBuckets1m} deletedMarketVolumeBuckets1m=${summary.deletedMarketVolumeBuckets1m} deletedMeteoraSnapshots=${summary.deletedMeteoraSnapshots} addressLimit=${BLOCKED_ARTIFACT_ADDRESS_LIMIT} chunkLimit=${BLOCKED_ARTIFACT_CHUNK_LIMIT} statementTimeoutMs=${BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS} loop=blocked-artifacts intervalMs=${BLOCKED_ARTIFACT_LOOP_INTERVAL_MS}`
       );
     }
   } catch (err) {

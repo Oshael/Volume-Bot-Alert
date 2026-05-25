@@ -1497,6 +1497,54 @@ async function deleteByAddresses(addresses) {
   return result.rowCount || 0;
 }
 
+async function deleteChunkByAddress(address, options = {}) {
+  const normalized = String(address || '').trim();
+  if (!isValidAddress(normalized)) {
+    return {
+      deletedMarketBucketsAgg: 0,
+      deletedMarketBuckets1m: 0,
+    };
+  }
+
+  const limit = Math.max(1, Math.min(Math.trunc(Number(options.limit) || 250), 1000));
+  const statementTimeoutMs = Math.max(0, Math.trunc(Number(options.statementTimeoutMs) || 0));
+  const aggResult = await db.queryWithStatementTimeout(
+    `WITH doomed AS (
+       SELECT ctid
+       FROM token_market_buckets_agg
+       WHERE token_address = $1
+       LIMIT $2
+     )
+     DELETE FROM token_market_buckets_agg
+     WHERE ctid IN (SELECT ctid FROM doomed)`,
+    [normalized, limit],
+    statementTimeoutMs
+  );
+  const bucketResult = await db.queryWithStatementTimeout(
+    `WITH doomed AS (
+       SELECT ctid
+       FROM token_market_buckets_1m
+       WHERE token_address = $1
+       LIMIT $2
+     )
+     DELETE FROM token_market_buckets_1m
+     WHERE ctid IN (SELECT ctid FROM doomed)`,
+    [normalized, limit],
+    statementTimeoutMs
+  );
+  const deletedMarketBucketsAgg = aggResult.rowCount || 0;
+  const deletedMarketBuckets1m = bucketResult.rowCount || 0;
+
+  if (deletedMarketBucketsAgg > 0 || deletedMarketBuckets1m > 0) {
+    invalidateSparklineCacheForAddresses([normalized]);
+  }
+
+  return {
+    deletedMarketBucketsAgg,
+    deletedMarketBuckets1m,
+  };
+}
+
 async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   const unique = Array.from(
     new Set(
@@ -2020,6 +2068,7 @@ module.exports = {
   listHistoryByAddress,
   listSparklineByAddresses,
   deleteByAddresses,
+  deleteChunkByAddress,
   listCurrentAndBaselineByAddresses,
   listHighCapDumpDetectionsByAddresses,
   listBidZoneCandidates,
