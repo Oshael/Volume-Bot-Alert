@@ -85,6 +85,13 @@ type SearchInputDraft = {
   selectionEnd: number | null;
 };
 
+type MockTradingBuyTicketDraft = {
+  address: string;
+  notionalSol: string;
+  takeProfitMcapUsd: string;
+  takeProfitSellPercent: string;
+};
+
 type LiveResizablePanelKey = 'monitored' | 'alerts';
 type LiveWorkspacePanelKey = 'monitored' | 'pumpfun' | 'alerts';
 
@@ -198,6 +205,7 @@ export function renderAppShell(
   const passwordResetDraft = capturePasswordResetDraft(root);
   const userMenuDraft = captureUserMenuDraft(root);
   const searchInputDraft = captureSearchInputDraft(root);
+  const mockTradingBuyTicketDraft = captureMockTradingBuyTicketDraft(root);
   const renderFrame = ensureAppRenderFrame(root);
   const isLiveWorkspace = state.ui.workspace === 'live';
   const isHistoryWorkspace = state.ui.workspace === 'history';
@@ -307,6 +315,7 @@ export function renderAppShell(
   applyPasswordResetFocus(root, state);
   applyUserMenuDraft(root, userMenuDraft);
   applySearchInputDraft(root, searchInputDraft);
+  applyMockTradingBuyTicketDraft(root, mockTradingBuyTicketDraft);
   applyConfigDraft(root, configDraft, state);
   applyPanelScrollDraft(root, panelScrollDraft);
   applyProfileModalScrollDraft(root, profileModalScrollDraft);
@@ -1326,8 +1335,42 @@ function applySearchInputDraft(root: HTMLElement, draft: SearchInputDraft | null
   }
 }
 
+function captureMockTradingBuyTicketDraft(root: HTMLElement): MockTradingBuyTicketDraft | null {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="mock-trading-ticket-form"][data-side="buy"]');
+  if (!form) {
+    return null;
+  }
 
+  return {
+    address: form.dataset.address || '',
+    notionalSol: form.querySelector<HTMLInputElement>('input[name="notionalSol"]')?.value || '',
+    takeProfitMcapUsd: form.querySelector<HTMLInputElement>('input[name="takeProfitMcapUsd"]')?.value || '',
+    takeProfitSellPercent: form.querySelector<HTMLInputElement>('input[name="takeProfitSellPercent"]')?.value || '',
+  };
+}
 
+function applyMockTradingBuyTicketDraft(root: HTMLElement, draft: MockTradingBuyTicketDraft | null) {
+  if (!draft) {
+    return;
+  }
+
+  const form = root.querySelector<HTMLFormElement>('form[data-role="mock-trading-ticket-form"][data-side="buy"]');
+  if (!form || form.dataset.address !== draft.address) {
+    return;
+  }
+
+  const fields: Record<string, string> = {
+    notionalSol: draft.notionalSol,
+    takeProfitMcapUsd: draft.takeProfitMcapUsd,
+    takeProfitSellPercent: draft.takeProfitSellPercent,
+  };
+  for (const [name, value] of Object.entries(fields)) {
+    const input = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+    if (input) {
+      input.value = value;
+    }
+  }
+}
 
 let currentHoverKey: string | null = null;
 let hoverWired = false;
