@@ -2410,6 +2410,41 @@ a {
   opacity: 0.64;
 }
 
+.expanded-sparkline-loading {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(96, 186, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(5, 12, 22, 0.72);
+  box-shadow:
+    0 0 16px rgba(0, 212, 255, 0.16),
+    inset 0 0 12px rgba(58, 151, 255, 0.12);
+  backdrop-filter: blur(10px) saturate(130%);
+  pointer-events: none;
+}
+
+.expanded-sparkline-loading-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(154, 210, 255, 0.26);
+  border-top-color: #7af3ff;
+  border-radius: 999px;
+  animation: expanded-sparkline-spinner-spin 0.78s linear infinite;
+}
+
+@keyframes expanded-sparkline-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .expanded-sparkline-footnote {
   color: #7593af;
   font-size: 9px;

@@ -2103,6 +2103,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
         </div>
         <div class="expanded-sparkline-chart${sparkline.loading ? ' is-loading' : ''}">
           ${renderSparklineFigure(sparkline, address, { expanded: true, markers: state.data.mockTradingTradesByAddress[address] || [], mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs), liveMcap: token?.mcap ?? null })}
+          ${sparkline.loading ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>' : ''}
         </div>
         <div class="expanded-sparkline-footnote">${sparkline.loading ? 'Loading full available history.' : `Updated ${escapeHtml(stats.updatedLabel)}.`} Hover for approximate market cap and time.</div>
       </div>
