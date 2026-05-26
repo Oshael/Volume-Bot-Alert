@@ -1368,12 +1368,12 @@ async function listExpandedSparklineByAddress(address, options = {}) {
 
   const safePoints = Math.max(120, Math.min(Number(options.points) || DEFAULT_EXPANDED_SPARKLINE_POINTS, 1000));
   const granularityMinutes = resolveExpandedSparklineGranularityMinutes(bounds.first_bucket_at, bounds.latest_bucket_at);
-  const rows = await queryAllAvailableSparklineRows(normalizedAddress, granularityMinutes);
   const firstTs = toTimestampMs(bounds.first_bucket_at);
   const latestTs = toTimestampMs(bounds.latest_bucket_at);
   const spanHours = firstTs != null && latestTs != null && latestTs > firstTs
     ? Math.max(1, Math.ceil((latestTs - firstTs) / 3600000))
     : 1;
+  const rows = await queryAllAvailableSparklineRows(normalizedAddress, granularityMinutes, { spanHours });
   const [result] = buildSparklineResults([normalizedAddress], rows, {
     hours: spanHours,
     maxHours: spanHours,
@@ -1387,24 +1387,60 @@ async function listExpandedSparklineByAddress(address, options = {}) {
 
 async function getExpandedSparklineBounds(address) {
   const { rows } = await db.query(
-    `SELECT
-       MIN(bucket_ts) AS first_bucket_at,
-       MAX(bucket_ts) AS latest_bucket_at,
-       COUNT(*)::int AS bucket_count
-     FROM token_market_buckets_1m
-     WHERE token_address = $1
-       AND close_mcap IS NOT NULL`,
-    [address]
+    `WITH bounds AS (
+       SELECT
+         MIN(bucket_ts) AS first_bucket_at,
+         MAX(bucket_ts) AS latest_bucket_at
+       FROM token_market_buckets_1m
+       WHERE token_address = $1
+         AND close_mcap IS NOT NULL
+       UNION ALL
+       SELECT
+         MIN(bucket_ts) AS first_bucket_at,
+         MAX(bucket_ts) AS latest_bucket_at
+       FROM token_market_buckets_agg
+       WHERE token_address = $2
+         AND close_mcap IS NOT NULL
+     )
+     SELECT
+       MIN(first_bucket_at) AS first_bucket_at,
+       MAX(latest_bucket_at) AS latest_bucket_at
+     FROM bounds
+     WHERE first_bucket_at IS NOT NULL
+       AND latest_bucket_at IS NOT NULL`,
+    [address, address]
   );
 
   const row = rows[0];
-  if (!row?.first_bucket_at || !row?.latest_bucket_at || !(Number(row.bucket_count) > 0)) {
+  if (!row?.first_bucket_at || !row?.latest_bucket_at) {
     return null;
   }
   return row;
 }
 
-async function queryAllAvailableSparklineRows(address, granularityMinutes) {
+async function queryAllAvailableSparklineRows(address, granularityMinutes, options = {}) {
+  if (!shouldUseAggregateSparklines(granularityMinutes)) {
+    return queryAllAvailableOneMinuteSparklineRows(address, granularityMinutes);
+  }
+
+  const aggregateRows = await queryAllAvailableAggregateSparklineRows(address, granularityMinutes);
+  const [aggregateResult] = buildSparklineResults([address], aggregateRows, {
+    hours: Math.max(1, Number(options.spanHours) || DEFAULT_SPARKLINE_HOURS),
+    maxHours: Math.max(1, Number(options.spanHours) || DEFAULT_SPARKLINE_HOURS),
+    points: DEFAULT_EXPANDED_SPARKLINE_POINTS,
+    maxPoints: 1000,
+    granularityMinutes,
+  });
+
+  if (!shouldFallbackAggregateSparkline(aggregateResult, options.spanHours)) {
+    return aggregateRows;
+  }
+
+  const fallbackRows = await queryAllAvailableOneMinuteSparklineRows(address, granularityMinutes);
+  return fallbackRows.length > 0 ? fallbackRows : aggregateRows;
+}
+
+async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinutes) {
   const { rows } = await db.query(
     `WITH raw AS (
        SELECT
@@ -1440,6 +1476,24 @@ async function queryAllAvailableSparklineRows(address, granularityMinutes) {
        close_mcap
      FROM ranked
      WHERE rn_close = 1
+     ORDER BY bucket_ts ASC`,
+    [address, granularityMinutes]
+  );
+
+  return rows;
+}
+
+async function queryAllAvailableAggregateSparklineRows(address, granularityMinutes) {
+  const { rows } = await db.query(
+    `SELECT
+       token_address,
+       bucket_ts,
+       pair_address,
+       close_mcap
+     FROM token_market_buckets_agg
+     WHERE token_address = $1
+       AND granularity_minutes = $2::int
+       AND close_mcap IS NOT NULL
      ORDER BY bucket_ts ASC`,
     [address, granularityMinutes]
   );
