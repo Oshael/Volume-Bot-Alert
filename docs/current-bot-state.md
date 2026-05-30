@@ -1384,6 +1384,7 @@ Current security priority order:
   - the table now includes a `Chart` column
   - charts are not rendered in `Monitored Tokens` cards
   - alerts feed rows now render their own static mini charts
+  - clicking an alert mini chart opens the shared expanded sparkline modal on demand, seeded from that alert's frozen snapshot while the full available history loads
 - Current sparkline behavior for `Manual Tokens`:
   - source endpoint: `POST /api/catalog/sparklines`
   - source data: `token_market_buckets_1m` for `1m`; `token_market_buckets_agg` for `5m`, `15m`, and `30m`
@@ -1401,6 +1402,7 @@ Current security priority order:
   - hover shows approximate market cap + approximate bucket time for the inspected point
   - clicking a manual-row mini chart opens a compact expanded hologram popup and loads a separate full-available-history sparkline for that token
   - the expanded popup remains a sparkline, not a candle chart, and compresses the available bucket history into a bounded point budget
+  - expanded sparkline reads are cached briefly by the backend and reused briefly by the frontend to avoid repeat query/fetch churn on repeated opens
   - the expanded popup is chart-only; it no longer uses projection/feixe lines from the clicked row
   - max chart window is `14d`, but younger tokens use their real available lifespan instead of rendering a long empty left side
   - current age-adaptive chart granularity:

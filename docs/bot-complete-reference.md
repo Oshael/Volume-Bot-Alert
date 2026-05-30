@@ -915,6 +915,7 @@ Important:
   - hover inspection shows approximate market cap plus approximate bucket time for the selected point
   - clicking a manual mini chart opens a compact expanded hologram popup and loads a separate full-available-history sparkline for that token
   - the expanded popup stays as a compressed sparkline, not candles
+  - expanded sparkline reads are cached briefly by the backend and reused briefly by the frontend to reduce repeated open/query churn
   - the expanded popup keeps the chart-focused layout and does not render projection/feixe lines
   - the visual span is `14d` max, but tokens younger than `14d` render only their real available lifespan
   - current age-adaptive granularity:
@@ -1124,7 +1125,9 @@ Reasons:
   - a newer alert for the same token no longer mutates older alert-card mini charts
   - the cache is pruned when old alert rows leave the capped local alert history or are removed/cleared
   - hover inspection shows approximate market cap plus approximate bucket time for the selected point
-  - alert mini charts are intentionally not expandable; only routed/manual tables open the compact hologram popup
+  - clicking an alert mini chart opens the shared compact expanded sparkline popup on demand
+  - the popup is seeded from the clicked alert's frozen mini-chart snapshot before the full available history request completes
+  - repeated opens reuse a short frontend/backend expanded-chart cache instead of refetching immediately
   - the current request profile still uses the same `14d` / `336`-point sparkline window with age-adaptive granularity
   - alert mini charts use the same backend sparkline endpoint and can benefit from the aggregate `5m`/`15m`/`30m` source plus `1m` fallback
 
