@@ -845,6 +845,63 @@ describe('token market 1m bucket helpers', () => {
     }
   });
 
+  it('caches repeated expanded sparkline requests and invalidates by address', async () => {
+    const address = 'So11111111111111111111111111111111111111112';
+    const originalQuery = db.query;
+    let queryCount = 0;
+
+    db.query = async (sql) => {
+      queryCount += 1;
+      if (/WITH bounds/.test(sql)) {
+        return {
+          rows: [{
+            first_bucket_at: '2026-04-19T12:00:00.000Z',
+            latest_bucket_at: '2026-04-19T12:20:00.000Z',
+          }],
+        };
+      }
+
+      return {
+        rows: [
+          {
+            token_address: address,
+            bucket_ts: '2026-04-19T12:00:00.000Z',
+            pair_address: address,
+            close_mcap: '100',
+          },
+          {
+            token_address: address,
+            bucket_ts: '2026-04-19T12:20:00.000Z',
+            pair_address: address,
+            close_mcap: '160',
+          },
+        ],
+      };
+    };
+
+    try {
+      const first = await tokenMarketBucket1m.listExpandedSparklineByAddress(address, {
+        points: 720,
+      });
+      const second = await tokenMarketBucket1m.listExpandedSparklineByAddress(address, {
+        points: 720,
+      });
+
+      assert.equal(queryCount, 2);
+      assert.deepEqual(second, first);
+
+      const deleted = tokenMarketBucket1m.__private.invalidateSparklineCacheForAddresses([address]);
+      assert.equal(deleted, 1);
+
+      await tokenMarketBucket1m.listExpandedSparklineByAddress(address, {
+        points: 720,
+      });
+      assert.equal(queryCount, 4);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('invalidates cached sparkline entries for updated addresses', async () => {
     const key = tokenMarketBucket1m.__private.getSparklineCacheKey([
       'So11111111111111111111111111111111111111112',

@@ -102,11 +102,31 @@ function getSparklineCacheKey(addresses, options) {
   });
 }
 
-function cloneSparklineResults(rows) {
-  return (Array.isArray(rows) ? rows : []).map((row) => ({
+function getExpandedSparklineCacheKey(address, options) {
+  return JSON.stringify({
+    expanded: true,
+    address,
+    points: options.points,
+  });
+}
+
+function cloneSparklineResult(row) {
+  if (!row || typeof row !== 'object') {
+    return row;
+  }
+
+  return {
     ...row,
     series: Array.isArray(row.series) ? [...row.series] : row.series,
-  }));
+  };
+}
+
+function cloneSparklineResults(rows) {
+  if (!Array.isArray(rows)) {
+    return cloneSparklineResult(rows);
+  }
+
+  return rows.map((row) => cloneSparklineResult(row));
 }
 
 function pruneSparklineCache(nowMs = Date.now(), maxEntries = DEFAULT_SPARKLINE_CACHE_MAX_ENTRIES) {
@@ -178,6 +198,10 @@ function invalidateSparklineCacheForAddresses(addresses) {
     try {
       const parsed = JSON.parse(key);
       if (Array.isArray(parsed.addresses) && parsed.addresses.some((address) => target.has(address))) {
+        sparklineCache.delete(key);
+        deleted += 1;
+      }
+      if (parsed.address && target.has(parsed.address)) {
         sparklineCache.delete(key);
         deleted += 1;
       }
@@ -1351,9 +1375,19 @@ async function listExpandedSparklineByAddress(address, options = {}) {
     return null;
   }
 
+  const safePoints = Math.max(120, Math.min(Number(options.points) || DEFAULT_EXPANDED_SPARKLINE_POINTS, 1000));
+  const cacheEnabled = options.disableCache !== true && Number(options.cacheTtlMs ?? DEFAULT_SPARKLINE_CACHE_TTL_MS) > 0;
+  const cacheKey = cacheEnabled ? getExpandedSparklineCacheKey(normalizedAddress, { points: safePoints }) : null;
+  if (cacheKey) {
+    const cached = getSparklineCacheEntry(cacheKey);
+    if (cached) {
+      return cached.result;
+    }
+  }
+
   const bounds = await getExpandedSparklineBounds(normalizedAddress);
   if (!bounds) {
-    return {
+    const emptyResult = {
       address: normalizedAddress,
       pairAddress: null,
       bucketCount: 0,
@@ -1364,9 +1398,16 @@ async function listExpandedSparklineByAddress(address, options = {}) {
       latestBucketAt: null,
       series: [],
     };
+    if (cacheKey) {
+      setSparklineCacheEntry(cacheKey, emptyResult, { expanded: true, cacheHit: false }, { ttlMs: options.cacheTtlMs });
+      const entry = sparklineCache.get(cacheKey);
+      if (entry) {
+        entry.addresses = [normalizedAddress];
+      }
+    }
+    return emptyResult;
   }
 
-  const safePoints = Math.max(120, Math.min(Number(options.points) || DEFAULT_EXPANDED_SPARKLINE_POINTS, 1000));
   const granularityMinutes = resolveExpandedSparklineGranularityMinutes(bounds.first_bucket_at, bounds.latest_bucket_at);
   const firstTs = toTimestampMs(bounds.first_bucket_at);
   const latestTs = toTimestampMs(bounds.latest_bucket_at);
@@ -1381,6 +1422,13 @@ async function listExpandedSparklineByAddress(address, options = {}) {
     maxPoints: 1000,
     granularityMinutes,
   });
+  if (cacheKey) {
+    setSparklineCacheEntry(cacheKey, result, { expanded: true, cacheHit: false }, { ttlMs: options.cacheTtlMs });
+    const entry = sparklineCache.get(cacheKey);
+    if (entry) {
+      entry.addresses = [normalizedAddress];
+    }
+  }
 
   return result;
 }
@@ -2282,6 +2330,7 @@ module.exports = {
     computeSampleStddev,
     scoreBidZoneCandidate,
     clearSparklineCache,
+    getExpandedSparklineCacheKey,
     getSparklineCacheKey,
     invalidateSparklineCacheForAddresses,
     pruneSparklineCache,
