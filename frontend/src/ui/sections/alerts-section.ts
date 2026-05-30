@@ -67,7 +67,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   syncSearchInput(view, searchQuery);
   syncPaginationControls(view, pagination.safePage, pagination.totalPages);
   reconcileAlertRows(view, pagination.pageItems, state, renderNow, cardEffectsEnabled);
-  bindSparklineHover(view.section, state.data.alertSparklineById);
+  bindSparklineHover(view.section, state.data.alertSparklineById, { controller });
   view.count.textContent = String(filteredAlerts.length);
 
   return view.section;
@@ -1056,7 +1056,12 @@ function buildAlertRowContent(
 function buildAlertSparklineBlock(alertId: string, address: string, sparkline: TokenSparklineEntry | null) {
   const chart = document.createElement('div');
   chart.className = 'alert-chart-v1';
-  chart.innerHTML = renderSparklineFigure(sparkline, address, { areaFill: true, lookupKey: alertId, variant: 'alert' });
+  chart.innerHTML = renderSparklineFigure(sparkline, address, {
+    areaFill: true,
+    expandable: true,
+    lookupKey: alertId,
+    variant: 'alert',
+  });
   return chart;
 }
 

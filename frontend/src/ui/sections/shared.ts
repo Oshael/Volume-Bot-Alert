@@ -230,7 +230,7 @@ export function bindSparklineHover(
       expanded: wrap.classList.contains('sparkline-wrap-expanded'),
       variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
     });
-    bindExpandableSparkline(wrap, address, options.controller);
+    bindExpandableSparkline(wrap, address, lookupKey, options.controller);
     const hoverParts = resolveBindableSparklineHover(wrap, entry, series, displaySeries);
     if (!hoverParts) {
       continue;
@@ -289,6 +289,7 @@ export function bindSparklineHover(
 function bindExpandableSparkline(
   wrap: HTMLElement,
   address: string,
+  lookupKey: string,
   controller?: AppController,
 ) {
   const expandable = wrap.dataset.sparklineExpandable === 'true';
@@ -304,6 +305,10 @@ function bindExpandableSparkline(
 
   let pointerHandled = false;
   const open = () => {
+    if (wrap.dataset.sparklineVariant === 'alert' && lookupKey) {
+      controller.openAlertExpandedSparkline(lookupKey, address);
+      return;
+    }
     controller.openExpandedSparkline(address);
   };
 

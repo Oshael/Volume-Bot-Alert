@@ -160,6 +160,7 @@ const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
 const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
 const EXPANDED_SPARKLINE_POINT_COUNT = 720;
+const EXPANDED_SPARKLINE_FRONTEND_CACHE_MS = 30 * 1000;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
@@ -386,6 +387,7 @@ export interface AppController {
   clearAllAlerts(): void;
   removeAlert(id: string): void;
   openExpandedSparkline(address: string): void;
+  openAlertExpandedSparkline(alertId: string, address: string): void;
   closeExpandedSparkline(): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
@@ -5752,7 +5754,20 @@ export function createAppController(): AppController {
     } satisfies TokenSparklineEntry;
   }
 
-  function setExpandedSparklineLoading(address: string) {
+  function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
+    if (!entry || entry.loading || !hasRenderableSparklineSeries(entry)) {
+      return false;
+    }
+
+    if ((Number(entry.points) || 0) < EXPANDED_SPARKLINE_POINT_COUNT) {
+      return false;
+    }
+
+    const generatedAtMs = entry.generatedAt ? Date.parse(entry.generatedAt) : NaN;
+    return Number.isFinite(generatedAtMs) && now - generatedAtMs < EXPANDED_SPARKLINE_FRONTEND_CACHE_MS;
+  }
+
+  function setExpandedSparklineLoading(address: string, seed?: TokenSparklineEntry | null) {
     const compact = state.data.sparklineByAddress[address];
     const existing = state.data.expandedSparklineByAddress[address];
     if (existing?.loading) {
@@ -5762,11 +5777,35 @@ export function createAppController(): AppController {
     state.data.expandedSparklineByAddress = {
       ...state.data.expandedSparklineByAddress,
       [address]: {
-        ...(existing || compact || { address, series: [] }),
+        ...(existing || seed || compact || { address, series: [] }),
         address,
         loading: true,
       },
     };
+  }
+
+  function seedExpandedSparklineFromAlert(alertId: string, address: string) {
+    const normalized = String(address || '').trim();
+    const alertSparkline = state.data.alertSparklineById[String(alertId || '').trim()];
+    if (!normalized || !hasRenderableSparklineSeries(alertSparkline)) {
+      return null;
+    }
+
+    const existing = state.data.expandedSparklineByAddress[normalized];
+    if (isExpandedSparklineCacheFresh(existing)) {
+      return existing;
+    }
+
+    const seed = {
+      ...alertSparkline,
+      address: normalized,
+      loading: false,
+    } satisfies TokenSparklineEntry;
+    state.data.expandedSparklineByAddress = {
+      ...state.data.expandedSparklineByAddress,
+      [normalized]: seed,
+    };
+    return seed;
   }
 
   async function refreshExpandedSparkline(address: string, token?: string | null) {
@@ -8667,7 +8706,33 @@ export function createAppController(): AppController {
 
       state.ui.expandedSparklineAddress = normalized;
       state.ui.mockTradingPnlAddress = null;
+      emit('overlay');
+      if (isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[normalized])) {
+        return;
+      }
       setExpandedSparklineLoading(normalized);
+      emit('overlay');
+      void refreshExpandedSparkline(normalized);
+    },
+    openAlertExpandedSparkline(alertId: string, address: string) {
+      const normalized = String(address || '').trim();
+      if (!normalized) {
+        return;
+      }
+
+      const seed = seedExpandedSparklineFromAlert(alertId, normalized);
+      const sparkline = getExpandedTokenSparkline(state, normalized);
+      if (!hasRenderableSparklineSeries(sparkline)) {
+        return;
+      }
+
+      state.ui.expandedSparklineAddress = normalized;
+      state.ui.mockTradingPnlAddress = null;
+      emit('overlay');
+      if (isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[normalized])) {
+        return;
+      }
+      setExpandedSparklineLoading(normalized, seed);
       emit('overlay');
       void refreshExpandedSparkline(normalized);
     },
