@@ -15,6 +15,7 @@ const {
   buildRiskReviewSummary,
   buildStructuralRiskSummary,
 } = require('./token-risk-summary');
+const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const DEFAULT_ALERT_FEED_LIMIT = 50;
 
@@ -87,6 +88,10 @@ function mapDeliveryCursor(cursor, rule) {
 
 function buildDashboardAlertEventCatalogPayload(catalogRow) {
   const meteora = catalogRow?.meteora || null;
+  const socialLinks = normalizeSocialLinkFields({
+    twitterUrl: catalogRow?.last_twitter_url,
+    communityUrl: catalogRow?.last_community_url,
+  });
 
   return {
     symbol: toTextOrNull(catalogRow?.symbol),
@@ -94,7 +99,8 @@ function buildDashboardAlertEventCatalogPayload(catalogRow) {
     pairAddress: toTextOrNull(catalogRow?.last_pair_address),
     pairUrl: toTextOrNull(catalogRow?.last_pair_url),
     imageUrl: toTextOrNull(catalogRow?.last_image_url),
-    twitterUrl: toTextOrNull(catalogRow?.last_twitter_url),
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
     tokenCreatedAt: toNumberOrNull(catalogRow?.last_token_created_at_ms),
     priceChange1h: toNumberOrNull(catalogRow?.last_price_change_1h),
     priceChange6h: toNumberOrNull(catalogRow?.last_price_change_6h),
@@ -202,14 +208,22 @@ function normalizeTickerPeersSnapshot(value) {
 }
 
 function buildDashboardUserAlertIdentityPayload(payload, catalogRow) {
+  const textField = (payloadKey, catalogKey) => (
+    toTextOrNull(normalizeUserAlertPayloadValue(payload, payloadKey)) ?? toTextOrNull(catalogRow?.[catalogKey])
+  );
+  const socialLinks = normalizeSocialLinkFields({
+    twitterUrl: textField('twitterUrl', 'last_twitter_url'),
+    communityUrl: textField('communityUrl', 'last_community_url'),
+  });
   return {
     address: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'address')) || toTextOrNull(catalogRow?.address) || '',
-    symbol: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'symbol')) ?? toTextOrNull(catalogRow?.symbol),
-    name: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'name')) ?? toTextOrNull(catalogRow?.name),
-    pairAddress: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'pairAddress')) ?? toTextOrNull(catalogRow?.last_pair_address),
-    pairUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'pairUrl')) ?? toTextOrNull(catalogRow?.last_pair_url),
-    imageUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'imageUrl')) ?? toTextOrNull(catalogRow?.last_image_url),
-    twitterUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'twitterUrl')) ?? toTextOrNull(catalogRow?.last_twitter_url),
+    symbol: textField('symbol', 'symbol'),
+    name: textField('name', 'name'),
+    pairAddress: textField('pairAddress', 'last_pair_address'),
+    pairUrl: textField('pairUrl', 'last_pair_url'),
+    imageUrl: textField('imageUrl', 'last_image_url'),
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
     tokenCreatedAt: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'tokenCreatedAt')) ?? toNumberOrNull(catalogRow?.last_token_created_at_ms),
   };
 }

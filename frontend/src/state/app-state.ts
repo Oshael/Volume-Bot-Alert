@@ -10,6 +10,7 @@ export interface AlertEntry {
   pairUrl?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   createdAt: number;
   tokenCreatedAt?: number | null;
   priceChange1h?: number | null;
@@ -69,6 +70,7 @@ export interface ManualTokenEntry {
   pairUrl?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   manual?: boolean;
   _userManual?: boolean;
   createdAt?: number | null;
@@ -297,6 +299,7 @@ export interface BidZoneTokenEntry {
   pairUrl?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   monitorPriority?: string | null;
   mcap?: number | null;
   catalogMcap?: number | null;
@@ -332,6 +335,7 @@ export interface PumpTokenEntry {
   symbol?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   pairUrl?: string | null;
   createdAt?: number | null;
   lastTradeAt?: number | null;

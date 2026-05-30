@@ -72,6 +72,7 @@ export interface DashboardMonitoredToken {
   pairUrl?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   eligibleForMonitoring?: boolean;
   monitorPriority?: string | null;
   mcap?: number | null;
@@ -155,6 +156,7 @@ export interface DashboardAlertEvent {
   pairUrl?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   tokenCreatedAt?: number | null;
   mcap?: number | null;
   priceChange1h?: number | null;
@@ -264,6 +266,7 @@ export interface BidZoneCandidate {
   pairUrl?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
+  communityUrl?: string | null;
   monitorPriority?: string | null;
   mcap?: number | null;
   catalogMcap?: number | null;

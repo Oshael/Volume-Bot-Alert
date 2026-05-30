@@ -223,8 +223,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
   const xSearch = buildXSearchUrl(symbol, item.address);
-  const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
-  const twitterMeta = getXDestinationMeta(twitterUrl);
+  const socialLinks = splitTokenSocialUrls(item.twitterUrl, item.communityUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
   const volDeltaBaseline = item.prevVolume5mCanonical ?? null;
@@ -266,8 +265,11 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   const actions = document.createElement('div');
   actions.className = 'panel-row-actions monitored-actions-line';
   actions.append(buildInlineActionLink('X', sanitizeHttpUrl(xSearch), 'x-search', 'Search contract or ticker on X'));
-  if (twitterUrl) {
-    actions.append(buildInlineActionLink(twitterMeta.icon, twitterUrl, 'x-profile', twitterMeta.title));
+  if (socialLinks.twitterUrl) {
+    actions.append(buildInlineActionLink('👤', socialLinks.twitterUrl, 'x-profile', 'X profile'));
+  }
+  if (socialLinks.communityUrl) {
+    actions.append(buildInlineActionLink('👥', socialLinks.communityUrl, 'x-profile', 'Community'));
   }
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
@@ -402,24 +404,37 @@ function buildXSearchUrl(symbol: string, address: string) {
   return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
-function isXCommunityUrl(url: string | null | undefined) {
-  const value = String(url || '').trim().toLowerCase();
-  return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
+function isCommunityUrl(url: string | null | undefined) {
+  const safeUrl = sanitizeOptionalHttpUrl(url);
+  if (!safeUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(safeUrl);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.toLowerCase();
+    return ((host === 'x.com' || host === 'twitter.com') && path.startsWith('/i/communities/'))
+      || (host === 'coincommunities.org' && path.startsWith('/communities/'));
+  } catch {
+    return false;
+  }
 }
 
-function getXDestinationMeta(url: string | null | undefined) {
-  if (isXCommunityUrl(url)) {
+function splitTokenSocialUrls(twitterUrl: string | null | undefined, communityUrl: string | null | undefined) {
+  const safeTwitterUrl = sanitizeOptionalHttpUrl(twitterUrl);
+  const safeCommunityUrl = sanitizeOptionalHttpUrl(communityUrl);
+  if (isCommunityUrl(safeTwitterUrl)) {
     return {
-      title: 'X community',
-      icon: '👥',
+      twitterUrl: null,
+      communityUrl: safeCommunityUrl || safeTwitterUrl,
     };
   }
-
   return {
-    title: 'X profile',
-    icon: '👤',
+    twitterUrl: safeTwitterUrl,
+    communityUrl: safeCommunityUrl,
   };
 }
+
 
 function buildGlyphButton(
   label: string,

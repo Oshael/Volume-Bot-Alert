@@ -18,6 +18,7 @@ const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
+const { extractDexSocialLinks, normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { logTrace } = require('../utils/pump-migrate-trace');
 const {
   attachResponsePerfHeaders,
@@ -433,16 +434,13 @@ function buildCatalogTokenPayload(body = {}, fallbackSource = 'unknown') {
     pairUrl: sanitizeHttpUrl(body.pairUrl),
     imageUrl: sanitizeAssetUrl(body.imageUrl),
     twitterUrl: sanitizeHttpUrl(body.twitterUrl),
+    communityUrl: sanitizeHttpUrl(body.communityUrl),
     isActiveMonitorCandidate: body.isActiveMonitorCandidate,
   };
 }
 
 function normalizeSource(source) {
   return String(source || '').trim().toLowerCase();
-}
-
-function extractTwitterUrl(pair) {
-  return sanitizeHttpUrl(pair?.info?.socials?.find((item) => item.type === 'twitter')?.url || null);
 }
 
 function toNumber(value) {
@@ -520,6 +518,10 @@ function buildMonitoredMetadataPayload(
     marketMcapBaselineByAddress.get(item.address) || null,
     marketVolumeBaselineByAddress.get(item.address) || null
   );
+  const socialLinks = normalizeSocialLinkFields({
+    twitterUrl: item.last_twitter_url,
+    communityUrl: item.last_community_url,
+  });
 
   return {
     address: item.address,
@@ -528,7 +530,8 @@ function buildMonitoredMetadataPayload(
     pairAddress: item.last_pair_address || null,
     pairUrl: item.last_pair_url || null,
     imageUrl: item.last_image_url || null,
-    twitterUrl: item.last_twitter_url || null,
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
     eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
     monitorPriority: item.monitor_priority || 'dormant',
     mcap: toNumber(item.last_mcap),
@@ -717,6 +720,10 @@ async function enrichDashboardCandidateMetadata(candidates = []) {
     if (!metadata) {
       return item;
     }
+    const socialLinks = normalizeSocialLinkFields({
+      twitterUrl: item.twitterUrl ?? metadata.last_twitter_url,
+      communityUrl: item.communityUrl ?? metadata.last_community_url,
+    });
 
     return {
       ...item,
@@ -726,7 +733,8 @@ async function enrichDashboardCandidateMetadata(candidates = []) {
       pairAddress: item.pairAddress ?? metadata.last_pair_address ?? null,
       pairUrl: item.pairUrl ?? metadata.last_pair_url ?? null,
       imageUrl: item.imageUrl ?? metadata.last_image_url ?? null,
-      twitterUrl: item.twitterUrl ?? metadata.last_twitter_url ?? null,
+      twitterUrl: socialLinks.twitterUrl,
+      communityUrl: socialLinks.communityUrl,
     };
   });
 }
@@ -1061,6 +1069,7 @@ async function buildValidatedPromotion(user, body = {}) {
   }
 
   clearTransientRetry(user.id, address, source);
+  const socialLinks = extractDexSocialLinks(bestPair);
 
   return {
     status: 200,
@@ -1079,7 +1088,8 @@ async function buildValidatedPromotion(user, body = {}) {
       pairAddress: bestPair.pairAddress || requested.pairAddress,
       pairUrl: bestPair.url || requested.pairUrl,
       imageUrl: bestPair.info?.imageUrl || requested.imageUrl,
-      twitterUrl: extractTwitterUrl(bestPair) || requested.twitterUrl,
+      twitterUrl: socialLinks.twitterUrl || requested.twitterUrl,
+      communityUrl: socialLinks.communityUrl || requested.communityUrl,
       isActiveMonitorCandidate: requested.isActiveMonitorCandidate,
     },
   };

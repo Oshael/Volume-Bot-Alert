@@ -2,6 +2,7 @@
 const path = require('path');
 const db = require('../models/db');
 const tokenCatalog = require('../models/token-catalog');
+const { extractDexSocialLinks } = require('./dex-social-links');
 
 const seedPath = path.join(__dirname, '..', '..', 'data', 'initial-monitored-tokens.txt');
 const DEX_TIMEOUT_MS = 8000;
@@ -9,6 +10,50 @@ const DEX_DELAY_MS = 150;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pickDexPair(pairs) {
+  return pairs.find((pair) => pair?.chainId === 'solana') || pairs[0] || null;
+}
+
+function buildDexMetadata(pair) {
+  if (!pair) {
+    return null;
+  }
+  const socialLinks = extractDexSocialLinks(pair);
+  return {
+    symbol: pair.baseToken?.symbol || null,
+    name: pair.baseToken?.name || null,
+    mcap: pair.marketCap || pair.fdv || null,
+    price: pair.priceUsd || null,
+    pairAddress: pair.pairAddress || null,
+    pairUrl: pair.url || null,
+    imageUrl: pair.info?.imageUrl || pair.info?.header || pair.baseToken?.logoUri || null,
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
+  };
+}
+
+function metadataValue(metadata, key) {
+  return metadata?.[key] || null;
+}
+
+function buildBootstrapTokenPayload(address, metadata) {
+  return {
+    address,
+    chain: 'solana',
+    source: 'bootstrap',
+    isActiveMonitorCandidate: true,
+    symbol: metadataValue(metadata, 'symbol'),
+    name: metadataValue(metadata, 'name'),
+    mcap: metadataValue(metadata, 'mcap'),
+    price: metadataValue(metadata, 'price'),
+    pairAddress: metadataValue(metadata, 'pairAddress'),
+    pairUrl: metadataValue(metadata, 'pairUrl'),
+    imageUrl: metadataValue(metadata, 'imageUrl'),
+    twitterUrl: metadataValue(metadata, 'twitterUrl'),
+    communityUrl: metadataValue(metadata, 'communityUrl'),
+  };
 }
 
 async function fetchDexMetadata(address) {
@@ -25,19 +70,7 @@ async function fetchDexMetadata(address) {
     const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
     if (!pairs.length) return null;
 
-    const pair = pairs.find((p) => p?.chainId === 'solana') || pairs[0];
-    if (!pair) return null;
-
-    return {
-      symbol: pair.baseToken?.symbol || null,
-      name: pair.baseToken?.name || null,
-      mcap: pair.marketCap || pair.fdv || null,
-      price: pair.priceUsd || null,
-      pairAddress: pair.pairAddress || null,
-      pairUrl: pair.url || null,
-      imageUrl: pair.info?.imageUrl || pair.info?.header || pair.baseToken?.logoUri || null,
-      twitterUrl: (pair.info?.socials || []).find((item) => item.type === 'twitter')?.url || null,
-    };
+    return buildDexMetadata(pickDexPair(pairs));
   } catch (_) {
     return null;
   } finally {
@@ -64,20 +97,7 @@ async function run() {
 
     for (const address of addresses) {
       const metadata = await fetchDexMetadata(address);
-      await tokenCatalog.upsertToken({
-        address,
-        chain: 'solana',
-        source: 'bootstrap',
-        isActiveMonitorCandidate: true,
-        symbol: metadata?.symbol || null,
-        name: metadata?.name || null,
-        mcap: metadata?.mcap || null,
-        price: metadata?.price || null,
-        pairAddress: metadata?.pairAddress || null,
-        pairUrl: metadata?.pairUrl || null,
-        imageUrl: metadata?.imageUrl || null,
-        twitterUrl: metadata?.twitterUrl || null,
-      });
+      await tokenCatalog.upsertToken(buildBootstrapTokenPayload(address, metadata));
       imported++;
       if (metadata?.symbol || metadata?.name) enriched++;
       await sleep(DEX_DELAY_MS);

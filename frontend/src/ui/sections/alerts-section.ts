@@ -1025,12 +1025,14 @@ function buildAlertRowContent(
 
   const links = document.createElement('div');
   links.className = 'alert-links-v68';
+  const socialLinks = splitTokenSocialUrls(alert.twitterUrl, alert.communityUrl);
   links.append(
     buildInlineLink('Dex Screener', dexUrl),
     buildTextSeparator(),
     buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(xSearch)),
     buildTextSeparator(),
-    buildProfileLink(alert.twitterUrl),
+    buildProfileLink(socialLinks.twitterUrl),
+    ...(socialLinks.communityUrl ? [buildTextSeparator(), buildCommunityLink(socialLinks.communityUrl)] : []),
   );
 
   const actions = document.createElement('div');
@@ -1366,11 +1368,52 @@ function buildProfileLink(url: string | null | undefined) {
     disabled.textContent = '👤';
     return disabled;
   }
-  const isCommunity = isXCommunityUrl(safeUrl);
-  const link = buildInlineLink(isCommunity ? '👥' : '👤', sanitizeHttpUrl(safeUrl));
+  const link = buildInlineLink('👤', sanitizeHttpUrl(safeUrl));
   link.classList.add('alert-inline-link-social');
-  link.classList.add(isCommunity ? 'alert-inline-link-social-community' : 'alert-inline-link-social-profile');
+  link.classList.add('alert-inline-link-social-profile');
   return link;
+}
+
+function buildCommunityLink(url: string | null | undefined) {
+  const safeUrl = sanitizeOptionalHttpUrl(url);
+  if (!safeUrl) {
+    return document.createTextNode('');
+  }
+  const link = buildInlineLink('👥', sanitizeHttpUrl(safeUrl));
+  link.classList.add('alert-inline-link-social');
+  link.classList.add('alert-inline-link-social-community');
+  return link;
+}
+
+function isCommunityUrl(url: string | null | undefined) {
+  const safeUrl = sanitizeOptionalHttpUrl(url);
+  if (!safeUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(safeUrl);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.toLowerCase();
+    return ((host === 'x.com' || host === 'twitter.com') && path.startsWith('/i/communities/'))
+      || (host === 'coincommunities.org' && path.startsWith('/communities/'));
+  } catch {
+    return false;
+  }
+}
+
+function splitTokenSocialUrls(twitterUrl: string | null | undefined, communityUrl: string | null | undefined) {
+  const safeTwitterUrl = sanitizeOptionalHttpUrl(twitterUrl);
+  const safeCommunityUrl = sanitizeOptionalHttpUrl(communityUrl);
+  if (isCommunityUrl(safeTwitterUrl)) {
+    return {
+      twitterUrl: null,
+      communityUrl: safeCommunityUrl || safeTwitterUrl,
+    };
+  }
+  return {
+    twitterUrl: safeTwitterUrl,
+    communityUrl: safeCommunityUrl,
+  };
 }
 
 function buildTextSeparator() {
@@ -1421,11 +1464,6 @@ function buildStarButton(address: string, isStarred: boolean, disabled: boolean,
   button.title = title;
   button.textContent = isStarred ? '★' : '☆';
   return button;
-}
-
-function isXCommunityUrl(url: string | null | undefined) {
-  const value = String(url || '').trim().toLowerCase();
-  return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
 }
 
 function appendHighCapDumpFlowLine(container: HTMLElement, alert: AlertEntry) {

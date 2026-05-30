@@ -8,6 +8,7 @@ const backendAlertPublisher = require('./backend-alert-publisher');
 const alertTickerPeers = require('./alert-ticker-peers');
 const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
 const userAlertProfileCache = require('./user-alert-profile-cache');
+const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
@@ -138,6 +139,10 @@ function resolveDisplaySymbol(tokenAfter, address) {
 
 function buildSharedPayload(tokenAfter, signals) {
   const address = String(tokenAfter?.address || '').trim();
+  const socialLinks = normalizeSocialLinkFields({
+    twitterUrl: tokenAfter?.last_twitter_url,
+    communityUrl: tokenAfter?.last_community_url,
+  });
   return {
     address,
     symbol: resolveDisplaySymbol(tokenAfter, address),
@@ -145,7 +150,8 @@ function buildSharedPayload(tokenAfter, signals) {
     pairAddress: toTextOrNull(tokenAfter?.last_pair_address),
     pairUrl: toTextOrNull(tokenAfter?.last_pair_url),
     imageUrl: toTextOrNull(tokenAfter?.last_image_url),
-    twitterUrl: toTextOrNull(tokenAfter?.last_twitter_url),
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
     tokenCreatedAt: toNumberOrNull(tokenAfter?.last_token_created_at_ms),
     prevVolume1m: signals.prevVolume1m,
     volume1m: signals.currentVolume1m,

@@ -16,6 +16,7 @@ const {
   buildStructuralRiskSummary,
   toNumberOrNull,
 } = require('../services/token-risk-summary');
+const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const MONITORED_MIN_MCAP = 30000;
 
@@ -315,6 +316,10 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
   const meteora = includeMeteora
     ? buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null)
     : null;
+  const socialLinks = normalizeSocialLinkFields({
+    twitterUrl: item.last_twitter_url,
+    communityUrl: item.last_community_url,
+  });
 
   const payload = {
     address: item.address,
@@ -323,7 +328,8 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     pairAddress: item.last_pair_address || null,
     pairUrl: item.last_pair_url || null,
     imageUrl: item.last_image_url || null,
-    twitterUrl: item.last_twitter_url || null,
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
     eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
     monitorPriority: item.monitor_priority || 'dormant',
     mcap: toNumberOrNull(item.last_mcap),

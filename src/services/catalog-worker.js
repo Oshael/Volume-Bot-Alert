@@ -8,6 +8,7 @@ const gmgnClient = require('./gmgn-client');
 const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const { extractDexSocialLinks } = require('../utils/dex-social-links');
 const {
   AUTO_BLOCK_LABEL_PREFIXES,
   buildPrefixedAutoBlockLabel,
@@ -164,10 +165,6 @@ function addPriorityJitter(baseDelayMs, jitterMs, randomValue = Math.random()) {
     : 0;
 
   return safeBaseDelayMs + Math.round(clampedRandom * safeJitterMs);
-}
-
-function extractTwitterUrl(pair) {
-  return pair?.info?.socials?.find((item) => item.type === 'twitter')?.url || null;
 }
 
 function toNumber(value) {
@@ -1421,6 +1418,7 @@ async function evaluateTokenWithData(token, data) {
     });
   }
 
+  const socialLinks = extractDexSocialLinks(bestPair);
   const updatedToken = await tokenCatalog.applyEvaluationResult(token.address, {
     evaluationSource: 'dexscreener',
     eligibilityState: snapshot.eligibilityState,
@@ -1435,7 +1433,8 @@ async function evaluateTokenWithData(token, data) {
     pairAddress: bestPair.pairAddress || null,
     pairUrl: bestPair.url || null,
     imageUrl: bestPair.info?.imageUrl || null,
-    twitterUrl: extractTwitterUrl(bestPair),
+    twitterUrl: socialLinks.twitterUrl,
+    communityUrl: socialLinks.communityUrl,
     mcap: marketCap,
     price: bestPair.priceUsd || null,
     vol5m: snapshot.vol5m,

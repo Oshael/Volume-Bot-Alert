@@ -16,6 +16,7 @@ const TABLES = `
     last_pair_url             TEXT,
     last_image_url            TEXT,
     last_twitter_url          TEXT,
+    last_community_url        TEXT,
     is_active_monitor_candidate BOOLEAN NOT NULL DEFAULT TRUE,
     metadata_updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );

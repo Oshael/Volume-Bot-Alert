@@ -899,6 +899,19 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage41-token-catalog-community-url',
+    name: 'Stage 41 token catalog community URL',
+    repair: 'node src/utils/db-init-stage41.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: [
+          'last_community_url',
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

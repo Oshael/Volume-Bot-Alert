@@ -1555,12 +1555,51 @@ function renderBucketDismissButton(mode: 'manual' | 'recent' | 'old-week', safeA
   return `<button type="button" class="inline-icon danger" data-action="${action}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
 }
 
-function renderTokenTwitterAction(twitterUrl: string | null, twitterMeta: { title: string; icon: string }) {
-  if (!twitterUrl) {
-    return '<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>';
+function renderTokenSocialActions(twitterUrl: string | null, communityUrl: string | null) {
+  const socialLinks = splitTokenSocialUrls(twitterUrl, communityUrl);
+  const actions: string[] = [];
+  if (!socialLinks.twitterUrl) {
+    actions.push('<span class="action-glyph x-profile disabled" title="No X profile">&#128100;</span>');
+  } else {
+    actions.push(`<a class="action-glyph x-profile" href="${socialLinks.twitterUrl}" target="_blank" rel="noreferrer" title="X profile">&#128100;</a>`);
   }
 
-  return `<a class="action-glyph x-profile" href="${twitterUrl}" target="_blank" rel="noreferrer" title="${escapeHtml(twitterMeta.title)}">${twitterMeta.icon}</a>`;
+  if (socialLinks.communityUrl) {
+    actions.push(`<a class="action-glyph x-profile" href="${socialLinks.communityUrl}" target="_blank" rel="noreferrer" title="Community">&#128101;</a>`);
+  }
+
+  return actions.join('');
+}
+
+function isCommunityUrl(url: string | null | undefined) {
+  const safeUrl = sanitizeOptionalHttpUrl(url);
+  if (!safeUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(safeUrl);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.toLowerCase();
+    return ((host === 'x.com' || host === 'twitter.com') && path.startsWith('/i/communities/'))
+      || (host === 'coincommunities.org' && path.startsWith('/communities/'));
+  } catch {
+    return false;
+  }
+}
+
+function splitTokenSocialUrls(twitterUrl: string | null, communityUrl: string | null) {
+  const safeTwitterUrl = sanitizeOptionalHttpUrl(twitterUrl);
+  const safeCommunityUrl = sanitizeOptionalHttpUrl(communityUrl);
+  if (isCommunityUrl(safeTwitterUrl)) {
+    return {
+      twitterUrl: null,
+      communityUrl: safeCommunityUrl || safeTwitterUrl,
+    };
+  }
+  return {
+    twitterUrl: safeTwitterUrl,
+    communityUrl: safeCommunityUrl,
+  };
 }
 
 function renderTokenAdminAction(isAdmin: boolean, safeAddress: string, safeSymbol: string, busy: boolean) {
@@ -1636,7 +1675,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
   const xSearch = buildXSearchUrl(symbol, item.address);
   const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
-  const twitterMeta = getXDestinationMeta(twitterUrl);
+  const communityUrl = sanitizeOptionalHttpUrl(item.communityUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   const mcapDelta = resolveTokenMcapDelta(item);
   const actionButton = renderBucketDismissButton(mode, safeAddress, busy);
@@ -1652,7 +1691,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
               <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
               <div class="token-actions-inline">
                 <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
-                ${renderTokenTwitterAction(twitterUrl, twitterMeta)}
+                ${renderTokenSocialActions(twitterUrl, communityUrl)}
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { enabledTradeTerminals })}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
@@ -1686,25 +1725,6 @@ function buildXSearchUrl(symbol: string, address: string) {
   const queryParts = [String(address || '').trim(), `$${String(symbol || '').trim()}`]
     .filter(Boolean);
   return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
-}
-
-function isXCommunityUrl(url: string | null | undefined) {
-  const value = String(url || '').trim().toLowerCase();
-  return value.includes('x.com/i/communities/') || value.includes('twitter.com/i/communities/');
-}
-
-function getXDestinationMeta(url: string | null | undefined) {
-  if (isXCommunityUrl(url)) {
-    return {
-      title: 'X community',
-      icon: '&#128101;',
-    };
-  }
-
-  return {
-    title: 'X profile',
-    icon: '&#128100;',
-  };
 }
 
 const METEORA_TVL_HISTORY_1H = 3600000;

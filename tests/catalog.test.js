@@ -89,6 +89,7 @@ function buildPair(overrides = {}) {
     info: {
       imageUrl: 'https://example.com/token.png',
       socials: [{ type: 'twitter', url: 'https://x.com/wsol' }],
+      websites: [{ label: 'CC', url: 'https://coincommunities.org/communities/wsol' }],
     },
     ...overrides,
   };
@@ -108,6 +109,7 @@ async function ensureAccessSchema() {
     `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_days INTEGER`,
     `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
     `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
+    `ALTER TABLE token_catalog ADD COLUMN IF NOT EXISTS last_community_url TEXT`,
   ];
   for (const statement of statements) {
     await db.query(statement);
@@ -263,7 +265,7 @@ describe('Catalog routes', () => {
     assert.equal(res.body.token.source, 'monitored-token');
 
     const { rows } = await db.query(
-      'SELECT address, source, symbol, name, last_mcap, last_pair_url, last_image_url, last_twitter_url FROM token_catalog WHERE address = $1',
+      'SELECT address, source, symbol, name, last_mcap, last_pair_url, last_image_url, last_twitter_url, last_community_url FROM token_catalog WHERE address = $1',
       [VALID_ADDR]
     );
 
@@ -276,6 +278,7 @@ describe('Catalog routes', () => {
     assert.equal(rows[0].last_pair_url, 'https://dexscreener.com/solana/testpair');
     assert.equal(rows[0].last_image_url, 'https://example.com/token.png');
     assert.equal(rows[0].last_twitter_url, 'https://x.com/wsol');
+    assert.equal(rows[0].last_community_url, 'https://coincommunities.org/communities/wsol');
   });
 
   it('defers monitored token promotion when Dex data is unavailable', async () => {
