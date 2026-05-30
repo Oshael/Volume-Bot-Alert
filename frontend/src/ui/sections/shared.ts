@@ -34,6 +34,8 @@ const EXPANDED_SPARKLINE_SVG_WIDTH = 720;
 const EXPANDED_SPARKLINE_SVG_HEIGHT = 260;
 const EXPANDED_SPARKLINE_PADDING_X = 12;
 const EXPANDED_SPARKLINE_PADDING_Y = 16;
+const TOKEN_IMAGE_PREVIEW_DELAY_MS = 120;
+const TOKEN_IMAGE_PREVIEW_OFFSET_PX = 14;
 const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
@@ -42,6 +44,11 @@ const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 });
 const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
 const sparklineHoverBoundElements = new WeakSet<HTMLElement>();
+const tokenImagePreviewBoundRoots = new WeakSet<EventTarget>();
+let tokenImagePreviewTarget: HTMLElement | null = null;
+let tokenImagePreviewTimer: ReturnType<typeof window.setTimeout> | null = null;
+let tokenImagePreviewPosition = { x: 0, y: 0 };
+let tokenImagePreviewGlobalBound = false;
 
 type SparklineRenderOptions = {
   expanded?: boolean;
@@ -214,6 +221,185 @@ export function bindCopyButtons(section: ParentNode) {
       }
     });
   }
+}
+
+export function bindTokenImagePreview(section: ParentNode) {
+  if (!(section instanceof EventTarget) || tokenImagePreviewBoundRoots.has(section)) {
+    return;
+  }
+
+  tokenImagePreviewBoundRoots.add(section);
+
+  section.addEventListener('pointerover', (event) => {
+    const pointerEvent = event as PointerEvent;
+    if (pointerEvent.pointerType === 'touch') {
+      return;
+    }
+
+    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-token-image-preview="true"]');
+    if (!target) {
+      return;
+    }
+
+    tokenImagePreviewPosition = {
+      x: pointerEvent.clientX,
+      y: pointerEvent.clientY,
+    };
+    scheduleTokenImagePreview(target);
+  });
+
+  section.addEventListener('pointermove', (event) => {
+    const pointerEvent = event as PointerEvent;
+    if (pointerEvent.pointerType === 'touch' || !tokenImagePreviewTarget) {
+      return;
+    }
+
+    tokenImagePreviewPosition = {
+      x: pointerEvent.clientX,
+      y: pointerEvent.clientY,
+    };
+    positionTokenImagePreview();
+  });
+
+  section.addEventListener('pointerout', (event) => {
+    if (!tokenImagePreviewTarget) {
+      return;
+    }
+
+    const relatedTarget = (event as PointerEvent).relatedTarget;
+    if (relatedTarget instanceof Node && tokenImagePreviewTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-token-image-preview="true"]');
+    if (target === tokenImagePreviewTarget) {
+      hideTokenImagePreview();
+    }
+  });
+
+  bindTokenImagePreviewGlobalEvents();
+}
+
+function scheduleTokenImagePreview(target: HTMLElement) {
+  const src = getTokenImagePreviewSrc(target);
+  if (!src) {
+    return;
+  }
+
+  if (tokenImagePreviewTarget === target && getTokenImagePreviewElement()?.classList.contains('is-visible')) {
+    positionTokenImagePreview();
+    return;
+  }
+
+  clearTokenImagePreviewTimer();
+  tokenImagePreviewTarget = target;
+  tokenImagePreviewTimer = window.setTimeout(() => {
+    if (tokenImagePreviewTarget !== target) {
+      return;
+    }
+
+    showTokenImagePreview(target, src);
+  }, TOKEN_IMAGE_PREVIEW_DELAY_MS);
+}
+
+function showTokenImagePreview(target: HTMLElement, src: string) {
+  const preview = getOrCreateTokenImagePreviewElement();
+  const image = preview.querySelector<HTMLImageElement>('img');
+  if (!image) {
+    return;
+  }
+
+  image.src = src;
+  image.alt = target.getAttribute('alt') || '';
+  preview.classList.add('is-visible');
+  positionTokenImagePreview();
+}
+
+function hideTokenImagePreview() {
+  clearTokenImagePreviewTimer();
+  tokenImagePreviewTarget = null;
+  getTokenImagePreviewElement()?.classList.remove('is-visible');
+}
+
+function clearTokenImagePreviewTimer() {
+  if (!tokenImagePreviewTimer) {
+    return;
+  }
+
+  window.clearTimeout(tokenImagePreviewTimer);
+  tokenImagePreviewTimer = null;
+}
+
+function getTokenImagePreviewSrc(target: HTMLElement) {
+  if (target instanceof HTMLImageElement) {
+    return target.currentSrc || target.src || target.dataset.tokenImagePreviewSrc || '';
+  }
+
+  return target.dataset.tokenImagePreviewSrc || '';
+}
+
+function getTokenImagePreviewElement() {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  return document.body.querySelector<HTMLElement>('.token-image-preview-popover');
+}
+
+function getOrCreateTokenImagePreviewElement() {
+  const existing = getTokenImagePreviewElement();
+  if (existing) {
+    return existing;
+  }
+
+  const preview = document.createElement('div');
+  preview.className = 'token-image-preview-popover';
+  preview.setAttribute('aria-hidden', 'true');
+
+  const image = document.createElement('img');
+  image.decoding = 'async';
+  preview.append(image);
+  document.body.append(preview);
+  return preview;
+}
+
+function positionTokenImagePreview() {
+  const preview = getTokenImagePreviewElement();
+  if (!preview?.classList.contains('is-visible')) {
+    return;
+  }
+
+  const width = preview.offsetWidth || 340;
+  const height = preview.offsetHeight || 340;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  let left = tokenImagePreviewPosition.x + TOKEN_IMAGE_PREVIEW_OFFSET_PX;
+  let top = tokenImagePreviewPosition.y + TOKEN_IMAGE_PREVIEW_OFFSET_PX;
+
+  if (left + width + TOKEN_IMAGE_PREVIEW_OFFSET_PX > viewportWidth) {
+    left = tokenImagePreviewPosition.x - width - TOKEN_IMAGE_PREVIEW_OFFSET_PX;
+  }
+  if (top + height + TOKEN_IMAGE_PREVIEW_OFFSET_PX > viewportHeight) {
+    top = viewportHeight - height - TOKEN_IMAGE_PREVIEW_OFFSET_PX;
+  }
+
+  preview.style.left = `${Math.max(TOKEN_IMAGE_PREVIEW_OFFSET_PX, left)}px`;
+  preview.style.top = `${Math.max(TOKEN_IMAGE_PREVIEW_OFFSET_PX, top)}px`;
+}
+
+function bindTokenImagePreviewGlobalEvents() {
+  if (tokenImagePreviewGlobalBound || typeof window === 'undefined') {
+    return;
+  }
+
+  tokenImagePreviewGlobalBound = true;
+  window.addEventListener('scroll', hideTokenImagePreview, true);
+  window.addEventListener('resize', hideTokenImagePreview);
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      hideTokenImagePreview();
+    }
+  });
 }
 
 export function bindSparklineHover(
@@ -1599,7 +1785,10 @@ function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, min
 function renderAvatar(item: ManualTokenEntry, symbol: string) {
   const safeSymbol = escapeHtml(symbol);
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
-  return imageUrl ? `<img src="${imageUrl}" alt="${safeSymbol}" class="token-avatar" />` : `<div class="token-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
+  const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : '';
+  return imageUrl
+    ? `<img src="${safeImageUrl}" alt="${safeSymbol}" class="token-avatar" data-token-image-preview="true" data-token-image-preview-src="${safeImageUrl}" />`
+    : `<div class="token-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
 }
 
 function renderPctSpan(value?: number | null) {

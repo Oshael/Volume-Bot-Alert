@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getManualTokens, getMockTradingPositionsViewByAddress, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, renderManualTokenTable } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, renderManualTokenTable } from './shared';
 import { resolveManualTableRows } from '../../utils/token-table';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
@@ -135,6 +135,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindTokenImagePreview(section);
   bindBucketSortControls(section, controller, 'manual');
   return section;
 }

@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionsViewByAddress, getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindTokenActions, fmtConfig, renderPagedAgeBucketList } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, fmtConfig, renderPagedAgeBucketList } from './shared';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
@@ -352,6 +352,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindTokenImagePreview(section);
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
   section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"]').forEach((input) => {
@@ -614,6 +615,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindTokenImagePreview(section);
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
   section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"]').forEach((input) => {

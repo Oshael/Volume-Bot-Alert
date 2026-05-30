@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const ALERT_FX_SETTLE_MS = 1_600;
@@ -68,6 +68,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   syncPaginationControls(view, pagination.safePage, pagination.totalPages);
   reconcileAlertRows(view, pagination.pageItems, state, renderNow, cardEffectsEnabled);
   bindSparklineHover(view.section, state.data.alertSparklineById, { controller });
+  bindTokenImagePreview(view.section);
   view.count.textContent = String(filteredAlerts.length);
 
   return view.section;
@@ -1141,6 +1142,8 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null) {
     image.src = imageUrl;
     image.alt = symbol;
     image.className = 'alert-avatar';
+    image.dataset.tokenImagePreview = 'true';
+    image.dataset.tokenImagePreviewSrc = imageUrl;
     return image;
   }
 

@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, bindTokenImagePreview, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 
@@ -193,6 +193,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   bindMonitoredSearchInput(searchInput, controller);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
+  bindTokenImagePreview(section);
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
   return section;
@@ -361,6 +362,8 @@ function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {
     image.src = imageUrl;
     image.alt = symbol;
     image.className = 'tok-avatar';
+    image.dataset.tokenImagePreview = 'true';
+    image.dataset.tokenImagePreviewSrc = imageUrl;
     return image;
   }
 
