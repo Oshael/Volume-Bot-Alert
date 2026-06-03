@@ -36,7 +36,7 @@ const DEFAULT_UI_PREFS = {
     spans: {
       monitored: 1,
       pumpfun: 1,
-      alerts: 1,
+      alerts: 2,
     },
   },
 };

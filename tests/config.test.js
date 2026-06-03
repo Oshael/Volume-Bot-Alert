@@ -201,7 +201,7 @@ describe('Config routes', () => {
       spans: {
         monitored: 1,
         pumpfun: 1,
-        alerts: 1,
+        alerts: 2,
       },
     });
     assert.equal(response.body.uiPrefs.recentPerPage, 30);

@@ -9,6 +9,18 @@ describe('user-ui-pref', () => {
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
   });
 
+  it('defaults new live layouts with alerts spanning two thirds', () => {
+    const prefs = userUiPref.normalizePrefs({});
+    assert.deepEqual(prefs.livePanelLayout, {
+      order: ['monitored', 'pumpfun', 'alerts'],
+      spans: {
+        monitored: 1,
+        pumpfun: 1,
+        alerts: 2,
+      },
+    });
+  });
+
   it('accepts a filtered trade terminal selection', () => {
     const validation = userUiPref.validatePatch({
       enabledTradeTerminals: ['bullx', 'gmgn'],
