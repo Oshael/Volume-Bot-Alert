@@ -386,7 +386,7 @@ function buildTopPerformersPayload(rows, options = {}) {
   return {
     generatedAt: new Date().toISOString(),
     source: 'token_catalog',
-    ranking: 'pchange24h_x_log_vol24h',
+    ranking: 'volume24h_rank_x_pchange24h_rank',
     minMcap: options.minMcap,
     minVol24h: options.minVol24h,
     count: rows.length,

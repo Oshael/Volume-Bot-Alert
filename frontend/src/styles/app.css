@@ -5871,15 +5871,6 @@ button,
   min-height: 22px;
 }
 
-.top-performers-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-}
-
 .top-performers-viewport {
   display: flex;
   gap: 8px;

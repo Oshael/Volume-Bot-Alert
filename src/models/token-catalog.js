@@ -721,32 +721,45 @@ function normalizeTopPerformersOptions(options = {}) {
 async function listDashboardTopPerformers(options = {}) {
   const normalized = normalizeTopPerformersOptions(options);
   const { rows } = await db.queryWithStatementTimeout(
-    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
-       (
-         LEAST(GREATEST(COALESCE(tc.last_price_change_24h, 0), 0), $4::numeric)
-         * LN(1 + GREATEST(COALESCE(tc.last_vol_24h, 0), 0))
-       ) AS performance_score
-     FROM token_catalog tc
-     LEFT JOIN token_risk_reviews trr
-       ON trr.token_address = tc.address
-     WHERE tc.eligible_for_monitoring = TRUE
-       AND tc.is_active_monitor_candidate = TRUE
-       AND COALESCE(tc.last_mcap, 0) >= $2
-       AND COALESCE(tc.last_vol_24h, 0) >= $3
-       AND COALESCE(tc.last_price_change_24h, 0) > 0
-       AND COALESCE(trr.label, '') NOT IN ('junk_probable', 'junk_permanent')
-       AND NOT EXISTS (
-         SELECT 1
-         FROM admin_blocked_tokens ab
-         WHERE ab.address = tc.address
-       )
+    `WITH candidates AS (
+       ${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
+       LEAST(GREATEST(COALESCE(tc.last_price_change_24h, 0), 0), $4::numeric) AS pchange_score_input,
+       LN(1 + GREATEST(COALESCE(tc.last_vol_24h, 0), 0)) AS volume_score_input
+       FROM token_catalog tc
+       LEFT JOIN token_risk_reviews trr
+         ON trr.token_address = tc.address
+       WHERE tc.eligible_for_monitoring = TRUE
+         AND tc.is_active_monitor_candidate = TRUE
+         AND COALESCE(tc.last_mcap, 0) >= $2
+         AND COALESCE(tc.last_vol_24h, 0) >= $3
+         AND COALESCE(tc.last_price_change_24h, 0) > 0
+         AND COALESCE(trr.label, '') NOT IN ('junk_probable', 'junk_permanent')
+         AND NOT EXISTS (
+           SELECT 1
+           FROM admin_blocked_tokens ab
+           WHERE ab.address = tc.address
+         )
+     ),
+     ranked AS (
+       SELECT
+         candidates.*,
+         CUME_DIST() OVER (ORDER BY volume_score_input) AS volume_rank_score,
+         CUME_DIST() OVER (ORDER BY pchange_score_input) AS pchange_rank_score
+       FROM candidates
+     )
+     SELECT
+       ranked.*,
+       ((volume_rank_score * 0.62) + (pchange_rank_score * 0.38)) * 100 AS performance_score
+     FROM ranked
      ORDER BY
        performance_score DESC,
-       COALESCE(tc.last_price_change_24h, 0) DESC,
-       COALESCE(tc.last_vol_24h, 0) DESC,
-       COALESCE(tc.last_mcap, 0) DESC,
-       tc.last_seen_at DESC,
-       tc.address ASC
+       volume_rank_score DESC,
+       pchange_rank_score DESC,
+       COALESCE(last_vol_24h, 0) DESC,
+       COALESCE(last_price_change_24h, 0) DESC,
+       COALESCE(last_mcap, 0) DESC,
+       last_seen_at DESC,
+       address ASC
      LIMIT $1`,
     [
       normalized.limit,

@@ -219,10 +219,9 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
     if (deltaSeconds > 0) {
       const currentLeft = viewport.scrollLeft;
       let targetLeft = currentLeft + (TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC * deltaSeconds);
-      if (targetLeft >= loopWidth) {
-        targetLeft -= loopWidth;
+      if (targetLeft >= maxScrollLeft) {
+        targetLeft = 0;
         logTopPerformersDebug('auto-scroll-wrap', {
-          loopWidth: Math.round(loopWidth),
           maxScrollLeft: Math.round(maxScrollLeft),
         });
       }
@@ -281,6 +280,7 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
   });
   viewport.addEventListener('pointerleave', () => {
     topPerformersManualPauseUntil = Date.now() + 500;
+    scheduleResume(500);
     logTopPerformersDebug('manual-pause-end', {
       reason: 'pointerleave',
       resumeInMs: 500,
@@ -321,16 +321,11 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
   section.innerHTML = `
     <div class="legacy-bar-head top-performers-head">
       <span class="legacy-bar-title top-performers">TOP 24H</span>
-      <div class="top-performers-meta">
-        <span>${tokens.length}/10</span>
-        <span>${escapeHtml(state.data.topPerformersRanking || 'pchange x volume')}</span>
-      </div>
     </div>
     ${
       tokens.length > 0
         ? `<div class="top-performers-viewport">
             <div class="top-performers-track">${renderTopPerformerCards(state, tokens)}</div>
-            ${tokens.length > 1 ? `<div class="top-performers-track top-performers-track-clone">${renderTopPerformerCards(state, tokens, { duplicate: true })}</div>` : ''}
           </div>`
         : '<div class="top-performers-empty">Waiting for eligible performers...</div>'
     }

@@ -282,7 +282,7 @@ describe('Dashboard routes', () => {
       assert.deepEqual(capturedOptions, [{ limit: 10, minMcap: 30000, minVol24h: 200000 }]);
       assert.equal(firstRes.body.cached, false);
       assert.equal(secondRes.body.cached, true);
-      assert.equal(firstRes.body.ranking, 'pchange24h_x_log_vol24h');
+      assert.equal(firstRes.body.ranking, 'volume24h_rank_x_pchange24h_rank');
       assert.equal(firstRes.body.minMcap, 30000);
       assert.equal(firstRes.body.minVol24h, 200000);
       assert.equal(firstRes.body.count, 1);
