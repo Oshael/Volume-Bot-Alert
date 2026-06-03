@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getTopPerformerTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
-import { bindCopyButtons, bindSparklineHover, bindTokenImagePreview, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
+import { bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 
 function renderTokenAvatar(token: ManualTokenEntry) {
@@ -90,6 +90,9 @@ function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, option
   const pairUrl = sanitizeOptionalHttpUrl(token.pairUrl);
   const duplicateAttrs = options.duplicate ? ' aria-hidden="true"' : '';
   const duplicateActionAttrs = options.duplicate ? ' tabindex="-1"' : '';
+  const adminAction = state.session.role === 'admin'
+    ? `<button type="button" class="inline-icon top-performer-admin-block" data-action="admin-block-token" data-address="${escapeHtml(address)}" data-label="${escapeHtml(symbol)}" title="Admin block permanently" aria-label="Admin block ${escapeHtml(symbol)} permanently"${duplicateActionAttrs}>☠</button>`
+    : '';
   const age = token.createdAt ? fmtAge(token.createdAt) : '-';
 
   return `
@@ -113,6 +116,7 @@ function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, option
       <div class="top-performer-actions">
         <button type="button" class="inline-icon copy-button" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract"${duplicateActionAttrs}>⧉</button>
         ${pairUrl ? `<a class="inline-icon top-performer-open" href="${escapeHtml(pairUrl)}" target="_blank" rel="noreferrer" title="Open pair" aria-label="Open ${escapeHtml(symbol)} pair"${duplicateActionAttrs}>↗</a>` : ''}
+        ${adminAction}
       </div>
     </article>
   `;
@@ -320,7 +324,7 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
 
   section.innerHTML = `
     <div class="legacy-bar-head top-performers-head">
-      <span class="legacy-bar-title top-performers">TOP 24H</span>
+      <span class="legacy-bar-title top-performers">Best Perfomance Coins</span>
     </div>
     ${
       tokens.length > 0
@@ -332,6 +336,7 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
   `;
 
   bindCopyButtons(section);
+  bindTokenActions(section, controller);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindTokenImagePreview(section);
   bindTopPerformersAutoScroll(section);

@@ -14,10 +14,11 @@ const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
 const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
 const HISTORY_BUCKET_SORT_MODES = new Set(['vol', 'mcap', 'pchange', 'age']);
-const DEFAULT_TOP_PERFORMERS_LIMIT = 10;
+const DEFAULT_TOP_PERFORMERS_LIMIT = 15;
 const DEFAULT_TOP_PERFORMERS_MIN_MCAP = 30000;
 const DEFAULT_TOP_PERFORMERS_MIN_VOL_24H = 200000;
 const DEFAULT_TOP_PERFORMERS_MAX_PCHANGE_24H = 300;
+const DEFAULT_TOP_PERFORMERS_VOLUME_SLOT_LIMIT = 7;
 const DEFAULT_TOP_PERFORMERS_STATEMENT_TIMEOUT_MS = 5000;
 
 const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
@@ -708,12 +709,14 @@ function normalizeTopPerformersOptions(options = {}) {
   const minMcap = Math.max(0, Number.isFinite(Number(options.minMcap)) ? Number(options.minMcap) : DEFAULT_TOP_PERFORMERS_MIN_MCAP);
   const minVol24h = Math.max(0, Number.isFinite(Number(options.minVol24h)) ? Number(options.minVol24h) : DEFAULT_TOP_PERFORMERS_MIN_VOL_24H);
   const maxPchange24h = Math.max(1, Number.isFinite(Number(options.maxPchange24h)) ? Number(options.maxPchange24h) : DEFAULT_TOP_PERFORMERS_MAX_PCHANGE_24H);
+  const volumeSlotLimit = Math.min(DEFAULT_TOP_PERFORMERS_VOLUME_SLOT_LIMIT, limit);
   const statementTimeoutMs = Math.max(0, Math.trunc(Number(options.statementTimeoutMs) || DEFAULT_TOP_PERFORMERS_STATEMENT_TIMEOUT_MS));
   return {
     limit,
     minMcap,
     minVol24h,
     maxPchange24h,
+    volumeSlotLimit,
     statementTimeoutMs,
   };
 }
@@ -746,11 +749,50 @@ async function listDashboardTopPerformers(options = {}) {
          CUME_DIST() OVER (ORDER BY volume_score_input) AS volume_rank_score,
          CUME_DIST() OVER (ORDER BY pchange_score_input) AS pchange_rank_score
        FROM candidates
+     ),
+     volume_picks AS (
+       SELECT
+         ranked.*,
+         'volume_24h' AS performance_bucket,
+         ((volume_rank_score * 0.82) + (pchange_rank_score * 0.18)) * 100 AS performance_score
+       FROM ranked
+       ORDER BY
+         volume_score_input DESC,
+         COALESCE(last_vol_24h, 0) DESC,
+         pchange_score_input DESC,
+         COALESCE(last_mcap, 0) DESC,
+         last_seen_at DESC,
+         address ASC
+       LIMIT $5
+     ),
+     pchange_picks AS (
+       SELECT
+         ranked.*,
+         'pchange_24h' AS performance_bucket,
+         ((pchange_rank_score * 0.82) + (volume_rank_score * 0.18)) * 100 AS performance_score
+       FROM ranked
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM volume_picks vp
+         WHERE vp.address = ranked.address
+       )
+       ORDER BY
+         pchange_score_input DESC,
+         pchange_rank_score DESC,
+         volume_rank_score DESC,
+         COALESCE(last_vol_24h, 0) DESC,
+         COALESCE(last_mcap, 0) DESC,
+         last_seen_at DESC,
+         address ASC
+       LIMIT GREATEST(0, $1 - (SELECT COUNT(*) FROM volume_picks))
+     ),
+     combined AS (
+       SELECT * FROM volume_picks
+       UNION ALL
+       SELECT * FROM pchange_picks
      )
-     SELECT
-       ranked.*,
-       ((volume_rank_score * 0.62) + (pchange_rank_score * 0.38)) * 100 AS performance_score
-     FROM ranked
+     SELECT *
+     FROM combined
      ORDER BY
        performance_score DESC,
        volume_rank_score DESC,
@@ -766,6 +808,7 @@ async function listDashboardTopPerformers(options = {}) {
       normalized.minMcap,
       normalized.minVol24h,
       normalized.maxPchange24h,
+      normalized.volumeSlotLimit,
     ],
     normalized.statementTimeoutMs
   );

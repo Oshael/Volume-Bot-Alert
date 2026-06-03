@@ -19,7 +19,7 @@ const {
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const MONITORED_MIN_MCAP = 30000;
-const TOP_PERFORMERS_DEFAULT_LIMIT = 10;
+const TOP_PERFORMERS_DEFAULT_LIMIT = 15;
 const TOP_PERFORMERS_MAX_LIMIT = 20;
 const TOP_PERFORMERS_MIN_VOL_24H = 200000;
 const TOP_PERFORMERS_CACHE_TTL_MS = 30000;
@@ -386,7 +386,7 @@ function buildTopPerformersPayload(rows, options = {}) {
   return {
     generatedAt: new Date().toISOString(),
     source: 'token_catalog',
-    ranking: 'volume24h_rank_x_pchange24h_rank',
+    ranking: 'split_volume24h_7_pchange24h_8',
     minMcap: options.minMcap,
     minVol24h: options.minVol24h,
     count: rows.length,

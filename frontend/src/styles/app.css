@@ -6052,6 +6052,16 @@ button,
   line-height: 1;
 }
 
+.top-performer-actions .top-performer-admin-block {
+  border-color: rgba(255, 93, 122, 0.34);
+  color: #ff6b7f;
+}
+
+.top-performer-actions .top-performer-admin-block:hover {
+  border-color: rgba(255, 93, 122, 0.72);
+  background: rgba(72, 12, 24, 0.92);
+}
+
 .top-performers-empty {
   display: flex;
   align-items: center;

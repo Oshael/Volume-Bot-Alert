@@ -105,18 +105,24 @@ describe('token catalog dashboard top performers', () => {
         minVol24h: 200000,
       });
 
-      assert.deepEqual(capturedParams, [10, 30000, 200000, 300]);
+      assert.deepEqual(capturedParams, [10, 30000, 200000, 300, 7]);
       assert.equal(capturedTimeout, 5000);
       assert.match(capturedSql, /CUME_DIST\(\) OVER \(ORDER BY volume_score_input\) AS volume_rank_score/i);
       assert.match(capturedSql, /CUME_DIST\(\) OVER \(ORDER BY pchange_score_input\) AS pchange_rank_score/i);
-      assert.match(capturedSql, /volume_rank_score \* 0\.62/i);
-      assert.match(capturedSql, /pchange_rank_score \* 0\.38/i);
+      assert.match(capturedSql, /'volume_24h' AS performance_bucket/i);
+      assert.match(capturedSql, /'pchange_24h' AS performance_bucket/i);
+      assert.doesNotMatch(capturedSql, /COALESCE\(last_price_change_24h, 0\) >= \$5/i);
+      assert.match(capturedSql, /volume_rank_score \* 0\.82/i);
+      assert.match(capturedSql, /pchange_rank_score \* 0\.82/i);
+      assert.match(capturedSql, /LIMIT \$5/i);
+      assert.match(capturedSql, /LIMIT GREATEST\(0, \$1 - \(SELECT COUNT\(\*\) FROM volume_picks\)\)/i);
       assert.match(capturedSql, /tc\.eligible_for_monitoring = TRUE/i);
       assert.match(capturedSql, /tc\.is_active_monitor_candidate = TRUE/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= \$2/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_vol_24h, 0\) >= \$3/i);
       assert.match(capturedSql, /COALESCE\(trr\.label, ''\) NOT IN \('junk_probable', 'junk_permanent'\)/i);
       assert.match(capturedSql, /FROM admin_blocked_tokens ab/i);
+      assert.match(capturedSql, /UNION ALL/i);
       assert.match(capturedSql, /ORDER BY\s+performance_score DESC,\s+volume_rank_score DESC,\s+pchange_rank_score DESC/i);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].performance_score, '557.12');
