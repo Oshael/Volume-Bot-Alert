@@ -101,6 +101,9 @@ export interface ManualTokenEntry {
   _lastAlertKind?: AlertEntry['kind'] | null;
   _isRecentRouted?: boolean;
   _isOldWeekRouted?: boolean;
+  _isTopPerformer?: boolean;
+  performanceRank?: number | null;
+  performanceScore?: number | null;
 }
 
 export type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
@@ -557,6 +560,9 @@ export interface AppState {
     manualTokenAddresses: string[];
     recentTokenAddresses: string[];
     oldWeekTokenAddresses: string[];
+    topPerformerAddresses: string[];
+    topPerformersGeneratedAt: string | null;
+    topPerformersRanking: string | null;
     dismissedRecent: string[];
     dismissedOldWeek: string[];
     dismissedPump: string[];
@@ -723,6 +729,9 @@ export function createAppState(): AppState {
       manualTokenAddresses: [],
       recentTokenAddresses: [],
       oldWeekTokenAddresses: [],
+      topPerformerAddresses: [],
+      topPerformersGeneratedAt: null,
+      topPerformersRanking: null,
       dismissedRecent: [],
       dismissedOldWeek: [],
       dismissedPump: [],
@@ -987,6 +996,12 @@ export function getRecentTokens(state: AppState) {
 
 export function getOldWeekTokens(state: AppState) {
   return state.data.oldWeekTokenAddresses
+    .map((address) => getTrackedToken(state, address))
+    .filter((item): item is ManualTokenEntry => Boolean(item));
+}
+
+export function getTopPerformerTokens(state: AppState) {
+  return state.data.topPerformerAddresses
     .map((address) => getTrackedToken(state, address))
     .filter((item): item is ManualTokenEntry => Boolean(item));
 }

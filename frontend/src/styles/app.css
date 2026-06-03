@@ -5854,6 +5854,221 @@ button,
     0 0 18px rgba(0, 212, 255, 0.06);
 }
 
+.top-performers-bar {
+  min-height: 172px;
+  border-color: rgba(66, 211, 146, 0.36);
+  background: linear-gradient(180deg, rgba(7, 22, 19, 0.94), rgba(7, 12, 21, 0.96));
+  box-shadow:
+    0 0 0 1px rgba(66, 211, 146, 0.08) inset,
+    0 0 18px rgba(66, 211, 146, 0.04);
+}
+
+.legacy-bar-title.top-performers {
+  color: #42d392;
+}
+
+.top-performers-head {
+  min-height: 22px;
+}
+
+.top-performers-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.top-performers-viewport {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scroll-snap-type: none;
+}
+
+.top-performers-track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(320px, 380px);
+  gap: 8px;
+  width: max-content;
+  padding-bottom: 2px;
+}
+
+.top-performer-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: 26px minmax(48px, auto) 60px;
+  row-gap: 8px;
+  min-height: 132px;
+  padding: 10px;
+  border: 1px solid rgba(151, 180, 211, 0.16);
+  border-radius: 6px;
+  background: rgba(4, 12, 20, 0.64);
+  font-variant-numeric: tabular-nums;
+}
+
+.top-performer-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.top-performer-avatar {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.top-performer-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #d8f7e8;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.top-performer-symbol {
+  min-width: 0;
+  color: #effff7;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-performer-rank {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #586355;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.top-performer-metrics {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.top-performer-change {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 4px;
+  color: #42d392;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.top-performer-change-window {
+  color: #586355;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.top-performer-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.top-performer-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.top-performer-stat-label {
+  color: #586355;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.top-performer-stat-value {
+  color: #aeb9ab;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.top-performer-chart {
+  width: 100%;
+  height: 60px;
+  min-width: 0;
+}
+
+.top-performer-chart .sparkline-wrap,
+.top-performer-chart .token-sparkline {
+  width: 100%;
+  height: 60px;
+}
+
+.top-performer-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.top-performer-card:hover .top-performer-actions,
+.top-performer-card:focus-within .top-performer-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.top-performer-card:hover .top-performer-rank,
+.top-performer-card:focus-within .top-performer-rank {
+  opacity: 0;
+}
+
+.top-performer-actions .inline-icon {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border-radius: 5px;
+  background: rgba(4, 12, 20, 0.86);
+  font-size: 0.64rem;
+  line-height: 1;
+}
+
+.top-performers-empty {
+  display: flex;
+  align-items: center;
+  min-height: 72px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
 .recent-bar {
   border-color: rgba(0, 204, 102, 0.28);
   box-shadow:

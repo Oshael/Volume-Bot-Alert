@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -437,6 +437,7 @@ export type AppRenderRegion =
   | 'header'
   | 'toasts'
   | 'legacy'
+  | 'top-performers'
   | 'manual'
   | 'recent'
   | 'old-week'
@@ -720,6 +721,7 @@ export function createAppController(): AppController {
   let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
+  let topPerformersRefreshInFlight = false;
   let mockTradingRefreshInFlight = false;
   let nextMockTradingMarketRefreshAt = 0;
   let floatingQuickBuyExecutionInFlight = false;
@@ -1155,7 +1157,11 @@ export function createAppController(): AppController {
   }
 
   function refreshTrackedTokenStore() {
-    const activeAddresses = new Set(state.data.monitoredTokenAddresses);
+    const activeAddresses = new Set([
+      ...state.data.monitoredTokenAddresses,
+      ...state.data.manualTokenAddresses,
+      ...state.data.topPerformerAddresses,
+    ]);
     for (const address of Object.keys(state.data.trackedTokensByAddress)) {
       if (!activeAddresses.has(address)) {
         delete state.data.trackedTokensByAddress[address];
@@ -4268,6 +4274,7 @@ export function createAppController(): AppController {
     state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => !blocked.has(item));
     state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => !blocked.has(item));
     state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => !blocked.has(item));
+    state.data.topPerformerAddresses = state.data.topPerformerAddresses.filter((item) => !blocked.has(item));
     refreshTrackedTokenStore();
     state.data.pumpTokens = state.data.pumpTokens.filter((item) => !blocked.has(item.mint));
     state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => !blocked.has(item.mint));
@@ -5415,20 +5422,36 @@ export function createAppController(): AppController {
       nextSparklineRefreshAt = 0;
     }
     if (hasEntries) {
-      emit('manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'recent', 'old-week');
     }
   }
 
   function getVisibleManualSparklineAddresses() {
-    return resolveManualTableRows(getManualTokens(state), {
+    const selected: string[] = [];
+    const seen = new Set<string>();
+    for (const address of state.data.topPerformerAddresses.slice(0, 10)) {
+      if (!address || seen.has(address)) {
+        continue;
+      }
+      seen.add(address);
+      selected.push(address);
+    }
+
+    for (const item of resolveManualTableRows(getManualTokens(state), {
       starredOnly: state.ui.manualStarredOnly,
       starredTokens: state.data.starredTokens,
       searchQuery: state.ui.manualSearchQuery,
       sortCriteria: state.ui.manualSorts,
     })
-      .slice(0, SPARKLINE_VISIBLE_LIMIT_MANUAL)
-      .map((item) => item.address)
-      .filter(Boolean);
+      .slice(0, SPARKLINE_VISIBLE_LIMIT_MANUAL)) {
+      if (!item.address || seen.has(item.address)) {
+        continue;
+      }
+      seen.add(item.address);
+      selected.push(item.address);
+    }
+
+    return selected;
   }
 
   function getVisibleRoutedHistorySparklineAddresses() {
@@ -5676,7 +5699,7 @@ export function createAppController(): AppController {
 
   function handleWorkspaceSparklineRefreshFailure(visibleAddresses: string[], error: unknown) {
     if (clearWorkspaceSparklineLoadingEntries(visibleAddresses)) {
-      emit('manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'recent', 'old-week');
     }
 
     console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
@@ -5726,10 +5749,10 @@ export function createAppController(): AppController {
 
     state.data.sparklineByAddress = nextCache;
     if (state.ui.expandedSparklineAddress) {
-      emit('manual', 'recent', 'old-week', 'overlay');
+      emit('top-performers', 'manual', 'recent', 'old-week', 'overlay');
       return;
     }
-    emit('manual', 'recent', 'old-week');
+    emit('top-performers', 'manual', 'recent', 'old-week');
   }
 
   function buildExpandedSparklineCacheEntry(
@@ -6114,7 +6137,7 @@ export function createAppController(): AppController {
 
     const loadingChanged = ensureWorkspaceSparklineLoadingEntries(visibleAddresses);
     if (changed || loadingChanged) {
-      emit('manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'recent', 'old-week');
     }
   }
 
@@ -6170,7 +6193,7 @@ export function createAppController(): AppController {
 
   function handleWorkspaceSparklineBatchRefreshError(batch: SparklineBatchRequest, error: unknown) {
     if (clearWorkspaceSparklineLoadingEntries(batch.addresses)) {
-      emit('manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'recent', 'old-week');
     }
 
     console.warn(
@@ -6428,6 +6451,7 @@ export function createAppController(): AppController {
         () => fetchDashboardMonitored(token),
       );
       applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      void refreshDashboardTopPerformers(token);
       void refreshHistoryWorkspaceSparklines({ token });
       void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
         address: item.address,
@@ -6458,6 +6482,29 @@ export function createAppController(): AppController {
       emit('legacy', 'overlay');
     } finally {
       monitoredRefreshInFlight = false;
+    }
+  }
+
+  async function refreshDashboardTopPerformers(token = state.session.token) {
+    if (!token || topPerformersRefreshInFlight || !isLiveWorkspace()) {
+      return;
+    }
+
+    topPerformersRefreshInFlight = true;
+    try {
+      const payload = await measureRuntimePerfAsync(
+        'api.dashboard.top-performers',
+        isRuntimePerfDebugActive(),
+        { workspace: state.ui.workspace },
+        () => fetchDashboardTopPerformers(token),
+      );
+      applyDashboardTopPerformers(payload);
+      emit('top-performers');
+      void refreshHistoryWorkspaceSparklines({ token });
+    } catch (error) {
+      console.warn('[AppController] Failed to refresh dashboard top performers:', error instanceof Error ? error.message : error);
+    } finally {
+      topPerformersRefreshInFlight = false;
     }
   }
 
@@ -6932,6 +6979,9 @@ export function createAppController(): AppController {
       manualTokenAddresses: [],
       recentTokenAddresses: [],
       oldWeekTokenAddresses: [],
+      topPerformerAddresses: [],
+      topPerformersGeneratedAt: null,
+      topPerformersRanking: null,
       dismissedRecent: [],
       dismissedOldWeek: [],
       dismissedPump: [],
@@ -7113,6 +7163,65 @@ export function createAppController(): AppController {
         rebuildTrackedState(manualPayload, monitoredDashboardTokens);
       },
     );
+  }
+
+  function clearTopPerformerFlags(addresses: string[]) {
+    for (const address of addresses) {
+      const existingItem = state.data.trackedTokensByAddress[address];
+      if (!existingItem?._isTopPerformer) {
+        continue;
+      }
+      const nextItem = {
+        ...existingItem,
+        _isTopPerformer: false,
+        performanceRank: null,
+        performanceScore: null,
+      };
+      replaceTrackedTokenReferences(address, nextItem);
+    }
+  }
+
+  function applyDashboardTopPerformers(payload: DashboardTopPerformersPayload) {
+    const blocked = new Set(state.data.blocklist.map((item) => item.address));
+    const previousAddresses = state.data.topPerformerAddresses;
+    const nextAddresses: string[] = [];
+    const seen = new Set<string>();
+
+    clearTopPerformerFlags(previousAddresses);
+
+    for (const item of payload.tokens || []) {
+      const address = String(item.address || '').trim();
+      if (!address || blocked.has(address) || seen.has(address)) {
+        continue;
+      }
+      seen.add(address);
+      nextAddresses.push(address);
+
+      const existingItem = state.data.trackedTokensByAddress[address];
+      const mergedItem = mergeTrackedDashboardFields({
+        existingItem,
+        dashboardItem: item,
+        base: {
+          ...existingItem,
+          address,
+          label: existingItem?.label ?? item.symbol ?? 'Top performer',
+          manual: existingItem?.manual ?? false,
+          _userManual: existingItem?._userManual ?? false,
+        },
+        coldRefreshDue: true,
+      });
+      replaceTrackedTokenReferences(address, {
+        ...selectMergedTrackedToken(existingItem, mergedItem),
+        _isTopPerformer: true,
+        performanceRank: item.performanceRank ?? nextAddresses.length,
+        performanceScore: item.performanceScore ?? null,
+      });
+    }
+
+    state.data.topPerformerAddresses = nextAddresses;
+    state.data.topPerformersGeneratedAt = payload.generatedAt ?? null;
+    state.data.topPerformersRanking = payload.ranking ?? null;
+    refreshTrackedTokenStore();
   }
 
   function buildCurrentMonitoredMeteoraSnapshot(address: string) {
@@ -7643,6 +7752,7 @@ export function createAppController(): AppController {
       }
 
       await hydratePagedDashboardMonitored(token, manualTokens, alertFeedMode);
+      void refreshDashboardTopPerformers(token);
     } catch (error) {
       recordRestoreControllerDebug('controller.dashboard-hydrate.error', {
         message: formatDebugErrorMessage(error),

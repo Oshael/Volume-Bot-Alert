@@ -133,6 +133,22 @@ export interface DashboardHistoryBootstrapPayload {
   oldWeek: DashboardHistoryBucketSlicePayload;
 }
 
+export interface DashboardTopPerformerToken extends DashboardMonitoredToken {
+  performanceRank?: number | null;
+  performanceScore?: number | null;
+}
+
+export interface DashboardTopPerformersPayload {
+  generatedAt?: string | null;
+  source?: string | null;
+  ranking?: string | null;
+  minMcap?: number | null;
+  minVol24h?: number | null;
+  count: number;
+  cached?: boolean;
+  tokens: DashboardTopPerformerToken[];
+}
+
 function normalizeDashboardHistoryBucketSlice(
   slice: Partial<DashboardHistoryBucketSlicePayload> | null | undefined,
 ): DashboardHistoryBucketSlicePayload {
@@ -412,6 +428,39 @@ export function fetchDashboardHistoryBootstrap(
     recent: normalizeDashboardHistoryBucketSlice(response.recent),
     oldWeek: normalizeDashboardHistoryBucketSlice(response.oldWeek),
   }));
+}
+
+export function fetchDashboardTopPerformers(
+  token?: string | null,
+  options?: { limit?: number; minMcap?: number; minVol24h?: number },
+) {
+  const query = new URLSearchParams();
+  if (options?.limit != null) {
+    query.set('limit', String(Math.max(1, Math.trunc(options.limit))));
+  }
+  if (options?.minMcap != null) {
+    query.set('minMcap', String(Math.max(0, Number(options.minMcap) || 0)));
+  }
+  if (options?.minVol24h != null) {
+    query.set('minVol24h', String(Math.max(0, Number(options.minVol24h) || 0)));
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+
+  return apiFetch<DashboardTopPerformersPayload>(`/api/dashboard/top-performers${suffix}`, { token })
+    .then((response) => ({
+      generatedAt: response.generatedAt ?? null,
+      source: response.source ?? null,
+      ranking: response.ranking ?? null,
+      minMcap: response.minMcap ?? null,
+      minVol24h: response.minVol24h ?? null,
+      count: Number(response.count) || 0,
+      cached: Boolean(response.cached),
+      tokens: Array.isArray(response.tokens) ? response.tokens.map((item) => ({
+        ...item,
+        performanceRank: item.performanceRank == null ? null : Number(item.performanceRank),
+        performanceScore: item.performanceScore == null ? null : Number(item.performanceScore),
+      })) : [],
+    }));
 }
 
 export function fetchTokenSparklines(

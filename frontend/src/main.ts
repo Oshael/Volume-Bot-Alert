@@ -360,7 +360,7 @@ function getRestorePriorityRegions(state: AppState) {
   }
 
   if (state.ui.workspace === 'live') {
-    return ['header', 'overlay', 'legacy', 'manual', 'alerts', 'monitored', 'pumpfun', 'toasts'] satisfies AppRenderRegion[];
+    return ['header', 'overlay', 'legacy', 'top-performers', 'manual', 'alerts', 'monitored', 'pumpfun', 'toasts'] satisfies AppRenderRegion[];
   }
 
   if (state.ui.workspace === 'history') {

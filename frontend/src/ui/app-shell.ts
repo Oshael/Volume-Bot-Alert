@@ -1,11 +1,12 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTopPerformerTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
 import { renderManualTokensSection } from './sections/manual-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
+import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
 import { resolveManualTableRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
@@ -149,6 +150,7 @@ type AppRenderFrame = {
   shell: HTMLElement;
   toastsSlot: HTMLElement;
   legacySlot: HTMLElement;
+  topPerformersSlot: HTMLElement;
   oldWeekSlot: HTMLElement;
   recentSlot: HTMLElement;
   manualSlot: HTMLElement;
@@ -167,6 +169,7 @@ const APP_HEADER_SLOT_SELECTOR = '[data-app-render-slot="header"]';
 const APP_SHELL_SELECTOR = '[data-app-render-slot="shell"]';
 const APP_TOASTS_SLOT_SELECTOR = '[data-app-render-slot="toasts"]';
 const APP_LEGACY_SLOT_SELECTOR = '[data-app-render-slot="legacy"]';
+const APP_TOP_PERFORMERS_SLOT_SELECTOR = '[data-app-render-slot="top-performers"]';
 const APP_OLD_WEEK_SLOT_SELECTOR = '[data-app-render-slot="old-week"]';
 const APP_RECENT_SLOT_SELECTOR = '[data-app-render-slot="recent"]';
 const APP_MANUAL_SLOT_SELECTOR = '[data-app-render-slot="manual"]';
@@ -224,6 +227,7 @@ export function renderAppShell(
   if (state.session.status === 'authenticated' && !isAccountSecurityRoute) {
     renderFrame.oldWeekSlot.hidden = !isHistoryWorkspace;
     renderFrame.recentSlot.hidden = !isHistoryWorkspace;
+    renderFrame.topPerformersSlot.hidden = !isLiveWorkspace;
     renderFrame.manualSlot.hidden = !isLiveWorkspace;
     renderFrame.panels.hidden = false;
 
@@ -250,11 +254,20 @@ export function renderAppShell(
     }
 
     if (isLiveWorkspace) {
+      updateRegionSlot(
+        renderFrame.topPerformersSlot,
+        'top-performers',
+        dirtyRegions,
+        getTopPerformersRenderKey(state),
+        () => [renderTopPerformersSection(state, controller)],
+        () => patchTopPerformersSlot(renderFrame.topPerformersSlot, state, controller),
+      );
       updateRegionSlot(renderFrame.manualSlot, 'manual', dirtyRegions, getManualRenderKey(state), () => [renderManualTokensSection(state, controller)]);
       updateRegionSlot(renderFrame.monitoredSlot, 'monitored', dirtyRegions, getMonitoredRenderKey(state), () => [renderMonitoredSection(state, controller)]);
       updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
       updateRegionSlot(renderFrame.alertsSlot, 'alerts', dirtyRegions, getAlertsRenderKey(state), () => [renderAlertsSection(state, controller)]);
     } else {
+      updateRenderSlot(renderFrame.topPerformersSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.monitoredSlot, 'hidden', () => []);
       updateRenderSlot(renderFrame.pumpfunSlot, 'hidden', () => []);
@@ -274,11 +287,13 @@ export function renderAppShell(
   } else {
     renderFrame.oldWeekSlot.hidden = true;
     renderFrame.recentSlot.hidden = true;
+    renderFrame.topPerformersSlot.hidden = true;
     renderFrame.manualSlot.hidden = true;
     renderFrame.panels.hidden = true;
 
     updateRenderSlot(renderFrame.oldWeekSlot, 'hidden', () => []);
     updateRenderSlot(renderFrame.recentSlot, 'hidden', () => []);
+    updateRenderSlot(renderFrame.topPerformersSlot, 'hidden', () => []);
     updateRenderSlot(renderFrame.manualSlot, 'hidden', () => []);
     renderFrame.monitoredSlot.replaceChildren();
     renderFrame.bidZoneSlot.replaceChildren();
@@ -339,6 +354,7 @@ function tryGetExistingAppRenderFrame(root: HTMLElement): AppRenderFrame | null 
     shell: existingFrame?.querySelector<HTMLElement>(APP_SHELL_SELECTOR),
     toastsSlot: existingFrame?.querySelector<HTMLElement>(APP_TOASTS_SLOT_SELECTOR),
     legacySlot: existingFrame?.querySelector<HTMLElement>(APP_LEGACY_SLOT_SELECTOR),
+    topPerformersSlot: existingFrame?.querySelector<HTMLElement>(APP_TOP_PERFORMERS_SLOT_SELECTOR),
     oldWeekSlot: existingFrame?.querySelector<HTMLElement>(APP_OLD_WEEK_SLOT_SELECTOR),
     recentSlot: existingFrame?.querySelector<HTMLElement>(APP_RECENT_SLOT_SELECTOR),
     manualSlot: existingFrame?.querySelector<HTMLElement>(APP_MANUAL_SLOT_SELECTOR),
@@ -376,6 +392,7 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
 
   const toastsSlot = createRenderSlot('toasts');
   const legacySlot = createRenderSlot('legacy');
+  const topPerformersSlot = createRenderSlot('top-performers');
   const oldWeekSlot = createRenderSlot('old-week');
   const recentSlot = createRenderSlot('recent');
   const manualSlot = createRenderSlot('manual');
@@ -392,7 +409,7 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
 
   monitoredStack.append(monitoredSlot, bidZoneSlot);
   panels.append(monitoredStack, pumpfunSlot, alertsSlot);
-  shell.append(toastsSlot, legacySlot, oldWeekSlot, recentSlot, manualSlot, panels);
+  shell.append(toastsSlot, legacySlot, topPerformersSlot, oldWeekSlot, recentSlot, manualSlot, panels);
 
   const overlaySlot = createRenderSlot('overlay');
   const floatingQuickBuySlot = createRenderSlot('floating-quick-buy');
@@ -406,6 +423,7 @@ function createAppRenderFrame(root: HTMLElement): AppRenderFrame {
     shell,
     toastsSlot,
     legacySlot,
+    topPerformersSlot,
     oldWeekSlot,
     recentSlot,
     manualSlot,
@@ -632,6 +650,48 @@ function updateRegionSlot(
   }
 
   updateRenderSlot(slot, nextKey, build);
+}
+
+function patchTopPerformersSlot(slot: HTMLElement, state: AppState, controller: AppController) {
+  const previousViewport = slot.querySelector<HTMLElement>('.top-performers-viewport');
+  const previousScrollLeft = previousViewport?.scrollLeft ?? 0;
+  const previousMaxScrollLeft = previousViewport
+    ? Math.max(0, previousViewport.scrollWidth - previousViewport.clientWidth)
+    : 0;
+  logTopPerformersDebug('patch-before', {
+    previousScrollLeft: Math.round(previousScrollLeft),
+    previousMaxScrollLeft: Math.round(previousMaxScrollLeft),
+    previousScrollWidth: Math.round(previousViewport?.scrollWidth ?? 0),
+    previousClientWidth: Math.round(previousViewport?.clientWidth ?? 0),
+  });
+  slot.replaceChildren(renderTopPerformersSection(state, controller));
+
+  const nextViewport = slot.querySelector<HTMLElement>('.top-performers-viewport');
+  if (!nextViewport || !(previousScrollLeft > 0)) {
+    logTopPerformersDebug('patch-after', {
+      restored: false,
+      reason: nextViewport ? 'previous-scroll-zero' : 'next-viewport-missing',
+    });
+    return true;
+  }
+
+  const nextMaxScrollLeft = Math.max(0, nextViewport.scrollWidth - nextViewport.clientWidth);
+  const scrollRatio = previousMaxScrollLeft > 0 ? previousScrollLeft / previousMaxScrollLeft : 0;
+  const nextScrollLeft = Math.min(nextMaxScrollLeft, Math.max(previousScrollLeft, Math.round(nextMaxScrollLeft * scrollRatio)));
+  const previousScrollBehavior = nextViewport.style.scrollBehavior;
+  nextViewport.style.scrollBehavior = 'auto';
+  nextViewport.scrollTo({ left: nextScrollLeft, behavior: 'auto' });
+  nextViewport.scrollLeft = nextScrollLeft;
+  nextViewport.style.scrollBehavior = previousScrollBehavior;
+  logTopPerformersDebug('patch-after', {
+    restored: true,
+    nextScrollLeft: Math.round(nextViewport.scrollLeft),
+    targetScrollLeft: Math.round(nextScrollLeft),
+    nextMaxScrollLeft: Math.round(nextMaxScrollLeft),
+    nextScrollWidth: Math.round(nextViewport.scrollWidth),
+    nextClientWidth: Math.round(nextViewport.clientWidth),
+  });
+  return true;
 }
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
@@ -1008,6 +1068,23 @@ function getLegacyRenderKey(state: AppState) {
     accessStatus: state.session.accessStatus,
     accessExpiresAt: state.session.accessExpiresAt,
     accessDaysRemaining: state.session.accessDaysRemaining,
+  });
+}
+
+function getTopPerformersRenderKey(state: AppState) {
+  return JSON.stringify({
+    generatedAt: state.data.topPerformersGeneratedAt,
+    ranking: state.data.topPerformersRanking,
+    tradeTerminals: state.ui.enabledTradeTerminals,
+    tokens: getTopPerformerTokens(state).map((token) => serializePrimitiveList([
+      token.address,
+      token.symbol,
+      token.name,
+      token.imageUrl,
+      token.pairUrl,
+      token.performanceRank,
+      Boolean(state.data.sparklineByAddress[token.address]),
+    ])),
   });
 }
 
