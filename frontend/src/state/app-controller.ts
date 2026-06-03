@@ -5429,7 +5429,7 @@ export function createAppController(): AppController {
   function getVisibleManualSparklineAddresses() {
     const selected: string[] = [];
     const seen = new Set<string>();
-    for (const address of state.data.topPerformerAddresses.slice(0, 10)) {
+    for (const address of state.data.topPerformerAddresses) {
       if (!address || seen.has(address)) {
         continue;
       }

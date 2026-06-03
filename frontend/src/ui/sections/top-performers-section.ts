@@ -14,7 +14,7 @@ function renderTokenAvatar(token: ManualTokenEntry) {
 
 const TOP_PERFORMERS_MANUAL_PAUSE_MS = 4000;
 const TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS = 1800;
-const TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC = 22;
+const TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC = 32;
 
 let topPerformersManualPauseUntil = 0;
 let topPerformersProgrammaticScrollUntil = 0;
@@ -149,6 +149,7 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
   let resumeTimeoutId = 0;
   let lastFrameAt = 0;
   let lastLoggedScrollLeft = -1;
+  let autoScrollLeft = viewport.scrollLeft;
 
   const getLoopWidth = () => {
     const track = viewport.querySelector<HTMLElement>('.top-performers-track:not(.top-performers-track-clone)');
@@ -207,28 +208,34 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
     }
 
     if (now < topPerformersManualPauseUntil) {
+      const remainingPauseMs = Math.max(0, topPerformersManualPauseUntil - now);
       logTopPerformersDebug('auto-scroll-skip', {
         reason: 'manual-pause-active',
-        remainingPauseMs: Math.max(0, topPerformersManualPauseUntil - now),
+        remainingPauseMs: Number.isFinite(remainingPauseMs) ? remainingPauseMs : 'hover',
         scrollLeft: Math.round(viewport.scrollLeft),
         scrollWidth: Math.round(viewport.scrollWidth),
         clientWidth: Math.round(viewport.clientWidth),
       });
-      scheduleResume(topPerformersManualPauseUntil - now);
+      if (Number.isFinite(remainingPauseMs)) {
+        scheduleResume(remainingPauseMs);
+      }
       return;
     }
 
     const deltaSeconds = lastFrameAt > 0 ? Math.min(0.08, (frameAt - lastFrameAt) / 1000) : 0;
     lastFrameAt = frameAt;
     if (deltaSeconds > 0) {
-      const currentLeft = viewport.scrollLeft;
-      let targetLeft = currentLeft + (TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC * deltaSeconds);
+      if (Date.now() > topPerformersProgrammaticScrollUntil && Math.abs(viewport.scrollLeft - autoScrollLeft) > 2) {
+        autoScrollLeft = viewport.scrollLeft;
+      }
+      let targetLeft = autoScrollLeft + (TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC * deltaSeconds);
       if (targetLeft >= maxScrollLeft) {
         targetLeft = 0;
         logTopPerformersDebug('auto-scroll-wrap', {
           maxScrollLeft: Math.round(maxScrollLeft),
         });
       }
+      autoScrollLeft = targetLeft;
       topPerformersProgrammaticScrollUntil = Date.now() + 120;
       viewport.scrollLeft = targetLeft;
     }
@@ -259,6 +266,7 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
 
     initialTimeoutId = window.setTimeout(() => {
       lastFrameAt = 0;
+      autoScrollLeft = viewport.scrollLeft;
       logTopPerformersDebug('auto-scroll-continuous-start', {
         speedPxPerSec: TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC,
       });
@@ -295,6 +303,9 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
   viewport.addEventListener('wheel', () => pauseForManualInput('wheel'), { passive: true });
   viewport.addEventListener('keydown', () => pauseForManualInput('keydown'));
   viewport.addEventListener('scroll', () => {
+    if (Date.now() > topPerformersProgrammaticScrollUntil) {
+      autoScrollLeft = viewport.scrollLeft;
+    }
     if (Math.abs(viewport.scrollLeft - lastLoggedScrollLeft) >= 4) {
       const programmatic = Date.now() <= topPerformersProgrammaticScrollUntil;
       logTopPerformersDebug('scroll', {

@@ -664,7 +664,9 @@ function patchTopPerformersSlot(slot: HTMLElement, state: AppState, controller: 
     previousScrollWidth: Math.round(previousViewport?.scrollWidth ?? 0),
     previousClientWidth: Math.round(previousViewport?.clientWidth ?? 0),
   });
-  slot.replaceChildren(renderTopPerformersSection(state, controller));
+  const nextSection = renderTopPerformersSection(state, controller);
+  preserveTopPerformerCharts(previousViewport, nextSection);
+  slot.replaceChildren(nextSection);
 
   const nextViewport = slot.querySelector<HTMLElement>('.top-performers-viewport');
   if (!nextViewport || !(previousScrollLeft > 0)) {
@@ -692,6 +694,30 @@ function patchTopPerformersSlot(slot: HTMLElement, state: AppState, controller: 
     nextClientWidth: Math.round(nextViewport.clientWidth),
   });
   return true;
+}
+
+function preserveTopPerformerCharts(previousViewport: HTMLElement | null, nextSection: HTMLElement) {
+  if (!previousViewport) {
+    return;
+  }
+
+  const previousChartsByAddress = new Map<string, HTMLElement>();
+  previousViewport.querySelectorAll<HTMLElement>('.top-performer-card[data-address]').forEach((card) => {
+    const address = String(card.dataset.address || '').trim();
+    const chart = card.querySelector<HTMLElement>('.top-performer-chart');
+    if (address && chart?.querySelector('.sparkline-wrap')) {
+      previousChartsByAddress.set(address, chart);
+    }
+  });
+
+  nextSection.querySelectorAll<HTMLElement>('.top-performer-card[data-address]').forEach((card) => {
+    const address = String(card.dataset.address || '').trim();
+    const previousChart = previousChartsByAddress.get(address);
+    const nextChart = card.querySelector<HTMLElement>('.top-performer-chart');
+    if (previousChart && nextChart?.querySelector('.sparkline-wrap')) {
+      nextChart.replaceWith(previousChart);
+    }
+  });
 }
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
