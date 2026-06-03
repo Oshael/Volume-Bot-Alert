@@ -6005,6 +6005,14 @@ button,
   font-weight: 500;
 }
 
+.top-performer-stat-value.top-performer-age-new {
+  color: #42d392;
+}
+
+.top-performer-stat-value.top-performer-age-old {
+  color: #ff8c00;
+}
+
 .top-performer-chart {
   width: 100%;
   height: 60px;
@@ -6015,6 +6023,16 @@ button,
 .top-performer-chart .token-sparkline {
   width: 100%;
   height: 60px;
+}
+
+.top-performer-chart .token-sparkline-line {
+  stroke-width: 1.55px;
+}
+
+.top-performer-chart .token-sparkline-glow {
+  stroke-width: 3.4px;
+  stroke-opacity: 0.18;
+  filter: blur(2px);
 }
 
 .top-performer-actions {

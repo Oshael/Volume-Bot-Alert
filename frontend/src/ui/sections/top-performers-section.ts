@@ -15,6 +15,7 @@ function renderTokenAvatar(token: ManualTokenEntry) {
 const TOP_PERFORMERS_MANUAL_PAUSE_MS = 4000;
 const TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS = 1800;
 const TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC = 32;
+const TOP_PERFORMERS_OLD_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 let topPerformersManualPauseUntil = 0;
 let topPerformersProgrammaticScrollUntil = 0;
@@ -94,6 +95,7 @@ function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, option
     ? `<button type="button" class="inline-icon top-performer-admin-block" data-action="admin-block-token" data-address="${escapeHtml(address)}" data-label="${escapeHtml(symbol)}" title="Admin block permanently" aria-label="Admin block ${escapeHtml(symbol)} permanently"${duplicateActionAttrs}>☠</button>`
     : '';
   const age = token.createdAt ? fmtAge(token.createdAt) : '-';
+  const ageToneClass = getTopPerformerAgeToneClass(token.createdAt);
 
   return `
     <article class="top-performer-card${options.duplicate ? ' is-duplicate' : ''}" data-address="${escapeHtml(address)}"${duplicateAttrs}>
@@ -107,7 +109,7 @@ function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, option
         <div class="top-performer-stats">
           <span class="top-performer-stat"><span class="top-performer-stat-label">MCAP</span><span class="top-performer-stat-value">${escapeHtml(fmtMoney(token.mcap))}</span></span>
           <span class="top-performer-stat"><span class="top-performer-stat-label">VOL 24H</span><span class="top-performer-stat-value">${escapeHtml(fmtMoney(token.volume24h))}</span></span>
-          <span class="top-performer-stat"><span class="top-performer-stat-label">AGE</span><span class="top-performer-stat-value">${escapeHtml(age)}</span></span>
+          <span class="top-performer-stat"><span class="top-performer-stat-label">AGE</span><span class="top-performer-stat-value ${ageToneClass}">${escapeHtml(age)}</span></span>
         </div>
       </div>
       <div class="top-performer-chart">
@@ -120,6 +122,16 @@ function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, option
       </div>
     </article>
   `;
+}
+
+function getTopPerformerAgeToneClass(createdAt?: number | null) {
+  const createdAtMs = Number(createdAt);
+  if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+    return '';
+  }
+  return Date.now() - createdAtMs >= TOP_PERFORMERS_OLD_AGE_MS
+    ? 'top-performer-age-old'
+    : 'top-performer-age-new';
 }
 
 function renderTopPerformerCards(state: AppState, tokens: ManualTokenEntry[], options: { duplicate?: boolean } = {}) {
