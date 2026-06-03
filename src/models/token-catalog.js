@@ -14,6 +14,11 @@ const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
 const OPEN_ENDED_AGE_MAX_MINUTES = 100 * 365 * 24 * 60;
 const HISTORY_BUCKET_SORT_MODES = new Set(['vol', 'mcap', 'pchange', 'age']);
+const DEFAULT_TOP_PERFORMERS_LIMIT = 10;
+const DEFAULT_TOP_PERFORMERS_MIN_MCAP = 30000;
+const DEFAULT_TOP_PERFORMERS_MIN_VOL_24H = 200000;
+const DEFAULT_TOP_PERFORMERS_MAX_PCHANGE_24H = 300;
+const DEFAULT_TOP_PERFORMERS_STATEMENT_TIMEOUT_MS = 5000;
 
 const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
   vol: Object.freeze({
@@ -696,6 +701,63 @@ async function listDashboardMonitoredSlice(page = 0, perPage = 30, minMcap = 300
     perPage: safePerPage,
     rows: rows.map(({ total_count: _totalCount, ...item }) => item),
   };
+}
+
+function normalizeTopPerformersOptions(options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_TOP_PERFORMERS_LIMIT, 50));
+  const minMcap = Math.max(0, Number.isFinite(Number(options.minMcap)) ? Number(options.minMcap) : DEFAULT_TOP_PERFORMERS_MIN_MCAP);
+  const minVol24h = Math.max(0, Number.isFinite(Number(options.minVol24h)) ? Number(options.minVol24h) : DEFAULT_TOP_PERFORMERS_MIN_VOL_24H);
+  const maxPchange24h = Math.max(1, Number.isFinite(Number(options.maxPchange24h)) ? Number(options.maxPchange24h) : DEFAULT_TOP_PERFORMERS_MAX_PCHANGE_24H);
+  const statementTimeoutMs = Math.max(0, Math.trunc(Number(options.statementTimeoutMs) || DEFAULT_TOP_PERFORMERS_STATEMENT_TIMEOUT_MS));
+  return {
+    limit,
+    minMcap,
+    minVol24h,
+    maxPchange24h,
+    statementTimeoutMs,
+  };
+}
+
+async function listDashboardTopPerformers(options = {}) {
+  const normalized = normalizeTopPerformersOptions(options);
+  const { rows } = await db.queryWithStatementTimeout(
+    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
+       (
+         LEAST(GREATEST(COALESCE(tc.last_price_change_24h, 0), 0), $4::numeric)
+         * LN(1 + GREATEST(COALESCE(tc.last_vol_24h, 0), 0))
+       ) AS performance_score
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.token_address = tc.address
+     WHERE tc.eligible_for_monitoring = TRUE
+       AND tc.is_active_monitor_candidate = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $2
+       AND COALESCE(tc.last_vol_24h, 0) >= $3
+       AND COALESCE(tc.last_price_change_24h, 0) > 0
+       AND COALESCE(trr.label, '') NOT IN ('junk_probable', 'junk_permanent')
+       AND NOT EXISTS (
+         SELECT 1
+         FROM admin_blocked_tokens ab
+         WHERE ab.address = tc.address
+       )
+     ORDER BY
+       performance_score DESC,
+       COALESCE(tc.last_price_change_24h, 0) DESC,
+       COALESCE(tc.last_vol_24h, 0) DESC,
+       COALESCE(tc.last_mcap, 0) DESC,
+       tc.last_seen_at DESC,
+       tc.address ASC
+     LIMIT $1`,
+    [
+      normalized.limit,
+      normalized.minMcap,
+      normalized.minVol24h,
+      normalized.maxPchange24h,
+    ],
+    normalized.statementTimeoutMs
+  );
+
+  return rows;
 }
 
 function normalizeHistoryBucketName(bucket) {
@@ -1607,6 +1669,7 @@ module.exports = {
   listEligibleVisible,
   listDashboardMonitored,
   listDashboardMonitoredSlice,
+  listDashboardTopPerformers,
   listDashboardHistoryBucket,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,

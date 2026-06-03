@@ -17,6 +17,7 @@ const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-bucket-1m');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
 const backendAlertFeed = require('../src/services/backend-alert-feed');
+const dashboardRoutes = require('../src/routes/dashboard');
 
 const TEST_USER = {
   username: `dashboardtest_${Date.now()}`,
@@ -233,6 +234,78 @@ describe('Dashboard routes', () => {
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
     }
+  });
+
+  it('returns cached top performers ranked by mixed 24h change and volume score', async () => {
+    const originalListDashboardTopPerformers = tokenCatalog.listDashboardTopPerformers;
+    dashboardRoutes.__private.resetTopPerformersCache();
+    const capturedOptions = [];
+
+    tokenCatalog.listDashboardTopPerformers = async (options) => {
+      capturedOptions.push(options);
+      return [{
+        address: 'So11111111111111111111111111111111111111112',
+        symbol: 'WSOL',
+        name: 'Wrapped SOL',
+        eligible_for_monitoring: true,
+        last_mcap: '1500000',
+        last_price: '123',
+        last_vol_5m: '1000',
+        last_vol_1h: '50000',
+        last_vol_6h: '150000',
+        last_vol_24h: '600000',
+        last_price_change_1h: '2',
+        last_price_change_6h: '5',
+        last_price_change_24h: '42',
+        last_token_created_at_ms: Date.UTC(2026, 3, 1, 12, 0, 0),
+        last_pair_address: 'pair_test_123',
+        last_pair_url: 'https://dexscreener.com/solana/testpair',
+        last_image_url: 'https://example.com/token.png',
+        last_twitter_url: 'https://x.com/wsol',
+        monitor_priority: 'normal',
+        last_seen_at: '2026-04-05T21:10:00.000Z',
+        last_evaluated_at: '2026-04-05T21:09:00.000Z',
+        performance_score: '557.12',
+      }];
+    };
+
+    try {
+      const firstRes = await request(app)
+        .get('/api/dashboard/top-performers')
+        .set('Authorization', `Bearer ${token}`);
+      const secondRes = await request(app)
+        .get('/api/dashboard/top-performers')
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(firstRes.status, 200);
+      assert.equal(secondRes.status, 200);
+      assert.deepEqual(capturedOptions, [{ limit: 10, minMcap: 30000, minVol24h: 200000 }]);
+      assert.equal(firstRes.body.cached, false);
+      assert.equal(secondRes.body.cached, true);
+      assert.equal(firstRes.body.ranking, 'pchange24h_x_log_vol24h');
+      assert.equal(firstRes.body.minMcap, 30000);
+      assert.equal(firstRes.body.minVol24h, 200000);
+      assert.equal(firstRes.body.count, 1);
+      assert.equal(firstRes.body.tokens[0].performanceRank, 1);
+      assert.equal(firstRes.body.tokens[0].performanceScore, 557.12);
+      assert.equal(firstRes.body.tokens[0].symbol, 'WSOL');
+      assert.equal(firstRes.body.tokens[0].volume24h, 600000);
+      assert.equal(firstRes.body.tokens[0].priceChange24h, 42);
+      assert.equal(firstRes.body.tokens[0].meteora, undefined);
+      assert.equal(firstRes.body.tokens[0].riskReview, undefined);
+    } finally {
+      dashboardRoutes.__private.resetTopPerformersCache();
+      tokenCatalog.listDashboardTopPerformers = originalListDashboardTopPerformers;
+    }
+  });
+
+  it('rejects invalid top performer limits', async () => {
+    const res = await request(app)
+      .get('/api/dashboard/top-performers?limit=25')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'limit must be between 1 and 20');
   });
 
   it('returns enriched high-cap dump alert events', async () => {

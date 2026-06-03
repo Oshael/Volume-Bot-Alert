@@ -19,10 +19,21 @@ const {
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const MONITORED_MIN_MCAP = 30000;
+const TOP_PERFORMERS_DEFAULT_LIMIT = 10;
+const TOP_PERFORMERS_MAX_LIMIT = 20;
+const TOP_PERFORMERS_MIN_VOL_24H = 200000;
+const TOP_PERFORMERS_CACHE_TTL_MS = 30000;
+
+let topPerformersCache = null;
 
 function normalizeMinMcap(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
+}
+
+function normalizeMinVol24h(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : TOP_PERFORMERS_MIN_VOL_24H;
 }
 
 function toTimestampMsOrNull(value) {
@@ -368,6 +379,63 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
   return payload;
 }
 
+function buildTopPerformersPayload(rows, options = {}) {
+  const emptyMeteoraByAddress = new Map();
+  const emptyMarketMcapBaselineByAddress = new Map();
+  const emptyMarketVolumeBaselineByAddress = new Map();
+  return {
+    generatedAt: new Date().toISOString(),
+    source: 'token_catalog',
+    ranking: 'pchange24h_x_log_vol24h',
+    minMcap: options.minMcap,
+    minVol24h: options.minVol24h,
+    count: rows.length,
+    tokens: rows.map((item, index) => ({
+      ...buildMonitoredTokenPayload(
+        item,
+        emptyMeteoraByAddress,
+        emptyMarketMcapBaselineByAddress,
+        emptyMarketVolumeBaselineByAddress,
+        { includeMeteora: false, includeRisk: false }
+      ),
+      performanceRank: index + 1,
+      performanceScore: toNumberOrNull(item.performance_score),
+    })),
+  };
+}
+
+function getTopPerformersCacheKey(options) {
+  return JSON.stringify({
+    limit: options.limit,
+    minMcap: options.minMcap,
+    minVol24h: options.minVol24h,
+  });
+}
+
+function getCachedTopPerformersPayload(cacheKey, nowMs = Date.now()) {
+  if (!topPerformersCache || topPerformersCache.key !== cacheKey || topPerformersCache.expiresAt <= nowMs) {
+    return null;
+  }
+  return {
+    ...topPerformersCache.payload,
+    cached: true,
+    cacheAgeMs: nowMs - topPerformersCache.createdAt,
+  };
+}
+
+function setCachedTopPerformersPayload(cacheKey, payload, nowMs = Date.now()) {
+  topPerformersCache = {
+    key: cacheKey,
+    payload,
+    createdAt: nowMs,
+    expiresAt: nowMs + TOP_PERFORMERS_CACHE_TTL_MS,
+  };
+}
+
+function resetTopPerformersCache() {
+  topPerformersCache = null;
+}
+
 function parseMonitoredSliceQuery(query) {
   if (query?.page === undefined && query?.perPage === undefined) {
     return { ok: true, value: null };
@@ -529,6 +597,40 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
   }
 });
 
+router.get('/top-performers', dashboardLimiter, async (req, res) => {
+  const parsedLimit = req.query?.limit === undefined
+    ? { ok: true, value: TOP_PERFORMERS_DEFAULT_LIMIT }
+    : parseNonNegativeInteger(req.query.limit, 'limit', { min: 1, max: TOP_PERFORMERS_MAX_LIMIT });
+  if (!parsedLimit.ok) {
+    return res.status(400).json({ error: parsedLimit.error });
+  }
+
+  const options = {
+    limit: parsedLimit.value,
+    minMcap: normalizeMinMcap(req.query?.minMcap),
+    minVol24h: normalizeMinVol24h(req.query?.minVol24h),
+  };
+  const cacheKey = getTopPerformersCacheKey(options);
+  const cached = getCachedTopPerformersPayload(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
+
+  try {
+    const rows = await tokenCatalog.listDashboardTopPerformers(options);
+    const payload = {
+      ...buildTopPerformersPayload(rows, options),
+      cached: false,
+      cacheTtlMs: TOP_PERFORMERS_CACHE_TTL_MS,
+    };
+    setCachedTopPerformersPayload(cacheKey, payload);
+    return res.json(payload);
+  } catch (err) {
+    console.error('GET /dashboard/top-performers error:', err.message);
+    return res.status(500).json({ error: 'Failed to load top performers' });
+  }
+});
+
 router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   const starredAddresses = parseAddressArray(req.body?.starredTokens, 'starredTokens');
   if (!starredAddresses.ok) {
@@ -680,9 +782,11 @@ router.__private = {
   buildMeteoraSummary,
   buildMarketBaseline,
   buildMonitoredTokenPayload,
+  buildTopPerformersPayload,
   buildRiskReviewSummary,
   buildStructuralRiskSummary,
   parseOptionalEventId,
+  resetTopPerformersCache,
 };
 
 module.exports = router;

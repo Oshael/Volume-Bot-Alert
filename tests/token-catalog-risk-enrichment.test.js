@@ -78,3 +78,48 @@ describe('token catalog auto risk review candidates', () => {
     }
   });
 });
+
+describe('token catalog dashboard top performers', () => {
+  it('ranks eligible active tokens with mixed 24h price change and volume score while excluding blocked junk', async () => {
+    const originalQueryWithStatementTimeout = db.queryWithStatementTimeout;
+    let capturedSql = null;
+    let capturedParams = null;
+    let capturedTimeout = null;
+
+    db.queryWithStatementTimeout = async (sql, params, timeoutMs) => {
+      capturedSql = sql;
+      capturedParams = params;
+      capturedTimeout = timeoutMs;
+      return {
+        rows: [{
+          address: 'So11111111111111111111111111111111111111112',
+          performance_score: '557.12',
+        }],
+      };
+    };
+
+    try {
+      const rows = await tokenCatalog.listDashboardTopPerformers({
+        limit: 10,
+        minMcap: 30000,
+        minVol24h: 200000,
+      });
+
+      assert.deepEqual(capturedParams, [10, 30000, 200000, 300]);
+      assert.equal(capturedTimeout, 5000);
+      assert.match(capturedSql, /LEAST\(GREATEST\(COALESCE\(tc\.last_price_change_24h, 0\), 0\), \$4::numeric\)/i);
+      assert.match(capturedSql, /LN\(1 \+ GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), 0\)\)/i);
+      assert.match(capturedSql, /tc\.eligible_for_monitoring = TRUE/i);
+      assert.match(capturedSql, /tc\.is_active_monitor_candidate = TRUE/i);
+      assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= \$2/i);
+      assert.match(capturedSql, /COALESCE\(tc\.last_vol_24h, 0\) >= \$3/i);
+      assert.match(capturedSql, /COALESCE\(trr\.label, ''\) NOT IN \('junk_probable', 'junk_permanent'\)/i);
+      assert.match(capturedSql, /FROM admin_blocked_tokens ab/i);
+      assert.match(capturedSql, /ORDER BY\s+performance_score DESC/i);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].performance_score, '557.12');
+    } finally {
+      db.queryWithStatementTimeout = originalQueryWithStatementTimeout;
+    }
+  });
+});
