@@ -664,7 +664,7 @@ function patchTopPerformersSlot(slot: HTMLElement, state: AppState, controller: 
     previousScrollWidth: Math.round(previousViewport?.scrollWidth ?? 0),
     previousClientWidth: Math.round(previousViewport?.clientWidth ?? 0),
   });
-  const nextSection = renderTopPerformersSection(state, controller);
+  const nextSection = renderTopPerformersSection(state, controller, { autoScrollStartDelayMs: 0 });
   preserveTopPerformerCharts(previousViewport, nextSection);
   slot.replaceChildren(nextSection);
 

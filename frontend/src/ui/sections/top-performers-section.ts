@@ -138,7 +138,11 @@ function renderTopPerformerCards(state: AppState, tokens: ManualTokenEntry[], op
   return tokens.map((token) => renderTopPerformerCard(state, token, options)).join('');
 }
 
-function bindTopPerformersAutoScroll(section: HTMLElement) {
+type TopPerformersRenderOptions = {
+  autoScrollStartDelayMs?: number;
+};
+
+function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformersRenderOptions = {}) {
   const viewport = section.querySelector<HTMLElement>('.top-performers-viewport');
   if (!viewport || viewport.dataset.autoScrollBound === 'true') return;
   viewport.dataset.autoScrollBound = 'true';
@@ -276,14 +280,16 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
       clientWidth: Math.round(viewport.clientWidth),
     });
 
+    const startDelayMs = Math.max(0, options.autoScrollStartDelayMs ?? TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS);
     initialTimeoutId = window.setTimeout(() => {
       lastFrameAt = 0;
       autoScrollLeft = viewport.scrollLeft;
       logTopPerformersDebug('auto-scroll-continuous-start', {
         speedPxPerSec: TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC,
+        startDelayMs,
       });
       animationFrameId = window.requestAnimationFrame(tick);
-    }, TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS);
+    }, startDelayMs);
   };
 
   window.requestAnimationFrame(() => startAutoScroll());
@@ -331,7 +337,7 @@ function bindTopPerformersAutoScroll(section: HTMLElement) {
   }, { passive: true });
 }
 
-export function renderTopPerformersSection(state: AppState, controller: AppController) {
+export function renderTopPerformersSection(state: AppState, controller: AppController, options: TopPerformersRenderOptions = {}) {
   const section = document.createElement('section');
   section.id = 'top-performers-section';
   section.className = 'legacy-token-bar top-performers-bar';
@@ -362,6 +368,6 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
   bindTokenActions(section, controller);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindTokenImagePreview(section);
-  bindTopPerformersAutoScroll(section);
+  bindTopPerformersAutoScroll(section, options);
   return section;
 }
