@@ -147,6 +147,31 @@ describe('token junk metric', () => {
     assert.ok(assessment.reasonCodes.includes('volume24h_too_low'));
   });
 
+  it('does not auto-junk healthy high-cap tokens only for no Meteora and extreme buy imbalance', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 400338,
+      volume1h: 954,
+      volume6h: 8895.26,
+      volume24h: 30017.98,
+      liquidityUsd: 90511.17,
+      txns24hBuys: 2211,
+      txns24hSells: 181,
+      holderCount: 1000,
+      top10Pct: 35.98,
+      top20Pct: 46.36,
+      mintAuthorityActive: false,
+      freezeAuthorityActive: false,
+      meteora: { noPool: true, poolCount: 0, tvl: null },
+    });
+
+    assert.equal(assessment.label, 'valid_but_weak');
+    assert.equal(assessment.manualReviewRequired, true);
+    assert.ok(assessment.reasonCodes.includes('meteora_absent_above_400k_mcap'));
+    assert.ok(assessment.reasonCodes.includes('buy_sell_imbalance_extreme'));
+    assert.ok(assessment.positiveSignals.includes('holder_distribution_healthy'));
+    assert.ok(assessment.positiveSignals.includes('liquidity_support_healthy'));
+  });
+
   it('promotes dead microcap shells into junk_probable even without structural enrichment', () => {
     const assessment = classifyTokenJunk({
       mcap: 81902.29,

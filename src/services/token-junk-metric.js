@@ -416,6 +416,27 @@ function buildPositiveProfileSignals(input, metrics, options) {
 }
 
 const LEGIT_GUARDRAIL_MIN_POSITIVE_SIGNALS = 3;
+const EXTREME_IMBALANCE_GUARDRAIL_MIN_POSITIVE_SIGNALS = 4;
+const EXTREME_IMBALANCE_GUARDRAIL_MIN_LIQUIDITY_TO_MCAP_RATIO = 0.15;
+const EXTREME_IMBALANCE_GUARDRAIL_MIN_VOL_TO_MCAP_RATIO = 0.05;
+const EXTREME_IMBALANCE_GUARDRAIL_MIN_TXNS_24H = 500;
+
+function hasHealthySupportForExtremeImbalanceGuardrail(input, behavioralSignals, positiveSignals, metrics) {
+  const toleratedSignals = new Set([
+    'meteora_absent_above_400k_mcap',
+    'buy_sell_imbalance_high',
+    'buy_sell_imbalance_extreme',
+  ]);
+
+  return behavioralSignals.includes('meteora_absent_above_400k_mcap')
+    && behavioralSignals.includes('buy_sell_imbalance_extreme')
+    && behavioralSignals.every((signal) => toleratedSignals.has(signal))
+    && positiveSignals.length >= EXTREME_IMBALANCE_GUARDRAIL_MIN_POSITIVE_SIGNALS
+    && (input.holderCount ?? 0) >= 500
+    && (metrics.txns24hTotal ?? 0) >= EXTREME_IMBALANCE_GUARDRAIL_MIN_TXNS_24H
+    && (metrics.liquidityToMcapRatio ?? 0) >= EXTREME_IMBALANCE_GUARDRAIL_MIN_LIQUIDITY_TO_MCAP_RATIO
+    && (metrics.volToMcapRatio ?? 0) >= EXTREME_IMBALANCE_GUARDRAIL_MIN_VOL_TO_MCAP_RATIO;
+}
 
 function shouldApplyLegitGuardrail(strongSignals, positiveSignals) {
   return strongSignals.length === 0
@@ -743,6 +764,14 @@ function applyLegitGuardrail(input, suggestedLabel, strongSignals, weakSignals, 
   }
 
   if (behavioralSignals.includes('buy_sell_imbalance_extreme')) {
+    if (
+      suggestedLabel === 'junk_probable'
+      && strongSignals.length === 0
+      && weakSignals.length === 0
+      && hasHealthySupportForExtremeImbalanceGuardrail(input, behavioralSignals, positiveSignals, metrics)
+    ) {
+      return 'valid_but_weak';
+    }
     return suggestedLabel;
   }
 
