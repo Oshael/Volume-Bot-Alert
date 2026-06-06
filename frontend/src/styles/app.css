@@ -9531,10 +9531,14 @@ TEMP_LEGACY_BAR_TITLE {
 
 .monitored-meta-line .meta-label {
   color: var(--muted) !important;
+  font-size: 11.5px;
+  font-weight: 600;
 }
 
 .monitored-meta-line .meta-value {
   color: #fff !important;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .legacy-bar-title.manual,
