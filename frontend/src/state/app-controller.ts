@@ -1,5 +1,5 @@
 import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
-import { resolveManualTableRows } from '../utils/token-table';
+import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -5422,7 +5422,7 @@ export function createAppController(): AppController {
       nextSparklineRefreshAt = 0;
     }
     if (hasEntries) {
-      emit('top-performers', 'manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
   }
 
@@ -5452,6 +5452,25 @@ export function createAppController(): AppController {
     }
 
     return selected;
+  }
+
+  function getVisibleMonitoredSparklineAddresses() {
+    if (state.ui.livePanelLayout.spans.monitored <= 1) {
+      return [];
+    }
+
+    const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
+    const filteredTracked = resolveMonitoredTableRows(getMonitoredTokens(state), {
+      searchQuery: state.ui.monitoredSearchQuery,
+      sortCriteria: state.ui.monitoredSorts,
+    });
+    const totalPages = Math.max(1, Math.ceil(filteredTracked.length / safePerPage));
+    const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
+    const start = safePage * safePerPage;
+    return filteredTracked
+      .slice(start, start + safePerPage)
+      .map((item) => item.address)
+      .filter(Boolean);
   }
 
   function getVisibleRoutedHistorySparklineAddresses() {
@@ -5503,7 +5522,19 @@ export function createAppController(): AppController {
 
   function getVisibleWorkspaceSparklineAddresses() {
     if (isLiveWorkspace()) {
-      return getVisibleManualSparklineAddresses();
+      const selected = [];
+      const seen = new Set<string>();
+      for (const address of [
+        ...getVisibleMonitoredSparklineAddresses(),
+        ...getVisibleManualSparklineAddresses(),
+      ]) {
+        if (!address || seen.has(address)) {
+          continue;
+        }
+        seen.add(address);
+        selected.push(address);
+      }
+      return selected;
     }
     if (isHistoryWorkspace()) {
       return getVisibleRoutedHistorySparklineAddresses();
@@ -5699,7 +5730,7 @@ export function createAppController(): AppController {
 
   function handleWorkspaceSparklineRefreshFailure(visibleAddresses: string[], error: unknown) {
     if (clearWorkspaceSparklineLoadingEntries(visibleAddresses)) {
-      emit('top-performers', 'manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
 
     console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
@@ -5749,10 +5780,10 @@ export function createAppController(): AppController {
 
     state.data.sparklineByAddress = nextCache;
     if (state.ui.expandedSparklineAddress) {
-      emit('top-performers', 'manual', 'recent', 'old-week', 'overlay');
+      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week', 'overlay');
       return;
     }
-    emit('top-performers', 'manual', 'recent', 'old-week');
+    emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
   }
 
   function buildExpandedSparklineCacheEntry(
@@ -6137,7 +6168,7 @@ export function createAppController(): AppController {
 
     const loadingChanged = ensureWorkspaceSparklineLoadingEntries(visibleAddresses);
     if (changed || loadingChanged) {
-      emit('top-performers', 'manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
   }
 
@@ -6193,7 +6224,7 @@ export function createAppController(): AppController {
 
   function handleWorkspaceSparklineBatchRefreshError(batch: SparklineBatchRequest, error: unknown) {
     if (clearWorkspaceSparklineLoadingEntries(batch.addresses)) {
-      emit('top-performers', 'manual', 'recent', 'old-week');
+      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
 
     console.warn(
@@ -6251,6 +6282,13 @@ export function createAppController(): AppController {
     } finally {
       sparklineRefreshInFlight = false;
     }
+  }
+
+  function refreshMonitoredSparklinesIfExpanded() {
+    if (state.ui.livePanelLayout.spans.monitored <= 1 || !state.session.token || !isLiveWorkspace()) {
+      return;
+    }
+    void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
   }
 
   function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
@@ -8900,6 +8938,7 @@ export function createAppController(): AppController {
       state.ui.monitoredSearchQuery = String(query || '');
       state.ui.monitoredPage = 0;
       emit('monitored');
+      refreshMonitoredSparklinesIfExpanded();
     },
     setManualSearchQuery(query: string) {
       state.ui.manualSearchQuery = String(query || '');
@@ -8955,6 +8994,7 @@ export function createAppController(): AppController {
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       emit('monitored');
+      refreshMonitoredSparklinesIfExpanded();
     },
     setAlertPage(page: number) {
       state.ui.alertPage = clampPage(page, getFilteredAlertsForPagination().length, ALERTS_PER_PAGE);
@@ -8985,6 +9025,7 @@ export function createAppController(): AppController {
       state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       queueUiPrefsPersist();
       emit('monitored');
+      refreshMonitoredSparklinesIfExpanded();
     },
     setRecentPerPage(perPage: number) {
       state.ui.recentPerPage = normalizeUiPerPage(perPage, ROUTED_BUCKET_DEFAULT_PER_PAGE);
@@ -9047,6 +9088,7 @@ export function createAppController(): AppController {
       state.ui.monitoredPage = 0;
       queueUiPrefsPersist();
       emit('monitored');
+      refreshMonitoredSparklinesIfExpanded();
       if (state.session.token && !usesHistoryBucketBootstrap()) {
         void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
           address: item.address,
@@ -9067,6 +9109,9 @@ export function createAppController(): AppController {
       state.ui.livePanelLayout.spans[panel] = nextSpan;
       queueUiPrefsPersist();
       emit(panel);
+      if (panel === 'monitored' && nextSpan > 1) {
+        refreshMonitoredSparklinesIfExpanded();
+      }
     },
     setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>) {
       const nextOrder = normalizeLivePanelOrder(order);

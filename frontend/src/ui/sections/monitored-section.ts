@@ -1,86 +1,94 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindTokenActions, bindTokenImagePreview, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
+import { resolveMonitoredTableRows } from '../../utils/token-table';
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
-  const isCollapsed = state.ui.collapsed.monitored;
-  section.className = `panel legacy-panel monitored-panel${isCollapsed ? ' panel-collapsed' : ''}`;
-  const sorts = state.ui.monitoredSorts;
-  const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
-  const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
-  const monitoredVolActive = hasMode('vol') ? 'active' : '';
-  const monitoredMcapActive = hasMode('mcap') ? 'active' : '';
-  const monitoredAgeActive = hasMode('age') ? 'active' : '';
-  const monitoredVol5m = hasCriterion('vol', '5m') ? 'active' : '';
-  const monitoredVol1h = hasCriterion('vol', '1h') ? 'active' : '';
-  const monitoredVol6h = hasCriterion('vol', '6h') ? 'active' : '';
-  const monitoredVol24h = hasCriterion('vol', '24h') ? 'active' : '';
-  const monitoredMcapHighest = hasCriterion('mcap', 'highest') ? 'active' : '';
-  const monitoredMcapLowest = hasCriterion('mcap', 'lowest') ? 'active' : '';
-  const monitoredAgeNewest = hasCriterion('age', 'newest') ? 'active' : '';
-  const monitoredAgeOldest = hasCriterion('age', 'oldest') ? 'active' : '';
-  const tracked = [...getMonitoredTokens(state)]
-    .filter((item) => item._userManual || !((item.mcap ?? 0) > 0 && (item.mcap ?? 0) < 30000))
-    .sort((a, b) => {
-      const metric = (entry: ManualTokenEntry, mode: string, window: string) => {
-        if (mode === 'age') return entry.createdAt || 0;
-        if (mode === 'mcap') return entry.mcap || 0;
-        if (window === '1h') return entry.volume1h || 0;
-        if (window === '6h') return entry.volume6h || 0;
-        if (window === '24h') return entry.volume24h || 0;
-        return entry.volume5m || 0;
-      };
-      for (const criterion of sorts) {
-        const aMetric = metric(a, criterion.mode, criterion.window);
-        const bMetric = metric(b, criterion.mode, criterion.window);
-        const delta = ((criterion.mode === 'age' && criterion.window === 'oldest') || (criterion.mode === 'mcap' && criterion.window === 'lowest'))
-          ? aMetric - bMetric
-          : bMetric - aMetric;
-        if (delta !== 0) return delta;
-      }
-      const createdDelta = (b.createdAt || 0) - (a.createdAt || 0);
-      if (createdDelta !== 0) return createdDelta;
-      return (b.mcap || 0) - (a.mcap || 0);
-    });
+  const view = resolveMonitoredSectionView(state);
+  section.className = `panel legacy-panel monitored-panel${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
+  section.innerHTML = view.isCollapsed
+    ? renderCollapsedMonitoredHeader(view.filteredTracked.length)
+    : renderExpandedMonitoredMarkup(view);
+
+  if (view.isCollapsed) {
+    bindMonitoredCollapseToggle(section, controller);
+    return section;
+  }
+
+  renderMonitoredRows(section, state, view.pageItems);
+  section.append(renderManualTokenEntryForm(state, controller));
+  bindMonitoredSectionControls(section, state, controller, view);
+  return section;
+}
+
+type MonitoredSectionView = ReturnType<typeof resolveMonitoredSectionView>;
+
+function resolveMonitoredSectionView(state: AppState) {
   const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
   const searchQuery = String(state.ui.monitoredSearchQuery || '').trim().toLowerCase();
-  const filteredTracked = searchQuery
-    ? tracked.filter((item) => {
-      const symbol = String(item.symbol || item.label || '').toLowerCase();
-      const name = String(item.name || '').toLowerCase();
-      const address = String(item.address || '').toLowerCase();
-      return symbol.includes(searchQuery) || name.includes(searchQuery) || address.includes(searchQuery);
-    })
-    : tracked;
+  const filteredTracked = resolveMonitoredTableRows(getMonitoredTokens(state), {
+    searchQuery,
+    sortCriteria: state.ui.monitoredSorts,
+  });
   const filteredTotalPages = Math.max(1, Math.ceil(filteredTracked.length / safePerPage));
   const filteredSafePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), filteredTotalPages - 1);
   const filteredPageStart = filteredSafePage * safePerPage;
-  const pageItems = filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage);
-  if (isCollapsed) {
-    section.innerHTML = `
-      <div class="panel-header monitored-panel-header">
-        <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
-        <div class="panel-header-controls monitored-header-controls">
-          <div class="monitored-header-top">
-            <span class="monitored-token-pill-wrap">
-              <span class="panel-header-label">TOKENS</span>
-              <span class="count monitored-token-count-pill">${filteredTracked.length}</span>
-            </span>
-            <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Expand monitored tokens"><span class="compact-icon-glyph">+</span></button>
-          </div>
+  return {
+    isCollapsed: state.ui.collapsed.monitored,
+    searchQuery,
+    safePerPage,
+    filteredTracked,
+    filteredTotalPages,
+    filteredSafePage,
+    pageItems: filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage),
+    sortClasses: resolveMonitoredSortClasses(state),
+    miniChartEnabled: state.ui.livePanelLayout.spans.monitored > 1,
+  };
+}
+
+function resolveMonitoredSortClasses(state: AppState) {
+  const sorts = state.ui.monitoredSorts;
+  const hasMode = (mode: string) => sorts.some((item) => item.mode === mode);
+  const hasCriterion = (mode: string, window: string) => sorts.some((item) => item.mode === mode && item.window === window);
+  return {
+    volActive: hasMode('vol') ? 'active' : '',
+    mcapActive: hasMode('mcap') ? 'active' : '',
+    ageActive: hasMode('age') ? 'active' : '',
+    vol5m: hasCriterion('vol', '5m') ? 'active' : '',
+    vol1h: hasCriterion('vol', '1h') ? 'active' : '',
+    vol6h: hasCriterion('vol', '6h') ? 'active' : '',
+    vol24h: hasCriterion('vol', '24h') ? 'active' : '',
+    mcapHighest: hasCriterion('mcap', 'highest') ? 'active' : '',
+    mcapLowest: hasCriterion('mcap', 'lowest') ? 'active' : '',
+    ageNewest: hasCriterion('age', 'newest') ? 'active' : '',
+    ageOldest: hasCriterion('age', 'oldest') ? 'active' : '',
+  };
+}
+
+function renderCollapsedMonitoredHeader(count: number) {
+  return `
+    <div class="panel-header monitored-panel-header">
+      <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
+      <div class="panel-header-controls monitored-header-controls">
+        <div class="monitored-header-top">
+          <span class="monitored-token-pill-wrap">
+            <span class="panel-header-label">TOKENS</span>
+            <span class="count monitored-token-count-pill">${count}</span>
+          </span>
+          <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Expand monitored tokens"><span class="compact-icon-glyph">+</span></button>
         </div>
       </div>
-    `;
-    section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
-      controller.toggleSectionCollapsed('monitored');
-    });
-    return section;
-  }
-  section.innerHTML = `
+    </div>
+  `;
+}
+
+function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
+  const sortClasses = view.sortClasses;
+  return `
     <div class="panel-header monitored-panel-header">
       <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
       <div class="panel-header-controls monitored-header-controls">
@@ -88,48 +96,48 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
           <span class="panel-header-label">SORT BY</span>
           <div class="sort-pill-group monitored-sort-group">
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${monitoredVolActive}" data-sort-toggle="monitored-vol">VOL</button>
+              <button type="button" class="old-filter-btn ${sortClasses.volActive}" data-sort-toggle="monitored-vol">VOL</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${monitoredVol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
-                <button type="button" class="sort-menu-item ${monitoredVol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
-                <button type="button" class="sort-menu-item ${monitoredVol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
-                <button type="button" class="sort-menu-item ${monitoredVol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol5m}" data-monitored-sort-mode="vol" data-monitored-sort-window="5m">5M</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol1h}" data-monitored-sort-mode="vol" data-monitored-sort-window="1h">1H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol6h}" data-monitored-sort-mode="vol" data-monitored-sort-window="6h">6H</button>
+                <button type="button" class="sort-menu-item ${sortClasses.vol24h}" data-monitored-sort-mode="vol" data-monitored-sort-window="24h">24H</button>
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${monitoredMcapActive}" data-sort-toggle="monitored-mcap">MCAP</button>
+              <button type="button" class="old-filter-btn ${sortClasses.mcapActive}" data-sort-toggle="monitored-mcap">MCAP</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${monitoredMcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
-                <button type="button" class="sort-menu-item ${monitoredMcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.mcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.mcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${monitoredAgeActive}" data-sort-toggle="monitored-age">AGE</button>
+              <button type="button" class="old-filter-btn ${sortClasses.ageActive}" data-sort-toggle="monitored-age">AGE</button>
               <div class="sort-menu-dropdown">
-                <button type="button" class="sort-menu-item ${monitoredAgeNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
-                <button type="button" class="sort-menu-item ${monitoredAgeOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.ageNewest}" data-monitored-sort-mode="age" data-monitored-sort-window="newest">NEWEST</button>
+                <button type="button" class="sort-menu-item ${sortClasses.ageOldest}" data-monitored-sort-mode="age" data-monitored-sort-window="oldest">OLDEST</button>
               </div>
             </div>
           </div>
           <span class="monitored-token-pill-wrap">
             <span class="panel-header-label">TOKENS</span>
-            <span class="count monitored-token-count-pill">${filteredTracked.length}</span>
+            <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
           </span>
         </div>
         <div class="monitored-header-bottom">
           <div class="monitored-inline-pagination">
             <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle monitored-inline-collapse" data-action="toggle-section-collapse" data-section="monitored" aria-label="Collapse monitored tokens"><span class="compact-icon-glyph">−</span></button>
-            <div class="compact-search compact-search-fixed ${searchQuery ? 'has-query open' : ''}">
+            <div class="compact-search compact-search-fixed ${view.searchQuery ? 'has-query open' : ''}">
               <button type="button" class="compact-search-toggle" data-action="monitored-search-focus" aria-label="Search monitored tokens">&#128269;</button>
               <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
             </div>
             <div class="monitored-inline-controls">
               <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
-              <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${filteredTotalPages}" step="1" data-action="monitored-page-jump" /></label>
-              <span class="bucket-page-total">${filteredTotalPages}</span>
+              <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${view.filteredTotalPages}" step="1" data-action="monitored-page-jump" /></label>
+              <span class="bucket-page-total">${view.filteredTotalPages}</span>
               <div class="button-row compact bucket-footer-actions">
-                <button type="button" class="action-button small" data-action="monitored-prev" ${filteredSafePage === 0 ? 'disabled' : ''}>Prev</button>
-                <button type="button" class="action-button small" data-action="monitored-next" ${filteredSafePage >= filteredTotalPages - 1 ? 'disabled' : ''}>Next</button>
+                <button type="button" class="action-button small" data-action="monitored-prev" ${view.filteredSafePage === 0 ? 'disabled' : ''}>Prev</button>
+                <button type="button" class="action-button small" data-action="monitored-next" ${view.filteredSafePage >= view.filteredTotalPages - 1 ? 'disabled' : ''}>Next</button>
               </div>
             </div>
           </div>
@@ -138,39 +146,55 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
     </div>
     <div class="monitored-list"></div>
   `;
+}
 
+function renderMonitoredRows(section: ParentNode, state: AppState, pageItems: ManualTokenEntry[]) {
   const monitoredList = section.querySelector<HTMLElement>('.monitored-list');
-  if (monitoredList) {
-    if (filteredTracked.length) {
-      const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
-      for (const item of pageItems) {
-        monitoredList.append(buildMonitoredRow(
-          item,
-          state.ui.busy,
-          state.data.starredTokens.includes(item.address),
-          state.session.role === 'admin',
-          state.ui.enabledTradeTerminals,
-          getMockTradingPositionView(state, item.address),
-          state.data.mockTradingTradesByAddress[item.address],
-          mockSolUsdcRate,
-        ));
-      }
-    } else {
-      const emptyState = document.createElement('div');
-      emptyState.className = 'empty-state';
-      const emptyIcon = document.createElement('div');
-      emptyIcon.className = 'empty-icon';
-      emptyIcon.textContent = '?';
-      const emptyText = document.createElement('div');
-      emptyText.className = 'empty-text';
-      emptyText.textContent = 'No monitored tokens match the current search.';
-      emptyState.append(emptyIcon, emptyText);
-      monitoredList.append(emptyState);
-    }
+  if (!monitoredList) {
+    return;
   }
 
-  section.append(renderManualTokenEntryForm(state, controller));
+  if (pageItems.length === 0) {
+    monitoredList.append(buildMonitoredEmptyState());
+    return;
+  }
 
+  const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
+  for (const item of pageItems) {
+    monitoredList.append(buildMonitoredRow(
+      item,
+      state.ui.busy,
+      state.data.starredTokens.includes(item.address),
+      state.session.role === 'admin',
+      state.ui.enabledTradeTerminals,
+      state.ui.livePanelLayout.spans.monitored > 1 ? state.data.sparklineByAddress[item.address] || null : null,
+      state.ui.livePanelLayout.spans.monitored > 1,
+      getMockTradingPositionView(state, item.address),
+      state.data.mockTradingTradesByAddress[item.address],
+      mockSolUsdcRate,
+    ));
+  }
+}
+
+function buildMonitoredEmptyState() {
+  const emptyState = document.createElement('div');
+  emptyState.className = 'empty-state';
+  const emptyIcon = document.createElement('div');
+  emptyIcon.className = 'empty-icon';
+  emptyIcon.textContent = '?';
+  const emptyText = document.createElement('div');
+  emptyText.className = 'empty-text';
+  emptyText.textContent = 'No monitored tokens match the current search.';
+  emptyState.append(emptyIcon, emptyText);
+  return emptyState;
+}
+
+function bindMonitoredSectionControls(
+  section: ParentNode,
+  state: AppState,
+  controller: AppController,
+  view: MonitoredSectionView,
+) {
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="monitored-search"]');
   if (searchInput) {
     searchInput.value = state.ui.monitoredSearchQuery || '';
@@ -181,22 +205,26 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   });
   const perPageInput = section.querySelector<HTMLInputElement>('[data-action="monitored-per-page"]');
   if (perPageInput) {
-    perPageInput.value = String(safePerPage);
+    perPageInput.value = String(view.safePerPage);
   }
   const pageJumpInput = section.querySelector<HTMLInputElement>('[data-action="monitored-page-jump"]');
   if (pageJumpInput) {
-    pageJumpInput.value = String(filteredSafePage + 1);
+    pageJumpInput.value = String(view.filteredSafePage + 1);
   }
-  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
-    controller.toggleSectionCollapsed('monitored');
-  });
+  bindMonitoredCollapseToggle(section, controller);
   bindMonitoredSearchInput(searchInput, controller);
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindTokenImagePreview(section);
+  bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
-  return section;
+}
+
+function bindMonitoredCollapseToggle(section: ParentNode, controller: AppController) {
+  section.querySelector<HTMLButtonElement>('[data-action="toggle-section-collapse"]')?.addEventListener('click', () => {
+    controller.toggleSectionCollapsed('monitored');
+  });
 }
 
 function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controller: AppController) {
@@ -218,7 +246,7 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   });
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
+function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
@@ -297,8 +325,23 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   delta.textContent = fmtPct(volDelta);
   side.append(volLabel, mainMetric, delta);
 
-  article.append(main, side);
+  article.append(main);
+  if (miniChartEnabled) {
+    article.append(buildMonitoredMiniChart(item, sparkline));
+  }
+  article.append(side);
   return article;
+}
+
+function buildMonitoredMiniChart(item: ManualTokenEntry, sparkline: AppState['data']['sparklineByAddress'][string] | null) {
+  const miniChart = document.createElement('div');
+  miniChart.className = 'monitored-mini-chart';
+  miniChart.innerHTML = renderSparklineFigure(sparkline, item.address, {
+    areaFill: true,
+    expandable: true,
+    liveMcap: item.mcap,
+  });
+  return miniChart;
 }
 
 function appendMonitoredAdminActions(
