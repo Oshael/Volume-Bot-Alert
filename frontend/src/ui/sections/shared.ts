@@ -36,12 +36,14 @@ const EXPANDED_SPARKLINE_PADDING_X = 12;
 const EXPANDED_SPARKLINE_PADDING_Y = 16;
 const TOKEN_IMAGE_PREVIEW_DELAY_MS = 120;
 const TOKEN_IMAGE_PREVIEW_OFFSET_PX = 14;
+const TOKEN_IMAGE_PREVIEW_MOUSE_SUPPRESSION_MS = 350;
 const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
   hour: 'numeric',
   minute: '2-digit',
 });
+const TOP_EDGE_PAGE_SCROLL_BRIDGE_DELAY_MS = 400;
 const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
 const sparklineHoverBoundElements = new WeakSet<HTMLElement>();
 const tokenImagePreviewBoundRoots = new WeakSet<EventTarget>();
@@ -49,6 +51,7 @@ let tokenImagePreviewTarget: HTMLElement | null = null;
 let tokenImagePreviewTimer: ReturnType<typeof window.setTimeout> | null = null;
 let tokenImagePreviewPosition = { x: 0, y: 0 };
 let tokenImagePreviewGlobalBound = false;
+let tokenImagePreviewLastPointerAt = 0;
 
 type SparklineRenderOptions = {
   expanded?: boolean;
@@ -229,55 +232,64 @@ export function bindTokenImagePreview(section: ParentNode) {
   }
 
   tokenImagePreviewBoundRoots.add(section);
-
-  section.addEventListener('pointerover', (event) => {
-    const pointerEvent = event as PointerEvent;
-    if (pointerEvent.pointerType === 'touch') {
-      return;
-    }
-
-    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-token-image-preview="true"]');
-    if (!target) {
-      return;
-    }
-
-    tokenImagePreviewPosition = {
-      x: pointerEvent.clientX,
-      y: pointerEvent.clientY,
-    };
-    scheduleTokenImagePreview(target);
-  });
-
-  section.addEventListener('pointermove', (event) => {
-    const pointerEvent = event as PointerEvent;
-    if (pointerEvent.pointerType === 'touch' || !tokenImagePreviewTarget) {
-      return;
-    }
-
-    tokenImagePreviewPosition = {
-      x: pointerEvent.clientX,
-      y: pointerEvent.clientY,
-    };
-    positionTokenImagePreview();
-  });
-
-  section.addEventListener('pointerout', (event) => {
-    if (!tokenImagePreviewTarget) {
-      return;
-    }
-
-    const relatedTarget = (event as PointerEvent).relatedTarget;
-    if (relatedTarget instanceof Node && tokenImagePreviewTarget.contains(relatedTarget)) {
-      return;
-    }
-
-    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-token-image-preview="true"]');
-    if (target === tokenImagePreviewTarget) {
-      hideTokenImagePreview();
-    }
-  });
-
   bindTokenImagePreviewGlobalEvents();
+}
+
+function getTokenImagePreviewTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  return target.closest<HTMLElement>('[data-token-image-preview="true"]');
+}
+
+function handleTokenImagePreviewEnter(target: EventTarget | null, clientX: number, clientY: number) {
+  const previewTarget = getTokenImagePreviewTarget(target);
+  if (!previewTarget) {
+    return;
+  }
+
+  tokenImagePreviewPosition = { x: clientX, y: clientY };
+  scheduleTokenImagePreview(previewTarget);
+}
+
+function resolveTokenImagePreviewTargetAtPointer() {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  return getTokenImagePreviewTarget(document.elementFromPoint(
+    tokenImagePreviewPosition.x,
+    tokenImagePreviewPosition.y,
+  ));
+}
+
+function handleTokenImagePreviewMove(target: EventTarget | null, clientX: number, clientY: number) {
+  tokenImagePreviewPosition = { x: clientX, y: clientY };
+
+  if (!tokenImagePreviewTarget) {
+    handleTokenImagePreviewEnter(target, clientX, clientY);
+    return;
+  }
+
+  positionTokenImagePreview();
+}
+
+function handleTokenImagePreviewLeave(target: EventTarget | null, relatedTarget: EventTarget | null) {
+  if (!tokenImagePreviewTarget) {
+    return;
+  }
+
+  if (relatedTarget instanceof Node && tokenImagePreviewTarget === relatedTarget) {
+    return;
+  }
+  if (relatedTarget instanceof Node && tokenImagePreviewTarget.contains(relatedTarget)) {
+    return;
+  }
+
+  if (getTokenImagePreviewTarget(target) === tokenImagePreviewTarget) {
+    hideTokenImagePreview('pointer-left-target');
+  }
 }
 
 function scheduleTokenImagePreview(target: HTMLElement) {
@@ -294,11 +306,18 @@ function scheduleTokenImagePreview(target: HTMLElement) {
   clearTokenImagePreviewTimer();
   tokenImagePreviewTarget = target;
   tokenImagePreviewTimer = window.setTimeout(() => {
-    if (tokenImagePreviewTarget !== target) {
+    const currentTarget = target.isConnected ? target : resolveTokenImagePreviewTargetAtPointer();
+    if (!currentTarget || tokenImagePreviewTarget !== target) {
       return;
     }
 
-    showTokenImagePreview(target, src);
+    const currentSrc = getTokenImagePreviewSrc(currentTarget);
+    if (!currentSrc) {
+      return;
+    }
+
+    tokenImagePreviewTarget = currentTarget;
+    showTokenImagePreview(currentTarget, currentSrc);
   }, TOKEN_IMAGE_PREVIEW_DELAY_MS);
 }
 
@@ -315,10 +334,48 @@ function showTokenImagePreview(target: HTMLElement, src: string) {
   positionTokenImagePreview();
 }
 
-function hideTokenImagePreview() {
+function hideTokenImagePreview(reason = 'hide') {
+  if (shouldKeepPendingTokenImagePreviewOnScroll(reason)) {
+    return;
+  }
+
   clearTokenImagePreviewTimer();
   tokenImagePreviewTarget = null;
   getTokenImagePreviewElement()?.classList.remove('is-visible');
+}
+
+function shouldKeepPendingTokenImagePreviewOnScroll(reason: string) {
+  if (reason !== 'scroll' && reason !== 'document-scroll') {
+    return false;
+  }
+
+  if (!tokenImagePreviewTimer || !tokenImagePreviewTarget) {
+    return false;
+  }
+
+  if (getTokenImagePreviewElement()?.classList.contains('is-visible')) {
+    return false;
+  }
+
+  const currentTarget = resolveTokenImagePreviewTargetAtPointer();
+  if (!currentTarget) {
+    return false;
+  }
+
+  return currentTarget === tokenImagePreviewTarget
+    || getTokenImagePreviewSrc(currentTarget) === getTokenImagePreviewSrc(tokenImagePreviewTarget);
+}
+
+function shouldIgnoreUnrelatedTokenImagePreviewScroll(target: EventTarget | null) {
+  if (!tokenImagePreviewTarget || target === document) {
+    return false;
+  }
+
+  if (!(target instanceof Node)) {
+    return false;
+  }
+
+  return !target.contains(tokenImagePreviewTarget);
 }
 
 function clearTokenImagePreviewTimer() {
@@ -369,6 +426,15 @@ function positionTokenImagePreview() {
     return;
   }
 
+  if (tokenImagePreviewTarget && !tokenImagePreviewTarget.isConnected) {
+    const currentTarget = resolveTokenImagePreviewTargetAtPointer();
+    if (!currentTarget) {
+      hideTokenImagePreview('position-target-disconnected');
+      return;
+    }
+    tokenImagePreviewTarget = currentTarget;
+  }
+
   const width = preview.offsetWidth || 340;
   const height = preview.offsetHeight || 340;
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
@@ -387,17 +453,122 @@ function positionTokenImagePreview() {
   preview.style.top = `${Math.max(TOKEN_IMAGE_PREVIEW_OFFSET_PX, top)}px`;
 }
 
+export function bindTopEdgePageScrollBridge(
+  list: HTMLElement | null,
+  options: { delayMs?: number } = {},
+) {
+  if (!list || list.dataset.topEdgePageScrollBridgeBound === 'true') {
+    return;
+  }
+
+  list.dataset.topEdgePageScrollBridgeBound = 'true';
+  const delayMs = options.delayMs ?? TOP_EDGE_PAGE_SCROLL_BRIDGE_DELAY_MS;
+  let lastScrollTop = Math.max(0, list.scrollTop);
+  let topEdgeEnteredAt = 0;
+
+  list.addEventListener('scroll', () => {
+    const currentScrollTop = Math.max(0, list.scrollTop);
+    if (currentScrollTop <= 0 && lastScrollTop > 0) {
+      topEdgeEnteredAt = Date.now();
+    } else if (currentScrollTop > 0) {
+      topEdgeEnteredAt = 0;
+    }
+    lastScrollTop = currentScrollTop;
+  }, { passive: true });
+
+  list.addEventListener('wheel', (event) => {
+    if (!(event.deltaY < 0)) {
+      if (list.scrollTop > 0) {
+        topEdgeEnteredAt = 0;
+      }
+      return;
+    }
+
+    if (list.scrollTop > 0) {
+      topEdgeEnteredAt = 0;
+      lastScrollTop = Math.max(0, list.scrollTop);
+      return;
+    }
+
+    const documentScrollElement = list.ownerDocument.scrollingElement;
+    if (!(documentScrollElement instanceof HTMLElement) || documentScrollElement.scrollTop <= 0) {
+      return;
+    }
+
+    const now = Date.now();
+    if (topEdgeEnteredAt > 0 && (now - topEdgeEnteredAt) < delayMs) {
+      event.preventDefault();
+      return;
+    }
+
+    topEdgeEnteredAt = 0;
+    event.preventDefault();
+    documentScrollElement.scrollTop = Math.max(0, documentScrollElement.scrollTop + event.deltaY);
+  }, { passive: false });
+}
+
 function bindTokenImagePreviewGlobalEvents() {
-  if (tokenImagePreviewGlobalBound || typeof window === 'undefined') {
+  if (tokenImagePreviewGlobalBound || typeof window === 'undefined' || typeof document === 'undefined') {
     return;
   }
 
   tokenImagePreviewGlobalBound = true;
-  window.addEventListener('scroll', hideTokenImagePreview, true);
-  window.addEventListener('resize', hideTokenImagePreview);
+  document.addEventListener('pointerover', (event) => {
+    if (event.pointerType === 'touch') {
+      return;
+    }
+
+    tokenImagePreviewLastPointerAt = Date.now();
+    handleTokenImagePreviewEnter(event.target, event.clientX, event.clientY);
+  });
+  document.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch') {
+      return;
+    }
+
+    tokenImagePreviewLastPointerAt = Date.now();
+    handleTokenImagePreviewMove(event.target, event.clientX, event.clientY);
+  });
+  document.addEventListener('pointerout', (event) => {
+    if (event.pointerType === 'touch') {
+      return;
+    }
+
+    tokenImagePreviewLastPointerAt = Date.now();
+    handleTokenImagePreviewLeave(event.target, event.relatedTarget);
+  });
+  document.addEventListener('mouseover', (event) => {
+    if (Date.now() - tokenImagePreviewLastPointerAt < TOKEN_IMAGE_PREVIEW_MOUSE_SUPPRESSION_MS) {
+      return;
+    }
+
+    handleTokenImagePreviewEnter(event.target, event.clientX, event.clientY);
+  });
+  document.addEventListener('mousemove', (event) => {
+    if (Date.now() - tokenImagePreviewLastPointerAt < TOKEN_IMAGE_PREVIEW_MOUSE_SUPPRESSION_MS) {
+      return;
+    }
+
+    handleTokenImagePreviewMove(event.target, event.clientX, event.clientY);
+  });
+  document.addEventListener('mouseout', (event) => {
+    if (Date.now() - tokenImagePreviewLastPointerAt < TOKEN_IMAGE_PREVIEW_MOUSE_SUPPRESSION_MS) {
+      return;
+    }
+
+    handleTokenImagePreviewLeave(event.target, event.relatedTarget);
+  });
+  window.addEventListener('scroll', (event) => {
+    if (shouldIgnoreUnrelatedTokenImagePreviewScroll(event.target)) {
+      return;
+    }
+
+    hideTokenImagePreview(event.target === document ? 'document-scroll' : 'scroll');
+  }, true);
+  window.addEventListener('resize', () => hideTokenImagePreview('resize'));
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      hideTokenImagePreview();
+      hideTokenImagePreview('escape');
     }
   });
 }
