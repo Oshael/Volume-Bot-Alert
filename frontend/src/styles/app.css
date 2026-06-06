@@ -9496,12 +9496,13 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-mini-chart .token-sparkline-glow {
-  stroke-width: 5;
-  filter: blur(3px);
+  stroke-width: 2.4;
+  stroke-opacity: 0.18;
+  filter: blur(2px);
 }
 
 .monitored-mini-chart .token-sparkline-line {
-  stroke-width: 2.2;
+  stroke-width: 1.25;
 }
 
 .monitored-mini-chart .sparkline-loading {
