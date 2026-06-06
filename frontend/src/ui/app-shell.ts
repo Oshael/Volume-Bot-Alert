@@ -7,7 +7,7 @@ import { renderManualTokensSection } from './sections/manual-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
 import { logTopPerformersDebug, renderTopPerformersSection } from './sections/top-performers-section';
-import { resolveManualTableRows } from '../utils/token-table';
+import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
 
@@ -1115,8 +1115,19 @@ function getTopPerformersRenderKey(state: AppState) {
 }
 
 function getMonitoredRenderKey(state: AppState) {
+  const monitoredSpan = state.ui.livePanelLayout.spans.monitored;
+  const filteredMonitoredTokens = resolveMonitoredTableRows(getMonitoredTokens(state), {
+    searchQuery: state.ui.monitoredSearchQuery,
+    sortCriteria: state.ui.monitoredSorts,
+  });
+  const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
+  const totalPages = Math.max(1, Math.ceil(filteredMonitoredTokens.length / safePerPage));
+  const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
+  const pageItems = filteredMonitoredTokens.slice(safePage * safePerPage, safePage * safePerPage + safePerPage);
+
   return JSON.stringify({
     collapsed: state.ui.collapsed.monitored,
+    span: monitoredSpan,
     busy: state.ui.busy,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
@@ -1127,6 +1138,9 @@ function getMonitoredRenderKey(state: AppState) {
     starred: state.data.starredTokens,
     tokens: getMonitoredTokens(state).map(serializeTrackedTokenForView),
     mockTrading: getMonitoredTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
+    sparklines: monitoredSpan > 1
+      ? pageItems.map((token) => serializeSparklineForView(state, token.address))
+      : [],
   });
 }
 
