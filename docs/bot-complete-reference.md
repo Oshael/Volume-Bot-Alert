@@ -526,10 +526,11 @@ GMGN risk gates before catalog/upsert alert flow:
   - overrides: `GMGN_RISK_REVIEW_QUEUE_INTERVAL_MS`, `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT`
   - legacy budget alias: `GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE`
   - `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT=0` pauses deep risk review processing
-  - queue budget exhaustion does not block catalog/bucket persistence by itself
+  - queue budget exhaustion does not block catalog/visual bucket persistence by itself
   - automatic GMGN-only alert emission still requires Dex confirmation or completed preliminary review
   - successful queued preliminary reviews create a process-local fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
-- GMGN ingestion writes mcap/price snapshots to `token_market_buckets_1m` when mcap is available, in addition to volume snapshots in `token_market_volume_buckets_1m`; this lets GMGN/manual refreshes feed the same sparkline source used by Dex-driven catalog refreshes
+  - GMGN refreshes preserve an already-earlier Dex recheck for GMGN-only rows, so repeated trending updates do not indefinitely postpone pair confirmation by `catalog-worker`
+- GMGN ingestion writes mcap/price snapshots to `token_market_buckets_1m` when mcap is available, in addition to volume snapshots in `token_market_volume_buckets_1m`; this lets GMGN/manual refreshes feed the same sparkline source used by Dex-driven catalog refreshes without bypassing the GMGN-only alert safeguard
 - Sparkline history uses `token_market_buckets_1m` as the base source and `token_market_buckets_agg` as the fast read source for `5m`, `15m`, and `30m` granularities.
 - `token_market_buckets_agg` can be populated historically with `npm run market-buckets-agg:backfill -- --days 14 --batchSize <n>`.
 - Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows.

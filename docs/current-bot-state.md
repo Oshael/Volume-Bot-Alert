@@ -1023,14 +1023,15 @@ Current monitored UI behavior:
     - legacy alias: `GMGN_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE`
     - `GMGN_RISK_REVIEW_QUEUE_TOKEN_LIMIT=0` pauses deep risk review processing without disabling trending ingestion
     - the budget counts tokens that enter the `security`/`info`/`kline` bundle, not each individual CLI call
-    - when a token is only queued, catalog and bucket writes can still happen, but GMGN-only alert emission remains blocked by the preliminary-review safeguard
+    - when a token is only queued, catalog and visual market/volume bucket writes can still happen, but GMGN-only alert emission remains blocked by the preliminary-review safeguard
     - after a queued token passes preliminary review, the process keeps a short fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
+    - GMGN refreshes no longer defer an already-earlier Dex recheck for GMGN-only rows, so repeated trending updates cannot keep `catalog-worker` from confirming a Dex pair
   - blocks young low-mcap/extreme-volume GMGN tokens before spending security/info/kline lookups
   - uses GMGN security/info/kline to block obvious scam profiles before they enter the normal monitored alert flow
   - quarantines young extreme GMGN churn under `gmgn_needs_risk_enrichment` until structural enrichment resolves it
   - `user-manual` rows and addresses present in the backend `user_tokens` manual-token table are protected from GMGN auto-blocking, even if a GMGN ingestion cycle sees the catalog row before its source has been rewritten to `user-manual`
   - still refreshes existing catalog tokens if they appear in `1m`
-  - writes GMGN mcap/price snapshots into `token_market_buckets_1m` when GMGN/manual ingestion has mcap data, so the normal sparkline source is fed by the GMGN path too
+  - writes GMGN mcap/price snapshots into `token_market_buckets_1m` when GMGN/manual ingestion has mcap data, so the normal sparkline source is fed by the GMGN path too; this visual history write is separate from the GMGN-only alert safeguard
   - writes GMGN market volume into `token_market_volume_buckets_1m`
   - fills missing young-token `6h`/`24h` volume windows from shorter GMGN volume before catalog, bucket, alert, and panel-state writes
   - for tokens with Dex confirmation, GMGN refreshes preserve the existing Dex-derived `5m` volume instead of overwriting it with raw GMGN interval volume
