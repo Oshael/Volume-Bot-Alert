@@ -259,9 +259,10 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(bucketWrites, 2);
   });
 
-  it('skips GMGN alert evaluation and bucket writes for automatic tokens without DEX confirmation or preliminary review', async () => {
+  it('persists GMGN visual buckets but skips alerts for automatic tokens without DEX confirmation or preliminary review', async () => {
     let matcherCalls = 0;
-    let bucketWrites = 0;
+    let marketBucketWrites = 0;
+    let volumeBucketWrites = 0;
 
     const result = await gmgnCatalogIngestion.ingestGmgnToken({
       ...createSnapshot(),
@@ -292,9 +293,17 @@ describe('gmgn catalog ingestion', () => {
           };
         },
       },
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          marketBucketWrites += 1;
+          assert.equal(payload.mcap, 50000);
+          assert.equal(payload.source, 'gmgn');
+          return {};
+        },
+      },
       volumeBucketModel: {
         async upsertSnapshotBucket() {
-          bucketWrites += 1;
+          volumeBucketWrites += 1;
           return {};
         },
       },
@@ -307,10 +316,12 @@ describe('gmgn catalog ingestion', () => {
     });
 
     assert.equal(result.summary.catalogUpdated, 1);
-    assert.equal(result.summary.volumeBucketsWritten, 0);
+    assert.equal(result.summary.marketBucketsWritten, 1);
+    assert.equal(result.summary.volumeBucketsWritten, 1);
     assert.equal(result.summary.matcherEvaluations, 0);
     assert.equal(result.summary.matcherSkippedGmgnSafeguard, 1);
-    assert.equal(bucketWrites, 0);
+    assert.equal(marketBucketWrites, 1);
+    assert.equal(volumeBucketWrites, 1);
     assert.equal(matcherCalls, 0);
   });
 
@@ -462,7 +473,7 @@ describe('gmgn catalog ingestion', () => {
     assert.deepEqual(matcherCalls, []);
     assert.equal(result.matcherSkippedGmgnSafeguard, 2);
     assert.equal(result.catalogUpdated, 2);
-    assert.equal(result.volumeBucketsWritten, 0);
+    assert.equal(result.volumeBucketsWritten, 2);
   });
 
   it('processes queued GMGN risk review independently and evaluates alerts after pass', async () => {
@@ -551,6 +562,23 @@ describe('gmgn catalog ingestion', () => {
     );
 
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:00:05.000Z');
+  });
+
+  it('does not defer an existing Dex recheck when GMGN refreshes a token without Dex confirmation', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      createSnapshot(),
+      {
+        source: 'gmgn',
+        eligibility_state: 'gmgn-high',
+        next_evaluation_at: new Date('2026-05-03T06:59:50.000Z'),
+      },
+      {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T06:59:50.000Z');
   });
 
   it('does not apply the GMGN non-launch grace period to known launch suffixes or Dex-confirmed tokens', () => {
@@ -833,7 +861,7 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.matcherSkippedGmgnSafeguard, 1);
     assert.equal(upsertCalls, 1);
     assert.equal(evaluationCalls, 1);
-    assert.equal(bucketWrites, 0);
+    assert.equal(bucketWrites, 1);
     assert.equal(matcherCalls, 0);
   });
 

@@ -300,7 +300,8 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   const nonLaunchGraceUntil = resolveGmgnNonLaunchGraceUntil(snapshot, tokenBefore, now);
   const nextEvaluationAt = resolveGmgnNextEvaluationAt(
     tokenBefore,
-    new Date(now.getTime() + options.activeDexRecheckMs)
+    new Date(now.getTime() + options.activeDexRecheckMs),
+    { preserveEarlier: true }
   );
   const isManual = String(tokenBefore?.source || '').trim().toLowerCase() === 'user-manual';
 
@@ -713,8 +714,8 @@ function toValidDateOrNull(value) {
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
-function resolveGmgnNextEvaluationAt(tokenBefore, fallbackNextEvaluationAt) {
-  if (!hasDexConfirmation(tokenBefore)) {
+function resolveGmgnNextEvaluationAt(tokenBefore, fallbackNextEvaluationAt, options = {}) {
+  if (!hasDexConfirmation(tokenBefore) && options.preserveEarlier !== true) {
     return fallbackNextEvaluationAt;
   }
 
@@ -750,6 +751,14 @@ function canPersistGmgnMarketBuckets(tokenBefore, tokenAfter, securityGuard) {
     return false;
   }
   return canEvaluateGmgnAlerts(tokenBefore, tokenAfter, securityGuard);
+}
+
+function canPersistGmgnVisualBuckets(tokenAfter, snapshot = {}) {
+  if (!tokenAfter || isBlockedToken(tokenAfter) || tokenAfter.eligible_for_monitoring === false) {
+    return false;
+  }
+
+  return toFiniteNumberOrNull(snapshot.mcap) != null;
 }
 
 function isGmgnSecurityAutoBlockRisk(security) {
@@ -1449,7 +1458,7 @@ async function ingestGmgnToken(snapshot, options = {}) {
     if (String(tokenAfter.suppressed_reason || '').trim() === GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON) {
       summary.riskEnrichmentSuppressed = 1;
     }
-    if (canPersistGmgnMarketBuckets(tokenBefore, tokenAfter, securityGuard)) {
+    if (canPersistGmgnVisualBuckets(tokenAfter, filledSnapshot)) {
       if (resolved.marketBucketModel) {
         await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(filledSnapshot, now));
         summary.marketBucketsWritten = 1;
@@ -1678,6 +1687,7 @@ module.exports = {
     buildMarketBucketPayload,
     buildVolumeBucketPayload,
     calculateTokenAgeHours,
+    canPersistGmgnVisualBuckets,
     computeSnapshotVolumeToMcapRatio,
     createEmptyIngestionSummary,
     canEvaluateGmgnAlerts,
