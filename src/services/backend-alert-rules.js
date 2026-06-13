@@ -1,4 +1,5 @@
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
+const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
 const MONITORED_VOL_RULE_KEY = 'monitored-vol';
 const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
 const MONITORED_MCAP_RULE_KEY = 'monitored-mcap';
@@ -24,6 +25,17 @@ const BACKEND_ALERT_RULES = Object.freeze({
       minBucketCount: 4,
       rearmRecoveryPct: 85,
       rearmAfterMs: 6 * 60 * 60 * 1000,
+    }),
+  }),
+  [GMGN_CLAIM_SIGNAL_RULE_KEY]: Object.freeze({
+    ruleKey: GMGN_CLAIM_SIGNAL_RULE_KEY,
+    kind: 'gmgn-claim-signal',
+    displayName: 'GMGN Claim Signal',
+    scope: 'global-signal',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({
+      maxAlertsPerToken: 2,
+      signalTypes: Object.freeze([17, 18]),
     }),
   }),
   [MONITORED_VOL_RULE_KEY]: Object.freeze({
@@ -134,6 +146,7 @@ function getDefaultDashboardAlertRuleKey() {
 
 module.exports = {
   BACKEND_ALERT_RULES,
+  GMGN_CLAIM_SIGNAL_RULE_KEY,
   GMGN_VOL_1M_RULE_KEY,
   HIGH_CAP_DUMP_RULE_KEY,
   HVNC_RULE_KEY,

@@ -237,6 +237,23 @@ function buildMarketKlineArgs(options = {}) {
   ];
 }
 
+function normalizeSignalType(value) {
+  const parsed = Math.trunc(Number(value));
+  return parsed === 17 || parsed === 18 ? parsed : 18;
+}
+
+function buildMarketSignalArgs(options = {}) {
+  return [
+    'market',
+    'signal',
+    '--chain',
+    normalizeChain(options.chain),
+    '--signal-type',
+    String(normalizeSignalType(options.signalType)),
+    '--raw',
+  ];
+}
+
 function toFiniteNumber(value) {
   if (value == null || value === '') {
     return null;
@@ -512,6 +529,33 @@ function collectKlineRows(payload) {
   return [];
 }
 
+function collectSignalRows(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const candidates = [
+    ['data'],
+    ['data', 'items'],
+    ['data', 'list'],
+    ['items'],
+    ['list'],
+    ['result'],
+    ['result', 'items'],
+    ['result', 'list'],
+  ];
+  for (const path of candidates) {
+    const rows = readPath(payload, path);
+    if (Array.isArray(rows)) {
+      return rows;
+    }
+  }
+  return [];
+}
+
 function normalizeKlineTimestamp(value) {
   const parsed = toFiniteNumber(value);
   if (parsed == null || parsed <= 0) {
@@ -532,6 +576,66 @@ function normalizeKlinePayload(payload) {
     }))
     .filter((row) => row.timestampMs != null && row.open != null && row.close != null)
     .sort((left, right) => left.timestampMs - right.timestampMs);
+}
+
+function normalizeClaimSignalRow(row, context = {}) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  const address = readTrimmedString(row, [
+    'address',
+    'token_address',
+    'tokenAddress',
+    'mint',
+    ['token', 'address'],
+    ['baseToken', 'address'],
+  ]);
+  if (!isValidAddress(address)) {
+    return null;
+  }
+
+  const signalType = normalizeSignalType(readFirst(row, ['signal_type', 'signalType', 'type']) || context.signalType);
+  const claimedAt = normalizeTimestamp(readFirst(row, [
+    'claimed_at',
+    'claim_time',
+    'timestamp',
+    'created_at',
+    'time',
+  ]));
+  const claimId = readTrimmedString(row, [
+    'claim_id',
+    'claimId',
+    'tx_hash',
+    'txHash',
+    'signature',
+    'hash',
+  ]) || `${signalType}:${address}:${claimedAt || ''}:${readFirst(row, ['total_fee_usd', 'totalFeeUsd', 'total_fee', 'fee']) || ''}`;
+
+  return {
+    tokenAddress: address,
+    chain: normalizeChain(readTrimmedString(row, ['chain']) || context.chain),
+    signalType,
+    claimId,
+    totalFeeUsd: readNumber(row, [
+      'total_fee_usd',
+      'totalFeeUsd',
+      'total_fee',
+      'totalFee',
+      'fee_usd',
+      'feeUsd',
+      'fee',
+    ]),
+    claimedAt,
+    source: 'gmgn',
+    raw: row,
+  };
+}
+
+function normalizeClaimSignalPayload(payload, context = {}) {
+  return collectSignalRows(payload)
+    .map((row) => normalizeClaimSignalRow(row, context))
+    .filter(Boolean);
 }
 
 
@@ -750,7 +854,32 @@ function createGmgnClient(options = {}) {
     }
   }
 
+  async function fetchMarketSignal(requestOptions = {}) {
+    const chain = normalizeChain(requestOptions.chain);
+    const signalType = normalizeSignalType(requestOptions.signalType);
+    const args = buildMarketSignalArgs({ ...requestOptions, chain, signalType });
+
+    try {
+      return normalizeClaimSignalPayload(await runCliJson(args, requestOptions), { chain, signalType });
+    } catch (error) {
+      if (error instanceof GmgnCliError) {
+        throw error;
+      }
+      const details = {
+        exitCode: error?.code,
+        stdout: error?.stdout || '',
+        stderr: error?.stderr || '',
+        resetAt: extractResetAt(`${error?.stderr || ''}\n${error?.stdout || ''}`),
+      };
+      if (isRateLimitError(error)) {
+        throw new GmgnRateLimitError('GMGN CLI rate limit reached', details);
+      }
+      throw new GmgnCliError(error?.message || 'GMGN CLI request failed', details);
+    }
+  }
+
   return {
+    fetchMarketSignal,
     fetchMarketKline,
     fetchTrending,
     fetchTokenInfo,
@@ -767,16 +896,21 @@ module.exports = {
   GmgnRateLimitError,
   __private: {
     buildMarketKlineArgs,
+    buildMarketSignalArgs,
     buildTokenInfoArgs,
     buildTokenSecurityArgs,
     createRiskLookupCache,
     collectKlineRows,
+    collectSignalRows,
     buildTrendingArgs,
     collectRankRows,
     extractJsonText,
     normalizeChain,
     normalizeInterval,
     normalizeLimit,
+    normalizeClaimSignalPayload,
+    normalizeClaimSignalRow,
+    normalizeSignalType,
     normalizeRate,
     normalizeKlinePayload,
     normalizeTokenInfoPayload,

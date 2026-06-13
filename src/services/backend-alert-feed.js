@@ -1,5 +1,6 @@
 const tokenAlertEvent = require('../models/token-alert-event');
 const userAlertEvent = require('../models/user-alert-event');
+const gmgnClaimAlertEvent = require('../models/gmgn-claim-alert-event');
 const alertDeliveryCursor = require('../models/alert-delivery-cursor');
 const tokenCatalog = require('../models/token-catalog');
 const tokenMeteoraState = require('../models/token-meteora-state');
@@ -151,6 +152,27 @@ function buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule) {
   };
 }
 
+function buildDashboardGmgnClaimSignalPayload(eventRow) {
+  const payload = eventRow?.payload && typeof eventRow.payload === 'object' && !Array.isArray(eventRow.payload)
+    ? eventRow.payload
+    : {};
+
+  return {
+    id: toNumberOrNull(eventRow?.id),
+    kind: 'gmgn-claim-signal',
+    ruleKey: eventRow?.ruleKey || 'gmgn-claim-signal',
+    signalType: toNumberOrNull(eventRow?.signalType),
+    claimSequence: toNumberOrNull(eventRow?.claimSequence),
+    claimId: toTextOrNull(eventRow?.claimId),
+    totalFeeUsd: toNumberOrNull(eventRow?.totalFeeUsd),
+    claimedAt: toTextOrNull(eventRow?.claimedAt),
+    source: toTextOrNull(eventRow?.source) || 'gmgn',
+    label: toNumberOrNull(eventRow?.signalType) === 17 ? 'BAGS CLAIM' : 'PUMP CLAIM',
+    payload,
+    triggeredAt: toTextOrNull(eventRow?.triggeredAt),
+  };
+}
+
 function normalizeUserAlertPayloadValue(payload, key, fallback = null) {
   return payload && Object.prototype.hasOwnProperty.call(payload, key)
     ? payload[key]
@@ -277,6 +299,14 @@ function buildDashboardAlertEventItem(eventRow, catalogRow, rule) {
     };
   }
 
+  if (rule.scope === 'global-signal') {
+    return {
+      address: toTextOrNull(eventRow?.tokenAddress) || '',
+      ...buildDashboardAlertEventCatalogPayload(catalogRow),
+      ...buildDashboardGmgnClaimSignalPayload(eventRow),
+    };
+  }
+
   return {
     address: toTextOrNull(eventRow?.tokenAddress) || '',
     ...buildDashboardAlertEventCatalogPayload(catalogRow),
@@ -295,7 +325,13 @@ async function buildDashboardAlertEventFromEvent(eventRow) {
 }
 
 function resolveAlertEventModel(rule) {
-  return rule.scope === 'user-token' ? userAlertEvent : tokenAlertEvent;
+  if (rule.scope === 'user-token') {
+    return userAlertEvent;
+  }
+  if (rule.scope === 'global-signal') {
+    return gmgnClaimAlertEvent;
+  }
+  return tokenAlertEvent;
 }
 
 async function listDashboardAlertEvents(options = {}) {
@@ -391,6 +427,7 @@ module.exports = {
   __private: {
     buildDashboardAlertEventCatalogPayload,
     buildDashboardAlertEventDetectionPayload,
+    buildDashboardGmgnClaimSignalPayload,
     buildDashboardUserAlertIdentityPayload,
     buildDashboardUserAlertMetricPayload,
     buildDashboardUserAlertEventPayload,

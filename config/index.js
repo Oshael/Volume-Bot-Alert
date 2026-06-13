@@ -508,6 +508,18 @@ module.exports = {
     },
   },
 
+  gmgnClaimSignalWorker: {
+    enabled: parseBoolean(process.env.GMGN_CLAIM_SIGNAL_ENABLED, false),
+    intervalMs: Math.max(5000, parseInt(process.env.GMGN_CLAIM_SIGNAL_INTERVAL_MS || '60000', 10) || 60000),
+    apiKeyConfigured: Boolean(String(process.env.GMGN_API_KEY || '').trim()),
+    chain: (process.env.GMGN_CLAIM_SIGNAL_CHAIN || process.env.GMGN_CHAIN || 'sol').trim().toLowerCase(),
+    signalTypes: String(process.env.GMGN_CLAIM_SIGNAL_TYPES || '17,18')
+      .split(',')
+      .map((item) => parseInt(item.trim(), 10))
+      .filter((item) => Number.isInteger(item)),
+    maxAlertsPerToken: Math.max(1, parseInt(process.env.GMGN_CLAIM_SIGNAL_MAX_ALERTS_PER_TOKEN || '2', 10) || 2),
+  },
+
   catalogWriteRateLimit: {
     windowMs: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_WINDOW_MS || '900000', 10),
     max: parseInt(process.env.CATALOG_WRITE_RATE_LIMIT_MAX_REQUESTS || '60', 10),

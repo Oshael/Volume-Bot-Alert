@@ -657,6 +657,50 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage42-gmgn-claim-signal-alerts',
+    name: 'Stage 42 GMGN claim signal alert persistence',
+    repair: 'node src/utils/db-init-stage42.js',
+    tables: [
+      {
+        table: 'gmgn_claim_alert_state',
+        columns: [
+          'rule_key',
+          'token_address',
+          'alert_count',
+          'last_claim_id',
+          'last_claimed_at',
+          'metadata',
+          'updated_at',
+        ],
+        defaults: {
+          alert_count: '0',
+          metadata: "'{}'::jsonb",
+        },
+      },
+      {
+        table: 'gmgn_claim_alert_events',
+        columns: [
+          'id',
+          'rule_key',
+          'token_address',
+          'signal_type',
+          'source',
+          'claim_sequence',
+          'claim_id',
+          'total_fee_usd',
+          'claimed_at',
+          'payload',
+          'triggered_at',
+          'created_at',
+        ],
+        defaults: {
+          source: "'gmgn'::character varying",
+          payload: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
+  {
     key: 'stage35-mock-trading',
     name: 'Stage 35 mock trading tables',
     repair: 'node src/utils/db-init-stage35.js',

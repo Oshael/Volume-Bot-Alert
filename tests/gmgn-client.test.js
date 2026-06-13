@@ -91,6 +91,23 @@ describe('gmgn client', () => {
     ]);
   });
 
+  it('builds market signal CLI args for Pump claim signals', () => {
+    const args = gmgn.__private.buildMarketSignalArgs({
+      chain: 'sol',
+      signalType: 18,
+    });
+
+    assert.deepEqual(args, [
+      'market',
+      'signal',
+      '--chain',
+      'sol',
+      '--signal-type',
+      '18',
+      '--raw',
+    ]);
+  });
+
   it('normalizes raw trending rows into internal token snapshots', async () => {
     const calls = [];
     const client = gmgn.createGmgnClient({
@@ -325,6 +342,43 @@ describe('gmgn client', () => {
       { timestampMs: 1777867980000, open: 0.1, high: 0.2, low: 0.1, close: 0.2, volume: 1000 },
       { timestampMs: 1777868040000, open: 0.2, high: 0.25, low: 0.19, close: 0.24, volume: 2000 },
     ]);
+  });
+
+  it('normalizes Pump and Bags claim signal rows', async () => {
+    const calls = [];
+    const client = gmgn.createGmgnClient({
+      apiKey: 'test-key',
+      cliBin: 'gmgn-cli',
+      execFileImpl: async (file, args, options) => {
+        calls.push({ file, args, apiKey: options.env.GMGN_API_KEY });
+        return {
+          stdout: JSON.stringify({
+            data: {
+              items: [{
+                token_address: TOKEN_A,
+                signal_type: 18,
+                tx_hash: 'claim-tx-1',
+                total_fee_usd: '12.34',
+                claimed_at: 1777867980,
+              }],
+            },
+          }),
+          stderr: '',
+        };
+      },
+    });
+
+    const rows = await client.fetchMarketSignal({ chain: 'sol', signalType: 18 });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, gmgn.__private.buildMarketSignalArgs({ chain: 'sol', signalType: 18 }));
+    assert.equal(calls[0].apiKey, 'test-key');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].tokenAddress, TOKEN_A);
+    assert.equal(rows[0].signalType, 18);
+    assert.equal(rows[0].claimId, 'claim-tx-1');
+    assert.equal(rows[0].totalFeeUsd, 12.34);
+    assert.equal(rows[0].claimedAt, '2026-05-04T04:13:00.000Z');
   });
 
   it('caches risk lookups across client instances', async () => {
