@@ -1,6 +1,6 @@
 export interface AlertEntry {
   id: string;
-  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'high-cap-dump-5m';
+  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'high-cap-dump-5m' | 'gmgn-claim-signal';
   ruleKey?: string | null;
   address: string;
   mintAddress?: string | null;
@@ -27,6 +27,11 @@ export interface AlertEntry {
   baselineMcap?: number | null;
   windowLowMcap?: number | null;
   thresholdPct?: number | null;
+  signalType?: number | null;
+  claimSequence?: number | null;
+  claimId?: string | null;
+  totalFeeUsd?: number | null;
+  claimedAt?: string | null;
   baselineTs?: string | null;
   currentTs?: string | null;
   meteoraCurrentTvl?: number | null;

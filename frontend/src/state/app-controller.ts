@@ -176,8 +176,10 @@ const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const BOOTSTRAP_ALERT_FEED_MODE = 'unseen';
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
+const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
 const BACKEND_OWNED_ALERT_RULE_KEYS = [
   HIGH_CAP_DUMP_RULE_KEY,
+  GMGN_CLAIM_SIGNAL_RULE_KEY,
   'monitored-vol',
   'gmgn-vol-1m',
   'monitored-mcap',
@@ -2816,6 +2818,8 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-meteora-surge-enabled');
       case 'high-cap-dump-5m':
         return isConfigEnabled('alert-high-cap-dump-enabled');
+      case 'gmgn-claim-signal':
+        return isConfigEnabled('alert-gmgn-claim-signal-enabled');
       default:
         return true;
     }
@@ -4719,6 +4723,39 @@ export function createAppController(): AppController {
     };
   }
 
+  function buildBackendGmgnClaimSignalAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
+    const address = String(event.address || '').trim();
+    if (!address) {
+      return null;
+    }
+
+    const eventId = Number(event.id);
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      return null;
+    }
+
+    const signalType = toOptionalNumber(event.signalType);
+    const label = signalType === 17 ? 'BAGS CLAIM' : 'PUMP CLAIM';
+
+    return {
+      id: `backend-gmgn-claim-signal:${eventId}`,
+      kind: 'gmgn-claim-signal',
+      ruleKey: toOptionalText(event.ruleKey) || GMGN_CLAIM_SIGNAL_RULE_KEY,
+      address,
+      mintAddress: address,
+      createdAt: getBackendAlertCreatedAt(event.triggeredAt || event.claimedAt),
+      label,
+      pct: 0,
+      signalType,
+      claimSequence: toOptionalNumber(event.claimSequence),
+      claimId: toOptionalText(event.claimId),
+      totalFeeUsd: toOptionalNumber(event.totalFeeUsd),
+      claimedAt: toOptionalText(event.claimedAt),
+      tickerPeers: event.tickerPeers ?? null,
+      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+    };
+  }
+
   function buildBackendSimpleAlertEntry(event: DashboardAlertEvent, kind: Extract<AlertEntry['kind'], 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'meteora-surge'>): AlertEntry | null {
     const address = String(event.address || '').trim();
     if (!address) {
@@ -4810,6 +4847,8 @@ export function createAppController(): AppController {
     switch (kind) {
       case 'high-cap-dump-5m':
         return buildBackendHighCapDumpAlertEntry(event);
+      case 'gmgn-claim-signal':
+        return buildBackendGmgnClaimSignalAlertEntry(event);
       case 'monitored-vol':
         return buildBackendSimpleAlertEntry(event, 'monitored-vol');
       case 'monitored-mcap':

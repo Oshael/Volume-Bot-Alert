@@ -496,7 +496,7 @@ function normalizeAlertFxEnteredAt(alert: AlertEntry, now: number) {
 }
 
 function getAlertFxTier(alert: AlertEntry): AlertFxTier {
-  if (isHighCapDumpAlert(alert) || isHvncAlert(alert) || alert.kind === 'meteora-surge' || alert.isOldSurge) {
+  if (isHighCapDumpAlert(alert) || isHvncAlert(alert) || alert.kind === 'meteora-surge' || alert.kind === 'gmgn-claim-signal' || alert.isOldSurge) {
     return 'special';
   }
 
@@ -1085,6 +1085,10 @@ function getAlertAccentColor(toneClass: string) {
       return '#ff6b00';
     case 'pump-alert':
       return 'var(--pump-color)';
+    case 'gmgn-claim-pump':
+      return '#60c888';
+    case 'gmgn-claim-bags':
+      return '#53fc18';
     case 'recent-surge':
       return 'var(--green)';
     case 'normal':
@@ -1128,6 +1132,12 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
     badge.append('🌊 Meteora Alert 1h', document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'METEORA 1H')));
     return badge;
   }
+  if (alert.kind === 'gmgn-claim-signal') {
+    badge.className = `alert-badge-v68 ${toneClass}`;
+    const title = alert.signalType === 18 ? 'PUMP CLAIM' : 'BAGS CLAIM';
+    badge.append(title, document.createElement('br'), buildAlertBadgeSub(`#${alert.claimSequence || '?'}`, String(alert.label || 'CLAIM')));
+    return badge;
+  }
   if (alert.isHvnc) {
     badge.className = 'alert-badge-v68 mega';
     badge.append('🚨 High Volume New Coin', document.createElement('br'), buildAlertBadgeSub(fmtMoney(alert.volume24h), 'total vol'));
@@ -1157,6 +1167,14 @@ function buildXSearchUrl(symbol: string, address: string) {
 function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   if (isHighCapDumpAlert(alert)) {
     appendHighCapDumpFlowLine(container, alert);
+    return;
+  }
+
+  if (alert.kind === 'gmgn-claim-signal') {
+    container.append(
+      buildMetricPair('FEE', fmtMoney(alert.totalFeeUsd), 'up'),
+      buildMetricPair('CLAIM', alert.claimSequence ? `#${alert.claimSequence}` : '-', 'white'),
+    );
     return;
   }
 
@@ -1201,6 +1219,15 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
   if (isHighCapDumpAlert(alert)) {
     appendHighCapDumpStatsLine(container, alert);
+    return;
+  }
+
+  if (alert.kind === 'gmgn-claim-signal') {
+    appendMetricRow(container, [
+      buildMetricPair('SOURCE', alert.signalType === 17 ? 'BAGS' : 'PUMP', 'white'),
+      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
+      buildMetricPair('AT', alert.claimedAt ? new Date(alert.claimedAt).toLocaleTimeString() : '-', 'white'),
+    ]);
     return;
   }
 

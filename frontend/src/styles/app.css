@@ -9870,6 +9870,20 @@ TEMP_LEGACY_BAR_TITLE {
   background: rgba(176, 106, 255, 0.10);
 }
 
+.alert-row.gmgn-claim-pump {
+  border-color: #60c888;
+  background:
+    linear-gradient(90deg, rgba(96, 200, 136, 0.20), rgba(255, 255, 255, 0.11) 36%, rgba(12, 28, 22, 0.94) 68%),
+    rgba(12, 28, 22, 0.94);
+}
+
+.alert-row.gmgn-claim-bags {
+  border-color: #53fc18;
+  background:
+    linear-gradient(90deg, rgba(83, 252, 24, 0.18), rgba(255, 255, 255, 0.10) 36%, rgba(11, 28, 5, 0.94) 68%),
+    rgba(11, 28, 5, 0.94);
+}
+
 .alert-row.mega,
 .alert-row.old-surge {
   border-color: #ff6b00;
@@ -9897,6 +9911,14 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-row.impact-special-meteora {
   box-shadow: inset 0 0 0 1px rgba(193, 142, 255, 0.12);
+}
+
+.alert-row.impact-special-gmgn-pump {
+  box-shadow: inset 0 0 0 1px rgba(96, 200, 136, 0.18);
+}
+
+.alert-row.impact-special-gmgn-bags {
+  box-shadow: inset 0 0 0 1px rgba(83, 252, 24, 0.18);
 }
 
 .alert-row.impact-enter {
@@ -10026,6 +10048,16 @@ TEMP_LEGACY_BAR_TITLE {
   color: var(--muted);
   font-size: 10px;
   font-weight: 400;
+}
+
+.alert-row.gmgn-claim-pump .alert-token-v68,
+.alert-row.gmgn-claim-pump .alert-token-name {
+  color: #60c888;
+}
+
+.alert-row.gmgn-claim-bags .alert-token-v68,
+.alert-row.gmgn-claim-bags .alert-token-name {
+  color: #53fc18;
 }
 
 .alert-ticker-peers-badge {
@@ -10208,10 +10240,20 @@ TEMP_LEGACY_BAR_TITLE {
   color: #d0a7ff;
 }
 
+.alert-badge-v68.gmgn-claim-pump {
+  color: #60c888;
+}
+
+.alert-badge-v68.gmgn-claim-bags {
+  color: #53fc18;
+}
+
 .alert-badge-v68 .alert-badge-sub,
 .alert-badge-v68.old-surge .alert-badge-sub,
 .alert-badge-v68.recent-surge .alert-badge-sub,
 .alert-badge-v68.meteora-surge .alert-badge-sub,
+.alert-badge-v68.gmgn-claim-pump .alert-badge-sub,
+.alert-badge-v68.gmgn-claim-bags .alert-badge-sub,
 .alert-badge-v68.mega .alert-badge-sub {
   display: block;
   margin-top: 2px;
@@ -10225,6 +10267,14 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-badge-v68.meteora-surge .alert-badge-sub {
   color: #e3c8ff;
+}
+
+.alert-badge-v68.gmgn-claim-pump .alert-badge-sub {
+  color: #e2ffec;
+}
+
+.alert-badge-v68.gmgn-claim-bags .alert-badge-sub {
+  color: #e5ffd8;
 }
 
 .alert-badge-v68.dump-alert .alert-badge-sub {

@@ -41,6 +41,14 @@ const ALERT_PATTERNS: Record<AlertEntry['kind'], ToneStep[]> = {
     { frequency: 392, durationMs: 100 },
     { frequency: 261.63, durationMs: 180 },
   ],
+  'gmgn-claim-signal': [
+    { frequency: 1567.98, durationMs: 110 },
+    { frequency: 2349.32, durationMs: 120 },
+    { frequency: 1975.53, durationMs: 130 },
+    { frequency: 2637.02, durationMs: 150 },
+    { frequency: 1760, durationMs: 180 },
+    { frequency: 1174.66, durationMs: 260 },
+  ],
 };
 
 const MIGRATE_PATTERN: ToneStep[] = [
@@ -58,6 +66,7 @@ const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   hvnc: 'sound-hvnc-enabled',
   'meteora-surge': 'sound-meteora-surge-enabled',
   'high-cap-dump-5m': 'sound-high-cap-dump-enabled',
+  'gmgn-claim-signal': 'sound-gmgn-claim-signal-enabled',
 };
 
 function resolveAlertSoundConfigKey(alert: AlertEntry) {

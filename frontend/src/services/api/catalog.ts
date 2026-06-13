@@ -200,6 +200,11 @@ export interface DashboardAlertEvent {
   currentCloseMcap?: number | null;
   dumpPct?: number | null;
   thresholdPct?: number | null;
+  signalType?: number | null;
+  claimSequence?: number | null;
+  claimId?: string | null;
+  totalFeeUsd?: number | null;
+  claimedAt?: string | null;
   triggeredAt?: string | null;
   tickerPeers?: {
     sourceSymbol?: string | null;

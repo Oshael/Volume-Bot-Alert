@@ -56,6 +56,14 @@ export function getAlertToneClass(alert: AlertEntry, now = Date.now()) {
     return 'meteora-surge';
   }
 
+  if (alert.kind === 'gmgn-claim-signal' && alert.signalType === 18) {
+    return 'gmgn-claim-pump';
+  }
+
+  if (alert.kind === 'gmgn-claim-signal' && alert.signalType === 17) {
+    return 'gmgn-claim-bags';
+  }
+
   return getAlertImpactTier(alert);
 }
 
@@ -75,6 +83,14 @@ function getAlertExclusiveClass(alert: AlertEntry) {
 
   if (alert.kind === 'meteora-surge') {
     return 'impact-special-meteora';
+  }
+
+  if (alert.kind === 'gmgn-claim-signal' && alert.signalType === 18) {
+    return 'impact-special-gmgn-pump';
+  }
+
+  if (alert.kind === 'gmgn-claim-signal' && alert.signalType === 17) {
+    return 'impact-special-gmgn-bags';
   }
 
   if (alert.isOldSurge) {

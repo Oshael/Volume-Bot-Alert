@@ -20,6 +20,7 @@ const ALERT_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   hvnc: 'alert-hvnc-enabled',
   'meteora-surge': 'alert-meteora-surge-enabled',
   'high-cap-dump-5m': 'alert-high-cap-dump-enabled',
+  'gmgn-claim-signal': 'alert-gmgn-claim-signal-enabled',
 };
 
 type AlertVolumeKey = 'volume1m' | 'volume5m' | 'volume1h' | 'volume6h' | 'volume24h';
@@ -30,6 +31,7 @@ const ALERT_VOLUME_KEYS: Record<Exclude<AlertEntry['kind'], 'old-surge'>, AlertV
   hvnc: ['volume24h', 'volume6h', 'volume1h', 'volume5m', 'volume1m'],
   'meteora-surge': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   'high-cap-dump-5m': ['volume5m', 'volume1m', 'volume1h'],
+  'gmgn-claim-signal': ['volume5m', 'volume1m', 'volume1h'],
 };
 
 const notifiedAlertIds = new Set<string>();
@@ -189,6 +191,8 @@ function getNotificationTitle(alert: AlertEntry) {
       return `METEORA 1H: ${symbol}`;
     case 'high-cap-dump-5m':
       return `HIGH CAP DUMP: ${symbol}`;
+    case 'gmgn-claim-signal':
+      return `${alert.signalType === 17 ? 'BAGS' : 'PUMP'} CLAIM #${alert.claimSequence || '?'}: ${symbol}`;
     default:
       return `Alert: ${symbol}`;
   }
@@ -210,6 +214,14 @@ function sanitizeHttpUrl(value?: string | null) {
 }
 
 function buildNotificationBody(alert: AlertEntry) {
+  if (alert.kind === 'gmgn-claim-signal') {
+    return [
+      formatMoney(alert.totalFeeUsd),
+      alert.claimedAt ? `claimed ${new Date(alert.claimedAt).toLocaleTimeString()}` : null,
+      formatAddressFragment(alert.address),
+    ].filter(Boolean).join(' · ');
+  }
+
   const parts = [
     formatPercent(alert.pct),
     getNotificationMcapLine(alert),
