@@ -690,12 +690,30 @@ const SCHEMA_GROUPS = [
           'total_fee_usd',
           'claimed_at',
           'payload',
+          'is_baseline',
           'triggered_at',
           'created_at',
         ],
         defaults: {
           source: "'gmgn'::character varying",
           payload: "'{}'::jsonb",
+          is_baseline: 'false',
+        },
+      },
+    ],
+  },
+  {
+    key: 'stage43-gmgn-claim-signal-baseline',
+    name: 'Stage 43 GMGN claim signal baseline visibility flag',
+    repair: 'node src/utils/db-init-stage43.js',
+    tables: [
+      {
+        table: 'gmgn_claim_alert_events',
+        columns: [
+          'is_baseline',
+        ],
+        defaults: {
+          is_baseline: 'false',
         },
       },
     ],

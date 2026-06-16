@@ -60,6 +60,7 @@ function mapEventRow(row) {
     totalFeeUsd: toNumberOrNull(row.total_fee_usd),
     claimedAt: row.claimed_at || null,
     payload: normalizeMetadata(row.payload),
+    isBaseline: row.is_baseline === true,
     triggeredAt: row.triggered_at || null,
     createdAt: row.created_at || null,
   };
@@ -90,6 +91,10 @@ async function listRecentEvents(filters = {}, runner = db) {
     clauses.push(`id > $${values.length}`);
   }
 
+  if (filters.includeBaseline !== true) {
+    clauses.push('is_baseline = false');
+  }
+
   values.push(limit);
   const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const { rows } = await runner.query(
@@ -116,6 +121,10 @@ async function getLatestEventId(filters = {}, runner = db) {
   if (filters.tokenAddress != null && String(filters.tokenAddress).trim() !== '') {
     values.push(normalizeTokenAddress(filters.tokenAddress));
     clauses.push(`token_address = $${values.length}`);
+  }
+
+  if (filters.includeBaseline !== true) {
+    clauses.push('is_baseline = false');
   }
 
   const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';

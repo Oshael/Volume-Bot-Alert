@@ -23,6 +23,7 @@ function createInitialStatus() {
     lastError: null,
     lastRequests: 0,
     lastSignals: 0,
+    lastBaselined: 0,
     lastTriggered: 0,
     lastDeduped: 0,
     lastSuppressed: 0,
@@ -31,6 +32,7 @@ function createInitialStatus() {
     totalErrors: 0,
     totalRequests: 0,
     totalSignals: 0,
+    totalBaselined: 0,
     totalTriggered: 0,
     totalDeduped: 0,
     totalSuppressed: 0,
@@ -68,6 +70,7 @@ function normalizeOptions(options = {}) {
     chain: gmgnClient.__private.normalizeChain(options.chain || 'sol'),
     signalTypes: normalizeSignalTypes(options.signalTypes),
     maxAlertsPerToken: Math.max(1, Math.trunc(Number(options.maxAlertsPerToken) || 2)),
+    baselineOnEmptyState: normalizeBoolean(options.baselineOnEmptyState, true),
     client: options.client || gmgnClient.createGmgnClient(options.clientOptions || {}),
     alertService: options.alertService || gmgnClaimSignalAlert,
   };
@@ -86,12 +89,14 @@ function updateStatusFromSummary(summary) {
   Object.assign(status, {
     lastRequests: summary.requests,
     lastSignals: summary.signals,
+    lastBaselined: summary.baselined,
     lastTriggered: summary.triggered,
     lastDeduped: summary.deduped,
     lastSuppressed: summary.suppressed,
   });
   status.totalRequests += summary.requests;
   status.totalSignals += summary.signals;
+  status.totalBaselined += summary.baselined;
   status.totalTriggered += summary.triggered;
   status.totalDeduped += summary.deduped;
   status.totalSuppressed += summary.suppressed;
@@ -101,7 +106,7 @@ function computeNextDelayMs(intervalMs, startedAtMs) {
   return Math.max(0, intervalMs - (Date.now() - startedAtMs));
 }
 
-async function runSignalType(signalType, options, summary) {
+async function runSignalType(signalType, options, summary, baselineMode) {
   summary.requests += 1;
   const signals = await options.client.fetchMarketSignal({
     chain: options.chain,
@@ -110,10 +115,15 @@ async function runSignalType(signalType, options, summary) {
   summary.signals += signals.length;
 
   for (const signal of signals) {
-    const result = await options.alertService.recordClaimSignal(signal, {
+    const recorder = baselineMode
+      ? options.alertService.recordClaimSignalBaseline
+      : options.alertService.recordClaimSignal;
+    const result = await recorder.call(options.alertService, signal, {
       maxAlertsPerToken: options.maxAlertsPerToken,
     });
-    if (result.action === 'triggered') {
+    if (result.action === 'baselined') {
+      summary.baselined += 1;
+    } else if (result.action === 'triggered') {
       summary.triggered += 1;
     } else if (result.action === 'suppressed') {
       summary.suppressed += 1;
@@ -136,7 +146,7 @@ async function runOnce(options = {}, meta = {}) {
 
   activeRunPromise = (async () => {
     const startedAtMs = Date.now();
-    const summary = { requests: 0, signals: 0, triggered: 0, deduped: 0, suppressed: 0 };
+    const summary = { requests: 0, signals: 0, baselined: 0, triggered: 0, deduped: 0, suppressed: 0 };
     status.inFlight = true;
     status.enabled = normalized.enabled;
     status.apiKeyConfigured = Boolean(normalized.apiKeyConfigured);
@@ -149,8 +159,14 @@ async function runOnce(options = {}, meta = {}) {
         return { skipped: true, reason: 'disabled', summary };
       }
 
+      const baselineMode = normalized.baselineOnEmptyState
+        && typeof normalized.alertService.hasBaselineCompleted === 'function'
+        && !(await normalized.alertService.hasBaselineCompleted());
       for (const signalType of normalized.signalTypes) {
-        await runSignalType(signalType, normalized, summary);
+        await runSignalType(signalType, normalized, summary, baselineMode);
+      }
+      if (baselineMode && typeof normalized.alertService.markBaselineCompleted === 'function') {
+        await normalized.alertService.markBaselineCompleted();
       }
       updateStatusFromSummary(summary);
       status.totalSuccessfulRuns += 1;

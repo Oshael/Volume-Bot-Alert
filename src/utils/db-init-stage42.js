@@ -28,6 +28,7 @@ const STATEMENTS = [
      total_fee_usd NUMERIC(20, 4),
      claimed_at TIMESTAMPTZ NOT NULL,
      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+     is_baseline BOOLEAN NOT NULL DEFAULT false,
      triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      UNIQUE (rule_key, claim_id),

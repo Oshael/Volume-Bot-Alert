@@ -5,6 +5,7 @@ const { GMGN_CLAIM_SIGNAL_RULE_KEY, getBackendAlertRule } = require('./backend-a
 
 const CLAIM_RULE = getBackendAlertRule(GMGN_CLAIM_SIGNAL_RULE_KEY);
 const DEFAULT_MAX_ALERTS_PER_TOKEN = CLAIM_RULE.defaults.maxAlertsPerToken;
+const BASELINE_MARKER_TOKEN_ADDRESS = '__baseline__';
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -100,7 +101,7 @@ async function ensureState(signal, runner) {
   return mapStateRow(rows[0] || null);
 }
 
-async function insertClaimEvent(signal, claimSequence, runner) {
+async function insertClaimEvent(signal, claimSequence, runner, options = {}) {
   const { rows } = await runner.query(
     `INSERT INTO gmgn_claim_alert_events (
        rule_key,
@@ -112,9 +113,10 @@ async function insertClaimEvent(signal, claimSequence, runner) {
        total_fee_usd,
        claimed_at,
        payload,
+       is_baseline,
        triggered_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, NOW())
      ON CONFLICT (rule_key, claim_id) DO NOTHING
      RETURNING *`,
     [
@@ -127,6 +129,7 @@ async function insertClaimEvent(signal, claimSequence, runner) {
       signal.totalFeeUsd,
       signal.claimedAt,
       JSON.stringify(signal.payload),
+      options.isBaseline === true,
     ]
   );
 
@@ -209,6 +212,17 @@ async function persistTriggeredSignal(signal, stateBefore, client) {
   return { action: 'triggered', reason: null, event, stateBefore, stateAfter };
 }
 
+async function persistBaselineSignal(signal, stateBefore, client) {
+  const claimSequence = (stateBefore?.alertCount || 0) + 1;
+  const event = await insertClaimEvent(signal, claimSequence, client, { isBaseline: true });
+  if (!event) {
+    return buildNoEventResult('deduped', 'existing-claim-event', stateBefore);
+  }
+
+  const stateAfter = await updateStateAfterEvent(signal, claimSequence, client);
+  return { action: 'baselined', reason: null, event, stateBefore, stateAfter };
+}
+
 async function recordClaimSignal(signalInput = {}, options = {}, deps = {}) {
   const signal = normalizeSignal(signalInput);
   const maxAlertsPerToken = Math.max(
@@ -240,10 +254,79 @@ async function recordClaimSignal(signalInput = {}, options = {}, deps = {}) {
   }
 }
 
+async function recordClaimSignalBaseline(signalInput = {}, options = {}, deps = {}) {
+  const signal = normalizeSignal(signalInput);
+  const maxAlertsPerToken = Math.max(
+    1,
+    Math.trunc(Number(options.maxAlertsPerToken) || DEFAULT_MAX_ALERTS_PER_TOKEN)
+  );
+  const client = deps.client || await db.getClient();
+  const ownsClient = !deps.client;
+
+  try {
+    await beginOwnedTransaction(client, ownsClient);
+
+    const stateBefore = await ensureState(signal, client);
+    const result = evaluateStateBefore(signal, stateBefore, maxAlertsPerToken)
+      || await persistBaselineSignal(signal, stateBefore, client);
+    await commitOwnedTransaction(client, ownsClient);
+
+    return result;
+  } catch (error) {
+    await rollbackOwnedTransaction(client, ownsClient);
+    throw error;
+  } finally {
+    if (ownsClient) {
+      client.release();
+    }
+  }
+}
+
+async function hasBaselineCompleted(options = {}, runner = db) {
+  const ruleKey = String(options.ruleKey || GMGN_CLAIM_SIGNAL_RULE_KEY).trim().toLowerCase();
+  const { rows } = await runner.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM gmgn_claim_alert_state
+       WHERE rule_key = $1
+         AND token_address = $2
+       LIMIT 1
+     ) AS exists`,
+    [ruleKey, BASELINE_MARKER_TOKEN_ADDRESS]
+  );
+  return rows[0]?.exists === true;
+}
+
+async function markBaselineCompleted(options = {}, runner = db) {
+  const ruleKey = String(options.ruleKey || GMGN_CLAIM_SIGNAL_RULE_KEY).trim().toLowerCase();
+  await runner.query(
+    `INSERT INTO gmgn_claim_alert_state (
+       rule_key,
+       token_address,
+       metadata
+     )
+     VALUES ($1, $2, '{"baselineCompleted": true}'::jsonb)
+     ON CONFLICT (rule_key, token_address)
+     DO UPDATE SET
+       metadata = jsonb_set(
+         COALESCE(gmgn_claim_alert_state.metadata, '{}'::jsonb),
+         '{baselineCompleted}',
+         'true'::jsonb,
+         true
+       ),
+       updated_at = NOW()`,
+    [ruleKey, BASELINE_MARKER_TOKEN_ADDRESS]
+  );
+}
+
 module.exports = {
   DEFAULT_MAX_ALERTS_PER_TOKEN,
+  hasBaselineCompleted,
+  markBaselineCompleted,
+  recordClaimSignalBaseline,
   recordClaimSignal,
   __private: {
+    BASELINE_MARKER_TOKEN_ADDRESS,
     mapStateRow,
     normalizeSignal,
   },

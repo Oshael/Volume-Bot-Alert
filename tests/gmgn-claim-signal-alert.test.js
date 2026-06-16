@@ -20,7 +20,7 @@ function createRunner() {
             alert_count: 0,
             last_claim_id: null,
             last_claimed_at: null,
-            metadata: {},
+            metadata: params[2] ? { baselineCompleted: true } : {},
             updated_at: '2026-06-01T00:00:00.000Z',
           });
         }
@@ -47,6 +47,7 @@ function createRunner() {
           total_fee_usd: params[6],
           claimed_at: params[7],
           payload: JSON.parse(params[8]),
+          is_baseline: params[9],
           triggered_at: '2026-06-01T00:00:00.000Z',
           created_at: '2026-06-01T00:00:00.000Z',
         };
@@ -66,6 +67,10 @@ function createRunner() {
         };
         state.set(key, next);
         return { rows: [next] };
+      }
+
+      if (text.includes('SELECT EXISTS') && text.includes('FROM gmgn_claim_alert_state')) {
+        return { rows: [{ exists: state.has(`${params[0]}:${params[1]}`) }] };
       }
 
       throw new Error(`Unexpected query: ${text}`);
@@ -109,5 +114,35 @@ describe('gmgn claim signal alert', () => {
     assert.equal(third.reason, 'max-alerts-per-token');
     assert.equal(published.length, 2);
     assert.equal(second.event.claimSequence, 2);
+  });
+
+  it('baselines existing claims without publishing alerts', async () => {
+    const runner = createRunner();
+    const published = [];
+    const publisher = {
+      publishEventSafe: async (event) => {
+        published.push(event);
+        return { delivered: true };
+      },
+    };
+
+    assert.equal(await claimAlert.hasBaselineCompleted({}, runner), false);
+
+    const result = await claimAlert.recordClaimSignalBaseline({
+      tokenAddress: TOKEN_A,
+      signalType: 18,
+      claimId: 'backlog-1',
+      totalFeeUsd: 1,
+    }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
+
+    assert.equal(result.action, 'baselined');
+    assert.equal(result.event.isBaseline, true);
+    assert.equal(result.event.claimSequence, 1);
+    assert.equal(published.length, 0);
+    assert.equal(await claimAlert.hasBaselineCompleted({}, runner), false);
+
+    await claimAlert.markBaselineCompleted({}, runner);
+
+    assert.equal(await claimAlert.hasBaselineCompleted({}, runner), true);
   });
 });
