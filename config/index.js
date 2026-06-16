@@ -509,7 +509,7 @@ module.exports = {
   },
 
   gmgnClaimSignalWorker: {
-    enabled: parseBoolean(process.env.GMGN_CLAIM_SIGNAL_ENABLED, false),
+    enabled: parseBoolean(process.env.GMGN_CLAIM_SIGNAL_ENABLED, true),
     intervalMs: Math.max(5000, parseInt(process.env.GMGN_CLAIM_SIGNAL_INTERVAL_MS || '60000', 10) || 60000),
     apiKeyConfigured: Boolean(String(process.env.GMGN_API_KEY || '').trim()),
     chain: (process.env.GMGN_CLAIM_SIGNAL_CHAIN || process.env.GMGN_CHAIN || 'sol').trim().toLowerCase(),
