@@ -177,6 +177,9 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
 }
 
 function resolveAlertSoundSlot(alert: AlertEntry): CustomSoundSlot {
+  if (alert.kind === 'gmgn-claim-signal') {
+    return 'claim';
+  }
   if (alert.kind === 'old-surge') {
     return alert.surgeWindow === '6H' ? 'old6h' : 'old1h';
   }

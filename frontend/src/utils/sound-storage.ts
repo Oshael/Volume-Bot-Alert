@@ -56,7 +56,7 @@ export function saveSoundSettings(scope: string, settings: SoundSettings) {
 }
 
 
-export type CustomSoundSlot = 'normal' | 'critical' | 'mega' | 'old1h' | 'old6h';
+export type CustomSoundSlot = 'normal' | 'critical' | 'mega' | 'old1h' | 'old6h' | 'claim';
 
 export interface CustomSoundAsset {
   name: string;
@@ -95,4 +95,3 @@ export function saveCustomSoundAsset(scope: string, slot: CustomSoundSlot, asset
   }
   window.localStorage.setItem(buildCustomSoundKey(scope, slot), JSON.stringify(asset));
 }
-

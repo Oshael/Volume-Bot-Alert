@@ -4936,6 +4936,7 @@ textarea:focus {
 .sound-dot.mega { background: #ff6b00; }
 .sound-dot.old1h { background: var(--green); }
 .sound-dot.old6h { background: #ff6b00; }
+.sound-dot.claim { background: #62d58f; }
 
 .legacy-sound-sub,
 .legacy-sound-meta {

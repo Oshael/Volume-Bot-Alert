@@ -4997,6 +4997,7 @@ function renderSoundUploadStrip(state: AppState) {
       sub: `Recent +${Math.round(recent6hThreshold)}% / Old +${Math.round(oldWeek6hThreshold)}% / MP3/WAV/OGG`,
       dot: 'sound-dot old6h',
     },
+    { slot: 'claim', title: 'GMGN Claim Alert', sub: 'Pump + Bags claim / MP3/WAV/OGG', dot: 'sound-dot claim' },
   ];
 
   return `
