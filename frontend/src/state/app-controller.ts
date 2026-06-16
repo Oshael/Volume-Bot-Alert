@@ -4746,6 +4746,7 @@ export function createAppController(): AppController {
       createdAt: getBackendAlertCreatedAt(event.triggeredAt || event.claimedAt),
       label,
       pct: 0,
+      mcap: toOptionalNumber(event.mcap),
       signalType,
       claimSequence: toOptionalNumber(event.claimSequence),
       claimId: toOptionalText(event.claimId),
