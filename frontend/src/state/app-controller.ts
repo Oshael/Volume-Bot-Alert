@@ -2806,7 +2806,17 @@ export function createAppController(): AppController {
     return String(state.data.configs[key] ?? (fallback ? 'on' : 'off')) !== 'off';
   }
 
-  function isAlertKindEnabled(kind: AlertEntry['kind']) {
+  function isGmgnClaimAlertEnabled(entry: Pick<AlertEntry, 'signalType'>) {
+    if (entry.signalType === 17) {
+      return isConfigEnabled('alert-gmgn-claim-bags-enabled');
+    }
+    if (entry.signalType === 18) {
+      return isConfigEnabled('alert-gmgn-claim-pump-enabled');
+    }
+    return true;
+  }
+
+  function isAlertKindEnabled(kind: AlertEntry['kind'], entry?: Pick<AlertEntry, 'signalType'>) {
     switch (kind) {
       case 'monitored-vol':
         return isConfigEnabled('alert-vol-enabled');
@@ -2819,7 +2829,7 @@ export function createAppController(): AppController {
       case 'high-cap-dump-5m':
         return isConfigEnabled('alert-high-cap-dump-enabled');
       case 'gmgn-claim-signal':
-        return isConfigEnabled('alert-gmgn-claim-signal-enabled');
+        return isGmgnClaimAlertEnabled(entry || {});
       default:
         return true;
     }
@@ -2840,12 +2850,12 @@ export function createAppController(): AppController {
     }
   }
 
-  function isAlertEntryEnabled(entry: Pick<AlertEntry, 'kind' | 'ruleKey' | 'surgeWindow'>) {
+  function isAlertEntryEnabled(entry: Pick<AlertEntry, 'kind' | 'ruleKey' | 'surgeWindow' | 'signalType'>) {
     if (entry.kind === 'old-surge') {
       return resolveBackendSurgeAlertEnabled(entry);
     }
 
-    return isAlertKindEnabled(entry.kind);
+    return isAlertKindEnabled(entry.kind, entry);
   }
 
   function isCrossAlertBlocked(token: ManualTokenEntry, now: number) {

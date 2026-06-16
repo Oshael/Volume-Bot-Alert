@@ -321,7 +321,8 @@ const ALERT_TOGGLE_FIELDS = [
   { key: 'alert-old-week-surge-6h-enabled', label: 'OLD SURGE 6H' },
   { key: 'alert-meteora-surge-enabled', label: 'METEORA 1H' },
   { key: 'alert-high-cap-dump-enabled', label: 'HIGH CAP DUMP 5M' },
-  { key: 'alert-gmgn-claim-signal-enabled', label: 'GMGN CLAIM' },
+  { key: 'alert-gmgn-claim-pump-enabled', label: 'PUMP CLAIM' },
+  { key: 'alert-gmgn-claim-bags-enabled', label: 'BAGS CLAIM' },
 ] as const;
 
 const SOUND_TOGGLE_FIELDS = [

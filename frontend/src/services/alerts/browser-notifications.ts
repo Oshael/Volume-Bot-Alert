@@ -21,7 +21,6 @@ const ALERT_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   hvnc: 'alert-hvnc-enabled',
   'meteora-surge': 'alert-meteora-surge-enabled',
   'high-cap-dump-5m': 'alert-high-cap-dump-enabled',
-  'gmgn-claim-signal': 'alert-gmgn-claim-signal-enabled',
 };
 
 type AlertVolumeKey = 'volume1m' | 'volume5m' | 'volume1h' | 'volume6h' | 'volume24h';
@@ -83,7 +82,21 @@ function resolveOldSurgeConfigKey(alert: Pick<AlertEntry, 'ruleKey' | 'surgeWind
   }
 }
 
+function isGmgnClaimAlertEnabled(alert: Pick<AlertEntry, 'signalType'>, configs?: Record<string, string | number>) {
+  if (alert.signalType === 17) {
+    return isConfigEnabled(configs, 'alert-gmgn-claim-bags-enabled');
+  }
+  if (alert.signalType === 18) {
+    return isConfigEnabled(configs, 'alert-gmgn-claim-pump-enabled');
+  }
+  return true;
+}
+
 function isAlertEnabledByConfig(alert: AlertEntry, configs?: Record<string, string | number>) {
+  if (alert.kind === 'gmgn-claim-signal') {
+    return isGmgnClaimAlertEnabled(alert, configs);
+  }
+
   const configKey = alert.kind === 'old-surge'
     ? resolveOldSurgeConfigKey(alert)
     : ALERT_KIND_CONFIG_KEY[alert.kind];

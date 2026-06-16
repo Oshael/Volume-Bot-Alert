@@ -42,6 +42,8 @@ const CONFIG_SCHEMA = {
   'alert-meteora-surge-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-high-cap-dump-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-gmgn-claim-signal-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-gmgn-claim-pump-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-gmgn-claim-bags-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'block-warning-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'sound-vol-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'sound-mcap-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
@@ -150,6 +152,21 @@ function applyLegacySurgeConfigFallbacks(configs, storedKeys = new Set()) {
   return configs;
 }
 
+function applyLegacyGmgnClaimConfigFallbacks(configs, storedKeys = new Set()) {
+  const safeStoredKeys = storedKeys instanceof Set ? storedKeys : new Set();
+  const legacyKey = 'alert-gmgn-claim-signal-enabled';
+  if (!safeStoredKeys.has(legacyKey)) {
+    return configs;
+  }
+
+  for (const key of ['alert-gmgn-claim-pump-enabled', 'alert-gmgn-claim-bags-enabled']) {
+    if (!safeStoredKeys.has(key)) {
+      configs[key] = configs[legacyKey];
+    }
+  }
+  return configs;
+}
+
 async function getAllWithStoredKeys(userId) {
   const { rows } = await db.query(
     'SELECT config_key, config_value FROM user_configs WHERE user_id = $1',
@@ -170,6 +187,7 @@ async function getAllWithStoredKeys(userId) {
   }
 
   applyLegacySurgeConfigFallbacks(configs, storedKeys);
+  applyLegacyGmgnClaimConfigFallbacks(configs, storedKeys);
   return { configs, storedKeys };
 }
 
@@ -232,6 +250,7 @@ async function remove(userId, key) {
 
 module.exports = {
   CONFIG_SCHEMA,
+  applyLegacyGmgnClaimConfigFallbacks,
   applyLegacySurgeConfigFallbacks,
   buildDefaultConfigs,
   getAllWithStoredKeys,
