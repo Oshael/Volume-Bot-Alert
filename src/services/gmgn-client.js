@@ -599,6 +599,8 @@ function normalizeClaimSignalRow(row, context = {}) {
   const claimedAt = normalizeTimestamp(readFirst(row, [
     'claimed_at',
     'claim_time',
+    'trigger_at',
+    'triggerAt',
     'timestamp',
     'created_at',
     'time',
@@ -606,15 +608,16 @@ function normalizeClaimSignalRow(row, context = {}) {
   const claimId = readTrimmedString(row, [
     'claim_id',
     'claimId',
+    'id',
     'tx_hash',
     'txHash',
     'signature',
     'hash',
-  ]) || `${signalType}:${address}:${claimedAt || ''}:${readFirst(row, ['total_fee_usd', 'totalFeeUsd', 'total_fee', 'fee']) || ''}`;
+  ]) || `${signalType}:${address}:${claimedAt || ''}:${readFirst(row, ['total_fee_usd', 'totalFeeUsd', 'total_fee', ['data', 'total_fee'], 'fee']) || ''}`;
 
   return {
     tokenAddress: address,
-    chain: normalizeChain(readTrimmedString(row, ['chain']) || context.chain),
+    chain: normalizeChain(readTrimmedString(row, ['chain', ['data', 'chain']]) || context.chain),
     signalType,
     claimId,
     totalFeeUsd: readNumber(row, [
@@ -622,9 +625,16 @@ function normalizeClaimSignalRow(row, context = {}) {
       'totalFeeUsd',
       'total_fee',
       'totalFee',
+      ['data', 'total_fee'],
+      ['data', 'totalFee'],
+      ['data', 'total_fee_usd'],
+      ['data', 'totalFeeUsd'],
       'fee_usd',
       'feeUsd',
       'fee',
+      ['data', 'fee_usd'],
+      ['data', 'feeUsd'],
+      ['data', 'fee'],
     ]),
     claimedAt,
     source: 'gmgn',

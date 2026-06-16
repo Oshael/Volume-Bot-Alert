@@ -355,11 +355,14 @@ describe('gmgn client', () => {
           stdout: JSON.stringify({
             data: {
               items: [{
+                id: 'gmgn-signal-1',
                 token_address: TOKEN_A,
                 signal_type: 18,
-                tx_hash: 'claim-tx-1',
-                total_fee_usd: '12.34',
-                claimed_at: 1777867980,
+                trigger_at: 1777867980,
+                data: {
+                  chain: 'sol',
+                  total_fee: '12.34',
+                },
               }],
             },
           }),
@@ -376,7 +379,7 @@ describe('gmgn client', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].tokenAddress, TOKEN_A);
     assert.equal(rows[0].signalType, 18);
-    assert.equal(rows[0].claimId, 'claim-tx-1');
+    assert.equal(rows[0].claimId, 'gmgn-signal-1');
     assert.equal(rows[0].totalFeeUsd, 12.34);
     assert.equal(rows[0].claimedAt, '2026-05-04T04:13:00.000Z');
   });

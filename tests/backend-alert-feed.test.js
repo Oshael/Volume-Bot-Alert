@@ -205,6 +205,57 @@ describe('backend alert feed service', () => {
     }
   });
 
+  it('uses GMGN claim payload metadata when catalog metadata is missing', async () => {
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+
+    tokenCatalog.listDashboardMetadataByAddresses = async () => [];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.buildDashboardAlertEventFromEvent({
+        id: 44,
+        ruleKey: 'gmgn-claim-signal',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        signalType: 18,
+        claimSequence: 1,
+        claimId: 'gmgn-signal-1',
+        totalFeeUsd: 12.34,
+        claimedAt: '2026-05-04T04:13:00.000Z',
+        triggeredAt: '2026-05-04T04:13:05.000Z',
+        payload: {
+          data: {
+            symbol: 'PUMP',
+            name: 'Pump Example',
+            logo: 'https://example.com/pump.png',
+            pool_address: 'pair_claim_1',
+            created_timestamp: 1777864380,
+            usd_market_cap: 45613.52,
+            volume_1h: 123,
+            volume_6h: 456,
+            volume_24h: 789,
+          },
+        },
+      });
+
+      assert.equal(payload.kind, 'gmgn-claim-signal');
+      assert.equal(payload.address, 'So11111111111111111111111111111111111111112');
+      assert.equal(payload.symbol, 'PUMP');
+      assert.equal(payload.name, 'Pump Example');
+      assert.equal(payload.imageUrl, 'https://example.com/pump.png');
+      assert.equal(payload.pairAddress, 'pair_claim_1');
+      assert.equal(payload.tokenCreatedAt, 1777864380000);
+      assert.equal(payload.totalFeeUsd, 12.34);
+      assert.equal(payload.mcap, 45613.52);
+      assert.equal(payload.volume1h, 123);
+      assert.equal(payload.volume6h, 456);
+      assert.equal(payload.volume24h, 789);
+    } finally {
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
   it('builds a dashboard payload for per-user backend alert rules from persisted user events', async () => {
     const originalGetCursor = alertDeliveryCursor.getCursor;
     const originalListRecentEvents = userAlertEvent.listRecentEvents;
@@ -350,6 +401,7 @@ describe('backend alert feed service', () => {
 
       assert.deepEqual(capturedRuleKeys, [
         'high-cap-dump-5m',
+        'gmgn-claim-signal',
         'monitored-vol',
         'gmgn-vol-1m',
         'monitored-mcap',
@@ -362,7 +414,7 @@ describe('backend alert feed service', () => {
       ]);
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 1);
-      assert.equal(payload.feeds.length, 10);
+      assert.equal(payload.feeds.length, 11);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
     }

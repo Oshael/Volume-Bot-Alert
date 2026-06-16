@@ -152,15 +152,45 @@ function buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule) {
   };
 }
 
-function buildDashboardGmgnClaimSignalPayload(eventRow) {
-  const payload = eventRow?.payload && typeof eventRow.payload === 'object' && !Array.isArray(eventRow.payload)
-    ? eventRow.payload
-    : {};
+function normalizeObjectPayload(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function timestampSecondsToMs(value) {
+  const createdTimestamp = toNumberOrNull(value);
+  return createdTimestamp != null ? createdTimestamp * 1000 : null;
+}
+
+function buildDashboardGmgnClaimIdentityPayload(data, catalogRow) {
+  return {
+    symbol: toTextOrNull(data.symbol) ?? toTextOrNull(catalogRow?.symbol),
+    name: toTextOrNull(data.name) ?? toTextOrNull(catalogRow?.name),
+    imageUrl: toTextOrNull(data.logo) ?? toTextOrNull(catalogRow?.last_image_url),
+    pairAddress: toTextOrNull(data.pool_address) ?? toTextOrNull(catalogRow?.last_pair_address),
+    tokenCreatedAt: timestampSecondsToMs(data.created_timestamp) ?? toNumberOrNull(catalogRow?.last_token_created_at_ms),
+  };
+}
+
+function buildDashboardGmgnClaimMetricPayload(data, catalogRow) {
+  return {
+    mcap: toNumberOrNull(data.usd_market_cap) ?? toNumberOrNull(data.market_cap) ?? toNumberOrNull(catalogRow?.last_mcap),
+    volume1m: toNumberOrNull(data.volume_1m),
+    volume1h: toNumberOrNull(data.volume_1h) ?? toNumberOrNull(catalogRow?.last_vol_1h),
+    volume6h: toNumberOrNull(data.volume_6h) ?? toNumberOrNull(catalogRow?.last_vol_6h),
+    volume24h: toNumberOrNull(data.volume_24h) ?? toNumberOrNull(catalogRow?.last_vol_24h),
+  };
+}
+
+function buildDashboardGmgnClaimSignalPayload(eventRow, catalogRow) {
+  const payload = normalizeObjectPayload(eventRow?.payload);
+  const data = normalizeObjectPayload(payload.data);
 
   return {
     id: toNumberOrNull(eventRow?.id),
     kind: 'gmgn-claim-signal',
     ruleKey: eventRow?.ruleKey || 'gmgn-claim-signal',
+    ...buildDashboardGmgnClaimIdentityPayload(data, catalogRow),
+    ...buildDashboardGmgnClaimMetricPayload(data, catalogRow),
     signalType: toNumberOrNull(eventRow?.signalType),
     claimSequence: toNumberOrNull(eventRow?.claimSequence),
     claimId: toTextOrNull(eventRow?.claimId),
@@ -303,7 +333,7 @@ function buildDashboardAlertEventItem(eventRow, catalogRow, rule) {
     return {
       address: toTextOrNull(eventRow?.tokenAddress) || '',
       ...buildDashboardAlertEventCatalogPayload(catalogRow),
-      ...buildDashboardGmgnClaimSignalPayload(eventRow),
+      ...buildDashboardGmgnClaimSignalPayload(eventRow, catalogRow),
     };
   }
 
