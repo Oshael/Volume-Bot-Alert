@@ -1067,6 +1067,61 @@ describe('catalog worker drift compensation', () => {
     }
   });
 
+  it('does not admin-block GMGN dex-unavailable zombies when mcap is missing', async () => {
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalAdminBlockAdd = adminBlockedToken.add;
+    const blockWrites = [];
+    const tokenBefore = {
+      address: TOKEN_A,
+      chain: 'solana',
+      source: 'gmgn',
+      symbol: 'BRUCE',
+      name: 'Bruce',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: null,
+      last_vol_5m: 0,
+      suppressed_reason: 'dex_unavailable',
+      last_evaluation_error: 'dex_unavailable',
+      evaluation_error_count: 300,
+    };
+    const demotedToken = { ...tokenBefore, eligibility_state: 'dex-unavailable' };
+
+    catalogWorker.__private.setDefaultGmgnClientForTest({
+      fetchTokenInfo: async (request) => {
+        assert.equal(request.address, tokenBefore.address);
+        return {
+          address: tokenBefore.address,
+          symbol: 'BRUCE',
+          name: 'Bruce',
+          liquidityUsd: 721.2,
+          marketCap: null,
+          price: 0.00001,
+        };
+      },
+    });
+    adminBlockedToken.add = async (payload) => {
+      blockWrites.push(payload);
+      return payload;
+    };
+    tokenCatalog.applyEvaluationResult = async (address, payload) => {
+      assert.equal(address, tokenBefore.address);
+      assert.notEqual(payload.eligibilityState, 'admin-blocked');
+      return demotedToken;
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, null);
+
+      assert.equal(result, demotedToken);
+      assert.equal(blockWrites.length, 0);
+    } finally {
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      adminBlockedToken.add = originalAdminBlockAdd;
+      catalogWorker.__private.setDefaultGmgnClientForTest(null);
+    }
+  });
+
   it('suppresses the first young extreme churn alert and auto-blocks on confirmation', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;

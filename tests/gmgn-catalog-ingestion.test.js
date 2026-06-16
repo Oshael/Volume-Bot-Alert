@@ -925,6 +925,21 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(blockWrites[0].evidence.marketSnapshot.mcap, 84550.6);
   });
 
+  it('does not auto-block low-liquidity GMGN-only tokens when mcap is missing', () => {
+    const shouldBlock = gmgnCatalogIngestion.__private.isGmgnLowLiquiditySpamRisk(
+      'nCRDiU4kzScNFXowy7T9yo36zfHVswYBgrWUhfVAfES',
+      {
+        tokenCreatedAt: '2026-05-03T06:35:00.000Z',
+        mcap: null,
+        liquidityUsd: 721.2,
+      },
+      null,
+      new Date('2026-05-03T07:00:00.000Z')
+    );
+
+    assert.equal(shouldBlock, false);
+  });
+
   it('auto-blocks GMGN-only mid-cap tokens with multiple bad liquidity statuses before expensive checks', async () => {
     const blockWrites = [];
     const result = await gmgnCatalogIngestion.ingestGmgnToken({

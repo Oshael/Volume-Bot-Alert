@@ -805,7 +805,8 @@ function isGmgnLowLiquiditySpamRisk(address, snapshot = {}, tokenBefore = null, 
     && ageHours < GMGN_LOW_LIQUIDITY_SPAM_MAX_AGE_HOURS
     && liquidityUsd != null
     && liquidityUsd < GMGN_LOW_LIQUIDITY_SPAM_MAX_LIQUIDITY_USD
-    && (marketCap == null || marketCap < GMGN_LOW_LIQUIDITY_SPAM_MAX_MCAP);
+    && marketCap != null
+    && marketCap < GMGN_LOW_LIQUIDITY_SPAM_MAX_MCAP;
 }
 
 function isGmgnBadLiquidityStatusMcapBandRisk(address, snapshot = {}, tokenBefore = null, now = new Date()) {

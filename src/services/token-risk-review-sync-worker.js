@@ -119,6 +119,13 @@ function hasStructuralCoverage(row) {
 }
 
 function toFiniteNumberOrNull(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -211,8 +218,8 @@ function buildNewLowMcapExtremeVolumeAssessment(row = {}) {
   return {
     label: 'junk_probable',
     confidence: 'high',
-    manualReviewRequired: true,
-    autoBlock: false,
+    manualReviewRequired: false,
+    autoBlock: true,
     mode: 'low_mcap_extreme_volume_gate',
     strongSignalCount: 1,
     reasonCodes: [AUTO_BLOCK_REASON_CODES.NEW_LOW_MCAP_EXTREME_VOL5M_CHURN],
@@ -242,8 +249,8 @@ function buildDexGmgnHolderAnomalyAssessment(row = {}, info = {}) {
   return {
     label: 'junk_probable',
     confidence: 'high',
-    manualReviewRequired: true,
-    autoBlock: false,
+    manualReviewRequired: false,
+    autoBlock: true,
     mode: 'gmgn_info_holder_anomaly',
     strongSignalCount: 1,
     reasonCodes: [AUTO_BLOCK_REASON_CODES.GMGN_HOLDER_COUNT_MCAP_ANOMALY],
@@ -305,8 +312,8 @@ function buildGmgnRiskGateAssessment(row) {
   return {
     label: reasonCodes.length ? 'junk_probable' : 'valid',
     confidence: reasonCodes.length ? 'high' : 'medium',
-    manualReviewRequired: reasonCodes.length > 0,
-    autoBlock: false,
+    manualReviewRequired: false,
+    autoBlock: reasonCodes.length > 0,
     mode: 'gmgn_risk_enrichment_gate',
     strongSignalCount: reasonCodes.length ? 1 : 0,
     reasonCodes,
@@ -359,6 +366,12 @@ async function captureEvidenceSafely(row, assessment, meteoraSummary, deps = {})
 
 function shouldAutoBlockLabel(label) {
   return String(label || '').trim().toLowerCase() === 'junk_probable';
+}
+
+function shouldAutoBlockAssessment(label, assessment) {
+  return shouldAutoBlockLabel(label)
+    && assessment?.autoBlock === true
+    && assessment?.manualReviewRequired !== true;
 }
 
 function hasPersistedValidReview(row) {
@@ -585,7 +598,7 @@ async function processRows(rows = [], deps = {}) {
       continue;
     }
 
-    if (shouldAutoBlockLabel(label) && await autoBlockToken(row, assessment, deps, meteoraSummary)) {
+    if (shouldAutoBlockAssessment(label, assessment) && await autoBlockToken(row, assessment, deps, meteoraSummary)) {
       autoBlocked += 1;
     } else if (label === 'valid' && await releaseGmgnRiskSuppression(row, deps)) {
       released += 1;
@@ -740,6 +753,7 @@ module.exports = {
     normalizeOptions,
     processRows,
     releaseGmgnRiskSuppression,
+    shouldAutoBlockAssessment,
     shouldAutoBlockLabel,
     hasPersistedValidReview,
   },

@@ -570,4 +570,28 @@ describe('token junk metric', () => {
   it('returns null when there is not enough signal context', () => {
     assert.equal(classifyTokenJunk({ address: 'So11111111111111111111111111111111111111112' }), null);
   });
+
+  it('does not treat missing structural fields as zero-risk evidence', () => {
+    const assessment = classifyTokenJunk({
+      mcap: 100414,
+      volume1h: 11310.03,
+      volume6h: 28473.56,
+      volume24h: 48717.2,
+      liquidityUsd: 24024.83,
+      txns24hBuys: 440,
+      txns24hSells: 404,
+      priceChange6h: 88.07,
+      priceChange24h: 65.46,
+      holderCount: null,
+      top10Pct: null,
+      top20Pct: null,
+    });
+
+    assert.equal(assessment.holderCount, null);
+    assert.equal(assessment.top10Pct, null);
+    assert.equal(assessment.top20Pct, null);
+    assert.ok(!assessment.reasonCodes.includes('holder_count_extremely_low_for_mcap'));
+    assert.ok(!assessment.reasonCodes.includes('holder_distribution_healthy'));
+    assert.equal(assessment.autoBlock, false);
+  });
 });

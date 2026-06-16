@@ -9,7 +9,7 @@ describe('token risk review sync worker', () => {
     assert.equal(worker.__private.normalizeOptions({}).minMcap, 15000);
   });
 
-  it('persists auto labels from the current junk assessment', async () => {
+  it('persists manual-review junk assessments without auto-blocking', async () => {
     const saved = [];
     const evidence = [];
     const blocked = [];
@@ -76,16 +76,16 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
-    assert.equal(result.autoBlocked, 1);
+    assert.equal(result.autoBlocked, 0);
     assert.equal(result.manualProtected, 0);
     assert.equal(saved[0].label, 'junk_probable');
-    assert.equal(blocked[0].address, 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M');
-    assert.match(blocked[0].label, /^auto-junk-probable:/);
-    assert.equal(suppressed[0].payload.suppressedReason, 'admin_blocked');
-    assert.deepEqual(removedAutoReviews, ['BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M']);
+    assert.equal(blocked.length, 0);
+    assert.equal(suppressed.length, 0);
+    assert.deepEqual(removedAutoReviews, []);
     assert.match(saved[0].notes, /^auto\/v1_manual_review:/);
     assert.equal(evidence.length, 1);
     assert.equal(evidence[0].assessment.label, 'junk_probable');
+    assert.equal(evidence[0].assessment.autoBlock, false);
   });
 
   it('counts manual rows as protected when auto sync hits an existing manual review', async () => {
@@ -405,8 +405,8 @@ describe('token risk review sync worker', () => {
     });
 
     assert.equal(result.saved, 1);
-    assert.equal(result.autoBlocked, 1);
-    assert.equal(blocked.length, 1);
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(blocked.length, 0);
     assert.equal(saved[0].label, 'junk_probable');
   });
 

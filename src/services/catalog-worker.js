@@ -168,6 +168,13 @@ function addPriorityJitter(baseDelayMs, jitterMs, randomValue = Math.random()) {
 }
 
 function toNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
@@ -1301,7 +1308,9 @@ async function maybeAutoBlockGmgnDexUnavailableLowLiquidity(token) {
   }
 
   const snapshot = buildGmgnDexUnavailableMarketSnapshot(token, gmgnInfo);
-  if (!(snapshot.liquidityUsd != null && snapshot.liquidityUsd < GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD)) {
+  if (!(snapshot.mcap != null
+    && snapshot.liquidityUsd != null
+    && snapshot.liquidityUsd < GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD)) {
     return null;
   }
 
