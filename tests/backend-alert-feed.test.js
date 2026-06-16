@@ -229,7 +229,10 @@ describe('backend alert feed service', () => {
             name: 'Pump Example',
             logo: 'https://example.com/pump.png',
             pool_address: 'pair_claim_1',
+            quote_address: 'So11111111111111111111111111111111111111112',
             created_timestamp: 1777864380,
+            total_fee: 12.34,
+            claim_fee_sol_amount: '0.123456',
             usd_market_cap: 45613.52,
             volume_1h: 123,
             volume_6h: 456,
@@ -245,7 +248,11 @@ describe('backend alert feed service', () => {
       assert.equal(payload.imageUrl, 'https://example.com/pump.png');
       assert.equal(payload.pairAddress, 'pair_claim_1');
       assert.equal(payload.tokenCreatedAt, 1777864380000);
-      assert.equal(payload.totalFeeUsd, 12.34);
+      assert.equal(payload.claimFeeAmount, 0.123456);
+      assert.equal(payload.claimFeeCurrency, 'SOL');
+      assert.equal(payload.claimFeeUsd, null);
+      assert.equal(payload.quoteAddress, 'So11111111111111111111111111111111111111112');
+      assert.equal(payload.totalFeeUsd, null);
       assert.equal(payload.mcap, 45613.52);
       assert.equal(payload.volume1h, 123);
       assert.equal(payload.volume6h, 456);

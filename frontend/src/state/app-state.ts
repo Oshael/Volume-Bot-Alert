@@ -30,6 +30,10 @@ export interface AlertEntry {
   signalType?: number | null;
   claimSequence?: number | null;
   claimId?: string | null;
+  claimFeeAmount?: number | null;
+  claimFeeCurrency?: string | null;
+  claimFeeUsd?: number | null;
+  quoteAddress?: string | null;
   totalFeeUsd?: number | null;
   claimedAt?: string | null;
   baselineTs?: string | null;

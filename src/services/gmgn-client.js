@@ -578,6 +578,75 @@ function normalizeKlinePayload(payload) {
     .sort((left, right) => left.timestampMs - right.timestampMs);
 }
 
+const WRAPPED_SOL_ADDRESS = 'so11111111111111111111111111111111111111112';
+const USDC_ADDRESS = 'epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v';
+const USDT_ADDRESS = 'es9vmfrzacermjfrf4h2fyd4e5hvpdj8w6r9vwxzbdi';
+const STABLE_CLAIM_FEE_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+
+function normalizeClaimFeeQuoteAddress(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isStableClaimFeeQuote(value) {
+  return STABLE_CLAIM_FEE_QUOTES.has(String(value || '').trim().toUpperCase());
+}
+
+function resolveClaimFeeQuoteSymbol(row, quoteAddress) {
+  const explicitSymbol = readTrimmedString(row, [
+    'quote_symbol',
+    'quoteSymbol',
+    ['data', 'quote_symbol'],
+    ['data', 'quoteSymbol'],
+    ['quoteToken', 'symbol'],
+    ['data', 'quoteToken', 'symbol'],
+  ]);
+  if (explicitSymbol) {
+    return explicitSymbol.toUpperCase();
+  }
+
+  switch (normalizeClaimFeeQuoteAddress(quoteAddress)) {
+    case WRAPPED_SOL_ADDRESS:
+      return 'SOL';
+    case USDC_ADDRESS:
+      return 'USDC';
+    case USDT_ADDRESS:
+      return 'USDT';
+    default:
+      return null;
+  }
+}
+
+function readClaimFeeQuoteAmount(row) {
+  return readNumber(row, [
+    'claim_fee_quote_amount',
+    'claimFeeQuoteAmount',
+    ['data', 'claim_fee_quote_amount'],
+    ['data', 'claimFeeQuoteAmount'],
+    'claim_fee_amount',
+    'claimFeeAmount',
+    ['data', 'claim_fee_amount'],
+    ['data', 'claimFeeAmount'],
+    'total_fee',
+    'totalFee',
+    ['data', 'total_fee'],
+    ['data', 'totalFee'],
+  ]);
+}
+
+function resolveClaimFeeAmount(row, quoteSymbol) {
+  const solAmount = readNumber(row, [
+    'claim_fee_sol_amount',
+    'claimFeeSolAmount',
+    ['data', 'claim_fee_sol_amount'],
+    ['data', 'claimFeeSolAmount'],
+  ]);
+  if (quoteSymbol === 'SOL') {
+    return solAmount ?? readClaimFeeQuoteAmount(row);
+  }
+
+  return readClaimFeeQuoteAmount(row) ?? solAmount;
+}
+
 function normalizeClaimSignalRow(row, context = {}) {
   if (!row || typeof row !== 'object') {
     return null;
@@ -615,27 +684,34 @@ function normalizeClaimSignalRow(row, context = {}) {
     'hash',
   ]) || `${signalType}:${address}:${claimedAt || ''}:${readFirst(row, ['total_fee_usd', 'totalFeeUsd', 'total_fee', ['data', 'total_fee'], 'fee']) || ''}`;
 
+  const quoteAddress = readTrimmedString(row, [
+    'quote_address',
+    'quoteAddress',
+    ['data', 'quote_address'],
+    ['data', 'quoteAddress'],
+  ]);
+  const quoteSymbol = resolveClaimFeeQuoteSymbol(row, quoteAddress);
+  const claimFeeAmount = resolveClaimFeeAmount(row, quoteSymbol);
+  const explicitTotalFeeUsd = readNumber(row, [
+    'total_fee_usd',
+    'totalFeeUsd',
+    ['data', 'total_fee_usd'],
+    ['data', 'totalFeeUsd'],
+    'fee_usd',
+    'feeUsd',
+    ['data', 'fee_usd'],
+    ['data', 'feeUsd'],
+  ]);
+
   return {
     tokenAddress: address,
     chain: normalizeChain(readTrimmedString(row, ['chain', ['data', 'chain']]) || context.chain),
     signalType,
     claimId,
-    totalFeeUsd: readNumber(row, [
-      'total_fee_usd',
-      'totalFeeUsd',
-      'total_fee',
-      'totalFee',
-      ['data', 'total_fee'],
-      ['data', 'totalFee'],
-      ['data', 'total_fee_usd'],
-      ['data', 'totalFeeUsd'],
-      'fee_usd',
-      'feeUsd',
-      'fee',
-      ['data', 'fee_usd'],
-      ['data', 'feeUsd'],
-      ['data', 'fee'],
-    ]),
+    totalFeeUsd: explicitTotalFeeUsd ?? (isStableClaimFeeQuote(quoteSymbol) ? claimFeeAmount : null),
+    claimFeeAmount,
+    claimFeeCurrency: quoteSymbol,
+    quoteAddress,
     claimedAt,
     source: 'gmgn',
     raw: row,

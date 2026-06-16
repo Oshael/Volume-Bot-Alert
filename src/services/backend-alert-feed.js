@@ -19,6 +19,10 @@ const {
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const DEFAULT_ALERT_FEED_LIMIT = 50;
+const WRAPPED_SOL_ADDRESS = 'so11111111111111111111111111111111111111112';
+const USDC_ADDRESS = 'epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v';
+const USDT_ADDRESS = 'es9vmfrzacermjfrf4h2fyd4e5hvpdj8w6r9vwxzbdi';
+const STABLE_CLAIM_FEE_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -181,6 +185,63 @@ function buildDashboardGmgnClaimMetricPayload(data, catalogRow) {
   };
 }
 
+function normalizeClaimFeeQuoteAddress(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function resolveGmgnClaimQuoteSymbol(data) {
+  const explicitSymbol = toTextOrNull(data.quote_symbol) ?? toTextOrNull(data.quoteSymbol);
+  if (explicitSymbol) {
+    return explicitSymbol.toUpperCase();
+  }
+
+  switch (normalizeClaimFeeQuoteAddress(data.quote_address ?? data.quoteAddress)) {
+    case WRAPPED_SOL_ADDRESS:
+      return 'SOL';
+    case USDC_ADDRESS:
+      return 'USDC';
+    case USDT_ADDRESS:
+      return 'USDT';
+    default:
+      return null;
+  }
+}
+
+function readGmgnClaimQuoteFeeAmount(data) {
+  return toNumberOrNull(data.claim_fee_quote_amount)
+    ?? toNumberOrNull(data.claimFeeQuoteAmount)
+    ?? toNumberOrNull(data.claim_fee_amount)
+    ?? toNumberOrNull(data.claimFeeAmount)
+    ?? toNumberOrNull(data.total_fee)
+    ?? toNumberOrNull(data.totalFee);
+}
+
+function resolveGmgnClaimFeeAmount(data, quoteSymbol) {
+  const solAmount = toNumberOrNull(data.claim_fee_sol_amount) ?? toNumberOrNull(data.claimFeeSolAmount);
+  if (quoteSymbol === 'SOL') {
+    return solAmount ?? readGmgnClaimQuoteFeeAmount(data);
+  }
+
+  return readGmgnClaimQuoteFeeAmount(data) ?? solAmount;
+}
+
+function buildDashboardGmgnClaimFeePayload(data, eventRow) {
+  const quoteSymbol = resolveGmgnClaimQuoteSymbol(data);
+  const claimFeeAmount = resolveGmgnClaimFeeAmount(data, quoteSymbol);
+  const claimFeeUsd = STABLE_CLAIM_FEE_QUOTES.has(quoteSymbol || '')
+    ? claimFeeAmount ?? toNumberOrNull(eventRow?.totalFeeUsd)
+    : null;
+  const legacyTotalFeeUsd = quoteSymbol ? null : toNumberOrNull(eventRow?.totalFeeUsd);
+
+  return {
+    claimFeeAmount,
+    claimFeeCurrency: quoteSymbol,
+    claimFeeUsd: claimFeeUsd ?? legacyTotalFeeUsd,
+    quoteAddress: toTextOrNull(data.quote_address) ?? toTextOrNull(data.quoteAddress),
+    totalFeeUsd: claimFeeUsd ?? legacyTotalFeeUsd,
+  };
+}
+
 function buildDashboardGmgnClaimSignalPayload(eventRow, catalogRow) {
   const payload = normalizeObjectPayload(eventRow?.payload);
   const data = normalizeObjectPayload(payload.data);
@@ -194,7 +255,7 @@ function buildDashboardGmgnClaimSignalPayload(eventRow, catalogRow) {
     signalType: toNumberOrNull(eventRow?.signalType),
     claimSequence: toNumberOrNull(eventRow?.claimSequence),
     claimId: toTextOrNull(eventRow?.claimId),
-    totalFeeUsd: toNumberOrNull(eventRow?.totalFeeUsd),
+    ...buildDashboardGmgnClaimFeePayload(data, eventRow),
     claimedAt: toTextOrNull(eventRow?.claimedAt),
     source: toTextOrNull(eventRow?.source) || 'gmgn',
     label: toNumberOrNull(eventRow?.signalType) === 17 ? 'BAGS CLAIM' : 'PUMP CLAIM',

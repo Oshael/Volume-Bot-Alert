@@ -1,4 +1,5 @@
 import type { AlertEntry } from '../../state/app-state';
+import { formatClaimFee } from './claim-fee-format';
 
 const STORAGE_KEY_PREFIX = 'trendscope_browser_notifications_v1';
 const DEFAULT_ICON_URL = '/favicon.png';
@@ -216,7 +217,7 @@ function sanitizeHttpUrl(value?: string | null) {
 function buildNotificationBody(alert: AlertEntry) {
   if (alert.kind === 'gmgn-claim-signal') {
     return [
-      formatMoney(alert.totalFeeUsd),
+      formatClaimFee(alert),
       alert.claimedAt ? `claimed ${new Date(alert.claimedAt).toLocaleTimeString()}` : null,
       formatAddressFragment(alert.address),
     ].filter(Boolean).join(' · ');

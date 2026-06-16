@@ -1,6 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
+import { formatClaimFee } from '../../services/alerts/claim-fee-format';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
@@ -1164,17 +1165,25 @@ function buildXSearchUrl(symbol: string, address: string) {
   return `https://x.com/search?q=${encodeURIComponent(queryParts.join(' OR '))}`;
 }
 
-function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
+function appendSpecialAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   if (isHighCapDumpAlert(alert)) {
     appendHighCapDumpFlowLine(container, alert);
-    return;
+    return true;
   }
 
   if (alert.kind === 'gmgn-claim-signal') {
     container.append(
-      buildMetricPair('FEE', fmtMoney(alert.totalFeeUsd), 'up'),
+      buildMetricPair('FEE', formatClaimFee(alert) ?? '-', 'up'),
       buildMetricPair('CLAIM', alert.claimSequence ? `#${alert.claimSequence}` : '-', 'white'),
     );
+    return true;
+  }
+
+  return false;
+}
+
+function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
+  if (appendSpecialAlertFlowLine(container, alert)) {
     return;
   }
 

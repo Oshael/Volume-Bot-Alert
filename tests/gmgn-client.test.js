@@ -354,16 +354,31 @@ describe('gmgn client', () => {
         return {
           stdout: JSON.stringify({
             data: {
-              items: [{
-                id: 'gmgn-signal-1',
-                token_address: TOKEN_A,
-                signal_type: 18,
-                trigger_at: 1777867980,
-                data: {
-                  chain: 'sol',
-                  total_fee: '12.34',
+              items: [
+                {
+                  id: 'gmgn-signal-1',
+                  token_address: TOKEN_A,
+                  signal_type: 18,
+                  trigger_at: 1777867980,
+                  data: {
+                    chain: 'sol',
+                    quote_address: 'So11111111111111111111111111111111111111112',
+                    total_fee: '12.34',
+                    claim_fee_sol_amount: '0.123456',
+                  },
                 },
-              }],
+                {
+                  id: 'gmgn-signal-2',
+                  token_address: TOKEN_B,
+                  signal_type: 18,
+                  trigger_at: 1777868040,
+                  data: {
+                    chain: 'sol',
+                    quote_address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                    total_fee: '1030.5',
+                  },
+                },
+              ],
             },
           }),
           stderr: '',
@@ -376,12 +391,19 @@ describe('gmgn client', () => {
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].args, gmgn.__private.buildMarketSignalArgs({ chain: 'sol', signalType: 18 }));
     assert.equal(calls[0].apiKey, 'test-key');
-    assert.equal(rows.length, 1);
+    assert.equal(rows.length, 2);
     assert.equal(rows[0].tokenAddress, TOKEN_A);
     assert.equal(rows[0].signalType, 18);
     assert.equal(rows[0].claimId, 'gmgn-signal-1');
-    assert.equal(rows[0].totalFeeUsd, 12.34);
+    assert.equal(rows[0].totalFeeUsd, null);
+    assert.equal(rows[0].claimFeeAmount, 0.123456);
+    assert.equal(rows[0].claimFeeCurrency, 'SOL');
+    assert.equal(rows[0].quoteAddress, 'So11111111111111111111111111111111111111112');
     assert.equal(rows[0].claimedAt, '2026-05-04T04:13:00.000Z');
+    assert.equal(rows[1].tokenAddress, TOKEN_B);
+    assert.equal(rows[1].totalFeeUsd, 1030.5);
+    assert.equal(rows[1].claimFeeAmount, 1030.5);
+    assert.equal(rows[1].claimFeeCurrency, 'USDC');
   });
 
   it('caches risk lookups across client instances', async () => {
