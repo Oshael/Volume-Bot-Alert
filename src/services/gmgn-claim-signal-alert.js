@@ -6,6 +6,7 @@ const { GMGN_CLAIM_SIGNAL_RULE_KEY, getBackendAlertRule } = require('./backend-a
 const CLAIM_RULE = getBackendAlertRule(GMGN_CLAIM_SIGNAL_RULE_KEY);
 const DEFAULT_MAX_ALERTS_PER_TOKEN = CLAIM_RULE.defaults.maxAlertsPerToken;
 const BASELINE_MARKER_TOKEN_ADDRESS = '__baseline__';
+const DEFAULT_MAX_TOKEN_AGE_MS = 10 * 24 * 60 * 60 * 1000;
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -20,6 +21,33 @@ function toTimestampOrNull(value) {
 
 function firstPresent(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== '') ?? null;
+}
+
+function readObjectPath(value, path) {
+  return path.reduce((current, key) => (
+    current && typeof current === 'object' ? current[key] : undefined
+  ), value);
+}
+
+function readFirstPath(value, paths) {
+  for (const path of paths) {
+    const found = Array.isArray(path) ? readObjectPath(value, path) : value?.[path];
+    if (found !== undefined && found !== null && found !== '') {
+      return found;
+    }
+  }
+  return null;
+}
+
+function normalizeTimestampMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  if (parsed > 100000000000000) {
+    return Math.trunc(parsed / 1000);
+  }
+  return parsed > 100000000000 ? Math.trunc(parsed) : Math.trunc(parsed * 1000);
 }
 
 function normalizeSignalType(signal) {
@@ -50,6 +78,19 @@ function normalizeClaimId(signal, tokenAddress, signalType) {
   );
 }
 
+function normalizeTokenCreatedAtMs(signal) {
+  return normalizeTimestampMs(readFirstPath(signal, [
+    'tokenCreatedAt',
+    'token_created_at',
+    'created_timestamp',
+    'createdTimestamp',
+    ['data', 'created_timestamp'],
+    ['data', 'createdTimestamp'],
+    ['raw', 'data', 'created_timestamp'],
+    ['payload', 'data', 'created_timestamp'],
+  ]));
+}
+
 function normalizeSignal(signal = {}) {
   const tokenAddress = gmgnClaimAlertEvent.__private.normalizeTokenAddress(firstPresent(signal.tokenAddress, signal.address));
   const signalType = normalizeSignalType(signal);
@@ -61,6 +102,7 @@ function normalizeSignal(signal = {}) {
     claimId: normalizeClaimId(signal, tokenAddress, signalType),
     totalFeeUsd: toNumberOrNull(firstPresent(signal.totalFeeUsd, signal.total_fee_usd, signal.total_fee)),
     claimedAt: normalizeClaimedAt(signal),
+    tokenCreatedAtMs: normalizeTokenCreatedAtMs(signal),
     payload: gmgnClaimAlertEvent.__private.normalizeMetadata(signal.payload || signal.raw || signal),
   };
 }
@@ -201,6 +243,16 @@ function evaluateStateBefore(signal, stateBefore, maxAlertsPerToken) {
   return null;
 }
 
+function evaluateTokenAge(signal, maxTokenAgeMs, nowMs) {
+  if (signal.tokenCreatedAtMs == null) {
+    return null;
+  }
+  if ((nowMs - signal.tokenCreatedAtMs) > maxTokenAgeMs) {
+    return buildNoEventResult('suppressed', 'token-too-old', null);
+  }
+  return null;
+}
+
 async function persistTriggeredSignal(signal, stateBefore, client) {
   const claimSequence = (stateBefore?.alertCount || 0) + 1;
   const event = await insertClaimEvent(signal, claimSequence, client);
@@ -229,6 +281,12 @@ async function recordClaimSignal(signalInput = {}, options = {}, deps = {}) {
     1,
     Math.trunc(Number(options.maxAlertsPerToken) || DEFAULT_MAX_ALERTS_PER_TOKEN)
   );
+  const maxTokenAgeMs = Math.max(0, Math.trunc(Number(options.maxTokenAgeMs) || DEFAULT_MAX_TOKEN_AGE_MS));
+  const nowMs = normalizeTimestampMs(options.now) ?? Date.now();
+  const ageResult = evaluateTokenAge(signal, maxTokenAgeMs, nowMs);
+  if (ageResult) {
+    return ageResult;
+  }
   const client = deps.client || await db.getClient();
   const ownsClient = !deps.client;
 
@@ -320,6 +378,7 @@ async function markBaselineCompleted(options = {}, runner = db) {
 }
 
 module.exports = {
+  DEFAULT_MAX_TOKEN_AGE_MS,
   DEFAULT_MAX_ALERTS_PER_TOKEN,
   hasBaselineCompleted,
   markBaselineCompleted,
@@ -327,6 +386,7 @@ module.exports = {
   recordClaimSignal,
   __private: {
     BASELINE_MARKER_TOKEN_ADDRESS,
+    evaluateTokenAge,
     mapStateRow,
     normalizeSignal,
   },

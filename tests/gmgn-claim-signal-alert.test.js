@@ -145,4 +145,40 @@ describe('gmgn claim signal alert', () => {
 
     assert.equal(await claimAlert.hasBaselineCompleted({}, runner), true);
   });
+
+  it('suppresses claim alerts for tokens older than ten days', async () => {
+    const published = [];
+    const publisher = {
+      publishEventSafe: async (event) => {
+        published.push(event);
+        return { delivered: true };
+      },
+    };
+    const failingRunner = {
+      async query() {
+        throw new Error('old token suppression should not hit the database');
+      },
+    };
+
+    const result = await claimAlert.recordClaimSignal({
+      tokenAddress: TOKEN_A,
+      signalType: 18,
+      claimId: 'old-claim-1',
+      raw: {
+        data: {
+          created_timestamp: 1776988800,
+        },
+      },
+    }, {
+      now: new Date('2026-05-12T00:00:01.000Z'),
+    }, {
+      client: failingRunner,
+      publisher,
+    });
+
+    assert.equal(result.action, 'suppressed');
+    assert.equal(result.reason, 'token-too-old');
+    assert.equal(result.event, null);
+    assert.equal(published.length, 0);
+  });
 });
