@@ -218,6 +218,7 @@ function buildNotificationBody(alert: AlertEntry) {
   if (alert.kind === 'gmgn-claim-signal') {
     return [
       formatClaimFee(alert),
+      getNotificationMcapLine(alert),
       alert.claimedAt ? `claimed ${new Date(alert.claimedAt).toLocaleTimeString()}` : null,
       formatAddressFragment(alert.address),
     ].filter(Boolean).join(' · ');

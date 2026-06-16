@@ -1174,6 +1174,7 @@ function appendSpecialAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   if (alert.kind === 'gmgn-claim-signal') {
     container.append(
       buildMetricPair('FEE', formatClaimFee(alert) ?? '-', 'up'),
+      buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up'),
       buildMetricPair('CLAIM', alert.claimSequence ? `#${alert.claimSequence}` : '-', 'white'),
     );
     return true;
