@@ -1563,7 +1563,43 @@ export function createAppController(): AppController {
       address: item.address,
       symbol: item.symbol ?? '',
       mcap: item.mcap ?? null,
+      createdAt: item.tokenCreatedAt ?? null,
+      lastSeenAt: item.lastSeenAt ?? null,
+      lastEvaluatedAt: item.lastEvaluatedAt ?? null,
     }));
+  }
+
+  function summarizeRecentDebugAddress(address: string) {
+    const item = state.data.trackedTokensByAddress[address];
+    return {
+      address,
+      symbol: item?.symbol ?? item?.label ?? '',
+      mcap: item?.mcap ?? null,
+      createdAt: item?.createdAt ?? null,
+      lastSeenAt: item?.lastSeenAt ?? null,
+      lastEvaluatedAt: item?.lastEvaluatedAt ?? null,
+    };
+  }
+
+  function summarizeRecentDebugDelta(previous: string[], next: string[]) {
+    const previousSet = new Set(previous);
+    const nextSet = new Set(next);
+    const added = next.filter((address) => !previousSet.has(address)).slice(0, 12);
+    const removed = previous.filter((address) => !nextSet.has(address)).slice(0, 12);
+    const moved = next
+      .map((address, nextIndex) => ({
+        address,
+        previousIndex: previous.indexOf(address),
+        nextIndex,
+      }))
+      .filter((item) => item.previousIndex >= 0 && item.previousIndex !== item.nextIndex)
+      .slice(0, 12);
+
+    return {
+      added: added.map(summarizeRecentDebugAddress),
+      removed: removed.map(summarizeRecentDebugAddress),
+      moved,
+    };
   }
 
   function formatDebugErrorMessage(error: unknown) {
@@ -7500,29 +7536,45 @@ export function createAppController(): AppController {
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
     manualTokensOverride?: AddressItem[],
   ) {
+    const previousRecentAddresses = state.data.recentTokenAddresses.slice();
+    const previousOldWeekAddresses = state.data.oldWeekTokenAddresses.slice();
     const requestedRecentPage = Math.max(0, Number(payload.recent?.page) || 0);
     const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek?.page) || 0);
     const recentTokens = payload.recent?.tokens || [];
     const oldWeekTokens = payload.oldWeek?.tokens || [];
+    const nextRecentAddresses = recentTokens.map((item) => item.address);
+    const nextOldWeekAddresses = oldWeekTokens.map((item) => item.address);
     const monitoredDashboardTokens = Array.from(new Map(
       [...recentTokens, ...oldWeekTokens].map((item) => [item.address, item]),
     ).values());
 
     applyMonitoredDashboard(monitoredDashboardTokens, manualTokensOverride, payload.generatedAt ?? null);
-    state.data.recentTokenAddresses = recentTokens.map((item) => item.address);
-    state.data.oldWeekTokenAddresses = oldWeekTokens.map((item) => item.address);
+    state.data.recentTokenAddresses = nextRecentAddresses;
+    state.data.oldWeekTokenAddresses = nextOldWeekAddresses;
     state.bars.recent = Math.max(0, Number(payload.recent?.total) || 0);
     state.bars.oldWeek = Math.max(0, Number(payload.oldWeek?.total) || 0);
     state.ui.recentPage = requestedRecentPage;
     state.ui.oldWeekPage = requestedOldWeekPage;
     state.runtime.routedRevision += 1;
     syncRoutedPagination();
+    const missingRecentTracked = state.data.recentTokenAddresses
+      .filter((address) => !state.data.trackedTokensByAddress[address])
+      .slice(0, 12);
+    const missingOldWeekTracked = state.data.oldWeekTokenAddresses
+      .filter((address) => !state.data.trackedTokensByAddress[address])
+      .slice(0, 12);
     recordRestoreControllerDebug('controller.history-bootstrap.apply', {
       generatedAt: payload.generatedAt ?? null,
       recentReturned: recentTokens.length,
       oldWeekReturned: oldWeekTokens.length,
       recentTotal: state.bars.recent,
       oldWeekTotal: state.bars.oldWeek,
+      recentRequest: buildHistoryBootstrapRequest().recent,
+      oldWeekRequest: buildHistoryBootstrapRequest().oldWeek,
+      recentDelta: summarizeRecentDebugDelta(previousRecentAddresses, state.data.recentTokenAddresses),
+      oldWeekDelta: summarizeRecentDebugDelta(previousOldWeekAddresses, state.data.oldWeekTokenAddresses),
+      missingRecentTracked,
+      missingOldWeekTracked,
       recentPayloadHead: summarizeDashboardDebugTokens(recentTokens),
       oldWeekPayloadHead: summarizeDashboardDebugTokens(oldWeekTokens),
     });
