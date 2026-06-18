@@ -580,6 +580,136 @@ describe('catalog worker drift compensation', () => {
     }
   });
 
+  it('auto-blocks non-launch-suffix tokens under 48h when Dex liquidity is at or below 1k', async () => {
+    const originalGetBestPair = dexscreener.getBestPair;
+    const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;
+    const originalUpsertMarketBucket = tokenMarketBucket1m.upsertSnapshotBucket;
+    const originalUpsertVolumeBucket = tokenMarketVolumeBucket1m.upsertSnapshotBucket;
+    const originalAdminBlockAdd = adminBlockedToken.add;
+    const originalEvaluateUpdatedToken = userAlertMatcher.evaluateUpdatedToken;
+    const callOrder = [];
+    const createdAtMs = Date.now() - (25 * 60 * 60 * 1000);
+    const tokenBefore = {
+      address: TOKEN_A,
+      chain: 'solana',
+      source: 'gmgn',
+      risk_review_label: 'valid',
+      risk_review_source: 'auto',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_mcap: 107480,
+    };
+    const updatedToken = {
+      ...tokenBefore,
+      symbol: 'LOWLIQ',
+      name: 'Low Liquidity',
+      last_mcap: 107480,
+      last_liquidity_usd: 1000,
+      last_token_created_at_ms: createdAtMs,
+    };
+    const blockedToken = {
+      ...updatedToken,
+      eligibility_state: 'admin-blocked',
+      eligible_for_monitoring: false,
+      suppressed_reason: 'admin_blocked',
+    };
+
+    dexscreener.getBestPair = () => ({
+      marketCap: 107480,
+      pairAddress: 'pair-low-liq',
+      priceUsd: '0.0001',
+      url: 'https://dexscreener.com/solana/pair-low-liq',
+      baseToken: { symbol: 'LOWLIQ', name: 'Low Liquidity' },
+      volume: { m5: 100, h1: 5000, h6: 5000, h24: 5000 },
+      priceChange: {},
+      liquidity: { usd: 1000 },
+      pairCreatedAt: createdAtMs,
+    });
+    tokenCatalog.applyEvaluationResult = async (_address, payload) => {
+      if (payload.eligibilityState === 'admin-blocked') {
+        callOrder.push('blockCatalog');
+        assert.equal(payload.lastEvaluationError, null);
+        assert.equal(payload.evaluationErrorCount, 0);
+        return blockedToken;
+      }
+      callOrder.push('applyEvaluationResult');
+      assert.equal(payload.liquidityUsd, 1000);
+      return updatedToken;
+    };
+    tokenMarketBucket1m.upsertSnapshotBucket = async (payload) => {
+      callOrder.push('marketBucket');
+      assert.equal(payload.tokenAddress, tokenBefore.address);
+      return payload;
+    };
+    tokenMarketVolumeBucket1m.upsertSnapshotBucket = async (payload) => {
+      callOrder.push('volumeBucket');
+      assert.equal(payload.tokenAddress, tokenBefore.address);
+      return payload;
+    };
+    adminBlockedToken.add = async (payload) => {
+      callOrder.push('adminBlock');
+      assert.equal(payload.address, tokenBefore.address);
+      assert.equal(payload.label, 'catalog-liquidity:under-1k-48h:1000:107480');
+      assert.equal(payload.allowAutoValidOverride, true);
+      assert.equal(payload.evidence.pipeline, 'catalog-worker:young-low-liquidity');
+      assert.equal(payload.evidence.marketSnapshot.liquidityUsd, 1000);
+      assert.equal(payload.evidence.catalogSnapshot.riskReviewLabel, 'valid');
+      assert.equal(payload.evidence.catalogSnapshot.riskReviewSource, 'auto');
+      return payload;
+    };
+    userAlertMatcher.evaluateUpdatedToken = async () => {
+      throw new Error('matcher should not run for young low-liquidity auto-blocks');
+    };
+
+    try {
+      const result = await catalogWorker.__private.evaluateTokenWithData(tokenBefore, { pairs: [{}] });
+
+      assert.equal(result, blockedToken);
+      assert.deepEqual(callOrder, [
+        'applyEvaluationResult',
+        'marketBucket',
+        'volumeBucket',
+        'adminBlock',
+        'blockCatalog',
+      ]);
+    } finally {
+      dexscreener.getBestPair = originalGetBestPair;
+      tokenCatalog.applyEvaluationResult = originalApplyEvaluationResult;
+      tokenMarketBucket1m.upsertSnapshotBucket = originalUpsertMarketBucket;
+      tokenMarketVolumeBucket1m.upsertSnapshotBucket = originalUpsertVolumeBucket;
+      adminBlockedToken.add = originalAdminBlockAdd;
+      userAlertMatcher.evaluateUpdatedToken = originalEvaluateUpdatedToken;
+    }
+  });
+
+  it('exempts pump, bags, and bonk suffixes from the young low-liquidity block', () => {
+    const baseToken = {
+      source: 'gmgn',
+      last_token_created_at_ms: Date.now() - (2 * 60 * 60 * 1000),
+    };
+    const pair = {
+      liquidity: { usd: 200 },
+      marketCap: 50000,
+    };
+
+    for (const suffix of ['pump', 'bags', 'bonk']) {
+      const assessment = catalogWorker.__private.assessYoungLowLiquidity(
+        { ...baseToken, address: `2gXeM4einZoLMSQ5K7s6rHzCAeksU2hRFouBpqSo${suffix}` },
+        pair,
+        { liquidityUsd: 200, marketCap: 50000 }
+      );
+      assert.equal(assessment.shouldBlock, false);
+      assert.equal(assessment.reason, 'launch-suffix');
+    }
+
+    const nonExemptAssessment = catalogWorker.__private.assessYoungLowLiquidity(
+      { ...baseToken, address: '2gXeM4einZoLMSQ5K7s6rHzCAeksU2hRFouBpqSo1111' },
+      pair,
+      { liquidityUsd: 200, marketCap: 50000 }
+    );
+    assert.equal(nonExemptAssessment.shouldBlock, true);
+  });
+
   it('uses GMGN token info before Dex for manual pre-migration launchpad tokens', async () => {
     const originalGetBestPair = dexscreener.getBestPair;
     const originalApplyEvaluationResult = tokenCatalog.applyEvaluationResult;

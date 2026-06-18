@@ -38,6 +38,45 @@ describe('admin blocked token model', () => {
     }
   });
 
+  it('allows explicit low-liquidity overrides for auto valid risk reviews', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM token_risk_reviews/.test(sql)) {
+        return { rows: [{ label: 'valid', source: 'auto' }] };
+      }
+      if (/INSERT INTO admin_blocked_tokens/.test(sql)) {
+        return {
+          rows: [{
+            address: params[0],
+            label: params[1],
+            created_by: params[2],
+          }],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+
+    try {
+      const row = await adminBlockedToken.add({
+        address: 'So11111111111111111111111111111111111111112',
+        label: 'catalog-liquidity:under-1k-48h:500:30000',
+        allowAutoValidOverride: true,
+      });
+
+      assert.ok(calls.some((call) => /FROM token_risk_reviews/.test(call.sql)));
+      assert.deepEqual(row, {
+        address: 'So11111111111111111111111111111111111111112',
+        label: 'catalog-liquidity:under-1k-48h:500:30000',
+        created_by: null,
+      });
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('prevents automatic admin blocks for manual risk reviews', async () => {
     const originalQuery = db.query;
     const calls = [];

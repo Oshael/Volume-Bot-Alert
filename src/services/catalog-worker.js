@@ -57,6 +57,10 @@ const YOUNG_EXTREME_CHURN_MIN_VOL_5M = 100000;
 const YOUNG_EXTREME_CHURN_MIN_VOL_MCAP_RATIO = 2.8;
 const YOUNG_EXTREME_CHURN_CONFIRMATION_WINDOW_MS = 10 * 60 * 1000;
 const YOUNG_EXTREME_CHURN_REQUIRED_HITS = 2;
+const YOUNG_LOW_LIQUIDITY_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const YOUNG_LOW_LIQUIDITY_MAX_USD = 1000;
+const YOUNG_LOW_LIQUIDITY_BLOCK_YEARS = 10;
+const YOUNG_LOW_LIQUIDITY_EXEMPT_SUFFIXES = ['pump', 'bags', 'bonk'];
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_MIN_ERROR_COUNT = 30;
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_REASON = 'gmgn_dex_unavailable_zombie';
 const GMGN_DEX_UNAVAILABLE_ZOMBIE_LOW_LIQUIDITY_USD = 1000;
@@ -253,6 +257,11 @@ function hasKnownLaunchAddressSuffix(token) {
   return LAUNCH_ADDRESS_SUFFIXES.some((suffix) => address.endsWith(suffix));
 }
 
+function hasYoungLowLiquidityExemptSuffix(token) {
+  const address = String(token?.address || '').trim().toLowerCase();
+  return YOUNG_LOW_LIQUIDITY_EXEMPT_SUFFIXES.some((suffix) => address.endsWith(suffix));
+}
+
 function isGmgnDexUnavailableZombie(token) {
   if (!token || isManualSource(token) || hasKnownLaunchAddressSuffix(token)) {
     return false;
@@ -335,6 +344,15 @@ function buildGmgnDexUnavailableLowLiquidityLabel(snapshot = {}) {
   );
 }
 
+function buildYoungLowLiquidityLabel(assessment = {}) {
+  const liquidityUsd = Math.round(toNumber(assessment.liquidityUsd) || 0);
+  const marketCap = Math.round(toNumber(assessment.marketCap) || 0);
+  return buildPrefixedAutoBlockLabel(
+    AUTO_BLOCK_LABEL_PREFIXES.CATALOG_LIQUIDITY_UNDER_1K_48H,
+    [liquidityUsd, marketCap]
+  );
+}
+
 function readNestedNumber(source, containerKey, valueKey) {
   return toNumber(source?.[containerKey]?.[valueKey]);
 }
@@ -390,6 +408,46 @@ function buildYoungExtremeChurnBlockEvidence(token, updatedToken, pair, snapshot
     marketSnapshot: buildYoungExtremeChurnMarketSnapshot(token, pair, snapshot, assessment),
     assessment,
     ruleMatches: [{ label, reason: assessment.reason || 'young-extreme-churn' }],
+    gmgnSnapshot: {},
+  };
+}
+
+function buildYoungLowLiquidityCatalogSnapshot(token, updatedToken, pair) {
+  return {
+    source: firstPresentValue(token?.source),
+    address: firstPresentValue(token?.address),
+    symbol: firstPresentValue(updatedToken?.symbol, pair?.baseToken?.symbol, token?.symbol),
+    name: firstPresentValue(updatedToken?.name, pair?.baseToken?.name, token?.name),
+    eligibilityState: firstPresentValue(token?.eligibility_state),
+    monitorPriority: firstPresentValue(token?.monitor_priority),
+    riskReviewLabel: firstPresentValue(token?.risk_review_label),
+    riskReviewSource: firstPresentValue(token?.risk_review_source),
+  };
+}
+
+function buildYoungLowLiquidityMarketSnapshot(token, pair, snapshot, assessment) {
+  return {
+    mcap: assessment.marketCap,
+    price: toNumber(pair?.priceUsd),
+    pairAddress: pair?.pairAddress || null,
+    pairCreatedAt: pair?.pairCreatedAt || token?.last_token_created_at_ms || null,
+    liquidityUsd: assessment.liquidityUsd,
+    vol5m: toNumber(snapshot?.vol5m),
+    vol1h: toNumber(snapshot?.vol1h),
+    vol6h: toNumber(snapshot?.vol6h),
+    vol24h: toNumber(snapshot?.vol24h),
+  };
+}
+
+function buildYoungLowLiquidityBlockEvidence(token, updatedToken, pair, snapshot, assessment) {
+  const label = buildYoungLowLiquidityLabel(assessment);
+  return {
+    pipeline: 'catalog-worker:young-low-liquidity',
+    source: token?.source || null,
+    catalogSnapshot: buildYoungLowLiquidityCatalogSnapshot(token, updatedToken, pair),
+    marketSnapshot: buildYoungLowLiquidityMarketSnapshot(token, pair, snapshot, assessment),
+    assessment,
+    ruleMatches: [{ label, reason: assessment.reason || 'young-low-liquidity' }],
     gmgnSnapshot: {},
   };
 }
@@ -883,6 +941,122 @@ async function autoBlockYoungExtremeChurn(token, updatedToken, pair, snapshot) {
   }
 
   return applyYoungExtremeChurnBlock(token, updatedToken, pair, assessment, snapshot);
+}
+
+function getYoungLowLiquiditySkipReason(token) {
+  if (!token || isManualSource(token)) {
+    return 'trusted-source';
+  }
+  if (hasYoungLowLiquidityExemptSuffix(token)) {
+    return 'launch-suffix';
+  }
+  return null;
+}
+
+function resolveYoungLowLiquidityAgeMs(token, pair, now = Date.now()) {
+  const createdAtMs = toTimestampMs(pair?.pairCreatedAt || token?.last_token_created_at_ms);
+  if (!createdAtMs) {
+    return null;
+  }
+
+  const ageMs = now - createdAtMs;
+  if (ageMs < 0 || ageMs >= YOUNG_LOW_LIQUIDITY_MAX_AGE_MS) {
+    return null;
+  }
+  return ageMs;
+}
+
+function assessYoungLowLiquidity(token, pair, snapshot, now = Date.now()) {
+  const skipReason = getYoungLowLiquiditySkipReason(token);
+  if (skipReason) {
+    return { shouldBlock: false, reason: skipReason };
+  }
+
+  const ageMs = resolveYoungLowLiquidityAgeMs(token, pair, now);
+  if (ageMs == null) {
+    return { shouldBlock: false, reason: 'age' };
+  }
+  const liquidityUsd = toNumber(snapshot?.liquidityUsd ?? pair?.liquidity?.usd);
+  if (liquidityUsd == null || liquidityUsd > YOUNG_LOW_LIQUIDITY_MAX_USD) {
+    return { shouldBlock: false, reason: 'liquidity', liquidityUsd, ageMs };
+  }
+
+  const marketCap = toNumber(snapshot?.marketCap ?? pair?.marketCap ?? pair?.fdv ?? token?.last_mcap);
+  return {
+    shouldBlock: true,
+    reason: 'young-low-liquidity',
+    ageMs,
+    liquidityUsd,
+    marketCap,
+    thresholdUsd: YOUNG_LOW_LIQUIDITY_MAX_USD,
+    maxAgeMs: YOUNG_LOW_LIQUIDITY_MAX_AGE_MS,
+  };
+}
+
+function buildBlockEvaluationPayload(token, updatedToken, pair) {
+  return {
+    eligibilityState: 'admin-blocked',
+    eligibleForMonitoring: false,
+    suppressedReason: 'admin_blocked',
+    monitorPriority: 'dormant',
+    nextEvaluationAt: new Date(Date.now() + (YOUNG_LOW_LIQUIDITY_BLOCK_YEARS * 365 * 24 * 60 * 60 * 1000)),
+    lastEvaluationError: null,
+    evaluationErrorCount: 0,
+    symbol: updatedToken?.symbol || pair?.baseToken?.symbol || token?.symbol || null,
+    name: updatedToken?.name || pair?.baseToken?.name || token?.name || null,
+  };
+}
+
+async function autoBlockYoungLowLiquidity(token, updatedToken, pair, snapshot) {
+  const assessment = assessYoungLowLiquidity(token, pair, snapshot);
+  if (!assessment.shouldBlock) {
+    return { blocked: false, assessment };
+  }
+
+  const label = buildYoungLowLiquidityLabel(assessment);
+  await adminBlockedToken.add({
+    address: token.address,
+    label,
+    createdBy: null,
+    allowAutoValidOverride: true,
+    evidence: buildYoungLowLiquidityBlockEvidence(token, updatedToken, pair, snapshot, assessment),
+  });
+
+  const blockedToken = await tokenCatalog.applyEvaluationResult(
+    token.address,
+    buildBlockEvaluationPayload(token, updatedToken, pair)
+  );
+
+  return {
+    blocked: true,
+    blockedToken: blockedToken || updatedToken,
+    assessment,
+  };
+}
+
+async function handlePostBucketAutoBlocks(token, updatedToken, bestPair, snapshot) {
+  const youngLowLiquidityBlock = await autoBlockYoungLowLiquidity(token, updatedToken, bestPair, snapshot);
+  if (youngLowLiquidityBlock.blocked) {
+    console.warn(
+      `[CatalogWorker] Auto-blocked ${token.address} for young low liquidity: ${buildYoungLowLiquidityLabel(youngLowLiquidityBlock.assessment)}`
+    );
+    return youngLowLiquidityBlock.blockedToken;
+  }
+
+  const youngExtremeChurnBlock = await autoBlockYoungExtremeChurn(token, updatedToken, bestPair, snapshot);
+  if (youngExtremeChurnBlock.blocked) {
+    console.warn(
+      `[CatalogWorker] Auto-blocked ${token.address} before alert matcher: ${buildYoungExtremeChurnLabel(youngExtremeChurnBlock.assessment)}`
+    );
+    return youngExtremeChurnBlock.blockedToken;
+  }
+  if (youngExtremeChurnBlock.suppressAlert) {
+    console.warn(
+      `[CatalogWorker] Suppressed alert for young extreme churn candidate ${token.address}: ${buildYoungExtremeChurnLabel(youngExtremeChurnBlock.assessment)}`
+    );
+    return updatedToken;
+  }
+  return null;
 }
 
 function isLowActivityAutoToken(token, vol24h) {
@@ -1476,23 +1650,9 @@ async function evaluateTokenWithData(token, data) {
   await tokenMarketBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
   await tokenMarketVolumeBucket1m.upsertSnapshotBucket(marketSnapshotPayload);
 
-  const youngExtremeChurnBlock = await autoBlockYoungExtremeChurn(
-    token,
-    updatedToken,
-    bestPair,
-    snapshot
-  );
-  if (youngExtremeChurnBlock.blocked) {
-    console.warn(
-      `[CatalogWorker] Auto-blocked ${token.address} before alert matcher: ${buildYoungExtremeChurnLabel(youngExtremeChurnBlock.assessment)}`
-    );
-    return youngExtremeChurnBlock.blockedToken;
-  }
-  if (youngExtremeChurnBlock.suppressAlert) {
-    console.warn(
-      `[CatalogWorker] Suppressed alert for young extreme churn candidate ${token.address}: ${buildYoungExtremeChurnLabel(youngExtremeChurnBlock.assessment)}`
-    );
-    return updatedToken;
+  const postBucketAutoBlockToken = await handlePostBucketAutoBlocks(token, updatedToken, bestPair, snapshot);
+  if (postBucketAutoBlockToken) {
+    return postBucketAutoBlockToken;
   }
 
   try {
@@ -1797,8 +1957,11 @@ module.exports = {
     isGmgnDexUnavailableZombie,
     setDefaultGmgnClientForTest,
     isManualSource,
+    hasYoungLowLiquidityExemptSuffix,
     shouldCheckManualGmgnBeforeDex,
     isMigrationGraceActive,
+    assessYoungLowLiquidity,
+    buildYoungLowLiquidityLabel,
     assessYoungExtremeChurn,
     buildYoungExtremeChurnLabel,
     clearYoungExtremeChurnState,

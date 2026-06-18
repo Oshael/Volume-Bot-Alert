@@ -77,7 +77,19 @@ async function captureEvidenceSafely({ address, label, createdBy, evidence }) {
   }
 }
 
-async function add({ address, label = null, createdBy = null, evidence = null }) {
+function shouldAllowProtectedAutoBlock(protection, options = {}) {
+  return protection?.source !== 'manual'
+    && protection?.label === 'valid'
+    && options.allowAutoValidOverride === true;
+}
+
+async function add({
+  address,
+  label = null,
+  createdBy = null,
+  evidence = null,
+  allowAutoValidOverride = false,
+}) {
   await ensureTable();
   const normalizedAddress = normalizeAddress(address);
   if (!isValidAddress(normalizedAddress)) {
@@ -86,7 +98,7 @@ async function add({ address, label = null, createdBy = null, evidence = null })
 
   if (isAutomaticBlockRequest(createdBy)) {
     const protection = await getAutoBlockProtection(normalizedAddress);
-    if (protection) {
+    if (protection && !shouldAllowProtectedAutoBlock(protection, { allowAutoValidOverride })) {
       throw buildProtectedAutoBlockError(normalizedAddress, protection);
     }
   }
