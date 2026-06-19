@@ -5,10 +5,14 @@ const { GMGN_CLAIM_SIGNAL_RULE_KEY, getBackendAlertRule } = require('./backend-a
 
 const CLAIM_RULE = getBackendAlertRule(GMGN_CLAIM_SIGNAL_RULE_KEY);
 const DEFAULT_MAX_ALERTS_PER_TOKEN = CLAIM_RULE.defaults.maxAlertsPerToken;
+const DEFAULT_MIN_MCAP_USD = CLAIM_RULE.defaults.minMcapUsd;
 const BASELINE_MARKER_TOKEN_ADDRESS = '__baseline__';
 const DEFAULT_MAX_TOKEN_AGE_MS = 10 * 24 * 60 * 60 * 1000;
 
 function toNumberOrNull(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
@@ -91,6 +95,47 @@ function normalizeTokenCreatedAtMs(signal) {
   ]));
 }
 
+function normalizeMarketCap(signal) {
+  return toNumberOrNull(readFirstPath(signal, [
+    'mcap',
+    'marketCap',
+    'market_cap',
+    'usdMarketCap',
+    'usd_market_cap',
+    'fdv',
+    ['data', 'mcap'],
+    ['data', 'marketCap'],
+    ['data', 'market_cap'],
+    ['data', 'usdMarketCap'],
+    ['data', 'usd_market_cap'],
+    ['data', 'fdv'],
+    ['raw', 'mcap'],
+    ['raw', 'marketCap'],
+    ['raw', 'market_cap'],
+    ['raw', 'usdMarketCap'],
+    ['raw', 'usd_market_cap'],
+    ['raw', 'fdv'],
+    ['raw', 'data', 'mcap'],
+    ['raw', 'data', 'marketCap'],
+    ['raw', 'data', 'market_cap'],
+    ['raw', 'data', 'usdMarketCap'],
+    ['raw', 'data', 'usd_market_cap'],
+    ['raw', 'data', 'fdv'],
+    ['payload', 'mcap'],
+    ['payload', 'marketCap'],
+    ['payload', 'market_cap'],
+    ['payload', 'usdMarketCap'],
+    ['payload', 'usd_market_cap'],
+    ['payload', 'fdv'],
+    ['payload', 'data', 'mcap'],
+    ['payload', 'data', 'marketCap'],
+    ['payload', 'data', 'market_cap'],
+    ['payload', 'data', 'usdMarketCap'],
+    ['payload', 'data', 'usd_market_cap'],
+    ['payload', 'data', 'fdv'],
+  ]));
+}
+
 function normalizeSignal(signal = {}) {
   const tokenAddress = gmgnClaimAlertEvent.__private.normalizeTokenAddress(firstPresent(signal.tokenAddress, signal.address));
   const signalType = normalizeSignalType(signal);
@@ -103,6 +148,7 @@ function normalizeSignal(signal = {}) {
     totalFeeUsd: toNumberOrNull(firstPresent(signal.totalFeeUsd, signal.total_fee_usd, signal.total_fee)),
     claimedAt: normalizeClaimedAt(signal),
     tokenCreatedAtMs: normalizeTokenCreatedAtMs(signal),
+    mcap: normalizeMarketCap(signal),
     payload: gmgnClaimAlertEvent.__private.normalizeMetadata(signal.payload || signal.raw || signal),
   };
 }
@@ -253,6 +299,16 @@ function evaluateTokenAge(signal, maxTokenAgeMs, nowMs) {
   return null;
 }
 
+function evaluateMarketCap(signal, minMcapUsd) {
+  if (signal.mcap == null) {
+    return buildNoEventResult('suppressed', 'market-cap-missing', null);
+  }
+  if (signal.mcap < minMcapUsd) {
+    return buildNoEventResult('suppressed', 'market-cap-below-min', null);
+  }
+  return null;
+}
+
 async function persistTriggeredSignal(signal, stateBefore, client) {
   const claimSequence = (stateBefore?.alertCount || 0) + 1;
   const event = await insertClaimEvent(signal, claimSequence, client);
@@ -281,11 +337,13 @@ async function recordClaimSignal(signalInput = {}, options = {}, deps = {}) {
     1,
     Math.trunc(Number(options.maxAlertsPerToken) || DEFAULT_MAX_ALERTS_PER_TOKEN)
   );
+  const minMcapUsd = Math.max(0, toNumberOrNull(options.minMcapUsd) ?? DEFAULT_MIN_MCAP_USD);
   const maxTokenAgeMs = Math.max(0, Math.trunc(Number(options.maxTokenAgeMs) || DEFAULT_MAX_TOKEN_AGE_MS));
   const nowMs = normalizeTimestampMs(options.now) ?? Date.now();
-  const ageResult = evaluateTokenAge(signal, maxTokenAgeMs, nowMs);
-  if (ageResult) {
-    return ageResult;
+  const preflightResult = evaluateTokenAge(signal, maxTokenAgeMs, nowMs)
+    || evaluateMarketCap(signal, minMcapUsd);
+  if (preflightResult) {
+    return preflightResult;
   }
   const client = deps.client || await db.getClient();
   const ownsClient = !deps.client;
@@ -318,6 +376,11 @@ async function recordClaimSignalBaseline(signalInput = {}, options = {}, deps = 
     1,
     Math.trunc(Number(options.maxAlertsPerToken) || DEFAULT_MAX_ALERTS_PER_TOKEN)
   );
+  const minMcapUsd = Math.max(0, toNumberOrNull(options.minMcapUsd) ?? DEFAULT_MIN_MCAP_USD);
+  const mcapResult = evaluateMarketCap(signal, minMcapUsd);
+  if (mcapResult) {
+    return mcapResult;
+  }
   const client = deps.client || await db.getClient();
   const ownsClient = !deps.client;
 
@@ -379,6 +442,7 @@ async function markBaselineCompleted(options = {}, runner = db) {
 
 module.exports = {
   DEFAULT_MAX_TOKEN_AGE_MS,
+  DEFAULT_MIN_MCAP_USD,
   DEFAULT_MAX_ALERTS_PER_TOKEN,
   hasBaselineCompleted,
   markBaselineCompleted,
@@ -386,6 +450,7 @@ module.exports = {
   recordClaimSignal,
   __private: {
     BASELINE_MARKER_TOKEN_ADDRESS,
+    evaluateMarketCap,
     evaluateTokenAge,
     mapStateRow,
     normalizeSignal,

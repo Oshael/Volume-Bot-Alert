@@ -360,6 +360,7 @@ describe('gmgn client', () => {
                   token_address: TOKEN_A,
                   signal_type: 18,
                   trigger_at: 1777867980,
+                  market_cap: '3999',
                   data: {
                     chain: 'sol',
                     quote_address: 'So11111111111111111111111111111111111111112',
@@ -374,6 +375,7 @@ describe('gmgn client', () => {
                   trigger_at: 1777868040,
                   data: {
                     chain: 'sol',
+                    market_cap: '56789',
                     quote_address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
                     total_fee: '1030.5',
                   },
@@ -398,12 +400,14 @@ describe('gmgn client', () => {
     assert.equal(rows[0].totalFeeUsd, null);
     assert.equal(rows[0].claimFeeAmount, 0.123456);
     assert.equal(rows[0].claimFeeCurrency, 'SOL');
+    assert.equal(rows[0].mcap, 3999);
     assert.equal(rows[0].quoteAddress, 'So11111111111111111111111111111111111111112');
     assert.equal(rows[0].claimedAt, '2026-05-04T04:13:00.000Z');
     assert.equal(rows[1].tokenAddress, TOKEN_B);
     assert.equal(rows[1].totalFeeUsd, 1030.5);
     assert.equal(rows[1].claimFeeAmount, 1030.5);
     assert.equal(rows[1].claimFeeCurrency, 'USDC');
+    assert.equal(rows[1].mcap, 56789);
   });
 
   it('caches risk lookups across client instances', async () => {

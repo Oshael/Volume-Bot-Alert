@@ -35,6 +35,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     dashboardFeedEnabled: true,
     defaults: Object.freeze({
       maxAlertsPerToken: 2,
+      minMcapUsd: 4000,
       signalTypes: Object.freeze([17, 18]),
     }),
   }),

@@ -647,6 +647,23 @@ function resolveClaimFeeAmount(row, quoteSymbol) {
   return readClaimFeeQuoteAmount(row) ?? solAmount;
 }
 
+function readClaimMarketCap(row) {
+  return readNumber(row, [
+    'usd_market_cap',
+    'usdMarketCap',
+    ['data', 'usd_market_cap'],
+    ['data', 'usdMarketCap'],
+    'market_cap',
+    'marketCap',
+    ['data', 'market_cap'],
+    ['data', 'marketCap'],
+    'mcap',
+    ['data', 'mcap'],
+    'fdv',
+    ['data', 'fdv'],
+  ]);
+}
+
 function normalizeClaimSignalRow(row, context = {}) {
   if (!row || typeof row !== 'object') {
     return null;
@@ -711,6 +728,7 @@ function normalizeClaimSignalRow(row, context = {}) {
     totalFeeUsd: explicitTotalFeeUsd ?? (isStableClaimFeeQuote(quoteSymbol) ? claimFeeAmount : null),
     claimFeeAmount,
     claimFeeCurrency: quoteSymbol,
+    mcap: readClaimMarketCap(row),
     quoteAddress,
     claimedAt,
     source: 'gmgn',

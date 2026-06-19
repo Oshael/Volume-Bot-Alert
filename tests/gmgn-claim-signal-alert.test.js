@@ -94,18 +94,21 @@ describe('gmgn claim signal alert', () => {
       signalType: 18,
       claimId: 'claim-1',
       totalFeeUsd: 1,
+      mcap: 4000,
     }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
     const second = await claimAlert.recordClaimSignal({
       tokenAddress: TOKEN_A,
       signalType: 18,
       claimId: 'claim-2',
       totalFeeUsd: 2,
+      mcap: 4500,
     }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
     const third = await claimAlert.recordClaimSignal({
       tokenAddress: TOKEN_A,
       signalType: 18,
       claimId: 'claim-3',
       totalFeeUsd: 3,
+      mcap: 5000,
     }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
 
     assert.equal(first.action, 'triggered');
@@ -133,6 +136,7 @@ describe('gmgn claim signal alert', () => {
       signalType: 18,
       claimId: 'backlog-1',
       totalFeeUsd: 1,
+      mcap: 4000,
     }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
 
     assert.equal(result.action, 'baselined');
@@ -180,5 +184,57 @@ describe('gmgn claim signal alert', () => {
     assert.equal(result.reason, 'token-too-old');
     assert.equal(result.event, null);
     assert.equal(published.length, 0);
+  });
+
+  it('ignores claim alerts below the minimum market cap without consuming claim sequence', async () => {
+    const runner = createRunner();
+    const published = [];
+    const publisher = {
+      publishEventSafe: async (event) => {
+        published.push(event);
+        return { delivered: true };
+      },
+    };
+
+    const lowMcap = await claimAlert.recordClaimSignal({
+      tokenAddress: TOKEN_A,
+      signalType: 17,
+      claimId: 'bags-low-1',
+      totalFeeUsd: 1,
+      mcap: 3999.99,
+    }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
+    const highMcap = await claimAlert.recordClaimSignal({
+      tokenAddress: TOKEN_A,
+      signalType: 17,
+      claimId: 'bags-high-1',
+      totalFeeUsd: 2,
+      mcap: 4000,
+    }, { maxAlertsPerToken: 2 }, { client: runner, publisher });
+
+    assert.equal(lowMcap.action, 'suppressed');
+    assert.equal(lowMcap.reason, 'market-cap-below-min');
+    assert.equal(lowMcap.event, null);
+    assert.equal(highMcap.action, 'triggered');
+    assert.equal(highMcap.event.claimSequence, 1);
+    assert.equal(published.length, 1);
+  });
+
+  it('does not baseline claims that are missing market cap', async () => {
+    const failingRunner = {
+      async query() {
+        throw new Error('missing market cap suppression should not hit the database');
+      },
+    };
+
+    const result = await claimAlert.recordClaimSignalBaseline({
+      tokenAddress: TOKEN_A,
+      signalType: 18,
+      claimId: 'backlog-missing-mcap',
+      totalFeeUsd: 1,
+    }, { maxAlertsPerToken: 2 }, { client: failingRunner });
+
+    assert.equal(result.action, 'suppressed');
+    assert.equal(result.reason, 'market-cap-missing');
+    assert.equal(result.event, null);
   });
 });
