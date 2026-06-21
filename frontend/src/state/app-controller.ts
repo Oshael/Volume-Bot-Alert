@@ -4594,6 +4594,9 @@ export function createAppController(): AppController {
     let fingerprint = '';
 
     switch (entry.kind) {
+      case 'hvnc':
+        fingerprint = 'single-fire';
+        break;
       case 'monitored-mcap':
         fingerprint = [
           roundAlertMetric(entry.pct),
@@ -4629,6 +4632,9 @@ export function createAppController(): AppController {
             roundAlertMetric(item.mcap ?? null),
           ].join('|');
           break;
+        case 'hvnc':
+          existingFingerprint = 'single-fire';
+          break;
         case 'meteora-surge':
           existingFingerprint = [
             roundAlertMetric(item.pct),
@@ -4638,6 +4644,10 @@ export function createAppController(): AppController {
           break;
         default:
           return false;
+      }
+
+      if (entry.kind === 'hvnc') {
+        return existingFingerprint === fingerprint;
       }
 
       return existingFingerprint === fingerprint

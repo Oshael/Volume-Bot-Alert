@@ -1025,6 +1025,10 @@ function buildEventDedupeKey(profile, tokenAfter, candidate) {
     return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:hidden`;
   }
 
+  if (candidate?.ruleKey === 'hvnc') {
+    return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}`;
+  }
+
   return `${profile.userId}:${candidate.ruleKey}:${tokenAfter.address}:${candidate.fingerprint}`;
 }
 

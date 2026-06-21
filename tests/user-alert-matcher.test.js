@@ -877,6 +877,28 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].ruleKey, 'hvnc');
   });
 
+  it('keeps the hvnc backend event dedupe key stable as total volume changes', () => {
+    const profile = { userId: 23 };
+    const tokenAfter = { address: TOKEN_ADDRESS };
+    const firstCandidate = {
+      ruleKey: 'hvnc',
+      fingerprint: 'hvnc|320000|1776427200000',
+    };
+    const secondCandidate = {
+      ruleKey: 'hvnc',
+      fingerprint: 'hvnc|423000|1776427200000',
+    };
+
+    assert.equal(
+      userAlertMatcher.__private.buildEventDedupeKey(profile, tokenAfter, firstCandidate),
+      '23:hvnc:So11111111111111111111111111111111111111112'
+    );
+    assert.equal(
+      userAlertMatcher.__private.buildEventDedupeKey(profile, tokenAfter, secondCandidate),
+      '23:hvnc:So11111111111111111111111111111111111111112'
+    );
+  });
+
   it('emits meteora-surge from stored meteora baselines without frontend recomputation', async () => {
     const context = createDeps({
       profiles: [{
