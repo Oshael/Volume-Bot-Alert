@@ -7,6 +7,7 @@ const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const backendAlertFeed = require('../services/backend-alert-feed');
 const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
+const alertTickerPeers = require('../services/alert-ticker-peers');
 const { isValidAddress } = require('../models/user-token');
 const { classifyTokenJunk } = require('../services/token-junk-metric');
 const {
@@ -359,6 +360,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
     lastSeenAt: item.last_seen_at || null,
     lastEvaluatedAt: item.last_evaluated_at || null,
+    tickerPeers: options.tickerPeersByAddress?.get(item.address) || null,
   };
 
   if (includeRisk) {
@@ -521,15 +523,25 @@ function parseMonitoredSortsQuery(value) {
   return { ok: true, value: next };
 }
 
+async function loadTickerPeerSummariesSafe(items = []) {
+  try {
+    return await alertTickerPeers.listTickerPeerSummariesForTokens(items);
+  } catch (err) {
+    console.warn('[Dashboard] Failed to load monitored ticker peer summaries:', err.message);
+    return new Map();
+  }
+}
+
 async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = null) {
   const addresses = items.map((item) => item.address);
   const emptyMeteoraByAddress = new Map();
   const marketMcapBaselineByAddress = new Map();
   const marketVolumeBaselineByAddress = new Map();
 
-  const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
+  const [primaryMarketBaselineRows, primaryVolumeBaselineRows, tickerPeersByAddress] = await Promise.all([
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+    loadTickerPeerSummariesSafe(items),
   ]);
 
   for (const row of primaryMarketBaselineRows) {
@@ -550,7 +562,7 @@ async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = 
       emptyMeteoraByAddress,
       marketMcapBaselineByAddress,
       marketVolumeBaselineByAddress,
-      { includeMeteora: false, includeRisk: false }
+      { includeMeteora: false, includeRisk: false, tickerPeersByAddress }
     )),
   };
 

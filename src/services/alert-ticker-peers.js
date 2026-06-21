@@ -179,6 +179,142 @@ function resolveSourcePeerRole(address, stats) {
   return SOURCE_PEER_ROLE_WARNING;
 }
 
+function buildTickerPeerSummary(input = {}, stats = null, items = []) {
+  const address = String(input.address || '').trim();
+  const symbol = String(input.symbol || '').trim();
+  const normalizedSymbol = normalizeSymbolKey(symbol);
+  if (!isValidAddress(address) || normalizedSymbol.length < 2 || !stats || stats.exactCount <= 1) {
+    return null;
+  }
+
+  return {
+    sourceSymbol: symbol || null,
+    normalizedSymbol,
+    count: stats.exactCount,
+    exactCount: stats.exactCount,
+    subtickerCount: stats.subtickerCount,
+    hasSubtickerMatch: stats.subtickerCount > 0,
+    sourcePeerRole: resolveSourcePeerRole(address, stats),
+    oldestExactAddress: stats.oldestExactAddress,
+    highestMcapExactAddress: stats.highestMcapExactAddress,
+    items,
+  };
+}
+
+async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runner = db) {
+  const inputs = Array.from(new Map(
+    (Array.isArray(tokens) ? tokens : [])
+      .map((item) => ({
+        address: String(item?.address || '').trim(),
+        symbol: String(item?.symbol || '').trim(),
+      }))
+      .filter((item) => isValidAddress(item.address) && normalizeSymbolKey(item.symbol).length >= 2)
+      .map((item) => [item.address, item])
+  ).values());
+
+  const normalizedSymbols = [...new Set(inputs.map((item) => normalizeSymbolKey(item.symbol)))];
+  if (!normalizedSymbols.length) {
+    return new Map();
+  }
+
+  const limit = normalizeLimit(options.limit);
+  const snapshotTsMs = toNumberOrNull(options.snapshotTsMs) ?? Date.now();
+  const { rows } = await runner.query(
+    `WITH catalog AS (
+       SELECT
+         address,
+         symbol,
+         name,
+         last_image_url AS image_url,
+         last_mcap,
+         last_token_created_at_ms,
+         CASE
+           WHEN last_token_created_at_ms IS NOT NULL
+            THEN GREATEST(0, $3::bigint - last_token_created_at_ms)
+           ELSE NULL
+         END AS age_ms_at_alert,
+         regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
+       FROM token_catalog
+       WHERE symbol IS NOT NULL
+         AND btrim(symbol) <> ''
+     ),
+     exact_matches AS (
+       SELECT
+         *,
+         'exact' AS match_type
+       FROM catalog
+       WHERE normalized_symbol = ANY($1::text[])
+     ),
+     stats AS (
+       SELECT
+         normalized_symbol,
+         COUNT(*) AS exact_count,
+         0 AS subticker_count,
+         COUNT(*) FILTER (WHERE last_token_created_at_ms IS NULL) AS exact_missing_created_at_count,
+         COUNT(*) FILTER (WHERE last_mcap IS NULL OR last_mcap <= 0) AS exact_missing_mcap_count,
+         (
+           ARRAY_AGG(address ORDER BY last_token_created_at_ms ASC, address ASC)
+           FILTER (WHERE last_token_created_at_ms IS NOT NULL)
+         )[1] AS oldest_exact_address,
+         (
+           ARRAY_AGG(address ORDER BY last_mcap DESC, COALESCE(last_token_created_at_ms, 9223372036854775807) ASC, address ASC)
+           FILTER (WHERE last_mcap IS NOT NULL AND last_mcap > 0)
+         )[1] AS highest_mcap_exact_address
+       FROM exact_matches
+       GROUP BY normalized_symbol
+     ),
+     ranked AS (
+       SELECT
+         exact_matches.*,
+         stats.exact_count,
+         stats.subticker_count,
+         stats.exact_missing_created_at_count,
+         stats.exact_missing_mcap_count,
+         stats.oldest_exact_address,
+         stats.highest_mcap_exact_address,
+         ROW_NUMBER() OVER (
+           PARTITION BY exact_matches.normalized_symbol
+           ORDER BY COALESCE(exact_matches.last_mcap, 0) DESC,
+                    COALESCE(exact_matches.last_token_created_at_ms, 0) DESC,
+                    exact_matches.address ASC
+         ) AS peer_rank
+       FROM exact_matches
+       JOIN stats ON stats.normalized_symbol = exact_matches.normalized_symbol
+     )
+     SELECT
+       *
+     FROM ranked
+     WHERE peer_rank <= $2
+     ORDER BY normalized_symbol ASC, peer_rank ASC`,
+    [normalizedSymbols, limit, snapshotTsMs]
+  );
+
+  const statsBySymbol = new Map();
+  const itemsBySymbol = new Map();
+  for (const row of rows) {
+    const normalizedSymbol = normalizeSymbolKey(row.normalized_symbol);
+    if (!statsBySymbol.has(normalizedSymbol)) {
+      statsBySymbol.set(normalizedSymbol, mapPeerStatsRow(row));
+    }
+    const items = itemsBySymbol.get(normalizedSymbol) || [];
+    items.push(mapPeerRow(row));
+    itemsBySymbol.set(normalizedSymbol, items);
+  }
+  return new Map(inputs
+    .map((item) => {
+      const normalizedSymbol = normalizeSymbolKey(item.symbol);
+      return [
+        item.address,
+        buildTickerPeerSummary(
+          item,
+          statsBySymbol.get(normalizedSymbol) || null,
+          itemsBySymbol.get(normalizedSymbol) || []
+        ),
+      ];
+    })
+    .filter(([, summary]) => Boolean(summary)));
+}
+
 async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
   const normalizedSymbol = normalizeSymbolKey(symbol);
   if (normalizedSymbol.length < 2) {
@@ -325,8 +461,10 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
 
 module.exports = {
   buildTickerPeerSnapshotForAlert,
+  listTickerPeerSummariesForTokens,
   listTickerPeersBySymbol,
   __private: {
+    buildTickerPeerSummary,
     mapPeerStatsRow,
     filterContextualTickerPeerRows,
     isContextualSubtickerPeer,

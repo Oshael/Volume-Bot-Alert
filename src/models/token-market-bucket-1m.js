@@ -99,6 +99,7 @@ function getSparklineCacheKey(addresses, options) {
     hours: options.hours,
     points: options.points,
     granularityMinutes: options.granularityMinutes,
+    allowOneMinuteFallback: options.allowOneMinuteFallback === true,
   });
 }
 
@@ -1300,6 +1301,7 @@ async function listSparklineByAddresses(addresses, options = {}) {
     hours: safeHours,
     points: safePoints,
     granularityMinutes: safeGranularityMinutes,
+    allowOneMinuteFallback: options.allowOneMinuteFallback === true,
   };
   const cacheEnabled = options.disableCache !== true && Number(options.cacheTtlMs ?? DEFAULT_SPARKLINE_CACHE_TTL_MS) > 0;
   const cacheKey = cacheEnabled ? getSparklineCacheKey(unique, cacheOptions) : null;

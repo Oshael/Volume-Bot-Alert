@@ -2031,6 +2031,32 @@ export function fmtAge(createdAt: number) {
   return `${seconds}s`;
 }
 
+export function getAgeToneClassFromAgeMs(ageMs: number | null | undefined) {
+  if (!(Number(ageMs) >= 0)) {
+    return 'white';
+  }
+
+  const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+  const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
+  const normalizedAgeMs = Number(ageMs);
+  if (normalizedAgeMs <= oneWeekMs) {
+    return 'up';
+  }
+  if (normalizedAgeMs < oneMonthMs) {
+    return 'warn';
+  }
+  return 'down';
+}
+
+export function getAgeToneClassFromCreatedAt(createdAt: number | null | undefined) {
+  const createdAtMs = Number(createdAt);
+  if (!(createdAtMs > 0)) {
+    return 'white';
+  }
+
+  return getAgeToneClassFromAgeMs(Math.max(0, Date.now() - createdAtMs));
+}
+
 export function fmtConfig(state: AppState, key: string, fallback: number) {
   const value = Number(state.data.configs[key]);
   return Number.isFinite(value) ? value : fallback;

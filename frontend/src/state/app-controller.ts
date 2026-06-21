@@ -1304,6 +1304,7 @@ export function createAppController(): AppController {
       name: selectTrackedColdField(shouldApplyColdFields, dashboard.name, existing.name, base.name),
       createdAt: selectTrackedColdField(shouldApplyColdFields, dashboard.tokenCreatedAt, existing.createdAt, base.createdAt),
       catalogFirstSeenAt: selectTrackedColdField(shouldApplyColdFields, dashboard.catalogFirstSeenAt, existing.catalogFirstSeenAt, base.catalogFirstSeenAt),
+      tickerPeers: firstDefinedTrackedValue(dashboardItem?.tickerPeers, existing.tickerPeers, base.tickerPeers),
     };
   }
 
@@ -6162,9 +6163,10 @@ export function createAppController(): AppController {
         batches.map(async (batch) => ({
           batch,
           payload: await fetchTokenSparklines(batch.addresses, {
-          hours: SPARKLINE_WINDOW_HOURS,
-          points: SPARKLINE_POINT_COUNT,
-          granularityMinutes: batch.granularityMinutes,
+            hours: SPARKLINE_WINDOW_HOURS,
+            points: SPARKLINE_POINT_COUNT,
+            granularityMinutes: batch.granularityMinutes,
+            allowOneMinuteFallback: true,
           }, token),
         })),
       );
@@ -6297,6 +6299,7 @@ export function createAppController(): AppController {
               hours: SPARKLINE_WINDOW_HOURS,
               points: SPARKLINE_POINT_COUNT,
               granularityMinutes: batch.granularityMinutes,
+              allowOneMinuteFallback: true,
             }, token);
             onPayload(batch, payload);
             return { batch, payload };
@@ -7412,6 +7415,7 @@ export function createAppController(): AppController {
       prevVolume5mCanonical: firstDefinedTrackedValue(item.prevVolume5mCanonical, item.prevVolume5m),
       lastSeenAt: toNullableTrackedValue(item.lastSeenAt),
       lastEvaluatedAt: toNullableTrackedValue(item.lastEvaluatedAt),
+      tickerPeers: item.tickerPeers ?? null,
       meteora: buildCurrentMonitoredMeteoraSnapshot(address),
     } satisfies DashboardMonitoredToken;
   }

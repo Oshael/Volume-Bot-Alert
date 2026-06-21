@@ -15,6 +15,7 @@ const userToken = require('../models/user-token');
 const dexscreener = require('../services/dexscreener');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
+const alertTickerPeers = require('../services/alert-ticker-peers');
 const { isValidAddress } = require('../models/user-token');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
@@ -64,7 +65,7 @@ function parseMeteoraBatchAddresses(value) {
   return { ok: true, addresses };
 }
 
-function parseOptionalBooleanBodyField(value, defaultValue = true) {
+function parseOptionalBooleanBodyField(value, defaultValue = true, name = 'includeMeteora') {
   if (value === undefined || value === null || value === '') {
     return { ok: true, value: defaultValue };
   }
@@ -81,7 +82,7 @@ function parseOptionalBooleanBodyField(value, defaultValue = true) {
     return { ok: true, value: false };
   }
 
-  return { ok: false, error: 'includeMeteora must be a boolean' };
+  return { ok: false, error: `${name} must be a boolean` };
 }
 
 function parseOptionalIntegerBodyField(value, name, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -127,6 +128,15 @@ function parseSparklineBatchRequest(body = {}) {
     return granularityMinutes;
   }
 
+  const allowOneMinuteFallback = parseOptionalBooleanBodyField(
+    body.allowOneMinuteFallback,
+    false,
+    'allowOneMinuteFallback'
+  );
+  if (!allowOneMinuteFallback.ok) {
+    return allowOneMinuteFallback;
+  }
+
   return {
     ok: true,
     value: {
@@ -134,6 +144,7 @@ function parseSparklineBatchRequest(body = {}) {
       hours: hours.value || (14 * 24),
       points: points.value || 336,
       granularityMinutes: granularityMinutes.value || 30,
+      allowOneMinuteFallback: allowOneMinuteFallback.value,
     },
   };
 }
@@ -234,6 +245,7 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
     const meteoraByAddress = new Map(meteoraSummaryRows.map((row) => [row.tokenAddress, row]));
     const marketMcapBaselineByAddress = new Map(primaryMarketBaselineRows.map((row) => [row.token_address, row]));
     const marketVolumeBaselineByAddress = new Map(primaryVolumeBaselineRows.map((row) => [row.token_address, row]));
+    const tickerPeersByAddress = await loadTickerPeerSummariesSafe(metadataRows);
 
     const tokens = addresses
       .map((address) => {
@@ -247,7 +259,7 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
           meteoraByAddress,
           marketMcapBaselineByAddress,
           marketVolumeBaselineByAddress,
-          { includeMeteora: includeMeteora.value },
+          { includeMeteora: includeMeteora.value, tickerPeersByAddress },
         );
       })
       .filter(Boolean);
@@ -276,6 +288,7 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
       hours: parsed.value.hours,
       points: parsed.value.points,
       granularityMinutes: parsed.value.granularityMinutes,
+      allowOneMinuteFallback: parsed.value.allowOneMinuteFallback,
     };
     if (isPerfMetricsEnabled()) {
       sparklineOptions.onMetrics = (metrics) => {
@@ -522,6 +535,7 @@ function buildMonitoredMetadataPayload(
     twitterUrl: item.last_twitter_url,
     communityUrl: item.last_community_url,
   });
+  const tickerPeers = options.tickerPeersByAddress?.get(item.address) || null;
 
   return {
     address: item.address,
@@ -549,10 +563,20 @@ function buildMonitoredMetadataPayload(
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
     lastSeenAt: item.last_seen_at || null,
     lastEvaluatedAt: item.last_evaluated_at || null,
+    tickerPeers,
     meteora: includeMeteora
       ? buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null)
       : null,
   };
+}
+
+async function loadTickerPeerSummariesSafe(items = []) {
+  try {
+    return await alertTickerPeers.listTickerPeerSummariesForTokens(items);
+  } catch (err) {
+    console.warn('[Catalog] Failed to load monitored ticker peer summaries:', err.message);
+    return new Map();
+  }
 }
 
 function getMarketCap(pair) {

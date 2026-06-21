@@ -9518,11 +9518,46 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-title-line .token-addr {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.monitored-ticker-peer-badge {
+  flex: 0 0 auto;
+  color: #ff4d5f;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+  list-style: none;
+  line-height: 1;
+  margin-left: -4px;
+}
+
+.monitored-ticker-peer-badge::-webkit-details-marker {
+  display: none;
+}
+
+.monitored-ticker-peer-badge[data-peer-role="og"] {
+  color: #3b82f6;
+}
+
+.monitored-ticker-peer-badge[data-peer-role="mcap_leader"] {
+  color: #22c55e;
+}
+
+.monitored-token-row:has(.monitored-ticker-peers-panel[open]) {
+  z-index: 40;
+}
+
+.monitored-token-row:has(.monitored-ticker-peers-panel[open]) .monitored-title-line {
+  overflow: visible;
+}
+
+.monitored-ticker-peers-panel[open] {
+  z-index: 41;
 }
 
 .monitored-title-line .inline-link {
@@ -9540,6 +9575,22 @@ TEMP_LEGACY_BAR_TITLE {
   color: #fff !important;
   font-size: 12px;
   font-weight: 700;
+}
+
+.monitored-meta-line .meta-value.up {
+  color: var(--green) !important;
+}
+
+.monitored-meta-line .meta-value.warn {
+  color: #ff8a00 !important;
+}
+
+.monitored-meta-line .meta-value.down {
+  color: var(--red) !important;
+}
+
+.monitored-meta-line .meta-value.white {
+  color: #fff !important;
 }
 
 .legacy-bar-title.manual,
@@ -10156,7 +10207,26 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-ticker-peers-symbol {
   color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-weight: 700;
+}
+
+.alert-ticker-peers-row-badge {
+  flex: 0 0 auto;
+  color: #ff4d5f;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.alert-ticker-peers-row-badge[data-peer-role="og"] {
+  color: #3b82f6;
+}
+
+.alert-ticker-peers-row-badge[data-peer-role="mcap_leader"] {
+  color: #22c55e;
 }
 
 .alert-ticker-peers-address {
@@ -10174,8 +10244,16 @@ TEMP_LEGACY_BAR_TITLE {
   white-space: nowrap;
 }
 
+.alert-ticker-peers-mcap {
+  color: #fff;
+}
+
 .alert-ticker-peers-age.up {
   color: var(--green);
+}
+
+.alert-ticker-peers-age.warn {
+  color: #ff8a00;
 }
 
 .alert-ticker-peers-age.down {
@@ -10352,6 +10430,11 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-flow-v68 .value.up,
 .alert-stats-v68 .value.up {
   color: var(--green);
+}
+
+.alert-flow-v68 .value.warn,
+.alert-stats-v68 .value.warn {
+  color: #ff8a00;
 }
 
 .alert-flow-v68 .value.meteora-pool-value,

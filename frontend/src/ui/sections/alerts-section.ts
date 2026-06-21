@@ -2,7 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const ALERT_FX_SETTLE_MS = 1_600;
@@ -1495,20 +1495,7 @@ function getHighCapDumpDropAmount(alert: AlertEntry) {
 }
 
 function getAlertAgeToneClass(alert: AlertEntry) {
-  const tokenCreatedAt = Number(alert.tokenCreatedAt);
-  if (!(tokenCreatedAt > 0)) {
-    return 'white';
-  }
-
-  return getAgeToneClassFromAgeMs(Math.max(0, Date.now() - tokenCreatedAt));
-}
-
-function getAgeToneClassFromAgeMs(ageMs: number | null | undefined) {
-  if (!(Number(ageMs) >= 0)) {
-    return 'white';
-  }
-
-  return Number(ageMs) < 24 * 60 * 60 * 1000 ? 'up' : 'down';
+  return getAgeToneClassFromCreatedAt(alert.tokenCreatedAt);
 }
 
 function fmtAgeFromDurationMs(ageMs: number | null | undefined) {
@@ -1589,7 +1576,9 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
     const symbol = document.createElement('div');
     symbol.className = 'alert-ticker-peers-symbol';
-    symbol.textContent = item.symbol || item.address.slice(0, 8);
+    const symbolText = document.createElement('span');
+    symbolText.textContent = item.symbol || item.address.slice(0, 8);
+    symbol.append(symbolText, ...buildTickerPeersRowBadges(alert.tickerPeers, item.address));
 
     const address = document.createElement('div');
     address.className = 'alert-ticker-peers-address';
@@ -1601,6 +1590,7 @@ function buildTickerPeersControl(alert: AlertEntry) {
     const stats = document.createElement('div');
     stats.className = 'alert-ticker-peers-stats';
     const mcapLabel = document.createElement('span');
+    mcapLabel.className = 'alert-ticker-peers-mcap';
     mcapLabel.textContent = fmtMoney(item.mcap);
     const separator = document.createElement('span');
     separator.textContent = ' • ';
@@ -1616,6 +1606,27 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
   details.append(summary, list);
   return details;
+}
+
+function buildTickerPeersRowBadges(tickerPeers: AlertEntry['tickerPeers'], address: string) {
+  const normalizedAddress = String(address || '').trim();
+  const badges: HTMLElement[] = [];
+  if (normalizedAddress && normalizedAddress === String(tickerPeers?.oldestExactAddress || '').trim()) {
+    badges.push(buildTickerPeersRowBadge('OG', 'og', 'Oldest exact ticker match'));
+  }
+  if (normalizedAddress && normalizedAddress === String(tickerPeers?.highestMcapExactAddress || '').trim()) {
+    badges.push(buildTickerPeersRowBadge('#1', 'mcap_leader', 'Market-cap leader among exact ticker peers'));
+  }
+  return badges;
+}
+
+function buildTickerPeersRowBadge(label: string, role: 'og' | 'mcap_leader', title: string) {
+  const badge = document.createElement('span');
+  badge.className = 'alert-ticker-peers-row-badge';
+  badge.dataset.peerRole = role;
+  badge.title = title;
+  badge.textContent = label;
+  return badge;
 }
 
 function resolveTickerPeersBadgeRole(tickerPeers: AlertEntry['tickerPeers']) {

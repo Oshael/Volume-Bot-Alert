@@ -92,6 +92,27 @@ export interface DashboardMonitoredToken {
   lastSeenAt?: string | null;
   lastEvaluatedAt?: string | null;
   meteora?: MeteoraBatchItem | null;
+  tickerPeers?: {
+    sourceSymbol?: string | null;
+    normalizedSymbol?: string | null;
+    count?: number;
+    exactCount?: number | null;
+    subtickerCount?: number | null;
+    hasSubtickerMatch?: boolean;
+    sourcePeerRole?: 'og' | 'mcap_leader' | 'peer_warning' | null;
+    oldestExactAddress?: string | null;
+    highestMcapExactAddress?: string | null;
+    items?: Array<{
+      address: string;
+      symbol?: string | null;
+      name?: string | null;
+      imageUrl?: string | null;
+      mcap?: number | null;
+      tokenCreatedAt?: number | null;
+      ageMsAtAlert?: number | null;
+      matchType?: 'exact' | 'subticker' | null;
+    }>;
+  } | null;
 }
 
 export interface DashboardMonitoredPayload {
@@ -474,7 +495,7 @@ export function fetchDashboardTopPerformers(
 
 export function fetchTokenSparklines(
   addresses: string[],
-  options?: { hours?: number; points?: number; granularityMinutes?: number },
+  options?: { hours?: number; points?: number; granularityMinutes?: number; allowOneMinuteFallback?: boolean },
   token?: string | null,
 ) {
   return apiFetch<TokenSparklinesPayload>('/api/catalog/sparklines', {
@@ -484,6 +505,7 @@ export function fetchTokenSparklines(
       hours: options?.hours ?? (14 * 24),
       points: options?.points ?? 336,
       granularityMinutes: options?.granularityMinutes ?? 30,
+      allowOneMinuteFallback: options?.allowOneMinuteFallback ?? false,
     }),
     token,
   }).then((response) => ({

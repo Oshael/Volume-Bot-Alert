@@ -650,11 +650,17 @@ describe('Catalog routes', () => {
           hours: 14 * 24,
           points: 336,
           granularityMinutes: 30,
+          allowOneMinuteFallback: true,
         });
 
       assert.equal(res.status, 200);
       assert.deepEqual(capturedAddresses, [VALID_ADDR]);
-      assert.deepEqual(capturedOptions, { hours: 14 * 24, points: 336, granularityMinutes: 30 });
+      assert.deepEqual(capturedOptions, {
+        hours: 14 * 24,
+        points: 336,
+        granularityMinutes: 30,
+        allowOneMinuteFallback: true,
+      });
       assert.equal(res.body.hours, 14 * 24);
       assert.equal(res.body.points, 336);
       assert.equal(res.body.granularityMinutes, 30);

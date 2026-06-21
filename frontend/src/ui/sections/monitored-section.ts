@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -218,8 +218,24 @@ function bindMonitoredSectionControls(
   bindTokenImagePreview(section);
   bindTopEdgePageScrollBridge(section.querySelector<HTMLElement>('.monitored-list'));
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindMonitoredTickerPeerPanelClose(section);
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
+}
+
+function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
+  section.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    closeOpenMonitoredTickerPeerPanels(section, target?.closest<HTMLDetailsElement>('.monitored-ticker-peers-panel') || null);
+  });
+}
+
+function closeOpenMonitoredTickerPeerPanels(root: ParentNode, exceptPanel: HTMLDetailsElement | null) {
+  for (const panel of root.querySelectorAll<HTMLDetailsElement>('.monitored-ticker-peers-panel[open]')) {
+    if (panel !== exceptPanel) {
+      panel.open = false;
+    }
+  }
 }
 
 function bindMonitoredCollapseToggle(section: ParentNode, controller: AppController) {
@@ -254,6 +270,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   const xSearch = buildXSearchUrl(symbol, item.address);
   const socialLinks = splitTokenSocialUrls(item.twitterUrl, item.communityUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
+  const ageToneClass = getAgeToneClassFromCreatedAt(item.createdAt);
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
   const volDeltaBaseline = item.prevVolume5mCanonical ?? null;
   const volDelta = volDeltaBaseline && volDeltaBaseline > 0 && item.volume5m != null
@@ -276,16 +293,17 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   tokenName.target = '_blank';
   tokenName.rel = 'noreferrer';
   tokenName.textContent = symbol;
+  const tickerPeerBadge = buildTickerPeerBadge(item.tickerPeers);
   const tokenAddr = document.createElement('span');
   tokenAddr.className = 'token-addr';
   tokenAddr.textContent = subtitle;
-  titleLine.append(tokenName, tokenAddr);
+  titleLine.append(...[tokenName, tokenAddr, tickerPeerBadge].filter((item): item is HTMLElement => Boolean(item)));
 
   const metaLine = document.createElement('div');
   metaLine.className = 'panel-row-meta monitored-meta-line';
   metaLine.append(
     buildMetaMetric('MCAP', fmtMoney(item.mcap)),
-    buildMetaMetric('AGE', age),
+    buildMetaMetric('AGE', age, ageToneClass),
     buildMetaMetric('VOL 1H', fmtMoney(item.volume1h)),
     buildMetaMetric('VOL 6H', fmtMoney(item.volume6h)),
     buildMetaMetric('VOL 24H', fmtMoney(item.volume24h)),
@@ -430,16 +448,210 @@ function buildInlineActionLink(label: string, href: string, className: string, t
   return link;
 }
 
-function buildMetaMetric(label: string, value: string) {
+function buildMetaMetric(label: string, value: string, valueClassName = '') {
   const wrapper = document.createElement('span');
   const labelEl = document.createElement('span');
   labelEl.className = 'meta-label';
   labelEl.textContent = label;
   const valueEl = document.createElement('span');
-  valueEl.className = 'meta-value';
+  valueEl.className = `meta-value${valueClassName ? ` ${valueClassName}` : ''}`;
   valueEl.textContent = value;
   wrapper.append(labelEl, ' ', valueEl);
   return wrapper;
+}
+
+function resolveTickerPeerRole(tickerPeers: ManualTokenEntry['tickerPeers']) {
+  if (tickerPeers?.sourcePeerRole === 'og') {
+    return 'og';
+  }
+  if (tickerPeers?.sourcePeerRole === 'mcap_leader') {
+    return 'mcap_leader';
+  }
+  return 'peer_warning';
+}
+
+function getTickerPeerBadgeMark(role: 'og' | 'mcap_leader' | 'peer_warning') {
+  if (role === 'og') {
+    return 'OG';
+  }
+  if (role === 'mcap_leader') {
+    return '#1';
+  }
+  return '!';
+}
+
+function getTickerPeerBadgeTitle(tickerPeers: ManualTokenEntry['tickerPeers'], role: 'og' | 'mcap_leader' | 'peer_warning') {
+  if (role === 'og') {
+    return 'OG ticker peer: oldest known exact ticker match';
+  }
+  if (role === 'mcap_leader') {
+    return 'Market-cap leader among exact ticker peers';
+  }
+  return `${Number(tickerPeers?.count) || 0} exact ticker peers`;
+}
+
+function fmtAgeFromDurationMs(ageMs: number | null | undefined) {
+  if (ageMs == null) {
+    return '-';
+  }
+
+  const duration = Number(ageMs);
+  if (!Number.isFinite(duration) || duration < 0) {
+    return '-';
+  }
+
+  const monthDays = 30;
+  const months = Math.floor(duration / (monthDays * 86400000));
+  if (months >= 12) {
+    return `${Math.floor(months / 12)}y`;
+  }
+  if (months >= 1) {
+    return `${months}mo`;
+  }
+
+  const days = Math.floor(duration / 86400000);
+  if (days >= 1) {
+    return `${days}d`;
+  }
+  const hours = Math.floor(duration / 3600000);
+  if (hours >= 1) {
+    return `${hours}h`;
+  }
+  const minutes = Math.floor(duration / 60000);
+  if (minutes >= 1) {
+    return `${minutes}m`;
+  }
+  return '0m';
+}
+
+function resolveTickerPeerAgeMs(
+  item: NonNullable<NonNullable<ManualTokenEntry['tickerPeers']>['items']>[number],
+) {
+  const ageMsAtAlert = Number(item.ageMsAtAlert);
+  if (Number.isFinite(ageMsAtAlert) && ageMsAtAlert >= 0) {
+    return ageMsAtAlert;
+  }
+
+  const tokenCreatedAt = Number(item.tokenCreatedAt);
+  if (Number.isFinite(tokenCreatedAt) && tokenCreatedAt > 0) {
+    return Math.max(0, Date.now() - tokenCreatedAt);
+  }
+
+  return null;
+}
+
+function buildTickerPeerAvatar(symbol: string, imageUrl: string | null) {
+  if (imageUrl) {
+    const image = document.createElement('img');
+    image.src = imageUrl;
+    image.alt = symbol;
+    image.className = 'alert-avatar';
+    image.dataset.tokenImagePreview = 'true';
+    image.dataset.tokenImagePreviewSrc = imageUrl;
+    return image;
+  }
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'alert-avatar-placeholder';
+  placeholder.textContent = symbol.slice(0, 2).toUpperCase();
+  return placeholder;
+}
+
+function buildTickerPeerList(tickerPeers: ManualTokenEntry['tickerPeers']) {
+  const list = document.createElement('div');
+  list.className = 'alert-ticker-peers-list monitored-ticker-peers-list';
+  const items = Array.isArray(tickerPeers?.items) ? tickerPeers.items : [];
+
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'alert-ticker-peers-row';
+
+    const identity = document.createElement('div');
+    identity.className = 'alert-ticker-peers-identity';
+    identity.append(buildTickerPeerAvatar(String(item.symbol || '?'), sanitizeOptionalHttpUrl(item.imageUrl)));
+
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'action-glyph copy-button alert-ticker-peers-copy';
+    copy.dataset.action = 'copy-address';
+    copy.dataset.address = item.address;
+    copy.title = 'Copy contract';
+    copy.textContent = '⧉';
+
+    const identityText = document.createElement('div');
+    identityText.className = 'alert-ticker-peers-text';
+
+    const symbol = document.createElement('div');
+    symbol.className = 'alert-ticker-peers-symbol';
+    const symbolText = document.createElement('span');
+    symbolText.textContent = item.symbol || item.address.slice(0, 8);
+    symbol.append(symbolText, ...buildTickerPeerRowBadges(tickerPeers, item.address));
+
+    const address = document.createElement('div');
+    address.className = 'alert-ticker-peers-address';
+    address.textContent = `${item.address.slice(0, 4)}...${item.address.slice(-4)}`;
+
+    identityText.append(symbol, address);
+    identity.append(identityText, copy);
+
+    const stats = document.createElement('div');
+    stats.className = 'alert-ticker-peers-stats';
+    const mcapLabel = document.createElement('span');
+    mcapLabel.className = 'alert-ticker-peers-mcap';
+    mcapLabel.textContent = fmtMoney(item.mcap);
+    const separator = document.createElement('span');
+    separator.textContent = ' • ';
+    const ageMs = resolveTickerPeerAgeMs(item);
+    const age = document.createElement('span');
+    age.className = `alert-ticker-peers-age ${getAgeToneClassFromAgeMs(ageMs)}`;
+    age.textContent = fmtAgeFromDurationMs(ageMs);
+    stats.append(mcapLabel, separator, age);
+
+    row.append(identity, stats);
+    list.append(row);
+  }
+
+  return list;
+}
+
+function buildTickerPeerRowBadges(tickerPeers: ManualTokenEntry['tickerPeers'], address: string) {
+  const normalizedAddress = String(address || '').trim();
+  const badges: HTMLElement[] = [];
+  if (normalizedAddress && normalizedAddress === String(tickerPeers?.oldestExactAddress || '').trim()) {
+    badges.push(buildTickerPeerRowBadge('OG', 'og', 'Oldest exact ticker match'));
+  }
+  if (normalizedAddress && normalizedAddress === String(tickerPeers?.highestMcapExactAddress || '').trim()) {
+    badges.push(buildTickerPeerRowBadge('#1', 'mcap_leader', 'Market-cap leader among exact ticker peers'));
+  }
+  return badges;
+}
+
+function buildTickerPeerRowBadge(label: string, role: 'og' | 'mcap_leader', title: string) {
+  const badge = document.createElement('span');
+  badge.className = 'alert-ticker-peers-row-badge';
+  badge.dataset.peerRole = role;
+  badge.title = title;
+  badge.textContent = label;
+  return badge;
+}
+
+function buildTickerPeerBadge(tickerPeers: ManualTokenEntry['tickerPeers']) {
+  if (!tickerPeers || (Number(tickerPeers.count) || 0) <= 1) {
+    return null;
+  }
+
+  const role = resolveTickerPeerRole(tickerPeers);
+  const details = document.createElement('details');
+  details.className = 'alert-ticker-peers-panel monitored-ticker-peers-panel';
+
+  const summary = document.createElement('summary');
+  summary.className = 'monitored-ticker-peer-badge';
+  summary.dataset.peerRole = role;
+  summary.title = getTickerPeerBadgeTitle(tickerPeers, role);
+  summary.textContent = getTickerPeerBadgeMark(role);
+
+  details.append(summary, buildTickerPeerList(tickerPeers));
+  return details;
 }
 
 function buildXSearchUrl(symbol: string, address: string) {

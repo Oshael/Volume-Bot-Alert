@@ -157,4 +157,64 @@ describe('alert ticker peers', () => {
     assert.equal(snapshot.items[0].ageMsAtAlert, 7200000);
     assert.equal(calls.length, 1);
   });
+
+  it('builds ticker peer role summaries for monitored token batches', async () => {
+    const calls = [];
+    const runner = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        return {
+          rows: [
+            {
+              address: SOURCE_ADDRESS,
+              symbol: 'WSOL',
+              name: 'Wrapped SOL',
+              image_url: 'https://example.com/wsol.png',
+              last_mcap: '300000',
+              last_token_created_at_ms: '1710000000000',
+              age_ms_at_alert: '7200000',
+              match_type: 'exact',
+              normalized_symbol: 'WSOL',
+              exact_count: '2',
+              subticker_count: '0',
+              exact_missing_created_at_count: '0',
+              exact_missing_mcap_count: '0',
+              oldest_exact_address: PEER_ADDRESS,
+              highest_mcap_exact_address: SOURCE_ADDRESS,
+            },
+            {
+              address: PEER_ADDRESS,
+              symbol: 'WSOL',
+              name: 'Older WSOL',
+              last_mcap: '120000',
+              last_token_created_at_ms: '1700000000000',
+              age_ms_at_alert: '172000000',
+              match_type: 'exact',
+              normalized_symbol: 'WSOL',
+              exact_count: '2',
+              subticker_count: '0',
+              exact_missing_created_at_count: '0',
+              exact_missing_mcap_count: '0',
+              oldest_exact_address: PEER_ADDRESS,
+              highest_mcap_exact_address: SOURCE_ADDRESS,
+            },
+          ],
+        };
+      },
+    };
+
+    const summaries = await alertTickerPeers.listTickerPeerSummariesForTokens([
+      { address: SOURCE_ADDRESS, symbol: 'WSOL' },
+      { address: PEER_ADDRESS, symbol: 'wsol' },
+    ], {}, runner);
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].params[0], ['WSOL']);
+    assert.equal(summaries.get(SOURCE_ADDRESS).sourcePeerRole, 'mcap_leader');
+    assert.equal(summaries.get(PEER_ADDRESS).sourcePeerRole, 'og');
+    assert.equal(summaries.get(SOURCE_ADDRESS).count, 2);
+    assert.equal(summaries.get(SOURCE_ADDRESS).items.length, 2);
+    assert.equal(summaries.get(SOURCE_ADDRESS).items[0].address, SOURCE_ADDRESS);
+    assert.equal(summaries.get(SOURCE_ADDRESS).items[0].ageMsAtAlert, 7200000);
+  });
 });

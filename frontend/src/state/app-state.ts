@@ -113,6 +113,7 @@ export interface ManualTokenEntry {
   _isTopPerformer?: boolean;
   performanceRank?: number | null;
   performanceScore?: number | null;
+  tickerPeers?: AlertEntry['tickerPeers'];
 }
 
 export type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
