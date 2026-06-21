@@ -892,13 +892,31 @@ function getHistoryBucketOrderDirection(mode, window) {
   return 'DESC';
 }
 
-function buildHistoryBucketOrderSql(sorts) {
-  const clauses = normalizeHistoryBucketSorts(sorts).map(({ mode, window }) => {
+function getHistoryBucketScoreDirection(mode, window) {
+  return getHistoryBucketOrderDirection(mode, window) === 'DESC' ? 'ASC' : 'DESC';
+}
+
+function buildHistoryBucketSortClauses(sorts) {
+  return normalizeHistoryBucketSorts(sorts).map(({ mode, window }) => {
     const column = HISTORY_BUCKET_SORT_COLUMNS[mode][window];
     const direction = getHistoryBucketOrderDirection(mode, window);
     return `COALESCE(${column}, 0) ${direction}`;
   });
+}
 
+function buildHistoryBucketScoreSql(sorts) {
+  const normalized = normalizeHistoryBucketSorts(sorts);
+  const scoreClauses = normalized.map(({ mode, window }) => {
+    const column = HISTORY_BUCKET_SORT_COLUMNS[mode][window];
+    const direction = getHistoryBucketScoreDirection(mode, window);
+    return `CUME_DIST() OVER (ORDER BY COALESCE(${column}, 0) ${direction})`;
+  });
+
+  return `(${scoreClauses.join(' + ')}) / ${scoreClauses.length}`;
+}
+
+function buildHistoryBucketOrderSql(sorts) {
+  const clauses = ['history_sort_score DESC', ...buildHistoryBucketSortClauses(sorts)];
   clauses.push('COALESCE(tc.last_token_created_at_ms, 0) DESC');
   clauses.push('COALESCE(tc.last_mcap, 0) DESC');
   clauses.push('tc.address ASC');
@@ -1013,6 +1031,7 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
       dismissedAddresses,
       starredAddresses,
       starredOnly: Boolean(options.starredOnly),
+      scoreSql: buildHistoryBucketScoreSql(options.sorts),
       orderSql: buildHistoryBucketOrderSql(options.sorts),
       ageParams,
     },
@@ -1074,6 +1093,7 @@ async function listDashboardHistoryBucket(bucket, options = {}) {
 
   const { rows } = await db.query(
     `${DASHBOARD_MONITORED_SELECT_SQL},
+       ${params.scoreSql} AS history_sort_score,
        COUNT(*) OVER() AS total_count
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr

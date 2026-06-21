@@ -67,6 +67,8 @@ describe('token-catalog history bucket queries', () => {
       assert.equal(result.perPage, 30);
       assert.match(captured.sql, /^SELECT\s+tc\.address,/);
       assert.doesNotMatch(captured.sql, /\bSELECT\s+SELECT\b/i);
+      assert.match(captured.sql, /\(CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_1h, 0\) ASC\)\) \/ 1 AS history_sort_score/);
+      assert.match(captured.sql, /ORDER BY history_sort_score DESC,\s+COALESCE\(tc\.last_vol_1h, 0\) DESC,/);
       assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$1 AND tc\.last_token_created_at_ms <= \$2/);
       assert.ok(Array.isArray(captured.params));
       assert.equal(captured.params.length, 10);
@@ -103,6 +105,52 @@ describe('token-catalog history bucket queries', () => {
 
       assert.equal(result.total, 0);
       assert.match(captured.sql, /tc\.last_token_created_at_ms <= \$1/);
+      assert.ok(Array.isArray(captured.params));
+      assert.equal(captured.params.length, 9);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('scores multiple history bucket sort criteria as an average rank', async () => {
+    const originalQuery = db.query;
+    const captured = {
+      sql: '',
+      params: null,
+    };
+
+    db.query = async (sql, params) => {
+      captured.sql = String(sql);
+      captured.params = params;
+      return { rows: [] };
+    };
+
+    try {
+      const result = await tokenCatalog.listDashboardHistoryBucket('oldWeek', {
+        page: 0,
+        perPage: 30,
+        searchQuery: '',
+        starredOnly: false,
+        sorts: [
+          { mode: 'vol', window: '24h' },
+          { mode: 'vol', window: '6h' },
+          { mode: 'pchange', window: '1h' },
+        ],
+        dismissedAddresses: [],
+        starredAddresses: [],
+        mcapMin: 120000,
+        mcapMax: 0,
+      });
+
+      assert.equal(result.total, 0);
+      assert.match(
+        captured.sql,
+        /\(CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_24h, 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_6h, 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_price_change_1h, 0\) ASC\)\) \/ 3 AS history_sort_score/
+      );
+      assert.match(
+        captured.sql,
+        /ORDER BY history_sort_score DESC,\s+COALESCE\(tc\.last_vol_24h, 0\) DESC,\s+COALESCE\(tc\.last_vol_6h, 0\) DESC,\s+COALESCE\(tc\.last_price_change_1h, 0\) DESC,/
+      );
       assert.ok(Array.isArray(captured.params));
       assert.equal(captured.params.length, 9);
     } finally {
