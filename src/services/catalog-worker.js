@@ -8,7 +8,10 @@ const gmgnClient = require('./gmgn-client');
 const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
-const { isVolume24hCoherentWithShorterWindows } = require('./volume-window-consistency');
+const {
+  isVolume24hCoherentWithShorterWindows,
+  normalizeVolume24hWithShorterWindows,
+} = require('./volume-window-consistency');
 const { extractDexSocialLinks } = require('../utils/dex-social-links');
 const {
   AUTO_BLOCK_LABEL_PREFIXES,
@@ -1075,16 +1078,22 @@ function getLowActivityMinimumRecheckMs(token, vol24h, volumeWindows = {}) {
   return isLowActivityAutoToken(token, vol24h, volumeWindows) ? LOW_ACTIVITY_RECHECK_MS : 0;
 }
 
-function derivePrioritySnapshot(bestPair, token = null) {
-  const marketCap = Number(bestPair?.marketCap || bestPair?.fdv || 0);
-  const now = Date.now();
-  const filledVolumes = fillYoungTokenVolumeWindows({
+function buildPriorityVolumeWindows(bestPair, token, now) {
+  return normalizeVolume24hWithShorterWindows(fillYoungTokenVolumeWindows({
     tokenCreatedAt: bestPair?.pairCreatedAt,
     vol5m: toVolumeNumber(bestPair?.volume?.m5),
     vol1h: toVolumeNumber(bestPair?.volume?.h1),
     vol6h: toVolumeNumber(bestPair?.volume?.h6),
     vol24h: toVolumeNumber(bestPair?.volume?.h24),
-  }, { now: new Date(now) });
+  }, { now: new Date(now) }), {
+    vol24h: token?.last_vol_24h,
+  });
+}
+
+function derivePrioritySnapshot(bestPair, token = null) {
+  const marketCap = Number(bestPair?.marketCap || bestPair?.fdv || 0);
+  const now = Date.now();
+  const filledVolumes = buildPriorityVolumeWindows(bestPair, token, now);
   const vol5m = filledVolumes.vol5m;
   const vol1h = filledVolumes.vol1h;
   const vol6h = filledVolumes.vol6h;

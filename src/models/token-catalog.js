@@ -20,12 +20,13 @@ const DEFAULT_TOP_PERFORMERS_MIN_VOL_24H = 200000;
 const DEFAULT_TOP_PERFORMERS_MAX_PCHANGE_24H = 300;
 const DEFAULT_TOP_PERFORMERS_VOLUME_SLOT_LIMIT = 7;
 const DEFAULT_TOP_PERFORMERS_STATEMENT_TIMEOUT_MS = 5000;
+const EFFECTIVE_HISTORY_VOL_24H_SQL = 'GREATEST(COALESCE(tc.last_vol_24h, 0), COALESCE(tc.last_vol_6h, 0), COALESCE(tc.last_vol_1h, 0))';
 
 const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
   vol: Object.freeze({
     '1h': 'tc.last_vol_1h',
     '6h': 'tc.last_vol_6h',
-    '24h': 'tc.last_vol_24h',
+    '24h': EFFECTIVE_HISTORY_VOL_24H_SQL,
   }),
   mcap: Object.freeze({
     highest: 'tc.last_mcap',

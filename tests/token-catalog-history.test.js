@@ -110,7 +110,10 @@ describe('token-catalog history bucket queries', () => {
       assert.match(captured.sql, /FROM unnest\(\$1::varchar\[\]\) WITH ORDINALITY/);
       assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$2 AND tc\.last_token_created_at_ms <= \$3/);
       assert.match(captured.sql, /COALESCE\(tc\.last_mcap, 0\) >= \$4/);
-      assert.match(captured.sql, /ROW_NUMBER\(\) OVER \(ORDER BY history_sort_score DESC,\s+COALESCE\(scored\.last_vol_24h, 0\) DESC,/);
+      assert.match(
+        captured.sql,
+        /ROW_NUMBER\(\) OVER \(ORDER BY history_sort_score DESC,\s+COALESCE\(GREATEST\(COALESCE\(scored\.last_vol_24h, 0\), COALESCE\(scored\.last_vol_6h, 0\), COALESCE\(scored\.last_vol_1h, 0\)\), 0\) DESC,/
+      );
       assert.ok(Array.isArray(captured.params));
       assert.equal(captured.params.length, 9);
       assert.deepEqual(captured.params[0], ['So11111111111111111111111111111111111111112']);
@@ -187,11 +190,11 @@ describe('token-catalog history bucket queries', () => {
       assert.equal(result.total, 0);
       assert.match(
         captured.sql,
-        /\(CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_24h, 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_6h, 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_price_change_1h, 0\) ASC\)\) \/ 3 AS history_sort_score/
+        /\(CUME_DIST\(\) OVER \(ORDER BY COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_6h, 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_price_change_1h, 0\) ASC\)\) \/ 3 AS history_sort_score/
       );
       assert.match(
         captured.sql,
-        /ORDER BY history_sort_score DESC,\s+COALESCE\(tc\.last_vol_24h, 0\) DESC,\s+COALESCE\(tc\.last_vol_6h, 0\) DESC,\s+COALESCE\(tc\.last_price_change_1h, 0\) DESC,/
+        /ORDER BY history_sort_score DESC,\s+COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) DESC,\s+COALESCE\(tc\.last_vol_6h, 0\) DESC,\s+COALESCE\(tc\.last_price_change_1h, 0\) DESC,/
       );
       assert.ok(Array.isArray(captured.params));
       assert.equal(captured.params.length, 9);
