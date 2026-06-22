@@ -1568,6 +1568,14 @@ export function createAppController(): AppController {
     return symbol ?? fallback ?? '';
   }
 
+  function toDebugNumber(value: number | null | undefined, decimals = 2) {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const factor = 10 ** decimals;
+    return Math.round(Number(value) * factor) / factor;
+  }
+
   function summarizeDebugTokenMetrics(item: Partial<ManualTokenEntry & DashboardMonitoredToken>) {
     return {
       mcap: toDebugNullable(item.mcap),
@@ -1581,6 +1589,82 @@ export function createAppController(): AppController {
     };
   }
 
+  function summarizeHistoryRequestDebug(request: DashboardHistoryBucketRequest) {
+    return {
+      page: request.page ?? null,
+      perPage: request.perPage ?? null,
+      sorts: (request.sorts || []).map((item) => `${item.mode}:${item.window}`).join(','),
+      mcapMin: request.mcapMin ?? null,
+      mcapMax: request.mcapMax ?? null,
+      ageMinMinutes: request.ageMinMinutes ?? null,
+      ageMaxMinutes: request.ageMaxMinutes ?? null,
+      search: request.searchQuery ? 'set' : '',
+      starredOnly: Boolean(request.starredOnly),
+      dismissedCount: request.dismissedAddresses?.length ?? 0,
+    };
+  }
+
+  function summarizeCompactHistoryToken(
+    address: string,
+    item?: Partial<ManualTokenEntry & DashboardMonitoredToken>,
+    rank?: number,
+  ) {
+    return {
+      rank: rank ?? null,
+      address,
+      symbol: toDebugSymbol(item?.symbol, item?.label),
+      score: toDebugNumber(item?.historySortScore, 6),
+      mcap: toDebugNumber(item?.mcap),
+      v24: toDebugNumber(item?.volume24h),
+      v6: toDebugNumber(item?.volume6h),
+      v1: toDebugNumber(item?.volume1h),
+      createdAt: toDebugNullable(item?.tokenCreatedAt ?? item?.createdAt),
+      evaluatedAt: toDebugNullable(item?.lastEvaluatedAt),
+    };
+  }
+
+  function buildPreviousRecentDebugMap(addresses: string[]) {
+    return new Map(addresses.map((address, index) => [
+      address,
+      summarizeCompactHistoryToken(address, state.data.trackedTokensByAddress[address], index + 1),
+    ]));
+  }
+
+  function buildPayloadRecentDebugMap(tokens: DashboardMonitoredToken[]) {
+    return new Map(tokens.map((item, index) => [
+      item.address,
+      summarizeCompactHistoryToken(item.address, item, index + 1),
+    ]));
+  }
+
+  function summarizeCompactRecentDebugDelta(
+    previous: string[],
+    next: string[],
+    previousMap: Map<string, ReturnType<typeof summarizeCompactHistoryToken>>,
+    nextMap: Map<string, ReturnType<typeof summarizeCompactHistoryToken>>,
+  ) {
+    const previousSet = new Set(previous);
+    const nextSet = new Set(next);
+    const addedAddresses = next.filter((address) => !previousSet.has(address));
+    const removedAddresses = previous.filter((address) => !nextSet.has(address));
+    const moved = next
+      .map((address, nextIndex) => ({
+        address,
+        previousRank: previous.indexOf(address) + 1,
+        nextRank: nextIndex + 1,
+      }))
+      .filter((item) => item.previousRank > 0 && item.previousRank !== item.nextRank);
+
+    return {
+      addedCount: addedAddresses.length,
+      removedCount: removedAddresses.length,
+      movedCount: moved.length,
+      added: addedAddresses.slice(0, 6).map((address) => nextMap.get(address) || summarizeCompactHistoryToken(address)),
+      removed: removedAddresses.slice(0, 6).map((address) => previousMap.get(address) || summarizeCompactHistoryToken(address)),
+      moved: moved.slice(0, 8),
+    };
+  }
+
   function summarizeDashboardDebugTokens(tokens: DashboardMonitoredToken[] = []) {
     return tokens.slice(0, 8).map((item) => ({
       address: item.address,
@@ -1590,40 +1674,6 @@ export function createAppController(): AppController {
       lastSeenAt: toDebugNullable(item.lastSeenAt),
       lastEvaluatedAt: toDebugNullable(item.lastEvaluatedAt),
     }));
-  }
-
-  function summarizeRecentDebugAddress(address: string) {
-    const item = state.data.trackedTokensByAddress[address];
-    const source: Partial<ManualTokenEntry> = item || {};
-    return {
-      address,
-      symbol: toDebugSymbol(source.symbol, source.label),
-      ...summarizeDebugTokenMetrics(source),
-      createdAt: toDebugNullable(source.createdAt),
-      lastSeenAt: toDebugNullable(source.lastSeenAt),
-      lastEvaluatedAt: toDebugNullable(source.lastEvaluatedAt),
-    };
-  }
-
-  function summarizeRecentDebugDelta(previous: string[], next: string[]) {
-    const previousSet = new Set(previous);
-    const nextSet = new Set(next);
-    const added = next.filter((address) => !previousSet.has(address)).slice(0, 12);
-    const removed = previous.filter((address) => !nextSet.has(address)).slice(0, 12);
-    const moved = next
-      .map((address, nextIndex) => ({
-        address,
-        previousIndex: previous.indexOf(address),
-        nextIndex,
-      }))
-      .filter((item) => item.previousIndex >= 0 && item.previousIndex !== item.nextIndex)
-      .slice(0, 12);
-
-    return {
-      added: added.map(summarizeRecentDebugAddress),
-      removed: removed.map(summarizeRecentDebugAddress),
-      moved,
-    };
   }
 
   function formatDebugErrorMessage(error: unknown) {
@@ -7576,12 +7626,15 @@ export function createAppController(): AppController {
   ) {
     const previousRecentAddresses = state.data.recentTokenAddresses.slice();
     const previousOldWeekAddresses = state.data.oldWeekTokenAddresses.slice();
+    const previousRecentDebugMap = buildPreviousRecentDebugMap(previousRecentAddresses);
     const requestedRecentPage = Math.max(0, Number(payload.recent?.page) || 0);
     const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek?.page) || 0);
     const recentTokens = payload.recent?.tokens || [];
     const oldWeekTokens = payload.oldWeek?.tokens || [];
     const nextRecentAddresses = recentTokens.map((item) => item.address);
     const nextOldWeekAddresses = oldWeekTokens.map((item) => item.address);
+    const nextRecentDebugMap = buildPayloadRecentDebugMap(recentTokens);
+    const historyRequestDebug = buildHistoryBootstrapRequest();
     const monitoredDashboardTokens = Array.from(new Map(
       [...recentTokens, ...oldWeekTokens].map((item) => [item.address, item]),
     ).values());
@@ -7601,20 +7654,32 @@ export function createAppController(): AppController {
     const missingOldWeekTracked = state.data.oldWeekTokenAddresses
       .filter((address) => !state.data.trackedTokensByAddress[address])
       .slice(0, 12);
+    const oldWeekPreviousSet = new Set(previousOldWeekAddresses);
+    const oldWeekNextSet = new Set(state.data.oldWeekTokenAddresses);
+    const oldWeekAddedCount = state.data.oldWeekTokenAddresses.filter((address) => !oldWeekPreviousSet.has(address)).length;
+    const oldWeekRemovedCount = previousOldWeekAddresses.filter((address) => !oldWeekNextSet.has(address)).length;
     recordRestoreControllerDebug('controller.history-bootstrap.apply', {
       generatedAt: payload.generatedAt ?? null,
       recentReturned: recentTokens.length,
       oldWeekReturned: oldWeekTokens.length,
       recentTotal: state.bars.recent,
       oldWeekTotal: state.bars.oldWeek,
-      recentRequest: buildHistoryBootstrapRequest().recent,
-      oldWeekRequest: buildHistoryBootstrapRequest().oldWeek,
-      recentDelta: summarizeRecentDebugDelta(previousRecentAddresses, state.data.recentTokenAddresses),
-      oldWeekDelta: summarizeRecentDebugDelta(previousOldWeekAddresses, state.data.oldWeekTokenAddresses),
+      recentRequest: summarizeHistoryRequestDebug(historyRequestDebug.recent),
+      oldWeekRequest: summarizeHistoryRequestDebug(historyRequestDebug.oldWeek),
+      recentDelta: summarizeCompactRecentDebugDelta(
+        previousRecentAddresses,
+        state.data.recentTokenAddresses,
+        previousRecentDebugMap,
+        nextRecentDebugMap,
+      ),
+      oldWeekDelta: {
+        addedCount: oldWeekAddedCount,
+        removedCount: oldWeekRemovedCount,
+      },
+      missingRecentTrackedCount: missingRecentTracked.length,
       missingRecentTracked,
-      missingOldWeekTracked,
-      recentPayloadHead: summarizeDashboardDebugTokens(recentTokens),
-      oldWeekPayloadHead: summarizeDashboardDebugTokens(oldWeekTokens),
+      missingOldWeekTrackedCount: missingOldWeekTracked.length,
+      recentHead: recentTokens.slice(0, 15).map((item, index) => summarizeCompactHistoryToken(item.address, item, index + 1)),
     });
   }
 
