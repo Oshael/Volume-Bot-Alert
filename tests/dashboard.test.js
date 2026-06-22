@@ -538,10 +538,12 @@ describe('Dashboard routes', () => {
 
   it('returns recent and old-week history bootstrap slices without loading full monitored payloads', async () => {
     const originalListDashboardHistoryBucket = tokenCatalog.listDashboardHistoryBucket;
+    const originalListDashboardHistoryBucketDebugProbe = tokenCatalog.listDashboardHistoryBucketDebugProbe;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
     const capturedCalls = [];
+    const capturedProbeCalls = [];
 
     tokenCatalog.listDashboardHistoryBucket = async (bucket, options) => {
       capturedCalls.push([bucket, options]);
@@ -639,6 +641,28 @@ describe('Dashboard routes', () => {
         }],
       };
     };
+    tokenCatalog.listDashboardHistoryBucketDebugProbe = async (bucket, options, addresses) => {
+      capturedProbeCalls.push([bucket, options, addresses]);
+      return [{
+        address: addresses[0],
+        symbol: 'WSOL',
+        included: false,
+        diagnosis: 'eligible_for_monitoring=false:gmgn-low-activity',
+        rank: null,
+        historySortScore: null,
+        eligibleForMonitoring: false,
+        eligibilityState: 'gmgn-low-activity',
+        suppressedReason: 'low_activity_24h',
+        monitorPriority: 'low',
+        mcap: 150000,
+        volume1h: 5000,
+        volume6h: 15000,
+        volume24h: 60000,
+        tokenCreatedAt: Date.UTC(2026, 3, 10, 12, 0, 0),
+        lastSeenAt: '2026-04-15T21:10:00.000Z',
+        lastEvaluatedAt: '2026-04-15T21:09:00.000Z',
+      }];
+    };
     tokenMeteoraState.listSummaryByAddresses = async (addresses) => addresses.map((address) => ({
       tokenAddress: address,
       lastCheckedAt: '2026-04-15T21:08:00.000Z',
@@ -662,6 +686,7 @@ describe('Dashboard routes', () => {
         .set('Origin', 'http://localhost:5173')
         .send({
           starredTokens: ['So11111111111111111111111111111111111111112'],
+          recentDebugProbeAddresses: ['So11111111111111111111111111111111111111112'],
           recent: {
             page: 1,
             perPage: 20,
@@ -722,8 +747,12 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.recent.tokens[0].catalogFirstSeenAt, Date.parse('2026-04-15T21:00:00.000Z'));
       assert.equal(res.body.oldWeek.total, 11);
       assert.equal(res.body.oldWeek.tokens[0].symbol, 'BONK');
+      assert.deepEqual(capturedProbeCalls, [['recent', capturedCalls[0][1], ['So11111111111111111111111111111111111111112']]]);
+      assert.equal(res.body.debug.recentProbe.length, 1);
+      assert.equal(res.body.debug.recentProbe[0].diagnosis, 'eligible_for_monitoring=false:gmgn-low-activity');
     } finally {
       tokenCatalog.listDashboardHistoryBucket = originalListDashboardHistoryBucket;
+      tokenCatalog.listDashboardHistoryBucketDebugProbe = originalListDashboardHistoryBucketDebugProbe;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;

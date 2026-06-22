@@ -1076,6 +1076,167 @@ function buildHistoryBucketQueryParamsWithLimit(params) {
   ];
 }
 
+function shiftSqlPlaceholders(sql, offset) {
+  return sql.replace(/\$(\d+)/g, (_match, value) => `$${Number(value) + offset}`);
+}
+
+function getHistoryBucketProbeAgeDiagnosis(row, params) {
+  const createdAtMs = Number(row.last_token_created_at_ms);
+  if (params.bucket === 'oldWeek' && params.ageParams.length < 2) {
+    if (createdAtMs > params.ageParams[0]) return 'age_too_young';
+    return null;
+  } else {
+    if (createdAtMs < params.ageParams[0]) return 'age_too_old';
+    if (createdAtMs > params.ageParams[1]) return 'age_too_young';
+  }
+  return null;
+}
+
+function matchesHistoryBucketSearch(row, searchPattern) {
+  if (!searchPattern) {
+    return true;
+  }
+
+  const searchNeedle = searchPattern.replace(/%/g, '').toLowerCase();
+  const haystack = `${row.symbol || ''} ${row.name || ''} ${row.address || ''}`.toLowerCase();
+  return haystack.includes(searchNeedle);
+}
+
+function diagnoseHistoryBucketProbe(row, params) {
+  if (!row.catalog_present) return 'catalog_missing';
+  if (row.included_rank) return 'included_by_filters';
+  if (!row.eligible_for_monitoring) {
+    return `eligible_for_monitoring=false:${row.suppressed_reason || row.eligibility_state || 'unknown'}`;
+  }
+  if (!row.last_token_created_at_ms || Number(row.last_token_created_at_ms) <= 0) {
+    return 'missing_token_created_at';
+  }
+
+  const ageDiagnosis = getHistoryBucketProbeAgeDiagnosis(row, params);
+  if (ageDiagnosis) return ageDiagnosis;
+
+  const mcap = Number(row.last_mcap) || 0;
+  if (mcap < params.minMcap) return 'mcap_below_min';
+  if (params.maxMcap > 0 && mcap > params.maxMcap) return 'mcap_above_max';
+  if (!matchesHistoryBucketSearch(row, params.searchPattern)) return 'search_mismatch';
+  if (params.dismissedAddresses.includes(row.address)) return 'dismissed';
+  if (params.starredOnly && !params.starredAddresses.includes(row.address)) return 'starred_only_mismatch';
+  return 'excluded_unknown';
+}
+
+async function listDashboardHistoryBucketDebugProbe(bucket, options = {}, addresses = []) {
+  const unique = Array.from(new Set(
+    (Array.isArray(addresses) ? addresses : [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => isValidAddress(item))
+  )).slice(0, 50);
+
+  if (!unique.length) {
+    return [];
+  }
+
+  const normalized = buildHistoryBucketQueryParams(bucket, options);
+  if (!normalized.ok) {
+    return unique.map((address) => ({
+      address,
+      included: false,
+      diagnosis: 'starred_only_empty',
+    }));
+  }
+
+  const { params } = normalized;
+  const whereSql = buildHistoryBucketWhereSql(params).map((clause) => shiftSqlPlaceholders(clause, 1));
+  const whereParams = buildHistoryBucketWhereParams(params);
+  const rankedOrderSql = params.orderSql.replace(/\btc\./g, 'scored.');
+
+  const { rows } = await db.query(
+    `WITH requested AS (
+       SELECT address, ordinality AS input_order
+       FROM unnest($1::varchar[]) WITH ORDINALITY AS probe(address, ordinality)
+     ),
+     scored AS (
+       SELECT
+         tc.address,
+         tc.last_mcap,
+         tc.last_vol_1h,
+         tc.last_vol_6h,
+         tc.last_vol_24h,
+         tc.last_price_change_1h,
+         tc.last_price_change_6h,
+         tc.last_price_change_24h,
+         tc.last_token_created_at_ms,
+         ${params.scoreSql} AS history_sort_score
+       FROM token_catalog tc
+       LEFT JOIN token_risk_reviews trr
+         ON trr.token_address = tc.address
+       LEFT JOIN admin_blocked_tokens ab
+         ON ab.address = tc.address
+       LEFT JOIN token_risk_enrichment tre
+         ON tre.token_address = tc.address
+       WHERE ${whereSql.join('\n         AND ')}
+     ),
+     ranked AS (
+       SELECT
+         scored.address,
+         scored.history_sort_score,
+         ROW_NUMBER() OVER (ORDER BY ${rankedOrderSql}) AS included_rank
+       FROM scored
+     )
+     SELECT
+       requested.address,
+       requested.input_order,
+       tc.address IS NOT NULL AS catalog_present,
+       tc.symbol,
+       tc.name,
+       tc.eligible_for_monitoring,
+       tc.eligibility_state,
+       tc.suppressed_reason,
+       tc.monitor_priority,
+       tc.last_mcap,
+       tc.last_vol_1h,
+       tc.last_vol_6h,
+       tc.last_vol_24h,
+       tc.last_price_change_1h,
+       tc.last_price_change_6h,
+       tc.last_price_change_24h,
+       tc.last_token_created_at_ms,
+       tc.last_seen_at,
+       tc.last_evaluated_at,
+       ranked.included_rank,
+       ranked.history_sort_score
+     FROM requested
+     LEFT JOIN token_catalog tc
+       ON tc.address = requested.address
+     LEFT JOIN ranked
+       ON ranked.address = requested.address
+     ORDER BY requested.input_order ASC`,
+    [unique, ...whereParams]
+  );
+
+  return rows.map((row) => ({
+    address: row.address,
+    symbol: row.symbol || null,
+    included: Boolean(row.included_rank),
+    diagnosis: diagnoseHistoryBucketProbe(row, params),
+    rank: row.included_rank ? Number(row.included_rank) : null,
+    historySortScore: row.history_sort_score != null ? Number(row.history_sort_score) : null,
+    eligibleForMonitoring: row.eligible_for_monitoring,
+    eligibilityState: row.eligibility_state || null,
+    suppressedReason: row.suppressed_reason || null,
+    monitorPriority: row.monitor_priority || null,
+    mcap: row.last_mcap != null ? Number(row.last_mcap) : null,
+    volume1h: row.last_vol_1h != null ? Number(row.last_vol_1h) : null,
+    volume6h: row.last_vol_6h != null ? Number(row.last_vol_6h) : null,
+    volume24h: row.last_vol_24h != null ? Number(row.last_vol_24h) : null,
+    priceChange1h: row.last_price_change_1h != null ? Number(row.last_price_change_1h) : null,
+    priceChange6h: row.last_price_change_6h != null ? Number(row.last_price_change_6h) : null,
+    priceChange24h: row.last_price_change_24h != null ? Number(row.last_price_change_24h) : null,
+    tokenCreatedAt: row.last_token_created_at_ms != null ? Number(row.last_token_created_at_ms) : null,
+    lastSeenAt: row.last_seen_at || null,
+    lastEvaluatedAt: row.last_evaluated_at || null,
+  }));
+}
+
 async function listDashboardHistoryBucket(bucket, options = {}) {
   const normalized = buildHistoryBucketQueryParams(bucket, options);
   if (!normalized.ok) {
@@ -1747,6 +1908,7 @@ module.exports = {
   listDashboardMonitoredSlice,
   listDashboardTopPerformers,
   listDashboardHistoryBucket,
+  listDashboardHistoryBucketDebugProbe,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,
   listRiskEnrichmentCandidates,

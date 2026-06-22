@@ -149,10 +149,36 @@ export interface DashboardHistoryBucketSlicePayload {
   tokens: DashboardMonitoredToken[];
 }
 
+export interface DashboardHistoryDebugProbeEntry {
+  address: string;
+  symbol?: string | null;
+  included?: boolean;
+  diagnosis?: string | null;
+  rank?: number | null;
+  historySortScore?: number | null;
+  eligibleForMonitoring?: boolean | null;
+  eligibilityState?: string | null;
+  suppressedReason?: string | null;
+  monitorPriority?: string | null;
+  mcap?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
+  volume24h?: number | null;
+  priceChange1h?: number | null;
+  priceChange6h?: number | null;
+  priceChange24h?: number | null;
+  tokenCreatedAt?: number | null;
+  lastSeenAt?: string | null;
+  lastEvaluatedAt?: string | null;
+}
+
 export interface DashboardHistoryBootstrapPayload {
   generatedAt?: string | null;
   recent: DashboardHistoryBucketSlicePayload;
   oldWeek: DashboardHistoryBucketSlicePayload;
+  debug?: {
+    recentProbe?: DashboardHistoryDebugProbeEntry[];
+  } | null;
 }
 
 export interface DashboardTopPerformerToken extends DashboardMonitoredToken {
@@ -443,6 +469,7 @@ export function fetchDashboardHistoryBootstrap(
     starredTokens?: string[];
     recent?: DashboardHistoryBucketRequest;
     oldWeek?: DashboardHistoryBucketRequest;
+    recentDebugProbeAddresses?: string[];
   },
   token?: string | null,
 ) {
@@ -452,12 +479,14 @@ export function fetchDashboardHistoryBootstrap(
       starredTokens: payload.starredTokens ?? [],
       recent: payload.recent ?? {},
       oldWeek: payload.oldWeek ?? {},
+      recentDebugProbeAddresses: payload.recentDebugProbeAddresses ?? [],
     }),
     token,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
     recent: normalizeDashboardHistoryBucketSlice(response.recent),
     oldWeek: normalizeDashboardHistoryBucketSlice(response.oldWeek),
+    debug: response.debug ?? null,
   }));
 }
 

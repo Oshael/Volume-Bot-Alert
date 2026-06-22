@@ -40,7 +40,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -235,6 +235,7 @@ type HistoryBootstrapRequestPayload = {
   starredTokens: string[];
   recent: DashboardHistoryBucketRequest;
   oldWeek: DashboardHistoryBucketRequest;
+  recentDebugProbeAddresses?: string[];
 };
 
 type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>;
@@ -1663,6 +1664,38 @@ export function createAppController(): AppController {
       removed: removedAddresses.slice(0, 6).map((address) => previousMap.get(address) || summarizeCompactHistoryToken(address)),
       moved: moved.slice(0, 8),
     };
+  }
+
+  function summarizeHistoryDebugProbe(
+    probe: DashboardHistoryDebugProbeEntry[] | undefined,
+    previous: string[],
+    next: string[],
+  ) {
+    if (!probe?.length) {
+      return [];
+    }
+
+    const nextSet = new Set(next);
+    const removedSet = new Set(previous.filter((address) => !nextSet.has(address)));
+    return probe
+      .filter((item) => removedSet.has(item.address))
+      .slice(0, 8)
+      .map((item) => ({
+        address: item.address,
+        symbol: item.symbol ?? null,
+        included: Boolean(item.included),
+        diagnosis: item.diagnosis ?? null,
+        rank: item.rank ?? null,
+        score: toDebugNumber(item.historySortScore, 6),
+        mcap: toDebugNumber(item.mcap),
+        v24: toDebugNumber(item.volume24h),
+        v6: toDebugNumber(item.volume6h),
+        v1: toDebugNumber(item.volume1h),
+        eligible: item.eligibleForMonitoring ?? null,
+        state: item.eligibilityState ?? null,
+        suppressed: item.suppressedReason ?? null,
+        evaluatedAt: item.lastEvaluatedAt ?? null,
+      }));
   }
 
   function summarizeDashboardDebugTokens(tokens: DashboardMonitoredToken[] = []) {
@@ -7530,8 +7563,13 @@ export function createAppController(): AppController {
   }
 
   function buildHistoryBootstrapRequest(): HistoryBootstrapRequestPayload {
+    const recentDebugProbeAddresses = isRuntimePerfDebugActive()
+      ? state.data.recentTokenAddresses.slice(0, 30)
+      : [];
+
     return {
       starredTokens: [...state.data.starredTokens],
+      recentDebugProbeAddresses,
       recent: {
         page: state.ui.recentPage,
         perPage: state.ui.recentPerPage,
@@ -7671,6 +7709,11 @@ export function createAppController(): AppController {
         state.data.recentTokenAddresses,
         previousRecentDebugMap,
         nextRecentDebugMap,
+      ),
+      recentProbe: summarizeHistoryDebugProbe(
+        payload.debug?.recentProbe,
+        previousRecentAddresses,
+        state.data.recentTokenAddresses,
       ),
       oldWeekDelta: {
         addedCount: oldWeekAddedCount,

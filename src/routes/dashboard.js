@@ -238,8 +238,15 @@ function parseHistoryBucketRequest(body = {}, name) {
   };
 }
 
-function buildHistoryBootstrapPayload(recentResult, oldWeekResult, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress) {
-  return {
+function buildHistoryBootstrapPayload(
+  recentResult,
+  oldWeekResult,
+  meteoraByAddress,
+  marketMcapBaselineByAddress,
+  marketVolumeBaselineByAddress,
+  debug = null
+) {
+  const payload = {
     generatedAt: new Date().toISOString(),
     recent: {
       total: recentResult.total,
@@ -256,6 +263,12 @@ function buildHistoryBootstrapPayload(recentResult, oldWeekResult, meteoraByAddr
       tokens: oldWeekResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
     },
   };
+
+  if (debug) {
+    payload.debug = debug;
+  }
+
+  return payload;
 }
 
 router.use(authenticate);
@@ -660,8 +673,13 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
     return res.status(400).json({ error: oldWeek.error });
   }
 
+  const recentDebugProbeAddresses = parseAddressArray(req.body?.recentDebugProbeAddresses, 'recentDebugProbeAddresses');
+  if (!recentDebugProbeAddresses.ok) {
+    return res.status(400).json({ error: recentDebugProbeAddresses.error });
+  }
+
   try {
-    const [recentResult, oldWeekResult] = await Promise.all([
+    const [recentResult, oldWeekResult, recentDebugProbe] = await Promise.all([
       tokenCatalog.listDashboardHistoryBucket('recent', {
         ...recent.value,
         starredAddresses: starredAddresses.value,
@@ -670,6 +688,12 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
         ...oldWeek.value,
         starredAddresses: starredAddresses.value,
       }),
+      recentDebugProbeAddresses.value.length > 0
+        ? tokenCatalog.listDashboardHistoryBucketDebugProbe('recent', {
+            ...recent.value,
+            starredAddresses: starredAddresses.value,
+          }, recentDebugProbeAddresses.value)
+        : Promise.resolve([]),
     ]);
 
     const addresses = Array.from(new Set([
@@ -705,6 +729,7 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
       meteoraByAddress,
       marketMcapBaselineByAddress,
       marketVolumeBaselineByAddress,
+      recentDebugProbe.length > 0 ? { recentProbe: recentDebugProbe } : null,
     );
 
     res.json(payload);

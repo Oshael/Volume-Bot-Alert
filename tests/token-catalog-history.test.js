@@ -77,6 +77,48 @@ describe('token-catalog history bucket queries', () => {
     }
   });
 
+  it('builds a valid SQL statement for dashboard history debug probes', async () => {
+    const originalQuery = db.query;
+    const captured = {
+      sql: '',
+      params: null,
+    };
+
+    db.query = async (sql, params) => {
+      captured.sql = String(sql);
+      captured.params = params;
+      return { rows: [] };
+    };
+
+    try {
+      const result = await tokenCatalog.listDashboardHistoryBucketDebugProbe('recent', {
+        page: 0,
+        perPage: 30,
+        searchQuery: '',
+        starredOnly: false,
+        sorts: [{ mode: 'vol', window: '24h' }, { mode: 'vol', window: '6h' }, { mode: 'vol', window: '1h' }],
+        dismissedAddresses: [],
+        starredAddresses: [],
+        mcapMin: 30000,
+        mcapMax: 100000000,
+        ageMinMinutes: 30,
+        ageMaxMinutes: 10080,
+      }, ['So11111111111111111111111111111111111111112']);
+
+      assert.deepEqual(result, []);
+      assert.match(captured.sql, /^WITH requested AS \(/);
+      assert.match(captured.sql, /FROM unnest\(\$1::varchar\[\]\) WITH ORDINALITY/);
+      assert.match(captured.sql, /tc\.last_token_created_at_ms >= \$2 AND tc\.last_token_created_at_ms <= \$3/);
+      assert.match(captured.sql, /COALESCE\(tc\.last_mcap, 0\) >= \$4/);
+      assert.match(captured.sql, /ROW_NUMBER\(\) OVER \(ORDER BY history_sort_score DESC,\s+COALESCE\(scored\.last_vol_24h, 0\) DESC,/);
+      assert.ok(Array.isArray(captured.params));
+      assert.equal(captured.params.length, 9);
+      assert.deepEqual(captured.params[0], ['So11111111111111111111111111111111111111112']);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('uses a single upper age bound for old-week buckets', async () => {
     const originalQuery = db.query;
     const captured = {
