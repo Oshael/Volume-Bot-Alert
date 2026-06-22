@@ -742,6 +742,56 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.snapshot.vol6h, 953689.09);
   });
 
+  it('does not let incoherent GMGN 24h volume replace a stronger existing 24h window', async () => {
+    const catalog = createTokenCatalogStub();
+    const bucketWrites = [];
+    catalog.getByAddress = async (address) => ({
+      address,
+      source: 'gmgn',
+      eligibility_state: 'dex-high',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_vol_1h: 50376.47,
+      last_vol_6h: 1051261.67,
+      last_vol_24h: 1703467.79,
+    });
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot(),
+      vol1h: 68894.7,
+      vol6h: 3967.08,
+      vol24h: 3967.08,
+      tokenCreatedAt: '2026-04-03T06:00:00.000Z',
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: catalog,
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          bucketWrites.push(payload);
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+    });
+
+    const upsertPayload = catalog.calls.find((call) => call[0] === 'upsertToken')[1];
+    const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
+
+    assert.equal(upsertPayload.vol1h, 68894.7);
+    assert.equal(upsertPayload.vol6h, 3967.08);
+    assert.equal(upsertPayload.vol24h, 1703467.79);
+    assert.equal(evaluationPayload.vol24h, 1703467.79);
+    assert.equal(evaluationPayload.eligibilityState, 'gmgn-high');
+    assert.equal(evaluationPayload.eligibleForMonitoring, true);
+    assert.equal(bucketWrites[0].vol24h, 1703467.79);
+    assert.equal(result.snapshot.vol24h, 1703467.79);
+  });
+
   it('keeps Dex-confirmed 5m volume when GMGN reports inconsistent interval volume', async () => {
     const catalog = createTokenCatalogStub();
     const bucketWrites = [];

@@ -10,7 +10,10 @@ const gmgnRiskReviewQueue = require('./gmgn-risk-review-queue');
 const userAlertMatcher = require('./user-alert-matcher');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
-const { isVolume24hCoherentWithShorterWindows } = require('./volume-window-consistency');
+const {
+  isVolume24hCoherentWithShorterWindows,
+  normalizeVolume24hWithShorterWindows,
+} = require('./volume-window-consistency');
 const {
   AUTO_BLOCK_LABEL_PREFIXES,
   buildCommaSuffixAutoBlockLabel,
@@ -291,7 +294,9 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
     }
   }
 
-  return next;
+  return normalizeVolume24hWithShorterWindows(next, {
+    vol24h: tokenBefore.last_vol_24h,
+  });
 }
 
 function buildPreservedGmgnEvaluation(snapshot, tokenBefore, marketCap, nextEvaluationAt) {
