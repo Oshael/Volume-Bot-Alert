@@ -8,6 +8,7 @@ const gmgnClient = require('./gmgn-client');
 const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const { isVolume24hCoherentWithShorterWindows } = require('./volume-window-consistency');
 const { extractDexSocialLinks } = require('../utils/dex-social-links');
 const {
   AUTO_BLOCK_LABEL_PREFIXES,
@@ -1059,16 +1060,19 @@ async function handlePostBucketAutoBlocks(token, updatedToken, bestPair, snapsho
   return null;
 }
 
-function isLowActivityAutoToken(token, vol24h) {
+function isLowActivityAutoToken(token, vol24h, volumeWindows = {}) {
   const numericVol24h = Number(vol24h);
+  const vol1h = volumeWindows.vol1h ?? token?.last_vol_1h;
+  const vol6h = volumeWindows.vol6h ?? token?.last_vol_6h;
   return !isManualSource(token)
     && Number.isFinite(numericVol24h)
     && numericVol24h >= 0
-    && numericVol24h < LOW_ACTIVITY_24H_MAX_VOL;
+    && numericVol24h < LOW_ACTIVITY_24H_MAX_VOL
+    && isVolume24hCoherentWithShorterWindows({ vol1h, vol6h, vol24h: numericVol24h });
 }
 
-function getLowActivityMinimumRecheckMs(token, vol24h) {
-  return isLowActivityAutoToken(token, vol24h) ? LOW_ACTIVITY_RECHECK_MS : 0;
+function getLowActivityMinimumRecheckMs(token, vol24h, volumeWindows = {}) {
+  return isLowActivityAutoToken(token, vol24h, volumeWindows) ? LOW_ACTIVITY_RECHECK_MS : 0;
 }
 
 function derivePrioritySnapshot(bestPair, token = null) {
@@ -1095,7 +1099,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
   const txns24hSells = toNumber(bestPair?.txns?.h24?.sells);
 
   const applyLowActivityCooldown = (delayMs, randomValue = Math.random()) => {
-    const minimumDelayMs = getLowActivityMinimumRecheckMs(token, vol24h);
+    const minimumDelayMs = getLowActivityMinimumRecheckMs(token, vol24h, { vol1h, vol6h });
     const safeDelayMs = normalizeDelayMs(delayMs, minimumDelayMs || LOOP_INTERVAL_MS);
     if (minimumDelayMs > safeDelayMs) {
       return addPriorityJitter(minimumDelayMs, LOW_ACTIVITY_JITTER_MS, randomValue);
@@ -1104,7 +1108,7 @@ function derivePrioritySnapshot(bestPair, token = null) {
   };
 
   const maybeSuppressLowActivity = (snapshot) => {
-    if (!isLowActivityAutoToken(token, vol24h)) {
+    if (!isLowActivityAutoToken(token, vol24h, { vol1h, vol6h })) {
       return snapshot;
     }
 

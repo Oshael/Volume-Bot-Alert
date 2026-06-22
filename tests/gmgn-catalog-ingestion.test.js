@@ -532,7 +532,7 @@ describe('gmgn catalog ingestion', () => {
 
   it('suppresses low-activity automatic GMGN tokens using the existing 24h volume guard', () => {
     const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
-      { ...createSnapshot(), vol24h: 1200 },
+      { ...createSnapshot(), vol1h: 300, vol6h: 900, vol24h: 1200 },
       { source: 'dexscreener-discovery' },
       {
         now: () => new Date('2026-05-03T07:00:00.000Z'),
@@ -544,6 +544,30 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(evaluation.eligibleForMonitoring, false);
     assert.equal(evaluation.suppressedReason, 'low_activity_24h');
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:03:00.000Z');
+  });
+
+  it('preserves the previous GMGN state when low 24h volume conflicts with active shorter windows', () => {
+    const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
+      { ...createSnapshot(), vol1h: 68894.7, vol6h: 3967.08, vol24h: 3967.08 },
+      {
+        source: 'gmgn',
+        eligible_for_monitoring: true,
+        eligibility_state: 'dex-high',
+        suppressed_reason: null,
+        monitor_priority: 'high',
+        next_evaluation_at: new Date('2026-05-03T07:00:05.000Z'),
+      },
+      {
+        now: () => new Date('2026-05-03T07:00:00.000Z'),
+        activeDexRecheckMs: 30000,
+      }
+    );
+
+    assert.equal(evaluation.eligibilityState, 'dex-high');
+    assert.equal(evaluation.eligibleForMonitoring, true);
+    assert.equal(evaluation.suppressedReason, null);
+    assert.equal(evaluation.monitorPriority, 'high');
+    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:00:05.000Z');
   });
 
   it('does not defer an existing Dex recheck when GMGN refreshes a Dex-confirmed token', () => {

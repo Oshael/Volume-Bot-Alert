@@ -10,6 +10,7 @@ const gmgnRiskReviewQueue = require('./gmgn-risk-review-queue');
 const userAlertMatcher = require('./user-alert-matcher');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const { isVolume24hCoherentWithShorterWindows } = require('./volume-window-consistency');
 const {
   AUTO_BLOCK_LABEL_PREFIXES,
   buildCommaSuffixAutoBlockLabel,
@@ -293,6 +294,20 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
   return next;
 }
 
+function buildPreservedGmgnEvaluation(snapshot, tokenBefore, marketCap, nextEvaluationAt) {
+  if (!tokenBefore || tokenBefore.eligible_for_monitoring == null) {
+    return null;
+  }
+
+  return buildEvaluationPayload(snapshot, {
+    eligibilityState: tokenBefore.eligibility_state || resolveEligibilityState(marketCap),
+    eligibleForMonitoring: tokenBefore.eligible_for_monitoring === true,
+    suppressedReason: tokenBefore.suppressed_reason || null,
+    monitorPriority: tokenBefore.monitor_priority || resolveMonitorPriority(marketCap),
+    nextEvaluationAt,
+  });
+}
+
 function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
@@ -326,16 +341,23 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   }
 
   if (!isManual && vol24h != null && vol24h >= 0 && vol24h < LOW_ACTIVITY_24H_MAX_VOL) {
-    return buildEvaluationPayload(snapshot, {
-      eligibilityState: 'gmgn-low-activity',
-      eligibleForMonitoring: false,
-      suppressedReason: 'low_activity_24h',
-      monitorPriority: 'low',
-      nextEvaluationAt: resolveGmgnNextEvaluationAt(
-        tokenBefore,
-        new Date(now.getTime() + LOW_ACTIVITY_RECHECK_MS)
-      ),
-    });
+    if (!isVolume24hCoherentWithShorterWindows(snapshot)) {
+      const preserved = buildPreservedGmgnEvaluation(snapshot, tokenBefore, marketCap, nextEvaluationAt);
+      if (preserved) {
+        return preserved;
+      }
+    } else {
+      return buildEvaluationPayload(snapshot, {
+        eligibilityState: 'gmgn-low-activity',
+        eligibleForMonitoring: false,
+        suppressedReason: 'low_activity_24h',
+        monitorPriority: 'low',
+        nextEvaluationAt: resolveGmgnNextEvaluationAt(
+          tokenBefore,
+          new Date(now.getTime() + LOW_ACTIVITY_RECHECK_MS)
+        ),
+      });
+    }
   }
 
   if (!isManual && shouldSuppressGmgnForRiskEnrichment(snapshot, now)) {

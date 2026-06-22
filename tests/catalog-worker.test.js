@@ -267,11 +267,11 @@ describe('catalog worker drift compensation', () => {
     assert.ok(nextMs >= 3 * 60 * 1000 && nextMs <= 4 * 60 * 1000, `expected 3m low-activity cadence with jitter, got ${nextMs}ms`);
   });
 
-  it('suppresses auto high-cap tokens below 5k volume24h and slows them to at least 3m', () => {
+  it('suppresses auto high-cap tokens below 5k coherent volume24h and slows them to at least 3m', () => {
     const now = Date.now();
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({
       marketCap: 250000,
-      volume: { h24: 4500, h6: 60000 },
+      volume: { h24: 4500, h6: 3200, h1: 900 },
       priceChange: {},
     });
 
@@ -281,6 +281,22 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.eligibilityState, 'dex-low-activity');
     assert.equal(snapshot.suppressedReason, 'low_activity_24h');
     assert.ok(nextMs >= 3 * 60 * 1000 && nextMs <= 4 * 60 * 1000, `expected 3m low-activity cadence with jitter, got ${nextMs}ms`);
+  });
+
+  it('does not suppress active auto tokens when volume24h is lower than shorter windows', () => {
+    const now = Date.now();
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      marketCap: 250000,
+      volume: { h24: 4500, h6: 60000, h1: 12000 },
+      priceChange: {},
+    });
+
+    const nextMs = snapshot.nextEvaluationAt.getTime() - now;
+    assert.equal(snapshot.monitorPriority, 'high');
+    assert.equal(snapshot.eligibleForMonitoring, true);
+    assert.equal(snapshot.eligibilityState, 'dex-high');
+    assert.equal(snapshot.suppressedReason, null);
+    assert.ok(nextMs < 3 * 60 * 1000, `expected active high-cap cadence without low-activity cooldown, got ${nextMs}ms`);
   });
 
   it('does not accelerate low-dust auto tokens that are already slower than 3m', () => {
@@ -370,7 +386,8 @@ describe('catalog worker drift compensation', () => {
       monitor_priority: 'high',
       last_mcap: 180000,
       last_vol_24h: 4200,
-      last_vol_6h: 80000,
+      last_vol_6h: 3200,
+      last_vol_1h: 900,
     };
 
     assert.equal(catalogWorker.__private.getThrottleTokenBucket(token), 'low-dust');
