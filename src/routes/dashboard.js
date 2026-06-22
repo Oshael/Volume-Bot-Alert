@@ -353,6 +353,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     priceChange1h: toNumberOrNull(item.last_price_change_1h),
     priceChange6h: toNumberOrNull(item.last_price_change_6h),
     priceChange24h: toNumberOrNull(item.last_price_change_24h),
+    historySortScore: toNumberOrNull(item.history_sort_score),
     tokenCreatedAt: toNumberOrNull(item.last_token_created_at_ms),
     catalogFirstSeenAt: toTimestampMsOrNull(item.first_seen_at),
     prevMcap: marketBaseline.prevMcap,

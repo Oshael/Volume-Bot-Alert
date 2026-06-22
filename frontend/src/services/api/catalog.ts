@@ -84,6 +84,7 @@ export interface DashboardMonitoredToken {
   priceChange1h?: number | null;
   priceChange6h?: number | null;
   priceChange24h?: number | null;
+  historySortScore?: number | null;
   tokenCreatedAt?: number | null;
   catalogFirstSeenAt?: number | null;
   prevMcap?: number | null;

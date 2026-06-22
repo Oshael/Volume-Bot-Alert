@@ -93,6 +93,7 @@ export interface ManualTokenEntry {
   priceChange1h?: number | null;
   priceChange6h?: number | null;
   priceChange24h?: number | null;
+  historySortScore?: number | null;
   mcapDelta?: number | null;
   prevVolume5m?: number | null;
   prevVolume5mCanonical?: number | null;

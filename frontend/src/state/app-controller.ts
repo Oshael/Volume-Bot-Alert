@@ -308,6 +308,7 @@ const TRACKED_MARKET_FIELD_KEYS = [
   'priceChange1h',
   'priceChange6h',
   'priceChange24h',
+  'historySortScore',
   'mcapDelta',
   'prevMcap',
   'prevVolume5mCanonical',
@@ -1559,26 +1560,48 @@ export function createAppController(): AppController {
     return state.session.role === 'admin' && isRuntimePerfDebugEnabled();
   }
 
+  function toDebugNullable<T>(value: T | null | undefined) {
+    return value ?? null;
+  }
+
+  function toDebugSymbol(symbol: string | null | undefined, fallback?: string | null) {
+    return symbol ?? fallback ?? '';
+  }
+
+  function summarizeDebugTokenMetrics(item: Partial<ManualTokenEntry & DashboardMonitoredToken>) {
+    return {
+      mcap: toDebugNullable(item.mcap),
+      vol1h: toDebugNullable(item.volume1h),
+      vol6h: toDebugNullable(item.volume6h),
+      vol24h: toDebugNullable(item.volume24h),
+      pchange1h: toDebugNullable(item.priceChange1h),
+      pchange6h: toDebugNullable(item.priceChange6h),
+      pchange24h: toDebugNullable(item.priceChange24h),
+      historySortScore: toDebugNullable(item.historySortScore),
+    };
+  }
+
   function summarizeDashboardDebugTokens(tokens: DashboardMonitoredToken[] = []) {
     return tokens.slice(0, 8).map((item) => ({
       address: item.address,
-      symbol: item.symbol ?? '',
-      mcap: item.mcap ?? null,
-      createdAt: item.tokenCreatedAt ?? null,
-      lastSeenAt: item.lastSeenAt ?? null,
-      lastEvaluatedAt: item.lastEvaluatedAt ?? null,
+      symbol: toDebugSymbol(item.symbol),
+      ...summarizeDebugTokenMetrics(item),
+      createdAt: toDebugNullable(item.tokenCreatedAt),
+      lastSeenAt: toDebugNullable(item.lastSeenAt),
+      lastEvaluatedAt: toDebugNullable(item.lastEvaluatedAt),
     }));
   }
 
   function summarizeRecentDebugAddress(address: string) {
     const item = state.data.trackedTokensByAddress[address];
+    const source: Partial<ManualTokenEntry> = item || {};
     return {
       address,
-      symbol: item?.symbol ?? item?.label ?? '',
-      mcap: item?.mcap ?? null,
-      createdAt: item?.createdAt ?? null,
-      lastSeenAt: item?.lastSeenAt ?? null,
-      lastEvaluatedAt: item?.lastEvaluatedAt ?? null,
+      symbol: toDebugSymbol(source.symbol, source.label),
+      ...summarizeDebugTokenMetrics(source),
+      createdAt: toDebugNullable(source.createdAt),
+      lastSeenAt: toDebugNullable(source.lastSeenAt),
+      lastEvaluatedAt: toDebugNullable(source.lastEvaluatedAt),
     };
   }
 
@@ -7409,6 +7432,7 @@ export function createAppController(): AppController {
       priceChange1h: toNullableTrackedValue(item.priceChange1h),
       priceChange6h: toNullableTrackedValue(item.priceChange6h),
       priceChange24h: toNullableTrackedValue(item.priceChange24h),
+      historySortScore: toNullableTrackedValue(item.historySortScore),
       tokenCreatedAt: toNullableTrackedValue(item.createdAt),
       prevMcap: toNullableTrackedValue(item.prevMcap),
       mcapDelta: toNullableTrackedValue(item.mcapDelta),
