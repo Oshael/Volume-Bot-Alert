@@ -742,7 +742,7 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.snapshot.vol6h, 953689.09);
   });
 
-  it('does not let incoherent GMGN 24h volume replace a stronger existing 24h window', async () => {
+  it('does not let incoherent GMGN cumulative volume replace stronger existing windows', async () => {
     const catalog = createTokenCatalogStub();
     const bucketWrites = [];
     catalog.getByAddress = async (address) => ({
@@ -783,12 +783,15 @@ describe('gmgn catalog ingestion', () => {
     const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
 
     assert.equal(upsertPayload.vol1h, 68894.7);
-    assert.equal(upsertPayload.vol6h, 3967.08);
+    assert.equal(upsertPayload.vol6h, 1051261.67);
     assert.equal(upsertPayload.vol24h, 1703467.79);
+    assert.equal(evaluationPayload.vol6h, 1051261.67);
     assert.equal(evaluationPayload.vol24h, 1703467.79);
     assert.equal(evaluationPayload.eligibilityState, 'gmgn-high');
     assert.equal(evaluationPayload.eligibleForMonitoring, true);
+    assert.equal(bucketWrites[0].vol6h, 1051261.67);
     assert.equal(bucketWrites[0].vol24h, 1703467.79);
+    assert.equal(result.snapshot.vol6h, 1051261.67);
     assert.equal(result.snapshot.vol24h, 1703467.79);
   });
 

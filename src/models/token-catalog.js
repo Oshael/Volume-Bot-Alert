@@ -4,6 +4,7 @@ const monitoredTokenExitEvent = require('./monitored-token-exit-event');
 const { isValidAddress } = require('./user-token');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
+const { normalizeCumulativeVolumeWindows } = require('../services/volume-window-consistency');
 
 const PUMPFUN_MIGRATION_GRACE_MS = 10 * 60 * 1000;
 const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
@@ -20,12 +21,13 @@ const DEFAULT_TOP_PERFORMERS_MIN_VOL_24H = 200000;
 const DEFAULT_TOP_PERFORMERS_MAX_PCHANGE_24H = 300;
 const DEFAULT_TOP_PERFORMERS_VOLUME_SLOT_LIMIT = 7;
 const DEFAULT_TOP_PERFORMERS_STATEMENT_TIMEOUT_MS = 5000;
+const EFFECTIVE_HISTORY_VOL_6H_SQL = 'GREATEST(COALESCE(tc.last_vol_6h, 0), COALESCE(tc.last_vol_1h, 0))';
 const EFFECTIVE_HISTORY_VOL_24H_SQL = 'GREATEST(COALESCE(tc.last_vol_24h, 0), COALESCE(tc.last_vol_6h, 0), COALESCE(tc.last_vol_1h, 0))';
 
 const HISTORY_BUCKET_SORT_COLUMNS = Object.freeze({
   vol: Object.freeze({
     '1h': 'tc.last_vol_1h',
-    '6h': 'tc.last_vol_6h',
+    '6h': EFFECTIVE_HISTORY_VOL_6H_SQL,
     '24h': EFFECTIVE_HISTORY_VOL_24H_SQL,
   }),
   mcap: Object.freeze({
@@ -826,9 +828,6 @@ async function preserveGmgnPositiveVolumeWindows(address, result, volumes) {
   if (String(result.evaluationSource || '').trim().toLowerCase() !== 'gmgn') {
     return volumes;
   }
-  if (volumes.lastVol1h !== 0 && volumes.lastVol6h !== 0 && volumes.lastVol24h !== 0) {
-    return volumes;
-  }
 
   const { rows } = await db.query(
     `SELECT last_vol_1h, last_vol_6h, last_vol_24h
@@ -838,7 +837,7 @@ async function preserveGmgnPositiveVolumeWindows(address, result, volumes) {
     [address]
   );
   const previous = rows[0] || {};
-  return {
+  const preserved = {
     ...volumes,
     lastVol1h: volumes.lastVol1h === 0 && toNullableNumber(previous.last_vol_1h) > 0
       ? toNullableNumber(previous.last_vol_1h)
@@ -849,6 +848,21 @@ async function preserveGmgnPositiveVolumeWindows(address, result, volumes) {
     lastVol24h: volumes.lastVol24h === 0 && toNullableNumber(previous.last_vol_24h) > 0
       ? toNullableNumber(previous.last_vol_24h)
       : volumes.lastVol24h,
+  };
+
+  const normalized = normalizeCumulativeVolumeWindows({
+    vol1h: preserved.lastVol1h,
+    vol6h: preserved.lastVol6h,
+    vol24h: preserved.lastVol24h,
+  }, {
+    vol6h: toNullableNumber(previous.last_vol_6h),
+    vol24h: toNullableNumber(previous.last_vol_24h),
+  });
+
+  return {
+    ...preserved,
+    lastVol6h: normalized.vol6h,
+    lastVol24h: normalized.vol24h,
   };
 }
 

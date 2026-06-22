@@ -11,7 +11,7 @@ const userAlertMatcher = require('./user-alert-matcher');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
 const {
-  isVolume24hCoherentWithShorterWindows,
+  isCumulativeVolumeWindowCoherent,
   normalizeVolume24hWithShorterWindows,
 } = require('./volume-window-consistency');
 const {
@@ -295,6 +295,7 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
   }
 
   return normalizeVolume24hWithShorterWindows(next, {
+    vol6h: tokenBefore.last_vol_6h,
     vol24h: tokenBefore.last_vol_24h,
   });
 }
@@ -346,7 +347,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
   }
 
   if (!isManual && vol24h != null && vol24h >= 0 && vol24h < LOW_ACTIVITY_24H_MAX_VOL) {
-    if (!isVolume24hCoherentWithShorterWindows(snapshot)) {
+    if (!isCumulativeVolumeWindowCoherent(snapshot)) {
       const preserved = buildPreservedGmgnEvaluation(snapshot, tokenBefore, marketCap, nextEvaluationAt);
       if (preserved) {
         return preserved;

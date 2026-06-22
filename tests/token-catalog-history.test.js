@@ -190,11 +190,11 @@ describe('token-catalog history bucket queries', () => {
       assert.equal(result.total, 0);
       assert.match(
         captured.sql,
-        /\(CUME_DIST\(\) OVER \(ORDER BY COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_vol_6h, 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_price_change_1h, 0\) ASC\)\) \/ 3 AS history_sort_score/
+        /\(CUME_DIST\(\) OVER \(ORDER BY COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) ASC\) \+ CUME_DIST\(\) OVER \(ORDER BY COALESCE\(tc\.last_price_change_1h, 0\) ASC\)\) \/ 3 AS history_sort_score/
       );
       assert.match(
         captured.sql,
-        /ORDER BY history_sort_score DESC,\s+COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) DESC,\s+COALESCE\(tc\.last_vol_6h, 0\) DESC,\s+COALESCE\(tc\.last_price_change_1h, 0\) DESC,/
+        /ORDER BY history_sort_score DESC,\s+COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_24h, 0\), COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) DESC,\s+COALESCE\(GREATEST\(COALESCE\(tc\.last_vol_6h, 0\), COALESCE\(tc\.last_vol_1h, 0\)\), 0\) DESC,\s+COALESCE\(tc\.last_price_change_1h, 0\) DESC,/
       );
       assert.ok(Array.isArray(captured.params));
       assert.equal(captured.params.length, 9);
