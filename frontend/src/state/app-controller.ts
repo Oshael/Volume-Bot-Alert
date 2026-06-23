@@ -454,20 +454,29 @@ export type AppRenderRegion =
   | 'alerts'
   | 'overlay';
 
-function isAuthRoutePath(pathname: string) {
-  return pathname === '/auth/verify-email' || pathname === '/auth/reset-password';
+function normalizeRoutePath(pathname: string | null | undefined) {
+  const value = String(pathname || '/').trim().toLowerCase();
+  if (value.length > 1 && value.endsWith('/')) {
+    return value.replace(/\/+$/, '');
+  }
+  return value || '/';
+}
+
+function isAuthRoutePath(pathname: string | null | undefined) {
+  const normalizedPathname = normalizeRoutePath(pathname);
+  return normalizedPathname === '/auth/verify-email' || normalizedPathname === '/auth/reset-password';
 }
 
 function isLoginRoutePath(pathname: string | null | undefined) {
-  return String(pathname || '').trim().toLowerCase() === '/login';
+  return normalizeRoutePath(pathname) === '/login';
 }
 
 function isPublicLandingRoutePath(pathname: string | null | undefined) {
-  return String(pathname || '').trim().toLowerCase() === '/';
+  return normalizeRoutePath(pathname) === '/';
 }
 
 function isAccountSecurityRoutePath(pathname: string | null | undefined) {
-  const value = String(pathname || '').trim().toLowerCase();
+  const value = normalizeRoutePath(pathname);
   return value === '/account-security' || value.startsWith('/account-security/');
 }
 
@@ -476,7 +485,7 @@ function hasAuthRouteIntent(locationLike: Location | null | undefined) {
     return false;
   }
 
-  const pathname = String(locationLike.pathname || '/');
+  const pathname = normalizeRoutePath(locationLike.pathname);
   if (isAuthRoutePath(pathname)) {
     return true;
   }
@@ -487,7 +496,7 @@ function hasAuthRouteIntent(locationLike: Location | null | undefined) {
 }
 
 function isPreAccessRoutePath(pathname: string | null | undefined) {
-  const value = String(pathname || '').trim().toLowerCase();
+  const value = normalizeRoutePath(pathname);
   return value === '/access' || value.startsWith('/access/');
 }
 
@@ -570,7 +579,7 @@ function getAuthRouteIntent(locationLike: Location | null | undefined): AuthRout
     return null;
   }
 
-  const pathname = String(locationLike.pathname || '/');
+  const pathname = normalizeRoutePath(locationLike.pathname);
   const search = new URLSearchParams(locationLike.search || '');
   const token = normalizeAuthRouteToken(String(search.get('token') || ''));
   const rawMode = String(search.get('mode') || '').trim().toLowerCase();
@@ -2521,7 +2530,7 @@ export function createAppController(): AppController {
     }
     const pathname = window.location.pathname || '/';
     const search = new URLSearchParams(window.location.search);
-    if (pathname === '/auth/verify-email' || pathname === '/auth/reset-password' || search.has('mode') || search.has('token')) {
+    if (isAuthRoutePath(pathname) || search.has('mode') || search.has('token')) {
       window.history.replaceState({}, document.title, '/login');
     }
   }
@@ -8393,6 +8402,9 @@ export function createAppController(): AppController {
   }
 
   function resetUiForAuthRouteIntent() {
+    if (state.session.status === 'loading') {
+      state.session.status = 'anonymous';
+    }
     setBusy(false);
     setError(null);
     setNotice(null);
