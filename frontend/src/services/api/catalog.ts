@@ -147,6 +147,7 @@ export interface DashboardHistoryBucketSlicePayload {
   perPage: number;
   count: number;
   tokens: DashboardMonitoredToken[];
+  pinnedTokens?: DashboardMonitoredToken[];
 }
 
 export interface DashboardHistoryDebugProbeEntry {
@@ -206,6 +207,7 @@ function normalizeDashboardHistoryBucketSlice(
     perPage: Number(slice?.perPage) || 30,
     count: Number(slice?.count) || 0,
     tokens: slice?.tokens || [],
+    pinnedTokens: slice?.pinnedTokens || [],
   };
 }
 
@@ -469,6 +471,8 @@ export function fetchDashboardHistoryBootstrap(
     starredTokens?: string[];
     recent?: DashboardHistoryBucketRequest;
     oldWeek?: DashboardHistoryBucketRequest;
+    recentPinnedAddresses?: string[];
+    oldWeekPinnedAddresses?: string[];
     recentDebugProbeAddresses?: string[];
   },
   token?: string | null,
@@ -479,6 +483,8 @@ export function fetchDashboardHistoryBootstrap(
       starredTokens: payload.starredTokens ?? [],
       recent: payload.recent ?? {},
       oldWeek: payload.oldWeek ?? {},
+      recentPinnedAddresses: payload.recentPinnedAddresses ?? [],
+      oldWeekPinnedAddresses: payload.oldWeekPinnedAddresses ?? [],
       recentDebugProbeAddresses: payload.recentDebugProbeAddresses ?? [],
     }),
     token,

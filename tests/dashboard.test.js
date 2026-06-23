@@ -539,11 +539,13 @@ describe('Dashboard routes', () => {
   it('returns recent and old-week history bootstrap slices without loading full monitored payloads', async () => {
     const originalListDashboardHistoryBucket = tokenCatalog.listDashboardHistoryBucket;
     const originalListDashboardHistoryBucketDebugProbe = tokenCatalog.listDashboardHistoryBucketDebugProbe;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
     const capturedCalls = [];
     const capturedProbeCalls = [];
+    const capturedPinnedMetadataCalls = [];
 
     tokenCatalog.listDashboardHistoryBucket = async (bucket, options) => {
       capturedCalls.push([bucket, options]);
@@ -663,6 +665,50 @@ describe('Dashboard routes', () => {
         lastEvaluatedAt: '2026-04-15T21:09:00.000Z',
       }];
     };
+    tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
+      capturedPinnedMetadataCalls.push(addresses);
+      return addresses.map((address, index) => ({
+        address,
+        symbol: index === 0 ? 'PINREC' : 'PINOLD',
+        name: index === 0 ? 'Pinned Recent' : 'Pinned Old',
+        eligible_for_monitoring: true,
+        last_mcap: index === 0 ? '180000' : '280000',
+        last_price: '1.5',
+        last_vol_5m: '800',
+        last_vol_1h: '6000',
+        last_vol_6h: '16000',
+        last_vol_24h: '62000',
+        last_price_change_1h: '1',
+        last_price_change_6h: '4',
+        last_price_change_24h: '8',
+        last_token_created_at_ms: Date.UTC(2026, 3, 12, 12, 0, 0),
+        last_pair_address: `pair_pinned_${index}`,
+        last_pair_url: `https://dexscreener.com/solana/pinned${index}`,
+        last_image_url: `https://example.com/pinned${index}.png`,
+        last_twitter_url: null,
+        last_community_url: null,
+        monitor_priority: 'normal',
+        first_seen_at: '2026-04-15T22:00:00.000Z',
+        last_seen_at: '2026-04-15T22:10:00.000Z',
+        last_evaluated_at: '2026-04-15T22:09:00.000Z',
+        risk_review_label: null,
+        risk_review_source: null,
+        risk_review_notes: null,
+        risk_review_updated_at: null,
+        blocked_label: null,
+        blocked_created_by: null,
+        blocked_created_at: null,
+        risk_enrichment_last_attempted_at: null,
+        risk_enrichment_last_enriched_at: null,
+        risk_enrichment_last_error: null,
+        risk_holder_count: null,
+        risk_mint_authority_active: false,
+        risk_freeze_authority_active: false,
+        risk_top_10_pct: null,
+        risk_top_20_pct: null,
+        risk_reason_codes: [],
+      }));
+    };
     tokenMeteoraState.listSummaryByAddresses = async (addresses) => addresses.map((address) => ({
       tokenAddress: address,
       lastCheckedAt: '2026-04-15T21:08:00.000Z',
@@ -686,6 +732,8 @@ describe('Dashboard routes', () => {
         .set('Origin', 'http://localhost:5173')
         .send({
           starredTokens: ['So11111111111111111111111111111111111111112'],
+          recentPinnedAddresses: ['So11111111111111111111111111111111111111115'],
+          oldWeekPinnedAddresses: ['So11111111111111111111111111111111111111116'],
           recentDebugProbeAddresses: ['So11111111111111111111111111111111111111112'],
           recent: {
             page: 1,
@@ -745,14 +793,23 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.recent.page, 1);
       assert.equal(res.body.recent.tokens.length, 1);
       assert.equal(res.body.recent.tokens[0].catalogFirstSeenAt, Date.parse('2026-04-15T21:00:00.000Z'));
+      assert.deepEqual(capturedPinnedMetadataCalls, [[
+        'So11111111111111111111111111111111111111115',
+        'So11111111111111111111111111111111111111116',
+      ]]);
+      assert.equal(res.body.recent.pinnedTokens.length, 1);
+      assert.equal(res.body.recent.pinnedTokens[0].symbol, 'PINREC');
       assert.equal(res.body.oldWeek.total, 11);
       assert.equal(res.body.oldWeek.tokens[0].symbol, 'BONK');
+      assert.equal(res.body.oldWeek.pinnedTokens.length, 1);
+      assert.equal(res.body.oldWeek.pinnedTokens[0].symbol, 'PINOLD');
       assert.deepEqual(capturedProbeCalls, [['recent', capturedCalls[0][1], ['So11111111111111111111111111111111111111112']]]);
       assert.equal(res.body.debug.recentProbe.length, 1);
       assert.equal(res.body.debug.recentProbe[0].diagnosis, 'eligible_for_monitoring=false:gmgn-low-activity');
     } finally {
       tokenCatalog.listDashboardHistoryBucket = originalListDashboardHistoryBucket;
       tokenCatalog.listDashboardHistoryBucketDebugProbe = originalListDashboardHistoryBucketDebugProbe;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;

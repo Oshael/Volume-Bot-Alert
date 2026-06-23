@@ -235,6 +235,8 @@ type HistoryBootstrapRequestPayload = {
   starredTokens: string[];
   recent: DashboardHistoryBucketRequest;
   oldWeek: DashboardHistoryBucketRequest;
+  recentPinnedAddresses?: string[];
+  oldWeekPinnedAddresses?: string[];
   recentDebugProbeAddresses?: string[];
 };
 
@@ -414,6 +416,7 @@ export interface AppController {
   setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
+  setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean): void;
   setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
   setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
   setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
@@ -741,6 +744,12 @@ export function createAppController(): AppController {
   let historyBootstrapInFlightRequestKey = '';
   let queuedHistoryBootstrapRefresh: HistoryBootstrapRefreshOptions | null = null;
   let historyBootstrapRequestRevision = 0;
+  const historyBucketOrderLocks = {
+    recent: false,
+    oldWeek: false,
+  };
+  let pendingRecentHistoryOrder: string[] | null = null;
+  let pendingOldWeekHistoryOrder: string[] | null = null;
   let monitoredBootstrapHydrationRevision = 0;
   let configReloadRevision = 0;
   let documentHiddenForUi = typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -2681,6 +2690,9 @@ export function createAppController(): AppController {
 
     const nextWorkspace = resolveWorkspaceFromPath(pathname);
     const changed = state.ui.workspace !== nextWorkspace;
+    if (changed) {
+      clearHistoryBucketOrderLocks({ applyPending: false });
+    }
     state.ui.workspace = nextWorkspace;
 
     if (options?.canonicalize) {
@@ -2713,6 +2725,7 @@ export function createAppController(): AppController {
     }
 
     if (state.ui.workspace !== nextWorkspace) {
+      clearHistoryBucketOrderLocks({ applyPending: false });
       state.ui.workspace = nextWorkspace;
       syncWorkspaceCapabilities();
       refreshWorkspaceSnapshot();
@@ -7566,9 +7579,17 @@ export function createAppController(): AppController {
     const recentDebugProbeAddresses = isRuntimePerfDebugActive()
       ? state.data.recentTokenAddresses.slice(0, 30)
       : [];
+    const recentPinnedAddresses = historyBucketOrderLocks.recent
+      ? state.data.recentTokenAddresses.slice()
+      : [];
+    const oldWeekPinnedAddresses = historyBucketOrderLocks.oldWeek
+      ? state.data.oldWeekTokenAddresses.slice()
+      : [];
 
     return {
       starredTokens: [...state.data.starredTokens],
+      recentPinnedAddresses,
+      oldWeekPinnedAddresses,
       recentDebugProbeAddresses,
       recent: {
         page: state.ui.recentPage,
@@ -7607,6 +7628,8 @@ export function createAppController(): AppController {
       starredTokens: requestPayload.starredTokens,
       recent: requestPayload.recent,
       oldWeek: requestPayload.oldWeek,
+      recentPinnedAddresses: requestPayload.recentPinnedAddresses ?? [],
+      oldWeekPinnedAddresses: requestPayload.oldWeekPinnedAddresses ?? [],
     };
   }
 
@@ -7658,6 +7681,108 @@ export function createAppController(): AppController {
     void refreshHistoryWorkspaceBootstrap(queuedRefresh);
   }
 
+  function isHistoryBucketOrderLocked(bucket: 'recent' | 'old-week') {
+    return bucket === 'recent' ? historyBucketOrderLocks.recent : historyBucketOrderLocks.oldWeek;
+  }
+
+  function mergeLockedHistoryBucketSnapshots(
+    tokens: DashboardMonitoredToken[],
+    lockedAddresses: string[],
+  ) {
+    const byAddress = new Map(tokens.map((item) => [item.address, item]));
+    for (const address of lockedAddresses) {
+      if (byAddress.has(address)) {
+        continue;
+      }
+
+      const snapshot = buildCurrentMonitoredSnapshotToken(address);
+      if (snapshot) {
+        byAddress.set(address, snapshot);
+      }
+    }
+    return [...byAddress.values()];
+  }
+
+  function sanitizeHistoryBucketOrder(bucket: 'recent' | 'old-week', addresses: string[]) {
+    const dismissed = new Set(bucket === 'recent' ? state.data.dismissedRecent : state.data.dismissedOldWeek);
+    const blocked = new Set(state.data.blocklist.map((item) => item.address));
+    return addresses.filter((address) => (
+      !dismissed.has(address)
+      && !blocked.has(address)
+      && Boolean(state.data.trackedTokensByAddress[address])
+    ));
+  }
+
+  function resolveHistoryBucketOrderForApply(
+    bucket: 'recent' | 'old-week',
+    previousAddresses: string[],
+    nextAddresses: string[],
+  ) {
+    const locked = isHistoryBucketOrderLocked(bucket);
+    return {
+      locked,
+      lockedAddresses: locked ? previousAddresses : [],
+      visibleAddresses: locked ? previousAddresses : nextAddresses,
+      pendingAddresses: locked ? nextAddresses : null,
+    };
+  }
+
+  function setPendingHistoryOrder(bucket: 'recent' | 'old-week', addresses: string[] | null) {
+    if (bucket === 'recent') {
+      pendingRecentHistoryOrder = addresses;
+      return;
+    }
+    pendingOldWeekHistoryOrder = addresses;
+  }
+
+  function applyPendingHistoryOrder(bucket: 'recent' | 'old-week') {
+    if (bucket === 'recent') {
+      if (!pendingRecentHistoryOrder) {
+        return false;
+      }
+      state.data.recentTokenAddresses = sanitizeHistoryBucketOrder('recent', pendingRecentHistoryOrder);
+      pendingRecentHistoryOrder = null;
+      state.runtime.routedRevision += 1;
+      syncRoutedPagination();
+      return true;
+    }
+
+    if (!pendingOldWeekHistoryOrder) {
+      return false;
+    }
+    state.data.oldWeekTokenAddresses = sanitizeHistoryBucketOrder('old-week', pendingOldWeekHistoryOrder);
+    pendingOldWeekHistoryOrder = null;
+    state.runtime.routedRevision += 1;
+    syncRoutedPagination();
+    return true;
+  }
+
+  function clearHistoryBucketOrderLock(bucket: 'recent' | 'old-week', options?: { applyPending?: boolean }) {
+    if (bucket === 'recent') {
+      const wasLocked = historyBucketOrderLocks.recent;
+      historyBucketOrderLocks.recent = false;
+      if (options?.applyPending === false) {
+        pendingRecentHistoryOrder = null;
+        return false;
+      }
+      return wasLocked && applyPendingHistoryOrder('recent');
+    }
+
+    const wasLocked = historyBucketOrderLocks.oldWeek;
+    historyBucketOrderLocks.oldWeek = false;
+    if (options?.applyPending === false) {
+      pendingOldWeekHistoryOrder = null;
+      return false;
+    }
+    return wasLocked && applyPendingHistoryOrder('old-week');
+  }
+
+  function clearHistoryBucketOrderLocks(options?: { applyPending?: boolean }) {
+    const recentChanged = clearHistoryBucketOrderLock('recent', options);
+    const oldWeekChanged = clearHistoryBucketOrderLock('old-week', options);
+    return recentChanged || oldWeekChanged;
+  }
+
   function applyHistoryBootstrapPayload(
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
     manualTokensOverride?: AddressItem[],
@@ -7665,23 +7790,33 @@ export function createAppController(): AppController {
     const previousRecentAddresses = state.data.recentTokenAddresses.slice();
     const previousOldWeekAddresses = state.data.oldWeekTokenAddresses.slice();
     const previousRecentDebugMap = buildPreviousRecentDebugMap(previousRecentAddresses);
-    const requestedRecentPage = Math.max(0, Number(payload.recent?.page) || 0);
-    const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek?.page) || 0);
-    const recentTokens = payload.recent?.tokens || [];
-    const oldWeekTokens = payload.oldWeek?.tokens || [];
+    const requestedRecentPage = Math.max(0, Number(payload.recent.page) || 0);
+    const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek.page) || 0);
+    const recentTokens = payload.recent.tokens || [];
+    const oldWeekTokens = payload.oldWeek.tokens || [];
+    const recentPinnedTokens = payload.recent.pinnedTokens || [];
+    const oldWeekPinnedTokens = payload.oldWeek.pinnedTokens || [];
     const nextRecentAddresses = recentTokens.map((item) => item.address);
     const nextOldWeekAddresses = oldWeekTokens.map((item) => item.address);
     const nextRecentDebugMap = buildPayloadRecentDebugMap(recentTokens);
     const historyRequestDebug = buildHistoryBootstrapRequest();
-    const monitoredDashboardTokens = Array.from(new Map(
-      [...recentTokens, ...oldWeekTokens].map((item) => [item.address, item]),
-    ).values());
+    const recentOrder = resolveHistoryBucketOrderForApply('recent', previousRecentAddresses, nextRecentAddresses);
+    const oldWeekOrder = resolveHistoryBucketOrderForApply('old-week', previousOldWeekAddresses, nextOldWeekAddresses);
+    const monitoredDashboardTokens = mergeLockedHistoryBucketSnapshots(
+      Array.from(new Map(
+        [...recentTokens, ...oldWeekTokens, ...recentPinnedTokens, ...oldWeekPinnedTokens]
+          .map((item) => [item.address, item]),
+      ).values()),
+      [...recentOrder.lockedAddresses, ...oldWeekOrder.lockedAddresses],
+    );
 
     applyMonitoredDashboard(monitoredDashboardTokens, manualTokensOverride, payload.generatedAt ?? null);
-    state.data.recentTokenAddresses = nextRecentAddresses;
-    state.data.oldWeekTokenAddresses = nextOldWeekAddresses;
-    state.bars.recent = Math.max(0, Number(payload.recent?.total) || 0);
-    state.bars.oldWeek = Math.max(0, Number(payload.oldWeek?.total) || 0);
+    setPendingHistoryOrder('recent', recentOrder.pendingAddresses);
+    setPendingHistoryOrder('old-week', oldWeekOrder.pendingAddresses);
+    state.data.recentTokenAddresses = recentOrder.visibleAddresses;
+    state.data.oldWeekTokenAddresses = oldWeekOrder.visibleAddresses;
+    state.bars.recent = Math.max(0, Number(payload.recent.total) || 0);
+    state.bars.oldWeek = Math.max(0, Number(payload.oldWeek.total) || 0);
     state.ui.recentPage = requestedRecentPage;
     state.ui.oldWeekPage = requestedOldWeekPage;
     state.runtime.routedRevision += 1;
@@ -9048,6 +9183,7 @@ export function createAppController(): AppController {
     },
     dismissRecentToken(address: string) {
       if (!state.data.dismissedRecent.includes(address)) {
+        clearHistoryBucketOrderLock('recent', { applyPending: false });
         state.data.dismissedRecent = [...state.data.dismissedRecent, address];
         state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
         state.bars.recent = Math.max(0, state.bars.recent - 1);
@@ -9062,6 +9198,7 @@ export function createAppController(): AppController {
     },
     dismissOldWeekToken(address: string) {
       if (!state.data.dismissedOldWeek.includes(address)) {
+        clearHistoryBucketOrderLock('old-week', { applyPending: false });
         state.data.dismissedOldWeek = [...state.data.dismissedOldWeek, address];
         state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
         state.bars.oldWeek = Math.max(0, state.bars.oldWeek - 1);
@@ -9200,6 +9337,7 @@ export function createAppController(): AppController {
       }
     },
     setRecentSearchQuery(query: string) {
+      clearHistoryBucketOrderLock('recent', { applyPending: false });
       state.ui.recentSearchQuery = String(query || '');
       state.ui.recentSearchPending = usesHistoryBucketBootstrap() && Boolean(String(query || '').trim());
       state.ui.recentPage = 0;
@@ -9209,6 +9347,7 @@ export function createAppController(): AppController {
       }
     },
     setOldWeekSearchQuery(query: string) {
+      clearHistoryBucketOrderLock('old-week', { applyPending: false });
       state.ui.oldWeekSearchQuery = String(query || '');
       state.ui.oldWeekSearchPending = usesHistoryBucketBootstrap() && Boolean(String(query || '').trim());
       state.ui.oldWeekPage = 0;
@@ -9226,6 +9365,7 @@ export function createAppController(): AppController {
       }
     },
     setRecentStarredOnly(enabled: boolean) {
+      clearHistoryBucketOrderLock('recent', { applyPending: false });
       state.ui.recentStarredOnly = Boolean(enabled);
       state.ui.recentPage = 0;
       queueUiPrefsPersist();
@@ -9235,6 +9375,7 @@ export function createAppController(): AppController {
       }
     },
     setOldWeekStarredOnly(enabled: boolean) {
+      clearHistoryBucketOrderLock('old-week', { applyPending: false });
       state.ui.oldWeekStarredOnly = Boolean(enabled);
       state.ui.oldWeekPage = 0;
       queueUiPrefsPersist();
@@ -9253,6 +9394,7 @@ export function createAppController(): AppController {
       emit('alerts');
     },
     setRecentPage(page: number) {
+      clearHistoryBucketOrderLock('recent', { applyPending: false });
       const normalizedPage = Math.max(0, Math.floor(page) || 0);
       state.ui.recentPage = usesHistoryBucketBootstrap()
         ? normalizedPage
@@ -9263,6 +9405,7 @@ export function createAppController(): AppController {
       }
     },
     setOldWeekPage(page: number) {
+      clearHistoryBucketOrderLock('old-week', { applyPending: false });
       const normalizedPage = Math.max(0, Math.floor(page) || 0);
       state.ui.oldWeekPage = usesHistoryBucketBootstrap()
         ? normalizedPage
@@ -9280,6 +9423,7 @@ export function createAppController(): AppController {
       refreshMonitoredSparklinesIfExpanded();
     },
     setRecentPerPage(perPage: number) {
+      clearHistoryBucketOrderLock('recent', { applyPending: false });
       state.ui.recentPerPage = normalizeUiPerPage(perPage, ROUTED_BUCKET_DEFAULT_PER_PAGE);
       state.ui.recentPage = clampPage(state.ui.recentPage, getRecentTokenTotalForPagination(), state.ui.recentPerPage);
       queueUiPrefsPersist();
@@ -9289,6 +9433,7 @@ export function createAppController(): AppController {
       }
     },
     setOldWeekPerPage(perPage: number) {
+      clearHistoryBucketOrderLock('old-week', { applyPending: false });
       state.ui.oldWeekPerPage = normalizeUiPerPage(perPage, ROUTED_BUCKET_DEFAULT_PER_PAGE);
       state.ui.oldWeekPage = clampPage(state.ui.oldWeekPage, getOldWeekTokenTotalForPagination(), state.ui.oldWeekPerPage);
       queueUiPrefsPersist();
@@ -9309,6 +9454,7 @@ export function createAppController(): AppController {
       }
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
+      clearHistoryBucketOrderLock('recent', { applyPending: false });
       state.ui.recentSorts = toggleSortCriterion(
         state.ui.recentSorts,
         normalizeBucketCriterion(mode, window),
@@ -9321,6 +9467,7 @@ export function createAppController(): AppController {
       }
     },
     setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow) {
+      clearHistoryBucketOrderLock('old-week', { applyPending: false });
       state.ui.oldWeekSorts = toggleSortCriterion(
         state.ui.oldWeekSorts,
         normalizeBucketCriterion(mode, window),
@@ -9330,6 +9477,29 @@ export function createAppController(): AppController {
       emit('old-week');
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
+      }
+    },
+    setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean) {
+      if (!usesHistoryBucketBootstrap()) {
+        return;
+      }
+
+      const key = bucket === 'recent' ? 'recent' : 'oldWeek';
+      if (historyBucketOrderLocks[key] === locked) {
+        return;
+      }
+
+      historyBucketOrderLocks[key] = locked;
+      if (locked) {
+        const otherBucket = bucket === 'recent' ? 'old-week' : 'recent';
+        if (clearHistoryBucketOrderLock(otherBucket)) {
+          emit(otherBucket);
+        }
+        return;
+      }
+
+      if (applyPendingHistoryOrder(bucket)) {
+        emit(bucket);
       }
     },
     setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow) {
@@ -9458,6 +9628,9 @@ export function createAppController(): AppController {
     },
     setDocumentHidden(hidden: boolean) {
       documentHiddenForUi = Boolean(hidden);
+      if (hidden && clearHistoryBucketOrderLocks()) {
+        emit('recent', 'old-week');
+      }
       if (state.session.status !== 'authenticated' || state.runtime.mode !== 'active') {
         return;
       }

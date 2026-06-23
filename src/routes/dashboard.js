@@ -244,8 +244,11 @@ function buildHistoryBootstrapPayload(
   meteoraByAddress,
   marketMcapBaselineByAddress,
   marketVolumeBaselineByAddress,
-  debug = null
+  debug = null,
+  options = {}
 ) {
+  const recentPinnedRows = Array.isArray(options.recentPinnedRows) ? options.recentPinnedRows : [];
+  const oldWeekPinnedRows = Array.isArray(options.oldWeekPinnedRows) ? options.oldWeekPinnedRows : [];
   const payload = {
     generatedAt: new Date().toISOString(),
     recent: {
@@ -254,6 +257,7 @@ function buildHistoryBootstrapPayload(
       perPage: recentResult.perPage,
       count: recentResult.rows.length,
       tokens: recentResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
+      pinnedTokens: recentPinnedRows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
     },
     oldWeek: {
       total: oldWeekResult.total,
@@ -261,6 +265,7 @@ function buildHistoryBootstrapPayload(
       perPage: oldWeekResult.perPage,
       count: oldWeekResult.rows.length,
       tokens: oldWeekResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
+      pinnedTokens: oldWeekPinnedRows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
     },
   };
 
@@ -269,6 +274,34 @@ function buildHistoryBootstrapPayload(
   }
 
   return payload;
+}
+
+function getPinnedHistoryRows(pinnedRows, pageRows, requestedAddresses) {
+  const pinnedByAddress = new Map(pinnedRows.map((item) => [item.address, item]));
+  const pageAddresses = new Set(pageRows.map((item) => item.address));
+  return requestedAddresses
+    .map((address) => pinnedByAddress.get(address))
+    .filter((item) => item && !pageAddresses.has(item.address));
+}
+
+function parseHistoryBootstrapPinnedAddresses(body = {}) {
+  const recentPinnedAddresses = parseAddressArray(body.recentPinnedAddresses, 'recentPinnedAddresses');
+  if (!recentPinnedAddresses.ok) {
+    return recentPinnedAddresses;
+  }
+
+  const oldWeekPinnedAddresses = parseAddressArray(body.oldWeekPinnedAddresses, 'oldWeekPinnedAddresses');
+  if (!oldWeekPinnedAddresses.ok) {
+    return oldWeekPinnedAddresses;
+  }
+
+  return {
+    ok: true,
+    value: {
+      recent: recentPinnedAddresses.value,
+      oldWeek: oldWeekPinnedAddresses.value,
+    },
+  };
 }
 
 router.use(authenticate);
@@ -678,8 +711,17 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
     return res.status(400).json({ error: recentDebugProbeAddresses.error });
   }
 
+  const pinnedAddressesByBucket = parseHistoryBootstrapPinnedAddresses(req.body);
+  if (!pinnedAddressesByBucket.ok) {
+    return res.status(400).json({ error: pinnedAddressesByBucket.error });
+  }
+
   try {
-    const [recentResult, oldWeekResult, recentDebugProbe] = await Promise.all([
+    const pinnedAddresses = Array.from(new Set([
+      ...pinnedAddressesByBucket.value.recent,
+      ...pinnedAddressesByBucket.value.oldWeek,
+    ]));
+    const [recentResult, oldWeekResult, recentDebugProbe, pinnedRows] = await Promise.all([
       tokenCatalog.listDashboardHistoryBucket('recent', {
         ...recent.value,
         starredAddresses: starredAddresses.value,
@@ -694,11 +736,16 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
             starredAddresses: starredAddresses.value,
           }, recentDebugProbeAddresses.value)
         : Promise.resolve([]),
+      tokenCatalog.listDashboardMetadataByAddresses(pinnedAddresses),
     ]);
+    const recentPinnedRows = getPinnedHistoryRows(pinnedRows, recentResult.rows, pinnedAddressesByBucket.value.recent);
+    const oldWeekPinnedRows = getPinnedHistoryRows(pinnedRows, oldWeekResult.rows, pinnedAddressesByBucket.value.oldWeek);
 
     const addresses = Array.from(new Set([
       ...recentResult.rows.map((item) => item.address),
       ...oldWeekResult.rows.map((item) => item.address),
+      ...recentPinnedRows.map((item) => item.address),
+      ...oldWeekPinnedRows.map((item) => item.address),
     ]));
 
     const meteoraSummaryRows = await uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses);
@@ -730,6 +777,7 @@ router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async 
       marketMcapBaselineByAddress,
       marketVolumeBaselineByAddress,
       recentDebugProbe.length > 0 ? { recentProbe: recentDebugProbe } : null,
+      { recentPinnedRows, oldWeekPinnedRows },
     );
 
     res.json(payload);

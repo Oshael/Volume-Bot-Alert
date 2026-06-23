@@ -147,6 +147,34 @@ function bindCommittedInputs(
   }
 }
 
+function bindHistoryBucketOrderLock(
+  section: ParentNode,
+  controller: AppController,
+  mode: 'recent' | 'old-week',
+) {
+  if (controller.state.ui.workspace !== 'history') {
+    return;
+  }
+
+  const tableWrap = section.querySelector<HTMLElement>('.token-table-wrap');
+  if (!tableWrap) {
+    return;
+  }
+
+  tableWrap.addEventListener('pointerenter', (event) => {
+    if (event.pointerType === 'touch') {
+      return;
+    }
+    controller.setHistoryBucketOrderLocked(mode, true);
+  });
+  tableWrap.addEventListener('pointerleave', () => {
+    controller.setHistoryBucketOrderLocked(mode, false);
+  });
+  tableWrap.addEventListener('pointercancel', () => {
+    controller.setHistoryBucketOrderLocked(mode, false);
+  });
+}
+
 export function renderRecentSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-token-bar recent-bar';
@@ -355,6 +383,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindTokenImagePreview(section);
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
+  bindHistoryBucketOrderLock(section, controller, 'recent');
   section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"]').forEach((input) => {
     input.addEventListener('change', () => {
       const minInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-min"]');
@@ -618,6 +647,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindTokenImagePreview(section);
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
+  bindHistoryBucketOrderLock(section, controller, 'old-week');
   section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"]').forEach((input) => {
     input.addEventListener('change', () => {
       const minInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-min"]');
