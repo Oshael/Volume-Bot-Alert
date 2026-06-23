@@ -300,16 +300,18 @@ describe('catalog worker drift compensation', () => {
     assert.ok(nextMs < 3 * 60 * 1000, `expected active high-cap cadence without low-activity cooldown, got ${nextMs}ms`);
   });
 
-  it('preserves stronger existing volume24h when Dex reports an incoherent lower 24h window', () => {
+  it('preserves stronger existing cumulative volume windows when Dex reports incoherent lower windows', () => {
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({
       marketCap: 250000,
-      volume: { h24: 1200, h6: 60000, h1: 12000 },
+      volume: { h24: 1200, h6: 1200, h1: 64000 },
       priceChange: {},
     }, {
       source: 'gmgn',
+      last_vol_6h: 360000,
       last_vol_24h: 1760000,
     });
 
+    assert.equal(snapshot.vol6h, 360000);
     assert.equal(snapshot.vol24h, 1760000);
     assert.equal(snapshot.monitorPriority, 'high');
     assert.equal(snapshot.eligibleForMonitoring, true);

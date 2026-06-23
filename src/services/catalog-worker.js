@@ -9,7 +9,7 @@ const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
 const {
-  isVolume24hCoherentWithShorterWindows,
+  isCumulativeVolumeWindowCoherent,
   normalizeVolume24hWithShorterWindows,
 } = require('./volume-window-consistency');
 const { extractDexSocialLinks } = require('../utils/dex-social-links');
@@ -1071,7 +1071,7 @@ function isLowActivityAutoToken(token, vol24h, volumeWindows = {}) {
     && Number.isFinite(numericVol24h)
     && numericVol24h >= 0
     && numericVol24h < LOW_ACTIVITY_24H_MAX_VOL
-    && isVolume24hCoherentWithShorterWindows({ vol1h, vol6h, vol24h: numericVol24h });
+    && isCumulativeVolumeWindowCoherent({ vol1h, vol6h, vol24h: numericVol24h });
 }
 
 function getLowActivityMinimumRecheckMs(token, vol24h, volumeWindows = {}) {
@@ -1086,6 +1086,7 @@ function buildPriorityVolumeWindows(bestPair, token, now) {
     vol6h: toVolumeNumber(bestPair?.volume?.h6),
     vol24h: toVolumeNumber(bestPair?.volume?.h24),
   }, { now: new Date(now) }), {
+    vol6h: token?.last_vol_6h,
     vol24h: token?.last_vol_24h,
   });
 }
