@@ -277,6 +277,13 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
   }
 
   const next = { ...snapshot };
+  const incomingVol24h = toFiniteNumberOrNull(next.vol24h);
+  const previousVol24h = toFiniteNumberOrNull(tokenBefore.last_vol_24h);
+  const preserveExistingActiveWindows = incomingVol24h != null
+    && incomingVol24h >= 0
+    && incomingVol24h < LOW_ACTIVITY_24H_MAX_VOL
+    && previousVol24h != null
+    && previousVol24h >= LOW_ACTIVITY_24H_MAX_VOL;
   const previousVol5m = toFiniteNumberOrNull(tokenBefore.last_vol_5m);
   if (hasDexConfirmation(tokenBefore) && previousVol5m != null && previousVol5m > 0) {
     next.vol5m = previousVol5m;
@@ -289,7 +296,11 @@ function preserveExistingPositiveVolumeWindows(snapshot, tokenBefore) {
   ]) {
     const incoming = toFiniteNumberOrNull(next[snapshotKey]);
     const previous = toFiniteNumberOrNull(tokenBefore[catalogKey]);
-    if (incoming === 0 && previous != null && previous > 0) {
+    if (
+      previous != null
+      && previous > 0
+      && (incoming === 0 || (preserveExistingActiveWindows && (incoming == null || incoming < previous)))
+    ) {
       next[snapshotKey] = previous;
     }
   }

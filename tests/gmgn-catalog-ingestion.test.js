@@ -795,6 +795,58 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.snapshot.vol24h, 1703467.79);
   });
 
+  it('does not let coherent low-activity GMGN volume suppress an already active token', async () => {
+    const catalog = createTokenCatalogStub();
+    const bucketWrites = [];
+    catalog.getByAddress = async (address) => ({
+      address,
+      source: 'gmgn',
+      eligibility_state: 'dex-high',
+      eligible_for_monitoring: true,
+      monitor_priority: 'high',
+      last_vol_1h: 21477.58,
+      last_vol_6h: 326832.75,
+      last_vol_24h: 1857602.72,
+    });
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot(),
+      mcap: 424144,
+      vol1h: 1200,
+      vol6h: 1200,
+      vol24h: 1200,
+      tokenCreatedAt: '2026-04-03T06:00:00.000Z',
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel: catalog,
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          bucketWrites.push(payload);
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+      gmgnClient: createSafeGmgnSecurityStub(),
+    });
+
+    const upsertPayload = catalog.calls.find((call) => call[0] === 'upsertToken')[1];
+    const evaluationPayload = catalog.calls.find((call) => call[0] === 'applyEvaluationResult')[2];
+
+    assert.equal(upsertPayload.vol1h, 21477.58);
+    assert.equal(upsertPayload.vol6h, 326832.75);
+    assert.equal(upsertPayload.vol24h, 1857602.72);
+    assert.equal(evaluationPayload.eligibilityState, 'gmgn-high');
+    assert.equal(evaluationPayload.eligibleForMonitoring, true);
+    assert.equal(evaluationPayload.suppressedReason, null);
+    assert.equal(evaluationPayload.vol24h, 1857602.72);
+    assert.equal(bucketWrites[0].vol24h, 1857602.72);
+    assert.equal(result.snapshot.vol24h, 1857602.72);
+  });
+
   it('keeps Dex-confirmed 5m volume when GMGN reports inconsistent interval volume', async () => {
     const catalog = createTokenCatalogStub();
     const bucketWrites = [];
