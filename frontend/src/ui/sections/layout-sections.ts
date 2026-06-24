@@ -1062,11 +1062,11 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
           <a href="${getWorkspaceHref('history')}" class="workspace-route-btn ${isHistoryWorkspace ? 'active' : ''}" data-action="open-workspace-history">RADAR</a>
         </div>
         <div class="workspace-layout-reset" data-role="layout-reset">
-          <button type="button" class="workspace-layout-reset-btn" data-action="reset-live-panel-layout" aria-label="Reset bot layout">
+          <button type="button" class="workspace-layout-reset-btn" data-action="reset-live-panel-layout" aria-label="Reset bot layout only">
             <span aria-hidden="true">↺</span>
           </button>
           <div class="workspace-layout-reset-tooltip" role="tooltip">
-            ${escapeHtml('Isso reseta o layout do bot para as configurações visuais padrões')}
+            ${escapeHtml('Reset the bot layout to the default visual setup for a new account. Manual tokens are not changed.')}
           </div>
         </div>
         ${renderMockTradingHeaderSummary(state)}
@@ -4878,9 +4878,9 @@ function isConfigEnabled(state: AppState, key: string) {
 
 function renderSurgeThresholdMenu(state: AppState) {
   const recent1h = Number(state.data.configs['recent-surge-1h-threshold'] ?? 50);
-  const recent6h = Number(state.data.configs['recent-surge-6h-threshold'] ?? 150);
+  const recent6h = Number(state.data.configs['recent-surge-6h-threshold'] ?? 100);
   const oldWeek1h = Number(state.data.configs['old-week-surge-1h-threshold'] ?? 50);
-  const oldWeek6h = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 150);
+  const oldWeek6h = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 100);
   return `
     <div class="config-item config-item-menu">
       <label>
@@ -4979,9 +4979,9 @@ function renderConfigToggleMenu(
 function renderSoundUploadStrip(state: AppState) {
   const scope = state.session.email || state.session.username || 'anonymous';
   const recent1hThreshold = Number(state.data.configs['recent-surge-1h-threshold'] ?? 50);
-  const recent6hThreshold = Number(state.data.configs['recent-surge-6h-threshold'] ?? 150);
+  const recent6hThreshold = Number(state.data.configs['recent-surge-6h-threshold'] ?? 100);
   const oldWeek1hThreshold = Number(state.data.configs['old-week-surge-1h-threshold'] ?? 50);
-  const oldWeek6hThreshold = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 150);
+  const oldWeek6hThreshold = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 100);
   const slots: Array<{ slot: CustomSoundSlot; title: string; sub: string; dot: string }> = [
     { slot: 'normal', title: 'Sound Level Normal', sub: '(+50%) / MP3/WAV/OGG', dot: 'sound-dot normal' },
     { slot: 'critical', title: 'Sound Level Critical', sub: '(+100%) / MP3/WAV/OGG', dot: 'sound-dot critical' },
@@ -5011,7 +5011,7 @@ function renderSoundUploadStrip(state: AppState) {
             <div class="legacy-sound-sub">${escapeHtml(sub)}</div>
             <div class="legacy-sound-picker">
               <label class="legacy-file-btn">
-                Escolher arquivo
+                Choose file
                 <input type="file" accept="audio/*" data-sound-slot="${escapeHtml(slot)}" />
               </label>
             </div>
@@ -5202,9 +5202,9 @@ function hydrateLegacyConfigValues(section: HTMLElement, state: AppState) {
 
   const surgeThresholdFields = [
     ['recent-surge-1h-threshold', 50],
-    ['recent-surge-6h-threshold', 150],
+    ['recent-surge-6h-threshold', 100],
     ['old-week-surge-1h-threshold', 50],
-    ['old-week-surge-6h-threshold', 150],
+    ['old-week-surge-6h-threshold', 100],
   ] as const;
   for (const [fieldName, fallback] of surgeThresholdFields) {
     const input = section.querySelector<HTMLInputElement>(`input[name="${fieldName}"]`);
@@ -5228,16 +5228,16 @@ function defaultConfigValue(key: string, type: 'number' | 'text') {
   const defaults: Record<string, number> = {
     threshold: 50,
     'mcap-threshold': 50,
-    'min-vol': 8000,
+    'min-vol': 10000,
     'min-mcap': 30000,
     'max-mcap': 0,
     'hvnc-min-vol': 300000,
     'old-alert-1h-threshold': 50,
-    'old-alert-6h-threshold': 150,
+    'old-alert-6h-threshold': 100,
     'recent-surge-1h-threshold': 50,
-    'recent-surge-6h-threshold': 150,
+    'recent-surge-6h-threshold': 100,
     'old-week-surge-1h-threshold': 50,
-    'old-week-surge-6h-threshold': 150,
+    'old-week-surge-6h-threshold': 100,
     'meteora-alert-1h-threshold': 50,
     'old-mcap-max': 100000000,
     'old-week-mcap-max': 100000000,

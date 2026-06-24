@@ -821,9 +821,9 @@ export function createAppState(): AppState {
       livePanelLayout: {
         order: ['monitored', 'pumpfun', 'alerts'],
         spans: {
-          monitored: 1,
+          monitored: 2,
           pumpfun: 1,
-          alerts: 2,
+          alerts: 1,
         },
       },
       soundEnabled: true,

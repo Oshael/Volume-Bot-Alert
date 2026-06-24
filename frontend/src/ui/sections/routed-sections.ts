@@ -529,7 +529,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
             <span class="recent-ctrl-cluster-label">AGE</span>
             <input type="text" name="old-week-age-min" inputmode="numeric" placeholder="7d / 30d" aria-label="Age min">
             <span class="recent-ctrl-range-sep">–</span>
-            <input type="text" name="old-week-age-max" inputmode="numeric" placeholder="∞" title="Deixe em branco para não limitar a idade máxima (∞)" aria-label="Age max">
+            <input type="text" name="old-week-age-max" inputmode="numeric" placeholder="∞" title="Leave blank for no maximum age limit (∞)" aria-label="Age max">
           </div>
           <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
             <span class="recent-ctrl-cluster-label">MCAP</span>

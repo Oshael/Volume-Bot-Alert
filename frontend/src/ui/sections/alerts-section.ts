@@ -85,16 +85,22 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     <div class="panel-header">
       <span>\u{1F514} ALERTS</span>
       <div class="alerts-panel-header-controls">
-        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
-        <div class="alerts-page-controls" aria-label="Alerts pages">
-          <button type="button" class="action-button small" data-action="alerts-prev">Prev</button>
-          <label class="legacy-mini-field alerts-page-field">PAGE <input type="number" min="1" step="1" data-action="alerts-page-jump" /></label>
-          <span class="bucket-page-total alerts-page-total">1</span>
-          <button type="button" class="action-button small" data-action="alerts-next">Next</button>
-        </div>
         <div class="compact-search compact-search-fixed">
           <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
+        </div>
+        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
+        <div class="alerts-page-controls" aria-label="Alerts pages">
+          <button type="button" class="action-button small" data-action="alerts-prev">Prev</button>
+          <label class="legacy-mini-field alerts-page-field">
+            PAGE
+            <span class="alerts-page-box">
+              <input type="number" min="1" step="1" data-action="alerts-page-jump" aria-label="Current alerts page" />
+              <span class="alerts-page-separator" aria-hidden="true">/</span>
+              <span class="bucket-page-total alerts-page-total">1</span>
+            </span>
+          </label>
+          <button type="button" class="action-button small" data-action="alerts-next">Next</button>
         </div>
         <span class="count alerts-panel-count">0</span>
       </div>

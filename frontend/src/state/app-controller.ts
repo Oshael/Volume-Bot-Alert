@@ -4628,7 +4628,7 @@ export function createAppController(): AppController {
   }
 
   function passesAlertFilters(token: ManualTokenEntry) {
-    const minVol = getConfigNumber('min-vol', 8000);
+    const minVol = getConfigNumber('min-vol', 10000);
     const minMcap = getConfigNumber('min-mcap', 30000);
     const maxMcap = getConfigNumber('max-mcap', 0);
     const volume5m = token.volume5m ?? 0;
