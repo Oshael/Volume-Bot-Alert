@@ -1,18 +1,18 @@
-# Bot Complete Reference
+# Bot Reference
 
 ## Purpose
-This document is the full reference for the current bot implementation.
+This document is the technical reference for the current bot implementation.
 
-It is meant to play the role that the old `CLAUDE_HTML_PURO_.md` used to play, but for the current backend + frontend architecture.
+It is meant to hold the deeper implementation details that are too large for the root `README.md`.
 
 Use this document for:
 - behavior review
-- onboarding
 - architecture recall
 - rule verification
 - debugging which file owns which feature
+- detailed review of workers, alerts, persistence, endpoints, and feature contracts
 
-Use `docs/current-bot-state.md` as the shorter canonical snapshot.
+Use `README.md` as the primary operational entry point.
 
 Last reviewed against code and the live deployment model on `2026-05-23` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, mock-trading wallets, current rate limit buckets, the `/monitor` visible rename to `RADAR`, manual GMGN fallback behavior, GMGN dex-unavailable zombie handling, selected mock wallet persistence, and floating Quick Buy.
 
@@ -867,7 +867,7 @@ Current persisted config/ui-pref notes:
   - `on`
   - `off`
 - current config defaults for new accounts include:
-  - `min-vol = 8000`
+  - `min-vol = 10000`
   - `min-mcap = 30000`
 - `uiPrefs.enabledTradeTerminals` is persisted per account and defaults to:
   - `axiom`
@@ -877,6 +877,7 @@ Current persisted config/ui-pref notes:
   - `padre`
 - `uiPrefs.livePanelLayout` is now persisted per account for `/alerts`:
   - `order = ['monitored', 'pumpfun', 'alerts']`
+  - default spans: `monitored = 2`, `pumpfun = 1`, `alerts = 1`
   - `spans.monitored = 1 | 2 | 3`
   - `spans.pumpfun = 1`
   - `spans.alerts = 1 | 2 | 3`
@@ -2811,13 +2812,11 @@ When verifying the bot, these are the best quick checks:
 
 ## Relationship To Other Docs
 
-Use this file for deep reference.
-
-Use:
-- `docs/current-bot-state.md`
-for the shorter state snapshot
+Use this file for deep technical reference.
 
 Keep:
+- `README.md`
+for the primary project entry point, local workflow, validation policy, and high-level architecture
 - `docs/phase6-runbook.md`
 - `docs/phase6-checklist.md`
 - `docs/phase6-railway.md`

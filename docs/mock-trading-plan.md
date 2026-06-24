@@ -832,8 +832,8 @@ Recommended rollout:
 2. admin routes with tests
 3. minimal frontend trade controls
 4. chart markers
-5. update `docs/current-bot-state.md`
-6. update `docs/bot-complete-reference.md`
+5. update `README.md` if the operational workflow changes
+6. update `docs/bot-reference.md` if the technical contract changes
 
 Reason:
 - The backend math and access control are the critical safety boundary.

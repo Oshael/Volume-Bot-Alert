@@ -6,8 +6,8 @@ Plan the change that makes mock trading use a live SOL/USD price from CoinMarket
 This is a planning document only. It is grounded in the current repository state and should be reviewed before implementation.
 
 Reviewed against:
-- `docs/current-bot-state.md`
-- `docs/bot-complete-reference.md`
+- `README.md`
+- `docs/bot-reference.md`
 - `docs/mock-trading-plan.md`
 - `src/services/mock-trading-service.js`
 - `src/services/sol-price.js`
@@ -363,13 +363,13 @@ Estimated size:
 - small
 
 Scope:
-- update `docs/current-bot-state.md`
-- update `docs/bot-complete-reference.md`
+- update `README.md` if the operational workflow changes
+- update `docs/bot-reference.md` if the technical contract changes
 - update or supersede the relevant parts of `docs/mock-trading-plan.md`
 
 Implemented files:
-- `docs/current-bot-state.md`
-- `docs/bot-complete-reference.md`
+- `README.md`
+- `docs/bot-reference.md`
 - `docs/mock-trading-solana-price-sync-plan.md`
 
 Validation:

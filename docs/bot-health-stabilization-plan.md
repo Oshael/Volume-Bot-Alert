@@ -65,8 +65,8 @@ Os pontos abaixo vieram do codigo e das validacoes executadas, nao de suposicao.
 
 Docs principais:
 
-- [docs/current-bot-state.md](/Users/ezequielmarinho/Volume-Bot-Alert/docs/current-bot-state.md)
-- [docs/bot-complete-reference.md](/Users/ezequielmarinho/Volume-Bot-Alert/docs/bot-complete-reference.md)
+- [README.md](/Users/ezequielmarinho/Volume-Bot-Alert/README.md)
+- [docs/bot-reference.md](/Users/ezequielmarinho/Volume-Bot-Alert/docs/bot-reference.md)
 
 Sinal positivo:
 

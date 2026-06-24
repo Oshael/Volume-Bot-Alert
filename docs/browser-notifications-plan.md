@@ -285,8 +285,8 @@ Validation:
 
 Scope:
 
-- update `docs/current-bot-state.md`
-- update `docs/bot-complete-reference.md`
+- update `README.md` if the operational workflow changes
+- update `docs/bot-reference.md` if the technical contract changes
 - add manual test checklist
 
 Validation:
