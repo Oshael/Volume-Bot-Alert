@@ -263,6 +263,9 @@ describe('Billing foundation', () => {
     };
 
     const { pool } = require('../src/models/db');
+    const { assertUsingTestDatabase } = require('./helpers/test-db');
+
+    await assertUsingTestDatabase(pool);
     await ensureSchemas(pool);
     await pool.query('DELETE FROM billing_events');
     await pool.query('DELETE FROM billing_orders');

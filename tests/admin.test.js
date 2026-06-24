@@ -127,7 +127,9 @@ describe('Admin panel auth and management', () => {
     tokenRiskReview = require('../src/models/token-risk-review');
     tokenMeteoraState = require('../src/models/token-meteora-state');
     const { pool } = require('../src/models/db');
+    const { assertUsingTestDatabase } = require('./helpers/test-db');
 
+    await assertUsingTestDatabase(pool);
     await ensureAccessSchema(pool);
     await pool.query('DELETE FROM sessions');
     await pool.query('DELETE FROM login_attempts');

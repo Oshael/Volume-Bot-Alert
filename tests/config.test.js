@@ -14,6 +14,7 @@ const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
 const tokenCatalog = require('../src/models/token-catalog');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
+const { assertUsingTestDatabase } = require('./helpers/test-db');
 
 const VALID_ADDR_1 = 'So11111111111111111111111111111111111111112';
 const VALID_ADDR_2 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -104,6 +105,7 @@ describe('Config routes', () => {
   let adminToken;
 
   before(async () => {
+    await assertUsingTestDatabase(db);
     await ensureAccessSchema();
     await db.query('DELETE FROM user_starred_tokens');
     await db.query('DELETE FROM user_blocklist');
@@ -170,16 +172,16 @@ describe('Config routes', () => {
     assert.equal(response.body.configs.interval, 30);
     assert.equal(response.body.configs.chain, 'solana');
     assert.equal(response.body.configs['block-warning-enabled'], 'on');
-    assert.equal(response.body.configs['min-vol'], 8000);
+    assert.equal(response.body.configs['min-vol'], 10000);
     assert.equal(response.body.configs['card-effects-mode'], 'on');
     assert.equal(response.body.configs['old-mcap-min'], 120000);
     assert.equal(response.body.configs['old-mcap-max'], 100000000);
     assert.equal(response.body.configs['recent-age-min'], 0);
     assert.equal(response.body.configs['recent-age-max'], 10080);
     assert.equal(response.body.configs['recent-surge-1h-threshold'], 50);
-    assert.equal(response.body.configs['recent-surge-6h-threshold'], 150);
+    assert.equal(response.body.configs['recent-surge-6h-threshold'], 100);
     assert.equal(response.body.configs['old-week-surge-1h-threshold'], 50);
-    assert.equal(response.body.configs['old-week-surge-6h-threshold'], 150);
+    assert.equal(response.body.configs['old-week-surge-6h-threshold'], 100);
     assert.equal(response.body.configs['alert-recent-surge-1h-enabled'], 'on');
     assert.equal(response.body.configs['alert-recent-surge-6h-enabled'], 'on');
     assert.equal(response.body.configs['alert-old-week-surge-1h-enabled'], 'on');
@@ -199,9 +201,9 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['monitored', 'pumpfun', 'alerts'],
       spans: {
-        monitored: 1,
+        monitored: 2,
         pumpfun: 1,
-        alerts: 2,
+        alerts: 1,
       },
     });
     assert.equal(response.body.uiPrefs.recentPerPage, 30);

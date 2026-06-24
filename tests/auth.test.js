@@ -219,7 +219,9 @@ describe('Volume Alert Server auth flow', () => {
     process.env.DISCORD_OAUTH_CLIENT_SECRET = 'discord-test-client-secret';
 
     const { pool } = require('../src/models/db');
+    const { assertUsingTestDatabase } = require('./helpers/test-db');
 
+    await assertUsingTestDatabase(pool);
     await ensureAccessSchema(pool);
     await pool.query('DELETE FROM sessions');
     await pool.query('DELETE FROM login_attempts');
