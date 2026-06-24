@@ -91,6 +91,23 @@ function mapDeliveryCursor(cursor, rule) {
   };
 }
 
+function shouldSuppressHistoricalReplay(rule) {
+  return rule?.historicalReplayEnabled === false;
+}
+
+async function bootstrapRealtimeOnlyCursor({ userId, rule, eventModel }) {
+  if (userId == null) {
+    return null;
+  }
+
+  const latestEventId = await eventModel.getLatestEventId({ ruleKey: rule.ruleKey });
+  if (latestEventId != null) {
+    return alertDeliveryCursor.markSeen(userId, rule.ruleKey, latestEventId);
+  }
+
+  return alertDeliveryCursor.getCursor(userId, rule.ruleKey);
+}
+
 function buildDashboardAlertEventCatalogPayload(catalogRow) {
   const meteora = catalogRow?.meteora || null;
   const socialLinks = normalizeSocialLinkFields({
@@ -430,6 +447,20 @@ async function listDashboardAlertEvents(options = {}) {
   const rule = resolveDashboardFeedRule(options.ruleKey);
   const mode = normalizeAlertFeedMode(options.mode);
   const eventModel = resolveAlertEventModel(rule);
+
+  if (shouldSuppressHistoricalReplay(rule)) {
+    const cursor = await bootstrapRealtimeOnlyCursor({ userId: options.userId, rule, eventModel });
+    return {
+      generatedAt: new Date().toISOString(),
+      ruleKey: rule.ruleKey,
+      kind: rule.kind,
+      mode,
+      cursor: mapDeliveryCursor(cursor, rule),
+      count: 0,
+      events: [],
+    };
+  }
+
   let cursor = options.userId == null ? null : await alertDeliveryCursor.getCursor(options.userId, rule.ruleKey);
   const hasExplicitAfterId = options.afterId != null && String(options.afterId).trim() !== '';
   let afterId = hasExplicitAfterId
@@ -522,9 +553,11 @@ module.exports = {
     buildDashboardUserAlertIdentityPayload,
     buildDashboardUserAlertMetricPayload,
     buildDashboardUserAlertEventPayload,
+    bootstrapRealtimeOnlyCursor,
     loadDashboardCatalogRowsWithMeteora,
     mapDeliveryCursor,
     resolveAlertEventModel,
+    shouldSuppressHistoricalReplay,
     toNumberOrNull,
     toTextOrNull,
   },

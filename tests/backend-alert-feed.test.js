@@ -2,6 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const alertDeliveryCursor = require('../src/models/alert-delivery-cursor');
+const gmgnClaimAlertEvent = require('../src/models/gmgn-claim-alert-event');
 const tokenAlertEvent = require('../src/models/token-alert-event');
 const tokenCatalog = require('../src/models/token-catalog');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
@@ -260,6 +261,59 @@ describe('backend alert feed service', () => {
     } finally {
       tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
+  it('suppresses historical replay for realtime-only GMGN claim alerts', async () => {
+    const originalGetLatestEventId = gmgnClaimAlertEvent.getLatestEventId;
+    const originalListRecentEvents = gmgnClaimAlertEvent.listRecentEvents;
+    const originalMarkSeen = alertDeliveryCursor.markSeen;
+    let capturedLatestFilters = null;
+    let capturedMarkSeenArgs = null;
+
+    gmgnClaimAlertEvent.getLatestEventId = async (filters) => {
+      capturedLatestFilters = filters;
+      return 88;
+    };
+    gmgnClaimAlertEvent.listRecentEvents = async () => {
+      throw new Error('GMGN claim historical events must not replay through dashboard feed');
+    };
+    alertDeliveryCursor.markSeen = async (userId, ruleKey, lastSeenEventId) => {
+      capturedMarkSeenArgs = [userId, ruleKey, lastSeenEventId];
+      return {
+        userId,
+        ruleKey,
+        lastSeenEventId,
+        lastAckedEventId: null,
+        updatedAt: '2026-05-04T04:13:05.000Z',
+      };
+    };
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 12,
+        ruleKey: 'gmgn-claim-signal',
+        mode: 'all',
+        limit: 50,
+      });
+
+      assert.deepEqual(capturedLatestFilters, { ruleKey: 'gmgn-claim-signal' });
+      assert.deepEqual(capturedMarkSeenArgs, [12, 'gmgn-claim-signal', 88]);
+      assert.equal(payload.ruleKey, 'gmgn-claim-signal');
+      assert.equal(payload.kind, 'gmgn-claim-signal');
+      assert.equal(payload.mode, 'all');
+      assert.equal(payload.count, 0);
+      assert.deepEqual(payload.events, []);
+      assert.deepEqual(payload.cursor, {
+        ruleKey: 'gmgn-claim-signal',
+        lastSeenEventId: 88,
+        lastAckedEventId: null,
+        updatedAt: '2026-05-04T04:13:05.000Z',
+      });
+    } finally {
+      gmgnClaimAlertEvent.getLatestEventId = originalGetLatestEventId;
+      gmgnClaimAlertEvent.listRecentEvents = originalListRecentEvents;
+      alertDeliveryCursor.markSeen = originalMarkSeen;
     }
   });
 

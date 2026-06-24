@@ -33,6 +33,7 @@ const BACKEND_ALERT_RULES = Object.freeze({
     displayName: 'GMGN Claim Signal',
     scope: 'global-signal',
     dashboardFeedEnabled: true,
+    historicalReplayEnabled: false,
     defaults: Object.freeze({
       maxAlertsPerToken: 2,
       minMcapUsd: 4000,

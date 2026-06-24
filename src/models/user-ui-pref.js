@@ -34,9 +34,9 @@ const DEFAULT_UI_PREFS = {
   livePanelLayout: {
     order: [...LIVE_PANEL_KEYS],
     spans: {
-      monitored: 1,
+      monitored: 2,
       pumpfun: 1,
-      alerts: 2,
+      alerts: 1,
     },
   },
 };

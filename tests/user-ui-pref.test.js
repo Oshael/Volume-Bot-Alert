@@ -9,14 +9,14 @@ describe('user-ui-pref', () => {
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
   });
 
-  it('defaults new live layouts with alerts spanning two thirds', () => {
+  it('defaults new live layouts with monitored spanning two thirds', () => {
     const prefs = userUiPref.normalizePrefs({});
     assert.deepEqual(prefs.livePanelLayout, {
       order: ['monitored', 'pumpfun', 'alerts'],
       spans: {
-        monitored: 1,
+        monitored: 2,
         pumpfun: 1,
-        alerts: 2,
+        alerts: 1,
       },
     });
   });
