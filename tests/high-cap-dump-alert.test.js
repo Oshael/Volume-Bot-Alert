@@ -58,6 +58,7 @@ function createStablePinnedDetection(overrides = {}) {
 describe('high cap dump alert service', () => {
   it('creates an event once the pair pin is already stable', async () => {
     const originalGetClient = db.getClient;
+    const originalQuery = db.query;
     const originalCreateEvent = tokenAlertEvent.createEvent;
     const originalGetState = tokenAlertRuleState.getState;
     const originalUpsertState = tokenAlertRuleState.upsertState;
@@ -68,6 +69,7 @@ describe('high cap dump alert service', () => {
     const publishedEvents = [];
 
     db.getClient = async () => createClient(clientLog);
+    db.query = async () => ({ rows: [] });
     tokenAlertRuleState.getState = async () => createStablePinState();
     tokenAlertEvent.createEvent = async (payload) => {
       eventWrites.push(payload);
@@ -118,6 +120,7 @@ describe('high cap dump alert service', () => {
       assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
     } finally {
       db.getClient = originalGetClient;
+      db.query = originalQuery;
       tokenAlertEvent.createEvent = originalCreateEvent;
       tokenAlertRuleState.getState = originalGetState;
       tokenAlertRuleState.upsertState = originalUpsertState;
@@ -160,7 +163,6 @@ describe('high cap dump alert service', () => {
       stateWrites.push(payload);
       return payload;
     };
-
     try {
       const result = await highCapDumpAlert.evaluateDetection(createStablePinnedDetection({
         baselineTs: '2026-04-05T18:01:00.000Z',
@@ -314,6 +316,7 @@ describe('high cap dump alert service', () => {
 
   it('allows a new alert after 6h even if the token did not recover to 85% of the original baseline', async () => {
     const originalGetClient = db.getClient;
+    const originalQuery = db.query;
     const originalCreateEvent = tokenAlertEvent.createEvent;
     const originalGetState = tokenAlertRuleState.getState;
     const originalUpsertState = tokenAlertRuleState.upsertState;
@@ -322,6 +325,7 @@ describe('high cap dump alert service', () => {
     const eventWrites = [];
 
     db.getClient = async () => createClient(clientLog);
+    db.query = async () => ({ rows: [] });
     tokenAlertRuleState.getState = async () => createStablePinState({
       status: 'triggered',
       lastBaselineTs: '2026-04-05T10:00:00.000Z',
@@ -374,6 +378,7 @@ describe('high cap dump alert service', () => {
       assert.deepEqual(clientLog, ['BEGIN', 'COMMIT', 'RELEASE']);
     } finally {
       db.getClient = originalGetClient;
+      db.query = originalQuery;
       tokenAlertEvent.createEvent = originalCreateEvent;
       tokenAlertRuleState.getState = originalGetState;
       tokenAlertRuleState.upsertState = originalUpsertState;

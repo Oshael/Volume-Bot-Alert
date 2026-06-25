@@ -39,8 +39,13 @@ function createNotificationMock(permission = 'granted') {
   return MockNotification;
 }
 
-function loadBrowserNotificationModule(options = {}) {
-  const source = fs.readFileSync(SERVICE_PATH, 'utf8');
+function loadTypeScriptModule(filePath, sandboxOverrides = {}, cache = new Map()) {
+  const resolvedPath = path.resolve(filePath);
+  if (cache.has(resolvedPath)) {
+    return cache.get(resolvedPath).exports;
+  }
+
+  const source = fs.readFileSync(resolvedPath, 'utf8');
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
@@ -48,17 +53,34 @@ function loadBrowserNotificationModule(options = {}) {
     },
   });
   const module = { exports: {} };
+  cache.set(resolvedPath, module);
+  const localRequire = (specifier) => {
+    if (specifier.startsWith('.')) {
+      const dependencyPath = path.resolve(path.dirname(resolvedPath), specifier);
+      const typeScriptPath = dependencyPath.endsWith('.ts') ? dependencyPath : `${dependencyPath}.ts`;
+      if (fs.existsSync(typeScriptPath)) {
+        return loadTypeScriptModule(typeScriptPath, sandboxOverrides, cache);
+      }
+    }
+    return require(specifier);
+  };
   const sandbox = {
     module,
     exports: module.exports,
-    require,
+    require: localRequire,
     URL,
-    window: options.window,
-    document: options.document,
+    ...sandboxOverrides,
   };
 
-  vm.runInNewContext(compiled.outputText, sandbox, { filename: SERVICE_PATH });
+  vm.runInNewContext(compiled.outputText, sandbox, { filename: resolvedPath });
   return module.exports;
+}
+
+function loadBrowserNotificationModule(options = {}) {
+  return loadTypeScriptModule(SERVICE_PATH, {
+    window: options.window,
+    document: options.document,
+  });
 }
 
 function buildAlert(overrides = {}) {

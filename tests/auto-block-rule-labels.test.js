@@ -12,6 +12,7 @@ const {
 describe('auto-block rule labels', () => {
   it('keeps canonical high-ban label prefixes stable', () => {
     assert.deepEqual(AUTO_BLOCK_LABEL_PREFIXES, {
+      CATALOG_LIQUIDITY_UNDER_1K_48H: 'catalog-liquidity:under-1k-48h',
       CATALOG_YOUNG_EXTREME_CHURN: 'catalog-volume:young-extreme-churn',
       GMGN_AUTO_JUNK: 'gmgn-auto-junk',
       GMGN_INFO_LOW_MCAP_HIGH_HOLDERS: 'gmgn-info:low-mcap-high-holders',
