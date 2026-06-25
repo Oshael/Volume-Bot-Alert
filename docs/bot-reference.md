@@ -37,16 +37,20 @@ Current production-like topology:
 
 ## Test Environment And Database Safety
 
-This project has an important operational trap that is now explicitly documented because the tests are destructive against the selected database.
+This project has an important operational trap that is now explicitly documented because integration tests are destructive against the selected database.
 
 Code-backed behavior:
-- the core automated test path now runs:
+- `npm test` now runs the isolated unit group and does not intentionally use the real database
+- `npm run test:integration` runs sequentially:
   - `npm run db:schema-check:test`
   - `tests/admin.test.js`
   - `tests/auth.test.js`
+  - `tests/billing.test.js`
   - `tests/catalog.test.js`
   - `tests/config.test.js`
-  - `tests/billing.test.js`
+  - `tests/dashboard.test.js`
+  - `tests/mock-trading-routes.test.js`
+- `npm run test:all` runs unit and integration groups
 - multiple test entrypoints force `NODE_ENV=test` themselves, including:
   - `tests/catalog.test.js`
   - `tests/admin.test.js`
@@ -83,7 +87,7 @@ Operational rules that must be followed:
 - use a clearly isolated local DB name such as `volume_alert_test`
 - treat names like `volume_alert_railway_snapshot` as unsafe for tests even if they are local
 
-Recommended verification command before `npm test`:
+Recommended verification command before integration tests:
 ```bash
 node -e "process.env.NODE_ENV='test'; const config=require('./config'); console.log(config.db)"
 ```

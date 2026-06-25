@@ -105,11 +105,11 @@ In local frontend development, Vite proxies `/api` and `/socket.io` to the backe
 
 ## Database Safety
 
-Automated tests are destructive against the selected database.
+Unit tests do not intentionally use the real database. Integration tests are destructive against the selected test database.
 
 Mandatory rules:
 
-- Never run `npm test` against the normal `.env` database.
+- Never run `npm run test:integration`, `npm run test:all`, or an individual integration suite against the normal `.env` database.
 - Never point tests at production, Railway, a VPS DB, or a local production snapshot.
 - Keep `.env` and `.env.test` separate.
 - In `.env.test`, use explicit test-only DB variables:
@@ -123,7 +123,7 @@ Mandatory rules:
 - Use a local DB name that clearly looks test-only, for example `volume_alert_test`.
 - Treat names like `volume_alert_railway_snapshot` as unsafe for automated tests.
 
-Before running destructive tests, verify the selected test DB:
+Before running integration tests, verify the selected test DB:
 
 ```bash
 node -e "process.env.NODE_ENV='test'; const config=require('./config'); console.log(config.db)"
@@ -143,11 +143,16 @@ Root backend commands:
 ```bash
 npm run lint
 npm run test
+npm run test:unit
+npm run test:integration
+npm run test:all
 npm run test:admin
 npm run test:auth
 npm run test:catalog
 npm run test:config
 npm run test:billing
+npm run test:dashboard
+npm run test:mock-trading-routes
 npm run test:smoke
 npm run db:init
 npm run db:schema-check
