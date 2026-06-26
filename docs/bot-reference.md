@@ -1269,12 +1269,17 @@ Current login behavior:
     - login panel exposes `Continue with Google` and `Continue with Discord`
     - `GET /api/auth/social/:provider/login/start`
     - provider redirects to `GET /api/auth/social/:provider/login/callback`
-    - backend exchanges OAuth code, resolves linked provider identity, and never creates an account automatically
+    - backend exchanges OAuth code and resolves the provider identity
+    - Google can create a new verified account automatically when its verified email is not already registered
+    - the generated username comes from the email local-part, sanitized to the account username rules, with a numeric suffix on collision
+    - Discord remains linked-account-only
     - backend branches by access state:
       - linked + valid access -> normal bot session without OTP
       - linked + `inactive` / expired -> pre-access session + `/access`
       - linked + `revoked` / deactivated -> blocked
-      - not linked -> return to login with explicit social-login error
+      - unlinked Google + new verified email -> create inactive account + pre-access session + `/access`
+      - unlinked Google + existing email -> block automatic merge and require authenticated linking from the original account
+      - unlinked Discord -> return to login with explicit social-login error
 - restore path:
   - normal session:
     - `GET /api/auth/me`
@@ -1295,10 +1300,12 @@ Login access rules:
 - invite-based registration can immediately grant timed access when the consumed invite has `grant_access_days > 0`
 - that invite grant affects access state only; it does not make the new account an admin
 - successful verify-email now skips the immediate OTP step and opens pre-access directly
-- social login is allowed only for previously linked provider identities
+- Google login can provision a new account; Discord login is allowed only for previously linked identities
 - social login does not use OTP
 - local `email + password` login still uses OTP
-- social login never performs account creation and never performs email-based merge
+- social login never performs email-based merge
+- Google-only accounts may keep using OAuth without adding a password
+- unlinking a social identity requires a usable local password; Google-only users can create one through the password-reset email flow
 
 Current login UX features:
 - `TrendScope` branding with `Volume Bot Tracker`
@@ -1529,6 +1536,11 @@ Current implementation notes:
 - `/access` now hydrates plan selection from the public billing-plan payload so pricing cards do not wait on order-history loading
 - pre-access checkout opens in a new tab
 - while the checkout link is being generated, the selected pricing card shows an explicit in-card loading banner
+- MoonPay dynamic paylinks are supported per billing plan with `providerPaylinkDynamic: true`
+  - dynamic plans reuse `providerPaylinkId` for full and discounted checkout
+  - the backend sends `requestAmount` to MoonPay/Helio from the final order price
+  - `amountMinor: 1500` remains `USDC 15.00` in the app, while the provider `requestAmount` is sent as decimal `15`
+  - fixed paylink plans still require `discountProviderPaylinkId` for discounted checkout
 - current sandbox/dev validation uses a single public tunnel on the frontend origin:
   - `frontend/vite.config.ts` proxies `/api` and `/socket.io` to `localhost:3000`
   - this allows provider redirect and MoonPay webhook calls to share the same public host during local testing
@@ -1610,7 +1622,8 @@ Files:
 - `frontend/src/ui/sections/layout-sections.ts`
 
 Behavior:
-- social login is now implemented for already-linked identities only
+- linked Google/Discord identities can sign in directly
+- Google can also provision a new inactive account from a verified provider email
 - start routes:
   - `GET /api/auth/social/:provider/login/start`
 - callback routes:
@@ -1619,12 +1632,29 @@ Behavior:
 Current login rules:
 - linked `Google` / `Discord` identities can sign in without OTP
 - local `email + password` login still requires OTP
-- social login never creates a new account
+- Google creates a new account only when the provider email is verified and does not belong to an existing account
+- Discord never creates a new account
 - social login never merges by email
 - linked + active access -> normal bot session
 - linked + `inactive` / expired -> pre-access session + `/access`
 - linked + `revoked` / deactivated -> blocked
 - not linked -> return to login with explicit social-login error
+
+## Solana Wallet Selection
+
+Files:
+- `frontend/src/services/wallets/solana-wallets.ts`
+- `frontend/src/state/app-controller.ts`
+- `frontend/src/ui/sections/layout-sections.ts`
+
+Behavior:
+- wallet login and account linking discover compatible providers through Wallet Standard
+- supported installed wallets include Phantom, Solflare, Backpack, and other providers exposing `standard:connect` plus `solana:signMessage`
+- the user explicitly chooses the wallet before challenge creation
+- the backend remains provider-agnostic and verifies the Solana public key plus Ed25519 signature
+- MetaMask is not registered through the MetaMask Solana SDK; it appears only if the user's environment exposes MetaMask as a compatible Wallet Standard Solana provider
+- `VITE_SOLANA_NETWORK` and `VITE_SOLANA_RPC_URL` must match the token-gate environment
+- message-signing login does not submit an on-chain transaction; network approval or switching is wallet-dependent
 
 Important implementation note:
 - linking and social login now use different callback URIs for each provider
