@@ -57,6 +57,7 @@ export interface VerifyEmailConfirmResponse {
   requiresPreAccess?: boolean;
   redirectPath?: string;
   preAccessToken?: string;
+  token?: string;
 }
 
 export interface VerifyEmailRequestInput {

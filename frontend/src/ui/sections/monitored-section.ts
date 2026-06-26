@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
-import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
+import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
 import { renderManualTokenEntryForm } from './manual-section';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderMeteoraCell, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -307,6 +307,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
     buildMetaMetric('VOL 1H', fmtMoney(item.volume1h)),
     buildMetaMetric('VOL 6H', fmtMoney(item.volume6h)),
     buildMetaMetric('VOL 24H', fmtMoney(item.volume24h)),
+    buildMetaMetric('METEORA', buildMonitoredMeteoraPoolValue(item)),
   );
 
   const actions = document.createElement('div');
@@ -448,16 +449,55 @@ function buildInlineActionLink(label: string, href: string, className: string, t
   return link;
 }
 
-function buildMetaMetric(label: string, value: string, valueClassName = '') {
+function buildMetaMetric(label: string, value: string | HTMLElement, valueClassName = '') {
   const wrapper = document.createElement('span');
   const labelEl = document.createElement('span');
   labelEl.className = 'meta-label';
   labelEl.textContent = label;
   const valueEl = document.createElement('span');
   valueEl.className = `meta-value${valueClassName ? ` ${valueClassName}` : ''}`;
-  valueEl.textContent = value;
+  if (typeof value === 'string') {
+    valueEl.textContent = value;
+  } else {
+    valueEl.append(value);
+  }
   wrapper.append(labelEl, ' ', valueEl);
   return wrapper;
+}
+
+function buildMonitoredMeteoraPoolValue(item: ManualTokenEntry) {
+  const value = document.createElement('span');
+  const meteoraEntry = normalizeMonitoredMeteoraEntry(item);
+  if (!meteoraEntry) {
+    value.textContent = '-';
+    return value;
+  }
+
+  value.innerHTML = renderMeteoraCell(item.address, meteoraEntry, 0);
+  return value;
+}
+
+function hasMonitoredMeteoraPool(item: ManualTokenEntry) {
+  const meteora = item.meteora;
+  return Boolean(meteora && !meteora.noPool && (meteora.poolAddress || Number(meteora.poolCount) > 0));
+}
+
+function normalizeMonitoredMeteoraEntry(item: ManualTokenEntry): MeteoraEntry | undefined {
+  if (!hasMonitoredMeteoraPool(item) || !item.meteora) {
+    return undefined;
+  }
+
+  return {
+    tvl: Number(item.meteora.tvl) || 0,
+    poolAddress: item.meteora.poolAddress ?? null,
+    poolCount: Number(item.meteora.poolCount) || 0,
+    noPool: Boolean(item.meteora.noPool),
+    lastCheckedAt: item.meteora.lastCheckedAt ?? null,
+    lastSnapshotAt: item.meteora.lastSnapshotAt ?? null,
+    change1h: item.meteora.change1h ?? null,
+    change6h: item.meteora.change6h ?? null,
+    change24h: item.meteora.change24h ?? null,
+  };
 }
 
 function resolveTickerPeerRole(tickerPeers: ManualTokenEntry['tickerPeers']) {

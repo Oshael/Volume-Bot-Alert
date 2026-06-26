@@ -114,6 +114,7 @@ export interface ManualTokenEntry {
   _isTopPerformer?: boolean;
   performanceRank?: number | null;
   performanceScore?: number | null;
+  meteora?: ManualTokenMeteoraEntry | null;
   tickerPeers?: AlertEntry['tickerPeers'];
 }
 
@@ -165,6 +166,19 @@ export interface MeteoraEntry {
   change6h?: number | null;
   change24h?: number | null;
   history?: MeteoraTvlPoint[];
+}
+
+export interface ManualTokenMeteoraEntry {
+  address: string;
+  tvl?: number | null;
+  poolAddress?: string | null;
+  poolCount?: number;
+  noPool?: boolean;
+  lastCheckedAt?: string | null;
+  lastSnapshotAt?: string | null;
+  change1h?: number | null;
+  change6h?: number | null;
+  change24h?: number | null;
 }
 
 export interface TokenSparklineEntry {
@@ -398,6 +412,7 @@ export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-token
 export type AuthPanel =
   | 'none'
   | ProfileAuthPanel
+  | 'wallet-select'
   | 'register'
   | 'invite-assistance'
   | 'password-reset'
@@ -421,9 +436,16 @@ export interface StatusMetric {
   tone?: 'neutral' | 'ok' | 'warn';
 }
 
+export interface SolanaWalletOptionState {
+  id: string;
+  name: string;
+  icon: string | null;
+}
+
 export interface AddressItem {
   address: string;
   label?: string | null;
+  imageUrl?: string | null;
 }
 
 export interface BlockTokenWarningState {
@@ -443,11 +465,18 @@ export interface SessionState {
   accessStatus: 'inactive' | 'active' | 'grace' | 'revoked' | null;
   accessGrantedAt: string | null;
   accessExpiresAt: string | null;
-  accessSource: 'manual' | 'payment' | 'admin' | 'promo' | 'invite' | null;
+  accessSource: 'manual' | 'payment' | 'admin' | 'promo' | 'invite' | 'token' | null;
   accessUpdatedAt: string | null;
   accessIsExpired: boolean;
   accessHasProductAccess: boolean;
   accessDaysRemaining: number | null;
+  accessReason: string | null;
+  tokenTier: string | null;
+  tokenDiscountPercent: number;
+  tokenBalanceRaw: string | null;
+  tokenBalanceUi: string | null;
+  tokenSnapshotCheckedAt: string | null;
+  tokenSnapshotExpiresAt: string | null;
 }
 
 export interface BillingPlanEntry {
@@ -458,6 +487,10 @@ export interface BillingPlanEntry {
   currencyCode: string;
   amountMinor: number;
   priceDisplay: string | null;
+  discountedAmountMinor?: number | null;
+  discountedPriceDisplay?: string | null;
+  discountPercent?: number;
+  discountAvailable?: boolean;
   featured: boolean;
   provider: string;
   available: boolean;
@@ -492,6 +525,8 @@ export interface LinkedIdentityEntry {
   providerDisplayName: string | null;
   linkedAt: string | null;
   lastLoginAt: string | null;
+  canUnlink: boolean;
+  unlinkBlockedReason: string | null;
 }
 
 export interface ConfigSummary {
@@ -519,11 +554,13 @@ export interface AppState {
   identities: {
     loaded: boolean;
     providers: LinkedIdentityEntry[];
+    hasPasswordLogin: boolean;
     error: string | null;
   };
   preAccess: {
     loaded: boolean;
     awaitingConfirmation: boolean;
+    pendingBillingOrderId: number | null;
   };
   runtime: {
     mode: StatusMode;
@@ -600,6 +637,9 @@ export interface AppState {
     notice: string | null;
     loginErrorCount: number;
     authPanel: AuthPanel;
+    walletSelectorMode: 'login' | 'link' | null;
+    walletOptions: SolanaWalletOptionState[];
+    walletNetworkLabel: string;
     pendingIdentityUnlinkProvider: LinkedIdentityEntry['provider'] | null;
     pendingVerificationEmail: string | null;
     pendingPasswordResetToken: string | null;
@@ -666,6 +706,13 @@ export function createAppState(): AppState {
       accessIsExpired: false,
       accessHasProductAccess: false,
       accessDaysRemaining: null,
+      accessReason: null,
+      tokenTier: null,
+      tokenDiscountPercent: 0,
+      tokenBalanceRaw: null,
+      tokenBalanceUi: null,
+      tokenSnapshotCheckedAt: null,
+      tokenSnapshotExpiresAt: null,
     },
     billing: {
       loaded: false,
@@ -681,11 +728,13 @@ export function createAppState(): AppState {
     identities: {
       loaded: false,
       providers: [],
+      hasPasswordLogin: false,
       error: null,
     },
     preAccess: {
       loaded: false,
       awaitingConfirmation: false,
+      pendingBillingOrderId: null,
     },
     runtime: {
       mode: 'stopped',
@@ -769,6 +818,9 @@ export function createAppState(): AppState {
       notice: null,
       loginErrorCount: 0,
       authPanel: 'none',
+      walletSelectorMode: null,
+      walletOptions: [],
+      walletNetworkLabel: 'Solana Mainnet',
       pendingIdentityUnlinkProvider: null,
       pendingVerificationEmail: null,
       pendingPasswordResetToken: null,

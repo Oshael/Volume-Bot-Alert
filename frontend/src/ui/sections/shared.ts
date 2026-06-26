@@ -1950,7 +1950,7 @@ function renderMeteoraDelta(label: string, value: number | null) {
   return `<div class="meteora-tip-line"><span>${escapeHtml(label)}</span><span class="${cls}">${value >= 0 ? '+' : ''}${value.toFixed(1)}%</span></div>`;
 }
 
-function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, minPool: number) {
+export function renderMeteoraCell(address: string, entry: MeteoraEntry | undefined, minPool: number) {
   if (!entry || entry.noPool || !(entry.tvl > 0) || (minPool > 0 && entry.tvl < minPool)) {
     return '-';
   }

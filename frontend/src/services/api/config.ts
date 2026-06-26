@@ -3,6 +3,7 @@ import { apiFetch } from './base';
 export interface AddressItem {
   address: string;
   label?: string | null;
+  imageUrl?: string | null;
 }
 
 export interface BucketSortCriterionPayload {

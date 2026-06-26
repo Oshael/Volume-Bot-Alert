@@ -24,6 +24,10 @@
   --shadow: none;
 }
 
+[data-app-render-slot][hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2280,8 +2284,37 @@ body:has(.workspace-topbar)::before {
 }
 
 .legacy-auth-panel-user-settings {
-  width: min(920px, calc(100vw - 28px));
+  width: min(760px, calc(100vw - 28px));
+  max-height: min(92vh, 720px);
+  gap: 12px;
+  padding: 24px;
+  border-color: rgba(110, 140, 190, 0.16);
+  border-radius: 16px;
+  background: #0a0f1a;
   overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.legacy-auth-panel-user-settings .legacy-auth-panel-head {
+  align-items: center;
+  gap: 16px;
+}
+
+.legacy-auth-panel-user-settings .legacy-auth-panel-head strong {
+  font-size: 25px;
+  line-height: 1.05;
+}
+
+.legacy-auth-panel-user-settings .legacy-auth-panel-head span {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.legacy-auth-panel-user-settings .legacy-profile-modal-close {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  color: #9fb1c9;
 }
 
 .legacy-auth-panel-block-warning {
@@ -2536,11 +2569,15 @@ body:has(.workspace-topbar)::before {
 .legacy-user-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .legacy-user-settings-card {
   margin-top: 0;
+  padding: 14px 16px;
+  border-color: rgba(110, 140, 190, 0.16);
+  border-radius: 14px;
+  background: rgba(8, 13, 24, 0.78);
 }
 
 .legacy-user-settings-card-wide {
@@ -2548,30 +2585,35 @@ body:has(.workspace-topbar)::before {
 }
 
 .legacy-user-settings-card-head {
-  display: grid;
-  gap: 3px;
-  margin-bottom: 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
 }
 
 .legacy-user-settings-card-head strong {
   color: #eef4ff;
+  font-size: 15px;
+  line-height: 1.1;
 }
 
 .legacy-user-settings-card-head span {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
+  text-align: right;
 }
 
 .legacy-user-settings-actions {
-  margin-top: 8px;
-  justify-content: flex-start;
+  margin-top: 0;
+  justify-content: flex-end;
 }
 
 .legacy-user-identity-access-card {
   display: grid;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: 12px;
+  padding: 16px;
 }
 
 .legacy-account-access-topline {
@@ -2618,20 +2660,21 @@ body:has(.workspace-topbar)::before {
 
 .legacy-account-access-copy {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
 .legacy-account-access-primary {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .legacy-account-access-primary strong {
   color: #eef4ff;
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1;
 }
 
@@ -2639,15 +2682,32 @@ body:has(.workspace-topbar)::before {
 .legacy-account-access-meta span,
 .legacy-account-access-item span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.45;
 }
 
-.legacy-account-access-primary span {
+.legacy-account-access-wallet {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: #71819c;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.legacy-account-access-chip {
+  min-height: 22px;
+  padding: 3px 8px;
+  border: 1px solid rgba(91, 128, 180, 0.28);
+  border-radius: 6px;
+  background: rgba(80, 119, 177, 0.09);
+  color: #91a7c4 !important;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 10px !important;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .legacy-account-access-meta {
@@ -2658,7 +2718,7 @@ body:has(.workspace-topbar)::before {
 
 .legacy-account-access-status {
   display: grid;
-  justify-items: end;
+  justify-items: center;
   gap: 6px;
   flex: 0 0 auto;
 }
@@ -2666,20 +2726,31 @@ body:has(.workspace-topbar)::before {
 .legacy-account-access-status-badge {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   min-height: 28px;
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(0, 212, 255, 0.32);
   background: rgba(10, 29, 44, 0.85);
-  color: #c8ecff;
-  font-size: 11px;
+  color: #46d6e0;
+  font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
+.legacy-account-access-status-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #46d6e0;
+}
+
 .legacy-account-access-status strong {
   color: #eef4ff;
-  font-size: 18px;
+  font-size: 13px;
+  text-align: center;
   line-height: 1;
 }
 
@@ -2690,19 +2761,34 @@ body:has(.workspace-topbar)::before {
 
 .legacy-account-access-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(120px, 1.2fr) minmax(82px, 0.8fr) minmax(88px, 0.9fr) minmax(72px, 0.7fr) auto;
   gap: 10px 14px;
+  align-items: center;
 }
 
 .legacy-account-access-item {
   display: grid;
-  gap: 3px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .legacy-account-access-item strong {
   color: #eef4ff;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legacy-account-access-item span {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.legacy-account-access-token-tier {
+  color: #7fe0a8 !important;
 }
 
 .legacy-account-access-item-inline {
@@ -2716,12 +2802,97 @@ body:has(.workspace-topbar)::before {
   gap: 12px;
 }
 
-.legacy-account-access-billing-btn {
-  min-height: 38px;
-  padding-inline: 18px;
+.legacy-account-access-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.legacy-account-access-billing-btn,
+.legacy-account-access-wallet-btn {
+  min-height: 34px;
+  padding-inline: 14px;
   white-space: nowrap;
   flex: 0 0 auto;
-  margin-top: -10px;
+  margin-top: 0;
+  color: #5aa6f0;
+  font-size: 11px;
+}
+
+.legacy-account-access-note {
+  color: #66758d;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.legacy-token-entitlement-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 212, 170, 0.18);
+  background: rgba(0, 212, 170, 0.06);
+}
+
+.legacy-token-entitlement-strip div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.legacy-token-entitlement-strip span {
+  color: #86a0bd;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.legacy-token-entitlement-strip strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #eafff7;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legacy-account-profile-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.legacy-account-profile-form label {
+  gap: 6px;
+}
+
+.legacy-account-profile-form label span {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+}
+
+.legacy-account-profile-form input {
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.legacy-account-profile-form .legacy-user-settings-actions {
+  margin-top: 10px;
+}
+
+.legacy-account-profile-form .legacy-btn {
+  min-height: 38px;
+  padding-inline: 18px;
+  border-radius: 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .legacy-linked-identity-list {
@@ -2732,12 +2903,27 @@ body:has(.workspace-topbar)::before {
 .legacy-linked-identity-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 10px;
   border: 1px solid rgba(50, 82, 124, 0.36);
-  border-radius: 12px;
+  border-radius: 10px;
   background: rgba(11, 17, 26, 0.66);
+}
+
+.legacy-security-inline-card .legacy-linked-identity-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.legacy-security-inline-card .legacy-linked-identity-provider-mark {
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+}
+
+.legacy-security-inline-card .legacy-linked-identity-provider-mark svg {
+  width: 18px;
+  height: 18px;
 }
 
 .legacy-linked-identity-main,
@@ -2749,13 +2935,13 @@ body:has(.workspace-topbar)::before {
 .legacy-linked-identity-main strong,
 .legacy-linked-identity-side strong {
   color: #eef4ff;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .legacy-linked-identity-main span,
 .legacy-linked-identity-side span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.4;
 }
 
@@ -2765,11 +2951,22 @@ body:has(.workspace-topbar)::before {
 }
 
 .legacy-linked-identity-connect {
-  margin-top: 4px;
+  min-height: 30px;
+  margin-top: 0;
+  padding-inline: 12px;
+  border-radius: 8px;
+  color: #5aa6f0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: none;
   justify-self: end;
 }
 
 .legacy-linked-identity-unlink {
+  min-height: 30px;
+  padding-inline: 10px;
+  border-radius: 8px;
+  font-size: 10px;
   justify-self: end;
 }
 
@@ -2778,26 +2975,49 @@ body:has(.workspace-topbar)::before {
 }
 
 .legacy-security-inline-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.legacy-security-inline-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 16px;
 }
 
 .legacy-security-inline-copy {
   display: grid;
-  gap: 3px;
+  gap: 7px;
+  min-width: 0;
 }
 
 .legacy-security-inline-copy strong {
   color: #eef4ff;
+  font-size: 15px;
+  line-height: 1.1;
 }
 
 .legacy-security-inline-copy span {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.legacy-security-inline-card > .legacy-user-settings-actions,
+.legacy-security-inline-head .legacy-user-settings-actions {
+  flex: 0 0 auto;
+}
+
+.legacy-security-inline-head .legacy-btn {
+  min-height: 34px;
+  padding-inline: 16px;
+  border-radius: 9px;
+  color: #5aa6f0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .legacy-pre-access-landing {
@@ -3578,12 +3798,36 @@ body:has(.workspace-topbar)::before {
   gap: 8px;
 }
 
-.legacy-public-plan-price-row span {
+.legacy-public-plan-price-row span,
+.legacy-public-plan-price-row del {
   color: #6f8398;
   font-family: "JetBrains Mono", "Space Mono", monospace;
   font-size: 14px;
   line-height: 1.2;
   margin-bottom: 6px;
+}
+
+.legacy-public-plan-price-row del,
+.legacy-profile-billing-price-row del {
+  color: #6f8398;
+  text-decoration-color: rgba(0, 212, 170, 0.78);
+}
+
+.legacy-token-discount-badge {
+  justify-self: start;
+  width: fit-content;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 212, 170, 0.32);
+  background: rgba(0, 212, 170, 0.12);
+  color: #8fffe4;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
 }
 
 .legacy-public-plan-price {
@@ -3604,6 +3848,40 @@ body:has(.workspace-topbar)::before {
   font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
+}
+
+.legacy-token-discount-line {
+  color: #00d4aa;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.legacy-token-billing-notice {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 212, 170, 0.24);
+  background: rgba(0, 212, 170, 0.08);
+}
+
+.legacy-token-billing-notice strong {
+  color: #dffff7;
+  font-family: "Space Grotesk", "Syne", sans-serif;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.legacy-token-billing-notice span {
+  color: #9db5c9;
+  font-family: "JetBrains Mono", "Space Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .legacy-public-pricing-card .legacy-user-settings-actions {
@@ -3685,12 +3963,12 @@ body:has(.workspace-topbar)::before {
 .legacy-billing-plan-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .legacy-profile-billing-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 10px;
 }
 
 .legacy-billing-plan-card,
@@ -3702,14 +3980,14 @@ body:has(.workspace-topbar)::before {
 
 .legacy-billing-plan-card {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   padding: 12px;
 }
 
 .legacy-profile-billing-card {
-  gap: 12px;
-  padding: 18px 18px 16px;
-  border-radius: 16px;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
   border-color: rgba(40, 68, 112, 0.92);
   background:
     linear-gradient(180deg, rgba(8, 13, 21, 0.98), rgba(7, 12, 19, 0.94)),
@@ -3735,23 +4013,23 @@ body:has(.workspace-topbar)::before {
 
 .legacy-billing-plan-copy strong {
   color: #eef4ff;
-  font-size: 22px;
+  font-size: 17px;
   line-height: 1;
 }
 
 .legacy-profile-billing-copy {
-  gap: 6px;
+  gap: 4px;
 }
 
 .legacy-profile-billing-copy strong {
   font-family: "Space Grotesk", "Syne", sans-serif;
-  font-size: 25px;
+  font-size: 17px;
   line-height: 1.04;
 }
 
 .legacy-profile-billing-copy span {
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 11px;
+  font-size: 10px;
   color: #8fa4bf;
 }
 
@@ -3779,9 +4057,9 @@ body:has(.workspace-topbar)::before {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 36px;
-  padding: 8px 12px;
-  border-radius: 10px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 8px;
   border: 1px solid rgba(0, 212, 170, 0.2);
   background: rgba(0, 212, 170, 0.1);
   color: #b9ffe8;
@@ -3812,7 +4090,7 @@ body:has(.workspace-topbar)::before {
 .legacy-billing-plan-price {
   color: #eef4ff;
   font-family: 'Bebas Neue', 'Saira Condensed', sans-serif;
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 700;
   line-height: 0.95;
 }
@@ -3822,41 +4100,42 @@ body:has(.workspace-topbar)::before {
 }
 
 .legacy-profile-billing-badge {
-  min-height: 28px;
-  padding: 0 16px;
+  min-height: 22px;
+  padding: 0 10px;
   border-radius: 999px;
   border-color: rgba(0, 212, 170, 0.2);
   background: rgba(0, 212, 170, 0.08);
   color: #00d4aa;
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.14em;
 }
 
 .legacy-profile-billing-duration {
   color: #32455d;
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.14em;
 }
 
 .legacy-profile-billing-price-row {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
-.legacy-profile-billing-price-row span {
+.legacy-profile-billing-price-row span,
+.legacy-profile-billing-price-row del {
   color: #8396ae;
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 13px;
+  font-size: 10px;
   line-height: 1.1;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .legacy-profile-billing-price {
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 42px;
+  font-size: 24px;
   line-height: 0.9;
 }
 
@@ -3864,19 +4143,19 @@ body:has(.workspace-topbar)::before {
   min-height: 0;
   color: #57708b;
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .legacy-profile-billing-btn {
-  min-height: 42px;
-  border-radius: 10px;
+  min-height: 34px;
+  border-radius: 8px;
   border-color: rgba(35, 52, 82, 0.95);
   background: transparent;
   color: #dfe9f7;
   font-family: "JetBrains Mono", "Space Mono", monospace;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
 }
 
 .legacy-profile-billing-btn:hover,
@@ -3896,7 +4175,8 @@ body:has(.workspace-topbar)::before {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
 }
 
 .legacy-billing-order-main {
@@ -3908,12 +4188,12 @@ body:has(.workspace-topbar)::before {
 
 .legacy-billing-order-main strong {
   color: #eef4ff;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .legacy-billing-order-main span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   white-space: nowrap;
 }
 
@@ -4180,6 +4460,35 @@ body:has(.workspace-topbar)::before {
     padding-inline: 18px;
   }
 
+  .legacy-account-access-topline,
+  .legacy-security-inline-head {
+    align-items: flex-start;
+  }
+
+  .legacy-account-access-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .legacy-account-access-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .legacy-account-profile-form,
+  .legacy-security-inline-card .legacy-linked-identity-list {
+    grid-template-columns: 1fr;
+  }
+
+  .legacy-user-settings-card-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .legacy-user-settings-card-head span {
+    text-align: left;
+  }
+
   .legacy-billing-order-row {
     flex-direction: column;
     align-items: flex-start;
@@ -4287,6 +4596,80 @@ body:has(.workspace-topbar)::before {
   color: #eef4ff;
   padding: 0 76px 0 16px;
   font-size: 16px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-form label {
+  gap: 6px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-form label span {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-form input {
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-form .legacy-user-settings-actions {
+  margin-top: 10px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-form .legacy-btn {
+  min-height: 38px;
+  padding-inline: 18px;
+  border-radius: 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only {
+  padding: 14px 16px 16px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only .legacy-user-settings-card-head {
+  margin-bottom: 10px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only .legacy-account-profile-form {
+  grid-template-columns: minmax(220px, 360px) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only .legacy-user-settings-actions {
+  grid-column: auto;
+  align-self: end;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only .legacy-btn {
+  min-width: 156px;
+}
+
+@media (max-width: 860px) {
+  .legacy-auth-panel-user-settings .legacy-account-profile-form {
+    grid-template-columns: 1fr;
+  }
+
+  .legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only .legacy-account-profile-form {
+    grid-template-columns: 1fr;
+  }
+
+  .legacy-auth-panel-user-settings .legacy-account-profile-card.is-username-only .legacy-user-settings-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
 }
 
 .legacy-auth-panel-actions {
@@ -5377,6 +5760,10 @@ button,
   .legacy-bootstrap-copy h3 {
     line-height: 1.02;
   }
+
+  .legacy-token-entitlement-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .legacy-login-sub {
@@ -5550,16 +5937,156 @@ button,
 }
 
 .legacy-login-social-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 46px;
   background: rgba(10, 18, 30, 0.88);
   border: 1px solid rgba(52, 73, 108, 0.9);
   color: #edf4ff;
+  text-align: center;
+}
+
+.legacy-login-social-icon {
+  position: absolute;
+  left: max(22px, calc(50% - 190px));
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+}
+
+.legacy-login-social-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .legacy-login-social-btn:hover,
 .legacy-login-social-btn:focus-visible {
   border-color: rgba(0, 212, 255, 0.55);
   box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.14) inset;
+}
+
+.legacy-login-wallet-block {
+  display: grid;
+  gap: 10px;
+}
+
+.legacy-wallet-selector-panel {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.legacy-wallet-selector-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.legacy-wallet-selector-option {
+  width: 100%;
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(80, 136, 183, 0.42);
+  border-radius: 6px;
+  background: rgba(7, 16, 27, 0.92);
+  color: #eaf3ff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.legacy-wallet-selector-option:hover,
+.legacy-wallet-selector-option:focus-visible {
+  border-color: #16d5c3;
+  background: rgba(13, 36, 49, 0.96);
+  outline: none;
+}
+
+.legacy-wallet-selector-option:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.legacy-wallet-selector-option img,
+.legacy-wallet-selector-fallback {
+  width: 42px;
+  height: 42px;
+  border-radius: 6px;
+}
+
+.legacy-wallet-selector-option img {
+  display: block;
+  object-fit: cover;
+}
+
+.legacy-wallet-selector-fallback {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(22, 213, 195, 0.45);
+  background: rgba(22, 213, 195, 0.12);
+  color: #8af4e8;
+  font-weight: 800;
+}
+
+.legacy-wallet-selector-option > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.legacy-wallet-selector-option strong,
+.legacy-wallet-selector-option small {
+  overflow-wrap: anywhere;
+}
+
+.legacy-wallet-selector-option strong {
+  font-size: 15px;
+}
+
+.legacy-wallet-selector-option small {
+  color: #8fa6bf;
+  font-size: 12px;
+}
+
+.legacy-wallet-selector-note {
+  margin-top: 14px;
+}
+
+.legacy-login-wallet-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  border: 1px solid rgba(0, 212, 170, 0.48);
+  background: rgba(0, 212, 170, 0.1);
+  color: #d8fff2;
+  text-align: center;
+}
+
+.legacy-login-wallet-icon {
+  position: absolute;
+  left: max(22px, calc(50% - 190px));
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: #8af4e8;
+}
+
+.legacy-login-wallet-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.legacy-login-wallet-btn:hover,
+.legacy-login-wallet-btn:focus-visible {
+  border-color: rgba(0, 212, 170, 0.76);
+  box-shadow: 0 0 0 1px rgba(0, 212, 170, 0.16) inset;
 }
 
 .legacy-login-submit {
@@ -9483,6 +10010,8 @@ TEMP_LEGACY_BAR_TITLE {
   font-size: 11px !important;
   line-height: 1.2;
   color: #fff !important;
+  overflow: visible;
+  white-space: normal;
 }
 
 .monitored-actions-line {
@@ -9615,6 +10144,14 @@ TEMP_LEGACY_BAR_TITLE {
   color: #fff !important;
   font-size: 12px;
   font-weight: 700;
+}
+
+.monitored-meta-line .meta-value .meteora-value {
+  color: #c4a6ff !important;
+}
+
+.monitored-meta-line .met-tip-dd {
+  z-index: 80;
 }
 
 .monitored-meta-line .meta-value.up {

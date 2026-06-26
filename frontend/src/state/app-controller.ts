@@ -1,4 +1,4 @@
-import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -19,6 +19,12 @@ import {
   verifyLoginOtp as verifyLoginOtpRequest,
 } from '../services/api/auth';
 import {
+  requestWalletChallenge,
+  requestWalletLinkChallenge,
+  verifyWalletLinkSignature,
+  verifyWalletSignature,
+} from '../services/api/wallet-auth';
+import {
   addManualToken as addManualTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
   fetchConfig,
@@ -35,11 +41,12 @@ import {
   fetchAccountIdentities,
   fetchAccountSecurityIdentities,
   unlinkAccountSecurityIdentity,
+  updateAccountProfile as updateAccountProfileRequest,
   type AccountAccessPayload,
   type AccountIdentitiesPayload,
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
-import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, type PreAccessBillingStatePayload } from '../services/api/pre-access';
+import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
 import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
@@ -92,6 +99,11 @@ import {
   requestBrowserNotificationPermission,
   saveBrowserNotificationSettings,
 } from '../services/alerts/browser-notifications';
+import {
+  connectSolanaWallet,
+  getSolanaNetworkLabel,
+  listSolanaWallets,
+} from '../services/wallets/solana-wallets';
 
 const AUTH_NOTICE_NO_SESSION = 'No saved session. Sign in to continue.';
 const AUTH_NOTICE_RESTORING = 'Restoring session...';
@@ -107,6 +119,7 @@ const SOCIAL_LINK_SYNC_TIMEOUT_MS = 90_000;
 const AUTH_ERROR_COOKIE_BLOCKED = 'Login succeeded, but the secure session cookie was not accepted. Check browser cookie/privacy settings and try again.';
 const SOLANA_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -145,6 +158,40 @@ function getMockTradingBuyValidationError(
     return 'Take profit percent must be between 1 and 100';
   }
   return null;
+}
+
+function encodeBase58(bytes: Uint8Array | number[]) {
+  const buffer = Array.from(bytes || []);
+  let value = buffer.reduce((total, byte) => (total * 256n) + BigInt(byte), 0n);
+  let encoded = '';
+  while (value > 0n) {
+    const mod = Number(value % 58n);
+    encoded = BASE58_ALPHABET[mod] + encoded;
+    value /= 58n;
+  }
+  for (const byte of buffer) {
+    if (byte !== 0) break;
+    encoded = `1${encoded}`;
+  }
+  return encoded || '1';
+}
+
+function normalizeWalletLoginError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const lower = message.toLowerCase();
+  if (lower.includes('user rejected') || lower.includes('rejected') || lower.includes('denied')) {
+    return 'Wallet signature was declined.';
+  }
+  if (lower.includes('token access requirements') || lower.includes('insufficient')) {
+    return 'This wallet does not currently meet the token access requirement.';
+  }
+  if (lower.includes('invalid solana wallet') || lower.includes('wallet address')) {
+    return 'Connected wallet address is not a valid Solana wallet.';
+  }
+  if (lower.includes('signature')) {
+    return 'Wallet signature could not be verified.';
+  }
+  return message || 'Wallet login failed';
 }
 const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
@@ -329,6 +376,7 @@ export interface AppController {
   state: AppState;
   init(): Promise<void>;
   login(email: string, password: string): Promise<void>;
+  loginWithWallet(walletId?: string): Promise<void>;
   verifyLoginOtp(code: string): Promise<void>;
   resendLoginOtp(): Promise<void>;
   register(input: RegisterInput): Promise<void>;
@@ -344,8 +392,11 @@ export interface AppController {
   goToAccountSecurity(): void;
   goToPreAccess(): void;
   refreshBilling(): Promise<void>;
+  updateAccountProfile(username: string, email: string, password: string, confirmPassword: string): Promise<void>;
   startSocialLink(provider: 'google' | 'discord'): void;
   startSocialLogin(provider: 'google' | 'discord'): void;
+  connectWallet(walletId?: string): Promise<void>;
+  closeWalletSelector(): void;
   openIdentityUnlink(provider: 'google' | 'discord'): void;
   cancelIdentityUnlink(): void;
   unlinkSocialIdentity(provider: 'google' | 'discord', currentPassword: string): Promise<void>;
@@ -468,7 +519,8 @@ function isAuthRoutePath(pathname: string | null | undefined) {
 }
 
 function isLoginRoutePath(pathname: string | null | undefined) {
-  return normalizeRoutePath(pathname) === '/login';
+  const value = normalizeRoutePath(pathname);
+  return value === '/login' || value.startsWith('/login/');
 }
 
 function isPublicLandingRoutePath(pathname: string | null | undefined) {
@@ -478,6 +530,44 @@ function isPublicLandingRoutePath(pathname: string | null | undefined) {
 function isAccountSecurityRoutePath(pathname: string | null | undefined) {
   const value = normalizeRoutePath(pathname);
   return value === '/account-security' || value.startsWith('/account-security/');
+}
+
+type LoginRouteAuthPanel = 'register' | 'email-verification' | 'invite-assistance' | 'password-reset' | 'wallet-select';
+type AccountRouteAuthPanel = ProfileAuthPanel | 'email-verification' | 'wallet-select';
+
+const LOGIN_AUTH_PANEL_PATHS: Record<LoginRouteAuthPanel, string> = {
+  register: '/login/register',
+  'email-verification': '/login/verify-email',
+  'invite-assistance': '/login/invite-assistance',
+  'password-reset': '/login/password-reset',
+  'wallet-select': '/login/wallet',
+};
+
+const ACCOUNT_AUTH_PANEL_PATHS: Record<AccountRouteAuthPanel, string> = {
+  'user-settings': '/account/profile',
+  'bot-settings': '/account/bot-settings',
+  'blocked-tokens': '/account/blocked-tokens',
+  'change-password': '/account/change-password',
+  'email-verification': '/account/verify-email',
+  'wallet-select': '/account/wallet',
+};
+
+function getLoginAuthPanelFromPath(pathname: string | null | undefined): LoginRouteAuthPanel | '' {
+  const value = normalizeRoutePath(pathname);
+  const matched = (Object.entries(LOGIN_AUTH_PANEL_PATHS) as [LoginRouteAuthPanel, string][])
+    .find(([, path]) => value === path);
+  return matched?.[0] || '';
+}
+
+function getAccountAuthPanelFromPath(pathname: string | null | undefined): AccountRouteAuthPanel | '' {
+  const value = normalizeRoutePath(pathname);
+  const matched = (Object.entries(ACCOUNT_AUTH_PANEL_PATHS) as [AccountRouteAuthPanel, string][])
+    .find(([, path]) => value === path);
+  return matched?.[0] || '';
+}
+
+function isAccountAuthPanelRoutePath(pathname: string | null | undefined) {
+  return Boolean(getAccountAuthPanelFromPath(pathname));
 }
 
 function hasAuthRouteIntent(locationLike: Location | null | undefined) {
@@ -518,6 +608,11 @@ function getLoginPanelIntent(locationLike: Location | null | undefined) {
     return '';
   }
 
+  const pathPanel = getLoginAuthPanelFromPath(locationLike.pathname);
+  if (pathPanel) {
+    return pathPanel;
+  }
+
   const search = new URLSearchParams(locationLike.search || '');
   const panel = String(search.get('panel') || '').trim().toLowerCase();
   return panel === 'register' ? panel : '';
@@ -531,6 +626,16 @@ function getBillingCheckoutIntent(locationLike: Location | null | undefined) {
   const search = new URLSearchParams(locationLike.search || '');
   const status = String(search.get('billing') || '').trim().toLowerCase();
   return status === 'success' ? 'success' : null;
+}
+
+function getBillingCheckoutOrderId(locationLike: Location | null | undefined) {
+  if (!locationLike) {
+    return null;
+  }
+
+  const search = new URLSearchParams(locationLike.search || '');
+  const orderId = Number(search.get('billingOrderId'));
+  return Number.isInteger(orderId) && orderId > 0 ? orderId : null;
 }
 
 function normalizeSocialProvider(value: string | null | undefined): SocialProvider | null {
@@ -681,6 +786,9 @@ function getSocialLoginFailureMessage(intent: SocialIntent) {
   if (intent.status === 'not_linked') {
     return `This ${providerLabel} account is not linked to a TrendScope login yet. Sign in with email and password first, then link it from User Settings.`;
   }
+  if (intent.status === 'email_conflict') {
+    return 'That verified Google email already belongs to an existing TrendScope account. Sign in with its current method, then link Google from User Settings.';
+  }
   if (intent.status === 'provider_denied') {
     return `The ${providerLabel} sign-in request was not approved.`;
   }
@@ -707,17 +815,161 @@ function getWorkspacePath(workspace: WorkspaceView) {
   return workspace === 'history' ? '/monitor' : '/alerts';
 }
 
+function getWorkspaceSparklinePath(workspace: WorkspaceView, address: string) {
+  const prefix = workspace === 'history' ? '/radar' : '/alerts';
+  return `${prefix}/${encodeURIComponent(address)}/sparkline`;
+}
+
+function getWorkspaceSparklineBasePath(pathname: string | null | undefined, workspace: WorkspaceView) {
+  const value = String(pathname || '').trim().toLowerCase();
+  if (workspace === 'history' && value.startsWith('/radar/')) {
+    return '/radar';
+  }
+  return getWorkspacePath(workspace);
+}
+
+function parseWorkspaceSparklineRoute(pathname: string | null | undefined): { workspace: WorkspaceView; address: string } | null {
+  const rawPath = String(pathname || '').trim().replace(/\/+$/, '');
+  const segments = rawPath.split('/').filter(Boolean);
+  if (segments.length !== 3 || segments[2].toLowerCase() !== 'sparkline') {
+    return null;
+  }
+
+  const root = segments[0].toLowerCase();
+  if (root !== 'alerts' && root !== 'radar' && root !== 'monitor') {
+    return null;
+  }
+
+  const rawAddress = segments[1];
+  let address = rawAddress;
+  try {
+    address = decodeURIComponent(rawAddress);
+  } catch (_) {
+    address = rawAddress;
+  }
+
+  const normalizedAddress = String(address || '').trim();
+  if (!normalizedAddress) {
+    return null;
+  }
+
+  return {
+    workspace: root === 'alerts' ? 'live' : 'history',
+    address: normalizedAddress,
+  };
+}
+
 function resolveWorkspaceFromPath(pathname: string | null | undefined): WorkspaceView {
   const value = String(pathname || '').trim().toLowerCase();
   if (
     value === '/monitor'
     || value.startsWith('/monitor/')
+    || value === '/radar'
+    || value.startsWith('/radar/')
     || value === '/workspace/history'
     || value.startsWith('/workspace/history/')
   ) {
     return 'history';
   }
   return 'live';
+}
+
+interface AccountProfileValidationOk {
+  ok: true;
+  input: {
+    username: string;
+    email?: string;
+    password?: string;
+    confirmPassword?: string;
+  };
+}
+
+type AccountProfileValidationResult = AccountProfileValidationOk | { ok: false; message: string };
+
+function isWalletOnlySessionEmail(email: string | null | undefined) {
+  return /^wallet_[^@]+@wallet\.local$/i.test(String(email || '').trim());
+}
+
+function validateAccountUsername(username: string): AccountProfileValidationResult {
+  if (username.length < 3 || username.length > 32) {
+    return { ok: false, message: 'Username must be 3-32 characters' };
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    return { ok: false, message: 'Username can only contain letters, numbers, and underscores' };
+  }
+  return { ok: true, input: { username } };
+}
+
+function validateWalletCompletionInput(input: {
+  email: string;
+  password: string;
+  confirmPassword: string;
+  isWalletOnlyAccount: boolean;
+}): AccountProfileValidationResult {
+  if (!input.isWalletOnlyAccount) {
+    return { ok: false, message: 'Email and password can only be added to wallet-only accounts.' };
+  }
+  if (!input.email || !input.password || !input.confirmPassword) {
+    return { ok: false, message: 'Email, password, and confirmation are required.' };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
+    return { ok: false, message: 'Enter a valid email address.' };
+  }
+  if (input.password.length < 8 || input.password.length > 128) {
+    return { ok: false, message: 'Password must be 8-128 characters.' };
+  }
+  if (input.password !== input.confirmPassword) {
+    return { ok: false, message: 'Password confirmation does not match.' };
+  }
+  return {
+    ok: true,
+    input: {
+      username: '',
+      email: input.email,
+      password: input.password,
+      confirmPassword: input.confirmPassword,
+    },
+  };
+}
+
+function validateAccountProfileInput(args: {
+  username: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  isWalletOnlyAccount: boolean;
+}): AccountProfileValidationResult {
+  const username = String(args.username || '').trim();
+  const usernameValidation = validateAccountUsername(username);
+  if (!usernameValidation.ok) {
+    return usernameValidation;
+  }
+
+  const email = trimLoginEmailValue(args.email);
+  const wantsWalletCompletion = Boolean(email || args.password || args.confirmPassword);
+  if (!wantsWalletCompletion) {
+    return { ok: true, input: { username } };
+  }
+
+  const walletValidation = validateWalletCompletionInput({
+    email,
+    password: args.password,
+    confirmPassword: args.confirmPassword,
+    isWalletOnlyAccount: args.isWalletOnlyAccount,
+  });
+  if (!walletValidation.ok) {
+    return walletValidation;
+  }
+
+  return {
+    ok: true,
+    input: {
+      username,
+      email: walletValidation.input.email,
+      password: walletValidation.input.password,
+      confirmPassword: walletValidation.input.confirmPassword,
+    },
+  };
 }
 
 export function createAppController(): AppController {
@@ -977,6 +1229,7 @@ export function createAppController(): AppController {
     }
     socialLinkPopupWindow = null;
     state.ui.authPanel = 'user-settings';
+    replaceAuthPanelRoute('user-settings');
     state.ui.notice = null;
     state.ui.error = null;
 
@@ -1351,6 +1604,7 @@ export function createAppController(): AppController {
       existingItem?.lastEvaluatedAt,
       base.lastEvaluatedAt,
     );
+    nextFields.meteora = firstDefinedTrackedValue(dashboardItem?.meteora, existingItem?.meteora, base.meteora);
 
     return nextFields;
   }
@@ -2541,13 +2795,77 @@ export function createAppController(): AppController {
     }
 
     const url = new URL(window.location.href);
-    if (!url.searchParams.has('panel')) {
+    const isPanelPath = Boolean(getLoginAuthPanelFromPath(url.pathname));
+    if (!isPanelPath && !url.searchParams.has('panel')) {
       return;
     }
 
     url.searchParams.delete('panel');
-    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    const nextUrl = isPanelPath ? '/login' : `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState({}, document.title, nextUrl || '/login');
+  }
+
+  function clearAccountPanelUrl() {
+    if (typeof window === 'undefined' || !isAccountAuthPanelRoutePath(window.location.pathname)) {
+      return;
+    }
+
+    window.history.replaceState({}, document.title, getWorkspacePath(state.ui.workspace));
+  }
+
+  function clearWorkspaceSparklineUrl() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const route = parseWorkspaceSparklineRoute(window.location.pathname);
+    if (!route) {
+      return;
+    }
+
+    window.history.replaceState({}, document.title, getWorkspaceSparklineBasePath(window.location.pathname, route.workspace));
+  }
+
+  function getAuthPanelRoute(panel: Exclude<AuthPanel, 'none'>) {
+    if (state.session.status === 'anonymous') {
+      return LOGIN_AUTH_PANEL_PATHS[panel as LoginRouteAuthPanel] || null;
+    }
+    if (state.session.status === 'authenticated') {
+      return ACCOUNT_AUTH_PANEL_PATHS[panel as AccountRouteAuthPanel] || null;
+    }
+    return null;
+  }
+
+  function navigateToAuthPanelRoute(panel: Exclude<AuthPanel, 'none'>) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextPath = getAuthPanelRoute(panel);
+    if (!nextPath) {
+      return;
+    }
+
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentPath !== nextPath) {
+      window.history.pushState({}, document.title, nextPath);
+    }
+  }
+
+  function replaceAuthPanelRoute(panel: Exclude<AuthPanel, 'none'>) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const nextPath = getAuthPanelRoute(panel);
+    if (!nextPath) {
+      return;
+    }
+
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentPath !== nextPath) {
+      window.history.replaceState({}, document.title, nextPath);
+    }
   }
 
   function clearBillingCheckoutUrl() {
@@ -2613,12 +2931,7 @@ export function createAppController(): AppController {
       return;
     }
 
-    const url = new URL('/login', window.location.origin);
-    if (panel === 'register') {
-      url.searchParams.set('panel', 'register');
-    }
-
-    const nextPath = `${url.pathname}${url.search}${url.hash}`;
+    const nextPath = panel === 'register' ? LOGIN_AUTH_PANEL_PATHS.register : '/login';
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextPath) {
       window.history.pushState({}, document.title, nextPath);
     }
@@ -2671,9 +2984,13 @@ export function createAppController(): AppController {
 
     if (isLoginRoutePath(pathname) || isAuthRoutePath(pathname)) {
       const loginPanelIntent = getLoginPanelIntent(window.location);
-      if (loginPanelIntent === 'register') {
-        state.ui.authPanel = 'register';
-      } else if (isLoginRoutePath(pathname) && state.ui.authPanel === 'register') {
+      if (loginPanelIntent) {
+        if (loginPanelIntent === 'wallet-select' && state.ui.authPanel !== 'wallet-select') {
+          void openWalletSelector('login');
+          return;
+        }
+        state.ui.authPanel = loginPanelIntent;
+      } else if (isLoginRoutePath(pathname) && getAuthPanelRoute(state.ui.authPanel as Exclude<AuthPanel, 'none'>)) {
         state.ui.authPanel = 'none';
       }
       return;
@@ -2687,6 +3004,72 @@ export function createAppController(): AppController {
     emit('all');
   }
 
+  function syncAuthenticatedPanelRouteFromLocation() {
+    if (typeof window === 'undefined' || state.session.status !== 'authenticated') {
+      return false;
+    }
+
+    const panel = getAccountAuthPanelFromPath(window.location.pathname);
+    if (!panel) {
+      if (getAuthPanelRoute(state.ui.authPanel as Exclude<AuthPanel, 'none'>)) {
+        state.ui.authPanel = 'none';
+        state.ui.pendingIdentityUnlinkProvider = null;
+      }
+      return false;
+    }
+
+    if (panel === 'wallet-select' && state.ui.authPanel !== 'wallet-select') {
+      void openWalletSelector('link');
+      return true;
+    }
+
+    const panelChanged = state.ui.authPanel !== panel;
+    state.ui.authPanel = panel;
+    if (panel === 'bot-settings') {
+      hydrateBrowserNotificationSettings();
+    }
+    if (panel === 'user-settings') {
+      void refreshUserSettingsState(COOKIE_SESSION_MARKER)
+        .then(() => emit('overlay', 'header'))
+        .catch(() => emit('overlay', 'header'));
+    }
+    if (panelChanged) {
+      emit('all');
+    }
+    return true;
+  }
+
+  function syncWorkspaceSparklineRouteFromLocation() {
+    if (typeof window === 'undefined' || state.session.status !== 'authenticated') {
+      return false;
+    }
+
+    const route = parseWorkspaceSparklineRoute(window.location.pathname);
+    if (!route) {
+      if (state.ui.expandedSparklineAddress) {
+        state.ui.expandedSparklineAddress = null;
+        emit('overlay');
+      }
+      return false;
+    }
+
+    if (state.ui.workspace !== route.workspace) {
+      clearHistoryBucketOrderLocks({ applyPending: false });
+      state.ui.workspace = route.workspace;
+    }
+    const addressChanged = state.ui.expandedSparklineAddress !== route.address;
+    state.ui.expandedSparklineAddress = route.address;
+    state.ui.mockTradingPnlAddress = null;
+    if (!isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[route.address])) {
+      setExpandedSparklineLoading(route.address);
+      void refreshExpandedSparkline(route.address);
+    }
+    if (addressChanged) {
+      emit('overlay');
+    }
+    return true;
+  }
+
   function syncWorkspaceFromLocationInternal(options?: { canonicalize?: boolean }) {
     if (typeof window === 'undefined') {
       return;
@@ -2697,14 +3080,19 @@ export function createAppController(): AppController {
       return;
     }
 
+    if (syncAuthenticatedPanelRouteFromLocation()) {
+      return;
+    }
+
     const nextWorkspace = resolveWorkspaceFromPath(pathname);
     const changed = state.ui.workspace !== nextWorkspace;
     if (changed) {
       clearHistoryBucketOrderLocks({ applyPending: false });
     }
     state.ui.workspace = nextWorkspace;
+    const isSparklineRoute = syncWorkspaceSparklineRouteFromLocation();
 
-    if (options?.canonicalize) {
+    if (options?.canonicalize && !isSparklineRoute) {
       const canonicalPath = getWorkspacePath(nextWorkspace);
       if (pathname !== canonicalPath) {
         window.history.replaceState({}, document.title, canonicalPath);
@@ -7002,14 +7390,40 @@ export function createAppController(): AppController {
   }
 
   function applyAccountAccess(access: AccountAccessPayload | null) {
-    state.session.accessStatus = access?.accessStatus ?? null;
-    state.session.accessGrantedAt = access?.accessGrantedAt ?? null;
-    state.session.accessExpiresAt = access?.accessExpiresAt ?? null;
-    state.session.accessSource = access?.accessSource ?? null;
-    state.session.accessUpdatedAt = access?.accessUpdatedAt ?? null;
-    state.session.accessIsExpired = Boolean(access?.isExpired);
-    state.session.accessHasProductAccess = Boolean(access?.hasProductAccess);
-    state.session.accessDaysRemaining = access?.daysRemaining ?? null;
+    if (!access) {
+      state.session.accessStatus = null;
+      state.session.accessGrantedAt = null;
+      state.session.accessExpiresAt = null;
+      state.session.accessSource = null;
+      state.session.accessUpdatedAt = null;
+      state.session.accessIsExpired = false;
+      state.session.accessHasProductAccess = false;
+      state.session.accessDaysRemaining = null;
+      state.session.accessReason = null;
+      state.session.tokenTier = null;
+      state.session.tokenDiscountPercent = 0;
+      state.session.tokenBalanceRaw = null;
+      state.session.tokenBalanceUi = null;
+      state.session.tokenSnapshotCheckedAt = null;
+      state.session.tokenSnapshotExpiresAt = null;
+      return;
+    }
+
+    state.session.accessStatus = access.accessStatus;
+    state.session.accessGrantedAt = access.accessGrantedAt;
+    state.session.accessExpiresAt = access.accessExpiresAt;
+    state.session.accessSource = access.accessSource;
+    state.session.accessUpdatedAt = access.accessUpdatedAt;
+    state.session.accessIsExpired = Boolean(access.isExpired);
+    state.session.accessHasProductAccess = Boolean(access.hasProductAccess);
+    state.session.accessDaysRemaining = access.daysRemaining;
+    state.session.accessReason = access.accessReason ?? null;
+    state.session.tokenTier = access.tokenTier ?? null;
+    state.session.tokenDiscountPercent = Number(access.discountPercent) || 0;
+    state.session.tokenBalanceRaw = access.tokenBalanceRaw ?? null;
+    state.session.tokenBalanceUi = access.tokenBalanceUi ?? null;
+    state.session.tokenSnapshotCheckedAt = access.tokenSnapshotCheckedAt ?? null;
+    state.session.tokenSnapshotExpiresAt = access.tokenSnapshotExpiresAt ?? null;
   }
 
   function applyBillingStateSnapshot(snapshot: BillingStatePayload | null) {
@@ -7041,6 +7455,7 @@ export function createAppController(): AppController {
   function applyIdentityStateSnapshot(snapshot: AccountIdentitiesPayload | null) {
     state.identities.loaded = Boolean(snapshot);
     state.identities.providers = (snapshot?.providers ?? []) as LinkedIdentityEntry[];
+    state.identities.hasPasswordLogin = Boolean(snapshot?.hasPasswordLogin);
     state.identities.error = null;
   }
 
@@ -7088,6 +7503,7 @@ export function createAppController(): AppController {
     } catch (error) {
       state.identities.loaded = false;
       state.identities.providers = [];
+      state.identities.hasPasswordLogin = false;
       state.identities.error = error instanceof Error ? error.message : 'Unable to load linked identities';
     }
   }
@@ -7098,6 +7514,7 @@ export function createAppController(): AppController {
     } catch (error) {
       state.identities.loaded = false;
       state.identities.providers = [];
+      state.identities.hasPasswordLogin = false;
       state.identities.error = error instanceof Error ? error.message : 'Unable to load linked identities';
     }
   }
@@ -7137,12 +7554,12 @@ export function createAppController(): AppController {
   async function refreshPreAccessState() {
     const [preAccess, billing] = await Promise.all([
       fetchPreAccessMe(),
-      fetchPublicBillingPlans(),
+      fetchPreAccessBillingState(),
     ]);
 
     applyPreAccessSession(preAccess.user);
     applyAccountAccess(preAccess.access);
-    applyPublicBillingPlansSnapshot(billing);
+    applyPreAccessBillingStateSnapshot(billing);
     state.preAccess.loaded = true;
   }
 
@@ -7197,6 +7614,13 @@ export function createAppController(): AppController {
     state.session.accessIsExpired = false;
     state.session.accessHasProductAccess = false;
     state.session.accessDaysRemaining = null;
+    state.session.accessReason = null;
+    state.session.tokenTier = null;
+    state.session.tokenDiscountPercent = 0;
+    state.session.tokenBalanceRaw = null;
+    state.session.tokenBalanceUi = null;
+    state.session.tokenSnapshotCheckedAt = null;
+    state.session.tokenSnapshotExpiresAt = null;
     state.billing.loaded = false;
     state.billing.enabled = false;
     state.billing.provider = null;
@@ -7208,9 +7632,11 @@ export function createAppController(): AppController {
     state.billing.error = null;
     state.identities.loaded = false;
     state.identities.providers = [];
+    state.identities.hasPasswordLogin = false;
     state.identities.error = null;
     state.preAccess.loaded = false;
     state.preAccess.awaitingConfirmation = false;
+    state.preAccess.pendingBillingOrderId = null;
     state.runtime.cycle = 0;
     state.runtime.alerts = 0;
     state.runtime.alertRevision = 0;
@@ -7357,6 +7783,7 @@ export function createAppController(): AppController {
       const result = await completePreAccessSession();
       stopPreAccessPolling();
       state.preAccess.awaitingConfirmation = false;
+      state.preAccess.pendingBillingOrderId = null;
       applySession(result.user, { deferWorkspaceSync: true });
       await refreshAccountAccessState(COOKIE_SESSION_MARKER);
       await refreshBillingState(COOKIE_SESSION_MARKER);
@@ -7380,6 +7807,22 @@ export function createAppController(): AppController {
     return true;
   }
 
+  async function syncPendingPreAccessBillingOrder() {
+    const orderId = state.preAccess.pendingBillingOrderId;
+    if (!orderId) {
+      return;
+    }
+
+    try {
+      const result = await syncPreAccessOrder(orderId);
+      if (result.order?.status === 'paid') {
+        state.preAccess.pendingBillingOrderId = null;
+      }
+    } catch (_) {
+      // Keep polling; the webhook path or a later provider sync can still confirm payment.
+    }
+  }
+
   function schedulePreAccessConfirmationPolling(attempt = 0) {
     if (typeof window === 'undefined' || preAccessPollingTimer || state.session.status !== 'pre_access') {
       return;
@@ -7392,6 +7835,7 @@ export function createAppController(): AppController {
       }
 
       try {
+        await syncPendingPreAccessBillingOrder();
         await refreshPreAccessState();
         emit('legacy');
 
@@ -8296,10 +8740,16 @@ export function createAppController(): AppController {
     flushEmit();
   }
 
-  function applyVerifiedEmailSuccessResult(result: VerifyEmailConfirmResponse) {
-    if (state.session.status === 'authenticated') {
-      applySession(result.user);
-    }
+  async function applyVerifiedEmailSuccessResult(result: VerifyEmailConfirmResponse) {
+    const session = await fetchCurrentSession();
+    applySession(session.user, { deferWorkspaceSync: true });
+    applyAccountAccess(result.access ?? null);
+    await Promise.all([
+      refreshBillingState(COOKIE_SESSION_MARKER),
+      refreshIdentityState(COOKIE_SESSION_MARKER),
+    ]);
+    await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+    navigateToWorkspace('live');
     state.ui.authPanel = 'email-verified-success';
     setNotice(result.message || 'Email verified successfully.');
     emit('all');
@@ -8325,9 +8775,10 @@ export function createAppController(): AppController {
         return;
       }
 
-      applyVerifiedEmailSuccessResult(result);
+      await applyVerifiedEmailSuccessResult(result);
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Email verification failed');
+      const raw = error instanceof Error ? error.message : '';
+      setError(raw.includes('Authentication required') ? AUTH_ERROR_COOKIE_BLOCKED : raw || 'Email verification failed');
     } finally {
       clearAuthUrl();
       setBusy(false);
@@ -8429,11 +8880,13 @@ export function createAppController(): AppController {
   }) {
     if (options.billingCheckoutSucceeded) {
       state.ui.authPanel = 'user-settings';
+      replaceAuthPanelRoute('user-settings');
       clearBillingCheckoutUrl();
     }
 
     if (options.socialLinkIntent) {
       state.ui.authPanel = 'user-settings';
+      replaceAuthPanelRoute('user-settings');
       clearSocialLinkUrl();
       if (options.socialLinkIntent.status === 'success') {
         setNotice(`${getSocialProviderLabel(options.socialLinkIntent.provider)} linked successfully.`);
@@ -8476,14 +8929,24 @@ export function createAppController(): AppController {
 
   async function handlePreAccessRestore(options: {
     billingCheckoutSucceeded: boolean;
+    billingCheckoutOrderId: number | null;
     socialLoginIntent: SocialIntent | null;
   }) {
+    if (options.billingCheckoutSucceeded && options.billingCheckoutOrderId) {
+      try {
+        await syncPreAccessOrder(options.billingCheckoutOrderId);
+      } catch (_) {
+        // The normal webhook/polling path can still complete the checkout.
+      }
+    }
+
     await refreshPreAccessState();
     navigateToPreAccess();
     setError(null);
     state.ui.loginErrorCount = 0;
 
     if (options.billingCheckoutSucceeded) {
+      state.preAccess.pendingBillingOrderId = options.billingCheckoutOrderId;
       clearBillingCheckoutUrl();
       state.preAccess.awaitingConfirmation = true;
       setNotice('Waiting for payment confirmation...');
@@ -8496,11 +8959,13 @@ export function createAppController(): AppController {
     if (options.socialLoginIntent?.status === 'success') {
       clearSocialLoginUrl();
       state.preAccess.awaitingConfirmation = false;
+      state.preAccess.pendingBillingOrderId = null;
       setNotice(`${getSocialProviderLabel(options.socialLoginIntent.provider)} sign-in successful. Access payment is still required before entering the bot.`);
       return;
     }
 
     state.preAccess.awaitingConfirmation = false;
+    state.preAccess.pendingBillingOrderId = null;
     if (!(await maybeAutoCompletePreAccess({ automatic: true }))) {
       setNotice('Access payment required before entering the bot.');
     }
@@ -8531,6 +8996,7 @@ export function createAppController(): AppController {
     error: unknown,
     options: {
       billingCheckoutSucceeded: boolean;
+      billingCheckoutOrderId: number | null;
       socialLoginIntent: SocialIntent | null;
     },
   ) {
@@ -8873,6 +9339,120 @@ export function createAppController(): AppController {
     return { followupError };
   }
 
+  async function applyWalletAuthResult(result: Awaited<ReturnType<typeof verifyWalletSignature>>) {
+    if (!result.user) {
+      throw new Error('This wallet does not currently meet the token access requirement.');
+    }
+
+    if (result.requiresPreAccess) {
+      applyPreAccessSession(result.user);
+      applyAccountAccess(result.access ?? null);
+      await refreshPreAccessState();
+      navigateToPreAccess(result.redirectPath || '/access');
+      state.ui.authPanel = 'none';
+      state.ui.loginErrorCount = 0;
+      setNotice(result.message || 'Token discount found. Choose a plan to continue.');
+      return;
+    }
+
+    if (!result.access?.hasProductAccess) {
+      throw new Error('This wallet does not currently meet the token access requirement.');
+    }
+
+    const session = await fetchCurrentSession();
+    applySession(session.user, { deferWorkspaceSync: true });
+    applyAccountAccess(result.access);
+    await refreshBillingState(COOKIE_SESSION_MARKER);
+    await refreshIdentityState(COOKIE_SESSION_MARKER);
+    await reloadConfigInternal(COOKIE_SESSION_MARKER, { deferDashboard: true });
+    state.ui.authPanel = 'none';
+    state.ui.loginErrorCount = 0;
+    syncWorkspaceFromLocationInternal({ canonicalize: true });
+    setNotice(result.mode === 'created_wallet_user'
+      ? 'Wallet account created. Workspace synced.'
+      : 'Wallet login successful. Workspace synced.');
+  }
+
+  function closeWalletSelectorInternal() {
+    const mode = state.ui.walletSelectorMode;
+    state.ui.walletSelectorMode = null;
+    state.ui.walletOptions = [];
+    state.ui.authPanel = mode === 'link' && state.session.status === 'authenticated'
+      ? 'user-settings'
+      : 'none';
+    if (state.ui.authPanel === 'user-settings') {
+      replaceAuthPanelRoute('user-settings');
+    } else if (state.session.status === 'anonymous') {
+      clearLoginPanelUrl();
+    } else if (state.session.status === 'authenticated') {
+      clearAccountPanelUrl();
+    }
+  }
+
+  async function openWalletSelector(mode: 'login' | 'link') {
+    if (authSubmitInFlight) {
+      return;
+    }
+    authSubmitInFlight = true;
+    setBusy(true);
+    setError(null);
+    setNotice('Finding compatible Solana wallets...');
+    emit(mode === 'login' ? 'legacy' : 'overlay');
+    try {
+      const wallets = await listSolanaWallets();
+      if (wallets.length === 0) {
+        throw new Error('No compatible Solana wallet was detected. Install Phantom, Solflare, Backpack, or another Wallet Standard Solana wallet.');
+      }
+      state.ui.walletSelectorMode = mode;
+      state.ui.walletOptions = wallets;
+      state.ui.walletNetworkLabel = getSolanaNetworkLabel();
+      state.ui.authPanel = 'wallet-select';
+      navigateToAuthPanelRoute('wallet-select');
+      setNotice(null);
+    } catch (error) {
+      setError(normalizeWalletLoginError(error));
+    } finally {
+      authSubmitInFlight = false;
+      setBusy(false);
+      emit(mode === 'login' ? 'legacy' : 'overlay');
+    }
+  }
+
+  async function linkSelectedWallet(walletId: string) {
+    const connectedWallet = await connectSolanaWallet(walletId);
+    const challenge = await requestWalletLinkChallenge(connectedWallet.address, COOKIE_SESSION_MARKER);
+    setNotice(`Sign the message in ${connectedWallet.provider} to link this account.`);
+    emit('overlay');
+    const signature = await connectedWallet.signMessage(new TextEncoder().encode(challenge.message));
+    const result = await verifyWalletLinkSignature({
+      walletAddress: connectedWallet.address,
+      message: challenge.message,
+      signature: encodeBase58(signature),
+      walletProvider: connectedWallet.provider,
+    }, COOKIE_SESSION_MARKER);
+
+    applyAccountAccess(result.access ?? null);
+    await refreshBillingState(COOKIE_SESSION_MARKER);
+    setNotice(result.message || 'Wallet connected. Token balance refreshed.');
+  }
+
+  async function loginWithSelectedWallet(walletId: string) {
+    const connectedWallet = await connectSolanaWallet(walletId);
+    setNotice('Requesting wallet challenge...');
+    emit('legacy');
+    const challenge = await requestWalletChallenge(connectedWallet.address);
+    setNotice(`Sign the message in ${connectedWallet.provider} to continue.`);
+    emit('legacy');
+    const signature = await connectedWallet.signMessage(new TextEncoder().encode(challenge.message));
+    const result = await verifyWalletSignature({
+      walletAddress: connectedWallet.address,
+      message: challenge.message,
+      signature: encodeBase58(signature),
+      walletProvider: connectedWallet.provider,
+    });
+    await applyWalletAuthResult(result);
+  }
+
   installAlertDebugConsole();
 
   return {
@@ -8945,9 +9525,7 @@ export function createAppController(): AppController {
         hydrateBrowserNotificationSettings();
       }
       state.ui.authPanel = panel;
-      if (panel === 'register' && typeof window !== 'undefined' && state.session.status === 'anonymous' && isLoginRoutePath(window.location.pathname)) {
-        navigateToLogin('register');
-      }
+      navigateToAuthPanelRoute(panel);
       emit('all');
       if (panel === 'user-settings' && state.session.status === 'authenticated') {
         void refreshUserSettingsState(COOKIE_SESSION_MARKER)
@@ -8970,11 +9548,20 @@ export function createAppController(): AppController {
       state.ui.pendingLoginOtpEmailHint = null;
       if (state.session.status === 'anonymous') {
         clearLoginPanelUrl();
+      } else if (state.session.status === 'authenticated') {
+        clearAccountPanelUrl();
       }
       monitoringPausedForAuthPanel = false;
       if (shouldResumeMonitoring) {
         startMonitoringTimers();
       }
+      emit('all');
+    },
+    closeWalletSelector() {
+      if (state.ui.authPanel !== 'wallet-select') {
+        return;
+      }
+      closeWalletSelectorInternal();
       emit('all');
     },
     goToLogin(panel?: 'register') {
@@ -9102,6 +9689,57 @@ export function createAppController(): AppController {
         emit('all');
       }
     },
+    async updateAccountProfile(username: string, email: string, password: string, confirmPassword: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+      if (state.session.status !== 'authenticated') {
+        setError('Authenticated bot session required to update account details.');
+        emit('overlay');
+        return;
+      }
+
+      const validated = validateAccountProfileInput({
+        username,
+        email,
+        password,
+        confirmPassword,
+        isWalletOnlyAccount: isWalletOnlySessionEmail(state.session.email),
+      });
+      if (!validated.ok) {
+        setError(validated.message);
+        emit('overlay');
+        return;
+      }
+
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice(validated.input.email ? 'Saving account details...' : 'Updating profile...');
+      emit('overlay');
+
+      try {
+        const result = await updateAccountProfileRequest(validated.input, COOKIE_SESSION_MARKER);
+
+        state.session.username = result.user.username;
+        state.session.email = result.user.email;
+        state.session.role = result.user.role;
+        state.session.isEmailVerified = Boolean(result.user.isEmailVerified);
+        state.session.emailVerifiedAt = result.user.emailVerifiedAt ?? null;
+        if (result.emailVerificationRequired) {
+          state.ui.pendingVerificationEmail = trimLoginEmailValue(result.user.email);
+          state.ui.authPanel = 'email-verification';
+          replaceAuthPanelRoute('email-verification');
+        }
+        setNotice(appendEmailDebugNotice(result.message || 'Profile updated.', result.emailDebug));
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Unable to update account details');
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit('overlay', 'header');
+      }
+    },
     startSocialLogin(provider: 'google' | 'discord') {
       if (typeof window === 'undefined') {
         return;
@@ -9112,6 +9750,37 @@ export function createAppController(): AppController {
       const url = new URL(`/api/auth/social/${normalizedProvider}/login/start`, resolveApiBase(window.location));
       url.searchParams.set('returnTo', currentPath || '/alerts');
       window.location.assign(url.toString());
+    },
+    async connectWallet(walletId?: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+      if (state.session.status !== 'authenticated') {
+        setError('Authenticated bot session required to connect a wallet.');
+        emit('overlay');
+        return;
+      }
+      if (!walletId) {
+        await openWalletSelector('link');
+        return;
+      }
+
+      closeWalletSelectorInternal();
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Connecting wallet...');
+      emit('overlay');
+
+      try {
+        await linkSelectedWallet(walletId);
+      } catch (error) {
+        setError(normalizeWalletLoginError(error));
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit('overlay', 'header', 'legacy');
+      }
     },
     async startBillingCheckout(planKey: string) {
       if (state.session.status !== 'authenticated') {
@@ -9261,6 +9930,12 @@ export function createAppController(): AppController {
 
       state.ui.expandedSparklineAddress = normalized;
       state.ui.mockTradingPnlAddress = null;
+      if (typeof window !== 'undefined') {
+        const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
+        if (window.location.pathname !== nextPath) {
+          window.history.pushState({}, document.title, nextPath);
+        }
+      }
       emit('overlay');
       if (isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[normalized])) {
         return;
@@ -9283,6 +9958,12 @@ export function createAppController(): AppController {
 
       state.ui.expandedSparklineAddress = normalized;
       state.ui.mockTradingPnlAddress = null;
+      if (typeof window !== 'undefined') {
+        const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
+        if (window.location.pathname !== nextPath) {
+          window.history.pushState({}, document.title, nextPath);
+        }
+      }
       emit('overlay');
       if (isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[normalized])) {
         return;
@@ -9296,6 +9977,7 @@ export function createAppController(): AppController {
         return;
       }
       state.ui.expandedSparklineAddress = null;
+      clearWorkspaceSparklineUrl();
       emit('overlay');
     },
     clearDismissedRecent() {
@@ -9676,6 +10358,7 @@ export function createAppController(): AppController {
     },
     async init() {
       const billingCheckoutSucceeded = typeof window !== 'undefined' && getBillingCheckoutIntent(window.location) === 'success';
+      const billingCheckoutOrderId = typeof window !== 'undefined' ? getBillingCheckoutOrderId(window.location) : null;
       const socialLinkIntent = typeof window !== 'undefined' ? getSocialLinkIntent(window.location) : null;
       const socialLoginIntent = typeof window !== 'undefined' ? getSocialLoginIntent(window.location) : null;
 
@@ -9702,6 +10385,7 @@ export function createAppController(): AppController {
       } catch (error) {
         await handleSessionRestoreFailure(error, {
           billingCheckoutSucceeded,
+          billingCheckoutOrderId,
           socialLoginIntent,
         });
       } finally {
@@ -9802,6 +10486,35 @@ export function createAppController(): AppController {
           ? state.ui.loginErrorCount + 1
           : 0;
         setError(message);
+      } finally {
+        authSubmitInFlight = false;
+        setBusy(false);
+        emit();
+      }
+    },
+    async loginWithWallet(walletId?: string) {
+      if (authSubmitInFlight) {
+        return;
+      }
+      if (!walletId) {
+        await openWalletSelector('login');
+        return;
+      }
+
+      closeWalletSelectorInternal();
+      authSubmitInFlight = true;
+      setBusy(true);
+      setError(null);
+      setNotice('Connecting wallet...');
+      emit('legacy');
+
+      try {
+        await loginWithSelectedWallet(walletId);
+      } catch (error) {
+        disconnectSocket();
+        stopMonitoringTimers();
+        clearSession();
+        setError(normalizeWalletLoginError(error));
       } finally {
         authSubmitInFlight = false;
         setBusy(false);
@@ -9922,6 +10635,7 @@ export function createAppController(): AppController {
         navigateToLogin();
         state.ui.pendingVerificationEmail = trimLoginEmailValue(validated.input.email);
         state.ui.authPanel = 'email-verification';
+        replaceAuthPanelRoute('email-verification');
         setNotice(appendEmailDebugNotice(
           result.verificationEmailError
             ? 'Account created, but the verification email could not be sent. Fix email delivery and resend.'
@@ -10079,6 +10793,7 @@ export function createAppController(): AppController {
         disconnectSocket();
         stopMonitoringTimers();
         clearSession();
+        navigateToLogin();
         state.ui.authPanel = 'password-change-success';
         setNotice(result.message || 'Password changed successfully. Please login again with your new password.');
       } catch (error) {

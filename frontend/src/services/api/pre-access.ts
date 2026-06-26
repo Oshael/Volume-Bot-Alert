@@ -45,6 +45,16 @@ export function createPreAccessOrder(planKey: string) {
   });
 }
 
+export function syncPreAccessOrder(orderId: number) {
+  return apiFetch<{ synced: boolean; reason: string | null; order: BillingOrderEntry | null }>(
+    `/api/pre-access/billing/orders/${encodeURIComponent(String(orderId))}/sync`,
+    {
+      method: 'POST',
+      token: null,
+    },
+  );
+}
+
 export function completePreAccessSession() {
   return apiFetch<PreAccessCompleteResponse>('/api/pre-access/complete', {
     method: 'POST',

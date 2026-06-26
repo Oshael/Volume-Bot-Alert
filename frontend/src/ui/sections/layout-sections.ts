@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type ProfileAuthPanel } from '../../state/app-state';
+import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -638,6 +638,7 @@ function renderPreAccessFlow(state: AppState, controller: AppController) {
       ` : waiting ? `
         <div class="legacy-auth-panel-note">Payment returned from checkout. We are still waiting for backend confirmation before opening the bot.</div>
       ` : ''}
+      ${hasTokenEntitlementState(state) ? renderTokenEntitlementStrip(state) : ''}
 
       <section class="legacy-pre-access-plans-section legacy-public-pricing-section">
         <div class="legacy-pre-access-section-head legacy-public-section-head">
@@ -1221,10 +1222,22 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
 
   const overlay = document.createElement('div');
   overlay.className = 'workspace-profile-overlay-root';
+  if (state.ui.authPanel === 'wallet-select') {
+    overlay.innerHTML = renderWalletSelectorModal(state);
+    bindWalletSelectorModal(overlay, controller, state);
+    return overlay;
+  }
   if (state.ui.authPanel === 'user-settings') {
     overlay.innerHTML = renderUserSettingsModal(state);
     bindProfileModalCloseActions(overlay, controller);
     bindUserSettingsPanel(overlay, controller);
+    return overlay;
+  }
+
+  if (state.ui.authPanel === 'email-verification') {
+    overlay.innerHTML = renderEmailVerificationModal(state);
+    hydrateAuthSensitiveText(overlay, state);
+    bindEmailVerificationPanel(overlay, controller, state);
     return overlay;
   }
 
@@ -1283,8 +1296,9 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
 }
 
 function resolveWorkspaceOverlayMode(state: AppState) {
-  if (isProfileAuthPanel(state.ui.authPanel)) {
-    return 'profile';
+  const authPanelMode = resolveAuthPanelOverlayMode(state);
+  if (authPanelMode) {
+    return authPanelMode;
   }
   if (state.session.status === 'authenticated' && state.ui.blockTokenWarning) {
     return 'block-token-warning';
@@ -1307,6 +1321,19 @@ function resolveWorkspaceOverlayMode(state: AppState) {
   const sparkline = address ? getExpandedTokenSparkline(state, address) : null;
   const hasExpandedSparkline = Boolean(sparkline && Array.isArray(sparkline.series) && sparkline.series.length >= 2);
   return hasExpandedSparkline ? 'expanded-sparkline' : 'none';
+}
+
+function resolveAuthPanelOverlayMode(state: AppState) {
+  if (state.ui.authPanel === 'wallet-select') {
+    return 'wallet-select';
+  }
+  if (state.ui.authPanel === 'email-verification') {
+    return 'email-verification';
+  }
+  if (isProfileAuthPanel(state.ui.authPanel)) {
+    return 'profile';
+  }
+  return null;
 }
 
 function bindProfileModalCloseActions(section: ParentNode, controller: AppController) {
@@ -1389,12 +1416,85 @@ function renderProfileModalShell(options: {
             <strong id="${escapeHtml(options.labelId)}">${escapeHtml(options.title)}</strong>
             <span>${escapeHtml(options.description)}</span>
           </div>
-          <button type="button" class="legacy-profile-modal-close" data-action="close-profile-modal" aria-label="Close dialog">X</button>
+            <button type="button" class="legacy-profile-modal-close" data-action="close-profile-modal" aria-label="Close dialog">&times;</button>
         </div>
         ${options.content}
       </div>
     </div>
   `;
+}
+
+function renderWalletSelectorModal(state: AppState) {
+  const actionLabel = state.ui.walletSelectorMode === 'link' ? 'Connect' : 'Login';
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="wallet-select" data-auth-modal-scope="wallet-selector">
+      <div class="legacy-auth-modal-backdrop" data-action="close-wallet-selector"></div>
+      <div class="legacy-auth-panel legacy-wallet-selector-panel" data-auth-panel="wallet-select" role="dialog" aria-modal="true" aria-labelledby="wallet-selector-title">
+        <div class="legacy-auth-panel-head">
+          <div>
+            <strong id="wallet-selector-title">Choose Wallet</strong>
+            <span>${escapeHtml(state.ui.walletNetworkLabel)} · message signature only</span>
+          </div>
+          <button type="button" class="legacy-profile-modal-close" data-action="close-wallet-selector" aria-label="Close wallet selector">X</button>
+        </div>
+        <div class="legacy-wallet-selector-list">
+          ${state.ui.walletOptions.map((wallet) => `
+            <button
+              type="button"
+              class="legacy-wallet-selector-option"
+              data-action="select-solana-wallet"
+              data-wallet-id="${escapeHtml(wallet.id)}"
+              ${state.ui.busy ? 'disabled' : ''}
+            >
+              ${wallet.icon
+                ? `<img src="${escapeHtml(wallet.icon)}" alt="" />`
+                : `<span class="legacy-wallet-selector-fallback" aria-hidden="true">${escapeHtml(wallet.name.slice(0, 1).toUpperCase())}</span>`}
+              <span>
+                <strong>${escapeHtml(wallet.name)}</strong>
+                <small>${actionLabel} with Solana account</small>
+              </span>
+            </button>
+          `).join('')}
+        </div>
+        <div class="legacy-auth-panel-note legacy-wallet-selector-note">
+          The wallet may ask you to approve the configured Solana network. No transaction is sent during login.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindWalletSelectorModal(section: ParentNode, controller: AppController, state: AppState) {
+  const panel = section.querySelector<HTMLElement>('[data-auth-panel="wallet-select"]');
+  if (panel) {
+    bindFocusTrap(panel);
+    panel.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        controller.closeWalletSelector();
+      }
+    });
+  }
+  section.querySelectorAll<HTMLElement>('[data-action="close-wallet-selector"]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      controller.closeWalletSelector();
+    });
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="select-solana-wallet"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const walletId = String(button.dataset.walletId || '').trim();
+      if (!walletId) {
+        return;
+      }
+      if (state.ui.walletSelectorMode === 'link') {
+        void controller.connectWallet(walletId);
+      } else {
+        void controller.loginWithWallet(walletId);
+      }
+    });
+  });
 }
 
 function renderBlockTokenWarningModal(state: AppState) {
@@ -2393,11 +2493,13 @@ function renderLegacyLogin(state: AppState, controller: AppController) {
   bindPasswordChangeSuccessPanel(section, controller);
   bindInviteAssistancePanel(section, controller, state);
   bindPasswordResetPanel(section, controller, state);
+  bindWalletSelectorModal(section, controller, state);
   return section;
 }
 
 function renderLegacyAuthPanels(state: AppState) {
   return [
+    state.ui.authPanel === 'wallet-select' ? renderWalletSelectorModal(state) : '',
     state.ui.authPanel === 'register' ? renderRegisterModal(state) : '',
     state.ui.authPanel === 'email-verification' ? renderEmailVerificationModal(state) : '',
     state.ui.authPanel === 'email-verified-success' ? renderEmailVerifiedSuccessModal() : '',
@@ -2595,6 +2697,9 @@ function bindLegacyLoginActions(section: HTMLElement, state: AppState, controlle
       }
     });
   });
+  section.querySelector<HTMLButtonElement>('[data-action="login-with-wallet"]')?.addEventListener('click', () => {
+    void controller.loginWithWallet();
+  });
 }
 
 function setTextContentIfPresent(root: ParentNode, selector: string, value: string) {
@@ -2608,27 +2713,43 @@ function hydrateAuthSensitiveText(section: HTMLElement, state: AppState) {
   setTextContentIfPresent(section, '[data-auth-text="pending-login-otp-email"]', state.ui.pendingLoginOtpEmailHint || '');
 }
 
+function isLoginFlashErrorMessage(message: string) {
+  return matchesMessage(message, {
+    exact: [
+      'Email is required.',
+      'Enter a valid email address.',
+      'Password is required.',
+      'Incorrect email or password. Check your credentials and try again.',
+    ],
+    fragments: [
+      'Incorrect email or password',
+      'temporarily locked',
+      'deactivated',
+      'not verified',
+      'wallet',
+      'Wallet',
+      'saved session is no longer valid',
+      'Unable to reach the server',
+      'You are using the old password',
+    ],
+  });
+}
+
+function isLoginFlashNoticeMessage(message: string) {
+  return matchesMessage(message, {
+    noticeSet: LOGIN_RELEVANT_NOTICES,
+    fragments: ['wallet', 'Wallet', 'Sign the wallet message'],
+  });
+}
+
 function renderLoginFlash(state: AppState) {
   const message = state.ui.error ?? state.ui.notice ?? '';
   if (!message) {
     return '';
   }
 
-  const isLoginError = (
-    message === 'Email is required.'
-    || message === 'Enter a valid email address.'
-    || message === 'Password is required.'
-    || message === 'Incorrect email or password. Check your credentials and try again.'
-    || message.includes('Incorrect email or password')
-    || message.includes('temporarily locked')
-    || message.includes('deactivated')
-    || message.includes('not verified')
-    || message.includes('saved session is no longer valid')
-    || message.includes('Unable to reach the server')
-    || message.includes('You are using the old password')
-  );
-
-  const isLoginNotice = LOGIN_RELEVANT_NOTICES.has(message);
+  const isLoginError = isLoginFlashErrorMessage(message);
+  const isLoginNotice = isLoginFlashNoticeMessage(message);
   if (!isLoginError && !isLoginNotice) {
     return '';
   }
@@ -2706,11 +2827,24 @@ function renderLoginForm(state: AppState, options: { hasCredentialError: boolean
       </div>
       <div class="legacy-login-help" id="login-help">Secure sign-in restores your TrendScope workspace and monitoring preferences.</div>
       <div class="legacy-login-social-block">
-        <div class="legacy-login-social-copy">Linked accounts only</div>
+        <div class="legacy-login-social-copy">Google signup or linked Discord</div>
         <div class="legacy-login-social-actions">
-          <button type="button" class="legacy-btn legacy-login-social-btn" data-action="start-social-login" data-provider="google" ${state.ui.busy ? 'disabled' : ''}>CONTINUE WITH GOOGLE</button>
-          <button type="button" class="legacy-btn legacy-login-social-btn" data-action="start-social-login" data-provider="discord" ${state.ui.busy ? 'disabled' : ''}>CONTINUE WITH DISCORD</button>
+          <button type="button" class="legacy-btn legacy-login-social-btn" data-action="start-social-login" data-provider="google" ${state.ui.busy ? 'disabled' : ''}>
+            <span class="legacy-login-social-icon" aria-hidden="true">${renderIdentityProviderMark('google')}</span>
+            <span>CONTINUE WITH GOOGLE</span>
+          </button>
+          <button type="button" class="legacy-btn legacy-login-social-btn" data-action="start-social-login" data-provider="discord" ${state.ui.busy ? 'disabled' : ''}>
+            <span class="legacy-login-social-icon" aria-hidden="true">${renderIdentityProviderMark('discord')}</span>
+            <span>CONTINUE WITH DISCORD</span>
+          </button>
         </div>
+      </div>
+      <div class="legacy-login-wallet-block">
+        <div class="legacy-login-social-copy">Token-gated wallet</div>
+        <button type="button" class="legacy-btn legacy-login-wallet-btn" data-action="login-with-wallet" ${state.ui.busy ? 'disabled' : ''}>
+          <span class="legacy-login-wallet-icon" aria-hidden="true">${renderWalletProviderMark()}</span>
+          <span>LOGIN WITH WALLET</span>
+        </button>
       </div>
       <button type="submit" class="legacy-btn legacy-btn-primary legacy-login-submit ${state.ui.busy ? 'is-busy' : ''}" ${state.ui.busy ? 'disabled' : ''}>
         <span class="legacy-login-submit-copy">${submitLabel}</span>
@@ -2922,6 +3056,7 @@ function renderRegisterModal(state: AppState) {
 function renderEmailVerificationStatusCards(options: {
   emailSendFailed: boolean;
   hasLocalDevLink: boolean;
+  profileCompletion?: boolean;
 }) {
   return `
     <div class="legacy-assistance-grid">
@@ -2935,10 +3070,12 @@ function renderEmailVerificationStatusCards(options: {
       <div class="legacy-assistance-card">
         <div class="legacy-assistance-card-title">AFTER VERIFY</div>
         <div class="legacy-assistance-card-copy">${options.hasLocalDevLink
-          ? 'Use the local dev verification link shown above. After confirmation, TrendScope will open the access setup flow with the plans and account-bound checkout.'
+          ? 'Use the local dev verification link shown above. After confirmation, the account email can be used for email and password login.'
           : options.emailSendFailed
             ? 'Try sending the verification link again after fixing email delivery.'
-            : 'Open the email and confirm your address. After that, TrendScope will take you into the access setup flow instead of dropping you directly into the bot.'
+            : options.profileCompletion
+              ? 'Open the email and confirm your address. After that, email and password login will be available for this account.'
+              : 'Open the email and confirm your address. After that, TrendScope will take you into the access setup flow instead of dropping you directly into the bot.'
         }</div>
       </div>
     </div>
@@ -2961,10 +3098,12 @@ function renderEmailVerificationRequestForm(state: AppState, emailError: boolean
 }
 
 function renderEmailVerificationModal(state: AppState) {
+  const isProfileCompletionNotice = Boolean(state.ui.pendingVerificationEmail && state.ui.notice?.includes('Account details saved'));
   const isPostRegisterNotice = Boolean(
     state.ui.pendingVerificationEmail
     && (
       state.ui.notice?.includes('Account created')
+      || isProfileCompletionNotice
       || state.ui.error?.includes('verification email could not be sent')
     )
   );
@@ -2985,7 +3124,7 @@ function renderEmailVerificationModal(state: AppState) {
         </div>
         <div class="legacy-auth-panel-feedback" data-auth-slot="feedback">${renderPasswordResetFlash(state)}</div>
         ${isPostRegisterNotice ? `
-          ${renderEmailVerificationStatusCards({ emailSendFailed, hasLocalDevLink })}
+          ${renderEmailVerificationStatusCards({ emailSendFailed, hasLocalDevLink, profileCompletion: isProfileCompletionNotice })}
         ` : `
           ${renderEmailVerificationRequestForm(state, emailError)}
         `}
@@ -3213,7 +3352,7 @@ function renderPasswordResetModal(state: AppState) {
 }
 
 function getPublicBillingPlanDescriptor(plan: AppState['billing']['plans'][number]) {
-  return plan.description || (plan.accessDays >= 30 ? 'Monthly access' : 'Weekly access');
+  return plan.description || (plan.accessDays >= 30 ? 'Monthly access' : 'Plan access');
 }
 
 function renderPublicBillingPlanValueLine(
@@ -3221,8 +3360,8 @@ function renderPublicBillingPlanValueLine(
   recommended: boolean,
   shortestPlan: AppState['billing']['plans'][number] | null,
 ) {
-  const dailyRate = formatBillingDailyRate(plan.amountMinor, plan.accessDays);
-  const shortestDailyRate = shortestPlan ? formatBillingDailyRate(shortestPlan.amountMinor, shortestPlan.accessDays) : null;
+  const dailyRate = formatBillingDailyRate(getPlanDisplayAmount(plan), plan.accessDays);
+  const shortestDailyRate = shortestPlan ? formatBillingDailyRate(getPlanDisplayAmount(shortestPlan), shortestPlan.accessDays) : null;
   if (!recommended || !dailyRate || !shortestDailyRate || !shortestPlan || shortestPlan.key === plan.key) {
     return '';
   }
@@ -3284,10 +3423,7 @@ function renderPublicBillingPlanCard(
         <strong>${escapeHtml(plan.label)}</strong>
         <span>${escapeHtml(descriptor)}</span>
       </div>
-      <div class="legacy-public-plan-price-row">
-        <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
-        <strong class="legacy-billing-plan-price legacy-public-plan-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
-      </div>
+      ${renderBillingPriceRow(plan, 'legacy-public-plan-price-row', 'legacy-public-plan-price')}
       <div class="legacy-billing-plan-meta legacy-public-plan-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
       ${renderPublicBillingPlanValueLine(plan, recommended, shortestPlan)}
       ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
@@ -3315,10 +3451,7 @@ function renderProfileBillingPlanCard(
         <strong>${escapeHtml(plan.label)}</strong>
         <span>${escapeHtml(descriptor)}</span>
       </div>
-      <div class="legacy-profile-billing-price-row">
-        <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
-        <strong class="legacy-billing-plan-price legacy-profile-billing-price">${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</strong>
-      </div>
+      ${renderBillingPriceRow(plan, 'legacy-profile-billing-price-row', 'legacy-profile-billing-price')}
       <div class="legacy-billing-plan-meta legacy-profile-billing-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
       ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
       <div class="legacy-auth-panel-actions legacy-user-settings-actions">
@@ -3434,9 +3567,9 @@ function renderLoginExtensionDraft(key: Parameters<typeof getAuthExtensionFields
 }
 
 function formatAccessDate(value: string | null) {
-  if (!value) return 'No expiry';
+  if (!value) return 'No Expire';
   const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) return 'No expiry';
+  if (!Number.isFinite(parsed.getTime())) return 'No Expire';
   return parsed.toLocaleString('en-US');
 }
 
@@ -3452,14 +3585,31 @@ function formatUserRole(value: string | null) {
   return value.toUpperCase();
 }
 
-function formatEmailVerificationStatus(state: AppState) {
+function formatCompactEmailVerificationStatus(state: AppState) {
   if (!state.session.isEmailVerified) {
-    return 'Pending';
+    return 'pending';
   }
   if (!state.session.emailVerifiedAt) {
-    return 'Verified';
+    return 'verified';
   }
-  return `Verified on ${formatAccessDate(state.session.emailVerifiedAt)}`;
+  const parsed = new Date(state.session.emailVerifiedAt);
+  if (!Number.isFinite(parsed.getTime())) {
+    return 'verified';
+  }
+  return `verified ${parsed.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`;
+}
+
+function maskAccountEmail(value: string | null) {
+  const email = String(value || '').trim();
+  const walletMatch = email.match(/^(wallet_)([^@]+)(@wallet\.local)$/i);
+  if (!walletMatch) {
+    return email || '-';
+  }
+  const middle = walletMatch[2] || '';
+  if (middle.length <= 8) {
+    return email;
+  }
+  return `${walletMatch[1]}${middle.slice(0, 3)}...${middle.slice(-4)}${walletMatch[3]}`;
 }
 
 function formatBillingAmount(currencyCode: string, amountMinor: number) {
@@ -3476,6 +3626,116 @@ function formatBillingMajorAmount(amountMinor: number) {
     return '-';
   }
   return (amount / 100).toFixed(2);
+}
+
+function trimFixedDecimals(value: number, maximumFractionDigits: number) {
+  return value
+    .toFixed(maximumFractionDigits)
+    .replace(/\.?0+$/, '');
+}
+
+function formatCompactTokenBalance(value: string | null | undefined) {
+  const normalized = String(value || '').replace(/,/g, '').trim();
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount)) {
+    return value || '-';
+  }
+
+  const absAmount = Math.abs(amount);
+  if (absAmount >= 1_000_000_000) {
+    return `${trimFixedDecimals(amount / 1_000_000_000, 2)}B`;
+  }
+  if (absAmount >= 1_000_000) {
+    return `${trimFixedDecimals(amount / 1_000_000, 2)}M`;
+  }
+  if (absAmount >= 1_000) {
+    return `${trimFixedDecimals(amount / 1_000, 2)}K`;
+  }
+  if (absAmount >= 1) {
+    return trimFixedDecimals(amount, 2);
+  }
+  return trimFixedDecimals(amount, 6);
+}
+
+function getPlanDisplayAmount(plan: AppState['billing']['plans'][number]) {
+  return plan.discountAvailable && plan.discountedAmountMinor != null
+    ? plan.discountedAmountMinor
+    : plan.amountMinor;
+}
+
+function renderBillingPriceRow(
+  plan: AppState['billing']['plans'][number],
+  rowClass: string,
+  priceClass: string,
+) {
+  const displayAmount = getPlanDisplayAmount(plan);
+  const discountLabel = plan.discountAvailable ? `-${plan.discountPercent || 0}% OFF` : '';
+  return `
+    ${plan.discountAvailable ? `
+      <div class="legacy-token-discount-badge">${escapeHtml(discountLabel)}</div>
+    ` : ''}
+    <div class="${rowClass} ${plan.discountAvailable ? 'has-discount' : ''}">
+      <span>${escapeHtml(String(plan.currencyCode || '').trim().toUpperCase())}</span>
+      ${plan.discountAvailable ? `<del>${escapeHtml(formatBillingMajorAmount(plan.amountMinor))}</del>` : ''}
+      <strong class="legacy-billing-plan-price ${priceClass}">${escapeHtml(formatBillingMajorAmount(displayAmount))}</strong>
+    </div>
+    ${plan.discountAvailable ? `
+      <div class="legacy-token-discount-line">${escapeHtml('Token holder discount applied')}</div>
+    ` : ''}
+  `;
+}
+
+function getTokenTierLabel(tier: string | null) {
+  if (tier === 'unlimited') return 'Unlimited holder';
+  if (tier === 'launch_free') return 'Launch free';
+  if (tier === 'discount_50') return '50% discount';
+  return 'No token tier';
+}
+
+function renderTokenEntitlementStrip(state: AppState) {
+  const tier = state.session.tokenTier || 'none';
+  const checkedLabel = formatDateTime(state.session.tokenSnapshotCheckedAt);
+  const balanceLabel = formatCompactTokenBalance(state.session.tokenBalanceUi);
+  return `
+    <div class="legacy-token-entitlement-strip" data-tier="${escapeHtml(tier)}">
+      <div>
+        <span>Token Tier</span>
+        <strong>${escapeHtml(getTokenTierLabel(tier))}</strong>
+      </div>
+      <div>
+        <span>Balance</span>
+        <strong title="${escapeHtml(state.session.tokenBalanceUi || balanceLabel)}">${escapeHtml(balanceLabel)}</strong>
+      </div>
+      <div>
+        <span>Checked</span>
+        <strong>${escapeHtml(checkedLabel)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function hasTokenEntitlementState(state: AppState) {
+  const tier = String(state.session.tokenTier || '').trim().toLowerCase();
+  return Boolean(
+    (tier && tier !== 'none')
+    || state.session.tokenBalanceRaw
+    || state.session.tokenBalanceUi
+    || state.session.tokenSnapshotCheckedAt
+    || state.session.tokenDiscountPercent > 0
+  );
+}
+
+function getTokenTierShortLabel(state: AppState) {
+  if (state.session.tokenTier === 'discount_50' || state.session.tokenDiscountPercent === 50) {
+    return '50% off';
+  }
+  if (state.session.tokenTier === 'unlimited') {
+    return 'Unlimited';
+  }
+  if (state.session.tokenTier === 'launch_free') {
+    return 'Free';
+  }
+  return '-';
 }
 
 function formatBillingDailyRate(amountMinor: number, accessDays: number) {
@@ -3532,19 +3792,48 @@ function renderIdentityProviderMark(provider: 'google' | 'discord') {
   `;
 }
 
+function renderWalletProviderMark() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M5.5 7.5h12.25c1.1 0 2 .9 2 2v7c0 1.1-.9 2-2 2H5.5c-1.1 0-2-.9-2-2v-10c0-1.1.9-2 2-2h10.25c.83 0 1.5.67 1.5 1.5v1.5"
+        fill="none"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="1.8"
+      />
+      <path
+        d="M16.75 13h.01"
+        fill="none"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="3"
+      />
+    </svg>
+  `;
+}
+
 function renderAccountAccessSummaryCard(state: AppState) {
   const statusLabel = getAccessStatusLabel(state);
   const expiryLabel = formatAccessDate(state.session.accessExpiresAt);
-  const sourceLabel = state.session.accessSource ? state.session.accessSource.toUpperCase() : '-';
+  const sourceLabel = state.session.accessSource
+    ? `${state.session.accessSource.slice(0, 1).toUpperCase()}${state.session.accessSource.slice(1)}`
+    : '-';
   const remainingLabel = state.session.accessDaysRemaining == null
     ? 'Unlimited'
     : `${state.session.accessDaysRemaining} day${state.session.accessDaysRemaining === 1 ? '' : 's'}`;
   const username = escapeHtml(state.session.username ?? '-');
-  const email = escapeHtml(state.session.email ?? '-');
+  const email = escapeHtml(maskAccountEmail(state.session.email));
   const role = escapeHtml(formatUserRole(state.session.role));
-  const emailStatus = escapeHtml(formatEmailVerificationStatus(state));
+  const emailStatus = escapeHtml(formatCompactEmailVerificationStatus(state));
   const initialsSource = (state.session.username ?? state.session.email ?? 'U').trim();
   const avatarText = escapeHtml((initialsSource.slice(0, 2) || 'U').toUpperCase());
+  const walletButtonLabel = hasTokenEntitlementState(state) ? 'REFRESH' : 'CONNECT';
+  const tokenTierLabel = getTokenTierShortLabel(state);
+  const balanceLabel = formatCompactTokenBalance(state.session.tokenBalanceUi);
+  const checkedLabel = formatDateTime(state.session.tokenSnapshotCheckedAt);
 
   return `
     <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-user-identity-access-card">
@@ -3554,12 +3843,10 @@ function renderAccountAccessSummaryCard(state: AppState) {
           <div class="legacy-account-access-copy">
             <div class="legacy-account-access-primary">
               <strong>${username}</strong>
-              <span>${email}</span>
-            </div>
-            <div class="legacy-account-access-meta">
-              <span>${role}</span>
+              <span class="legacy-account-access-chip">${role}</span>
               <span>${emailStatus}</span>
             </div>
+            <div class="legacy-account-access-wallet">${email}</div>
           </div>
         </div>
         <div class="legacy-account-access-status">
@@ -3573,109 +3860,226 @@ function renderAccountAccessSummaryCard(state: AppState) {
           <span>Expires</span>
           <strong>${escapeHtml(expiryLabel)}</strong>
         </div>
-        <div class="legacy-account-access-item legacy-account-access-item-inline">
-          <span>Access Source</span>
-          <div class="legacy-account-access-inline">
-            <strong>${escapeHtml(sourceLabel)}</strong>
-            <button type="button" class="legacy-btn legacy-btn-soft-accent legacy-account-access-billing-btn" data-action="focus-billing-plans">OPEN BILLING</button>
-          </div>
+        <div class="legacy-account-access-item">
+          <span>Source</span>
+          <strong>${escapeHtml(sourceLabel)}</strong>
+        </div>
+        <div class="legacy-account-access-item">
+          <span>Token Tier</span>
+          <strong class="legacy-account-access-token-tier">${escapeHtml(tokenTierLabel)}</strong>
+        </div>
+        <div class="legacy-account-access-item">
+          <span>Balance</span>
+          <strong title="${escapeHtml(state.session.tokenBalanceUi || balanceLabel)}">${escapeHtml(balanceLabel)}</strong>
+        </div>
+        <div class="legacy-account-access-actions">
+          <button type="button" class="legacy-btn legacy-btn-soft-accent legacy-account-access-wallet-btn" data-action="connect-wallet" ${state.ui.busy ? 'disabled' : ''}>${walletButtonLabel}</button>
+          <button type="button" class="legacy-btn legacy-btn-soft-accent legacy-account-access-billing-btn" data-action="focus-billing-plans">BILLING</button>
         </div>
       </div>
+      ${checkedLabel === '-' ? '' : `<div class="legacy-account-access-note">Balance last checked ${escapeHtml(checkedLabel)}</div>`}
+    </div>
+  `;
+}
+
+function renderAccountProfileCard(state: AppState) {
+  const username = escapeHtml(state.session.username ?? '');
+  const isWalletOnlyAccount = /^wallet_[^@]+@wallet\.local$/i.test(String(state.session.email || '').trim());
+  const completionCopy = isWalletOnlyAccount
+    ? 'Add a real email and password before token-only access disappears.'
+    : 'Update the public username used by this account.';
+
+  return `
+    <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-account-profile-card ${isWalletOnlyAccount ? 'is-wallet-completion' : 'is-username-only'}">
+      <div class="legacy-user-settings-card-head">
+        <strong>Profile</strong>
+        <span>${escapeHtml(completionCopy)}</span>
+      </div>
+      <form class="legacy-auth-panel-form legacy-account-profile-form" data-role="account-profile-form" novalidate>
+        <label>
+          <span>Username</span>
+          <input name="username" type="text" value="${username}" minlength="3" maxlength="32" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
+        </label>
+        ${isWalletOnlyAccount ? `
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" maxlength="${LOGIN_EMAIL_MAX_LENGTH}" autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input name="password" type="password" minlength="8" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+          <label>
+            <span>Confirm Password</span>
+            <input name="confirmPassword" type="password" minlength="8" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
+          </label>
+        ` : ''}
+        <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+          <button type="submit" class="legacy-btn legacy-btn-outline-accent" ${state.ui.busy ? 'disabled' : ''}>
+            ${state.ui.busy ? 'SAVING...' : isWalletOnlyAccount ? 'COMPLETE ACCOUNT' : 'SAVE PROFILE'}
+          </button>
+        </div>
+      </form>
     </div>
   `;
 }
 
 function renderUserLinkedIdentitiesCard(
   state: AppState,
-  options?: { allowConnectActions?: boolean; allowUnlinkActions?: boolean },
+  options?: { allowConnectActions?: boolean; allowUnlinkActions?: boolean; embedded?: boolean },
 ) {
   const allowConnectActions = options?.allowConnectActions !== false;
   const allowUnlinkActions = options?.allowUnlinkActions === true;
   const loadingMessage = !state.identities.loaded && !state.identities.error
     ? 'Loading linked identity status...'
     : null;
+  const content = `
+    ${state.identities.error ? `
+      <div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.identities.error)}</div>
+    ` : ''}
+    ${loadingMessage ? `
+      <div class="legacy-auth-panel-note">${escapeHtml(loadingMessage)}</div>
+    ` : `
+      <div class="legacy-linked-identity-list">
+        ${state.identities.providers.map((provider) => renderLinkedIdentityRow(
+          state,
+          provider,
+          { allowConnectActions, allowUnlinkActions },
+        )).join('')}
+      </div>
+    `}
+  `;
+
+  if (options?.embedded) {
+    return content;
+  }
 
   return `
     <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide">
       <div class="legacy-user-settings-card-head">
         <strong>Connected Identities</strong>
-        <span>Providers already attached to this account and available for linked-only sign-in.</span>
+        <span>Google can create an account directly. Other providers must first be linked here.</span>
       </div>
-      ${state.identities.error ? `
-        <div class="legacy-auth-panel-note" data-state="error">${escapeHtml(state.identities.error)}</div>
-      ` : ''}
-      ${loadingMessage ? `
-        <div class="legacy-auth-panel-note">${escapeHtml(loadingMessage)}</div>
-      ` : `
-        <div class="legacy-linked-identity-list">
-          ${state.identities.providers.map((provider) => `
-            <div class="legacy-linked-identity-row">
-              <div class="legacy-linked-identity-provider-mark">${renderIdentityProviderMark(provider.provider)}</div>
-              <div class="legacy-linked-identity-main">
-                <strong>${escapeHtml(provider.label)}</strong>
-                <span>${escapeHtml(provider.providerDisplayName || provider.providerEmail || (provider.configured ? 'Ready for linking' : 'Provider unavailable'))}</span>
-                <span class="legacy-linked-identity-meta">${escapeHtml(
-                  provider.linked
-                    ? `Linked ${formatDateTime(provider.linkedAt)}`
-                    : provider.configured
-                      ? 'Not linked yet'
-                      : 'Missing OAuth config'
-                )}</span>
-              </div>
-              <div class="legacy-linked-identity-side">
-                ${provider.linked || !allowConnectActions ? '' : `
-                  <button
-                    type="button"
-                    class="legacy-btn legacy-btn-soft-accent legacy-linked-identity-connect"
-                    data-action="start-social-link"
-                    data-provider="${escapeHtml(provider.provider)}"
-                    ${provider.configured ? '' : 'disabled'}
-                  >CONNECT ${escapeHtml(provider.label.toUpperCase())}</button>
-                `}
-                ${!provider.linked || !allowUnlinkActions ? '' : `
-                  ${state.ui.pendingIdentityUnlinkProvider === provider.provider ? `
-                    <form class="legacy-auth-panel-form" data-role="unlink-social-identity-form" data-provider="${escapeHtml(provider.provider)}" novalidate>
-                      <label>
-                        <span>Current password</span>
-                        <input name="currentPassword" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
-                      </label>
-                      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-                        <button type="button" class="legacy-userbar-link" data-action="cancel-social-unlink" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
-                        <button type="submit" class="legacy-btn legacy-btn-outline-accent" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'UNLINKING...' : `UNLINK ${escapeHtml(provider.label.toUpperCase())}`}</button>
-                      </div>
-                    </form>
-                  ` : `
-                    <button
-                      type="button"
-                      class="legacy-btn legacy-btn-outline-accent legacy-linked-identity-unlink"
-                      data-action="open-social-unlink"
-                      data-provider="${escapeHtml(provider.provider)}"
-                      ${state.ui.busy ? 'disabled' : ''}
-                    >UNLINK ${escapeHtml(provider.label.toUpperCase())}</button>
-                  `}
-                `}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `}
+      ${content}
     </div>
   `;
 }
 
+function renderLinkedIdentityRow(
+  state: AppState,
+  provider: LinkedIdentityEntry,
+  options: { allowConnectActions: boolean; allowUnlinkActions: boolean },
+) {
+  const providerStatus = provider.linked
+    ? `Linked ${formatDateTime(provider.linkedAt)}`
+    : provider.configured
+      ? 'Not linked yet'
+      : 'Missing OAuth config';
+  const providerDescription = provider.providerDisplayName
+    || provider.providerEmail
+    || (provider.configured ? 'Ready for linking' : 'Provider unavailable');
+  return `
+    <div class="legacy-linked-identity-row ${provider.linked ? 'is-linked' : ''}">
+      <div class="legacy-linked-identity-provider-mark">${renderIdentityProviderMark(provider.provider)}</div>
+      <div class="legacy-linked-identity-main">
+        <strong>${escapeHtml(provider.label)}</strong>
+        <span>${escapeHtml(provider.linked ? providerDescription : providerStatus)}</span>
+      </div>
+      <div class="legacy-linked-identity-side">
+        ${renderIdentityConnectAction(provider, options.allowConnectActions)}
+        ${renderIdentityUnlinkAction(state, provider, options.allowUnlinkActions)}
+      </div>
+    </div>
+  `;
+}
+
+function renderIdentityConnectAction(provider: LinkedIdentityEntry, allowConnectActions: boolean) {
+  if (provider.linked || !allowConnectActions) {
+    return '';
+  }
+  return `
+    <button
+      type="button"
+      class="legacy-btn legacy-btn-soft-accent legacy-linked-identity-connect"
+      data-action="start-social-link"
+      data-provider="${escapeHtml(provider.provider)}"
+      ${provider.configured ? '' : 'disabled'}
+    >CONNECT</button>
+  `;
+}
+
+function renderIdentityUnlinkAction(state: AppState, provider: LinkedIdentityEntry, allowUnlinkActions: boolean) {
+  if (!provider.linked || !allowUnlinkActions) {
+    return '';
+  }
+  if (state.ui.pendingIdentityUnlinkProvider === provider.provider) {
+    return renderIdentityUnlinkForm(state, provider);
+  }
+  return `
+    <button
+      type="button"
+      class="legacy-btn legacy-btn-outline-accent legacy-linked-identity-unlink"
+      data-action="open-social-unlink"
+      data-provider="${escapeHtml(provider.provider)}"
+      title="${escapeHtml(provider.unlinkBlockedReason || `Unlink ${provider.label}`)}"
+      ${state.ui.busy || !provider.canUnlink ? 'disabled' : ''}
+    >${provider.canUnlink ? `UNLINK ${escapeHtml(provider.label.toUpperCase())}` : 'SET PASSWORD FIRST'}</button>
+  `;
+}
+
+function renderIdentityUnlinkForm(state: AppState, provider: LinkedIdentityEntry) {
+  return `
+    <form class="legacy-auth-panel-form" data-role="unlink-social-identity-form" data-provider="${escapeHtml(provider.provider)}" novalidate>
+      <label>
+        <span>Current password</span>
+        <input name="currentPassword" type="password" maxlength="${LOGIN_PASSWORD_MAX_LENGTH}" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" ${state.ui.busy ? 'disabled' : ''} required />
+      </label>
+      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+        <button type="button" class="legacy-userbar-link" data-action="cancel-social-unlink" ${state.ui.busy ? 'disabled' : ''}>Cancel</button>
+        <button type="submit" class="legacy-btn legacy-btn-outline-accent" ${state.ui.busy ? 'disabled' : ''}>${state.ui.busy ? 'UNLINKING...' : `UNLINK ${escapeHtml(provider.label.toUpperCase())}`}</button>
+      </div>
+    </form>
+  `;
+}
+
 function renderUserSecurityCard(state: AppState) {
-  const otpStatus = state.session.isEmailVerified
+  const otpStatus = !state.identities.hasPasswordLogin
+    ? 'Google sign-in is active. Add a password by email if you also want traditional login or identity unlinking.'
+    : state.session.isEmailVerified
     ? 'Login still requires the email verification code step.'
     : 'Verify the account email before using recovery and login features normally.';
   return `
     <div class="auth-summary legacy-user-settings-card legacy-user-settings-card-wide legacy-security-inline-card">
-      <div class="legacy-security-inline-copy">
-        <strong>Security</strong>
-        <span>${escapeHtml(otpStatus)}</span>
+      <div class="legacy-security-inline-head">
+        <div class="legacy-security-inline-copy">
+          <strong>Sign-in & Security</strong>
+          <span>${escapeHtml(otpStatus)}</span>
+        </div>
+        <div class="legacy-auth-panel-actions legacy-user-settings-actions">
+          ${state.identities.hasPasswordLogin ? `
+            <button type="button" class="legacy-btn legacy-btn-outline-accent" data-action="open-change-password-from-user-settings" ${state.ui.busy ? 'disabled' : ''}>CHANGE PASSWORD</button>
+          ` : `
+            <button type="button" class="legacy-btn legacy-btn-outline-accent" data-action="add-password-by-email" ${state.ui.busy ? 'disabled' : ''}>ADD PASSWORD</button>
+          `}
+        </div>
       </div>
-      <div class="legacy-auth-panel-actions legacy-user-settings-actions">
-        <button type="button" class="legacy-btn legacy-btn-outline-accent" data-action="open-change-password-from-user-settings" ${state.ui.busy ? 'disabled' : ''}>CHANGE PASSWORD</button>
-      </div>
+      ${renderUserLinkedIdentitiesCard(state, { allowUnlinkActions: true, embedded: true })}
+    </div>
+  `;
+}
+
+function renderBillingTokenAccessNotice(state: AppState) {
+  if (state.session.tokenTier !== 'unlimited') {
+    return '';
+  }
+
+  const balance = state.session.tokenBalanceUi
+    ? formatCompactTokenBalance(state.session.tokenBalanceUi)
+    : 'the required amount of';
+  return `
+    <div class="legacy-token-billing-notice" data-tier="unlimited">
+      <strong>Unlimited token access active</strong>
+      <span>You hold ${escapeHtml(balance)} tokens, so this account already has unlimited bot access while the balance stays eligible. You do not need to buy a plan.</span>
     </div>
   `;
 }
@@ -3709,6 +4113,7 @@ function renderBillingPlansCard(state: AppState) {
       ${billingUnavailableMessage ? `
         <div class="legacy-auth-panel-note">${escapeHtml(billingUnavailableMessage)}</div>
       ` : `
+        ${renderBillingTokenAccessNotice(state)}
         <div class="legacy-billing-plan-grid legacy-profile-billing-grid">
           ${state.billing.plans.map((plan) => renderProfileBillingPlanCard(state, plan)).join('')}
         </div>
@@ -3796,14 +4201,14 @@ function renderUserSettingsModal(state: AppState) {
   return renderProfileModalShell({
     panel: 'user-settings',
     title: 'User Settings',
-    description: 'Review account access, identity state, and security actions without mixing them into bot config.',
+    description: 'Account access, identity, and security - all in one place.',
     labelId: 'user-settings-title',
     panelClass: 'legacy-auth-panel-user-settings',
     content: `
       <div class="legacy-user-settings-grid">
         ${renderAccountAccessSummaryCard(state)}
+        ${renderAccountProfileCard(state)}
         ${renderUserSecurityCard(state)}
-        ${renderUserLinkedIdentitiesCard(state, { allowUnlinkActions: true })}
         ${renderBillingPlansCard(state)}
         ${renderBillingOrdersCard(state)}
       </div>
@@ -3973,7 +4378,7 @@ function renderBlockedTokensModal(state: AppState) {
         ` : state.data.blocklist.map((item) => `
           <div class="blocked-token-row">
             <div class="blocked-token-main">
-              ${renderBlockedTokenAvatar(state, item.address, item.label || item.address.slice(0, 8))}
+              ${renderBlockedTokenAvatar(state, item, item.label || item.address.slice(0, 8))}
               <div class="blocked-token-copy">
                 <strong>${escapeHtml(item.label || item.address.slice(0, 8))}</strong>
                 <span>${escapeHtml(item.address)}</span>
@@ -3987,10 +4392,10 @@ function renderBlockedTokensModal(state: AppState) {
   });
 }
 
-function renderBlockedTokenAvatar(state: AppState, address: string, fallbackLabel: string) {
-  const tracked = getTrackedToken(state, address);
-  const imageUrl = sanitizeOptionalHttpUrl(tracked?.imageUrl);
-  const safeLabel = escapeHtml(String(fallbackLabel || '').trim() || address.slice(0, 8));
+function renderBlockedTokenAvatar(state: AppState, item: AppState['data']['blocklist'][number], fallbackLabel: string) {
+  const tracked = getTrackedToken(state, item.address);
+  const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl || tracked?.imageUrl);
+  const safeLabel = escapeHtml(String(fallbackLabel || '').trim() || item.address.slice(0, 8));
   if (imageUrl) {
     return `<img src="${imageUrl}" alt="${safeLabel}" class="blocked-token-avatar" />`;
   }
@@ -4113,6 +4518,7 @@ function bindChangePasswordPanel(section: ParentNode, controller: AppController,
 }
 
 function bindUserSettingsPanel(section: ParentNode, controller: AppController) {
+  const state = controller.state;
   const panel = section.querySelector<HTMLElement>('[data-auth-panel="user-settings"]');
   if (!panel) {
     return;
@@ -4123,8 +4529,31 @@ function bindUserSettingsPanel(section: ParentNode, controller: AppController) {
   section.querySelector<HTMLButtonElement>('[data-action="focus-billing-plans"]')?.addEventListener('click', () => {
     section.querySelector<HTMLElement>('[data-role="billing-plans-card"]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
+  section.querySelector<HTMLButtonElement>('[data-action="connect-wallet"]')?.addEventListener('click', () => {
+    void controller.connectWallet();
+  });
+  section.querySelector<HTMLFormElement>('[data-role="account-profile-form"]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (state.ui.busy || !(form instanceof HTMLFormElement)) {
+      return;
+    }
+    const data = new FormData(form);
+    void controller.updateAccountProfile(
+      String(data.get('username') || ''),
+      String(data.get('email') || ''),
+      String(data.get('password') || ''),
+      String(data.get('confirmPassword') || ''),
+    );
+  });
   section.querySelector<HTMLButtonElement>('[data-action="open-change-password-from-user-settings"]')?.addEventListener('click', () => {
     controller.openAuthPanel('change-password');
+  });
+  section.querySelector<HTMLButtonElement>('[data-action="add-password-by-email"]')?.addEventListener('click', () => {
+    const email = String(state.session.email || '').trim();
+    if (email) {
+      void controller.requestPasswordReset(email);
+    }
   });
   section.querySelectorAll<HTMLButtonElement>('[data-action="start-billing-checkout"]').forEach((button) => {
     button.addEventListener('click', () => {

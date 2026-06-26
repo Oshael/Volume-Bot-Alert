@@ -1094,6 +1094,12 @@ function getLegacyRenderKey(state: AppState) {
     accessStatus: state.session.accessStatus,
     accessExpiresAt: state.session.accessExpiresAt,
     accessDaysRemaining: state.session.accessDaysRemaining,
+    accessReason: state.session.accessReason,
+    tokenTier: state.session.tokenTier,
+    tokenDiscountPercent: state.session.tokenDiscountPercent,
+    tokenBalanceUi: state.session.tokenBalanceUi,
+    tokenSnapshotCheckedAt: state.session.tokenSnapshotCheckedAt,
+    tokenSnapshotExpiresAt: state.session.tokenSnapshotExpiresAt,
   });
 }
 
@@ -1385,6 +1391,12 @@ function getUserSettingsOverlaySnapshot(state: AppState) {
     billingOrders: state.billing.orders,
     billingPendingPlanKey: state.billing.pendingPlanKey,
     billingError: state.billing.error,
+    accessReason: state.session.accessReason,
+    tokenTier: state.session.tokenTier,
+    tokenDiscountPercent: state.session.tokenDiscountPercent,
+    tokenBalanceUi: state.session.tokenBalanceUi,
+    tokenSnapshotCheckedAt: state.session.tokenSnapshotCheckedAt,
+    tokenSnapshotExpiresAt: state.session.tokenSnapshotExpiresAt,
   };
 }
 
