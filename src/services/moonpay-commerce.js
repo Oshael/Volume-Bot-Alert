@@ -132,7 +132,8 @@ function extractChargePaylinkId(body) {
 }
 
 function extractChargeRequestAmount(body) {
-  return body?.requestAmount
+  return body?.paylinkTx?.meta?.tokenQuote?.fromAmountDecimal
+    || body?.requestAmount
     || body?.prepareRequestBody?.amount
     || body?.paylink?.normalizedPrice
     || body?.paylink?.price
@@ -183,6 +184,10 @@ function buildChargePayload(input) {
       },
     },
   };
+
+  if (input.requestAmount) {
+    payload.requestAmount = String(input.requestAmount);
+  }
 
   if (input.successRedirectUrl) {
     payload.successRedirectUrl = input.successRedirectUrl;

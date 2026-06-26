@@ -16,6 +16,7 @@ const LoginEmailOtpChallenge = require('./models/login-email-otp-challenge');
 
 // Routes
 const authRoutes = require('./routes/auth');
+const walletAuthRoutes = require('./routes/wallet-auth');
 const socialAuthRoutes = require('./routes/social-auth');
 const inviteRoutes = require('./routes/invites');
 const healthRoutes = require('./routes/health');
@@ -130,6 +131,7 @@ if (config.nodeEnv === 'development') {
 app.use('/api/health', healthLimiter, healthRoutes);
 app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/wallet-auth', walletAuthRoutes);
 app.use('/api/invites', defaultApiLimiter, inviteRoutes);
 app.use('/api/admin/mock-trading', defaultApiLimiter, mockTradingRoutes);
 app.use('/api/admin', defaultApiLimiter, adminRoutes);

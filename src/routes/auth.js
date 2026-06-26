@@ -296,7 +296,7 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Email not verified. Check your inbox or resend verification before signing in.' });
     }
 
-    const access = userAccess.buildAccessSnapshot(user);
+    const access = await userAccess.buildResolvedAccessSnapshot(user);
     if (isHardBlockedAccess(access)) {
       await LoginAttempt.record({ email, ipAddress: req.ip, success: false, userAgent: req.get('user-agent') });
       return res.status(403).json({ error: access.denialReason || 'Access revoked' });
@@ -352,7 +352,7 @@ router.post('/login-otp/resend', authOtpLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Verification challenge is invalid or expired. Please sign in again.' });
     }
 
-    const access = userAccess.buildAccessSnapshot(user);
+    const access = await userAccess.buildResolvedAccessSnapshot(user);
     if (isHardBlockedAccess(access)) {
       return res.status(403).json({ error: access.denialReason || 'Access revoked' });
     }
@@ -400,7 +400,7 @@ router.post('/login-otp/verify', authOtpLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Verification code is invalid or expired. Please sign in again.' });
     }
 
-    const access = userAccess.buildAccessSnapshot(user);
+    const access = await userAccess.buildResolvedAccessSnapshot(user);
     if (isHardBlockedAccess(access)) {
       clearPreAccessCookie(res);
       return res.status(403).json({ error: access.denialReason || 'Access revoked' });
@@ -556,9 +556,23 @@ router.post('/verify-email/confirm', authEmailLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Account is deactivated' });
     }
 
-    const access = userAccess.buildAccessSnapshot(user);
+    const access = await userAccess.buildResolvedAccessSnapshot(user);
     if (isHardBlockedAccess(access)) {
       return res.status(403).json({ error: access.denialReason || 'Access revoked' });
+    }
+
+    if (access.hasProductAccess) {
+      const payload = await createAuthenticatedSession({
+        user,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        res,
+      });
+      return res.json({
+        ...payload,
+        message: 'Email verified successfully. Workspace synced.',
+        access,
+      });
     }
 
     return res.json({

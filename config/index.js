@@ -12,6 +12,7 @@ require('dotenv').config({ path: resolvedEnvPath });
 
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
   return value === 'true' || value === '1';
 }
 
@@ -21,6 +22,15 @@ function parseIntegerInRange(value, fallback, min, max) {
     return fallback;
   }
   return Math.max(min, Math.min(parsed, max));
+}
+
+function parseOptionalTimestamp(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(normalized);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
 function parseJson(value, fallback) {
@@ -46,42 +56,6 @@ function getEnv(...names) {
   return '';
 }
 
-function normalizeBillingPlans(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') {
-        return null;
-      }
-
-      const key = String(entry.key || '').trim();
-      const label = String(entry.label || '').trim();
-      const currencyCode = String(entry.currencyCode || entry.currency || '').trim().toUpperCase();
-      const providerPaylinkId = normalizeMoonpayPaylinkId(entry.providerPaylinkId || entry.paylinkId || '');
-      const accessDays = Number(entry.accessDays);
-      const amountMinor = Number(entry.amountMinor);
-
-      if (!key || !label || !currencyCode || !Number.isFinite(accessDays) || accessDays <= 0 || !Number.isFinite(amountMinor) || amountMinor <= 0) {
-        return null;
-      }
-
-      return {
-        key,
-        label,
-        description: String(entry.description || '').trim(),
-        currencyCode,
-        amountMinor: Math.round(amountMinor),
-        accessDays: Math.round(accessDays),
-        featured: parseBoolean(entry.featured, false),
-        providerPaylinkId,
-      };
-    })
-    .filter(Boolean);
-}
-
 function normalizeMoonpayPaylinkId(value) {
   const raw = String(value || '').trim();
   if (!raw) {
@@ -95,6 +69,57 @@ function normalizeMoonpayPaylinkId(value) {
   } catch (_) {
     return raw;
   }
+}
+
+function hasValidBillingPlanFields({ key, label, currencyCode, accessDays, amountMinor }) {
+  return Boolean(
+    key
+    && label
+    && currencyCode
+    && Number.isFinite(accessDays)
+    && accessDays > 0
+    && Number.isFinite(amountMinor)
+    && amountMinor > 0
+  );
+}
+
+function normalizeBillingPlan(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const key = String(entry.key || '').trim();
+  const label = String(entry.label || '').trim();
+  const currencyCode = String(entry.currencyCode || entry.currency || '').trim().toUpperCase();
+  const accessDays = Number(entry.accessDays);
+  const amountMinor = Number(entry.amountMinor);
+  const providerPaylinkDynamic = parseBoolean(
+    entry.providerPaylinkDynamic ?? entry.paylinkDynamic ?? entry.dynamicPaylink,
+    false
+  );
+
+  if (!hasValidBillingPlanFields({ key, label, currencyCode, accessDays, amountMinor })) {
+    return null;
+  }
+
+  return {
+    key,
+    label,
+    description: String(entry.description || '').trim(),
+    currencyCode,
+    amountMinor: Math.round(amountMinor),
+    accessDays: Math.round(accessDays),
+    featured: parseBoolean(entry.featured, false),
+    providerPaylinkId: normalizeMoonpayPaylinkId(entry.providerPaylinkId || entry.paylinkId || ''),
+    providerPaylinkDynamic,
+    discountProviderPaylinkId: normalizeMoonpayPaylinkId(
+      entry.discountProviderPaylinkId || entry.discountPaylinkId || ''
+    ),
+  };
+}
+
+function normalizeBillingPlans(value) {
+  return Array.isArray(value) ? value.map(normalizeBillingPlan).filter(Boolean) : [];
 }
 
 function normalizeMoonpayNetwork(value) {
@@ -435,6 +460,27 @@ module.exports = {
 
   marketBuckets: {
     aggregateOnWriteEnabled: parseBoolean(process.env.MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED, true),
+  },
+
+  tokenGate: {
+    enabled: parseBoolean(process.env.TOKEN_GATE_ENABLED, false),
+    chain: (process.env.TOKEN_GATE_CHAIN || 'solana').trim().toLowerCase(),
+    mintAddress: (process.env.TOKEN_GATE_MINT_ADDRESS || '').trim(),
+    rpcProvider: (process.env.TOKEN_GATE_RPC_PROVIDER || 'helius').trim().toLowerCase(),
+    balanceCacheSeconds: Math.max(1, parseInt(process.env.TOKEN_GATE_BALANCE_CACHE_SECONDS || '60', 10) || 60),
+    rpcFailureGraceSeconds: Math.max(
+      60,
+      parseInt(process.env.TOKEN_GATE_RPC_FAILURE_GRACE_SECONDS || '3600', 10) || 3600
+    ),
+    unlimitedThreshold: String(process.env.TOKEN_GATE_UNLIMITED_THRESHOLD || '2000000').trim(),
+    discountThreshold: String(process.env.TOKEN_GATE_DISCOUNT_THRESHOLD || '1000000').trim(),
+    discountPercent: parseIntegerInRange(process.env.TOKEN_GATE_DISCOUNT_PERCENT, 50, 0, 100),
+    launchPromo: {
+      enabled: parseBoolean(process.env.TOKEN_GATE_LAUNCH_PROMO_ENABLED, true),
+      startAt: parseOptionalTimestamp(process.env.TOKEN_GATE_LAUNCH_PROMO_START_AT),
+      endAt: parseOptionalTimestamp(process.env.TOKEN_GATE_LAUNCH_PROMO_END_AT),
+      threshold: String(process.env.TOKEN_GATE_LAUNCH_PROMO_THRESHOLD || '100000').trim(),
+    },
   },
 
   bidZoneWorker: {

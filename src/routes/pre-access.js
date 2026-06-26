@@ -54,6 +54,21 @@ router.post('/billing/orders', authenticatePreAccess, requireTrustedOrigin, asyn
   }
 });
 
+router.post('/billing/orders/:orderId/sync', authenticatePreAccess, requireTrustedOrigin, async (req, res) => {
+  try {
+    const result = await billingService.syncOrderPaymentFromProvider(req.user, req.params.orderId);
+    res.json({
+      synced: Boolean(result.synced),
+      reason: result.reason || null,
+      order: result.order || null,
+    });
+  } catch (err) {
+    console.error('Pre-access billing order sync error:', err);
+    const statusCode = Number(err?.statusCode) || 500;
+    return res.status(statusCode).json({ error: err?.message || 'Internal server error' });
+  }
+});
+
 router.post('/complete', authenticatePreAccess, requireTrustedOrigin, async (req, res) => {
   try {
     if (!req.access.hasProductAccess) {

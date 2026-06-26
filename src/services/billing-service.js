@@ -2,8 +2,11 @@ const config = require('../../config');
 const billingOrder = require('../models/billing-order');
 const billingEvent = require('../models/billing-event');
 const userAccess = require('../models/user-access');
+const userWallet = require('../models/user-wallet');
+const User = require('../models/user');
 const billingCatalog = require('./billing-catalog');
 const moonpayCommerce = require('./moonpay-commerce');
+const tokenHoldingService = require('./token-holding-service');
 
 function parseAdditionalJson(rawValue) {
   if (!rawValue) {
@@ -31,21 +34,21 @@ function normalizeUpperTextValue(value) {
   return normalized ? normalized.toUpperCase() : null;
 }
 
-function normalizeIntegerLikeString(value) {
+function normalizeDecimalAmountString(value) {
   if (value === null || value === undefined || value === '') {
     return null;
   }
 
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? String(Math.trunc(value)) : null;
-  }
-
   const normalized = String(value).trim();
-  if (!/^-?\d+$/.test(normalized)) {
+  const match = normalized.match(/^(-?)(\d+)(?:\.(\d+))?$/);
+  if (!match) {
     return null;
   }
 
-  return String(BigInt(normalized));
+  const sign = match[1] === '-' ? '-' : '';
+  const integerPart = String(BigInt(match[2]));
+  const fractionalPart = String(match[3] || '').replace(/0+$/, '');
+  return `${sign}${integerPart}${fractionalPart ? `.${fractionalPart}` : ''}`;
 }
 
 function getAdditionalUserId(payload) {
@@ -141,9 +144,32 @@ function buildProviderChargeMetadata(providerCharge) {
     providerChargeLookupTransactionId: normalizeTextValue(providerCharge?.providerTransactionId),
     providerChargeLookupTransactionSignature: normalizeTextValue(providerCharge?.providerTransactionSignature),
     providerChargeLookupPaylinkId: normalizeTextValue(providerCharge?.providerPaylinkId),
-    providerChargeLookupAmount: normalizeIntegerLikeString(providerCharge?.providerRequestAmount),
+    providerChargeLookupAmount: normalizeDecimalAmountString(providerCharge?.providerRequestAmount),
     providerChargeLookupCurrency: normalizeUpperTextValue(providerCharge?.providerCurrencySymbol),
   };
+}
+
+function getProviderChargeLookupId(order) {
+  return normalizeTextValue(order?.providerChargeToken)
+    || normalizeTextValue(order?.providerChargeId)
+    || null;
+}
+
+function buildCheckoutSuccessRedirectUrl(baseUrl, orderId) {
+  const normalizedBaseUrl = normalizeTextValue(baseUrl);
+  if (!normalizedBaseUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(normalizedBaseUrl);
+    url.searchParams.set('billing', 'success');
+    url.searchParams.set('billingOrderId', String(orderId));
+    return url.toString();
+  } catch (_) {
+    const separator = normalizedBaseUrl.includes('?') ? '&' : '?';
+    return `${normalizedBaseUrl}${separator}billing=success&billingOrderId=${encodeURIComponent(String(orderId))}`;
+  }
 }
 
 function buildValidationFailure(reason, details = null) {
@@ -218,6 +244,8 @@ function validateProviderChargeAgainstOrder(order, payload, providerCharge) {
     return buildValidationFailure('MoonPay charge lookup did not return a charge');
   }
 
+  const expectedProviderRequestAmount = order.metadata?.pricing?.providerRequestAmount
+    || order.currencyAmountMinor;
   const directFieldFailure = findFirstValidationFailure([
     compareRequiredField({
       reason: 'MoonPay charge id does not match billing order',
@@ -235,8 +263,8 @@ function validateProviderChargeAgainstOrder(order, payload, providerCharge) {
     }),
     compareRequiredField({
       reason: 'MoonPay request amount does not match billing order',
-      expected: normalizeIntegerLikeString(order.currencyAmountMinor),
-      received: normalizeIntegerLikeString(providerCharge.providerRequestAmount),
+      expected: normalizeDecimalAmountString(expectedProviderRequestAmount),
+      received: normalizeDecimalAmountString(providerCharge.providerRequestAmount),
       expectedKey: 'expectedAmount',
       receivedKey: 'receivedAmount',
     }),
@@ -391,14 +419,15 @@ async function resolveWebhookOrderContext(payload, receivedEvent, orderId) {
     };
   }
 
-  if (!order.providerChargeId) {
+  const providerChargeLookupId = getProviderChargeLookupId(order);
+  if (!providerChargeLookupId) {
     return {
       done: true,
-      result: await rejectReceivedEvent(receivedEvent, order, 'Billing order is missing providerChargeId'),
+      result: await rejectReceivedEvent(receivedEvent, order, 'Billing order is missing provider charge lookup token'),
     };
   }
 
-  const providerCharge = await moonpayCommerce.getChargeById(order.providerChargeId);
+  const providerCharge = await moonpayCommerce.getChargeById(providerChargeLookupId);
   const providerValidationFailure = validateProviderChargeAgainstOrder(order, payload, providerCharge);
   if (providerValidationFailure) {
     return {
@@ -491,6 +520,112 @@ function getPublicBillingState(userId, plans, orders) {
   };
 }
 
+function buildNoDiscountContext(reason) {
+  return {
+    discountPercent: 0,
+    tokenTier: 'none',
+    tokenSnapshotId: null,
+    tokenBalanceRaw: null,
+    tokenBalanceUi: null,
+    tokenSnapshotCheckedAt: null,
+    tokenSnapshotExpiresAt: null,
+    notAppliedReason: reason || null,
+  };
+}
+
+async function resolveTokenDiscountContext(user, options = {}) {
+  if (!config.tokenGate.enabled || !config.tokenGate.mintAddress) {
+    return buildNoDiscountContext('token_gate_disabled');
+  }
+
+  const wallet = await (options.userWalletModel || userWallet).findByUserId(user.id);
+  if (!wallet?.walletAddress) {
+    return buildNoDiscountContext('wallet_not_linked');
+  }
+
+  const snapshot = await (options.tokenHoldingService || tokenHoldingService).refreshSnapshotForUser({
+    userId: user.id,
+    walletAddress: wallet.walletAddress,
+  });
+
+  return buildDiscountContextFromSnapshot(snapshot);
+}
+
+function buildDiscountContextFromSnapshot(snapshot) {
+  return {
+    discountPercent: Number(snapshot?.discountPercent) || 0,
+    tokenTier: snapshot?.tier || 'none',
+    tokenSnapshotId: snapshot?.id || null,
+    tokenBalanceRaw: snapshot?.balanceRaw || null,
+    tokenBalanceUi: snapshot?.balanceUiString || null,
+    tokenSnapshotCheckedAt: snapshot?.checkedAt || null,
+    tokenSnapshotExpiresAt: snapshot?.expiresAt || null,
+    notAppliedReason: null,
+  };
+}
+
+function buildProviderRequestAmount(plan, amountMinor) {
+  if (!billingCatalog.isDynamicPaylinkPlan(plan)) {
+    return null;
+  }
+
+  const amount = Number.parseInt(String(amountMinor ?? ''), 10);
+  if (!Number.isInteger(amount) || amount <= 0) {
+    return null;
+  }
+
+  const whole = Math.trunc(amount / 100);
+  const cents = amount % 100;
+  if (cents === 0) {
+    return String(whole);
+  }
+  return `${whole}.${String(cents).padStart(2, '0').replace(/0+$/, '')}`;
+}
+
+function canApplyTokenDiscount({ discountPercent, dynamicPaylink, discountWithoutPaylinkAllowed, plan }) {
+  return discountPercent > 0
+    && (discountWithoutPaylinkAllowed || dynamicPaylink || Boolean(plan.discountProviderPaylinkId));
+}
+
+function resolvePricingPaylinkId({ canApplyDiscount, dynamicPaylink, plan }) {
+  if (canApplyDiscount && plan.discountProviderPaylinkId && !dynamicPaylink) {
+    return plan.discountProviderPaylinkId;
+  }
+  return plan.providerPaylinkId;
+}
+
+function buildOrderPricing(plan, discountContext, options = {}) {
+  const discountPercent = Math.max(0, Math.min(Number(discountContext?.discountPercent) || 0, 100));
+  const discountedAmountMinor = billingCatalog.applyDiscountToAmount(plan.amountMinor, discountPercent);
+  const discountWithoutPaylinkAllowed = options.discountWithoutPaylinkAllowed
+    ?? billingCatalog.isDiscountWithoutPaylinkAllowed();
+  const dynamicPaylink = billingCatalog.isDynamicPaylinkPlan(plan);
+  const canApplyDiscount = canApplyTokenDiscount({
+    discountPercent,
+    dynamicPaylink,
+    discountWithoutPaylinkAllowed,
+    plan,
+  });
+  const finalAmountMinor = canApplyDiscount ? discountedAmountMinor : plan.amountMinor;
+  const providerPaylinkId = resolvePricingPaylinkId({ canApplyDiscount, dynamicPaylink, plan });
+
+  return {
+    baseAmountMinor: plan.amountMinor,
+    finalAmountMinor,
+    discountPercent: canApplyDiscount ? discountPercent : 0,
+    discountAmountMinor: canApplyDiscount ? plan.amountMinor - finalAmountMinor : 0,
+    providerPaylinkId,
+    providerPaylinkDynamic: dynamicPaylink,
+    providerRequestAmount: buildProviderRequestAmount(plan, finalAmountMinor),
+    discountApplied: canApplyDiscount,
+    discountNotAppliedReason: canApplyDiscount
+      ? null
+      : discountPercent > 0
+        ? 'discount_paylink_missing'
+        : discountContext?.notAppliedReason || null,
+  };
+}
+
 async function createOrderForUser(user, planKey, options = {}) {
   const plan = billingCatalog.getPlanByKey(planKey);
   if (!plan) {
@@ -517,30 +652,47 @@ async function createOrderForUser(user, planKey, options = {}) {
     throw error;
   }
 
+  const discountContext = await resolveTokenDiscountContext(user, options);
+  const pricing = buildOrderPricing(plan, discountContext);
+  const baseSuccessRedirectUrl = options.successRedirectUrl || config.billing.checkoutReturnUrl || null;
+
   const order = await billingOrder.createOrder({
     userId: user.id,
     planKey: plan.key,
     planName: plan.label,
     accessDays: plan.accessDays,
     provider: billingCatalog.PROVIDER,
-    providerPaylinkId: plan.providerPaylinkId,
+    providerPaylinkId: pricing.providerPaylinkId,
     currencyCode: plan.currencyCode,
-    currencyAmountMinor: plan.amountMinor,
+    currencyAmountMinor: pricing.finalAmountMinor,
     metadata: {
       createdBy: 'user',
       moonpayNetwork: config.billing.moonpay.network,
-      successRedirectUrl: options.successRedirectUrl || config.billing.checkoutReturnUrl || null,
+      pricing: {
+        baseAmountMinor: pricing.baseAmountMinor,
+        finalAmountMinor: pricing.finalAmountMinor,
+        discountAmountMinor: pricing.discountAmountMinor,
+        discountPercent: pricing.discountPercent,
+        discountApplied: pricing.discountApplied,
+        discountNotAppliedReason: pricing.discountNotAppliedReason,
+        providerPaylinkDynamic: pricing.providerPaylinkDynamic,
+        providerRequestAmount: pricing.providerRequestAmount,
+      },
+      tokenDiscount: discountContext,
+      successRedirectUrl: baseSuccessRedirectUrl,
       ...(options.metadata || {}),
     },
   });
 
   try {
+    const successRedirectUrl = buildCheckoutSuccessRedirectUrl(baseSuccessRedirectUrl, order.id);
     const charge = await moonpayCommerce.createCharge({
       orderId: order.id,
       planKey: plan.key,
       userId: user.id,
-      providerPaylinkId: plan.providerPaylinkId,
-      successRedirectUrl: options.successRedirectUrl || config.billing.checkoutReturnUrl || null,
+      providerPaylinkId: pricing.providerPaylinkId,
+      requestAmount: pricing.providerRequestAmount,
+      successRedirectUrl,
     });
 
     return billingOrder.markCheckoutReady(order.id, {
@@ -549,7 +701,7 @@ async function createOrderForUser(user, planKey, options = {}) {
       providerCheckoutUrl: charge.providerCheckoutUrl,
       providerStatus: charge.providerStatus,
       metadata: {
-        successRedirectUrl: options.successRedirectUrl || config.billing.checkoutReturnUrl || null,
+        successRedirectUrl,
         providerCreateChargeResponse: charge.raw,
       },
     });
@@ -566,9 +718,88 @@ async function createOrderForUser(user, planKey, options = {}) {
 }
 
 async function listBillingStateForUser(userId) {
-  const plans = billingCatalog.getPublicPlans();
+  const user = await User.findById(userId);
+  const access = user ? await userAccess.buildResolvedAccessSnapshot(user) : null;
+  const plans = billingCatalog.getPublicPlans({ discountPercent: access?.discountPercent || 0 });
   const orders = await billingOrder.listForUser(userId, 20);
   return getPublicBillingState(userId, plans, orders);
+}
+
+async function syncOrderPaymentFromProvider(user, orderId) {
+  const normalizedOrderId = Number(orderId);
+  if (!Number.isInteger(normalizedOrderId) || normalizedOrderId <= 0) {
+    const error = new Error('Invalid billing order id');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const order = await billingOrder.findByIdForUser(normalizedOrderId, user.id);
+  if (!order) {
+    const error = new Error('Billing order not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (order.status === 'paid') {
+    return {
+      synced: false,
+      reason: 'already_paid',
+      order,
+    };
+  }
+
+  if (billingCatalog.isMoonpayMockMode()) {
+    return {
+      synced: false,
+      reason: 'mock_mode',
+      order,
+    };
+  }
+
+  const providerChargeLookupId = getProviderChargeLookupId(order);
+  if (!providerChargeLookupId) {
+    const error = new Error('Billing order is missing provider charge lookup token');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const providerCharge = await moonpayCommerce.getChargeById(providerChargeLookupId);
+  const providerTransactionStatus = normalizeUpperTextValue(providerCharge.providerTransactionStatus);
+  if (providerTransactionStatus !== 'SUCCESS') {
+    return {
+      synced: false,
+      reason: 'provider_charge_not_successful',
+      order,
+      providerStatus: providerTransactionStatus || null,
+    };
+  }
+
+  const transactionId = providerCharge.providerTransactionId || providerCharge.providerChargeId;
+  const result = await processMoonpayWebhook({
+    event: 'CREATED',
+    webhookDeliveryIdempotencyKey: `provider-sync:${order.id}:${transactionId}`,
+    transactionObject: {
+      id: transactionId,
+      meta: {
+        transactionStatus: providerTransactionStatus,
+        transactionSignature: providerCharge.providerTransactionSignature,
+        customerDetails: {
+          additionalJSON: JSON.stringify({
+            billingOrderId: order.id,
+            billingPlanKey: order.planKey,
+            appUserId: order.userId,
+          }),
+        },
+      },
+    },
+  });
+
+  return {
+    synced: Boolean(result?.order?.status === 'paid' || result?.duplicate),
+    reason: result?.reason || null,
+    order: await billingOrder.findByIdForUser(order.id, user.id),
+    result,
+  };
 }
 
 async function processMoonpayWebhook(payload) {
@@ -628,5 +859,10 @@ async function processMoonpayWebhook(payload) {
 module.exports = {
   createOrderForUser,
   listBillingStateForUser,
+  syncOrderPaymentFromProvider,
   processMoonpayWebhook,
+  __private: {
+    buildOrderPricing,
+    resolveTokenDiscountContext,
+  },
 };

@@ -17,7 +17,7 @@ function getProviderDefinitions() {
   });
 }
 
-function buildIdentitySnapshot(identities) {
+function buildIdentitySnapshot(identities, options = {}) {
   const byProvider = new Map(
     (Array.isArray(identities) ? identities : [])
       .map((entry) => [String(entry.provider || '').trim().toLowerCase(), entry])
@@ -35,6 +35,10 @@ function buildIdentitySnapshot(identities) {
       providerDisplayName: linked?.provider_display_name || null,
       linkedAt: linked?.linked_at || null,
       lastLoginAt: linked?.last_login_at || null,
+      canUnlink: Boolean(linked && options.hasPasswordLogin),
+      unlinkBlockedReason: linked && !options.hasPasswordLogin
+        ? 'Set an account password before unlinking this sign-in method.'
+        : null,
     };
   });
 }

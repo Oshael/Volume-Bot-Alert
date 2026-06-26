@@ -262,9 +262,14 @@ function authenticateAccountSecurity(req, res, next) {
 
 router.get('/identities', authenticateAccountSecurity, async (req, res) => {
   try {
-    const identities = await UserSocialIdentity.listByUserId(req.user.id);
+    const [identities, userWithPassword] = await Promise.all([
+      UserSocialIdentity.listByUserId(req.user.id),
+      User.findByEmail(req.user.email),
+    ]);
+    const hasPasswordLogin = User.isUsablePasswordHash(userWithPassword?.password_hash);
     res.json({
-      providers: buildIdentitySnapshot(identities),
+      providers: buildIdentitySnapshot(identities, { hasPasswordLogin }),
+      hasPasswordLogin,
       scope: req.preAccessToken ? 'pre_access' : 'authenticated',
     });
   } catch (err) {
@@ -282,13 +287,22 @@ router.post('/identities/:provider/unlink', authenticateAccountSecurity, require
       return res.status(400).json({ error: 'Unsupported social provider' });
     }
 
-    if (!currentPassword) {
-      return res.status(400).json({ error: 'Current password is required' });
+    const [identities, userWithPassword] = await Promise.all([
+      UserSocialIdentity.listByUserId(req.user.id),
+      User.findByEmail(req.user.email),
+    ]);
+    const existingIdentity = identities.find((identity) => identity.provider === provider);
+    if (!existingIdentity) {
+      return res.status(404).json({ error: 'This social identity is not linked to the current account' });
+    }
+    if (!User.isUsablePasswordHash(userWithPassword?.password_hash)) {
+      return res.status(409).json({
+        error: 'Set an account password before unlinking your only sign-in method',
+      });
     }
 
-    const userWithPassword = await User.findByEmail(req.user.email);
-    if (!userWithPassword?.password_hash) {
-      return res.status(401).json({ error: 'Account password is unavailable for confirmation' });
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'Current password is required' });
     }
 
     const passwordValid = await User.verifyPassword(currentPassword, userWithPassword.password_hash);
@@ -296,17 +310,13 @@ router.post('/identities/:provider/unlink', authenticateAccountSecurity, require
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
-    const existingIdentity = await UserSocialIdentity.findByUserAndProvider(req.user.id, provider);
-    if (!existingIdentity) {
-      return res.status(404).json({ error: 'This social identity is not linked to the current account' });
-    }
-
     await UserSocialIdentity.removeLinkForUser(req.user.id, provider);
-    const identities = await UserSocialIdentity.listByUserId(req.user.id);
+    const remainingIdentities = await UserSocialIdentity.listByUserId(req.user.id);
 
     return res.json({
       message: `${provider === 'google' ? 'Google' : 'Discord'} identity unlinked successfully`,
-      providers: buildIdentitySnapshot(identities),
+      providers: buildIdentitySnapshot(remainingIdentities, { hasPasswordLogin: true }),
+      hasPasswordLogin: true,
       scope: req.preAccessToken ? 'pre_access' : 'authenticated',
     });
   } catch (err) {

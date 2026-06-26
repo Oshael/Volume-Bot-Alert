@@ -56,7 +56,74 @@ function findSetCookie(headers, cookieName) {
   return String(values.find((entry) => String(entry || '').startsWith(prefix)) || '').split(';')[0];
 }
 
-async function verifyEmailFromRegisterResponse(registerResponse) {
+async function completeGoogleLogin(identity, returnTo = '/alerts') {
+  const start = await request(
+    'GET',
+    `/api/auth/social/google/login/start?returnTo=${encodeURIComponent(returnTo)}`
+  );
+  assert.equal(start.status, 302);
+  const state = new URL(String(start.headers.location || '')).searchParams.get('state');
+  const socialCookie = findSetCookie(start.headers, 'volume_alert_social_login');
+  assert.ok(state);
+  assert.ok(socialCookie);
+
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    const targetUrl = String(url || '');
+    if (targetUrl === 'https://oauth2.googleapis.com/token') {
+      return {
+        ok: true,
+        async text() {
+          return JSON.stringify({ access_token: 'google-direct-login-access-token' });
+        },
+      };
+    }
+    if (targetUrl === 'https://openidconnect.googleapis.com/v1/userinfo') {
+      return {
+        ok: true,
+        async text() {
+          return JSON.stringify(identity);
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch call in direct Google login test: ${targetUrl}`);
+  };
+
+  try {
+    return await request(
+      'GET',
+      `/api/auth/social/google/login/callback?code=test-google-direct-code&state=${encodeURIComponent(state)}`,
+      { headers: { Cookie: socialCookie } }
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+async function createBearerSessionForUser(user) {
+  const crypto = require('crypto');
+  const jwt = require('jsonwebtoken');
+  const config = require('../config');
+  const Session = require('../src/models/session');
+
+  const sessionId = crypto.randomUUID();
+  const token = jwt.sign(
+    { userId: user.id, role: user.role, jti: sessionId },
+    config.jwt.secret,
+    { expiresIn: config.jwt.expiresIn }
+  );
+  const decoded = jwt.decode(token);
+  await Session.create({
+    userId: user.id,
+    token,
+    ipAddress: '127.0.0.1',
+    userAgent: 'auth-test',
+    expiresAt: new Date(decoded.exp * 1000),
+  });
+  return token;
+}
+
+async function verifyEmailWithGrantedAccessFromRegisterResponse(registerResponse) {
   assert.equal(registerResponse.status, 201);
   assert.equal(registerResponse.body.emailVerificationRequired, true);
   assert.ok(registerResponse.body.emailDebug?.actionUrl);
@@ -68,10 +135,10 @@ async function verifyEmailFromRegisterResponse(registerResponse) {
   });
 
   assert.equal(verifyResponse.status, 200);
-  assert.equal(verifyResponse.body.requiresPreAccess, true);
-  assert.equal(verifyResponse.body.redirectPath, '/access');
+  assert.equal(verifyResponse.body.requiresPreAccess, undefined);
   assert.equal(verifyResponse.body.user.isEmailVerified, true);
-  assert.ok(verifyResponse.body.preAccessToken);
+  assert.equal(verifyResponse.body.access?.hasProductAccess, true);
+  assert.ok(verifyResponse.body.token);
   assert.match(String(verifyResponse.body.message || ''), /Email verified successfully/i);
   return verifyResponse;
 }
@@ -380,7 +447,7 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.body.token, null);
       assert.equal(res.body.user.username, 'admin_user');
       assert.equal(res.body.user.isEmailVerified, false);
-      await verifyEmailFromRegisterResponse(res);
+      await verifyEmailWithGrantedAccessFromRegisterResponse(res);
 
       const { query } = require('../src/models/db');
       await query("UPDATE users SET role = 'admin' WHERE username = 'admin_user'");
@@ -394,7 +461,39 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.status, 201);
       assert.equal(res.body.token, null);
       assert.equal(res.body.user.username, 'regular_user');
-      await verifyEmailFromRegisterResponse(res);
+      await verifyEmailWithGrantedAccessFromRegisterResponse(res);
+    });
+
+    it('verifies email into pre-access when the invite grants no active access', async () => {
+      const { query } = require('../src/models/db');
+      const code = 'NOGRANT00000001';
+      await query(
+        `INSERT INTO invites (code, created_by, max_uses, grant_access_days, grant_access_source, expires_at)
+         VALUES ($1, NULL, 1, NULL, 'invite', NOW() + INTERVAL '24 hours')`,
+        [code]
+      );
+
+      const register = await request('POST', '/api/auth/register', {
+        body: {
+          username: 'nogrant_user',
+          email: 'nogrant@test.com',
+          password: 'nograntpass123',
+          inviteCode: code,
+        },
+      });
+      assert.equal(register.status, 201);
+
+      const verificationToken = getQueryToken(register.body.emailDebug.actionUrl);
+      const verify = await request('POST', '/api/auth/verify-email/confirm', {
+        body: { token: verificationToken },
+      });
+
+      assert.equal(verify.status, 200);
+      assert.equal(verify.body.requiresPreAccess, true);
+      assert.equal(verify.body.redirectPath, '/access');
+      assert.equal(verify.body.user.isEmailVerified, true);
+      assert.equal(verify.body.access?.hasProductAccess, false);
+      assert.ok(verify.body.preAccessToken);
     });
 
     it('fails with duplicate username', async () => {
@@ -705,6 +804,91 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.body.isExpired, false);
     });
 
+    it('updates the authenticated account username without changing email verification state', async () => {
+      const res = await request('PATCH', '/api/account/profile', {
+        token: userToken,
+        body: { username: 'regular_user_renamed' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.user.username, 'regular_user_renamed');
+      assert.equal(res.body.user.email, 'user@test.com');
+      assert.equal(res.body.user.isEmailVerified, true);
+
+      const me = await request('GET', '/api/auth/me', { token: userToken });
+      assert.equal(me.status, 200);
+      assert.equal(me.body.user.username, 'regular_user_renamed');
+
+      await require('../src/models/db').query(
+        `UPDATE users SET username = 'regular_user' WHERE email = 'user@test.com'`
+      );
+    });
+
+    it('blocks adding email and password to a non-wallet account', async () => {
+      const res = await request('PATCH', '/api/account/profile', {
+        token: userToken,
+        body: {
+          username: 'regular_user',
+          email: 'regular-new@test.com',
+          password: 'regularnewpass123',
+          confirmPassword: 'regularnewpass123',
+        },
+      });
+      assert.equal(res.status, 409);
+      assert.match(res.body.error, /wallet-only/i);
+    });
+
+    it('completes a wallet-only account and requires email verification before email login', async () => {
+      const User = require('../src/models/user');
+      const walletUser = await User.createWalletOnly({
+        username: 'user_abcd',
+        walletAddress: 'WalletProfileTest1111111111111111111111111111',
+      });
+      await require('../src/models/db').query(
+        `UPDATE users
+         SET access_status = 'active',
+             access_expires_at = NOW() + INTERVAL '1 hour',
+             access_source = 'manual'
+         WHERE id = $1`,
+        [walletUser.id]
+      );
+      const walletToken = await createBearerSessionForUser(walletUser);
+
+      const res = await request('PATCH', '/api/account/profile', {
+        token: walletToken,
+        body: {
+          username: 'wallet_profile_user',
+          email: 'wallet-profile@test.com',
+          password: 'walletpass123',
+          confirmPassword: 'walletpass123',
+        },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.emailVerificationRequired, true);
+      assert.equal(res.body.user.username, 'wallet_profile_user');
+      assert.equal(res.body.user.email, 'wallet-profile@test.com');
+      assert.equal(res.body.user.isEmailVerified, false);
+      assert.ok(res.body.emailDebug?.actionUrl);
+
+      const earlyLogin = await request('POST', '/api/auth/login', {
+        body: { email: 'wallet-profile@test.com', password: 'walletpass123' },
+      });
+      assert.equal(earlyLogin.status, 403);
+
+      const verificationToken = getQueryToken(res.body.emailDebug.actionUrl);
+      const verifyResponse = await request('POST', '/api/auth/verify-email/confirm', {
+        body: { token: verificationToken },
+      });
+      assert.equal(verifyResponse.status, 200);
+      assert.equal(verifyResponse.body.user.isEmailVerified, true);
+
+      const login = await completeLogin('wallet-profile@test.com', 'walletpass123');
+      const me = await request('GET', '/api/auth/me', { token: login.token });
+      assert.equal(me.status, 200);
+      assert.equal(me.body.user.username, 'wallet_profile_user');
+      assert.equal(me.body.user.email, 'wallet-profile@test.com');
+      assert.equal(me.body.user.isEmailVerified, true);
+    });
+
     it('returns social identity provider status for an authenticated user', async () => {
       const res = await request('GET', '/api/account/identities', { token: userToken });
       assert.equal(res.status, 200);
@@ -992,6 +1176,74 @@ describe('Volume Alert Server auth flow', () => {
       } finally {
         global.fetch = originalFetch;
       }
+    });
+
+    it('creates a new verified account from Google login and redirects to pre-access billing', async () => {
+      const callback = await completeGoogleLogin({
+        sub: 'google-direct-user-001',
+        email: 'new.oauth-user@test.com',
+        email_verified: true,
+        name: 'New OAuth User',
+      });
+
+      assert.equal(callback.status, 302);
+      const redirect = new URL(String(callback.headers.location || ''));
+      assert.equal(redirect.pathname, '/access');
+      assert.equal(redirect.searchParams.get('socialLogin'), 'success');
+      assert.equal(redirect.searchParams.get('socialProvider'), 'google');
+
+      const preAccessCookie = findSetCookie(callback.headers, 'volume_alert_pre_access');
+      assert.ok(preAccessCookie);
+      const me = await request('GET', '/api/pre-access/me', {
+        headers: { Cookie: preAccessCookie },
+      });
+      assert.equal(me.status, 200);
+      assert.equal(me.body.user.username, 'new_oauth_user');
+      assert.equal(me.body.user.email, 'new.oauth-user@test.com');
+      assert.equal(me.body.user.isEmailVerified, true);
+      assert.equal(me.body.access.hasProductAccess, false);
+    });
+
+    it('blocks automatic Google account merge when the verified email already exists', async () => {
+      const callback = await completeGoogleLogin({
+        sub: 'google-email-conflict-001',
+        email: 'user@test.com',
+        email_verified: true,
+        name: 'Conflicting Google User',
+      });
+
+      assert.equal(callback.status, 302);
+      const redirect = new URL(String(callback.headers.location || ''));
+      assert.equal(redirect.pathname, '/alerts');
+      assert.equal(redirect.searchParams.get('socialLogin'), 'email_conflict');
+
+      const { query } = require('../src/models/db');
+      const linked = await query(
+        `SELECT id FROM user_social_identities
+         WHERE provider = 'google' AND provider_user_id = 'google-email-conflict-001'`
+      );
+      assert.equal(linked.rowCount, 0);
+    });
+
+    it('blocks unlinking Google when it is the account only login method', async () => {
+      const callback = await completeGoogleLogin({
+        sub: 'google-only-login-001',
+        email: 'google.only@test.com',
+        email_verified: true,
+        name: 'Google Only',
+      });
+      const preAccessCookie = findSetCookie(callback.headers, 'volume_alert_pre_access');
+      assert.ok(preAccessCookie);
+
+      const unlink = await request('POST', '/api/account-security/identities/google/unlink', {
+        body: {},
+        headers: {
+          Cookie: preAccessCookie,
+          Origin: 'http://localhost:5173',
+        },
+      });
+      assert.equal(unlink.status, 409);
+      assert.match(String(unlink.body.error || ''), /only sign-in method/i);
     });
 
     it('blocks social login when the provider identity is not linked to any account', async () => {

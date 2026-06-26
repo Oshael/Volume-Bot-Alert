@@ -121,6 +121,44 @@ async function ensureSchemas(pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       processed_at TIMESTAMPTZ
     )`,
+    `CREATE TABLE IF NOT EXISTS user_wallets (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      wallet_address VARCHAR(64) NOT NULL,
+      chain VARCHAR(16) NOT NULL DEFAULT 'solana',
+      wallet_provider VARCHAR(64),
+      is_primary BOOLEAN NOT NULL DEFAULT true,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_login_at TIMESTAMPTZ,
+      last_verified_at TIMESTAMPTZ,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_wallets_wallet_address
+      ON user_wallets(wallet_address)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_wallets_user_id
+      ON user_wallets(user_id)`,
+    `CREATE TABLE IF NOT EXISTS token_holding_snapshots (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      wallet_address VARCHAR(64) NOT NULL,
+      mint_address VARCHAR(64) NOT NULL,
+      token_program VARCHAR(128),
+      decimals INTEGER NOT NULL,
+      balance_raw TEXT NOT NULL,
+      balance_ui_string TEXT,
+      tier VARCHAR(32) NOT NULL DEFAULT 'none',
+      discount_percent INTEGER NOT NULL DEFAULT 0,
+      has_unlimited_access BOOLEAN NOT NULL DEFAULT false,
+      has_launch_promo_access BOOLEAN NOT NULL DEFAULT false,
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      rpc_provider VARCHAR(64),
+      rpc_slot BIGINT,
+      rpc_error TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_token_holding_snapshots_user_checked
+      ON token_holding_snapshots(user_id, checked_at DESC, id DESC)`,
   ];
 
   for (const statement of statements) {
@@ -135,17 +173,21 @@ function jsonResponse(body, status = 200) {
     async text() {
       return JSON.stringify(body);
     },
+    async json() {
+      return body;
+    },
   };
 }
 
 function buildChargeLookupBody({
   chargeId,
-  paylinkId = 'paylink_test_7d',
-  requestAmount = '1500',
+  paylinkId = 'paylink_test_30d',
+  requestAmount = '49',
   currencySymbol = 'USDC',
   transactionId = null,
   transactionSignature = null,
   transactionStatus = 'SUCCESS',
+  tokenQuoteFromAmountDecimal = null,
 } = {}) {
   return {
     id: chargeId,
@@ -172,6 +214,12 @@ function buildChargeLookupBody({
       meta: {
         transactionSignature: transactionSignature || `sig_${transactionId}`,
         transactionStatus,
+        tokenQuote: tokenQuoteFromAmountDecimal ? {
+          from: currencySymbol,
+          fromAmountDecimal: tokenQuoteFromAmountDecimal,
+          to: currencySymbol,
+          toAmountMinimal: requestAmount,
+        } : undefined,
         currency: {
           symbol: currencySymbol,
         },
@@ -185,11 +233,16 @@ describe('Billing foundation', () => {
   let userToken;
   let lastOrderId = null;
   let lastOrderChargeId = null;
+  let tokenDiscountUserToken;
+  let tokenDiscountUserId;
+  let tokenDiscountOrderId;
+  let tokenDiscountOrderChargeId;
   let originalFetch;
   let createdChargeCount = 0;
   let createdChargeLookups;
   let chargeLookupOverrides;
   let transientLookupFailures;
+  let heliusBalanceRaw;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -205,31 +258,42 @@ describe('Billing foundation', () => {
     process.env.BILLING_CHECKOUT_RETURN_URL = 'http://localhost:5173/access';
     process.env.BILLING_PLANS_JSON = JSON.stringify([
       {
-        key: 'plan-7d',
-        label: '7 Days',
-        description: 'Weekly access',
-        accessDays: 7,
+        key: 'plan-30d',
+        label: '30 Days',
+        description: 'Monthly access',
+        accessDays: 30,
         currencyCode: 'USDC',
-        amountMinor: 1500,
+        amountMinor: 4900,
         featured: true,
-        providerPaylinkId: 'paylink_test_7d',
+        providerPaylinkId: 'paylink_test_30d',
+        providerPaylinkDynamic: true,
       },
     ]);
     process.env.MOONPAY_COMMERCE_API_KEY = 'test-api-key';
     process.env.MOONPAY_COMMERCE_BEARER_TOKEN = 'test-bearer-token';
     process.env.MOONPAY_COMMERCE_WEBHOOK_TOKENS = 'test-webhook-token';
+    process.env.HELIUS_API_KEY = 'test-helius-key';
+    process.env.TOKEN_GATE_ENABLED = 'true';
+    process.env.TOKEN_GATE_MINT_ADDRESS = 'DiscountMint111111111111111111111111111111111';
+    process.env.TOKEN_GATE_BALANCE_CACHE_SECONDS = '60';
+    process.env.TOKEN_GATE_UNLIMITED_THRESHOLD = '2000000';
+    process.env.TOKEN_GATE_DISCOUNT_THRESHOLD = '1000000';
+    process.env.TOKEN_GATE_DISCOUNT_PERCENT = '50';
+    process.env.TOKEN_GATE_LAUNCH_PROMO_ENABLED = 'false';
 
     originalFetch = global.fetch;
     createdChargeLookups = new Map();
     chargeLookupOverrides = new Map();
     transientLookupFailures = new Map();
+    heliusBalanceRaw = '1000000000000';
     global.fetch = async (url, init = {}) => {
       const targetUrl = String(url || '');
       if (targetUrl.includes('/charge/api-key')) {
         createdChargeCount += 1;
         const chargeId = `charge_test_${createdChargeCount}`;
         const requestBody = JSON.parse(String(init.body || '{}'));
-        const paylinkId = requestBody?.paymentRequestId || 'paylink_test_7d';
+        const paylinkId = requestBody?.paymentRequestId || 'paylink_test_30d';
+        const requestAmount = requestBody?.requestAmount || '49';
         const body = {
           id: chargeId,
           pageUrl: `https://checkout.example.test/charge/${chargeId}`,
@@ -238,10 +302,37 @@ describe('Billing foundation', () => {
         createdChargeLookups.set(chargeId, buildChargeLookupBody({
           chargeId,
           paylinkId,
-          requestAmount: '1500',
+          requestAmount,
           currencySymbol: 'USDC',
         }));
         return jsonResponse(body);
+      }
+
+      if (targetUrl.includes('helius-rpc.com')) {
+        const requestBody = JSON.parse(String(init.body || '{}'));
+        if (requestBody.method === 'getTokenSupply') {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: requestBody.id,
+            result: {
+              context: { slot: 123 },
+              value: { decimals: 6 },
+            },
+          });
+        }
+        if (requestBody.method === 'getTokenAccounts') {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: requestBody.id,
+            result: {
+              context: { slot: 123 },
+              token_accounts: [{
+                amount: heliusBalanceRaw,
+                token_program: 'Tokenkeg1111111111111111111111111111111111',
+              }],
+            },
+          });
+        }
       }
 
       const chargeMatch = targetUrl.match(/\/charge\/([^/?]+)/);
@@ -271,6 +362,8 @@ describe('Billing foundation', () => {
     await pool.query('DELETE FROM billing_orders');
     await pool.query('DELETE FROM sessions');
     await pool.query('DELETE FROM login_attempts');
+    await pool.query('DELETE FROM token_holding_snapshots');
+    await pool.query('DELETE FROM user_wallets');
     await pool.query('DELETE FROM users');
     await pool.query('DELETE FROM invites');
     await pool.query('ALTER TABLE invites ALTER COLUMN created_by DROP NOT NULL').catch(() => {});
@@ -288,6 +381,25 @@ describe('Billing foundation', () => {
     });
     await verifyEmailFromRegisterResponse(registerResponse);
     userToken = await completeLogin('billing@test.com', 'billingpass123');
+
+    const tokenRegisterResponse = await request('POST', '/api/auth/register', {
+      body: {
+        username: 'billingtokenuser',
+        email: 'billing-token@test.com',
+        password: 'billingpass123',
+        inviteCode: 'BILLINGTEST0001',
+      },
+    });
+    await verifyEmailFromRegisterResponse(tokenRegisterResponse);
+    tokenDiscountUserToken = await completeLogin('billing-token@test.com', 'billingpass123');
+    const tokenMeResponse = await request('GET', '/api/auth/me', { token: tokenDiscountUserToken });
+    assert.equal(tokenMeResponse.status, 200);
+    tokenDiscountUserId = tokenMeResponse.body.user.id;
+    await pool.query(
+      `INSERT INTO user_wallets (user_id, wallet_address, chain, wallet_provider, is_primary, last_verified_at)
+       VALUES ($1, $2, 'solana', 'phantom', true, NOW())`,
+      [tokenDiscountUserId, 'DiscountWallet1111111111111111111111111111111']
+    );
   });
 
   after(async () => {
@@ -309,7 +421,7 @@ describe('Billing foundation', () => {
     assert.equal(res.body.providerReady, true);
     assert.equal(res.body.plans.length, 1);
     assert.equal(res.body.orders.length, 0);
-    assert.equal(res.body.plans[0].key, 'plan-7d');
+    assert.equal(res.body.plans[0].key, 'plan-30d');
   });
 
   it('returns billing plans publicly without requiring authentication', async () => {
@@ -319,13 +431,13 @@ describe('Billing foundation', () => {
     assert.equal(res.body.provider, 'moonpay_commerce');
     assert.equal(res.body.providerReady, true);
     assert.equal(res.body.plans.length, 1);
-    assert.equal(res.body.plans[0].key, 'plan-7d');
+    assert.equal(res.body.plans[0].key, 'plan-30d');
   });
 
   it('creates a MoonPay billing order', async () => {
     const res = await request('POST', '/api/billing/orders', {
       token: userToken,
-      body: { planKey: 'plan-7d' },
+      body: { planKey: 'plan-30d' },
       headers: {
         Origin: 'http://localhost:3000',
       },
@@ -333,10 +445,50 @@ describe('Billing foundation', () => {
 
     assert.equal(res.status, 201);
     assert.equal(res.body.order.status, 'awaiting_payment');
-    assert.equal(res.body.order.planKey, 'plan-7d');
+    assert.equal(res.body.order.planKey, 'plan-30d');
     assert.equal(res.body.checkoutUrl, 'https://checkout.example.test/charge/charge_test_1');
+    assert.equal(res.body.order.metadata.pricing.providerPaylinkDynamic, true);
+    assert.equal(res.body.order.metadata.pricing.providerRequestAmount, '49');
     lastOrderId = res.body.order.id;
     lastOrderChargeId = res.body.order.providerChargeId;
+    assert.equal(
+      res.body.order.metadata.successRedirectUrl,
+      `http://localhost:5173/access?billing=success&billingOrderId=${lastOrderId}`
+    );
+  });
+
+  it('creates a discounted billing order for a linked wallet token holder', async () => {
+    const res = await request('POST', '/api/billing/orders', {
+      token: tokenDiscountUserToken,
+      body: { planKey: 'plan-30d' },
+      headers: {
+        Origin: 'http://localhost:3000',
+      },
+    });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.order.status, 'awaiting_payment');
+    assert.equal(res.body.order.currencyAmountMinor, 2450);
+    assert.equal(res.body.order.providerPaylinkId, 'paylink_test_30d');
+    assert.equal(res.body.order.metadata.pricing.baseAmountMinor, 4900);
+    assert.equal(res.body.order.metadata.pricing.finalAmountMinor, 2450);
+    assert.equal(res.body.order.metadata.pricing.discountAmountMinor, 2450);
+    assert.equal(res.body.order.metadata.pricing.discountPercent, 50);
+    assert.equal(res.body.order.metadata.pricing.discountApplied, true);
+    assert.equal(res.body.order.metadata.pricing.providerPaylinkDynamic, true);
+    assert.equal(res.body.order.metadata.pricing.providerRequestAmount, '24.5');
+    assert.equal(res.body.order.metadata.tokenDiscount.tokenTier, 'discount_50');
+    assert.equal(res.body.order.metadata.tokenDiscount.discountPercent, 50);
+    assert.equal(res.body.order.metadata.tokenDiscount.tokenBalanceRaw, '1000000000000');
+    assert.ok(res.body.order.metadata.tokenDiscount.tokenSnapshotId);
+    tokenDiscountOrderId = res.body.order.id;
+    tokenDiscountOrderChargeId = res.body.order.providerChargeId;
+
+    const stateResponse = await request('GET', '/api/billing/state', { token: tokenDiscountUserToken });
+    assert.equal(stateResponse.status, 200);
+    assert.equal(stateResponse.body.plans[0].discountAvailable, true);
+    assert.equal(stateResponse.body.plans[0].discountedAmountMinor, 2450);
+    assert.equal(stateResponse.body.plans[0].discountPercent, 50);
   });
 
   it('lists created billing order', async () => {
@@ -349,8 +501,8 @@ describe('Billing foundation', () => {
   it('processes MoonPay webhook and credits access', async () => {
     chargeLookupOverrides.set(lastOrderChargeId, buildChargeLookupBody({
       chargeId: lastOrderChargeId,
-      paylinkId: 'paylink_test_7d',
-      requestAmount: '1500',
+      paylinkId: 'paylink_test_30d',
+      requestAmount: '49',
       currencySymbol: 'USDC',
       transactionId: 'txn_test_1',
       transactionSignature: 'sig_test_1',
@@ -371,7 +523,7 @@ describe('Billing foundation', () => {
             customerDetails: {
               additionalJSON: JSON.stringify({
                 billingOrderId: lastOrderId,
-                billingPlanKey: 'plan-7d',
+                billingPlanKey: 'plan-30d',
               }),
             },
           },
@@ -394,14 +546,81 @@ describe('Billing foundation', () => {
     assert.equal(accessResponse.body.accessSource, 'payment');
     assert.equal(accessResponse.body.accessStatus, 'active');
     assert.ok(accessResponse.body.accessExpiresAt);
-    assert.ok(accessResponse.body.daysRemaining >= 7);
+    assert.ok(accessResponse.body.daysRemaining >= 30);
+  });
+
+  it('processes a discounted webhook and preserves paid access after token balance drops', async () => {
+    chargeLookupOverrides.set(tokenDiscountOrderChargeId, buildChargeLookupBody({
+      chargeId: tokenDiscountOrderChargeId,
+      paylinkId: 'paylink_test_30d',
+      requestAmount: '24.5',
+      currencySymbol: 'USDC',
+      transactionId: 'txn_token_discount_1',
+      transactionSignature: 'sig_token_discount_1',
+      transactionStatus: 'SUCCESS',
+    }));
+
+    const res = await request('POST', '/api/billing/webhooks/moonpay', {
+      headers: {
+        Authorization: 'Bearer test-webhook-token',
+      },
+      body: {
+        event: 'CREATED',
+        webhookDeliveryIdempotencyKey: 'token_discount_delivery_1',
+        transactionObject: {
+          id: 'txn_token_discount_1',
+          meta: {
+            transactionStatus: 'SUCCESS',
+            transactionSignature: 'sig_token_discount_1',
+            customerDetails: {
+              additionalJSON: JSON.stringify({
+                billingOrderId: tokenDiscountOrderId,
+                billingPlanKey: 'plan-30d',
+                appUserId: tokenDiscountUserId,
+              }),
+            },
+          },
+        },
+      },
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.duplicate, false);
+    assert.equal(res.body.ignored, false);
+    assert.equal(res.body.rejected, false);
+
+    heliusBalanceRaw = '1';
+    const snapshotModel = require('../src/models/token-holding-snapshot');
+    await snapshotModel.createSnapshot({
+      userId: tokenDiscountUserId,
+      walletAddress: 'DiscountWallet1111111111111111111111111111111',
+      mintAddress: 'DiscountMint111111111111111111111111111111111',
+      decimals: 6,
+      balanceRaw: '1',
+      balanceUiString: '0.000001',
+      tier: 'none',
+      discountPercent: 0,
+      hasUnlimitedAccess: false,
+      hasLaunchPromoAccess: false,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      rpcProvider: 'helius',
+      rpcSlot: 124,
+    });
+
+    const accessResponse = await request('GET', '/api/account/access', { token: tokenDiscountUserToken });
+    assert.equal(accessResponse.status, 200);
+    assert.equal(accessResponse.body.accessSource, 'payment');
+    assert.equal(accessResponse.body.accessStatus, 'active');
+    assert.equal(accessResponse.body.hasProductAccess, true);
+    assert.equal(accessResponse.body.tokenTier, 'none');
+    assert.equal(accessResponse.body.discountPercent, 0);
   });
 
   it('serves an internal receipt for paid billing orders', async () => {
     const res = await request('GET', `/api/account-security/billing/orders/${lastOrderId}/receipt`, { token: userToken });
     assert.equal(res.status, 200);
     assert.match(String(res.body || ''), /TrendScope Payment Receipt/i);
-    assert.match(String(res.body || ''), /7 Days/);
+    assert.match(String(res.body || ''), /30 Days/);
     assert.match(String(res.body || ''), /sig_test_1/);
     assert.match(String(res.body || ''), /TS-/);
   });
@@ -435,7 +654,7 @@ describe('Billing foundation', () => {
   it('rejects webhook when provider charge reconciliation does not match local order', async () => {
     const orderResponse = await request('POST', '/api/billing/orders', {
       token: userToken,
-      body: { planKey: 'plan-7d' },
+      body: { planKey: 'plan-30d' },
       headers: {
         Origin: 'http://localhost:3000',
       },
@@ -449,7 +668,7 @@ describe('Billing foundation', () => {
     chargeLookupOverrides.set(rejectedChargeId, buildChargeLookupBody({
       chargeId: rejectedChargeId,
       paylinkId: 'paylink_wrong',
-      requestAmount: '1500',
+      requestAmount: '49',
       currencySymbol: 'USDC',
       transactionId: 'txn_reject_1',
       transactionSignature: 'sig_reject_1',
@@ -471,7 +690,7 @@ describe('Billing foundation', () => {
             customerDetails: {
               additionalJSON: JSON.stringify({
                 billingOrderId: rejectedOrderId,
-                billingPlanKey: 'plan-7d',
+                billingPlanKey: 'plan-30d',
                 appUserId: rejectedUserId,
               }),
             },
@@ -493,10 +712,44 @@ describe('Billing foundation', () => {
     assert.equal(rejectedOrder.status, 'awaiting_payment');
   });
 
+  it('syncs a paid provider charge when the webhook did not arrive', async () => {
+    const orderResponse = await request('POST', '/api/billing/orders', {
+      token: userToken,
+      body: { planKey: 'plan-30d' },
+      headers: {
+        Origin: 'http://localhost:3000',
+      },
+    });
+
+    assert.equal(orderResponse.status, 201);
+    const syncOrderId = orderResponse.body.order.id;
+    const syncChargeId = orderResponse.body.order.providerChargeId;
+    const syncUserId = orderResponse.body.order.userId;
+
+    chargeLookupOverrides.set(syncChargeId, buildChargeLookupBody({
+      chargeId: syncChargeId,
+      paylinkId: 'paylink_test_30d',
+      requestAmount: '49000000',
+      tokenQuoteFromAmountDecimal: '49',
+      currencySymbol: 'USDC',
+      transactionId: 'txn_sync_1',
+      transactionSignature: 'sig_sync_1',
+      transactionStatus: 'SUCCESS',
+    }));
+
+    const billingService = require('../src/services/billing-service');
+    const result = await billingService.syncOrderPaymentFromProvider({ id: syncUserId }, syncOrderId);
+
+    assert.equal(result.synced, true);
+    assert.equal(result.order.status, 'paid');
+    assert.equal(result.order.metadata.providerChargeLookupAmount, '49');
+    assert.equal(result.order.metadata.providerTransactionSignature, 'sig_sync_1');
+  });
+
   it('retries a received webhook after transient provider lookup failure', async () => {
     const orderResponse = await request('POST', '/api/billing/orders', {
       token: userToken,
-      body: { planKey: 'plan-7d' },
+      body: { planKey: 'plan-30d' },
       headers: {
         Origin: 'http://localhost:3000',
       },
@@ -508,8 +761,8 @@ describe('Billing foundation', () => {
 
     chargeLookupOverrides.set(retryChargeId, buildChargeLookupBody({
       chargeId: retryChargeId,
-      paylinkId: 'paylink_test_7d',
-      requestAmount: '1500',
+      paylinkId: 'paylink_test_30d',
+      requestAmount: '49',
       currencySymbol: 'USDC',
       transactionId: 'txn_retry_1',
       transactionSignature: 'sig_retry_1',
@@ -528,7 +781,7 @@ describe('Billing foundation', () => {
           customerDetails: {
             additionalJSON: JSON.stringify({
               billingOrderId: retryOrderId,
-              billingPlanKey: 'plan-7d',
+              billingPlanKey: 'plan-30d',
             }),
           },
         },
@@ -574,7 +827,7 @@ describe('Billing foundation', () => {
     try {
       const orderResponse = await request('POST', '/api/billing/orders', {
         token: userToken,
-        body: { planKey: 'plan-7d' },
+        body: { planKey: 'plan-30d' },
         headers: {
           Origin: 'http://localhost:3000',
         },

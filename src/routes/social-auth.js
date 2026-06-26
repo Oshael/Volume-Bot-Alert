@@ -4,6 +4,7 @@ const config = require('../../config');
 const User = require('../models/user');
 const Session = require('../models/session');
 const UserSocialIdentity = require('../models/user-social-identity');
+const { getClient } = require('../models/db');
 const { authenticate } = require('../middleware/auth');
 const userAccess = require('../models/user-access');
 const { clearAuthCookie, createAuthenticatedSession } = require('../services/auth-session');
@@ -366,6 +367,76 @@ async function exchangeSocialIdentity(provider, code, intent) {
   return fetchProviderIdentity(provider, accessToken);
 }
 
+function normalizeSocialUsername(email) {
+  const localPart = String(email || '').split('@')[0] || 'user';
+  const normalized = localPart
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32);
+  if (normalized.length >= 3) {
+    return normalized;
+  }
+  return `user_${normalized || 'google'}`.slice(0, 32);
+}
+
+async function createGoogleLoginUser(identity) {
+  if (!identity.providerEmail || !identity.providerEmailVerified) {
+    return { errorCode: 'email_unverified' };
+  }
+
+  const emailOwner = await User.findByEmail(identity.providerEmail);
+  if (emailOwner) {
+    return { errorCode: 'email_conflict' };
+  }
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    let user = null;
+    const baseUsername = normalizeSocialUsername(identity.providerEmail);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const suffix = attempt === 0 ? '' : `_${attempt + 1}`;
+      const username = `${baseUsername.slice(0, 32 - suffix.length)}${suffix}`;
+      try {
+        user = await User.createSocialOnly({
+          username,
+          email: identity.providerEmail,
+        }, client);
+        break;
+      } catch (err) {
+        if (err.status !== 409 || !/username/i.test(err.message)) {
+          throw err;
+        }
+      }
+    }
+    if (!user) {
+      throw Object.assign(new Error('Could not allocate Google username'), { status: 409 });
+    }
+
+    const linkedIdentity = await UserSocialIdentity.upsertLinkForUser(
+      user.id,
+      'google',
+      identity,
+      client
+    );
+    await client.query('COMMIT');
+    return {
+      linkedIdentity,
+      user,
+      access: await userAccess.buildResolvedAccessSnapshot(user),
+      created: true,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.status === 409 && /email/i.test(err.message)) {
+      return { errorCode: 'email_conflict' };
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function resolveSocialLoginUser(provider, identity) {
   if (!identity.providerUserId) {
     return { errorCode: 'identity_missing' };
@@ -373,11 +444,13 @@ async function resolveSocialLoginUser(provider, identity) {
 
   const linkedIdentity = await UserSocialIdentity.findByProviderIdentity(provider, identity.providerUserId);
   if (!linkedIdentity) {
-    return { errorCode: 'not_linked' };
+    return provider === 'google'
+      ? createGoogleLoginUser(identity)
+      : { errorCode: 'not_linked' };
   }
 
   const user = await User.findById(linkedIdentity.user_id);
-  const access = user ? userAccess.buildAccessSnapshot(user) : null;
+  const access = user ? await userAccess.buildResolvedAccessSnapshot(user) : null;
 
   return {
     linkedIdentity,

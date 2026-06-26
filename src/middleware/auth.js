@@ -41,7 +41,7 @@ function createAuthenticateMiddleware({ allowExpiredAccess = false } = {}) {
           return res.status(403).json({ error: 'Account is deactivated' });
         }
 
-        const access = userAccess.buildAccessSnapshot(user);
+        const access = await userAccess.buildResolvedAccessSnapshot(user);
         if (!allowExpiredAccess && !access.hasProductAccess) {
           return res.status(403).json({ error: access.denialReason || 'Access inactive' });
         }

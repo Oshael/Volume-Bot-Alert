@@ -2,6 +2,10 @@ const { query } = require('./db');
 
 const ALLOWED_PROVIDERS = new Set(['google', 'discord']);
 
+function getExecutor(db) {
+  return db && typeof db.query === 'function' ? db : { query };
+}
+
 function normalizeProvider(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return ALLOWED_PROVIDERS.has(normalized) ? normalized : '';
@@ -10,8 +14,8 @@ function normalizeProvider(value) {
 const UserSocialIdentity = {
   normalizeProvider,
 
-  async listByUserId(userId) {
-    const { rows } = await query(
+  async listByUserId(userId, db) {
+    const { rows } = await getExecutor(db).query(
       `SELECT id, user_id, provider, provider_user_id, provider_email, provider_email_verified,
               provider_display_name, linked_at, last_login_at, updated_at
        FROM user_social_identities
@@ -22,13 +26,13 @@ const UserSocialIdentity = {
     return rows;
   },
 
-  async findByUserAndProvider(userId, provider) {
+  async findByUserAndProvider(userId, provider, db) {
     const normalizedProvider = normalizeProvider(provider);
     if (!normalizedProvider) {
       return null;
     }
 
-    const { rows } = await query(
+    const { rows } = await getExecutor(db).query(
       `SELECT id, user_id, provider, provider_user_id, provider_email, provider_email_verified,
               provider_display_name, linked_at, last_login_at, updated_at
        FROM user_social_identities
@@ -39,14 +43,14 @@ const UserSocialIdentity = {
     return rows[0] || null;
   },
 
-  async findByProviderIdentity(provider, providerUserId) {
+  async findByProviderIdentity(provider, providerUserId, db) {
     const normalizedProvider = normalizeProvider(provider);
     const normalizedProviderUserId = String(providerUserId || '').trim();
     if (!normalizedProvider || !normalizedProviderUserId) {
       return null;
     }
 
-    const { rows } = await query(
+    const { rows } = await getExecutor(db).query(
       `SELECT id, user_id, provider, provider_user_id, provider_email, provider_email_verified,
               provider_display_name, linked_at, last_login_at, updated_at
        FROM user_social_identities
@@ -57,7 +61,7 @@ const UserSocialIdentity = {
     return rows[0] || null;
   },
 
-  async upsertLinkForUser(userId, provider, identity) {
+  async upsertLinkForUser(userId, provider, identity, db) {
     const normalizedProvider = normalizeProvider(provider);
     const normalizedProviderUserId = String(identity?.providerUserId || '').trim();
     if (!normalizedProvider || !normalizedProviderUserId) {
@@ -71,11 +75,12 @@ const UserSocialIdentity = {
       ? identity.metadata
       : {};
 
-    const existing = await this.findByUserAndProvider(userId, normalizedProvider);
+    const executor = getExecutor(db);
+    const existing = await this.findByUserAndProvider(userId, normalizedProvider, db);
     let rows;
 
     if (existing) {
-      ({ rows } = await query(
+      ({ rows } = await executor.query(
         `UPDATE user_social_identities
          SET provider_user_id = $3,
              provider_email = $4,
@@ -97,7 +102,7 @@ const UserSocialIdentity = {
         ]
       ));
     } else {
-      ({ rows } = await query(
+      ({ rows } = await executor.query(
         `INSERT INTO user_social_identities (
           user_id,
           provider,

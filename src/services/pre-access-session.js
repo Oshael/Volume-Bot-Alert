@@ -96,7 +96,7 @@ function authenticatePreAccess(req, res, next) {
         return res.status(403).json({ error: 'Email not verified' });
       }
 
-      const access = userAccess.buildAccessSnapshot(user);
+      const access = await userAccess.buildResolvedAccessSnapshot(user);
       if (isHardBlockedAccess(access)) {
         clearPreAccessCookie(res);
         return res.status(403).json({ error: access.denialReason || 'Access revoked' });

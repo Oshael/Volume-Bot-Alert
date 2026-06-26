@@ -257,7 +257,7 @@ async function sweepAccessEligibility() {
         continue;
       }
 
-      const access = userAccess.buildAccessSnapshot(user);
+      const access = await userAccess.buildResolvedAccessSnapshot(user);
       if (!access.hasProductAccess) {
         revokeUserSockets(userId, access.denialCode || 'access_inactive');
       }
@@ -310,7 +310,7 @@ function init(httpServer) {
         return next(new Error('User not found or deactivated'));
       }
 
-      const access = userAccess.buildAccessSnapshot(user);
+      const access = await userAccess.buildResolvedAccessSnapshot(user);
       if (!access.hasProductAccess) {
         return next(new Error(access.denialReason || 'Access inactive'));
       }
