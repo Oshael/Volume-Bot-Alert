@@ -581,15 +581,20 @@ async function loadTickerPeerSummariesSafe(items = []) {
 
 async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = null) {
   const addresses = items.map((item) => item.address);
-  const emptyMeteoraByAddress = new Map();
+  const meteoraByAddress = new Map();
   const marketMcapBaselineByAddress = new Map();
   const marketVolumeBaselineByAddress = new Map();
 
-  const [primaryMarketBaselineRows, primaryVolumeBaselineRows, tickerPeersByAddress] = await Promise.all([
+  const [meteoraSummaryRows, primaryMarketBaselineRows, primaryVolumeBaselineRows, tickerPeersByAddress] = await Promise.all([
+    uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses),
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     loadTickerPeerSummariesSafe(items),
   ]);
+
+  for (const row of meteoraSummaryRows) {
+    meteoraByAddress.set(row.tokenAddress, row);
+  }
 
   for (const row of primaryMarketBaselineRows) {
     marketMcapBaselineByAddress.set(row.token_address, row);
@@ -606,10 +611,10 @@ async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = 
     count: items.length,
     tokens: items.map((item) => buildMonitoredTokenPayload(
       item,
-      emptyMeteoraByAddress,
+      meteoraByAddress,
       marketMcapBaselineByAddress,
       marketVolumeBaselineByAddress,
-      { includeMeteora: false, includeRisk: false, tickerPeersByAddress }
+      { includeRisk: false, tickerPeersByAddress }
     )),
   };
 

@@ -6,10 +6,15 @@ const { isValidAddress } = require('./user-token');
  */
 async function getAll(userId) {
   const { rows } = await db.query(
-    `SELECT address, label, blocked_at
-     FROM user_blocklist
-     WHERE user_id = $1
-     ORDER BY blocked_at DESC`,
+    `SELECT ub.address,
+            ub.label,
+            ub.blocked_at,
+            tc.last_image_url AS "imageUrl"
+     FROM user_blocklist ub
+     LEFT JOIN token_catalog tc
+       ON tc.address = ub.address
+     WHERE ub.user_id = $1
+     ORDER BY ub.blocked_at DESC`,
     [userId]
   );
   return rows;

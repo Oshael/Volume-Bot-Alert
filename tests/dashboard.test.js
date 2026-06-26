@@ -18,6 +18,7 @@ const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-buc
 const tokenMeteoraState = require('../src/models/token-meteora-state');
 const backendAlertFeed = require('../src/services/backend-alert-feed');
 const dashboardRoutes = require('../src/routes/dashboard');
+const uiMeteoraSummaryCache = require('../src/services/ui-meteora-summary-cache');
 
 const TEST_USER = {
   username: `dashboardtest_${Date.now()}`,
@@ -115,7 +116,7 @@ describe('Dashboard routes', () => {
     assert.equal(res.status, 401);
   });
 
-  it('returns a lean monitored dashboard payload without blocking on Meteora summaries', async () => {
+  it('returns a lean monitored dashboard payload with Meteora summaries but without risk payloads', async () => {
     const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
@@ -144,9 +145,19 @@ describe('Dashboard routes', () => {
       last_seen_at: '2026-04-05T21:10:00.000Z',
       last_evaluated_at: '2026-04-05T21:09:00.000Z',
     }];
-    tokenMeteoraState.listSummaryByAddresses = async () => {
-      throw new Error('listSummaryByAddresses should not be called for /api/dashboard/monitored');
-    };
+    uiMeteoraSummaryCache.clearUiMeteoraSummaryCache();
+    tokenMeteoraState.listSummaryByAddresses = async (addresses) => addresses.map((address) => ({
+      tokenAddress: address,
+      hasPool: true,
+      currentTvl: 125000,
+      bestPoolAddress: 'meteora_pool_123',
+      poolCount: 2,
+      lastCheckedAt: '2026-04-05T21:08:00.000Z',
+      lastSnapshotAt: '2026-04-05T21:08:00.000Z',
+      baselineTvl1h: 100000,
+      baselineTvl6h: 90000,
+      baselineTvl24h: 80000,
+    }));
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
 
@@ -157,7 +168,18 @@ describe('Dashboard routes', () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.body.tokens.length, 1);
-      assert.equal(res.body.tokens[0].meteora, undefined);
+      assert.deepEqual(res.body.tokens[0].meteora, {
+        address: 'So11111111111111111111111111111111111111112',
+        tvl: 125000,
+        poolAddress: 'meteora_pool_123',
+        poolCount: 2,
+        lastCheckedAt: '2026-04-05T21:08:00.000Z',
+        lastSnapshotAt: '2026-04-05T21:08:00.000Z',
+        change1h: 25,
+        change6h: 38.88888888888889,
+        change24h: 56.25,
+        noPool: false,
+      });
       assert.equal(res.body.tokens[0].riskReview, undefined);
       assert.equal(res.body.tokens[0].blockStatus, undefined);
       assert.equal(res.body.tokens[0].effectiveRiskLabel, undefined);
@@ -174,6 +196,7 @@ describe('Dashboard routes', () => {
   it('returns paginated monitored dashboard slices when page params are provided', async () => {
     const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
     const originalListDashboardMonitoredSlice = tokenCatalog.listDashboardMonitoredSlice;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
 
@@ -212,6 +235,8 @@ describe('Dashboard routes', () => {
       }],
       };
     };
+    uiMeteoraSummaryCache.clearUiMeteoraSummaryCache();
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
 
@@ -231,6 +256,7 @@ describe('Dashboard routes', () => {
     } finally {
       tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
       tokenCatalog.listDashboardMonitoredSlice = originalListDashboardMonitoredSlice;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
     }

@@ -506,6 +506,15 @@ describe('Config routes', () => {
     assert.equal(createResponse.status, 201);
     assert.equal(createResponse.body.blocked.address, VALID_ADDR_2);
 
+    const imageUrl = 'https://example.com/usdc.png';
+    await db.query('UPDATE token_catalog SET last_image_url = $1 WHERE address = $2', [imageUrl, VALID_ADDR_2]);
+    const configResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(configResponse.status, 200);
+    assert.equal(configResponse.body.blocklist.find((item) => item.address === VALID_ADDR_2)?.imageUrl, imageUrl);
+
     const duplicateResponse = await request(app)
       .post('/api/config/blocklist')
       .set('Authorization', `Bearer ${userToken}`)
