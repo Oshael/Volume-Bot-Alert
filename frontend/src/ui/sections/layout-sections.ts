@@ -3686,11 +3686,14 @@ function renderBillingPriceRow(
 }
 
 function getTokenTierLabel(tier: string | null) {
-  if (tier === 'unlimited') return 'Unlimited holder';
+  if (tier === 'unlimited') return 'Tier Premium';
   if (tier === 'launch_free') return 'Launch free';
   const discountPercent = getDiscountPercentFromTier(tier);
-  if (discountPercent > 0) return `${discountPercent}% discount`;
-  return 'No token tier';
+  if (discountPercent === 50) return 'Tier 1 Holder';
+  if (discountPercent === 25) return 'Tier 2 Holder';
+  if (discountPercent === 10) return 'Tier 3(250k) Holder';
+  if (discountPercent > 0) return `${discountPercent}% Holder`;
+  return 'No Holder Tier';
 }
 
 function getDiscountPercentFromTier(tier: string | null | undefined) {
@@ -3733,11 +3736,20 @@ function hasTokenEntitlementState(state: AppState) {
 
 function getTokenTierShortLabel(state: AppState) {
   const discountPercent = state.session.tokenDiscountPercent || getDiscountPercentFromTier(state.session.tokenTier);
-  if (discountPercent > 0) {
-    return `${discountPercent}% off`;
-  }
   if (state.session.tokenTier === 'unlimited') {
-    return 'Unlimited';
+    return 'Tier Premium';
+  }
+  if (discountPercent === 50) {
+    return 'Tier 1 Holder';
+  }
+  if (discountPercent === 25) {
+    return 'Tier 2 Holder';
+  }
+  if (discountPercent === 10) {
+    return 'Tier 3(250k) Holder';
+  }
+  if (discountPercent > 0) {
+    return `${discountPercent}% Holder`;
   }
   if (state.session.tokenTier === 'launch_free') {
     return 'Free';

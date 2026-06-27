@@ -58,12 +58,17 @@ describe('token holding service', () => {
     const tieredConfig = {
       ...gateConfig,
       discountTiers: [
-        { threshold: '100000', discountPercent: 10, tier: 'discount_10' },
+        { threshold: '250000', discountPercent: 10, tier: 'discount_10' },
         { threshold: '1000000', discountPercent: 50, tier: 'discount_50' },
         { threshold: '500000', discountPercent: 25, tier: 'discount_25' },
       ],
     };
 
+    const entryTier = tokenHoldingService.evaluateTier({
+      balanceRaw: '250000000000',
+      decimals: 6,
+      now: '2026-06-20T00:00:00.000Z',
+    }, tieredConfig);
     const midTier = tokenHoldingService.evaluateTier({
       balanceRaw: '750000000000',
       decimals: 6,
@@ -75,6 +80,8 @@ describe('token holding service', () => {
       now: '2026-06-20T00:00:00.000Z',
     }, tieredConfig);
 
+    assert.equal(entryTier.tier, 'discount_10');
+    assert.equal(entryTier.discountPercent, 10);
     assert.equal(midTier.tier, 'discount_25');
     assert.equal(midTier.discountPercent, 25);
     assert.equal(topTier.tier, 'discount_50');

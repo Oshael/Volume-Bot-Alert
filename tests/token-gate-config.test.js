@@ -31,7 +31,7 @@ describe('token gate config', () => {
       TOKEN_GATE_DISCOUNT_THRESHOLD: '1000000',
       TOKEN_GATE_DISCOUNT_PERCENT: '50',
       TOKEN_GATE_DISCOUNT_TIERS_JSON: JSON.stringify([
-        { threshold: '100000', discountPercent: 10 },
+        { threshold: '250000', discountPercent: 10 },
         { threshold: '1000000', discountPercent: 50 },
         { threshold: '500000', discountPercent: 25 },
       ]),
@@ -39,7 +39,7 @@ describe('token gate config', () => {
       assert.deepEqual(config.tokenGate.discountTiers, [
         { threshold: '1000000', discountPercent: 50, tier: 'discount_50' },
         { threshold: '500000', discountPercent: 25, tier: 'discount_25' },
-        { threshold: '100000', discountPercent: 10, tier: 'discount_10' },
+        { threshold: '250000', discountPercent: 10, tier: 'discount_10' },
       ]);
     });
   });
