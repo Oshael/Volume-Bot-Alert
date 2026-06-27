@@ -88,6 +88,34 @@ async function findByUserId(userId, runner = db) {
   return mapRow(rows[0]);
 }
 
+async function findByWalletAddresses(walletAddresses, runner = db) {
+  const normalizedWallets = Array.isArray(walletAddresses)
+    ? [...new Set(walletAddresses.map(normalizeWalletAddress))]
+    : [];
+  if (normalizedWallets.length === 0) {
+    return [];
+  }
+
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM user_wallets
+     WHERE wallet_address = ANY($1::varchar[])
+     ORDER BY linked_at DESC`,
+    [normalizedWallets]
+  );
+  return rows.map(mapRow);
+}
+
+async function listLinkedWalletAddresses(runner = db) {
+  const { rows } = await runner.query(
+    `SELECT DISTINCT wallet_address
+     FROM user_wallets
+     WHERE chain = 'solana'
+     ORDER BY wallet_address ASC`
+  );
+  return rows.map((row) => normalizeWalletAddress(row.wallet_address));
+}
+
 async function markLastLogin(id, runner = db) {
   const { rows } = await runner.query(
     `UPDATE user_wallets
@@ -115,7 +143,9 @@ module.exports = {
   mapRow,
   createLink,
   findByWalletAddress,
+  findByWalletAddresses,
   findByUserId,
+  listLinkedWalletAddresses,
   markLastLogin,
   markVerified,
 };

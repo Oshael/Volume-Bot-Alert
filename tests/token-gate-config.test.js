@@ -55,4 +55,28 @@ describe('token gate config', () => {
       ]);
     });
   });
+
+  it('parses Helius webhook bearer tokens', () => {
+    withEnv({
+      HELIUS_WEBHOOK_TOKENS: ' token-a,token-b ,, ',
+    }, (config) => {
+      assert.deepEqual(config.tokenGate.webhookTokens, ['token-a', 'token-b']);
+    });
+  });
+
+  it('parses Helius token gate webhook sync settings', () => {
+    withEnv({
+      HELIUS_TOKEN_GATE_WEBHOOK_SYNC_ENABLED: 'true',
+      HELIUS_TOKEN_GATE_WEBHOOK_ID: 'webhook-1',
+      HELIUS_TOKEN_GATE_WEBHOOK_URL: 'https://api.example.test/api/token-gate/webhooks/helius',
+      HELIUS_TOKEN_GATE_WEBHOOK_TRANSACTION_TYPES: 'TRANSFER,SWAP',
+      HELIUS_WEBHOOK_API_BASE_URL: 'https://mainnet.helius-rpc.com',
+    }, (config) => {
+      assert.equal(config.tokenGate.heliusWebhook.enabled, true);
+      assert.equal(config.tokenGate.heliusWebhook.id, 'webhook-1');
+      assert.equal(config.tokenGate.heliusWebhook.url, 'https://api.example.test/api/token-gate/webhooks/helius');
+      assert.deepEqual(config.tokenGate.heliusWebhook.transactionTypes, ['TRANSFER', 'SWAP']);
+      assert.equal(config.tokenGate.heliusWebhook.apiBaseUrl, 'https://mainnet.helius-rpc.com');
+    });
+  });
 });

@@ -5,6 +5,7 @@ const UserWallet = require('../models/user-wallet');
 const WalletAuthChallenge = require('../models/wallet-auth-challenge');
 const TokenHoldingSnapshot = require('../models/token-holding-snapshot');
 const tokenHoldingService = require('./token-holding-service');
+const tokenGateWebhookSync = require('./token-gate-webhook-sync-service');
 const userAccess = require('../models/user-access');
 const { getClient } = require('../models/db');
 
@@ -263,6 +264,7 @@ async function verifyNewWallet({ walletAddress, input, deps, walletModel, snapsh
       createSnapshot: (payload) => (snapshotModel || TokenHoldingSnapshot).createSnapshot(payload, client),
     });
     await client.query('COMMIT');
+    tokenGateWebhookSync.queueLinkedWalletSync();
 
     return serializeWalletAuthResult({
       user,
@@ -355,6 +357,7 @@ async function createAuthenticatedWalletLink({ user, walletAddress, input, deps,
       createSnapshot: (payload) => (snapshotModel || TokenHoldingSnapshot).createSnapshot(payload, client),
     });
     await client.query('COMMIT');
+    tokenGateWebhookSync.queueLinkedWalletSync();
 
     return serializeWalletAuthResult({
       user,

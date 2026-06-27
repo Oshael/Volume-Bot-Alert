@@ -1,4 +1,5 @@
 const DEFAULT_BASE_URL = 'https://mainnet.helius-rpc.com/';
+const DEFAULT_WEBHOOK_API_BASE_URL = 'https://mainnet.helius-rpc.com/';
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_RPC_MIN_INTERVAL_MS = 125;
 const DEFAULT_DAS_MIN_INTERVAL_MS = 600;
@@ -47,6 +48,17 @@ function buildRpcUrl({ apiKey, baseUrl = DEFAULT_BASE_URL } = {}) {
   }
 
   const url = new URL(normalizeBaseUrl(baseUrl));
+  url.searchParams.set('api-key', trimmedApiKey);
+  return url.toString();
+}
+
+function buildWebhookApiUrl({ apiKey, apiBaseUrl = DEFAULT_WEBHOOK_API_BASE_URL, path = '' } = {}) {
+  const trimmedApiKey = String(apiKey || '').trim();
+  if (!trimmedApiKey) {
+    throw new Error('Helius API key is required');
+  }
+
+  const url = new URL(String(path || '').replace(/^\/+/, ''), normalizeBaseUrl(apiBaseUrl));
   url.searchParams.set('api-key', trimmedApiKey);
   return url.toString();
 }
@@ -244,8 +256,44 @@ function createHeliusClient(options = {}) {
     return body?.result ?? null;
   }
 
+  async function requestWebhookApi(method, path, body, requestOptions = {}) {
+    const response = await resolved.requestImpl(buildWebhookApiUrl({
+      apiKey: resolved.apiKey,
+      apiBaseUrl: requestOptions.apiBaseUrl || process.env.HELIUS_WEBHOOK_API_BASE_URL,
+      path,
+    }), {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(requestOptions.timeoutMs || resolved.timeoutMs),
+      body: body == null ? undefined : JSON.stringify(body),
+    });
+
+    let responseBody = null;
+    try {
+      responseBody = await response.json();
+    } catch (_) {
+      responseBody = null;
+    }
+
+    if (!response.ok) {
+      throw createHeliusError(
+        `Helius webhook API ${method} ${path} failed with status ${response.status}`,
+        {
+          status: response.status,
+          method: `webhook:${method}`,
+          body: responseBody,
+        }
+      );
+    }
+
+    return responseBody;
+  }
+
   return {
     request,
+    requestWebhookApi,
     getAsset(address, requestOptions = {}) {
       const assetId = String(address || '').trim();
       if (!assetId) {
@@ -293,6 +341,13 @@ function createHeliusClient(options = {}) {
         requestOptions
       );
     },
+    updateWebhook(webhookId, payload, requestOptions = {}) {
+      const id = String(webhookId || '').trim();
+      if (!id) {
+        throw new Error('Helius webhook ID is required');
+      }
+      return requestWebhookApi('PUT', `/v0/webhooks/${encodeURIComponent(id)}`, payload, requestOptions);
+    },
   };
 }
 
@@ -301,16 +356,19 @@ const defaultClient = createHeliusClient();
 module.exports = {
   createHeliusClient,
   request: (...args) => defaultClient.request(...args),
+  requestWebhookApi: (...args) => defaultClient.requestWebhookApi(...args),
   getAsset: (...args) => defaultClient.getAsset(...args),
   getTokenLargestAccounts: (...args) => defaultClient.getTokenLargestAccounts(...args),
   getTokenSupply: (...args) => defaultClient.getTokenSupply(...args),
   getMultipleAccounts: (...args) => defaultClient.getMultipleAccounts(...args),
   getTokenAccounts: (...args) => defaultClient.getTokenAccounts(...args),
+  updateWebhook: (...args) => defaultClient.updateWebhook(...args),
   __private: {
     buildMultipleAccountsParams,
     buildTokenAccountsParams,
     buildRpcParams,
     buildRpcUrl,
+    buildWebhookApiUrl,
     createChannelLimiter,
     createHeliusError,
     normalizeBaseUrl,

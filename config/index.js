@@ -543,6 +543,20 @@ module.exports = {
       endAt: parseOptionalTimestamp(process.env.TOKEN_GATE_LAUNCH_PROMO_END_AT),
       threshold: String(process.env.TOKEN_GATE_LAUNCH_PROMO_THRESHOLD || '100000').trim(),
     },
+    webhookTokens: String(process.env.HELIUS_WEBHOOK_TOKENS || process.env.HELIUS_WEBHOOK_TOKEN || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
+    heliusWebhook: {
+      enabled: parseBoolean(process.env.HELIUS_TOKEN_GATE_WEBHOOK_SYNC_ENABLED, false),
+      id: String(process.env.HELIUS_TOKEN_GATE_WEBHOOK_ID || '').trim(),
+      url: String(process.env.HELIUS_TOKEN_GATE_WEBHOOK_URL || '').trim(),
+      apiBaseUrl: String(process.env.HELIUS_WEBHOOK_API_BASE_URL || 'https://mainnet.helius-rpc.com').trim(),
+      transactionTypes: String(process.env.HELIUS_TOKEN_GATE_WEBHOOK_TRANSACTION_TYPES || 'TRANSFER')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    },
   },
 
   bidZoneWorker: {

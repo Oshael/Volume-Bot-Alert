@@ -141,4 +141,39 @@ describe('helius service', () => {
         && /rate limited/.test(error.message)
     );
   });
+
+  it('updates a webhook through the Helius webhook API', async () => {
+    const calls = [];
+    const client = helius.createHeliusClient({
+      apiKey: 'test-key',
+      requestImpl: async (url, init) => {
+        calls.push({
+          url: String(url),
+          method: init.method,
+          body: JSON.parse(init.body),
+        });
+        return {
+          ok: true,
+          json: async () => ({ webhookID: 'webhook-1' }),
+        };
+      },
+      timeoutMs: 500,
+    });
+
+    const result = await client.updateWebhook('webhook-1', {
+      webhookURL: 'https://api.example.test/api/token-gate/webhooks/helius',
+      transactionTypes: ['TRANSFER'],
+      accountAddresses: ['Wallet111'],
+      webhookType: 'enhanced',
+      authHeader: 'Bearer secret',
+    }, {
+      apiBaseUrl: 'https://mainnet.helius-rpc.com',
+    });
+
+    assert.equal(result.webhookID, 'webhook-1');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://mainnet.helius-rpc.com/v0/webhooks/webhook-1?api-key=test-key');
+    assert.equal(calls[0].method, 'PUT');
+    assert.deepEqual(calls[0].body.accountAddresses, ['Wallet111']);
+  });
 });

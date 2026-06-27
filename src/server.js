@@ -29,6 +29,7 @@ const preAccessRoutes = require('./routes/pre-access');
 const bootstrapRoutes = require('./routes/bootstrap');
 const catalogRoutes = require('./routes/catalog');
 const dashboardRoutes = require('./routes/dashboard');
+const tokenGateRoutes = require('./routes/token-gate');
 
 // Services
 const socketHub = require('./services/socket-hub');
@@ -138,6 +139,7 @@ app.use('/api/admin', defaultApiLimiter, adminRoutes);
 app.use('/api/account', defaultApiLimiter, accountRoutes);
 app.use('/api/account-security', defaultApiLimiter, accountSecurityRoutes);
 app.use('/api/billing', defaultApiLimiter, billingRoutes);
+app.use('/api/token-gate', tokenGateRoutes);
 app.use('/api/pre-access', defaultApiLimiter, preAccessRoutes);
 app.use('/api/config', defaultApiLimiter, require('./routes/config'));
 app.use('/api/bootstrap', defaultApiLimiter, bootstrapRoutes);
