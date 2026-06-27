@@ -122,6 +122,63 @@ function normalizeBillingPlans(value) {
   return Array.isArray(value) ? value.map(normalizeBillingPlan).filter(Boolean) : [];
 }
 
+function normalizeTokenGateTierName(value, discountPercent) {
+  const raw = String(value || '').trim().toLowerCase();
+  const fallback = `discount_${discountPercent}`;
+  if (!raw) {
+    return fallback;
+  }
+  const normalized = raw.replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32);
+  return normalized || fallback;
+}
+
+function compareWholeTokenStringsDesc(left, right) {
+  const leftValue = BigInt(left.threshold);
+  const rightValue = BigInt(right.threshold);
+  if (leftValue === rightValue) return 0;
+  return leftValue > rightValue ? -1 : 1;
+}
+
+function normalizeTokenGateDiscountTier(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const threshold = String(entry.threshold || entry.discountThreshold || '').trim();
+  const discountPercent = parseIntegerInRange(entry.discountPercent ?? entry.percent, 0, 0, 100);
+  if (!/^\d+$/.test(threshold) || BigInt(threshold) <= 0n || discountPercent <= 0) {
+    return null;
+  }
+
+  return {
+    threshold,
+    discountPercent,
+    tier: normalizeTokenGateTierName(entry.tier, discountPercent),
+  };
+}
+
+function normalizeTokenGateDiscountTiers(value, fallbackThreshold, fallbackPercent) {
+  const parsedTiers = Array.isArray(value)
+    ? value.map(normalizeTokenGateDiscountTier).filter(Boolean)
+    : [];
+
+  if (parsedTiers.length > 0) {
+    return parsedTiers.sort(compareWholeTokenStringsDesc);
+  }
+
+  const threshold = String(fallbackThreshold || '').trim();
+  const discountPercent = parseIntegerInRange(fallbackPercent, 50, 0, 100);
+  if (!/^\d+$/.test(threshold) || BigInt(threshold) <= 0n || discountPercent <= 0) {
+    return [];
+  }
+
+  return [{
+    threshold,
+    discountPercent,
+    tier: normalizeTokenGateTierName('', discountPercent),
+  }];
+}
+
 function normalizeMoonpayNetwork(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'test' || normalized === 'testnet' || normalized === 'sandbox' || normalized === 'dev' || normalized === 'development') {
@@ -475,6 +532,11 @@ module.exports = {
     unlimitedThreshold: String(process.env.TOKEN_GATE_UNLIMITED_THRESHOLD || '2000000').trim(),
     discountThreshold: String(process.env.TOKEN_GATE_DISCOUNT_THRESHOLD || '1000000').trim(),
     discountPercent: parseIntegerInRange(process.env.TOKEN_GATE_DISCOUNT_PERCENT, 50, 0, 100),
+    discountTiers: normalizeTokenGateDiscountTiers(
+      parseJson(process.env.TOKEN_GATE_DISCOUNT_TIERS_JSON, null),
+      process.env.TOKEN_GATE_DISCOUNT_THRESHOLD || '1000000',
+      process.env.TOKEN_GATE_DISCOUNT_PERCENT
+    ),
     launchPromo: {
       enabled: parseBoolean(process.env.TOKEN_GATE_LAUNCH_PROMO_ENABLED, true),
       startAt: parseOptionalTimestamp(process.env.TOKEN_GATE_LAUNCH_PROMO_START_AT),

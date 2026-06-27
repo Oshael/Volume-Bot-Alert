@@ -3688,8 +3688,14 @@ function renderBillingPriceRow(
 function getTokenTierLabel(tier: string | null) {
   if (tier === 'unlimited') return 'Unlimited holder';
   if (tier === 'launch_free') return 'Launch free';
-  if (tier === 'discount_50') return '50% discount';
+  const discountPercent = getDiscountPercentFromTier(tier);
+  if (discountPercent > 0) return `${discountPercent}% discount`;
   return 'No token tier';
+}
+
+function getDiscountPercentFromTier(tier: string | null | undefined) {
+  const match = String(tier || '').trim().toLowerCase().match(/^discount_(100|[1-9]\d?)$/);
+  return match ? Number(match[1]) : 0;
 }
 
 function renderTokenEntitlementStrip(state: AppState) {
@@ -3726,8 +3732,9 @@ function hasTokenEntitlementState(state: AppState) {
 }
 
 function getTokenTierShortLabel(state: AppState) {
-  if (state.session.tokenTier === 'discount_50' || state.session.tokenDiscountPercent === 50) {
-    return '50% off';
+  const discountPercent = state.session.tokenDiscountPercent || getDiscountPercentFromTier(state.session.tokenTier);
+  if (discountPercent > 0) {
+    return `${discountPercent}% off`;
   }
   if (state.session.tokenTier === 'unlimited') {
     return 'Unlimited';

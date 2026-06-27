@@ -38,14 +38,66 @@ function isWithinLaunchPromo(now, launchPromo = {}) {
   return Number.isFinite(ts) && Number.isFinite(start) && Number.isFinite(end) && ts >= start && ts <= end;
 }
 
+function normalizeDiscountTierName(value, discountPercent) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw) {
+    return raw.slice(0, 32);
+  }
+  return `discount_${discountPercent}`;
+}
+
+function getConfiguredDiscountTiers(gateConfig = DEFAULT_CONFIG) {
+  if (Array.isArray(gateConfig.discountTiers) && gateConfig.discountTiers.length > 0) {
+    return [...gateConfig.discountTiers].sort((left, right) => {
+      const leftValue = parseWholeTokenThreshold(left.threshold, 'Discount threshold');
+      const rightValue = parseWholeTokenThreshold(right.threshold, 'Discount threshold');
+      if (leftValue === rightValue) return 0;
+      return leftValue > rightValue ? -1 : 1;
+    });
+  }
+
+  const discountPercent = Math.max(0, Number(gateConfig.discountPercent) || 0);
+  if (discountPercent <= 0) {
+    return [];
+  }
+
+  return [{
+    threshold: gateConfig.discountThreshold,
+    discountPercent,
+    tier: `discount_${discountPercent}`,
+  }];
+}
+
+function resolveDiscountTier(balanceRaw, decimals, gateConfig = DEFAULT_CONFIG) {
+  for (const tier of getConfiguredDiscountTiers(gateConfig)) {
+    const discountPercent = Math.max(0, Number(tier.discountPercent) || 0);
+    if (discountPercent <= 0) {
+      continue;
+    }
+    const thresholdRaw = thresholdToRaw(tier.threshold, decimals, 'Discount threshold');
+    if (balanceRaw >= thresholdRaw) {
+      return {
+        tier: normalizeDiscountTierName(tier.tier, discountPercent),
+        discountPercent,
+        thresholdRaw: thresholdRaw.toString(),
+      };
+    }
+  }
+  return {
+    tier: 'none',
+    discountPercent: 0,
+    thresholdRaw: null,
+  };
+}
+
 function evaluateTier(input = {}, gateConfig = DEFAULT_CONFIG) {
   const decimals = Number.parseInt(String(input.decimals ?? ''), 10);
   const balanceRaw = parseRawBalance(input.balanceRaw);
   const unlimitedRaw = thresholdToRaw(gateConfig.unlimitedThreshold, decimals, 'Unlimited threshold');
-  const discountRaw = thresholdToRaw(gateConfig.discountThreshold, decimals, 'Discount threshold');
+  const discountTier = resolveDiscountTier(balanceRaw, decimals, gateConfig);
   const launchPromoRaw = thresholdToRaw(gateConfig.launchPromo?.threshold || '0', decimals, 'Launch promo threshold');
   const hasUnlimitedAccess = balanceRaw >= unlimitedRaw;
-  const discountPercent = balanceRaw >= discountRaw ? Math.max(0, Number(gateConfig.discountPercent) || 0) : 0;
+  const discountPercent = discountTier.discountPercent;
   const hasLaunchPromoAccess = !hasUnlimitedAccess
     && isWithinLaunchPromo(input.now || new Date(), gateConfig.launchPromo)
     && balanceRaw >= launchPromoRaw;
@@ -56,7 +108,7 @@ function evaluateTier(input = {}, gateConfig = DEFAULT_CONFIG) {
   } else if (hasLaunchPromoAccess) {
     tier = 'launch_free';
   } else if (discountPercent > 0) {
-    tier = 'discount_50';
+    tier = discountTier.tier;
   }
 
   return {
@@ -66,7 +118,7 @@ function evaluateTier(input = {}, gateConfig = DEFAULT_CONFIG) {
     hasLaunchPromoAccess,
     thresholds: {
       unlimitedRaw: unlimitedRaw.toString(),
-      discountRaw: discountRaw.toString(),
+      discountRaw: discountTier.thresholdRaw,
       launchPromoRaw: launchPromoRaw.toString(),
     },
   };
@@ -175,8 +227,10 @@ module.exports = {
     assertEnabledConfig,
     buildExpiresAt,
     getBalanceProvider,
+    getConfiguredDiscountTiers,
     isWithinLaunchPromo,
     parseRawBalance,
     parseWholeTokenThreshold,
+    resolveDiscountTier,
   },
 };

@@ -347,7 +347,7 @@ function init(httpServer) {
       socket.sessionId = sessionId;
       socket.clientIp = clientIp;
       next();
-    } catch (err) {
+    } catch (_err) {
       return next(new Error('Invalid token'));
     }
   });

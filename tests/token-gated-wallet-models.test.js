@@ -139,4 +139,10 @@ describe('token-gated wallet model foundation', () => {
       /Invalid raw token balance/
     );
   });
+
+  it('accepts configured percentage discount tier names', () => {
+    assert.equal(tokenHoldingSnapshot.normalizeTier('discount_10'), 'discount_10');
+    assert.equal(tokenHoldingSnapshot.normalizeTier('discount_25'), 'discount_25');
+    assert.equal(tokenHoldingSnapshot.normalizeTier('discount_custom'), 'none');
+  });
 });

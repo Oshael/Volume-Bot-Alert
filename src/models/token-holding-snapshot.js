@@ -1,7 +1,8 @@
 const db = require('./db');
 const userWallet = require('./user-wallet');
 
-const VALID_TIERS = new Set(['unlimited', 'discount_50', 'launch_free', 'none']);
+const VALID_TIERS = new Set(['unlimited', 'launch_free', 'none']);
+const DISCOUNT_TIER_RE = /^discount_(100|[1-9]\d?)$/;
 
 function normalizeAddress(value, label) {
   const normalized = String(value || '').trim();
@@ -13,7 +14,7 @@ function normalizeAddress(value, label) {
 
 function normalizeTier(value) {
   const normalized = String(value || 'none').trim().toLowerCase();
-  return VALID_TIERS.has(normalized) ? normalized : 'none';
+  return VALID_TIERS.has(normalized) || DISCOUNT_TIER_RE.test(normalized) ? normalized : 'none';
 }
 
 function normalizeBalanceRaw(value) {
