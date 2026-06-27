@@ -414,6 +414,13 @@ function normalizeTokenSecurityPayload(payload, context = {}) {
       'top_10_pct',
       'top10Pct',
     ])),
+    top20HolderRate: normalizeRate(readFirst(row, [
+      'top_20_holder_rate',
+      'top20_holder_rate',
+      'top20HolderRate',
+      'top_20_pct',
+      'top20Pct',
+    ])),
     canSell: readNumber(row, ['can_sell', 'canSell']),
     canNotSell: readNumber(row, ['can_not_sell', 'canNotSell']),
     hideRisk: normalizeBooleanish(readFirst(row, ['hide_risk', 'hideRisk'])),

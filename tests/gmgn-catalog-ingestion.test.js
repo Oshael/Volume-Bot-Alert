@@ -1499,12 +1499,15 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(calls[0][1].isActiveMonitorCandidate, true);
   });
 
-  it('auto-blocks young extreme GMGN tokens when token security shows concentrated top holders', async () => {
+  it('quarantines very new GMGN tokens with concentrated top holders instead of auto-blocking', async () => {
     const blockWrites = [];
     let upsertCalls = 0;
     let bucketWrites = 0;
 
-    const result = await gmgnCatalogIngestion.ingestGmgnToken(createYoungExtremeGmgnSnapshot(), {
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createYoungExtremeGmgnSnapshot(),
+      tokenCreatedAt: '2026-05-03T06:55:00.000Z',
+    }, {
       now: () => new Date('2026-05-03T07:00:00.000Z'),
       evaluationState: new Map(),
       adminBlockedTokenModel: {
@@ -1520,8 +1523,16 @@ describe('gmgn catalog ingestion', () => {
         async upsertToken() {
           upsertCalls += 1;
         },
-        async applyEvaluationResult() {
-          throw new Error('brand-new GMGN security block must happen before catalog evaluation');
+        async applyEvaluationResult(address, payload) {
+          assert.equal(payload.eligibilityState, 'gmgn-needs-risk-enrichment');
+          assert.equal(payload.eligibleForMonitoring, false);
+          assert.equal(payload.suppressedReason, 'gmgn_needs_risk_enrichment');
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: false,
+            suppressed_reason: payload.suppressedReason,
+          };
         },
       },
       volumeBucketModel: {
@@ -1538,28 +1549,40 @@ describe('gmgn catalog ingestion', () => {
             top10HolderRate: 0.9234,
           };
         },
+        async fetchTokenInfo() {
+          return {
+            address: TOKEN_A,
+            holderCount: 500,
+            marketCap: 100000,
+          };
+        },
+        async fetchMarketKline() {
+          return [
+            { timestampMs: Date.parse('2026-05-03T06:55:00.000Z'), open: 1, high: 1.03, low: 0.99, close: 1.01, volume: 1000 },
+            { timestampMs: Date.parse('2026-05-03T06:56:00.000Z'), open: 1.01, high: 1.02, low: 0.98, close: 0.99, volume: 1200 },
+          ];
+        },
       },
       alertMatcher: {
         async evaluateUpdatedToken() {
-          throw new Error('blocked GMGN security risk tokens must not alert');
+          throw new Error('quarantined GMGN security risk tokens must not alert');
         },
       },
     });
 
-    assert.equal(result.skipped, true);
-    assert.equal(result.skipReason, 'gmgn-security-auto-blocked');
+    assert.equal(result.skipped, undefined);
     assert.equal(result.summary.gmgnSecurityChecks, 1);
-    assert.equal(result.summary.gmgnSecurityAutoBlocked, 1);
+    assert.equal(result.summary.gmgnSecurityAutoBlocked, 0);
     assert.equal(result.summary.gmgnSecurityErrors, 0);
-    assert.equal(blockWrites.length, 1);
-    assert.equal(blockWrites[0].address, TOKEN_A);
-    assert.equal(blockWrites[0].label, 'gmgn-security:top10-holder-rate-92.34%');
-    assert.equal(upsertCalls, 0);
+    assert.equal(result.summary.riskEnrichmentSuppressed, 1);
+    assert.equal(blockWrites.length, 0);
+    assert.equal(upsertCalls, 1);
     assert.equal(bucketWrites, 0);
   });
 
-  it('checks GMGN security for young active tokens even below the old extreme churn threshold', async () => {
+  it('does not auto-block concentrated top holders without enough complementary bad signals', async () => {
     const blockWrites = [];
+    let upsertCalls = 0;
     const result = await gmgnCatalogIngestion.ingestGmgnToken({
       ...createYoungExtremeGmgnSnapshot(),
       mcap: 264234,
@@ -1567,6 +1590,81 @@ describe('gmgn catalog ingestion', () => {
       vol1h: 1817446.48,
       vol6h: 1817446.48,
       vol24h: 1817446.48,
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add(payload) {
+          blockWrites.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken() {
+          upsertCalls += 1;
+        },
+        async applyEvaluationResult(address, payload) {
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: payload.eligibleForMonitoring,
+            eligibility_state: payload.eligibilityState,
+            last_vol_5m: payload.vol5m,
+          };
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {},
+      },
+      gmgnClient: {
+        async fetchTokenSecurity(request) {
+          assert.equal(request.address, TOKEN_A);
+          return {
+            address: TOKEN_A,
+            top10HolderRate: 0.7864,
+          };
+        },
+        async fetchTokenInfo() {
+          return {
+            address: TOKEN_A,
+            holderCount: 500,
+            marketCap: 264234,
+          };
+        },
+        async fetchMarketKline() {
+          return [
+            { timestampMs: Date.parse('2026-05-03T06:45:00.000Z'), open: 1, high: 1.03, low: 0.99, close: 1.01, volume: 1000 },
+            { timestampMs: Date.parse('2026-05-03T06:46:00.000Z'), open: 1.01, high: 1.02, low: 0.98, close: 0.99, volume: 1200 },
+          ];
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.notEqual(result.skipReason, 'gmgn-security-auto-blocked');
+    assert.equal(result.summary.gmgnSecurityChecks, 1);
+    assert.equal(result.summary.gmgnSecurityAutoBlocked, 0);
+    assert.equal(blockWrites.length, 0);
+    assert.equal(upsertCalls, 1);
+  });
+
+  it('auto-blocks concentrated top holders only with three complementary bad signals', async () => {
+    const blockWrites = [];
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createYoungExtremeGmgnSnapshot(),
+      tokenCreatedAt: '2026-05-03T06:30:00.000Z',
+      mcap: 100000,
+      vol5m: 18000,
+      vol1h: 50000,
+      vol6h: 50000,
+      vol24h: 50000,
     }, {
       now: () => new Date('2026-05-03T07:00:00.000Z'),
       evaluationState: new Map(),
@@ -1593,12 +1691,24 @@ describe('gmgn catalog ingestion', () => {
         },
       },
       gmgnClient: {
-        async fetchTokenSecurity(request) {
-          assert.equal(request.address, TOKEN_A);
+        async fetchTokenSecurity() {
           return {
             address: TOKEN_A,
-            top10HolderRate: 0.7864,
+            top10HolderRate: 0.9234,
           };
+        },
+        async fetchTokenInfo() {
+          return {
+            address: TOKEN_A,
+            holderCount: 2000,
+            marketCap: 100000,
+          };
+        },
+        async fetchMarketKline() {
+          return [
+            { timestampMs: Date.parse('2026-05-03T06:45:00.000Z'), open: 1, high: 1.03, low: 0.99, close: 1.01, volume: 1000 },
+            { timestampMs: Date.parse('2026-05-03T06:46:00.000Z'), open: 1.01, high: 1.02, low: 0.98, close: 0.99, volume: 1200 },
+          ];
         },
       },
       alertMatcher: {
@@ -1610,10 +1720,110 @@ describe('gmgn catalog ingestion', () => {
 
     assert.equal(result.skipped, true);
     assert.equal(result.skipReason, 'gmgn-security-auto-blocked');
-    assert.equal(result.summary.gmgnSecurityChecks, 1);
     assert.equal(result.summary.gmgnSecurityAutoBlocked, 1);
     assert.equal(blockWrites.length, 1);
-    assert.equal(blockWrites[0].label, 'gmgn-security:top10-holder-rate-78.64%');
+    assert.equal(blockWrites[0].label, 'gmgn-security:top10-holder-rate-92.34%');
+    assert.deepEqual(blockWrites[0].evidence.assessment.badSignals, [
+      'low_mcap_under_150k',
+      'holder_count_high_low_mcap',
+      'missing_dex_confirmation',
+    ]);
+  });
+
+  it('does not auto-block pump, bonk, or bags suffix tokens solely for concentrated top holders', async () => {
+    const security = { top10HolderRate: 0.9234 };
+    assert.equal(
+      gmgnCatalogIngestion.__private.isGmgnSecurityAutoBlockRisk(
+        security,
+        '3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump'
+      ),
+      false
+    );
+    assert.equal(
+      gmgnCatalogIngestion.__private.isGmgnSecurityAutoBlockRisk(
+        security,
+        'BAGSoDxpPMzKz1VQDeeHTHSXbH6AGU1fLqJrtHTBAGS'
+      ),
+      false
+    );
+    assert.equal(
+      gmgnCatalogIngestion.__private.isGmgnSecurityAutoBlockRisk(
+        security,
+        'BONKoDxpPMzKz1VQDeeHTHSXbH6AGU1fLqJrtHTbonk'
+      ),
+      false
+    );
+    assert.equal(
+      gmgnCatalogIngestion.__private.hasGmgnSecurityTopHolderRisk(security, TOKEN_A),
+      true
+    );
+  });
+
+  it('continues GMGN ingestion for pump suffix tokens with isolated top holder concentration', async () => {
+    const address = '3QQQxazHaMb72d7N9iftT26vuk6A4Re31fYmkwA2pump';
+    const catalog = createTokenCatalogStub();
+    const blockWrites = [];
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createYoungExtremeGmgnSnapshot(address),
+      mcap: 264234,
+      vol5m: 64409.82,
+      vol1h: 1817446.48,
+      vol6h: 1817446.48,
+      vol24h: 1817446.48,
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add(payload) {
+          blockWrites.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        ...catalog,
+        async getByAddress(tokenAddress) {
+          catalog.calls.push(['getByAddress', tokenAddress]);
+          return null;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {},
+      },
+      gmgnClient: {
+        async fetchTokenSecurity(request) {
+          assert.equal(request.address, address);
+          return {
+            address,
+            top10HolderRate: 0.9234,
+          };
+        },
+        async fetchTokenInfo() {
+          return {
+            address,
+            holderCount: 500,
+            marketCap: 264234,
+          };
+        },
+        async fetchMarketKline() {
+          return [
+            { timestampMs: Date.parse('2026-05-03T06:45:00.000Z'), open: 1, high: 1.03, low: 0.99, close: 1.01, volume: 1000 },
+            { timestampMs: Date.parse('2026-05-03T06:46:00.000Z'), open: 1.01, high: 1.02, low: 0.98, close: 0.99, volume: 1200 },
+          ];
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.notEqual(result.skipReason, 'gmgn-security-auto-blocked');
+    assert.equal(result.summary.gmgnSecurityChecks, 1);
+    assert.equal(result.summary.gmgnSecurityAutoBlocked, 0);
+    assert.equal(blockWrites.length, 0);
+    assert.equal(catalog.calls.some(([name]) => name === 'upsertToken'), true);
   });
 
   it('auto-blocks young low-mcap GMGN tokens with extreme 5m volume before risk lookups', async () => {

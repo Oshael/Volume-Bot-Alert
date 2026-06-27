@@ -8,6 +8,7 @@ const AUTO_BLOCK_LABEL_PREFIXES = Object.freeze({
   GMGN_LIQUIDITY_UNDER_1K_SPAM: 'gmgn-liquidity:under-1k-spam',
   GMGN_NEW_NON_PUMP_HIGH_LAUNCH_MCAP: 'gmgn-origin:new-non-pump-high-launch-mcap',
   GMGN_SECURITY_TOP10_HOLDER_RATE: 'gmgn-security:top10-holder-rate',
+  GMGN_SECURITY_TOP20_HOLDER_RATE: 'gmgn-security:top20-holder-rate',
   GMGN_VOLUME_LOW_MCAP_EXTREME_VOL5M: 'gmgn-volume:low-mcap-extreme-vol5m',
   RISK_REVIEW_AUTO_JUNK_PROBABLE: 'auto-junk-probable',
 });

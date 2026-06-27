@@ -38,6 +38,15 @@ const GMGN_RISK_LOOKUP_MIN_MCAP = 100000;
 const GMGN_RISK_LOOKUP_MIN_VOL_5M = 50000;
 const GMGN_RISK_LOOKUP_VOL_1H_TO_MCAP_RATIO = 3;
 const GMGN_SECURITY_TOP_10_HOLDER_RATE_BLOCK_THRESHOLD = 0.70;
+const GMGN_SECURITY_EXTREME_TOP_10_HOLDER_RATE_THRESHOLD = 0.90;
+const GMGN_SECURITY_EXTREME_TOP_20_HOLDER_RATE_THRESHOLD = 0.95;
+const GMGN_SECURITY_TOP_HOLDER_MIN_BAD_SIGNALS = 3;
+const GMGN_SECURITY_TOP_HOLDER_VERY_NEW_MS = GMGN_NON_LAUNCH_GRACE_MS;
+const GMGN_SECURITY_LOW_LIQUIDITY_USD = 1000;
+const GMGN_SECURITY_LOW_MCAP = 150000;
+const GMGN_SECURITY_HIGH_HOLDER_COUNT = 1500;
+const GMGN_SECURITY_EXTREME_VOL5M = 500000;
+const GMGN_SECURITY_EXTREME_VOL5M_TO_MCAP = 6;
 const GMGN_LOW_MCAP_HIGH_HOLDER_MAX_MCAP = 150000;
 const GMGN_LOW_MCAP_HIGH_HOLDER_MIN_HOLDERS = 1500;
 const GMGN_LOW_MCAP_EXTREME_VOL_MAX_AGE_HOURS = 24;
@@ -147,6 +156,15 @@ function calculateTokenAgeHours(snapshot, now) {
     return null;
   }
   return (nowMs - createdAtMs) / (60 * 60 * 1000);
+}
+
+function calculateTokenAgeMs(snapshot, now) {
+  const createdAtMs = toTimestampMsOrNull(snapshot?.tokenCreatedAt);
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!(createdAtMs > 0) || !(nowMs > createdAtMs)) {
+    return null;
+  }
+  return nowMs - createdAtMs;
 }
 
 function computeSnapshotVolumeToMcapRatio(volume, marketCap) {
@@ -325,7 +343,7 @@ function buildPreservedGmgnEvaluation(snapshot, tokenBefore, marketCap, nextEval
   });
 }
 
-function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
+function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = null) {
   const marketCap = toFiniteNumberOrNull(snapshot.mcap);
   const vol24h = toFiniteNumberOrNull(snapshot.vol24h);
   const now = options.now();
@@ -336,6 +354,16 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options) {
     { preserveEarlier: true }
   );
   const isManual = String(tokenBefore?.source || '').trim().toLowerCase() === 'user-manual';
+
+  if (!isManual && securityGuard?.topHolderAssessment?.quarantine) {
+    return buildEvaluationPayload(snapshot, {
+      eligibilityState: 'gmgn-needs-risk-enrichment',
+      eligibleForMonitoring: false,
+      suppressedReason: GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,
+      monitorPriority: resolveMonitorPriority(marketCap),
+      nextEvaluationAt,
+    });
+  }
 
   if (nonLaunchGraceUntil) {
     return buildEvaluationPayload(snapshot, {
@@ -579,22 +607,14 @@ function enqueueGmgnRiskReview(address, snapshot, tokenBefore, options, summary)
 
 async function runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, options, summary) {
   let security = null;
+  let hasTopHolderRisk = false;
   summary.gmgnSecurityChecks += 1;
   try {
     security = await options.gmgnClient.fetchTokenSecurity({
       chain: normalizeChain(snapshot.chain),
       address,
     });
-
-    if (isGmgnSecurityAutoBlockRisk(security)) {
-      await autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options);
-      summary.gmgnSecurityAutoBlocked += 1;
-      return {
-        skipped: true,
-        skipReason: 'gmgn-security-auto-blocked',
-        security,
-      };
-    }
+    hasTopHolderRisk = hasGmgnSecurityTopHolderRisk(security, address);
   } catch (error) {
     summary.gmgnSecurityErrors += 1;
     summary.errorMessages.push(`GMGN security check failed for ${address}: ${error.message}`);
@@ -608,7 +628,7 @@ async function runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, opti
       address,
     });
 
-    if (isGmgnInfoAutoBlockRisk(info, snapshot)) {
+    if (!hasTopHolderRisk && isGmgnInfoAutoBlockRisk(info, snapshot)) {
       await autoBlockGmgnInfoRisk(address, snapshot, tokenBefore, info, options);
       summary.gmgnInfoAutoBlocked += 1;
       return {
@@ -634,6 +654,51 @@ async function runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, opti
       to: Math.floor(options.now().getTime() / 1000),
     });
     const klineAnalysis = analyzeGmgnKlinePattern(candles);
+    const topHolderAssessment = buildGmgnSecurityTopHolderAssessment({
+      address,
+      snapshot,
+      tokenBefore,
+      security,
+      info,
+      klineAnalysis,
+      now: options.now(),
+    });
+
+    if (topHolderAssessment.autoBlock) {
+      await autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options, topHolderAssessment);
+      summary.gmgnSecurityAutoBlocked += 1;
+      return {
+        skipped: true,
+        skipReason: 'gmgn-security-auto-blocked',
+        security,
+        info,
+        klineAnalysis,
+        topHolderAssessment,
+      };
+    }
+
+    if (topHolderAssessment.quarantine) {
+      return {
+        skipped: false,
+        security,
+        info,
+        klineAnalysis,
+        topHolderAssessment,
+      };
+    }
+
+    if (isGmgnInfoAutoBlockRisk(info, snapshot)) {
+      await autoBlockGmgnInfoRisk(address, snapshot, tokenBefore, info, options);
+      summary.gmgnInfoAutoBlocked += 1;
+      return {
+        skipped: true,
+        skipReason: 'gmgn-info-auto-blocked',
+        security,
+        info,
+        klineAnalysis,
+        topHolderAssessment,
+      };
+    }
 
     if (!isGmgnStaircasePumpRisk(klineAnalysis)) {
       return {
@@ -641,6 +706,7 @@ async function runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, opti
         security,
         info,
         klineAnalysis,
+        topHolderAssessment,
       };
     }
 
@@ -652,6 +718,7 @@ async function runGmgnPreliminaryRiskReview(address, snapshot, tokenBefore, opti
       security,
       info,
       klineAnalysis,
+      topHolderAssessment,
     };
   } catch (error) {
     summary.gmgnKlineErrors += 1;
@@ -722,6 +789,13 @@ function hasKnownLaunchSuffix(address) {
     || normalized.endsWith('bonk');
 }
 
+function hasTopHolderRateAutoBlockExemptSuffix(address) {
+  const normalized = normalizeLowerText(address);
+  return normalized.endsWith('pump')
+    || normalized.endsWith('bags')
+    || normalized.endsWith('bonk');
+}
+
 function isAutomaticGmgnToken(tokenBefore, tokenAfter) {
   return normalizeLowerText(tokenAfter?.source) === 'gmgn'
     && !isManualToken(tokenBefore)
@@ -770,6 +844,7 @@ function resolveGmgnNextEvaluationAt(tokenBefore, fallbackNextEvaluationAt, opti
 
 function hasCompletedGmgnPreliminaryReview(securityGuard) {
   return securityGuard?.skipped === false
+    && securityGuard.topHolderAssessment?.quarantine !== true
     && securityGuard.security
     && securityGuard.info
     && securityGuard.klineAnalysis;
@@ -800,9 +875,148 @@ function canPersistGmgnVisualBuckets(tokenAfter, snapshot = {}) {
   return toFiniteNumberOrNull(snapshot.mcap) != null;
 }
 
-function isGmgnSecurityAutoBlockRisk(security) {
+function hasGmgnSecurityTopHolderRisk(security, address = null) {
+  if (hasTopHolderRateAutoBlockExemptSuffix(address)) {
+    return false;
+  }
   const top10HolderRate = toFiniteNumberOrNull(security?.top10HolderRate);
-  return top10HolderRate != null && top10HolderRate >= GMGN_SECURITY_TOP_10_HOLDER_RATE_BLOCK_THRESHOLD;
+  const top20HolderRate = toFiniteNumberOrNull(security?.top20HolderRate);
+  return (top10HolderRate != null && top10HolderRate >= GMGN_SECURITY_TOP_10_HOLDER_RATE_BLOCK_THRESHOLD)
+    || (top20HolderRate != null && top20HolderRate >= GMGN_SECURITY_EXTREME_TOP_20_HOLDER_RATE_THRESHOLD);
+}
+
+function hasActiveGmgnAuthorityRisk(security = {}) {
+  return security?.renouncedMint === false
+    || security?.renouncedFreezeAccount === false
+    || security?.mintAuthorityActive === true
+    || security?.freezeAuthorityActive === true;
+}
+
+function isSecurityLowLiquiditySignal(liquidityUsd) {
+  return liquidityUsd != null && liquidityUsd < GMGN_SECURITY_LOW_LIQUIDITY_USD;
+}
+
+function isSecurityLowMcapSignal(marketCap) {
+  return marketCap != null && marketCap <= GMGN_SECURITY_LOW_MCAP;
+}
+
+function isSecurityHighHolderLowMcapSignal(holderCount, marketCap) {
+  return holderCount != null
+    && holderCount >= GMGN_SECURITY_HIGH_HOLDER_COUNT
+    && isSecurityLowMcapSignal(marketCap);
+}
+
+function isSecurityExtremeVol5mSignal(vol5m, vol5mToMcap) {
+  return vol5m != null
+    && vol5m >= GMGN_SECURITY_EXTREME_VOL5M
+    && vol5mToMcap != null
+    && vol5mToMcap >= GMGN_SECURITY_EXTREME_VOL5M_TO_MCAP;
+}
+
+function buildGmgnSecurityBadSignalReport({
+  snapshot = {},
+  tokenBefore = null,
+  security = {},
+  info = null,
+  klineAnalysis = null,
+} = {}) {
+  const badLiquidityStatusSignals = getBadGmgnLiquidityStatusSignals(snapshot);
+  const marketCap = toFiniteNumberOrNull(info?.marketCap) ?? toFiniteNumberOrNull(snapshot.mcap);
+  const liquidityUsd = toFiniteNumberOrNull(snapshot.liquidityUsd);
+  const holderCount = toFiniteNumberOrNull(info?.holderCount);
+  const vol5m = toFiniteNumberOrNull(snapshot.vol5m);
+  const vol5mToMcap = computeSnapshotVolumeToMcapRatio(vol5m, marketCap);
+  const klineRisk = isGmgnStaircasePumpRisk(klineAnalysis);
+  const dexConfirmed = hasDexConfirmation(tokenBefore);
+  const badSignals = [];
+
+  if (isSecurityLowLiquiditySignal(liquidityUsd)) badSignals.push('low_liquidity_under_1k');
+  if (isSecurityLowMcapSignal(marketCap)) badSignals.push('low_mcap_under_150k');
+  if (isSecurityHighHolderLowMcapSignal(holderCount, marketCap)) badSignals.push('holder_count_high_low_mcap');
+  if (isSecurityExtremeVol5mSignal(vol5m, vol5mToMcap)) badSignals.push('extreme_vol5m_to_mcap');
+  if (badLiquidityStatusSignals.length >= GMGN_BAD_LIQUIDITY_STATUS_MIN_BAD_SIGNALS) badSignals.push('bad_liquidity_status');
+  if (hasActiveGmgnAuthorityRisk(security)) badSignals.push('mint_or_freeze_authority_active');
+  if (klineRisk) badSignals.push('staircase_pump_kline');
+  if (!dexConfirmed) badSignals.push('missing_dex_confirmation');
+
+  return {
+    badSignals,
+    badLiquidityStatusSignals,
+    marketCap,
+    liquidityUsd,
+    holderCount,
+    vol5m,
+    vol5mToMcap,
+    klineRisk,
+    dexConfirmed,
+  };
+}
+
+function toRatePctOrNull(rate) {
+  return rate == null ? null : Math.round(rate * 10000) / 100;
+}
+
+function isExtremeGmgnTopHolderRisk(top10HolderRate, top20HolderRate) {
+  return (top10HolderRate != null && top10HolderRate >= GMGN_SECURITY_EXTREME_TOP_10_HOLDER_RATE_THRESHOLD)
+    || (top20HolderRate != null && top20HolderRate >= GMGN_SECURITY_EXTREME_TOP_20_HOLDER_RATE_THRESHOLD);
+}
+
+function shouldAutoBlockGmgnTopHolderRisk(topHolderRisk, veryNew, badSignalCount) {
+  return topHolderRisk
+    && !veryNew
+    && badSignalCount >= GMGN_SECURITY_TOP_HOLDER_MIN_BAD_SIGNALS;
+}
+
+function shouldQuarantineGmgnTopHolderRisk(topHolderRisk, veryNew) {
+  return topHolderRisk && veryNew;
+}
+
+function buildGmgnSecurityTopHolderAssessment({
+  address = null,
+  snapshot = {},
+  tokenBefore = null,
+  security = {},
+  info = null,
+  klineAnalysis = null,
+  now = new Date(),
+} = {}) {
+  const top10HolderRate = toFiniteNumberOrNull(security?.top10HolderRate);
+  const top20HolderRate = toFiniteNumberOrNull(security?.top20HolderRate);
+  const topHolderRisk = hasGmgnSecurityTopHolderRisk(security, address);
+  const ageMs = calculateTokenAgeMs(snapshot, now);
+  const signalReport = buildGmgnSecurityBadSignalReport({
+    snapshot,
+    tokenBefore,
+    security,
+    info,
+    klineAnalysis,
+  });
+
+  const veryNew = ageMs != null && ageMs < GMGN_SECURITY_TOP_HOLDER_VERY_NEW_MS;
+  const badSignalCount = signalReport.badSignals.length;
+
+  return {
+    mode: 'gmgn_security_top_holder_composite',
+    topHolderRisk,
+    extremeTopHolderRisk: isExtremeGmgnTopHolderRisk(top10HolderRate, top20HolderRate),
+    autoBlock: shouldAutoBlockGmgnTopHolderRisk(topHolderRisk, veryNew, badSignalCount),
+    quarantine: shouldQuarantineGmgnTopHolderRisk(topHolderRisk, veryNew),
+    veryNew,
+    top10HolderRate,
+    top20HolderRate,
+    top10Pct: toRatePctOrNull(top10HolderRate),
+    top20Pct: toRatePctOrNull(top20HolderRate),
+    badSignalCount,
+    ...signalReport,
+  };
+}
+
+function isGmgnSecurityAutoBlockRisk(security, address = null, context = {}) {
+  return buildGmgnSecurityTopHolderAssessment({
+    ...context,
+    address,
+    security,
+  }).autoBlock;
 }
 
 function isGmgnInfoAutoBlockRisk(info, snapshot = {}) {
@@ -971,11 +1185,16 @@ function buildGmgnAutoBlockLabel(assessment) {
 
 function buildGmgnSecurityAutoBlockLabel(security) {
   const top10HolderRate = toFiniteNumberOrNull(security?.top10HolderRate);
-  if (top10HolderRate == null) {
-    return 'gmgn-security:auto-risk';
+  if (top10HolderRate != null) {
+    const pct = Math.round(top10HolderRate * 10000) / 100;
+    return `${AUTO_BLOCK_LABEL_PREFIXES.GMGN_SECURITY_TOP10_HOLDER_RATE}-${pct}%`;
   }
-  const pct = Math.round(top10HolderRate * 10000) / 100;
-  return `${AUTO_BLOCK_LABEL_PREFIXES.GMGN_SECURITY_TOP10_HOLDER_RATE}-${pct}%`;
+  const top20HolderRate = toFiniteNumberOrNull(security?.top20HolderRate);
+  if (top20HolderRate != null) {
+    const pct = Math.round(top20HolderRate * 10000) / 100;
+    return `${AUTO_BLOCK_LABEL_PREFIXES.GMGN_SECURITY_TOP20_HOLDER_RATE}-${pct}%`;
+  }
+  return 'gmgn-security:auto-risk';
 }
 
 function buildGmgnInfoAutoBlockLabel(info, snapshot = {}) {
@@ -1111,7 +1330,7 @@ async function autoBlockGmgnJunk(address, snapshot, tokenBefore, assessment, opt
   }
 }
 
-async function autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options) {
+async function autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, security, options, assessment = null) {
   const label = buildGmgnSecurityAutoBlockLabel(security);
   await options.adminBlockedTokenModel.add({
     address,
@@ -1119,6 +1338,7 @@ async function autoBlockGmgnSecurityRisk(address, snapshot, tokenBefore, securit
     createdBy: null,
     evidence: buildGmgnBlockEvidence(address, label, 'gmgn-ingestion:security', snapshot, tokenBefore, {
       security,
+      assessment,
     }),
   });
 
@@ -1442,6 +1662,7 @@ async function applyPreCatalogGmgnGuards(address, snapshot, tokenBefore, options
       gmgnSecurity: securityGuard.security,
       gmgnInfo: securityGuard.info,
       gmgnKlineAnalysis: securityGuard.klineAnalysis,
+      topHolderAssessment: securityGuard.topHolderAssessment,
     };
   }
 
@@ -1483,6 +1704,7 @@ async function ingestGmgnToken(snapshot, options = {}) {
       gmgnSecurity: guardResult.gmgnSecurity,
       gmgnInfo: guardResult.gmgnInfo,
       gmgnKlineAnalysis: guardResult.gmgnKlineAnalysis,
+      topHolderAssessment: guardResult.topHolderAssessment,
     };
   }
   const { securityGuard } = guardResult;
@@ -1490,7 +1712,7 @@ async function ingestGmgnToken(snapshot, options = {}) {
   await resolved.tokenCatalogModel.upsertToken(buildCatalogPayload(filledSnapshot, tokenBefore, { manualProtected }));
   const tokenAfter = await resolved.tokenCatalogModel.applyEvaluationResult(
     address,
-    deriveGmgnEvaluation(filledSnapshot, tokenBefore, resolved)
+    deriveGmgnEvaluation(filledSnapshot, tokenBefore, resolved, securityGuard)
   );
 
   summary.catalogUpdated = tokenAfter ? 1 : 0;
@@ -1727,6 +1949,7 @@ module.exports = {
     buildMarketBucketPayload,
     buildVolumeBucketPayload,
     calculateTokenAgeHours,
+    calculateTokenAgeMs,
     canPersistGmgnVisualBuckets,
     computeSnapshotVolumeToMcapRatio,
     createEmptyIngestionSummary,
@@ -1741,10 +1964,12 @@ module.exports = {
     hasCompletedGmgnPreliminaryReview,
     hasDexConfirmation,
     hasKnownLaunchSuffix,
+    hasGmgnSecurityTopHolderRisk,
     isOneMinuteOnlyDiscovery,
     isHighConfidenceJunkAssessment,
     isJunkAssessment,
     isGmgnSecurityAutoBlockRisk,
+    buildGmgnSecurityTopHolderAssessment,
     isGmgnInfoAutoBlockRisk,
     isGmgnBadLiquidityStatusMcapBandRisk,
     isGmgnLowLiquiditySpamRisk,

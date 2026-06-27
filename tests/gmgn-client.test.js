@@ -187,6 +187,7 @@ describe('gmgn client', () => {
           stdout: JSON.stringify({
             address: TOKEN_A,
             top_10_holder_rate: '0.9234',
+            top_20_holder_rate: '0.9734',
             hide_risk: false,
             renounced_freeze_account: true,
             renounced_mint: true,
@@ -206,6 +207,7 @@ describe('gmgn client', () => {
     assert.equal(calls[0].apiKey, 'test-key');
     assert.equal(security.address, TOKEN_A);
     assert.equal(security.top10HolderRate, 0.9234);
+    assert.equal(security.top20HolderRate, 0.9734);
     assert.equal(security.hideRisk, false);
     assert.equal(security.renouncedFreezeAccount, true);
     assert.equal(security.renouncedMint, true);
@@ -217,9 +219,11 @@ describe('gmgn client', () => {
     const security = gmgn.__private.normalizeTokenSecurityPayload({
       address: TOKEN_A,
       top_10_holder_rate: '92.34',
+      top_20_holder_rate: '97.34',
     });
 
     assert.equal(security.top10HolderRate, 0.9234);
+    assert.equal(security.top20HolderRate, 0.9734);
   });
 
   it('normalizes token info holder and derived market cap metrics', async () => {
