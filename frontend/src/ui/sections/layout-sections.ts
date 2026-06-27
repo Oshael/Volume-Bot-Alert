@@ -3423,7 +3423,7 @@ function renderPublicBillingPlanCard(
         <strong>${escapeHtml(plan.label)}</strong>
         <span>${escapeHtml(descriptor)}</span>
       </div>
-      ${renderBillingPriceRow(plan, 'legacy-public-plan-price-row', 'legacy-public-plan-price')}
+      ${renderBillingPriceRow(state, plan, 'legacy-public-plan-price-row', 'legacy-public-plan-price')}
       <div class="legacy-billing-plan-meta legacy-public-plan-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
       ${renderPublicBillingPlanValueLine(plan, recommended, shortestPlan)}
       ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
@@ -3451,7 +3451,7 @@ function renderProfileBillingPlanCard(
         <strong>${escapeHtml(plan.label)}</strong>
         <span>${escapeHtml(descriptor)}</span>
       </div>
-      ${renderBillingPriceRow(plan, 'legacy-profile-billing-price-row', 'legacy-profile-billing-price')}
+      ${renderBillingPriceRow(state, plan, 'legacy-profile-billing-price-row', 'legacy-profile-billing-price')}
       <div class="legacy-billing-plan-meta legacy-profile-billing-meta">${plan.available ? 'Continue with account-bound checkout in a new tab' : escapeHtml(plan.availabilityReason || 'Unavailable')}</div>
       ${pending ? `<div class="legacy-billing-plan-pending-banner"><span class="legacy-billing-plan-spinner" aria-hidden="true"></span>Generating secure checkout link...</div>` : ''}
       <div class="legacy-auth-panel-actions legacy-user-settings-actions">
@@ -3664,12 +3664,14 @@ function getPlanDisplayAmount(plan: AppState['billing']['plans'][number]) {
 }
 
 function renderBillingPriceRow(
+  state: AppState,
   plan: AppState['billing']['plans'][number],
   rowClass: string,
   priceClass: string,
 ) {
   const displayAmount = getPlanDisplayAmount(plan);
   const discountLabel = plan.discountAvailable ? `-${plan.discountPercent || 0}% OFF` : '';
+  const tokenDiscountLine = getTokenDiscountLineLabel(state, plan);
   return `
     ${plan.discountAvailable ? `
       <div class="legacy-token-discount-badge">${escapeHtml(discountLabel)}</div>
@@ -3680,9 +3682,19 @@ function renderBillingPriceRow(
       <strong class="legacy-billing-plan-price ${priceClass}">${escapeHtml(formatBillingMajorAmount(displayAmount))}</strong>
     </div>
     ${plan.discountAvailable ? `
-      <div class="legacy-token-discount-line">${escapeHtml('Token holder discount applied')}</div>
+      <div class="legacy-token-discount-line">${escapeHtml(tokenDiscountLine)}</div>
     ` : ''}
   `;
+}
+
+function getTokenDiscountLineLabel(state: AppState, plan: AppState['billing']['plans'][number]) {
+  const discountPercent = state.session.tokenDiscountPercent
+    || plan.discountPercent
+    || getDiscountPercentFromTier(state.session.tokenTier);
+  if (discountPercent === 50) return 'Tier 1 Token Holder Discount';
+  if (discountPercent === 25) return 'Tier 2 Token Holder Discount';
+  if (discountPercent === 10) return 'Tier 3 Token Holder Discount';
+  return 'Token Holder Discount';
 }
 
 function getTokenTierLabel(tier: string | null) {
