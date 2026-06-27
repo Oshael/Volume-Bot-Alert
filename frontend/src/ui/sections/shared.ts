@@ -37,11 +37,12 @@ const EXPANDED_SPARKLINE_PADDING_Y = 16;
 const TOKEN_IMAGE_PREVIEW_DELAY_MS = 120;
 const TOKEN_IMAGE_PREVIEW_OFFSET_PX = 14;
 const TOKEN_IMAGE_PREVIEW_MOUSE_SUPPRESSION_MS = 350;
-const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
   hour: 'numeric',
   minute: '2-digit',
+  hour12: true,
 });
 const TOP_EDGE_PAGE_SCROLL_BRIDGE_DELAY_MS = 400;
 const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
