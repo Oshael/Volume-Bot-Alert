@@ -229,7 +229,7 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          last_mcap,
          last_token_created_at_ms,
          CASE
-           WHEN last_token_created_at_ms IS NOT NULL
+           WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
             THEN GREATEST(0, $3::bigint - last_token_created_at_ms)
            ELSE NULL
          END AS age_ms_at_alert,
@@ -250,11 +250,11 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          normalized_symbol,
          COUNT(*) AS exact_count,
          0 AS subticker_count,
-         COUNT(*) FILTER (WHERE last_token_created_at_ms IS NULL) AS exact_missing_created_at_count,
+         COUNT(*) FILTER (WHERE last_token_created_at_ms IS NULL OR last_token_created_at_ms <= 0) AS exact_missing_created_at_count,
          COUNT(*) FILTER (WHERE last_mcap IS NULL OR last_mcap <= 0) AS exact_missing_mcap_count,
          (
            ARRAY_AGG(address ORDER BY last_token_created_at_ms ASC, address ASC)
-           FILTER (WHERE last_token_created_at_ms IS NOT NULL)
+           FILTER (WHERE last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0)
          )[1] AS oldest_exact_address,
          (
            ARRAY_AGG(address ORDER BY last_mcap DESC, COALESCE(last_token_created_at_ms, 9223372036854775807) ASC, address ASC)
@@ -333,7 +333,7 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          last_mcap,
          last_token_created_at_ms,
          CASE
-           WHEN last_token_created_at_ms IS NOT NULL
+           WHEN last_token_created_at_ms IS NOT NULL AND last_token_created_at_ms > 0
             THEN GREATEST(0, $4::bigint - last_token_created_at_ms)
            ELSE NULL
          END AS age_ms_at_alert,
@@ -374,11 +374,18 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
        SELECT
          COUNT(*) FILTER (WHERE normalized_symbol = $1) AS exact_count,
          COUNT(*) FILTER (WHERE normalized_symbol <> $1) AS subticker_count,
-         COUNT(*) FILTER (WHERE normalized_symbol = $1 AND last_token_created_at_ms IS NULL) AS exact_missing_created_at_count,
+         COUNT(*) FILTER (
+           WHERE normalized_symbol = $1
+             AND (last_token_created_at_ms IS NULL OR last_token_created_at_ms <= 0)
+         ) AS exact_missing_created_at_count,
          COUNT(*) FILTER (WHERE normalized_symbol = $1 AND (last_mcap IS NULL OR last_mcap <= 0)) AS exact_missing_mcap_count,
          (
            ARRAY_AGG(address ORDER BY last_token_created_at_ms ASC, address ASC)
-           FILTER (WHERE normalized_symbol = $1 AND last_token_created_at_ms IS NOT NULL)
+           FILTER (
+             WHERE normalized_symbol = $1
+               AND last_token_created_at_ms IS NOT NULL
+               AND last_token_created_at_ms > 0
+           )
          )[1] AS oldest_exact_address,
          (
            ARRAY_AGG(address ORDER BY last_mcap DESC, COALESCE(last_token_created_at_ms, 9223372036854775807) ASC, address ASC)

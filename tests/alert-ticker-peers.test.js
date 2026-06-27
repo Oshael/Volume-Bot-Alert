@@ -95,6 +95,33 @@ describe('alert ticker peers', () => {
     assert.equal(role, 'peer_warning');
   });
 
+  it('treats nonpositive token-created timestamps as missing for OG peer queries', async () => {
+    const calls = [];
+    const runner = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        return { rows: [] };
+      },
+    };
+
+    await alertTickerPeers.__private.queryTickerPeerRowsBySymbol('HOBBES', {}, runner);
+    await alertTickerPeers.listTickerPeerSummariesForTokens([
+      { address: SOURCE_ADDRESS, symbol: 'HOBBES' },
+    ], {}, runner);
+
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      assert.match(
+        call.sql,
+        /last_token_created_at_ms IS NOT NULL\s+AND last_token_created_at_ms > 0/i
+      );
+      assert.match(
+        call.sql,
+        /last_token_created_at_ms IS NULL OR last_token_created_at_ms <= 0/i
+      );
+    }
+  });
+
   it('adds peer role metadata to alert snapshots', async () => {
     const calls = [];
     const runner = {
