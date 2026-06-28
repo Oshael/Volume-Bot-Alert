@@ -9113,6 +9113,32 @@ TEMP_LEGACY_BAR_TITLE {
   height: 38px !important;
 }
 
+@media (min-width: 1500px) {
+  .manual-bar .sparkline-col,
+  .recent-bar .sparkline-col,
+  .old-week-bar .sparkline-col {
+    width: clamp(180px, 20vw, 340px);
+    min-width: clamp(180px, 20vw, 340px);
+  }
+
+  .manual-bar .sparkline-wrap,
+  .manual-bar .token-sparkline,
+  .recent-bar .sparkline-wrap,
+  .recent-bar .token-sparkline,
+  .old-week-bar .sparkline-wrap,
+  .old-week-bar .token-sparkline {
+    width: 100%;
+    height: 64px;
+  }
+
+  .manual-bar .sparkline-loading,
+  .recent-bar .sparkline-loading,
+  .old-week-bar .sparkline-loading {
+    width: 100%;
+    min-height: 64px;
+  }
+}
+
 .manual-bar .pct-pos,
 .manual-bar .pct-neg,
 .manual-bar .pct-neutral,
@@ -10040,12 +10066,6 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-panel-mini-chart-enabled .monitored-token-row-v68 {
   grid-template-columns: 36px minmax(0, 1fr) minmax(224px, 312px) 88px;
   align-items: center;
-}
-
-@media (min-width: 1500px) {
-  .monitored-panel-mini-chart-enabled .monitored-token-row-v68 {
-    grid-template-columns: 36px minmax(0, 1fr) minmax(280px, clamp(312px, 28vw, 520px)) 88px;
-  }
 }
 
 .monitored-panel-mini-chart-enabled .monitored-side-v68 {
