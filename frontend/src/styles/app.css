@@ -10042,6 +10042,12 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: center;
 }
 
+@media (min-width: 1500px) {
+  .monitored-panel-mini-chart-enabled .monitored-token-row-v68 {
+    grid-template-columns: 36px minmax(0, 1fr) minmax(280px, clamp(312px, 28vw, 520px)) 88px;
+  }
+}
+
 .monitored-panel-mini-chart-enabled .monitored-side-v68 {
   min-width: 88px;
 }

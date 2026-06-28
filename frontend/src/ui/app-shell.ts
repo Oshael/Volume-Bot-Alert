@@ -783,6 +783,7 @@ function serializeSparklineForView(state: AppState, address: string) {
   const entry = state.data.sparklineByAddress[address] || null;
   const series = Array.isArray(entry?.series) ? entry.series : [];
   return serializePrimitiveList([
+    Boolean(entry?.loading),
     entry?.pairAddress,
     entry?.bucketCount,
     entry?.coverageRatio == null ? null : Number(entry.coverageRatio).toFixed(3),
@@ -793,6 +794,20 @@ function serializeSparklineForView(state: AppState, address: string) {
     series.length,
     series.map((value) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : '')).join('|'),
   ]);
+}
+
+function getPagedBucketSparklineRenderSnapshot(
+  state: AppState,
+  tokens: ReturnType<typeof getRecentTokens>,
+  page: number,
+  perPage: number,
+) {
+  const safePerPage = Math.max(10, Math.floor(perPage) || 15);
+  const totalPages = Math.max(1, Math.ceil(tokens.length / safePerPage));
+  const safePage = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
+  const pageItems = tokens.slice(safePage * safePerPage, safePage * safePerPage + safePerPage);
+
+  return pageItems.map((token) => serializeSparklineForView(state, token.address));
 }
 
 function serializeMeteoraForView(state: AppState, address: string) {
@@ -1204,6 +1219,12 @@ function getRecentRenderKey(state: AppState) {
     tokenCount: state.data.recentTokenAddresses.length,
     ageMinute: Math.floor(Date.now() / 60000),
     tokens: getRecentTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
+    sparklines: getPagedBucketSparklineRenderSnapshot(
+      state,
+      getRecentTokens(state),
+      state.ui.recentPage,
+      state.ui.recentPerPage,
+    ),
   });
 }
 
@@ -1225,6 +1246,12 @@ function getOldWeekRenderKey(state: AppState) {
     tokenCount: state.data.oldWeekTokenAddresses.length,
     ageMinute: Math.floor(Date.now() / 60000),
     tokens: getOldWeekTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
+    sparklines: getPagedBucketSparklineRenderSnapshot(
+      state,
+      getOldWeekTokens(state),
+      state.ui.oldWeekPage,
+      state.ui.oldWeekPerPage,
+    ),
   });
 }
 
