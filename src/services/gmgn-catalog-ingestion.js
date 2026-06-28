@@ -30,6 +30,7 @@ const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
 const GMGN_NON_LAUNCH_GRACE_SUPPRESSION_REASON = 'gmgn_non_launch_grace_period';
 const GMGN_NON_LAUNCH_GRACE_MS = 15 * 60 * 1000;
 const GMGN_ONE_MINUTE_ONLY_OLD_TOKEN_MIN_AGE_HOURS = 24;
+const GMGN_OLD_NEW_DISCOVERY_GUARD_MIN_AGE_HOURS = 10 * 24;
 const GMGN_YOUNG_TOKEN_MAX_AGE_HOURS = 2;
 const GMGN_RISK_LOOKUP_MAX_AGE_HOURS = 6;
 const GMGN_YOUNG_VOL_1H_TO_MCAP_RATIO = 10;
@@ -497,6 +498,15 @@ function shouldSkipNewGmgnDiscovery(snapshot, tokenBefore, now = new Date()) {
   return !tokenBefore
     && isOneMinuteOnlyDiscovery(snapshot)
     && !isOldEnoughForOneMinuteOnlyDiscovery(snapshot, now);
+}
+
+function shouldGuardOldNewGmgnDiscovery(snapshot, tokenBefore, now = new Date()) {
+  if (tokenBefore) {
+    return false;
+  }
+
+  const ageHours = calculateTokenAgeHours(snapshot, now);
+  return ageHours != null && ageHours >= GMGN_OLD_NEW_DISCOVERY_GUARD_MIN_AGE_HOURS;
 }
 
 function resolveGmgnNonLaunchGraceUntil(snapshot = {}, tokenBefore = null, now = new Date()) {
@@ -1619,6 +1629,14 @@ function shouldKeepTokenInGmgnPanel(result) {
 }
 
 async function applyPreCatalogGmgnGuards(address, snapshot, tokenBefore, options, summary, manualProtected, now) {
+  if (shouldGuardOldNewGmgnDiscovery(snapshot, tokenBefore, now)) {
+    summary.gmgnOldNewDiscoveryGuarded += 1;
+    return {
+      skipped: false,
+      oldNewDiscoveryGuarded: true,
+    };
+  }
+
   const junkGuard = await applyGmgnJunkGuard(address, snapshot, tokenBefore, options, summary, manualProtected);
   if (junkGuard?.skipped) {
     return {
@@ -1800,6 +1818,7 @@ function createEmptyIngestionSummary() {
     matcherEmitted: 0,
     gmgn1mAlerts: 0,
     skipped1mOnlyDiscovery: 0,
+    gmgnOldNewDiscoveryGuarded: 0,
     autoBlockedJunk: 0,
     skippedJunkSuspect: 0,
     junkAssessments: 0,
@@ -1841,6 +1860,7 @@ function mergeIngestionSummary(target, source) {
   target.matcherEmitted += source.matcherEmitted;
   target.gmgn1mAlerts += source.gmgn1mAlerts;
   target.skipped1mOnlyDiscovery += source.skipped1mOnlyDiscovery;
+  target.gmgnOldNewDiscoveryGuarded += source.gmgnOldNewDiscoveryGuarded;
   target.autoBlockedJunk += source.autoBlockedJunk;
   target.skippedJunkSuspect += source.skippedJunkSuspect;
   target.junkAssessments += source.junkAssessments;
@@ -1966,6 +1986,7 @@ module.exports = {
     hasKnownLaunchSuffix,
     hasGmgnSecurityTopHolderRisk,
     isOneMinuteOnlyDiscovery,
+    shouldGuardOldNewGmgnDiscovery,
     isHighConfidenceJunkAssessment,
     isJunkAssessment,
     isGmgnSecurityAutoBlockRisk,

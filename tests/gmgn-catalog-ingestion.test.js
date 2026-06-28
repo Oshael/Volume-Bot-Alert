@@ -1413,6 +1413,61 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(matcherCalls, 0);
   });
 
+  it('does not auto-block old GMGN junk discovered for the first time', async () => {
+    let blockCalls = 0;
+    let upsertCalls = 0;
+    let evaluationCalls = 0;
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createHighConfidenceJunkSnapshot(),
+      tokenCreatedAt: '2026-04-20T07:00:00.000Z',
+    }, {
+      now: () => new Date('2026-05-03T07:00:00.000Z'),
+      evaluationState: new Map(),
+      adminBlockedTokenModel: {
+        async add() {
+          blockCalls += 1;
+        },
+      },
+      tokenCatalogModel: {
+        async getByAddress() {
+          return null;
+        },
+        async upsertToken() {
+          upsertCalls += 1;
+        },
+        async applyEvaluationResult(address, payload) {
+          evaluationCalls += 1;
+          return {
+            address,
+            source: 'gmgn',
+            eligible_for_monitoring: payload.eligibleForMonitoring,
+            eligibility_state: payload.eligibilityState,
+            suppressed_reason: payload.suppressedReason,
+          };
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket() {
+          return {};
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          throw new Error('old first-seen GMGN token without review should not alert immediately');
+        },
+      },
+    });
+
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.summary.gmgnOldNewDiscoveryGuarded, 1);
+    assert.equal(result.summary.autoBlockedJunk, 0);
+    assert.equal(result.summary.junkAssessments, 0);
+    assert.equal(blockCalls, 0);
+    assert.equal(upsertCalls, 1);
+    assert.equal(evaluationCalls, 1);
+  });
+
   it('skips medium-confidence new GMGN junk without auto-blocking', async () => {
     let blockCalls = 0;
     let upsertCalls = 0;
