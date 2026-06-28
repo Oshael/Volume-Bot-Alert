@@ -45,6 +45,12 @@ const MATCHER_RULE_KEYS = Object.freeze([
   'old-week-surge-6h',
   'meteora-surge',
 ]);
+const SURGE_RULE_KEYS = Object.freeze([
+  'recent-surge-1h',
+  'recent-surge-6h',
+  'old-week-surge-1h',
+  'old-week-surge-6h',
+]);
 const RULE_ENABLED_FIELD_BY_KEY = Object.freeze({
   'monitored-vol': 'monitoredVol',
   [GMGN_VOL_1M_RULE_KEY]: 'monitoredVol',
@@ -844,16 +850,10 @@ function buildRepeatAwarePayload(candidate, state) {
 }
 
 function getRelatedSurgeRuleKeys(ruleKey) {
-  if (ruleKey === 'recent-surge-1h' || ruleKey === 'recent-surge-6h') {
-    return ['recent-surge-1h', 'recent-surge-6h'];
-  }
-  if (ruleKey === 'old-week-surge-1h' || ruleKey === 'old-week-surge-6h') {
-    return ['old-week-surge-1h', 'old-week-surge-6h'];
-  }
-  return [];
+  return SURGE_RULE_KEYS.includes(ruleKey) ? SURGE_RULE_KEYS : [];
 }
 
-async function hasRecentRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps) {
+async function hasBlockingRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps) {
   if (candidate?.kind !== 'old-surge') {
     return false;
   }
@@ -862,7 +862,14 @@ async function hasRecentRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs,
   for (const relatedRuleKey of relatedRuleKeys) {
     const relatedState = await deps.userAlertRuleState.getState(profile.userId, relatedRuleKey, tokenAfter.address);
     const lastAlertedAtMs = toTimestampMs(relatedState?.lastAlertedAt);
-    if (lastAlertedAtMs != null && (nowMs - lastAlertedAtMs) < SURGE_CROSS_WINDOW_COOLDOWN_MS) {
+    if (lastAlertedAtMs == null) {
+      continue;
+    }
+    if ((nowMs - lastAlertedAtMs) < SURGE_CROSS_WINDOW_COOLDOWN_MS) {
+      return true;
+    }
+    if (toNumberOrNull(relatedState?.lastAlertedPct) != null
+      && !canRepeatSurgeInSession(candidate, relatedState)) {
       return true;
     }
   }
@@ -997,8 +1004,9 @@ function resolveCandidateState(candidate, rawState, profile) {
   return rawState;
 }
 
-function shouldSuppressSurgeSessionRepeat(candidate, state, profile) {
-  return isSameSurgeSessionState(candidate, state, profile)
+function shouldSuppressSurgeRepeat(candidate, state, profile) {
+  return candidate?.kind === 'old-surge'
+    && (isSameSurgeSessionState(candidate, state, profile) || toTimestampMs(state?.lastAlertedAt) != null)
     && toNumberOrNull(state?.lastAlertedPct) != null
     && !canRepeatSurgeInSession(candidate, state);
 }
@@ -1062,7 +1070,7 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   if (shouldSuppressHiddenSessionRepeat(state, profile)) {
     return 'suppress';
   }
-  if (shouldSuppressSurgeSessionRepeat(candidate, state, profile)) {
+  if (shouldSuppressSurgeRepeat(candidate, state, profile)) {
     return 'suppress';
   }
   if (shouldSuppressMeteoraSessionRepeat(candidate, state, profile)) {
@@ -1081,13 +1089,13 @@ async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKey
   for (const candidate of Array.isArray(candidates) ? candidates : [candidates].filter(Boolean)) {
     const rawState = await deps.userAlertRuleState.getState(profile.userId, candidate.ruleKey, tokenAfter.address);
     const state = resolveCandidateState(candidate, rawState, profile);
-    const hasRelatedSurgeCooldown = await hasRecentRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps);
+    const hasBlockingSurgeAlert = await hasBlockingRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps);
     const decision = getCandidateLifecycleDecision(candidate, state, profile, nowMs);
 
     if (decision === 'prime') {
       await primeCandidate(profile, tokenAfter, candidate, nowMs, deps);
       summary.suppressed += 1;
-    } else if (hasRelatedSurgeCooldown) {
+    } else if (hasBlockingSurgeAlert) {
       summary.suppressed += 1;
     } else if (decision === 'emit') {
       const event = await emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps);
@@ -1217,7 +1225,7 @@ module.exports = {
     hasRequiredSurgePctAdvance,
     hasSatisfiedRepeatAdvance,
     hasAdvancedRepeatValue,
-    hasRecentRelatedSurgeAlert,
+    hasBlockingRelatedSurgeAlert,
     createEmptySummary,
     getCandidateLifecycleDecision,
     getRelatedSurgeRuleKeys,
@@ -1238,7 +1246,7 @@ module.exports = {
     roundAlertMetric,
     resolveCandidateState,
     resolveDisplaySymbol,
-    shouldSuppressSurgeSessionRepeat,
+    shouldSuppressSurgeRepeat,
     shouldSuppressHiddenSessionRepeat,
     toProfileHiddenSessionKey,
     toProfileLoadedAtMs,

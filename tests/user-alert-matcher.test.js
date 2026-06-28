@@ -1799,6 +1799,124 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
+  it('suppresses a rearmed 6h surge after reload until price change and market cap beat the last alert', async () => {
+    const previousLoadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 9, 6, 0);
+    const loadedAt = new Date(nowMs - (3 * 60 * 1000)).toISOString();
+    const createdAt = nowMs - (240 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 66,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (70 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 103,
+          lastAlertedValue: 103,
+          metadata: {
+            lastDecision: 'rearmed',
+            lastAlertedMcap: 448000,
+            sessionStartedAt: previousLoadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 99,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'KITTY',
+        last_mcap: 414000,
+        last_vol_24h: 51000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 106,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('suppresses a surge window when another surge already alerted the same token without the required advance', async () => {
+    const nowMs = Date.UTC(2026, 3, 17, 1, 58, 0);
+    const createdAt = nowMs - (6 * 24 * 60 * 60 * 1000);
+    const loadedAt = new Date(nowMs - (2 * 60 * 60 * 1000)).toISOString();
+    const context = createDeps({
+      profiles: [{
+        userId: 67,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: true,
+          recentSurge6h: true,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: false,
+          meteoraSurge: false,
+        },
+        recentSurge1hThresholdPct: 50,
+        recentSurge6hThresholdPct: 100,
+      }],
+      getState(_userId, ruleKey) {
+        if (ruleKey === 'recent-surge-6h') {
+          return {
+            status: 'rearmed',
+            rearmRequired: false,
+            lastAlertedAt: new Date(nowMs - (61 * 60 * 1000)).toISOString(),
+            lastAlertedPct: 1365,
+            lastAlertedValue: 1365,
+            metadata: {
+              lastDecision: 'rearmed',
+              lastAlertedMcap: 167000,
+              sessionStartedAt: loadedAt,
+            },
+          };
+        }
+        return null;
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_1h: 49,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'BANKS',
+        last_mcap: 313000,
+        last_vol_24h: 388000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_1h: 75,
+        last_price_change_6h: 90,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
   it('suppresses a primed 1h surge until the same-session price change advances by 5pp', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);
