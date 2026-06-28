@@ -197,6 +197,7 @@ const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
+const MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE = 500;
 const MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS = 3 * 1000;
 const FLOATING_QUICK_BUY_NOTIONAL_SOL = 0.3;
 const FLOATING_QUICK_BUY_DASHBOARD_REFRESH_INTERVAL_MS = MONITORED_REFRESH_INTERVAL_MS;
@@ -1005,6 +1006,7 @@ export function createAppController(): AppController {
   let historyBootstrapInFlightRequestKey = '';
   let queuedHistoryBootstrapRefresh: HistoryBootstrapRefreshOptions | null = null;
   let historyBootstrapRequestRevision = 0;
+  let lastAppliedHistoryBootstrapOrderLockKey = '';
   const historyBucketOrderLocks = {
     recent: false,
     oldWeek: false,
@@ -6994,7 +6996,7 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(message.payload);
+      applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload);
       emit('recent', 'old-week', 'bid-zone', 'header');
       return;
     }
@@ -7046,7 +7048,7 @@ export function createAppController(): AppController {
       }
 
       clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(payload, options?.manualTokensOverride);
+      applyHistoryBootstrapPayload(payload, options?.manualTokensOverride, requestPayload);
       broadcastHistoryBootstrapSnapshot(payload, requestPayload);
       void refreshHistoryWorkspaceSparklines({ token });
       refreshMockTradingStateForMarketPoll();
@@ -7101,29 +7103,33 @@ export function createAppController(): AppController {
 
     monitoredRefreshInFlight = true;
     try {
-      const monitoredDashboard = await measureRuntimePerfAsync(
+      const manualTokens = getManualTokens(state).map((item) => ({
+        address: item.address,
+        label: item.label ?? null,
+      }));
+      await measureRuntimePerfAsync(
         'api.dashboard.monitored',
         isRuntimePerfDebugActive(),
         { workspace: state.ui.workspace, mode: 'poll' },
-        () => fetchDashboardMonitored(token),
+        () => hydratePagedDashboardMonitored(
+          token,
+          manualTokens,
+          options?.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE,
+          { includeAlertFeed: Boolean(options?.includeAlertFeed) },
+        ),
       );
-      applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
       void refreshDashboardTopPerformers(token);
       void refreshHistoryWorkspaceSparklines({ token });
-      void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
-        address: item.address,
-        label: item.label ?? null,
-      })), { emitOnComplete: isLiveWorkspace() });
+      void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: isLiveWorkspace() });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
         setError(null);
       }
       lastMonitoredDashboardError = null;
-      queueSupplementalMeteoraRefresh(token, monitoredDashboard.tokens);
-      queueDashboardAlertFeedRefresh(token, options?.includeAlertFeed, options?.alertFeedMode);
       if (isHistoryWorkspace() && isHistorySyncLeader()) {
-        broadcastHistoryMonitoredSnapshot(monitoredDashboard.tokens, monitoredDashboard.generatedAt ?? null);
+        broadcastHistoryMonitoredSnapshot(monitoredSnapshot, null);
       }
       if (isLiveWorkspace()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'header');
@@ -8086,6 +8092,20 @@ export function createAppController(): AppController {
     };
   }
 
+  function buildHistoryBootstrapOrderLockKey(requestPayload: HistoryBootstrapRequestPayload) {
+    return JSON.stringify({
+      token: state.session.token ?? '',
+      starredTokens: requestPayload.starredTokens,
+      recent: requestPayload.recent,
+      oldWeek: requestPayload.oldWeek,
+    });
+  }
+
+  function isCurrentHistoryBootstrapOrderLockReady() {
+    return Boolean(lastAppliedHistoryBootstrapOrderLockKey)
+      && lastAppliedHistoryBootstrapOrderLockKey === buildHistoryBootstrapOrderLockKey(buildHistoryBootstrapRequest());
+  }
+
   function buildHistoryBootstrapRequestKey(
     token: string,
     requestPayload: HistoryBootstrapRequestPayload,
@@ -8239,6 +8259,7 @@ export function createAppController(): AppController {
   function applyHistoryBootstrapPayload(
     payload: Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>,
     manualTokensOverride?: AddressItem[],
+    appliedRequestPayload?: HistoryBootstrapRequestPayload,
   ) {
     const previousRecentAddresses = state.data.recentTokenAddresses.slice();
     const previousOldWeekAddresses = state.data.oldWeekTokenAddresses.slice();
@@ -8273,6 +8294,7 @@ export function createAppController(): AppController {
     state.ui.recentPage = requestedRecentPage;
     state.ui.oldWeekPage = requestedOldWeekPage;
     state.runtime.routedRevision += 1;
+    lastAppliedHistoryBootstrapOrderLockKey = buildHistoryBootstrapOrderLockKey(appliedRequestPayload ?? historyRequestDebug);
     syncRoutedPagination();
     const missingRecentTracked = state.data.recentTokenAddresses
       .filter((address) => !state.data.trackedTokensByAddress[address])
@@ -8490,16 +8512,17 @@ export function createAppController(): AppController {
     token: string,
     manualTokens: AddressItem[],
     alertFeedMode: DashboardAlertFeedMode,
+    options: { includeAlertFeed?: boolean } = { includeAlertFeed: true },
   ) {
     const requestRevision = monitoredBootstrapHydrationRevision + 1;
     monitoredBootstrapHydrationRevision = requestRevision;
-    const firstPageSize = Math.max(1, state.ui.monitoredPerPage || 30);
+    const pageSize = MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE;
     const bootstrapSorts = getMonitoredBootstrapSorts();
     const preserveExistingUntilComplete = getCurrentMonitoredDashboardSnapshot().length > 0;
     const firstPage = await fetchMonitoredHydrationPage({
       token,
       page: 0,
-      perPage: firstPageSize,
+      perPage: pageSize,
       sorts: bootstrapSorts,
     });
     if (!isMonitoredHydrationCurrent(requestRevision, token)) {
@@ -8508,7 +8531,7 @@ export function createAppController(): AppController {
 
     let aggregatedTokens = [...(firstPage.tokens || [])];
     const generatedAt = firstPage.generatedAt ?? null;
-    const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || firstPageSize, 1));
+    const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || pageSize, 1));
     const firstPageComplete = isMonitoredHydrationPageComplete({
       page: 0,
       totalPages,
@@ -8525,7 +8548,7 @@ export function createAppController(): AppController {
       generatedAt,
     });
     void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-    queueDashboardAlertFeedRefresh(token, true, alertFeedMode);
+    queueDashboardAlertFeedRefresh(token, Boolean(options.includeAlertFeed), alertFeedMode);
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
       generatedAt,
       returned: firstPage.tokens.length,
@@ -8550,7 +8573,7 @@ export function createAppController(): AppController {
       const nextPage = await fetchMonitoredHydrationPage({
         token,
         page,
-        perPage: firstPageSize,
+        perPage: pageSize,
         sorts: bootstrapSorts,
       });
       if (!isMonitoredHydrationCurrent(requestRevision, token)) {
@@ -10175,6 +10198,10 @@ export function createAppController(): AppController {
     },
     setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean) {
       if (!usesHistoryBucketBootstrap()) {
+        return;
+      }
+
+      if (locked && !isCurrentHistoryBootstrapOrderLockReady()) {
         return;
       }
 
