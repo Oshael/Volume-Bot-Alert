@@ -9137,6 +9137,20 @@ TEMP_LEGACY_BAR_TITLE {
     width: 100%;
     min-height: 64px;
   }
+
+  .manual-bar .token-sparkline-glow,
+  .recent-bar .token-sparkline-glow,
+  .old-week-bar .token-sparkline-glow {
+    stroke-width: 3.4;
+    stroke-opacity: 0.2;
+    filter: blur(2.2px);
+  }
+
+  .manual-bar .token-sparkline-line,
+  .recent-bar .token-sparkline-line,
+  .old-week-bar .token-sparkline-line {
+    stroke-width: 1.45;
+  }
 }
 
 .manual-bar .pct-pos,
