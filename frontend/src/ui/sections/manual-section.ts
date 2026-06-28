@@ -54,6 +54,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
     <div class="legacy-bar-head">
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
       <div class="legacy-bar-controls">
+        ${renderManualTokenEntryFormMarkup(state)}
         <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="manual" aria-label="Collapse manual tokens"><span class="compact-icon-glyph">−</span></button>
         <div class="compact-search ${searchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
@@ -137,25 +138,30 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
   bindTokenImagePreview(section);
   bindBucketSortControls(section, controller, 'manual');
+  bindManualTokenEntryForm(section, controller);
   return section;
 }
 
-export function renderManualTokenEntryForm(state: AppState, controller: AppController) {
-  const wrap = document.createElement('div');
-  wrap.className = 'panel-manual-entry';
-  wrap.innerHTML = `
-    <form class="manual-token-form panel-manual-form" data-role="manual-token-form">
-      <input name="address" type="text" placeholder="Token address (CA)..." required ${state.ui.busy ? 'disabled' : ''} />
-      <button type="button" class="legacy-btn legacy-btn-accent" data-action="manual-add" ${state.ui.busy ? 'disabled' : ''}>ADD</button>
+function renderManualTokenEntryFormMarkup(state: AppState) {
+  return `
+    <form class="manual-token-form manual-token-inline-form" data-role="manual-token-form">
+      <input name="address" type="text" placeholder="Token address (CA)..." aria-label="Token address" required ${state.ui.busy ? 'disabled' : ''} />
+      <button type="button" class="old-filter-btn manual-token-inline-trigger" data-action="manual-add" ${state.ui.busy ? 'disabled' : ''}>ADD TOKEN</button>
     </form>
   `;
+}
 
-  const form = wrap.querySelector<HTMLFormElement>('form[data-role="manual-token-form"]');
-  const input = wrap.querySelector<HTMLInputElement>('input[name="address"]');
-  const button = wrap.querySelector<HTMLButtonElement>('button[data-action="manual-add"]');
+function bindManualTokenEntryForm(root: ParentNode, controller: AppController) {
+  const form = root.querySelector<HTMLFormElement>('form[data-role="manual-token-form"]');
+  const input = root.querySelector<HTMLInputElement>('input[name="address"]');
+  const button = root.querySelector<HTMLButtonElement>('button[data-action="manual-add"]');
 
   const submitManual = () => {
     const value = String(input?.value || '').trim();
+    if (!value) {
+      input?.focus();
+      return;
+    }
     const active = document.activeElement;
     if (active instanceof HTMLElement) {
       active.blur();
@@ -171,6 +177,4 @@ export function renderManualTokenEntryForm(state: AppState, controller: AppContr
   button?.addEventListener('click', () => {
     submitManual();
   });
-
-  return wrap;
 }

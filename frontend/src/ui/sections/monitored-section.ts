@@ -1,6 +1,5 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { renderManualTokenEntryForm } from './manual-section';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderMeteoraCell, renderSparklineFigure } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
@@ -20,7 +19,6 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   }
 
   renderMonitoredRows(section, state, view.pageItems);
-  section.append(renderManualTokenEntryForm(state, controller));
   bindMonitoredSectionControls(section, state, controller, view);
   return section;
 }
@@ -119,7 +117,7 @@ function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
               </div>
             </div>
           </div>
-          <span class="monitored-token-pill-wrap">
+          <span class="monitored-token-pill-wrap monitored-token-pill-wrap-top">
             <span class="panel-header-label">TOKENS</span>
             <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
           </span>
@@ -132,13 +130,23 @@ function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
               <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
             </div>
             <div class="monitored-inline-controls">
-              <label class="legacy-mini-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
-              <label class="legacy-mini-field">PAGE <input type="number" min="1" max="${view.filteredTotalPages}" step="1" data-action="monitored-page-jump" /></label>
-              <span class="bucket-page-total">${view.filteredTotalPages}</span>
+              <label class="legacy-mini-field monitored-per-page-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
+              <label class="legacy-mini-field monitored-page-field">
+                PAGE
+                <span class="monitored-page-box">
+                  <input type="number" min="1" max="${view.filteredTotalPages}" step="1" data-action="monitored-page-jump" aria-label="Current monitored page" />
+                  <span class="monitored-page-separator" aria-hidden="true">/</span>
+                  <span class="bucket-page-total monitored-page-total">${view.filteredTotalPages}</span>
+                </span>
+              </label>
               <div class="button-row compact bucket-footer-actions">
                 <button type="button" class="action-button small" data-action="monitored-prev" ${view.filteredSafePage === 0 ? 'disabled' : ''}>Prev</button>
                 <button type="button" class="action-button small" data-action="monitored-next" ${view.filteredSafePage >= view.filteredTotalPages - 1 ? 'disabled' : ''}>Next</button>
               </div>
+              <span class="monitored-token-pill-wrap monitored-token-pill-wrap-inline">
+                <span class="panel-header-label">TOKENS</span>
+                <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
+              </span>
             </div>
           </div>
         </div>
