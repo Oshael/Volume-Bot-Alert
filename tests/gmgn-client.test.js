@@ -176,6 +176,29 @@ describe('gmgn client', () => {
     assert.equal(rows[0].vol5m, null);
   });
 
+  it('does not use GMGN fdv as an operational market cap', () => {
+    const rows = gmgn.__private.normalizeTrendingPayload({
+      data: {
+        rank: [{ address: TOKEN_A, price: '0.24', fdv: '480000000' }],
+      },
+    }, { chain: 'sol', interval: '5m' });
+    const info = gmgn.__private.normalizeTokenInfoPayload({
+      address: TOKEN_A,
+      price: '0.24',
+      total_supply: '2000000000',
+      fdv: '480000000',
+    });
+    const claim = gmgn.__private.normalizeClaimSignalPayload([{
+      address: TOKEN_A,
+      signal_type: 17,
+      fdv: '480000000',
+    }]);
+
+    assert.equal(rows[0].mcap, null);
+    assert.equal(info.marketCap, null);
+    assert.equal(claim[0].mcap, null);
+  });
+
   it('normalizes token security metrics', async () => {
     const calls = [];
     const client = gmgn.createGmgnClient({

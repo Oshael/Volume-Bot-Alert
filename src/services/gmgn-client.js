@@ -350,7 +350,7 @@ function normalizeTrendingToken(row, context = {}) {
     imageUrl: readTrimmedString(row, ['logo', 'imageUrl', 'logoUrl', 'icon', ['info', 'imageUrl']]),
     pairAddress: readTrimmedString(row, ['pairAddress', 'poolAddress', 'pool_address']),
     pairUrl: readTrimmedString(row, ['pairUrl', 'url']),
-    mcap: readNumber(row, ['market_cap', 'marketCap', 'mcap', 'fdv']),
+    mcap: readNumber(row, ['market_cap', 'marketCap', 'mcap']),
     price: readNumber(row, ['price', 'priceUsd', 'price_usd']),
     liquidityUsd: readNumber(row, ['liquidity', 'liquidityUsd', 'liquidity_usd']),
     priceChange1m: readNumber(row, ['price_change_percent1m', 'priceChange1m']),
@@ -436,13 +436,13 @@ function normalizeTokenSecurityPayload(payload, context = {}) {
 }
 
 function computeMarketCapFromInfo(row) {
-  const direct = readNumber(row, ['usd_market_cap', 'market_cap', 'marketCap', 'mcap', 'fdv']);
+  const direct = readNumber(row, ['usd_market_cap', 'market_cap', 'marketCap', 'mcap']);
   if (direct != null) {
     return direct;
   }
 
   const price = readNumber(row, [['price', 'price'], 'priceUsd', 'price_usd', 'price']);
-  const supply = readNumber(row, ['circulating_supply', 'circulatingSupply', 'total_supply', 'totalSupply']);
+  const supply = readNumber(row, ['circulating_supply', 'circulatingSupply']);
   return price != null && supply != null ? price * supply : null;
 }
 
@@ -666,8 +666,6 @@ function readClaimMarketCap(row) {
     ['data', 'marketCap'],
     'mcap',
     ['data', 'mcap'],
-    'fdv',
-    ['data', 'fdv'],
   ]);
 }
 

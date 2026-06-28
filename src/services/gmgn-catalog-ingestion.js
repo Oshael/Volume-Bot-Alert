@@ -23,6 +23,7 @@ const {
 const DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS = 3000;
 const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
 const DEFAULT_PANEL_STALE_AFTER_MS = 15000;
+const RECENT_DEX_MARKET_DATA_MAX_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
@@ -175,6 +176,52 @@ function computeSnapshotVolumeToMcapRatio(volume, marketCap) {
     return null;
   }
   return parsedVolume / parsedMarketCap;
+}
+
+function getLatestMarketDataTimestampMs(tokenBefore) {
+  const timestamps = [
+    tokenBefore?.metadata_updated_at,
+    tokenBefore?.last_seen_at,
+    tokenBefore?.last_evaluated_at,
+    tokenBefore?.updated_at,
+  ].map(toTimestampMsOrNull).filter((value) => value != null);
+  return timestamps.length ? Math.max(...timestamps) : null;
+}
+
+function hasRecentDexMarketData(tokenBefore, now) {
+  if (!hasDexConfirmation(tokenBefore)) {
+    return false;
+  }
+
+  const timestampMs = getLatestMarketDataTimestampMs(tokenBefore);
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  return timestampMs != null
+    && Number.isFinite(nowMs)
+    && timestampMs <= nowMs
+    && (nowMs - timestampMs) <= RECENT_DEX_MARKET_DATA_MAX_AGE_MS;
+}
+
+function shouldPreferDexMarketData(tokenBefore, now) {
+  if (!hasRecentDexMarketData(tokenBefore, now)) {
+    return false;
+  }
+
+  const dexMcap = toFiniteNumberOrNull(tokenBefore?.last_mcap);
+  return dexMcap > 0 || toFiniteNumberOrNull(tokenBefore?.last_price) > 0;
+}
+
+function preserveDexMarketDataForGmgnSnapshot(snapshot, tokenBefore, now) {
+  if (!shouldPreferDexMarketData(tokenBefore, now)) {
+    return snapshot;
+  }
+
+  const dexMcap = toFiniteNumberOrNull(tokenBefore?.last_mcap);
+  const dexPrice = toFiniteNumberOrNull(tokenBefore?.last_price);
+  return {
+    ...snapshot,
+    mcap: dexMcap ?? snapshot.mcap,
+    price: dexPrice ?? snapshot.price,
+  };
 }
 
 function normalizeAddress(value) {
@@ -1702,9 +1749,10 @@ async function ingestGmgnToken(snapshot, options = {}) {
     fillYoungTokenVolumeWindows(snapshot, { now }),
     tokenBefore
   );
+  const marketSafeSnapshot = preserveDexMarketDataForGmgnSnapshot(filledSnapshot, tokenBefore, now);
   const guardResult = await applyPreCatalogGmgnGuards(
     address,
-    filledSnapshot,
+    marketSafeSnapshot,
     tokenBefore,
     resolved,
     summary,
@@ -1727,10 +1775,10 @@ async function ingestGmgnToken(snapshot, options = {}) {
   }
   const { securityGuard } = guardResult;
 
-  await resolved.tokenCatalogModel.upsertToken(buildCatalogPayload(filledSnapshot, tokenBefore, { manualProtected }));
+  await resolved.tokenCatalogModel.upsertToken(buildCatalogPayload(marketSafeSnapshot, tokenBefore, { manualProtected }));
   const tokenAfter = await resolved.tokenCatalogModel.applyEvaluationResult(
     address,
-    deriveGmgnEvaluation(filledSnapshot, tokenBefore, resolved, securityGuard)
+    deriveGmgnEvaluation(marketSafeSnapshot, tokenBefore, resolved, securityGuard)
   );
 
   summary.catalogUpdated = tokenAfter ? 1 : 0;
@@ -1738,12 +1786,12 @@ async function ingestGmgnToken(snapshot, options = {}) {
     if (String(tokenAfter.suppressed_reason || '').trim() === GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON) {
       summary.riskEnrichmentSuppressed = 1;
     }
-    if (canPersistGmgnVisualBuckets(tokenAfter, filledSnapshot)) {
+    if (canPersistGmgnVisualBuckets(tokenAfter, marketSafeSnapshot)) {
       if (resolved.marketBucketModel) {
-        await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(filledSnapshot, now));
+        await resolved.marketBucketModel.upsertSnapshotBucket(buildMarketBucketPayload(marketSafeSnapshot, now));
         summary.marketBucketsWritten = 1;
       }
-      await resolved.volumeBucketModel.upsertSnapshotBucket(buildVolumeBucketPayload(filledSnapshot, now));
+      await resolved.volumeBucketModel.upsertSnapshotBucket(buildVolumeBucketPayload(marketSafeSnapshot, now));
       summary.volumeBucketsWritten = 1;
     }
     if (canEvaluateGmgnAlerts(tokenBefore, tokenAfter, securityGuard)) {
@@ -1975,6 +2023,10 @@ module.exports = {
     createEmptyIngestionSummary,
     canEvaluateGmgnAlerts,
     canPersistGmgnMarketBuckets,
+    getLatestMarketDataTimestampMs,
+    hasRecentDexMarketData,
+    preserveDexMarketDataForGmgnSnapshot,
+    shouldPreferDexMarketData,
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
     GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON,

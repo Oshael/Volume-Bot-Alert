@@ -224,6 +224,84 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.gmgn1mAlerts, 1);
   });
 
+  it('preserves recent DexScreener market cap and price when GMGN reports inflated FDV-style mcap', async () => {
+    const tokenCatalogModel = createTokenCatalogStub();
+    tokenCatalogModel.getByAddress = async (address) => ({
+      address,
+      source: 'user-manual',
+      eligibility_state: 'dex-high',
+      eligible_for_monitoring: true,
+      last_pair_url: 'https://dexscreener.com/solana/cards-pair',
+      last_mcap: 62425152,
+      last_price: 0.2423,
+      last_vol_5m: 3000,
+      metadata_updated_at: '2026-06-28T00:13:30.000Z',
+    });
+
+    let catalogPayload = null;
+    let evaluationPayload = null;
+    let marketBucketPayload = null;
+    let volumeBucketPayload = null;
+    tokenCatalogModel.upsertToken = async (payload) => {
+      catalogPayload = payload;
+      return { address: payload.address, source: payload.source };
+    };
+    tokenCatalogModel.applyEvaluationResult = async (address, payload) => {
+      evaluationPayload = payload;
+      return {
+        address,
+        source: 'user-manual',
+        eligible_for_monitoring: true,
+        eligibility_state: payload.eligibilityState,
+        last_mcap: payload.mcap,
+        last_vol_5m: payload.vol5m,
+      };
+    };
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken({
+      ...createSnapshot(TOKEN_A),
+      mcap: 481958457.81,
+      price: 0.2410147,
+      vol5m: 6451.07,
+      priceChange1h: 0.05,
+      pairAddress: TOKEN_B,
+      pairUrl: 'https://gmgn.ai/sol/token/cards',
+    }, {
+      now: () => new Date('2026-06-28T00:14:00.000Z'),
+      evaluationState: new Map(),
+      tokenCatalogModel,
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          marketBucketPayload = payload;
+          return payload;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          volumeBucketPayload = payload;
+          return payload;
+        },
+      },
+      alertMatcher: { async evaluateUpdatedToken() { return { emitted: 0, events: [] }; } },
+    });
+
+    assert.equal(catalogPayload.mcap, 62425152);
+    assert.equal(catalogPayload.price, 0.2423);
+    assert.equal(catalogPayload.vol5m, 3000);
+    assert.equal(catalogPayload.vol1h, 50000);
+    assert.equal(catalogPayload.priceChange1h, 0.05);
+    assert.equal(evaluationPayload.mcap, 62425152);
+    assert.equal(evaluationPayload.price, 0.2423);
+    assert.equal(marketBucketPayload.mcap, 62425152);
+    assert.equal(marketBucketPayload.price, 0.2423);
+    assert.equal(marketBucketPayload.source, 'gmgn');
+    assert.equal(volumeBucketPayload.vol5m, 3000);
+    assert.equal(volumeBucketPayload.vol1h, 50000);
+    assert.equal(volumeBucketPayload.source, 'gmgn');
+    assert.equal(result.summary.marketBucketsWritten, 1);
+    assert.equal(result.summary.volumeBucketsWritten, 1);
+  });
+
   it('debounces repeated per-token alert evaluation while still persisting market data', async () => {
     let nowMs = Date.parse('2026-05-03T07:00:00.000Z');
     const evaluationState = new Map();
