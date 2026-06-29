@@ -1092,7 +1092,7 @@ function buildPriorityVolumeWindows(bestPair, token, now) {
 }
 
 function derivePrioritySnapshot(bestPair, token = null) {
-  const marketCap = Number(bestPair?.marketCap || bestPair?.fdv || 0);
+  const marketCap = dexscreener.resolveOperationalMarketCap(bestPair) || 0;
   const now = Date.now();
   const filledVolumes = buildPriorityVolumeWindows(bestPair, token, now);
   const vol5m = filledVolumes.vol5m;

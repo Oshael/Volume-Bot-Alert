@@ -41,6 +41,11 @@ describe('dexscreener rate-limit helpers', () => {
     assert.equal(Object.prototype.hasOwnProperty.call(resolved.options, 'delayMs'), false);
   });
 
+  it('does not use FDV as operational market cap', () => {
+    assert.equal(dexscreener.resolveOperationalMarketCap({ fdv: 99800000 }), null);
+    assert.equal(dexscreener.resolveOperationalMarketCap({ marketCap: 41200000, fdv: 99800000 }), 41200000);
+  });
+
   it('activates global cooldown only after the 10th consecutive 429', () => {
     const response = { headers: { get: () => null } };
 

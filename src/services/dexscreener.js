@@ -455,6 +455,16 @@ function toFiniteNumberOrZero(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function toFiniteNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveOperationalMarketCap(pair) {
+  const marketCap = toFiniteNumberOrNull(pair?.marketCap);
+  return marketCap != null && marketCap > 0 ? marketCap : null;
+}
+
 function getPairTxnCount(pair, window) {
   const txns = pair?.txns?.[window];
   return toFiniteNumberOrZero(txns?.buys) + toFiniteNumberOrZero(txns?.sells);
@@ -937,6 +947,7 @@ module.exports = {
   getTokenPairs,
   batchGetTokens,
   getBestPair,
+  resolveOperationalMarketCap,
   getLatestTokenProfiles,
   getTopTokenBoosts,
   getLatestTokenBoosts,
@@ -959,6 +970,7 @@ module.exports = {
     comparePairsForSelection,
     getPairSelectionMetrics,
     getPairSelectionScore,
+    resolveOperationalMarketCap,
     resetRateLimitState,
     resolveBatchOptions,
     shouldFallbackSuspiciousBatchPair,

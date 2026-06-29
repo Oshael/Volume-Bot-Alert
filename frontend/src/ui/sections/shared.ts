@@ -34,6 +34,8 @@ const EXPANDED_SPARKLINE_SVG_WIDTH = 720;
 const EXPANDED_SPARKLINE_SVG_HEIGHT = 260;
 const EXPANDED_SPARKLINE_PADDING_X = 12;
 const EXPANDED_SPARKLINE_PADDING_Y = 16;
+const SPARKLINE_SCALE_SHIFT_MIN_RATIO = 1.7;
+const SPARKLINE_SCALE_SHIFT_MAX_RATIO = 8;
 const TOKEN_IMAGE_PREVIEW_DELAY_MS = 120;
 const TOKEN_IMAGE_PREVIEW_OFFSET_PX = 14;
 const TOKEN_IMAGE_PREVIEW_MOUSE_SUPPRESSION_MS = 350;
@@ -623,7 +625,8 @@ export function bindSparklineHover(
       dot.style.left = `${point.x}px`;
       dot.style.top = `${point.y}px`;
       tooltip.style.left = `${tooltipLeft}px`;
-      tooltip.textContent = `MCAP ${fmtMoney(series[index])} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
+      const hoverValue = displaySeries[index] ?? series[index];
+      tooltip.textContent = `MCAP ${fmtMoney(hoverValue)} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
       hover.classList.add('active');
     };
 
@@ -1329,6 +1332,69 @@ function computeMedian(values: number[]) {
   return sorted[middleIndex];
 }
 
+function computeSparklineWindowMedian(series: number[], startIndex: number, endIndex: number) {
+  return computeMedian(series.slice(Math.max(0, startIndex), Math.max(0, endIndex)));
+}
+
+function findTerminalSparklineScaleShift(series: number[]) {
+  if (!Array.isArray(series) || series.length < 12) {
+    return null;
+  }
+
+  const maxTailCount = Math.max(1, Math.min(24, Math.floor(series.length * 0.25)));
+  for (let tailCount = 1; tailCount <= maxTailCount; tailCount += 1) {
+    const splitIndex = series.length - tailCount;
+    const baselineCount = Math.max(6, Math.min(24, tailCount * 3));
+    const beforeMedian = computeSparklineWindowMedian(series, splitIndex - baselineCount, splitIndex);
+    const afterMedian = computeSparklineWindowMedian(series, splitIndex, series.length);
+    if (!(beforeMedian && beforeMedian > 0) || !(afterMedian && afterMedian > 0)) {
+      continue;
+    }
+
+    const ratio = Math.max(beforeMedian, afterMedian) / Math.min(beforeMedian, afterMedian);
+    if (ratio < SPARKLINE_SCALE_SHIFT_MIN_RATIO || ratio > SPARKLINE_SCALE_SHIFT_MAX_RATIO) {
+      continue;
+    }
+
+    const boundaryBefore = series[splitIndex - 1];
+    const boundaryAfter = series[splitIndex];
+    if (!(boundaryBefore > 0) || !(boundaryAfter > 0)) {
+      continue;
+    }
+
+    const boundaryRatio = Math.max(boundaryBefore, boundaryAfter) / Math.min(boundaryBefore, boundaryAfter);
+    if (boundaryRatio < SPARKLINE_SCALE_SHIFT_MIN_RATIO) {
+      continue;
+    }
+
+    return { splitIndex, beforeMedian, afterMedian };
+  }
+
+  return null;
+}
+
+function normalizeTerminalSparklineScaleShift(series: number[]) {
+  const shift = findTerminalSparklineScaleShift(series);
+  if (!shift) {
+    return series;
+  }
+
+  const normalized = series.slice();
+  if (shift.afterMedian < shift.beforeMedian) {
+    const scale = shift.afterMedian / shift.beforeMedian;
+    for (let index = 0; index < shift.splitIndex; index += 1) {
+      normalized[index] *= scale;
+    }
+    return normalized;
+  }
+
+  const scale = shift.beforeMedian / shift.afterMedian;
+  for (let index = shift.splitIndex; index < normalized.length; index += 1) {
+    normalized[index] *= scale;
+  }
+  return normalized;
+}
+
 function isIsolatedSparklineSpike(series: number[], spikeIndex: number) {
   if (!Array.isArray(series) || series.length < 8 || spikeIndex <= 0 || spikeIndex >= series.length - 1) {
     return false;
@@ -1365,6 +1431,11 @@ function isIsolatedSparklineSpike(series: number[], spikeIndex: number) {
 function buildDisplaySparklineSeries(series: number[], _options: SparklineRenderOptions = {}) {
   if (!Array.isArray(series) || series.length < 8) {
     return series;
+  }
+
+  const scaleNormalizedSeries = normalizeTerminalSparklineScaleShift(series);
+  if (scaleNormalizedSeries !== series) {
+    return scaleNormalizedSeries;
   }
 
   let spikeIndex = -1;

@@ -267,6 +267,20 @@ describe('catalog worker drift compensation', () => {
     assert.ok(nextMs >= 3 * 60 * 1000 && nextMs <= 4 * 60 * 1000, `expected 3m low-activity cadence with jitter, got ${nextMs}ms`);
   });
 
+  it('does not treat Dex FDV as market cap for catalog priority', () => {
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+      fdv: 99800000,
+      volume: { h24: 250000 },
+      priceChange: {},
+    });
+
+    assert.equal(snapshot.marketCap, null);
+    assert.equal(snapshot.monitorPriority, 'dormant');
+    assert.equal(snapshot.eligibleForMonitoring, false);
+    assert.equal(snapshot.eligibilityState, 'dex-known-no-mcap');
+    assert.equal(snapshot.suppressedReason, 'mcap_unavailable');
+  });
+
   it('suppresses auto high-cap tokens below 5k coherent volume24h and slows them to at least 3m', () => {
     const now = Date.now();
     const snapshot = catalogWorker.__private.derivePrioritySnapshot({

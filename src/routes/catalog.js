@@ -580,7 +580,7 @@ async function loadTickerPeerSummariesSafe(items = []) {
 }
 
 function getMarketCap(pair) {
-  return toNumber(pair?.marketCap) || toNumber(pair?.fdv) || 0;
+  return dexscreener.resolveOperationalMarketCap(pair) || 0;
 }
 
 function getRetryKey(userId, address, source) {
