@@ -215,6 +215,81 @@ describe('dexscreener rate-limit helpers', () => {
     }
   });
 
+  it('prefers the single-token endpoint when the batch endpoint returns only a migrated launch-floor pair', async () => {
+    const address = 'vD4gAaQdJb3T3E4233vS4ix41ppSxQa7pGbfLtJpump';
+    const migratedPumpfunPair = {
+      chainId: 'solana',
+      dexId: 'pumpfun',
+      pairAddress: 'FzaGkGLgABu3UHYUy5FzX7dVmHqHUmsRjVKtvyRVdPCb',
+      baseToken: { address },
+      quoteToken: { address: 'So11111111111111111111111111111111111111112' },
+      marketCap: 30474.98,
+      fdv: 30474.98,
+      priceUsd: '0.00003047',
+      volume: { h24: 6304.84, h6: 6304.84, h1: 6304.84, m5: 0 },
+      txns: {
+        m5: { buys: 0, sells: 0 },
+        h1: { buys: 2, sells: 0 },
+        h6: { buys: 2, sells: 0 },
+        h24: { buys: 2, sells: 0 },
+      },
+    };
+    const bestLivePair = {
+      chainId: 'solana',
+      dexId: 'pumpswap',
+      pairAddress: 'E7VswuHUKUp9TZJb5tgQspV45YidnBJCo6v9UhyQ4sVm',
+      baseToken: { address },
+      quoteToken: { address: 'So11111111111111111111111111111111111111112' },
+      marketCap: 225872,
+      fdv: 225872,
+      priceUsd: '0.0002258',
+      liquidity: { usd: 35325.49 },
+      volume: { h24: 481125.71, h6: 481125.71, h1: 481125.71, m5: 50696.31 },
+      txns: {
+        m5: { buys: 291, sells: 188 },
+        h1: { buys: 3171, sells: 2609 },
+        h6: { buys: 3171, sells: 2609 },
+        h24: { buys: 3171, sells: 2609 },
+      },
+    };
+
+    const originalFetch = global.fetch;
+    const seenUrls = [];
+    global.fetch = async (url) => {
+      seenUrls.push(String(url));
+      if (String(url).includes(`/tokens/v1/solana/${address}`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [migratedPumpfunPair],
+        };
+      }
+
+      if (String(url).includes(`/latest/dex/tokens/${address}`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ pairs: [bestLivePair, migratedPumpfunPair] }),
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    };
+
+    try {
+      const results = await dexscreener.__private.fetchTokenPairsBatchUncached([address], { chain: 'solana' });
+      const payload = results.get(address);
+      const bestPair = dexscreener.getBestPair(payload, 'solana');
+
+      assert.ok(seenUrls.some((url) => url.includes(`/tokens/v1/solana/${address}`)));
+      assert.ok(seenUrls.some((url) => url.includes(`/latest/dex/tokens/${address}`)));
+      assert.equal(bestPair?.pairAddress, bestLivePair.pairAddress);
+      assert.equal(payload?.pairs?.length, 2);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('prefers a pair with meaningful recent activity over a more liquid but stale pair', () => {
     const activePair = {
       chainId: 'solana',

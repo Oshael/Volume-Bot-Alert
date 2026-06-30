@@ -11,6 +11,10 @@ const RATE_LIMIT_MAX_BACKOFF_MS = 10 * 60 * 1000;
 const RATE_LIMIT_JITTER_RATIO = 0.25;
 const RATE_LIMIT_ACTIVATION_THRESHOLD = 10;
 const COOLDOWN_BATCH_DELAY_MS = 400;
+const LAUNCH_FLOOR_MIN_MCAP = 29000;
+const LAUNCH_FLOOR_MAX_MCAP = 35000;
+const LAUNCH_FLOOR_MAX_LIQUIDITY_USD = 1000;
+const LAUNCH_FLOOR_MAX_TXNS_1H = 3;
 const RECOVERY_PHASES = [
   { name: 'high-manual', cycles: 5, batchDelayMs: 500 },
   { name: 'normal', cycles: 5, batchDelayMs: 350 },
@@ -658,6 +662,25 @@ function isStaleLaunchVenueBatchPair(pair) {
   return checks.every(Boolean);
 }
 
+function isLaunchFloorBatchPair(pair) {
+  const liquidityUsd = toFiniteNumberOrZero(pair?.liquidity?.usd);
+  const volume5m = toFiniteNumberOrZero(pair?.volume?.m5);
+  const txns5m = getPairTxnCount(pair, 'm5');
+  const txns1h = getPairTxnCount(pair, 'h1');
+  const marketCap = toFiniteNumberOrZero(pair?.marketCap || pair?.fdv);
+  const checks = [
+    isLaunchVenuePair(pair),
+    marketCap >= LAUNCH_FLOOR_MIN_MCAP,
+    marketCap <= LAUNCH_FLOOR_MAX_MCAP,
+    liquidityUsd <= LAUNCH_FLOOR_MAX_LIQUIDITY_USD,
+    volume5m <= 0,
+    txns5m <= 0,
+    txns1h <= LAUNCH_FLOOR_MAX_TXNS_1H,
+  ];
+
+  return checks.every(Boolean);
+}
+
 function shouldFallbackSuspiciousBatchPair(address, payload, chain = 'solana') {
   const pair = getSinglePairFromPayload(payload);
   if (!pair) {
@@ -672,7 +695,9 @@ function shouldFallbackSuspiciousBatchPair(address, payload, chain = 'solana') {
     return false;
   }
 
-  return isLowConfidencePumpfunPair(pair) || isStaleLaunchVenueBatchPair(pair);
+  return isLowConfidencePumpfunPair(pair)
+    || isStaleLaunchVenueBatchPair(pair)
+    || isLaunchFloorBatchPair(pair);
 }
 
 async function fetchTokenPairsBatchUncached(addresses, options = {}) {
@@ -970,6 +995,7 @@ module.exports = {
     comparePairsForSelection,
     getPairSelectionMetrics,
     getPairSelectionScore,
+    isLaunchFloorBatchPair,
     resolveOperationalMarketCap,
     resetRateLimitState,
     resolveBatchOptions,
