@@ -14,7 +14,6 @@ const COOLDOWN_BATCH_DELAY_MS = 400;
 const LAUNCH_FLOOR_MIN_MCAP = 29000;
 const LAUNCH_FLOOR_MAX_MCAP = 35000;
 const LAUNCH_FLOOR_MAX_LIQUIDITY_USD = 1000;
-const LAUNCH_FLOOR_MAX_TXNS_1H = 3;
 const RECOVERY_PHASES = [
   { name: 'high-manual', cycles: 5, batchDelayMs: 500 },
   { name: 'normal', cycles: 5, batchDelayMs: 350 },
@@ -666,7 +665,6 @@ function isLaunchFloorBatchPair(pair) {
   const liquidityUsd = toFiniteNumberOrZero(pair?.liquidity?.usd);
   const volume5m = toFiniteNumberOrZero(pair?.volume?.m5);
   const txns5m = getPairTxnCount(pair, 'm5');
-  const txns1h = getPairTxnCount(pair, 'h1');
   const marketCap = toFiniteNumberOrZero(pair?.marketCap || pair?.fdv);
   const checks = [
     isLaunchVenuePair(pair),
@@ -675,7 +673,6 @@ function isLaunchFloorBatchPair(pair) {
     liquidityUsd <= LAUNCH_FLOOR_MAX_LIQUIDITY_USD,
     volume5m <= 0,
     txns5m <= 0,
-    txns1h <= LAUNCH_FLOOR_MAX_TXNS_1H,
   ];
 
   return checks.every(Boolean);

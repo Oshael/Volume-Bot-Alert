@@ -215,41 +215,57 @@ describe('dexscreener rate-limit helpers', () => {
     }
   });
 
-  it('prefers the single-token endpoint when the batch endpoint returns only a migrated launch-floor pair', async () => {
-    const address = 'vD4gAaQdJb3T3E4233vS4ix41ppSxQa7pGbfLtJpump';
+  it('prefers the single-token endpoint when the batch endpoint returns only a noisy migrated launch-floor pair', async () => {
+    const address = '3ZJSefCHnGyFUZzHwneyie847FQXNc23y9Nmt9ADpump';
     const migratedPumpfunPair = {
       chainId: 'solana',
       dexId: 'pumpfun',
-      pairAddress: 'FzaGkGLgABu3UHYUy5FzX7dVmHqHUmsRjVKtvyRVdPCb',
+      pairAddress: 'FDt37d94WmFDRLXQXrUr69wgWoQmHZYf616SzZXaesdE',
       baseToken: { address },
       quoteToken: { address: 'So11111111111111111111111111111111111111112' },
-      marketCap: 30474.98,
-      fdv: 30474.98,
-      priceUsd: '0.00003047',
-      volume: { h24: 6304.84, h6: 6304.84, h1: 6304.84, m5: 0 },
+      marketCap: 30150.39,
+      fdv: 30150.39,
+      priceUsd: '0.00003015',
+      volume: { h24: 6237.69, h6: 6237.69, h1: 6237.69, m5: 0 },
       txns: {
         m5: { buys: 0, sells: 0 },
-        h1: { buys: 2, sells: 0 },
-        h6: { buys: 2, sells: 0 },
-        h24: { buys: 2, sells: 0 },
+        h1: { buys: 8, sells: 0 },
+        h6: { buys: 8, sells: 0 },
+        h24: { buys: 8, sells: 0 },
       },
     };
     const bestLivePair = {
       chainId: 'solana',
       dexId: 'pumpswap',
-      pairAddress: 'E7VswuHUKUp9TZJb5tgQspV45YidnBJCo6v9UhyQ4sVm',
+      pairAddress: 'AbGszsod9Tzh6dzFMD6VuVcZRPJYFhfJ6tmxFdHk77JZ',
       baseToken: { address },
       quoteToken: { address: 'So11111111111111111111111111111111111111112' },
-      marketCap: 225872,
-      fdv: 225872,
-      priceUsd: '0.0002258',
-      liquidity: { usd: 35325.49 },
-      volume: { h24: 481125.71, h6: 481125.71, h1: 481125.71, m5: 50696.31 },
+      marketCap: 79664,
+      fdv: 79664,
+      priceUsd: '0.00007966',
+      liquidity: { usd: 21930.49 },
+      volume: { h24: 932762.77, h6: 932762.77, h1: 932762.77, m5: 103741.74 },
       txns: {
-        m5: { buys: 291, sells: 188 },
-        h1: { buys: 3171, sells: 2609 },
-        h6: { buys: 3171, sells: 2609 },
-        h24: { buys: 3171, sells: 2609 },
+        m5: { buys: 497, sells: 462 },
+        h1: { buys: 4550, sells: 3633 },
+        h6: { buys: 4550, sells: 3633 },
+        h24: { buys: 4550, sells: 3633 },
+      },
+    };
+    const lowLiquidityMeteoraPair = {
+      chainId: 'solana',
+      dexId: 'meteora',
+      pairAddress: '47cWjT4jCbPfZr8T9RQD3aAtTNgCCj4JJab8sWWN6qKM',
+      baseToken: { address },
+      quoteToken: { address: 'So11111111111111111111111111111111111111112' },
+      marketCap: 76619,
+      liquidity: { usd: 62.65 },
+      volume: { h24: 32.45, h6: 32.45, h1: 32.45, m5: 0 },
+      txns: {
+        m5: { buys: 0, sells: 0 },
+        h1: { buys: 68, sells: 5 },
+        h6: { buys: 68, sells: 5 },
+        h24: { buys: 68, sells: 5 },
       },
     };
 
@@ -269,7 +285,7 @@ describe('dexscreener rate-limit helpers', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ pairs: [bestLivePair, migratedPumpfunPair] }),
+          json: async () => ({ pairs: [bestLivePair, lowLiquidityMeteoraPair, migratedPumpfunPair] }),
         };
       }
 
@@ -284,7 +300,7 @@ describe('dexscreener rate-limit helpers', () => {
       assert.ok(seenUrls.some((url) => url.includes(`/tokens/v1/solana/${address}`)));
       assert.ok(seenUrls.some((url) => url.includes(`/latest/dex/tokens/${address}`)));
       assert.equal(bestPair?.pairAddress, bestLivePair.pairAddress);
-      assert.equal(payload?.pairs?.length, 2);
+      assert.equal(payload?.pairs?.length, 3);
     } finally {
       global.fetch = originalFetch;
     }
