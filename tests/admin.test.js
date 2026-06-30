@@ -107,6 +107,7 @@ describe('Admin panel auth and management', () => {
   let tokenRiskEnrichmentWorker;
   let tokenRiskReview;
   let tokenMeteoraState;
+  let adminTokenReviewAlert;
 
   before(async () => {
     process.env.NODE_ENV = 'test';
@@ -126,11 +127,14 @@ describe('Admin panel auth and management', () => {
     tokenRiskEnrichmentWorker = require('../src/services/token-risk-enrichment-worker');
     tokenRiskReview = require('../src/models/token-risk-review');
     tokenMeteoraState = require('../src/models/token-meteora-state');
+    adminTokenReviewAlert = require('../src/models/admin-token-review-alert');
     const { pool } = require('../src/models/db');
     const { assertUsingTestDatabase } = require('./helpers/test-db');
 
     await assertUsingTestDatabase(pool);
     await ensureAccessSchema(pool);
+    await adminTokenReviewAlert.ensureTable();
+    await pool.query('DELETE FROM admin_token_review_alerts');
     await pool.query('DELETE FROM sessions');
     await pool.query('DELETE FROM login_attempts');
     await pool.query('DELETE FROM users');
@@ -247,6 +251,11 @@ describe('Admin panel auth and management', () => {
         '/api/admin/token-junk-assessments?addresses=So11111111111111111111111111111111111111112',
         { token: userToken }
       );
+      assert.equal(res.status, 403);
+    });
+
+    it('GET /api/admin/token-review-alerts -> 403', async () => {
+      const res = await request('GET', '/api/admin/token-review-alerts', { token: userToken });
       assert.equal(res.status, 403);
     });
 
@@ -714,6 +723,34 @@ describe('Admin panel auth and management', () => {
       } finally {
         tokenRiskReview.remove = originalRemove;
       }
+    });
+  });
+
+  describe('Admin Token Review Alerts', () => {
+    it('lists and resolves open token review alerts', async () => {
+      const alert = await adminTokenReviewAlert.enqueue({
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        priority: 'high',
+        alertKind: 'manual-review-socials-present',
+        pipeline: 'risk-review-sync',
+        label: 'auto-review:junk_probable',
+        reasonCodes: ['holder_concentration_extreme'],
+        assessment: { label: 'junk_probable', manualReviewRequired: true },
+        socialSnapshot: { twitterUrl: 'https://x.com/wsol' },
+      });
+
+      const listResponse = await request('GET', '/api/admin/token-review-alerts?limit=10', { token: adminToken });
+      assert.equal(listResponse.status, 200);
+      assert.equal(listResponse.body.count >= 1, true);
+      assert.ok(listResponse.body.alerts.some((item) => item.id === alert.id));
+
+      const resolveResponse = await request('POST', `/api/admin/token-review-alerts/${alert.id}/resolve`, {
+        token: adminToken,
+        body: { resolution: 'dismiss', notes: 'reviewed in test' },
+      });
+      assert.equal(resolveResponse.status, 200);
+      assert.equal(resolveResponse.body.alert.status, 'resolved');
+      assert.equal(resolveResponse.body.alert.resolution, 'dismiss');
     });
   });
 

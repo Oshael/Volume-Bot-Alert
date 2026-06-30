@@ -1043,6 +1043,47 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage46-admin-token-review-alerts',
+    name: 'Stage 46 admin token review alert queue',
+    repair: 'node src/utils/db-init-stage46.js',
+    tables: [
+      {
+        table: 'admin_token_review_alerts',
+        columns: [
+          'id',
+          'token_address',
+          'status',
+          'priority',
+          'alert_kind',
+          'pipeline',
+          'label',
+          'reason_codes',
+          'assessment',
+          'social_snapshot',
+          'market_snapshot',
+          'risk_snapshot',
+          'meteora_snapshot',
+          'created_at',
+          'updated_at',
+          'resolved_at',
+          'resolved_by',
+          'resolution',
+          'notes',
+        ],
+        defaults: {
+          status: "'open'::character varying",
+          priority: "'normal'::character varying",
+          reason_codes: "'[]'::jsonb",
+          assessment: "'{}'::jsonb",
+          social_snapshot: "'{}'::jsonb",
+          market_snapshot: "'{}'::jsonb",
+          risk_snapshot: "'{}'::jsonb",
+          meteora_snapshot: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {

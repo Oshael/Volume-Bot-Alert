@@ -47,6 +47,14 @@ function isTwitterProfileUrl(value) {
   return host === 'x.com' || host === 'twitter.com';
 }
 
+function isGenericWebsiteUrl(value) {
+  const url = parseSafeUrl(value);
+  if (!url || isCommunityUrl(url.toString()) || isTwitterProfileUrl(url.toString())) {
+    return false;
+  }
+  return true;
+}
+
 function normalizeEntryUrl(entry) {
   return sanitizeHttpUrl(entry?.url);
 }
@@ -70,30 +78,42 @@ function extractDexSocialLinks(pair) {
     (url, entry) => String(entry?.type || '').toLowerCase() === 'twitter' && isTwitterProfileUrl(url),
   );
   const communityUrl = firstMatchingUrl(socials, isCommunityUrl) || firstMatchingUrl(websites, isCommunityUrl);
+  const websiteUrl = firstMatchingUrl(
+    websites,
+    (url, entry) => {
+      const label = String(entry?.label || '').trim().toLowerCase();
+      return (label === 'website' || !label) && isGenericWebsiteUrl(url);
+    },
+  ) || firstMatchingUrl(websites, isGenericWebsiteUrl);
 
   return {
     twitterUrl,
     communityUrl,
+    websiteUrl,
   };
 }
 
 function normalizeSocialLinkFields(fields = {}) {
   const twitterUrl = sanitizeHttpUrl(fields.twitterUrl);
   const communityUrl = sanitizeHttpUrl(fields.communityUrl);
+  const websiteUrl = sanitizeHttpUrl(fields.websiteUrl);
   if (isCommunityUrl(twitterUrl)) {
     return {
       twitterUrl: null,
       communityUrl: communityUrl || twitterUrl,
+      websiteUrl,
     };
   }
   return {
     twitterUrl,
     communityUrl,
+    websiteUrl,
   };
 }
 
 module.exports = {
   extractDexSocialLinks,
+  isGenericWebsiteUrl,
   isCoinCommunitiesUrl,
   isCommunityUrl,
   isXCommunityUrl,

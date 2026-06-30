@@ -11,6 +11,8 @@ const tokenRiskCandidateSelector = require('../services/token-risk-candidate-sel
 const tokenRiskEnrichmentWorker = require('../services/token-risk-enrichment-worker');
 const tokenRiskEnrichment = require('../models/token-risk-enrichment');
 const tokenRiskReview = require('../models/token-risk-review');
+const adminBlockedToken = require('../models/admin-blocked-token');
+const adminTokenReviewAlert = require('../models/admin-token-review-alert');
 const monitoredTokenExitEvent = require('../models/monitored-token-exit-event');
 const { getBackendAlertRule, HIGH_CAP_DUMP_RULE_KEY } = require('../services/backend-alert-rules');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
@@ -275,10 +277,125 @@ function parseAccessSource(value) {
   return userAccess.VALID_SOURCES.has(normalized) ? normalized : null;
 }
 
+function normalizeReviewAlertResolution(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['dismiss', 'block', 'mark_valid', 'mark_weak'].includes(normalized) ? normalized : null;
+}
+
+function normalizeReviewNotes(value) {
+  const normalized = String(value || '').trim();
+  return normalized ? normalized.slice(0, 1000) : null;
+}
+
+function resolveReviewLabelForResolution(resolution) {
+  if (resolution === 'mark_valid') return 'valid';
+  if (resolution === 'mark_weak') return 'valid_but_weak';
+  return null;
+}
+
+async function applyReviewAlertResolution(alert, resolution, userId, notes) {
+  if (resolution === 'block') {
+    const label = String(alert.label || alert.alertKind || 'admin-review-block').slice(0, 128);
+    await adminBlockedToken.add({
+      address: alert.tokenAddress,
+      label,
+      createdBy: userId,
+    });
+    await tokenCatalog.upsertToken({
+      address: alert.tokenAddress,
+      chain: 'solana',
+      source: 'admin-blocked',
+      symbol: alert.assessment?.symbol || alert.tokenAddress.slice(0, 8),
+      isActiveMonitorCandidate: false,
+    });
+    await tokenCatalog.applyEvaluationResult(alert.tokenAddress, {
+      eligibilityState: 'admin-blocked',
+      eligibleForMonitoring: false,
+      suppressedReason: 'admin_blocked',
+      nextEvaluationAt: new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000)),
+      monitorPriority: 'dormant',
+    });
+    await tokenRiskReview.removeAutoReview(alert.tokenAddress);
+    return;
+  }
+
+  const reviewLabel = resolveReviewLabelForResolution(resolution);
+  if (reviewLabel) {
+    await tokenRiskReview.upsertReview({
+      tokenAddress: alert.tokenAddress,
+      label: reviewLabel,
+      source: 'manual',
+      notes,
+      createdBy: userId,
+      updatedBy: userId,
+    });
+  }
+}
+
 // All admin routes require authentication + admin role
 router.use(authenticate);
 router.use(requireAdmin);
 router.use(requireTrustedOrigin);
+
+router.get('/token-review-alerts', async (req, res) => {
+  const limit = parseLogsLimit(req.query?.limit);
+  if (limit == null) {
+    return res.status(400).json({ error: 'limit must be a positive integer' });
+  }
+
+  const address = parseOptionalAddressQuery(req.query?.address);
+  if (!address.ok) {
+    return res.status(400).json({ error: address.error });
+  }
+
+  const status = String(req.query?.status || 'open').trim().toLowerCase();
+  if (!['open', 'resolved'].includes(status)) {
+    return res.status(400).json({ error: 'status must be open or resolved' });
+  }
+
+  try {
+    const alerts = await adminTokenReviewAlert.listRecent({
+      status,
+      address: address.value,
+      limit,
+    });
+    res.json({ alerts, count: alerts.length });
+  } catch (err) {
+    console.error('Admin token review alerts error:', err.message);
+    res.status(500).json({ error: 'Failed to load token review alerts' });
+  }
+});
+
+router.post('/token-review-alerts/:id/resolve', async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid alert id' });
+  }
+
+  const resolution = normalizeReviewAlertResolution(req.body?.resolution);
+  if (!resolution) {
+    return res.status(400).json({ error: 'resolution must be dismiss, block, mark_valid, or mark_weak' });
+  }
+
+  const notes = normalizeReviewNotes(req.body?.notes);
+  try {
+    const alert = await adminTokenReviewAlert.getById(id);
+    if (!alert || alert.status !== 'open') {
+      return res.status(404).json({ error: 'Open token review alert not found' });
+    }
+
+    await applyReviewAlertResolution(alert, resolution, req.user.id, notes);
+    const resolved = await adminTokenReviewAlert.resolve(id, {
+      resolution,
+      resolvedBy: req.user.id,
+      notes,
+    });
+    res.json({ message: 'Token review alert resolved', alert: resolved });
+  } catch (err) {
+    console.error('Admin token review resolve error:', err.message);
+    res.status(500).json({ error: 'Failed to resolve token review alert' });
+  }
+});
 
 router.get('/monitored-exit-events', async (req, res) => {
   const limit = parseLogsLimit(req.query?.limit);

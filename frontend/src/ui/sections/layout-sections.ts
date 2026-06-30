@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel } from '../../state/app-state';
+import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -1044,6 +1044,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   const isHistoryWorkspace = state.ui.workspace === 'history';
   const connectionState = getWorkspaceConnectionState(state);
   const quickBuyMenuItem = renderQuickBuyMenuItem(state);
+  const tokenReviewMenuItem = renderTokenReviewMenuItem(state);
   section.innerHTML = `
     <div class="workspace-topbar-inner">
       <div class="workspace-brand">
@@ -1086,6 +1087,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
             ${quickBuyMenuItem}
             <button type="button" class="legacy-user-dd-item" data-action="open-bot-settings"><span class="workspace-menu-icon workspace-menu-icon-gear">⚙</span><span>Bot Settings</span></button>
             <button type="button" class="legacy-user-dd-item" data-action="open-blocked-tokens"><span class="workspace-menu-icon workspace-menu-icon-danger">✖</span><span class="workspace-menu-label">Blocked Tokens</span></button>
+            ${tokenReviewMenuItem}
             <button type="button" class="legacy-user-dd-item workspace-user-dd-item-danger" data-action="logout"><span class="workspace-menu-icon workspace-menu-icon-danger">⏻</span><span>Logout</span></button>
           </div>
         </div>
@@ -1167,7 +1169,8 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
     controller.openAuthPanel('blocked-tokens');
     section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
   });
-  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-user-settings"]):not([data-action="open-floating-quick-buy"]):not([data-action="open-bot-settings"]):not([data-action="open-blocked-tokens"]):not([data-action="logout"])').forEach((button) => {
+  bindTokenReviewHeaderAction(section, controller);
+  section.querySelectorAll<HTMLButtonElement>('.legacy-user-dd-item:not([data-action="open-user-settings"]):not([data-action="open-floating-quick-buy"]):not([data-action="open-bot-settings"]):not([data-action="open-blocked-tokens"]):not([data-action="open-token-review-alerts"]):not([data-action="logout"])').forEach((button) => {
     button.addEventListener('click', () => {
       section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
     });
@@ -1181,6 +1184,24 @@ function renderQuickBuyMenuItem(state: AppState) {
     return '';
   }
   return '<button type="button" class="legacy-user-dd-item" data-action="open-floating-quick-buy"><span class="workspace-menu-icon">⚡</span><span>Quick Buy</span></button>';
+}
+
+function renderTokenReviewMenuItem(state: AppState) {
+  if (state.session.role !== 'admin') {
+    return '';
+  }
+  const count = state.data.adminTokenReviewAlerts.length;
+  const suffix = count > 0 ? ` <small class="workspace-menu-count">${count}</small>` : '';
+  return `<button type="button" class="legacy-user-dd-item" data-action="open-token-review-alerts"><span class="workspace-menu-icon workspace-menu-icon-danger">!</span><span>Review Alerts${suffix}</span></button>`;
+}
+
+function bindTokenReviewHeaderAction(section: ParentNode, controller: AppController) {
+  section.querySelector<HTMLButtonElement>('[data-action="open-token-review-alerts"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    controller.openAuthPanel('token-review-alerts');
+    section.querySelector<HTMLElement>('[data-user-menu]')?.classList.remove('open');
+  });
 }
 
 function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppController) {
@@ -1252,6 +1273,13 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
     overlay.innerHTML = renderBlockedTokensModal(state);
     bindProfileModalCloseActions(overlay, controller);
     bindBlockedTokensPanel(overlay, controller);
+    return overlay;
+  }
+
+  if (state.ui.authPanel === 'token-review-alerts') {
+    overlay.innerHTML = renderTokenReviewAlertsModal(state);
+    bindProfileModalCloseActions(overlay, controller);
+    bindTokenReviewAlertsPanel(overlay, controller);
     return overlay;
   }
 
@@ -4433,6 +4461,108 @@ function renderBlockedTokenAvatar(state: AppState, item: AppState['data']['block
   return `<div class="blocked-token-avatar blocked-token-avatar-placeholder">${safeLabel.slice(0, 2).toUpperCase()}</div>`;
 }
 
+function renderTokenReviewAlertsModal(state: AppState) {
+  const alerts = state.data.adminTokenReviewAlerts;
+  return renderProfileModalShell({
+    panel: 'token-review-alerts',
+    title: 'Review Alerts',
+    description: 'Manual-review tokens with social or website evidence.',
+    labelId: 'token-review-alerts-title',
+    panelClass: 'legacy-auth-panel-token-review',
+    content: `
+      <div class="token-review-toolbar">
+        <span class="token-review-count">${alerts.length} open</span>
+        <button type="button" class="legacy-user-dd-item token-review-refresh" data-action="refresh-token-review-alerts" ${state.ui.busy ? 'disabled' : ''}>Refresh</button>
+      </div>
+      <div class="token-review-list">
+        ${alerts.length === 0 ? '<div class="blocked-token-empty">No token review alerts right now.</div>' : alerts.map((alert) => renderTokenReviewAlertRow(alert, state.ui.busy)).join('')}
+      </div>
+    `,
+  });
+}
+
+function renderTokenReviewAlertRow(alert: AdminTokenReviewAlertEntry, busy: boolean) {
+  const address = String(alert.tokenAddress || '').trim();
+  const label = String(alert.label || alert.alertKind || 'manual review').trim();
+  const priority = String(alert.priority || 'normal').trim().toUpperCase();
+  const reasonCodes = Array.isArray(alert.reasonCodes) ? alert.reasonCodes : [];
+  const market = alert.marketSnapshot || {};
+  const risk = alert.riskSnapshot || {};
+  const social = alert.socialSnapshot || {};
+  const imageUrl = sanitizeOptionalHttpUrl(getRecordString(social, 'imageUrl'));
+  const createdAt = formatDateTime(alert.createdAt);
+  const metricItems = [
+    ['MCAP', fmtMoney(getRecordNumber(market, 'mcap') ?? getRecordNumber(alert.assessment, 'marketCap'))],
+    ['LIQ', fmtMoney(getRecordNumber(market, 'liquidityUsd'))],
+    ['VOL24H', fmtMoney(getRecordNumber(market, 'vol24h'))],
+    ['TOP10', formatReviewPct(getRecordNumber(risk, 'top10Pct'))],
+    ['TOP20', formatReviewPct(getRecordNumber(risk, 'top20Pct'))],
+  ].filter(([, value]) => value && value !== '-');
+  return `
+    <article class="token-review-row">
+      <div class="token-review-main">
+        ${imageUrl
+          ? `<img src="${imageUrl}" alt="" class="blocked-token-avatar" />`
+          : `<div class="blocked-token-avatar blocked-token-avatar-placeholder">${escapeHtml(address.slice(0, 2).toUpperCase() || '??')}</div>`}
+        <div class="token-review-copy">
+          <div class="token-review-title">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="token-review-priority">${escapeHtml(priority)}</span>
+          </div>
+          <span class="token-review-address">${escapeHtml(address)}</span>
+          <div class="token-review-meta">
+            <span>${escapeHtml(createdAt || 'No date')}</span>
+            ${reasonCodes.slice(0, 4).map((reason) => `<span>${escapeHtml(reason)}</span>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="token-review-links">
+        ${renderTokenReviewLink('Website', getRecordString(social, 'websiteUrl'))}
+        ${renderTokenReviewLink('Twitter', getRecordString(social, 'twitterUrl'))}
+        ${renderTokenReviewLink('Community', getRecordString(social, 'communityUrl'))}
+        ${renderTokenReviewLink('Pair', getRecordString(social, 'pairUrl'))}
+      </div>
+      <div class="token-review-metrics">
+        ${metricItems.map(([labelText, value]) => `
+          <span>
+            <small>${escapeHtml(labelText)}</small>
+            <b>${escapeHtml(value)}</b>
+          </span>
+        `).join('')}
+      </div>
+      <div class="token-review-actions">
+        <button type="button" class="legacy-user-dd-item" data-action="resolve-token-review-alert" data-resolution="mark_valid" data-alert-id="${alert.id}" ${busy ? 'disabled' : ''}>Valid</button>
+        <button type="button" class="legacy-user-dd-item" data-action="resolve-token-review-alert" data-resolution="mark_weak" data-alert-id="${alert.id}" ${busy ? 'disabled' : ''}>Weak</button>
+        <button type="button" class="legacy-user-dd-item" data-action="resolve-token-review-alert" data-resolution="dismiss" data-alert-id="${alert.id}" ${busy ? 'disabled' : ''}>Dismiss</button>
+        <button type="button" class="legacy-user-dd-item token-review-block" data-action="resolve-token-review-alert" data-resolution="block" data-alert-id="${alert.id}" ${busy ? 'disabled' : ''}>Block</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderTokenReviewLink(label: string, value: string | null) {
+  const url = sanitizeOptionalHttpUrl(value);
+  if (!url) {
+    return '';
+  }
+  return `<a href="${url}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`;
+}
+
+function getRecordString(record: Record<string, unknown> | null | undefined, key: string) {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getRecordNumber(record: Record<string, unknown> | null | undefined, key: string) {
+  const value = record?.[key];
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function formatReviewPct(value: number | null) {
+  return value == null ? '-' : `${value.toFixed(2)}%`;
+}
+
 function renderChangePasswordModal(state: AppState) {
   const currentPasswordError = state.ui.error === 'Current password is required.'
     || state.ui.error === 'Current password is incorrect';
@@ -4865,6 +4995,35 @@ function bindBlockedTokensPanel(section: ParentNode, controller: AppController) 
       }
     });
   });
+}
+
+function bindTokenReviewAlertsPanel(section: ParentNode, controller: AppController) {
+  const panel = section.querySelector<HTMLElement>('[data-auth-panel="token-review-alerts"]');
+  if (!panel) {
+    return;
+  }
+
+  bindFocusTrap(panel);
+  section.querySelector<HTMLButtonElement>('[data-action="refresh-token-review-alerts"]')?.addEventListener('click', () => {
+    void controller.refreshAdminTokenReviewAlerts();
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="resolve-token-review-alert"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const alertId = Number(button.dataset.alertId || '0');
+      const resolution = button.dataset.resolution;
+      if (!isTokenReviewResolution(resolution)) {
+        return;
+      }
+      if (resolution === 'block' && typeof window !== 'undefined' && !window.confirm('Block this token in the backend?')) {
+        return;
+      }
+      void controller.resolveAdminTokenReviewAlert(alertId, resolution);
+    });
+  });
+}
+
+function isTokenReviewResolution(value: string | undefined): value is 'dismiss' | 'block' | 'mark_valid' | 'mark_weak' {
+  return value === 'dismiss' || value === 'block' || value === 'mark_valid' || value === 'mark_weak';
 }
 
 function bindRegisterPanel(section: ParentNode, controller: AppController, state: AppState) {

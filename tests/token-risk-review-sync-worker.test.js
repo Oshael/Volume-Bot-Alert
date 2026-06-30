@@ -14,6 +14,7 @@ describe('token risk review sync worker', () => {
     const evidence = [];
     const blocked = [];
     const suppressed = [];
+    const reviewAlerts = [];
     const removedAutoReviews = [];
     const result = await worker.__private.processRows([
       {
@@ -73,6 +74,13 @@ describe('token risk review sync worker', () => {
           evidence.push({ row, assessment, meteoraSummary });
         },
       },
+      adminTokenReviewAlertModel: {
+        enqueue: async (payload) => {
+          reviewAlerts.push(payload);
+          return payload;
+        },
+      },
+      adminReviewSocialLookupLimit: 0,
     });
 
     assert.equal(result.saved, 1);
@@ -81,11 +89,147 @@ describe('token risk review sync worker', () => {
     assert.equal(saved[0].label, 'junk_probable');
     assert.equal(blocked.length, 0);
     assert.equal(suppressed.length, 0);
+    assert.equal(reviewAlerts.length, 0);
     assert.deepEqual(removedAutoReviews, []);
     assert.match(saved[0].notes, /^auto\/v1_manual_review:/);
     assert.equal(evidence.length, 1);
     assert.equal(evidence[0].assessment.label, 'junk_probable');
     assert.equal(evidence[0].assessment.autoBlock, false);
+  });
+
+  it('creates an admin review alert for manual-review junk with stored social metadata', async () => {
+    const saved = [];
+    const reviewAlerts = [];
+    const result = await worker.__private.processRows([
+      {
+        address: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
+        symbol: 'RTPBET',
+        last_mcap: 113660296,
+        last_vol_1h: 10,
+        last_vol_6h: 100,
+        last_vol_24h: 900,
+        last_liquidity_usd: 877620.15,
+        last_txns_24h_buys: 9,
+        last_txns_24h_sells: 26,
+        last_twitter_url: 'https://x.com/rtpbet',
+        risk_holder_count: 158,
+        risk_top_10_pct: 84.63,
+        risk_top_20_pct: 97.49,
+        risk_mint_authority_active: false,
+        risk_freeze_authority_active: false,
+      },
+    ], {
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [{
+          tokenAddress: 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M',
+          hasPool: false,
+          currentTvl: null,
+          poolCount: 0,
+        }],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async () => {
+          throw new Error('manual-review social alert tokens must not be auto-blocked');
+        },
+      },
+      adminTokenReviewAlertModel: {
+        enqueue: async (payload) => {
+          reviewAlerts.push(payload);
+          return payload;
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(result.adminReviewAlerts, 1);
+    assert.equal(saved[0].label, 'junk_probable');
+    assert.equal(reviewAlerts[0].alertKind, 'manual-review-socials-present');
+    assert.equal(reviewAlerts[0].socialSnapshot.twitterUrl, 'https://x.com/rtpbet');
+    assert.equal(reviewAlerts[0].priority, 'high');
+  });
+
+  it('checks Dex for manual-review junk socials without disabling hard-ban gates', async () => {
+    const reviewAlerts = [];
+    const address = 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M';
+    let dexLookups = 0;
+    const result = await worker.__private.processRows([
+      {
+        address,
+        symbol: 'RTPBET',
+        last_mcap: 113660296,
+        last_vol_1h: 10,
+        last_vol_6h: 100,
+        last_vol_24h: 900,
+        last_liquidity_usd: 877620.15,
+        last_txns_24h_buys: 9,
+        last_txns_24h_sells: 26,
+        risk_holder_count: 158,
+        risk_top_10_pct: 84.63,
+        risk_top_20_pct: 97.49,
+        risk_mint_authority_active: false,
+        risk_freeze_authority_active: false,
+      },
+    ], {
+      dexscreenerService: {
+        getTokenPairs: async (tokenAddress) => {
+          dexLookups += 1;
+          assert.equal(tokenAddress, address);
+          return {
+            pairs: [{
+              chainId: 'solana',
+              dexId: 'meteora',
+              pairAddress: 'FpqhEG281t5Bi6yT782ieQkpzmPMRyBY5oirK1rcwCH1',
+              url: 'https://dexscreener.com/solana/fpqh',
+              info: {
+                websites: [{ label: 'Website', url: 'https://example-token.com/' }],
+                socials: [{ type: 'twitter', url: 'https://x.com/exampletoken' }],
+              },
+            }],
+          };
+        },
+        getBestPair: (data) => data.pairs[0],
+      },
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [{
+          tokenAddress: address,
+          hasPool: false,
+          currentTvl: null,
+          poolCount: 0,
+        }],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => ({ tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' }),
+      },
+      adminBlockedTokenModel: {
+        add: async () => {
+          throw new Error('manual-review social alert tokens must not be auto-blocked');
+        },
+      },
+      adminTokenReviewAlertModel: {
+        enqueue: async (payload) => {
+          reviewAlerts.push(payload);
+          return payload;
+        },
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async () => {},
+      },
+    });
+
+    assert.equal(dexLookups, 1);
+    assert.equal(result.adminReviewAlerts, 1);
+    assert.equal(reviewAlerts[0].socialSnapshot.websiteUrl, 'https://example-token.com/');
+    assert.equal(reviewAlerts[0].socialSnapshot.twitterUrl, 'https://x.com/exampletoken');
   });
 
   it('counts manual rows as protected when auto sync hits an existing manual review', async () => {
@@ -402,6 +546,7 @@ describe('token risk review sync worker', () => {
           throw new Error('boom');
         },
       },
+      adminReviewSocialLookupLimit: 0,
     });
 
     assert.equal(result.saved, 1);

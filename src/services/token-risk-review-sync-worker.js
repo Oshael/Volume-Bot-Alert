@@ -3,6 +3,7 @@ const tokenMeteoraState = require('../models/token-meteora-state');
 const tokenRiskReview = require('../models/token-risk-review');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenJunkEvidenceCapture = require('./token-junk-evidence-capture');
+const adminTokenReviewAlertService = require('./admin-token-review-alert-service');
 const gmgnClient = require('./gmgn-client');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const {
@@ -14,6 +15,7 @@ const {
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_SCAN_LIMIT = 200;
 const DEFAULT_MIN_MCAP = 15000;
+const DEFAULT_ADMIN_REVIEW_SOCIAL_LOOKUP_LIMIT = 25;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
 const GMGN_CONCENTRATED_TOP_10_PCT = 90;
 const GMGN_CONCENTRATED_TOP_20_PCT = 95;
@@ -53,12 +55,14 @@ let status = {
   lastManualProtected: 0,
   lastValidProtected: 0,
   lastReleased: 0,
+  lastAdminReviewAlerts: 0,
   totalProcessed: 0,
   totalSaved: 0,
   totalAutoBlocked: 0,
   totalManualProtected: 0,
   totalValidProtected: 0,
   totalReleased: 0,
+  totalAdminReviewAlerts: 0,
   totalErrors: 0,
   lastError: null,
 };
@@ -69,6 +73,14 @@ function normalizeLimit(value, fallback, max = 5000) {
     return fallback;
   }
   return Math.max(1, Math.min(Math.trunc(parsed), max));
+}
+
+function normalizeNonNegativeLimit(value, fallback, max = 5000) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(Math.trunc(parsed), max));
 }
 
 function normalizeOptions(options = {}) {
@@ -538,6 +550,63 @@ async function autoBlockToken(row, assessment, deps = {}, meteoraSummary = null)
   return true;
 }
 
+async function enqueueAdminReviewAlert(row, label, assessment, meteoraSummary, deps = {}, options = {}) {
+  const alertService = deps.adminTokenReviewAlertService || adminTokenReviewAlertService;
+  const alert = await alertService.maybeEnqueueManualReviewSocialAlert({
+    row,
+    label,
+    assessment,
+    marketSnapshot: buildRiskReviewMarketSnapshot(row),
+    riskSnapshot: buildRiskReviewRiskSnapshot(row),
+    meteoraSnapshot: buildRiskReviewMeteoraSnapshot(meteoraSummary),
+  }, {
+    ...deps,
+    skipDexLookup: options.skipDexLookup === true,
+  });
+  return Boolean(alert);
+}
+
+function resolveAdminReviewDexLookupOptions(row, state) {
+  const hasStoredSocial = Boolean(row?.last_twitter_url || row?.last_community_url);
+  const skipDexLookup = !hasStoredSocial && state.socialLookups >= state.socialLookupLimit;
+  if (!hasStoredSocial && !skipDexLookup) {
+    state.socialLookups += 1;
+  }
+  return { skipDexLookup };
+}
+
+async function maybeEnqueueAdminReviewAlert(row, label, assessment, meteoraSummary, deps, state) {
+  if (!adminTokenReviewAlertService.shouldCreateManualReviewSocialAlert(label, assessment)) {
+    return false;
+  }
+  const options = resolveAdminReviewDexLookupOptions(row, state);
+  return enqueueAdminReviewAlert(row, label, assessment, meteoraSummary, deps, options);
+}
+
+async function handleAutoReviewOutcome(row, label, assessment, meteoraSummary, deps, state) {
+  if (shouldAutoBlockAssessment(label, assessment)) {
+    return {
+      autoBlocked: await autoBlockToken(row, assessment, deps, meteoraSummary) ? 1 : 0,
+      released: 0,
+      adminReviewAlerts: 0,
+    };
+  }
+
+  if (label === 'valid') {
+    return {
+      autoBlocked: 0,
+      released: await releaseGmgnRiskSuppression(row, deps) ? 1 : 0,
+      adminReviewAlerts: 0,
+    };
+  }
+
+  return {
+    autoBlocked: 0,
+    released: 0,
+    adminReviewAlerts: await maybeEnqueueAdminReviewAlert(row, label, assessment, meteoraSummary, deps, state) ? 1 : 0,
+  };
+}
+
 async function listCandidates(offset, options, deps = {}) {
   const catalogModel = deps.tokenCatalogModel || tokenCatalog;
   const rows = await catalogModel.listAutoRiskReviewCandidates(options.scanLimit, offset, options.minMcap);
@@ -570,6 +639,15 @@ async function processRows(rows = [], deps = {}) {
   let manualProtected = 0;
   let validProtected = 0;
   let released = 0;
+  let adminReviewAlerts = 0;
+  const adminReviewState = {
+    socialLookups: 0,
+    socialLookupLimit: normalizeNonNegativeLimit(
+      deps.adminReviewSocialLookupLimit,
+      DEFAULT_ADMIN_REVIEW_SOCIAL_LOOKUP_LIMIT,
+      500
+    ),
+  };
 
   for (const row of rows) {
     if (hasPersistedValidReview(row)) {
@@ -598,16 +676,15 @@ async function processRows(rows = [], deps = {}) {
       continue;
     }
 
-    if (shouldAutoBlockAssessment(label, assessment) && await autoBlockToken(row, assessment, deps, meteoraSummary)) {
-      autoBlocked += 1;
-    } else if (label === 'valid' && await releaseGmgnRiskSuppression(row, deps)) {
-      released += 1;
-    }
+    const outcome = await handleAutoReviewOutcome(row, label, assessment, meteoraSummary, deps, adminReviewState);
+    autoBlocked += outcome.autoBlocked;
+    released += outcome.released;
+    adminReviewAlerts += outcome.adminReviewAlerts;
 
     saved += 1;
   }
 
-  return { saved, autoBlocked, manualProtected, validProtected, released };
+  return { saved, autoBlocked, manualProtected, validProtected, released, adminReviewAlerts };
 }
 
 function schedule(options = {}) {
@@ -649,6 +726,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
     status.lastManualProtected = 0;
     status.lastValidProtected = 0;
     status.lastReleased = 0;
+    status.lastAdminReviewAlerts = 0;
     status.lastError = null;
 
     try {
@@ -667,12 +745,14 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastManualProtected = result.manualProtected;
       status.lastValidProtected = result.validProtected;
       status.lastReleased = result.released;
+      status.lastAdminReviewAlerts = result.adminReviewAlerts;
       status.totalProcessed += rows.length;
       status.totalSaved += result.saved;
       status.totalAutoBlocked += result.autoBlocked;
       status.totalManualProtected += result.manualProtected;
       status.totalValidProtected += result.validProtected;
       status.totalReleased += result.released;
+      status.totalAdminReviewAlerts += result.adminReviewAlerts;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
       status.lastScheduledDelayMs = computeNextDelayMs(status.lastRunDurationMs);
@@ -687,6 +767,7 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
         manualProtected: result.manualProtected,
         validProtected: result.validProtected,
         released: result.released,
+        adminReviewAlerts: result.adminReviewAlerts,
         nextOffset,
       };
     } catch (error) {
@@ -731,6 +812,7 @@ module.exports = {
   LOOP_INTERVAL_MS,
   DEFAULT_SCAN_LIMIT,
   DEFAULT_MIN_MCAP,
+  DEFAULT_ADMIN_REVIEW_SOCIAL_LOOKUP_LIMIT,
   getStatus,
   runOnce,
   start,
@@ -744,11 +826,14 @@ module.exports = {
     captureEvidenceSafely,
     buildMeteoraMetric,
     buildAutoBlockLabel,
+    enqueueAdminReviewAlert,
+    handleAutoReviewOutcome,
     hasGmgnConcentratedStructure,
     hasStructuralCoverage,
     isGmgnRiskEnrichmentSuppressed,
     listCandidates,
     normalizeAutoLabel,
+    normalizeNonNegativeLimit,
     normalizePersistedAutoLabel,
     normalizeOptions,
     processRows,

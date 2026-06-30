@@ -1307,6 +1307,7 @@ function getOverlayRenderKey(state: AppState) {
     botSettingsConfigs: state.ui.authPanel === 'bot-settings' ? state.data.configs : null,
     browserNotifications: state.ui.authPanel === 'bot-settings' ? state.ui.browserNotifications : null,
     blockedTokens: state.ui.authPanel === 'blocked-tokens' ? state.data.blocklist : null,
+    tokenReviewAlerts: state.ui.authPanel === 'token-review-alerts' ? state.data.adminTokenReviewAlerts : null,
   });
 }
 

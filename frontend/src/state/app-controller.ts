@@ -1,4 +1,4 @@
-import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -27,12 +27,15 @@ import {
 import {
   addManualToken as addManualTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
+  fetchAdminTokenReviewAlerts,
   fetchConfig,
   patchConfig,
   patchUiPrefs,
+  resolveAdminTokenReviewAlert as resolveAdminTokenReviewAlertRequest,
   removeManualToken as removeManualTokenRequest,
   removeBlockedToken as removeBlockedTokenRequest,
   syncConfig,
+  type AdminTokenReviewResolution,
   type ConfigPayload,
   type UiPrefsPayload,
 } from '../services/api/config';
@@ -416,6 +419,8 @@ export interface AppController {
   confirmBlockedTokenWarning(): Promise<void>;
   adminBlockToken(address: string, label?: string | null): Promise<void>;
   adminUnblockToken(address: string): Promise<void>;
+  refreshAdminTokenReviewAlerts(): Promise<void>;
+  resolveAdminTokenReviewAlert(id: number, resolution: AdminTokenReviewResolution): Promise<void>;
   mockBuyToken(address: string): Promise<void>;
   mockSellToken(address: string, percent: number): Promise<void>;
   setActiveMockTradingWallet(walletId: number): Promise<void>;
@@ -548,6 +553,7 @@ const ACCOUNT_AUTH_PANEL_PATHS: Record<AccountRouteAuthPanel, string> = {
   'user-settings': '/account/profile',
   'bot-settings': '/account/bot-settings',
   'blocked-tokens': '/account/blocked-tokens',
+  'token-review-alerts': '/account/token-review-alerts',
   'change-password': '/account/change-password',
   'email-verification': '/account/verify-email',
   'wallet-select': '/account/wallet',
@@ -3030,6 +3036,11 @@ export function createAppController(): AppController {
     state.ui.authPanel = panel;
     if (panel === 'bot-settings') {
       hydrateBrowserNotificationSettings();
+    }
+    if (panel === 'token-review-alerts') {
+      void loadAdminTokenReviewAlertsInternal()
+        .then(() => emit('overlay', 'header'))
+        .catch(() => emit('overlay', 'header'));
     }
     if (panel === 'user-settings') {
       void refreshUserSettingsState(COOKIE_SESSION_MARKER)
@@ -7694,6 +7705,7 @@ export function createAppController(): AppController {
       dismissedOldWeek: [],
       dismissedPump: [],
       blocklist: [],
+      adminTokenReviewAlerts: [],
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
@@ -8703,6 +8715,17 @@ export function createAppController(): AppController {
     applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
   }
 
+  async function loadAdminTokenReviewAlertsInternal() {
+    const token = state.session.token;
+    if (!token || state.session.role !== 'admin') {
+      state.data.adminTokenReviewAlerts = [];
+      return;
+    }
+
+    const result = await fetchAdminTokenReviewAlerts(token, 'open');
+    state.data.adminTokenReviewAlerts = result.alerts as AdminTokenReviewAlertEntry[];
+  }
+
   async function refreshRestoredSessionStateInternal(options: { force?: boolean } = {}) {
     const token = state.session.token;
     if (state.session.status !== 'authenticated' || !token) {
@@ -9553,6 +9576,11 @@ export function createAppController(): AppController {
       }
       if (panel === 'bot-settings') {
         hydrateBrowserNotificationSettings();
+      }
+      if (panel === 'token-review-alerts') {
+        void loadAdminTokenReviewAlertsInternal()
+          .then(() => emit('overlay', 'header'))
+          .catch(() => emit('overlay', 'header'));
       }
       state.ui.authPanel = panel;
       navigateToAuthPanelRoute(panel);
@@ -11151,6 +11179,57 @@ export function createAppController(): AppController {
       } finally {
         setBusy(false);
         emit('overlay', 'monitored', 'manual', 'recent', 'old-week', 'header');
+      }
+    },
+    async refreshAdminTokenReviewAlerts() {
+      if (!state.session.token || state.session.role !== 'admin') {
+        state.data.adminTokenReviewAlerts = [];
+        emit('overlay', 'header');
+        return;
+      }
+
+      try {
+        await loadAdminTokenReviewAlertsInternal();
+        setError(null);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to load token review alerts');
+      } finally {
+        emit('overlay', 'header');
+      }
+    },
+    async resolveAdminTokenReviewAlert(id: number, resolution: AdminTokenReviewResolution) {
+      const token = state.session.token;
+      if (!token || state.session.role !== 'admin') {
+        setError('Admin access required');
+        emit('overlay');
+        return;
+      }
+
+      const parsedId = Number(id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        setError('Valid review alert id is required');
+        emit('overlay');
+        return;
+      }
+
+      const currentAlert = state.data.adminTokenReviewAlerts.find((alert) => alert.id === parsedId) || null;
+      setBusy(true);
+      setError(null);
+      setNotice('Resolving token review alert...');
+      emit('overlay');
+
+      try {
+        const result = await resolveAdminTokenReviewAlertRequest(parsedId, resolution, token);
+        state.data.adminTokenReviewAlerts = state.data.adminTokenReviewAlerts.filter((alert) => alert.id !== parsedId);
+        if (resolution === 'block' && currentAlert?.tokenAddress) {
+          removeTokenEverywhere(currentAlert.tokenAddress);
+        }
+        setNotice(result.message);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to resolve token review alert');
+      } finally {
+        setBusy(false);
+        emit('overlay', 'manual', 'recent', 'old-week', 'monitored', 'header');
       }
     },
     async mockBuyToken(address: string) {

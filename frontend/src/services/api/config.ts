@@ -6,6 +6,30 @@ export interface AddressItem {
   imageUrl?: string | null;
 }
 
+export interface AdminTokenReviewAlert {
+  id: number;
+  tokenAddress: string | null;
+  status: 'open' | 'resolved' | string | null;
+  priority: string | null;
+  alertKind: string | null;
+  pipeline: string | null;
+  label: string | null;
+  reasonCodes: string[];
+  assessment: Record<string, unknown>;
+  socialSnapshot: Record<string, unknown>;
+  marketSnapshot: Record<string, unknown>;
+  riskSnapshot: Record<string, unknown>;
+  meteoraSnapshot: Record<string, unknown>;
+  createdAt: string | null;
+  updatedAt: string | null;
+  resolvedAt: string | null;
+  resolvedBy: number | null;
+  resolution: string | null;
+  notes: string | null;
+}
+
+export type AdminTokenReviewResolution = 'dismiss' | 'block' | 'mark_valid' | 'mark_weak';
+
 export interface BucketSortCriterionPayload {
   mode: 'vol' | 'mcap' | 'pchange' | 'age';
   window: '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
@@ -127,6 +151,25 @@ export function addBlockedToken(address: string, label?: string | null, token?: 
 export function removeBlockedToken(address: string, token?: string | null) {
   return apiFetch<{ message: string }>(`/api/config/blocklist/${encodeURIComponent(address)}`, {
     method: 'DELETE',
+    token,
+  });
+}
+
+export function fetchAdminTokenReviewAlerts(token?: string | null, status: 'open' | 'resolved' = 'open') {
+  return apiFetch<{ alerts: AdminTokenReviewAlert[]; count: number }>(`/api/admin/token-review-alerts?status=${encodeURIComponent(status)}&limit=100`, {
+    token,
+  });
+}
+
+export function resolveAdminTokenReviewAlert(
+  id: number,
+  resolution: AdminTokenReviewResolution,
+  token?: string | null,
+  notes?: string | null,
+) {
+  return apiFetch<{ message: string; alert: AdminTokenReviewAlert | null }>(`/api/admin/token-review-alerts/${encodeURIComponent(String(id))}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ resolution, notes: notes ?? null }),
     token,
   });
 }

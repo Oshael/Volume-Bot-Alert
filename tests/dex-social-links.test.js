@@ -18,6 +18,20 @@ describe('Dex social link extraction', () => {
 
     assert.equal(links.twitterUrl, 'https://x.com/example');
     assert.equal(links.communityUrl, 'https://coincommunities.org/communities/token123');
+    assert.equal(links.websiteUrl, null);
+  });
+
+  it('extracts a generic project website without treating it as a community link', () => {
+    const links = extractDexSocialLinks({
+      info: {
+        socials: [{ type: 'twitter', url: 'https://x.com/nestusd' }],
+        websites: [{ label: 'Website', url: 'https://nestusd.com/' }],
+      },
+    });
+
+    assert.equal(links.twitterUrl, 'https://x.com/nestusd');
+    assert.equal(links.communityUrl, null);
+    assert.equal(links.websiteUrl, 'https://nestusd.com/');
   });
 
   it('keeps X communities out of the official profile URL', () => {

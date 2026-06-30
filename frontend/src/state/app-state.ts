@@ -408,7 +408,7 @@ export interface PumpToastEntry {
 export type CollapsibleSectionKey = 'manual' | 'recent' | 'oldWeek' | 'monitored' | 'bidZone' | 'pumpfun';
 export type WorkspaceView = 'live' | 'history';
 export type TradeTerminalKey = 'axiom' | 'photon' | 'bullx' | 'gmgn' | 'padre';
-export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'change-password';
+export type ProfileAuthPanel = 'user-settings' | 'bot-settings' | 'blocked-tokens' | 'token-review-alerts' | 'change-password';
 export type AuthPanel =
   | 'none'
   | ProfileAuthPanel
@@ -427,6 +427,7 @@ export function isProfileAuthPanel(panel: AuthPanel): panel is ProfileAuthPanel 
   return panel === 'user-settings'
     || panel === 'bot-settings'
     || panel === 'blocked-tokens'
+    || panel === 'token-review-alerts'
     || panel === 'change-password';
 }
 
@@ -446,6 +447,28 @@ export interface AddressItem {
   address: string;
   label?: string | null;
   imageUrl?: string | null;
+}
+
+export interface AdminTokenReviewAlertEntry {
+  id: number;
+  tokenAddress: string | null;
+  status: 'open' | 'resolved' | string | null;
+  priority: string | null;
+  alertKind: string | null;
+  pipeline: string | null;
+  label: string | null;
+  reasonCodes: string[];
+  assessment: Record<string, unknown>;
+  socialSnapshot: Record<string, unknown>;
+  marketSnapshot: Record<string, unknown>;
+  riskSnapshot: Record<string, unknown>;
+  meteoraSnapshot: Record<string, unknown>;
+  createdAt: string | null;
+  updatedAt: string | null;
+  resolvedAt: string | null;
+  resolvedBy: number | null;
+  resolution: string | null;
+  notes: string | null;
 }
 
 export interface BlockTokenWarningState {
@@ -615,6 +638,7 @@ export interface AppState {
     dismissedOldWeek: string[];
     dismissedPump: string[];
     blocklist: AddressItem[];
+    adminTokenReviewAlerts: AdminTokenReviewAlertEntry[];
     starredTokens: string[];
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
@@ -796,6 +820,7 @@ export function createAppState(): AppState {
       dismissedOldWeek: [],
       dismissedPump: [],
       blocklist: [],
+      adminTokenReviewAlerts: [],
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},

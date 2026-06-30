@@ -2069,9 +2069,29 @@ body:has(.workspace-topbar)::before {
   color: #ff8aa5;
 }
 
+.workspace-menu-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 122, 89, 0.16);
+  color: #ffb092;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .legacy-auth-panel-blocklist {
   width: min(620px, calc(100vw - 28px));
   max-height: min(78vh, 720px);
+}
+
+.legacy-auth-panel-token-review {
+  width: min(860px, calc(100vw - 28px));
+  max-height: min(84vh, 760px);
 }
 
 .blocked-token-admin-unblock-form {
@@ -2189,9 +2209,158 @@ body:has(.workspace-topbar)::before {
   text-align: center;
 }
 
+.token-review-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.token-review-count {
+  color: rgba(180, 197, 223, 0.84);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.token-review-refresh {
+  justify-content: center;
+  min-height: 36px;
+}
+
+.token-review-list {
+  display: grid;
+  gap: 12px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.token-review-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(39, 58, 92, 0.68);
+  border-radius: 10px;
+  background: rgba(6, 12, 20, 0.84);
+}
+
+.token-review-main {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.token-review-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.token-review-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.token-review-title strong {
+  color: #e5eefb;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.token-review-priority {
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 183, 77, 0.38);
+  border-radius: 999px;
+  color: #ffc36d;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.token-review-address {
+  color: rgba(150, 169, 196, 0.78);
+  font-size: 10px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.token-review-meta,
+.token-review-links,
+.token-review-metrics,
+.token-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.token-review-meta span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(170, 187, 214, 0.78);
+  font-size: 9px;
+}
+
+.token-review-links a {
+  color: var(--accent-cyan);
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.token-review-links a:hover {
+  text-decoration: underline;
+}
+
+.token-review-metrics span {
+  display: grid;
+  gap: 2px;
+  min-width: 86px;
+  padding: 8px 10px;
+  border: 1px solid rgba(45, 66, 102, 0.62);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.token-review-metrics small {
+  color: rgba(150, 169, 196, 0.72);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.token-review-metrics b {
+  color: #eef4ff;
+  font-size: 12px;
+}
+
+.token-review-actions {
+  justify-content: flex-end;
+}
+
+.token-review-actions .legacy-user-dd-item {
+  justify-content: center;
+  min-height: 34px;
+}
+
+.token-review-block {
+  color: rgba(255, 102, 130, 0.96);
+}
+
 @media (max-width: 620px) {
   .blocked-token-admin-unblock-form {
     grid-template-columns: 1fr;
+  }
+
+  .token-review-toolbar,
+  .token-review-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
