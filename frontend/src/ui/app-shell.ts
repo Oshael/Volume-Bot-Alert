@@ -1283,6 +1283,16 @@ function getAlertsRenderKey(state: AppState) {
     starred: state.data.starredTokens,
     alertRevision: state.runtime.alertRevision,
     alertCount: state.data.alerts.length,
+    tokenReviewAlerts: state.session.role === 'admin'
+      ? state.data.adminTokenReviewAlerts.map((alert) => [
+        alert.id,
+        alert.tokenAddress,
+        alert.priority,
+        alert.label,
+        alert.updatedAt,
+        alert.status,
+      ])
+      : null,
   });
 }
 

@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
+import type { AdminTokenReviewAlertEntry, AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
@@ -54,19 +54,20 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   const renderNow = Date.now();
   const view = getOrCreateAlertsSectionView(controller);
   const cardEffectsEnabled = areAlertCardEffectsEnabled(state);
+  const visibleAlerts = buildVisibleAlerts(state);
   view.controller = controller;
-  syncAlertFxStates(view, state.data.alerts, renderNow);
+  syncAlertFxStates(view, visibleAlerts, renderNow);
   if (!cardEffectsEnabled && view.fxGhostHost.childElementCount > 0) {
     view.fxGhostHost.replaceChildren();
   }
 
   const searchQuery = String(state.ui.alertSearchQuery || '');
-  const filteredAlerts = filterAlerts(state, searchQuery);
+  const filteredAlerts = filterAlerts(visibleAlerts, searchQuery);
   const pagination = paginateAlerts(filteredAlerts, state.ui.alertPage);
 
   syncSearchInput(view, searchQuery);
   syncPaginationControls(view, pagination.safePage, pagination.totalPages);
-  reconcileAlertRows(view, pagination.pageItems, state, renderNow, cardEffectsEnabled);
+  reconcileAlertRows(view, pagination.pageItems, visibleAlerts, state, renderNow, cardEffectsEnabled);
   bindSparklineHover(view.section, state.data.alertSparklineById, { controller });
   bindTokenImagePreview(view.section);
   view.count.textContent = String(filteredAlerts.length);
@@ -196,8 +197,32 @@ function getOrCreateAlertsSectionView(controller: AppController) {
       return;
     }
 
+    const reviewAlertId = Number(button.dataset.reviewAlertId || '0');
+    if (Number.isInteger(reviewAlertId) && reviewAlertId > 0) {
+      void alertsSectionView.controller.resolveAdminTokenReviewAlert(reviewAlertId, 'dismiss');
+      return;
+    }
+
     removeAlertRowImmediately(alertsSectionView, button);
     alertsSectionView.controller.removeAlert(alertId);
+  });
+
+  section.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-action="resolve-token-review-alert"]');
+    if (!button || !alertsSectionView) {
+      return;
+    }
+
+    const reviewAlertId = Number(button.dataset.alertId || '0');
+    const resolution = button.dataset.resolution;
+    if (!Number.isInteger(reviewAlertId) || reviewAlertId <= 0 || !isTokenReviewResolution(resolution)) {
+      return;
+    }
+    if (resolution === 'block' && typeof window !== 'undefined' && !window.confirm('Block this token in the backend?')) {
+      return;
+    }
+    void alertsSectionView.controller.resolveAdminTokenReviewAlert(reviewAlertId, resolution);
   });
 
   document.addEventListener('click', (event) => {
@@ -228,17 +253,117 @@ function buildEmptyState() {
   return emptyState;
 }
 
-function filterAlerts(state: AppState, searchQuery: string) {
-  const normalizedQuery = String(searchQuery || '').trim().toLowerCase();
-  if (!normalizedQuery) {
+function buildVisibleAlerts(state: AppState): AlertEntry[] {
+  if (state.session.role !== 'admin' || state.data.adminTokenReviewAlerts.length === 0) {
     return state.data.alerts;
   }
 
-  return state.data.alerts.filter((alert) => {
+  const reviewAlerts = state.data.adminTokenReviewAlerts
+    .filter((alert) => String(alert.status || 'open').toLowerCase() === 'open')
+    .map(buildAdminReviewAlertEntry)
+    .filter((alert): alert is AlertEntry => Boolean(alert));
+
+  return [...reviewAlerts, ...state.data.alerts];
+}
+
+function buildAdminReviewAlertEntry(review: AdminTokenReviewAlertEntry): AlertEntry | null {
+  const address = String(review.tokenAddress || '').trim();
+  if (!address) {
+    return null;
+  }
+
+  const snapshots = getAdminReviewSnapshots(review);
+  const identity = getAdminReviewIdentity(review, address, snapshots.assessment, snapshots.market);
+  const socialFields = getAdminReviewSocialFields(snapshots.social);
+  const createdAt = parseReviewTimestamp(review.createdAt) ?? parseReviewTimestamp(review.updatedAt) ?? Date.now();
+
+  return {
+    id: `admin-review:${review.id}`,
+    kind: 'admin-token-review',
+    address,
+    ...identity,
+    ...socialFields,
+    reviewAlertId: review.id,
+    reviewPriority: review.priority,
+    reviewReasons: Array.isArray(review.reasonCodes) ? review.reasonCodes : [],
+    reviewTop10Pct: getRecordNumber(snapshots.risk, 'top10Pct'),
+    reviewTop20Pct: getRecordNumber(snapshots.risk, 'top20Pct'),
+    createdAt,
+    pct: 0,
+    label: String(review.label || review.alertKind || 'MANUAL REVIEW'),
+  } satisfies AlertEntry;
+}
+
+function getAdminReviewSnapshots(review: AdminTokenReviewAlertEntry) {
+  return {
+    social: review.socialSnapshot || {},
+    market: review.marketSnapshot || {},
+    risk: review.riskSnapshot || {},
+    assessment: review.assessment || {},
+  };
+}
+
+function getAdminReviewIdentity(
+  review: AdminTokenReviewAlertEntry,
+  address: string,
+  assessment: Record<string, unknown>,
+  market: Record<string, unknown>,
+) {
+  return {
+    symbol: getRecordString(assessment, 'symbol') || getRecordString(market, 'symbol') || address.slice(0, 6),
+    name: getRecordString(assessment, 'name') || String(review.label || review.alertKind || 'Manual review'),
+    mcap: getRecordNumber(market, 'mcap') ?? getRecordNumber(market, 'marketCap') ?? getRecordNumber(assessment, 'marketCap'),
+    volume24h: getRecordNumber(market, 'vol24h') ?? getRecordNumber(market, 'volume24h'),
+  };
+}
+
+function getAdminReviewSocialFields(social: Record<string, unknown>) {
+  return {
+    pairAddress: getRecordString(social, 'pairAddress'),
+    pairUrl: getRecordString(social, 'pairUrl'),
+    imageUrl: getRecordString(social, 'imageUrl'),
+    twitterUrl: getRecordString(social, 'twitterUrl'),
+    communityUrl: getRecordString(social, 'communityUrl'),
+    reviewWebsiteUrl: getRecordString(social, 'websiteUrl'),
+  };
+}
+
+function parseReviewTimestamp(value: string | null | undefined) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getRecordString(record: Record<string, unknown> | null | undefined, key: string) {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getRecordNumber(record: Record<string, unknown> | null | undefined, key: string) {
+  const value = record?.[key];
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatReviewPct(value?: number | null) {
+  return value != null && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
+}
+
+function isTokenReviewResolution(value: string | undefined): value is 'dismiss' | 'block' | 'mark_valid' | 'mark_weak' {
+  return value === 'dismiss' || value === 'block' || value === 'mark_valid' || value === 'mark_weak';
+}
+
+function filterAlerts(alerts: AlertEntry[], searchQuery: string) {
+  const normalizedQuery = String(searchQuery || '').trim().toLowerCase();
+  if (!normalizedQuery) {
+    return alerts;
+  }
+
+  return alerts.filter((alert) => {
     const symbol = String(alert.symbol || '').toLowerCase();
     const name = String(alert.name || '').toLowerCase();
     const address = String(alert.address || '').toLowerCase();
-    return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery);
+    const reasons = (alert.reviewReasons || []).join(' ').toLowerCase();
+    return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery) || reasons.includes(normalizedQuery);
   });
 }
 
@@ -275,11 +400,12 @@ function syncPaginationControls(view: AlertsSectionView, safePage: number, total
 function reconcileAlertRows(
   view: AlertsSectionView,
   filteredAlerts: AlertEntry[],
+  visibleAlerts: AlertEntry[],
   state: AppState,
   renderNow: number,
   cardEffectsEnabled: boolean,
 ) {
-  const liveAlertIds = new Set(state.data.alerts.map((alert) => alert.id));
+  const liveAlertIds = new Set(visibleAlerts.map((alert) => alert.id));
   const desiredNodes: HTMLElement[] = [];
   const pendingEnterFx: Array<{ row: HTMLElement; fxState: AlertFxState }> = [];
 
@@ -869,6 +995,12 @@ function getAlertRowRenderKey(
     surgeWindow: alert.surgeWindow,
     meteoraCurrentTvl: alert.meteoraCurrentTvl,
     meteoraBaselineTvl24h: alert.meteoraBaselineTvl24h,
+    reviewAlertId: alert.reviewAlertId,
+    reviewPriority: alert.reviewPriority,
+    reviewReasons: alert.reviewReasons,
+    reviewWebsiteUrl: alert.reviewWebsiteUrl,
+    reviewTop10Pct: alert.reviewTop10Pct,
+    reviewTop20Pct: alert.reviewTop20Pct,
     tickerPeers: alert.tickerPeers ?? null,
     busy,
     isStarred,
@@ -933,6 +1065,10 @@ function buildAlertRowContent(
   const xSearch = buildXSearchUrl(symbol, alert.address);
   const topClass = getAlertToneClass(alert, renderNow);
   const timeLabel = new Date(alert.createdAt).toLocaleTimeString('en-US');
+  if (alert.kind === 'admin-token-review') {
+    return buildAdminReviewAlertRowContent(alert, busy, isStarred, enabledTradeTerminals, timeLabel, topClass);
+  }
+
   const grid = document.createElement('div');
   grid.className = 'alert-grid';
   const body = document.createElement('div');
@@ -1013,6 +1149,117 @@ function buildAlertRowContent(
   }
 
   content.append(main, statsLine, links, actions);
+  body.append(content, rail);
+  grid.append(body, time);
+  return grid;
+}
+
+function buildAdminReviewAlertRowContent(
+  alert: AlertEntry,
+  busy: boolean,
+  isStarred: boolean,
+  enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'],
+  timeLabel: string,
+  topClass: string,
+) {
+  const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
+  const symbol = String(alert.symbol || '');
+  const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
+  const reviewAlertId = Number(alert.reviewAlertId || 0);
+  const reasons = Array.isArray(alert.reviewReasons) ? alert.reviewReasons : [];
+  const firstReason = reasons[0] ? String(reasons[0]).replace(/_/g, ' ') : String(alert.label || 'manual review');
+  const socialCount = [
+    alert.reviewWebsiteUrl,
+    alert.twitterUrl,
+    alert.communityUrl,
+  ].filter(Boolean).length;
+  const priority = String(alert.reviewPriority || 'normal').toUpperCase();
+
+  const grid = document.createElement('div');
+  grid.className = 'alert-grid';
+  const body = document.createElement('div');
+  body.className = 'alert-body-v68';
+  const time = document.createElement('div');
+  time.className = 'alert-time-v68';
+  time.textContent = timeLabel;
+
+  const main = document.createElement('div');
+  main.className = 'alert-main-v68';
+  main.append(buildAlertAvatar(symbol, imageUrl, alert.address));
+
+  const copyBlock = document.createElement('div');
+  copyBlock.className = 'alert-copy-block';
+
+  const top = document.createElement('div');
+  top.className = 'alert-top-v68';
+  const tokenLine = document.createElement('span');
+  tokenLine.className = 'alert-token-v68';
+  tokenLine.append(symbol, ' ');
+  const tokenName = document.createElement('span');
+  tokenName.className = 'alert-token-name';
+  tokenName.textContent = String(alert.name || '');
+  tokenLine.append(tokenName);
+  top.append(tokenLine);
+
+  const flowLine = document.createElement('div');
+  flowLine.className = 'alert-flow-v68';
+  flowLine.append(
+    buildMetricPair('MCAP', fmtMoney(alert.mcap), 'warn'),
+    buildMetricPair('SOCIAL', socialCount > 0 ? `${socialCount}` : '-', socialCount > 0 ? 'up' : 'white'),
+    buildMetricPair('REVIEW', priority, 'warn'),
+  );
+
+  copyBlock.append(top, flowLine);
+  main.append(copyBlock);
+
+  const statsLine = document.createElement('div');
+  statsLine.className = 'alert-stats-v68';
+  appendMetricRow(statsLine, [
+    buildMetricPair('TOP10', formatReviewPct(alert.reviewTop10Pct), 'warn'),
+    buildMetricPair('TOP20', formatReviewPct(alert.reviewTop20Pct), 'warn'),
+    buildMetricPair('VOL24H', fmtMoney(alert.volume24h), 'white'),
+    buildMetricPair('WHY', firstReason, 'white'),
+  ]);
+
+  const links = document.createElement('div');
+  links.className = 'alert-links-v68';
+  const socialLinks = splitTokenSocialUrls(alert.twitterUrl, alert.communityUrl);
+  links.append(
+    buildInlineLink('Dex Screener', dexUrl),
+    buildTextSeparator(),
+    buildInlineLink('Website', sanitizeHttpUrl(alert.reviewWebsiteUrl || dexUrl)),
+    buildTextSeparator(),
+    buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(buildXSearchUrl(symbol, alert.address))),
+    buildTextSeparator(),
+    buildProfileLink(socialLinks.twitterUrl),
+    ...(socialLinks.communityUrl ? [buildTextSeparator(), buildCommunityLink(socialLinks.communityUrl)] : []),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'alert-actions-v68';
+  actions.append(
+    buildAdminReviewCopyButton(alert.address),
+    buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
+      enabledTradeTerminals,
+    }),
+    buildStarButton(alert.address, isStarred, busy, 'Star token'),
+    buildReviewActionButton('Valid', 'mark_valid', reviewAlertId, busy),
+    buildReviewActionButton('Weak', 'mark_weak', reviewAlertId, busy),
+    buildReviewActionButton('Dismiss', 'dismiss', reviewAlertId, busy),
+    buildReviewActionButton('Block', 'block', reviewAlertId, busy, true),
+  );
+
+  const content = document.createElement('div');
+  content.className = 'alert-content-v68';
+  content.append(main, statsLine, links, actions);
+
+  const side = document.createElement('div');
+  side.className = 'alert-side-v68';
+  side.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id, reviewAlertId));
+  const rail = document.createElement('div');
+  rail.className = 'alert-rail-v68';
+  rail.append(side);
+
   body.append(content, rail);
   grid.append(body, time);
   return grid;
@@ -1129,6 +1376,11 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null, address: stri
 
 function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
   const badge = document.createElement('span');
+  if (alert.kind === 'admin-token-review') {
+    badge.className = `alert-badge-v68 ${toneClass}`;
+    badge.append('Admin Review', document.createElement('br'), buildAlertBadgeSub(String(alert.reviewPriority || 'normal').toUpperCase(), 'manual queue'));
+    return badge;
+  }
   if (isHighCapDumpAlert(alert)) {
     badge.className = `alert-badge-v68 ${toneClass}`;
     badge.append('💥 Dump Alert!', document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'MCAP 5M')));
@@ -1260,7 +1512,7 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
     ]);
   } else {
-    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap';
+    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap' && alert.kind !== 'meteora-surge';
     const compactMcap = shouldShowCompactMcap ? buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up', '', 'current-mcap') : null;
     compactMcap?.classList.add('compact-only-metric');
     const row = appendMetricRow(container, [
@@ -1447,12 +1699,40 @@ function buildActionButton(
   return button;
 }
 
-function buildAlertDismissButton(alertId: string) {
+function buildReviewActionButton(
+  label: string,
+  resolution: 'dismiss' | 'block' | 'mark_valid' | 'mark_weak',
+  reviewAlertId: number,
+  disabled: boolean,
+  danger = false,
+) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `alert-action-button${danger ? ' danger' : ''}`;
+  button.dataset.action = 'resolve-token-review-alert';
+  button.dataset.resolution = resolution;
+  button.dataset.alertId = String(reviewAlertId);
+  button.disabled = disabled || !(reviewAlertId > 0);
+  button.textContent = label;
+  return button;
+}
+
+function buildAdminReviewCopyButton(address: string) {
+  const button = buildActionButton('CA', 'alert-action-button copy-button admin-review-copy-button', 'copy-address', address);
+  button.title = 'Copiar CA';
+  button.setAttribute('aria-label', 'Copiar CA');
+  return button;
+}
+
+function buildAlertDismissButton(alertId: string, reviewAlertId?: number | null) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'alert-dismiss-button';
   button.dataset.action = 'remove-alert';
   button.dataset.alertId = alertId;
+  if (reviewAlertId && reviewAlertId > 0) {
+    button.dataset.reviewAlertId = String(reviewAlertId);
+  }
   button.setAttribute('aria-label', 'Remove alert');
   button.textContent = '×';
   return button;

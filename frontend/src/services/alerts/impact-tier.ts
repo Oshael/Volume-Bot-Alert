@@ -29,6 +29,10 @@ function getOldSurgeToneClass(alert: AlertEntry, now: number) {
 }
 
 export function getAlertImpactTier(alert: AlertEntry): AlertImpactTier {
+  if (alert.kind === 'admin-token-review') {
+    return 'critical';
+  }
+
   if (isHighCapDumpAlert(alert) || isHvncAlert(alert)) {
     return 'mega';
   }
@@ -40,6 +44,10 @@ export function getAlertImpactTier(alert: AlertEntry): AlertImpactTier {
 }
 
 export function getAlertToneClass(alert: AlertEntry, now = Date.now()) {
+  if (alert.kind === 'admin-token-review') {
+    return 'admin-token-review';
+  }
+
   if (isHighCapDumpAlert(alert)) {
     return 'dump-alert';
   }
@@ -73,6 +81,10 @@ export function isAlertInArrivalWindow(alert: AlertEntry, now = Date.now()) {
 }
 
 function getAlertExclusiveClass(alert: AlertEntry) {
+  if (alert.kind === 'admin-token-review') {
+    return 'impact-special-admin-review';
+  }
+
   if (isHighCapDumpAlert(alert)) {
     return 'impact-special-dump';
   }

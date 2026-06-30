@@ -3039,8 +3039,8 @@ export function createAppController(): AppController {
     }
     if (panel === 'token-review-alerts') {
       void loadAdminTokenReviewAlertsInternal()
-        .then(() => emit('overlay', 'header'))
-        .catch(() => emit('overlay', 'header'));
+        .then(() => emit('overlay', 'header', 'alerts'))
+        .catch(() => emit('overlay', 'header', 'alerts'));
     }
     if (panel === 'user-settings') {
       void refreshUserSettingsState(COOKIE_SESSION_MARKER)
@@ -9579,8 +9579,8 @@ export function createAppController(): AppController {
       }
       if (panel === 'token-review-alerts') {
         void loadAdminTokenReviewAlertsInternal()
-          .then(() => emit('overlay', 'header'))
-          .catch(() => emit('overlay', 'header'));
+          .then(() => emit('overlay', 'header', 'alerts'))
+          .catch(() => emit('overlay', 'header', 'alerts'));
       }
       state.ui.authPanel = panel;
       navigateToAuthPanelRoute(panel);
@@ -11184,7 +11184,7 @@ export function createAppController(): AppController {
     async refreshAdminTokenReviewAlerts() {
       if (!state.session.token || state.session.role !== 'admin') {
         state.data.adminTokenReviewAlerts = [];
-        emit('overlay', 'header');
+        emit('overlay', 'header', 'alerts');
         return;
       }
 
@@ -11194,7 +11194,7 @@ export function createAppController(): AppController {
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to load token review alerts');
       } finally {
-        emit('overlay', 'header');
+        emit('overlay', 'header', 'alerts');
       }
     },
     async resolveAdminTokenReviewAlert(id: number, resolution: AdminTokenReviewResolution) {
@@ -11229,7 +11229,7 @@ export function createAppController(): AppController {
         setError(error instanceof Error ? error.message : 'Failed to resolve token review alert');
       } finally {
         setBusy(false);
-        emit('overlay', 'manual', 'recent', 'old-week', 'monitored', 'header');
+        emit('overlay', 'manual', 'recent', 'old-week', 'monitored', 'header', 'alerts');
       }
     },
     async mockBuyToken(address: string) {

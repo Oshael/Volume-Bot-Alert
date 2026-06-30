@@ -11,7 +11,7 @@ type ToneStep = {
   durationMs: number;
 };
 
-const ALERT_PATTERNS: Record<AlertEntry['kind'], ToneStep[]> = {
+const ALERT_PATTERNS: Partial<Record<AlertEntry['kind'], ToneStep[]>> = {
   'monitored-vol': [
     { frequency: 523.25, durationMs: 110 },
     { frequency: 659.25, durationMs: 140 },
@@ -177,6 +177,10 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
 }
 
 function resolveAlertSoundSlot(alert: AlertEntry): CustomSoundSlot {
+  if (alert.kind === 'admin-token-review') {
+    return 'normal';
+  }
+
   if (alert.kind === 'gmgn-claim-signal') {
     return 'claim';
   }
@@ -199,6 +203,10 @@ export async function playAlertSound(
   alert: AlertEntry,
   options?: { enabled?: boolean; volume?: number; scope?: string; configs?: Record<string, string | number> },
 ): Promise<AlertSoundPlaybackResult> {
+  if (alert.kind === 'admin-token-review') {
+    return 'skipped';
+  }
+
   if (options?.enabled === false) {
     return 'skipped';
   }

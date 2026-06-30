@@ -25,7 +25,7 @@ const ALERT_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
 
 type AlertVolumeKey = 'volume1m' | 'volume5m' | 'volume1h' | 'volume6h' | 'volume24h';
 
-const ALERT_VOLUME_KEYS: Record<Exclude<AlertEntry['kind'], 'old-surge'>, AlertVolumeKey[]> = {
+const ALERT_VOLUME_KEYS: Partial<Record<Exclude<AlertEntry['kind'], 'old-surge'>, AlertVolumeKey[]>> = {
   'monitored-vol': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   'monitored-mcap': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   hvnc: ['volume24h', 'volume6h', 'volume1h', 'volume5m', 'volume1m'],
@@ -93,6 +93,10 @@ function isGmgnClaimAlertEnabled(alert: Pick<AlertEntry, 'signalType'>, configs?
 }
 
 function isAlertEnabledByConfig(alert: AlertEntry, configs?: Record<string, string | number>) {
+  if (alert.kind === 'admin-token-review') {
+    return false;
+  }
+
   if (alert.kind === 'gmgn-claim-signal') {
     return isGmgnClaimAlertEnabled(alert, configs);
   }
@@ -158,7 +162,7 @@ function getAlertVolume(alert: AlertEntry) {
       ? ['volume6h', 'volume1h', 'volume24h']
       : ['volume1h', 'volume6h', 'volume24h']);
   }
-  return selectFirstNumber(alert, ALERT_VOLUME_KEYS[alert.kind]);
+  return selectFirstNumber(alert, ALERT_VOLUME_KEYS[alert.kind] || []);
 }
 
 function getNotificationMcapLine(alert: AlertEntry) {
@@ -207,6 +211,8 @@ function getNotificationTitle(alert: AlertEntry) {
       return `HIGH CAP DUMP: ${symbol}`;
     case 'gmgn-claim-signal':
       return `${alert.signalType === 17 ? 'BAGS' : 'PUMP'} CLAIM #${alert.claimSequence || '?'}: ${symbol}`;
+    case 'admin-token-review':
+      return `ADMIN REVIEW: ${symbol}`;
     default:
       return `Alert: ${symbol}`;
   }

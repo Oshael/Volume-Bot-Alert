@@ -1,6 +1,6 @@
 export interface AlertEntry {
   id: string;
-  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'high-cap-dump-5m' | 'gmgn-claim-signal';
+  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'high-cap-dump-5m' | 'gmgn-claim-signal' | 'admin-token-review';
   ruleKey?: string | null;
   address: string;
   mintAddress?: string | null;
@@ -11,6 +11,12 @@ export interface AlertEntry {
   imageUrl?: string | null;
   twitterUrl?: string | null;
   communityUrl?: string | null;
+  reviewAlertId?: number | null;
+  reviewPriority?: string | null;
+  reviewReasons?: string[];
+  reviewWebsiteUrl?: string | null;
+  reviewTop10Pct?: number | null;
+  reviewTop20Pct?: number | null;
   createdAt: number;
   tokenCreatedAt?: number | null;
   priceChange1h?: number | null;
