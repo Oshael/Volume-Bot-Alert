@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderMeteoraCell, renderSparklineFigure } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderMeteoraCell, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -288,7 +288,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
   article.className = `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}`;
   article.dataset.hoverKey = `monitored:${item.address}`;
 
-  article.append(buildMonitoredAvatar(symbol, imageUrl));
+  article.append(buildMonitoredAvatar(symbol, imageUrl, item.address));
 
   const main = document.createElement('div');
   main.className = 'panel-row-main monitored-row-main';
@@ -429,7 +429,10 @@ function formatMockTradingTakeProfitSummary(orders: NonNullable<AppState['data']
   return `TP ${preview}${extra}`;
 }
 
-function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {
+function buildMonitoredAvatar(symbol: string, imageUrl: string | null, address: string) {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'token-avatar-wrap monitored-avatar-wrap';
+
   if (imageUrl) {
     const image = document.createElement('img');
     image.src = imageUrl;
@@ -437,13 +440,16 @@ function buildMonitoredAvatar(symbol: string, imageUrl: string | null) {
     image.className = 'tok-avatar';
     image.dataset.tokenImagePreview = 'true';
     image.dataset.tokenImagePreviewSrc = imageUrl;
-    return image;
+    wrapper.append(image);
+  } else {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'tok-avatar-placeholder';
+    placeholder.textContent = symbol.slice(0, 2).toUpperCase();
+    wrapper.append(placeholder);
   }
 
-  const placeholder = document.createElement('div');
-  placeholder.className = 'tok-avatar-placeholder';
-  placeholder.textContent = symbol.slice(0, 2).toUpperCase();
-  return placeholder;
+  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address));
+  return wrapper;
 }
 
 function buildInlineActionLink(label: string, href: string, className: string, title: string) {

@@ -14,6 +14,16 @@ const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
   padre: new URL('../../../terminal-padre.svg', import.meta.url).href,
 };
 
+type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora';
+
+const TOKEN_LAUNCHPAD_META: Record<TokenLaunchpadKey, { label: string; mark: string }> = {
+  pump: { label: 'Pump.fun', mark: 'P' },
+  bags: { label: 'Bags', mark: '$' },
+  bonk: { label: 'LetsBonk', mark: 'B' },
+  brrr: { label: 'Brrr', mark: 'BR' },
+  meteora: { label: 'Meteora', mark: 'M' },
+};
+
 type TradeTerminalLink = {
   key: TradeTerminalKey;
   label: string;
@@ -55,6 +65,21 @@ let tokenImagePreviewTimer: ReturnType<typeof window.setTimeout> | null = null;
 let tokenImagePreviewPosition = { x: 0, y: 0 };
 let tokenImagePreviewGlobalBound = false;
 let tokenImagePreviewLastPointerAt = 0;
+
+export function resolveTokenLaunchpad(address: string): TokenLaunchpadKey {
+  const normalized = String(address || '').trim().toLowerCase();
+  if (normalized.endsWith('pump')) return 'pump';
+  if (normalized.endsWith('bags')) return 'bags';
+  if (normalized.endsWith('bonk')) return 'bonk';
+  if (normalized.endsWith('brrr')) return 'brrr';
+  return 'meteora';
+}
+
+export function renderTokenLaunchpadBadge(address: string) {
+  const key = resolveTokenLaunchpad(address);
+  const meta = TOKEN_LAUNCHPAD_META[key];
+  return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}">${escapeHtml(meta.mark)}</span>`;
+}
 
 type SparklineRenderOptions = {
   expanded?: boolean;
@@ -2049,9 +2074,10 @@ function renderAvatar(item: ManualTokenEntry, symbol: string) {
   const safeSymbol = escapeHtml(symbol);
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
   const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : '';
-  return imageUrl
+  const avatar = imageUrl
     ? `<img src="${safeImageUrl}" alt="${safeSymbol}" class="token-avatar" data-token-image-preview="true" data-token-image-preview-src="${safeImageUrl}" />`
     : `<div class="token-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
+  return `<span class="token-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(item.address)}</span>`;
 }
 
 function renderPctSpan(value?: number | null) {

@@ -2,7 +2,7 @@ import type { AppController } from '../../state/app-controller';
 import type { AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 
 const ALERT_FX_SETTLE_MS = 1_600;
@@ -943,7 +943,7 @@ function buildAlertRowContent(
 
   const main = document.createElement('div');
   main.className = 'alert-main-v68';
-  main.append(buildAlertAvatar(symbol, imageUrl));
+  main.append(buildAlertAvatar(symbol, imageUrl, alert.address));
 
   const copyBlock = document.createElement('div');
   copyBlock.className = 'alert-copy-block';
@@ -1104,7 +1104,10 @@ function getAlertAccentColor(toneClass: string) {
   }
 }
 
-function buildAlertAvatar(symbol: string, imageUrl: string | null) {
+function buildAlertAvatar(symbol: string, imageUrl: string | null, address: string) {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'token-avatar-wrap alert-avatar-wrap';
+
   if (imageUrl) {
     const image = document.createElement('img');
     image.src = imageUrl;
@@ -1112,13 +1115,16 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null) {
     image.className = 'alert-avatar';
     image.dataset.tokenImagePreview = 'true';
     image.dataset.tokenImagePreviewSrc = imageUrl;
-    return image;
+    wrapper.append(image);
+  } else {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'alert-avatar-placeholder';
+    placeholder.textContent = symbol.slice(0, 2).toUpperCase();
+    wrapper.append(placeholder);
   }
 
-  const placeholder = document.createElement('div');
-  placeholder.className = 'alert-avatar-placeholder';
-  placeholder.textContent = symbol.slice(0, 2).toUpperCase();
-  return placeholder;
+  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address));
+  return wrapper;
 }
 
 function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
@@ -1567,7 +1573,7 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
     const identity = document.createElement('div');
     identity.className = 'alert-ticker-peers-identity';
-    identity.append(buildAlertAvatar(String(item.symbol || '?'), sanitizeOptionalHttpUrl(item.imageUrl)));
+    identity.append(buildAlertAvatar(String(item.symbol || '?'), sanitizeOptionalHttpUrl(item.imageUrl), item.address));
 
     const copy = document.createElement('button');
     copy.type = 'button';

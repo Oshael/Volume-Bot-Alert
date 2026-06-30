@@ -498,6 +498,78 @@ body:has(.workspace-topbar)::before {
   background: rgba(255,255,255,0.04);
 }
 
+.token-avatar-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.token-avatar-wrap > .token-avatar,
+.token-avatar-wrap > .alert-avatar,
+.token-avatar-wrap > .alert-avatar-placeholder,
+.token-avatar-wrap > .tok-avatar,
+.token-avatar-wrap > .tok-avatar-placeholder {
+  display: block;
+}
+
+.token-launchpad-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid rgba(8, 11, 16, 0.96);
+  border-radius: 50%;
+  background: #111827;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.token-launchpad-pump {
+  background: rgba(5, 24, 20, 0.96) url("/launchpad-pump.png") center / 92% 92% no-repeat;
+  color: transparent;
+  overflow: hidden;
+}
+
+.token-launchpad-bags {
+  overflow: hidden;
+  background: #071b12 url("/launchpad-bags.png") center / 92% 92% no-repeat;
+  color: transparent;
+}
+
+.token-launchpad-bonk {
+  background: #ffd800 url("/launchpad-bonk.png") center / cover no-repeat;
+  border-color: rgba(8, 11, 16, 0.98);
+  overflow: hidden;
+  color: transparent;
+}
+
+.token-launchpad-brrr {
+  background:
+    radial-gradient(circle at 70% 28%, rgba(255, 255, 255, 0.52) 0 12%, transparent 13%),
+    linear-gradient(145deg, #bff7ff, #35a9dd 56%, #0a4b86);
+  color: #032742;
+  font-size: 5.5px;
+}
+
+.token-launchpad-meteora {
+  overflow: hidden;
+  background: #06131f url("/launchpad-meteora.png") center / 92% 92% no-repeat;
+  color: transparent;
+}
+
 .token-avatar.placeholder {
   display: inline-flex;
   align-items: center;
