@@ -7,16 +7,6 @@ const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { normalizeCumulativeVolumeWindows } = require('../services/volume-window-consistency');
 
 const PUMPFUN_MIGRATION_GRACE_MS = 10 * 60 * 1000;
-const YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MS = 90 * 60 * 1000;
-const YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_AGE_MS = 2 * 60 * 60 * 1000;
-const YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MIN_PREVIOUS_MCAP = 100000;
-const YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_INCOMING_MCAP = 75000;
-const YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_RATIO = 0.35;
-const YOUNG_TOKEN_LAUNCH_FLOOR_MIN_MCAP = 29000;
-const YOUNG_TOKEN_LAUNCH_FLOOR_MAX_MCAP = 32000;
-const YOUNG_TOKEN_LAUNCH_FLOOR_MIN_SIGNAL_MCAP = 100000;
-const YOUNG_TOKEN_LAUNCH_FLOOR_MIN_RATIO = 3;
-const YOUNG_TOKEN_LAUNCH_FLOOR_MIN_SAMPLES = 10;
 const METEORA_HIGH_TIER_MIN_VOL_24H = 100000;
 const METEORA_NORMAL_TIER_MIN_VOL_24H = 15000;
 const METEORA_PRIORITY_TIERS = ['high', 'normal', 'low'];
@@ -215,14 +205,11 @@ async function getMonitoredExitSnapshot(address) {
        suppressed_reason,
        monitor_priority,
        last_mcap,
-       last_price,
        last_liquidity_usd,
        last_vol_5m,
        last_vol_1h,
        last_vol_6h,
        last_vol_24h,
-       last_token_created_at_ms,
-       first_seen_at,
        last_seen_at,
        last_evaluated_at,
        next_evaluation_at,
@@ -246,210 +233,6 @@ async function recordMonitoredExit(previousRow, currentRow, context = {}) {
   } catch (err) {
     console.warn('[TokenCatalog] Failed to record monitored token exit:', err instanceof Error ? err.message : err);
   }
-}
-
-function toTimestampMsOrNull(value) {
-  if (value == null || value === '') return null;
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isFinite(time) ? time : null;
-  }
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
-  }
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isRecentTimestamp(value, nowMs, maxAgeMs) {
-  const timestampMs = toTimestampMsOrNull(value);
-  return timestampMs != null
-    && timestampMs <= nowMs
-    && (nowMs - timestampMs) <= maxAgeMs;
-}
-
-function isYoungCatalogToken(row, result, nowMs) {
-  const createdAtMs = toTimestampMsOrNull(row?.last_token_created_at_ms ?? result?.tokenCreatedAt);
-  if (createdAtMs != null) {
-    return createdAtMs <= nowMs
-      && (nowMs - createdAtMs) <= YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_AGE_MS;
-  }
-  return isRecentTimestamp(row?.first_seen_at, nowMs, YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_AGE_MS);
-}
-
-function shouldGuardYoungTokenMcapDowngrade(previousRow, result, incomingMcap, nowMs = Date.now()) {
-  const source = String(result?.evaluationSource || result?.source || '').trim().toLowerCase();
-  if (source !== 'dexscreener' && source !== 'gmgn') {
-    return false;
-  }
-  if (!previousRow?.eligible_for_monitoring) {
-    return false;
-  }
-
-  const previousMcap = toNullableNumber(previousRow.last_mcap);
-  if (!(previousMcap >= YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MIN_PREVIOUS_MCAP)) {
-    return false;
-  }
-  if (!(incomingMcap > 0 && incomingMcap <= YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_INCOMING_MCAP)) {
-    return false;
-  }
-  if ((incomingMcap / previousMcap) > YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MAX_RATIO) {
-    return false;
-  }
-  if (!isYoungCatalogToken(previousRow, result, nowMs)) {
-    return false;
-  }
-
-  return isRecentTimestamp(previousRow.last_evaluated_at || previousRow.last_seen_at, nowMs, YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MS);
-}
-
-function isLaunchFloorMcap(value) {
-  return value >= YOUNG_TOKEN_LAUNCH_FLOOR_MIN_MCAP
-    && value <= YOUNG_TOKEN_LAUNCH_FLOOR_MAX_MCAP;
-}
-
-function resolveMonitorPriorityForMcap(mcap, fallback = 'normal') {
-  if (mcap >= 100000) return 'high';
-  if (mcap >= 30000) return 'normal';
-  return fallback;
-}
-
-function resolveEligibilityStateForMcap(mcap, source, fallback = 'unknown') {
-  const normalizedSource = String(source || '').trim().toLowerCase();
-  if (mcap >= 100000) {
-    return normalizedSource === 'dexscreener' ? 'dex-high' : 'gmgn-high';
-  }
-  if (mcap >= 30000) {
-    return normalizedSource === 'dexscreener' ? 'dex-normal' : 'gmgn-normal';
-  }
-  return fallback;
-}
-
-function shouldUseProtectedMcapClassification(protectedMcap, resolvedMcap, previousMcap) {
-  return protectedMcap != null && resolvedMcap > (previousMcap || 0);
-}
-
-function resolveGuardedEligibilityState(values, previousRow, source, resolvedMcap, useProtectedClassification) {
-  if (useProtectedClassification) {
-    return resolveEligibilityStateForMcap(resolvedMcap, source, values.eligibilityState);
-  }
-  return previousRow?.eligibility_state || resolveEligibilityStateForMcap(resolvedMcap, source, values.eligibilityState);
-}
-
-function resolveGuardedMonitorPriority(values, previousRow, resolvedMcap, useProtectedClassification) {
-  if (useProtectedClassification) {
-    return resolveMonitorPriorityForMcap(resolvedMcap, values.monitorPriority);
-  }
-  return previousRow?.monitor_priority || resolveMonitorPriorityForMcap(resolvedMcap, values.monitorPriority);
-}
-
-function resolveGuardedEligibleForMonitoring(previousRow, resolvedMcap) {
-  return previousRow?.eligible_for_monitoring === false ? resolvedMcap >= 30000 : true;
-}
-
-function resolveGuardedPrice(values, previousRow) {
-  return previousRow?.last_price == null ? values.lastPrice : toNullableNumber(previousRow.last_price);
-}
-
-function applyResolvedYoungTokenMcapGuard(values, previousRow, result, protectedMcap = null) {
-  const source = String(result?.evaluationSource || result?.source || '').trim().toLowerCase();
-  const previousMcap = toNullableNumber(previousRow?.last_mcap);
-  const protectedMcapValue = protectedMcap == null ? null : toNullableNumber(protectedMcap);
-  const resolvedMcap = protectedMcapValue ?? previousMcap ?? values.lastMcap;
-  const useProtectedClassification = shouldUseProtectedMcapClassification(protectedMcap, resolvedMcap, previousMcap);
-  return {
-    ...values,
-    eligibilityState: resolveGuardedEligibilityState(values, previousRow, source, resolvedMcap, useProtectedClassification),
-    eligibleForMonitoring: resolveGuardedEligibleForMonitoring(previousRow, resolvedMcap),
-    suppressedReason: previousRow?.suppressed_reason || null,
-    monitorPriority: resolveGuardedMonitorPriority(values, previousRow, resolvedMcap, useProtectedClassification),
-    lastMcap: resolvedMcap,
-    lastPrice: resolveGuardedPrice(values, previousRow),
-  };
-}
-
-function applyYoungTokenMcapDowngradeGuard(values, previousRow, result) {
-  if (!shouldGuardYoungTokenMcapDowngrade(previousRow, result, values.lastMcap)) {
-    return values;
-  }
-
-  return applyResolvedYoungTokenMcapGuard(values, previousRow, result);
-}
-
-function shouldCheckRecentLaunchFloorClamp(previousRow, result, incomingMcap, nowMs = Date.now()) {
-  const source = String(result?.evaluationSource || result?.source || '').trim().toLowerCase();
-  return (source === 'dexscreener' || source === 'gmgn')
-    && previousRow
-    && isLaunchFloorMcap(incomingMcap)
-    && isYoungCatalogToken(previousRow, result, nowMs);
-}
-
-async function getRecentLaunchFloorClampSignal(address, incomingMcap) {
-  const { rows } = await db.query(
-    `SELECT
-       MAX(GREATEST(
-         COALESCE(open_mcap, 0),
-         COALESCE(high_mcap, 0),
-         COALESCE(close_mcap, 0)
-       )) AS max_signal_mcap,
-       COUNT(*) FILTER (
-         WHERE close_mcap BETWEEN $2 AND $3
-       ) AS floor_bucket_count,
-       COALESCE(SUM(sample_count) FILTER (
-         WHERE close_mcap BETWEEN $2 AND $3
-       ), 0) AS floor_sample_count
-     FROM token_market_buckets_1m
-     WHERE token_address = $1
-       AND bucket_ts >= NOW() - ($4::int * INTERVAL '1 minute')`,
-    [
-      address,
-      YOUNG_TOKEN_LAUNCH_FLOOR_MIN_MCAP,
-      YOUNG_TOKEN_LAUNCH_FLOOR_MAX_MCAP,
-      Math.ceil(YOUNG_TOKEN_MCAP_DOWNGRADE_GUARD_MS / 60000),
-    ]
-  );
-  const row = rows[0] || {};
-  const maxSignalMcap = toNullableNumber(row.max_signal_mcap);
-  const floorBucketCount = Number(row.floor_bucket_count) || 0;
-  const floorSampleCount = Number(row.floor_sample_count) || 0;
-  if (!(maxSignalMcap >= YOUNG_TOKEN_LAUNCH_FLOOR_MIN_SIGNAL_MCAP)) {
-    return null;
-  }
-  if ((maxSignalMcap / incomingMcap) < YOUNG_TOKEN_LAUNCH_FLOOR_MIN_RATIO) {
-    return null;
-  }
-  if (floorBucketCount < 1 || floorSampleCount < YOUNG_TOKEN_LAUNCH_FLOOR_MIN_SAMPLES) {
-    return null;
-  }
-  return {
-    maxSignalMcap,
-    floorBucketCount,
-    floorSampleCount,
-  };
-}
-
-async function applyYoungTokenMcapGuards(values, previousRow, result, address) {
-  const guardedValues = applyYoungTokenMcapDowngradeGuard(values, previousRow, result);
-  if (guardedValues !== values) {
-    return guardedValues;
-  }
-  if (!shouldCheckRecentLaunchFloorClamp(previousRow, result, values.lastMcap)) {
-    return values;
-  }
-
-  const clampSignal = await getRecentLaunchFloorClampSignal(address, values.lastMcap);
-  if (!clampSignal) {
-    return values;
-  }
-
-  const previousMcap = toNullableNumber(previousRow?.last_mcap);
-  return applyResolvedYoungTokenMcapGuard(
-    values,
-    previousRow,
-    result,
-    Math.max(previousMcap || 0, clampSignal.maxSignalMcap)
-  );
 }
 
 function normalizeRiskCandidateLimit(value, fallback = 250) {
@@ -1812,9 +1595,9 @@ async function applyEvaluationResult(address, result) {
   await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
   const previousMonitoringRow = await getMonitoredExitSnapshot(addr);
-  let eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
-  let eligibleForMonitoring = !!result.eligibleForMonitoring;
-  let suppressedReason = toNullableText(result.suppressedReason);
+  const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
+  const eligibleForMonitoring = !!result.eligibleForMonitoring;
+  const suppressedReason = toNullableText(result.suppressedReason);
   const nextEvaluationAt = result.nextEvaluationAt || new Date(Date.now() + 10 * 60 * 1000);
   const lastEvaluationError = toNullableText(result.lastEvaluationError);
   const errorCount = Number.isInteger(result.evaluationErrorCount) ? result.evaluationErrorCount : 0;
@@ -1826,9 +1609,9 @@ async function applyEvaluationResult(address, result) {
   const socialLinks = normalizeSocialLinkFields(result);
   const twitterUrl = socialLinks.twitterUrl;
   const communityUrl = socialLinks.communityUrl;
-  let lastMcap = toNullableNumber(result.mcap);
-  let lastPrice = toNullableNumber(result.price);
-  let monitorPriority = toNullableText(result.monitorPriority, 32) || 'dormant';
+  const lastMcap = toNullableNumber(result.mcap);
+  const lastPrice = toNullableNumber(result.price);
+  const monitorPriority = toNullableText(result.monitorPriority, 32) || 'dormant';
   const lastVol5m = toNullableNumber(result.vol5m);
   const volumeValues = await preserveGmgnPositiveVolumeWindows(addr, result, {
     lastVol1h: toNullableNumber(result.vol1h),
@@ -1845,22 +1628,6 @@ async function applyEvaluationResult(address, result) {
   const lastTxns24hBuys = toNullableInteger(result.txns24hBuys);
   const lastTxns24hSells = toNullableInteger(result.txns24hSells);
   const lastTokenCreatedAtMs = toNullableInteger(result.tokenCreatedAt);
-  const guardedValues = await applyYoungTokenMcapGuards({
-    eligibilityState,
-    eligibleForMonitoring,
-    suppressedReason,
-    monitorPriority,
-    lastMcap,
-    lastPrice,
-  }, previousMonitoringRow, result, addr);
-  ({
-    eligibilityState,
-    eligibleForMonitoring,
-    suppressedReason,
-    monitorPriority,
-    lastMcap,
-    lastPrice,
-  } = guardedValues);
 
   const updateResult = await db.query(
     `UPDATE token_catalog
