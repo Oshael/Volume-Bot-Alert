@@ -32,6 +32,7 @@ const NEW_LOW_MCAP_EXTREME_VOL_MAX_AGE_HOURS = 24;
 const NEW_LOW_MCAP_EXTREME_VOL_MAX_MCAP = 100000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M = 500000;
 const NEW_LOW_MCAP_EXTREME_VOL_MIN_VOL_5M_TO_MCAP = 4;
+const KNOWN_LAUNCHPAD_SUFFIXES = ['pump', 'bags', 'bonk'];
 
 let timer = null;
 let running = false;
@@ -117,6 +118,48 @@ function normalizeAutoLabel(assessment) {
     return null;
   }
   return label === 'junk_permanent' ? 'junk_probable' : label;
+}
+
+function normalizeSuffixCandidate(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+$/g, '');
+}
+
+function hasKnownLaunchpadSuffixValue(value) {
+  const normalized = normalizeSuffixCandidate(value);
+  return Boolean(normalized) && KNOWN_LAUNCHPAD_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+function hasKnownLaunchpadSuffix(row = {}) {
+  return [
+    row.address,
+    row.symbol,
+    row.name,
+  ].some(hasKnownLaunchpadSuffixValue);
+}
+
+function buildKnownLaunchpadValidAssessment(row = {}) {
+  if (!hasKnownLaunchpadSuffix(row)) {
+    return null;
+  }
+
+  return {
+    label: 'valid',
+    confidence: 'high',
+    manualReviewRequired: false,
+    autoBlock: false,
+    mode: 'known_launchpad_suffix_allowlist',
+    strongSignalCount: 0,
+    reasonCodes: [],
+    strongSignals: [],
+    weakSignals: [],
+    behavioralSignals: [],
+    positiveSignals: ['known_launchpad_suffix_allowlist'],
+    marketCap: toFiniteNumberOrNull(row?.last_mcap),
+    holderCount: toFiniteNumberOrNull(row?.risk_holder_count),
+    top10Pct: toFiniteNumberOrNull(row?.risk_top_10_pct),
+    top20Pct: toFiniteNumberOrNull(row?.risk_top_20_pct),
+    liquidityUsd: toFiniteNumberOrNull(row?.last_liquidity_usd),
+  };
 }
 
 function hasStructuralCoverage(row) {
@@ -347,6 +390,10 @@ function normalizePersistedAutoLabel(row, assessment) {
     return null;
   }
 
+  if (assessment?.mode === 'known_launchpad_suffix_allowlist') {
+    return label;
+  }
+
   if (label === 'valid' && !hasStructuralCoverage(row)) {
     return 'valid_but_weak';
   }
@@ -365,6 +412,10 @@ function buildAutoNotes(assessment) {
   }
 
   return `auto/${mode}: ${reasonCodes.join(', ')}`;
+}
+
+function shouldCaptureRiskEvidence(assessment) {
+  return assessment?.mode !== 'known_launchpad_suffix_allowlist';
 }
 
 async function captureEvidenceSafely(row, assessment, meteoraSummary, deps = {}) {
@@ -618,7 +669,8 @@ async function listCandidates(offset, options, deps = {}) {
 }
 
 async function assessRiskReviewRow(row, meteoraSummary, deps = {}) {
-  return buildGmgnRiskGateAssessment(row)
+  return buildKnownLaunchpadValidAssessment(row)
+    || buildGmgnRiskGateAssessment(row)
     || buildNewLowMcapExtremeVolumeAssessment(row)
     || await assessDexGmgnHolderAnomaly(row, deps)
     || classifyTokenJunk({
@@ -663,7 +715,9 @@ async function processRows(rows = [], deps = {}) {
       continue;
     }
 
-    await captureEvidenceSafely(row, assessment, meteoraSummary, deps);
+    if (shouldCaptureRiskEvidence(assessment)) {
+      await captureEvidenceSafely(row, assessment, meteoraSummary, deps);
+    }
 
     const review = await reviewModel.upsertAutoReview({
       tokenAddress: row.address,

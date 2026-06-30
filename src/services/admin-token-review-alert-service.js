@@ -3,6 +3,7 @@ const dexscreener = require('./dexscreener');
 const { extractDexSocialLinks, normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const ALERT_KIND_SOCIALS_PRESENT = 'manual-review-socials-present';
+const LAUNCHPAD_SUFFIXES = ['pump', 'bonk', 'bags'];
 
 function normalizeReasonCodes(assessment = {}) {
   return Array.isArray(assessment.reasonCodes)
@@ -12,6 +13,25 @@ function normalizeReasonCodes(assessment = {}) {
 
 function hasSocialEvidence(snapshot = {}) {
   return Boolean(snapshot.twitterUrl || snapshot.communityUrl || snapshot.websiteUrl);
+}
+
+function normalizeSuffixCandidate(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+$/g, '');
+}
+
+function hasLaunchpadSuffixValue(value) {
+  const normalized = normalizeSuffixCandidate(value);
+  return Boolean(normalized) && LAUNCHPAD_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+function hasLaunchpadSuffix(row = {}, assessment = {}) {
+  return [
+    row.address,
+    row.symbol,
+    row.name,
+    assessment.symbol,
+    assessment.name,
+  ].some(hasLaunchpadSuffixValue);
 }
 
 function shouldCreateManualReviewSocialAlert(label, assessment) {
@@ -80,7 +100,7 @@ async function maybeEnqueueManualReviewSocialAlert({
   meteoraSnapshot,
 }, deps = {}) {
   const address = String(row?.address || '').trim();
-  if (!address || !shouldCreateManualReviewSocialAlert(label, assessment)) {
+  if (!address || hasLaunchpadSuffix(row, assessment) || !shouldCreateManualReviewSocialAlert(label, assessment)) {
     return null;
   }
 
@@ -129,6 +149,8 @@ module.exports = {
   maybeEnqueueManualReviewSocialAlert,
   shouldCreateManualReviewSocialAlert,
   __private: {
+    hasLaunchpadSuffix,
+    hasLaunchpadSuffixValue,
     normalizeReasonCodes,
     resolvePriority,
   },

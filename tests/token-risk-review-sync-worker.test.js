@@ -158,6 +158,85 @@ describe('token risk review sync worker', () => {
     assert.equal(reviewAlerts[0].priority, 'high');
   });
 
+  it('treats known launchpad suffix tokens as valid before junk gates', async () => {
+    const saved = [];
+    const evidence = [];
+    const blocked = [];
+    const reviewAlerts = [];
+    const result = await worker.__private.processRows([
+      {
+        address: 'HmjCoarLh5duURfJ333DwfFiPyTCgFT35pRSAoP8pump',
+        symbol: 'SCAMPUMP',
+        name: 'Scam Pump',
+        source: 'gmgn',
+        suppressed_reason: 'gmgn_needs_risk_enrichment',
+        last_mcap: 30000,
+        last_vol_5m: 1000000,
+        last_vol_1h: 1000000,
+        last_vol_6h: 1000000,
+        last_vol_24h: 1000000,
+        last_liquidity_usd: 1000,
+        last_txns_24h_buys: 1000,
+        last_txns_24h_sells: 1,
+        risk_holder_count: 100,
+        risk_top_10_pct: 99,
+        risk_top_20_pct: 99,
+        risk_mint_authority_active: true,
+        risk_freeze_authority_active: true,
+      },
+    ], {
+      gmgnClient: {
+        fetchTokenInfo: async () => {
+          throw new Error('known launchpad suffix tokens must not hit GMGN anomaly lookup');
+        },
+      },
+      tokenMeteoraStateModel: {
+        listSummaryByAddresses: async () => [{
+          tokenAddress: 'HmjCoarLh5duURfJ333DwfFiPyTCgFT35pRSAoP8pump',
+          hasPool: false,
+          currentTvl: null,
+          poolCount: 0,
+        }],
+      },
+      tokenRiskReviewModel: {
+        upsertAutoReview: async (payload) => {
+          saved.push(payload);
+          return { tokenAddress: payload.tokenAddress, label: payload.label, source: 'auto' };
+        },
+      },
+      adminBlockedTokenModel: {
+        add: async (payload) => {
+          blocked.push(payload);
+          return payload;
+        },
+      },
+      adminTokenReviewAlertModel: {
+        enqueue: async (payload) => {
+          reviewAlerts.push(payload);
+          return payload;
+        },
+      },
+      tokenCatalogModel: {
+        applyEvaluationResult: async (address, payload) => ({ address, ...payload }),
+      },
+      tokenJunkEvidenceCaptureService: {
+        captureJunkEvidence: async (...args) => {
+          evidence.push(args);
+        },
+      },
+    });
+
+    assert.equal(result.saved, 1);
+    assert.equal(result.autoBlocked, 0);
+    assert.equal(result.released, 1);
+    assert.equal(result.adminReviewAlerts, 0);
+    assert.equal(saved[0].label, 'valid');
+    assert.match(saved[0].notes, /^auto\/known_launchpad_suffix_allowlist/);
+    assert.equal(blocked.length, 0);
+    assert.equal(reviewAlerts.length, 0);
+    assert.equal(evidence.length, 0);
+  });
+
   it('checks Dex for manual-review junk socials without disabling hard-ban gates', async () => {
     const reviewAlerts = [];
     const address = 'BafT6NoybUFdEMn8RUA9fyYUqeC5SgCCE9ccocAt5t6M';
@@ -429,7 +508,7 @@ describe('token risk review sync worker', () => {
 
     assert.equal(result.saved, 1);
     assert.equal(result.autoBlocked, 0);
-    assert.equal(saved[0].label, 'valid_but_weak');
+    assert.equal(saved[0].label, 'valid');
     assert.equal(blocked.length, 0);
     assert.equal(suppressed.length, 0);
   });
@@ -487,7 +566,7 @@ describe('token risk review sync worker', () => {
 
     assert.equal(result.saved, 1);
     assert.equal(result.autoBlocked, 0);
-    assert.equal(saved[0].label, 'valid_but_weak');
+    assert.equal(saved[0].label, 'valid');
     assert.equal(blocked.length, 0);
     assert.equal(suppressed.length, 0);
   });
@@ -686,7 +765,7 @@ describe('token risk review sync worker', () => {
     const blocked = [];
     const suppressed = [];
     let gmgnInfoChecks = 0;
-    const address = '3XwDQHMKcner1GhXRqLKojrWWwNdMaruQs7g7riDpump';
+    const address = '3XwDQHMKcner1GhXRqLKojrWWwNdMaruQs7g7riDpumq';
     const result = await worker.__private.processRows([
       {
         address,

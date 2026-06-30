@@ -226,6 +226,7 @@ const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const BOOTSTRAP_ALERT_FEED_MODE = 'unseen';
+const ADMIN_TOKEN_REVIEW_EXCLUDED_SUFFIXES = ['pump', 'bonk', 'bags'];
 const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
 const BACKEND_OWNED_ALERT_RULE_KEYS = [
@@ -8723,7 +8724,27 @@ export function createAppController(): AppController {
     }
 
     const result = await fetchAdminTokenReviewAlerts(token, 'open');
-    state.data.adminTokenReviewAlerts = result.alerts as AdminTokenReviewAlertEntry[];
+    state.data.adminTokenReviewAlerts = (result.alerts as AdminTokenReviewAlertEntry[])
+      .filter((alert) => !hasExcludedAdminTokenReviewSuffix(alert));
+  }
+
+  function hasExcludedAdminTokenReviewSuffix(alert: AdminTokenReviewAlertEntry) {
+    const assessment = alert.assessment || {};
+    return [
+      alert.tokenAddress,
+      getRecordStringValue(assessment, 'symbol'),
+      getRecordStringValue(assessment, 'name'),
+    ].some(hasExcludedAdminTokenReviewSuffixValue);
+  }
+
+  function hasExcludedAdminTokenReviewSuffixValue(value: string | null | undefined) {
+    const normalized = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+$/g, '');
+    return Boolean(normalized) && ADMIN_TOKEN_REVIEW_EXCLUDED_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+  }
+
+  function getRecordStringValue(record: Record<string, unknown> | null | undefined, key: string) {
+    const value = record?.[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
   }
 
   async function refreshRestoredSessionStateInternal(options: { force?: boolean } = {}) {
