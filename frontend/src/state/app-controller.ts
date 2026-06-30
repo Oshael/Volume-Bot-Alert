@@ -1001,6 +1001,7 @@ export function createAppController(): AppController {
   let supplementalMeteoraRefreshInFlight = false;
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
+  let sparklineRefreshQueued = false;
   const expandedSparklineRequests = new Set<string>();
   let historyBootstrapRefreshInFlight = false;
   let historyBootstrapInFlightRequestKey = '';
@@ -6754,16 +6755,13 @@ export function createAppController(): AppController {
     clearHistorySparklineCache();
   }
 
-  function shouldSkipWorkspaceSparklineRefresh(addressKey: string, force: boolean, now: number) {
-    if (!force && addressKey === lastSparklineAddressKey && now < nextSparklineRefreshAt) {
-      return true;
-    }
+  function isWorkspaceSparklineCacheFresh(addressKey: string, force: boolean, now: number) {
+    return !force && addressKey === lastSparklineAddressKey && now < nextSparklineRefreshAt;
+  }
 
-    if (sparklineRefreshInFlight) {
-      return true;
-    }
-
-    return false;
+  function queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses: string[]) {
+    showWorkspaceSparklineLoadingEntries(visibleAddresses);
+    sparklineRefreshQueued = true;
   }
 
   function showWorkspaceSparklineLoadingEntries(
@@ -6874,7 +6872,11 @@ export function createAppController(): AppController {
     }
 
     const now = Date.now();
-    if (shouldSkipWorkspaceSparklineRefresh(addressKey, force, now)) {
+    if (sparklineRefreshInFlight) {
+      queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses);
+      return;
+    }
+    if (isWorkspaceSparklineCacheFresh(addressKey, force, now)) {
       return;
     }
 
@@ -6902,6 +6904,11 @@ export function createAppController(): AppController {
       handleWorkspaceSparklineRefreshError(visibleAddresses, error);
     } finally {
       sparklineRefreshInFlight = false;
+      const shouldRunQueuedRefresh = sparklineRefreshQueued;
+      sparklineRefreshQueued = false;
+      if (shouldRunQueuedRefresh && isWorkspaceSparklineRefreshAllowed(state.session.token ?? token)) {
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token ?? token, force: true });
+      }
     }
   }
 
