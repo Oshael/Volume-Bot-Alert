@@ -11606,10 +11606,9 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: start;
 }
 
-.alert-avatar,
-.alert-avatar-placeholder {
+.alert-avatar-wrap {
   align-self: start;
-  margin-top: 2px;
+  margin-top: -2px;
 }
 
 .alert-body-v68 {
