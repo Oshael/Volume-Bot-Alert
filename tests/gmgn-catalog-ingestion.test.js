@@ -302,6 +302,88 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.volumeBucketsWritten, 1);
   });
 
+  it('keeps fresh GMGN panel market data when Dex is stuck on a launch-floor pair', async () => {
+    const address = 'HGGBJQpERkzjF38LNfE7FFdpLit4zpyWszoyyu3jpump';
+    const now = new Date('2026-06-30T19:19:05.000Z');
+    const snapshot = {
+      ...createSnapshot(address),
+      symbol: 'ANSOM',
+      name: 'Book of Ansom',
+      pairAddress: '53zWPx56cp8no7ywx3aLRD2W8ohRkFoPT969y7KM4i4S',
+      pairUrl: 'https://gmgn.ai/sol/token/HGGBJQpERkzjF38LNfE7FFdpLit4zpyWszoyyu3jpump',
+      mcap: 116777,
+      price: 0.000116777,
+      liquidityUsd: 26199.9,
+      vol1m: 28389.9,
+      vol5m: 149702,
+      vol1h: 149702,
+      vol24h: 149702,
+      gmgnInterval: '1m',
+    };
+    const tokenCatalogModel = createTokenCatalogStub();
+    const marketBucketPayloads = [];
+
+    tokenCatalogModel.getByAddress = async () => ({
+      address,
+      source: 'gmgn',
+      eligibility_state: 'gmgn-normal',
+      eligible_for_monitoring: true,
+      last_mcap: 30253.11,
+      last_price: 0.00003025311,
+      last_pair_url: 'https://dexscreener.com/solana/53zwpx56cp8no7ywx3alrd2w8ohrkfopt969y7km4i4s',
+      last_seen_at: now,
+      last_evaluated_at: now,
+      next_evaluation_at: new Date('2026-06-30T19:20:00.000Z'),
+    });
+    tokenCatalogModel.upsertToken = async (payload) => {
+      assert.equal(payload.mcap, 116777);
+      assert.equal(payload.price, 0.000116777);
+      return { address: payload.address, source: payload.source };
+    };
+    tokenCatalogModel.applyEvaluationResult = async (tokenAddress, payload) => {
+      assert.equal(tokenAddress, address);
+      assert.equal(payload.mcap, 116777);
+      assert.equal(payload.price, 0.000116777);
+      assert.equal(payload.eligibilityState, 'gmgn-high');
+      assert.equal(payload.monitorPriority, 'high');
+      return {
+        address: tokenAddress,
+        source: 'gmgn',
+        eligible_for_monitoring: true,
+        eligibility_state: payload.eligibilityState,
+        last_mcap: payload.mcap,
+        last_vol_5m: payload.vol5m,
+        last_vol_24h: payload.vol24h,
+      };
+    };
+
+    const result = await gmgnCatalogIngestion.ingestGmgnToken(snapshot, {
+      now: () => now,
+      evaluationState: new Map(),
+      tokenCatalogModel,
+      gmgnClient: createSafeGmgnSecurityStub(),
+      marketBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          marketBucketPayloads.push(payload);
+          return payload;
+        },
+      },
+      volumeBucketModel: {
+        async upsertSnapshotBucket(payload) {
+          return payload;
+        },
+      },
+      alertMatcher: {
+        async evaluateUpdatedToken() {
+          return { emitted: 0, events: [] };
+        },
+      },
+    });
+
+    assert.equal(result.summary.catalogUpdated, 1);
+    assert.equal(marketBucketPayloads[0]?.mcap, 116777);
+  });
+
   it('debounces repeated per-token alert evaluation while still persisting market data', async () => {
     let nowMs = Date.parse('2026-05-03T07:00:00.000Z');
     const evaluationState = new Map();

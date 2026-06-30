@@ -25,6 +25,13 @@ const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
 const DEFAULT_PANEL_STALE_AFTER_MS = 15000;
 const RECENT_DEX_MARKET_DATA_MAX_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
+const LAUNCH_FLOOR_MIN_MCAP = 29000;
+const LAUNCH_FLOOR_MAX_MCAP = 35000;
+const GMGN_PANEL_OVERRIDE_MIN_MCAP = 75000;
+const GMGN_PANEL_OVERRIDE_MIN_RATIO = 2;
+const GMGN_PANEL_OVERRIDE_MIN_LIQUIDITY_USD = 5000;
+const GMGN_PANEL_OVERRIDE_MIN_VOL_5M = 10000;
+const GMGN_PANEL_OVERRIDE_MIN_VOL_1M = 2500;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
 const GMGN_RISK_ENRICHMENT_SUPPRESSION_REASON = 'gmgn_needs_risk_enrichment';
@@ -210,8 +217,38 @@ function shouldPreferDexMarketData(tokenBefore, now) {
   return dexMcap > 0 || toFiniteNumberOrNull(tokenBefore?.last_price) > 0;
 }
 
+function isLaunchFloorMcap(value) {
+  const mcap = toFiniteNumberOrNull(value);
+  return mcap != null && mcap >= LAUNCH_FLOOR_MIN_MCAP && mcap <= LAUNCH_FLOOR_MAX_MCAP;
+}
+
+function hasStrongGmgnPanelMarketSignal(snapshot) {
+  const liquidityUsd = toFiniteNumberOrNull(snapshot?.liquidityUsd);
+  const vol5m = toFiniteNumberOrNull(snapshot?.vol5m);
+  const vol1m = toFiniteNumberOrNull(snapshot?.vol1m);
+  return (liquidityUsd != null && liquidityUsd >= GMGN_PANEL_OVERRIDE_MIN_LIQUIDITY_USD)
+    || (vol5m != null && vol5m >= GMGN_PANEL_OVERRIDE_MIN_VOL_5M)
+    || (vol1m != null && vol1m >= GMGN_PANEL_OVERRIDE_MIN_VOL_1M);
+}
+
+function shouldKeepFreshGmgnMarketData(snapshot, tokenBefore) {
+  if (!isPumpAddress(snapshot?.address || snapshot?.tokenAddress)) {
+    return false;
+  }
+  const dexMcap = toFiniteNumberOrNull(tokenBefore?.last_mcap);
+  const gmgnMcap = toFiniteNumberOrNull(snapshot?.mcap);
+  return isLaunchFloorMcap(dexMcap)
+    && gmgnMcap != null
+    && gmgnMcap >= GMGN_PANEL_OVERRIDE_MIN_MCAP
+    && (gmgnMcap / dexMcap) >= GMGN_PANEL_OVERRIDE_MIN_RATIO
+    && hasStrongGmgnPanelMarketSignal(snapshot);
+}
+
 function preserveDexMarketDataForGmgnSnapshot(snapshot, tokenBefore, now) {
   if (!shouldPreferDexMarketData(tokenBefore, now)) {
+    return snapshot;
+  }
+  if (shouldKeepFreshGmgnMarketData(snapshot, tokenBefore)) {
     return snapshot;
   }
 
