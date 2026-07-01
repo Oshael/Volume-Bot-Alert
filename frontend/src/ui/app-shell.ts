@@ -714,10 +714,22 @@ function preserveTopPerformerCharts(previousViewport: HTMLElement | null, nextSe
     const address = String(card.dataset.address || '').trim();
     const previousChart = previousChartsByAddress.get(address);
     const nextChart = card.querySelector<HTMLElement>('.top-performer-chart');
-    if (previousChart && nextChart?.querySelector('.sparkline-wrap')) {
+    if (previousChart && nextChart?.querySelector('.sparkline-wrap') && getTopPerformerChartSignature(previousChart) === getTopPerformerChartSignature(nextChart)) {
       nextChart.replaceWith(previousChart);
     }
   });
+}
+
+function getTopPerformerChartSignature(chart: HTMLElement) {
+  const wrap = chart.querySelector<HTMLElement>('.sparkline-wrap');
+  const line = chart.querySelector<SVGPolylineElement>('.token-sparkline-line');
+  const area = chart.querySelector<SVGPolygonElement>('.token-sparkline-area');
+  return serializePrimitiveList([
+    wrap?.className,
+    wrap?.dataset.sparklineSummary,
+    line?.getAttribute('points'),
+    area?.getAttribute('points'),
+  ]);
 }
 
 function serializePrimitiveList(values: Array<string | number | boolean | null | undefined>) {
@@ -1130,7 +1142,10 @@ function getTopPerformersRenderKey(state: AppState) {
       token.imageUrl,
       token.pairUrl,
       token.performanceRank,
-      Boolean(state.data.sparklineByAddress[token.address]),
+      token.mcap,
+      token.volume24h,
+      token.priceChange24h,
+      serializeSparklineForView(state, token.address),
     ])),
   });
 }
