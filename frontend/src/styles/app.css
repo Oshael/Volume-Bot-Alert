@@ -2577,10 +2577,11 @@ body:has(.workspace-topbar)::before {
 
 .legacy-auth-panel-expanded-sparkline {
   position: relative;
-  width: min(576px, calc(100vw - 24px));
-  max-height: min(72vh, 374px);
-  padding: 8px 8px 8px;
-  gap: 6px;
+  width: min(82vw, 1380px);
+  min-width: min(960px, calc(100vw - 28px));
+  max-height: min(82vh, 820px);
+  padding: 14px;
+  gap: 10px;
   overflow: visible;
   border: 0;
   border-radius: 20px;
@@ -2593,7 +2594,7 @@ body:has(.workspace-topbar)::before {
 .legacy-auth-panel-expanded-sparkline::before {
   content: "";
   position: absolute;
-  inset: 96px 8px 8px;
+  inset: 74px 10px 10px;
   border-radius: 20px;
   background:
     radial-gradient(circle at 18% 18%, rgba(0, 212, 255, 0.12), transparent 34%),
@@ -2619,7 +2620,7 @@ body:has(.workspace-topbar)::before {
 
 .legacy-auth-modal[data-auth-modal-scope="sparkline"] {
   align-items: start;
-  padding-top: min(12vh, 84px);
+  padding-top: min(7vh, 64px);
 }
 
 .legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-auth-modal-backdrop {
@@ -2632,7 +2633,7 @@ body:has(.workspace-topbar)::before {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 16px;
   position: relative;
   z-index: 1;
 }
@@ -2693,9 +2694,52 @@ body:has(.workspace-topbar)::before {
   backdrop-filter: blur(10px);
 }
 
+.expanded-sparkline-resolution-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid rgba(63, 113, 176, 0.32);
+  border-radius: 999px;
+  background: rgba(5, 12, 22, 0.38);
+  box-shadow: 0 0 0 1px rgba(14, 25, 40, 0.18) inset;
+  backdrop-filter: blur(10px);
+}
+
+.expanded-sparkline-resolution-button {
+  min-width: 34px;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #86a8c8;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.expanded-sparkline-resolution-button:hover,
+.expanded-sparkline-resolution-button:focus-visible {
+  color: #d7f3ff;
+  background: rgba(76, 151, 218, 0.18);
+  outline: none;
+}
+
+.expanded-sparkline-resolution-button.is-active {
+  color: #ecfbff;
+  background: rgba(0, 212, 255, 0.18);
+  box-shadow:
+    0 0 16px rgba(0, 212, 255, 0.14),
+    inset 0 0 0 1px rgba(130, 223, 255, 0.22);
+}
+
 .expanded-sparkline-chart {
   position: relative;
-  padding: 6px 6px 2px;
+  min-height: clamp(360px, 56vh, 610px);
+  padding: 12px 14px 8px;
   border: 1px solid rgba(65, 109, 182, 0.3);
   border-radius: 16px;
   background:
@@ -2740,6 +2784,128 @@ body:has(.workspace-topbar)::before {
 
 .expanded-sparkline-chart.is-loading .sparkline-wrap {
   opacity: 0.64;
+}
+
+.expanded-candle-wrap {
+  position: relative;
+  width: 100%;
+  height: clamp(350px, 55vh, 590px);
+  display: flex;
+  color: #9fb0c2;
+  cursor: crosshair;
+}
+
+.expanded-candle-chart-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.expanded-candle-grid-line {
+  stroke: rgba(132, 171, 210, 0.13);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.expanded-candle-axis-label {
+  fill: rgba(178, 201, 226, 0.68);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.08);
+}
+
+.expanded-candle-price-label {
+  text-anchor: start;
+}
+
+.expanded-candle-time-label {
+  text-anchor: middle;
+}
+
+.expanded-candle-wick {
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.expanded-candle-body {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.expanded-candle.up {
+  color: #18c79a;
+}
+
+.expanded-candle.down {
+  color: #ff4f67;
+}
+
+.expanded-candle-hover {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.expanded-candle-wrap.is-hovering .expanded-candle-hover {
+  opacity: 1;
+}
+
+.expanded-candle-hover-line {
+  position: absolute;
+  display: block;
+  background: rgba(168, 219, 255, 0.28);
+}
+
+.expanded-candle-hover-line-x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.expanded-candle-hover-line-y {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.expanded-candle-hover-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(220, 249, 255, 0.9);
+  border-radius: 999px;
+  background: rgba(7, 18, 28, 0.92);
+  box-shadow: 0 0 14px rgba(0, 212, 255, 0.22);
+  transform: translate(-50%, -50%);
+}
+
+.expanded-candle-hover-tooltip {
+  position: absolute;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 7px 9px;
+  border: 1px solid rgba(87, 155, 216, 0.38);
+  border-radius: 8px;
+  background: rgba(5, 12, 22, 0.9);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(120, 201, 255, 0.08);
+  color: #d6ecff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
 }
 
 .expanded-sparkline-loading {
@@ -7310,7 +7476,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .sparkline-wrap-expanded {
   width: 100%;
-  height: 170px;
+  height: clamp(350px, 55vh, 590px);
   display: flex;
 }
 
@@ -7340,7 +7506,7 @@ TEMP_LEGACY_BAR_TITLE {
 
 .token-sparkline-expanded {
   width: 100%;
-  height: 170px;
+  height: 100%;
 }
 
 .legacy-auth-panel-expanded-sparkline .token-sparkline-glow {

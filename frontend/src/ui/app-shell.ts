@@ -1420,10 +1420,14 @@ function getExpandedSparklineOverlaySnapshot(state: AppState) {
 
   const sparkline = getExpandedTokenSparkline(state, address);
   const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
+  const candles = Array.isArray(sparkline?.candles) ? sparkline.candles : [];
   return {
     address,
+    granularityMinutes: state.ui.expandedSparklineGranularityMinutes,
     loading: Boolean(sparkline?.loading),
     points: series.length,
+    candles: candles.length,
+    latestBucketAt: sparkline?.latestBucketAt ?? null,
     seriesKey: series.map((value) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : value)).join('|'),
   };
 }

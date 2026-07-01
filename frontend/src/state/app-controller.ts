@@ -219,6 +219,8 @@ const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
 const EXPANDED_SPARKLINE_POINT_COUNT = 720;
 const EXPANDED_SPARKLINE_FRONTEND_CACHE_MS = 30 * 1000;
+const EXPANDED_SPARKLINE_GRANULARITIES = [5, 15, 30, 60, 240, 1440] as const;
+const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
@@ -464,6 +466,7 @@ export interface AppController {
   openExpandedSparkline(address: string): void;
   openAlertExpandedSparkline(alertId: string, address: string): void;
   closeExpandedSparkline(): void;
+  setExpandedSparklineGranularity(granularityMinutes: number): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
   toggleSectionCollapsed(section: CollapsibleSectionKey): void;
@@ -3089,7 +3092,7 @@ export function createAppController(): AppController {
     const addressChanged = state.ui.expandedSparklineAddress !== route.address;
     state.ui.expandedSparklineAddress = route.address;
     state.ui.mockTradingPnlAddress = null;
-    if (!isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[route.address])) {
+    if (!isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(route.address))) {
       setExpandedSparklineLoading(route.address);
       void refreshExpandedSparkline(route.address);
     }
@@ -6414,6 +6417,28 @@ export function createAppController(): AppController {
     } satisfies TokenSparklineEntry;
   }
 
+  function normalizeExpandedSparklineGranularity(granularityMinutes: unknown) {
+    const parsed = Math.round(Number(granularityMinutes));
+    return EXPANDED_SPARKLINE_GRANULARITIES.includes(parsed as typeof EXPANDED_SPARKLINE_GRANULARITIES[number])
+      ? parsed
+      : EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
+  }
+
+  function getActiveExpandedSparklineGranularity() {
+    return normalizeExpandedSparklineGranularity(state.ui.expandedSparklineGranularityMinutes);
+  }
+
+  function getExpandedSparklineCacheKey(address: string, granularityMinutes = getActiveExpandedSparklineGranularity()) {
+    return `${String(address || '').trim()}::${normalizeExpandedSparklineGranularity(granularityMinutes)}`;
+  }
+
+  function getExpandedSparklineCacheEntry(address: string, granularityMinutes = getActiveExpandedSparklineGranularity()) {
+    const normalized = String(address || '').trim();
+    return state.data.expandedSparklineByAddress[getExpandedSparklineCacheKey(normalized, granularityMinutes)]
+      || state.data.expandedSparklineByAddress[normalized]
+      || null;
+  }
+
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
     if (!entry || entry.loading || !hasRenderableSparklineSeries(entry)) {
       return false;
@@ -6427,18 +6452,20 @@ export function createAppController(): AppController {
     return Number.isFinite(generatedAtMs) && now - generatedAtMs < EXPANDED_SPARKLINE_FRONTEND_CACHE_MS;
   }
 
-  function setExpandedSparklineLoading(address: string, seed?: TokenSparklineEntry | null) {
+  function setExpandedSparklineLoading(address: string, seed?: TokenSparklineEntry | null, granularityMinutes = getActiveExpandedSparklineGranularity()) {
     const compact = state.data.sparklineByAddress[address];
-    const existing = state.data.expandedSparklineByAddress[address];
+    const cacheKey = getExpandedSparklineCacheKey(address, granularityMinutes);
+    const existing = state.data.expandedSparklineByAddress[cacheKey];
     if (existing?.loading) {
       return;
     }
 
     state.data.expandedSparklineByAddress = {
       ...state.data.expandedSparklineByAddress,
-      [address]: {
+      [cacheKey]: {
         ...(existing || seed || compact || { address, series: [] }),
         address,
+        granularityMinutes,
         loading: true,
       },
     };
@@ -6451,7 +6478,8 @@ export function createAppController(): AppController {
       return null;
     }
 
-    const existing = state.data.expandedSparklineByAddress[normalized];
+    const cacheKey = getExpandedSparklineCacheKey(normalized);
+    const existing = state.data.expandedSparklineByAddress[cacheKey];
     if (isExpandedSparklineCacheFresh(existing)) {
       return existing;
     }
@@ -6463,59 +6491,67 @@ export function createAppController(): AppController {
     } satisfies TokenSparklineEntry;
     state.data.expandedSparklineByAddress = {
       ...state.data.expandedSparklineByAddress,
-      [normalized]: seed,
+      [cacheKey]: seed,
     };
     return seed;
   }
 
-  async function refreshExpandedSparkline(address: string, token?: string | null) {
+  function isCurrentExpandedSparklineRequest(address: string, token: string, granularityMinutes: number) {
+    return state.session.token === token
+      && state.ui.expandedSparklineAddress === address
+      && getActiveExpandedSparklineGranularity() === granularityMinutes;
+  }
+
+  function writeExpandedSparklineFallbackEntry(address: string, cacheKey: string, granularityMinutes: number) {
+    state.data.expandedSparklineByAddress = {
+      ...state.data.expandedSparklineByAddress,
+      [cacheKey]: {
+        ...(state.data.expandedSparklineByAddress[cacheKey] || state.data.sparklineByAddress[address] || { address, series: [] }),
+        granularityMinutes,
+        loading: false,
+      },
+    };
+  }
+
+  async function refreshExpandedSparkline(address: string, token?: string | null, granularityMinutes = getActiveExpandedSparklineGranularity()) {
     const normalized = String(address || '').trim();
     const requestToken = token ?? state.session.token;
-    if (!normalized || !requestToken || expandedSparklineRequests.has(normalized)) {
+    const safeGranularity = normalizeExpandedSparklineGranularity(granularityMinutes);
+    const cacheKey = getExpandedSparklineCacheKey(normalized, safeGranularity);
+    if (!normalized || !requestToken || expandedSparklineRequests.has(cacheKey)) {
       return;
     }
 
-    expandedSparklineRequests.add(normalized);
+    expandedSparklineRequests.add(cacheKey);
     try {
       const payload = await fetchExpandedTokenSparkline(normalized, {
         points: EXPANDED_SPARKLINE_POINT_COUNT,
+        granularityMinutes: safeGranularity,
       }, requestToken);
-      if (state.session.token !== requestToken || state.ui.expandedSparklineAddress !== normalized) {
+      if (!isCurrentExpandedSparklineRequest(normalized, requestToken, safeGranularity)) {
         return;
       }
 
       const entry = buildExpandedSparklineCacheEntry(payload.item, payload.generatedAt, payload.points);
       if (!entry || !hasRenderableSparklineSeries(entry)) {
-        state.data.expandedSparklineByAddress = {
-          ...state.data.expandedSparklineByAddress,
-          [normalized]: {
-            ...(state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || { address: normalized, series: [] }),
-            loading: false,
-          },
-        };
+        writeExpandedSparklineFallbackEntry(normalized, cacheKey, safeGranularity);
         emit('overlay');
         return;
       }
 
       state.data.expandedSparklineByAddress = {
         ...state.data.expandedSparklineByAddress,
-        [normalized]: entry,
+        [cacheKey]: entry,
       };
       emit('overlay');
     } catch (error) {
       if (state.ui.expandedSparklineAddress === normalized) {
-        state.data.expandedSparklineByAddress = {
-          ...state.data.expandedSparklineByAddress,
-          [normalized]: {
-            ...(state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || { address: normalized, series: [] }),
-            loading: false,
-          },
-        };
+        writeExpandedSparklineFallbackEntry(normalized, cacheKey, safeGranularity);
         emit('overlay');
       }
       console.warn('[AppController] Failed to refresh expanded sparkline:', error instanceof Error ? error.message : error);
     } finally {
-      expandedSparklineRequests.delete(normalized);
+      expandedSparklineRequests.delete(cacheKey);
     }
   }
 
@@ -10109,7 +10145,7 @@ export function createAppController(): AppController {
         }
       }
       emit('overlay');
-      if (isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[normalized])) {
+      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(normalized))) {
         return;
       }
       setExpandedSparklineLoading(normalized);
@@ -10137,7 +10173,7 @@ export function createAppController(): AppController {
         }
       }
       emit('overlay');
-      if (isExpandedSparklineCacheFresh(state.data.expandedSparklineByAddress[normalized])) {
+      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(normalized))) {
         return;
       }
       setExpandedSparklineLoading(normalized, seed);
@@ -10151,6 +10187,28 @@ export function createAppController(): AppController {
       state.ui.expandedSparklineAddress = null;
       clearWorkspaceSparklineUrl();
       emit('overlay');
+    },
+    setExpandedSparklineGranularity(granularityMinutes: number) {
+      const safeGranularity = normalizeExpandedSparklineGranularity(granularityMinutes);
+      if (state.ui.expandedSparklineGranularityMinutes === safeGranularity) {
+        return;
+      }
+
+      state.ui.expandedSparklineGranularityMinutes = safeGranularity;
+      const address = String(state.ui.expandedSparklineAddress || '').trim();
+      if (!address) {
+        emit('overlay');
+        return;
+      }
+
+      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, safeGranularity))) {
+        emit('overlay');
+        return;
+      }
+
+      setExpandedSparklineLoading(address, null, safeGranularity);
+      emit('overlay');
+      void refreshExpandedSparkline(address, undefined, safeGranularity);
     },
     clearDismissedRecent() {
       state.data.dismissedRecent = [];

@@ -716,6 +716,7 @@ export interface AppState {
     recentSearchPending: boolean;
     oldWeekSearchPending: boolean;
     expandedSparklineAddress: string | null;
+    expandedSparklineGranularityMinutes: number;
     activeMockTradingWalletId: number | null;
     mockTradingTicket: MockTradingTicketState | null;
     floatingQuickBuy: FloatingQuickBuyState;
@@ -902,6 +903,7 @@ export function createAppState(): AppState {
       recentSearchPending: false,
       oldWeekSearchPending: false,
       expandedSparklineAddress: null,
+      expandedSparklineGranularityMinutes: 5,
       activeMockTradingWalletId: null,
       mockTradingTicket: null,
       floatingQuickBuy: {
@@ -1105,7 +1107,9 @@ export function getTokenSparkline(state: AppState, address: string) {
 
 export function getExpandedTokenSparkline(state: AppState, address: string) {
   const normalized = String(address || '').trim();
-  return state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || null;
+  const granularityMinutes = Math.max(1, Math.round(Number(state.ui.expandedSparklineGranularityMinutes) || 5));
+  const scopedKey = `${normalized}::${granularityMinutes}`;
+  return state.data.expandedSparklineByAddress[scopedKey] || state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || null;
 }
 
 export function getManualTokens(state: AppState) {

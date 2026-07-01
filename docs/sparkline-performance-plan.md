@@ -124,8 +124,12 @@ Status de implementacao local em 2026-07-01:
 - feito: leitura expanded retorna `candles` OHLC e preserva `series`
 - feito: fallback para `1m` no expanded agora e apenas explicito
 - feito: frontend normaliza e guarda `candles`, e o client HTTP ja aceita enviar `granularityMinutes`
-- pendente: controles visiveis de resolucao no modal expanded
-- pendente: backfill inicial das novas granularidades `60/240/1440` na VPS
+- feito: backfill inicial de `60/240/1440` executado na VPS a partir do `5m`
+- feito: cobertura de `4h` e `24h` validada contra `5m` com `0` divergencias
+- feito: modal expanded renderiza candles quando o payload traz OHLC valido, com fallback para `series`
+- feito: controles visiveis de resolucao no modal expanded chamam o backend com `granularityMinutes`
+- feito: default do modal expanded e `5m`, a menor granularidade agregada disponivel
+- feito: candle chart tem labels de preco/tempo e hover com crosshair/tooltip por candle
 - pendente: worker de reparo/retencao
 
 Gate operacional antes de expor `1h/4h/24h` na UI:
@@ -136,6 +140,31 @@ Gate operacional antes de expor `1h/4h/24h` na UI:
 - para janelas mais antigas que a retencao de `1m`, gerar `60/240/1440` a partir dos buckets `5m` ja existentes
 - validar cobertura antes de habilitar controles do modal para essas resolucoes
 - manter `5/15/30` sem backfill amplo enquanto auditorias leves nao mostrarem buracos reais
+
+Proximos blocos de frontend, em ordem:
+
+1. Renderizar candles no modal expanded. Status: implementado.
+   - trocar a visualizacao principal do modal de sparkline simples para candle chart
+   - consumir `candles` do payload expanded
+   - manter fallback para `series` quando `candles` vier vazio
+   - nao adicionar ferramentas de desenho neste bloco
+
+2. Adicionar controle explicito de resolucao. Status: implementado.
+   - opcoes: `5m`, `15m`, `30m`, `1h`, `4h`, `24h`
+   - chamar `/api/catalog/sparklines/expanded` com `granularityMinutes`
+   - cachear por `address + granularityMinutes`
+   - mostrar loading apenas da resolucao solicitada
+
+3. Adicionar informacoes complementares do chart.
+   - status: labels de preco/tempo e hover/crosshair implementados
+   - volume so entra depois de ampliar o contrato backend, porque o payload atual tem OHLC e `sampleCount`, nao volume real
+   - marcadores do bot entram depois dos candles e da escala tempo/preco estarem estaveis
+   - linhas de referencia entram como camada propria, nao misturadas com candle rendering
+
+4. Adicionar ferramentas manuais minimas.
+   - comecar por linha horizontal e trendline
+   - texto, regua, brush e outras ferramentas estilo Axion/TradingView ficam para fases posteriores
+   - cada ferramenta precisa de estado, eventos de mouse/touch, conversao pixel-tempo-preco, renderizacao e persistencia se for necessario manter ao reabrir
 
 Pontos importantes:
 
