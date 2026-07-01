@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -873,6 +873,9 @@ function getWorkspaceConnectionState(state: AppState) {
 }
 
 function renderMockTradingHeaderSummary(state: AppState) {
+  if (!isMockTradingEnabled(state)) {
+    return '';
+  }
   const summary = state.session.role === 'admin' ? getMockTradingSummaryView(state) : null;
   if (!summary) {
     return '';
@@ -1335,23 +1338,20 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
 
 function resolveWorkspaceOverlayMode(state: AppState) {
   const authPanelMode = resolveAuthPanelOverlayMode(state);
+  const canRenderMockTradingOverlay = shouldRenderMockTradingOverlay(state);
   if (authPanelMode) {
     return authPanelMode;
   }
   if (state.session.status === 'authenticated' && state.ui.blockTokenWarning) {
     return 'block-token-warning';
   }
-  if (state.session.status === 'authenticated' && state.session.role === 'admin' && state.ui.mockTradingTicket) {
+  if (canRenderMockTradingOverlay && state.ui.mockTradingTicket) {
     return 'mock-trading-ticket';
   }
-  if (state.session.status === 'authenticated' && state.session.role === 'admin' && state.ui.mockTradingHistoryOpen) {
+  if (canRenderMockTradingOverlay && state.ui.mockTradingHistoryOpen) {
     return 'mock-trading-history';
   }
-  if (
-    state.session.status === 'authenticated'
-    && state.session.role === 'admin'
-    && resolveMockTradingPnlResumeAddress(state)
-  ) {
+  if (canRenderMockTradingOverlay && resolveMockTradingPnlResumeAddress(state)) {
     return 'mock-trading-pnl';
   }
 
@@ -1359,6 +1359,12 @@ function resolveWorkspaceOverlayMode(state: AppState) {
   const sparkline = address ? getExpandedTokenSparkline(state, address) : null;
   const hasExpandedSparkline = Boolean(sparkline && Array.isArray(sparkline.series) && sparkline.series.length >= 2);
   return hasExpandedSparkline ? 'expanded-sparkline' : 'none';
+}
+
+function shouldRenderMockTradingOverlay(state: AppState) {
+  return isMockTradingEnabled(state)
+    && state.session.status === 'authenticated'
+    && state.session.role === 'admin';
 }
 
 function resolveAuthPanelOverlayMode(state: AppState) {

@@ -106,6 +106,9 @@ export interface ConfigPayload {
   tokens: AddressItem[];
   blocklist: AddressItem[];
   starredTokens: Array<{ address: string }>;
+  runtimeFlags?: {
+    mockTradingEnabled?: boolean;
+  };
 }
 
 export interface ConfigSyncPayload {

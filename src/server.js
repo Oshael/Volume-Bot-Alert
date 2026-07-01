@@ -134,7 +134,13 @@ app.use('/api/auth/social', socialAuthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/wallet-auth', walletAuthRoutes);
 app.use('/api/invites', defaultApiLimiter, inviteRoutes);
-app.use('/api/admin/mock-trading', defaultApiLimiter, mockTradingRoutes);
+if (config.mockTrading.enabled) {
+  app.use('/api/admin/mock-trading', defaultApiLimiter, mockTradingRoutes);
+} else {
+  app.use('/api/admin/mock-trading', defaultApiLimiter, (_req, res) => {
+    res.status(404).json({ error: 'Mock trading is disabled' });
+  });
+}
 app.use('/api/admin', defaultApiLimiter, adminRoutes);
 app.use('/api/account', defaultApiLimiter, accountRoutes);
 app.use('/api/account-security', defaultApiLimiter, accountSecurityRoutes);

@@ -584,9 +584,14 @@ module.exports = {
   },
 
   mockTradingTakeProfitWorker: {
-    enabled: parseBoolean(process.env.MOCK_TRADING_TAKE_PROFIT_ENABLED, true),
+    enabled: parseBoolean(process.env.MOCK_TRADING_ENABLED, true)
+      && parseBoolean(process.env.MOCK_TRADING_TAKE_PROFIT_ENABLED, true),
     intervalMs: Math.max(1000, parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_INTERVAL_MS || '3000', 10) || 3000),
     batchLimit: Math.max(1, Math.min(parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_BATCH_LIMIT || '25', 10) || 25, 100)),
+  },
+
+  mockTrading: {
+    enabled: parseBoolean(process.env.MOCK_TRADING_ENABLED, true),
   },
 
   solUsdPrice: {

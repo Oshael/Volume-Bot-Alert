@@ -662,6 +662,9 @@ export interface AppState {
   configSummary: ConfigSummary;
   data: {
     configs: Record<string, string | number>;
+    runtimeFlags: {
+      mockTradingEnabled: boolean;
+    };
     trackedTokensByAddress: Record<string, ManualTokenEntry>;
     monitoredTokenAddresses: string[];
     manualTokenAddresses: string[];
@@ -849,6 +852,9 @@ export function createAppState(): AppState {
     },
     data: {
       configs: {},
+      runtimeFlags: {
+        mockTradingEnabled: true,
+      },
       trackedTokensByAddress: {},
       monitoredTokenAddresses: [],
       manualTokenAddresses: [],
@@ -1063,6 +1069,9 @@ function buildLiveMockTradingPosition(
 }
 
 export function getMockTradingPositionView(state: AppState, address: string) {
+  if (!isMockTradingEnabled(state)) {
+    return null;
+  }
   const normalizedAddress = String(address || '').trim();
   const position = state.data.mockTradingPositionsByAddress[normalizedAddress] || null;
   if (!position) {
@@ -1072,6 +1081,9 @@ export function getMockTradingPositionView(state: AppState, address: string) {
 }
 
 export function getMockTradingPositionsViewByAddress(state: AppState) {
+  if (!isMockTradingEnabled(state)) {
+    return {};
+  }
   return Object.fromEntries(
     Object.keys(state.data.mockTradingPositionsByAddress).map((address) => [
       address,
@@ -1081,6 +1093,9 @@ export function getMockTradingPositionsViewByAddress(state: AppState) {
 }
 
 export function getMockTradingSummaryView(state: AppState) {
+  if (!isMockTradingEnabled(state)) {
+    return null;
+  }
   const summary = state.data.mockTradingSummary;
   if (!summary) {
     return null;
@@ -1099,6 +1114,10 @@ export function getMockTradingSummaryView(state: AppState) {
       ? (totalPnlUsd / summary.account.startingCashUsd) * 100
       : null,
   };
+}
+
+export function isMockTradingEnabled(state: AppState) {
+  return state.data.runtimeFlags.mockTradingEnabled !== false;
 }
 
 export function getTokenSparkline(state: AppState, address: string) {

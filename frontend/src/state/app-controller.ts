@@ -1,4 +1,4 @@
-import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -234,6 +234,7 @@ const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
 const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
+const ADMIN_TOKEN_REVIEW_ALERT_REFRESH_INTERVAL_MS = 15 * 1000;
 const BOOTSTRAP_ALERT_FEED_MODE = 'unseen';
 const ADMIN_TOKEN_REVIEW_EXCLUDED_SUFFIXES = ['pump', 'bonk', 'bags'];
 const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
@@ -1009,11 +1010,13 @@ export function createAppController(): AppController {
   let monitoringInterval: ReturnType<typeof setInterval> | null = null;
   let uptimeInterval: ReturnType<typeof setInterval> | null = null;
   let pumpGcInterval: ReturnType<typeof setInterval> | null = null;
+  let adminTokenReviewAlertRefreshInterval: ReturnType<typeof setInterval> | null = null;
   let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
   let topPerformersRefreshInFlight = false;
   let mockTradingRefreshInFlight = false;
+  let adminTokenReviewAlertRefreshInFlight = false;
   let nextMockTradingMarketRefreshAt = 0;
   let floatingQuickBuyExecutionInFlight = false;
   let floatingQuickBuyDashboardRefreshInFlight = false;
@@ -2470,6 +2473,12 @@ export function createAppController(): AppController {
   }
 
   function getMockTradingAdminToken() {
+    if (!isMockTradingEnabled(state)) {
+      clearMockTradingState();
+      setError('Mock trading is disabled');
+      emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+      return null;
+    }
     const token = state.session.token;
     if (!token || state.session.role !== 'admin') {
       setError('Admin access required');
@@ -2496,7 +2505,7 @@ export function createAppController(): AppController {
 
   async function refreshMockTradingState(options?: { emit?: boolean }) {
     const token = state.session.token;
-    if (!token || state.session.role !== 'admin') {
+    if (!isMockTradingEnabled(state) || !token || state.session.role !== 'admin') {
       clearMockTradingState();
       return;
     }
@@ -2538,7 +2547,8 @@ export function createAppController(): AppController {
   }
 
   function refreshMockTradingStateForMarketPoll() {
-    if (state.session.role !== 'admin' || !state.session.token) {
+    if (!isMockTradingEnabled(state) || state.session.role !== 'admin' || !state.session.token) {
+      clearMockTradingState();
       return;
     }
     const now = Date.now();
@@ -7255,6 +7265,7 @@ export function createAppController(): AppController {
     computeUptimeLabel();
     syncHistorySyncState({ runImmediatelyOnGain: true });
     syncMonitoringPolling({ runImmediately: true });
+    syncAdminTokenReviewAlertPolling({ runImmediately: true });
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
       emit('header');
@@ -7264,10 +7275,12 @@ export function createAppController(): AppController {
   function stopMonitoringTimers() {
     if (monitoringInterval) clearInterval(monitoringInterval);
     if (uptimeInterval) clearInterval(uptimeInterval);
+    if (adminTokenReviewAlertRefreshInterval) clearInterval(adminTokenReviewAlertRefreshInterval);
     flushPumpfunEmit();
     stopPumpGcTimer();
     monitoringInterval = null;
     uptimeInterval = null;
+    adminTokenReviewAlertRefreshInterval = null;
     startedAt = null;
     state.runtime.mode = 'stopped';
     state.runtime.uptimeLabel = '0m';
@@ -7371,6 +7384,7 @@ export function createAppController(): AppController {
 
     syncHistorySyncState({ runImmediatelyOnGain: true });
     syncMonitoringPolling();
+    syncAdminTokenReviewAlertPolling({ runImmediately: true });
   }
 
   function refreshWorkspaceSnapshot() {
@@ -7699,6 +7713,9 @@ export function createAppController(): AppController {
     state.pumpfun.bondTargetMcap = 35000;
     state.data = {
       configs: {},
+      runtimeFlags: {
+        mockTradingEnabled: true,
+      },
       trackedTokensByAddress: {},
       monitoredTokenAddresses: [],
       manualTokenAddresses: [],
@@ -8578,6 +8595,12 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: monitoredDashboardTokens.length,
     };
     state.data.configs = payload.configs || {};
+    state.data.runtimeFlags = {
+      mockTradingEnabled: payload.runtimeFlags?.mockTradingEnabled !== false,
+    };
+    if (!isMockTradingEnabled(state)) {
+      clearMockTradingState();
+    }
     applyUiPreferencesFromConfigs();
     applyUiPreferences(payload.uiPrefs);
     persistSoundSettings();
@@ -8841,16 +8864,73 @@ export function createAppController(): AppController {
     applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
   }
 
+  function buildAdminTokenReviewAlertsSignature(alerts = state.data.adminTokenReviewAlerts) {
+    return alerts
+      .map((alert) => `${alert.id}:${alert.status}:${alert.updatedAt || ''}`)
+      .join('|');
+  }
+
   async function loadAdminTokenReviewAlertsInternal() {
+    const beforeSignature = buildAdminTokenReviewAlertsSignature();
     const token = state.session.token;
     if (!token || state.session.role !== 'admin') {
       state.data.adminTokenReviewAlerts = [];
-      return;
+      return beforeSignature !== buildAdminTokenReviewAlertsSignature();
     }
 
     const result = await fetchAdminTokenReviewAlerts(token, 'open');
     state.data.adminTokenReviewAlerts = (result.alerts as AdminTokenReviewAlertEntry[])
       .filter((alert) => !hasExcludedAdminTokenReviewSuffix(alert));
+    return beforeSignature !== buildAdminTokenReviewAlertsSignature();
+  }
+
+  async function autoRefreshAdminTokenReviewAlerts() {
+    if (
+      adminTokenReviewAlertRefreshInFlight
+      || state.runtime.mode !== 'active'
+      || state.session.status !== 'authenticated'
+      || state.session.role !== 'admin'
+      || !state.session.token
+    ) {
+      return;
+    }
+
+    adminTokenReviewAlertRefreshInFlight = true;
+    try {
+      const changed = await loadAdminTokenReviewAlertsInternal();
+      if (changed) {
+        emit('header', 'alerts', 'overlay');
+      }
+    } catch (error) {
+      console.warn('[AppController] Failed to auto-refresh token review alerts:', error instanceof Error ? error.message : error);
+    } finally {
+      adminTokenReviewAlertRefreshInFlight = false;
+    }
+  }
+
+  function syncAdminTokenReviewAlertPolling(options?: { runImmediately?: boolean }) {
+    const shouldRun = state.session.status === 'authenticated' && state.session.role === 'admin' && Boolean(state.session.token);
+    if (!shouldRun) {
+      if (adminTokenReviewAlertRefreshInterval) {
+        clearInterval(adminTokenReviewAlertRefreshInterval);
+        adminTokenReviewAlertRefreshInterval = null;
+      }
+      if (state.data.adminTokenReviewAlerts.length > 0) {
+        state.data.adminTokenReviewAlerts = [];
+        emit('header', 'alerts', 'overlay');
+      }
+      return;
+    }
+
+    if (options?.runImmediately) {
+      void autoRefreshAdminTokenReviewAlerts();
+    }
+    if (!adminTokenReviewAlertRefreshInterval) {
+      adminTokenReviewAlertRefreshInterval = setInterval(
+        () => void autoRefreshAdminTokenReviewAlerts(),
+        ADMIN_TOKEN_REVIEW_ALERT_REFRESH_INTERVAL_MS,
+      );
+    }
   }
 
   function hasExcludedAdminTokenReviewSuffix(alert: AdminTokenReviewAlertEntry) {
@@ -11653,6 +11733,12 @@ export function createAppController(): AppController {
       }
     },
     async mockBuyToken(address: string) {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       if (!state.session.token || state.session.role !== 'admin') {
         setError('Admin access required');
         emit();
@@ -11667,6 +11753,12 @@ export function createAppController(): AppController {
       emit('overlay');
     },
     async mockSellToken(address: string, percent: number) {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       if (!state.session.token || state.session.role !== 'admin') {
         setError('Admin access required');
         emit();
@@ -11826,6 +11918,12 @@ export function createAppController(): AppController {
       }
     },
     openMockTradingHistory() {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       if (state.session.role !== 'admin') {
         setError('Admin access required');
         emit();
@@ -11843,6 +11941,12 @@ export function createAppController(): AppController {
       emit('overlay');
     },
     openMockTradingPnlResume(address: string) {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       if (state.session.role !== 'admin') {
         setError('Admin access required');
         emit();
@@ -11873,6 +11977,12 @@ export function createAppController(): AppController {
       emit('overlay');
     },
     async submitMockTradingBuy(address: string, notionalSol: number, takeProfit?: { targetMcapUsd?: number | null; sellPercent?: number | null }) {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       const token = state.session.token;
       if (!token || state.session.role !== 'admin') {
         setError('Admin access required');
@@ -11910,6 +12020,12 @@ export function createAppController(): AppController {
       }
     },
     async submitMockTradingSell(address: string, percent: number) {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       const token = state.session.token;
       if (!token || state.session.role !== 'admin') {
         setError('Admin access required');
@@ -11950,6 +12066,12 @@ export function createAppController(): AppController {
       }
     },
     async submitMockTradingSellOrder(address: string, targetMcapUsd: number, sellPercent: number) {
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+        setError('Mock trading is disabled');
+        emit('header', 'overlay', 'manual', 'recent', 'old-week', 'monitored');
+        return;
+      }
       const token = state.session.token;
       if (!token || state.session.role !== 'admin') {
         setError('Admin access required');

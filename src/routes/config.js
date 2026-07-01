@@ -12,6 +12,7 @@ const tokenCatalog = require('../models/token-catalog');
 const userAlertProfileCache = require('../services/user-alert-profile-cache');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const { normalizeText } = require('../utils/url-safety');
+const config = require('../../config');
 
 // All config routes require authentication
 router.use(authenticate);
@@ -124,6 +125,12 @@ function stripRestrictedConfigKeys(configs, user) {
   return next;
 }
 
+function buildRuntimeFlags() {
+  return {
+    mockTradingEnabled: Boolean(config.mockTrading.enabled),
+  };
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  CONFIGS (thresholds, intervals, etc.)
 // ══════════════════════════════════════════════════════════════════
@@ -148,6 +155,7 @@ router.get('/', async (req, res) => {
       tokens,
       blocklist,
       starredTokens,
+      runtimeFlags: buildRuntimeFlags(),
     };
     res.json(responsePayload);
   } catch (err) {
@@ -310,6 +318,7 @@ router.put('/', async (req, res) => {
       tokens: await userToken.getAll(req.user.id),
       blocklist: await userBlocklist.getAll(req.user.id),
       starredTokens: await userStarredToken.getAll(req.user.id),
+      runtimeFlags: buildRuntimeFlags(),
     };
 
     const responsePayload = { message: 'Config synced', ...result };
