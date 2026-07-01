@@ -1,5 +1,5 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTopPerformerTokens, getTrackedToken, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTopPerformerTokens, getTrackedToken, getVisibleManualTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
 import { renderBidZoneSection } from './sections/bid-zone-section';
@@ -1166,7 +1166,8 @@ function getMonitoredRenderKey(state: AppState) {
 }
 
 function getManualRenderKey(state: AppState) {
-  const filteredManualTokens = resolveManualTableRows(getManualTokens(state), {
+  const visibleManualTokens = getVisibleManualTokens(state);
+  const filteredManualTokens = resolveManualTableRows(visibleManualTokens, {
     starredOnly: state.ui.manualStarredOnly,
     starredTokens: state.data.starredTokens,
     searchQuery: state.ui.manualSearchQuery,
@@ -1179,6 +1180,9 @@ function getManualRenderKey(state: AppState) {
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.manualSearchQuery,
+    visibleFolders: state.ui.manualVisibleFolderIds,
+    folders: state.data.manualTokenFolders,
+    folderItems: state.data.manualTokenFolderItems,
     starredOnly: state.ui.manualStarredOnly,
     sorts: state.ui.manualSorts,
     starred: state.data.starredTokens,

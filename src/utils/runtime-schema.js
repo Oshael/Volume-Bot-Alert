@@ -1044,6 +1044,41 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage45-manual-token-folders',
+    name: 'Stage 45 manual token folders',
+    repair: 'node src/utils/db-init-stage45.js',
+    tables: [
+      {
+        table: 'user_token_folders',
+        columns: [
+          'id',
+          'user_id',
+          'parent_folder_id',
+          'name',
+          'sort_order',
+          'created_at',
+          'updated_at',
+        ],
+        defaults: {
+          sort_order: '0',
+        },
+      },
+      {
+        table: 'user_token_folder_items',
+        columns: [
+          'user_id',
+          'folder_id',
+          'address',
+          'sort_order',
+          'added_at',
+        ],
+        defaults: {
+          sort_order: '0',
+        },
+      },
+    ],
+  },
+  {
     key: 'stage46-admin-token-review-alerts',
     name: 'Stage 46 admin token review alert queue',
     repair: 'node src/utils/db-init-stage46.js',

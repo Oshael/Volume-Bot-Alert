@@ -7,6 +7,7 @@ describe('user-ui-pref', () => {
   it('defaults enabled trade terminals for legacy prefs', () => {
     const prefs = userUiPref.normalizePrefs({});
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
+    assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
   });
 
   it('defaults new live layouts with monitored spanning two thirds', () => {
@@ -24,10 +25,12 @@ describe('user-ui-pref', () => {
   it('accepts a filtered trade terminal selection', () => {
     const validation = userUiPref.validatePatch({
       enabledTradeTerminals: ['bullx', 'gmgn'],
+      manualFolderDeleteWarningDismissed: true,
     });
 
     assert.equal(validation.valid, true);
     assert.deepEqual(validation.prefs.enabledTradeTerminals, ['bullx', 'gmgn']);
+    assert.equal(validation.prefs.manualFolderDeleteWarningDismissed, true);
   });
 
   it('rejects empty trade terminal selection', () => {

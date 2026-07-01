@@ -5,6 +5,7 @@ const db = require('../models/db');
 const userConfig = require('../models/user-config');
 const userUiPref = require('../models/user-ui-pref');
 const userToken = require('../models/user-token');
+const userTokenFolder = require('../models/user-token-folder');
 const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
@@ -85,6 +86,26 @@ async function upsertCatalogItemsAndSchedule(items, source) {
       console.error(`[TokenCatalog] Failed to upsert ${source} token ${item.address}:`, err.message);
     }
   }
+}
+
+function getRouteErrorStatus(err) {
+  const status = Number(err?.status);
+  if (Number.isInteger(status) && status >= 400 && status < 600) {
+    return status;
+  }
+  if (err?.code === '23505') {
+    return 409;
+  }
+  if (err?.code === '23503') {
+    return 400;
+  }
+  return 500;
+}
+
+function sendRouteError(res, err, fallbackMessage) {
+  const status = getRouteErrorStatus(err);
+  const message = status === 500 ? fallbackMessage : err.message;
+  return res.status(status).json({ error: message });
 }
 
 function stripRestrictedConfigKeys(configs, user) {
@@ -430,6 +451,143 @@ router.delete('/tokens/:address', async (req, res) => {
   } catch (err) {
     console.error('DELETE /config/tokens error:', err.message);
     res.status(500).json({ error: 'Failed to remove token' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  MANUAL TOKEN FOLDERS
+// ══════════════════════════════════════════════════════════════════
+
+router.get('/token-folders', async (req, res) => {
+  try {
+    const result = await userTokenFolder.listForUser(req.user.id);
+    res.json(result);
+  } catch (err) {
+    console.error('GET /config/token-folders error:', err.message);
+    sendRouteError(res, err, 'Failed to load token folders');
+  }
+});
+
+router.post('/token-folders', async (req, res) => {
+  try {
+    if (req.body?.parentFolderId !== null && req.body?.parentFolderId !== undefined) {
+      return res.status(400).json({ error: 'Subfolders are not supported' });
+    }
+
+    const folder = await userTokenFolder.createFolder(req.user.id, {
+      name: req.body?.name,
+      sortOrder: req.body?.sortOrder,
+    });
+    res.status(201).json({ message: 'Folder created', folder });
+  } catch (err) {
+    console.error('POST /config/token-folders error:', err.message);
+    sendRouteError(res, err, 'Failed to create token folder');
+  }
+});
+
+router.patch('/token-folders/:folderId', async (req, res) => {
+  try {
+    if (req.body?.parentFolderId !== null && req.body?.parentFolderId !== undefined) {
+      return res.status(400).json({ error: 'Subfolders are not supported' });
+    }
+
+    const folder = await userTokenFolder.updateFolder(req.user.id, req.params.folderId, {
+      ...(Object.hasOwn(req.body || {}, 'name') ? { name: req.body.name } : {}),
+      ...(Object.hasOwn(req.body || {}, 'sortOrder') ? { sortOrder: req.body.sortOrder } : {}),
+    });
+
+    if (!folder) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    res.json({ message: 'Folder updated', folder });
+  } catch (err) {
+    console.error('PATCH /config/token-folders/:folderId error:', err.message);
+    sendRouteError(res, err, 'Failed to update token folder');
+  }
+});
+
+router.delete('/token-folders/:folderId', async (req, res) => {
+  try {
+    const result = await userTokenFolder.deleteFolderAndManualTokens(req.user.id, req.params.folderId);
+    if (!result.deleted) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    await Promise.all(result.removedAddresses.map((address) => tokenCatalog.demoteFormerManualAddress(address)));
+
+    res.json({
+      message: 'Folder deleted',
+      removedTokens: result.removedAddresses,
+    });
+  } catch (err) {
+    console.error('DELETE /config/token-folders/:folderId error:', err.message);
+    sendRouteError(res, err, 'Failed to delete token folder');
+  }
+});
+
+router.post('/token-folders/:folderId/tokens', async (req, res) => {
+  try {
+    const address = String(req.body?.address || '').trim();
+    if (!userToken.isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid token address format' });
+    }
+
+    const folderExists = await userTokenFolder.folderExists(req.user.id, req.params.folderId);
+    if (!folderExists) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    const alreadyManual = await userToken.exists(req.user.id, address);
+    if (!alreadyManual) {
+      const currentCount = await userToken.count(req.user.id);
+      if (currentCount >= MAX_TOKENS) {
+        return res.status(400).json({
+          error: `Maximum ${MAX_TOKENS} manual tokens reached`,
+        });
+      }
+
+      const addedToken = await userToken.add(req.user.id, address, null);
+      if (addedToken) {
+        try {
+          await manualTokenBootstrap.upsertManualCatalogToken(address);
+        } catch (catalogErr) {
+          console.error(`[TokenCatalog] Failed to catalog manual token ${address}:`, catalogErr.message);
+        }
+      }
+    }
+
+    const item = await userTokenFolder.addTokenToFolder(req.user.id, req.params.folderId, address, {
+      sortOrder: req.body?.sortOrder,
+    });
+
+    if (!item) {
+      return res.status(404).json({ error: 'Folder token not found' });
+    }
+
+    res.status(201).json({ message: 'Token added to folder', item, tokenCreated: !alreadyManual });
+  } catch (err) {
+    console.error('POST /config/token-folders/:folderId/tokens error:', err.message);
+    sendRouteError(res, err, 'Failed to add token to folder');
+  }
+});
+
+router.delete('/token-folders/:folderId/tokens/:address', async (req, res) => {
+  try {
+    const result = await userTokenFolder.deleteFolderTokenAndManualToken(
+      req.user.id,
+      req.params.folderId,
+      req.params.address
+    );
+    if (!result.deleted) {
+      return res.status(404).json({ error: 'Folder token not found' });
+    }
+
+    await tokenCatalog.demoteFormerManualAddress(result.removedAddress);
+    res.json({ message: 'Token removed' });
+  } catch (err) {
+    console.error('DELETE /config/token-folders/:folderId/tokens/:address error:', err.message);
+    sendRouteError(res, err, 'Failed to remove folder token');
   }
 });
 

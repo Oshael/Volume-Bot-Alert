@@ -3,6 +3,12 @@ const db = require('./db');
 const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
 const MONITORED_SORT_MODES = ['vol', 'mcap', 'age'];
+const BOOLEAN_PREF_KEYS = [
+  'manualStarredOnly',
+  'manualFolderDeleteWarningDismissed',
+  'recentStarredOnly',
+  'oldWeekStarredOnly',
+];
 const TRADE_TERMINAL_KEYS = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const LIVE_PANEL_KEYS = ['monitored', 'pumpfun', 'alerts'];
 const LIVE_PANEL_SPANS = {
@@ -21,6 +27,7 @@ const DEFAULT_UI_PREFS = {
     pumpfun: false,
   },
   manualStarredOnly: false,
+  manualFolderDeleteWarningDismissed: false,
   recentStarredOnly: false,
   oldWeekStarredOnly: false,
   monitoredPerPage: 30,
@@ -259,6 +266,7 @@ function normalizePrefs(raw) {
   };
 
   defaults.manualStarredOnly = Boolean(source.manualStarredOnly);
+  defaults.manualFolderDeleteWarningDismissed = Boolean(source.manualFolderDeleteWarningDismissed);
   defaults.recentStarredOnly = Boolean(source.recentStarredOnly);
   defaults.oldWeekStarredOnly = Boolean(source.oldWeekStarredOnly);
 
@@ -341,7 +349,7 @@ function validatePatch(input) {
       continue;
     }
 
-    if (key === 'manualStarredOnly' || key === 'recentStarredOnly' || key === 'oldWeekStarredOnly') {
+    if (BOOLEAN_PREF_KEYS.includes(key)) {
       const result = validateBoolean(key, value);
       if (!result.valid) {
         errors.push(result.error);

@@ -13,6 +13,7 @@ const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
 const tokenCatalog = require('../src/models/token-catalog');
+const stage45 = require('../src/utils/db-init-stage45');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -21,6 +22,7 @@ const VALID_ADDR_2 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const VALID_ADDR_3 = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const INVALID_ADDR = 'not-a-valid-address!!!';
 const VALID_EVM_ADDR = `0x${'a'.repeat(40)}`;
+const FOLDER_ONLY_ADDR = `0x${'b'.repeat(40)}`;
 
 function getQueryToken(actionUrl) {
   assert.ok(actionUrl, 'Expected actionUrl in email debug payload');
@@ -107,6 +109,9 @@ describe('Config routes', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await ensureAccessSchema();
+    await stage45.init({ closePool: false });
+    await db.query('DELETE FROM user_token_folder_items');
+    await db.query('DELETE FROM user_token_folders');
     await db.query('DELETE FROM user_starred_tokens');
     await db.query('DELETE FROM user_blocklist');
     await db.query('DELETE FROM user_tokens');
@@ -497,6 +502,104 @@ describe('Config routes', () => {
     }
   });
 
+  it('supports manual token folder CRUD and destructive folder delete', async () => {
+    const createRoot = await request(app)
+      .post('/api/config/token-folders')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ name: 'Utility coins' });
+
+    assert.equal(createRoot.status, 201);
+    assert.equal(createRoot.body.folder.name, 'Utility coins');
+
+    const addItem = await request(app)
+      .post(`/api/config/token-folders/${createRoot.body.folder.id}/tokens`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ address: FOLDER_ONLY_ADDR });
+
+    assert.equal(addItem.status, 201);
+    assert.equal(addItem.body.item.address, FOLDER_ONLY_ADDR);
+    assert.equal(addItem.body.tokenCreated, true);
+
+    const listResponse = await request(app)
+      .get('/api/config/token-folders')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(listResponse.status, 200);
+    assert.equal(listResponse.body.folders.length, 1);
+    assert.deepEqual(listResponse.body.items.map((item) => item.address), [FOLDER_ONLY_ADDR]);
+
+    const configWithFolderToken = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(configWithFolderToken.status, 200);
+    assert.equal(configWithFolderToken.body.tokens.some((item) => item.address === FOLDER_ONLY_ADDR), true);
+
+    const deleteResponse = await request(app)
+      .delete(`/api/config/token-folders/${createRoot.body.folder.id}`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(deleteResponse.status, 200);
+    assert.deepEqual(deleteResponse.body.removedTokens, [FOLDER_ONLY_ADDR]);
+
+    const configResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(configResponse.status, 200);
+    assert.equal(configResponse.body.tokens.some((item) => item.address === FOLDER_ONLY_ADDR), false);
+  });
+
+  it('rejects manual token subfolders', async () => {
+    const createRoot = await request(app)
+      .post('/api/config/token-folders')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ name: 'Root only' });
+
+    assert.equal(createRoot.status, 201);
+
+    const subfolder = await request(app)
+      .post('/api/config/token-folders')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ name: 'Nested', parentFolderId: createRoot.body.folder.id });
+
+    assert.equal(subfolder.status, 400);
+    assert.match(subfolder.body.error, /subfolders are not supported/i);
+  });
+
+  it('removes a linked folder token from manual tokens through the folder item route', async () => {
+    await request(app)
+      .post('/api/config/tokens')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ address: VALID_ADDR_2, label: 'Wrapped USDC' });
+
+    const createFolder = await request(app)
+      .post('/api/config/token-folders')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ name: 'Delete linked token' });
+
+    assert.equal(createFolder.status, 201);
+
+    const addItem = await request(app)
+      .post(`/api/config/token-folders/${createFolder.body.folder.id}/tokens`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ address: VALID_ADDR_2 });
+
+    assert.equal(addItem.status, 201);
+
+    const deleteItem = await request(app)
+      .delete(`/api/config/token-folders/${createFolder.body.folder.id}/tokens/${VALID_ADDR_2}`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(deleteItem.status, 200);
+
+    const configResponse = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    assert.equal(configResponse.body.tokens.some((item) => item.address === VALID_ADDR_2), false);
+  });
+
   it('supports blocklist CRUD', async () => {
     const createResponse = await request(app)
       .post('/api/config/blocklist')
@@ -537,6 +640,7 @@ describe('Config routes', () => {
       .send({
         uiPrefs: {
           manualStarredOnly: true,
+          manualFolderDeleteWarningDismissed: true,
           enabledTradeTerminals: ['photon', 'bullx'],
           monitoredPerPage: 50,
           livePanelLayout: {
@@ -552,6 +656,7 @@ describe('Config routes', () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.uiPrefs.manualStarredOnly, true);
+    assert.equal(response.body.uiPrefs.manualFolderDeleteWarningDismissed, true);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {

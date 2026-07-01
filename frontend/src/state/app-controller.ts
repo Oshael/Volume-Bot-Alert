@@ -1,4 +1,4 @@
-import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -25,18 +25,25 @@ import {
   verifyWalletSignature,
 } from '../services/api/wallet-auth';
 import {
+  addManualTokenToFolder as addManualTokenToFolderRequest,
   addManualToken as addManualTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
+  createManualTokenFolder as createManualTokenFolderRequest,
+  deleteManualTokenFolder as deleteManualTokenFolderRequest,
   fetchAdminTokenReviewAlerts,
   fetchConfig,
+  fetchManualTokenFolders,
   patchConfig,
   patchUiPrefs,
   resolveAdminTokenReviewAlert as resolveAdminTokenReviewAlertRequest,
+  removeManualTokenFromFolder as removeManualTokenFromFolderRequest,
   removeManualToken as removeManualTokenRequest,
   removeBlockedToken as removeBlockedTokenRequest,
   syncConfig,
+  updateManualTokenFolder as updateManualTokenFolderRequest,
   type AdminTokenReviewResolution,
   type ConfigPayload,
+  type ManualTokenFoldersPayload,
   type UiPrefsPayload,
 } from '../services/api/config';
 import {
@@ -414,6 +421,12 @@ export interface AppController {
   saveMonitoringConfig(configs: Record<string, number | string>): Promise<void>;
   addManualToken(address: string, label?: string | null): Promise<void>;
   removeManualToken(address: string): Promise<void>;
+  createManualTokenFolder(name: string): Promise<void>;
+  updateManualTokenFolder(folderId: number, input: { name?: string; sortOrder?: number }): Promise<void>;
+  deleteManualTokenFolder(folderId: number): Promise<void>;
+  addManualTokenToFolder(folderId: number, address: string): Promise<void>;
+  removeManualTokenFromFolder(folderId: number, address: string): Promise<void>;
+  setManualVisibleFolderIds(folderIds: number[]): void;
   addBlockedToken(address: string, label?: string | null): Promise<void>;
   cancelBlockedTokenWarning(): Promise<void>;
   setBlockedTokenWarningDontShowAgain(enabled: boolean): void;
@@ -462,6 +475,7 @@ export interface AppController {
   setRecentSearchQuery(query: string): void;
   setOldWeekSearchQuery(query: string): void;
   setManualStarredOnly(enabled: boolean): void;
+  setManualFolderDeleteWarningDismissed(enabled: boolean): void;
   setRecentStarredOnly(enabled: boolean): void;
   setOldWeekStarredOnly(enabled: boolean): void;
   setMonitoredPage(page: number): void;
@@ -1052,6 +1066,8 @@ export function createAppController(): AppController {
   let manualMetadataBatchCacheExpiresAt = 0;
   let manualMetadataMeteoraCacheKey = '';
   let manualMetadataNextMeteoraRefreshAt = 0;
+  const pendingManualFolderDeleteIds = new Set<number>();
+  const pendingManualFolderDeleteAddresses = new Set<string>();
   let suppressSocketStatusNoticeUntil = 0;
   const historySyncTabId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -3344,6 +3360,7 @@ export function createAppController(): AppController {
         pumpfun: Boolean(state.ui.collapsed.pumpfun),
       },
       manualStarredOnly: Boolean(state.ui.manualStarredOnly),
+      manualFolderDeleteWarningDismissed: Boolean(state.ui.manualFolderDeleteWarningDismissed),
       recentStarredOnly: Boolean(state.ui.recentStarredOnly),
       oldWeekStarredOnly: Boolean(state.ui.oldWeekStarredOnly),
       monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
@@ -3692,6 +3709,7 @@ export function createAppController(): AppController {
     };
 
     state.ui.manualStarredOnly = Boolean(uiPrefs?.manualStarredOnly);
+    state.ui.manualFolderDeleteWarningDismissed = Boolean(uiPrefs?.manualFolderDeleteWarningDismissed);
     state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
     state.ui.oldWeekStarredOnly = Boolean(uiPrefs?.oldWeekStarredOnly);
 
@@ -7697,6 +7715,8 @@ export function createAppController(): AppController {
       trackedTokensByAddress: {},
       monitoredTokenAddresses: [],
       manualTokenAddresses: [],
+      manualTokenFolders: [],
+      manualTokenFolderItems: [],
       recentTokenAddresses: [],
       oldWeekTokenAddresses: [],
       topPerformerAddresses: [],
@@ -7723,6 +7743,7 @@ export function createAppController(): AppController {
       recentPumpMigrations: [],
       pumpToasts: [],
     };
+    state.ui.manualVisibleFolderIds = [];
     state.bars.manual = 0;
     state.bars.recent = 0;
     state.bars.oldWeek = 0;
@@ -8368,6 +8389,110 @@ export function createAppController(): AppController {
     };
   }
 
+  function normalizeManualTokenFolderPayload(payload?: ManualTokenFoldersPayload | null) {
+    const foldersById = new Map<number, ManualTokenFolderEntry>();
+    const folders = (Array.isArray(payload?.folders) ? payload.folders : [])
+      .map((folder) => ({
+        id: Number(folder.id),
+        userId: Number(folder.userId),
+        parentFolderId: folder.parentFolderId == null ? null : Number(folder.parentFolderId),
+        name: String(folder.name || '').trim(),
+        sortOrder: Number(folder.sortOrder) || 0,
+        createdAt: folder.createdAt ?? null,
+        updatedAt: folder.updatedAt ?? null,
+      }))
+      .filter((folder) => Number.isInteger(folder.id) && folder.id > 0 && folder.name && folder.parentFolderId == null);
+
+    for (const folder of folders) {
+      foldersById.set(folder.id, folder);
+    }
+
+    const manualAddressSet = new Set(state.data.manualTokenAddresses);
+    const items = (Array.isArray(payload?.items) ? payload.items : [])
+      .map((item) => ({
+        userId: Number(item.userId),
+        folderId: Number(item.folderId),
+        address: String(item.address || '').trim(),
+        sortOrder: Number(item.sortOrder) || 0,
+        addedAt: item.addedAt ?? null,
+      }))
+      .filter((item) => foldersById.has(item.folderId) && manualAddressSet.has(item.address));
+
+    return {
+      folders: folders.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id - b.id),
+      items: items.sort((a, b) => a.folderId - b.folderId || a.sortOrder - b.sortOrder || a.address.localeCompare(b.address)),
+    };
+  }
+
+  function applyManualTokenFolders(payload?: ManualTokenFoldersPayload | null) {
+    const normalized = normalizeManualTokenFolderPayload(payload);
+    const folderIds = new Set(normalized.folders.map((folder) => folder.id));
+    state.data.manualTokenFolders = normalized.folders;
+    state.data.manualTokenFolderItems = normalized.items;
+    state.ui.manualVisibleFolderIds = state.ui.manualVisibleFolderIds.filter((id) => folderIds.has(id));
+  }
+
+  function filterPendingManualFolderDeletes(input: {
+    configPayload: ConfigPayload;
+    tokenFolders?: ManualTokenFoldersPayload | null;
+  }) {
+    if (pendingManualFolderDeleteIds.size === 0 && pendingManualFolderDeleteAddresses.size === 0) {
+      return input;
+    }
+
+    const removedAddresses = pendingManualFolderDeleteAddresses;
+    const removedFolderIds = pendingManualFolderDeleteIds;
+    return {
+      configPayload: {
+        ...input.configPayload,
+        tokens: input.configPayload.tokens.filter((item) => !removedAddresses.has(String(item.address || '').trim())),
+      },
+      tokenFolders: input.tokenFolders
+        ? {
+          folders: input.tokenFolders.folders.filter((folder) => !removedFolderIds.has(Number(folder.id))),
+          items: input.tokenFolders.items.filter((item) => (
+            !removedFolderIds.has(Number(item.folderId))
+            && !removedAddresses.has(String(item.address || '').trim())
+          )),
+        }
+        : input.tokenFolders,
+    };
+  }
+
+  function upsertManualTokenFolderItem(item: ManualTokenFolderItemEntry) {
+    const folderId = Number(item.folderId);
+    const address = String(item.address || '').trim();
+    if (!Number.isInteger(folderId) || folderId <= 0 || !address) {
+      return;
+    }
+
+    const exists = state.data.manualTokenFolders.some((folder) => folder.id === folderId);
+    if (!exists) {
+      return;
+    }
+
+    state.data.manualTokenFolderItems = [
+      ...state.data.manualTokenFolderItems.filter((current) => (
+        current.folderId !== folderId || current.address !== address
+      )),
+      {
+        userId: Number(item.userId) || 0,
+        folderId,
+        address,
+        sortOrder: Number(item.sortOrder) || 0,
+        addedAt: item.addedAt ?? null,
+      },
+    ].sort((a, b) => a.folderId - b.folderId || a.sortOrder - b.sortOrder || a.address.localeCompare(b.address));
+  }
+
+  async function fetchConfigBundle(token: string) {
+    const [configPayload, tokenFolders] = await Promise.all([
+      fetchConfig(token),
+      fetchManualTokenFolders(token),
+    ]);
+    return { configPayload, tokenFolders };
+  }
+
   function syncMeteoraDashboardCache(
     monitoredDashboardTokens: DashboardMonitoredToken[],
     manualTokens: Array<{ address: string; label?: string | null }>,
@@ -8452,7 +8577,11 @@ export function createAppController(): AppController {
     }
   }
 
-  function applyConfig(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
+  function applyConfig(
+    payload: ConfigPayload,
+    monitoredDashboardTokens: DashboardMonitoredToken[] = [],
+    tokenFolders?: ManualTokenFoldersPayload | null,
+  ) {
     state.configSummary = {
       loaded: true,
       configCount: Object.keys(payload.configs || {}).length,
@@ -8475,6 +8604,7 @@ export function createAppController(): AppController {
     });
     state.bars.blocklist = payload.blocklist.length;
     applyMonitoredDashboard(monitoredDashboardTokens, payload.tokens);
+    applyManualTokenFolders(tokenFolders);
     refreshPumpPanelCounts();
   }
 
@@ -8687,12 +8817,16 @@ export function createAppController(): AppController {
     recordRestoreControllerDebug('controller.config-reload.start', {
       deferDashboard: Boolean(options?.deferDashboard),
     });
-    const payload = await fetchConfig(token);
+    const { configPayload: rawPayload, tokenFolders: rawTokenFolders } = await fetchConfigBundle(token);
     if (requestRevision !== configReloadRevision || state.session.token !== token || state.session.status !== 'authenticated') {
       return;
     }
+    const { configPayload: payload, tokenFolders } = filterPendingManualFolderDeletes({
+      configPayload: rawPayload,
+      tokenFolders: rawTokenFolders,
+    });
 
-    applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
+    applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
     recordRestoreControllerDebug('controller.config-reload.apply-preserved-dashboard', {
       deferDashboard: Boolean(options?.deferDashboard),
       manualTokens: payload.tokens.length,
@@ -8709,11 +8843,15 @@ export function createAppController(): AppController {
   async function reloadConfigPreservingMonitoredSnapshot(token: string) {
     const requestRevision = configReloadRevision + 1;
     configReloadRevision = requestRevision;
-    const payload = await fetchConfig(token);
+    const { configPayload: rawPayload, tokenFolders: rawTokenFolders } = await fetchConfigBundle(token);
     if (requestRevision !== configReloadRevision || state.session.token !== token || state.session.status !== 'authenticated') {
       return;
     }
-    applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
+    const { configPayload: payload, tokenFolders } = filterPendingManualFolderDeletes({
+      configPayload: rawPayload,
+      tokenFolders: rawTokenFolders,
+    });
+    applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
   }
 
   async function loadAdminTokenReviewAlertsInternal() {
@@ -8772,12 +8910,16 @@ export function createAppController(): AppController {
 
     try {
       const requestRevision = configReloadRevision;
-      const payload = await fetchConfig(token);
+      const { configPayload: rawPayload, tokenFolders: rawTokenFolders } = await fetchConfigBundle(token);
       if (requestRevision !== configReloadRevision || state.session.token !== token || state.session.status !== 'authenticated') {
         return;
       }
+      const { configPayload: payload, tokenFolders } = filterPendingManualFolderDeletes({
+        configPayload: rawPayload,
+        tokenFolders: rawTokenFolders,
+      });
 
-      applyConfig(payload, getCurrentMonitoredDashboardSnapshot());
+      applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
       emit('all');
       void hydrateDashboardMonitoredInternal(token, payload.tokens, 'unseen');
       recordRestoreControllerDebug('controller.restored-refresh.apply-preserved-snapshot', {
@@ -10137,6 +10279,11 @@ export function createAppController(): AppController {
         void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
       }
     },
+    setManualFolderDeleteWarningDismissed(enabled: boolean) {
+      state.ui.manualFolderDeleteWarningDismissed = Boolean(enabled);
+      queueUiPrefsPersist();
+      emit('manual');
+    },
     setRecentStarredOnly(enabled: boolean) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });
       state.ui.recentStarredOnly = Boolean(enabled);
@@ -11092,6 +11239,249 @@ export function createAppController(): AppController {
         setBusy(false);
         emit();
       }
+    },
+    async createManualTokenFolder(name: string) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Creating manual token folder...');
+      emit('manual');
+
+      try {
+        await createManualTokenFolderRequest({ name }, token);
+        applyManualTokenFolders(await fetchManualTokenFolders(token));
+        setNotice('Folder created');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to create folder');
+      } finally {
+        setBusy(false);
+        emit('manual', 'header');
+      }
+    },
+    async updateManualTokenFolder(folderId: number, input: { name?: string; sortOrder?: number }) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Updating manual token folder...');
+      emit('manual');
+
+      try {
+        await updateManualTokenFolderRequest(folderId, input, token);
+        applyManualTokenFolders(await fetchManualTokenFolders(token));
+        setNotice('Folder updated');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to update folder');
+      } finally {
+        setBusy(false);
+        emit('manual', 'header');
+      }
+    },
+    async deleteManualTokenFolder(folderId: number) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Deleting manual token folder...');
+      const removedAddresses = Array.from(new Set(
+        state.data.manualTokenFolderItems
+          .filter((item) => item.folderId === folderId)
+          .map((item) => String(item.address || '').trim())
+          .filter(Boolean),
+      ));
+      const folderSnapshot = state.data.manualTokenFolders.map((item) => ({ ...item }));
+      const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
+      const visibleFolderIdsSnapshot = [...state.ui.manualVisibleFolderIds];
+      const manualAddressesSnapshot = [...state.data.manualTokenAddresses];
+      const trackedTokenSnapshots = Object.fromEntries(
+        removedAddresses
+          .map((item) => [item, state.data.trackedTokensByAddress[item] ? { ...state.data.trackedTokensByAddress[item] } : null] as const),
+      );
+      const pendingRemovedAddresses = new Set(removedAddresses);
+      const removedAddressSet = new Set(removedAddresses);
+
+      pendingManualFolderDeleteIds.add(folderId);
+      for (const item of pendingRemovedAddresses) {
+        pendingManualFolderDeleteAddresses.add(item);
+      }
+      state.data.manualTokenFolders = state.data.manualTokenFolders.filter((folder) => folder.id !== folderId);
+      state.data.manualTokenFolderItems = state.data.manualTokenFolderItems.filter((item) => (
+        item.folderId !== folderId && !removedAddressSet.has(String(item.address || '').trim())
+      ));
+      state.ui.manualVisibleFolderIds = state.ui.manualVisibleFolderIds.filter((id) => id !== folderId);
+      state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => !removedAddressSet.has(String(item || '').trim()));
+      for (const item of removedAddresses) {
+        const currentTracked = state.data.trackedTokensByAddress[item];
+        if (currentTracked) {
+          replaceTrackedTokenReferences(item, {
+            ...currentTracked,
+            manual: false,
+            _userManual: false,
+          });
+        }
+      }
+      state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+      state.bars.manual = state.data.manualTokenAddresses.length;
+      deriveAgeBuckets();
+      refreshMonitoredPanelCounts();
+      emit('manual', 'monitored', 'header');
+
+      try {
+        const result = await deleteManualTokenFolderRequest(folderId, token);
+        for (const item of result.removedTokens || []) {
+          const normalizedAddress = String(item || '').trim();
+          if (normalizedAddress) {
+            pendingRemovedAddresses.add(normalizedAddress);
+            pendingManualFolderDeleteAddresses.add(normalizedAddress);
+          }
+        }
+        await reloadConfigPreservingMonitoredSnapshot(token);
+        const removedCount = result.removedTokens.length;
+        setNotice(removedCount > 0 ? `Folder deleted; ${removedCount} manual token(s) removed` : 'Folder deleted');
+      } catch (error) {
+        pendingManualFolderDeleteIds.delete(folderId);
+        for (const item of pendingRemovedAddresses) {
+          pendingManualFolderDeleteAddresses.delete(item);
+        }
+        state.data.manualTokenFolders = folderSnapshot;
+        state.data.manualTokenFolderItems = folderItemsSnapshot;
+        state.ui.manualVisibleFolderIds = visibleFolderIdsSnapshot;
+        state.data.manualTokenAddresses = manualAddressesSnapshot;
+        for (const [item, snapshot] of Object.entries(trackedTokenSnapshots)) {
+          if (snapshot) {
+            state.data.trackedTokensByAddress[item] = snapshot;
+          } else {
+            delete state.data.trackedTokensByAddress[item];
+          }
+        }
+        state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
+        state.bars.manual = state.data.manualTokenAddresses.length;
+        deriveAgeBuckets();
+        refreshMonitoredPanelCounts();
+        setError(error instanceof Error ? error.message : 'Failed to delete folder');
+      } finally {
+        pendingManualFolderDeleteIds.delete(folderId);
+        for (const item of pendingRemovedAddresses) {
+          pendingManualFolderDeleteAddresses.delete(item);
+        }
+        setBusy(false);
+        emit('manual', 'monitored', 'header');
+      }
+    },
+    async addManualTokenToFolder(folderId: number, address: string) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress) {
+        setError('Token address is required');
+        emit('manual');
+        return;
+      }
+
+      if (!isValidTokenAddressFormat(normalizedAddress)) {
+        setError('Invalid token address format');
+        setNotice(null);
+        emit('manual');
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Adding token to folder...');
+
+      const tokenSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress);
+      const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
+      applyOptimisticManualToken(normalizedAddress, buildOptimisticManualToken(normalizedAddress, null));
+      upsertManualTokenFolderItem({
+        userId: 0,
+        folderId,
+        address: normalizedAddress,
+        sortOrder: 0,
+        addedAt: null,
+      });
+      emit('manual', 'monitored', 'header');
+
+      try {
+        const result = await addManualTokenToFolderRequest(folderId, normalizedAddress, token);
+        upsertManualTokenFolderItem(result.item);
+        void reloadConfigPreservingMonitoredSnapshot(token)
+          .then(() => emit('manual', 'monitored', 'header'))
+          .catch(() => {
+            void fetchManualTokenFolders(token)
+              .then((payload) => {
+                applyManualTokenFolders(payload);
+                emit('manual', 'header');
+              })
+              .catch(() => {});
+          });
+        setNotice('Token added to folder');
+      } catch (error) {
+        revertOptimisticManualToken(normalizedAddress, tokenSnapshot);
+        state.data.manualTokenFolderItems = folderItemsSnapshot;
+        setError(error instanceof Error ? error.message : 'Failed to add token to folder');
+        setNotice(null);
+      } finally {
+        setBusy(false);
+        emit('manual', 'monitored', 'header');
+      }
+    },
+    async removeManualTokenFromFolder(folderId: number, address: string) {
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      setNotice('Removing manual token...');
+      emit('manual');
+
+      try {
+        await removeManualTokenFromFolderRequest(folderId, address, token);
+        await reloadConfigPreservingMonitoredSnapshot(token);
+        setNotice('Token removed');
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Failed to remove token');
+      } finally {
+        setBusy(false);
+        emit('manual', 'monitored', 'header');
+      }
+    },
+    setManualVisibleFolderIds(folderIds: number[]) {
+      const nextFolderIds = Array.from(new Set(
+        (Array.isArray(folderIds) ? folderIds : [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ));
+      const current = state.ui.manualVisibleFolderIds;
+      if (current.length === nextFolderIds.length && current.every((id, index) => id === nextFolderIds[index])) {
+        return;
+      }
+      state.ui.manualVisibleFolderIds = nextFolderIds;
+      emit('manual');
     },
     async addBlockedToken(address: string, label?: string | null) {
       if (!state.session.token) {

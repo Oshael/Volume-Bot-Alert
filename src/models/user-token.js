@@ -29,6 +29,20 @@ async function getAll(userId) {
 }
 
 /**
+ * Check whether a manual token already exists for a user.
+ */
+async function exists(userId, address) {
+  const { rows } = await db.query(
+    `SELECT 1
+     FROM user_tokens
+     WHERE user_id = $1 AND address = $2
+     LIMIT 1`,
+    [userId, address.trim()]
+  );
+  return rows.length > 0;
+}
+
+/**
  * Add a manual token. Returns the created row or null if duplicate.
  */
 async function add(userId, address, label = null) {
@@ -101,6 +115,7 @@ async function count(userId) {
 module.exports = {
   isValidAddress,
   getAll,
+  exists,
   add,
   setAll,
   remove,

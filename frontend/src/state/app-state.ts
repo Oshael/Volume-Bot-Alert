@@ -124,6 +124,24 @@ export interface ManualTokenEntry {
   tickerPeers?: AlertEntry['tickerPeers'];
 }
 
+export interface ManualTokenFolderEntry {
+  id: number;
+  userId: number;
+  parentFolderId: number | null;
+  name: string;
+  sortOrder: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface ManualTokenFolderItemEntry {
+  userId: number;
+  folderId: number;
+  address: string;
+  sortOrder: number;
+  addedAt?: string | null;
+}
+
 export type BucketSortMode = 'vol' | 'mcap' | 'pchange' | 'age';
 export type BucketSortWindow = '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
 export interface BucketSortCriterion {
@@ -635,6 +653,8 @@ export interface AppState {
     trackedTokensByAddress: Record<string, ManualTokenEntry>;
     monitoredTokenAddresses: string[];
     manualTokenAddresses: string[];
+    manualTokenFolders: ManualTokenFolderEntry[];
+    manualTokenFolderItems: ManualTokenFolderItemEntry[];
     recentTokenAddresses: string[];
     oldWeekTokenAddresses: string[];
     topPerformerAddresses: string[];
@@ -691,6 +711,8 @@ export interface AppState {
     mockTradingHistoryOpen: boolean;
     mockTradingPnlAddress: string | null;
     manualStarredOnly: boolean;
+    manualFolderDeleteWarningDismissed: boolean;
+    manualVisibleFolderIds: number[];
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
     monitoredPage: number;
@@ -817,6 +839,8 @@ export function createAppState(): AppState {
       trackedTokensByAddress: {},
       monitoredTokenAddresses: [],
       manualTokenAddresses: [],
+      manualTokenFolders: [],
+      manualTokenFolderItems: [],
       recentTokenAddresses: [],
       oldWeekTokenAddresses: [],
       topPerformerAddresses: [],
@@ -887,6 +911,8 @@ export function createAppState(): AppState {
       mockTradingHistoryOpen: false,
       mockTradingPnlAddress: null,
       manualStarredOnly: false,
+      manualFolderDeleteWarningDismissed: false,
+      manualVisibleFolderIds: [],
       recentStarredOnly: false,
       oldWeekStarredOnly: false,
       monitoredPage: 0,
@@ -1074,6 +1100,31 @@ export function getManualTokens(state: AppState) {
   return state.data.manualTokenAddresses
     .map((address) => getTrackedToken(state, address))
     .filter((item): item is ManualTokenEntry => Boolean(item));
+}
+
+export function getManualFolderAddressSet(state: AppState, folderIds = state.ui.manualVisibleFolderIds) {
+  const normalizedFolderIds = Array.from(new Set(
+    (Array.isArray(folderIds) ? folderIds : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0),
+  ));
+  if (normalizedFolderIds.length === 0) {
+    return new Set(state.data.manualTokenAddresses);
+  }
+
+  const selected = new Set(normalizedFolderIds);
+  const addresses = new Set<string>();
+  for (const item of state.data.manualTokenFolderItems) {
+    if (selected.has(item.folderId)) {
+      addresses.add(item.address);
+    }
+  }
+  return addresses;
+}
+
+export function getVisibleManualTokens(state: AppState) {
+  const visibleAddresses = getManualFolderAddressSet(state);
+  return getManualTokens(state).filter((item) => visibleAddresses.has(item.address));
 }
 
 export function getMonitoredTokens(state: AppState) {

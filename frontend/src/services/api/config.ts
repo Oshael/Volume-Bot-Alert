@@ -30,6 +30,29 @@ export interface AdminTokenReviewAlert {
 
 export type AdminTokenReviewResolution = 'dismiss' | 'block' | 'mark_valid' | 'mark_weak';
 
+export interface ManualTokenFolderPayload {
+  id: number;
+  userId: number;
+  parentFolderId: number | null;
+  name: string;
+  sortOrder: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ManualTokenFolderItemPayload {
+  userId: number;
+  folderId: number;
+  address: string;
+  sortOrder: number;
+  addedAt: string | null;
+}
+
+export interface ManualTokenFoldersPayload {
+  folders: ManualTokenFolderPayload[];
+  items: ManualTokenFolderItemPayload[];
+}
+
 export interface BucketSortCriterionPayload {
   mode: 'vol' | 'mcap' | 'pchange' | 'age';
   window: '1h' | '6h' | '24h' | 'newest' | 'oldest' | 'highest' | 'lowest';
@@ -63,6 +86,7 @@ export interface UiPrefsPayload {
     pumpfun: boolean;
   };
   manualStarredOnly: boolean;
+  manualFolderDeleteWarningDismissed: boolean;
   recentStarredOnly: boolean;
   oldWeekStarredOnly: boolean;
   monitoredPerPage: number;
@@ -93,6 +117,10 @@ export interface ConfigSyncPayload {
 
 export function fetchConfig(token?: string | null) {
   return apiFetch<ConfigPayload>('/api/config', { token });
+}
+
+export function fetchManualTokenFolders(token?: string | null) {
+  return apiFetch<ManualTokenFoldersPayload>('/api/config/token-folders', { token });
 }
 
 export function patchConfig(
@@ -138,6 +166,59 @@ export function removeManualToken(address: string, token?: string | null) {
     method: 'DELETE',
     token,
   });
+}
+
+export function createManualTokenFolder(
+  payload: { name: string; sortOrder?: number },
+  token?: string | null,
+) {
+  return apiFetch<{ message: string; folder: ManualTokenFolderPayload }>('/api/config/token-folders', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    token,
+  });
+}
+
+export function updateManualTokenFolder(
+  folderId: number,
+  payload: { name?: string; sortOrder?: number },
+  token?: string | null,
+) {
+  return apiFetch<{ message: string; folder: ManualTokenFolderPayload }>(`/api/config/token-folders/${encodeURIComponent(String(folderId))}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+    token,
+  });
+}
+
+export function deleteManualTokenFolder(folderId: number, token?: string | null) {
+  return apiFetch<{ message: string; removedTokens: string[] }>(`/api/config/token-folders/${encodeURIComponent(String(folderId))}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export function addManualTokenToFolder(
+  folderId: number,
+  address: string,
+  token?: string | null,
+  sortOrder?: number,
+) {
+  return apiFetch<{ message: string; item: ManualTokenFolderItemPayload; tokenCreated?: boolean }>(`/api/config/token-folders/${encodeURIComponent(String(folderId))}/tokens`, {
+    method: 'POST',
+    body: JSON.stringify({ address, sortOrder }),
+    token,
+  });
+}
+
+export function removeManualTokenFromFolder(folderId: number, address: string, token?: string | null) {
+  return apiFetch<{ message: string }>(
+    `/api/config/token-folders/${encodeURIComponent(String(folderId))}/tokens/${encodeURIComponent(address)}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  );
 }
 
 export function addBlockedToken(address: string, label?: string | null, token?: string | null) {
