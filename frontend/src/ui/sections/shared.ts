@@ -92,6 +92,7 @@ type SparklineRenderOptions = {
   markers?: MockTradingTradeEntry[];
   mockSolUsdcRate?: number;
   liveMcap?: number | null;
+  preserveTerminalMove?: boolean;
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -1496,9 +1497,13 @@ function findTerminalSparklineScaleShift(series: number[]) {
   return null;
 }
 
-function normalizeTerminalSparklineScaleShift(series: number[]) {
+function normalizeTerminalSparklineScaleShift(series: number[], options: SparklineRenderOptions = {}) {
   const shift = findTerminalSparklineScaleShift(series);
   if (!shift) {
+    return series;
+  }
+
+  if (options.preserveTerminalMove && shift.splitIndex >= series.length - 3) {
     return series;
   }
 
@@ -1551,12 +1556,12 @@ function isIsolatedSparklineSpike(series: number[], spikeIndex: number) {
   return Number.isFinite(secondHighest) && secondHighest < spikeValue * 0.6;
 }
 
-function buildDisplaySparklineSeries(series: number[], _options: SparklineRenderOptions = {}) {
+function buildDisplaySparklineSeries(series: number[], options: SparklineRenderOptions = {}) {
   if (!Array.isArray(series) || series.length < 8) {
     return series;
   }
 
-  const scaleNormalizedSeries = normalizeTerminalSparklineScaleShift(series);
+  const scaleNormalizedSeries = normalizeTerminalSparklineScaleShift(series, options);
   if (scaleNormalizedSeries !== series) {
     return scaleNormalizedSeries;
   }
@@ -1568,6 +1573,10 @@ function buildDisplaySparklineSeries(series: number[], _options: SparklineRender
       spikeValue = series[index];
       spikeIndex = index;
     }
+  }
+
+  if (options.preserveTerminalMove && spikeIndex >= series.length - 3) {
+    return series;
   }
 
   if (!isIsolatedSparklineSpike(series, spikeIndex)) {
@@ -1865,8 +1874,12 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   if (!entry) {
     return renderSparklinePlaceholder(entry);
   }
-  const series = appendLiveSparklineMcap(normalizeSparklineSeries(entry.series), options.liveMcap);
-  const displaySeries = buildDisplaySparklineSeries(series, options);
+  const baseSeries = normalizeSparklineSeries(entry.series);
+  const series = appendLiveSparklineMcap(baseSeries, options.liveMcap);
+  const displaySeries = buildDisplaySparklineSeries(series, {
+    ...options,
+    preserveTerminalMove: options.preserveTerminalMove || series.length > baseSeries.length,
+  });
   if (series.length < 2 || displaySeries.length < 2) {
     return renderSparklinePlaceholder(entry);
   }
