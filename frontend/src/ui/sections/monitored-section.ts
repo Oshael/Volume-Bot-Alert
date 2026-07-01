@@ -1,7 +1,7 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderMeteoraCell, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
-import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderMeteoraCell, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
 
@@ -171,6 +171,7 @@ function renderMonitoredRows(section: ParentNode, state: AppState, pageItems: Ma
   for (const item of pageItems) {
     monitoredList.append(buildMonitoredRow(
       item,
+      state.data.manualTokenFolders,
       state.ui.busy,
       state.data.starredTokens.includes(item.address),
       state.session.role === 'admin',
@@ -271,7 +272,7 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   });
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
+function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const subtitle = String(item.name || item.label || '');
   const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
@@ -332,6 +333,7 @@ function buildMonitoredRow(item: ManualTokenEntry, busy: boolean, isStarred: boo
     buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress, {
       enabledTradeTerminals,
     }),
+    buildManualQuickAddElement(item.address, busy, manualTokenFolders),
     buildStarButton(item.address, isStarred, busy),
     buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token'),
   );
@@ -769,6 +771,21 @@ function buildGlyphButton(
   button.disabled = disabled;
   button.textContent = label;
   return button;
+}
+
+function buildManualQuickAddElement(
+  address: string,
+  busy: boolean,
+  folders: AppState['data']['manualTokenFolders'],
+) {
+  const template = document.createElement('template');
+  template.innerHTML = renderManualQuickAddAction(escapeHtml(address), busy, folders).trim();
+  const element = template.content.firstElementChild;
+  if (element instanceof HTMLElement) {
+    return element;
+  }
+
+  return buildGlyphButton('+', 'action-glyph manual-quick-add-button', 'manual-quick-add', address, null, busy, 'Add to manual tokens');
 }
 
 function buildStarButton(address: string, isStarred: boolean, disabled: boolean) {

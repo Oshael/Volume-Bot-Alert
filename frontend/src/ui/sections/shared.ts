@@ -65,6 +65,8 @@ let tokenImagePreviewTimer: ReturnType<typeof window.setTimeout> | null = null;
 let tokenImagePreviewPosition = { x: 0, y: 0 };
 let tokenImagePreviewGlobalBound = false;
 let tokenImagePreviewLastPointerAt = 0;
+let manualQuickAddOpenKey: string | null = null;
+let manualQuickAddDocumentCloseBound = false;
 
 export function resolveTokenLaunchpad(address: string): TokenLaunchpadKey {
   const normalized = String(address || '').trim().toLowerCase();
@@ -185,6 +187,98 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
       void controller.toggleStarredToken(address);
     });
   }
+
+  bindManualQuickAddControls(section, controller);
+}
+
+function bindManualQuickAddControls(section: ParentNode, controller: AppController) {
+  const scope = resolveManualQuickAddScope(section);
+  const buildOpenKey = (address: string) => `${scope}:${address}`;
+  const ownerDocument = (section instanceof Node && section.ownerDocument) || document;
+  const closeMenus = (except?: HTMLElement | null) => {
+    ownerDocument.querySelectorAll<HTMLElement>('.manual-quick-add-wrap.open').forEach((wrap) => {
+      if (wrap !== except) {
+        wrap.classList.remove('open');
+      }
+    });
+    if (!except) {
+      manualQuickAddOpenKey = null;
+    }
+  };
+
+  section.querySelectorAll<HTMLElement>('.manual-quick-add-wrap').forEach((wrap) => {
+    const address = wrap.querySelector<HTMLButtonElement>('[data-action="manual-quick-add"]')?.dataset.address;
+    wrap.classList.toggle('open', Boolean(address && buildOpenKey(address) === manualQuickAddOpenKey));
+  });
+
+  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="manual-quick-add"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const address = button.dataset.address;
+      if (!address) {
+        return;
+      }
+
+      const wrap = button.closest<HTMLElement>('.manual-quick-add-wrap');
+      if (controller.state.data.manualTokenFolders.length === 0 || !wrap) {
+        void controller.addManualToken(address);
+        return;
+      }
+
+      const wasOpen = wrap.classList.contains('open');
+      closeMenus(wrap);
+      manualQuickAddOpenKey = wasOpen ? null : buildOpenKey(address);
+      wrap.classList.toggle('open', !wasOpen);
+    });
+  }
+
+  for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="manual-quick-add-target"]')) {
+    if (button.dataset.tokenActionBound === 'true') continue;
+    button.dataset.tokenActionBound = 'true';
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const address = button.dataset.address;
+      if (!address) {
+        return;
+      }
+
+      closeMenus();
+      if (button.dataset.target === 'folder') {
+        const folderId = Number(button.dataset.folderId);
+        if (Number.isInteger(folderId) && folderId > 0) {
+          void controller.addManualTokenToFolder(folderId, address);
+        }
+        return;
+      }
+
+      void controller.addManualToken(address);
+    });
+  }
+
+  if (!manualQuickAddDocumentCloseBound) {
+    manualQuickAddDocumentCloseBound = true;
+    ownerDocument.addEventListener('click', (event) => {
+      if (event.target instanceof Element && event.target.closest('.manual-quick-add-wrap')) {
+        return;
+      }
+      closeMenus();
+    });
+    ownerDocument.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeMenus();
+      }
+    });
+  }
+}
+
+function resolveManualQuickAddScope(section: ParentNode) {
+  const root = section instanceof Element ? section.closest<HTMLElement>('section') ?? section : null;
+  if (root?.classList.contains('monitored-panel')) return 'monitored';
+  if (root?.classList.contains('recent-bar')) return 'recent';
+  if (root?.classList.contains('old-week-bar')) return 'old-week';
+  return 'shared';
 }
 
 function bindMockTradingPnlButtons(section: ParentNode, controller: AppController) {
@@ -1219,6 +1313,7 @@ export function renderPagedAgeBucketList(
     mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
     mockTradingTradesByAddress?: Record<string, MockTradingTradeEntry[]>;
     mockSolUsdcRate?: number;
+    manualTokenFolders?: AppState['data']['manualTokenFolders'];
   },
 ) {
   const totalCount = Math.max(0, Number(options?.totalCount) || 0);
@@ -1242,6 +1337,7 @@ export function renderPagedAgeBucketList(
       startRank: pageStart + 1,
       isAdmin,
       enabledTradeTerminals,
+      manualTokenFolders: options?.manualTokenFolders,
       showSparkline: options?.showSparkline,
       sparklineByAddress: options?.sparklineByAddress,
       mockTradingPositionsByAddress: options?.mockTradingPositionsByAddress,
@@ -1279,6 +1375,7 @@ function renderTokenTableShell(options: {
   startRank?: number;
   isAdmin?: boolean;
   enabledTradeTerminals: TradeTerminalKey[];
+  manualTokenFolders?: AppState['data']['manualTokenFolders'];
   showSparkline?: boolean;
   sparklineByAddress?: Record<string, TokenSparklineEntry>;
   mockTradingPositionsByAddress?: Record<string, MockTradingPositionEntry>;
@@ -1319,6 +1416,7 @@ function renderTokenTableShell(options: {
             (options.startRank ?? 1) + index,
             Boolean(options.isAdmin),
             options.enabledTradeTerminals,
+            options.manualTokenFolders ?? [],
             showSparkline ? options.sparklineByAddress?.[item.address] || null : null,
             options.mockTradingPositionsByAddress?.[item.address] || null,
             options.mockTradingTradesByAddress?.[item.address] || [],
@@ -1878,6 +1976,30 @@ function renderTokenAdminAction(isAdmin: boolean, safeAddress: string, safeSymbo
   return `<button type="button" class="action-glyph danger-glyph" data-action="admin-block-token" data-address="${safeAddress}" data-label="${safeSymbol}" ${busy ? 'disabled' : ''} title="Admin block permanently">&#9760;</button>`;
 }
 
+export function renderManualQuickAddAction(
+  safeAddress: string,
+  busy: boolean,
+  folders: AppState['data']['manualTokenFolders'] = [],
+) {
+  const menu = folders.length > 0
+    ? `
+      <span class="manual-quick-add-menu" role="menu">
+        <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="all" data-address="${safeAddress}" role="menuitem">All</button>
+        ${folders.map((folder) => `
+          <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="folder" data-folder-id="${folder.id}" data-address="${safeAddress}" role="menuitem">${escapeHtml(folder.name)}</button>
+        `).join('')}
+      </span>
+    `
+    : '';
+
+  return `
+    <span class="manual-quick-add-wrap">
+      <button type="button" class="action-glyph manual-quick-add-button" data-action="manual-quick-add" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Add to manual tokens">+</button>
+      ${menu}
+    </span>
+  `;
+}
+
 function renderMockTradingActions(isAdmin: boolean, safeAddress: string, position: MockTradingPositionEntry | null, busy: boolean) {
   if (!isAdmin) {
     return '';
@@ -1935,7 +2057,7 @@ function renderBucketSparklineCell(
   return `<td class="sparkline-col">${renderSparklineCell(sparkline, item.address, markers, mockSolUsdcRate, item.mcap)}</td>`;
 }
 
-function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
+function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], manualTokenFolders: AppState['data']['manualTokenFolders'] = [], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
@@ -1962,6 +2084,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
                 ${renderTokenSocialActions(twitterUrl, communityUrl)}
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
                 ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { enabledTradeTerminals })}
+                ${mode === 'manual' ? '' : renderManualQuickAddAction(safeAddress, busy, manualTokenFolders)}
                 <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
                 ${renderMockTradingActions(isAdmin, safeAddress, mockTradingPosition, busy)}
                 ${renderTokenAdminAction(isAdmin, safeAddress, safeSymbol, busy)}

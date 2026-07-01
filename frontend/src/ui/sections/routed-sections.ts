@@ -333,6 +333,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),
         mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
         mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs),
+        manualTokenFolders: state.data.manualTokenFolders,
       },
     )}
   `;
@@ -597,6 +598,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
         mockTradingPositionsByAddress: getMockTradingPositionsViewByAddress(state),
         mockTradingTradesByAddress: state.data.mockTradingTradesByAddress,
         mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs),
+        manualTokenFolders: state.data.manualTokenFolders,
       },
     )}
   `;

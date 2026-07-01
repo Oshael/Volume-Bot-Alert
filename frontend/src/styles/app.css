@@ -9141,11 +9141,15 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .manual-folder-create-icon {
+  border-color: rgba(0, 212, 255, 0.34);
+  background: rgba(0, 212, 255, 0.08);
+  color: #00d4ff;
   cursor: pointer;
 }
 
 .manual-folder-create-icon .compact-icon-glyph {
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 800;
   transform: none;
 }
 
@@ -9207,7 +9211,9 @@ TEMP_LEGACY_BAR_TITLE {
   border: 1px solid rgba(0, 212, 255, 0.28);
   border-radius: 6px;
   background: rgba(0, 212, 255, 0.08);
+  color: #00d4ff;
   font-size: 13px;
+  font-weight: 800;
 }
 
 .manual-folder-modal-head h3 {
@@ -10324,6 +10330,70 @@ TEMP_LEGACY_BAR_TITLE {
 .recent-bar .token-actions-inline .copy-button,
 .old-week-bar .token-actions-inline .copy-button {
   font-size: 10px !important;
+}
+
+.manual-quick-add-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.manual-quick-add-button {
+  color: rgba(205, 244, 255, 0.92);
+}
+
+.manual-quick-add-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 35;
+  display: grid;
+  gap: 4px;
+  min-width: 92px;
+  max-width: 160px;
+  padding: 5px;
+  border: 1px solid rgba(0, 212, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(2, 17, 24, 0.96);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  visibility: hidden;
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.manual-quick-add-wrap.open .manual-quick-add-menu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.manual-quick-add-option {
+  min-width: 0;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(0, 212, 255, 0.08);
+  color: rgba(226, 250, 255, 0.9);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: left;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.manual-quick-add-option:hover {
+  border-color: rgba(0, 212, 255, 0.52);
+  background: rgba(0, 212, 255, 0.16);
+  color: #ffffff;
 }
 
 .manual-bar .muted-block {
