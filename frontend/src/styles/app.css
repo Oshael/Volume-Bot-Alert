@@ -9148,8 +9148,9 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .manual-folder-create-icon .compact-icon-glyph {
-  font-size: 15px;
-  font-weight: 800;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1;
   transform: none;
 }
 
@@ -9212,8 +9213,9 @@ TEMP_LEGACY_BAR_TITLE {
   border-radius: 6px;
   background: rgba(0, 212, 255, 0.08);
   color: #00d4ff;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1;
 }
 
 .manual-folder-modal-head h3 {

@@ -43,7 +43,7 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
       <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
       <div class="legacy-bar-controls">
         ${renderManualTokenEntryFormMarkup(state)}
-        <button type="button" class="compact-icon-toggle manual-folder-create-icon" data-action="manual-folder-create-root" aria-label="Create manual token folder" title="Create folder"><span class="compact-icon-glyph">+</span></button>
+        <button type="button" class="compact-icon-toggle manual-folder-create-icon" data-action="manual-folder-create-root" aria-label="Create manual token folder" title="Create folder"><span class="compact-icon-glyph">&#128449;&#65038;</span></button>
         <button type="button" class="compact-icon-toggle section-collapse-toggle" data-action="toggle-section-collapse" data-section="manual" aria-label="Collapse manual tokens"><span class="compact-icon-glyph">−</span></button>
         <div class="compact-search ${searchQuery ? 'has-query open' : ''}">
           <button type="button" class="compact-search-toggle" data-action="manual-search-focus" aria-label="Search manual tokens">&#128269;</button>
@@ -273,7 +273,7 @@ function renderManualFolderCreateModal(state: AppState) {
       <button type="button" class="manual-folder-modal-backdrop" data-action="manual-folder-modal-close" aria-label="Close create folder dialog"></button>
       <form class="manual-folder-modal-panel" data-role="manual-folder-create-form" role="dialog" aria-modal="true" aria-labelledby="manual-folder-create-title">
         <div class="manual-folder-modal-head">
-          <span class="manual-folder-modal-icon">+</span>
+          <span class="manual-folder-modal-icon">&#128449;&#65038;</span>
           <div>
             <h3 id="manual-folder-create-title">New Folder</h3>
             <p>Organize manual tokens in a custom view.</p>
