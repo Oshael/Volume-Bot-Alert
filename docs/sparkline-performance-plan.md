@@ -119,6 +119,7 @@ Status de implementacao local em 2026-07-01:
 - feito: schema stage 47 para aceitar `60/240/1440` em `token_market_buckets_agg`
 - feito: granularidades centralizadas no backend em `src/utils/market-bucket-granularities.js`
 - feito: backfill aceita `60/240/1440`
+- feito: backfill de `60/240/1440` usa `token_market_buckets_agg` em `5m` como fonte, porque a tabela `1m` pode ter apenas os ultimos 14 dias
 - feito: leitura expanded aceita `granularityMinutes` e `allowOneMinuteFallback`
 - feito: leitura expanded retorna `candles` OHLC e preserva `series`
 - feito: fallback para `1m` no expanded agora e apenas explicito
@@ -132,6 +133,7 @@ Gate operacional antes de expor `1h/4h/24h` na UI:
 - aplicar `node src/utils/db-init-stage47.js` na VPS
 - rodar `npm run db:schema-check` na VPS
 - fazer backfill inicial somente das novas granularidades (`60`, `240`, `1440`) em janelas pequenas/resumiveis
+- para janelas mais antigas que a retencao de `1m`, gerar `60/240/1440` a partir dos buckets `5m` ja existentes
 - validar cobertura antes de habilitar controles do modal para essas resolucoes
 - manter `5/15/30` sem backfill amplo enquanto auditorias leves nao mostrarem buracos reais
 

@@ -5,6 +5,8 @@ const DEFAULT_LOOKBACK_HOURS = 14 * 24;
 const DEFAULT_BATCH_SIZE = 250;
 const DEFAULT_WINDOW_HOURS = 24;
 const SUPPORTED_GRANULARITIES = AGGREGATE_GRANULARITY_MINUTES;
+const FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY = 5;
+const FIVE_MINUTE_AGGREGATE_ROLLUP_MIN_GRANULARITY = 60;
 
 function parseBooleanFlag(value) {
   return value === true || value === 'true' || value === '1';
@@ -151,19 +153,65 @@ function buildLookbackClause(options, tableAlias = 'b', params = []) {
   };
 }
 
+function getAggregateBackfillSourceGranularityMinutes(granularityMinutes) {
+  const parsed = Number(granularityMinutes);
+  return parsed >= FIVE_MINUTE_AGGREGATE_ROLLUP_MIN_GRANULARITY
+    ? FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY
+    : null;
+}
+
+function shouldScanOneMinuteCandidates(granularities = []) {
+  return granularities.some((granularity) => getAggregateBackfillSourceGranularityMinutes(granularity) == null);
+}
+
+function shouldScanFiveMinuteAggregateCandidates(granularities = []) {
+  return granularities.some((granularity) => getAggregateBackfillSourceGranularityMinutes(granularity) === FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY);
+}
+
+function buildCandidateSourceSql(options, params) {
+  const sourceSql = [];
+  const granularities = options.granularities || SUPPORTED_GRANULARITIES;
+  if (shouldScanOneMinuteCandidates(granularities)) {
+    const clauses = [
+      '(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)',
+    ];
+    const lookback = buildLookbackClause(options, 'b', params);
+    if (lookback.sql) {
+      clauses.push(lookback.sql.slice(4));
+    }
+    sourceSql.push(
+      `SELECT DISTINCT b.token_address
+       FROM token_market_buckets_1m b
+       WHERE ${clauses.join(' AND ')}`
+    );
+  }
+
+  if (shouldScanFiveMinuteAggregateCandidates(granularities)) {
+    const clauses = [
+      `b.granularity_minutes = ${FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY}`,
+      '(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)',
+    ];
+    const lookback = buildLookbackClause(options, 'b', params);
+    if (lookback.sql) {
+      clauses.push(lookback.sql.slice(4));
+    }
+    sourceSql.push(
+      `SELECT DISTINCT b.token_address
+       FROM token_market_buckets_agg b
+       WHERE ${clauses.join(' AND ')}`
+    );
+  }
+
+  return sourceSql;
+}
+
 async function listCandidateAddresses(options, afterAddress = null) {
   const params = [];
-  const clauses = [
-    '(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)',
-  ];
-
-  const lookback = buildLookbackClause(options, 'b', params);
-  if (lookback.sql) {
-    clauses.push(lookback.sql.slice(4));
-  }
+  const sourceSql = buildCandidateSourceSql(options, params);
+  const candidateClauses = [];
   if (afterAddress) {
     params.push(afterAddress);
-    clauses.push(`b.token_address > $${params.length}`);
+    candidateClauses.push(`token_address > $${params.length}`);
   }
 
   params.push(Math.max(1, Number(options.batchSize) || DEFAULT_BATCH_SIZE));
@@ -182,10 +230,13 @@ async function listCandidateAddresses(options, afterAddress = null) {
   }
 
   const result = await queryWithOptionalTimeout(
-    `SELECT DISTINCT b.token_address
-     FROM token_market_buckets_1m b
-     WHERE ${clauses.join(' AND ')}
-     ORDER BY b.token_address ASC
+    `WITH candidates AS (
+       ${sourceSql.join('\n       UNION\n       ')}
+     )
+     SELECT token_address
+     FROM candidates
+     ${candidateClauses.length ? `WHERE ${candidateClauses.join(' AND ')}` : ''}
+     ORDER BY token_address ASC
      LIMIT $${batchLimitParam}::int`,
     params,
     options
@@ -196,13 +247,7 @@ async function listCandidateAddresses(options, afterAddress = null) {
 
 async function countCandidateAddresses(options) {
   const params = [];
-  const clauses = [
-    '(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)',
-  ];
-  const lookback = buildLookbackClause(options, 'b', params);
-  if (lookback.sql) {
-    clauses.push(lookback.sql.slice(4));
-  }
+  const sourceSql = buildCandidateSourceSql(options, params);
 
   const limitSql = Number.isInteger(options.limitAddresses)
     ? `LIMIT ${Math.max(1, options.limitAddresses)}`
@@ -210,10 +255,12 @@ async function countCandidateAddresses(options) {
   const result = await queryWithOptionalTimeout(
     `SELECT COUNT(*)::int AS address_count
      FROM (
-       SELECT DISTINCT b.token_address
-       FROM token_market_buckets_1m b
-       WHERE ${clauses.join(' AND ')}
-       ORDER BY b.token_address ASC
+       WITH candidates AS (
+         ${sourceSql.join('\n         UNION\n         ')}
+       )
+       SELECT token_address
+       FROM candidates
+       ORDER BY token_address ASC
        ${limitSql}
      ) candidates`,
     params,
@@ -242,40 +289,14 @@ async function resetAggregateBuckets(addresses, granularityMinutes, options) {
   return result.rowCount || 0;
 }
 
-async function backfillAggregateBuckets(addresses, granularityMinutes, options) {
-  if (!Array.isArray(addresses) || !addresses.length) {
-    return 0;
-  }
-
-  const params = [addresses, granularityMinutes];
-  const lookback = buildLookbackClause(options, 'b', params);
-  const result = await queryWithOptionalTimeout(
-    `WITH source_rows AS (
-       SELECT
-         b.token_address,
-         to_timestamp(
-           FLOOR(EXTRACT(EPOCH FROM b.bucket_ts) / ($2::int * 60)) * ($2::int * 60)
-         ) AS aggregate_bucket_ts,
-         b.bucket_ts,
-         b.pair_address,
-         b.open_mcap,
-         b.high_mcap,
-         b.low_mcap,
-         b.close_mcap,
-         b.open_price,
-         b.high_price,
-         b.low_price,
-         b.close_price,
-         b.sample_count
-       FROM token_market_buckets_1m b
-       WHERE b.token_address = ANY($1::varchar[])
-         AND (b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)
-         ${lookback.sql}
+function buildAggregateInsertSql(sourceRowsSql, sourceLabel) {
+  return `WITH source_rows AS (
+       ${sourceRowsSql}
      ),
      aggregated AS (
        SELECT
          token_address,
-         $2::int AS granularity_minutes,
+         target_granularity_minutes AS granularity_minutes,
          aggregate_bucket_ts AS bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
@@ -288,7 +309,7 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
          (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
          COALESCE(SUM(sample_count), 0)::int AS sample_count
        FROM source_rows
-       GROUP BY token_address, aggregate_bucket_ts
+       GROUP BY token_address, target_granularity_minutes, aggregate_bucket_ts
      )
      INSERT INTO token_market_buckets_agg (
        token_address,
@@ -320,7 +341,7 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
        low_price,
        close_price,
        sample_count,
-       'aggregate_backfill'
+       '${sourceLabel}'
      FROM aggregated
      ON CONFLICT (token_address, granularity_minutes, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_agg.pair_address),
@@ -334,7 +355,69 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
        close_price = EXCLUDED.close_price,
        sample_count = EXCLUDED.sample_count,
        source = EXCLUDED.source,
-       updated_at = NOW()`,
+       updated_at = NOW()`;
+}
+
+function buildOneMinuteSourceRowsSql(targetGranularityParam, timestampPrefix = '') {
+  return `SELECT
+         b.token_address,
+         ${targetGranularityParam}::int AS target_granularity_minutes,
+         to_timestamp(
+           FLOOR(EXTRACT(EPOCH FROM b.bucket_ts) / (${targetGranularityParam}::int * 60)) * (${targetGranularityParam}::int * 60)
+         ) AS aggregate_bucket_ts,
+         b.bucket_ts,
+         b.pair_address,
+         b.open_mcap,
+         b.high_mcap,
+         b.low_mcap,
+         b.close_mcap,
+         b.open_price,
+         b.high_price,
+         b.low_price,
+         b.close_price,
+         b.sample_count
+       FROM token_market_buckets_1m b
+       WHERE ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
+}
+
+function buildFiveMinuteAggregateSourceRowsSql(targetGranularityParam, sourceGranularityParam, timestampPrefix = '') {
+  return `SELECT
+         b.token_address,
+         ${targetGranularityParam}::int AS target_granularity_minutes,
+         to_timestamp(
+           FLOOR(EXTRACT(EPOCH FROM b.bucket_ts) / (${targetGranularityParam}::int * 60)) * (${targetGranularityParam}::int * 60)
+         ) AS aggregate_bucket_ts,
+         b.bucket_ts,
+         b.pair_address,
+         b.open_mcap,
+         b.high_mcap,
+         b.low_mcap,
+         b.close_mcap,
+         b.open_price,
+         b.high_price,
+         b.low_price,
+         b.close_price,
+         b.sample_count
+       FROM token_market_buckets_agg b
+       WHERE b.granularity_minutes = ${sourceGranularityParam}::int
+         AND ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
+}
+
+async function backfillAggregateBuckets(addresses, granularityMinutes, options) {
+  if (!Array.isArray(addresses) || !addresses.length) {
+    return 0;
+  }
+
+  const sourceGranularity = getAggregateBackfillSourceGranularityMinutes(granularityMinutes);
+  const params = sourceGranularity == null
+    ? [addresses, granularityMinutes]
+    : [addresses, granularityMinutes, sourceGranularity];
+  const lookback = buildLookbackClause(options, 'b', params);
+  const sourceRowsSql = sourceGranularity == null
+    ? `${buildOneMinuteSourceRowsSql('$2')}\n         AND b.token_address = ANY($1::varchar[])\n         ${lookback.sql}`
+    : `${buildFiveMinuteAggregateSourceRowsSql('$2', '$3')}\n         AND b.token_address = ANY($1::varchar[])\n         ${lookback.sql}`;
+  const result = await queryWithOptionalTimeout(
+    buildAggregateInsertSql(sourceRowsSql, 'aggregate_backfill'),
     lookback.params,
     options
   );
@@ -356,93 +439,16 @@ async function resetAggregateBucketsForWindow(granularityMinutes, windowStart, w
 }
 
 async function backfillAggregateBucketsForWindow(granularityMinutes, windowStart, windowEnd, options = {}) {
+  const sourceGranularity = getAggregateBackfillSourceGranularityMinutes(granularityMinutes);
+  const params = sourceGranularity == null
+    ? [granularityMinutes, windowStart, windowEnd]
+    : [granularityMinutes, windowStart, windowEnd, sourceGranularity];
+  const sourceRowsSql = sourceGranularity == null
+    ? `${buildOneMinuteSourceRowsSql('$1')}\n         AND b.bucket_ts >= $2::timestamptz\n         AND b.bucket_ts < $3::timestamptz`
+    : `${buildFiveMinuteAggregateSourceRowsSql('$1', '$4')}\n         AND b.bucket_ts >= $2::timestamptz\n         AND b.bucket_ts < $3::timestamptz`;
   const result = await queryWithOptionalTimeout(
-    `WITH source_rows AS (
-       SELECT
-         b.token_address,
-         to_timestamp(
-           FLOOR(EXTRACT(EPOCH FROM b.bucket_ts) / ($1::int * 60)) * ($1::int * 60)
-         ) AS aggregate_bucket_ts,
-         b.bucket_ts,
-         b.pair_address,
-         b.open_mcap,
-         b.high_mcap,
-         b.low_mcap,
-         b.close_mcap,
-         b.open_price,
-         b.high_price,
-         b.low_price,
-         b.close_price,
-         b.sample_count
-       FROM token_market_buckets_1m b
-       WHERE b.bucket_ts >= $2::timestamptz
-         AND b.bucket_ts < $3::timestamptz
-         AND (b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)
-     ),
-     aggregated AS (
-       SELECT
-         token_address,
-         $1::int AS granularity_minutes,
-         aggregate_bucket_ts AS bucket_ts,
-         (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
-         (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(high_mcap) AS high_mcap,
-         MIN(low_mcap) AS low_mcap,
-         (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
-         (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
-         MAX(high_price) AS high_price,
-         MIN(low_price) AS low_price,
-         (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
-         COALESCE(SUM(sample_count), 0)::int AS sample_count
-       FROM source_rows
-       GROUP BY token_address, aggregate_bucket_ts
-     )
-     INSERT INTO token_market_buckets_agg (
-       token_address,
-       granularity_minutes,
-       bucket_ts,
-       pair_address,
-       open_mcap,
-       high_mcap,
-       low_mcap,
-       close_mcap,
-       open_price,
-       high_price,
-       low_price,
-       close_price,
-       sample_count,
-       source
-     )
-     SELECT
-       token_address,
-       granularity_minutes,
-       bucket_ts,
-       pair_address,
-       open_mcap,
-       high_mcap,
-       low_mcap,
-       close_mcap,
-       open_price,
-       high_price,
-       low_price,
-       close_price,
-       sample_count,
-       'aggregate_window_backfill'
-     FROM aggregated
-     ON CONFLICT (token_address, granularity_minutes, bucket_ts) DO UPDATE SET
-       pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_agg.pair_address),
-       open_mcap = EXCLUDED.open_mcap,
-       high_mcap = EXCLUDED.high_mcap,
-       low_mcap = EXCLUDED.low_mcap,
-       close_mcap = EXCLUDED.close_mcap,
-       open_price = EXCLUDED.open_price,
-       high_price = EXCLUDED.high_price,
-       low_price = EXCLUDED.low_price,
-       close_price = EXCLUDED.close_price,
-       sample_count = EXCLUDED.sample_count,
-       source = EXCLUDED.source,
-       updated_at = NOW()`,
-    [granularityMinutes, windowStart, windowEnd],
+    buildAggregateInsertSql(sourceRowsSql, 'aggregate_window_backfill'),
+    params,
     options
   );
 

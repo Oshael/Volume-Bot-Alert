@@ -110,6 +110,37 @@ describe('backfill aggregate market buckets', () => {
     }
   });
 
+  it('builds large aggregate backfill SQL from 5m aggregate buckets', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return { rows: [], rowCount: 4 };
+    };
+
+    try {
+      const rowCount = await backfillBucketsAgg.__private.backfillAggregateBuckets([
+        'So11111111111111111111111111111111111111112',
+      ], 240, {
+        all: true,
+      });
+
+      assert.equal(rowCount, 4);
+      assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
+      assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.match(capturedSql, /b\.granularity_minutes = \$3::int/);
+      assert.match(capturedSql, /FLOOR\(EXTRACT\(EPOCH FROM b\.bucket_ts\) \/ \(\$2::int \* 60\)\) \* \(\$2::int \* 60\)/);
+      assert.deepEqual(capturedParams, [[
+        'So11111111111111111111111111111111111111112',
+      ], 240, 5]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('builds windowed aggregate backfill SQL without address pagination', async () => {
     const originalQuery = db.query;
     let capturedSql = '';
@@ -138,6 +169,34 @@ describe('backfill aggregate market buckets', () => {
     }
   });
 
+  it('builds windowed large aggregate backfill SQL from 5m aggregate buckets', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return { rows: [], rowCount: 3 };
+    };
+
+    try {
+      const start = new Date('2026-03-22T00:00:00.000Z');
+      const end = new Date('2026-03-23T00:00:00.000Z');
+      const rowCount = await backfillBucketsAgg.__private.backfillAggregateBucketsForWindow(1440, start, end);
+
+      assert.equal(rowCount, 3);
+      assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
+      assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.match(capturedSql, /b\.granularity_minutes = \$4::int/);
+      assert.match(capturedSql, /b\.bucket_ts >= \$2::timestamptz/);
+      assert.match(capturedSql, /b\.bucket_ts < \$3::timestamptz/);
+      assert.deepEqual(capturedParams, [1440, start, end, 5]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('paginates candidate addresses after the resume cursor', async () => {
     const originalQuery = db.query;
     let capturedSql = '';
@@ -158,12 +217,45 @@ describe('backfill aggregate market buckets', () => {
         all: false,
         lookbackHours: 48,
         batchSize: 10,
+        granularities: [5],
       }, 'So11111111111111111111111111111111111111112');
 
       assert.deepEqual(rows, ['So11111111111111111111111111111111111111113']);
-      assert.match(capturedSql, /b\.token_address > \$2/);
+      assert.match(capturedSql, /token_address > \$2/);
       assert.match(capturedSql, /LIMIT \$3::int/);
       assert.deepEqual(capturedParams, [48, 'So11111111111111111111111111111111111111112', 10]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('scans 5m aggregate candidates for large rollups', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return {
+        rows: [
+          { token_address: 'So11111111111111111111111111111111111111113' },
+        ],
+      };
+    };
+
+    try {
+      const rows = await backfillBucketsAgg.__private.listCandidateAddresses({
+        all: true,
+        batchSize: 10,
+        granularities: [240],
+      });
+
+      assert.deepEqual(rows, ['So11111111111111111111111111111111111111113']);
+      assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.match(capturedSql, /b\.granularity_minutes = 5/);
+      assert.doesNotMatch(capturedSql, /FROM token_market_buckets_1m b/);
+      assert.deepEqual(capturedParams, [10]);
     } finally {
       db.query = originalQuery;
     }
@@ -193,7 +285,8 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(result.processedAddressCount, 1);
       assert.equal(result.totalAggregateRows, 0);
       assert.equal(statements.length, 2);
-      assert(statements.every((statement) => /^SELECT DISTINCT b\.token_address/.test(statement.trim())));
+      assert(statements.every((statement) => /SELECT token_address/.test(statement)));
+      assert(statements.every((statement) => /FROM token_market_buckets_1m b/.test(statement)));
     } finally {
       db.query = originalQuery;
     }
