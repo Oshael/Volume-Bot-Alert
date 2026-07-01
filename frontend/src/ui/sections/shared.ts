@@ -93,6 +93,7 @@ type SparklineRenderOptions = {
   mockSolUsdcRate?: number;
   liveMcap?: number | null;
   preserveTerminalMove?: boolean;
+  preserveTerminalScaleShift?: boolean;
 };
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
@@ -709,6 +710,7 @@ export function bindSparklineHover(
     const displaySeries = buildDisplaySparklineSeries(series, {
       expanded: wrap.classList.contains('sparkline-wrap-expanded'),
       variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
+      preserveTerminalScaleShift: isFreshSparklineTerminal(entry),
     });
     bindExpandableSparkline(wrap, address, lookupKey, options.controller);
     const hoverParts = resolveBindableSparklineHover(wrap, entry, series, displaySeries);
@@ -1433,15 +1435,6 @@ function normalizeSparklineSeries(series: number[] | null | undefined) {
   return Array.isArray(series) ? series.filter((value) => Number.isFinite(value)) : [];
 }
 
-function appendLiveSparklineMcap(series: number[], liveMcap?: number | null) {
-  const value = Number(liveMcap);
-  if (!Number.isFinite(value) || value <= 0 || series.length < 2) {
-    return series;
-  }
-
-  return [...series, value];
-}
-
 function computeMedian(values: number[]) {
   if (!Array.isArray(values) || values.length === 0) {
     return null;
@@ -1503,7 +1496,7 @@ function normalizeTerminalSparklineScaleShift(series: number[], options: Sparkli
     return series;
   }
 
-  if (options.preserveTerminalMove && shift.splitIndex >= series.length - 3) {
+  if ((options.preserveTerminalMove || options.preserveTerminalScaleShift) && shift.splitIndex >= series.length - 3) {
     return series;
   }
 
@@ -1588,6 +1581,17 @@ function buildDisplaySparklineSeries(series: number[], options: SparklineRenderO
   const normalized = series.slice();
   normalized[spikeIndex] = previousValue + ((nextValue - previousValue) / 2);
   return normalized;
+}
+
+function isFreshSparklineTerminal(entry?: TokenSparklineEntry | null, now = Date.now()) {
+  const latestTsMs = Date.parse(String(entry?.latestBucketAt || ''));
+  if (!Number.isFinite(latestTsMs)) {
+    return false;
+  }
+
+  const granularityMinutes = Math.max(1, Math.round(Number(entry?.granularityMinutes) || 1));
+  const freshnessMs = Math.max(3 * 60 * 1000, granularityMinutes * 3 * 60 * 1000);
+  return now - latestTsMs >= 0 && now - latestTsMs <= freshnessMs;
 }
 
 function resolveSparklineDimensions(options: SparklineRenderOptions = {}) {
@@ -1874,11 +1878,10 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   if (!entry) {
     return renderSparklinePlaceholder(entry);
   }
-  const baseSeries = normalizeSparklineSeries(entry.series);
-  const series = appendLiveSparklineMcap(baseSeries, options.liveMcap);
+  const series = normalizeSparklineSeries(entry.series);
   const displaySeries = buildDisplaySparklineSeries(series, {
     ...options,
-    preserveTerminalMove: options.preserveTerminalMove || series.length > baseSeries.length,
+    preserveTerminalScaleShift: options.preserveTerminalScaleShift || isFreshSparklineTerminal(entry),
   });
   if (series.length < 2 || displaySeries.length < 2) {
     return renderSparklinePlaceholder(entry);
