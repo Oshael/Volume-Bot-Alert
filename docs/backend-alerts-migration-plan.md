@@ -95,8 +95,7 @@ This is the difference between a survivable migration and a rewrite trap.
 
 ## Current incremental landing zone
 
-The repository now has its first backend-owned alert path in progress:
-- `HIGH CAP DUMP 5M`
+The repository now has backend-owned alert paths for monitored alerts, surge variants, Meteora, and GMGN claim signals.
 
 What this proves:
 - backend detection can read canonical market buckets
@@ -110,7 +109,6 @@ What it does **not** prove yet:
 - that per-user thresholds or cooldown semantics can be layered onto the current global event tables
 
 Important:
-- the current dump-alert path is intentionally global-event oriented
 - the larger migration still needs per-user state for rules that depend on user config, session semantics, or individualized cooldowns
 
 ## Non-Goals

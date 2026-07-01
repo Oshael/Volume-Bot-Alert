@@ -334,7 +334,7 @@ describe('Dashboard routes', () => {
     assert.equal(res.body.error, 'limit must be between 1 and 20');
   });
 
-  it('returns enriched high-cap dump alert events', async () => {
+  it('returns enriched backend alert events', async () => {
     const originalListDashboardAlertEvents = backendAlertFeed.listDashboardAlertEvents;
     let capturedOptions = null;
 
@@ -342,11 +342,11 @@ describe('Dashboard routes', () => {
       capturedOptions = options;
       return {
         generatedAt: '2026-04-05T18:05:06.000Z',
-        kind: 'high-cap-dump-5m',
-        ruleKey: 'high-cap-dump-5m',
+        kind: 'monitored-vol',
+        ruleKey: 'monitored-vol',
         mode: 'all',
         cursor: {
-          ruleKey: 'high-cap-dump-5m',
+          ruleKey: 'monitored-vol',
           lastSeenEventId: null,
           lastAckedEventId: null,
           updatedAt: null,
@@ -354,8 +354,8 @@ describe('Dashboard routes', () => {
         count: 1,
         events: [{
           id: 17,
-          kind: 'high-cap-dump-5m',
-          ruleKey: 'high-cap-dump-5m',
+          kind: 'monitored-vol',
+          ruleKey: 'monitored-vol',
           address: 'So11111111111111111111111111111111111111112',
           symbol: 'WSOL',
           name: 'Wrapped SOL',
@@ -365,16 +365,11 @@ describe('Dashboard routes', () => {
           twitterUrl: 'https://x.com/wsol',
           tokenCreatedAt: Date.UTC(2026, 3, 1, 12, 0, 0),
           mcap: 4100000,
+          volume5m: 120000,
           volume1h: 200000,
           volume6h: 900000,
           volume24h: 3400000,
-          baselineTs: '2026-04-05T18:00:00.000Z',
-          baselineMcap: 8000000,
-          windowLowMcap: 3200000,
-          currentTs: '2026-04-05T18:05:00.000Z',
-          currentCloseMcap: 4100000,
-          dumpPct: -60,
-          thresholdPct: 50,
+          pct: 80,
           triggeredAt: '2026-04-05T18:05:05.000Z',
         }],
       };
@@ -388,15 +383,15 @@ describe('Dashboard routes', () => {
       assert.equal(res.status, 200);
       assert.deepEqual(capturedOptions, { userId, ruleKey: undefined, limit: '25', mode: undefined, afterId: undefined });
       assert.equal(res.body.count, 1);
-      assert.equal(res.body.kind, 'high-cap-dump-5m');
+      assert.equal(res.body.kind, 'monitored-vol');
       assert.equal(res.body.mode, 'all');
-      assert.equal(res.body.ruleKey, 'high-cap-dump-5m');
+      assert.equal(res.body.ruleKey, 'monitored-vol');
       assert.equal(res.body.events[0].id, 17);
-      assert.equal(res.body.events[0].kind, 'high-cap-dump-5m');
+      assert.equal(res.body.events[0].kind, 'monitored-vol');
       assert.equal(res.body.events[0].symbol, 'WSOL');
-      assert.equal(res.body.events[0].currentCloseMcap, 4100000);
+      assert.equal(res.body.events[0].mcap, 4100000);
       assert.equal(res.body.events[0].volume24h, 3400000);
-      assert.equal(res.body.events[0].dumpPct, -60);
+      assert.equal(res.body.events[0].pct, 80);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
     }
@@ -410,11 +405,11 @@ describe('Dashboard routes', () => {
       capturedOptions = options;
       return {
         generatedAt: '2026-04-05T18:05:06.000Z',
-        kind: 'high-cap-dump-5m',
-        ruleKey: 'high-cap-dump-5m',
+        kind: 'monitored-vol',
+        ruleKey: 'monitored-vol',
         mode: 'unseen',
         cursor: {
-          ruleKey: 'high-cap-dump-5m',
+          ruleKey: 'monitored-vol',
           lastSeenEventId: 21,
           lastAckedEventId: 19,
           updatedAt: '2026-04-05T18:06:00.000Z',
@@ -461,12 +456,12 @@ describe('Dashboard routes', () => {
           },
           {
             generatedAt: '2026-04-16T12:05:10.000Z',
-            kind: 'high-cap-dump-5m',
-            ruleKey: 'high-cap-dump-5m',
+            kind: 'gmgn-claim-signal',
+            ruleKey: 'gmgn-claim-signal',
             mode: 'unseen',
-            cursor: { ruleKey: 'high-cap-dump-5m', lastSeenEventId: 30, lastAckedEventId: 28, updatedAt: '2026-04-16T12:05:11.000Z' },
+            cursor: { ruleKey: 'gmgn-claim-signal', lastSeenEventId: 30, lastAckedEventId: 28, updatedAt: '2026-04-16T12:05:11.000Z' },
             count: 1,
-            events: [{ id: 30, kind: 'high-cap-dump-5m', ruleKey: 'high-cap-dump-5m', address: 'B' }],
+            events: [{ id: 30, kind: 'gmgn-claim-signal', ruleKey: 'gmgn-claim-signal', address: 'B' }],
           },
         ],
       };
@@ -488,7 +483,7 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.count, 2);
       assert.equal(res.body.feeds.length, 2);
       assert.equal(res.body.feeds[0].ruleKey, 'monitored-vol');
-      assert.equal(res.body.feeds[1].ruleKey, 'high-cap-dump-5m');
+      assert.equal(res.body.feeds[1].ruleKey, 'gmgn-claim-signal');
     } finally {
       backendAlertFeed.listDashboardAlertFeeds = originalListDashboardAlertFeeds;
     }
@@ -522,7 +517,7 @@ describe('Dashboard routes', () => {
     backendAlertFeed.updateDashboardAlertCursor = async (userId, payload) => {
       capturedArgs = [userId, payload];
       return {
-        ruleKey: 'high-cap-dump-5m',
+        ruleKey: 'monitored-vol',
         lastSeenEventId: 31,
         lastAckedEventId: 29,
         updatedAt: '2026-04-05T18:07:00.000Z',
@@ -534,14 +529,14 @@ describe('Dashboard routes', () => {
         .post('/api/dashboard/alert-events/cursor')
         .set('Authorization', `Bearer ${token}`)
         .send({
-          ruleKey: 'high-cap-dump-5m',
+          ruleKey: 'monitored-vol',
           lastSeenEventId: 31,
           lastAckedEventId: 29,
         });
 
       assert.equal(res.status, 200);
       assert.deepEqual(capturedArgs, [userId, {
-        ruleKey: 'high-cap-dump-5m',
+        ruleKey: 'monitored-vol',
         lastSeenEventId: 31,
         lastAckedEventId: 29,
       }]);

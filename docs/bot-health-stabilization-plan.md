@@ -251,7 +251,6 @@ Checklist:
 - confirmar que ele aponta para um DB isolado
 - aplicar no banco de teste as stages pendentes:
   - `node src/utils/db-init-stage17.js`
-  - `node src/utils/db-init-stage19.js`
   - `node src/utils/db-init-stage20.js`
   - `node src/utils/db-init-stage21.js`
   - `node src/utils/db-init-stage22.js`

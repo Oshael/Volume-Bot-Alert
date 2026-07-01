@@ -1,6 +1,5 @@
 const db = require('./db');
 const { isValidAddress } = require('./user-token');
-const { HIGH_CAP_DUMP_RULE_KEY, getBackendAlertRule } = require('../services/backend-alert-rules');
 const config = require('../../config');
 
 const DEFAULT_ANALYTICS_MIN_MCAP = 90_000;
@@ -33,12 +32,6 @@ const DEFAULT_SPARKLINE_CACHE_TTL_MS = 30_000;
 const DEFAULT_SPARKLINE_CACHE_MAX_ENTRIES = 500;
 const AGGREGATE_GRANULARITY_MINUTES = Object.freeze([5, 15, 30]);
 const sparklineCache = new Map();
-const HIGH_CAP_DUMP_RULE = getBackendAlertRule(HIGH_CAP_DUMP_RULE_KEY);
-const DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES = HIGH_CAP_DUMP_RULE.defaults.windowMinutes;
-const DEFAULT_HIGH_CAP_DUMP_THRESHOLD_PCT = HIGH_CAP_DUMP_RULE.defaults.thresholdPct;
-const DEFAULT_HIGH_CAP_DUMP_MIN_BASELINE_MCAP = HIGH_CAP_DUMP_RULE.defaults.minBaselineMcap;
-const DEFAULT_HIGH_CAP_DUMP_MAX_LATEST_BUCKET_AGE_MS = HIGH_CAP_DUMP_RULE.defaults.maxLatestBucketAgeMs;
-const DEFAULT_HIGH_CAP_DUMP_MIN_BUCKETS = HIGH_CAP_DUMP_RULE.defaults.minBucketCount;
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -249,117 +242,6 @@ function toTimestampMs(value) {
 
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.getTime() : null;
-}
-
-function firstDefinedValue(...values) {
-  for (const value of values) {
-    if (value !== undefined) {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-function resolveHighCapDumpOptions(options = {}) {
-  return {
-    thresholdPct: Math.max(0, Number(options.thresholdPct) || DEFAULT_HIGH_CAP_DUMP_THRESHOLD_PCT),
-    minBaselineMcap: Math.max(0, Number(options.minBaselineMcap) || DEFAULT_HIGH_CAP_DUMP_MIN_BASELINE_MCAP),
-    maxLatestBucketAgeMs: Math.max(1, Number(options.maxLatestBucketAgeMs) || DEFAULT_HIGH_CAP_DUMP_MAX_LATEST_BUCKET_AGE_MS),
-    minBucketCount: Math.max(1, Number(options.minBucketCount) || DEFAULT_HIGH_CAP_DUMP_MIN_BUCKETS),
-    referenceTsMs: options.referenceTs == null ? Date.now() : toTimestampMs(options.referenceTs),
-  };
-}
-
-function computeHighCapDumpPct(baselineMcap, windowLowMcap) {
-  if (!(baselineMcap > 0) || !(windowLowMcap > 0)) {
-    return null;
-  }
-
-  return ((windowLowMcap - baselineMcap) / baselineMcap) * 100;
-}
-
-function computeLatestBucketAgeMs(currentTs, referenceTsMs) {
-  const currentTsMs = toTimestampMs(currentTs);
-  if (currentTsMs == null || referenceTsMs == null) {
-    return null;
-  }
-
-  return Math.max(0, referenceTsMs - currentTsMs);
-}
-
-function evaluateHighCapDumpGates(input, options) {
-  return {
-    passesHighCapGate: input.baselineMcap != null && input.baselineMcap >= options.minBaselineMcap,
-    passesCoverageGate: input.bucketCount >= options.minBucketCount,
-    passesFreshnessGate: input.latestBucketAgeMs != null && input.latestBucketAgeMs <= options.maxLatestBucketAgeMs,
-    passesThreshold: input.dumpPct != null && input.dumpPct <= (-1 * options.thresholdPct),
-    passesPairConsistencyGate: isHighCapDumpPairWindowConsistent(input),
-  };
-}
-
-function isHighCapDumpPairWindowConsistent(input) {
-  const explicitPairChange = input?.pairChangedInWindow === true
-    || (Number(input?.windowPairCount) || 0) > 1;
-  if (explicitPairChange) {
-    return false;
-  }
-
-  const uniquePairs = new Set(
-    [
-      input?.baselinePairAddress,
-      input?.currentPairAddress,
-      input?.windowLowPairAddress,
-    ]
-      .map((value) => String(value || '').trim())
-      .filter(Boolean)
-  );
-
-  return uniquePairs.size <= 1;
-}
-
-function normalizeHighCapDumpTextField(primaryValue, secondaryValue) {
-  return firstDefinedValue(primaryValue, secondaryValue) || null;
-}
-
-function normalizeHighCapDumpNumberField(primaryValue, secondaryValue) {
-  return toNumberOrNull(firstDefinedValue(primaryValue, secondaryValue));
-}
-
-function normalizeHighCapDumpBucketCount(primaryValue, secondaryValue) {
-  return Math.max(0, Number(firstDefinedValue(primaryValue, secondaryValue)) || 0);
-}
-
-function readHighCapDumpTextField(row, snakeKey, camelKey) {
-  return normalizeHighCapDumpTextField(row?.[snakeKey], row?.[camelKey]);
-}
-
-function readHighCapDumpNumberField(row, snakeKey, camelKey) {
-  return normalizeHighCapDumpNumberField(row?.[snakeKey], row?.[camelKey]);
-}
-
-function readHighCapDumpBucketCountField(row, snakeKey, camelKey) {
-  return normalizeHighCapDumpBucketCount(row?.[snakeKey], row?.[camelKey]);
-}
-
-function normalizeHighCapDumpRow(row) {
-  return {
-    tokenAddress: String(readHighCapDumpTextField(row, 'token_address', 'tokenAddress') || '').trim(),
-    baselineTs: readHighCapDumpTextField(row, 'baseline_ts', 'baselineTs'),
-    currentTs: readHighCapDumpTextField(row, 'current_ts', 'currentTs'),
-    liveCurrentTs: readHighCapDumpTextField(row, 'live_current_ts', 'liveCurrentTs'),
-    baselinePairAddress: readHighCapDumpTextField(row, 'baseline_pair_address', 'baselinePairAddress'),
-    currentPairAddress: readHighCapDumpTextField(row, 'current_pair_address', 'currentPairAddress'),
-    liveCurrentPairAddress: readHighCapDumpTextField(row, 'live_current_pair_address', 'liveCurrentPairAddress'),
-    pinnedPairAddress: readHighCapDumpTextField(row, 'pinned_pair_address', 'pinnedPairAddress'),
-    windowLowBucketTs: readHighCapDumpTextField(row, 'window_low_bucket_ts', 'windowLowBucketTs'),
-    windowLowPairAddress: readHighCapDumpTextField(row, 'window_low_pair_address', 'windowLowPairAddress'),
-    baselineMcap: readHighCapDumpNumberField(row, 'baseline_mcap', 'baselineMcap'),
-    currentCloseMcap: readHighCapDumpNumberField(row, 'current_close_mcap', 'currentCloseMcap'),
-    windowLowMcap: readHighCapDumpNumberField(row, 'window_low_mcap', 'windowLowMcap'),
-    bucketCount: readHighCapDumpBucketCountField(row, 'bucket_count', 'bucketCount'),
-    windowPairCount: readHighCapDumpBucketCountField(row, 'window_pair_count', 'windowPairCount'),
-  };
 }
 
 function computeSampleStddev(values) {
@@ -1840,172 +1722,6 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   return rows;
 }
 
-function buildHighCapDumpDetection(row, options = {}) {
-  const normalizedRow = normalizeHighCapDumpRow(row);
-  const settings = resolveHighCapDumpOptions(options);
-  const latestBucketAgeMs = computeLatestBucketAgeMs(normalizedRow.currentTs, settings.referenceTsMs);
-  const dumpPct = computeHighCapDumpPct(normalizedRow.baselineMcap, normalizedRow.windowLowMcap);
-  const gates = evaluateHighCapDumpGates({
-    baselineMcap: normalizedRow.baselineMcap,
-    bucketCount: normalizedRow.bucketCount,
-    latestBucketAgeMs,
-    dumpPct,
-    baselinePairAddress: normalizedRow.baselinePairAddress,
-    currentPairAddress: normalizedRow.currentPairAddress,
-    windowLowPairAddress: normalizedRow.windowLowPairAddress,
-    windowPairCount: normalizedRow.windowPairCount,
-    pairChangedInWindow: normalizedRow.windowPairCount > 1,
-  }, settings);
-
-  return {
-    tokenAddress: normalizedRow.tokenAddress,
-    baselineTs: normalizedRow.baselineTs,
-    baselinePairAddress: normalizedRow.baselinePairAddress,
-    baselineMcap: normalizedRow.baselineMcap,
-    currentTs: normalizedRow.currentTs,
-    currentPairAddress: normalizedRow.currentPairAddress,
-    liveCurrentTs: normalizedRow.liveCurrentTs,
-    liveCurrentPairAddress: normalizedRow.liveCurrentPairAddress,
-    pinnedPairAddress: normalizedRow.pinnedPairAddress,
-    currentCloseMcap: normalizedRow.currentCloseMcap,
-    windowLowBucketTs: normalizedRow.windowLowBucketTs,
-    windowLowPairAddress: normalizedRow.windowLowPairAddress,
-    windowLowMcap: normalizedRow.windowLowMcap,
-    bucketCount: normalizedRow.bucketCount,
-    windowPairCount: normalizedRow.windowPairCount,
-    pairChangedInWindow: normalizedRow.windowPairCount > 1,
-    latestBucketAgeMs,
-    dumpPct: roundMetric(dumpPct, 2),
-    ...gates,
-  };
-}
-
-async function listHighCapDumpDetectionsByAddresses(addresses, options = {}) {
-  const unique = Array.from(
-    new Set(
-      (Array.isArray(addresses) ? addresses : [])
-        .map((item) => String(item || '').trim())
-        .filter((item) => isValidAddress(item))
-    )
-  );
-  if (!unique.length) {
-    return [];
-  }
-
-  const safeWindowMinutes = Math.max(1, Math.min(Number(options.windowMinutes) || DEFAULT_HIGH_CAP_DUMP_WINDOW_MINUTES, 60));
-  const pinnedPairByAddress = options.pinnedPairByAddress && typeof options.pinnedPairByAddress === 'object'
-    ? options.pinnedPairByAddress
-    : {};
-  const pinnedPairs = unique.map((address) => {
-    const value = pinnedPairByAddress[address];
-    const normalized = String(value || '').trim();
-    return normalized || null;
-  });
-  const { rows } = await db.query(
-    `WITH requested AS (
-       SELECT *
-       FROM UNNEST($1::varchar[], $2::varchar[]) AS t(token_address, pinned_pair_address)
-     )
-     SELECT
-       requested.token_address,
-       requested.pinned_pair_address,
-       current_row.current_ts,
-       current_row.current_pair_address,
-       current_row.current_close_mcap,
-       live_current_row.live_current_ts,
-       live_current_row.live_current_pair_address,
-       baseline_row.baseline_ts,
-       baseline_row.baseline_pair_address,
-       baseline_row.baseline_mcap,
-       window_low_row.window_low_bucket_ts,
-       window_low_row.window_low_pair_address,
-       window_low_row.window_low_mcap,
-       window_stats.bucket_count,
-       window_stats.window_pair_count
-     FROM requested
-     LEFT JOIN LATERAL (
-       SELECT
-         bucket_ts AS current_ts,
-         pair_address AS current_pair_address,
-         close_mcap AS current_close_mcap
-       FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
-         AND close_mcap IS NOT NULL
-         AND (
-           requested.pinned_pair_address IS NULL
-           OR pair_address = requested.pinned_pair_address
-         )
-       ORDER BY bucket_ts DESC
-       LIMIT 1
-     ) AS current_row ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT
-         bucket_ts AS live_current_ts,
-         pair_address AS live_current_pair_address
-       FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
-         AND close_mcap IS NOT NULL
-       ORDER BY bucket_ts DESC
-       LIMIT 1
-     ) AS live_current_row ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT
-         bucket_ts AS baseline_ts,
-         pair_address AS baseline_pair_address,
-         close_mcap AS baseline_mcap
-       FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
-         AND close_mcap IS NOT NULL
-         AND current_row.current_ts IS NOT NULL
-         AND bucket_ts >= current_row.current_ts - (($3::int + 1) * INTERVAL '1 minute')
-         AND bucket_ts <= current_row.current_ts - ($3::int * INTERVAL '1 minute')
-         AND (
-           requested.pinned_pair_address IS NULL
-           OR pair_address = requested.pinned_pair_address
-         )
-       ORDER BY bucket_ts DESC
-       LIMIT 1
-     ) AS baseline_row ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT
-         bucket_ts AS window_low_bucket_ts,
-         pair_address AS window_low_pair_address,
-         low_mcap AS window_low_mcap
-       FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
-         AND current_row.current_ts IS NOT NULL
-         AND bucket_ts > current_row.current_ts - ($3::int * INTERVAL '1 minute')
-         AND bucket_ts <= current_row.current_ts
-         AND low_mcap IS NOT NULL
-         AND (
-           requested.pinned_pair_address IS NULL
-           OR pair_address = requested.pinned_pair_address
-         )
-       ORDER BY low_mcap ASC, bucket_ts DESC
-       LIMIT 1
-     ) AS window_low_row ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT
-         COUNT(*)::int AS bucket_count,
-         COUNT(DISTINCT pair_address)::int AS window_pair_count
-       FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
-         AND current_row.current_ts IS NOT NULL
-         AND bucket_ts > current_row.current_ts - ($3::int * INTERVAL '1 minute')
-         AND bucket_ts <= current_row.current_ts
-         AND (low_mcap IS NOT NULL OR high_mcap IS NOT NULL OR close_mcap IS NOT NULL)
-         AND (
-           requested.pinned_pair_address IS NULL
-           OR pair_address = requested.pinned_pair_address
-         )
-     ) AS window_stats ON TRUE
-     ORDER BY requested.token_address ASC`,
-    [unique, pinnedPairs, safeWindowMinutes]
-  );
-
-  return rows.map((row) => buildHighCapDumpDetection(row, options));
-}
-
 async function computeBidZoneCandidates(options = {}) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_BID_ZONE_HOURS, 48));
   const minMcap = Math.max(DEFAULT_BID_ZONE_MIN_MCAP, Number(options.minMcap) || DEFAULT_BID_ZONE_MIN_MCAP);
@@ -2306,10 +2022,8 @@ module.exports = {
   deleteByAddresses,
   deleteChunkByAddress,
   listCurrentAndBaselineByAddresses,
-  listHighCapDumpDetectionsByAddresses,
   listBidZoneCandidates,
   __private: {
-    buildHighCapDumpDetection,
     computeAgeHours,
     computeQuantile,
     countTouchClusters,
@@ -2324,7 +2038,6 @@ module.exports = {
     getMcapRankingBonus,
     getMinimumWindowHoursForMcap,
     getStaleLowCapPenalty,
-    isHighCapDumpPairWindowConsistent,
     getLiquidityRankingAdjustment,
     passesDeadLiquidityFilter,
     normalizeCandidateScanLimit,

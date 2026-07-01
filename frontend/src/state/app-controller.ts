@@ -234,10 +234,8 @@ const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const BACKEND_ALERT_FEED_LIMIT = 50;
 const BOOTSTRAP_ALERT_FEED_MODE = 'unseen';
 const ADMIN_TOKEN_REVIEW_EXCLUDED_SUFFIXES = ['pump', 'bonk', 'bags'];
-const HIGH_CAP_DUMP_RULE_KEY = 'high-cap-dump-5m';
 const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
 const BACKEND_OWNED_ALERT_RULE_KEYS = [
-  HIGH_CAP_DUMP_RULE_KEY,
   GMGN_CLAIM_SIGNAL_RULE_KEY,
   'monitored-vol',
   'gmgn-vol-1m',
@@ -3411,8 +3409,6 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-hvnc-enabled');
       case 'meteora-surge':
         return isConfigEnabled('alert-meteora-surge-enabled');
-      case 'high-cap-dump-5m':
-        return isConfigEnabled('alert-high-cap-dump-enabled');
       case 'gmgn-claim-signal':
         return isGmgnClaimAlertEnabled(entry || {});
       default:
@@ -5111,21 +5107,7 @@ export function createAppController(): AppController {
     return Number.isFinite(createdAt) ? createdAt : Date.now();
   }
 
-  function buildBackendHighCapDumpAlertMarketFields(event: DashboardAlertEvent) {
-    return {
-      volume1h: toOptionalNumber(event.volume1h),
-      volume6h: toOptionalNumber(event.volume6h),
-      volume24h: toOptionalNumber(event.volume24h),
-      prevMcap: toOptionalNumber(event.baselineMcap),
-      mcap: toOptionalNumber(event.currentCloseMcap) ?? toOptionalNumber(event.mcap),
-      baselineMcap: toOptionalNumber(event.baselineMcap),
-      windowLowMcap: toOptionalNumber(event.windowLowMcap),
-      thresholdPct: toOptionalNumber(event.thresholdPct),
-      pct: toOptionalNumber(event.dumpPct) ?? 0,
-    };
-  }
-
-  function buildBackendHighCapDumpAlertMetaFields(event: DashboardAlertEvent, address: string) {
+  function buildBackendAlertMetaFields(event: DashboardAlertEvent, address: string) {
     return {
       pairAddress: toOptionalText(event.pairAddress),
       symbol: toOptionalText(event.symbol) || address.slice(0, 8),
@@ -5135,8 +5117,6 @@ export function createAppController(): AppController {
       twitterUrl: toOptionalText(event.twitterUrl),
       communityUrl: toOptionalText(event.communityUrl),
       tokenCreatedAt: toOptionalNumber(event.tokenCreatedAt),
-      baselineTs: toOptionalText(event.baselineTs),
-      currentTs: toOptionalText(event.currentTs),
     };
   }
 
@@ -5300,35 +5280,6 @@ export function createAppController(): AppController {
     return true;
   }
 
-  function buildBackendHighCapDumpAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
-    const address = String(event.address || '').trim();
-    if (!address) {
-      return null;
-    }
-
-    const kind = String(event.kind || event.ruleKey || '').trim().toLowerCase();
-    if (kind && kind !== 'high-cap-dump-5m') {
-      return null;
-    }
-
-    const eventId = Number(event.id);
-    if (!Number.isFinite(eventId) || eventId <= 0) {
-      return null;
-    }
-
-    return {
-      id: `backend-high-cap-dump-5m:${eventId}`,
-      kind: 'high-cap-dump-5m',
-      address,
-      mintAddress: address,
-      createdAt: getBackendAlertCreatedAt(event.triggeredAt),
-      label: 'MCAP 5M',
-      tickerPeers: event.tickerPeers ?? null,
-      ...buildBackendHighCapDumpAlertMetaFields(event, address),
-      ...buildBackendHighCapDumpAlertMarketFields(event),
-    };
-  }
-
   function buildBackendGmgnClaimSignalAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
     const address = String(event.address || '').trim();
     if (!address) {
@@ -5363,7 +5314,7 @@ export function createAppController(): AppController {
       totalFeeUsd: toOptionalNumber(event.totalFeeUsd),
       claimedAt: toOptionalText(event.claimedAt),
       tickerPeers: event.tickerPeers ?? null,
-      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      ...buildBackendAlertMetaFields(event, address),
     };
   }
 
@@ -5395,7 +5346,7 @@ export function createAppController(): AppController {
               : 'VOL'
       ),
       tickerPeers: event.tickerPeers ?? null,
-      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      ...buildBackendAlertMetaFields(event, address),
       volume1m: toOptionalNumber(event.volume1m),
       volume5m: toOptionalNumber(event.volume5m),
       volume1h: toOptionalNumber(event.volume1h),
@@ -5437,7 +5388,7 @@ export function createAppController(): AppController {
       createdAt: getBackendAlertCreatedAt(event.triggeredAt),
       label: toOptionalText(event.label) || `PCHANGE ${surgeWindow}`,
       tickerPeers: event.tickerPeers ?? null,
-      ...buildBackendHighCapDumpAlertMetaFields(event, address),
+      ...buildBackendAlertMetaFields(event, address),
       priceChange1h: toOptionalNumber(event.priceChange1h),
       priceChange6h: toOptionalNumber(event.priceChange6h),
       volume1h: toOptionalNumber(event.volume1h),
@@ -5456,8 +5407,6 @@ export function createAppController(): AppController {
     const kind = String(event.kind || event.ruleKey || '').trim().toLowerCase();
 
     switch (kind) {
-      case 'high-cap-dump-5m':
-        return buildBackendHighCapDumpAlertEntry(event);
       case 'gmgn-claim-signal':
         return buildBackendGmgnClaimSignalAlertEntry(event);
       case 'monitored-vol':
@@ -5510,9 +5459,10 @@ export function createAppController(): AppController {
 
   async function markDashboardAlertEventsSeen(token: string, events: DashboardAlertEvent[], ruleKey?: string | null) {
     const lastSeenEventId = getMaxBackendAlertEventId(events);
+    const cursorRuleKey = ruleKey || GMGN_CLAIM_SIGNAL_RULE_KEY;
     if (!lastSeenEventId) {
       recordAlertDebug('backend.mark-seen.skip-no-event-id', {
-        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        ruleKey: cursorRuleKey,
         events: summarizeDashboardAlertEventsDebug(events),
       });
       return;
@@ -5521,21 +5471,21 @@ export function createAppController(): AppController {
     try {
       flushAlertsPersist();
       recordAlertDebug('backend.mark-seen.start', {
-        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        ruleKey: cursorRuleKey,
         lastSeenEventId,
         events: summarizeDashboardAlertEventsDebug(events),
       });
       await updateDashboardAlertCursor({
-        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        ruleKey: cursorRuleKey,
         lastSeenEventId,
       }, token);
       recordAlertDebug('backend.mark-seen.complete', {
-        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        ruleKey: cursorRuleKey,
         lastSeenEventId,
       });
     } catch {
       recordAlertDebug('backend.mark-seen.error', {
-        ruleKey: ruleKey || HIGH_CAP_DUMP_RULE_KEY,
+        ruleKey: cursorRuleKey,
         lastSeenEventId,
       });
     }
@@ -6004,7 +5954,7 @@ export function createAppController(): AppController {
         continue;
       }
 
-      void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || HIGH_CAP_DUMP_RULE_KEY);
+      void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || GMGN_CLAIM_SIGNAL_RULE_KEY);
     }
 
     if (addedEvents > 0) {
@@ -7335,7 +7285,7 @@ export function createAppController(): AppController {
         });
         const added = syncBackendAlertEvents([payload]);
         if (added > 0) {
-          void markDashboardAlertEventsSeen(sessionToken, [payload], payload.ruleKey || payload.kind || HIGH_CAP_DUMP_RULE_KEY);
+          void markDashboardAlertEventsSeen(sessionToken, [payload], payload.ruleKey || payload.kind || GMGN_CLAIM_SIGNAL_RULE_KEY);
           if (hiddenForUiWork) {
             emit('alerts');
           } else {

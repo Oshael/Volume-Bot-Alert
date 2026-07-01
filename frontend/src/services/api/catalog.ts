@@ -243,12 +243,6 @@ export interface DashboardAlertEvent {
   ageBucket?: 'recent' | 'old-week' | null;
   meteoraCurrentTvl?: number | null;
   meteoraBaselineTvl24h?: number | null;
-  baselineTs?: string | null;
-  baselineMcap?: number | null;
-  windowLowMcap?: number | null;
-  currentTs?: string | null;
-  currentCloseMcap?: number | null;
-  dumpPct?: number | null;
   thresholdPct?: number | null;
   signalType?: number | null;
   claimSequence?: number | null;

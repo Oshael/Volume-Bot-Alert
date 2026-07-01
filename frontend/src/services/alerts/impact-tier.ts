@@ -6,10 +6,6 @@ const ALERT_ARRIVAL_WINDOW_MS = 1600;
 
 export type AlertImpactTier = 'normal' | 'critical' | 'mega';
 
-export function isHighCapDumpAlert(alert: AlertEntry) {
-  return alert.kind === 'high-cap-dump-5m';
-}
-
 export function isHvncAlert(alert: AlertEntry) {
   return alert.isHvnc === true || alert.kind === 'hvnc';
 }
@@ -33,7 +29,7 @@ export function getAlertImpactTier(alert: AlertEntry): AlertImpactTier {
     return 'critical';
   }
 
-  if (isHighCapDumpAlert(alert) || isHvncAlert(alert)) {
+  if (isHvncAlert(alert)) {
     return 'mega';
   }
 
@@ -46,10 +42,6 @@ export function getAlertImpactTier(alert: AlertEntry): AlertImpactTier {
 export function getAlertToneClass(alert: AlertEntry, now = Date.now()) {
   if (alert.kind === 'admin-token-review') {
     return 'admin-token-review';
-  }
-
-  if (isHighCapDumpAlert(alert)) {
-    return 'dump-alert';
   }
 
   if (alert.isOldSurge) {
@@ -85,10 +77,6 @@ function getAlertExclusiveClass(alert: AlertEntry) {
     return 'impact-special-admin-review';
   }
 
-  if (isHighCapDumpAlert(alert)) {
-    return 'impact-special-dump';
-  }
-
   if (isHvncAlert(alert)) {
     return 'impact-special-hvnc';
   }
@@ -120,10 +108,6 @@ function getAlertArrivalClass(alert: AlertEntry, now: number) {
   /*
   if (!isAlertInArrivalWindow(alert, now)) {
     return '';
-  }
-
-  if (isHighCapDumpAlert(alert)) {
-    return 'impact-enter impact-enter-dump';
   }
 
   if (isHvncAlert(alert)) {

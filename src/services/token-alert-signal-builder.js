@@ -249,7 +249,6 @@ function normalizeCoreFacts(input = {}, nowMs = Date.now()) {
     ),
     prevMcap: firstNumber(
       input.prevMcap,
-      input.baselineMcap,
       input.baseline_mcap,
     ),
     volume24h: firstNumber(

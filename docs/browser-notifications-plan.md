@@ -149,7 +149,6 @@ Notification format:
   - `HVNC: SYMBOL`
   - `OLD 1H surge: SYMBOL`
   - `METEORA 1H: SYMBOL`
-  - `HIGH CAP DUMP: SYMBOL`
 - body:
   - include percent, mcap, volume, and address fragment when available
 - tag:

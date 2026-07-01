@@ -1115,8 +1115,6 @@ Reasons:
     - `old-week-surge-1h`
     - `old-week-surge-6h`
     - `meteora-surge`
-  - backend-owned global-token alert:
-    - `high-cap-dump-5m`
 - the panel now also supports per-user animated card FX behind `card-effects-mode`
 - current implementation detail:
   - the visible row shell stays stable in the list
@@ -2057,7 +2055,6 @@ Files:
 - `frontend/src/ui/sections/alerts-section.ts`
 - `frontend/src/services/alerts/sound.ts`
 - `frontend/src/services/alerts/browser-notifications.ts`
-- `src/services/high-cap-dump-alert.js`
 - `src/services/backend-alert-feed.js`
 
 Main alert types:
@@ -2069,7 +2066,6 @@ Main alert types:
 - `old-week-surge-1h`
 - `old-week-surge-6h`
 - `meteora-surge`
-- `high-cap-dump-5m`
 - backend ownership today:
   - user-scoped backend matcher rules:
     - `monitored-vol`
@@ -2080,8 +2076,6 @@ Main alert types:
     - `old-week-surge-1h`
     - `old-week-surge-6h`
     - `meteora-surge`
-  - global-token backend rule:
-    - `high-cap-dump-5m`
 - the panel also supports local text search by symbol, name, or contract/address
 - the alerts search now uses the same compact-search behavior as the other lupa inputs and supports `Enter/Return` to blur/commit
 - alerts are restored from browser-local storage per account scope
@@ -2192,38 +2186,7 @@ Current visual contract:
 - frontend-local PumpFun alerts are disabled.
 - migrated PumpFun tokens can still trigger normal backend monitored alerts after they pass catalog-worker eligibility.
 
-### High Cap Dump 5M
-Ownership:
-- backend-owned
-
-Rule source:
-- `src/services/backend-alert-rules.js`
-
-Detection model:
-- strict baseline anchored `5m` back
-- evaluates the minimum `low_mcap` inside the trailing `5m` window
-- default gate requires `baseline_mcap >= 2_000_000`
-- default threshold is `50%` down from baseline
-- wick-style intrawindow dumps qualify; it does not require the token to close the full `5m` window at the low
-- pair consistency is now part of the gate:
-  - the detector tracks pair/pool identity through the window
-  - dumps are suppressed when the window shows pair churn instead of a consistent collapse on the same pair
-  - this was added to reduce false dump alerts caused by Dex returning a different pool for the same token
-- the dump rule now also keeps a rule-local pinned pair per token in `token_alert_rule_state.metadata`
-- pin acquisition or pin switch requires `15` consecutive live best-pair observations before the detector trusts the new pair
-- while pin acquisition or switching is in progress, dump alerts are intentionally suppressed for that token
-- if the live best pair diverges from the pinned pair while the old collapse leg is still triggered, the rule rearms immediately with reason `pair-switch`
-
-Rearm / dedupe:
-- first qualifying dump creates a persisted event
-- the same collapse does not keep generating new events every minute
-- rearm requires either:
-  - recovery to `85%` of the last baseline
-  - or `6h` since the last alert
-
 Persistence and delivery:
-- global event history lives in `token_alert_events`
-- current rule state lives in `token_alert_rule_state`
 - per-user per-rule seen/replay progress lives in `alert_delivery_cursors`
 - per-user emitted alert events live in `user_alert_events`
 - `user_alert_events` requires `dedupe_key` and enforces `UNIQUE (user_id, dedupe_key)` so the matcher can stay idempotent per user without relying on browser-local ambiguity
@@ -2240,8 +2203,6 @@ Persistence and delivery:
 
 Current user-config scope:
 - monitored `VOL/MCAP`, `HVNC`, split surge variants, and `Meteora` all expose backend-persisted user enable/threshold config
-- high-cap dump still exposes only on/off + sound control to the user
-- users cannot currently customize high-cap-dump threshold, baseline market-cap gate, window length, or rearm
 
 ### Alert evaluation timing
 Important current behavior:
@@ -2310,7 +2271,6 @@ Notification content:
   - `RECENT 1H surge: SYMBOL`
   - `OLD 6H surge: SYMBOL`
   - `METEORA 1H: SYMBOL`
-  - `HIGH CAP DUMP: SYMBOL`
 - body includes:
   - percent
   - MCAP transition when `prevMcap`/baseline exists
@@ -2355,7 +2315,6 @@ Current visual mapping:
 - `mega` alerts above `200%` use orange
 - `Recent Token Surge` uses green
 - `Old Token Surge` uses orange
-- `💥 Dump Alert!` uses an explicit red dump-alert treatment
 
 ## Top Config Menu
 
@@ -2380,7 +2339,6 @@ Current per-type toggle families:
 - `Old Token Surge 1H`
 - `Old Token Surge 6H`
 - `Meteora 1H`
-- `High Cap Dump 5M`
 
 Persistence:
 - these are backend-persisted user config values

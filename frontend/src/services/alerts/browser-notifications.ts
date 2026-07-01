@@ -20,7 +20,6 @@ const ALERT_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-mcap': 'alert-mcap-enabled',
   hvnc: 'alert-hvnc-enabled',
   'meteora-surge': 'alert-meteora-surge-enabled',
-  'high-cap-dump-5m': 'alert-high-cap-dump-enabled',
 };
 
 type AlertVolumeKey = 'volume1m' | 'volume5m' | 'volume1h' | 'volume6h' | 'volume24h';
@@ -30,7 +29,6 @@ const ALERT_VOLUME_KEYS: Partial<Record<Exclude<AlertEntry['kind'], 'old-surge'>
   'monitored-mcap': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   hvnc: ['volume24h', 'volume6h', 'volume1h', 'volume5m', 'volume1m'],
   'meteora-surge': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
-  'high-cap-dump-5m': ['volume5m', 'volume1m', 'volume1h'],
   'gmgn-claim-signal': ['volume5m', 'volume1m', 'volume1h'],
 };
 
@@ -168,7 +166,7 @@ function getAlertVolume(alert: AlertEntry) {
 function getNotificationMcapLine(alert: AlertEntry) {
   return formatMoneyTransition(
     'MCAP',
-    alert.kind === 'high-cap-dump-5m' ? alert.baselineMcap ?? alert.prevMcap : alert.prevMcap,
+    alert.prevMcap,
     alert.mcap,
   );
 }
@@ -207,8 +205,6 @@ function getNotificationTitle(alert: AlertEntry) {
       return `${getOldSurgePrefix(alert)}: ${symbol}`;
     case 'meteora-surge':
       return `METEORA 1H: ${symbol}`;
-    case 'high-cap-dump-5m':
-      return `HIGH CAP DUMP: ${symbol}`;
     case 'gmgn-claim-signal':
       return `${alert.signalType === 17 ? 'BAGS' : 'PUMP'} CLAIM #${alert.claimSequence || '?'}: ${symbol}`;
     case 'admin-token-review':

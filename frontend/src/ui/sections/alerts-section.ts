@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import type { AdminTokenReviewAlertEntry, AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
-import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHighCapDumpAlert, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
+import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
@@ -629,7 +629,7 @@ function normalizeAlertFxEnteredAt(alert: AlertEntry, now: number) {
 }
 
 function getAlertFxTier(alert: AlertEntry): AlertFxTier {
-  if (isHighCapDumpAlert(alert) || isHvncAlert(alert) || alert.kind === 'meteora-surge' || alert.kind === 'gmgn-claim-signal' || alert.isOldSurge) {
+  if (isHvncAlert(alert) || alert.kind === 'meteora-surge' || alert.kind === 'gmgn-claim-signal' || alert.isOldSurge) {
     return 'special';
   }
 
@@ -984,8 +984,6 @@ function getAlertRowRenderKey(
     prevVolume5m: alert.prevVolume5m,
     prevMcap: alert.prevMcap,
     mcap: alert.mcap,
-    baselineMcap: alert.baselineMcap,
-    windowLowMcap: alert.windowLowMcap,
     tokenCreatedAt: alert.tokenCreatedAt,
     imageUrl: alert.imageUrl,
     pairUrl: alert.pairUrl,
@@ -1330,8 +1328,6 @@ function getAlertAccentColor(toneClass: string) {
   switch (toneClass) {
     case 'critical':
       return 'var(--yellow)';
-    case 'dump-alert':
-      return 'var(--red)';
     case 'meteora-surge':
       return '#b06aff';
     case 'mega':
@@ -1381,11 +1377,6 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
     badge.append('Admin Review', document.createElement('br'), buildAlertBadgeSub(String(alert.reviewPriority || 'normal').toUpperCase(), 'manual queue'));
     return badge;
   }
-  if (isHighCapDumpAlert(alert)) {
-    badge.className = `alert-badge-v68 ${toneClass}`;
-    badge.append('💥 Dump Alert!', document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'MCAP 5M')));
-    return badge;
-  }
   if (alert.isOldSurge) {
     const surgeTitle = toneClass === 'recent-surge' ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
     badge.className = `alert-badge-v68 ${toneClass}`;
@@ -1430,11 +1421,6 @@ function buildXSearchUrl(symbol: string, address: string) {
 }
 
 function appendSpecialAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
-  if (isHighCapDumpAlert(alert)) {
-    appendHighCapDumpFlowLine(container, alert);
-    return true;
-  }
-
   if (alert.kind === 'gmgn-claim-signal') {
     container.append(
       buildMetricPair('FEE', formatClaimFee(alert) ?? '-', 'up'),
@@ -1491,11 +1477,6 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 }
 
 function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
-  if (isHighCapDumpAlert(alert)) {
-    appendHighCapDumpStatsLine(container, alert);
-    return;
-  }
-
   if (alert.kind === 'gmgn-claim-signal') {
     appendMetricRow(container, [
       buildMetricPair('SOURCE', alert.signalType === 17 ? 'BAGS' : 'PUMP', 'white'),
@@ -1748,42 +1729,6 @@ function buildStarButton(address: string, isStarred: boolean, disabled: boolean,
   button.title = title;
   button.textContent = isStarred ? '★' : '☆';
   return button;
-}
-
-function appendHighCapDumpFlowLine(container: HTMLElement, alert: AlertEntry) {
-  const baselineMcap = fmtMoney(alert.baselineMcap ?? alert.prevMcap ?? null);
-  const currentMcap = fmtMoney(alert.mcap);
-  const dropAmount = fmtMoney(getHighCapDumpDropAmount(alert));
-
-  container.append(buildFlowTransition('MCAP', baselineMcap, currentMcap, 'down'));
-  const gap = document.createElement('span');
-  gap.className = 'flow-gap';
-  container.append(gap);
-  container.append(buildMetricPair('DROP', dropAmount, 'down'));
-}
-
-function appendHighCapDumpStatsLine(container: HTMLElement, alert: AlertEntry) {
-  appendMetricRow(container, [
-    buildMetricPair('CURRENT', fmtMoney(alert.mcap), 'down current-mcap'),
-    buildMetricPair('DROP', fmtMoney(getHighCapDumpDropAmount(alert)), 'down'),
-    buildMetricPair('LOW 5M', fmtMoney(alert.windowLowMcap ?? null), 'down'),
-    buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
-  ]);
-  appendMetricRow(container, [
-    buildMetricPair('1H', fmtMoney(alert.volume1h), 'white'),
-    buildMetricPair('6H', fmtMoney(alert.volume6h), 'white'),
-    buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
-  ]);
-}
-
-function getHighCapDumpDropAmount(alert: AlertEntry) {
-  const baseline = Number(alert.baselineMcap ?? alert.prevMcap);
-  const windowLow = Number(alert.windowLowMcap);
-  if (!Number.isFinite(baseline) || !Number.isFinite(windowLow)) {
-    return null;
-  }
-
-  return Math.max(0, baseline - windowLow);
 }
 
 function getAlertAgeToneClass(alert: AlertEntry) {

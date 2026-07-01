@@ -35,12 +35,6 @@ const ALERT_PATTERNS: Partial<Record<AlertEntry['kind'], ToneStep[]>> = {
     { frequency: 523.25, durationMs: 130 },
     { frequency: 659.25, durationMs: 180 },
   ],
-  'high-cap-dump-5m': [
-    { frequency: 659.25, durationMs: 70 },
-    { frequency: 523.25, durationMs: 70 },
-    { frequency: 392, durationMs: 100 },
-    { frequency: 261.63, durationMs: 180 },
-  ],
   'gmgn-claim-signal': [
     { frequency: 1567.98, durationMs: 110 },
     { frequency: 2349.32, durationMs: 120 },
@@ -65,7 +59,6 @@ const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-mcap': 'sound-mcap-enabled',
   hvnc: 'sound-hvnc-enabled',
   'meteora-surge': 'sound-meteora-surge-enabled',
-  'high-cap-dump-5m': 'sound-high-cap-dump-enabled',
   'gmgn-claim-signal': 'sound-gmgn-claim-signal-enabled',
 };
 

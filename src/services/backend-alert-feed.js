@@ -1,4 +1,3 @@
-const tokenAlertEvent = require('../models/token-alert-event');
 const userAlertEvent = require('../models/user-alert-event');
 const gmgnClaimAlertEvent = require('../models/gmgn-claim-alert-event');
 const alertDeliveryCursor = require('../models/alert-delivery-cursor');
@@ -153,24 +152,6 @@ async function loadDashboardCatalogRowsWithMeteora(addresses = []) {
       tvl: toNumberOrNull(meteoraByAddress.get(row.address)?.currentTvl),
     },
   }));
-}
-
-function buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule) {
-  return {
-    id: toNumberOrNull(eventRow?.id),
-    kind: rule.kind,
-    ruleKey: rule.ruleKey,
-    mcap: toNumberOrNull(eventRow?.currentCloseMcap) ?? toNumberOrNull(catalogRow?.last_mcap),
-    baselineTs: toTextOrNull(eventRow?.baselineTs),
-    baselineMcap: toNumberOrNull(eventRow?.baselineMcap),
-    windowLowMcap: toNumberOrNull(eventRow?.windowLowMcap),
-    currentTs: toTextOrNull(eventRow?.currentTs),
-    currentCloseMcap: toNumberOrNull(eventRow?.currentCloseMcap),
-    dumpPct: toNumberOrNull(eventRow?.dumpPct),
-    thresholdPct: toNumberOrNull(eventRow?.thresholdPct),
-    tickerPeers: normalizeTickerPeersSnapshot(eventRow?.metadata?.tickerPeers),
-    triggeredAt: toTextOrNull(eventRow?.triggeredAt),
-  };
 }
 
 function normalizeObjectPayload(value) {
@@ -415,11 +396,7 @@ function buildDashboardAlertEventItem(eventRow, catalogRow, rule) {
     };
   }
 
-  return {
-    address: toTextOrNull(eventRow?.tokenAddress) || '',
-    ...buildDashboardAlertEventCatalogPayload(catalogRow),
-    ...buildDashboardAlertEventDetectionPayload(eventRow, catalogRow, rule),
-  };
+  return null;
 }
 
 async function buildDashboardAlertEventFromEvent(eventRow) {
@@ -439,7 +416,7 @@ function resolveAlertEventModel(rule) {
   if (rule.scope === 'global-signal') {
     return gmgnClaimAlertEvent;
   }
-  return tokenAlertEvent;
+  return null;
 }
 
 async function listDashboardAlertEvents(options = {}) {
@@ -548,7 +525,6 @@ module.exports = {
   updateDashboardAlertCursor,
   __private: {
     buildDashboardAlertEventCatalogPayload,
-    buildDashboardAlertEventDetectionPayload,
     buildDashboardGmgnClaimSignalPayload,
     buildDashboardUserAlertIdentityPayload,
     buildDashboardUserAlertMetricPayload,

@@ -1,11 +1,9 @@
 const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
-const tokenAlertRuleState = require('../models/token-alert-rule-state');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const dexscreener = require('./dexscreener');
 const gmgnClient = require('./gmgn-client');
-const highCapDumpAlert = require('./high-cap-dump-alert');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
 const {
@@ -107,10 +105,6 @@ let status = {
   totalEligible: 0,
   totalIneligible: 0,
   totalErrors: 0,
-  lastHighCapDumpEvaluated: 0,
-  lastHighCapDumpEmitted: 0,
-  lastHighCapDumpRearmed: 0,
-  lastHighCapDumpSuppressed: 0,
   lastYoungExtremeChurnAlertSuppressed: 0,
   lastYoungExtremeChurnAutoBlocked: 0,
   totalYoungExtremeChurnAlertSuppressed: 0,
@@ -1681,82 +1675,6 @@ async function evaluateTokenWithData(token, data) {
   return updatedToken;
 }
 
-function createEmptyHighCapDumpAlertSummary() {
-  return {
-    evaluated: 0,
-    emitted: 0,
-    rearmed: 0,
-    suppressed: 0,
-    errors: 0,
-  };
-}
-
-function readPinnedPairAddressFromState(state) {
-  const value = state?.metadata?.pinnedPairAddress;
-  const normalized = String(value || '').trim();
-  return normalized || null;
-}
-
-async function processHighCapDumpAlertsForAddresses(addresses, options = {}) {
-  const uniqueAddresses = Array.from(
-    new Set(
-      (Array.isArray(addresses) ? addresses : [])
-        .map((item) => String(item || '').trim())
-        .filter(Boolean)
-    )
-  );
-
-  if (!uniqueAddresses.length) {
-    return createEmptyHighCapDumpAlertSummary();
-  }
-
-  const now = options.now || new Date();
-  const states = await Promise.all(
-    uniqueAddresses.map(async (tokenAddress) => ([
-      tokenAddress,
-      await tokenAlertRuleState.getState(highCapDumpAlert.HIGH_CAP_DUMP_RULE_KEY, tokenAddress),
-    ]))
-  );
-  const pinnedPairByAddress = Object.fromEntries(
-    states.map(([tokenAddress, state]) => [tokenAddress, readPinnedPairAddressFromState(state)])
-  );
-  const detections = await tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses(uniqueAddresses, {
-    referenceTs: now,
-    pinnedPairByAddress,
-  });
-  const summary = createEmptyHighCapDumpAlertSummary();
-  summary.evaluated = detections.length;
-
-  for (let index = 0; index < detections.length; index += CONCURRENCY) {
-    const batch = detections.slice(index, index + CONCURRENCY);
-    const results = await Promise.all(batch.map(async (detection) => {
-      try {
-        return await highCapDumpAlert.evaluateDetection(detection, { now });
-      } catch (err) {
-        console.error(`[CatalogWorker] Failed to evaluate high-cap dump alert for ${detection?.tokenAddress || 'unknown'}:`, err.message);
-        return { action: 'error' };
-      }
-    }));
-
-    for (const result of results) {
-      if (result?.emitted) {
-        summary.emitted += 1;
-      }
-      if (result?.rearmed) {
-        summary.rearmed += 1;
-      }
-      if (result?.action === 'suppressed') {
-        summary.suppressed += 1;
-      }
-      if (result?.action === 'error') {
-        summary.errors += 1;
-      }
-    }
-  }
-
-  return summary;
-}
-
 function getDexPriorityHint(token) {
   const marketCap = Number(token?.last_mcap || 0);
   const priority = String(token?.monitor_priority || '').trim().toLowerCase();
@@ -1846,10 +1764,6 @@ async function runOnce() {
   status.lastMaxOverdueMsByPriority = dueSummary.maxOverdueMsByPriority || emptyPriorityCounts();
   status.lastDexBatchCount = Math.ceil(due.length / DEX_BATCH_LIMIT);
   status.lastProcessBatchCount = 0;
-  status.lastHighCapDumpEvaluated = 0;
-  status.lastHighCapDumpEmitted = 0;
-  status.lastHighCapDumpRearmed = 0;
-  status.lastHighCapDumpSuppressed = 0;
   status.lastYoungExtremeChurnAlertSuppressed = 0;
   status.lastYoungExtremeChurnAutoBlocked = 0;
   status.totalProcessed += due.length;
@@ -1887,14 +1801,6 @@ async function runOnce() {
       }));
     }
 
-    const alertSummary = await processHighCapDumpAlertsForAddresses(
-      fetchBatch.map((token) => token.address),
-      { now: new Date() }
-    );
-    status.lastHighCapDumpEvaluated += alertSummary.evaluated;
-    status.lastHighCapDumpEmitted += alertSummary.emitted;
-    status.lastHighCapDumpRearmed += alertSummary.rearmed;
-    status.lastHighCapDumpSuppressed += alertSummary.suppressed;
   }
 
   const cycleFinishedAt = Date.now();
@@ -1990,8 +1896,6 @@ module.exports = {
     isTokenAllowedByThrottle,
     normalizeDelayMs,
     prioritizeTokensForThrottle,
-    processHighCapDumpAlertsForAddresses,
-    readPinnedPairAddressFromState,
     evaluateTokenWithData,
   },
 };

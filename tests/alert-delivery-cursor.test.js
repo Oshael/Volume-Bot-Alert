@@ -14,7 +14,7 @@ describe('alert delivery cursor model', () => {
       return {
         rows: [{
           user_id: 7,
-          rule_key: 'high-cap-dump-5m',
+          rule_key: 'monitored-vol',
           last_seen_event_id: 19,
           last_acked_event_id: 17,
           updated_at: '2026-04-05T18:10:00.000Z',
@@ -23,8 +23,8 @@ describe('alert delivery cursor model', () => {
     };
 
     try {
-      const cursor = await alertDeliveryCursor.getCursor(7, 'high-cap-dump-5m');
-      assert.deepEqual(capturedParams, [7, 'high-cap-dump-5m']);
+      const cursor = await alertDeliveryCursor.getCursor(7, 'monitored-vol');
+      assert.deepEqual(capturedParams, [7, 'monitored-vol']);
       assert.equal(cursor.userId, 7);
       assert.equal(cursor.lastSeenEventId, 19);
       assert.equal(cursor.lastAckedEventId, 17);
@@ -42,7 +42,7 @@ describe('alert delivery cursor model', () => {
       return {
         rows: [{
           user_id: 7,
-          rule_key: 'high-cap-dump-5m',
+          rule_key: 'monitored-vol',
           last_seen_event_id: 25,
           last_acked_event_id: 25,
           updated_at: '2026-04-05T18:12:00.000Z',
@@ -53,11 +53,11 @@ describe('alert delivery cursor model', () => {
     try {
       const cursor = await alertDeliveryCursor.upsertCursor({
         userId: 7,
-        ruleKey: 'high-cap-dump-5m',
+        ruleKey: 'monitored-vol',
         lastAckedEventId: 25,
       });
 
-      assert.deepEqual(capturedParams, [7, 'high-cap-dump-5m', 25, 25]);
+      assert.deepEqual(capturedParams, [7, 'monitored-vol', 25, 25]);
       assert.equal(cursor.lastSeenEventId, 25);
       assert.equal(cursor.lastAckedEventId, 25);
     } finally {

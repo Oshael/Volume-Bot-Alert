@@ -8959,11 +8959,6 @@ TEMP_LEGACY_BAR_TITLE {
   background: rgba(255, 204, 0, 0.05);
 }
 
-.alert-row.dump-alert {
-  border-color: var(--red);
-  background: rgba(255, 60, 95, 0.08);
-}
-
 .alert-row.mega {
   border-color: #ff6b00;
   background: rgba(255, 107, 0, 0.08);
@@ -11942,10 +11937,6 @@ TEMP_LEGACY_BAR_TITLE {
   color: var(--yellow);
 }
 
-.alert-pct-v68.dump-alert {
-  color: var(--red);
-}
-
 .alert-pct-v68.recent-surge {
   color: var(--green);
 }
@@ -11970,10 +11961,6 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-badge-v68.recent-surge {
   color: var(--green);
-}
-
-.alert-badge-v68.dump-alert {
-  color: var(--red);
 }
 
 .alert-badge-v68.meteora-surge {
@@ -12020,10 +12007,6 @@ TEMP_LEGACY_BAR_TITLE {
 
 .alert-badge-v68.gmgn-claim-bags .alert-badge-sub {
   color: #e5ffd8;
-}
-
-.alert-badge-v68.dump-alert .alert-badge-sub {
-  color: #ff9aaa;
 }
 
 .alert-flow-v68,

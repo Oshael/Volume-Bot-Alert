@@ -239,9 +239,7 @@ Alerts:
 - `src/services/backend-alert-rules.js`
 - `src/services/backend-alert-feed.js`
 - `src/services/backend-alert-publisher.js`
-- `src/services/high-cap-dump-alert.js`
 - `src/services/user-alert-matcher.js`
-- `src/models/token-alert-event.js`
 - `src/models/user-alert-event.js`
 
 Frontend orchestration:

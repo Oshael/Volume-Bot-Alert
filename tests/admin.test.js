@@ -100,7 +100,6 @@ describe('Admin panel auth and management', () => {
   let adminUserId;
   let userToken;
   let userId;
-  let tokenMarketBucket1m;
   let tokenCatalog;
   let tokenRiskCandidateSelector;
   let tokenRiskEnrichment;
@@ -120,7 +119,6 @@ describe('Admin panel auth and management', () => {
     process.env.APP_BASE_URL = 'http://localhost:5173';
     process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
 
-    tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
     tokenCatalog = require('../src/models/token-catalog');
     tokenRiskCandidateSelector = require('../src/services/token-risk-candidate-selector');
     tokenRiskEnrichment = require('../src/models/token-risk-enrichment');
@@ -207,15 +205,6 @@ describe('Admin panel auth and management', () => {
 
     it('GET /api/admin/invites -> 403', async () => {
       const res = await request('GET', '/api/admin/invites', { token: userToken });
-      assert.equal(res.status, 403);
-    });
-
-    it('GET /api/admin/high-cap-dump-candidates -> 403', async () => {
-      const res = await request(
-        'GET',
-        '/api/admin/high-cap-dump-candidates?addresses=So11111111111111111111111111111111111111112',
-        { token: userToken }
-      );
       assert.equal(res.status, 403);
     });
 
@@ -311,99 +300,6 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.gmgn);
       assert.equal(typeof res.body.gmgn.riskLookupCache.entries, 'number');
       assert.equal(typeof res.body.gmgn.riskLookupCache.hits, 'number');
-    });
-  });
-
-  describe('Admin High Cap Dump Inspection', () => {
-    it('validates that addresses are required', async () => {
-      const res = await request('GET', '/api/admin/high-cap-dump-candidates', { token: adminToken });
-      assert.equal(res.status, 400);
-      assert.equal(res.body.error, 'addresses query parameter is required');
-    });
-
-    it('returns admin inspection results from the dump detector', async () => {
-      const originalDetector = tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses;
-      let capturedAddresses = null;
-      let capturedOptions = null;
-
-      tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = async (addresses, options) => {
-        capturedAddresses = addresses;
-        capturedOptions = options;
-        return [
-          {
-            tokenAddress: 'So11111111111111111111111111111111111111112',
-            baselineTs: '2026-04-05T12:00:00.000Z',
-            baselinePairAddress: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
-            baselineMcap: 8000000,
-            currentTs: '2026-04-05T12:05:00.000Z',
-            currentPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
-            currentCloseMcap: 4200000,
-            windowLowBucketTs: '2026-04-05T12:03:00.000Z',
-            windowLowPairAddress: '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m',
-            windowLowMcap: 3200000,
-            bucketCount: 5,
-            windowPairCount: 2,
-            pairChangedInWindow: true,
-            latestBucketAgeMs: 20000,
-            dumpPct: -60,
-            passesHighCapGate: true,
-            passesCoverageGate: true,
-            passesFreshnessGate: true,
-            passesThreshold: true,
-            passesPairConsistencyGate: false,
-          },
-          {
-            tokenAddress: '7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6',
-            baselineTs: '2026-04-05T12:00:00.000Z',
-            baselineMcap: 3500000,
-            currentTs: '2026-04-05T12:05:00.000Z',
-            currentCloseMcap: 2200000,
-            windowLowMcap: 1500000,
-            bucketCount: 5,
-            latestBucketAgeMs: 10000,
-            dumpPct: -57.14,
-            passesHighCapGate: false,
-            passesCoverageGate: true,
-            passesFreshnessGate: true,
-            passesThreshold: true,
-            passesPairConsistencyGate: true,
-          },
-        ];
-      };
-
-      try {
-        const res = await request(
-          'GET',
-          '/api/admin/high-cap-dump-candidates?addresses=So11111111111111111111111111111111111111112,7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6&thresholdPct=55&minBucketCount=5&maxLatestBucketAgeMs=120000',
-          { token: adminToken }
-        );
-
-        assert.equal(res.status, 200);
-        assert.deepEqual(capturedAddresses, [
-          'So11111111111111111111111111111111111111112',
-          '7vfCXTUXx5Wc4YbM33v7Jmd7M6m8Qjz6mkTHx5f8GzE6',
-        ]);
-        assert.deepEqual(capturedOptions, {
-          windowMinutes: undefined,
-          thresholdPct: 55,
-          minBaselineMcap: undefined,
-          maxLatestBucketAgeMs: 120000,
-          minBucketCount: 5,
-        });
-        assert.equal(res.body.count, 2);
-        assert.equal(res.body.qualifyingCount, 0);
-        assert.equal(res.body.options.thresholdPct, 55);
-        assert.equal(res.body.options.minBaselineMcap, 2000000);
-        assert.equal(res.body.options.minBucketCount, 5);
-        assert.equal(res.body.detections[0].passesAllGates, false);
-        assert.equal(res.body.detections[0].pairChangedInWindow, true);
-        assert.equal(res.body.detections[0].passesPairConsistencyGate, false);
-        assert.equal(res.body.detections[0].windowPairCount, 2);
-        assert.equal(res.body.detections[0].currentPairAddress, '4Yx3iT9W3YfAqQKpH5uVh6hNnZx4oLrR8j9t4Qw2fN3m');
-        assert.equal(res.body.detections[1].passesAllGates, false);
-      } finally {
-        tokenMarketBucket1m.listHighCapDumpDetectionsByAddresses = originalDetector;
-      }
     });
   });
 

@@ -14,7 +14,7 @@ describe('backend alert publisher', () => {
 
     backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
       id: event.id,
-      kind: 'high-cap-dump-5m',
+      kind: 'gmgn-claim-signal',
       ruleKey: event.ruleKey,
       address: event.tokenAddress,
     });
@@ -27,15 +27,15 @@ describe('backend alert publisher', () => {
     try {
       const result = await backendAlertPublisher.publishEvent({
         id: 11,
-        ruleKey: 'high-cap-dump-5m',
+        ruleKey: 'gmgn-claim-signal',
         tokenAddress: 'So11111111111111111111111111111111111111112',
       });
 
       assert.equal(result.delivered, true);
       assert.deepEqual(result.payload, {
         id: 11,
-        kind: 'high-cap-dump-5m',
-        ruleKey: 'high-cap-dump-5m',
+        kind: 'gmgn-claim-signal',
+        ruleKey: 'gmgn-claim-signal',
         address: 'So11111111111111111111111111111111111111112',
       });
       assert.deepEqual(emittedPayloads, [result.payload]);
@@ -88,7 +88,7 @@ describe('backend alert publisher', () => {
     try {
       const result = await backendAlertPublisher.publishEventSafe({
         id: 12,
-        ruleKey: 'high-cap-dump-5m',
+        ruleKey: 'gmgn-claim-signal',
         tokenAddress: 'So11111111111111111111111111111111111111112',
       });
 
