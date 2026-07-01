@@ -7,6 +7,10 @@ const tokenCatalog = require('../models/token-catalog');
 const adminBlockedToken = require('../models/admin-blocked-token');
 const tokenRiskReview = require('../models/token-risk-review');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const {
+  MAX_SPARKLINE_GRANULARITY_MINUTES,
+  isSparklineGranularityMinutes,
+} = require('../utils/market-bucket-granularities');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const tokenMarketBidZoneRun = require('../models/token-market-bid-zone-run');
 const tokenMeteoraState = require('../models/token-meteora-state');
@@ -122,10 +126,13 @@ function parseSparklineBatchRequest(body = {}) {
   const granularityMinutes = parseOptionalIntegerBodyField(
     body.granularityMinutes,
     'granularityMinutes',
-    { min: 1, max: 60 }
+    { min: 1, max: MAX_SPARKLINE_GRANULARITY_MINUTES }
   );
   if (!granularityMinutes.ok) {
     return granularityMinutes;
+  }
+  if (granularityMinutes.value != null && !isSparklineGranularityMinutes(granularityMinutes.value)) {
+    return { ok: false, error: 'granularityMinutes must be one of 1, 5, 15, 30, 60, 240, 1440' };
   }
 
   const allowOneMinuteFallback = parseOptionalBooleanBodyField(
@@ -160,11 +167,34 @@ function parseExpandedSparklineRequest(body = {}) {
     return points;
   }
 
+  const granularityMinutes = parseOptionalIntegerBodyField(
+    body.granularityMinutes,
+    'granularityMinutes',
+    { min: 1, max: MAX_SPARKLINE_GRANULARITY_MINUTES }
+  );
+  if (!granularityMinutes.ok) {
+    return granularityMinutes;
+  }
+  if (granularityMinutes.value != null && !isSparklineGranularityMinutes(granularityMinutes.value)) {
+    return { ok: false, error: 'granularityMinutes must be one of 1, 5, 15, 30, 60, 240, 1440' };
+  }
+
+  const allowOneMinuteFallback = parseOptionalBooleanBodyField(
+    body.allowOneMinuteFallback,
+    false,
+    'allowOneMinuteFallback'
+  );
+  if (!allowOneMinuteFallback.ok) {
+    return allowOneMinuteFallback;
+  }
+
   return {
     ok: true,
     value: {
       address,
       points: points.value || 720,
+      granularityMinutes: granularityMinutes.value,
+      allowOneMinuteFallback: allowOneMinuteFallback.value,
     },
   };
 }
@@ -351,12 +381,17 @@ router.post('/sparklines/expanded', catalogReadLimiter, async (req, res) => {
   try {
     const item = await tokenMarketBucket1m.listExpandedSparklineByAddress(
       parsed.value.address,
-      { points: parsed.value.points }
+      {
+        points: parsed.value.points,
+        granularityMinutes: parsed.value.granularityMinutes,
+        allowOneMinuteFallback: parsed.value.allowOneMinuteFallback,
+      }
     );
 
     res.json({
       generatedAt: new Date().toISOString(),
       points: parsed.value.points,
+      granularityMinutes: item?.granularityMinutes ?? parsed.value.granularityMinutes ?? null,
       count: item ? 1 : 0,
       item,
     });

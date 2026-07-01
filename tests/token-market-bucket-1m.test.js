@@ -24,10 +24,16 @@ describe('token market 1m bucket helpers', () => {
     const fiveMinute = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 5);
     const fifteenMinute = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 15);
     const thirtyMinute = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 30);
+    const hourly = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 60);
+    const fourHourly = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T05:18:59.999Z', 240);
+    const daily = tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T23:59:59.999Z', 1440);
 
     assert.equal(fiveMinute.toISOString(), '2026-03-24T04:15:00.000Z');
     assert.equal(fifteenMinute.toISOString(), '2026-03-24T04:15:00.000Z');
     assert.equal(thirtyMinute.toISOString(), '2026-03-24T04:00:00.000Z');
+    assert.equal(hourly.toISOString(), '2026-03-24T04:00:00.000Z');
+    assert.equal(fourHourly.toISOString(), '2026-03-24T04:00:00.000Z');
+    assert.equal(daily.toISOString(), '2026-03-24T00:00:00.000Z');
     assert.throws(
       () => tokenMarketBucket1m.__private.getAggregateBucketDate('2026-03-24T04:18:59.999Z', 10),
       /Invalid aggregate granularity/
@@ -424,7 +430,7 @@ describe('token market 1m bucket helpers', () => {
       ], {
         hours: 14 * 24,
         points: 336,
-        granularityMinutes: 30,
+        granularityMinutes: 240,
       });
 
       assert.equal(calls.length, 1);
@@ -432,10 +438,10 @@ describe('token market 1m bucket helpers', () => {
       assert.doesNotMatch(calls[0].sql, /spark_bucket_ts/);
       assert.deepEqual(calls[0].params, [[
         'So11111111111111111111111111111111111111112',
-      ], 14 * 24, 30]);
+      ], 14 * 24, 240]);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].bucketCount, 2);
-      assert.equal(rows[0].granularityMinutes, 30);
+      assert.equal(rows[0].granularityMinutes, 240);
       assert.equal(rows[0].effectiveHours, 336);
     } finally {
       db.query = originalQuery;
@@ -465,7 +471,15 @@ describe('token market 1m bucket helpers', () => {
             token_address: 'So11111111111111111111111111111111111111112',
             bucket_ts: '2026-04-01T00:00:00.000Z',
             pair_address: 'So11111111111111111111111111111111111111112',
+            open_mcap: '90',
+            high_mcap: '110',
+            low_mcap: '80',
             close_mcap: '100',
+            open_price: '0.000000001',
+            high_price: '0.000000003',
+            low_price: '0.000000001',
+            close_price: '0.000000002',
+            sample_count: 7,
           },
           {
             token_address: 'So11111111111111111111111111111111111111112',
@@ -480,7 +494,7 @@ describe('token market 1m bucket helpers', () => {
     try {
       const row = await tokenMarketBucket1m.listExpandedSparklineByAddress(
         'So11111111111111111111111111111111111111112',
-        { points: 720 }
+        { points: 720, granularityMinutes: 240 }
       );
 
       assert.equal(calls.length, 2);
@@ -492,18 +506,33 @@ describe('token market 1m bucket helpers', () => {
       ]);
       assert.match(calls[1].sql, /FROM token_market_buckets_agg/);
       assert.doesNotMatch(calls[1].sql, /NOW\(\) -/);
-      assert.deepEqual(calls[1].params, ['So11111111111111111111111111111111111111112', 30]);
+      assert.deepEqual(calls[1].params, ['So11111111111111111111111111111111111111112', 240]);
       assert.equal(row.address, 'So11111111111111111111111111111111111111112');
-      assert.equal(row.granularityMinutes, 30);
+      assert.equal(row.granularityMinutes, 240);
       assert.equal(row.firstBucketAt, '2026-04-01T00:00:00.000Z');
       assert.equal(row.latestBucketAt, '2026-04-20T00:00:00.000Z');
       assert.equal(row.series.length, 720);
+      assert.equal(row.candles.length, 2);
+      assert.deepEqual(row.candles[0], {
+        bucketTs: '2026-04-01T00:00:00.000Z',
+        pairAddress: 'So11111111111111111111111111111111111111112',
+        granularityMinutes: 240,
+        openMcap: 90,
+        highMcap: 110,
+        lowMcap: 80,
+        closeMcap: 100,
+        openPrice: 0.000000001,
+        highPrice: 0.000000003,
+        lowPrice: 0.000000001,
+        closePrice: 0.000000002,
+        sampleCount: 7,
+      });
     } finally {
       db.query = originalQuery;
     }
   });
 
-  it('falls back to all available 1m buckets for expanded sparkline when aggregate coverage is missing', async () => {
+  it('falls back to all available 1m buckets for expanded sparkline when explicitly enabled', async () => {
     const originalQuery = db.query;
     const calls = [];
 
@@ -544,7 +573,7 @@ describe('token market 1m bucket helpers', () => {
     try {
       const row = await tokenMarketBucket1m.listExpandedSparklineByAddress(
         'So11111111111111111111111111111111111111112',
-        { points: 720 }
+        { points: 720, allowOneMinuteFallback: true }
       );
 
       assert.equal(calls.length, 3);
@@ -557,6 +586,43 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(row.firstBucketAt, '2026-04-01T00:00:00.000Z');
       assert.equal(row.latestBucketAt, '2026-04-20T00:00:00.000Z');
       assert.equal(row.series.length, 720);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('does not fall back to all available 1m buckets for expanded sparkline by default', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (calls.length === 1) {
+        return {
+          rows: [
+            {
+              first_bucket_at: '2026-04-01T00:00:00.000Z',
+              latest_bucket_at: '2026-04-20T00:00:00.000Z',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+
+    try {
+      const row = await tokenMarketBucket1m.listExpandedSparklineByAddress(
+        'So11111111111111111111111111111111111111112',
+        { points: 720 }
+      );
+
+      assert.equal(calls.length, 2);
+      assert.match(calls[1].sql, /FROM token_market_buckets_agg/);
+      assert.doesNotMatch(calls[1].sql, /FROM token_market_buckets_1m/);
+      assert.equal(row.address, 'So11111111111111111111111111111111111111112');
+      assert.equal(row.bucketCount, 0);
+      assert.deepEqual(row.candles, []);
+      assert.deepEqual(row.series, []);
     } finally {
       db.query = originalQuery;
     }

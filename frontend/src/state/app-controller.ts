@@ -6409,6 +6409,7 @@ export function createAppController(): AppController {
       generatedAt: toOptionalSparklineString(generatedAt),
       points: resolveSparklineCount(points, EXPANDED_SPARKLINE_POINT_COUNT),
       series,
+      candles: Array.isArray(item?.candles) ? item.candles : [],
       loading: false,
     } satisfies TokenSparklineEntry;
   }

@@ -201,6 +201,21 @@ export interface ManualTokenMeteoraEntry {
   change24h?: number | null;
 }
 
+export interface TokenSparklineCandleEntry {
+  bucketTs: string;
+  pairAddress?: string | null;
+  granularityMinutes: number;
+  openMcap: number | null;
+  highMcap: number | null;
+  lowMcap: number | null;
+  closeMcap: number | null;
+  openPrice: number | null;
+  highPrice: number | null;
+  lowPrice: number | null;
+  closePrice: number | null;
+  sampleCount: number;
+}
+
 export interface TokenSparklineEntry {
   address: string;
   pairAddress?: string | null;
@@ -214,6 +229,7 @@ export interface TokenSparklineEntry {
   hours?: number;
   points?: number;
   series: number[];
+  candles?: TokenSparklineCandleEntry[];
   loading?: boolean;
 }
 

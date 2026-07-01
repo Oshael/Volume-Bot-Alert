@@ -11,7 +11,7 @@ describe('backfill aggregate market buckets', () => {
     assert.equal(parsed.lookbackHours, 14 * 24);
     assert.equal(parsed.all, false);
     assert.equal(parsed.batchSize, 250);
-    assert.deepEqual(parsed.granularities, [5, 15, 30]);
+    assert.deepEqual(parsed.granularities, [5, 15, 30, 60, 240, 1440]);
   });
 
   it('supports day-based lookback, cursor resume, and selected granularities', () => {
@@ -23,13 +23,13 @@ describe('backfill aggregate market buckets', () => {
       '--afterAddress',
       'So11111111111111111111111111111111111111112',
       '--granularity',
-      '5,30',
+      '5,240',
     ]);
 
     assert.equal(parsed.lookbackHours, 72);
     assert.equal(parsed.batchSize, 25);
     assert.equal(parsed.afterAddress, 'So11111111111111111111111111111111111111112');
-    assert.deepEqual(parsed.granularities, [5, 30]);
+    assert.deepEqual(parsed.granularities, [5, 240]);
   });
 
   it('supports all-history mode', () => {
@@ -52,7 +52,7 @@ describe('backfill aggregate market buckets', () => {
       '--statementTimeoutMs',
       '30000',
       '--granularity',
-      '30',
+      '1440',
     ]);
 
     assert.equal(parsed.startDate.toISOString(), '2026-03-22T00:00:00.000Z');
@@ -60,7 +60,7 @@ describe('backfill aggregate market buckets', () => {
     assert.equal(parsed.windowHours, 24);
     assert.equal(parsed.sleepMs, 500);
     assert.equal(parsed.statementTimeoutMs, 30000);
-    assert.deepEqual(parsed.granularities, [30]);
+    assert.deepEqual(parsed.granularities, [1440]);
   });
 
   it('requires startDate and endDate together', () => {
@@ -99,8 +99,8 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 7);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_1m b/);
-      assert.match(capturedSql, /date_trunc\('hour', b\.bucket_ts\)/);
-      assert.match(capturedSql, /FLOOR\(EXTRACT\(MINUTE FROM b\.bucket_ts\) \/ \$2::numeric\)::int/);
+      assert.match(capturedSql, /to_timestamp\(/);
+      assert.match(capturedSql, /FLOOR\(EXTRACT\(EPOCH FROM b\.bucket_ts\) \/ \(\$2::int \* 60\)\) \* \(\$2::int \* 60\)/);
       assert.match(capturedSql, /ON CONFLICT \(token_address, granularity_minutes, bucket_ts\) DO UPDATE SET/);
       assert.deepEqual(capturedParams, [[
         'So11111111111111111111111111111111111111112',

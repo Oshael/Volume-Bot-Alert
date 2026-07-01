@@ -1,9 +1,10 @@
 const db = require('../models/db');
+const { AGGREGATE_GRANULARITY_MINUTES } = require('./market-bucket-granularities');
 
 const DEFAULT_LOOKBACK_HOURS = 14 * 24;
 const DEFAULT_BATCH_SIZE = 250;
 const DEFAULT_WINDOW_HOURS = 24;
-const SUPPORTED_GRANULARITIES = Object.freeze([5, 15, 30]);
+const SUPPORTED_GRANULARITIES = AGGREGATE_GRANULARITY_MINUTES;
 
 function parseBooleanFlag(value) {
   return value === true || value === 'true' || value === '1';
@@ -252,12 +253,8 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
     `WITH source_rows AS (
        SELECT
          b.token_address,
-         (
-           date_trunc('hour', b.bucket_ts)
-           + (
-             FLOOR(EXTRACT(MINUTE FROM b.bucket_ts) / $2::numeric)::int
-             * ($2::int * INTERVAL '1 minute')
-           )
+         to_timestamp(
+           FLOOR(EXTRACT(EPOCH FROM b.bucket_ts) / ($2::int * 60)) * ($2::int * 60)
          ) AS aggregate_bucket_ts,
          b.bucket_ts,
          b.pair_address,
@@ -363,12 +360,8 @@ async function backfillAggregateBucketsForWindow(granularityMinutes, windowStart
     `WITH source_rows AS (
        SELECT
          b.token_address,
-         (
-           date_trunc('hour', b.bucket_ts)
-           + (
-             FLOOR(EXTRACT(MINUTE FROM b.bucket_ts) / $1::numeric)::int
-             * ($1::int * INTERVAL '1 minute')
-           )
+         to_timestamp(
+           FLOOR(EXTRACT(EPOCH FROM b.bucket_ts) / ($1::int * 60)) * ($1::int * 60)
          ) AS aggregate_bucket_ts,
          b.bucket_ts,
          b.pair_address,

@@ -7,7 +7,7 @@ const db = require('../models/db');
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_market_buckets_agg (
      token_address VARCHAR(64) NOT NULL,
-     granularity_minutes INTEGER NOT NULL CHECK (granularity_minutes IN (5, 15, 30)),
+     granularity_minutes INTEGER NOT NULL CHECK (granularity_minutes IN (5, 15, 30, 60, 240, 1440)),
      bucket_ts TIMESTAMPTZ NOT NULL,
      pair_address VARCHAR(64),
      open_mcap NUMERIC(20, 2),

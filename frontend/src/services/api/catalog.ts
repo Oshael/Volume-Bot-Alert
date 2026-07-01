@@ -309,6 +309,22 @@ export interface TokenSparklineItem {
   firstBucketAt?: string | null;
   latestBucketAt?: string | null;
   series: number[];
+  candles?: TokenSparklineCandleItem[];
+}
+
+export interface TokenSparklineCandleItem {
+  bucketTs: string;
+  pairAddress?: string | null;
+  granularityMinutes: number;
+  openMcap: number | null;
+  highMcap: number | null;
+  lowMcap: number | null;
+  closeMcap: number | null;
+  openPrice: number | null;
+  highPrice: number | null;
+  lowPrice: number | null;
+  closePrice: number | null;
+  sampleCount: number;
 }
 
 export interface TokenSparklinesPayload {
@@ -323,8 +339,60 @@ export interface TokenSparklinesPayload {
 export interface ExpandedTokenSparklinePayload {
   generatedAt?: string | null;
   points?: number;
+  granularityMinutes?: number | null;
   count: number;
   item: TokenSparklineItem | null;
+}
+
+function toFiniteNumberOrNull(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toFiniteNumberOrZero(value: unknown) {
+  return toFiniteNumberOrNull(value) ?? 0;
+}
+
+function normalizeTokenSparklineSeries(series: unknown) {
+  if (!Array.isArray(series)) {
+    return [];
+  }
+
+  return series
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+}
+
+function normalizeTokenSparklineCandles(candles: unknown): TokenSparklineCandleItem[] {
+  if (!Array.isArray(candles)) {
+    return [];
+  }
+
+  const normalized: TokenSparklineCandleItem[] = [];
+  for (const item of candles) {
+    const candle = item as Record<string, unknown>;
+    const bucketTs = typeof candle.bucketTs === 'string' ? candle.bucketTs : '';
+    if (!bucketTs) {
+      continue;
+    }
+
+    normalized.push({
+      bucketTs,
+      pairAddress: typeof candle.pairAddress === 'string' ? candle.pairAddress : null,
+      granularityMinutes: toFiniteNumberOrZero(candle.granularityMinutes),
+      openMcap: toFiniteNumberOrNull(candle.openMcap),
+      highMcap: toFiniteNumberOrNull(candle.highMcap),
+      lowMcap: toFiniteNumberOrNull(candle.lowMcap),
+      closeMcap: toFiniteNumberOrNull(candle.closeMcap),
+      openPrice: toFiniteNumberOrNull(candle.openPrice),
+      highPrice: toFiniteNumberOrNull(candle.highPrice),
+      lowPrice: toFiniteNumberOrNull(candle.lowPrice),
+      closePrice: toFiniteNumberOrNull(candle.closePrice),
+      sampleCount: toFiniteNumberOrZero(candle.sampleCount),
+    });
+  }
+
+  return normalized;
 }
 
 export interface BidZoneCandidate {
@@ -553,28 +621,36 @@ export function fetchTokenSparklines(
       granularityMinutes: Number(item.granularityMinutes) || Number(response.granularityMinutes) || 30,
       firstBucketAt: item.firstBucketAt ?? null,
       latestBucketAt: item.latestBucketAt ?? null,
-      series: Array.isArray(item.series)
-        ? item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))
-        : [],
+      series: normalizeTokenSparklineSeries(item.series),
+      candles: normalizeTokenSparklineCandles(item.candles),
     })) : [],
   }));
 }
 
 export function fetchExpandedTokenSparkline(
   address: string,
-  options?: { points?: number },
+  options?: { points?: number; granularityMinutes?: number; allowOneMinuteFallback?: boolean },
   token?: string | null,
 ) {
+  const body: { address: string; points: number; granularityMinutes?: number; allowOneMinuteFallback?: boolean } = {
+    address,
+    points: options?.points ?? 720,
+  };
+  if (options?.granularityMinutes != null) {
+    body.granularityMinutes = options.granularityMinutes;
+  }
+  if (options?.allowOneMinuteFallback != null) {
+    body.allowOneMinuteFallback = options.allowOneMinuteFallback;
+  }
+
   return apiFetch<ExpandedTokenSparklinePayload>('/api/catalog/sparklines/expanded', {
     method: 'POST',
-    body: JSON.stringify({
-      address,
-      points: options?.points ?? 720,
-    }),
+    body: JSON.stringify(body),
     token,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
     points: Number(response.points) || 720,
+    granularityMinutes: Number(response.granularityMinutes) || null,
     count: Number(response.count) || 0,
     item: response.item ? {
       address: response.item.address,
@@ -585,9 +661,8 @@ export function fetchExpandedTokenSparkline(
       granularityMinutes: Number(response.item.granularityMinutes) || 30,
       firstBucketAt: response.item.firstBucketAt ?? null,
       latestBucketAt: response.item.latestBucketAt ?? null,
-      series: Array.isArray(response.item.series)
-        ? response.item.series.map((value) => Number(value)).filter((value) => Number.isFinite(value))
-        : [],
+      series: normalizeTokenSparklineSeries(response.item.series),
+      candles: normalizeTokenSparklineCandles(response.item.candles),
     } : null,
   }));
 }

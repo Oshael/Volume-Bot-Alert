@@ -851,6 +851,25 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage47-expanded-aggregated-market-bucket-granularities',
+    name: 'Stage 47 expanded aggregated market bucket granularities',
+    repair: 'node src/utils/db-init-stage47.js',
+    tables: [
+      {
+        table: 'token_market_buckets_agg',
+        columns: [
+          'granularity_minutes',
+        ],
+        constraints: [
+          {
+            name: 'token_market_buckets_agg_granularity_minutes_check',
+            includes: ['5', '15', '30', '60', '240', '1440'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage39-admin-block-evidence',
     name: 'Stage 39 admin block evidence snapshots',
     repair: 'node src/utils/db-init-stage39.js',
@@ -1089,13 +1108,51 @@ function summarizeList(items, limit = 12) {
   return [...items.slice(0, limit), `...and ${extra} more`];
 }
 
+function collectMismatchedDefaults(requirement, tableColumns, tableDefaults) {
+  const mismatchedDefaults = [];
+  for (const [columnName, expectedDefault] of Object.entries(requirement.defaults || {})) {
+    if (!tableColumns.has(columnName)) {
+      continue;
+    }
+    const actualDefault = tableDefaults.get(columnName) || null;
+    if (actualDefault !== expectedDefault) {
+      mismatchedDefaults.push(`${requirement.table}.${columnName}=${actualDefault || 'NULL'} (expected ${expectedDefault})`);
+    }
+  }
+  return mismatchedDefaults;
+}
+
+function collectMissingConstraints(requirement, tableConstraints) {
+  const missingConstraints = [];
+  for (const constraint of requirement.constraints || []) {
+    const constraintName = String(constraint.name || '').trim();
+    const actualDefinition = tableConstraints.get(constraintName);
+    if (!actualDefinition) {
+      missingConstraints.push(`${requirement.table}.${constraintName}`);
+      continue;
+    }
+
+    const missingParts = (constraint.includes || [])
+      .filter((part) => !actualDefinition.includes(String(part)));
+    if (missingParts.length > 0) {
+      missingConstraints.push(`${requirement.table}.${constraintName} missing ${missingParts.join('/')}`);
+    }
+  }
+  return missingConstraints;
+}
+
 async function loadSchemaSnapshot(tableNames) {
   const normalized = [...new Set(tableNames.map((table) => String(table || '').trim()).filter(Boolean))];
   if (normalized.length === 0) {
-    return { tables: new Set(), columnsByTable: new Map(), defaultsByTable: new Map() };
+    return {
+      tables: new Set(),
+      columnsByTable: new Map(),
+      constraintsByTable: new Map(),
+      defaultsByTable: new Map(),
+    };
   }
 
-  const [tableResult, columnResult] = await Promise.all([
+  const [tableResult, columnResult, constraintResult] = await Promise.all([
     query(
       `SELECT table_name
        FROM information_schema.tables
@@ -1110,10 +1167,23 @@ async function loadSchemaSnapshot(tableNames) {
          AND table_name = ANY($1::text[])`,
       [normalized]
     ),
+    query(
+      `SELECT
+         rel.relname AS table_name,
+         con.conname AS constraint_name,
+         pg_get_constraintdef(con.oid) AS constraint_def
+       FROM pg_constraint con
+       INNER JOIN pg_class rel ON rel.oid = con.conrelid
+       INNER JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+       WHERE nsp.nspname = 'public'
+         AND rel.relname = ANY($1::text[])`,
+      [normalized]
+    ),
   ]);
 
   const tables = new Set(tableResult.rows.map((row) => row.table_name));
   const columnsByTable = new Map();
+  const constraintsByTable = new Map();
   const defaultsByTable = new Map();
   for (const row of columnResult.rows) {
     if (!columnsByTable.has(row.table_name)) {
@@ -1127,7 +1197,14 @@ async function loadSchemaSnapshot(tableNames) {
     defaultsByTable.get(row.table_name).set(row.column_name, row.column_default || null);
   }
 
-  return { tables, columnsByTable, defaultsByTable };
+  for (const row of constraintResult.rows) {
+    if (!constraintsByTable.has(row.table_name)) {
+      constraintsByTable.set(row.table_name, new Map());
+    }
+    constraintsByTable.get(row.table_name).set(row.constraint_name, row.constraint_def || '');
+  }
+
+  return { tables, columnsByTable, constraintsByTable, defaultsByTable };
 }
 
 function buildSchemaReport(groups, snapshot) {
@@ -1136,6 +1213,7 @@ function buildSchemaReport(groups, snapshot) {
   for (const group of groups) {
     const missingTables = [];
     const missingColumns = [];
+    const missingConstraints = [];
     const mismatchedDefaults = [];
 
     for (const requirement of group.tables) {
@@ -1152,26 +1230,26 @@ function buildSchemaReport(groups, snapshot) {
         }
       }
 
-      const expectedDefaults = requirement.defaults || {};
       const tableDefaults = snapshot.defaultsByTable.get(tableName) || new Map();
-      for (const [columnName, expectedDefault] of Object.entries(expectedDefaults)) {
-        if (!tableColumns.has(columnName)) {
-          continue;
-        }
-        const actualDefault = tableDefaults.get(columnName) || null;
-        if (actualDefault !== expectedDefault) {
-          mismatchedDefaults.push(`${tableName}.${columnName}=${actualDefault || 'NULL'} (expected ${expectedDefault})`);
-        }
-      }
+      mismatchedDefaults.push(...collectMismatchedDefaults(requirement, tableColumns, tableDefaults));
+
+      const tableConstraints = snapshot.constraintsByTable.get(tableName) || new Map();
+      missingConstraints.push(...collectMissingConstraints(requirement, tableConstraints));
     }
 
-    if (missingTables.length > 0 || missingColumns.length > 0 || mismatchedDefaults.length > 0) {
+    if (
+      missingTables.length > 0
+      || missingColumns.length > 0
+      || missingConstraints.length > 0
+      || mismatchedDefaults.length > 0
+    ) {
       issues.push({
         key: group.key,
         name: group.name,
         repair: group.repair,
         missingTables,
         missingColumns,
+        missingConstraints,
         mismatchedDefaults,
       });
     }
@@ -1199,6 +1277,9 @@ function createRuntimeSchemaError(report, profile = 'runtime') {
     }
     if (issue.missingColumns.length > 0) {
       lines.push(`  Missing columns: ${summarizeList(issue.missingColumns).join(', ')}`);
+    }
+    if (issue.missingConstraints.length > 0) {
+      lines.push(`  Missing constraints: ${summarizeList(issue.missingConstraints).join(', ')}`);
     }
     if (issue.mismatchedDefaults.length > 0) {
       lines.push(`  Mismatched defaults: ${summarizeList(issue.mismatchedDefaults).join(', ')}`);

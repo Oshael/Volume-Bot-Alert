@@ -1,6 +1,11 @@
 const db = require('./db');
 const { isValidAddress } = require('./user-token');
 const config = require('../../config');
+const {
+  ON_WRITE_AGGREGATE_GRANULARITY_MINUTES,
+  isAggregateGranularityMinutes,
+  normalizeSparklineGranularityMinutes,
+} = require('../utils/market-bucket-granularities');
 
 const DEFAULT_ANALYTICS_MIN_MCAP = 90_000;
 const DEFAULT_ANALYTICS_HOURS = 48;
@@ -26,11 +31,9 @@ const DEFAULT_BID_ZONE_MAX_CLOSE_DRIFT_PCT = 30;
 const DEFAULT_SPARKLINE_HOURS = 14 * 24;
 const DEFAULT_SPARKLINE_POINTS = 336;
 const DEFAULT_EXPANDED_SPARKLINE_POINTS = 720;
-const DEFAULT_SPARKLINE_GRANULARITY_MINUTES = 30;
 const DEFAULT_SPARKLINE_AGGREGATE_MIN_EFFECTIVE_HOURS_RATIO = 0.5;
 const DEFAULT_SPARKLINE_CACHE_TTL_MS = 30_000;
 const DEFAULT_SPARKLINE_CACHE_MAX_ENTRIES = 500;
-const AGGREGATE_GRANULARITY_MINUTES = Object.freeze([5, 15, 30]);
 const sparklineCache = new Map();
 
 function toNumberOrNull(value) {
@@ -50,13 +53,13 @@ function getBucketDate(value = new Date()) {
 
 function getAggregateBucketDate(value = new Date(), granularityMinutes = 5) {
   const granularity = Number(granularityMinutes);
-  if (!AGGREGATE_GRANULARITY_MINUTES.includes(granularity)) {
+  if (!isAggregateGranularityMinutes(granularity)) {
     throw new Error('Invalid aggregate granularity');
   }
 
   const date = getBucketDate(value);
-  date.setUTCMinutes(Math.floor(date.getUTCMinutes() / granularity) * granularity, 0, 0);
-  return date;
+  const bucketMs = granularity * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / bucketMs) * bucketMs);
 }
 
 function buildAggregateBucketParams(address, bucketTsValues) {
@@ -67,7 +70,7 @@ function buildAggregateBucketParams(address, bucketTsValues) {
     .map((value) => getBucketDate(value));
 
   for (const sourceBucketDate of sourceBucketDates) {
-    for (const granularity of AGGREGATE_GRANULARITY_MINUTES) {
+    for (const granularity of ON_WRITE_AGGREGATE_GRANULARITY_MINUTES) {
       const aggregateBucketDate = getAggregateBucketDate(sourceBucketDate, granularity);
       const key = `${granularity}:${aggregateBucketDate.toISOString()}`;
       if (seen.has(key)) {
@@ -101,6 +104,8 @@ function getExpandedSparklineCacheKey(address, options) {
     expanded: true,
     address,
     points: options.points,
+    granularityMinutes: options.granularityMinutes,
+    allowOneMinuteFallback: options.allowOneMinuteFallback === true,
   });
 }
 
@@ -109,10 +114,14 @@ function cloneSparklineResult(row) {
     return row;
   }
 
-  return {
+  const cloned = {
     ...row,
     series: Array.isArray(row.series) ? [...row.series] : row.series,
   };
+  if (Array.isArray(row.candles)) {
+    cloned.candles = row.candles.map((item) => ({ ...item }));
+  }
+  return cloned;
 }
 
 function cloneSparklineResults(rows) {
@@ -207,6 +216,60 @@ function invalidateSparklineCacheForAddresses(addresses) {
 
 function clearSparklineCache() {
   sparklineCache.clear();
+}
+
+function markSparklineCacheAddresses(cacheKey, addresses) {
+  if (!cacheKey) {
+    return;
+  }
+  const entry = sparklineCache.get(cacheKey);
+  if (entry) {
+    entry.addresses = Array.isArray(addresses) ? [...addresses] : [addresses];
+  }
+}
+
+function buildEmptyExpandedSparklineResult(address, granularityMinutes = 1) {
+  return {
+    address,
+    pairAddress: null,
+    bucketCount: 0,
+    coverageRatio: 0,
+    effectiveHours: 0,
+    granularityMinutes,
+    firstBucketAt: null,
+    latestBucketAt: null,
+    candles: [],
+    series: [],
+  };
+}
+
+function getRequestedExpandedGranularityMinutes(options = {}) {
+  return options.granularityMinutes == null
+    ? null
+    : normalizeSparklineGranularityMinutes(options.granularityMinutes);
+}
+
+function getExpandedSparklineSpanHours(bounds) {
+  const firstTs = toTimestampMs(bounds?.first_bucket_at);
+  const latestTs = toTimestampMs(bounds?.latest_bucket_at);
+  return firstTs != null && latestTs != null && latestTs > firstTs
+    ? Math.max(1, Math.ceil((latestTs - firstTs) / 3600000))
+    : 1;
+}
+
+function readCachedSparklineResult(cacheKey) {
+  if (!cacheKey) {
+    return null;
+  }
+  return getSparklineCacheEntry(cacheKey)?.result || null;
+}
+
+function writeExpandedSparklineCache(cacheKey, result, options, address) {
+  if (!cacheKey) {
+    return;
+  }
+  setSparklineCacheEntry(cacheKey, result, { expanded: true, cacheHit: false }, { ttlMs: options.cacheTtlMs });
+  markSparklineCacheAddresses(cacheKey, [address]);
 }
 
 function shouldRefreshAggregatesForUpsertedBucket(row) {
@@ -972,12 +1035,8 @@ function buildSparklineSeriesFromBuckets(buckets, options = {}) {
   };
 }
 
-function normalizeSparklineGranularityMinutes(value) {
-  return Math.max(1, Math.min(Number(value) || DEFAULT_SPARKLINE_GRANULARITY_MINUTES, 60));
-}
-
 function shouldUseAggregateSparklines(granularityMinutes) {
-  return AGGREGATE_GRANULARITY_MINUTES.includes(Number(granularityMinutes));
+  return isAggregateGranularityMinutes(granularityMinutes);
 }
 
 function resolveExpandedSparklineGranularityMinutes(firstBucketAt, latestBucketAt) {
@@ -1260,45 +1319,33 @@ async function listExpandedSparklineByAddress(address, options = {}) {
   }
 
   const safePoints = Math.max(120, Math.min(Number(options.points) || DEFAULT_EXPANDED_SPARKLINE_POINTS, 1000));
+  const requestedGranularityMinutes = getRequestedExpandedGranularityMinutes(options);
+  const allowOneMinuteFallback = options.allowOneMinuteFallback === true;
   const cacheEnabled = options.disableCache !== true && Number(options.cacheTtlMs ?? DEFAULT_SPARKLINE_CACHE_TTL_MS) > 0;
-  const cacheKey = cacheEnabled ? getExpandedSparklineCacheKey(normalizedAddress, { points: safePoints }) : null;
-  if (cacheKey) {
-    const cached = getSparklineCacheEntry(cacheKey);
-    if (cached) {
-      return cached.result;
-    }
+  const cacheKey = cacheEnabled ? getExpandedSparklineCacheKey(normalizedAddress, {
+    points: safePoints,
+    granularityMinutes: requestedGranularityMinutes,
+    allowOneMinuteFallback,
+  }) : null;
+  const cachedResult = readCachedSparklineResult(cacheKey);
+  if (cachedResult) {
+    return cachedResult;
   }
 
   const bounds = await getExpandedSparklineBounds(normalizedAddress);
   if (!bounds) {
-    const emptyResult = {
-      address: normalizedAddress,
-      pairAddress: null,
-      bucketCount: 0,
-      coverageRatio: 0,
-      effectiveHours: 0,
-      granularityMinutes: 1,
-      firstBucketAt: null,
-      latestBucketAt: null,
-      series: [],
-    };
-    if (cacheKey) {
-      setSparklineCacheEntry(cacheKey, emptyResult, { expanded: true, cacheHit: false }, { ttlMs: options.cacheTtlMs });
-      const entry = sparklineCache.get(cacheKey);
-      if (entry) {
-        entry.addresses = [normalizedAddress];
-      }
-    }
+    const emptyResult = buildEmptyExpandedSparklineResult(normalizedAddress, requestedGranularityMinutes || 1);
+    writeExpandedSparklineCache(cacheKey, emptyResult, options, normalizedAddress);
     return emptyResult;
   }
 
-  const granularityMinutes = resolveExpandedSparklineGranularityMinutes(bounds.first_bucket_at, bounds.latest_bucket_at);
-  const firstTs = toTimestampMs(bounds.first_bucket_at);
-  const latestTs = toTimestampMs(bounds.latest_bucket_at);
-  const spanHours = firstTs != null && latestTs != null && latestTs > firstTs
-    ? Math.max(1, Math.ceil((latestTs - firstTs) / 3600000))
-    : 1;
-  const rows = await queryAllAvailableSparklineRows(normalizedAddress, granularityMinutes, { spanHours });
+  const granularityMinutes = requestedGranularityMinutes
+    || resolveExpandedSparklineGranularityMinutes(bounds.first_bucket_at, bounds.latest_bucket_at);
+  const spanHours = getExpandedSparklineSpanHours(bounds);
+  const rows = await queryAllAvailableSparklineRows(normalizedAddress, granularityMinutes, {
+    allowOneMinuteFallback,
+    spanHours,
+  });
   const [result] = buildSparklineResults([normalizedAddress], rows, {
     hours: spanHours,
     maxHours: spanHours,
@@ -1306,13 +1353,8 @@ async function listExpandedSparklineByAddress(address, options = {}) {
     maxPoints: 1000,
     granularityMinutes,
   });
-  if (cacheKey) {
-    setSparklineCacheEntry(cacheKey, result, { expanded: true, cacheHit: false }, { ttlMs: options.cacheTtlMs });
-    const entry = sparklineCache.get(cacheKey);
-    if (entry) {
-      entry.addresses = [normalizedAddress];
-    }
-  }
+  result.candles = buildExpandedCandlesFromRows(rows, granularityMinutes);
+  writeExpandedSparklineCache(cacheKey, result, options, normalizedAddress);
 
   return result;
 }
@@ -1368,6 +1410,10 @@ async function queryAllAvailableSparklineRows(address, granularityMinutes, optio
     return aggregateRows;
   }
 
+  if (options.allowOneMinuteFallback !== true) {
+    return aggregateRows;
+  }
+
   const fallbackRows = await queryAllAvailableOneMinuteSparklineRows(address, granularityMinutes);
   return fallbackRows.length > 0 ? fallbackRows : aggregateRows;
 }
@@ -1376,38 +1422,56 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
   const { rows } = await db.query(
     `WITH raw AS (
        SELECT
-         token_address,
-         pair_address,
-         bucket_ts,
-         close_mcap,
-         date_trunc('hour', bucket_ts)
-           + (
-             FLOOR(EXTRACT(MINUTE FROM bucket_ts) / $2::numeric)
-             * ($2::int * INTERVAL '1 minute')
-           ) AS spark_bucket_ts
+        token_address,
+        pair_address,
+        bucket_ts,
+        open_mcap,
+        high_mcap,
+        low_mcap,
+        close_mcap,
+        open_price,
+        high_price,
+        low_price,
+        close_price,
+        sample_count,
+        to_timestamp(
+          FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($2::int * 60)) * ($2::int * 60)
+        ) AS spark_bucket_ts
        FROM token_market_buckets_1m
        WHERE token_address = $1
          AND close_mcap IS NOT NULL
      ),
-     ranked AS (
+     aggregated AS (
        SELECT
          token_address,
          spark_bucket_ts,
-         pair_address,
-         close_mcap,
-         ROW_NUMBER() OVER (
-           PARTITION BY token_address, spark_bucket_ts
-           ORDER BY bucket_ts DESC
-         ) AS rn_close
+         (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
+         (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
+         MAX(high_mcap) AS high_mcap,
+         MIN(low_mcap) AS low_mcap,
+         (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
+         (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
+         MAX(high_price) AS high_price,
+         MIN(low_price) AS low_price,
+         (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
+         COALESCE(SUM(sample_count), 0)::int AS sample_count
        FROM raw
+       GROUP BY token_address, spark_bucket_ts
      )
      SELECT
        token_address,
        spark_bucket_ts AS bucket_ts,
        pair_address,
-       close_mcap
-     FROM ranked
-     WHERE rn_close = 1
+       open_mcap,
+       high_mcap,
+       low_mcap,
+       close_mcap,
+       open_price,
+       high_price,
+       low_price,
+       close_price,
+       sample_count
+     FROM aggregated
      ORDER BY bucket_ts ASC`,
     [address, granularityMinutes]
   );
@@ -1421,7 +1485,15 @@ async function queryAllAvailableAggregateSparklineRows(address, granularityMinut
        token_address,
        bucket_ts,
        pair_address,
-       close_mcap
+       open_mcap,
+       high_mcap,
+       low_mcap,
+       close_mcap,
+       open_price,
+       high_price,
+       low_price,
+       close_price,
+       sample_count
      FROM token_market_buckets_agg
      WHERE token_address = $1
        AND granularity_minutes = $2::int
@@ -1437,15 +1509,13 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
   const { rows } = await db.query(
     `WITH raw AS (
        SELECT
-         token_address,
-         pair_address,
-         bucket_ts,
-         close_mcap,
-         date_trunc('hour', bucket_ts)
-           + (
-             FLOOR(EXTRACT(MINUTE FROM bucket_ts) / $3::numeric)
-             * ($3::int * INTERVAL '1 minute')
-           ) AS spark_bucket_ts
+        token_address,
+        pair_address,
+        bucket_ts,
+        close_mcap,
+        to_timestamp(
+          FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($3::int * 60)) * ($3::int * 60)
+        ) AS spark_bucket_ts
        FROM token_market_buckets_1m
        WHERE token_address = ANY($1::varchar[])
          AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
@@ -1584,6 +1654,25 @@ function buildSparklineResults(addresses, rows, options) {
       series: sparkline.series,
     };
   });
+}
+
+function buildExpandedCandlesFromRows(rows, granularityMinutes) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      bucketTs: row.bucket_ts || null,
+      pairAddress: row.pair_address || null,
+      granularityMinutes,
+      openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
+      highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
+      lowMcap: row.low_mcap == null ? null : Number(row.low_mcap),
+      closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
+      openPrice: row.open_price == null ? null : Number(row.open_price),
+      highPrice: row.high_price == null ? null : Number(row.high_price),
+      lowPrice: row.low_price == null ? null : Number(row.low_price),
+      closePrice: row.close_price == null ? null : Number(row.close_price),
+      sampleCount: Number(row.sample_count) || 0,
+    }))
+    .filter((item) => item.bucketTs && (item.closeMcap != null || item.closePrice != null));
 }
 
 async function deleteByAddresses(addresses) {

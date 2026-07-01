@@ -675,6 +675,45 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('accepts expanded aggregate granularities for sparkline batches', async () => {
+    const originalListSparklineByAddresses = tokenMarketBucket1m.listSparklineByAddresses;
+    let capturedOptions = null;
+
+    tokenMarketBucket1m.listSparklineByAddresses = async (_addresses, options) => {
+      capturedOptions = options;
+      return [];
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          addresses: [VALID_ADDR],
+          granularityMinutes: 1440,
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(capturedOptions.granularityMinutes, 1440);
+      assert.equal(res.body.granularityMinutes, 1440);
+    } finally {
+      tokenMarketBucket1m.listSparklineByAddresses = originalListSparklineByAddresses;
+    }
+  });
+
+  it('rejects unsupported sparkline batch granularities', async () => {
+    const res = await request(app)
+      .post('/api/catalog/sparklines')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        addresses: [VALID_ADDR],
+        granularityMinutes: 10,
+      });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /granularityMinutes must be one of/);
+  });
+
   it('returns expanded sparkline for one requested address', async () => {
     const originalListExpandedSparklineByAddress = tokenMarketBucket1m.listExpandedSparklineByAddress;
     let capturedAddress = null;
@@ -689,9 +728,22 @@ describe('Catalog routes', () => {
         bucketCount: 1000,
         coverageRatio: 0.98,
         effectiveHours: 456,
-        granularityMinutes: 30,
+        granularityMinutes: 240,
         firstBucketAt: '2026-04-01T00:00:00.000Z',
         latestBucketAt: '2026-04-20T00:00:00.000Z',
+        candles: [{
+          bucketTs: '2026-04-20T00:00:00.000Z',
+          granularityMinutes: 240,
+          openMcap: 100,
+          highMcap: 150,
+          lowMcap: 90,
+          closeMcap: 120,
+          openPrice: null,
+          highPrice: null,
+          lowPrice: null,
+          closePrice: null,
+          sampleCount: 4,
+        }],
         series: [100, 140, 120],
       };
     };
@@ -703,16 +755,36 @@ describe('Catalog routes', () => {
         .send({
           address: VALID_ADDR,
           points: 720,
+          granularityMinutes: 240,
+          allowOneMinuteFallback: true,
         });
 
       assert.equal(res.status, 200);
       assert.equal(capturedAddress, VALID_ADDR);
-      assert.deepEqual(capturedOptions, { points: 720 });
+      assert.deepEqual(capturedOptions, {
+        points: 720,
+        granularityMinutes: 240,
+        allowOneMinuteFallback: true,
+      });
       assert.equal(res.body.points, 720);
+      assert.equal(res.body.granularityMinutes, 240);
       assert.equal(res.body.count, 1);
       assert.equal(res.body.item.address, VALID_ADDR);
       assert.equal(res.body.item.firstBucketAt, '2026-04-01T00:00:00.000Z');
-      assert.equal(res.body.item.granularityMinutes, 30);
+      assert.equal(res.body.item.granularityMinutes, 240);
+      assert.deepEqual(res.body.item.candles, [{
+        bucketTs: '2026-04-20T00:00:00.000Z',
+        granularityMinutes: 240,
+        openMcap: 100,
+        highMcap: 150,
+        lowMcap: 90,
+        closeMcap: 120,
+        openPrice: null,
+        highPrice: null,
+        lowPrice: null,
+        closePrice: null,
+        sampleCount: 4,
+      }]);
       assert.deepEqual(res.body.item.series, [100, 140, 120]);
     } finally {
       tokenMarketBucket1m.listExpandedSparklineByAddress = originalListExpandedSparklineByAddress;

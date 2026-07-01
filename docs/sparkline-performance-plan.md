@@ -1,5 +1,149 @@
 # Sparkline performance plan
 
+## Replanejamento - expanded chart com candles
+
+Objetivo atualizado:
+
+- suportar janelas/resolucoes de chart ampliado em `5m`, `15m`, `30m`, `1h`, `4h` e `24h`
+- manter candles a partir de `open/high/low/close` ja persistidos em `token_market_buckets_agg`
+- parar de depender de backfill/manual SQL periodico para manter agregados basicos em dia
+- separar claramente duas coisas diferentes:
+  - agregacao/rollup para leitura de chart
+  - retencao/limpeza para economizar espaco na VPS
+
+Estado real do codigo hoje:
+
+- `token_market_buckets_agg` existe, mas o schema de stage 38 limita `granularity_minutes IN (5, 15, 30)`
+- `AGGREGATE_GRANULARITY_MINUTES` em `src/models/token-market-bucket-1m.js` tambem esta limitado a `[5, 15, 30]`
+- `src/utils/backfill-market-buckets-agg.js` tambem so aceita `5,15,30`
+- o frontend agrupa sparklines em `[1, 5, 15, 30]`
+- o endpoint `/api/catalog/sparklines` aceita no maximo `60` minutos, entao `4h` e `24h` ainda seriam rejeitados
+- existe cleanup automatico de tokens arquivados/bloqueados, mas nao existe hoje um job automatico que faca:
+  - preencher agregados faltantes por janela
+  - compactar `1m` antigo em `1h/4h/24h`
+  - apagar `1m` antigo so depois de garantir cobertura agregada
+
+Conclusao sobre o "resumo manual" usado para economizar espaco:
+
+- se o resumo manual era rodar `npm run market-buckets-agg:backfill`, ele esta diretamente ligado aos agregados de chart
+- se o resumo manual tambem apagava dados antigos de `token_market_buckets_1m`, isso nao esta automatizado no codigo atual
+- o cleanup automatico atual economiza espaco apenas ao arquivar/bloquear tokens e apagar artefatos desses tokens; ele nao faz retencao temporal generica de buckets `1m`
+
+Diagnostico operacional de `5m/15m/30m` em 2026-07-01:
+
+- o ultimo backfill manual registrado em `token_market_buckets_agg` foi em `2026-05-26 00:18 UTC`
+- isso nao significa que os agregados estejam atrasados, porque o on-write continuou gerando `source = aggregate`
+- `latest_agg_bucket_ts` estava recente em `2026-07-01` para `5m/15m/30m`
+- a auditoria resumida por dia mostrou buckets completos do inicio ao fim do dia nas granularidades existentes
+- a queda de rows em `2026-06-17` e `2026-06-18` foi validada comparando `5m -> 15m` e `5m -> 30m`; ambos deram `missing = 0`
+- decisao: nao rodar backfill amplo para `5m/15m/30m` agora; so investigar/backfillar essas granularidades se houver sinal concreto de buraco
+
+Plano novo:
+
+1. Expandir granularidades suportadas.
+   - criar um stage novo para trocar o check constraint de `token_market_buckets_agg`
+   - nova lista: `5, 15, 30, 60, 240, 1440`
+   - atualizar `AGGREGATE_GRANULARITY_MINUTES`
+   - atualizar `SUPPORTED_GRANULARITIES` do backfill
+   - atualizar validacao de `/api/catalog/sparklines` para aceitar ate `1440`
+
+2. Centralizar configuracao de granularidades.
+   - evitar listas duplicadas em model, route, backfill e frontend
+   - expor helper backend para validacao de granularidade
+   - no frontend, trocar listas hardcoded `[1, 5, 15, 30]` por `1,5,15,30,60,240,1440`
+
+3. Atualizar escolha de resolucao no frontend.
+   - manter tokens muito novos em `1m` quando fizer sentido
+   - usar `5m` para janela curta
+   - usar `15m/30m` para varios dias
+   - usar `1h/4h/24h` para chart ampliado e historico longo
+   - o modal de expanded chart deve ter controles explicitos de resolucao: `5m`, `15m`, `30m`, `1h`, `4h`, `24h`
+
+4. Atualizar leitura de candles.
+   - `/api/catalog/sparklines/expanded` deve aceitar `granularityMinutes`
+   - para `5/15/30/60/240/1440`, ler `token_market_buckets_agg`
+   - retornar candles com:
+     - `openMcap`, `highMcap`, `lowMcap`, `closeMcap`
+     - `openPrice`, `highPrice`, `lowPrice`, `closePrice`
+     - `sampleCount`, `bucketTs`, `granularityMinutes`
+   - fallback para `1m` so deve existir quando for seguro e explicitamente permitido
+
+5. Automatizar manutencao dos agregados.
+   - criar worker/job pequeno para reparar janelas recentes continuamente
+   - exemplo inicial:
+     - a cada `5m`, reparar ultimas `2h` de `5m/15m/30m`
+     - a cada `30m`, reparar ultimas `24h` de `1h`
+     - a cada `4h`, reparar ultimos `7d` de `4h`
+     - a cada `24h`, reparar ultimos `60d+` de `24h`
+   - usar locks/estado em `worker_runtime_state` para nao duplicar trabalho entre processos
+   - rodar com batches pequenos e `statementTimeoutMs`
+
+6. Automatizar retencao de `1m`.
+   - regra operacional desejada:
+     - manter sempre `14d` completos de `token_market_buckets_1m`
+     - apagar automaticamente buckets `1m` a partir do 15o dia
+     - antes de apagar o 15o dia, garantir que os agregados/candles desse periodo ja foram preenchidos
+   - substituir o fluxo manual atual:
+     - hoje o operador roda resumo/backfill para popular `token_market_buckets_agg`
+     - hoje o operador apaga `1m` antigo para economizar espaco
+     - alvo: o bot fazer os dois passos automaticamente, em ordem segura
+   - o worker de retencao deve:
+     - selecionar uma janela antiga pequena, por exemplo `15d` ate `15d + 1h`
+     - reparar/backfill os agregados necessarios para essa janela
+     - validar cobertura minima em `5m/15m/30m/1h/4h/24h`
+     - deletar apenas os buckets `1m` daquela janela validada
+     - repetir em chunks pequenos ate manter somente os ultimos `14d`
+   - nunca rodar um `DELETE` temporal grande sem limite
+   - se a cobertura agregada falhar, nao apagar `1m` daquela janela
+   - registrar progresso em `worker_runtime_state` para continuar apos restart
+
+7. Backfill inicial.
+   - rodar `dryRun` por granularidade
+   - depois de expandir schema/codigo, fazer backfill inicial apenas das novas granularidades: `60`, `240`, `1440`
+   - nao reparar `5/15/30` por padrao; antes, validar com auditoria leve e so rodar em janelas com buraco comprovado
+   - usar `--windowHours` ou janela explicita para evitar travar a VPS
+   - adicionar resume via `worker_runtime_state` ou cursor persistido, nao depender apenas do terminal aberto
+
+8. Validacao.
+   - testes unitarios para:
+     - bucket floor de `60/240/1440`
+     - backfill aceitando novas granularidades
+     - leitura agregada sem fallback indevido
+     - candles OHLC corretos em janela agregada
+   - testes de rota para granularidade `240` e `1440`
+   - build frontend validando os controles do modal
+   - `npm run db:schema-check` validando novo check constraint/schema
+
+Status de implementacao local em 2026-07-01:
+
+- feito: schema stage 47 para aceitar `60/240/1440` em `token_market_buckets_agg`
+- feito: granularidades centralizadas no backend em `src/utils/market-bucket-granularities.js`
+- feito: backfill aceita `60/240/1440`
+- feito: leitura expanded aceita `granularityMinutes` e `allowOneMinuteFallback`
+- feito: leitura expanded retorna `candles` OHLC e preserva `series`
+- feito: fallback para `1m` no expanded agora e apenas explicito
+- feito: frontend normaliza e guarda `candles`, e o client HTTP ja aceita enviar `granularityMinutes`
+- pendente: controles visiveis de resolucao no modal expanded
+- pendente: backfill inicial das novas granularidades `60/240/1440` na VPS
+- pendente: worker de reparo/retencao
+
+Gate operacional antes de expor `1h/4h/24h` na UI:
+
+- aplicar `node src/utils/db-init-stage47.js` na VPS
+- rodar `npm run db:schema-check` na VPS
+- fazer backfill inicial somente das novas granularidades (`60`, `240`, `1440`) em janelas pequenas/resumiveis
+- validar cobertura antes de habilitar controles do modal para essas resolucoes
+- manter `5/15/30` sem backfill amplo enquanto auditorias leves nao mostrarem buracos reais
+
+Pontos importantes:
+
+- adicionar `1h/4h/24h` aumenta write amplification: cada novo bucket `1m` pode recalcular mais agregados.
+- para VPS pequena, talvez seja melhor o on-write manter `5/15/30` e o worker assinar `60/240/1440` em lote.
+- `5/15/30` nao devem ser backfillados em massa so porque o ultimo backfill manual e antigo; o on-write pode ter mantido a tabela em dia.
+- apagar `1m` antigo e gerar candles sao problemas relacionados, mas nao devem ser acoplados no mesmo primeiro deploy.
+- o rollout seguro e: schema + backfill + leitura + worker de reparo; retencao automatica de `1m` entra depois, mantendo sempre `14d` e apagando o 15o dia em chunks validados.
+- se `1m` for apagado antes de validar cobertura agregada, o chart ampliado pode ficar com buracos permanentes.
+
 ## Objetivo
 
 Reduzir o tempo de carregamento das sparklines no Radar, principalmente em `Recent Tokens` e `Old Tokens 1 Week+`, sem mudar o comportamento visual esperado da UI.
@@ -303,21 +447,77 @@ Implementacao aplicada:
 - script `npm run market-buckets-agg:backfill -- ...`
 - fonte: `token_market_buckets_1m`
 - destino: `token_market_buckets_agg`
-- default conservador: ultimos `14d`, granularidades `5,15,30`, batch de `250` addresses
+- default tecnico do script: ultimos `14d`, granularidades `5,15,30`, batch de `250` addresses
+- regra operacional: nao usar o default de `14d` automaticamente em producao; descobrir a janela real por auditoria antes de escrever
 - `--all` precisa ser explicito para historico completo
 - `--afterAddress <address>` permite continuar a partir do ultimo cursor logado
 - `--limitAddresses <n>` limita o total de addresses processados
 - `--batchSize <n>` ajusta o tamanho do lote
 - `--granularity 5,15,30` permite rodar granularidades especificas
+- `--startDate <timestamp> --endDate <timestamp> --windowHours <n>` permite rodar por janelas temporais pequenas
 - `--dryRun` conta e pagina candidates sem escrever agregados
 - `--resetRange` limpa agregados do escopo antes de regravar cada batch
 
-Exemplos:
+Auditoria resumida antes de qualquer backfill de `5/15/30`:
+
+```sql
+SELECT
+  date_trunc('day', bucket_ts) AS day,
+  granularity_minutes,
+  COUNT(*) AS agg_rows,
+  COUNT(DISTINCT token_address) AS tokens,
+  MIN(bucket_ts) AS first_bucket_ts,
+  MAX(bucket_ts) AS latest_bucket_ts,
+  COUNT(*) FILTER (WHERE source IN ('aggregate_backfill', 'aggregate_window_backfill')) AS backfill_rows,
+  COUNT(*) FILTER (WHERE source = 'aggregate') AS onwrite_rows
+FROM token_market_buckets_agg
+WHERE bucket_ts >= '2026-05-26T00:00:00Z'
+  AND bucket_ts < NOW()
+  AND granularity_minutes IN (5, 15, 30)
+GROUP BY 1, 2
+ORDER BY 1, 2;
+```
+
+Comparacao barata para confirmar se `15m` ou `30m` esta faltando em relacao a `5m` numa janela suspeita:
+
+```sql
+WITH expected AS (
+  SELECT DISTINCT
+    token_address,
+    date_trunc('hour', bucket_ts)
+      + FLOOR(EXTRACT(MINUTE FROM bucket_ts) / 15)::int * INTERVAL '15 minutes' AS bucket_ts
+  FROM token_market_buckets_agg
+  WHERE granularity_minutes = 5
+    AND bucket_ts >= '2026-06-17T00:00:00Z'
+    AND bucket_ts <  '2026-06-19T00:00:00Z'
+),
+actual AS (
+  SELECT token_address, bucket_ts
+  FROM token_market_buckets_agg
+  WHERE granularity_minutes = 15
+    AND bucket_ts >= '2026-06-17T00:00:00Z'
+    AND bucket_ts <  '2026-06-19T00:00:00Z'
+)
+SELECT
+  date_trunc('day', e.bucket_ts) AS day,
+  COUNT(*) AS expected_from_5m,
+  COUNT(a.*) AS actual_15m,
+  COUNT(*) - COUNT(a.*) AS missing_15m
+FROM expected e
+LEFT JOIN actual a
+  ON a.token_address = e.token_address
+ AND a.bucket_ts = e.bucket_ts
+GROUP BY 1
+ORDER BY 1;
+```
+
+Para validar `30m`, trocar divisor/intervalo para `30`, `granularity_minutes = 30` e aliases `actual_30m`/`missing_30m`.
+
+Exemplos operacionais:
 
 ```bash
-npm run market-buckets-agg:backfill -- --days 14 --batchSize 100 --dryRun
-npm run market-buckets-agg:backfill -- --days 14 --batchSize 100
-npm run market-buckets-agg:backfill -- --all --batchSize 100 --afterAddress So11111111111111111111111111111111111111112
+npm run market-buckets-agg:backfill -- --startDate "2026-06-17T00:00:00.000Z" --endDate "2026-06-19T00:00:00.000Z" --windowHours 1 --granularity 15,30 --statementTimeoutMs 30000 --dryRun
+npm run market-buckets-agg:backfill -- --startDate "2026-06-17T00:00:00.000Z" --endDate "2026-06-19T00:00:00.000Z" --windowHours 1 --granularity 15,30 --statementTimeoutMs 30000
 ```
 
 ## Bloco 7 - Leitura usando agregados
