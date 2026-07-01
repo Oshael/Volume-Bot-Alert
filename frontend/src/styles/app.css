@@ -9135,8 +9135,6 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .manual-token-inline-trigger {
-  min-width: 82px;
-  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -9147,11 +9145,45 @@ TEMP_LEGACY_BAR_TITLE {
   cursor: pointer;
 }
 
-.manual-folder-create-icon .compact-icon-glyph {
-  font-size: 17px;
-  font-weight: 400;
-  line-height: 1;
+.manual-folder-glyph {
+  position: relative;
+  display: inline-block;
+  width: 17px;
+  height: 13px;
+  color: currentColor;
+  font-size: 0;
+  line-height: 0;
+  overflow: visible;
   transform: none;
+}
+
+.manual-folder-glyph::before,
+.manual-folder-glyph::after {
+  content: "";
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+}
+
+.manual-folder-glyph::before {
+  left: 1px;
+  top: 0;
+  width: 7px;
+  height: 5px;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  background: rgba(0, 212, 255, 0.1);
+}
+
+.manual-folder-glyph::after {
+  left: 0;
+  top: 3px;
+  width: 17px;
+  height: 10px;
+  border-radius: 2px;
+  background:
+    linear-gradient(180deg, rgba(226, 250, 255, 0.28), rgba(0, 212, 255, 0.1));
+  box-shadow: inset 0 0 0 1px rgba(226, 250, 255, 0.08);
 }
 
 .manual-folder-modal {
@@ -9213,9 +9245,6 @@ TEMP_LEGACY_BAR_TITLE {
   border-radius: 6px;
   background: rgba(0, 212, 255, 0.08);
   color: #00d4ff;
-  font-size: 17px;
-  font-weight: 400;
-  line-height: 1;
 }
 
 .manual-folder-modal-head h3 {
