@@ -1,5 +1,8 @@
 const db = require('../models/db');
-const { buildNormalizedOhlcLowSql } = require('./market-bucket-ohlc');
+const {
+  buildNormalizedOhlcHighSql,
+  buildNormalizedOhlcLowSql,
+} = require('./market-bucket-ohlc');
 const { AGGREGATE_GRANULARITY_MINUTES } = require('./market-bucket-granularities');
 
 const DEFAULT_LOOKBACK_HOURS = 14 * 24;
@@ -301,7 +304,7 @@ function buildAggregateInsertSql(sourceRowsSql, sourceLabel) {
          aggregate_bucket_ts AS bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(high_mcap) AS high_mcap,
+         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
          MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,

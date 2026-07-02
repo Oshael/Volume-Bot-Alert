@@ -535,10 +535,11 @@ GMGN risk gates before catalog/upsert alert flow:
   - successful queued preliminary reviews create a process-local fresh-pass marker controlled by `GMGN_PRELIMINARY_REVIEW_TTL_MS`
   - GMGN refreshes preserve an already-earlier Dex recheck for GMGN-only rows, so repeated trending updates do not indefinitely postpone pair confirmation by `catalog-worker`
 - GMGN ingestion writes mcap/price snapshots to `token_market_buckets_1m` when mcap is available, in addition to volume snapshots in `token_market_volume_buckets_1m`; this lets GMGN/manual refreshes feed the same sparkline source used by Dex-driven catalog refreshes without bypassing the GMGN-only alert safeguard
-- Sparkline history uses `token_market_buckets_1m` as the base source and `token_market_buckets_agg` as the fast read source for `5m`, `15m`, and `30m` granularities.
+- Sparkline history uses `token_market_buckets_1m` as the base source and `token_market_buckets_agg` as the fast read source for `5m`, `15m`, `30m`, `1h`, `4h`, and `24h` granularities.
 - `token_market_buckets_agg` can be populated historically with `npm run market-buckets-agg:backfill -- --days 14 --batchSize <n>`.
-- Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows.
-- `MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED=false` disables the inline aggregate recompute after `1m` bucket writes. This is a pressure relief switch for small VPS incidents; aggregate sparklines can lag until a backfill/rebuild catches up.
+- Incremental aggregate writes happen only when a new `1m` bucket is created; repeated writes inside the same minute do not recompute aggregate windows. The inline path computes `5m`, `15m`, and `30m` from `1m`, then computes `1h`, `4h`, and `24h` from the refreshed `5m` buckets.
+- `MARKET_BUCKET_AGGREGATE_ON_WRITE_ENABLED=false` disables both inline aggregate recompute steps after `1m` bucket writes. This is a pressure relief switch for small VPS incidents; aggregate sparklines can lag until a backfill/rebuild catches up.
+- Expanded charts subscribe to authenticated Socket.io `market:bucket` updates for the open token. Bucket writes emit only after persistence/cache invalidation, and the frontend merges the live `1m` bucket into the currently visible candle granularity instead of forcing a Dex refresh per user.
 - GMGN bad-liquidity-status mcap-band auto-blocks automatic GMGN tokens before catalog/bucket/security work when:
   - the token is not manual, not already admin-blocked, and not Dex-confirmed; manual protection checks both `token_catalog.source = user-manual` and the persisted `user_tokens` table
   - the CA does not end with `pump`, `bags`, `brrr`, or `bonk`

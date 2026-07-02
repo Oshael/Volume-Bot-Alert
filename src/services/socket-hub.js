@@ -5,9 +5,12 @@
  * Events sent to clients:
  * - alert:event       - backend-owned alert event payload
  * - auth:revoked      - session revoked; client must logout
+ * - market:bucket     - live market bucket update for subscribed token charts
  *
  * Events received from clients:
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
+ * - market:subscribe  - { address } - subscribe socket to token market bucket updates
+ * - market:unsubscribe - { address } - unsubscribe socket from token market bucket updates
  */
 
 const { Server } = require('socket.io');
@@ -42,11 +45,23 @@ function getUserRoom(userId) {
     : null;
 }
 
+function getMarketRoom(address) {
+  const normalized = sanitizeMint(address);
+  return normalized ? `market:${normalized}` : null;
+}
+
 function sanitizeMint(rawMint) {
   if (typeof rawMint !== 'string') return null;
   const mint = rawMint.replace(/[^a-zA-Z0-9]/g, '');
   if (mint.length < 20 || mint.length > 64) return null;
   return mint;
+}
+
+function getSocketMarketRooms(socket) {
+  if (!socket.marketRooms) {
+    socket.marketRooms = new Set();
+  }
+  return socket.marketRooms;
 }
 
 function queueCatalogUpsert(token, source = 'unknown') {
@@ -375,10 +390,54 @@ function init(httpServer) {
       }
     });
 
+    socket.on('market:subscribe', (data) => {
+      if (!noteSocketAction(socket, 'market:subscribe')) return;
+      const room = getMarketRoom(data?.address);
+      if (!room) {
+        logSecurityEvent('socket_market_subscribe_rejected', {
+          socketId: socket.id,
+          userId: socket.user?.id,
+          sessionId: socket.sessionId,
+          ip: socket.clientIp,
+          error: 'invalid_address',
+        });
+        return;
+      }
+
+      const marketRooms = getSocketMarketRooms(socket);
+      const maxSubscriptions = Math.max(1, Number(config.security?.socket?.maxSubscriptionsPerSocket) || 350);
+      if (!marketRooms.has(room) && marketRooms.size >= maxSubscriptions) {
+        logSecurityEvent('socket_subscription_limit_reached', {
+          event: 'socket_subscription_limit_reached',
+          socketId: socket.id,
+          userId: socket.user?.id,
+          sessionId: socket.sessionId,
+          ip: socket.clientIp,
+          maxSubscriptions,
+        });
+        return;
+      }
+
+      marketRooms.add(room);
+      socket.join(room);
+    });
+
+    socket.on('market:unsubscribe', (data) => {
+      if (!noteSocketAction(socket, 'market:unsubscribe')) return;
+      const room = getMarketRoom(data?.address);
+      if (!room) {
+        return;
+      }
+
+      getSocketMarketRooms(socket).delete(room);
+      socket.leave(room);
+    });
+
     socket.on('disconnect', (reason) => {
       untrackSessionSocket(socket);
       userAlertProfileCache.clearLivePresence(socket.id);
       socketActionState.delete(socket.id);
+      socket.marketRooms?.clear?.();
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);
     });
   });
@@ -475,4 +534,32 @@ function emitBackendAlertEvent(payload, options = {}) {
   return true;
 }
 
-module.exports = { init, stop, getStatus, getIO, emitBackendAlertEvent, revokeSessionSockets, revokeUserSockets };
+function emitMarketBucketUpdate(payload) {
+  if (!io || !payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const room = getMarketRoom(payload.address);
+  if (!room) {
+    return false;
+  }
+
+  const sockets = io.sockets.adapter.rooms.get(room);
+  if (!sockets || sockets.size === 0) {
+    return false;
+  }
+
+  io.to(room).emit('market:bucket', payload);
+  return true;
+}
+
+module.exports = {
+  init,
+  stop,
+  getStatus,
+  getIO,
+  emitBackendAlertEvent,
+  emitMarketBucketUpdate,
+  revokeSessionSockets,
+  revokeUserSockets,
+};

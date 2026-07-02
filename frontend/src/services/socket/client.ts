@@ -1,13 +1,22 @@
 import { io, type Socket } from 'socket.io-client';
 import { resolveApiBase } from '../api/base';
-import type { DashboardAlertEvent } from '../api/catalog';
+import type { DashboardAlertEvent, TokenSparklineCandleItem } from '../api/catalog';
 
 let socket: Socket | null = null;
+const desiredMarketSubscriptions = new Set<string>();
 let desiredLivePresence: {
   workspace: 'live';
   mode: 'foreground' | 'hidden' | 'inactive';
   hiddenGraceMs?: number;
 } | null = null;
+
+export interface MarketBucketUpdateEvent {
+  address: string;
+  pairAddress?: string | null;
+  granularityMinutes: number;
+  generatedAt?: string | null;
+  candle: TokenSparklineCandleItem;
+}
 
 export function connectSocket(): Socket {
   if (socket) {
@@ -29,6 +38,7 @@ export function bindSocketLifecycle(options: {
   onRevoked: (reason: string) => void;
   onStatus?: (message: string) => void;
   onAlertEvent?: (payload: DashboardAlertEvent) => void;
+  onMarketBucket?: (payload: MarketBucketUpdateEvent) => void;
 }) {
   const current = connectSocket();
 
@@ -37,10 +47,14 @@ export function bindSocketLifecycle(options: {
   current.off('connect_error');
   current.off('auth:revoked');
   current.off('alert:event');
+  current.off('market:bucket');
 
   current.on('connect', () => {
     if (desiredLivePresence) {
       current.emit('live:presence', desiredLivePresence);
+    }
+    for (const address of desiredMarketSubscriptions) {
+      current.emit('market:subscribe', { address });
     }
     options.onStatus?.('Socket connected.');
   });
@@ -61,6 +75,10 @@ export function bindSocketLifecycle(options: {
     options.onAlertEvent?.(payload);
   });
 
+  current.on('market:bucket', (payload: MarketBucketUpdateEvent) => {
+    options.onMarketBucket?.(payload);
+  });
+
   return current;
 }
 
@@ -70,6 +88,28 @@ export function subscribePumpMint(_mint: string) {
 
 export function unsubscribePumpMint(_mint: string) {
   return false;
+}
+
+export function subscribeMarketChart(address: string) {
+  const normalized = String(address || '').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  desiredMarketSubscriptions.add(normalized);
+  connectSocket().emit('market:subscribe', { address: normalized });
+  return true;
+}
+
+export function unsubscribeMarketChart(address: string) {
+  const normalized = String(address || '').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  desiredMarketSubscriptions.delete(normalized);
+  socket?.emit('market:unsubscribe', { address: normalized });
+  return true;
 }
 
 export function getSocket(): Socket | null {
@@ -104,5 +144,6 @@ export function updateLivePresence(payload: {
 }
 
 export function disconnectSocket() {
+  desiredMarketSubscriptions.clear();
   socket?.disconnect();
 }

@@ -80,11 +80,14 @@ describe('token market 1m bucket helpers', () => {
       });
 
       assert.equal(row.token_address, 'So11111111111111111111111111111111111111112');
-      assert.equal(calls.length, 2);
+      assert.equal(calls.length, 3);
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
       assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
       assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
       assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
+      assert.match(calls[2].sql, /WITH requested\(target_granularity_minutes, bucket_start\)/);
+      assert.match(calls[2].sql, /INNER JOIN token_market_buckets_agg b/);
+      assert.match(calls[2].sql, /b\.granularity_minutes = \$2::int/);
       assert.deepEqual(calls[1].params.map((value) => (
         value instanceof Date ? value.toISOString() : value
       )), [
@@ -95,6 +98,18 @@ describe('token market 1m bucket helpers', () => {
         '2026-03-24T04:15:00.000Z',
         30,
         '2026-03-24T04:00:00.000Z',
+      ]);
+      assert.deepEqual(calls[2].params.map((value) => (
+        value instanceof Date ? value.toISOString() : value
+      )), [
+        'So11111111111111111111111111111111111111112',
+        5,
+        60,
+        '2026-03-24T04:00:00.000Z',
+        240,
+        '2026-03-24T04:00:00.000Z',
+        1440,
+        '2026-03-24T00:00:00.000Z',
       ]);
     } finally {
       db.query = originalQuery;
@@ -203,7 +218,7 @@ describe('token market 1m bucket helpers', () => {
         source: 'gmgn',
       });
 
-      assert.equal(calls.length, 2);
+      assert.equal(calls.length, 3);
       assert.deepEqual(calls[1].params.map((value) => (
         value instanceof Date ? value.toISOString() : value
       )), [
@@ -216,6 +231,18 @@ describe('token market 1m bucket helpers', () => {
         '2026-03-24T04:00:00.000Z',
         5,
         '2026-03-24T04:15:00.000Z',
+      ]);
+      assert.deepEqual(calls[2].params.map((value) => (
+        value instanceof Date ? value.toISOString() : value
+      )), [
+        'So11111111111111111111111111111111111111112',
+        5,
+        60,
+        '2026-03-24T04:00:00.000Z',
+        240,
+        '2026-03-24T04:00:00.000Z',
+        1440,
+        '2026-03-24T00:00:00.000Z',
       ]);
     } finally {
       db.query = originalQuery;
@@ -342,12 +369,12 @@ describe('token market 1m bucket helpers', () => {
     assert(sampled.includes(180));
   });
 
-  it('normalizes extreme lower-wick market cap outliers in expanded candles', () => {
+  it('normalizes extreme market cap wick outliers in expanded candles', () => {
     const candles = tokenMarketBucket1m.__private.buildExpandedCandlesFromRows([
       {
         bucket_ts: '2026-06-23T21:09:00.000Z',
         open_mcap: '642339',
-        high_mcap: '652964',
+        high_mcap: '2000000',
         low_mcap: '135352',
         close_mcap: '635437',
         sample_count: 35,
@@ -363,16 +390,47 @@ describe('token market 1m bucket helpers', () => {
       {
         bucket_ts: '2026-06-23T21:11:00.000Z',
         open_mcap: '690463',
-        high_mcap: '709040',
+        high_mcap: '0',
         low_mcap: '0',
         close_mcap: '696203',
         sample_count: 34,
       },
     ], 15);
 
+    assert.equal(candles[0].highMcap, 642339);
     assert.equal(candles[0].lowMcap, 635437);
+    assert.equal(candles[1].highMcap, 700119);
     assert.equal(candles[1].lowMcap, 634238);
+    assert.equal(candles[2].highMcap, 696203);
     assert.equal(candles[2].lowMcap, 690463);
+  });
+
+  it('builds live market bucket update payloads for chart sockets', () => {
+    const payload = tokenMarketBucket1m.__private.buildLiveMarketBucketPayload({
+      token_address: 'So11111111111111111111111111111111111111112',
+      bucket_ts: '2026-06-23T21:09:00.000Z',
+      pair_address: '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1',
+      open_mcap: '642339',
+      high_mcap: '2000000',
+      low_mcap: '135352',
+      close_mcap: '635437',
+      open_price: '0.000642',
+      high_price: '0.002',
+      low_price: '0.000135',
+      close_price: '0.000635',
+      sample_count: 35,
+    });
+
+    assert.equal(payload.address, 'So11111111111111111111111111111111111111112');
+    assert.equal(payload.pairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
+    assert.equal(payload.granularityMinutes, 1);
+    assert.equal(payload.candle.bucketTs, '2026-06-23T21:09:00.000Z');
+    assert.equal(payload.candle.granularityMinutes, 1);
+    assert.equal(payload.candle.highMcap, 642339);
+    assert.equal(payload.candle.lowMcap, 635437);
+    assert.equal(payload.candle.closeMcap, 635437);
+    assert.equal(payload.candle.sampleCount, 35);
+    assert.match(payload.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('maps sparkline batch rows by address and preserves empty results', async () => {

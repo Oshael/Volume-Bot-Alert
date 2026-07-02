@@ -1,4 +1,4 @@
-import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -73,7 +73,7 @@ import {
   saveDismissedOldWeek,
   saveDismissedRecent,
 } from '../utils/bar-storage';
-import { bindSocketLifecycle, disconnectSocket, subscribePumpMint, unsubscribePumpMint } from '../services/socket/client';
+import { bindSocketLifecycle, disconnectSocket, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
 import {
   normalizeInviteCode,
   normalizeAuthRouteToken,
@@ -3089,6 +3089,7 @@ export function createAppController(): AppController {
     const route = parseWorkspaceSparklineRoute(window.location.pathname);
     if (!route) {
       if (state.ui.expandedSparklineAddress) {
+        unsubscribeMarketChart(state.ui.expandedSparklineAddress);
         state.ui.expandedSparklineAddress = null;
         emit('overlay');
       }
@@ -3100,7 +3101,13 @@ export function createAppController(): AppController {
       state.ui.workspace = route.workspace;
     }
     const addressChanged = state.ui.expandedSparklineAddress !== route.address;
+    if (addressChanged && state.ui.expandedSparklineAddress) {
+      unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+    }
     state.ui.expandedSparklineAddress = route.address;
+    if (addressChanged) {
+      subscribeMarketChart(route.address);
+    }
     state.ui.mockTradingPnlAddress = null;
     if (!isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(route.address))) {
       setExpandedSparklineLoading(route.address);
@@ -6449,6 +6456,150 @@ export function createAppController(): AppController {
       || null;
   }
 
+  function floorLiveCandleBucketTs(bucketTs: string, granularityMinutes: number) {
+    const timestampMs = Date.parse(bucketTs);
+    if (!Number.isFinite(timestampMs)) {
+      return null;
+    }
+
+    const bucketMs = Math.max(1, granularityMinutes) * 60 * 1000;
+    return new Date(Math.floor(timestampMs / bucketMs) * bucketMs).toISOString();
+  }
+
+  function maxNullableNumber(left: number | null | undefined, right: number | null | undefined) {
+    const values = [left, right].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return values.length ? Math.max(...values) : null;
+  }
+
+  function minNullableNumber(left: number | null | undefined, right: number | null | undefined) {
+    const values = [left, right].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return values.length ? Math.min(...values) : null;
+  }
+
+  function mergeLiveCandle(
+    existing: TokenSparklineCandleEntry | null | undefined,
+    incoming: TokenSparklineCandleEntry,
+    granularityMinutes: number,
+  ): TokenSparklineCandleEntry | null {
+    const bucketTs = floorLiveCandleBucketTs(incoming.bucketTs, granularityMinutes);
+    if (!bucketTs) {
+      return null;
+    }
+
+    if (!existing) {
+      return {
+        ...incoming,
+        bucketTs,
+        granularityMinutes,
+      };
+    }
+
+    return {
+      ...existing,
+      pairAddress: incoming.pairAddress ?? existing.pairAddress ?? null,
+      granularityMinutes,
+      openMcap: existing.openMcap ?? incoming.openMcap,
+      highMcap: maxNullableNumber(existing.highMcap, incoming.highMcap),
+      lowMcap: minNullableNumber(existing.lowMcap, incoming.lowMcap),
+      closeMcap: incoming.closeMcap ?? existing.closeMcap,
+      openPrice: existing.openPrice ?? incoming.openPrice,
+      highPrice: maxNullableNumber(existing.highPrice, incoming.highPrice),
+      lowPrice: minNullableNumber(existing.lowPrice, incoming.lowPrice),
+      closePrice: incoming.closePrice ?? existing.closePrice,
+      sampleCount: Math.max(Number(existing.sampleCount) || 0, Number(incoming.sampleCount) || 0),
+    };
+  }
+
+  function mergeLiveCandleList(
+    candles: TokenSparklineCandleEntry[],
+    incoming: TokenSparklineCandleEntry,
+    granularityMinutes: number,
+    maxCandles: number,
+  ) {
+    const bucketTs = floorLiveCandleBucketTs(incoming.bucketTs, granularityMinutes);
+    if (!bucketTs) {
+      return null;
+    }
+
+    const nextCandles = candles.slice();
+    const existingIndex = nextCandles.findIndex((candle) => candle.bucketTs === bucketTs);
+    const merged = mergeLiveCandle(existingIndex >= 0 ? nextCandles[existingIndex] : null, incoming, granularityMinutes);
+    if (!merged) {
+      return null;
+    }
+
+    if (existingIndex >= 0) {
+      nextCandles[existingIndex] = merged;
+    } else {
+      nextCandles.push(merged);
+    }
+    nextCandles.sort((left, right) => Date.parse(left.bucketTs) - Date.parse(right.bucketTs));
+    return nextCandles.slice(-maxCandles);
+  }
+
+  function getLiveExpandedSparklineContext(payload: MarketBucketUpdateEvent) {
+    const address = String(payload?.address || '').trim();
+    if (!address || state.ui.expandedSparklineAddress !== address || !payload?.candle) {
+      return null;
+    }
+
+    const granularityMinutes = getActiveExpandedSparklineGranularity();
+    const cacheKey = getExpandedSparklineCacheKey(address, granularityMinutes);
+    const entry = getExpandedSparklineCacheEntry(address, granularityMinutes);
+    if (!entry || entry.loading || !Array.isArray(entry.candles)) {
+      return null;
+    }
+
+    return { address, cacheKey, candles: entry.candles, entry, granularityMinutes };
+  }
+
+  function buildLiveExpandedSparklineEntry(payload: MarketBucketUpdateEvent) {
+    const context = getLiveExpandedSparklineContext(payload);
+    if (!context) {
+      return null;
+    }
+
+    const { address, cacheKey, candles, entry, granularityMinutes } = context;
+    const maxCandles = Math.max(EXPANDED_SPARKLINE_POINT_COUNT, Number(entry.points) || EXPANDED_SPARKLINE_POINT_COUNT);
+    const visibleCandles = mergeLiveCandleList(candles, payload.candle, granularityMinutes, maxCandles);
+    if (!visibleCandles) {
+      return null;
+    }
+
+    const series = visibleCandles
+      .map((candle) => Number(candle.closeMcap))
+      .filter((value) => Number.isFinite(value));
+
+    return {
+      cacheKey,
+      entry: {
+        ...entry,
+        address,
+        pairAddress: payload.pairAddress ?? entry.pairAddress ?? null,
+        granularityMinutes,
+        generatedAt: payload.generatedAt || new Date().toISOString(),
+        latestBucketAt: visibleCandles[visibleCandles.length - 1]?.bucketTs ?? entry.latestBucketAt ?? null,
+        bucketCount: visibleCandles.length,
+        series: series.length ? series : entry.series,
+        candles: visibleCandles,
+        loading: false,
+      } satisfies TokenSparklineEntry,
+    };
+  }
+
+  function applyLiveMarketBucketUpdate(payload: MarketBucketUpdateEvent) {
+    const update = buildLiveExpandedSparklineEntry(payload);
+    if (!update) {
+      return;
+    }
+
+    state.data.expandedSparklineByAddress = {
+      ...state.data.expandedSparklineByAddress,
+      [update.cacheKey]: update.entry,
+    };
+    emit('overlay');
+  }
+
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
     if (!entry || entry.loading || !hasRenderableSparklineSeries(entry)) {
       return false;
@@ -7342,6 +7493,12 @@ export function createAppController(): AppController {
             emit('alerts', 'header', 'legacy');
           }
         }
+      },
+      onMarketBucket(payload) {
+        if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
+          return;
+        }
+        applyLiveMarketBucketUpdate(payload);
       },
     });
   }
@@ -10216,7 +10373,11 @@ export function createAppController(): AppController {
         return;
       }
 
+      if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
+        unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+      }
       state.ui.expandedSparklineAddress = normalized;
+      subscribeMarketChart(normalized);
       state.ui.mockTradingPnlAddress = null;
       if (typeof window !== 'undefined') {
         const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
@@ -10244,7 +10405,11 @@ export function createAppController(): AppController {
         return;
       }
 
+      if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
+        unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+      }
       state.ui.expandedSparklineAddress = normalized;
+      subscribeMarketChart(normalized);
       state.ui.mockTradingPnlAddress = null;
       if (typeof window !== 'undefined') {
         const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
@@ -10264,6 +10429,7 @@ export function createAppController(): AppController {
       if (!state.ui.expandedSparklineAddress) {
         return;
       }
+      unsubscribeMarketChart(state.ui.expandedSparklineAddress);
       state.ui.expandedSparklineAddress = null;
       clearWorkspaceSparklineUrl();
       emit('overlay');

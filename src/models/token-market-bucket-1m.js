@@ -2,12 +2,16 @@ const db = require('./db');
 const { isValidAddress } = require('./user-token');
 const config = require('../../config');
 const {
+  FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY,
   ON_WRITE_AGGREGATE_GRANULARITY_MINUTES,
+  ON_WRITE_ROLLUP_AGGREGATE_GRANULARITY_MINUTES,
   isAggregateGranularityMinutes,
   normalizeSparklineGranularityMinutes,
 } = require('../utils/market-bucket-granularities');
 const {
+  buildNormalizedOhlcHighSql,
   buildNormalizedOhlcLowSql,
+  normalizeOhlcHigh,
   normalizeOhlcLow,
 } = require('../utils/market-bucket-ohlc');
 
@@ -75,6 +79,33 @@ function buildAggregateBucketParams(address, bucketTsValues) {
 
   for (const sourceBucketDate of sourceBucketDates) {
     for (const granularity of ON_WRITE_AGGREGATE_GRANULARITY_MINUTES) {
+      const aggregateBucketDate = getAggregateBucketDate(sourceBucketDate, granularity);
+      const key = `${granularity}:${aggregateBucketDate.toISOString()}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+
+      const granularityParam = params.length + 1;
+      params.push(granularity);
+      const bucketParam = params.length + 1;
+      params.push(aggregateBucketDate);
+      valuesSql.push(`($${granularityParam}::int, $${bucketParam}::timestamptz)`);
+    }
+  }
+
+  return { params, valuesSql: valuesSql.join(', ') };
+}
+
+function buildRollupAggregateBucketParams(address, bucketTsValues) {
+  const params = [address, FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY];
+  const seen = new Set();
+  const valuesSql = [];
+  const sourceBucketDates = (Array.isArray(bucketTsValues) ? bucketTsValues : [bucketTsValues])
+    .map((value) => getBucketDate(value));
+
+  for (const sourceBucketDate of sourceBucketDates) {
+    for (const granularity of ON_WRITE_ROLLUP_AGGREGATE_GRANULARITY_MINUTES) {
       const aggregateBucketDate = getAggregateBucketDate(sourceBucketDate, granularity);
       const key = `${granularity}:${aggregateBucketDate.toISOString()}`;
       if (seen.has(key)) {
@@ -290,6 +321,40 @@ function getAggregateRefreshBucketDates(bucketTs) {
     currentBucket,
     new Date(currentBucket.getTime() - 60000),
   ];
+}
+
+function buildLiveMarketBucketPayload(row) {
+  if (!row?.token_address) {
+    return null;
+  }
+
+  const [candle] = buildExpandedCandlesFromRows([row], 1);
+  if (!candle) {
+    return null;
+  }
+
+  return {
+    address: String(row.token_address),
+    pairAddress: row.pair_address || null,
+    granularityMinutes: 1,
+    generatedAt: new Date().toISOString(),
+    candle,
+  };
+}
+
+function emitLiveMarketBucketUpdate(row) {
+  const payload = buildLiveMarketBucketPayload(row);
+  if (!payload) {
+    return false;
+  }
+
+  try {
+    const socketHub = require('../services/socket-hub');
+    return socketHub.emitMarketBucketUpdate?.(payload) === true;
+  } catch (error) {
+    console.warn('[MarketBuckets] Failed to emit live bucket update:', error.message);
+    return false;
+  }
 }
 
 function clamp01(value) {
@@ -734,6 +799,7 @@ async function upsertSnapshotBucket(snapshot) {
     await upsertAggregateBucketsForSourceBucket(address, getAggregateRefreshBucketDates(bucketTs));
   }
   invalidateSparklineCacheForAddresses([address]);
+  emitLiveMarketBucketUpdate(row);
 
   return row;
 }
@@ -783,7 +849,110 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
          bucket_start AS bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(high_mcap) AS high_mcap,
+         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
+         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
+         (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
+         (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
+         MAX(high_price) AS high_price,
+         MIN(low_price) AS low_price,
+         (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
+         COALESCE(SUM(sample_count), 0)::int AS sample_count
+       FROM source_rows
+       GROUP BY token_address, granularity_minutes, bucket_start
+     )
+     INSERT INTO token_market_buckets_agg (
+       token_address,
+       granularity_minutes,
+       bucket_ts,
+       pair_address,
+       open_mcap,
+       high_mcap,
+       low_mcap,
+       close_mcap,
+       open_price,
+       high_price,
+       low_price,
+       close_price,
+       sample_count,
+       source
+     )
+     SELECT
+       token_address,
+       granularity_minutes,
+       bucket_ts,
+       pair_address,
+       open_mcap,
+       high_mcap,
+       low_mcap,
+       close_mcap,
+       open_price,
+       high_price,
+       low_price,
+       close_price,
+       sample_count,
+       'aggregate'
+     FROM aggregated
+     ON CONFLICT (token_address, granularity_minutes, bucket_ts) DO UPDATE SET
+       pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_agg.pair_address),
+       open_mcap = EXCLUDED.open_mcap,
+       high_mcap = EXCLUDED.high_mcap,
+       low_mcap = EXCLUDED.low_mcap,
+       close_mcap = EXCLUDED.close_mcap,
+       open_price = EXCLUDED.open_price,
+       high_price = EXCLUDED.high_price,
+       low_price = EXCLUDED.low_price,
+       close_price = EXCLUDED.close_price,
+       sample_count = EXCLUDED.sample_count,
+       source = EXCLUDED.source,
+       updated_at = NOW()`,
+    params
+  );
+
+  await upsertRollupAggregateBucketsFromFiveMinuteSource(addr, bucketTsValues);
+}
+
+async function upsertRollupAggregateBucketsFromFiveMinuteSource(address, bucketTsValues) {
+  const { params, valuesSql } = buildRollupAggregateBucketParams(address, bucketTsValues);
+  if (!valuesSql) {
+    return;
+  }
+
+  await db.query(
+    `WITH requested(target_granularity_minutes, bucket_start) AS (
+       VALUES ${valuesSql}
+     ),
+     source_rows AS (
+       SELECT
+         b.token_address,
+         requested.target_granularity_minutes AS granularity_minutes,
+         requested.bucket_start,
+         b.bucket_ts,
+         b.pair_address,
+         b.open_mcap,
+         b.high_mcap,
+         b.low_mcap,
+         b.close_mcap,
+         b.open_price,
+         b.high_price,
+         b.low_price,
+         b.close_price,
+         b.sample_count
+       FROM requested
+       INNER JOIN token_market_buckets_agg b
+         ON b.token_address = $1
+        AND b.granularity_minutes = $2::int
+        AND b.bucket_ts >= requested.bucket_start
+        AND b.bucket_ts < requested.bucket_start + (requested.target_granularity_minutes * INTERVAL '1 minute')
+        AND (b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)
+     ),
+     aggregated AS (
+       SELECT
+         token_address,
+         granularity_minutes,
+         bucket_start AS bucket_ts,
+         (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
+         (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
+         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
          MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
@@ -1451,7 +1620,7 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
          spark_bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(high_mcap) AS high_mcap,
+         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
          MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
@@ -1670,12 +1839,17 @@ function buildExpandedCandlesFromRows(rows, granularityMinutes) {
         close: row.close_mcap,
       });
       const closeMcap = row.close_mcap == null ? null : Number(row.close_mcap);
+      const highMcap = normalizeOhlcHigh({
+        open: openMcap,
+        high: row.high_mcap,
+        close: closeMcap,
+      });
       return {
         bucketTs: row.bucket_ts || null,
         pairAddress: row.pair_address || null,
         granularityMinutes,
         openMcap,
-        highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
+        highMcap,
         lowMcap,
         closeMcap,
         openPrice: row.open_price == null ? null : Number(row.open_price),
@@ -2158,6 +2332,7 @@ module.exports = {
     resolveExpandedSparklineGranularityMinutes,
     upsertAggregateBucketsForSourceBucket,
     buildExpandedCandlesFromRows,
+    buildLiveMarketBucketPayload,
     buildSparklineSeriesFromBuckets,
     buildDenseSparklineMinuteSeries,
     downsampleSparklineSeries,

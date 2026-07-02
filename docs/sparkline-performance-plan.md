@@ -139,7 +139,9 @@ Status de implementacao local em 2026-07-01:
 - feito: renderer do expanded chart migrado para `lightweight-charts`; zoom, pan, crosshair e escalas agora usam o motor nativo da biblioteca
 - feito: price scale do Lightweight Charts inicia em modo manual com range OHLC calculado, liberando ajuste isolado do eixo Y
 - feito: wheel sobre a faixa direita ajusta somente o range do eixo Y, ancorado na altura do cursor
-- feito: `low_mcap` com wick inferior extremo agora e normalizado na leitura dos candles expandidos e no calculo/backfill de agregados, evitando samples GMGN isolados como `0.01` ou quedas artificiais contaminarem o chart
+- feito: `low_mcap`/`high_mcap` com wick extrema agora sao normalizados na leitura dos candles expandidos e no calculo/backfill de agregados, evitando samples GMGN isolados como `0.01`, quedas artificiais ou picos artificiais contaminarem o chart
+- feito: writes incrementais agora recalculam `1h`, `4h` e `24h` automaticamente a partir dos buckets `5m`, depois do recompute `1m -> 5/15/30`
+- feito: expanded chart assina updates `market:bucket` por Socket.io e atualiza a candle corrente quando o worker Dex/GMGN grava novo bucket
 - pendente: worker de reparo/retencao
 
 Gate operacional antes de expor `1h/4h/24h` na UI:
