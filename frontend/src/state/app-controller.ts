@@ -6560,7 +6560,11 @@ export function createAppController(): AppController {
     }
 
     const { address, cacheKey, candles, entry, granularityMinutes } = context;
-    const maxCandles = Math.max(EXPANDED_SPARKLINE_POINT_COUNT, Number(entry.points) || EXPANDED_SPARKLINE_POINT_COUNT);
+    const maxCandles = Math.max(
+      candles.length,
+      EXPANDED_SPARKLINE_POINT_COUNT,
+      Number(entry.points) || EXPANDED_SPARKLINE_POINT_COUNT
+    );
     const visibleCandles = mergeLiveCandleList(candles, payload.candle, granularityMinutes, maxCandles);
     if (!visibleCandles) {
       return null;

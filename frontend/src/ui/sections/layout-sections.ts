@@ -38,7 +38,6 @@ const PASSWORD_RESET_TRANSIENT_NOTICES = new Set([
   'Set a new password to finish the reset.',
   'Resetting password...',
 ]);
-const EXPANDED_CANDLE_MAX_RENDERED = 3600;
 const EXPANDED_CHART_GRANULARITY_OPTIONS = [
   { label: '5m', value: 5 },
   { label: '15m', value: 15 },
@@ -2279,12 +2278,7 @@ function getExpandedCandleLatestValue(sparkline: TokenSparklineEntry) {
 }
 
 function getRenderableExpandedCandles(sparkline: TokenSparklineEntry) {
-  const candles = normalizeExpandedCandles(sparkline);
-  if (candles.length <= EXPANDED_CANDLE_MAX_RENDERED) {
-    return candles;
-  }
-  const stride = Math.ceil(candles.length / EXPANDED_CANDLE_MAX_RENDERED);
-  return candles.filter((_candle, index) => index % stride === 0 || index === candles.length - 1);
+  return normalizeExpandedCandles(sparkline);
 }
 
 function toLightweightCandles(sparkline: TokenSparklineEntry): CandlestickData<UTCTimestamp>[] {
@@ -2398,7 +2392,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
       rightOffset: 6,
       timeVisible: true,
       secondsVisible: false,
-      minBarSpacing: 0.5,
+      minBarSpacing: 0.05,
     },
     localization: { priceFormatter: (price: number) => fmtMoney(price) },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
