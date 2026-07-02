@@ -1,3 +1,4 @@
+import type { CandlestickData, IPriceScaleApi, UTCTimestamp } from 'lightweight-charts';
 import type { AppController } from '../../state/app-controller';
 import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
@@ -37,10 +38,7 @@ const PASSWORD_RESET_TRANSIENT_NOTICES = new Set([
   'Set a new password to finish the reset.',
   'Resetting password...',
 ]);
-const EXPANDED_CANDLE_CHART_WIDTH = 1280;
-const EXPANDED_CANDLE_CHART_HEIGHT = 520;
-const EXPANDED_CANDLE_CHART_PADDING_X = 32;
-const EXPANDED_CANDLE_CHART_PADDING_Y = 28;
+const EXPANDED_CANDLE_MAX_RENDERED = 3600;
 const EXPANDED_CHART_GRANULARITY_OPTIONS = [
   { label: '5m', value: 5 },
   { label: '15m', value: 15 },
@@ -1250,6 +1248,9 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
   const overlayMode = resolveWorkspaceOverlayMode(state);
   const expandedSparklineAddress = String(state.ui.expandedSparklineAddress || '').trim();
   const expandedSparkline = expandedSparklineAddress ? getExpandedTokenSparkline(state, expandedSparklineAddress) : null;
+  if (overlayMode !== 'expanded-sparkline') {
+    destroyExpandedCandlestickChart();
+  }
   if (overlayMode === 'none') {
     return null;
   }
@@ -1326,7 +1327,7 @@ export function renderWorkspaceProfileOverlay(state: AppState, controller: AppCo
       return overlay;
     }
     overlay.innerHTML = renderExpandedSparklineModal(state, expandedSparklineAddress);
-    bindExpandedSparklineModal(overlay, controller, expandedSparklineAddress, sparklineEntry);
+    bindExpandedSparklineModal(overlay, controller, state, expandedSparklineAddress, sparklineEntry);
     return overlay;
   }
 
@@ -2277,95 +2278,169 @@ function getExpandedCandleLatestValue(sparkline: TokenSparklineEntry) {
   return series.length > 0 ? series[series.length - 1] : null;
 }
 
-function formatExpandedCandleTime(bucketTs: string) {
-  const parsed = new Date(bucketTs);
-  if (!Number.isFinite(parsed.getTime())) {
-    return 'time unavailable';
+function getRenderableExpandedCandles(sparkline: TokenSparklineEntry) {
+  const candles = normalizeExpandedCandles(sparkline);
+  if (candles.length <= EXPANDED_CANDLE_MAX_RENDERED) {
+    return candles;
   }
-
-  return parsed.toLocaleString(undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const stride = Math.ceil(candles.length / EXPANDED_CANDLE_MAX_RENDERED);
+  return candles.filter((_candle, index) => index % stride === 0 || index === candles.length - 1);
 }
 
-function renderExpandedCandleChart(sparkline: TokenSparklineEntry, address: string) {
-  const candles = normalizeExpandedCandles(sparkline);
-  if (candles.length < 2) {
+function toLightweightCandles(sparkline: TokenSparklineEntry): CandlestickData<UTCTimestamp>[] {
+  const byTime = new Map<number, CandlestickData<UTCTimestamp>>();
+  for (const candle of getRenderableExpandedCandles(sparkline)) {
+    const time = Math.floor(new Date(candle.bucketTs).getTime() / 1000);
+    if (Number.isFinite(time) && time > 0) {
+      byTime.set(time, { time: time as UTCTimestamp, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
+    }
+  }
+  return [...byTime.values()].sort((a, b) => Number(a.time) - Number(b.time));
+}
+
+function renderExpandedCandleChart(sparkline: TokenSparklineEntry) {
+  const candleCount = getRenderableExpandedCandles(sparkline).length;
+  if (candleCount < 2) {
     return '';
   }
-
-  const min = Math.min(...candles.map((candle) => candle.low));
-  const max = Math.max(...candles.map((candle) => candle.high));
-  const range = max - min;
-  const innerWidth = EXPANDED_CANDLE_CHART_WIDTH - (EXPANDED_CANDLE_CHART_PADDING_X * 2);
-  const innerHeight = EXPANDED_CANDLE_CHART_HEIGHT - (EXPANDED_CANDLE_CHART_PADDING_Y * 2);
-  const slotWidth = innerWidth / candles.length;
-  const bodyWidth = Math.max(2.6, Math.min(9, slotWidth * 0.62));
-  const toY = (value: number) => {
-    const normalized = range > 0 ? (value - min) / range : 0.5;
-    return EXPANDED_CANDLE_CHART_PADDING_Y + innerHeight - (normalized * innerHeight);
-  };
-
-  const gridRatios = [0, 0.25, 0.5, 0.75, 1];
-  const gridLines = gridRatios.map((ratio) => {
-    const y = EXPANDED_CANDLE_CHART_PADDING_Y + (innerHeight * ratio);
-    return `<line class="expanded-candle-grid-line" x1="${EXPANDED_CANDLE_CHART_PADDING_X}" y1="${y.toFixed(2)}" x2="${(EXPANDED_CANDLE_CHART_WIDTH - EXPANDED_CANDLE_CHART_PADDING_X).toFixed(2)}" y2="${y.toFixed(2)}"></line>`;
-  }).join('');
-  const priceLabels = gridRatios.map((ratio) => {
-    const value = max - (range * ratio);
-    const y = EXPANDED_CANDLE_CHART_PADDING_Y + (innerHeight * ratio);
-    return `<text class="expanded-candle-axis-label expanded-candle-price-label" x="${(EXPANDED_CANDLE_CHART_WIDTH - EXPANDED_CANDLE_CHART_PADDING_X + 8).toFixed(2)}" y="${(y + 3).toFixed(2)}">${escapeHtml(fmtMoney(value))}</text>`;
-  }).join('');
-  const timeLabelIndexes = Array.from(new Set([0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round((candles.length - 1) * ratio))));
-  const timeLabels = timeLabelIndexes.map((index) => {
-    const x = EXPANDED_CANDLE_CHART_PADDING_X + (slotWidth * index) + (slotWidth / 2);
-    const y = EXPANDED_CANDLE_CHART_HEIGHT - 6;
-    return `<text class="expanded-candle-axis-label expanded-candle-time-label" x="${x.toFixed(2)}" y="${y.toFixed(2)}">${escapeHtml(formatExpandedCandleTime(candles[index].bucketTs))}</text>`;
-  }).join('');
-
-  const candleNodes = candles.map((candle, index) => {
-    const x = EXPANDED_CANDLE_CHART_PADDING_X + (slotWidth * index) + (slotWidth / 2);
-    const openY = toY(candle.open);
-    const closeY = toY(candle.close);
-    const highY = toY(candle.high);
-    const lowY = toY(candle.low);
-    const bodyTop = Math.min(openY, closeY);
-    const bodyHeight = Math.max(1.4, Math.abs(closeY - openY));
-    const tone = candle.close >= candle.open ? 'up' : 'down';
-    const title = `${new Date(candle.bucketTs).toLocaleString()} - O ${fmtMoney(candle.open)} H ${fmtMoney(candle.high)} L ${fmtMoney(candle.low)} C ${fmtMoney(candle.close)}`;
-
-    return `
-      <g class="expanded-candle ${tone}" data-index="${index}" data-bucket-ts="${escapeHtml(candle.bucketTs)}" data-open="${candle.open}" data-high="${candle.high}" data-low="${candle.low}" data-close="${candle.close}" data-x="${x.toFixed(2)}" data-close-y="${closeY.toFixed(2)}">
-        <title>${escapeHtml(title)}</title>
-        <line class="expanded-candle-wick" x1="${x.toFixed(2)}" y1="${highY.toFixed(2)}" x2="${x.toFixed(2)}" y2="${lowY.toFixed(2)}"></line>
-        <rect class="expanded-candle-body" x="${(x - (bodyWidth / 2)).toFixed(2)}" y="${bodyTop.toFixed(2)}" width="${bodyWidth.toFixed(2)}" height="${bodyHeight.toFixed(2)}" rx="0.8"></rect>
-      </g>
-    `;
-  }).join('');
-
-  const summary = escapeHtml(`Candle chart - ${candles.length} candles - ${fmtMoney(min)} to ${fmtMoney(max)}`);
   return `
-    <div class="expanded-candle-wrap" data-address="${escapeHtml(address)}" data-candle-summary="${summary}">
-      <svg class="expanded-candle-chart-svg" viewBox="0 0 ${EXPANDED_CANDLE_CHART_WIDTH} ${EXPANDED_CANDLE_CHART_HEIGHT}" preserveAspectRatio="none" role="img" aria-label="${summary}">
-        <g class="expanded-candle-grid">${gridLines}</g>
-        <g class="expanded-candle-series">${candleNodes}</g>
-        <g class="expanded-candle-axis">${priceLabels}${timeLabels}</g>
-      </svg>
-      <div class="expanded-candle-hover" aria-hidden="true">
-        <span class="expanded-candle-hover-line expanded-candle-hover-line-x"></span>
-        <span class="expanded-candle-hover-line expanded-candle-hover-line-y"></span>
-        <span class="expanded-candle-hover-dot"></span>
-        <span class="expanded-candle-hover-tooltip"></span>
-      </div>
+    <div class="expanded-candles-wrap" data-candle-count="${candleCount}">
+      <div class="expanded-lightweight-legend" data-expanded-chart-legend></div>
+      <div class="expanded-lightweight-chart" data-expanded-candlestick-chart role="img" aria-label="Interactive market cap candlestick chart"></div>
     </div>
   `;
 }
 
+let expandedCandlestickChartCleanup: (() => void) | null = null;
+let expandedCandlestickChartMountId = 0;
+
+function destroyExpandedCandlestickChart() {
+  expandedCandlestickChartMountId += 1;
+  expandedCandlestickChartCleanup?.();
+  expandedCandlestickChartCleanup = null;
+}
+
+function formatExpandedChartLegend(candle: CandlestickData<UTCTimestamp>) {
+  const timestamp = new Date(Number(candle.time) * 1000).toLocaleString();
+  return `${timestamp} | O ${fmtMoney(candle.open)} H ${fmtMoney(candle.high)} L ${fmtMoney(candle.low)} C ${fmtMoney(candle.close)}`;
+}
+
+function getExpandedChartInitialPriceRange(data: CandlestickData<UTCTimestamp>[], referenceValue: number) {
+  const min = Math.min(referenceValue, ...data.map((candle) => candle.low));
+  const max = Math.max(referenceValue, ...data.map((candle) => candle.high));
+  const padding = Math.max(1, (max - min) * 0.08);
+  return { from: min - padding, to: max + padding };
+}
+
+function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceScaleApi) {
+  const onWheel = (event: WheelEvent) => {
+    const rect = container.getBoundingClientRect();
+    const axisWidth = Math.max(48, priceScale.width());
+    if (event.clientX < rect.right - axisWidth) {
+      return;
+    }
+    const range = priceScale.getVisibleRange();
+    if (!range || !(range.to > range.from)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const cursorRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)));
+    const anchor = range.to - ((range.to - range.from) * cursorRatio);
+    const factor = Math.exp(Math.max(-1.5, Math.min(1.5, event.deltaY * 0.0015)));
+    priceScale.setAutoScale(false);
+    priceScale.setVisibleRange({
+      from: anchor - ((anchor - range.from) * factor),
+      to: anchor + ((range.to - anchor) * factor),
+    });
+  };
+  container.addEventListener('wheel', onWheel, { passive: false, capture: true });
+  return () => container.removeEventListener('wheel', onWheel, true);
+}
+
+async function mountExpandedCandlestickChart(section: ParentNode, state: AppState, sparkline: TokenSparklineEntry, address: string) {
+  const container = section.querySelector<HTMLElement>('[data-expanded-candlestick-chart]');
+  const legend = section.querySelector<HTMLElement>('[data-expanded-chart-legend]');
+  const data = toLightweightCandles(sparkline);
+  if (!container || data.length < 2) {
+    return;
+  }
+
+  destroyExpandedCandlestickChart();
+  const mountId = expandedCandlestickChartMountId;
+  const { CandlestickSeries, ColorType, CrosshairMode, LineStyle, createChart } = await import('lightweight-charts');
+  if (mountId !== expandedCandlestickChartMountId || !container.isConnected) {
+    return;
+  }
+  const chart = createChart(container, {
+    autoSize: true,
+    layout: {
+      background: { type: ColorType.Solid, color: '#000000' },
+      textColor: 'rgba(180, 211, 238, 0.82)',
+      fontFamily: '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
+      fontSize: 11,
+    },
+    grid: {
+      vertLines: { color: 'rgba(112, 168, 226, 0.08)' },
+      horzLines: { color: 'rgba(112, 168, 226, 0.14)' },
+    },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+      vertLine: { color: 'rgba(160, 215, 255, 0.42)', labelBackgroundColor: 'rgba(8, 24, 42, 0.94)' },
+      horzLine: { color: 'rgba(160, 215, 255, 0.34)', labelBackgroundColor: 'rgba(8, 24, 42, 0.94)' },
+    },
+    rightPriceScale: {
+      borderColor: 'rgba(112, 168, 226, 0.24)',
+      scaleMargins: { top: 0.06, bottom: 0.08 },
+    },
+    timeScale: {
+      borderColor: 'rgba(112, 168, 226, 0.2)',
+      rightOffset: 6,
+      timeVisible: true,
+      secondsVisible: false,
+      minBarSpacing: 0.5,
+    },
+    localization: { priceFormatter: (price: number) => fmtMoney(price) },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+    handleScale: { axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true }, mouseWheel: true, pinch: true },
+  });
+  const candleSeries = chart.addSeries(CandlestickSeries, {
+    upColor: '#18c79a',
+    downColor: '#ff4f67',
+    borderUpColor: '#18c79a',
+    borderDownColor: '#ff4f67',
+    wickUpColor: '#18c79a',
+    wickDownColor: '#ff4f67',
+  });
+  candleSeries.setData(data);
+  const latest = data[data.length - 1];
+  const liveMcap = Number(getTrackedToken(state, address)?.mcap);
+  const referenceValue = Number.isFinite(liveMcap) && liveMcap > 0 ? liveMcap : latest.close;
+  const referenceColor = latest.close >= latest.open ? '#18c79a' : '#ff4f67';
+  candleSeries.createPriceLine({ price: referenceValue, color: referenceColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
+  const priceScale = chart.priceScale('right');
+  priceScale.setVisibleRange(getExpandedChartInitialPriceRange(data, referenceValue));
+  priceScale.setAutoScale(false);
+  const removePriceScaleWheel = bindExpandedPriceScaleWheel(container, priceScale);
+  if (legend) {
+    legend.textContent = formatExpandedChartLegend(latest);
+  }
+  chart.subscribeCrosshairMove((param) => {
+    const candle = param.seriesData.get(candleSeries) as CandlestickData<UTCTimestamp> | undefined;
+    if (legend && candle) {
+      legend.textContent = formatExpandedChartLegend(candle);
+    }
+  });
+  chart.timeScale().fitContent();
+  expandedCandlestickChartCleanup = () => {
+    removePriceScaleWheel();
+    chart.remove();
+  };
+}
+
 function renderExpandedChartBody(state: AppState, sparkline: TokenSparklineEntry, address: string) {
-  const candleChart = renderExpandedCandleChart(sparkline, address);
+  const liveMcap = getTrackedToken(state, address)?.mcap ?? null;
+  const candleChart = renderExpandedCandleChart(sparkline);
   if (candleChart) {
     return candleChart;
   }
@@ -2374,7 +2449,7 @@ function renderExpandedChartBody(state: AppState, sparkline: TokenSparklineEntry
     expanded: true,
     markers: state.data.mockTradingTradesByAddress[address] || [],
     mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs),
-    liveMcap: getTrackedToken(state, address)?.mcap ?? null,
+    liveMcap,
   });
 }
 
@@ -2452,6 +2527,7 @@ function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getT
 function bindExpandedSparklineModal(
   section: ParentNode,
   controller: AppController,
+  state: AppState,
   address: string,
   sparkline: ReturnType<typeof getTokenSparkline>,
 ) {
@@ -2463,6 +2539,7 @@ function bindExpandedSparklineModal(
     element.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      destroyExpandedCandlestickChart();
       controller.closeExpandedSparkline();
     });
   });
@@ -2473,58 +2550,10 @@ function bindExpandedSparklineModal(
       controller.setExpandedSparklineGranularity(Number(element.dataset.granularityMinutes));
     });
   });
-  bindExpandedCandleHover(section);
-  bindSparklineHover(section, { [address]: sparkline });
-}
-
-function formatExpandedCandleTooltip(candle: SVGElement) {
-  const bucketTs = String(candle.dataset.bucketTs || '');
-  const open = Number(candle.dataset.open);
-  const high = Number(candle.dataset.high);
-  const low = Number(candle.dataset.low);
-  const close = Number(candle.dataset.close);
-  return `${formatExpandedCandleTime(bucketTs)} | O ${fmtMoney(open)} H ${fmtMoney(high)} L ${fmtMoney(low)} C ${fmtMoney(close)}`;
-}
-
-function bindExpandedCandleHover(section: ParentNode) {
-  section.querySelectorAll<HTMLElement>('.expanded-candle-wrap').forEach((wrap) => {
-    const candles = Array.from(wrap.querySelectorAll<SVGElement>('.expanded-candle[data-index]'));
-    const lineX = wrap.querySelector<HTMLElement>('.expanded-candle-hover-line-x');
-    const lineY = wrap.querySelector<HTMLElement>('.expanded-candle-hover-line-y');
-    const dot = wrap.querySelector<HTMLElement>('.expanded-candle-hover-dot');
-    const tooltip = wrap.querySelector<HTMLElement>('.expanded-candle-hover-tooltip');
-    if (candles.length === 0 || !lineX || !lineY || !dot || !tooltip) {
-      return;
-    }
-
-    const hideHover = () => {
-      wrap.classList.remove('is-hovering');
-    };
-    const showHover = (event: PointerEvent) => {
-      const rect = wrap.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
-      const candleIndex = Math.max(0, Math.min(candles.length - 1, Math.round(ratio * (candles.length - 1))));
-      const candle = candles[candleIndex];
-      const xPct = (Number(candle.dataset.x) / EXPANDED_CANDLE_CHART_WIDTH) * 100;
-      const yPct = (Number(candle.dataset.closeY) / EXPANDED_CANDLE_CHART_HEIGHT) * 100;
-      const safeXPct = Math.max(0, Math.min(100, xPct));
-      const safeYPct = Math.max(0, Math.min(100, yPct));
-
-      lineX.style.left = `${safeXPct}%`;
-      lineY.style.top = `${safeYPct}%`;
-      dot.style.left = `${safeXPct}%`;
-      dot.style.top = `${safeYPct}%`;
-      tooltip.style.left = `${safeXPct}%`;
-      tooltip.style.top = `${safeYPct}%`;
-      tooltip.style.transform = safeXPct > 70 ? 'translate(calc(-100% - 12px), -120%)' : 'translate(12px, -120%)';
-      tooltip.textContent = formatExpandedCandleTooltip(candle);
-      wrap.classList.add('is-hovering');
-    };
-
-    wrap.addEventListener('pointermove', showHover);
-    wrap.addEventListener('pointerleave', hideHover);
-    wrap.addEventListener('pointercancel', hideHover);
+  void mountExpandedCandlestickChart(section, state, sparkline, address).catch((error) => {
+    console.warn('[ExpandedChart] Failed to mount Lightweight Charts:', error instanceof Error ? error.message : error);
   });
+  bindSparklineHover(section, { [address]: sparkline });
 }
 
 function bindBlockTokenWarningModal(section: ParentNode, controller: AppController) {
