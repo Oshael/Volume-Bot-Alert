@@ -342,6 +342,39 @@ describe('token market 1m bucket helpers', () => {
     assert(sampled.includes(180));
   });
 
+  it('normalizes extreme lower-wick market cap outliers in expanded candles', () => {
+    const candles = tokenMarketBucket1m.__private.buildExpandedCandlesFromRows([
+      {
+        bucket_ts: '2026-06-23T21:09:00.000Z',
+        open_mcap: '642339',
+        high_mcap: '652964',
+        low_mcap: '135352',
+        close_mcap: '635437',
+        sample_count: 35,
+      },
+      {
+        bucket_ts: '2026-06-23T21:10:00.000Z',
+        open_mcap: '644370',
+        high_mcap: '700119',
+        low_mcap: '634238',
+        close_mcap: '695333',
+        sample_count: 31,
+      },
+      {
+        bucket_ts: '2026-06-23T21:11:00.000Z',
+        open_mcap: '690463',
+        high_mcap: '709040',
+        low_mcap: '0',
+        close_mcap: '696203',
+        sample_count: 34,
+      },
+    ], 15);
+
+    assert.equal(candles[0].lowMcap, 635437);
+    assert.equal(candles[1].lowMcap, 634238);
+    assert.equal(candles[2].lowMcap, 690463);
+  });
+
   it('maps sparkline batch rows by address and preserves empty results', async () => {
     const originalQuery = db.query;
     let capturedSql = '';

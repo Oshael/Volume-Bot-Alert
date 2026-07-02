@@ -6,6 +6,10 @@ const {
   isAggregateGranularityMinutes,
   normalizeSparklineGranularityMinutes,
 } = require('../utils/market-bucket-granularities');
+const {
+  buildNormalizedOhlcLowSql,
+  normalizeOhlcLow,
+} = require('../utils/market-bucket-ohlc');
 
 const DEFAULT_ANALYTICS_MIN_MCAP = 90_000;
 const DEFAULT_ANALYTICS_HOURS = 48;
@@ -780,7 +784,7 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
          MAX(high_mcap) AS high_mcap,
-         MIN(low_mcap) AS low_mcap,
+         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
          MAX(high_price) AS high_price,
@@ -1448,7 +1452,7 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
          MAX(high_mcap) AS high_mcap,
-         MIN(low_mcap) AS low_mcap,
+         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
          MAX(high_price) AS high_price,
@@ -1658,20 +1662,29 @@ function buildSparklineResults(addresses, rows, options) {
 
 function buildExpandedCandlesFromRows(rows, granularityMinutes) {
   return (Array.isArray(rows) ? rows : [])
-    .map((row) => ({
-      bucketTs: row.bucket_ts || null,
-      pairAddress: row.pair_address || null,
-      granularityMinutes,
-      openMcap: row.open_mcap == null ? null : Number(row.open_mcap),
-      highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
-      lowMcap: row.low_mcap == null ? null : Number(row.low_mcap),
-      closeMcap: row.close_mcap == null ? null : Number(row.close_mcap),
-      openPrice: row.open_price == null ? null : Number(row.open_price),
-      highPrice: row.high_price == null ? null : Number(row.high_price),
-      lowPrice: row.low_price == null ? null : Number(row.low_price),
-      closePrice: row.close_price == null ? null : Number(row.close_price),
-      sampleCount: Number(row.sample_count) || 0,
-    }))
+    .map((row) => {
+      const openMcap = row.open_mcap == null ? null : Number(row.open_mcap);
+      const lowMcap = normalizeOhlcLow({
+        open: openMcap,
+        low: row.low_mcap,
+        close: row.close_mcap,
+      });
+      const closeMcap = row.close_mcap == null ? null : Number(row.close_mcap);
+      return {
+        bucketTs: row.bucket_ts || null,
+        pairAddress: row.pair_address || null,
+        granularityMinutes,
+        openMcap,
+        highMcap: row.high_mcap == null ? null : Number(row.high_mcap),
+        lowMcap,
+        closeMcap,
+        openPrice: row.open_price == null ? null : Number(row.open_price),
+        highPrice: row.high_price == null ? null : Number(row.high_price),
+        lowPrice: row.low_price == null ? null : Number(row.low_price),
+        closePrice: row.close_price == null ? null : Number(row.close_price),
+        sampleCount: Number(row.sample_count) || 0,
+      };
+    })
     .filter((item) => item.bucketTs && (item.closeMcap != null || item.closePrice != null));
 }
 
@@ -2144,6 +2157,7 @@ module.exports = {
     shouldUseAggregateSparklines,
     resolveExpandedSparklineGranularityMinutes,
     upsertAggregateBucketsForSourceBucket,
+    buildExpandedCandlesFromRows,
     buildSparklineSeriesFromBuckets,
     buildDenseSparklineMinuteSeries,
     downsampleSparklineSeries,

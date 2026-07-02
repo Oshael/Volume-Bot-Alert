@@ -129,7 +129,17 @@ Status de implementacao local em 2026-07-01:
 - feito: modal expanded renderiza candles quando o payload traz OHLC valido, com fallback para `series`
 - feito: controles visiveis de resolucao no modal expanded chamam o backend com `granularityMinutes`
 - feito: default do modal expanded e `5m`, a menor granularidade agregada disponivel
-- feito: candle chart tem labels de preco/tempo e hover com crosshair/tooltip por candle
+- feito: candle chart tem labels de preco/tempo e crosshair livre com market cap no eixo Y, horario no eixo X e tooltip OHLC do candle mais proximo
+- feito: candle chart tem linha de market cap atual com cor baseada no ultimo candle
+- feito: candle chart suporta zoom horizontal por scroll/pinch, pan por arraste e reset da janela
+- feito: eixos adaptativos mostram mais niveis de market cap e alternam horas/dias conforme o zoom
+- feito: eixo de market cap aceita zoom vertical por arraste/scroll e reset por duplo clique
+- feito: chart aceita pan vertical livre no corpo depois de ajustar a escala Y
+- feito: eixo X aceita overscroll para posicionar candles alem das bordas esquerda/direita
+- feito: renderer do expanded chart migrado para `lightweight-charts`; zoom, pan, crosshair e escalas agora usam o motor nativo da biblioteca
+- feito: price scale do Lightweight Charts inicia em modo manual com range OHLC calculado, liberando ajuste isolado do eixo Y
+- feito: wheel sobre a faixa direita ajusta somente o range do eixo Y, ancorado na altura do cursor
+- feito: `low_mcap` com wick inferior extremo agora e normalizado na leitura dos candles expandidos e no calculo/backfill de agregados, evitando samples GMGN isolados como `0.01` ou quedas artificiais contaminarem o chart
 - pendente: worker de reparo/retencao
 
 Gate operacional antes de expor `1h/4h/24h` na UI:
@@ -157,11 +167,13 @@ Proximos blocos de frontend, em ordem:
 
 3. Adicionar informacoes complementares do chart.
    - status: labels de preco/tempo e hover/crosshair implementados
+   - status: linha de market cap atual implementada; verde no ultimo candle positivo e vermelha no negativo
    - volume so entra depois de ampliar o contrato backend, porque o payload atual tem OHLC e `sampleCount`, nao volume real
    - marcadores do bot entram depois dos candles e da escala tempo/preco estarem estaveis
    - linhas de referencia entram como camada propria, nao misturadas com candle rendering
 
 4. Adicionar ferramentas manuais minimas.
+   - status: zoom horizontal, pan e reset de enquadramento implementados
    - comecar por linha horizontal e trendline
    - texto, regua, brush e outras ferramentas estilo Axion/TradingView ficam para fases posteriores
    - cada ferramenta precisa de estado, eventos de mouse/touch, conversao pixel-tempo-preco, renderizacao e persistencia se for necessario manter ao reabrir
