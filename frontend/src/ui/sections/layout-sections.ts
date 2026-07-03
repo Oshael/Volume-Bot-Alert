@@ -54,6 +54,8 @@ const EXPANDED_TOKEN_AGE_HOUR_MS = 60 * EXPANDED_TOKEN_AGE_MINUTE_MS;
 const EXPANDED_TOKEN_AGE_DAY_MS = 24 * EXPANDED_TOKEN_AGE_HOUR_MS;
 const EXPANDED_TOKEN_AGE_MONTH_DAYS = 30;
 const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
+const CHART_ALERT_MARKER_SIDE_OFFSET_PX = 36;
+const CHART_ALERT_MARKER_EDGE_PADDING_PX = 28;
 const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
   'Sending verification code...',
   'Verifying code...',
@@ -2475,6 +2477,24 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
   `;
 }
 
+function getChartAlertMarkerPlacement(cluster: ChartAlertMarkerCluster, containerWidth: number) {
+  const preferredRight = cluster.x + CHART_ALERT_MARKER_SIDE_OFFSET_PX;
+  const placeRight = preferredRight <= containerWidth - CHART_ALERT_MARKER_EDGE_PADDING_PX;
+  const rawMarkerX = placeRight
+    ? preferredRight
+    : cluster.x - CHART_ALERT_MARKER_SIDE_OFFSET_PX;
+  const markerX = Math.max(
+    CHART_ALERT_MARKER_EDGE_PADDING_PX,
+    Math.min(containerWidth - CHART_ALERT_MARKER_EDGE_PADDING_PX, rawMarkerX),
+  );
+  return {
+    markerX,
+    connectorLeft: Math.min(cluster.x, markerX),
+    connectorWidth: Math.abs(markerX - cluster.x),
+    side: markerX >= cluster.x ? 'right' : 'left',
+  };
+}
+
 function mountExpandedChartAlertOverlay(
   container: HTMLElement,
   chart: ExpandedChartApi,
@@ -2507,7 +2527,8 @@ function mountExpandedChartAlertOverlay(
   };
 
   const positionTooltip = (cluster: ChartAlertMarkerCluster) => {
-    const left = Math.max(12, Math.min(container.clientWidth - 260, cluster.x + 12));
+    const placement = getChartAlertMarkerPlacement(cluster, container.clientWidth);
+    const left = Math.max(12, Math.min(container.clientWidth - 260, placement.markerX + 12));
     const top = Math.max(12, Math.min(container.clientHeight - 130, cluster.y - 12));
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
@@ -2552,11 +2573,19 @@ function mountExpandedChartAlertOverlay(
       if (cluster.x < -24 || cluster.y < -24 || cluster.x > container.clientWidth + 24 || cluster.y > container.clientHeight + 24) {
         continue;
       }
+      const placement = getChartAlertMarkerPlacement(cluster, container.clientWidth);
+      const connector = document.createElement('span');
+      connector.className = 'expanded-chart-alert-marker-connector';
+      connector.style.left = `${placement.connectorLeft}px`;
+      connector.style.top = `${cluster.y}px`;
+      connector.style.width = `${placement.connectorWidth}px`;
+      overlay.append(connector);
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'expanded-chart-alert-marker';
       button.dataset.tone = cluster.tone;
-      button.style.left = `${cluster.x}px`;
+      button.dataset.side = placement.side;
+      button.style.left = `${placement.markerX}px`;
       button.style.top = `${cluster.y}px`;
       button.setAttribute('aria-label', cluster.ariaLabel);
       button.innerHTML = `<span>${escapeHtml(cluster.code)}</span>${cluster.overflow ? `<em>+${cluster.overflow}</em>` : ''}`;

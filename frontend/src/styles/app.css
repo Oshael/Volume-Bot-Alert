@@ -2846,6 +2846,7 @@ body:has(.workspace-topbar)::before {
 
 .expanded-chart-alert-marker {
   position: absolute;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2868,6 +2869,18 @@ body:has(.workspace-topbar)::before {
   transform: translate(-50%, -50%);
 }
 
+.expanded-chart-alert-marker-connector {
+  position: absolute;
+  z-index: 1;
+  height: 2px;
+  min-width: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
 .expanded-chart-alert-marker::before {
   content: "";
   position: absolute;
@@ -2877,7 +2890,7 @@ body:has(.workspace-topbar)::before {
 
 .expanded-chart-alert-marker:hover,
 .expanded-chart-alert-marker:focus-visible {
-  z-index: 2;
+  z-index: 3;
   outline: none;
   border-color: rgba(255, 255, 255, 0.82);
   transform: translate(-50%, -50%) scale(1.08);
