@@ -46,6 +46,7 @@ let lastObservedRouteKey: string | null = null;
 let suppressNextFocusFlush = false;
 let interactionLockUntil = 0;
 let currentListInteractionZone: HTMLElement | null = null;
+let activeRootPointerGesture = false;
 let restoreRenderQueued = false;
 let isDocumentHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
 let hiddenSinceAt: number | null = isDocumentHidden ? Date.now() : null;
@@ -282,6 +283,24 @@ function isListInteractionLocked() {
   return true;
 }
 
+function hasActiveRootTextSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return false;
+  }
+
+  const anchorNode = selection.anchorNode;
+  const focusNode = selection.focusNode;
+  return Boolean(
+    (anchorNode && root.contains(anchorNode))
+    || (focusNode && root.contains(focusNode)),
+  );
+}
+
+function isPointerOrSelectionLocked() {
+  return activeRootPointerGesture || hasActiveRootTextSelection();
+}
+
 function isSortMenuOpen() {
   return Boolean(root.querySelector('[data-sort-wrap].open'));
 }
@@ -345,7 +364,7 @@ function mergeDirtyRegions(target: Set<AppRenderRegion> | null, next: ReadonlySe
 }
 
 function flushPendingRender() {
-  if (isDocumentHidden || !pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isSortMenuOpen()) {
+  if (isDocumentHidden || !pendingState || isEditingInteractiveField() || isInteractionLocked() || isListInteractionLocked() || isPointerOrSelectionLocked() || isSortMenuOpen()) {
     return;
   }
 
@@ -614,6 +633,9 @@ function armHiddenRuntimeStopTimer() {
 
 root.addEventListener('pointerdown', (event) => {
   void primeAlertAudio();
+  if (event.isPrimary && event.button === 0) {
+    activeRootPointerGesture = true;
+  }
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a, [data-action], [data-trade-wrap]')) {
     interactionLockUntil = Date.now() + 300;
@@ -622,6 +644,22 @@ root.addEventListener('pointerdown', (event) => {
       suppressNextFocusFlush = false;
       flushPendingRender();
     }, 320);
+  }
+});
+
+const releaseRootPointerGesture = () => {
+  if (!activeRootPointerGesture) return;
+  activeRootPointerGesture = false;
+  window.setTimeout(() => flushPendingRender(), 0);
+};
+
+window.addEventListener('pointerup', releaseRootPointerGesture);
+window.addEventListener('pointercancel', releaseRootPointerGesture);
+window.addEventListener('blur', releaseRootPointerGesture);
+
+document.addEventListener('selectionchange', () => {
+  if (!hasActiveRootTextSelection()) {
+    window.setTimeout(() => flushPendingRender(), 0);
   }
 });
 
@@ -700,6 +738,7 @@ function shouldQueueRenderDuringInteraction() {
   return isEditingInteractiveField()
     || isInteractionLocked()
     || isListInteractionLocked()
+    || isPointerOrSelectionLocked()
     || isSortMenuOpen();
 }
 
@@ -861,6 +900,7 @@ document.addEventListener('visibilitychange', () => {
 
   interactionLockUntil = 0;
   currentListInteractionZone = null;
+  activeRootPointerGesture = false;
   suppressNextFocusFlush = false;
   if (latestState) {
     syncAudioSideEffects(latestState);
