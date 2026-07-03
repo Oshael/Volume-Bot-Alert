@@ -96,6 +96,7 @@ export interface UiPrefsPayload {
   recentSorts: BucketSortCriterionPayload[];
   oldWeekSorts: BucketSortCriterionPayload[];
   monitoredSorts: MonitoredSortCriterionPayload[];
+  expandedSparklineGranularityMinutes: number;
   enabledTradeTerminals: TradeTerminalKey[];
   livePanelLayout: LivePanelLayoutPayload;
 }

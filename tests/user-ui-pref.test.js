@@ -8,6 +8,7 @@ describe('user-ui-pref', () => {
     const prefs = userUiPref.normalizePrefs({});
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
     assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
+    assert.equal(prefs.expandedSparklineGranularityMinutes, 5);
   });
 
   it('defaults new live layouts with monitored spanning two thirds', () => {
@@ -31,6 +32,24 @@ describe('user-ui-pref', () => {
     assert.equal(validation.valid, true);
     assert.deepEqual(validation.prefs.enabledTradeTerminals, ['bullx', 'gmgn']);
     assert.equal(validation.prefs.manualFolderDeleteWarningDismissed, true);
+  });
+
+  it('accepts valid expanded chart granularity preferences', () => {
+    const validation = userUiPref.validatePatch({
+      expandedSparklineGranularityMinutes: 60,
+    });
+
+    assert.equal(validation.valid, true);
+    assert.equal(validation.prefs.expandedSparklineGranularityMinutes, 60);
+  });
+
+  it('rejects invalid expanded chart granularity preferences', () => {
+    const validation = userUiPref.validatePatch({
+      expandedSparklineGranularityMinutes: 10,
+    });
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.includes('expandedSparklineGranularityMinutes must be one of 5, 15, 30, 60, 240, 1440'));
   });
 
   it('rejects empty trade terminal selection', () => {

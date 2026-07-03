@@ -841,7 +841,7 @@ function getWorkspacePath(workspace: WorkspaceView) {
 
 function getWorkspaceSparklinePath(workspace: WorkspaceView, address: string) {
   const prefix = workspace === 'history' ? '/radar' : '/alerts';
-  return `${prefix}/${encodeURIComponent(address)}/sparkline`;
+  return `${prefix}/${encodeURIComponent(address)}`;
 }
 
 function getWorkspaceSparklineBasePath(pathname: string | null | undefined, workspace: WorkspaceView) {
@@ -855,7 +855,9 @@ function getWorkspaceSparklineBasePath(pathname: string | null | undefined, work
 function parseWorkspaceSparklineRoute(pathname: string | null | undefined): { workspace: WorkspaceView; address: string } | null {
   const rawPath = String(pathname || '').trim().replace(/\/+$/, '');
   const segments = rawPath.split('/').filter(Boolean);
-  if (segments.length !== 3 || segments[2].toLowerCase() !== 'sparkline') {
+  const isCurrentRoute = segments.length === 2;
+  const isLegacyRoute = segments.length === 3 && segments[2].toLowerCase() === 'sparkline';
+  if (!isCurrentRoute && !isLegacyRoute) {
     return null;
   }
 
@@ -3096,6 +3098,11 @@ export function createAppController(): AppController {
       return false;
     }
 
+    const canonicalPath = getWorkspaceSparklinePath(route.workspace, route.address);
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState({}, document.title, canonicalPath);
+    }
+
     if (state.ui.workspace !== route.workspace) {
       clearHistoryBucketOrderLocks({ applyPending: false });
       state.ui.workspace = route.workspace;
@@ -3367,6 +3374,10 @@ export function createAppController(): AppController {
     };
   }
 
+  function applyExpandedSparklineUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
+    state.ui.expandedSparklineGranularityMinutes = normalizeExpandedSparklineGranularity(uiPrefs?.expandedSparklineGranularityMinutes);
+  }
+
   function buildUiPrefsPayload(): UiPrefsPayload {
     return {
       collapsed: {
@@ -3388,6 +3399,7 @@ export function createAppController(): AppController {
       recentSorts: [...state.ui.recentSorts],
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
+      expandedSparklineGranularityMinutes: getActiveExpandedSparklineGranularity(),
       enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
       livePanelLayout: {
         order: [...state.ui.livePanelLayout.order],
@@ -3743,6 +3755,7 @@ export function createAppController(): AppController {
     state.ui.recentSorts = normalizeBucketSorts(uiPrefs?.recentSorts, 'recent');
     state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
+    applyExpandedSparklineUiPreferences(uiPrefs);
     state.ui.enabledTradeTerminals = normalizeTradeTerminals(uiPrefs?.enabledTradeTerminals);
     state.ui.livePanelLayout = normalizeLivePanelLayout(uiPrefs?.livePanelLayout);
     syncRoutedPagination();
@@ -6601,7 +6614,12 @@ export function createAppController(): AppController {
       ...state.data.expandedSparklineByAddress,
       [update.cacheKey]: update.entry,
     };
-    emit('overlay');
+    const latestCandle = update.entry.candles?.[update.entry.candles.length - 1];
+    if (typeof window !== 'undefined' && latestCandle) {
+      window.dispatchEvent(new CustomEvent('trendscope:expanded-chart-live-candle', {
+        detail: { address: update.entry.address, candle: latestCandle },
+      }));
+    }
   }
 
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
@@ -10445,6 +10463,7 @@ export function createAppController(): AppController {
       }
 
       state.ui.expandedSparklineGranularityMinutes = safeGranularity;
+      queueUiPrefsPersist();
       const address = String(state.ui.expandedSparklineAddress || '').trim();
       if (!address) {
         emit('overlay');

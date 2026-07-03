@@ -203,6 +203,7 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.uiPrefs.monitoredSorts, [{ mode: 'vol', window: '5m' }]);
     assert.deepEqual(response.body.uiPrefs.recentSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
     assert.deepEqual(response.body.uiPrefs.oldWeekSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
+    assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 5);
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['monitored', 'pumpfun', 'alerts'],
       spans: {
@@ -643,6 +644,7 @@ describe('Config routes', () => {
           manualFolderDeleteWarningDismissed: true,
           enabledTradeTerminals: ['photon', 'bullx'],
           monitoredPerPage: 50,
+          expandedSparklineGranularityMinutes: 60,
           livePanelLayout: {
             order: ['alerts', 'monitored', 'pumpfun'],
             spans: {
@@ -658,6 +660,7 @@ describe('Config routes', () => {
     assert.equal(response.body.uiPrefs.manualStarredOnly, true);
     assert.equal(response.body.uiPrefs.manualFolderDeleteWarningDismissed, true);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
+    assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 60);
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['alerts', 'monitored', 'pumpfun'],

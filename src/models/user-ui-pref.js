@@ -16,6 +16,8 @@ const LIVE_PANEL_SPANS = {
   pumpfun: [1],
   alerts: [1, 2, 3],
 };
+const EXPANDED_SPARKLINE_GRANULARITIES = [5, 15, 30, 60, 240, 1440];
+const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
 
 const DEFAULT_UI_PREFS = {
   collapsed: {
@@ -37,6 +39,7 @@ const DEFAULT_UI_PREFS = {
   recentSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
+  expandedSparklineGranularityMinutes: EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
   livePanelLayout: {
     order: [...LIVE_PANEL_KEYS],
@@ -65,6 +68,21 @@ function validatePerPage(key, value) {
     return { valid: false, error: `${key} must be between 10 and 500` };
   }
   return { valid: true, value: Math.floor(num) };
+}
+
+function normalizeExpandedSparklineGranularity(value) {
+  const parsed = Math.round(Number(value));
+  return EXPANDED_SPARKLINE_GRANULARITIES.includes(parsed)
+    ? parsed
+    : EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
+}
+
+function validateExpandedSparklineGranularity(key, value) {
+  const parsed = Math.round(Number(value));
+  if (!EXPANDED_SPARKLINE_GRANULARITIES.includes(parsed)) {
+    return { valid: false, error: `${key} must be one of ${EXPANDED_SPARKLINE_GRANULARITIES.join(', ')}` };
+  }
+  return { valid: true, value: parsed };
 }
 
 function validateCollapsed(value) {
@@ -317,6 +335,8 @@ function normalizePrefs(raw) {
     defaults.monitoredSorts = monitoredSorts.value;
   }
 
+  defaults.expandedSparklineGranularityMinutes = normalizeExpandedSparklineGranularity(source.expandedSparklineGranularityMinutes);
+
   const enabledTradeTerminals = validateTradeTerminals('enabledTradeTerminals', source.enabledTradeTerminals);
   if (enabledTradeTerminals.valid) {
     defaults.enabledTradeTerminals = enabledTradeTerminals.value;
@@ -361,6 +381,16 @@ function validatePatch(input) {
 
     if (key === 'monitoredPerPage' || key === 'recentPerPage' || key === 'oldWeekPerPage') {
       const result = validatePerPage(key, value);
+      if (!result.valid) {
+        errors.push(result.error);
+      } else {
+        prefs[key] = result.value;
+      }
+      continue;
+    }
+
+    if (key === 'expandedSparklineGranularityMinutes') {
+      const result = validateExpandedSparklineGranularity(key, value);
       if (!result.valid) {
         errors.push(result.error);
       } else {

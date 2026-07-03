@@ -2579,7 +2579,7 @@ body:has(.workspace-topbar)::before {
   position: relative;
   width: min(82vw, 1380px);
   min-width: min(960px, calc(100vw - 28px));
-  max-height: min(82vh, 820px);
+  max-height: min(90vh, 940px);
   padding: 14px;
   gap: 10px;
   overflow: visible;
@@ -2592,15 +2592,7 @@ body:has(.workspace-topbar)::before {
 }
 
 .legacy-auth-panel-expanded-sparkline::before {
-  content: "";
-  position: absolute;
-  inset: 74px 10px 10px;
-  border-radius: 20px;
-  background: #000;
-  border: 1px solid rgba(45, 52, 66, 0.82);
-  filter: none;
-  opacity: 1;
-  z-index: -1;
+  display: none;
 }
 
 @keyframes expanded-sparkline-hologram-enter {
@@ -2617,7 +2609,7 @@ body:has(.workspace-topbar)::before {
 
 .legacy-auth-modal[data-auth-modal-scope="sparkline"] {
   align-items: start;
-  padding-top: min(7vh, 64px);
+  padding-top: min(3vh, 28px);
 }
 
 .legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-auth-modal-backdrop {
@@ -2635,10 +2627,36 @@ body:has(.workspace-topbar)::before {
 }
 
 .expanded-sparkline-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 2px 2px 0 2px;
+}
+
+.expanded-sparkline-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border: 1px solid rgba(96, 166, 218, 0.45);
+  border-radius: 50%;
+  object-fit: cover;
+  background: #07101a;
+}
+
+.expanded-sparkline-avatar-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #dff7ff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.expanded-sparkline-identity-copy {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 2px 2px 0 2px;
 }
 
 .expanded-sparkline-identity strong {
@@ -2650,7 +2668,8 @@ body:has(.workspace-topbar)::before {
   text-shadow: 0 0 14px rgba(73, 236, 255, 0.18);
 }
 
-.expanded-sparkline-identity span {
+.expanded-sparkline-identity small {
+  display: block;
   color: #86b8dc;
   font-size: 11px;
   line-height: 1.35;
@@ -2672,9 +2691,10 @@ body:has(.workspace-topbar)::before {
   align-self: center;
 }
 
-.expanded-sparkline-popover-subhead span {
+.expanded-sparkline-popover-subhead > .expanded-sparkline-stat {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   min-height: 20px;
   padding: 0 9px;
   border: 1px solid rgba(63, 113, 176, 0.34);
@@ -2688,6 +2708,20 @@ body:has(.workspace-topbar)::before {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   backdrop-filter: blur(10px);
+}
+
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat span {
+  display: inline;
+  color: rgba(168, 202, 232, 0.86);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat strong {
+  color: #8fe7ff;
+  font: inherit;
+  font-weight: 900;
 }
 
 .expanded-sparkline-resolution-control {
@@ -2734,7 +2768,7 @@ body:has(.workspace-topbar)::before {
 
 .expanded-sparkline-chart {
   position: relative;
-  min-height: clamp(360px, 56vh, 610px);
+  min-height: clamp(420px, 67vh, 740px);
   padding: 12px 14px 8px;
   border: 1px solid rgba(55, 61, 75, 0.92);
   border-radius: 16px;
@@ -2779,8 +2813,8 @@ body:has(.workspace-topbar)::before {
 .expanded-candles-wrap {
   position: relative;
   width: 100%;
-  height: clamp(350px, 55vh, 590px);
-  min-height: 350px;
+  height: clamp(410px, 66vh, 720px);
+  min-height: 410px;
   overflow: hidden;
   background: #000;
   cursor: crosshair;

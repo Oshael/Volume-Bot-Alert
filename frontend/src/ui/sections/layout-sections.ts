@@ -2229,6 +2229,11 @@ type NormalizedExpandedCandle = {
   close: number;
 };
 
+type ExpandedChartLiveCandleDetail = {
+  address: string;
+  candle: TokenSparklineCandleEntry;
+};
+
 function toFiniteChartNumber(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -2306,17 +2311,29 @@ function renderExpandedCandleChart(sparkline: TokenSparklineEntry) {
 }
 
 let expandedCandlestickChartCleanup: (() => void) | null = null;
+let expandedCandlestickChartCaptureViewport: (() => void) | null = null;
 let expandedCandlestickChartMountId = 0;
+type ExpandedChartViewport = {
+  timeRange: { from: UTCTimestamp; to: UTCTimestamp } | null;
+  priceRange: { from: number; to: number } | null;
+};
+const expandedChartViewportByAddress = new Map<string, ExpandedChartViewport>();
+
+function captureExpandedCandlestickChartViewport() {
+  expandedCandlestickChartCaptureViewport?.();
+}
 
 function destroyExpandedCandlestickChart() {
   expandedCandlestickChartMountId += 1;
+  captureExpandedCandlestickChartViewport();
   expandedCandlestickChartCleanup?.();
+  expandedCandlestickChartCaptureViewport = null;
   expandedCandlestickChartCleanup = null;
 }
 
 function formatExpandedChartLegend(candle: CandlestickData<UTCTimestamp>) {
   const timestamp = new Date(Number(candle.time) * 1000).toLocaleString();
-  return `${timestamp} | O ${fmtMoney(candle.open)} H ${fmtMoney(candle.high)} L ${fmtMoney(candle.low)} C ${fmtMoney(candle.close)}`;
+  return `${timestamp} | MCAP ${fmtMoney(candle.close)}`;
 }
 
 function getExpandedChartInitialPriceRange(data: CandlestickData<UTCTimestamp>[], referenceValue: number) {
@@ -2324,6 +2341,26 @@ function getExpandedChartInitialPriceRange(data: CandlestickData<UTCTimestamp>[]
   const max = Math.max(referenceValue, ...data.map((candle) => candle.high));
   const padding = Math.max(1, (max - min) * 0.08);
   return { from: min - padding, to: max + padding };
+}
+
+function getExpandedChartInitialTimeRange(data: CandlestickData<UTCTimestamp>[], granularityMinutes: number) {
+  const latest = Number(data[data.length - 1]?.time);
+  const first = Number(data[0]?.time);
+  if (!Number.isFinite(latest) || !Number.isFinite(first) || latest <= first) {
+    return null;
+  }
+
+  const recentDaysByGranularity = new Map<number, number>([
+    [5, 3],
+    [15, 5],
+    [30, 7],
+    [60, 14],
+    [240, 45],
+    [1440, 180],
+  ]);
+  const recentDays = recentDaysByGranularity.get(Math.round(Number(granularityMinutes))) || 7;
+  const from = Math.max(first, latest - (recentDays * 86400));
+  return from < latest ? { from: from as UTCTimestamp, to: latest as UTCTimestamp } : null;
 }
 
 function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceScaleApi) {
@@ -2411,9 +2448,13 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   const liveMcap = Number(getTrackedToken(state, address)?.mcap);
   const referenceValue = Number.isFinite(liveMcap) && liveMcap > 0 ? liveMcap : latest.close;
   const referenceColor = latest.close >= latest.open ? '#18c79a' : '#ff4f67';
-  candleSeries.createPriceLine({ price: referenceValue, color: referenceColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
+  const referenceLine = candleSeries.createPriceLine({ price: referenceValue, color: referenceColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
   const priceScale = chart.priceScale('right');
-  priceScale.setVisibleRange(getExpandedChartInitialPriceRange(data, referenceValue));
+  const preservedViewport = expandedChartViewportByAddress.get(address);
+  if (!preservedViewport) {
+    expandedChartViewportByAddress.clear();
+  }
+  priceScale.setVisibleRange(preservedViewport?.priceRange || getExpandedChartInitialPriceRange(data, referenceValue));
   priceScale.setAutoScale(false);
   const removePriceScaleWheel = bindExpandedPriceScaleWheel(container, priceScale);
   if (legend) {
@@ -2425,8 +2466,60 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
       legend.textContent = formatExpandedChartLegend(candle);
     }
   });
-  chart.timeScale().fitContent();
+  if (preservedViewport?.timeRange) {
+    chart.timeScale().setVisibleRange(preservedViewport.timeRange);
+  } else {
+    const initialTimeRange = getExpandedChartInitialTimeRange(data, sparkline.granularityMinutes ?? 5);
+    if (initialTimeRange) {
+      chart.timeScale().setVisibleRange(initialTimeRange);
+    } else {
+      chart.timeScale().fitContent();
+    }
+  }
+  expandedCandlestickChartCaptureViewport = () => {
+    const timeRange = chart.timeScale().getVisibleRange();
+    const priceRange = priceScale.getVisibleRange();
+    expandedChartViewportByAddress.set(address, {
+      timeRange: timeRange && Number(timeRange.to) > Number(timeRange.from)
+        ? { from: timeRange.from as UTCTimestamp, to: timeRange.to as UTCTimestamp }
+        : null,
+      priceRange: priceRange && priceRange.to > priceRange.from
+        ? { from: priceRange.from, to: priceRange.to }
+        : null,
+    });
+  };
+  const onLiveCandle = (event: Event) => {
+    const detail = (event as CustomEvent<ExpandedChartLiveCandleDetail>).detail;
+    if (detail?.address !== address) {
+      return;
+    }
+    const normalized = normalizeExpandedCandle(detail.candle);
+    if (!normalized) {
+      return;
+    }
+    const time = Math.floor(Date.parse(normalized.bucketTs) / 1000);
+    if (!Number.isFinite(time) || time <= 0) {
+      return;
+    }
+    const liveCandle = {
+      time: time as UTCTimestamp,
+      open: normalized.open,
+      high: normalized.high,
+      low: normalized.low,
+      close: normalized.close,
+    } satisfies CandlestickData<UTCTimestamp>;
+    candleSeries.update(liveCandle);
+    referenceLine.applyOptions({
+      price: normalized.close,
+      color: normalized.close >= normalized.open ? '#18c79a' : '#ff4f67',
+    });
+    if (legend) {
+      legend.textContent = formatExpandedChartLegend(liveCandle);
+    }
+  };
+  window.addEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
   expandedCandlestickChartCleanup = () => {
+    window.removeEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
     removePriceScaleWheel();
     chart.remove();
   };
@@ -2468,21 +2561,17 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   const symbol = token?.symbol || token?.label || address.slice(0, 8);
   const name = token?.name || token?.label || address;
   const stats = getExpandedSparklineStats(sparkline);
+  const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl);
+  const ageLabel = formatExpandedTokenAge(token?.createdAt);
+  const loadingText = sparkline.loading ? 'Loading full available history.' : `Updated ${escapeHtml(stats.updatedLabel)}.`;
 
   return `
     <div class="legacy-auth-modal" data-auth-modal="expanded-sparkline" data-auth-modal-scope="sparkline">
       <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
-          <div class="expanded-sparkline-identity">
-            <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
-            <span>${escapeHtml(name)}</span>
-          </div>
-          <div class="expanded-sparkline-popover-subhead">
-            <span>MCAP ${escapeHtml(fmtMoney(stats.latestValue))}</span>
-            <span>${escapeHtml(stats.spanLabel)} span</span>
-            <span>${escapeHtml(stats.resolutionLabel)}</span>
-          </div>
+          ${renderExpandedSparklineIdentity(symbol, name, imageUrl)}
+          ${renderExpandedSparklineStatsRow(token, stats.latestValue, ageLabel)}
           ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
@@ -2490,10 +2579,57 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           ${renderExpandedChartBody(state, sparkline, address)}
           ${sparkline.loading ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>' : ''}
         </div>
-        <div class="expanded-sparkline-footnote">${sparkline.loading ? 'Loading full available history.' : `Updated ${escapeHtml(stats.updatedLabel)}.`} ${stats.hasCandles ? 'Candles use aggregate OHLC market cap.' : 'Hover for approximate market cap and time.'}</div>
+        <div class="expanded-sparkline-footnote">${loadingText}</div>
       </div>
     </div>
   `;
+}
+
+function renderExpandedSparklineIdentity(symbol: string, name: string, imageUrl: string | null) {
+  const avatar = imageUrl
+    ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
+    : `<span class="expanded-sparkline-avatar expanded-sparkline-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+  return `
+    <div class="expanded-sparkline-identity">
+      ${avatar}
+      <span class="expanded-sparkline-identity-copy">
+        <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
+        <small>${escapeHtml(name)}</small>
+      </span>
+    </div>
+  `;
+}
+
+function renderExpandedSparklineStatsRow(
+  token: ReturnType<typeof getTrackedToken>,
+  latestValue: number | null,
+  ageLabel: string,
+) {
+  return `
+    <div class="expanded-sparkline-popover-subhead">
+      ${renderExpandedSparklineStat('mcap', 'MCAP', fmtMoney(latestValue))}
+      ${renderExpandedSparklineStat('age', 'AGE', ageLabel)}
+      ${renderExpandedSparklineStat('vol-1h', 'VOL 1H', fmtMoney(token?.volume1h))}
+      ${renderExpandedSparklineStat('vol-6h', 'VOL 6H', fmtMoney(token?.volume6h))}
+      ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
+    </div>
+  `;
+}
+
+function renderExpandedSparklineStat(variant: string, label: string, value: string) {
+  return `<span class="expanded-sparkline-stat expanded-sparkline-stat-${escapeHtml(variant)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></span>`;
+}
+
+function formatExpandedTokenAge(createdAt: number | null | undefined) {
+  const timestamp = Number(createdAt);
+  if (!(timestamp > 0)) {
+    return '-';
+  }
+  const ageMs = Math.max(0, Date.now() - timestamp);
+  if (ageMs < 86400000) {
+    return `${Math.max(1, Math.floor(ageMs / 3600000))}h`;
+  }
+  return `${Math.floor(ageMs / 86400000)}d`;
 }
 
 function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>) {
@@ -2502,18 +2638,9 @@ function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getT
   const updatedLabel = sparkline.generatedAt
     ? new Date(sparkline.generatedAt).toLocaleString()
     : 'unknown';
-  const spanLabel = sparkline.effectiveHours != null && Number.isFinite(sparkline.effectiveHours)
-    ? `${Math.max(1, Math.round(sparkline.effectiveHours / 24))}d`
-    : '14d';
-  const resolutionLabel = sparkline.granularityMinutes != null && Number.isFinite(sparkline.granularityMinutes)
-    ? `${Math.round(sparkline.granularityMinutes)}m`
-    : '-';
-
   return {
     latestValue,
     updatedLabel,
-    spanLabel,
-    resolutionLabel,
     hasCandles: candles.length >= 2,
   };
 }
@@ -2541,6 +2668,7 @@ function bindExpandedSparklineModal(
     element.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      captureExpandedCandlestickChartViewport();
       controller.setExpandedSparklineGranularity(Number(element.dataset.granularityMinutes));
     });
   });
