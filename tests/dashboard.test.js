@@ -116,6 +116,12 @@ describe('Dashboard routes', () => {
     assert.equal(res.status, 401);
   });
 
+  it('rejects dashboard chart-alert-events without auth', async () => {
+    const res = await request(app)
+      .get('/api/dashboard/chart-alert-events?address=So11111111111111111111111111111111111111112');
+    assert.equal(res.status, 401);
+  });
+
   it('returns a lean monitored dashboard payload with Meteora summaries but without risk payloads', async () => {
     const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
@@ -394,6 +400,67 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.events[0].pct, 80);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
+    }
+  });
+
+  it('returns chart alert history scoped to the authenticated user and token', async () => {
+    const originalListDashboardChartAlertEvents = backendAlertFeed.listDashboardChartAlertEvents;
+    let capturedOptions = null;
+
+    backendAlertFeed.listDashboardChartAlertEvents = async (options) => {
+      capturedOptions = options;
+      return {
+        generatedAt: '2026-07-03T06:00:00.000Z',
+        windowHours: 24,
+        address: options.tokenAddress,
+        count: 1,
+        truncated: false,
+        events: [{
+          id: 71,
+          ruleKey: 'monitored-mcap',
+          kind: 'monitored-mcap',
+          address: options.tokenAddress,
+          triggeredAt: '2026-07-03T05:47:42.000Z',
+          mcap: 100000,
+          pct: 25,
+          label: 'MCAP',
+        }],
+      };
+    };
+
+    try {
+      const address = 'So11111111111111111111111111111111111111112';
+      const res = await request(app)
+        .get(`/api/dashboard/chart-alert-events?address=${address}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedOptions, { userId, tokenAddress: address });
+      assert.equal(res.body.windowHours, 24);
+      assert.equal(res.body.events[0].mcap, 100000);
+    } finally {
+      backendAlertFeed.listDashboardChartAlertEvents = originalListDashboardChartAlertEvents;
+    }
+  });
+
+  it('rejects invalid chart alert token addresses before querying history', async () => {
+    const originalListDashboardChartAlertEvents = backendAlertFeed.listDashboardChartAlertEvents;
+    let called = false;
+    backendAlertFeed.listDashboardChartAlertEvents = async () => {
+      called = true;
+      return {};
+    };
+
+    try {
+      const res = await request(app)
+        .get('/api/dashboard/chart-alert-events?address=invalid')
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error, 'Valid token address is required');
+      assert.equal(called, false);
+    } finally {
+      backendAlertFeed.listDashboardChartAlertEvents = originalListDashboardChartAlertEvents;
     }
   });
 

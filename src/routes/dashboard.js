@@ -817,6 +817,24 @@ router.get('/alert-events', dashboardLimiter, async (req, res) => {
   }
 });
 
+router.get('/chart-alert-events', dashboardLimiter, async (req, res) => {
+  const tokenAddress = String(req.query?.address || '').trim();
+  if (!isValidAddress(tokenAddress)) {
+    return res.status(400).json({ error: 'Valid token address is required' });
+  }
+
+  try {
+    const payload = await backendAlertFeed.listDashboardChartAlertEvents({
+      userId: req.user.id,
+      tokenAddress,
+    });
+    res.json(payload);
+  } catch (err) {
+    console.error('GET /dashboard/chart-alert-events error:', err.message);
+    res.status(500).json({ error: 'Failed to load chart alert events' });
+  }
+});
+
 router.get('/alert-feeds', dashboardLimiter, async (req, res) => {
   try {
     const payload = await backendAlertFeed.listDashboardAlertFeeds({

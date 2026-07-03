@@ -299,6 +299,38 @@ export interface DashboardAlertFeedsPayload {
   feeds: DashboardAlertEventsPayload[];
 }
 
+export interface ChartAlertEvent {
+  id: number;
+  ruleKey: string;
+  kind: string;
+  address: string;
+  triggeredAt: string;
+  mcap: number | null;
+  pct: number | null;
+  label: string | null;
+  prevVolume1m?: number | null;
+  volume1m?: number | null;
+  prevVolume5m?: number | null;
+  volume5m?: number | null;
+  prevMcap?: number | null;
+  volume24h?: number | null;
+  priceChange1h?: number | null;
+  priceChange6h?: number | null;
+  meteoraCurrentTvl?: number | null;
+  meteoraBaselineTvl24h?: number | null;
+  thresholdPct?: number | null;
+  surgeWindow?: '1H' | '6H' | null;
+}
+
+export interface ChartAlertEventsPayload {
+  generatedAt: string;
+  windowHours: number;
+  address: string;
+  count: number;
+  truncated: boolean;
+  events: ChartAlertEvent[];
+}
+
 export interface TokenSparklineItem {
   address: string;
   pairAddress?: string | null;
@@ -730,6 +762,19 @@ export function fetchDashboardAlertFeeds(token?: string | null, options?: { limi
             events: feed.events || [],
           }))
         : [],
+    }));
+}
+
+export function fetchDashboardChartAlertEvents(address: string, token?: string | null) {
+  const query = new URLSearchParams({ address: String(address || '').trim() });
+  return apiFetch<ChartAlertEventsPayload>(`/api/dashboard/chart-alert-events?${query.toString()}`, { token })
+    .then((response) => ({
+      generatedAt: response.generatedAt,
+      windowHours: Number(response.windowHours) || 24,
+      address: response.address,
+      count: Number(response.count) || 0,
+      truncated: Boolean(response.truncated),
+      events: Array.isArray(response.events) ? response.events : [],
     }));
 }
 
