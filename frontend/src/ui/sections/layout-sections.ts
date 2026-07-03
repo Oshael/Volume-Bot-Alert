@@ -2628,11 +2628,20 @@ function mountExpandedChartAlertOverlay(
     raf = window.requestAnimationFrame(render);
   }
 
+  function renderNow() {
+    if (raf) {
+      window.cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    render();
+  }
+
   function scheduleRenderBurst(frameCount = CHART_ALERT_MARKER_SYNC_FRAMES) {
     if (disposed) {
       return;
     }
     syncFramesRemaining = Math.max(syncFramesRemaining, frameCount);
+    renderNow();
     if (syncRaf) {
       return;
     }
