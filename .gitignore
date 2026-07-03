@@ -6,5 +6,6 @@ node_modules/
 *.sql
 .DS_Store
 frontend/dist/
+data/coingecko/
 Volume-Bot-Alert.git.backup/
 cookies.txt
