@@ -304,6 +304,13 @@ export interface ChartAlertEvent {
   ruleKey: string;
   kind: string;
   address: string;
+  symbol?: string | null;
+  name?: string | null;
+  imageUrl?: string | null;
+  pairUrl?: string | null;
+  twitterUrl?: string | null;
+  communityUrl?: string | null;
+  tokenCreatedAt?: number | null;
   triggeredAt: string;
   mcap: number | null;
   pct: number | null;

@@ -57,6 +57,9 @@ const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
 const CHART_ALERT_MARKER_SIDE_OFFSET_PX = 36;
 const CHART_ALERT_MARKER_EDGE_PADDING_PX = 28;
 const CHART_ALERT_MARKER_SYNC_FRAMES = 8;
+const CHART_ALERT_TOOLTIP_WIDTH_PX = 300;
+const CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX = 210;
+const CHART_ALERT_TOOLTIP_BADGE_GAP_PX = 32;
 const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
   'Sending verification code...',
   'Verifying code...',
@@ -2440,41 +2443,103 @@ function upsertChartAlertCandlePoint(candles: ChartAlertCandlePoint[], candle: C
   }
 }
 
-function formatChartAlertTime(event: ChartAlertEvent) {
+function formatChartAlertTimeShort(event: ChartAlertEvent) {
   const timestamp = Date.parse(event.triggeredAt);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : 'unknown time';
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '--:--';
 }
 
-function formatChartAlertMetric(event: ChartAlertEvent) {
-  if (event.ruleKey === 'monitored-vol') {
-    return `VOL ${fmtMoney(event.prevVolume5m ?? event.prevVolume1m)} → ${fmtMoney(event.volume5m ?? event.volume1m)}`;
+function getChartAlertHeader(event: ChartAlertEvent) {
+  if (event.ruleKey === 'recent-surge-1h' || event.ruleKey === 'recent-surge-6h') return 'RECENT TOKEN SURGE';
+  if (event.ruleKey === 'old-week-surge-1h' || event.ruleKey === 'old-week-surge-6h') return 'OLD TOKEN SURGE';
+  if (event.ruleKey === 'monitored-vol') return 'VOLUME ALERT';
+  if (event.ruleKey === 'monitored-mcap') return 'MCAP ALERT';
+  if (event.ruleKey === 'meteora-surge') return 'METEORA SURGE';
+  if (event.ruleKey === 'hvnc') return 'HVNC ALERT';
+  return String(event.label || event.kind || 'ALERT').toUpperCase();
+}
+
+function getChartAlertMetricLabel(event: ChartAlertEvent) {
+  if (event.ruleKey.includes('surge')) return `PCHANGE ${event.surgeWindow || (event.ruleKey.includes('6h') ? '6H' : '1H')}`;
+  if (event.ruleKey === 'monitored-vol') return 'VOLUME';
+  if (event.ruleKey === 'monitored-mcap') return 'MCAP';
+  if (event.ruleKey === 'meteora-surge') return 'TVL';
+  return 'CHANGE';
+}
+
+function getChartAlertHeroPercent(event: ChartAlertEvent) {
+  return event.pct ?? event.priceChange1h ?? event.priceChange6h ?? null;
+}
+
+function estimateMcapBeforeChange(currentMcap: number | null | undefined, pct: number | null | undefined) {
+  const mcap = Number(currentMcap);
+  const change = Number(pct);
+  if (!Number.isFinite(mcap) || mcap <= 0 || !Number.isFinite(change) || change <= -99.9) return null;
+  return mcap / (1 + (change / 100));
+}
+
+function truncateChartAlertAddress(address: string) {
+  const clean = String(address || '').trim();
+  return clean.length > 10 ? `${clean.slice(0, 4)}...${clean.slice(-4)}` : clean;
+}
+
+function renderChartAlertAvatar(event: ChartAlertEvent) {
+  const imageUrl = sanitizeOptionalHttpUrl(event.imageUrl);
+  if (imageUrl) {
+    return `<img class="expanded-chart-alert-token-avatar" src="${escapeHtml(imageUrl)}" alt="" />`;
   }
-  if (event.ruleKey === 'monitored-mcap') {
-    return `MCAP ${fmtMoney(event.prevMcap)} → ${fmtMoney(event.mcap)}`;
-  }
-  if (event.ruleKey === 'meteora-surge') {
-    return `TVL ${fmtMoney(event.meteoraBaselineTvl24h)} → ${fmtMoney(event.meteoraCurrentTvl)}`;
-  }
-  if (event.ruleKey.includes('surge')) {
-    return `${event.surgeWindow || 'SURGE'} ${fmtPct(event.priceChange1h ?? event.priceChange6h ?? event.pct)}`;
-  }
-  return `Change ${fmtPct(event.pct)}`;
+  const fallback = String(event.symbol || event.name || event.address || '?').slice(0, 2).toUpperCase();
+  return `<span class="expanded-chart-alert-token-avatar expanded-chart-alert-token-avatar-fallback">${escapeHtml(fallback)}</span>`;
+}
+
+function renderChartAlertMcapChip(label: string, value: number | null, highlight = false) {
+  return `
+    <span class="expanded-chart-alert-mcap-chip${highlight ? ' is-highlight' : ''}">
+      <small>${escapeHtml(label)}</small>
+      <strong>${escapeHtml(fmtMoney(value))}</strong>
+    </span>
+  `;
 }
 
 function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
+  const marker = cluster.markers[0];
+  const event = marker.event;
+  const hero = getChartAlertHeroPercent(event);
+  const tokenName = event.symbol || event.name || truncateChartAlertAddress(event.address);
+  const ageLabel = event.tokenCreatedAt ? formatExpandedTokenAge(event.tokenCreatedAt) : '-';
+  const oneHourMcap = estimateMcapBeforeChange(event.mcap, event.priceChange1h);
+  const sixHourMcap = estimateMcapBeforeChange(event.mcap, event.priceChange6h);
+  const clusterLabel = cluster.markers.length > 1 ? ` · +${cluster.markers.length - 1}` : '';
   return `
-    <div class="expanded-chart-alert-tooltip-title">${escapeHtml(cluster.title)}</div>
-    ${cluster.markers.map((marker) => `
-      <div class="expanded-chart-alert-tooltip-event">
-        <span class="expanded-chart-alert-tooltip-code" data-tone="${escapeHtml(marker.tone)}">${escapeHtml(marker.code)}</span>
-        <span class="expanded-chart-alert-tooltip-copy">
-          <strong>${escapeHtml(marker.title)}</strong>
-          <small>${escapeHtml(formatChartAlertTime(marker.event))}</small>
-          <small>${escapeHtml(marker.mcapAvailable ? `MCAP ${fmtMoney(marker.event.mcap)}` : 'MCAP do disparo indisponivel')}</small>
-          <small>${escapeHtml(formatChartAlertMetric(marker.event))}</small>
-        </span>
-      </div>
-    `).join('')}
+    <div class="expanded-chart-alert-tooltip-head">
+      <strong>🔥 ${escapeHtml(getChartAlertHeader(event))}${escapeHtml(clusterLabel)}</strong>
+      <time>${escapeHtml(formatChartAlertTimeShort(event))}</time>
+    </div>
+    <div class="expanded-chart-alert-tooltip-hero">
+      <strong>${escapeHtml(fmtPct(hero))}</strong>
+      <span>${escapeHtml(getChartAlertMetricLabel(event))}</span>
+    </div>
+    <div class="expanded-chart-alert-tooltip-token">
+      ${renderChartAlertAvatar(event)}
+      <span class="expanded-chart-alert-token-copy">
+        <strong>${escapeHtml(tokenName)}</strong>
+        <small>· ${escapeHtml(ageLabel)}</small>
+      </span>
+      <span class="expanded-chart-alert-token-mcap">
+        <small>MCAP</small>
+        <strong>${escapeHtml(fmtMoney(event.mcap))}</strong>
+      </span>
+    </div>
+    <div class="expanded-chart-alert-tooltip-mcaps">
+      ${renderChartAlertMcapChip('1H', oneHourMcap)}
+      ${renderChartAlertMcapChip('6H', sixHourMcap)}
+      ${renderChartAlertMcapChip('24H', event.mcap, true)}
+    </div>
+    <div class="expanded-chart-alert-tooltip-foot">
+      <span>Dex Screener / X Buscar CA</span>
+      <small title="${escapeHtml(event.address)}">${escapeHtml(truncateChartAlertAddress(event.address))}</small>
+    </div>
   `;
 }
 
@@ -2531,8 +2596,14 @@ function mountExpandedChartAlertOverlay(
 
   const positionTooltip = (cluster: ChartAlertMarkerCluster) => {
     const placement = getChartAlertMarkerPlacement(cluster, container.clientWidth);
-    const left = Math.max(12, Math.min(container.clientWidth - 260, placement.markerX + 12));
-    const top = Math.max(12, Math.min(container.clientHeight - 130, cluster.y - 12));
+    const preferredRight = placement.markerX + CHART_ALERT_TOOLTIP_BADGE_GAP_PX;
+    const preferredLeft = placement.markerX - CHART_ALERT_TOOLTIP_WIDTH_PX - CHART_ALERT_TOOLTIP_BADGE_GAP_PX;
+    const left = preferredRight + CHART_ALERT_TOOLTIP_WIDTH_PX <= container.clientWidth - 12
+      ? preferredRight
+      : (preferredLeft >= 12
+          ? preferredLeft
+          : Math.max(12, Math.min(container.clientWidth - CHART_ALERT_TOOLTIP_WIDTH_PX - 12, placement.markerX - (CHART_ALERT_TOOLTIP_WIDTH_PX / 2))));
+    const top = Math.max(12, Math.min(container.clientHeight - CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX - 12, cluster.y - 68));
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
   };
