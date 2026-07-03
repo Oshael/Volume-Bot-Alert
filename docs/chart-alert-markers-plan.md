@@ -2,7 +2,16 @@
 
 ## Status
 
-Planejamento aprovado em 2026-07-03. Nenhuma parte da feature descrita neste documento foi implementada ainda.
+Planejamento aprovado em 2026-07-03.
+
+Status atual:
+
+- Bloco 1 implementado: consulta backend por usuario/token/janela de 24h.
+- Bloco 2 implementado: endpoint autenticado e client frontend.
+- Bloco 3 implementado: cache frontend, dedupe fetch/socket, evento realtime interno e expiracao visual.
+- Bloco 4 implementado: projecao por timestamp + MCAP, codigos, prioridade e agrupamento por colisao.
+- Bloco 5 implementado: overlay no chart expandido, fetch ao montar, realtime, tooltip hover/click e cleanup.
+- Pendente: validacao manual em ambiente real com dados de alerta recentes e ajuste fino visual se necessario.
 
 Este documento e a fonte de verdade para retomar a implementacao sem depender do contexto da conversa original.
 
