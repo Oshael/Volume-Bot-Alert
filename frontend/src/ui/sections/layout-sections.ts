@@ -61,6 +61,11 @@ const CHART_ALERT_TOOLTIP_WIDTH_PX = 300;
 const CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX = 210;
 const CHART_ALERT_TOOLTIP_BADGE_GAP_PX = 32;
 const CHART_ALERT_RECAP_CLOSE_LABEL = 'Close alert recap';
+const CHART_ALERT_RECAP_CARD_WIDTH_PX = 960;
+const CHART_ALERT_RECAP_CARD_HEIGHT_PX = 620;
+const CHART_ALERT_RECAP_CARD_MARGIN_PX = 24;
+const CHART_ALERT_RECAP_LOGO_URL = new URL('../../../favicon.png', import.meta.url).href;
+const CHART_ALERT_RECAP_X_PROFILE_URL = 'https://x.com/TrendScope_pro';
 const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
   'Sending verification code...',
   'Verifying code...',
@@ -2508,11 +2513,16 @@ function toFiniteAlertNumber(value: unknown) {
   return Number.isFinite(number) ? number : null;
 }
 
+function truncateAlertRecapAddress(address: string) {
+  const clean = String(address || '').trim();
+  return clean.length > 10 ? `${clean.slice(0, 4)}…${clean.slice(-4)}` : clean;
+}
+
 function formatAlertRecapPercent(value: number | null) {
   if (value == null || !Number.isFinite(value)) return '-';
   const abs = Math.abs(value);
   const digits = abs >= 1000 ? 0 : (abs >= 100 ? 1 : 2);
-  const formatted = value.toLocaleString(undefined, {
+  const formatted = value.toLocaleString('en-US', {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
@@ -2521,15 +2531,13 @@ function formatAlertRecapPercent(value: number | null) {
 
 function formatAlertRecapMultiplier(value: number | null) {
   if (value == null || !Number.isFinite(value) || value <= 0) return '-';
-  const digits = value >= 10 ? 1 : 2;
-  return value.toFixed(digits);
+  return value.toFixed(value >= 10 ? 1 : 2);
 }
 
 function formatAlertRecapElapsed(event: ChartAlertEvent) {
   const timestamp = Date.parse(event.triggeredAt);
   if (!Number.isFinite(timestamp)) return '-';
-  const elapsedMs = Math.max(0, Date.now() - timestamp);
-  const minutes = Math.floor(elapsedMs / 60000);
+  const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60000);
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor((minutes % 1440) / 60);
   const mins = minutes % 60;
@@ -2565,8 +2573,8 @@ function renderAlertRecapAvatar(event: ChartAlertEvent) {
   if (imageUrl) {
     return `<img class="expanded-chart-alert-recap-token-avatar" src="${escapeHtml(imageUrl)}" alt="" />`;
   }
-  const fallback = String(event.symbol || event.name || event.address || '?').slice(0, 1).toUpperCase();
-  return `<span class="expanded-chart-alert-recap-token-avatar expanded-chart-alert-recap-token-avatar-fallback">${escapeHtml(fallback)}</span>`;
+  const letter = String(event.symbol || event.name || event.address || '?').slice(0, 1).toUpperCase();
+  return `<span class="expanded-chart-alert-recap-token-avatar expanded-chart-alert-recap-token-avatar-fallback">${escapeHtml(letter)}</span>`;
 }
 
 function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][number], candles: ChartAlertCandlePoint[]) {
@@ -2580,18 +2588,18 @@ function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][nu
   const multiplier = currentMcap / alertMcap;
   const peakMultiplier = peakMcap / alertMcap;
   const gainPct = (multiplier - 1) * 100;
-  const ticker = event.symbol || truncateChartAlertAddress(event.address);
+  const ticker = event.symbol || truncateAlertRecapAddress(event.address);
   const name = event.name || '';
   return `
     <section class="expanded-chart-alert-recap-card" role="dialog" aria-modal="false" aria-label="TrendScope alert recap">
-      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-a"></div>
-      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-b"></div>
-      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-c"></div>
-      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-d"></div>
+      <span class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-a" aria-hidden="true"></span>
+      <span class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-b" aria-hidden="true"></span>
+      <span class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-c" aria-hidden="true"></span>
+      <span class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-d" aria-hidden="true"></span>
       <button type="button" class="expanded-chart-alert-recap-close" data-action="close-alert-recap" aria-label="${CHART_ALERT_RECAP_CLOSE_LABEL}">×</button>
       <header class="expanded-chart-alert-recap-header">
         <span class="expanded-chart-alert-recap-brand">
-          <span class="expanded-chart-alert-recap-logo" aria-hidden="true"></span>
+          <img class="expanded-chart-alert-recap-logo" src="${CHART_ALERT_RECAP_LOGO_URL}" alt="" />
           <strong>TrendScope</strong>
         </span>
         <span class="expanded-chart-alert-recap-called">ALERT CALLED IT</span>
@@ -2599,7 +2607,7 @@ function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][nu
       <div class="expanded-chart-alert-recap-identity">
         ${renderAlertRecapAvatar(event)}
         <strong>${escapeHtml(ticker)}</strong>
-        ${name ? `<span>${escapeHtml(name)}</span>` : ''}
+        ${name ? `<span class="expanded-chart-alert-recap-token-name">${escapeHtml(name)}</span>` : ''}
       </div>
       <main class="expanded-chart-alert-recap-hero">
         <span class="expanded-chart-alert-recap-pill">▲ ${escapeHtml(formatAlertRecapPercent(gainPct))} · ${escapeHtml(formatAlertRecapElapsed(event))}</span>
@@ -2623,11 +2631,11 @@ function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][nu
         </span>
       </div>
       <footer class="expanded-chart-alert-recap-footer">
-        <span class="expanded-chart-alert-recap-x" aria-hidden="true">
-          <svg viewBox="0 0 24 24" focusable="false"><path d="M18.9 2h3.3l-7.2 8.2L23.5 22h-6.7l-5.2-6.8L5.6 22H2.3l7.7-8.8L1.8 2h6.8l4.7 6.2L18.9 2Zm-1.2 17.9h1.8L7.6 4H5.7l12 15.9Z"/></svg>
+        <a class="expanded-chart-alert-recap-x" href="${CHART_ALERT_RECAP_X_PROFILE_URL}" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.9 2h3.3l-7.2 8.2L23.5 22h-6.7l-5.2-6.8L5.6 22H2.3l7.7-8.8L1.8 2h6.8l4.7 6.2L18.9 2Zm-1.2 17.9h1.8L7.6 4H5.7l12 15.9Z"/></svg>
           <strong>@TrendScope_pro</strong>
-        </span>
-        <small title="${escapeHtml(event.address)}">CA ${escapeHtml(truncateChartAlertAddress(event.address))}</small>
+        </a>
+        <small title="${escapeHtml(event.address)}">CA ${escapeHtml(truncateAlertRecapAddress(event.address))}</small>
       </footer>
     </section>
   `;
@@ -2708,6 +2716,7 @@ function mountExpandedChartAlertOverlay(
   tooltip.setAttribute('role', 'tooltip');
   const recap = document.createElement('div');
   recap.className = 'expanded-chart-alert-recap-layer';
+  const expandedPanel = container.closest<HTMLElement>('.legacy-auth-panel-expanded-sparkline');
   container.append(overlay, tooltip, recap);
 
   let raf = 0;
@@ -2717,6 +2726,7 @@ function mountExpandedChartAlertOverlay(
   let hoveredClusterId: string | null = null;
   let pinnedClusterId: string | null = null;
   let activeRecapClusterId: string | null = null;
+  let lastRecapMarkup = '';
   let latestClusters: ChartAlertMarkerCluster[] = [];
   let disposed = false;
   const candlePoints = toChartAlertCandlePoints(data);
@@ -2731,9 +2741,23 @@ function mountExpandedChartAlertOverlay(
 
   const closeRecap = () => {
     activeRecapClusterId = null;
+    lastRecapMarkup = '';
     recap.replaceChildren();
     recap.removeAttribute('data-visible');
+    expandedPanel?.classList.remove('is-showing-alert-recap');
   };
+
+  // Delegated on the persistent layer: chart pointer interactions re-render the
+  // card between pointerup and click, destroying any listener attached to the
+  // close button itself before its click event ever fires.
+  recap.addEventListener('pointerdown', (event) => {
+    const target = event.target as Element | null;
+    if (target?.closest('[data-action="close-alert-recap"]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeRecap();
+    }
+  });
 
   const positionTooltip = (cluster: ChartAlertMarkerCluster) => {
     const placement = getChartAlertMarkerPlacement(cluster, container.clientWidth);
@@ -2771,13 +2795,21 @@ function mountExpandedChartAlertOverlay(
     }
     activeRecapClusterId = cluster.id;
     hideTooltip();
-    recap.innerHTML = markup;
+    const scale = Math.min(
+      (container.clientWidth - CHART_ALERT_RECAP_CARD_MARGIN_PX) / CHART_ALERT_RECAP_CARD_WIDTH_PX,
+      (container.clientHeight - CHART_ALERT_RECAP_CARD_MARGIN_PX) / CHART_ALERT_RECAP_CARD_HEIGHT_PX,
+      1,
+    );
+    recap.style.setProperty('--recap-scale', String(Number.isFinite(scale) && scale > 0 ? scale : 1));
+    // Only touch innerHTML when the content actually changed — pointer moves over
+    // the chart re-render every frame, and swapping the DOM mid-click would break
+    // the close button and the X profile link.
+    if (markup !== lastRecapMarkup) {
+      lastRecapMarkup = markup;
+      recap.innerHTML = markup;
+    }
     recap.dataset.visible = 'true';
-    recap.querySelector<HTMLButtonElement>('[data-action="close-alert-recap"]')?.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      closeRecap();
-    });
+    expandedPanel?.classList.add('is-showing-alert-recap');
   };
 
   const scheduleExpiry = () => {
@@ -2834,11 +2866,13 @@ function mountExpandedChartAlertOverlay(
       button.addEventListener('blur', () => {
         if (!pinnedClusterId) hideTooltip();
       });
-      button.addEventListener('click', (event) => {
+      const openRecapFromMarker = (event: Event) => {
         event.preventDefault();
         event.stopPropagation();
         showRecap(cluster);
-      });
+      };
+      button.addEventListener('pointerdown', openRecapFromMarker);
+      button.addEventListener('click', openRecapFromMarker);
       overlay.append(button);
     }
 
@@ -2976,6 +3010,7 @@ function mountExpandedChartAlertOverlay(
       window.cancelAnimationFrame(raf);
       window.cancelAnimationFrame(syncRaf);
       window.clearTimeout(expiryTimer);
+      expandedPanel?.classList.remove('is-showing-alert-recap');
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleRenderBurstDefault);
       chart.timeScale().unsubscribeSizeChange(scheduleRenderBurstDefault);
       resizeObserver?.disconnect();

@@ -3128,6 +3128,10 @@ body:has(.workspace-topbar)::before {
   white-space: nowrap;
 }
 
+/* ── TrendScope "Alert Recap" card (PNL de multiplicador) ─────────────────
+   Spec: docs/# Spec — TrendScope "Alert Recap" Card.md
+   Card fixo 960×620 escalado via --recap-scale para caber no chart. */
+
 .expanded-chart-alert-recap-layer {
   position: absolute;
   inset: 0;
@@ -3135,7 +3139,6 @@ body:has(.workspace-topbar)::before {
   display: none;
   align-items: center;
   justify-content: center;
-  padding: 18px;
   pointer-events: none;
 }
 
@@ -3150,9 +3153,9 @@ body:has(.workspace-topbar)::before {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(960px, 100%);
-  height: min(620px, calc(100% - 10px));
-  min-height: 520px;
+  flex: none;
+  width: 960px;
+  height: 620px;
   padding: 38px 50px 30px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 22px;
@@ -3161,30 +3164,40 @@ body:has(.workspace-topbar)::before {
   color: #eaf2f3;
   overflow: hidden;
   pointer-events: auto;
+  transform: scale(var(--recap-scale, 1));
 }
 
+.expanded-chart-alert-recap-card > *:not(.expanded-chart-alert-recap-shard):not(.expanded-chart-alert-recap-close) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Light shards — 4 feixes de luz diagonais no fundo */
 .expanded-chart-alert-recap-shard {
   position: absolute;
-  height: 840px;
+  z-index: 0;
   pointer-events: none;
-  transform: rotate(24deg);
 }
 
 .expanded-chart-alert-recap-shard-a {
   top: -120px;
   left: 140px;
   width: 90px;
+  height: 840px;
   background: linear-gradient(var(--recap-accent), transparent);
-  filter: blur(1px);
   opacity: 0.1;
+  transform: rotate(24deg);
+  filter: blur(1px);
 }
 
 .expanded-chart-alert-recap-shard-b {
   top: -120px;
   left: 300px;
   width: 40px;
+  height: 840px;
   background: linear-gradient(var(--recap-accent), transparent);
   opacity: 0.08;
+  transform: rotate(24deg);
 }
 
 .expanded-chart-alert-recap-shard-c {
@@ -3193,9 +3206,9 @@ body:has(.workspace-topbar)::before {
   width: 120px;
   height: 900px;
   background: linear-gradient(var(--recap-accent2), transparent);
-  filter: blur(1px);
   opacity: 0.09;
   transform: rotate(-20deg);
+  filter: blur(1px);
 }
 
 .expanded-chart-alert-recap-shard-d {
@@ -3208,71 +3221,49 @@ body:has(.workspace-topbar)::before {
   transform: rotate(-20deg);
 }
 
-.expanded-chart-alert-recap-card > *:not(.expanded-chart-alert-recap-shard) {
-  position: relative;
-  z-index: 1;
-}
-
 .expanded-chart-alert-recap-close {
   position: absolute;
-  top: 18px;
-  right: 20px;
+  top: 12px;
+  right: 16px;
   z-index: 2;
-  width: 32px;
-  height: 32px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #9fb0b6;
-  font-size: 21px;
-  font-weight: 700;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7c8a93;
+  font-size: 22px;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
 }
 
 .expanded-chart-alert-recap-close:hover,
 .expanded-chart-alert-recap-close:focus-visible {
-  border-color: rgba(52, 240, 221, 0.5);
-  color: var(--recap-accent);
+  color: #eaf2f3;
   outline: none;
 }
 
+/* Header — logo + TrendScope / ALERT CALLED IT */
 .expanded-chart-alert-recap-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
 }
 
 .expanded-chart-alert-recap-brand {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
 }
 
 .expanded-chart-alert-recap-logo {
-  position: relative;
-  width: 30px;
-  height: 30px;
-  border: 2px solid var(--recap-accent);
-  border-radius: 999px;
-}
-
-.expanded-chart-alert-recap-logo::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--recap-accent);
-  transform: translate(-50%, -50%);
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
 }
 
 .expanded-chart-alert-recap-brand strong {
   color: #eaf2f3;
+  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
   font-size: 20px;
   font-weight: 700;
 }
@@ -3283,15 +3274,16 @@ body:has(.workspace-topbar)::before {
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 1.5px;
+  text-transform: uppercase;
 }
 
+/* Identidade da moeda — avatar + ticker + nome */
 .expanded-chart-alert-recap-identity {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 11px;
   margin-top: 24px;
-  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
 }
 
 .expanded-chart-alert-recap-token-avatar {
@@ -3307,19 +3299,22 @@ body:has(.workspace-topbar)::before {
 .expanded-chart-alert-recap-token-avatar-fallback {
   background: linear-gradient(135deg, var(--recap-accent2), var(--recap-accent));
   color: #04110f;
+  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
   font-size: 17px;
   font-weight: 700;
 }
 
 .expanded-chart-alert-recap-identity strong {
   color: #eaf2f3;
+  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
   font-size: 28px;
   font-weight: 700;
 }
 
-.expanded-chart-alert-recap-identity span:last-child {
-  max-width: 260px;
+.expanded-chart-alert-recap-token-name {
+  max-width: 280px;
   color: #7c8a93;
+  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
   font-size: 16px;
   font-weight: 500;
   overflow: hidden;
@@ -3327,6 +3322,7 @@ body:has(.workspace-topbar)::before {
   white-space: nowrap;
 }
 
+/* Herói — badge pill + multiplicador gigante + caption */
 .expanded-chart-alert-recap-hero {
   display: flex;
   flex-direction: column;
@@ -3350,9 +3346,9 @@ body:has(.workspace-topbar)::before {
 
 .expanded-chart-alert-recap-multiple {
   display: flex;
-  align-items: flex-end;
+  align-items: baseline;
   justify-content: center;
-  margin-top: 22px;
+  margin-top: 34px;
   color: var(--recap-accent);
   font-family: "Space Grotesk", Inter, system-ui, sans-serif;
   font-weight: 700;
@@ -3362,34 +3358,35 @@ body:has(.workspace-topbar)::before {
 }
 
 .expanded-chart-alert-recap-multiple strong {
-  font-size: clamp(120px, 16vw, 200px);
+  font-size: 200px;
   font-weight: 700;
 }
 
 .expanded-chart-alert-recap-multiple span {
-  padding-bottom: 0.08em;
-  font-size: clamp(72px, 8.5vw, 104px);
+  font-size: 104px;
 }
 
 .expanded-chart-alert-recap-hero small {
-  margin-top: 28px;
+  margin-top: 30px;
   color: #9fb0b6;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 16px;
   font-weight: 600;
   letter-spacing: 5px;
+  text-transform: uppercase;
 }
 
+/* Faixa de stats — 3 colunas iguais */
 .expanded-chart-alert-recap-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
   margin-top: auto;
   padding-top: 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .expanded-chart-alert-recap-stats > span {
+  position: relative;
   display: grid;
   gap: 6px;
   place-items: center;
@@ -3397,8 +3394,15 @@ body:has(.workspace-topbar)::before {
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
-.expanded-chart-alert-recap-stats > span + span {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+.expanded-chart-alert-recap-stats > span + span::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 1px;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-50%);
 }
 
 .expanded-chart-alert-recap-stats small {
@@ -3406,6 +3410,7 @@ body:has(.workspace-topbar)::before {
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 1px;
+  text-transform: uppercase;
 }
 
 .expanded-chart-alert-recap-stats strong {
@@ -3414,10 +3419,11 @@ body:has(.workspace-topbar)::before {
   font-weight: 600;
 }
 
-.expanded-chart-alert-recap-stats .is-accent {
+.expanded-chart-alert-recap-stats strong.is-accent {
   color: var(--recap-accent);
 }
 
+/* Rodapé — handle do X + CA abreviado */
 .expanded-chart-alert-recap-footer {
   display: flex;
   align-items: center;
@@ -3431,6 +3437,18 @@ body:has(.workspace-topbar)::before {
   display: inline-flex;
   align-items: center;
   gap: 11px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.expanded-chart-alert-recap-x:hover strong,
+.expanded-chart-alert-recap-x:focus-visible strong {
+  color: var(--recap-accent);
+}
+
+.expanded-chart-alert-recap-x:hover svg,
+.expanded-chart-alert-recap-x:focus-visible svg {
+  fill: var(--recap-accent);
 }
 
 .expanded-chart-alert-recap-x svg {
@@ -8270,6 +8288,15 @@ TEMP_LEGACY_BAR_TITLE {
 .legacy-auth-modal[data-auth-modal-scope="sparkline"] .legacy-profile-modal-close:hover {
   border-color: rgba(104, 162, 255, 0.54);
   background: rgba(10, 18, 30, 0.36);
+}
+
+.legacy-auth-panel-expanded-sparkline.is-showing-alert-recap .expanded-sparkline-chart {
+  z-index: 30;
+}
+
+.legacy-auth-panel-expanded-sparkline.is-showing-alert-recap .expanded-sparkline-toolbar .legacy-profile-modal-close {
+  display: none;
+  pointer-events: none;
 }
 
 .sparkline-empty {
