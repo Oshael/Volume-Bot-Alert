@@ -2562,6 +2562,7 @@ function renderExpandedSparklineFootnote(loadingText: string, address: string) {
     <div class="expanded-sparkline-footnote">
       <span>${loadingText}</span>
       <button type="button" class="expanded-sparkline-address-copy" data-action="copy-expanded-sparkline-address" data-address="${safeAddress}" title="Copy contract address" aria-label="Copy contract address">${safeAddress}</button>
+      <span class="expanded-sparkline-copy-status" data-expanded-sparkline-copy-status aria-live="polite"></span>
     </div>
   `;
 }
@@ -2728,11 +2729,23 @@ function bindExpandedSparklineModal(
       try {
         await navigator.clipboard.writeText(tokenAddress);
         element.dataset.copyState = 'copied';
+        element
+          .closest<HTMLElement>('.expanded-sparkline-footnote')
+          ?.querySelector<HTMLElement>('[data-expanded-sparkline-copy-status]')
+          ?.replaceChildren('Copied');
       } catch {
         element.dataset.copyState = 'failed';
+        element
+          .closest<HTMLElement>('.expanded-sparkline-footnote')
+          ?.querySelector<HTMLElement>('[data-expanded-sparkline-copy-status]')
+          ?.replaceChildren('Copy failed');
       }
       window.setTimeout(() => {
         delete element.dataset.copyState;
+        element
+          .closest<HTMLElement>('.expanded-sparkline-footnote')
+          ?.querySelector<HTMLElement>('[data-expanded-sparkline-copy-status]')
+          ?.replaceChildren();
       }, 1200);
     });
   });

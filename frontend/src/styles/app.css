@@ -2935,6 +2935,14 @@ body:has(.workspace-topbar)::before {
   color: #ff9fa6;
 }
 
+.expanded-sparkline-copy-status {
+  flex: 0 0 auto;
+  min-width: 48px;
+  color: #8fe7ff;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .legacy-auth-panel-settings {
   overflow: visible;
 }
