@@ -18,7 +18,7 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
@@ -46,6 +46,11 @@ const EXPANDED_CHART_GRANULARITY_OPTIONS = [
   { label: '4h', value: 240 },
   { label: '24h', value: 1440 },
 ];
+const EXPANDED_TOKEN_AGE_MINUTE_MS = 60 * 1000;
+const EXPANDED_TOKEN_AGE_HOUR_MS = 60 * EXPANDED_TOKEN_AGE_MINUTE_MS;
+const EXPANDED_TOKEN_AGE_DAY_MS = 24 * EXPANDED_TOKEN_AGE_HOUR_MS;
+const EXPANDED_TOKEN_AGE_MONTH_DAYS = 30;
+const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
 const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
   'Sending verification code...',
   'Verifying code...',
@@ -2551,6 +2556,16 @@ function renderExpandedGranularityControls(activeGranularityMinutes: number) {
   `;
 }
 
+function renderExpandedSparklineFootnote(loadingText: string, address: string) {
+  const safeAddress = escapeHtml(address);
+  return `
+    <div class="expanded-sparkline-footnote">
+      <span>${loadingText}</span>
+      <button type="button" class="expanded-sparkline-address-copy" data-action="copy-expanded-sparkline-address" data-address="${safeAddress}" title="Copy contract address" aria-label="Copy contract address">${safeAddress}</button>
+    </div>
+  `;
+}
+
 function renderExpandedSparklineModal(state: AppState, address: string) {
   const token = getTrackedToken(state, address);
   const sparkline = getExpandedTokenSparkline(state, address);
@@ -2570,8 +2585,8 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
       <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
-          ${renderExpandedSparklineIdentity(symbol, name, imageUrl)}
-          ${renderExpandedSparklineStatsRow(token, stats.latestValue, ageLabel)}
+          ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address)}
+          ${renderExpandedSparklineStatsRow(token, state.data.meteoraByAddress[address], stats.latestValue, ageLabel)}
           ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
@@ -2579,19 +2594,19 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           ${renderExpandedChartBody(state, sparkline, address)}
           ${sparkline.loading ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>' : ''}
         </div>
-        <div class="expanded-sparkline-footnote">${loadingText}</div>
+        ${renderExpandedSparklineFootnote(loadingText, address)}
       </div>
     </div>
   `;
 }
 
-function renderExpandedSparklineIdentity(symbol: string, name: string, imageUrl: string | null) {
+function renderExpandedSparklineIdentity(symbol: string, name: string, imageUrl: string | null, address: string) {
   const avatar = imageUrl
     ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
     : `<span class="expanded-sparkline-avatar expanded-sparkline-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
   return `
     <div class="expanded-sparkline-identity">
-      ${avatar}
+      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address)}</span>
       <span class="expanded-sparkline-identity-copy">
         <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
         <small>${escapeHtml(name)}</small>
@@ -2602,9 +2617,11 @@ function renderExpandedSparklineIdentity(symbol: string, name: string, imageUrl:
 
 function renderExpandedSparklineStatsRow(
   token: ReturnType<typeof getTrackedToken>,
+  meteoraEntry: AppState['data']['meteoraByAddress'][string] | undefined,
   latestValue: number | null,
   ageLabel: string,
 ) {
+  const meteoraPoolValue = formatExpandedMeteoraPoolValue(token, meteoraEntry);
   return `
     <div class="expanded-sparkline-popover-subhead">
       ${renderExpandedSparklineStat('mcap', 'MCAP', fmtMoney(latestValue))}
@@ -2612,6 +2629,7 @@ function renderExpandedSparklineStatsRow(
       ${renderExpandedSparklineStat('vol-1h', 'VOL 1H', fmtMoney(token?.volume1h))}
       ${renderExpandedSparklineStat('vol-6h', 'VOL 6H', fmtMoney(token?.volume6h))}
       ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
+      ${renderExpandedSparklineStat('meteora-pool', 'METEORA', meteoraPoolValue)}
     </div>
   `;
 }
@@ -2620,16 +2638,42 @@ function renderExpandedSparklineStat(variant: string, label: string, value: stri
   return `<span class="expanded-sparkline-stat expanded-sparkline-stat-${escapeHtml(variant)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></span>`;
 }
 
+function formatExpandedMeteoraPoolValue(
+  token: ReturnType<typeof getTrackedToken>,
+  meteoraEntry: AppState['data']['meteoraByAddress'][string] | undefined,
+) {
+  const meteora = meteoraEntry || token?.meteora;
+  if (!meteora || meteora.noPool) {
+    return '-';
+  }
+  const poolAddress = String(meteora.poolAddress || '').trim();
+  const poolCount = Number(meteora.poolCount) || 0;
+  const tvl = Number(meteora.tvl);
+  const hasPool = Boolean(poolAddress) || poolCount > 0 || tvl > 0;
+
+  return hasPool ? fmtMoney(Number.isFinite(tvl) ? tvl : null) : '-';
+}
+
 function formatExpandedTokenAge(createdAt: number | null | undefined) {
   const timestamp = Number(createdAt);
   if (!(timestamp > 0)) {
     return '-';
   }
   const ageMs = Math.max(0, Date.now() - timestamp);
-  if (ageMs < 86400000) {
-    return `${Math.max(1, Math.floor(ageMs / 3600000))}h`;
+  if (ageMs < EXPANDED_TOKEN_AGE_HOUR_MS) {
+    return `${Math.max(1, Math.floor(ageMs / EXPANDED_TOKEN_AGE_MINUTE_MS))}m`;
   }
-  return `${Math.floor(ageMs / 86400000)}d`;
+  if (ageMs < EXPANDED_TOKEN_AGE_DAY_MS) {
+    return `${Math.floor(ageMs / EXPANDED_TOKEN_AGE_HOUR_MS)}h`;
+  }
+  const ageDays = Math.floor(ageMs / EXPANDED_TOKEN_AGE_DAY_MS);
+  if (ageDays <= EXPANDED_TOKEN_AGE_MONTH_DAYS) {
+    return `${ageDays}d`;
+  }
+  if (ageDays < EXPANDED_TOKEN_AGE_YEAR_DAYS) {
+    return `${Math.max(1, Math.floor(ageDays / EXPANDED_TOKEN_AGE_MONTH_DAYS))}mo`;
+  }
+  return `${Math.floor(ageDays / EXPANDED_TOKEN_AGE_YEAR_DAYS)}y`;
 }
 
 function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>) {
@@ -2670,6 +2714,26 @@ function bindExpandedSparklineModal(
       event.stopPropagation();
       captureExpandedCandlestickChartViewport();
       controller.setExpandedSparklineGranularity(Number(element.dataset.granularityMinutes));
+    });
+  });
+  section.querySelectorAll<HTMLButtonElement>('[data-action="copy-expanded-sparkline-address"]').forEach((element) => {
+    element.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const tokenAddress = element.dataset.address;
+      if (!tokenAddress) {
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(tokenAddress);
+        element.dataset.copyState = 'copied';
+      } catch {
+        element.dataset.copyState = 'failed';
+      }
+      window.setTimeout(() => {
+        delete element.dataset.copyState;
+      }, 1200);
     });
   });
   void mountExpandedCandlestickChart(section, state, sparkline, address).catch((error) => {

@@ -510,7 +510,8 @@ body:has(.workspace-topbar)::before {
 .token-avatar-wrap > .alert-avatar,
 .token-avatar-wrap > .alert-avatar-placeholder,
 .token-avatar-wrap > .tok-avatar,
-.token-avatar-wrap > .tok-avatar-placeholder {
+.token-avatar-wrap > .tok-avatar-placeholder,
+.token-avatar-wrap > .expanded-sparkline-avatar {
   display: block;
 }
 
@@ -2888,12 +2889,50 @@ body:has(.workspace-topbar)::before {
 }
 
 .expanded-sparkline-footnote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: #7593af;
   font-size: 9px;
   line-height: 1.5;
   text-shadow: 0 0 10px rgba(0, 212, 255, 0.08);
   position: relative;
   z-index: 1;
+}
+
+.expanded-sparkline-address-copy {
+  min-width: 0;
+  max-width: min(100%, 48ch);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8fb7d8;
+  font: inherit;
+  letter-spacing: 0;
+  line-height: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: copy;
+  user-select: all;
+}
+
+.expanded-sparkline-address-copy:hover,
+.expanded-sparkline-address-copy:focus-visible {
+  color: #d7f3ff;
+  outline: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.expanded-sparkline-address-copy[data-copy-state="copied"] {
+  color: #8fe7ff;
+}
+
+.expanded-sparkline-address-copy[data-copy-state="failed"] {
+  color: #ff9fa6;
 }
 
 .legacy-auth-panel-settings {
