@@ -2582,12 +2582,14 @@ function mountExpandedChartAlertOverlay(
   let syncRaf = 0;
   let syncFramesRemaining = 0;
   let expiryTimer = 0;
+  let hoveredClusterId: string | null = null;
   let pinnedClusterId: string | null = null;
   let latestClusters: ChartAlertMarkerCluster[] = [];
   let disposed = false;
   const candlePoints = toChartAlertCandlePoints(data);
 
   const hideTooltip = () => {
+    hoveredClusterId = null;
     pinnedClusterId = null;
     tooltip.removeAttribute('data-visible');
     tooltip.removeAttribute('data-pinned');
@@ -2612,9 +2614,11 @@ function mountExpandedChartAlertOverlay(
     tooltip.innerHTML = renderChartAlertTooltip(cluster);
     tooltip.dataset.visible = 'true';
     if (pinned) {
+      hoveredClusterId = null;
       pinnedClusterId = cluster.id;
       tooltip.dataset.pinned = 'true';
     } else if (!pinnedClusterId) {
+      hoveredClusterId = cluster.id;
       tooltip.removeAttribute('data-pinned');
     }
     positionTooltip(cluster);
@@ -2689,6 +2693,13 @@ function mountExpandedChartAlertOverlay(
       } else {
         hideTooltip();
       }
+    } else if (hoveredClusterId) {
+      const hovered = latestClusters.find((cluster) => cluster.id === hoveredClusterId);
+      if (hovered) {
+        showTooltip(hovered, false);
+      } else {
+        hideTooltip();
+      }
     }
   };
 
@@ -2745,6 +2756,16 @@ function mountExpandedChartAlertOverlay(
     }
     hideTooltip();
   };
+  const onDocumentPointerMove = (event: PointerEvent) => {
+    if (pinnedClusterId || !hoveredClusterId) {
+      return;
+    }
+    const target = event.target as Element | null;
+    if (target?.closest('.expanded-chart-alert-marker')) {
+      return;
+    }
+    hideTooltip();
+  };
   const onDocumentKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       hideTooltip();
@@ -2760,6 +2781,7 @@ function mountExpandedChartAlertOverlay(
   container.addEventListener('pointerup', scheduleRenderBurstDefault);
   window.addEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  document.addEventListener('pointermove', onDocumentPointerMove, true);
   document.addEventListener('keydown', onDocumentKeydown);
 
   if (sessionToken) {
@@ -2797,6 +2819,7 @@ function mountExpandedChartAlertOverlay(
       container.removeEventListener('pointerup', scheduleRenderBurstDefault);
       window.removeEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
       document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+      document.removeEventListener('pointermove', onDocumentPointerMove, true);
       document.removeEventListener('keydown', onDocumentKeydown);
       overlay.remove();
       tooltip.remove();
