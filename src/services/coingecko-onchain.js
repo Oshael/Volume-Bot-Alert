@@ -28,6 +28,53 @@ function parsePositiveInteger(value, fallback, min = 1, max = Number.MAX_SAFE_IN
   return Math.max(min, Math.min(parsed, max));
 }
 
+function parseBoundaryTimestampMs(value, optionName, boundary) {
+  const raw = normalizeString(value);
+  if (!raw) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? `${raw}T${boundary === 'end' ? '23:59:59.999' : '00:00:00.000'}Z`
+    : raw;
+  const timestampMs = Date.parse(normalized);
+  if (!Number.isFinite(timestampMs)) {
+    throw new CoinGeckoOnchainError(
+      `${optionName} must be a valid ISO date/time`,
+      'invalid_time_range',
+      { optionName, value: raw }
+    );
+  }
+  return timestampMs;
+}
+
+function resolveRequestedWindow(options, optionsInput = {}) {
+  const fromMs = parseBoundaryTimestampMs(
+    optionsInput.from ?? optionsInput.fromTimestamp,
+    '--from',
+    'start'
+  );
+  const toMs = parseBoundaryTimestampMs(
+    optionsInput.to ?? optionsInput.toTimestamp,
+    '--to',
+    'end'
+  );
+  const defaultToMs = options.now();
+  const maxMs = toMs ?? defaultToMs;
+  const minMs = fromMs ?? (maxMs - (options.days * 24 * 60 * 60 * 1000));
+  if (minMs > maxMs) {
+    throw new CoinGeckoOnchainError(
+      '--from must be earlier than or equal to --to',
+      'invalid_time_range',
+      { from: optionsInput.from ?? optionsInput.fromTimestamp, to: optionsInput.to ?? optionsInput.toTimestamp }
+    );
+  }
+  return {
+    minTimestamp: Math.floor(minMs / 1000),
+    maxTimestamp: Math.floor(maxMs / 1000),
+    from: new Date(minMs).toISOString(),
+    to: new Date(maxMs).toISOString(),
+    exact: fromMs != null || toMs != null,
+  };
+}
+
 function sleep(ms, setTimeoutImpl = setTimeout) {
   const delayMs = Math.max(0, Math.trunc(Number(ms) || 0));
   if (delayMs <= 0) return Promise.resolve();
@@ -126,11 +173,11 @@ function normalizeOhlcvItem(item) {
   };
 }
 
-function normalizeOhlcvList(list, minTimestamp = 0) {
+function normalizeOhlcvList(list, minTimestamp = 0, maxTimestamp = Number.MAX_SAFE_INTEGER) {
   const byTimestamp = new Map();
   for (const item of Array.isArray(list) ? list : []) {
     const candle = normalizeOhlcvItem(item);
-    if (candle && candle.timestamp >= minTimestamp) {
+    if (candle && candle.timestamp >= minTimestamp && candle.timestamp <= maxTimestamp) {
       byTimestamp.set(candle.timestamp, candle);
     }
   }
@@ -195,15 +242,15 @@ async function fetchPoolOhlcv(optionsInput = {}) {
     throw new CoinGeckoOnchainError('COINGECKO_DEMO_API_KEY or COINGECKO_API_KEY is required', 'api_key_required');
   }
 
-  const minTimestamp = Math.floor((options.now() - (options.days * 24 * 60 * 60 * 1000)) / 1000);
+  const requestedWindow = resolveRequestedWindow(options, optionsInput);
   const byTimestamp = new Map();
   let beforeTimestamp = optionsInput.beforeTimestamp
     ? parsePositiveInteger(optionsInput.beforeTimestamp, 0)
-    : Math.floor(options.now() / 1000) + 60;
+    : requestedWindow.maxTimestamp + (requestedWindow.exact ? 1 : 60);
   let calls = 0;
   let lastMeta = null;
 
-  while (beforeTimestamp > minTimestamp) {
+  while (beforeTimestamp > requestedWindow.minTimestamp) {
     const url = buildOhlcvUrl(options, poolAddress, beforeTimestamp);
     let payload;
     try {
@@ -220,7 +267,11 @@ async function fetchPoolOhlcv(optionsInput = {}) {
 
     calls += 1;
     lastMeta = payload?.meta || lastMeta;
-    const page = normalizeOhlcvList(extractOhlcvList(payload), minTimestamp);
+    const page = normalizeOhlcvList(
+      extractOhlcvList(payload),
+      requestedWindow.minTimestamp,
+      requestedWindow.maxTimestamp
+    );
     if (!page.length) break;
     for (const candle of page) {
       byTimestamp.set(candle.timestamp, candle);
@@ -239,6 +290,8 @@ async function fetchPoolOhlcv(optionsInput = {}) {
     currency: options.currency,
     token: options.token,
     requestedDays: options.days,
+    requestedFrom: requestedWindow.exact ? requestedWindow.from : null,
+    requestedTo: requestedWindow.exact ? requestedWindow.to : null,
     calls,
     meta: lastMeta,
     candles,

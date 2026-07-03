@@ -164,6 +164,8 @@ function buildRequestSummary(result, input, granularityMinutes) {
   return {
     network: result.network || input.network || 'solana',
     days: Number(result.requestedDays || input.days || 0) || null,
+    from: result.requestedFrom || input.from || null,
+    to: result.requestedTo || input.to || null,
     granularityMinutes,
     calls: Number(result.calls) || 0,
   };

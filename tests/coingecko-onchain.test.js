@@ -73,4 +73,64 @@ describe('CoinGecko onchain OHLCV service', () => {
     assert.equal(parseRetryAfterMs('Thu, 01 Jan 1970 00:00:05 GMT', 1000), 4000);
     assert.equal(parseRetryAfterMs(''), null);
   });
+
+  it('fetches only candles inside an exact from/to window', async () => {
+    const requestedUrls = [];
+    const fetchImpl = async (url) => {
+      requestedUrls.push(new URL(url));
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({
+          data: {
+            attributes: {
+              ohlcv_list: [
+                [Date.parse('2026-05-31T23:55:00.000Z') / 1000, 1, 1, 1, 1, 10],
+                [Date.parse('2026-06-01T00:00:00.000Z') / 1000, 2, 2, 2, 2, 20],
+                [Date.parse('2026-06-02T12:00:00.000Z') / 1000, 3, 3, 3, 3, 30],
+                [Date.parse('2026-06-03T00:00:00.000Z') / 1000, 4, 4, 4, 4, 40],
+              ],
+            },
+          },
+        }),
+      };
+    };
+
+    const result = await coingeckoOnchain.fetchPoolOhlcv({
+      poolAddress: 'pool123',
+      apiKey: 'key',
+      from: '2026-06-01',
+      to: '2026-06-02',
+      aggregate: 5,
+      limit: 1000,
+      delayMs: 0,
+      fetchImpl,
+      now: () => Date.parse('2026-07-03T00:00:00.000Z'),
+    });
+
+    const expectedBeforeTimestamp = Math.floor(Date.parse('2026-06-02T23:59:59.999Z') / 1000) + 1;
+    assert.equal(requestedUrls[0].searchParams.get('before_timestamp'), String(expectedBeforeTimestamp));
+    assert.equal(result.requestedFrom, '2026-06-01T00:00:00.000Z');
+    assert.equal(result.requestedTo, '2026-06-02T23:59:59.999Z');
+    assert.deepEqual(
+      result.candles.map((candle) => candle.bucketTs),
+      ['2026-06-01T00:00:00.000Z', '2026-06-02T12:00:00.000Z']
+    );
+  });
+
+  it('rejects from/to windows with an inverted range', async () => {
+    await assert.rejects(
+      () => coingeckoOnchain.fetchPoolOhlcv({
+        poolAddress: 'pool123',
+        apiKey: 'key',
+        from: '2026-06-03',
+        to: '2026-06-02',
+        fetchImpl: async () => {
+          throw new Error('fetch should not be called');
+        },
+      }),
+      /--from must be earlier than or equal to --to/
+    );
+  });
 });

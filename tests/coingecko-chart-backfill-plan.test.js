@@ -16,6 +16,8 @@ function buildResult(candles = [
     timeframe: 'minute',
     aggregate: 5,
     requestedDays: 31,
+    requestedFrom: '2026-07-02T18:00:00.000Z',
+    requestedTo: '2026-07-02T18:05:00.000Z',
     calls: 1,
     candles,
   };
@@ -43,6 +45,8 @@ describe('CoinGecko chart backfill planner', () => {
     assert.equal(plan.mode, 'dry-run');
     assert.equal(plan.writes, false);
     assert.equal(plan.token.symbol, 'SOLANGELES');
+    assert.equal(plan.request.from, '2026-07-02T18:00:00.000Z');
+    assert.equal(plan.request.to, '2026-07-02T18:05:00.000Z');
     assert.equal(plan.coingecko.candles, 2);
     assert.equal(plan.mcapMultiplier.source, 'catalog_last_mcap_over_coingecko_latest_close');
     assert.equal(plan.mcapMultiplier.value, 1000000);
