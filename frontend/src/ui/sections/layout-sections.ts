@@ -2399,6 +2399,7 @@ function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceS
 
 type ExpandedChartTimeScaleApi = {
   logicalToCoordinate(logical: Logical): number | null;
+  timeToCoordinate(time: UTCTimestamp): number | null;
   subscribeVisibleLogicalRangeChange(handler: () => void): void;
   unsubscribeVisibleLogicalRangeChange(handler: () => void): void;
   subscribeSizeChange(handler: () => void): void;
@@ -2541,6 +2542,7 @@ function mountExpandedChartAlertOverlay(
     const events = readChartAlertHistory(address).events;
     const projected = projectChartAlertMarkers(events, candlePoints, {
       logicalToCoordinate: (logical) => chart.timeScale().logicalToCoordinate(logical as Logical),
+      timeToCoordinate: (time) => chart.timeScale().timeToCoordinate(time as UTCTimestamp),
       priceToCoordinate: (price) => candleSeries.priceToCoordinate(price),
     }, granularityMinutes);
     latestClusters = clusterChartAlertMarkers(projected);

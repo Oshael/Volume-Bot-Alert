@@ -63,6 +63,20 @@ describe('chart alert marker projection', () => {
     assert.match(marker.summary, /\$100\.0K/);
   });
 
+  it('prefers chart time coordinates over logical indexes to stay beside the candle', () => {
+    const [marker] = markers.projectChartAlertMarkers([event()], candles, {
+      logicalToCoordinate: () => 0,
+      timeToCoordinate: (time) => {
+        if (time === candles[0].time) return 640;
+        if (time === candles[1].time) return 740;
+        return null;
+      },
+      priceToCoordinate: (price) => 500 - (price / 1000),
+    }, 5);
+
+    assert.equal(marker.x, 690);
+  });
+
   it('uses a visible candle fallback when event market cap is unavailable', () => {
     const [marker] = markers.projectChartAlertMarkers([event({ mcap: null, ruleKey: 'monitored-mcap' })], candles, scale(), 5);
 

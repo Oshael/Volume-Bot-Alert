@@ -8,6 +8,7 @@ export type ChartAlertCandlePoint = {
 
 export type ChartAlertScaleAdapter = {
   logicalToCoordinate(logical: number): number | null;
+  timeToCoordinate?(time: number): number | null;
   priceToCoordinate(price: number): number | null;
 };
 
@@ -97,13 +98,20 @@ function getEventTimestampSeconds(event: ChartAlertEvent) {
   return Number.isFinite(timestamp) ? timestamp / 1000 : null;
 }
 
-function findBucketProjection(candles: ChartAlertCandlePoint[], eventSeconds: number, granularityMinutes: number) {
+type BucketProjection = {
+  logical: number;
+  candle: ChartAlertCandlePoint;
+  eventSeconds: number;
+  bucketStart: number;
+};
+
+function findBucketProjection(candles: ChartAlertCandlePoint[], eventSeconds: number, granularityMinutes: number): BucketProjection | null {
   const granularitySeconds = Math.max(60, Math.round(Number(granularityMinutes) || 5) * 60);
   const bucketStart = Math.floor(eventSeconds / granularitySeconds) * granularitySeconds;
   const exactIndex = candles.findIndex((candle) => candle.time === bucketStart);
   if (exactIndex >= 0) {
     const fraction = Math.max(0, Math.min(0.999, (eventSeconds - bucketStart) / granularitySeconds));
-    return { logical: exactIndex + fraction, candle: candles[exactIndex] };
+    return { logical: exactIndex + fraction, candle: candles[exactIndex], eventSeconds, bucketStart };
   }
 
   const nextIndex = candles.findIndex((candle) => candle.time > eventSeconds);
@@ -118,7 +126,62 @@ function findBucketProjection(candles: ChartAlertCandlePoint[], eventSeconds: nu
   return {
     logical: previousIndex + ((nextIndex - previousIndex) * fraction),
     candle: previous,
+    eventSeconds,
+    bucketStart,
   };
+}
+
+function getCoordinateFromTime(timeToCoordinate: (time: number) => number | null, time: number) {
+  const coordinate = timeToCoordinate(time);
+  return coordinate == null || !Number.isFinite(coordinate) ? null : coordinate;
+}
+
+function interpolateTimeCoordinate(candles: ChartAlertCandlePoint[], projection: BucketProjection, scale: ChartAlertScaleAdapter) {
+  if (!scale.timeToCoordinate) {
+    return null;
+  }
+
+  const exact = getCoordinateFromTime(scale.timeToCoordinate, projection.eventSeconds);
+  if (exact != null) {
+    return exact;
+  }
+
+  const currentIndex = candles.findIndex((candle) => candle.time === projection.bucketStart);
+  if (currentIndex >= 0) {
+    const startX = getCoordinateFromTime(scale.timeToCoordinate, candles[currentIndex].time);
+    const next = candles[currentIndex + 1];
+    const nextX = next ? getCoordinateFromTime(scale.timeToCoordinate, next.time) : null;
+    if (startX != null && nextX != null && next.time > candles[currentIndex].time) {
+      const fraction = Math.max(0, Math.min(1, (projection.eventSeconds - candles[currentIndex].time) / (next.time - candles[currentIndex].time)));
+      return startX + ((nextX - startX) * fraction);
+    }
+    if (startX != null) {
+      return startX;
+    }
+  }
+
+  const nextIndex = candles.findIndex((candle) => candle.time > projection.eventSeconds);
+  const previous = candles[nextIndex - 1];
+  const next = candles[nextIndex];
+  if (!previous || !next || previous.time >= projection.eventSeconds || next.time <= projection.eventSeconds) {
+    return null;
+  }
+  const previousX = getCoordinateFromTime(scale.timeToCoordinate, previous.time);
+  const nextX = getCoordinateFromTime(scale.timeToCoordinate, next.time);
+  if (previousX == null || nextX == null) {
+    return null;
+  }
+  const fraction = (projection.eventSeconds - previous.time) / (next.time - previous.time);
+  return previousX + ((nextX - previousX) * fraction);
+}
+
+function getMarkerX(candles: ChartAlertCandlePoint[], projection: BucketProjection, scale: ChartAlertScaleAdapter) {
+  const timeCoordinate = interpolateTimeCoordinate(candles, projection, scale);
+  if (timeCoordinate != null) {
+    return timeCoordinate;
+  }
+  const logicalCoordinate = scale.logicalToCoordinate(projection.logical);
+  return logicalCoordinate == null || !Number.isFinite(logicalCoordinate) ? null : logicalCoordinate;
 }
 
 function getMarkerY(event: ChartAlertEvent, candle: ChartAlertCandlePoint, scale: ChartAlertScaleAdapter) {
@@ -164,9 +227,9 @@ export function projectChartAlertMarkers(
     if (!projection) {
       continue;
     }
-    const x = scale.logicalToCoordinate(projection.logical);
+    const x = getMarkerX(sortedCandles, projection, scale);
     const markerY = getMarkerY(event, projection.candle, scale);
-    if (x == null || !Number.isFinite(x) || !markerY) {
+    if (x == null || !markerY) {
       continue;
     }
 
