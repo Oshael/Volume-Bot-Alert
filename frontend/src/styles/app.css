@@ -2722,7 +2722,13 @@ body:has(.workspace-topbar)::before {
 .expanded-sparkline-popover-subhead .expanded-sparkline-stat strong {
   color: #8fe7ff;
   font: inherit;
+  font-size: 10.5px;
   font-weight: 900;
+  line-height: 1;
+}
+
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat-meteora-pool strong {
+  color: #d18cff;
 }
 
 .expanded-sparkline-resolution-control {
@@ -2769,7 +2775,7 @@ body:has(.workspace-topbar)::before {
 
 .expanded-sparkline-chart {
   position: relative;
-  min-height: clamp(420px, 67vh, 740px);
+  min-height: clamp(500px, 75vh, 820px);
   padding: 12px 14px 8px;
   border: 1px solid rgba(55, 61, 75, 0.92);
   border-radius: 16px;
@@ -2814,8 +2820,8 @@ body:has(.workspace-topbar)::before {
 .expanded-candles-wrap {
   position: relative;
   width: 100%;
-  height: clamp(410px, 66vh, 720px);
-  min-height: 410px;
+  height: clamp(490px, 74vh, 800px);
+  min-height: 490px;
   overflow: hidden;
   background: #000;
   cursor: crosshair;
@@ -2909,13 +2915,15 @@ body:has(.workspace-topbar)::before {
   background: transparent;
   color: #8fb7d8;
   font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
   letter-spacing: 0;
   line-height: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: copy;
-  user-select: all;
+  user-select: none;
 }
 
 .expanded-sparkline-address-copy:hover,
