@@ -3116,17 +3116,9 @@ body:has(.workspace-topbar)::before {
 .expanded-chart-alert-tooltip-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
   padding: 7px 12px;
   border-top: 1px solid #1c2534;
-}
-
-.expanded-chart-alert-tooltip-foot span {
-  color: #3f8cff;
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
 }
 
 .expanded-chart-alert-tooltip-foot small {

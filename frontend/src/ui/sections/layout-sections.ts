@@ -2537,7 +2537,6 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
       ${renderChartAlertMcapChip('24H', event.mcap, true)}
     </div>
     <div class="expanded-chart-alert-tooltip-foot">
-      <span>Dex Screener / X Buscar CA</span>
       <small title="${escapeHtml(event.address)}">${escapeHtml(truncateChartAlertAddress(event.address))}</small>
     </div>
   `;
