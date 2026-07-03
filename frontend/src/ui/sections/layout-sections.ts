@@ -1,6 +1,9 @@
-import type { CandlestickData, IPriceScaleApi, UTCTimestamp } from 'lightweight-charts';
+import type { CandlestickData, IPriceScaleApi, Logical, UTCTimestamp } from 'lightweight-charts';
 import type { AppController } from '../../state/app-controller';
 import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { fetchDashboardChartAlertEvents, type ChartAlertEvent } from '../../services/api/catalog';
+import { EXPANDED_CHART_ALERT_EVENT, mergeChartAlertHistory, readChartAlertHistory } from '../../services/charts/chart-alert-history';
+import { clusterChartAlertMarkers, projectChartAlertMarkers, type ChartAlertCandlePoint, type ChartAlertMarkerCluster } from '../../services/charts/chart-alert-markers';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -2394,6 +2397,273 @@ function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceS
   return () => container.removeEventListener('wheel', onWheel, true);
 }
 
+type ExpandedChartTimeScaleApi = {
+  logicalToCoordinate(logical: Logical): number | null;
+  subscribeVisibleLogicalRangeChange(handler: () => void): void;
+  unsubscribeVisibleLogicalRangeChange(handler: () => void): void;
+  subscribeSizeChange(handler: () => void): void;
+  unsubscribeSizeChange(handler: () => void): void;
+};
+
+type ExpandedChartApi = {
+  timeScale(): ExpandedChartTimeScaleApi;
+};
+
+type ExpandedCandleSeriesApi = {
+  priceToCoordinate(price: number): number | null;
+};
+
+function toChartAlertCandlePoints(data: CandlestickData<UTCTimestamp>[]): ChartAlertCandlePoint[] {
+  return data.map((candle) => ({
+    time: Number(candle.time),
+    high: candle.high,
+    close: candle.close,
+  }));
+}
+
+function upsertChartAlertCandlePoint(candles: ChartAlertCandlePoint[], candle: CandlestickData<UTCTimestamp>) {
+  const time = Number(candle.time);
+  if (!Number.isFinite(time)) {
+    return;
+  }
+  const next = { time, high: candle.high, close: candle.close };
+  const index = candles.findIndex((entry) => entry.time === time);
+  if (index >= 0) {
+    candles[index] = next;
+  } else {
+    candles.push(next);
+    candles.sort((left, right) => left.time - right.time);
+  }
+}
+
+function formatChartAlertTime(event: ChartAlertEvent) {
+  const timestamp = Date.parse(event.triggeredAt);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : 'unknown time';
+}
+
+function formatChartAlertMetric(event: ChartAlertEvent) {
+  if (event.ruleKey === 'monitored-vol') {
+    return `VOL ${fmtMoney(event.prevVolume5m ?? event.prevVolume1m)} → ${fmtMoney(event.volume5m ?? event.volume1m)}`;
+  }
+  if (event.ruleKey === 'monitored-mcap') {
+    return `MCAP ${fmtMoney(event.prevMcap)} → ${fmtMoney(event.mcap)}`;
+  }
+  if (event.ruleKey === 'meteora-surge') {
+    return `TVL ${fmtMoney(event.meteoraBaselineTvl24h)} → ${fmtMoney(event.meteoraCurrentTvl)}`;
+  }
+  if (event.ruleKey.includes('surge')) {
+    return `${event.surgeWindow || 'SURGE'} ${fmtPct(event.priceChange1h ?? event.priceChange6h ?? event.pct)}`;
+  }
+  return `Change ${fmtPct(event.pct)}`;
+}
+
+function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
+  return `
+    <div class="expanded-chart-alert-tooltip-title">${escapeHtml(cluster.title)}</div>
+    ${cluster.markers.map((marker) => `
+      <div class="expanded-chart-alert-tooltip-event">
+        <span class="expanded-chart-alert-tooltip-code" data-tone="${escapeHtml(marker.tone)}">${escapeHtml(marker.code)}</span>
+        <span class="expanded-chart-alert-tooltip-copy">
+          <strong>${escapeHtml(marker.title)}</strong>
+          <small>${escapeHtml(formatChartAlertTime(marker.event))}</small>
+          <small>${escapeHtml(marker.mcapAvailable ? `MCAP ${fmtMoney(marker.event.mcap)}` : 'MCAP do disparo indisponivel')}</small>
+          <small>${escapeHtml(formatChartAlertMetric(marker.event))}</small>
+        </span>
+      </div>
+    `).join('')}
+  `;
+}
+
+function mountExpandedChartAlertOverlay(
+  container: HTMLElement,
+  chart: ExpandedChartApi,
+  candleSeries: ExpandedCandleSeriesApi,
+  data: CandlestickData<UTCTimestamp>[],
+  address: string,
+  granularityMinutes: number,
+  sessionToken: string | null,
+) {
+  const overlay = document.createElement('div');
+  overlay.className = 'expanded-chart-alert-overlay';
+  overlay.setAttribute('aria-label', 'Chart alert markers');
+  const tooltip = document.createElement('div');
+  tooltip.className = 'expanded-chart-alert-tooltip';
+  tooltip.setAttribute('role', 'tooltip');
+  container.append(overlay, tooltip);
+
+  let raf = 0;
+  let expiryTimer = 0;
+  let pinnedClusterId: string | null = null;
+  let latestClusters: ChartAlertMarkerCluster[] = [];
+  let disposed = false;
+  const candlePoints = toChartAlertCandlePoints(data);
+
+  const hideTooltip = () => {
+    pinnedClusterId = null;
+    tooltip.removeAttribute('data-visible');
+    tooltip.removeAttribute('data-pinned');
+    tooltip.replaceChildren();
+  };
+
+  const positionTooltip = (cluster: ChartAlertMarkerCluster) => {
+    const left = Math.max(12, Math.min(container.clientWidth - 260, cluster.x + 12));
+    const top = Math.max(12, Math.min(container.clientHeight - 130, cluster.y - 12));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  };
+
+  const showTooltip = (cluster: ChartAlertMarkerCluster, pinned: boolean) => {
+    tooltip.innerHTML = renderChartAlertTooltip(cluster);
+    tooltip.dataset.visible = 'true';
+    if (pinned) {
+      pinnedClusterId = cluster.id;
+      tooltip.dataset.pinned = 'true';
+    } else if (!pinnedClusterId) {
+      tooltip.removeAttribute('data-pinned');
+    }
+    positionTooltip(cluster);
+  };
+
+  const scheduleExpiry = () => {
+    window.clearTimeout(expiryTimer);
+    const nextExpiryAt = readChartAlertHistory(address).nextExpiryAt;
+    if (!nextExpiryAt) {
+      return;
+    }
+    expiryTimer = window.setTimeout(() => {
+      scheduleRender();
+      scheduleExpiry();
+    }, Math.max(100, nextExpiryAt - Date.now() + 50));
+  };
+
+  const render = () => {
+    raf = 0;
+    const events = readChartAlertHistory(address).events;
+    const projected = projectChartAlertMarkers(events, candlePoints, {
+      logicalToCoordinate: (logical) => chart.timeScale().logicalToCoordinate(logical as Logical),
+      priceToCoordinate: (price) => candleSeries.priceToCoordinate(price),
+    }, granularityMinutes);
+    latestClusters = clusterChartAlertMarkers(projected);
+    overlay.replaceChildren();
+
+    for (const cluster of latestClusters) {
+      if (cluster.x < -24 || cluster.y < -24 || cluster.x > container.clientWidth + 24 || cluster.y > container.clientHeight + 24) {
+        continue;
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'expanded-chart-alert-marker';
+      button.dataset.tone = cluster.tone;
+      button.style.left = `${cluster.x}px`;
+      button.style.top = `${cluster.y}px`;
+      button.setAttribute('aria-label', cluster.ariaLabel);
+      button.innerHTML = `<span>${escapeHtml(cluster.code)}</span>${cluster.overflow ? `<em>+${cluster.overflow}</em>` : ''}`;
+      button.addEventListener('mouseenter', () => showTooltip(cluster, false));
+      button.addEventListener('focus', () => showTooltip(cluster, false));
+      button.addEventListener('mouseleave', () => {
+        if (!pinnedClusterId) hideTooltip();
+      });
+      button.addEventListener('blur', () => {
+        if (!pinnedClusterId) hideTooltip();
+      });
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showTooltip(cluster, true);
+      });
+      overlay.append(button);
+    }
+
+    if (pinnedClusterId) {
+      const pinned = latestClusters.find((cluster) => cluster.id === pinnedClusterId);
+      if (pinned) {
+        showTooltip(pinned, true);
+      } else {
+        hideTooltip();
+      }
+    }
+  };
+
+  function scheduleRender() {
+    if (disposed || raf) {
+      return;
+    }
+    raf = window.requestAnimationFrame(render);
+  }
+
+  const onChartAlert = (event: Event) => {
+    const detail = (event as CustomEvent<ChartAlertEvent>).detail;
+    if (detail?.address !== address) {
+      return;
+    }
+    scheduleRender();
+    scheduleExpiry();
+  };
+  const onDocumentPointerDown = (event: PointerEvent) => {
+    const target = event.target as Node | null;
+    if (target && (overlay.contains(target) || tooltip.contains(target))) {
+      return;
+    }
+    hideTooltip();
+  };
+  const onDocumentKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      hideTooltip();
+    }
+  };
+
+  chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleRender);
+  chart.timeScale().subscribeSizeChange(scheduleRender);
+  const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleRender) : null;
+  resizeObserver?.observe(container);
+  container.addEventListener('wheel', scheduleRender, { passive: true });
+  container.addEventListener('pointermove', scheduleRender, { passive: true });
+  container.addEventListener('pointerup', scheduleRender);
+  window.addEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
+  document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  document.addEventListener('keydown', onDocumentKeydown);
+
+  if (sessionToken) {
+    fetchDashboardChartAlertEvents(address, sessionToken)
+      .then((payload) => {
+        if (disposed) return;
+        mergeChartAlertHistory(payload);
+        scheduleRender();
+        scheduleExpiry();
+      })
+      .catch((error) => {
+        console.warn('[ExpandedChart] Failed to load alert markers:', error instanceof Error ? error.message : error);
+      });
+  }
+
+  scheduleRender();
+  scheduleExpiry();
+
+  return {
+    scheduleRender,
+    upsertCandle(candle: CandlestickData<UTCTimestamp>) {
+      upsertChartAlertCandlePoint(candlePoints, candle);
+      scheduleRender();
+    },
+    cleanup() {
+      disposed = true;
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(expiryTimer);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleRender);
+      chart.timeScale().unsubscribeSizeChange(scheduleRender);
+      resizeObserver?.disconnect();
+      container.removeEventListener('wheel', scheduleRender);
+      container.removeEventListener('pointermove', scheduleRender);
+      container.removeEventListener('pointerup', scheduleRender);
+      window.removeEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
+      document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+      document.removeEventListener('keydown', onDocumentKeydown);
+      overlay.remove();
+      tooltip.remove();
+    },
+  };
+}
+
 async function mountExpandedCandlestickChart(section: ParentNode, state: AppState, sparkline: TokenSparklineEntry, address: string) {
   const container = section.querySelector<HTMLElement>('[data-expanded-candlestick-chart]');
   const legend = section.querySelector<HTMLElement>('[data-expanded-chart-legend]');
@@ -2462,6 +2732,15 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   priceScale.setVisibleRange(preservedViewport?.priceRange || getExpandedChartInitialPriceRange(data, referenceValue));
   priceScale.setAutoScale(false);
   const removePriceScaleWheel = bindExpandedPriceScaleWheel(container, priceScale);
+  const chartAlertOverlay = mountExpandedChartAlertOverlay(
+    container,
+    chart,
+    candleSeries,
+    data,
+    address,
+    sparkline.granularityMinutes ?? 5,
+    state.session.token,
+  );
   if (legend) {
     legend.textContent = formatExpandedChartLegend(latest);
   }
@@ -2518,6 +2797,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
       price: normalized.close,
       color: normalized.close >= normalized.open ? '#18c79a' : '#ff4f67',
     });
+    chartAlertOverlay.upsertCandle(liveCandle);
     if (legend) {
       legend.textContent = formatExpandedChartLegend(liveCandle);
     }
@@ -2525,6 +2805,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   window.addEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
   expandedCandlestickChartCleanup = () => {
     window.removeEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
+    chartAlertOverlay.cleanup();
     removePriceScaleWheel();
     chart.remove();
   };
