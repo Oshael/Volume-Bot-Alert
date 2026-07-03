@@ -18,6 +18,18 @@ const {
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const DEFAULT_ALERT_FEED_LIMIT = 50;
+const CHART_ALERT_EVENT_LIMIT = 500;
+const CHART_ALERT_WINDOW_HOURS = 24;
+const CHART_ALERT_RULE_KEYS = Object.freeze([
+  'monitored-vol',
+  'monitored-mcap',
+  'hvnc',
+  'recent-surge-1h',
+  'recent-surge-6h',
+  'old-week-surge-1h',
+  'old-week-surge-6h',
+  'meteora-surge',
+]);
 const WRAPPED_SOL_ADDRESS = 'so11111111111111111111111111111111111111112';
 const USDC_ADDRESS = 'epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v';
 const USDT_ADDRESS = 'es9vmfrzacermjfrf4h2fyd4e5hvpdj8w6r9vwxzbdi';
@@ -499,6 +511,43 @@ async function listDashboardAlertFeeds(options = {}) {
   };
 }
 
+function buildDashboardChartAlertEvent(eventRow) {
+  const rule = resolveDashboardFeedRule(eventRow?.ruleKey);
+  const event = buildDashboardUserAlertEventPayload(eventRow, null, rule);
+  return {
+    ...event,
+    address: toTextOrNull(eventRow?.tokenAddress) || event.address,
+  };
+}
+
+async function listDashboardChartAlertEvents(options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
+  if (!Number.isFinite(now.getTime())) {
+    throw new Error('Valid chart alert reference time is required');
+  }
+  const cutoff = new Date(now.getTime() - (CHART_ALERT_WINDOW_HOURS * 60 * 60 * 1000));
+  const rows = await userAlertEvent.listChartEvents({
+    userId: options.userId,
+    tokenAddress: options.tokenAddress,
+    triggeredAfter: cutoff,
+    ruleKeys: CHART_ALERT_RULE_KEYS,
+    limit: CHART_ALERT_EVENT_LIMIT + 1,
+  });
+  const truncated = rows.length > CHART_ALERT_EVENT_LIMIT;
+  const events = rows
+    .slice(0, CHART_ALERT_EVENT_LIMIT)
+    .map((row) => buildDashboardChartAlertEvent(row));
+
+  return {
+    generatedAt: now.toISOString(),
+    windowHours: CHART_ALERT_WINDOW_HOURS,
+    address: String(options.tokenAddress || '').trim(),
+    count: events.length,
+    truncated,
+    events,
+  };
+}
+
 async function updateDashboardAlertCursor(userId, payload = {}) {
   const rule = resolveDashboardFeedRule(payload.ruleKey);
   const cursor = await alertDeliveryCursor.upsertCursor({
@@ -512,11 +561,15 @@ async function updateDashboardAlertCursor(userId, payload = {}) {
 }
 
 module.exports = {
+  CHART_ALERT_EVENT_LIMIT,
+  CHART_ALERT_RULE_KEYS,
+  CHART_ALERT_WINDOW_HOURS,
   DEFAULT_ALERT_FEED_LIMIT,
   buildDashboardAlertEventFromEvent,
   buildDashboardAlertEventItem,
   listDashboardAlertFeeds,
   listDashboardAlertEvents,
+  listDashboardChartAlertEvents,
   normalizeAlertFeedLimit,
   normalizeAlertFeedMode,
   normalizeAlertFeedRuleKeys,
@@ -529,6 +582,7 @@ module.exports = {
     buildDashboardUserAlertIdentityPayload,
     buildDashboardUserAlertMetricPayload,
     buildDashboardUserAlertEventPayload,
+    buildDashboardChartAlertEvent,
     bootstrapRealtimeOnlyCursor,
     loadDashboardCatalogRowsWithMeteora,
     mapDeliveryCursor,

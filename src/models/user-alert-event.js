@@ -63,6 +63,13 @@ function toTimestampOrNull(value) {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
+function normalizeRuleKeys(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('At least one alert rule key is required');
+  }
+  return Array.from(new Set(value.map((item) => normalizeRuleKey(item))));
+}
+
 function mapEventRow(row) {
   if (!row) return null;
   return {
@@ -158,6 +165,31 @@ async function listRecentEvents(filters = {}, runner = db) {
   return rows.map((row) => mapEventRow(row));
 }
 
+async function listChartEvents(filters = {}, runner = db) {
+  const userId = normalizeUserId(filters.userId);
+  const tokenAddress = normalizeTokenAddress(filters.tokenAddress);
+  const triggeredAfter = toTimestampOrNull(filters.triggeredAfter);
+  if (!triggeredAfter) {
+    throw new Error('Valid chart alert cutoff is required');
+  }
+  const ruleKeys = normalizeRuleKeys(filters.ruleKeys);
+  const limit = Math.max(1, Math.min(Number(filters.limit) || 501, 1001));
+
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM user_alert_events
+     WHERE user_id = $1
+       AND token_address = $2
+       AND triggered_at >= $3
+       AND rule_key = ANY($4::text[])
+     ORDER BY triggered_at ASC, id ASC
+     LIMIT $5`,
+    [userId, tokenAddress, triggeredAfter, ruleKeys, limit]
+  );
+
+  return rows.map((row) => mapEventRow(row));
+}
+
 async function getLatestEventId(filters = {}, runner = db) {
   const userId = normalizeUserId(filters.userId);
   const values = [userId];
@@ -187,6 +219,7 @@ async function getLatestEventId(filters = {}, runner = db) {
 module.exports = {
   createEvent,
   getLatestEventId,
+  listChartEvents,
   listRecentEvents,
   __private: {
     mapEventRow,
@@ -194,6 +227,7 @@ module.exports = {
     normalizeKind,
     normalizePayload,
     normalizeRuleKey,
+    normalizeRuleKeys,
     normalizeTokenAddress,
     normalizeUserId,
     toTimestampOrNull,

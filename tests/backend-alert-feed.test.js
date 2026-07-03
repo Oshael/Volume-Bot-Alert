@@ -19,6 +19,58 @@ describe('backend alert feed service', () => {
     );
   });
 
+  it('lists user-configurable chart alerts from the last 24 hours without catalog lookups', async () => {
+    const originalListChartEvents = userAlertEvent.listChartEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    let capturedFilters = null;
+
+    userAlertEvent.listChartEvents = async (filters) => {
+      capturedFilters = filters;
+      return [{
+        id: 71,
+        userId: 8,
+        ruleKey: 'monitored-mcap',
+        kind: 'monitored-mcap',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        payload: {
+          address: 'So11111111111111111111111111111111111111112',
+          symbol: 'WSOL',
+          mcap: 100000,
+          prevMcap: 80000,
+          pct: 25,
+          label: 'MCAP',
+        },
+        triggeredAt: '2026-07-03T05:47:42.000Z',
+      }];
+    };
+    tokenCatalog.listDashboardMetadataByAddresses = async () => {
+      throw new Error('chart history must use the persisted event snapshot');
+    };
+
+    try {
+      const payload = await backendAlertFeed.listDashboardChartAlertEvents({
+        userId: 8,
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        now: new Date('2026-07-03T06:00:00.000Z'),
+      });
+
+      assert.equal(capturedFilters.userId, 8);
+      assert.equal(capturedFilters.tokenAddress, 'So11111111111111111111111111111111111111112');
+      assert.equal(capturedFilters.triggeredAfter.toISOString(), '2026-07-02T06:00:00.000Z');
+      assert.deepEqual(capturedFilters.ruleKeys, backendAlertFeed.CHART_ALERT_RULE_KEYS);
+      assert.equal(capturedFilters.limit, 501);
+      assert.equal(payload.generatedAt, '2026-07-03T06:00:00.000Z');
+      assert.equal(payload.windowHours, 24);
+      assert.equal(payload.count, 1);
+      assert.equal(payload.truncated, false);
+      assert.equal(payload.events[0].mcap, 100000);
+      assert.equal(payload.events[0].triggeredAt, '2026-07-03T05:47:42.000Z');
+    } finally {
+      userAlertEvent.listChartEvents = originalListChartEvents;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+    }
+  });
+
   it('uses GMGN claim payload metadata when catalog metadata is missing', async () => {
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;

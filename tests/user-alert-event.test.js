@@ -139,4 +139,52 @@ describe('user alert event model', () => {
       db.query = originalQuery;
     }
   });
+
+  it('lists chart events by user, token, cutoff and explicit rules', async () => {
+    const originalQuery = db.query;
+    let capturedSql = null;
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = String(sql);
+      capturedParams = params;
+      return { rows: [] };
+    };
+
+    try {
+      const cutoff = new Date('2026-07-02T06:00:00.000Z');
+      const events = await userAlertEvent.listChartEvents({
+        userId: 9,
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        triggeredAfter: cutoff,
+        ruleKeys: ['monitored-vol', 'hvnc', 'monitored-vol'],
+        limit: 501,
+      });
+
+      assert.deepEqual(events, []);
+      assert.match(capturedSql, /triggered_at >= \$3/);
+      assert.match(capturedSql, /rule_key = ANY\(\$4::text\[\]\)/);
+      assert.match(capturedSql, /ORDER BY triggered_at ASC, id ASC/);
+      assert.deepEqual(capturedParams, [
+        9,
+        'So11111111111111111111111111111111111111112',
+        cutoff,
+        ['monitored-vol', 'hvnc'],
+        501,
+      ]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('rejects chart event queries without a valid cutoff', async () => {
+    await assert.rejects(
+      () => userAlertEvent.listChartEvents({
+        userId: 9,
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        ruleKeys: ['monitored-vol'],
+      }),
+      /Valid chart alert cutoff is required/
+    );
+  });
 });
