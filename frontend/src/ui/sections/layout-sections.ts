@@ -60,6 +60,7 @@ const CHART_ALERT_MARKER_SYNC_FRAMES = 8;
 const CHART_ALERT_TOOLTIP_WIDTH_PX = 300;
 const CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX = 210;
 const CHART_ALERT_TOOLTIP_BADGE_GAP_PX = 32;
+const CHART_ALERT_RECAP_CLOSE_LABEL = 'Close alert recap';
 const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
   'Sending verification code...',
   'Verifying code...',
@@ -2502,6 +2503,136 @@ function renderChartAlertMcapChip(label: string, value: number | null, highlight
   `;
 }
 
+function toFiniteAlertNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatAlertRecapPercent(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return '-';
+  const abs = Math.abs(value);
+  const digits = abs >= 1000 ? 0 : (abs >= 100 ? 1 : 2);
+  const formatted = value.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return `${value >= 0 ? '+' : ''}${formatted}%`;
+}
+
+function formatAlertRecapMultiplier(value: number | null) {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '-';
+  const digits = value >= 10 ? 1 : 2;
+  return value.toFixed(digits);
+}
+
+function formatAlertRecapElapsed(event: ChartAlertEvent) {
+  const timestamp = Date.parse(event.triggeredAt);
+  if (!Number.isFinite(timestamp)) return '-';
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(elapsedMs / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${Math.max(1, mins)}m`;
+}
+
+function getAlertRecapCurrentMcap(candles: ChartAlertCandlePoint[]) {
+  for (let index = candles.length - 1; index >= 0; index -= 1) {
+    const close = toFiniteAlertNumber(candles[index].close);
+    if (close != null && close > 0) return close;
+  }
+  return null;
+}
+
+function getAlertRecapPeakMcap(candles: ChartAlertCandlePoint[], event: ChartAlertEvent) {
+  const alertSeconds = Date.parse(event.triggeredAt) / 1000;
+  if (!Number.isFinite(alertSeconds)) return null;
+  let peak: number | null = null;
+  for (const candle of candles) {
+    if (candle.time < alertSeconds) continue;
+    const high = toFiniteAlertNumber(candle.high);
+    if (high != null && high > 0) {
+      peak = peak == null ? high : Math.max(peak, high);
+    }
+  }
+  return peak;
+}
+
+function renderAlertRecapAvatar(event: ChartAlertEvent) {
+  const imageUrl = sanitizeOptionalHttpUrl(event.imageUrl);
+  if (imageUrl) {
+    return `<img class="expanded-chart-alert-recap-token-avatar" src="${escapeHtml(imageUrl)}" alt="" />`;
+  }
+  const fallback = String(event.symbol || event.name || event.address || '?').slice(0, 1).toUpperCase();
+  return `<span class="expanded-chart-alert-recap-token-avatar expanded-chart-alert-recap-token-avatar-fallback">${escapeHtml(fallback)}</span>`;
+}
+
+function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][number], candles: ChartAlertCandlePoint[]) {
+  const event = marker.event;
+  const alertMcap = toFiniteAlertNumber(event.mcap);
+  const currentMcap = getAlertRecapCurrentMcap(candles);
+  if (alertMcap == null || alertMcap <= 0 || currentMcap == null || currentMcap <= 0) {
+    return '';
+  }
+  const peakMcap = getAlertRecapPeakMcap(candles, event) ?? currentMcap;
+  const multiplier = currentMcap / alertMcap;
+  const peakMultiplier = peakMcap / alertMcap;
+  const gainPct = (multiplier - 1) * 100;
+  const ticker = event.symbol || truncateChartAlertAddress(event.address);
+  const name = event.name || '';
+  return `
+    <section class="expanded-chart-alert-recap-card" role="dialog" aria-modal="false" aria-label="TrendScope alert recap">
+      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-a"></div>
+      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-b"></div>
+      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-c"></div>
+      <div class="expanded-chart-alert-recap-shard expanded-chart-alert-recap-shard-d"></div>
+      <button type="button" class="expanded-chart-alert-recap-close" data-action="close-alert-recap" aria-label="${CHART_ALERT_RECAP_CLOSE_LABEL}">×</button>
+      <header class="expanded-chart-alert-recap-header">
+        <span class="expanded-chart-alert-recap-brand">
+          <span class="expanded-chart-alert-recap-logo" aria-hidden="true"></span>
+          <strong>TrendScope</strong>
+        </span>
+        <span class="expanded-chart-alert-recap-called">ALERT CALLED IT</span>
+      </header>
+      <div class="expanded-chart-alert-recap-identity">
+        ${renderAlertRecapAvatar(event)}
+        <strong>${escapeHtml(ticker)}</strong>
+        ${name ? `<span>${escapeHtml(name)}</span>` : ''}
+      </div>
+      <main class="expanded-chart-alert-recap-hero">
+        <span class="expanded-chart-alert-recap-pill">▲ ${escapeHtml(formatAlertRecapPercent(gainPct))} · ${escapeHtml(formatAlertRecapElapsed(event))}</span>
+        <div class="expanded-chart-alert-recap-multiple">
+          <strong>${escapeHtml(formatAlertRecapMultiplier(multiplier))}</strong><span>×</span>
+        </div>
+        <small>SINCE TRENDSCOPE ALERTED</small>
+      </main>
+      <div class="expanded-chart-alert-recap-stats">
+        <span>
+          <small>MCAP @ALERT</small>
+          <strong>${escapeHtml(fmtMoney(alertMcap))}</strong>
+        </span>
+        <span>
+          <small>MCAP NOW</small>
+          <strong class="is-accent">${escapeHtml(fmtMoney(currentMcap))}</strong>
+        </span>
+        <span>
+          <small>PEAK ATH</small>
+          <strong>${escapeHtml(formatAlertRecapMultiplier(peakMultiplier))}×</strong>
+        </span>
+      </div>
+      <footer class="expanded-chart-alert-recap-footer">
+        <span class="expanded-chart-alert-recap-x" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false"><path d="M18.9 2h3.3l-7.2 8.2L23.5 22h-6.7l-5.2-6.8L5.6 22H2.3l7.7-8.8L1.8 2h6.8l4.7 6.2L18.9 2Zm-1.2 17.9h1.8L7.6 4H5.7l12 15.9Z"/></svg>
+          <strong>@TrendScope_pro</strong>
+        </span>
+        <small title="${escapeHtml(event.address)}">CA ${escapeHtml(truncateChartAlertAddress(event.address))}</small>
+      </footer>
+    </section>
+  `;
+}
+
 function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
   const marker = cluster.markers[0];
   const event = marker.event;
@@ -2575,7 +2706,9 @@ function mountExpandedChartAlertOverlay(
   const tooltip = document.createElement('div');
   tooltip.className = 'expanded-chart-alert-tooltip';
   tooltip.setAttribute('role', 'tooltip');
-  container.append(overlay, tooltip);
+  const recap = document.createElement('div');
+  recap.className = 'expanded-chart-alert-recap-layer';
+  container.append(overlay, tooltip, recap);
 
   let raf = 0;
   let syncRaf = 0;
@@ -2583,6 +2716,7 @@ function mountExpandedChartAlertOverlay(
   let expiryTimer = 0;
   let hoveredClusterId: string | null = null;
   let pinnedClusterId: string | null = null;
+  let activeRecapClusterId: string | null = null;
   let latestClusters: ChartAlertMarkerCluster[] = [];
   let disposed = false;
   const candlePoints = toChartAlertCandlePoints(data);
@@ -2593,6 +2727,12 @@ function mountExpandedChartAlertOverlay(
     tooltip.removeAttribute('data-visible');
     tooltip.removeAttribute('data-pinned');
     tooltip.replaceChildren();
+  };
+
+  const closeRecap = () => {
+    activeRecapClusterId = null;
+    recap.replaceChildren();
+    recap.removeAttribute('data-visible');
   };
 
   const positionTooltip = (cluster: ChartAlertMarkerCluster) => {
@@ -2621,6 +2761,23 @@ function mountExpandedChartAlertOverlay(
       tooltip.removeAttribute('data-pinned');
     }
     positionTooltip(cluster);
+  };
+
+  const showRecap = (cluster: ChartAlertMarkerCluster) => {
+    const markup = renderChartAlertRecapCard(cluster.markers[0], candlePoints);
+    if (!markup) {
+      showTooltip(cluster, true);
+      return;
+    }
+    activeRecapClusterId = cluster.id;
+    hideTooltip();
+    recap.innerHTML = markup;
+    recap.dataset.visible = 'true';
+    recap.querySelector<HTMLButtonElement>('[data-action="close-alert-recap"]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeRecap();
+    });
   };
 
   const scheduleExpiry = () => {
@@ -2680,7 +2837,7 @@ function mountExpandedChartAlertOverlay(
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        showTooltip(cluster, true);
+        showRecap(cluster);
       });
       overlay.append(button);
     }
@@ -2691,6 +2848,13 @@ function mountExpandedChartAlertOverlay(
         showTooltip(pinned, true);
       } else {
         hideTooltip();
+      }
+    } else if (activeRecapClusterId) {
+      const activeRecap = latestClusters.find((cluster) => cluster.id === activeRecapClusterId);
+      if (activeRecap) {
+        showRecap(activeRecap);
+      } else {
+        closeRecap();
       }
     } else if (hoveredClusterId) {
       const hovered = latestClusters.find((cluster) => cluster.id === hoveredClusterId);
@@ -2750,10 +2914,11 @@ function mountExpandedChartAlertOverlay(
   };
   const onDocumentPointerDown = (event: PointerEvent) => {
     const target = event.target as Node | null;
-    if (target && (overlay.contains(target) || tooltip.contains(target))) {
+    if (target && (overlay.contains(target) || tooltip.contains(target) || recap.contains(target))) {
       return;
     }
     hideTooltip();
+    closeRecap();
   };
   const onDocumentPointerMove = (event: PointerEvent) => {
     if (pinnedClusterId || !hoveredClusterId) {
@@ -2768,6 +2933,7 @@ function mountExpandedChartAlertOverlay(
   const onDocumentKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       hideTooltip();
+      closeRecap();
     }
   };
 
@@ -2822,6 +2988,7 @@ function mountExpandedChartAlertOverlay(
       document.removeEventListener('keydown', onDocumentKeydown);
       overlay.remove();
       tooltip.remove();
+      recap.remove();
     },
   };
 }
