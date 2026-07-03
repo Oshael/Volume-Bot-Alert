@@ -74,6 +74,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
+import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
   normalizeInviteCode,
   normalizeAuthRouteToken,
@@ -7507,6 +7508,7 @@ export function createAppController(): AppController {
           payload: summarizeDashboardAlertEventsDebug([payload]),
         });
         const added = syncBackendAlertEvents([payload]);
+        publishRealtimeChartAlert(payload);
         if (added > 0) {
           void markDashboardAlertEventsSeen(sessionToken, [payload], payload.ruleKey || payload.kind || GMGN_CLAIM_SIGNAL_RULE_KEY);
           if (hiddenForUiWork) {
@@ -7815,6 +7817,7 @@ export function createAppController(): AppController {
   }
 
   function clearSession() {
+    clearChartAlertHistory();
     flushAlertsPersist();
     stopSocialLinkSync();
     stopPreAccessPolling();
