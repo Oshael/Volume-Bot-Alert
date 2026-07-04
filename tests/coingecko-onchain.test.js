@@ -119,6 +119,63 @@ describe('CoinGecko onchain OHLCV service', () => {
     );
   });
 
+  it('continues paginating exact windows when a partial page is still newer than from', async () => {
+    const requestedUrls = [];
+    const pages = [
+      [
+        [Date.parse('2026-06-04T23:50:00.000Z') / 1000, 4, 4, 4, 4, 40],
+        [Date.parse('2026-06-04T23:55:00.000Z') / 1000, 5, 5, 5, 5, 50],
+      ],
+      [
+        [Date.parse('2026-03-06T00:00:00.000Z') / 1000, 1, 1, 1, 1, 10],
+        [Date.parse('2026-03-06T00:05:00.000Z') / 1000, 2, 2, 2, 2, 20],
+      ],
+    ];
+    const fetchImpl = async (url) => {
+      requestedUrls.push(new URL(url));
+      const ohlcvList = pages.shift() || [];
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({
+          data: {
+            attributes: {
+              ohlcv_list: ohlcvList,
+            },
+          },
+        }),
+      };
+    };
+
+    const result = await coingeckoOnchain.fetchPoolOhlcv({
+      poolAddress: 'pool123',
+      apiKey: 'key',
+      from: '2026-03-06',
+      to: '2026-06-04',
+      aggregate: 5,
+      limit: 3,
+      delayMs: 0,
+      fetchImpl,
+      now: () => Date.parse('2026-07-03T00:00:00.000Z'),
+    });
+
+    assert.equal(requestedUrls.length, 2);
+    assert.equal(
+      requestedUrls[1].searchParams.get('before_timestamp'),
+      String((Date.parse('2026-06-04T23:50:00.000Z') / 1000) - 1)
+    );
+    assert.deepEqual(
+      result.candles.map((candle) => candle.bucketTs),
+      [
+        '2026-03-06T00:00:00.000Z',
+        '2026-03-06T00:05:00.000Z',
+        '2026-06-04T23:50:00.000Z',
+        '2026-06-04T23:55:00.000Z',
+      ]
+    );
+  });
+
   it('rejects from/to windows with an inverted range', async () => {
     await assert.rejects(
       () => coingeckoOnchain.fetchPoolOhlcv({

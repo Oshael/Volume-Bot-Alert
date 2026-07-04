@@ -232,6 +232,22 @@ async function requestJson(url, options) {
   }
 }
 
+async function requestOhlcvPage(options, poolAddress, beforeTimestamp) {
+  const url = buildOhlcvUrl(options, poolAddress, beforeTimestamp);
+  while (true) {
+    try {
+      return await requestJson(url, options);
+    } catch (error) {
+      if (error.code !== 'rate_limited' || error.details?.retryAfterMs == null) {
+        throw error;
+      }
+      const waitMs = Math.max(options.delayMs, error.details.retryAfterMs);
+      options.logger.warn(`[CoinGecko] 429; waiting ${waitMs}ms before retrying`);
+      await sleep(waitMs, options.setTimeoutImpl);
+    }
+  }
+}
+
 async function fetchPoolOhlcv(optionsInput = {}) {
   const options = resolveOptions(optionsInput);
   const poolAddress = normalizeString(optionsInput.poolAddress);
@@ -251,33 +267,21 @@ async function fetchPoolOhlcv(optionsInput = {}) {
   let lastMeta = null;
 
   while (beforeTimestamp > requestedWindow.minTimestamp) {
-    const url = buildOhlcvUrl(options, poolAddress, beforeTimestamp);
-    let payload;
-    try {
-      payload = await requestJson(url, options);
-    } catch (error) {
-      if (error.code === 'rate_limited' && error.details?.retryAfterMs != null) {
-        const waitMs = Math.max(options.delayMs, error.details.retryAfterMs);
-        options.logger.warn(`[CoinGecko] 429; waiting ${waitMs}ms before retrying`);
-        await sleep(waitMs, options.setTimeoutImpl);
-        continue;
-      }
-      throw error;
-    }
-
+    const payload = await requestOhlcvPage(options, poolAddress, beforeTimestamp);
     calls += 1;
     lastMeta = payload?.meta || lastMeta;
-    const page = normalizeOhlcvList(
-      extractOhlcvList(payload),
-      requestedWindow.minTimestamp,
-      requestedWindow.maxTimestamp
-    );
-    if (!page.length) break;
+    const rawPage = normalizeOhlcvList(extractOhlcvList(payload));
+    if (!rawPage.length) break;
+    const page = rawPage.filter((candle) => (
+      candle.timestamp >= requestedWindow.minTimestamp
+      && candle.timestamp <= requestedWindow.maxTimestamp
+    ));
     for (const candle of page) {
       byTimestamp.set(candle.timestamp, candle);
     }
-    beforeTimestamp = getNextBeforeTimestamp(page);
-    if (page.length < options.limit) break;
+    const nextBeforeTimestamp = getNextBeforeTimestamp(rawPage);
+    if (nextBeforeTimestamp == null || nextBeforeTimestamp >= beforeTimestamp) break;
+    beforeTimestamp = nextBeforeTimestamp;
     await sleep(options.delayMs, options.setTimeoutImpl);
   }
 
