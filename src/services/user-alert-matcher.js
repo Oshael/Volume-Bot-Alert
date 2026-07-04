@@ -29,6 +29,11 @@ const METEORA_POST_ALERT_REPEAT_STEP_PCT = 50;
 const METEORA_REPEAT_TVL_GROWTH_PCT = 15;
 const METEORA_FINGERPRINT_CHANGE_BUCKET_PCT = 5;
 const METEORA_FINGERPRINT_TVL_BUCKET_USD = 10_000;
+const MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M = 5_000;
+const MONITORED_VOL_COLD_RESET_DURATION_MS = 60 * 60 * 1000;
+const MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS = 60 * 1000;
+const MONITORED_VOL_COLD_SINCE_METADATA_KEY = 'monitoredVolColdSinceAt';
+const MONITORED_VOL_HOT_SINCE_METADATA_KEY = 'monitoredVolHotSinceAt';
 const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
 const GMGN_VOL_1M_ALERT_THRESHOLD_PCT = 50;
 const GMGN_VOL_1M_ALERT_COOLDOWN_MS = 60 * 1000;
@@ -673,6 +678,118 @@ function hasAdvancedRepeatValue(candidate, state) {
   return nextAlertedValue >= requiredNextValue;
 }
 
+function getMonitoredVolColdSinceMs(state) {
+  return toTimestampMs(state?.metadata?.[MONITORED_VOL_COLD_SINCE_METADATA_KEY]);
+}
+
+function getMonitoredVolHotSinceMsFromMetadata(metadata) {
+  return toTimestampMs(metadata?.[MONITORED_VOL_HOT_SINCE_METADATA_KEY]);
+}
+
+function isMonitoredVolAnchorExpired(candidate, state, nowMs) {
+  if (candidate?.ruleKey !== 'monitored-vol' || state?.status !== 'rearmed') {
+    return false;
+  }
+
+  const coldSinceMs = getMonitoredVolColdSinceMs(state);
+  return coldSinceMs != null && (nowMs - coldSinceMs) >= MONITORED_VOL_COLD_RESET_DURATION_MS;
+}
+
+function buildMonitoredVolColdMetadata(state, signals, nowMs) {
+  const metadata = { ...(state?.metadata || {}) };
+  const currentVolume5m = toNumberOrNull(signals?.currentVolume5m ?? signals?.volume5m ?? signals?.last_vol_5m);
+  const existingColdSinceMs = getMonitoredVolColdSinceMs(state);
+  const existingHotSinceMs = getMonitoredVolHotSinceMsFromMetadata(metadata);
+
+  if (currentVolume5m == null) {
+    return { metadata, changed: false };
+  }
+
+  if (currentVolume5m <= MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M) {
+    if (existingColdSinceMs != null) {
+      if (existingHotSinceMs != null) {
+        delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
+        delete metadata.monitoredVolHotVolume5m;
+        return { metadata, changed: true };
+      }
+      return { metadata, changed: false };
+    }
+
+    metadata[MONITORED_VOL_COLD_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
+    metadata.monitoredVolColdMaxVolume5m = MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M;
+    delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
+    delete metadata.monitoredVolHotVolume5m;
+    delete metadata.monitoredVolColdInterruptedAt;
+    delete metadata.monitoredVolColdInterruptedVolume5m;
+    return { metadata, changed: true };
+  }
+
+  if (existingColdSinceMs == null) {
+    return { metadata, changed: false };
+  }
+
+  if (existingHotSinceMs == null) {
+    metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
+    metadata.monitoredVolHotVolume5m = currentVolume5m;
+    return { metadata, changed: true };
+  }
+
+  if ((nowMs - existingHotSinceMs) <= MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS) {
+    metadata.monitoredVolHotVolume5m = currentVolume5m;
+    return { metadata, changed: true };
+  }
+
+  delete metadata[MONITORED_VOL_COLD_SINCE_METADATA_KEY];
+  delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
+  delete metadata.monitoredVolHotVolume5m;
+  metadata.monitoredVolColdInterruptedAt = new Date(nowMs).toISOString();
+  metadata.monitoredVolColdInterruptedVolume5m = currentVolume5m;
+  return { metadata, changed: true };
+}
+
+async function syncRearmedMonitoredVolColdState(
+  profile,
+  tokenAfter,
+  ruleKey,
+  state,
+  signals,
+  nowMs,
+  deps,
+  options = {},
+) {
+  if (ruleKey !== 'monitored-vol' || state?.status !== 'rearmed') {
+    return state;
+  }
+
+  if (options.preserveExpiredColdAnchor === true && isMonitoredVolAnchorExpired({ ruleKey }, state, nowMs)) {
+    return state;
+  }
+
+  const { metadata, changed } = buildMonitoredVolColdMetadata(state, signals, nowMs);
+  if (!changed) {
+    return state;
+  }
+
+  await deps.userAlertRuleState.markRearmed({
+    userId: profile.userId,
+    ruleKey,
+    tokenAddress: tokenAfter.address,
+    cooldownUntil: state.cooldownUntil,
+    metadata: {
+      ...metadata,
+      lastDecision: 'rearmed',
+    },
+  });
+
+  return {
+    ...state,
+    metadata: {
+      ...metadata,
+      lastDecision: 'rearmed',
+    },
+  };
+}
+
 function shouldPrimeCandidate(candidate, state, nowMs) {
   if (state) {
     return false;
@@ -967,7 +1084,11 @@ function shouldPreserveCooldownOnRearm(ruleKey) {
   return REARM_PRESERVE_COOLDOWN_RULE_KEYS.has(String(ruleKey || '').trim().toLowerCase());
 }
 
-async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps) {
+async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, signals = null) {
+  const coldMetadata = ruleKey === 'monitored-vol'
+    ? buildMonitoredVolColdMetadata(state, signals, nowMs).metadata
+    : null;
+
   return deps.userAlertRuleState.markRearmed({
     userId: profile.userId,
     ruleKey,
@@ -975,13 +1096,18 @@ async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps) {
     cooldownUntil: shouldPreserveCooldownOnRearm(ruleKey) ? state?.cooldownUntil : null,
     metadata: {
       ...(state?.metadata || {}),
+      ...(coldMetadata || {}),
       lastDecision: 'rearmed',
       rearmedAt: new Date(nowMs).toISOString(),
     },
   });
 }
 
-function resolveCandidateState(candidate, rawState, profile) {
+function resolveCandidateState(candidate, rawState, profile, nowMs) {
+  if (isMonitoredVolAnchorExpired(candidate, rawState, nowMs)) {
+    return null;
+  }
+
   if (candidate?.kind === 'old-surge') {
     if (!rawState) {
       return null;
@@ -1088,7 +1214,17 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
 async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKeys, nowMs, deps, summary) {
   for (const candidate of Array.isArray(candidates) ? candidates : [candidates].filter(Boolean)) {
     const rawState = await deps.userAlertRuleState.getState(profile.userId, candidate.ruleKey, tokenAfter.address);
-    const state = resolveCandidateState(candidate, rawState, profile);
+    const syncedState = await syncRearmedMonitoredVolColdState(
+      profile,
+      tokenAfter,
+      candidate.ruleKey,
+      rawState,
+      candidate.payload,
+      nowMs,
+      deps,
+      { preserveExpiredColdAnchor: true },
+    );
+    const state = resolveCandidateState(candidate, syncedState, profile, nowMs);
     const hasBlockingSurgeAlert = await hasBlockingRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps);
     const decision = getCandidateLifecycleDecision(candidate, state, profile, nowMs);
 
@@ -1109,8 +1245,10 @@ async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKey
   for (const ruleKey of rearmRuleKeys) {
     const state = await deps.userAlertRuleState.getState(profile.userId, ruleKey, tokenAfter.address);
     if (state?.status === 'triggered' && state?.rearmRequired === true) {
-      await rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps);
+      await rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, tokenAfter);
       summary.rearmed += 1;
+    } else {
+      await syncRearmedMonitoredVolColdState(profile, tokenAfter, ruleKey, state, tokenAfter, nowMs, deps);
     }
   }
 }
@@ -1193,6 +1331,9 @@ module.exports = {
   METEORA_PRIMED_ACTIVITY_PROOF_STEP_PCT,
   METEORA_FINGERPRINT_CHANGE_BUCKET_PCT,
   METEORA_FINGERPRINT_TVL_BUCKET_USD,
+  MONITORED_VOL_COLD_RESET_DURATION_MS,
+  MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS,
+  MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M,
   GMGN_VOL_1M_RULE_KEY,
   GMGN_VOL_1M_ALERT_THRESHOLD_PCT,
   GMGN_VOL_1M_ALERT_COOLDOWN_MS,
@@ -1225,6 +1366,7 @@ module.exports = {
     hasRequiredSurgePctAdvance,
     hasSatisfiedRepeatAdvance,
     hasAdvancedRepeatValue,
+    isMonitoredVolAnchorExpired,
     hasBlockingRelatedSurgeAlert,
     createEmptySummary,
     getCandidateLifecycleDecision,

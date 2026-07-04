@@ -616,6 +616,304 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
+  it('starts the monitored-vol cold reset timer while a rearmed token stays at or below 5k volume', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 48,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 50,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 10000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+          metadata: { lastDecision: 'rearmed' },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 0,
+        last_vol_24h: 32000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T18:30:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.rearmed, 0);
+    assert.equal(context.rearmWrites.length, 1);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:30:00.000Z');
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdMaxVolume5m, 5000);
+  });
+
+  it('keeps the monitored-vol cold timer through a short hot blip before one hour', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 49,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+          metadata: {
+            lastDecision: 'rearmed',
+            monitoredVolColdSinceAt: '2026-04-17T18:00:00.000Z',
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 24000,
+        last_vol_24h: 24000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T18:59:59.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.rearmWrites.length, 1);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:00:00.000Z');
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotSinceAt, '2026-04-17T18:59:59.000Z');
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotVolume5m, 24000);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdInterruptedVolume5m, undefined);
+  });
+
+  it('interrupts the monitored-vol cold reset after volume stays above 5k beyond the hot blip grace', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 52,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+          metadata: {
+            lastDecision: 'rearmed',
+            monitoredVolColdSinceAt: '2026-04-17T18:00:00.000Z',
+            monitoredVolHotSinceAt: '2026-04-17T18:20:00.000Z',
+            monitoredVolHotVolume5m: 14000,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 24000,
+        last_vol_24h: 24000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T18:21:01.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.rearmWrites.length, 1);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, undefined);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotSinceAt, undefined);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdInterruptedVolume5m, 24000);
+  });
+
+  it('clears a short monitored-vol hot blip when volume cools again without restarting the cold timer', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 53,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+          metadata: {
+            lastDecision: 'rearmed',
+            monitoredVolColdSinceAt: '2026-04-17T18:00:00.000Z',
+            monitoredVolHotSinceAt: '2026-04-17T18:20:00.000Z',
+            monitoredVolHotVolume5m: 14000,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 1200,
+        last_vol_24h: 24000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T18:20:30.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(context.rearmWrites.length, 1);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolColdSinceAt, '2026-04-17T18:00:00.000Z');
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotSinceAt, undefined);
+    assert.equal(context.rearmWrites[0].metadata.monitoredVolHotVolume5m, undefined);
+  });
+
+  it('expires a rearmed monitored-vol anchor after one cold hour so fresh volume can alert against the rolling baseline', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 50,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+          metadata: {
+            lastDecision: 'rearmed',
+            monitoredVolColdSinceAt: '2026-04-17T18:00:00.000Z',
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 24000,
+        last_vol_24h: 24000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T19:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].payload.prevVolume5m, 7000);
+    assert.equal(context.eventWrites[0].payload.volume5m, 24000);
+    assert.ok(Math.abs(context.eventWrites[0].payload.pct - 242.85714285714286) < 0.000001);
+  });
+
+  it('does not expire monitored-vol anchors for tokens that have not rearmed yet', async () => {
+    const context = createDeps({
+      profiles: [{
+        userId: 51,
+        ruleEnabled: { monitoredVol: true, monitoredMcap: false, hvnc: false, meteoraSurge: false },
+        thresholdPct: 100,
+        minVol: 0,
+        minMcap: 0,
+        maxMcap: 0,
+      }],
+      volumeRows: [{
+        token_address: TOKEN_ADDRESS,
+        baseline_vol_5m: 7000,
+      }],
+      stateByRule: {
+        'monitored-vol': {
+          status: 'triggered',
+          rearmRequired: true,
+          lastAlertedPct: 128.57,
+          lastAlertedValue: 16000,
+          cooldownUntil: '2026-04-17T18:16:15.000Z',
+          metadata: {
+            lastDecision: 'triggered',
+            monitoredVolColdSinceAt: '2026-04-17T18:00:00.000Z',
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 36000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        last_vol_5m: 24000,
+        last_vol_24h: 24000,
+        last_mcap: 38000,
+      },
+    }, { now: '2026-04-17T19:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
   it('emits monitored-vol repeats against the last alerted volume and renders that anchored comparison in the payload', async () => {
     const context = createDeps({
       profiles: [{
