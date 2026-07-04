@@ -273,6 +273,7 @@ function buildEmptyExpandedSparklineResult(address, granularityMinutes = 1) {
     granularityMinutes,
     firstBucketAt: null,
     latestBucketAt: null,
+    oneMinuteAvailable: false,
     candles: [],
     series: [],
   };
@@ -1526,35 +1527,55 @@ async function listExpandedSparklineByAddress(address, options = {}) {
     maxPoints: 1000,
     granularityMinutes,
   });
+  result.oneMinuteAvailable = hasExpandedOneMinuteRows(bounds);
   result.candles = buildExpandedCandlesFromRows(rows, granularityMinutes);
   writeExpandedSparklineCache(cacheKey, result, options, normalizedAddress);
 
   return result;
 }
 
+function hasExpandedOneMinuteRows(bounds) {
+  return Boolean(bounds?.one_minute_first_bucket_at && bounds?.one_minute_latest_bucket_at);
+}
+
 async function getExpandedSparklineBounds(address) {
   const { rows } = await db.query(
-    `WITH bounds AS (
+    `WITH one_minute_bounds AS (
        SELECT
          MIN(bucket_ts) AS first_bucket_at,
          MAX(bucket_ts) AS latest_bucket_at
        FROM token_market_buckets_1m
        WHERE token_address = $1
          AND close_mcap IS NOT NULL
-       UNION ALL
+     ),
+     aggregate_bounds AS (
        SELECT
          MIN(bucket_ts) AS first_bucket_at,
          MAX(bucket_ts) AS latest_bucket_at
        FROM token_market_buckets_agg
        WHERE token_address = $2
          AND close_mcap IS NOT NULL
+     ),
+     bounds AS (
+       SELECT first_bucket_at, latest_bucket_at
+       FROM one_minute_bounds
+       UNION ALL
+       SELECT first_bucket_at, latest_bucket_at
+       FROM aggregate_bounds
      )
      SELECT
-       MIN(first_bucket_at) AS first_bucket_at,
-       MAX(latest_bucket_at) AS latest_bucket_at
-     FROM bounds
-     WHERE first_bucket_at IS NOT NULL
-       AND latest_bucket_at IS NOT NULL`,
+       (SELECT MIN(first_bucket_at) FROM bounds WHERE first_bucket_at IS NOT NULL) AS first_bucket_at,
+       (SELECT MAX(latest_bucket_at) FROM bounds WHERE latest_bucket_at IS NOT NULL) AS latest_bucket_at,
+       one_minute_bounds.first_bucket_at AS one_minute_first_bucket_at,
+       one_minute_bounds.latest_bucket_at AS one_minute_latest_bucket_at
+     FROM one_minute_bounds
+     CROSS JOIN aggregate_bounds
+     WHERE EXISTS (
+       SELECT 1
+       FROM bounds
+       WHERE first_bucket_at IS NOT NULL
+         AND latest_bucket_at IS NOT NULL
+     )`,
     [address, address]
   );
 

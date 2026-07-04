@@ -347,6 +347,7 @@ export interface TokenSparklineItem {
   granularityMinutes?: number | null;
   firstBucketAt?: string | null;
   latestBucketAt?: string | null;
+  oneMinuteAvailable?: boolean;
   series: number[];
   candles?: TokenSparklineCandleItem[];
 }
@@ -660,6 +661,7 @@ export function fetchTokenSparklines(
       granularityMinutes: Number(item.granularityMinutes) || Number(response.granularityMinutes) || 30,
       firstBucketAt: item.firstBucketAt ?? null,
       latestBucketAt: item.latestBucketAt ?? null,
+      oneMinuteAvailable: Boolean(item.oneMinuteAvailable),
       series: normalizeTokenSparklineSeries(item.series),
       candles: normalizeTokenSparklineCandles(item.candles),
     })) : [],
@@ -700,6 +702,7 @@ export function fetchExpandedTokenSparkline(
       granularityMinutes: Number(response.item.granularityMinutes) || 30,
       firstBucketAt: response.item.firstBucketAt ?? null,
       latestBucketAt: response.item.latestBucketAt ?? null,
+      oneMinuteAvailable: Boolean(response.item.oneMinuteAvailable),
       series: normalizeTokenSparklineSeries(response.item.series),
       candles: normalizeTokenSparklineCandles(response.item.candles),
     } : null,

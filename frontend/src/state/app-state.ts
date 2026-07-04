@@ -225,6 +225,7 @@ export interface TokenSparklineEntry {
   granularityMinutes?: number | null;
   firstBucketAt?: string | null;
   latestBucketAt?: string | null;
+  oneMinuteAvailable?: boolean;
   generatedAt?: string | null;
   hours?: number;
   points?: number;

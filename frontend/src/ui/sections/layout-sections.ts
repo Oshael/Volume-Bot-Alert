@@ -42,6 +42,7 @@ const PASSWORD_RESET_TRANSIENT_NOTICES = new Set([
   'Resetting password...',
 ]);
 const EXPANDED_CHART_GRANULARITY_OPTIONS = [
+  { label: '1m', value: 1 },
   { label: '5m', value: 5 },
   { label: '15m', value: 15 },
   { label: '30m', value: 30 },
@@ -52,6 +53,7 @@ const EXPANDED_CHART_GRANULARITY_OPTIONS = [
 const EXPANDED_TOKEN_AGE_MINUTE_MS = 60 * 1000;
 const EXPANDED_TOKEN_AGE_HOUR_MS = 60 * EXPANDED_TOKEN_AGE_MINUTE_MS;
 const EXPANDED_TOKEN_AGE_DAY_MS = 24 * EXPANDED_TOKEN_AGE_HOUR_MS;
+const EXPANDED_ONE_MINUTE_MAX_AGE_MS = 14 * EXPANDED_TOKEN_AGE_DAY_MS;
 const EXPANDED_TOKEN_AGE_MONTH_DAYS = 30;
 const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
 const CHART_ALERT_MARKER_SIDE_OFFSET_PX = 36;
@@ -3190,10 +3192,29 @@ function renderExpandedChartBody(state: AppState, sparkline: TokenSparklineEntry
   });
 }
 
-function renderExpandedGranularityControls(activeGranularityMinutes: number) {
+function isExpandedOneMinuteChartOptionAvailable(
+  token: ReturnType<typeof getTrackedToken>,
+  sparkline: TokenSparklineEntry,
+) {
+  if (sparkline.oneMinuteAvailable !== true) {
+    return false;
+  }
+
+  const createdAt = Number(token?.createdAt);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) {
+    return false;
+  }
+
+  const ageMs = Date.now() - createdAt;
+  return ageMs >= 0 && ageMs < EXPANDED_ONE_MINUTE_MAX_AGE_MS;
+}
+
+function renderExpandedGranularityControls(activeGranularityMinutes: number, oneMinuteAvailable: boolean) {
   return `
     <div class="expanded-sparkline-resolution-control" role="group" aria-label="Chart resolution">
-      ${EXPANDED_CHART_GRANULARITY_OPTIONS.map((option) => {
+      ${EXPANDED_CHART_GRANULARITY_OPTIONS.filter((option) => (
+        option.value !== 1 || oneMinuteAvailable || Number(activeGranularityMinutes) === 1
+      )).map((option) => {
         const active = Number(activeGranularityMinutes) === option.value;
         return `<button type="button" class="expanded-sparkline-resolution-button${active ? ' is-active' : ''}" data-action="set-expanded-sparkline-granularity" data-granularity-minutes="${option.value}" aria-pressed="${active ? 'true' : 'false'}">${escapeHtml(option.label)}</button>`;
       }).join('')}
@@ -3224,6 +3245,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   const stats = getExpandedSparklineStats(sparkline);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl);
   const ageLabel = formatExpandedTokenAge(token?.createdAt);
+  const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline);
   const loadingText = sparkline.loading ? 'Loading full available history.' : `Updated ${escapeHtml(stats.updatedLabel)}.`;
 
   return `
@@ -3233,7 +3255,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
         <div class="expanded-sparkline-toolbar">
           ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address)}
           ${renderExpandedSparklineStatsRow(token, state.data.meteoraByAddress[address], stats.latestValue, ageLabel)}
-          ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes)}
+          ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
         <div class="expanded-sparkline-chart${sparkline.loading ? ' is-loading' : ''}">

@@ -36,11 +36,11 @@ describe('user-ui-pref', () => {
 
   it('accepts valid expanded chart granularity preferences', () => {
     const validation = userUiPref.validatePatch({
-      expandedSparklineGranularityMinutes: 60,
+      expandedSparklineGranularityMinutes: 1,
     });
 
     assert.equal(validation.valid, true);
-    assert.equal(validation.prefs.expandedSparklineGranularityMinutes, 60);
+    assert.equal(validation.prefs.expandedSparklineGranularityMinutes, 1);
   });
 
   it('rejects invalid expanded chart granularity preferences', () => {
@@ -49,7 +49,7 @@ describe('user-ui-pref', () => {
     });
 
     assert.equal(validation.valid, false);
-    assert.ok(validation.errors.includes('expandedSparklineGranularityMinutes must be one of 5, 15, 30, 60, 240, 1440'));
+    assert.ok(validation.errors.includes('expandedSparklineGranularityMinutes must be one of 1, 5, 15, 30, 60, 240, 1440'));
   });
 
   it('rejects empty trade terminal selection', () => {

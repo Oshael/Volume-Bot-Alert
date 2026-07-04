@@ -551,6 +551,8 @@ describe('token market 1m bucket helpers', () => {
             {
               first_bucket_at: '2026-04-01T00:00:00.000Z',
               latest_bucket_at: '2026-04-20T00:00:00.000Z',
+              one_minute_first_bucket_at: '2026-04-01T00:00:00.000Z',
+              one_minute_latest_bucket_at: '2026-04-20T00:00:00.000Z',
             },
           ],
         };
@@ -602,6 +604,7 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(row.granularityMinutes, 240);
       assert.equal(row.firstBucketAt, '2026-04-01T00:00:00.000Z');
       assert.equal(row.latestBucketAt, '2026-04-20T00:00:00.000Z');
+      assert.equal(row.oneMinuteAvailable, true);
       assert.equal(row.series.length, 720);
       assert.equal(row.candles.length, 2);
       assert.deepEqual(row.candles[0], {
@@ -888,7 +891,7 @@ describe('token market 1m bucket helpers', () => {
 
     db.query = async (sql) => {
       queryCount += 1;
-      if (/WITH bounds/.test(sql)) {
+      if (/WITH one_minute_bounds/.test(sql)) {
         return {
           rows: [{
             first_bucket_at: '2026-04-19T12:00:00.000Z',
