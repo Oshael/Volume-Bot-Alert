@@ -11898,7 +11898,7 @@ TEMP_LEGACY_BAR_TITLE {
   flex: 0 0 auto;
   color: #ff4d5f;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 900;
   list-style: none;
   line-height: 1;
@@ -11915,6 +11915,10 @@ TEMP_LEGACY_BAR_TITLE {
 
 .monitored-ticker-peer-badge[data-peer-role="mcap_leader"] {
   color: #22c55e;
+}
+
+.monitored-ticker-peer-badge[data-peer-role="peer_warning"] {
+  font-size: 17px;
 }
 
 .monitored-token-row:has(.monitored-ticker-peers-panel[open]) {
@@ -12642,6 +12646,24 @@ TEMP_LEGACY_BAR_TITLE {
   border-radius: 10px;
   background: rgba(8, 18, 28, 0.96);
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+}
+
+.alert-row .alert-ticker-peers-list,
+.monitored-token-row .alert-ticker-peers-list {
+  position: fixed;
+  top: var(--ticker-peers-top, 0);
+  left: var(--ticker-peers-left, 0);
+  max-height: var(--ticker-peers-max-height, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.alert-ticker-peers-panel[data-placement="top"] .alert-ticker-peers-list {
+  transform-origin: bottom left;
+}
+
+.alert-ticker-peers-panel[data-placement="bottom"] .alert-ticker-peers-list {
+  transform-origin: top left;
 }
 
 .alert-ticker-peers-row {

@@ -12,6 +12,10 @@ const ALERT_CONTENT_BUFFER_PX = 20;
 const ALERT_CHART_MIN_WIDTH_PX = 200;
 const ALERT_RAIL_EXTRA_WIDTH_PX = 12;
 const ALERT_RAIL_GAP_FALLBACK_PX = 36;
+const TICKER_PEERS_PANEL_GAP_PX = 8;
+const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
+const TICKER_PEERS_MAX_HEIGHT_PX = 360;
+const TICKER_PEERS_MIN_HEIGHT_PX = 120;
 
 type AlertRowView = {
   element: HTMLElement;
@@ -225,11 +229,29 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     void alertsSectionView.controller.resolveAdminTokenReviewAlert(reviewAlertId, resolution);
   });
 
+  section.addEventListener('toggle', (event) => {
+    const panel = (event.target as HTMLElement | null)?.closest<HTMLDetailsElement>('.alert-ticker-peers-panel');
+    if (!panel || !panel.open) {
+      return;
+    }
+    closeOpenTickerPeerPanels(section, panel);
+    positionTickerPeerPanel(panel);
+  }, true);
+
+  section.addEventListener('scroll', () => {
+    positionOpenTickerPeerPanels(section);
+  }, true);
+
+  window.addEventListener('resize', () => {
+    positionOpenTickerPeerPanels(section);
+  });
+
   document.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     if (target?.closest('.alert-ticker-peers-panel')) {
       return;
     }
+
     closeOpenTickerPeerPanels(section);
   });
 
@@ -237,10 +259,56 @@ function getOrCreateAlertsSectionView(controller: AppController) {
   return alertsSectionView;
 }
 
-function closeOpenTickerPeerPanels(root: ParentNode) {
+function closeOpenTickerPeerPanels(root: ParentNode, exceptPanel: HTMLDetailsElement | null = null) {
   for (const panel of root.querySelectorAll<HTMLDetailsElement>('.alert-ticker-peers-panel[open]')) {
-    panel.open = false;
+    if (panel !== exceptPanel) {
+      panel.open = false;
+    }
   }
+}
+
+function positionOpenTickerPeerPanels(root: ParentNode) {
+  for (const panel of root.querySelectorAll<HTMLDetailsElement>('.alert-ticker-peers-panel[open]')) {
+    positionTickerPeerPanel(panel);
+  }
+}
+
+function positionTickerPeerPanel(panel: HTMLDetailsElement) {
+  if (!panel.open || typeof window === 'undefined') {
+    return;
+  }
+
+  const summary = panel.querySelector<HTMLElement>('summary');
+  const list = panel.querySelector<HTMLElement>('.alert-ticker-peers-list');
+  if (!summary || !list) {
+    return;
+  }
+
+  const summaryRect = summary.getBoundingClientRect();
+  const naturalHeight = Math.max(TICKER_PEERS_MIN_HEIGHT_PX, Math.min(list.scrollHeight, TICKER_PEERS_MAX_HEIGHT_PX));
+  const spaceBelow = window.innerHeight - summaryRect.bottom - TICKER_PEERS_VIEWPORT_MARGIN_PX;
+  const spaceAbove = summaryRect.top - TICKER_PEERS_VIEWPORT_MARGIN_PX;
+  const placement = spaceBelow >= Math.min(naturalHeight, TICKER_PEERS_MIN_HEIGHT_PX) || spaceBelow >= spaceAbove
+    ? 'bottom'
+    : 'top';
+  const availableHeight = Math.max(
+    TICKER_PEERS_MIN_HEIGHT_PX,
+    Math.floor((placement === 'bottom' ? spaceBelow : spaceAbove) - TICKER_PEERS_PANEL_GAP_PX),
+  );
+  const panelHeight = Math.min(naturalHeight, availableHeight);
+  const panelWidth = Math.min(Math.max(list.scrollWidth, 280), 340);
+  const left = Math.min(
+    Math.max(TICKER_PEERS_VIEWPORT_MARGIN_PX, summaryRect.left),
+    Math.max(TICKER_PEERS_VIEWPORT_MARGIN_PX, window.innerWidth - panelWidth - TICKER_PEERS_VIEWPORT_MARGIN_PX),
+  );
+  const top = placement === 'bottom'
+    ? summaryRect.bottom + TICKER_PEERS_PANEL_GAP_PX
+    : summaryRect.top - panelHeight - TICKER_PEERS_PANEL_GAP_PX;
+
+  panel.dataset.placement = placement;
+  list.style.setProperty('--ticker-peers-left', `${Math.round(left)}px`);
+  list.style.setProperty('--ticker-peers-top', `${Math.max(TICKER_PEERS_VIEWPORT_MARGIN_PX, Math.round(top))}px`);
+  list.style.setProperty('--ticker-peers-max-height', `${Math.round(panelHeight)}px`);
 }
 
 function buildEmptyState() {
