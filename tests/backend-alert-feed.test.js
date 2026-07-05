@@ -365,6 +365,8 @@ describe('backend alert feed service', () => {
         pct: 32,
         priceChange1h: 32,
         priceChange6h: 110,
+        prevMcap: 227272.73,
+        mcap: 300000,
         thresholdPct: 25,
         surgeWindow: '1H',
         ageBucket: 'recent',
@@ -408,6 +410,8 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].isOldSurge, true);
       assert.equal(payload.events[0].priceChange1h, 32);
       assert.equal(payload.events[0].priceChange6h, 110);
+      assert.equal(payload.events[0].prevMcap, 227272.73);
+      assert.equal(payload.events[0].mcap, 300000);
     } finally {
       alertDeliveryCursor.getCursor = originalGetCursor;
       userAlertEvent.listRecentEvents = originalListRecentEvents;
