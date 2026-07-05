@@ -302,6 +302,32 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.volumeBucketsWritten, 1);
   });
 
+  it('recovers a transient missing GMGN market cap from the prior implied circulating supply', () => {
+    const recovered = gmgnCatalogIngestion.__private.recoverMissingGmgnMarketCap(
+      { mcap: 0, price: 0.00003 },
+      {
+        last_mcap: 24000,
+        last_price: 0.000024,
+        metadata_updated_at: '2026-05-03T06:59:30.000Z',
+      },
+      new Date('2026-05-03T07:00:00.000Z')
+    );
+
+    assert.equal(Math.round(recovered.mcap), 30000);
+
+    const stale = gmgnCatalogIngestion.__private.recoverMissingGmgnMarketCap(
+      { mcap: 0, price: 0.00003 },
+      {
+        last_mcap: 24000,
+        last_price: 0.000024,
+        metadata_updated_at: '2026-05-03T05:59:59.000Z',
+      },
+      new Date('2026-05-03T07:00:00.000Z')
+    );
+
+    assert.equal(stale.mcap, 0);
+  });
+
   it('debounces repeated per-token alert evaluation while still persisting market data', async () => {
     let nowMs = Date.parse('2026-05-03T07:00:00.000Z');
     const evaluationState = new Map();
@@ -666,7 +692,7 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:00:05.000Z');
   });
 
-  it('does not defer an existing Dex recheck when GMGN refreshes a token without Dex confirmation', () => {
+  it('advances an overdue Dex recheck when GMGN refreshes a token without Dex confirmation', () => {
     const evaluation = gmgnCatalogIngestion.__private.deriveGmgnEvaluation(
       createSnapshot(),
       {
@@ -680,7 +706,7 @@ describe('gmgn catalog ingestion', () => {
       }
     );
 
-    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T06:59:50.000Z');
+    assert.equal(evaluation.nextEvaluationAt.toISOString(), '2026-05-03T07:00:30.000Z');
   });
 
   it('does not apply the GMGN non-launch grace period to known launch suffixes or Dex-confirmed tokens', () => {

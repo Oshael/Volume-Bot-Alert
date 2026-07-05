@@ -330,6 +330,17 @@ function normalizeTimestamp(value) {
   return parsed > 100000000000 ? new Date(parsed).toISOString() : new Date(parsed * 1000).toISOString();
 }
 
+function computeCirculatingMarketCap(row, pricePaths = ['price', 'priceUsd', 'price_usd']) {
+  const direct = readNumber(row, ['usd_market_cap', 'market_cap', 'marketCap', 'mcap']);
+  if (direct != null && direct > 0) {
+    return direct;
+  }
+
+  const price = readNumber(row, pricePaths);
+  const supply = readNumber(row, ['circulating_supply', 'circulatingSupply']);
+  return price != null && price > 0 && supply != null && supply > 0 ? price * supply : null;
+}
+
 function normalizeTrendingToken(row, context = {}) {
   if (!row || typeof row !== 'object') {
     return null;
@@ -350,7 +361,7 @@ function normalizeTrendingToken(row, context = {}) {
     imageUrl: readTrimmedString(row, ['logo', 'imageUrl', 'logoUrl', 'icon', ['info', 'imageUrl']]),
     pairAddress: readTrimmedString(row, ['pairAddress', 'poolAddress', 'pool_address']),
     pairUrl: readTrimmedString(row, ['pairUrl', 'url']),
-    mcap: readNumber(row, ['market_cap', 'marketCap', 'mcap']),
+    mcap: computeCirculatingMarketCap(row),
     price: readNumber(row, ['price', 'priceUsd', 'price_usd']),
     liquidityUsd: readNumber(row, ['liquidity', 'liquidityUsd', 'liquidity_usd']),
     priceChange1m: readNumber(row, ['price_change_percent1m', 'priceChange1m']),
@@ -436,14 +447,7 @@ function normalizeTokenSecurityPayload(payload, context = {}) {
 }
 
 function computeMarketCapFromInfo(row) {
-  const direct = readNumber(row, ['usd_market_cap', 'market_cap', 'marketCap', 'mcap']);
-  if (direct != null) {
-    return direct;
-  }
-
-  const price = readNumber(row, [['price', 'price'], 'priceUsd', 'price_usd', 'price']);
-  const supply = readNumber(row, ['circulating_supply', 'circulatingSupply']);
-  return price != null && supply != null ? price * supply : null;
+  return computeCirculatingMarketCap(row, [['price', 'price'], 'priceUsd', 'price_usd', 'price']);
 }
 
 function computePriceChangePct(current, previous) {

@@ -176,6 +176,21 @@ describe('gmgn client', () => {
     assert.equal(rows[0].vol5m, null);
   });
 
+  it('derives trending market cap from price and circulating supply when direct mcap is missing', () => {
+    const rows = gmgn.__private.normalizeTrendingPayload({
+      data: {
+        rank: [{
+          address: TOKEN_A,
+          price: '0.00002389',
+          circulating_supply: '1000000000',
+          market_cap: '0',
+        }],
+      },
+    }, { chain: 'sol', interval: '5m' });
+
+    assert.equal(rows[0].mcap, 23890);
+  });
+
   it('does not use GMGN fdv as an operational market cap', () => {
     const rows = gmgn.__private.normalizeTrendingPayload({
       data: {

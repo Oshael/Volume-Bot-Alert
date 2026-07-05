@@ -24,6 +24,7 @@ const DEFAULT_ALERT_EVALUATION_MIN_INTERVAL_MS = 3000;
 const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
 const DEFAULT_PANEL_STALE_AFTER_MS = 15000;
 const RECENT_DEX_MARKET_DATA_MAX_AGE_MS = 60 * 60 * 1000;
+const RECENT_GMGN_MCAP_RECOVERY_MAX_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
@@ -224,6 +225,32 @@ function preserveDexMarketDataForGmgnSnapshot(snapshot, tokenBefore, now) {
   };
 }
 
+function recoverMissingGmgnMarketCap(snapshot, tokenBefore, now) {
+  const incomingMcap = toFiniteNumberOrNull(snapshot?.mcap);
+  if (incomingMcap != null && incomingMcap > 0) {
+    return snapshot;
+  }
+
+  const previousMcap = toFiniteNumberOrNull(tokenBefore?.last_mcap);
+  const previousPrice = toFiniteNumberOrNull(tokenBefore?.last_price);
+  const incomingPrice = toFiniteNumberOrNull(snapshot?.price);
+  const timestampMs = getLatestMarketDataTimestampMs(tokenBefore);
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const hasRecentPreviousMarketData = timestampMs != null
+    && Number.isFinite(nowMs)
+    && timestampMs <= nowMs
+    && (nowMs - timestampMs) <= RECENT_GMGN_MCAP_RECOVERY_MAX_AGE_MS;
+
+  if (!hasRecentPreviousMarketData || !(previousMcap > 0) || !(previousPrice > 0) || !(incomingPrice > 0)) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    mcap: previousMcap * (incomingPrice / previousPrice),
+  };
+}
+
 function normalizeAddress(value) {
   const address = String(value || '').trim();
   if (!isValidAddress(address)) {
@@ -399,7 +426,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = nu
   const nextEvaluationAt = resolveGmgnNextEvaluationAt(
     tokenBefore,
     new Date(now.getTime() + options.activeDexRecheckMs),
-    { preserveEarlier: true }
+    { preserveEarlier: true, now }
   );
   const isManual = String(tokenBefore?.source || '').trim().toLowerCase() === 'user-manual';
 
@@ -419,7 +446,7 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = nu
       eligibleForMonitoring: false,
       suppressedReason: GMGN_NON_LAUNCH_GRACE_SUPPRESSION_REASON,
       monitorPriority: resolveMonitorPriority(marketCap),
-      nextEvaluationAt: resolveGmgnNextEvaluationAt(tokenBefore, nonLaunchGraceUntil),
+      nextEvaluationAt: resolveGmgnNextEvaluationAt(tokenBefore, nonLaunchGraceUntil, { now }),
     });
   }
 
@@ -447,7 +474,8 @@ function deriveGmgnEvaluation(snapshot, tokenBefore, options, securityGuard = nu
         monitorPriority: 'low',
         nextEvaluationAt: resolveGmgnNextEvaluationAt(
           tokenBefore,
-          new Date(now.getTime() + LOW_ACTIVITY_RECHECK_MS)
+          new Date(now.getTime() + LOW_ACTIVITY_RECHECK_MS),
+          { now }
         ),
       });
     }
@@ -892,7 +920,12 @@ function resolveGmgnNextEvaluationAt(tokenBefore, fallbackNextEvaluationAt, opti
   const existingNextEvaluationAt = toValidDateOrNull(
     tokenBefore?.next_evaluation_at || tokenBefore?.nextEvaluationAt
   );
-  if (!existingNextEvaluationAt || existingNextEvaluationAt > fallbackNextEvaluationAt) {
+  const now = toValidDateOrNull(options.now) || new Date();
+  if (
+    !existingNextEvaluationAt
+    || existingNextEvaluationAt <= now
+    || existingNextEvaluationAt > fallbackNextEvaluationAt
+  ) {
     return fallbackNextEvaluationAt;
   }
 
@@ -1749,7 +1782,11 @@ async function ingestGmgnToken(snapshot, options = {}) {
     fillYoungTokenVolumeWindows(snapshot, { now }),
     tokenBefore
   );
-  const marketSafeSnapshot = preserveDexMarketDataForGmgnSnapshot(filledSnapshot, tokenBefore, now);
+  const marketSafeSnapshot = recoverMissingGmgnMarketCap(
+    preserveDexMarketDataForGmgnSnapshot(filledSnapshot, tokenBefore, now),
+    tokenBefore,
+    now
+  );
   const guardResult = await applyPreCatalogGmgnGuards(
     address,
     marketSafeSnapshot,
@@ -2026,6 +2063,7 @@ module.exports = {
     getLatestMarketDataTimestampMs,
     hasRecentDexMarketData,
     preserveDexMarketDataForGmgnSnapshot,
+    recoverMissingGmgnMarketCap,
     shouldPreferDexMarketData,
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
