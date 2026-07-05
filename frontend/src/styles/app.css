@@ -13301,6 +13301,14 @@ TEMP_LEGACY_BAR_TITLE {
   overflow: hidden;
 }
 
+.alerts-panel[data-alerts-layout="compact"] .alert-row:has(.trade-wrap:hover),
+.alerts-panel[data-alerts-layout="compact"] .alert-row:has(.trade-wrap:focus-within),
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-row:has(.trade-wrap:hover),
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-row:has(.trade-wrap:focus-within) {
+  overflow: visible;
+  z-index: 50;
+}
+
 .alerts-panel[data-alerts-layout="compact"] .alert-grid,
 .live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-grid {
   display: grid;
