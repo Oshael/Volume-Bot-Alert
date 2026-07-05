@@ -58,7 +58,8 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   const renderNow = Date.now();
   const view = getOrCreateAlertsSectionView(controller);
   const cardEffectsEnabled = areAlertCardEffectsEnabled(state);
-  const visibleAlerts = buildVisibleAlerts(state);
+  const pinnedReviewAlerts = buildPinnedAdminReviewAlerts(state);
+  const visibleAlerts = [...pinnedReviewAlerts, ...state.data.alerts];
   view.controller = controller;
   syncAlertFxStates(view, visibleAlerts, renderNow);
   if (!cardEffectsEnabled && view.fxGhostHost.childElementCount > 0) {
@@ -66,15 +67,16 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   }
 
   const searchQuery = String(state.ui.alertSearchQuery || '');
-  const filteredAlerts = filterAlerts(visibleAlerts, searchQuery);
+  const filteredAlerts = filterAlerts(state.data.alerts, searchQuery);
   const pagination = paginateAlerts(filteredAlerts, state.ui.alertPage);
+  const displayedAlerts = [...pinnedReviewAlerts, ...pagination.pageItems];
 
   syncSearchInput(view, searchQuery);
   syncPaginationControls(view, pagination.safePage, pagination.totalPages);
-  reconcileAlertRows(view, pagination.pageItems, visibleAlerts, state, renderNow, cardEffectsEnabled);
+  reconcileAlertRows(view, displayedAlerts, visibleAlerts, state, renderNow, cardEffectsEnabled);
   bindSparklineHover(view.section, state.data.alertSparklineById, { controller });
   bindTokenImagePreview(view.section);
-  view.count.textContent = String(filteredAlerts.length);
+  view.count.textContent = String(pinnedReviewAlerts.length + filteredAlerts.length);
 
   return view.section;
 }
@@ -229,6 +231,17 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     void alertsSectionView.controller.resolveAdminTokenReviewAlert(reviewAlertId, resolution);
   });
 
+  section.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-action="open-alert-chart"]');
+    const alertId = String(button?.dataset.alertId || '').trim();
+    const address = String(button?.dataset.address || '').trim();
+    if (!button || !alertId || !address || !alertsSectionView) {
+      return;
+    }
+    alertsSectionView.controller.openAlertExpandedSparkline(alertId, address);
+  });
+
   section.addEventListener('toggle', (event) => {
     const panel = (event.target as HTMLElement | null)?.closest<HTMLDetailsElement>('.alert-ticker-peers-panel');
     if (!panel || !panel.open) {
@@ -321,9 +334,9 @@ function buildEmptyState() {
   return emptyState;
 }
 
-function buildVisibleAlerts(state: AppState): AlertEntry[] {
+function buildPinnedAdminReviewAlerts(state: AppState): AlertEntry[] {
   if (state.session.role !== 'admin' || state.data.adminTokenReviewAlerts.length === 0) {
-    return state.data.alerts;
+    return [];
   }
 
   const reviewAlerts = state.data.adminTokenReviewAlerts
@@ -331,7 +344,7 @@ function buildVisibleAlerts(state: AppState): AlertEntry[] {
     .map(buildAdminReviewAlertEntry)
     .filter((alert): alert is AlertEntry => Boolean(alert));
 
-  return [...reviewAlerts, ...state.data.alerts];
+  return reviewAlerts;
 }
 
 function buildAdminReviewAlertEntry(review: AdminTokenReviewAlertEntry): AlertEntry | null {
@@ -1202,7 +1215,8 @@ function buildAlertRowContent(
   const actions = document.createElement('div');
   actions.className = 'alert-actions-v68';
   actions.append(
-    buildActionButton('Copiar CA', 'alert-action-button copy-button', 'copy-address', alert.address),
+    buildAlertCopyButton(alert.address),
+    buildAlertChartButton(alert),
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
       enabledTradeTerminals,
     }),
@@ -1304,7 +1318,8 @@ function buildAdminReviewAlertRowContent(
   const actions = document.createElement('div');
   actions.className = 'alert-actions-v68';
   actions.append(
-    buildAdminReviewCopyButton(alert.address),
+    buildAlertCopyButton(alert.address),
+    buildAlertChartButton(alert),
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
       enabledTradeTerminals,
     }),
@@ -1517,7 +1532,9 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 
   if (alert.isOldSurge) {
     container.append(
-      buildMetricPair('MCAP', currentMcap, 'up'),
+      prevMcap
+        ? buildFlowTransition('MCAP', prevMcap, currentMcap, mcapTone)
+        : buildMetricPair('MCAP', currentMcap, 'up'),
       buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
     );
     return;
@@ -1766,10 +1783,23 @@ function buildReviewActionButton(
   return button;
 }
 
-function buildAdminReviewCopyButton(address: string) {
-  const button = buildActionButton('CA', 'alert-action-button copy-button admin-review-copy-button', 'copy-address', address);
+function buildAlertCopyButton(address: string) {
+  const button = buildActionButton('CA', 'alert-action-button copy-button compact-copy-button', 'copy-address', address);
   button.title = 'Copiar CA';
   button.setAttribute('aria-label', 'Copiar CA');
+  return button;
+}
+
+function buildAlertChartButton(alert: AlertEntry) {
+  const button = buildActionButton('', 'alert-action-button alert-chart-button', 'open-alert-chart', alert.address);
+  const glyph = document.createElement('span');
+  glyph.className = 'alert-chart-glyph';
+  glyph.setAttribute('aria-hidden', 'true');
+  glyph.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+  button.append(glyph);
+  button.dataset.alertId = alert.id;
+  button.title = 'Abrir chart';
+  button.setAttribute('aria-label', `Abrir chart de ${alert.symbol || alert.address}`);
   return button;
 }
 

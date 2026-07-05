@@ -320,6 +320,8 @@ export interface ChartAlertEvent {
   prevVolume5m?: number | null;
   volume5m?: number | null;
   prevMcap?: number | null;
+  volume1h?: number | null;
+  volume6h?: number | null;
   volume24h?: number | null;
   priceChange1h?: number | null;
   priceChange6h?: number | null;

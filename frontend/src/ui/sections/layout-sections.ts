@@ -2480,13 +2480,6 @@ function getChartAlertHeroPercent(event: ChartAlertEvent) {
   return event.pct ?? event.priceChange1h ?? event.priceChange6h ?? null;
 }
 
-function estimateMcapBeforeChange(currentMcap: number | null | undefined, pct: number | null | undefined) {
-  const mcap = Number(currentMcap);
-  const change = Number(pct);
-  if (!Number.isFinite(mcap) || mcap <= 0 || !Number.isFinite(change) || change <= -99.9) return null;
-  return mcap / (1 + (change / 100));
-}
-
 function truncateChartAlertAddress(address: string) {
   const clean = String(address || '').trim();
   return clean.length > 10 ? `${clean.slice(0, 4)}...${clean.slice(-4)}` : clean;
@@ -2501,12 +2494,31 @@ function renderChartAlertAvatar(event: ChartAlertEvent) {
   return `<span class="expanded-chart-alert-token-avatar expanded-chart-alert-token-avatar-fallback">${escapeHtml(fallback)}</span>`;
 }
 
-function renderChartAlertMcapChip(label: string, value: number | null, highlight = false) {
+function renderChartAlertVolumeChip(label: string, value: number | null, highlight = false) {
   return `
     <span class="expanded-chart-alert-mcap-chip${highlight ? ' is-highlight' : ''}">
       <small>${escapeHtml(label)}</small>
       <strong>${escapeHtml(fmtMoney(value))}</strong>
     </span>
+  `;
+}
+
+function renderChartAlertPrimaryMcap(event: ChartAlertEvent) {
+  const currentMcap = toFiniteAlertNumber(event.mcap);
+  const previousMcap = toFiniteAlertNumber(event.prevMcap);
+  const isPriceSurge = event.ruleKey === 'recent-surge-1h'
+    || event.ruleKey === 'recent-surge-6h'
+    || event.ruleKey === 'old-week-surge-1h'
+    || event.ruleKey === 'old-week-surge-6h';
+  if (!isPriceSurge || previousMcap == null || previousMcap <= 0) {
+    return `<strong>${escapeHtml(fmtMoney(currentMcap))}</strong>`;
+  }
+  return `
+    <strong class="has-transition">
+      <span class="previous">${escapeHtml(fmtMoney(previousMcap))}</span>
+      <span class="arrow">→</span>
+      <span>${escapeHtml(fmtMoney(currentMcap))}</span>
+    </strong>
   `;
 }
 
@@ -2649,8 +2661,6 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
   const hero = getChartAlertHeroPercent(event);
   const tokenName = event.symbol || event.name || truncateChartAlertAddress(event.address);
   const ageLabel = event.tokenCreatedAt ? formatExpandedTokenAge(event.tokenCreatedAt) : '-';
-  const oneHourMcap = estimateMcapBeforeChange(event.mcap, event.priceChange1h);
-  const sixHourMcap = estimateMcapBeforeChange(event.mcap, event.priceChange6h);
   const clusterLabel = cluster.markers.length > 1 ? ` · +${cluster.markers.length - 1}` : '';
   return `
     <div class="expanded-chart-alert-tooltip-head">
@@ -2669,13 +2679,13 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
       </span>
       <span class="expanded-chart-alert-token-mcap">
         <small>MCAP</small>
-        <strong>${escapeHtml(fmtMoney(event.mcap))}</strong>
+        ${renderChartAlertPrimaryMcap(event)}
       </span>
     </div>
     <div class="expanded-chart-alert-tooltip-mcaps">
-      ${renderChartAlertMcapChip('1H', oneHourMcap)}
-      ${renderChartAlertMcapChip('6H', sixHourMcap)}
-      ${renderChartAlertMcapChip('24H', event.mcap, true)}
+      ${renderChartAlertVolumeChip('1H', toFiniteAlertNumber(event.volume1h))}
+      ${renderChartAlertVolumeChip('6H', toFiniteAlertNumber(event.volume6h))}
+      ${renderChartAlertVolumeChip('24H', toFiniteAlertNumber(event.volume24h), true)}
     </div>
     <div class="expanded-chart-alert-tooltip-foot">
       <small title="${escapeHtml(event.address)}">${escapeHtml(truncateChartAlertAddress(event.address))}</small>

@@ -35,10 +35,18 @@ describe('chart alert history cache', () => {
       address: 'So11111111111111111111111111111111111111112',
       triggeredAt: '2026-07-03T05:47:42.000Z',
       mcap: '100000',
+      prevMcap: '50000',
+      volume1h: '12000',
+      volume6h: '34000',
+      volume24h: '56000',
       pct: '25',
     };
 
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'monitored-mcap' }).mcap, 100000);
+    assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).prevMcap, 50000);
+    assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume1h, 12000);
+    assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume6h, 34000);
+    assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume24h, 56000);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'monitored-mcap', mcap: null }).mcap, null);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'gmgn-claim-signal' }), null);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'gmgn-vol-1m' }), null);

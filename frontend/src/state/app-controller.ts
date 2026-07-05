@@ -1,4 +1,4 @@
-import { createAppState, getExpandedTokenSparkline, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -5415,6 +5415,11 @@ export function createAppController(): AppController {
     const ageBucket = event.ageBucket === 'recent' || event.ageBucket === 'old-week'
       ? event.ageBucket
       : null;
+    const mcap = toOptionalNumber(event.mcap);
+    const pct = toOptionalNumber(event.pct) ?? 0;
+    const mcapRatio = 1 + (pct / 100);
+    const prevMcap = toOptionalNumber(event.prevMcap)
+      ?? (mcap != null && mcap > 0 && mcapRatio > 0 ? mcap / mcapRatio : null);
 
     return {
       id: `backend:${toOptionalText(event.ruleKey) || 'old-surge'}:${eventId}`,
@@ -5431,9 +5436,10 @@ export function createAppController(): AppController {
       volume1h: toOptionalNumber(event.volume1h),
       volume6h: toOptionalNumber(event.volume6h),
       volume24h: toOptionalNumber(event.volume24h),
-      mcap: toOptionalNumber(event.mcap),
+      prevMcap,
+      mcap,
       thresholdPct: toOptionalNumber(event.thresholdPct),
-      pct: toOptionalNumber(event.pct) ?? 0,
+      pct,
       surgeWindow,
       ageBucket,
       isOldSurge: true,
@@ -10502,10 +10508,6 @@ export function createAppController(): AppController {
       }
 
       restorePreferredExpandedSparklineGranularityForAddress(normalized);
-      const sparkline = getExpandedTokenSparkline(state, normalized);
-      if (!hasRenderableSparklineSeries(sparkline)) {
-        return;
-      }
 
       if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
         unsubscribeMarketChart(state.ui.expandedSparklineAddress);
@@ -10535,10 +10537,6 @@ export function createAppController(): AppController {
 
       restorePreferredExpandedSparklineGranularityForAddress(normalized);
       const seed = seedExpandedSparklineFromAlert(alertId, normalized);
-      const sparkline = getExpandedTokenSparkline(state, normalized);
-      if (!hasRenderableSparklineSeries(sparkline)) {
-        return;
-      }
 
       if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
         unsubscribeMarketChart(state.ui.expandedSparklineAddress);

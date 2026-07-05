@@ -3078,6 +3078,17 @@ body:has(.workspace-topbar)::before {
   font-weight: 900;
 }
 
+.expanded-chart-alert-token-mcap strong.has-transition {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.expanded-chart-alert-token-mcap strong.has-transition .previous,
+.expanded-chart-alert-token-mcap strong.has-transition .arrow {
+  color: #8b96a8;
+}
+
 .expanded-chart-alert-tooltip-mcaps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -13013,10 +13024,45 @@ TEMP_LEGACY_BAR_TITLE {
   background: rgba(50, 10, 18, 0.55);
 }
 
-.alert-row.admin-token-review .admin-review-copy-button {
-  min-width: 44px;
-  padding-right: 7px;
-  padding-left: 7px;
+.alert-action-button.compact-copy-button {
+  min-width: 32px;
+  padding-right: 6px;
+  padding-left: 6px;
+}
+
+.alert-action-button.alert-chart-button {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
+.alert-chart-glyph {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 14px;
+  height: 13px;
+  padding: 1px;
+  border-bottom: 1px solid currentColor;
+  border-left: 1px solid currentColor;
+}
+
+.alert-chart-glyph i {
+  display: block;
+  width: 2px;
+  background: currentColor;
+}
+
+.alert-chart-glyph i:nth-child(1) {
+  height: 4px;
+}
+
+.alert-chart-glyph i:nth-child(2) {
+  height: 7px;
+}
+
+.alert-chart-glyph i:nth-child(3) {
+  height: 10px;
 }
 
 .alert-dismiss-button {

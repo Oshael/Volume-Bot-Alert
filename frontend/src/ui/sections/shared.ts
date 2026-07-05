@@ -330,7 +330,8 @@ export function bindCopyButtons(section: ParentNode) {
       if (!address) return;
       const original = button.dataset.copyOriginalLabel ?? button.textContent ?? '';
       button.dataset.copyOriginalLabel = original;
-      const keepTextFeedback = button.classList.contains('alert-action-button') || Boolean(button.closest('.alerts-panel'));
+      const keepTextFeedback = !button.classList.contains('compact-copy-button')
+        && (button.classList.contains('alert-action-button') || Boolean(button.closest('.alerts-panel')));
 
       try {
         await navigator.clipboard.writeText(address);

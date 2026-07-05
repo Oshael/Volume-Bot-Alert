@@ -52,6 +52,10 @@ export function normalizeChartAlertEvent(input: Partial<ChartAlertEvent> | Dashb
     address,
     triggeredAt: new Date(triggeredAtMs).toISOString(),
     mcap: toOptionalNumber(input.mcap),
+    prevMcap: toOptionalNumber(input.prevMcap),
+    volume1h: toOptionalNumber(input.volume1h),
+    volume6h: toOptionalNumber(input.volume6h),
+    volume24h: toOptionalNumber(input.volume24h),
     pct: toOptionalNumber(input.pct),
     label: normalizeText(input.label) || null,
   } as ChartAlertEvent;
