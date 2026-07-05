@@ -16,6 +16,8 @@ const LIVE_PANEL_SPANS = {
   pumpfun: [1],
   alerts: [1, 2, 3],
 };
+const LIVE_PANEL_DEFAULT_HEIGHT = 620;
+const LIVE_PANEL_MAX_HEIGHT = 100000;
 const EXPANDED_SPARKLINE_GRANULARITIES = [1, 5, 15, 30, 60, 240, 1440];
 const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
 
@@ -47,6 +49,10 @@ const DEFAULT_UI_PREFS = {
       monitored: 2,
       pumpfun: 1,
       alerts: 1,
+    },
+    heights: {
+      monitored: LIVE_PANEL_DEFAULT_HEIGHT,
+      alerts: LIVE_PANEL_DEFAULT_HEIGHT,
     },
   },
 };
@@ -229,6 +235,28 @@ function normalizeLivePanelOrder(input) {
   return next;
 }
 
+function validateLivePanelHeights(key, value) {
+  const sourceHeights = value == null ? {} : value;
+  if (!sourceHeights || typeof sourceHeights !== 'object' || Array.isArray(sourceHeights)) {
+    return { valid: false, error: `${key}.heights must be an object` };
+  }
+
+  const heights = {};
+  for (const panelKey of ['monitored', 'alerts']) {
+    const rawHeight = sourceHeights[panelKey] ?? LIVE_PANEL_DEFAULT_HEIGHT;
+    const numeric = Math.round(Number(rawHeight));
+    if (!Number.isFinite(numeric) || numeric < 1 || numeric > LIVE_PANEL_MAX_HEIGHT) {
+      return {
+        valid: false,
+        error: `${key}.heights.${panelKey} must be between 1 and ${LIVE_PANEL_MAX_HEIGHT}`,
+      };
+    }
+    heights[panelKey] = numeric;
+  }
+
+  return { valid: true, value: heights };
+}
+
 function validateLivePanelLayout(key, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { valid: false, error: `${key} must be an object` };
@@ -257,11 +285,17 @@ function validateLivePanelLayout(key, value) {
     spans[panelKey] = numeric;
   }
 
+  const heights = validateLivePanelHeights(key, value.heights);
+  if (!heights.valid) {
+    return heights;
+  }
+
   return {
     valid: true,
     value: {
       order,
       spans,
+      heights: heights.value,
     },
   };
 }

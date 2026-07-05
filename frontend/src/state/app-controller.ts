@@ -496,6 +496,7 @@ export interface AppController {
   setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
   setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
   setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
+  setLivePanelHeight(panel: 'monitored' | 'alerts', height: number): void;
   setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>): void;
   resetLivePanelLayout(): void;
   setSoundEnabled(enabled: boolean): void;
@@ -3362,10 +3363,18 @@ export function createAppController(): AppController {
     return span === 2 || span === 3 ? span : 1;
   }
 
+  function normalizeLivePanelHeight(input: unknown, fallback = 620) {
+    const height = Math.round(Number(input));
+    return Number.isFinite(height)
+      ? Math.min(100000, Math.max(1, height))
+      : fallback;
+  }
+
   function normalizeLivePanelLayout(input: unknown): AppState['ui']['livePanelLayout'] {
     const source = input && typeof input === 'object' && !Array.isArray(input)
       ? input as Partial<UiPrefsPayload['livePanelLayout']>
       : null;
+    const defaults = getDefaultLivePanelLayout();
     const monitoredSpan = Number(source?.spans?.monitored);
     return {
       order: normalizeLivePanelOrder(source?.order),
@@ -3373,6 +3382,10 @@ export function createAppController(): AppController {
         monitored: normalizeResizableLivePanelSpan(monitoredSpan),
         pumpfun: 1,
         alerts: normalizeResizableLivePanelSpan(source?.spans?.alerts),
+      },
+      heights: {
+        monitored: normalizeLivePanelHeight(source?.heights?.monitored, defaults.heights.monitored),
+        alerts: normalizeLivePanelHeight(source?.heights?.alerts, defaults.heights.alerts),
       },
     };
   }
@@ -3411,6 +3424,10 @@ export function createAppController(): AppController {
           monitored: state.ui.livePanelLayout.spans.monitored,
           pumpfun: 1,
           alerts: state.ui.livePanelLayout.spans.alerts,
+        },
+        heights: {
+          monitored: state.ui.livePanelLayout.heights.monitored,
+          alerts: state.ui.livePanelLayout.heights.alerts,
         },
       },
     };
@@ -10858,6 +10875,15 @@ export function createAppController(): AppController {
         refreshMonitoredSparklinesIfExpanded();
       }
     },
+    setLivePanelHeight(panel: 'monitored' | 'alerts', height: number) {
+      const nextHeight = normalizeLivePanelHeight(height);
+      if (state.ui.livePanelLayout.heights[panel] === nextHeight) {
+        return;
+      }
+      state.ui.livePanelLayout.heights[panel] = nextHeight;
+      queueUiPrefsPersist();
+      emit(panel);
+    },
     setLivePanelOrder(order: Array<'monitored' | 'pumpfun' | 'alerts'>) {
       const nextOrder = normalizeLivePanelOrder(order);
       const currentOrder = state.ui.livePanelLayout.order;
@@ -10876,12 +10902,15 @@ export function createAppController(): AppController {
       const isDefaultSpans = current.spans.monitored === defaults.spans.monitored
         && current.spans.pumpfun === defaults.spans.pumpfun
         && current.spans.alerts === defaults.spans.alerts;
-      if (isDefaultOrder && isDefaultSpans) {
+      const isDefaultHeights = current.heights.monitored === defaults.heights.monitored
+        && current.heights.alerts === defaults.heights.alerts;
+      if (isDefaultOrder && isDefaultSpans && isDefaultHeights) {
         return;
       }
       state.ui.livePanelLayout = {
         order: [...defaults.order],
         spans: { ...defaults.spans },
+        heights: { ...defaults.heights },
       };
       queueUiPrefsPersist();
       emit('monitored', 'pumpfun', 'alerts');

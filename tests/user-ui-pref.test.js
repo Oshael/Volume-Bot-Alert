@@ -20,7 +20,80 @@ describe('user-ui-pref', () => {
         pumpfun: 1,
         alerts: 1,
       },
+      heights: {
+        monitored: 620,
+        alerts: 620,
+      },
     });
+  });
+
+  it('preserves legacy live layout choices while defaulting missing heights', () => {
+    const prefs = userUiPref.normalizePrefs({
+      livePanelLayout: {
+        order: ['alerts', 'monitored', 'pumpfun'],
+        spans: {
+          monitored: 3,
+          pumpfun: 1,
+          alerts: 2,
+        },
+      },
+    });
+
+    assert.deepEqual(prefs.livePanelLayout, {
+      order: ['alerts', 'monitored', 'pumpfun'],
+      spans: {
+        monitored: 3,
+        pumpfun: 1,
+        alerts: 2,
+      },
+      heights: {
+        monitored: 620,
+        alerts: 620,
+      },
+    });
+  });
+
+  it('validates persisted live panel heights', () => {
+    const validation = userUiPref.validatePatch({
+      livePanelLayout: {
+        order: ['monitored', 'pumpfun', 'alerts'],
+        spans: {
+          monitored: 2,
+          pumpfun: 1,
+          alerts: 1,
+        },
+        heights: {
+          monitored: 840.4,
+          alerts: 1320,
+        },
+      },
+    });
+
+    assert.equal(validation.valid, true);
+    assert.deepEqual(validation.prefs.livePanelLayout.heights, {
+      monitored: 840,
+      alerts: 1320,
+    });
+  });
+
+  it('rejects unsafe live panel heights', () => {
+    const validation = userUiPref.validatePatch({
+      livePanelLayout: {
+        order: ['monitored', 'pumpfun', 'alerts'],
+        spans: {
+          monitored: 2,
+          pumpfun: 1,
+          alerts: 1,
+        },
+        heights: {
+          monitored: 0,
+          alerts: 620,
+        },
+      },
+    });
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.includes('livePanelLayout.heights.monitored must be between 1 and 100000'));
   });
 
   it('accepts a filtered trade terminal selection', () => {

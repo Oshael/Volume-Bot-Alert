@@ -74,6 +74,10 @@ export interface LivePanelLayoutPayload {
     pumpfun: 1;
     alerts: LiveWorkspacePanelSpan;
   };
+  heights: {
+    monitored: number;
+    alerts: number;
+  };
 }
 
 export interface UiPrefsPayload {

@@ -211,6 +211,10 @@ describe('Config routes', () => {
         pumpfun: 1,
         alerts: 1,
       },
+      heights: {
+        monitored: 620,
+        alerts: 620,
+      },
     });
     assert.equal(response.body.uiPrefs.recentPerPage, 30);
     assert.equal(response.body.uiPrefs.oldWeekPerPage, 30);
@@ -652,6 +656,10 @@ describe('Config routes', () => {
               pumpfun: 1,
               alerts: 3,
             },
+            heights: {
+              monitored: 760,
+              alerts: 980,
+            },
           },
         },
       });
@@ -668,6 +676,10 @@ describe('Config routes', () => {
         monitored: 2,
         pumpfun: 1,
         alerts: 3,
+      },
+      heights: {
+        monitored: 760,
+        alerts: 980,
       },
     });
   });

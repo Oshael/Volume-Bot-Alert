@@ -162,6 +162,10 @@ export interface LivePanelLayout {
     pumpfun: 1;
     alerts: LiveWorkspacePanelSpan;
   };
+  heights: {
+    monitored: number;
+    alerts: number;
+  };
 }
 
 export interface PumpVolumePoint {
@@ -954,6 +958,10 @@ export function createAppState(): AppState {
           monitored: 2,
           pumpfun: 1,
           alerts: 1,
+        },
+        heights: {
+          monitored: 620,
+          alerts: 620,
         },
       },
       soundEnabled: true,

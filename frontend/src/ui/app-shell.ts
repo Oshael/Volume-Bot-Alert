@@ -111,12 +111,24 @@ type LivePanelResizeDraft = {
   previewOrder: LiveWorkspacePanelKey[];
 };
 
+type LivePanelHeightResizeDraft = {
+  panelKey: LiveResizablePanelKey;
+  item: HTMLElement;
+  panels: HTMLElement;
+  pointerId: number;
+  startPageY: number;
+  lastClientY: number;
+  startHeight: number;
+  previewHeight: number;
+  minHeight: number;
+};
+
 type LivePanelResizePendingDraft = {
   item: HTMLElement;
   pointerId: number;
   startX: number;
   startY: number;
-  zone: 'right' | 'left';
+  zone: 'right' | 'left' | 'bottom';
 };
 
 type LivePanelReorderDraft = {
@@ -187,6 +199,13 @@ const APP_OVERLAY_SLOT_SELECTOR = '[data-app-render-slot="overlay"]';
 const APP_FLOATING_QUICK_BUY_SLOT_SELECTOR = '[data-app-render-slot="floating-quick-buy"]';
 const LIVE_PANEL_REORDER_ACTIVATION_DISTANCE = 14;
 const LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE = 16;
+const LIVE_PANEL_HEIGHT_SNAP_DISTANCE_PX = 6;
+const LIVE_PANEL_HEIGHT_AUTO_SCROLL_THRESHOLD_PX = 128;
+const LIVE_PANEL_HEIGHT_AUTO_SCROLL_MAX_STEP_PX = 8;
+const LIVE_PANEL_HEIGHT_MIN_CARD_FALLBACKS: Record<LiveResizablePanelKey, number> = {
+  monitored: 168,
+  alerts: 192,
+};
 
 let floatingQuickBuyPosition: { left: number; top: number } | null = null;
 
@@ -484,7 +503,7 @@ function syncLivePanelResizeFrame(element: HTMLElement, panelKey: string, enable
   frame.dataset.panelKey = panelKey;
   frame.setAttribute('aria-hidden', 'true');
 
-  for (const edge of ['right', 'left']) {
+  for (const edge of ['right', 'left', 'bottom'] as const) {
     const zone = document.createElement('button');
     zone.type = 'button';
     zone.className = `live-panel-resize-zone live-panel-resize-zone--${edge}`;
@@ -498,6 +517,52 @@ function syncLivePanelResizeFrame(element: HTMLElement, panelKey: string, enable
   element.append(frame);
 }
 
+function resetLivePanelItem(element: HTMLElement, panelKey: string) {
+  element.classList.add('live-panel-item', `live-panel-item--${panelKey}`);
+  element.dataset.panelKey = panelKey;
+  delete element.dataset.span;
+  delete element.dataset.reordering;
+  delete element.dataset.resizing;
+  element.style.pointerEvents = '';
+  if (panelKey === 'monitored' || panelKey === 'alerts') {
+    element.dataset.resizable = 'true';
+    element.classList.add('live-panel-item--resizable');
+    return;
+  }
+
+  delete element.dataset.resizable;
+  element.classList.remove('live-panel-item--resizable');
+}
+
+function resetPumpfunLivePanelItem(element: HTMLElement) {
+  element.classList.remove('live-panel-item', 'live-panel-item--pumpfun', 'live-panel-item--resizable');
+  delete element.dataset.panelKey;
+  delete element.dataset.span;
+  delete element.dataset.resizable;
+}
+
+function resolveLivePanelHeights(state: AppState): Record<LiveResizablePanelKey, number> {
+  return {
+    monitored: livePanelHeightResizeDraft?.panelKey === 'monitored'
+      ? livePanelHeightResizeDraft.previewHeight
+      : state.ui.livePanelLayout.heights.monitored,
+    alerts: livePanelHeightResizeDraft?.panelKey === 'alerts'
+      ? livePanelHeightResizeDraft.previewHeight
+      : state.ui.livePanelLayout.heights.alerts,
+  };
+}
+
+function applyActiveLivePanelResizeState(renderFrame: AppRenderFrame, livePanelItems: Record<LiveWorkspacePanelKey, HTMLElement>) {
+  const activeResizePanelKey = livePanelResizeDraft?.panelKey ?? livePanelHeightResizeDraft?.panelKey;
+  if (!activeResizePanelKey) {
+    return;
+  }
+
+  const previewItem = livePanelItems[activeResizePanelKey];
+  previewItem.dataset.resizing = 'true';
+  renderFrame.frame.classList.add('live-panel-resize-active');
+}
+
 function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
   renderFrame.panels.dataset.workspace = state.ui.workspace;
 
@@ -508,28 +573,9 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     alerts: renderFrame.alertsSlot,
   };
 
-  const resetItem = (element: HTMLElement, panelKey: string) => {
-    element.classList.add('live-panel-item', `live-panel-item--${panelKey}`);
-    element.dataset.panelKey = panelKey;
-    delete element.dataset.span;
-    delete element.dataset.reordering;
-    delete element.dataset.resizing;
-    element.style.pointerEvents = '';
-    if (panelKey === 'monitored' || panelKey === 'alerts') {
-      element.dataset.resizable = 'true';
-      element.classList.add('live-panel-item--resizable');
-    } else {
-      delete element.dataset.resizable;
-      element.classList.remove('live-panel-item--resizable');
-    }
-  };
-
-  resetItem(monitoredItem, 'monitored');
-  resetItem(renderFrame.alertsSlot, 'alerts');
-  renderFrame.pumpfunSlot.classList.remove('live-panel-item', 'live-panel-item--pumpfun', 'live-panel-item--resizable');
-  delete renderFrame.pumpfunSlot.dataset.panelKey;
-  delete renderFrame.pumpfunSlot.dataset.span;
-  delete renderFrame.pumpfunSlot.dataset.resizable;
+  resetLivePanelItem(monitoredItem, 'monitored');
+  resetLivePanelItem(renderFrame.alertsSlot, 'alerts');
+  resetPumpfunLivePanelItem(renderFrame.pumpfunSlot);
 
   if (state.ui.workspace !== 'live') {
     syncLivePanelDragHandle(monitoredItem, 'monitored', false);
@@ -555,9 +601,12 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     ['monitored', monitoredSpan],
     ['alerts', alertsSpan],
   ]);
+  const heightMap = resolveLivePanelHeights(state);
 
   monitoredItem.dataset.span = String(monitoredSpan);
   renderFrame.alertsSlot.dataset.span = String(alertsSpan);
+  applyLivePanelHeight(monitoredItem, 'monitored', heightMap.monitored);
+  applyLivePanelHeight(renderFrame.alertsSlot, 'alerts', heightMap.alerts);
   syncAlertsPanelLayoutPreset(renderFrame.alertsSlot, alertsSpan);
 
   const collapsedStackLayout = resolveLivePanelCollapsedStackLayout(previewOrder, spanMap, state);
@@ -585,16 +634,177 @@ function syncLivePanelLayout(renderFrame: AppRenderFrame, state: AppState) {
     renderFrame.frame.classList.add('live-panel-reorder-active');
   }
 
-  if (livePanelResizeDraft) {
-    const previewItem = livePanelItems[livePanelResizeDraft.panelKey];
-    previewItem.dataset.resizing = 'true';
-    renderFrame.frame.classList.add('live-panel-resize-active');
-  }
+  applyActiveLivePanelResizeState(renderFrame, livePanelItems);
 
   syncLivePanelDragHandle(monitoredItem, 'monitored', true);
   syncLivePanelDragHandle(renderFrame.alertsSlot, 'alerts', true);
   syncLivePanelResizeFrame(monitoredItem, 'monitored', true);
   syncLivePanelResizeFrame(renderFrame.alertsSlot, 'alerts', true);
+}
+
+function getLivePanelElement(item: HTMLElement, panelKey: LiveResizablePanelKey) {
+  return item.querySelector<HTMLElement>(panelKey === 'monitored' ? '.monitored-panel' : '.alerts-panel');
+}
+
+function getLivePanelListElement(panel: HTMLElement, panelKey: LiveResizablePanelKey) {
+  return panel.querySelector<HTMLElement>(panelKey === 'monitored' ? '.monitored-list' : '.alerts-list');
+}
+
+function getLivePanelCardSelector(panelKey: LiveResizablePanelKey) {
+  return panelKey === 'monitored' ? '.monitored-token-row' : '.alert-row';
+}
+
+function getVerticalCssPx(styles: CSSStyleDeclaration, property: 'padding' | 'margin') {
+  const top = Number.parseFloat(property === 'padding' ? styles.paddingTop : styles.marginTop) || 0;
+  const bottom = Number.parseFloat(property === 'padding' ? styles.paddingBottom : styles.marginBottom) || 0;
+  return top + bottom;
+}
+
+function getLivePanelMinimumHeight(item: HTMLElement, panelKey: LiveResizablePanelKey) {
+  const panel = getLivePanelElement(item, panelKey);
+  const list = panel ? getLivePanelListElement(panel, panelKey) : null;
+  if (!panel || !list) {
+    return 1;
+  }
+
+  const panelRect = panel.getBoundingClientRect();
+  const listRect = list.getBoundingClientRect();
+  const listStyles = window.getComputedStyle(list);
+  const firstCard = list.querySelector<HTMLElement>(getLivePanelCardSelector(panelKey));
+  const fallbackCardHeight = LIVE_PANEL_HEIGHT_MIN_CARD_FALLBACKS[panelKey];
+  const cardHeight = firstCard
+    ? firstCard.getBoundingClientRect().height + getVerticalCssPx(window.getComputedStyle(firstCard), 'margin')
+    : fallbackCardHeight;
+  const chromeHeight = Math.max(0, panelRect.height - listRect.height);
+  const listPadding = getVerticalCssPx(listStyles, 'padding');
+  return Math.ceil(chromeHeight + listPadding + cardHeight);
+}
+
+function applyLivePanelHeight(item: HTMLElement, panelKey: LiveResizablePanelKey, height: number) {
+  const panel = getLivePanelElement(item, panelKey);
+  if (!panel) {
+    return;
+  }
+
+  const minHeight = getLivePanelMinimumHeight(item, panelKey);
+  const nextHeight = Math.max(minHeight, Math.round(Number(height)) || 620);
+  item.style.setProperty('--live-panel-height', `${nextHeight}px`);
+}
+
+function clearLivePanelHeightSnapGuide(panels?: HTMLElement | null) {
+  if (!panels) {
+    return;
+  }
+  delete panels.dataset.heightSnap;
+  panels.style.removeProperty('--live-panel-snap-guide-top');
+}
+
+function clearLivePanelHeightScrollSpacer(panels?: HTMLElement | null) {
+  if (!panels) {
+    return;
+  }
+  delete panels.dataset.heightScrollSpacer;
+  panels.style.removeProperty('--live-panel-height-scroll-spacer');
+}
+
+function syncLivePanelHeightScrollSpacer(panels: HTMLElement, spacerHeight: number) {
+  const nextSpacerHeight = Math.max(0, Math.ceil(spacerHeight));
+  if (nextSpacerHeight <= 0) {
+    clearLivePanelHeightScrollSpacer(panels);
+    return;
+  }
+
+  panels.dataset.heightScrollSpacer = 'true';
+  panels.style.setProperty('--live-panel-height-scroll-spacer', `${nextSpacerHeight}px`);
+}
+
+function syncLivePanelHeightSnapGuide(panels: HTMLElement, targetBottom: number | null) {
+  if (targetBottom == null) {
+    clearLivePanelHeightSnapGuide(panels);
+    return;
+  }
+
+  const panelsRect = panels.getBoundingClientRect();
+  panels.dataset.heightSnap = 'true';
+  panels.style.setProperty('--live-panel-snap-guide-top', `${Math.round(targetBottom - panelsRect.top)}px`);
+}
+
+function resolveLivePanelHeightSnap(draft: LivePanelHeightResizeDraft, height: number) {
+  const panel = getLivePanelElement(draft.item, draft.panelKey);
+  if (!panel) {
+    return { height, guideBottom: null as number | null };
+  }
+
+  const panelTop = panel.getBoundingClientRect().top;
+  const proposedBottom = panelTop + height;
+  let snappedHeight = height;
+  let guideBottom: number | null = null;
+  let bestDistance = LIVE_PANEL_HEIGHT_SNAP_DISTANCE_PX + 1;
+
+  for (const item of getLivePanelItems(draft.panels)) {
+    const panelKey = item.dataset.panelKey;
+    if (item === draft.item || !isLiveResizablePanelKey(panelKey)) {
+      continue;
+    }
+    const otherPanel = getLivePanelElement(item, panelKey);
+    if (!otherPanel) {
+      continue;
+    }
+    const otherBottom = otherPanel.getBoundingClientRect().bottom;
+    const distance = Math.abs(otherBottom - proposedBottom);
+    const candidateHeight = Math.round(otherBottom - panelTop);
+    if (distance <= LIVE_PANEL_HEIGHT_SNAP_DISTANCE_PX && distance < bestDistance && candidateHeight >= draft.minHeight) {
+      bestDistance = distance;
+      snappedHeight = candidateHeight;
+      guideBottom = otherBottom;
+    }
+  }
+
+  return { height: snappedHeight, guideBottom };
+}
+
+function getLivePanelHeightAutoScrollStep(clientY: number) {
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const maxScrollTop = Math.max(0, document.documentElement.scrollHeight - viewportHeight);
+  const currentScrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+  if (viewportHeight <= 0 || currentScrollTop >= maxScrollTop || clientY < viewportHeight - LIVE_PANEL_HEIGHT_AUTO_SCROLL_THRESHOLD_PX) {
+    return 0;
+  }
+
+  const proximity = Math.min(1, (clientY - (viewportHeight - LIVE_PANEL_HEIGHT_AUTO_SCROLL_THRESHOLD_PX)) / LIVE_PANEL_HEIGHT_AUTO_SCROLL_THRESHOLD_PX);
+  return Math.max(1, Math.round(proximity * proximity * LIVE_PANEL_HEIGHT_AUTO_SCROLL_MAX_STEP_PX));
+}
+
+function stopLivePanelHeightAutoScroll() {
+  if (livePanelHeightAutoScrollFrame != null) {
+    window.cancelAnimationFrame(livePanelHeightAutoScrollFrame);
+    livePanelHeightAutoScrollFrame = null;
+  }
+}
+
+function scheduleLivePanelHeightAutoScroll() {
+  if (livePanelHeightAutoScrollFrame != null) {
+    return;
+  }
+
+  const tick = () => {
+    livePanelHeightAutoScrollFrame = null;
+    const draft = livePanelHeightResizeDraft;
+    if (!draft) {
+      return;
+    }
+
+    const step = getLivePanelHeightAutoScrollStep(draft.lastClientY);
+    if (step <= 0) {
+      return;
+    }
+
+    window.scrollBy({ top: step, left: 0, behavior: 'auto' });
+    updateLivePanelHeightResize(draft.lastClientY, { scheduleAutoScroll: false });
+    livePanelHeightAutoScrollFrame = window.requestAnimationFrame(tick);
+  };
+
+  livePanelHeightAutoScrollFrame = window.requestAnimationFrame(tick);
 }
 
 function syncAlertsPanelLayoutPreset(alertsSlot: HTMLElement, span: 1 | 2 | 3) {
@@ -1565,7 +1775,9 @@ let profileModalWired = false;
 let sectionCollapseWired = false;
 let livePanelResizeWired = false;
 let livePanelResizeDraft: LivePanelResizeDraft | null = null;
+let livePanelHeightResizeDraft: LivePanelHeightResizeDraft | null = null;
 let livePanelResizePendingDraft: LivePanelResizePendingDraft | null = null;
+let livePanelHeightAutoScrollFrame: number | null = null;
 let livePanelReorderWired = false;
 let livePanelReorderDraft: LivePanelReorderDraft | null = null;
 let livePanelReorderPendingDraft: LivePanelReorderPendingDraft | null = null;
@@ -2624,6 +2836,100 @@ function updateLivePanelResize(clientX: number) {
   }
 }
 
+function beginLivePanelHeightResize(
+  item: HTMLElement,
+  pointerId: number,
+  startPageY: number,
+  startClientY: number,
+) {
+  const panelKey = item.dataset.panelKey;
+  if (!isLiveResizablePanelKey(panelKey)) {
+    return false;
+  }
+
+  const panels = findLivePanelsContainer(item);
+  if (!(panels instanceof HTMLElement)) {
+    return false;
+  }
+
+  const panel = getLivePanelElement(item, panelKey);
+  if (!panel) {
+    return false;
+  }
+
+  item.setPointerCapture(pointerId);
+  const minHeight = getLivePanelMinimumHeight(item, panelKey);
+  const startHeight = Math.max(minHeight, Math.round(panel.getBoundingClientRect().height));
+  livePanelHeightResizeDraft = {
+    panelKey,
+    item,
+    panels,
+    pointerId,
+    startPageY,
+    lastClientY: startClientY,
+    startHeight,
+    previewHeight: startHeight,
+    minHeight,
+  };
+  item.dataset.resizing = 'true';
+  item.closest<HTMLElement>('[data-app-render-frame]')?.classList.add('live-panel-resize-active');
+  return true;
+}
+
+function updateLivePanelHeightResize(clientY: number, options?: { scheduleAutoScroll?: boolean }) {
+  if (!livePanelHeightResizeDraft) {
+    return;
+  }
+
+  const draft = livePanelHeightResizeDraft;
+  const isPointerMovingDown = clientY > draft.lastClientY;
+  draft.lastClientY = clientY;
+  const currentPageY = clientY + window.scrollY;
+  const rawHeight = Math.max(draft.minHeight, Math.round(draft.startHeight + currentPageY - draft.startPageY));
+  const snap = resolveLivePanelHeightSnap(draft, rawHeight);
+  const nextHeight = snap.height;
+  syncLivePanelHeightScrollSpacer(draft.panels, draft.startHeight - nextHeight);
+  if (nextHeight === draft.previewHeight) {
+    syncLivePanelHeightSnapGuide(draft.panels, snap.guideBottom);
+    if (options?.scheduleAutoScroll !== false && isPointerMovingDown) {
+      scheduleLivePanelHeightAutoScroll();
+    } else if (options?.scheduleAutoScroll !== false) {
+      stopLivePanelHeightAutoScroll();
+    }
+    return;
+  }
+
+  draft.previewHeight = nextHeight;
+  syncLivePanelHeightSnapGuide(draft.panels, snap.guideBottom);
+  applyLivePanelHeight(draft.item, draft.panelKey, nextHeight);
+  if (options?.scheduleAutoScroll !== false && isPointerMovingDown) {
+    scheduleLivePanelHeightAutoScroll();
+  } else if (options?.scheduleAutoScroll !== false) {
+    stopLivePanelHeightAutoScroll();
+  }
+}
+
+function endLivePanelHeightResize(root: HTMLElement, controller: AppController, options?: { commit?: boolean }) {
+  if (!livePanelHeightResizeDraft) {
+    return;
+  }
+
+  const draft = livePanelHeightResizeDraft;
+  livePanelHeightResizeDraft = null;
+  stopLivePanelHeightAutoScroll();
+  clearLivePanelHeightSnapGuide(draft.panels);
+  clearLivePanelHeightScrollSpacer(draft.panels);
+  delete draft.item.dataset.resizing;
+  root.querySelector<HTMLElement>('[data-app-render-frame]')?.classList.remove('live-panel-resize-active');
+
+  if (options?.commit) {
+    controller.setLivePanelHeight(draft.panelKey, draft.previewHeight);
+    return;
+  }
+
+  applyLivePanelHeight(draft.item, draft.panelKey, draft.startHeight);
+}
+
 function endLivePanelResize(root: HTMLElement, controller: AppController, options?: { commit?: boolean }) {
   if (!livePanelResizeDraft) {
     return;
@@ -2654,6 +2960,34 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
   if (livePanelResizeWired) return;
   livePanelResizeWired = true;
 
+  const clearPendingLivePanelResize = (pointerId?: number) => {
+    if (!livePanelResizePendingDraft || (pointerId != null && pointerId !== livePanelResizePendingDraft.pointerId)) {
+      return false;
+    }
+
+    releaseLivePanelPointerCapture(livePanelResizePendingDraft.item, livePanelResizePendingDraft.pointerId);
+    livePanelResizePendingDraft = null;
+    return true;
+  };
+
+  const finishActiveLivePanelResize = (pointerId: number, commit: boolean) => {
+    if (livePanelResizeDraft) {
+      const activeItem = livePanelResizeDraft.item;
+      releaseLivePanelPointerCapture(activeItem, pointerId);
+      endLivePanelResize(root, controller, { commit });
+      return true;
+    }
+
+    if (livePanelHeightResizeDraft) {
+      const activeItem = livePanelHeightResizeDraft.item;
+      releaseLivePanelPointerCapture(activeItem, pointerId);
+      endLivePanelHeightResize(root, controller, { commit });
+      return true;
+    }
+
+    return false;
+  };
+
   root.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 || livePanelReorderDraft || livePanelReorderPendingDraft) {
       return;
@@ -2667,11 +3001,10 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
     }
 
     const zoneName = zone.dataset.livePanelResizeZone;
-    if (zoneName !== 'right' && zoneName !== 'left') {
+    if (zoneName !== 'right' && zoneName !== 'left' && zoneName !== 'bottom') {
       return;
     }
 
-    item.setPointerCapture(event.pointerId);
     livePanelResizePendingDraft = {
       item,
       pointerId: event.pointerId,
@@ -2684,8 +3017,21 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
   });
 
   root.addEventListener('pointermove', (event) => {
+    if ((event.buttons & 1) !== 1) {
+      if (finishActiveLivePanelResize(event.pointerId, true)) {
+        return;
+      }
+      clearPendingLivePanelResize(event.pointerId);
+      return;
+    }
+
     if (livePanelResizeDraft) {
       updateLivePanelResize(event.clientX);
+      return;
+    }
+
+    if (livePanelHeightResizeDraft) {
+      updateLivePanelHeightResize(event.clientY);
       return;
     }
 
@@ -2695,54 +3041,80 @@ function wireLivePanelResize(root: HTMLElement, controller: AppController) {
 
     const deltaX = event.clientX - livePanelResizePendingDraft.startX;
     const deltaY = event.clientY - livePanelResizePendingDraft.startY;
+    if (livePanelResizePendingDraft.zone === 'bottom') {
+      if (Math.abs(deltaY) < LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE || Math.abs(deltaY) < Math.abs(deltaX)) {
+        return;
+      }
+
+      const pendingDraft = livePanelResizePendingDraft;
+      livePanelResizePendingDraft = null;
+      if (!beginLivePanelHeightResize(
+        pendingDraft.item,
+        pendingDraft.pointerId,
+        pendingDraft.startY + window.scrollY,
+        pendingDraft.startY,
+      )) {
+        return;
+      }
+      updateLivePanelHeightResize(event.clientY);
+      return;
+    }
+
     if (Math.abs(deltaX) < LIVE_PANEL_RESIZE_ACTIVATION_DISTANCE || Math.abs(deltaX) < Math.abs(deltaY)) {
       return;
     }
 
     const pendingDraft = livePanelResizePendingDraft;
+    const resizeZone = pendingDraft.zone;
+    if (resizeZone !== 'left' && resizeZone !== 'right') {
+      return;
+    }
     livePanelResizePendingDraft = null;
     if (!beginLivePanelResize(
       pendingDraft.item,
       pendingDraft.pointerId,
       pendingDraft.startX,
-      pendingDraft.zone,
+      resizeZone,
     )) {
-      releaseLivePanelPointerCapture(pendingDraft.item, pendingDraft.pointerId);
       return;
     }
     updateLivePanelResize(event.clientX);
   });
 
   root.addEventListener('pointerup', (event) => {
-    if (livePanelResizeDraft) {
-      const activeItem = livePanelResizeDraft.item;
-      releaseLivePanelPointerCapture(activeItem, event.pointerId);
-      endLivePanelResize(root, controller, { commit: true });
+    if (finishActiveLivePanelResize(event.pointerId, true)) {
       return;
     }
 
-    if (!livePanelResizePendingDraft || event.pointerId !== livePanelResizePendingDraft.pointerId) {
+    if (clearPendingLivePanelResize(event.pointerId)) {
       return;
     }
-
-    releaseLivePanelPointerCapture(livePanelResizePendingDraft.item, event.pointerId);
-    livePanelResizePendingDraft = null;
   });
 
   root.addEventListener('pointercancel', (event) => {
-    if (livePanelResizeDraft) {
-      const activeItem = livePanelResizeDraft.item;
-      releaseLivePanelPointerCapture(activeItem, event.pointerId);
-      endLivePanelResize(root, controller, { commit: false });
+    if (finishActiveLivePanelResize(event.pointerId, false)) {
       return;
     }
 
-    if (!livePanelResizePendingDraft || event.pointerId !== livePanelResizePendingDraft.pointerId) {
+    if (clearPendingLivePanelResize(event.pointerId)) {
+      return;
+    }
+  });
+
+  window.addEventListener('pointerup', (event) => {
+    if (finishActiveLivePanelResize(event.pointerId, true)) {
       return;
     }
 
-    releaseLivePanelPointerCapture(livePanelResizePendingDraft.item, event.pointerId);
-    livePanelResizePendingDraft = null;
+    clearPendingLivePanelResize(event.pointerId);
+  });
+
+  window.addEventListener('pointercancel', (event) => {
+    if (finishActiveLivePanelResize(event.pointerId, false)) {
+      return;
+    }
+
+    clearPendingLivePanelResize(event.pointerId);
   });
 }
 
