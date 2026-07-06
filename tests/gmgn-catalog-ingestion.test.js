@@ -323,6 +323,47 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(snapshot.price, 0.00762409);
   });
 
+  it('suppresses GMGN FDV-style market cap when recent market data implies a lower supply', async () => {
+    const snapshot = await gmgnCatalogIngestion.__private.suppressGmgnFdvMarketCap(
+      {
+        address: TOKEN_A,
+        mcap: 9833310,
+        price: 0.00983386,
+        raw: {
+          market_cap: '9833310',
+          total_supply: '999944518',
+        },
+      },
+      {
+        source: 'gmgn',
+        last_mcap: 9369350,
+        last_price: 0.00936987,
+        metadata_updated_at: '2026-07-06T07:23:30.000Z',
+      },
+      {
+        marketBucketModel: {
+          async listHistoryByAddress(address, options) {
+            assert.equal(address, TOKEN_A);
+            assert.deepEqual(options, { limit: 60, hours: 2 });
+            return [
+              {
+                ts: '2026-07-06T07:41:00.000Z',
+                closeMcap: 4720896,
+                closePrice: 0.009836,
+                source: 'dexscreener',
+              },
+            ];
+          },
+        },
+      },
+      new Date('2026-07-06T07:41:25.000Z'),
+      TOKEN_A
+    );
+
+    assert.equal(Math.round(snapshot.mcap), 4719869);
+    assert.equal(snapshot.price, 0.00983386);
+  });
+
   it('recovers a transient missing GMGN market cap from the prior implied circulating supply', () => {
     const recovered = gmgnCatalogIngestion.__private.recoverMissingGmgnMarketCap(
       { mcap: 0, price: 0.00003 },

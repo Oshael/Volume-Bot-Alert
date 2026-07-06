@@ -25,6 +25,9 @@ const DEFAULT_ACTIVE_DEX_RECHECK_MS = 30000;
 const DEFAULT_PANEL_STALE_AFTER_MS = 15000;
 const RECENT_DEX_MARKET_DATA_MAX_AGE_MS = 60 * 60 * 1000;
 const RECENT_GMGN_MCAP_RECOVERY_MAX_AGE_MS = 60 * 60 * 1000;
+const RECENT_GMGN_MCAP_REFERENCE_MAX_AGE_MS = 60 * 60 * 1000;
+const GMGN_TOTAL_SUPPLY_MCAP_MATCH_MAX_DEVIATION = 0.05;
+const GMGN_FDV_SUPPLY_INFLATION_RATIO = 1.35;
 const DEFAULT_RISK_LOOKUP_TOKEN_LIMIT_PER_CYCLE = 5;
 const LOW_ACTIVITY_24H_MAX_VOL = 5000;
 const LOW_ACTIVITY_RECHECK_MS = 3 * 60 * 1000;
@@ -248,6 +251,154 @@ function recoverMissingGmgnMarketCap(snapshot, tokenBefore, now) {
   return {
     ...snapshot,
     mcap: previousMcap * (incomingPrice / previousPrice),
+  };
+}
+
+function computeImpliedSupply(marketCap, price) {
+  const parsedMarketCap = toFiniteNumberOrNull(marketCap);
+  const parsedPrice = toFiniteNumberOrNull(price);
+  if (!(parsedMarketCap > 0) || !(parsedPrice > 0)) {
+    return null;
+  }
+  return parsedMarketCap / parsedPrice;
+}
+
+function computeRelativeDifference(a, b) {
+  const first = toFiniteNumberOrNull(a);
+  const second = toFiniteNumberOrNull(b);
+  if (!(first > 0) || !(second > 0)) {
+    return null;
+  }
+  return Math.abs(first - second) / Math.max(first, second);
+}
+
+function readSnapshotNumber(snapshot, keys) {
+  const raw = snapshot?.raw && typeof snapshot.raw === 'object' ? snapshot.raw : {};
+  for (const key of keys) {
+    const parsed = toFiniteNumberOrNull(snapshot?.[key]);
+    if (parsed != null) {
+      return parsed;
+    }
+    const rawParsed = toFiniteNumberOrNull(raw[key]);
+    if (rawParsed != null) {
+      return rawParsed;
+    }
+  }
+  return null;
+}
+
+function isGmgnMarketCapMatchingTotalSupply(snapshot) {
+  const incomingMcap = toFiniteNumberOrNull(snapshot?.mcap);
+  const incomingPrice = toFiniteNumberOrNull(snapshot?.price);
+  const totalSupply = readSnapshotNumber(snapshot, ['total_supply', 'totalSupply']);
+  const impliedSupply = computeImpliedSupply(incomingMcap, incomingPrice);
+  const deviation = computeRelativeDifference(impliedSupply, totalSupply);
+  return deviation != null && deviation <= GMGN_TOTAL_SUPPLY_MCAP_MATCH_MAX_DEVIATION;
+}
+
+function isRecentTimestamp(timestampMs, now, maxAgeMs) {
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  return timestampMs != null
+    && Number.isFinite(nowMs)
+    && timestampMs <= nowMs
+    && (nowMs - timestampMs) <= maxAgeMs;
+}
+
+function buildMarketCapReference(source, marketCap, price, timestamp, extra = {}) {
+  const impliedSupply = computeImpliedSupply(marketCap, price);
+  if (!(impliedSupply > 0)) {
+    return null;
+  }
+  return {
+    source,
+    marketCap: toFiniteNumberOrNull(marketCap),
+    price: toFiniteNumberOrNull(price),
+    timestampMs: toTimestampMsOrNull(timestamp),
+    impliedSupply,
+    ...extra,
+  };
+}
+
+function buildCatalogMarketCapReference(tokenBefore) {
+  return buildMarketCapReference(
+    'catalog',
+    tokenBefore?.last_mcap,
+    tokenBefore?.last_price,
+    getLatestMarketDataTimestampMs(tokenBefore)
+  );
+}
+
+function isUsableMarketCapReference(reference, now) {
+  return reference
+    && reference.impliedSupply > 0
+    && isRecentTimestamp(reference.timestampMs, now, RECENT_GMGN_MCAP_REFERENCE_MAX_AGE_MS);
+}
+
+function selectLatestMarketCapReference(references, now) {
+  return references
+    .filter((reference) => isUsableMarketCapReference(reference, now))
+    .sort((a, b) => (b.timestampMs || 0) - (a.timestampMs || 0))[0] || null;
+}
+
+async function loadRecentNonGmgnMarketCapReference(address, options, now) {
+  if (!options.marketBucketModel?.listHistoryByAddress) {
+    return null;
+  }
+
+  let buckets = [];
+  try {
+    buckets = await options.marketBucketModel.listHistoryByAddress(address, {
+      limit: 60,
+      hours: 2,
+    });
+  } catch {
+    return null;
+  }
+
+  const references = (Array.isArray(buckets) ? buckets : [])
+    .filter((bucket) => normalizeLowerText(bucket?.source) !== 'gmgn')
+    .map((bucket) => buildMarketCapReference(
+      bucket.source || 'bucket',
+      bucket.closeMcap ?? bucket.mcap,
+      bucket.closePrice ?? bucket.price,
+      bucket.ts,
+      { bucket: true }
+    ));
+
+  return selectLatestMarketCapReference(references, now);
+}
+
+function shouldSuppressGmgnFdvMarketCap(snapshot, reference) {
+  if (!isGmgnMarketCapMatchingTotalSupply(snapshot)) {
+    return false;
+  }
+
+  const incomingSupply = computeImpliedSupply(snapshot?.mcap, snapshot?.price);
+  return incomingSupply > 0
+    && reference?.impliedSupply > 0
+    && incomingSupply >= reference.impliedSupply * GMGN_FDV_SUPPLY_INFLATION_RATIO;
+}
+
+async function suppressGmgnFdvMarketCap(snapshot, tokenBefore, options, now, address) {
+  const incomingPrice = toFiniteNumberOrNull(snapshot?.price);
+  if (!(incomingPrice > 0)) {
+    return snapshot;
+  }
+
+  const recentBucketReference = await loadRecentNonGmgnMarketCapReference(address, options, now);
+  const catalogReference = buildCatalogMarketCapReference(tokenBefore);
+  const reference = selectLatestMarketCapReference([
+    recentBucketReference,
+    catalogReference,
+  ], now);
+
+  if (!shouldSuppressGmgnFdvMarketCap(snapshot, reference)) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    mcap: reference.impliedSupply * incomingPrice,
   };
 }
 
@@ -1793,10 +1944,17 @@ async function ingestGmgnToken(snapshot, options = {}) {
     fillYoungTokenVolumeWindows(snapshot, { now }),
     tokenBefore
   );
-  const marketSafeSnapshot = recoverMissingGmgnMarketCap(
+  const recoveredMarketSnapshot = recoverMissingGmgnMarketCap(
     preserveDexMarketDataForGmgnSnapshot(filledSnapshot, tokenBefore, now),
     tokenBefore,
     now
+  );
+  const marketSafeSnapshot = await suppressGmgnFdvMarketCap(
+    recoveredMarketSnapshot,
+    tokenBefore,
+    resolved,
+    now,
+    address
   );
   const guardResult = await applyPreCatalogGmgnGuards(
     address,
@@ -2075,6 +2233,9 @@ module.exports = {
     hasRecentDexMarketData,
     preserveDexMarketDataForGmgnSnapshot,
     recoverMissingGmgnMarketCap,
+    suppressGmgnFdvMarketCap,
+    computeImpliedSupply,
+    isGmgnMarketCapMatchingTotalSupply,
     shouldPreferDexMarketData,
     deriveGmgnEvaluation,
     DEX_CONFIRMED_ELIGIBILITY_STATES,
