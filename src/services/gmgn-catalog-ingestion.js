@@ -901,10 +901,21 @@ function isDexscreenerPairUrl(value) {
   }
 }
 
+function isGmgnCatalogSource(row) {
+  return normalizeLowerText(row?.source) === 'gmgn';
+}
+
 function hasDexConfirmation(row) {
   const state = normalizeLowerText(row?.eligibility_state || row?.eligibilityState);
-  return DEX_CONFIRMED_ELIGIBILITY_STATES.has(state)
-    || isDexscreenerPairUrl(row?.last_pair_url || row?.pairUrl);
+  if (DEX_CONFIRMED_ELIGIBILITY_STATES.has(state)) {
+    return true;
+  }
+
+  if (isGmgnCatalogSource(row)) {
+    return false;
+  }
+
+  return isDexscreenerPairUrl(row?.last_pair_url || row?.pairUrl);
 }
 
 function toValidDateOrNull(value) {

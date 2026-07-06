@@ -302,6 +302,27 @@ describe('gmgn catalog ingestion', () => {
     assert.equal(result.summary.volumeBucketsWritten, 1);
   });
 
+  it('does not preserve stale pair-url market data over current GMGN market cap for GMGN catalog rows', () => {
+    const snapshot = gmgnCatalogIngestion.__private.preserveDexMarketDataForGmgnSnapshot(
+      {
+        mcap: 7786240,
+        price: 0.00762409,
+      },
+      {
+        source: 'gmgn',
+        eligibility_state: 'gmgn-low',
+        last_pair_url: 'https://dexscreener.com/solana/cards-pair',
+        last_mcap: 11550,
+        last_price: 0.00001155,
+        metadata_updated_at: '2026-07-06T06:46:14.003Z',
+      },
+      new Date('2026-07-06T06:46:20.000Z')
+    );
+
+    assert.equal(snapshot.mcap, 7786240);
+    assert.equal(snapshot.price, 0.00762409);
+  });
+
   it('recovers a transient missing GMGN market cap from the prior implied circulating supply', () => {
     const recovered = gmgnCatalogIngestion.__private.recoverMissingGmgnMarketCap(
       { mcap: 0, price: 0.00003 },
