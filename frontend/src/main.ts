@@ -696,6 +696,12 @@ root.addEventListener('pointerout', (event) => {
   window.setTimeout(() => flushPendingRender(), 0);
 });
 
+root.addEventListener('monitored-pin-commit', () => {
+  currentListInteractionZone = null;
+  interactionLockUntil = 0;
+  window.setTimeout(() => flushPendingRender(), 0);
+});
+
 root.addEventListener('focusout', () => {
   if (suppressNextFocusFlush) {
     return;

@@ -16,6 +16,7 @@ const tokenCatalog = require('../src/models/token-catalog');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-bucket-1m');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
+const userPinnedMonitoredToken = require('../src/models/user-pinned-monitored-token');
 const backendAlertFeed = require('../src/services/backend-alert-feed');
 const dashboardRoutes = require('../src/routes/dashboard');
 const uiMeteoraSummaryCache = require('../src/services/ui-meteora-summary-cache');
@@ -124,6 +125,7 @@ describe('Dashboard routes', () => {
 
   it('returns a lean monitored dashboard payload with Meteora summaries but without risk payloads', async () => {
     const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
+    const originalListDashboardPinnedMonitored = tokenCatalog.listDashboardPinnedMonitored;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
@@ -151,6 +153,7 @@ describe('Dashboard routes', () => {
       last_seen_at: '2026-04-05T21:10:00.000Z',
       last_evaluated_at: '2026-04-05T21:09:00.000Z',
     }];
+    tokenCatalog.listDashboardPinnedMonitored = async () => [];
     uiMeteoraSummaryCache.clearUiMeteoraSummaryCache();
     tokenMeteoraState.listSummaryByAddresses = async (addresses) => addresses.map((address) => ({
       tokenAddress: address,
@@ -193,6 +196,7 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.tokens[0].junkAssessment, undefined);
     } finally {
       tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
+      tokenCatalog.listDashboardPinnedMonitored = originalListDashboardPinnedMonitored;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
@@ -202,6 +206,7 @@ describe('Dashboard routes', () => {
   it('returns paginated monitored dashboard slices when page params are provided', async () => {
     const originalListDashboardMonitored = tokenCatalog.listDashboardMonitored;
     const originalListDashboardMonitoredSlice = tokenCatalog.listDashboardMonitoredSlice;
+    const originalListDashboardPinnedMonitored = tokenCatalog.listDashboardPinnedMonitored;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
@@ -209,6 +214,7 @@ describe('Dashboard routes', () => {
     tokenCatalog.listDashboardMonitored = async () => {
       throw new Error('listDashboardMonitored should not be called for paginated /api/dashboard/monitored');
     };
+    tokenCatalog.listDashboardPinnedMonitored = async () => [];
     let capturedSorts = null;
     tokenCatalog.listDashboardMonitoredSlice = async (page, perPage, _minMcap, sorts) => {
       capturedSorts = sorts;
@@ -262,9 +268,88 @@ describe('Dashboard routes', () => {
     } finally {
       tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
       tokenCatalog.listDashboardMonitoredSlice = originalListDashboardMonitoredSlice;
+      tokenCatalog.listDashboardPinnedMonitored = originalListDashboardPinnedMonitored;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
+    }
+  });
+
+  it('persists monitored pin order through dashboard pin routes', async () => {
+    const originalGetAll = userPinnedMonitoredToken.getAll;
+    const originalSetAll = userPinnedMonitoredToken.setAll;
+    const captured = [];
+
+    userPinnedMonitoredToken.getAll = async (id) => {
+      assert.equal(id, userId);
+      return [{ address: 'So11111111111111111111111111111111111111112', sortOrder: 0 }];
+    };
+    userPinnedMonitoredToken.setAll = async (id, pinnedTokens) => {
+      assert.equal(id, userId);
+      captured.push(pinnedTokens);
+      return pinnedTokens;
+    };
+
+    try {
+      const listRes = await request(app)
+        .get('/api/dashboard/monitored-pins')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(listRes.status, 200);
+      assert.equal(listRes.body.pinnedTokens[0].address, 'So11111111111111111111111111111111111111112');
+
+      const saveRes = await request(app)
+        .put('/api/dashboard/monitored-pins')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          pinnedTokens: [
+            { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', sortOrder: 2 },
+            { address: 'So11111111111111111111111111111111111111112', sortOrder: 7 },
+          ],
+        });
+
+      assert.equal(saveRes.status, 200);
+      assert.deepEqual(captured[0], [
+        { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', sortOrder: 2 },
+        { address: 'So11111111111111111111111111111111111111112', sortOrder: 7 },
+      ]);
+      assert.deepEqual(saveRes.body.pinnedTokens.map((item) => item.sortOrder), [2, 7]);
+    } finally {
+      userPinnedMonitoredToken.getAll = originalGetAll;
+      userPinnedMonitoredToken.setAll = originalSetAll;
+    }
+  });
+
+  it('resets monitored pins through dashboard pin routes', async () => {
+    const originalRemove = userPinnedMonitoredToken.remove;
+    const originalRemoveAll = userPinnedMonitoredToken.removeAll;
+    const removed = [];
+
+    userPinnedMonitoredToken.remove = async (id, address) => {
+      assert.equal(id, userId);
+      removed.push(address);
+      return true;
+    };
+    userPinnedMonitoredToken.removeAll = async (id) => {
+      assert.equal(id, userId);
+      return 3;
+    };
+
+    try {
+      const removeOneRes = await request(app)
+        .delete('/api/dashboard/monitored-pins/So11111111111111111111111111111111111111112')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(removeOneRes.status, 200);
+      assert.equal(removeOneRes.body.removed, true);
+      assert.deepEqual(removed, ['So11111111111111111111111111111111111111112']);
+
+      const resetAllRes = await request(app)
+        .delete('/api/dashboard/monitored-pins')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(resetAllRes.status, 200);
+      assert.equal(resetAllRes.body.removed, 3);
+    } finally {
+      userPinnedMonitoredToken.remove = originalRemove;
+      userPinnedMonitoredToken.removeAll = originalRemoveAll;
     }
   });
 

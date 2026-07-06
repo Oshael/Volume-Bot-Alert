@@ -124,6 +124,13 @@ const SCHEMA_GROUPS = [
         columns: ['id', 'user_id', 'address', 'starred_at'],
       },
       {
+        table: 'user_pinned_monitored_tokens',
+        columns: ['id', 'user_id', 'address', 'sort_order', 'pinned_at', 'updated_at'],
+        defaults: {
+          sort_order: '0',
+        },
+      },
+      {
         table: 'user_bootstrap_tokens',
         columns: ['id', 'user_id', 'address', 'added_at'],
       },

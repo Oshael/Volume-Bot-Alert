@@ -57,6 +57,23 @@ const TABLES = `
   CREATE INDEX IF NOT EXISTS idx_user_starred_tokens_user
     ON user_starred_tokens(user_id);
 
+  -- user_pinned_monitored_tokens: pinned monitored ordering per user
+  CREATE TABLE IF NOT EXISTS user_pinned_monitored_tokens (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    address     VARCHAR(64) NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    pinned_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, address)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_pinned_monitored_tokens_user_order
+    ON user_pinned_monitored_tokens(user_id, sort_order, updated_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_user_pinned_monitored_tokens_address
+    ON user_pinned_monitored_tokens(address);
+
   -- user_bootstrap_tokens: baseline bootstrap tokens per user
   CREATE TABLE IF NOT EXISTS user_bootstrap_tokens (
     id        SERIAL PRIMARY KEY,
@@ -85,6 +102,7 @@ async function init() {
     console.log('   - user_tokens');
     console.log('   - user_blocklist');
     console.log('   - user_starred_tokens');
+    console.log('   - user_pinned_monitored_tokens');
     console.log('   - user_bootstrap_tokens');
     console.log('   - user_ui_prefs');
   } catch (err) {

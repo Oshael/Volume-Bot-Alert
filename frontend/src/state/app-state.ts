@@ -118,6 +118,8 @@ export interface ManualTokenEntry {
   performanceScore?: number | null;
   meteora?: ManualTokenMeteoraEntry | null;
   tickerPeers?: AlertEntry['tickerPeers'];
+  _isPinnedMonitored?: boolean;
+  pinnedSortOrder?: number | null;
 }
 
 export interface ManualTokenFolderEntry {
@@ -672,6 +674,7 @@ export interface AppState {
     };
     trackedTokensByAddress: Record<string, ManualTokenEntry>;
     monitoredTokenAddresses: string[];
+    pinnedMonitoredTokenAddresses: string[];
     manualTokenAddresses: string[];
     manualTokenFolders: ManualTokenFolderEntry[];
     manualTokenFolderItems: ManualTokenFolderItemEntry[];
@@ -862,6 +865,7 @@ export function createAppState(): AppState {
       },
       trackedTokensByAddress: {},
       monitoredTokenAddresses: [],
+      pinnedMonitoredTokenAddresses: [],
       manualTokenAddresses: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
@@ -1172,7 +1176,19 @@ export function getVisibleManualTokens(state: AppState) {
 }
 
 export function getMonitoredTokens(state: AppState) {
-  return state.data.monitoredTokenAddresses
+  const orderedAddresses = [
+    ...state.data.pinnedMonitoredTokenAddresses,
+    ...state.data.monitoredTokenAddresses,
+  ];
+  const seen = new Set<string>();
+  return orderedAddresses
+    .filter((address) => {
+      if (seen.has(address)) {
+        return false;
+      }
+      seen.add(address);
+      return true;
+    })
     .map((address) => getTrackedToken(state, address))
     .filter((item): item is ManualTokenEntry => Boolean(item));
 }

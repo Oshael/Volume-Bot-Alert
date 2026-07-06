@@ -9,17 +9,23 @@ const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
 const TICKER_PEERS_MAX_HEIGHT_PX = 360;
 const TICKER_PEERS_MIN_HEIGHT_PX = 120;
+const MONITORED_PIN_CLICK_DELAY_MS = 320;
+const MONITORED_PIN_DRAG_THRESHOLD_PX = 10;
+const MONITORED_PIN_DROP_DIRECTION_DEADZONE_PX = 6;
+const MONITORED_PIN_DROP_PREVIEW_BIAS_RATIO = 0.26;
+const MONITORED_PIN_DROP_VISUAL_SETTLE_MS = 80;
 
 export function renderMonitoredSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   const view = resolveMonitoredSectionView(state);
   section.className = `panel legacy-panel monitored-panel${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
   section.innerHTML = view.isCollapsed
-    ? renderCollapsedMonitoredHeader(view.filteredTracked.length)
+    ? renderCollapsedMonitoredHeader(view.filteredTracked.length, view.pinCount)
     : renderExpandedMonitoredMarkup(view);
 
   if (view.isCollapsed) {
     bindMonitoredCollapseToggle(section, controller);
+    bindMonitoredPinControls(section, state, controller);
     return section;
   }
 
@@ -50,6 +56,7 @@ function resolveMonitoredSectionView(state: AppState) {
     pageItems: filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage),
     sortClasses: resolveMonitoredSortClasses(state),
     miniChartEnabled: state.ui.livePanelLayout.spans.monitored > 1,
+    pinCount: state.data.pinnedMonitoredTokenAddresses.length,
   };
 }
 
@@ -72,7 +79,7 @@ function resolveMonitoredSortClasses(state: AppState) {
   };
 }
 
-function renderCollapsedMonitoredHeader(count: number) {
+function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
   return `
     <div class="panel-header monitored-panel-header">
       <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
@@ -82,6 +89,7 @@ function renderCollapsedMonitoredHeader(count: number) {
             <span class="panel-header-label">TOKENS</span>
             <span class="count monitored-token-count-pill">${count}</span>
           </span>
+          ${renderMonitoredResetPinsButton(pinCount)}
           <button type="button" class="compact-icon-toggle section-collapse-toggle panel-collapse-toggle" data-action="toggle-section-collapse" data-section="monitored" aria-label="Expand monitored tokens"><span class="compact-icon-glyph">+</span></button>
         </div>
       </div>
@@ -126,6 +134,7 @@ function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
             <span class="panel-header-label">TOKENS</span>
             <span class="count monitored-token-count-pill">${view.filteredTracked.length}</span>
           </span>
+          ${renderMonitoredResetPinsButton(view.pinCount)}
         </div>
         <div class="monitored-header-bottom">
           <div class="monitored-inline-pagination">
@@ -159,6 +168,11 @@ function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
     </div>
     <div class="monitored-list"></div>
   `;
+}
+
+function renderMonitoredResetPinsButton(pinCount: number) {
+  if (pinCount < 2) return '';
+  return `<button type="button" class="monitored-reset-pins" data-action="reset-monitored-pins" title="Reset all pinned tokens" aria-label="Reset all pinned tokens"><span aria-hidden="true">&#8634;</span> PINS</button>`;
 }
 
 function renderMonitoredRows(section: ParentNode, state: AppState, pageItems: ManualTokenEntry[]) {
@@ -235,6 +249,312 @@ function bindMonitoredSectionControls(
   bindMonitoredTickerPeerPanelClose(section);
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
+  bindMonitoredPinControls(section, state, controller);
+}
+
+type MonitoredPinClickDraft = {
+  address: string;
+  pinned: boolean;
+  timer: ReturnType<typeof window.setTimeout>;
+};
+
+type MonitoredPinDropTarget = {
+  centerY: number;
+};
+
+type MonitoredPinDragDraft = {
+  address: string;
+  handle: HTMLButtonElement;
+  list: HTMLElement;
+  row: HTMLElement;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  directionAnchorY: number;
+  dragDirection: -1 | 0 | 1;
+  offsetY: number;
+  rowHeight: number;
+  ghost: HTMLElement | null;
+  active: boolean;
+  pendingClientY: number | null;
+  previewFrame: number | null;
+  previewIndex: number;
+  dropTargets: MonitoredPinDropTarget[];
+  rows: HTMLElement[];
+  movableRows: HTMLElement[];
+  rowTops: Map<HTMLElement, number>;
+  slotTops: number[];
+};
+
+function bindMonitoredPinControls(section: ParentNode, state: AppState, controller: AppController) {
+  section.querySelector<HTMLButtonElement>('[data-action="reset-monitored-pins"]')?.addEventListener('click', () => {
+    void controller.resetMonitoredTokenPins();
+    dispatchMonitoredPinCommit(section);
+  });
+
+  let pendingClick: MonitoredPinClickDraft | null = null;
+  const registerPinTap = (address: string, pinned: boolean) => {
+    if (pendingClick?.address === address) {
+      window.clearTimeout(pendingClick.timer);
+      pendingClick = null;
+      if (pinned) {
+        void controller.unpinMonitoredToken(address);
+        dispatchMonitoredPinCommit(section);
+      }
+      return;
+    }
+
+    if (pendingClick) window.clearTimeout(pendingClick.timer);
+    const timer = window.setTimeout(() => {
+      pendingClick = null;
+      if (!pinned) {
+        void controller.pinMonitoredToken(address, 0);
+        dispatchMonitoredPinCommit(section);
+      }
+    }, MONITORED_PIN_CLICK_DELAY_MS);
+    pendingClick = { address, pinned, timer };
+  };
+
+  section.addEventListener('click', (event) => {
+    const mouseEvent = event as MouseEvent;
+    if (mouseEvent.detail !== 0) return;
+    const handle = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.monitored-pin-handle');
+    const address = handle?.dataset.address || '';
+    if (handle && address) registerPinTap(address, handle.dataset.pinned === 'true');
+  });
+
+  let dragDraft: MonitoredPinDragDraft | null = null;
+  const cleanupDrag = (commit: boolean) => {
+    const draft = dragDraft;
+    if (!draft) return;
+    dragDraft = null;
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerCancel);
+    if (draft.previewFrame != null) {
+      window.cancelAnimationFrame(draft.previewFrame);
+      draft.previewFrame = null;
+    }
+    try {
+      draft.handle.releasePointerCapture(draft.pointerId);
+    } catch (_) {
+      // Pointer capture may already be released when the window loses the gesture.
+    }
+
+    const shouldCommitDrag = commit && draft.active;
+    if (shouldCommitDrag && draft.pendingClientY != null) {
+      previewMonitoredPinDrop(draft, draft.pendingClientY);
+      draft.pendingClientY = null;
+    }
+    if (shouldCommitDrag) {
+      const position = resolveMonitoredAbsoluteDropPosition(state, draft.address, draft.previewIndex);
+      void controller.pinMonitoredToken(draft.address, position);
+      dispatchMonitoredPinCommit(section);
+      window.setTimeout(() => finishMonitoredPinDragVisuals(draft), MONITORED_PIN_DROP_VISUAL_SETTLE_MS);
+      return;
+    }
+
+    finishMonitoredPinDragVisuals(draft);
+  };
+
+  const onPointerMove = (event: PointerEvent) => {
+    const draft = dragDraft;
+    if (!draft || event.pointerId !== draft.pointerId) return;
+    const distance = Math.hypot(event.clientX - draft.startX, event.clientY - draft.startY);
+    if (!draft.active && distance >= MONITORED_PIN_DRAG_THRESHOLD_PX) {
+      if (pendingClick) window.clearTimeout(pendingClick.timer);
+      pendingClick = null;
+      beginMonitoredPinDrag(draft);
+    }
+    if (!draft.active || !draft.ghost) return;
+    event.preventDefault();
+    draft.ghost.style.top = `${Math.round(event.clientY - draft.offsetY)}px`;
+    const cardCenterY = event.clientY - draft.offsetY + (draft.rowHeight / 2);
+    const directionDelta = event.clientY - draft.directionAnchorY;
+    const dragDirection = Math.sign(directionDelta) as -1 | 0 | 1;
+    if (dragDirection !== 0 && Math.abs(directionDelta) >= MONITORED_PIN_DROP_DIRECTION_DEADZONE_PX) {
+      draft.dragDirection = dragDirection;
+      draft.directionAnchorY = event.clientY;
+    }
+    const previewY = cardCenterY + (draft.dragDirection * draft.rowHeight * MONITORED_PIN_DROP_PREVIEW_BIAS_RATIO);
+    scheduleMonitoredPinDropPreview(draft, previewY);
+  };
+
+  const onPointerUp = (event: PointerEvent) => {
+    if (!dragDraft || event.pointerId !== dragDraft.pointerId) return;
+    const completedDraft = dragDraft;
+    const wasDrag = completedDraft.active;
+    cleanupDrag(true);
+    if (!wasDrag) registerPinTap(completedDraft.address, completedDraft.handle.dataset.pinned === 'true');
+  };
+  const onPointerCancel = (event: PointerEvent) => {
+    if (dragDraft && event.pointerId === dragDraft.pointerId) cleanupDrag(false);
+  };
+
+  section.addEventListener('pointerdown', (event) => {
+    const pointerEvent = event as PointerEvent;
+    if (pointerEvent.button !== 0 || dragDraft) return;
+    const handle = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.monitored-pin-handle');
+    const row = handle?.closest<HTMLElement>('.monitored-token-row');
+    const list = row?.closest<HTMLElement>('.monitored-list');
+    const address = handle?.dataset.address || '';
+    if (!handle || !row || !list || !address) return;
+
+    const rect = row.getBoundingClientRect();
+    dragDraft = {
+      address,
+      handle,
+      list,
+      row,
+      pointerId: pointerEvent.pointerId,
+      startX: pointerEvent.clientX,
+      startY: pointerEvent.clientY,
+      directionAnchorY: pointerEvent.clientY,
+      dragDirection: 0,
+      offsetY: pointerEvent.clientY - rect.top,
+      rowHeight: rect.height,
+      ghost: null,
+      active: false,
+      pendingClientY: null,
+      previewFrame: null,
+      previewIndex: 0,
+      dropTargets: [],
+      rows: [],
+      movableRows: [],
+      rowTops: new Map(),
+      slotTops: [],
+    };
+    handle.setPointerCapture(pointerEvent.pointerId);
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+  });
+}
+
+function dispatchMonitoredPinCommit(section: ParentNode) {
+  if (!(section instanceof HTMLElement)) {
+    return;
+  }
+  section.dispatchEvent(new CustomEvent('monitored-pin-commit', { bubbles: true }));
+}
+
+function finishMonitoredPinDragVisuals(draft: MonitoredPinDragDraft) {
+  clearMonitoredPinPreviewTransforms(draft);
+  draft.row.classList.remove('monitored-token-row-drag-source');
+  draft.list.classList.remove('monitored-pin-drag-active');
+  draft.ghost?.remove();
+}
+
+function beginMonitoredPinDrag(draft: MonitoredPinDragDraft) {
+  const rect = draft.row.getBoundingClientRect();
+  const ghost = draft.row.cloneNode(true) as HTMLElement;
+  ghost.classList.add('monitored-token-row-drag-ghost');
+  ghost.classList.remove('monitored-token-row-drag-source');
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.style.left = `${Math.round(rect.left)}px`;
+  ghost.style.top = `${Math.round(rect.top)}px`;
+  ghost.style.width = `${Math.round(rect.width)}px`;
+  ghost.style.height = `${Math.round(rect.height)}px`;
+  ghost.style.gridTemplateColumns = window.getComputedStyle(draft.row).gridTemplateColumns;
+  document.body.append(ghost);
+  draft.ghost = ghost;
+  draft.active = true;
+  draft.row.classList.add('monitored-token-row-drag-source');
+  draft.list.classList.add('monitored-pin-drag-active');
+  refreshMonitoredPinDropTargets(draft);
+}
+
+function scheduleMonitoredPinDropPreview(draft: MonitoredPinDragDraft, clientY: number) {
+  draft.pendingClientY = clientY;
+  if (draft.previewFrame != null) {
+    return;
+  }
+
+  draft.previewFrame = window.requestAnimationFrame(() => {
+    draft.previewFrame = null;
+    const nextClientY = draft.pendingClientY;
+    draft.pendingClientY = null;
+    if (nextClientY == null || !draft.active || !draft.row.isConnected) {
+      return;
+    }
+    previewMonitoredPinDrop(draft, nextClientY);
+  });
+}
+
+function previewMonitoredPinDrop(draft: MonitoredPinDragDraft, clientY: number) {
+  for (const [index, target] of draft.dropTargets.entries()) {
+    if (clientY < target.centerY) {
+      applyMonitoredPinPreviewIndex(draft, index);
+      return;
+    }
+  }
+  applyMonitoredPinPreviewIndex(draft, draft.movableRows.length);
+}
+
+function applyMonitoredPinPreviewIndex(draft: MonitoredPinDragDraft, previewIndex: number) {
+  if (draft.previewIndex === previewIndex) {
+    return;
+  }
+  draft.previewIndex = previewIndex;
+  const finalRows = getMonitoredPinPreviewRows(draft);
+  const finalIndexByRow = new Map(finalRows.map((row, index) => [row, index]));
+
+  for (const row of draft.movableRows) {
+    const finalIndex = finalIndexByRow.get(row);
+    if (finalIndex == null) continue;
+    const startTop = draft.rowTops.get(row) ?? 0;
+    const targetTop = draft.slotTops[finalIndex] ?? startTop;
+    const deltaY = targetTop - startTop;
+    row.style.transform = Math.abs(deltaY) < 1 ? '' : `translateY(${Math.round(deltaY)}px)`;
+  }
+}
+
+function refreshMonitoredPinDropTargets(draft: MonitoredPinDragDraft) {
+  draft.rows = [...draft.list.querySelectorAll<HTMLElement>('.monitored-token-row')];
+  draft.movableRows = draft.rows.filter((row) => row !== draft.row);
+  draft.previewIndex = Math.max(0, draft.rows.indexOf(draft.row));
+  draft.rowTops = new Map(draft.rows.map((row) => [row, row.getBoundingClientRect().top]));
+  draft.slotTops = draft.rows.map((row) => draft.rowTops.get(row) ?? 0);
+  draft.dropTargets = draft.movableRows.map((row) => {
+    const rect = row.getBoundingClientRect();
+    return {
+      centerY: rect.top + (rect.height / 2),
+    };
+  });
+}
+
+function getMonitoredPinPreviewRows(draft: MonitoredPinDragDraft) {
+  const rows = [...draft.movableRows];
+  rows.splice(Math.min(Math.max(0, draft.previewIndex), rows.length), 0, draft.row);
+  return rows;
+}
+
+function clearMonitoredPinPreviewTransforms(draft: MonitoredPinDragDraft) {
+  for (const row of draft.movableRows) {
+    row.style.transform = '';
+  }
+}
+
+function resolveMonitoredAbsoluteDropPosition(state: AppState, address: string, previewIndex: number) {
+  const fullRows = resolveMonitoredTableRows(getMonitoredTokens(state), {
+    searchQuery: '',
+    sortCriteria: state.ui.monitoredSorts,
+  }).map((item) => item.address).filter((item) => item !== address);
+  const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
+  const searchQuery = String(state.ui.monitoredSearchQuery || '').trim().toLowerCase();
+  const filteredRows = resolveMonitoredTableRows(getMonitoredTokens(state), {
+    searchQuery,
+    sortCriteria: state.ui.monitoredSorts,
+  }).map((item) => item.address).filter((item) => item !== address);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / safePerPage));
+  const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
+  const requestedIndex = Math.min(Math.max(0, (safePage * safePerPage) + previewIndex), filteredRows.length);
+  const nextAddress = filteredRows[requestedIndex];
+  const previousAddress = filteredRows[requestedIndex - 1];
+  const nextIndex = nextAddress ? fullRows.indexOf(nextAddress) : -1;
+  if (nextIndex >= 0) return nextIndex;
+  const previousIndex = previousAddress ? fullRows.indexOf(previousAddress) : -1;
+  return previousIndex >= 0 ? previousIndex + 1 : 0;
 }
 
 function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
@@ -348,9 +668,11 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
     ? ((item.volume5m - volDeltaBaseline) / volDeltaBaseline) * 100
     : null;
   const article = document.createElement('article');
-  article.className = `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}`;
+  article.className = buildMonitoredRowClassName(isStarred, Boolean(item._isPinnedMonitored));
   article.dataset.hoverKey = `monitored:${item.address}`;
+  article.dataset.address = item.address;
 
+  article.append(buildMonitoredPinHandle(item));
   article.append(buildMonitoredAvatar(symbol, imageUrl, item.address));
 
   const main = document.createElement('div');
@@ -423,6 +745,24 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   }
   article.append(side);
   return article;
+}
+
+function buildMonitoredRowClassName(isStarred: boolean, isPinned: boolean) {
+  return `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}${isPinned ? ' monitored-token-pinned' : ''}`;
+}
+
+function buildMonitoredPinHandle(item: ManualTokenEntry) {
+  const pinned = Boolean(item._isPinnedMonitored);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'monitored-pin-handle';
+  button.dataset.action = 'monitored-pin-handle';
+  button.dataset.address = item.address;
+  button.dataset.pinned = String(pinned);
+  button.setAttribute('aria-label', pinned ? 'Move pinned token; double click to unpin' : 'Pin or move token');
+  button.setAttribute('aria-pressed', String(pinned));
+  button.title = pinned ? 'Drag to move; double click to unpin' : 'Click to pin at top; drag to place';
+  return button;
 }
 
 function buildMonitoredMiniChart(item: ManualTokenEntry, sparkline: AppState['data']['sparklineByAddress'][string] | null) {

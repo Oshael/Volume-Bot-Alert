@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
+const userPinnedMonitoredToken = require('../models/user-pinned-monitored-token');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const backendAlertFeed = require('../services/backend-alert-feed');
@@ -152,6 +153,37 @@ function parseAddressArray(value, name) {
   }
 
   return { ok: true, value: next };
+}
+
+function parsePinnedOrderItem(item, index) {
+  const address = String(typeof item === 'string' ? item : item?.address || '').trim();
+  if (!isValidAddress(address)) {
+    return { ok: false, error: 'addresses contains an invalid token address' };
+  }
+  const sortOrder = typeof item === 'object' && item?.sortOrder != null
+    ? Number(item.sortOrder)
+    : index;
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 1_000_000) {
+    return { ok: false, error: 'pinnedTokens contains an invalid sortOrder' };
+  }
+  return { ok: true, value: { address, sortOrder } };
+}
+
+function parsePinnedOrderPayload(body = {}) {
+  const source = Array.isArray(body?.addresses) ? body.addresses : body?.pinnedTokens;
+  if (!Array.isArray(source)) return { ok: false, error: 'addresses must be an array' };
+  if (source.length > 500) return { ok: false, error: 'addresses must contain at most 500 token addresses' };
+
+  const value = [];
+  const seen = new Set();
+  for (const [index, item] of source.entries()) {
+    const parsed = parsePinnedOrderItem(item, index);
+    if (!parsed.ok) return parsed;
+    if (seen.has(parsed.value.address)) continue;
+    seen.add(parsed.value.address);
+    value.push(parsed.value);
+  }
+  return { ok: true, value };
 }
 
 const DEFAULT_RECENT_AGE_MAX_MINUTES = 7 * 24 * 60;
@@ -364,6 +396,10 @@ function buildMarketBaseline(mcapBaselineRow, volumeBaselineRow) {
   };
 }
 
+function normalizePinnedSortOrder(value) {
+  return value != null ? Number(value) : null;
+}
+
 function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress, options = {}) {
   const includeRisk = options.includeRisk !== false;
   const includeMeteora = options.includeMeteora !== false;
@@ -402,6 +438,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     historySortScore: toNumberOrNull(item.history_sort_score),
     tokenCreatedAt: toNumberOrNull(item.last_token_created_at_ms),
     catalogFirstSeenAt: toTimestampMsOrNull(item.first_seen_at),
+    pinnedSortOrder: normalizePinnedSortOrder(item.pinned_sort_order),
     prevMcap: marketBaseline.prevMcap,
     mcapDelta: marketBaseline.mcapDelta,
     prevVolume5mCanonical: marketBaseline.prevVolume5mCanonical,
@@ -579,8 +616,8 @@ async function loadTickerPeerSummariesSafe(items = []) {
   }
 }
 
-async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = null) {
-  const addresses = items.map((item) => item.address);
+async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = null, pinnedItems = []) {
+  const addresses = [...new Set([...items, ...pinnedItems].map((item) => item.address).filter(Boolean))];
   const meteoraByAddress = new Map();
   const marketMcapBaselineByAddress = new Map();
   const marketVolumeBaselineByAddress = new Map();
@@ -616,6 +653,13 @@ async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = 
       marketVolumeBaselineByAddress,
       { includeRisk: false, tickerPeersByAddress }
     )),
+    pinnedTokens: pinnedItems.map((item) => buildMonitoredTokenPayload(
+      item,
+      meteoraByAddress,
+      marketMcapBaselineByAddress,
+      marketVolumeBaselineByAddress,
+      { includeRisk: false, tickerPeersByAddress }
+    )),
   };
 
   if (!pagination) {
@@ -643,6 +687,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
 
   try {
     const minMcap = normalizeMinMcap(req.query?.minMcap);
+    const pinnedTokens = await tokenCatalog.listDashboardPinnedMonitored(req.user.id);
     if (monitoredSliceQuery.value) {
       const monitoredSlice = await tokenCatalog.listDashboardMonitoredSlice(
         monitoredSliceQuery.value.page,
@@ -650,14 +695,64 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
         minMcap,
         monitoredSortsQuery.value,
       );
-      return res.json(await buildLeanMonitoredDashboardResponse(monitoredSlice.rows, minMcap, monitoredSlice));
+      return res.json(await buildLeanMonitoredDashboardResponse(monitoredSlice.rows, minMcap, monitoredSlice, pinnedTokens));
     }
 
     const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
-    res.json(await buildLeanMonitoredDashboardResponse(tokens, minMcap));
+    res.json(await buildLeanMonitoredDashboardResponse(tokens, minMcap, null, pinnedTokens));
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored dashboard' });
+  }
+});
+
+router.get('/monitored-pins', dashboardLimiter, async (req, res) => {
+  try {
+    const pinnedTokens = await userPinnedMonitoredToken.getAll(req.user.id);
+    return res.json({ pinnedTokens });
+  } catch (err) {
+    console.error('GET /dashboard/monitored-pins error:', err.message);
+    return res.status(500).json({ error: 'Failed to load monitored pins' });
+  }
+});
+
+router.put('/monitored-pins', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const parsed = parsePinnedOrderPayload(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  try {
+    const pinnedTokens = await userPinnedMonitoredToken.setAll(req.user.id, parsed.value);
+    return res.json({ pinnedTokens });
+  } catch (err) {
+    console.error('PUT /dashboard/monitored-pins error:', err.message);
+    return res.status(500).json({ error: 'Failed to save monitored pins' });
+  }
+});
+
+router.delete('/monitored-pins', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  try {
+    const removed = await userPinnedMonitoredToken.removeAll(req.user.id);
+    return res.json({ removed });
+  } catch (err) {
+    console.error('DELETE /dashboard/monitored-pins error:', err.message);
+    return res.status(500).json({ error: 'Failed to reset monitored pins' });
+  }
+});
+
+router.delete('/monitored-pins/:address', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const address = String(req.params.address || '').trim();
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: 'Invalid token address' });
+  }
+
+  try {
+    const removed = await userPinnedMonitoredToken.remove(req.user.id, address);
+    return res.json({ removed });
+  } catch (err) {
+    console.error('DELETE /dashboard/monitored-pins/:address error:', err.message);
+    return res.status(500).json({ error: 'Failed to remove monitored pin' });
   }
 });
 
@@ -895,6 +990,7 @@ router.__private = {
   buildRiskReviewSummary,
   buildStructuralRiskSummary,
   parseOptionalEventId,
+  parsePinnedOrderPayload,
   resetTopPerformersCache,
 };
 

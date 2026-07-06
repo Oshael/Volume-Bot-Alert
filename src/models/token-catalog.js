@@ -707,6 +707,34 @@ async function listDashboardMonitoredSlice(page = 0, perPage = 30, minMcap = 300
   };
 }
 
+async function listDashboardPinnedMonitored(userId) {
+  const safeUserId = Number(userId);
+  if (!Number.isInteger(safeUserId) || safeUserId <= 0) {
+    return [];
+  }
+
+  const { rows } = await db.query(
+    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
+       upmt.sort_order AS pinned_sort_order,
+       upmt.pinned_at AS pinned_at,
+       upmt.updated_at AS pinned_updated_at
+     FROM user_pinned_monitored_tokens upmt
+     JOIN token_catalog tc
+       ON tc.address = upmt.address
+     LEFT JOIN user_blocklist ub
+       ON ub.user_id = upmt.user_id
+      AND ub.address = upmt.address
+     LEFT JOIN admin_blocked_tokens ab
+       ON ab.address = upmt.address
+     WHERE upmt.user_id = $1
+       AND ub.address IS NULL
+       AND ab.address IS NULL
+     ORDER BY upmt.sort_order ASC, upmt.updated_at DESC, upmt.address ASC`,
+    [safeUserId]
+  );
+  return rows;
+}
+
 function normalizeTopPerformersOptions(options = {}) {
   const limit = Math.max(1, Math.min(Number(options.limit) || DEFAULT_TOP_PERFORMERS_LIMIT, 50));
   const minMcap = Math.max(0, Number.isFinite(Number(options.minMcap)) ? Number(options.minMcap) : DEFAULT_TOP_PERFORMERS_MIN_MCAP);
@@ -1928,6 +1956,7 @@ module.exports = {
   listEligibleVisible,
   listDashboardMonitored,
   listDashboardMonitoredSlice,
+  listDashboardPinnedMonitored,
   listDashboardTopPerformers,
   listDashboardHistoryBucket,
   listDashboardHistoryBucketDebugProbe,

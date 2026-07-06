@@ -966,6 +966,8 @@ function serializeTrackedTokenForView(token: ReturnType<typeof getMonitoredToken
     token.pairUrl,
     token.imageUrl,
     token.twitterUrl,
+    token._isPinnedMonitored,
+    token.pinnedSortOrder,
     token._isRecentRouted,
     token._isOldWeekRouted,
   ]);

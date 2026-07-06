@@ -92,7 +92,7 @@ function compareMonitoredCriterion(a: ManualTokenEntry, b: ManualTokenEntry, cri
 }
 
 function isVisibleMonitoredTableToken(item: ManualTokenEntry) {
-  if (item._userManual) {
+  if (item._userManual || item._isPinnedMonitored) {
     return true;
   }
 
@@ -131,8 +131,18 @@ export function resolveMonitoredTableRows(
   } = {},
 ) {
   const searchQuery = String(options.searchQuery || '').trim().toLowerCase();
-  return sortMonitoredTokens(
-    tokens.filter((item) => isVisibleMonitoredTableToken(item) && matchesTokenSearch(item, searchQuery)),
+  const filtered = tokens.filter((item) => isVisibleMonitoredTableToken(item) && matchesTokenSearch(item, searchQuery));
+  const regularTokens = sortMonitoredTokens(
+    filtered.filter((item) => !item._isPinnedMonitored),
     options.sortCriteria || [{ mode: 'vol', window: '5m' }],
   );
+  const pinnedTokens = filtered
+    .filter((item) => item._isPinnedMonitored)
+    .sort((a, b) => (a.pinnedSortOrder ?? 0) - (b.pinnedSortOrder ?? 0) || a.address.localeCompare(b.address));
+
+  for (const item of pinnedTokens) {
+    const position = Math.min(Math.max(0, item.pinnedSortOrder ?? 0), regularTokens.length);
+    regularTokens.splice(position, 0, item);
+  }
+  return regularTokens;
 }

@@ -57,7 +57,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -494,6 +494,9 @@ export interface AppController {
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean): void;
   setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
+  pinMonitoredToken(address: string, position?: number): Promise<void>;
+  unpinMonitoredToken(address: string): Promise<void>;
+  resetMonitoredTokenPins(): Promise<void>;
   setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
   setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
   setLivePanelHeight(panel: 'monitored' | 'alerts', height: number): void;
@@ -1019,6 +1022,8 @@ export function createAppController(): AppController {
   let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
   let monitoringPausedForAuthPanel = false;
   let monitoredRefreshInFlight = false;
+  let monitoredPinMutationInFlight = false;
+  let queuedMonitoredPinLayout: DashboardMonitoredPin[] | null = null;
   let topPerformersRefreshInFlight = false;
   let mockTradingRefreshInFlight = false;
   let adminTokenReviewAlertRefreshInFlight = false;
@@ -1470,6 +1475,7 @@ export function createAppController(): AppController {
   function refreshTrackedTokenStore() {
     const activeAddresses = new Set([
       ...state.data.monitoredTokenAddresses,
+      ...state.data.pinnedMonitoredTokenAddresses,
       ...state.data.manualTokenAddresses,
       ...state.data.topPerformerAddresses,
     ]);
@@ -1724,6 +1730,7 @@ export function createAppController(): AppController {
     nextTrackedStore: Record<string, ManualTokenEntry>;
     manualTokens: ManualTokenEntry[];
     monitoredMap: Map<string, ManualTokenEntry>;
+    pinnedAddresses: string[];
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
     now: number;
@@ -1736,6 +1743,7 @@ export function createAppController(): AppController {
     applyPersistedFrontendAlertFlags(state.data.trackedTokensByAddress);
     state.data.manualTokenAddresses = input.manualTokens.map((item) => item.address);
     state.data.monitoredTokenAddresses = [...input.monitoredMap.keys()];
+    state.data.pinnedMonitoredTokenAddresses = input.pinnedAddresses;
     state.bars.manual = state.data.manualTokenAddresses.length;
     if (!usesHistoryBucketBootstrap()) {
       state.data.recentTokenAddresses = [];
@@ -2781,7 +2789,12 @@ export function createAppController(): AppController {
       if (state.session.token !== token || state.session.role !== 'admin') {
         return;
       }
-      applyMonitoredDashboard(monitoredDashboard.tokens, undefined, monitoredDashboard.generatedAt ?? null);
+      applyMonitoredDashboard(
+        monitoredDashboard.tokens,
+        undefined,
+        monitoredDashboard.generatedAt ?? null,
+        monitoredDashboard.pinnedTokens,
+      );
       await executeFloatingQuickBuyIfReady();
       emit('manual', 'monitored', 'header');
     } catch (error) {
@@ -3920,6 +3933,7 @@ export function createAppController(): AppController {
         ? { ...state.data.trackedTokensByAddress[address] }
         : null,
       wasInMonitored: state.data.monitoredTokenAddresses.includes(address),
+      wasPinnedMonitored: state.data.pinnedMonitoredTokenAddresses.includes(address),
       wasInManual: state.data.manualTokenAddresses.includes(address),
       wasEligibleCatalog: state.data.eligibleCatalogTokens.includes(address),
       removedPumpTokens: state.data.pumpTokens
@@ -3952,6 +3966,10 @@ export function createAppController(): AppController {
 
     if (snapshot.wasInMonitored && !state.data.monitoredTokenAddresses.includes(address)) {
       state.data.monitoredTokenAddresses = [...state.data.monitoredTokenAddresses, address];
+    }
+
+    if (snapshot.wasPinnedMonitored && !state.data.pinnedMonitoredTokenAddresses.includes(address)) {
+      state.data.pinnedMonitoredTokenAddresses = [...state.data.pinnedMonitoredTokenAddresses, address];
     }
 
     if (snapshot.wasInManual && !state.data.manualTokenAddresses.includes(address)) {
@@ -4030,6 +4048,7 @@ export function createAppController(): AppController {
 
   function removeTokenEverywhere(address: string, options: { removeFromStarred?: boolean } = {}) {
     state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => item !== address);
+    state.data.pinnedMonitoredTokenAddresses = state.data.pinnedMonitoredTokenAddresses.filter((item) => item !== address);
     state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
     state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
     state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
@@ -4921,6 +4940,7 @@ export function createAppController(): AppController {
     }
 
     state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => !blocked.has(item));
+    state.data.pinnedMonitoredTokenAddresses = state.data.pinnedMonitoredTokenAddresses.filter((item) => !blocked.has(item));
     state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => !blocked.has(item));
     state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => !blocked.has(item));
     state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => !blocked.has(item));
@@ -5811,26 +5831,63 @@ export function createAppController(): AppController {
       setNotice(`Local monitored alert: ${symbol}`);
     }
   }
-  function rebuildTrackedState(payload: ConfigPayload, monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
-    const existing = new Map(
-      Object.entries(state.data.trackedTokensByAddress).length > 0
-        ? Object.entries(state.data.trackedTokensByAddress)
-        : getMonitoredTokens(state).map((item) => [item.address, item]),
-    );
-    const blockedSet = new Set(payload.blocklist.map((item) => item.address));
-    const dashboardByAddress = new Map(monitoredDashboardTokens.map((item) => [item.address, item]));
-    const nextTrackedStore: Record<string, ManualTokenEntry> = {};
-    const now = Date.now();
-    const coldRefreshDue = monitoredDashboardTokens.length > 0 && now >= nextColdFieldRefreshAt;
-    const alertCandidates = new Set<string>();
+  function sortPinnedDashboardTokens(tokens: DashboardMonitoredToken[] = []) {
+    return tokens
+      .slice()
+      .sort((a, b) => {
+        const orderA = Number.isFinite(Number(a.pinnedSortOrder)) ? Number(a.pinnedSortOrder) : 0;
+        const orderB = Number.isFinite(Number(b.pinnedSortOrder)) ? Number(b.pinnedSortOrder) : 0;
+        return orderA - orderB || a.address.localeCompare(b.address);
+      });
+  }
 
-    const manualTokens = sortAddresses(payload.tokens)
-      .filter((item) => !blockedSet.has(item.address))
+  function mergeDashboardTokenSnapshots(
+    monitoredDashboardTokens: DashboardMonitoredToken[] = [],
+    pinnedDashboardTokens: DashboardMonitoredToken[] = [],
+  ) {
+    return Array.from(new Map(
+      [...monitoredDashboardTokens, ...pinnedDashboardTokens]
+        .map((item) => [item.address, item]),
+    ).values());
+  }
+
+  function markPinnedTrackedToken(
+    address: string,
+    pinnedSortOrder: number | null,
+    nextTrackedStore: Record<string, ManualTokenEntry>,
+    monitoredMap: Map<string, ManualTokenEntry>,
+  ) {
+    const existingItem = nextTrackedStore[address] || monitoredMap.get(address);
+    if (!existingItem) {
+      return false;
+    }
+
+    const nextItem = {
+      ...existingItem,
+      _isPinnedMonitored: true,
+      pinnedSortOrder,
+    };
+    nextTrackedStore[address] = nextItem;
+    monitoredMap.set(address, nextItem);
+    return true;
+  }
+
+  function buildManualTrackedTokens(input: {
+    payload: ConfigPayload;
+    blockedSet: Set<string>;
+    dashboardByAddress: Map<string, DashboardMonitoredToken>;
+    existing: Map<string, ManualTokenEntry>;
+    nextTrackedStore: Record<string, ManualTokenEntry>;
+    alertCandidates: Set<string>;
+    coldRefreshDue: boolean;
+  }) {
+    return sortAddresses(input.payload.tokens)
+      .filter((item) => !input.blockedSet.has(item.address))
       .map((item) => {
-        const existingItem = existing.get(item.address);
-        const dashboardItem = dashboardByAddress.get(item.address);
+        const existingItem = input.existing.get(item.address);
+        const dashboardItem = input.dashboardByAddress.get(item.address);
         if (existingItem) {
-          alertCandidates.add(item.address);
+          input.alertCandidates.add(item.address);
         }
         const mergedItem = mergeTrackedDashboardFields({
           existingItem,
@@ -5841,26 +5898,76 @@ export function createAppController(): AppController {
             label: item.label ?? null,
             manual: true,
             _userManual: true,
+            _isPinnedMonitored: false,
+            pinnedSortOrder: null,
           },
-          coldRefreshDue,
+          coldRefreshDue: input.coldRefreshDue,
         });
         const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
-        nextTrackedStore[item.address] = nextItem;
+        input.nextTrackedStore[item.address] = nextItem;
         return nextItem;
       });
+  }
 
-    const monitoredMap = new Map<string, ManualTokenEntry>();
-    for (const item of manualTokens) {
-      monitoredMap.set(item.address, item);
+  function applyPinnedDashboardItems(input: {
+    pinnedDashboardItems: DashboardMonitoredToken[];
+    existing: Map<string, ManualTokenEntry>;
+    nextTrackedStore: Record<string, ManualTokenEntry>;
+    monitoredMap: Map<string, ManualTokenEntry>;
+    alertCandidates: Set<string>;
+    coldRefreshDue: boolean;
+  }) {
+    for (const item of input.pinnedDashboardItems) {
+      if (markPinnedTrackedToken(
+        item.address,
+        item.pinnedSortOrder ?? null,
+        input.nextTrackedStore,
+        input.monitoredMap,
+      )) {
+        continue;
+      }
+
+      const existingItem = input.existing.get(item.address);
+      if (existingItem) {
+        input.alertCandidates.add(item.address);
+      }
+      const mergedItem = mergeTrackedDashboardFields({
+        existingItem,
+        dashboardItem: item,
+        base: {
+          ...existingItem,
+          address: item.address,
+          label: existingItem?.label ?? item.symbol ?? 'Pinned',
+          manual: false,
+          _userManual: false,
+          _isPinnedMonitored: true,
+          pinnedSortOrder: item.pinnedSortOrder ?? null,
+        },
+        coldRefreshDue: input.coldRefreshDue,
+      });
+      const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
+      input.nextTrackedStore[item.address] = nextItem;
+      input.monitoredMap.set(item.address, nextItem);
     }
-    for (const item of monitoredDashboardTokens
+  }
+
+  function applyRegularDashboardItems(input: {
+    monitoredDashboardTokens: DashboardMonitoredToken[];
+    blockedSet: Set<string>;
+    existing: Map<string, ManualTokenEntry>;
+    nextTrackedStore: Record<string, ManualTokenEntry>;
+    monitoredMap: Map<string, ManualTokenEntry>;
+    alertCandidates: Set<string>;
+    coldRefreshDue: boolean;
+  }) {
+    for (const item of input.monitoredDashboardTokens
       .slice()
       .sort((a, b) => a.address.localeCompare(b.address))) {
-      if (blockedSet.has(item.address)) continue;
-      if (monitoredMap.has(item.address)) continue;
-      const existingItem = existing.get(item.address);
+      if (input.blockedSet.has(item.address)) continue;
+      if (input.monitoredMap.has(item.address)) continue;
+      const existingItem = input.existing.get(item.address);
       if (existingItem) {
-        alertCandidates.add(item.address);
+        input.alertCandidates.add(item.address);
       }
       const mergedItem = mergeTrackedDashboardFields({
         existingItem,
@@ -5871,18 +5978,78 @@ export function createAppController(): AppController {
           label: existingItem?.label ?? item.symbol ?? 'Eligible',
           manual: false,
           _userManual: false,
+          _isPinnedMonitored: false,
+          pinnedSortOrder: null,
         },
-        coldRefreshDue,
+        coldRefreshDue: input.coldRefreshDue,
       });
       const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
-      nextTrackedStore[item.address] = nextItem;
-      monitoredMap.set(item.address, nextItem);
+      input.nextTrackedStore[item.address] = nextItem;
+      input.monitoredMap.set(item.address, nextItem);
     }
+  }
+
+  function rebuildTrackedState(
+    payload: ConfigPayload,
+    monitoredDashboardTokens: DashboardMonitoredToken[] = [],
+    pinnedDashboardTokens: DashboardMonitoredToken[] = [],
+  ) {
+    const effectivePinnedDashboardTokens = monitoredPinMutationInFlight
+      ? getCurrentPinnedMonitoredDashboardSnapshot()
+      : pinnedDashboardTokens;
+    const existing = new Map(
+      Object.entries(state.data.trackedTokensByAddress).length > 0
+        ? Object.entries(state.data.trackedTokensByAddress)
+        : getMonitoredTokens(state).map((item) => [item.address, item]),
+    );
+    const blockedSet = new Set(payload.blocklist.map((item) => item.address));
+    const allDashboardTokens = mergeDashboardTokenSnapshots(monitoredDashboardTokens, effectivePinnedDashboardTokens);
+    const dashboardByAddress = new Map(allDashboardTokens.map((item) => [item.address, item]));
+    const nextTrackedStore: Record<string, ManualTokenEntry> = {};
+    const now = Date.now();
+    const coldRefreshDue = allDashboardTokens.length > 0 && now >= nextColdFieldRefreshAt;
+    const alertCandidates = new Set<string>();
+    const pinnedDashboardItems = sortPinnedDashboardTokens(effectivePinnedDashboardTokens)
+      .filter((item) => !blockedSet.has(item.address));
+    const pinnedAddresses = pinnedDashboardItems.map((item) => item.address);
+
+    const manualTokens = buildManualTrackedTokens({
+      payload,
+      blockedSet,
+      dashboardByAddress,
+      existing,
+      nextTrackedStore,
+      alertCandidates,
+      coldRefreshDue,
+    });
+    const monitoredMap = new Map<string, ManualTokenEntry>();
+    for (const item of manualTokens) {
+      monitoredMap.set(item.address, item);
+    }
+
+    applyPinnedDashboardItems({
+      pinnedDashboardItems,
+      existing,
+      nextTrackedStore,
+      monitoredMap,
+      alertCandidates,
+      coldRefreshDue,
+    });
+    applyRegularDashboardItems({
+      monitoredDashboardTokens,
+      blockedSet,
+      existing,
+      nextTrackedStore,
+      monitoredMap,
+      alertCandidates,
+      coldRefreshDue,
+    });
 
     commitTrackedStateRebuild({
       nextTrackedStore,
       manualTokens,
       monitoredMap,
+      pinnedAddresses,
       alertCandidates,
       coldRefreshDue,
       now,
@@ -5890,7 +6057,7 @@ export function createAppController(): AppController {
   }
 
   function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
-    applyMonitoredDashboard(tokens, undefined, generatedAt ?? null);
+    applyMonitoredDashboard(tokens, undefined, generatedAt ?? null, getCurrentPinnedMonitoredDashboardSnapshot());
     emit('recent', 'old-week', 'bid-zone', 'header');
   }
 
@@ -8031,6 +8198,7 @@ export function createAppController(): AppController {
       },
       trackedTokensByAddress: {},
       monitoredTokenAddresses: [],
+      pinnedMonitoredTokenAddresses: [],
       manualTokenAddresses: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
@@ -8220,24 +8388,26 @@ export function createAppController(): AppController {
     monitoredDashboardTokens: DashboardMonitoredToken[] = [],
     manualTokensOverride?: Array<{ address: string; label?: string | null }>,
     generatedAt?: string | null,
+    pinnedDashboardTokens: DashboardMonitoredToken[] = [],
   ) {
     measureRuntimePerf(
       'controller.applyMonitoredDashboard',
       isRuntimePerfDebugActive(),
       {
         tokens: monitoredDashboardTokens.length,
+        pinnedTokens: pinnedDashboardTokens.length,
         manualOverride: manualTokensOverride?.length ?? null,
         workspace: state.ui.workspace,
       },
       () => {
         const manualPayload = buildMonitoredDashboardPayload(manualTokensOverride);
-        syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens);
+        syncMeteoraDashboardCache(monitoredDashboardTokens, manualPayload.tokens, pinnedDashboardTokens);
         state.configSummary.eligibleCatalogTokens = monitoredDashboardTokens.length;
         state.data.eligibleCatalogTokens = monitoredDashboardTokens.map((item) => item.address).sort((a, b) => a.localeCompare(b));
         if (generatedAt !== undefined) {
           updateMonitoredFreshness(generatedAt ?? null);
         }
-        rebuildTrackedState(manualPayload, monitoredDashboardTokens);
+        rebuildTrackedState(manualPayload, monitoredDashboardTokens, pinnedDashboardTokens);
       },
     );
   }
@@ -8373,6 +8543,94 @@ export function createAppController(): AppController {
     }
 
     return snapshot;
+  }
+
+  function getCurrentPinnedMonitoredDashboardSnapshot(): DashboardMonitoredToken[] {
+    const snapshot: DashboardMonitoredToken[] = [];
+    state.data.pinnedMonitoredTokenAddresses.forEach((address) => {
+      const item = buildCurrentMonitoredSnapshotToken(address);
+      if (item) {
+        snapshot.push({ ...item, pinnedSortOrder: state.data.trackedTokensByAddress[address]?.pinnedSortOrder ?? 0 });
+      }
+    });
+    return snapshot;
+  }
+
+  function captureMonitoredPinLayout() {
+    return state.data.pinnedMonitoredTokenAddresses.map((address) => ({
+      address,
+      sortOrder: state.data.trackedTokensByAddress[address]?.pinnedSortOrder ?? 0,
+    }));
+  }
+
+  function applyMonitoredPinLayout(pins: DashboardMonitoredPin[]) {
+    const positions = new Map(pins.map((item) => [item.address, item.sortOrder]));
+    const previouslyPinned = new Set(state.data.pinnedMonitoredTokenAddresses);
+    for (const address of new Set([...previouslyPinned, ...positions.keys()])) {
+      const item = state.data.trackedTokensByAddress[address];
+      if (!item) continue;
+      const sortOrder = positions.get(address);
+      replaceTrackedTokenReferences(address, {
+        ...item,
+        _isPinnedMonitored: sortOrder != null,
+        pinnedSortOrder: sortOrder ?? null,
+      });
+    }
+    state.data.pinnedMonitoredTokenAddresses = [...positions.entries()]
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(([address]) => address);
+    emit('monitored');
+  }
+
+  function buildMovedMonitoredPinLayout(address: string, requestedPosition: number) {
+    const rows = resolveMonitoredTableRows(getMonitoredTokens(state), {
+      searchQuery: '',
+      sortCriteria: state.ui.monitoredSorts,
+    }).filter((item) => item.address !== address);
+    const position = Math.min(Math.max(0, Math.floor(requestedPosition) || 0), rows.length);
+    rows.splice(position, 0, state.data.trackedTokensByAddress[address]);
+    const pinnedAddresses = new Set([...state.data.pinnedMonitoredTokenAddresses, address]);
+    return rows.flatMap((item, index) => pinnedAddresses.has(item.address)
+      ? [{ address: item.address, sortOrder: index }]
+      : []);
+  }
+
+  function buildUnpinnedMonitoredPinLayout(address: string) {
+    const previous = captureMonitoredPinLayout();
+    const removed = previous.find((item) => item.address === address);
+    if (!removed) {
+      return previous;
+    }
+
+    const currentRows = resolveMonitoredTableRows(getMonitoredTokens(state), {
+      searchQuery: '',
+      sortCriteria: state.ui.monitoredSorts,
+    });
+    const movedUpAddresses = new Set<string>();
+    const removedIndex = currentRows.findIndex((item) => item.address === address);
+    if (removedIndex >= 0) {
+      for (const item of currentRows.slice(removedIndex + 1)) {
+        if (!item._isPinnedMonitored) break;
+        movedUpAddresses.add(item.address);
+      }
+    }
+
+    return previous
+      .filter((item) => item.address !== address)
+      .map((item) => ({
+        ...item,
+        sortOrder: movedUpAddresses.has(item.address)
+          ? Math.max(0, item.sortOrder - 1)
+          : item.sortOrder,
+      }));
+  }
+
+  async function refreshMonitoredAfterPinsChanged() {
+    if (!state.session.token) return;
+    await hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
+      address: item.address,
+      label: item.label ?? null,
+    })), 'unseen');
   }
 
   function emitMonitoredWorkspaceRegions() {
@@ -8642,7 +8900,12 @@ export function createAppController(): AppController {
       [...recentOrder.lockedAddresses, ...oldWeekOrder.lockedAddresses],
     );
 
-    applyMonitoredDashboard(monitoredDashboardTokens, manualTokensOverride, payload.generatedAt ?? null);
+    applyMonitoredDashboard(
+      monitoredDashboardTokens,
+      manualTokensOverride,
+      payload.generatedAt ?? null,
+      getCurrentPinnedMonitoredDashboardSnapshot(),
+    );
     setPendingHistoryOrder('recent', recentOrder.pendingAddresses);
     setPendingHistoryOrder('old-week', oldWeekOrder.pendingAddresses);
     state.data.recentTokenAddresses = recentOrder.visibleAddresses;
@@ -8813,8 +9076,12 @@ export function createAppController(): AppController {
   function syncMeteoraDashboardCache(
     monitoredDashboardTokens: DashboardMonitoredToken[],
     manualTokens: Array<{ address: string; label?: string | null }>,
+    pinnedDashboardTokens: DashboardMonitoredToken[] = [],
   ) {
-    const activeAddresses = new Set(monitoredDashboardTokens.map((item) => item.address));
+    const activeAddresses = new Set([
+      ...monitoredDashboardTokens.map((item) => item.address),
+      ...pinnedDashboardTokens.map((item) => item.address),
+    ]);
     for (const item of manualTokens) {
       activeAddresses.add(item.address);
     }
@@ -8825,7 +9092,7 @@ export function createAppController(): AppController {
       }
     }
 
-    for (const item of monitoredDashboardTokens) {
+    for (const item of mergeDashboardTokenSnapshots(monitoredDashboardTokens, pinnedDashboardTokens)) {
       if (!item?.address || !item.meteora) continue;
       state.data.meteoraByAddress[item.address] = {
         ...(state.data.meteoraByAddress[item.address] || {}),
@@ -8897,6 +9164,7 @@ export function createAppController(): AppController {
   function applyConfig(
     payload: ConfigPayload,
     monitoredDashboardTokens: DashboardMonitoredToken[] = [],
+    pinnedDashboardTokens: DashboardMonitoredToken[] = [],
     tokenFolders?: ManualTokenFoldersPayload | null,
   ) {
     state.configSummary = {
@@ -8926,7 +9194,7 @@ export function createAppController(): AppController {
       blocklistCount: state.data.blocklist.length,
     });
     state.bars.blocklist = payload.blocklist.length;
-    applyMonitoredDashboard(monitoredDashboardTokens, payload.tokens);
+    applyMonitoredDashboard(monitoredDashboardTokens, payload.tokens, undefined, pinnedDashboardTokens);
     applyManualTokenFolders(tokenFolders);
     refreshPumpPanelCounts();
   }
@@ -8935,6 +9203,7 @@ export function createAppController(): AppController {
     token: string;
     manualTokens: AddressItem[];
     tokens: DashboardMonitoredToken[];
+    pinnedTokens: DashboardMonitoredToken[];
     snapshotComplete: boolean;
     preserveExistingUntilComplete: boolean;
     generatedAt?: string | null;
@@ -8943,9 +9212,9 @@ export function createAppController(): AppController {
       return false;
     }
 
-    applyMonitoredDashboard(input.tokens, input.manualTokens, input.generatedAt);
+    applyMonitoredDashboard(input.tokens, input.manualTokens, input.generatedAt, input.pinnedTokens);
     emitMonitoredWorkspaceRegions();
-    queueSupplementalMeteoraRefresh(input.token, input.tokens);
+    queueSupplementalMeteoraRefresh(input.token, mergeDashboardTokenSnapshots(input.tokens, input.pinnedTokens));
     return true;
   }
 
@@ -9003,6 +9272,7 @@ export function createAppController(): AppController {
     }
 
     let aggregatedTokens = [...(firstPage.tokens || [])];
+    const pinnedTokens = firstPage.pinnedTokens || [];
     const generatedAt = firstPage.generatedAt ?? null;
     const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || pageSize, 1));
     const firstPageComplete = isMonitoredHydrationPageComplete({
@@ -9016,6 +9286,7 @@ export function createAppController(): AppController {
       token,
       manualTokens,
       tokens: aggregatedTokens,
+      pinnedTokens,
       snapshotComplete: firstPageComplete,
       preserveExistingUntilComplete,
       generatedAt,
@@ -9058,6 +9329,7 @@ export function createAppController(): AppController {
           token,
           manualTokens,
           tokens: aggregatedTokens,
+          pinnedTokens,
           snapshotComplete: true,
           preserveExistingUntilComplete,
           generatedAt,
@@ -9079,6 +9351,7 @@ export function createAppController(): AppController {
         token,
         manualTokens,
         tokens: aggregatedTokens,
+        pinnedTokens,
         snapshotComplete,
         preserveExistingUntilComplete,
         generatedAt,
@@ -9149,7 +9422,7 @@ export function createAppController(): AppController {
       tokenFolders: rawTokenFolders,
     });
 
-    applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
+    applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), getCurrentPinnedMonitoredDashboardSnapshot(), tokenFolders);
     recordRestoreControllerDebug('controller.config-reload.apply-preserved-dashboard', {
       deferDashboard: Boolean(options?.deferDashboard),
       manualTokens: payload.tokens.length,
@@ -9174,7 +9447,7 @@ export function createAppController(): AppController {
       configPayload: rawPayload,
       tokenFolders: rawTokenFolders,
     });
-    applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
+    applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), getCurrentPinnedMonitoredDashboardSnapshot(), tokenFolders);
   }
 
   function buildAdminTokenReviewAlertsSignature(alerts = state.data.adminTokenReviewAlerts) {
@@ -9299,7 +9572,7 @@ export function createAppController(): AppController {
         tokenFolders: rawTokenFolders,
       });
 
-      applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), tokenFolders);
+      applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), getCurrentPinnedMonitoredDashboardSnapshot(), tokenFolders);
       emit('all');
       void hydrateDashboardMonitoredInternal(token, payload.tokens, 'unseen');
       recordRestoreControllerDebug('controller.restored-refresh.apply-preserved-snapshot', {
@@ -10856,6 +11129,84 @@ export function createAppController(): AppController {
           address: item.address,
           label: item.label ?? null,
         })), 'unseen');
+      }
+    },
+    async pinMonitoredToken(address: string, position = 0) {
+      if (!state.session.token || !state.data.trackedTokensByAddress[address]) return;
+      const previous = captureMonitoredPinLayout();
+      const next = buildMovedMonitoredPinLayout(address, position);
+      applyMonitoredPinLayout(next);
+      if (monitoredPinMutationInFlight) {
+        queuedMonitoredPinLayout = next;
+        return;
+      }
+      monitoredPinMutationInFlight = true;
+      let layoutToSave: DashboardMonitoredPin[] | null = next;
+      let lastConfirmedLayout = previous;
+      try {
+        while (layoutToSave) {
+          const savedLayout = await saveMonitoredPinsRequest(layoutToSave, state.session.token);
+          lastConfirmedLayout = savedLayout;
+          layoutToSave = queuedMonitoredPinLayout;
+          queuedMonitoredPinLayout = null;
+          if (!layoutToSave) {
+            applyMonitoredPinLayout(savedLayout);
+          }
+        }
+      } catch (error) {
+        queuedMonitoredPinLayout = null;
+        applyMonitoredPinLayout(lastConfirmedLayout);
+        setError(error instanceof Error ? error.message : 'Failed to save monitored pin');
+        emit('overlay');
+      } finally {
+        monitoredPinMutationInFlight = false;
+      }
+    },
+    async unpinMonitoredToken(address: string) {
+      if (monitoredPinMutationInFlight || !state.session.token || !state.data.pinnedMonitoredTokenAddresses.includes(address)) return;
+      monitoredPinMutationInFlight = true;
+      const previous = captureMonitoredPinLayout();
+      const next = buildUnpinnedMonitoredPinLayout(address);
+      applyMonitoredPinLayout(next);
+      try {
+        applyMonitoredPinLayout(await saveMonitoredPinsRequest(next, state.session.token));
+      } catch (error) {
+        applyMonitoredPinLayout(previous);
+        setError(error instanceof Error ? error.message : 'Failed to remove monitored pin');
+        emit('overlay');
+        monitoredPinMutationInFlight = false;
+        return;
+      }
+      try {
+        await refreshMonitoredAfterPinsChanged();
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Pin removed, but monitored refresh failed');
+        emit('overlay');
+      } finally {
+        monitoredPinMutationInFlight = false;
+      }
+    },
+    async resetMonitoredTokenPins() {
+      if (monitoredPinMutationInFlight || !state.session.token || state.data.pinnedMonitoredTokenAddresses.length === 0) return;
+      monitoredPinMutationInFlight = true;
+      const previous = captureMonitoredPinLayout();
+      applyMonitoredPinLayout([]);
+      try {
+        await resetMonitoredPinsRequest(state.session.token);
+      } catch (error) {
+        applyMonitoredPinLayout(previous);
+        setError(error instanceof Error ? error.message : 'Failed to reset monitored pins');
+        emit('overlay');
+        monitoredPinMutationInFlight = false;
+        return;
+      }
+      try {
+        await refreshMonitoredAfterPinsChanged();
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Pins reset, but monitored refresh failed');
+        emit('overlay');
+      } finally {
+        monitoredPinMutationInFlight = false;
       }
     },
     setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']) {

@@ -85,6 +85,7 @@ export interface DashboardMonitoredToken {
   priceChange6h?: number | null;
   priceChange24h?: number | null;
   historySortScore?: number | null;
+  pinnedSortOrder?: number | null;
   tokenCreatedAt?: number | null;
   catalogFirstSeenAt?: number | null;
   prevMcap?: number | null;
@@ -119,10 +120,18 @@ export interface DashboardMonitoredToken {
 export interface DashboardMonitoredPayload {
   generatedAt?: string | null;
   tokens: DashboardMonitoredToken[];
+  pinnedTokens?: DashboardMonitoredToken[];
   total?: number;
   page?: number;
   perPage?: number;
   hasMore?: boolean;
+}
+
+export interface DashboardMonitoredPin {
+  address: string;
+  sortOrder: number;
+  pinnedAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface DashboardHistoryBucketRequest {
@@ -544,11 +553,39 @@ export function fetchDashboardMonitored(
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
       tokens: response.tokens || [],
+      pinnedTokens: response.pinnedTokens || [],
       total: Number(response.total) || 0,
       page: Number(response.page) || 0,
       perPage: Number(response.perPage) || 0,
       hasMore: Boolean(response.hasMore),
     }));
+}
+
+export function fetchMonitoredPins(token?: string | null) {
+  return apiFetch<{ pinnedTokens: DashboardMonitoredPin[] }>('/api/dashboard/monitored-pins', { token })
+    .then((response) => response.pinnedTokens || []);
+}
+
+export function saveMonitoredPins(pinnedTokens: DashboardMonitoredPin[], token?: string | null) {
+  return apiFetch<{ pinnedTokens: DashboardMonitoredPin[] }>('/api/dashboard/monitored-pins', {
+    method: 'PUT',
+    body: JSON.stringify({ pinnedTokens }),
+    token,
+  }).then((response) => response.pinnedTokens || []);
+}
+
+export function removeMonitoredPin(address: string, token?: string | null) {
+  return apiFetch<{ removed: boolean }>(`/api/dashboard/monitored-pins/${encodeURIComponent(address)}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export function resetMonitoredPins(token?: string | null) {
+  return apiFetch<{ removed: number }>('/api/dashboard/monitored-pins', {
+    method: 'DELETE',
+    token,
+  });
 }
 
 export function fetchMonitoredMetadataBatch(
