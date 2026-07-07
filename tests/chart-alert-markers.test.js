@@ -87,6 +87,21 @@ describe('chart alert marker projection', () => {
     assert.equal(marker.x, 690);
   });
 
+  it('projects alerts from candle points prepared once for repeated renders', () => {
+    const prepared = markers.prepareChartAlertCandlePoints([
+      candles[1],
+      { time: Number.NaN, high: 1, close: 1 },
+      candles[0],
+    ]);
+    const [marker] = markers.projectChartAlertMarkers([event()], prepared, scale(), 5, { candlesPrepared: true });
+
+    assert.equal(
+      prepared.map((candle) => candle.time).join(','),
+      candles.map((candle) => candle.time).join(','),
+    );
+    assert.equal(marker.x, 50);
+  });
+
   it('uses a visible candle fallback when event market cap is unavailable', () => {
     const [marker] = markers.projectChartAlertMarkers([event({ mcap: null, ruleKey: 'monitored-mcap' })], candles, scale(), 5);
 

@@ -3,7 +3,7 @@ import type { AppController } from '../../state/app-controller';
 import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { fetchDashboardChartAlertEvents, type ChartAlertEvent } from '../../services/api/catalog';
 import { EXPANDED_CHART_ALERT_EVENT, mergeChartAlertHistory, readChartAlertHistory } from '../../services/charts/chart-alert-history';
-import { clusterChartAlertMarkers, projectChartAlertMarkers, type ChartAlertCandlePoint, type ChartAlertMarkerCluster } from '../../services/charts/chart-alert-markers';
+import { clusterChartAlertMarkers, prepareChartAlertCandlePoints, projectChartAlertMarkers, type ChartAlertCandlePoint, type ChartAlertMarkerCluster } from '../../services/charts/chart-alert-markers';
 import { loadCustomSoundAsset, saveCustomSoundAsset, type CustomSoundSlot } from '../../utils/sound-storage';
 import {
   getAuthExtensionCounts,
@@ -59,6 +59,7 @@ const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
 const CHART_ALERT_MARKER_SIDE_OFFSET_PX = 36;
 const CHART_ALERT_MARKER_EDGE_PADDING_PX = 28;
 const CHART_ALERT_MARKER_SYNC_FRAMES = 8;
+const CHART_ALERT_MARKER_POINTER_SYNC_FRAMES = 2;
 const CHART_ALERT_MARKER_INTERACTION_IDLE_MS = 140;
 const CHART_ALERT_TOOLTIP_WIDTH_PX = 300;
 const CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX = 210;
@@ -2666,12 +2667,20 @@ function upsertChartAlertCandlePoint(candles: ChartAlertCandlePoint[], candle: C
     return;
   }
   const next = { time, high: candle.high, close: candle.close };
-  const index = candles.findIndex((entry) => entry.time === time);
-  if (index >= 0) {
-    candles[index] = next;
+  let low = 0;
+  let high = candles.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (candles[middle].time < time) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  if (candles[low]?.time === time) {
+    candles[low] = next;
   } else {
-    candles.push(next);
-    candles.sort((left, right) => left.time - right.time);
+    candles.splice(low, 0, next);
   }
 }
 
@@ -2984,7 +2993,7 @@ function mountExpandedChartAlertOverlay(
   let lastRecapMarkup = '';
   let latestClusters: ChartAlertMarkerCluster[] = [];
   let disposed = false;
-  const candlePoints = toChartAlertCandlePoints(data);
+  const candlePoints = prepareChartAlertCandlePoints(toChartAlertCandlePoints(data));
 
   const hideTooltip = () => {
     hoveredClusterId = null;
@@ -3133,21 +3142,23 @@ function mountExpandedChartAlertOverlay(
       logicalToCoordinate: (logical) => chart.timeScale().logicalToCoordinate(logical as Logical),
       timeToCoordinate: (time) => chart.timeScale().timeToCoordinate(time as UTCTimestamp),
       priceToCoordinate: (price) => candleSeries.priceToCoordinate(price),
-    }, granularityMinutes);
+    }, granularityMinutes, { candlesPrepared: true });
     latestClusters = clusterChartAlertMarkers(projected);
-    overlay.replaceChildren();
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+    const fragment = document.createDocumentFragment();
 
     for (const cluster of latestClusters) {
-      if (cluster.x < -24 || cluster.y < -24 || cluster.x > container.clientWidth + 24 || cluster.y > container.clientHeight + 24) {
+      if (cluster.x < -24 || cluster.y < -24 || cluster.x > containerWidth + 24 || cluster.y > containerHeight + 24) {
         continue;
       }
-      const placement = getChartAlertMarkerPlacement(cluster, container.clientWidth);
+      const placement = getChartAlertMarkerPlacement(cluster, containerWidth);
       const connector = document.createElement('span');
       connector.className = 'expanded-chart-alert-marker-connector';
       connector.style.left = `${placement.connectorLeft}px`;
       connector.style.top = `${cluster.y}px`;
       connector.style.width = `${placement.connectorWidth}px`;
-      overlay.append(connector);
+      fragment.append(connector);
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'expanded-chart-alert-marker';
@@ -3172,8 +3183,9 @@ function mountExpandedChartAlertOverlay(
       };
       button.addEventListener('pointerdown', openRecapFromMarker);
       button.addEventListener('click', openRecapFromMarker);
-      overlay.append(button);
+      fragment.append(button);
     }
+    overlay.replaceChildren(fragment);
 
     if (pinnedClusterId) {
       const pinned = latestClusters.find((cluster) => cluster.id === pinnedClusterId);
@@ -3244,7 +3256,6 @@ function mountExpandedChartAlertOverlay(
     syncRaf = window.requestAnimationFrame(tick);
   }
 
-  const scheduleRenderBurstDefault = () => scheduleRenderBurst();
   const scheduleRenderFrame = () => scheduleRender();
   const scheduleRenderAfterInteraction = () => {
     if (disposed) {
@@ -3278,7 +3289,7 @@ function mountExpandedChartAlertOverlay(
     debug.count('pointerUps');
     window.clearTimeout(interactionTimer);
     interactionTimer = 0;
-    scheduleRenderBurstDefault();
+    scheduleRenderBurst(CHART_ALERT_MARKER_POINTER_SYNC_FRAMES);
   };
 
   const onChartAlert = (event: Event) => {

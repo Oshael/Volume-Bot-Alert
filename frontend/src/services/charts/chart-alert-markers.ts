@@ -129,6 +129,10 @@ function getSortedFiniteCandles(candles: ChartAlertCandlePoint[]) {
     : finiteCandles.sort((left, right) => left.time - right.time);
 }
 
+export function prepareChartAlertCandlePoints(candles: ChartAlertCandlePoint[]) {
+  return getSortedFiniteCandles(candles);
+}
+
 function findFirstCandleIndexAtOrAfter(candles: ChartAlertCandlePoint[], time: number) {
   let low = 0;
   let high = candles.length;
@@ -259,12 +263,13 @@ export function projectChartAlertMarkers(
   candles: ChartAlertCandlePoint[],
   scale: ChartAlertScaleAdapter,
   granularityMinutes: number,
+  options: { candlesPrepared?: boolean } = {},
 ) {
   if (!events.length || !candles.length) {
     return [];
   }
 
-  const sortedCandles = getSortedFiniteCandles(candles);
+  const sortedCandles = options.candlesPrepared ? candles : getSortedFiniteCandles(candles);
   const markers: ProjectedChartAlertMarker[] = [];
 
   for (const event of events) {
