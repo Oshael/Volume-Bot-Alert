@@ -59,6 +59,7 @@ const EXPANDED_TOKEN_AGE_YEAR_DAYS = 365;
 const CHART_ALERT_MARKER_SIDE_OFFSET_PX = 36;
 const CHART_ALERT_MARKER_EDGE_PADDING_PX = 28;
 const CHART_ALERT_MARKER_SYNC_FRAMES = 8;
+const CHART_ALERT_MARKER_INTERACTION_IDLE_MS = 140;
 const CHART_ALERT_TOOLTIP_WIDTH_PX = 300;
 const CHART_ALERT_TOOLTIP_ESTIMATED_HEIGHT_PX = 210;
 const CHART_ALERT_TOOLTIP_BADGE_GAP_PX = 32;
@@ -2975,6 +2976,8 @@ function mountExpandedChartAlertOverlay(
   let syncRaf = 0;
   let syncFramesRemaining = 0;
   let expiryTimer = 0;
+  let interactionTimer = 0;
+  let overlayHiddenForInteraction = false;
   let hoveredClusterId: string | null = null;
   let pinnedClusterId: string | null = null;
   let activeRecapClusterId: string | null = null;
@@ -2997,6 +3000,24 @@ function mountExpandedChartAlertOverlay(
     recap.replaceChildren();
     recap.removeAttribute('data-visible');
     expandedPanel?.classList.remove('is-showing-alert-recap');
+  };
+
+  const hasActiveOverlayCard = () => Boolean(hoveredClusterId || pinnedClusterId || activeRecapClusterId);
+
+  const hideOverlayForInteraction = () => {
+    if (overlayHiddenForInteraction || hasActiveOverlayCard() || overlay.childElementCount === 0) {
+      return;
+    }
+    overlayHiddenForInteraction = true;
+    overlay.style.visibility = 'hidden';
+  };
+
+  const showOverlayAfterInteraction = () => {
+    if (!overlayHiddenForInteraction) {
+      return;
+    }
+    overlayHiddenForInteraction = false;
+    overlay.style.visibility = '';
   };
 
   const clearEmptyAlertOverlay = () => {
@@ -3205,6 +3226,7 @@ function mountExpandedChartAlertOverlay(
     if (disposed) {
       return;
     }
+    showOverlayAfterInteraction();
     syncFramesRemaining = Math.max(syncFramesRemaining, frameCount);
     renderNow();
     if (syncRaf) {
@@ -3224,9 +3246,25 @@ function mountExpandedChartAlertOverlay(
 
   const scheduleRenderBurstDefault = () => scheduleRenderBurst();
   const scheduleRenderFrame = () => scheduleRender();
+  const scheduleRenderAfterInteraction = () => {
+    if (disposed) {
+      return;
+    }
+    if (hasActiveOverlayCard()) {
+      scheduleRenderFrame();
+      return;
+    }
+    hideOverlayForInteraction();
+    window.clearTimeout(interactionTimer);
+    interactionTimer = window.setTimeout(() => {
+      interactionTimer = 0;
+      showOverlayAfterInteraction();
+      scheduleRenderFrame();
+    }, CHART_ALERT_MARKER_INTERACTION_IDLE_MS);
+  };
   const onVisibleLogicalRangeChange = () => {
     debug.count('rangeChanges');
-    scheduleRenderFrame();
+    scheduleRenderAfterInteraction();
   };
   const onSizeChange = () => {
     debug.count('sizeChanges');
@@ -3234,10 +3272,12 @@ function mountExpandedChartAlertOverlay(
   };
   const onWheel = () => {
     debug.count('wheels');
-    scheduleRenderFrame();
+    scheduleRenderAfterInteraction();
   };
   const onPointerUp = () => {
     debug.count('pointerUps');
+    window.clearTimeout(interactionTimer);
+    interactionTimer = 0;
     scheduleRenderBurstDefault();
   };
 
@@ -3324,6 +3364,8 @@ function mountExpandedChartAlertOverlay(
       document.removeEventListener('pointerdown', onDocumentPointerDown, true);
       document.removeEventListener('pointermove', onDocumentPointerMove, true);
       document.removeEventListener('keydown', onDocumentKeydown);
+      window.clearTimeout(interactionTimer);
+      overlay.style.visibility = '';
       overlay.remove();
       tooltip.remove();
       recap.remove();
