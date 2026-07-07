@@ -65,7 +65,7 @@ function isConfigEnabled(configs: Record<string, string | number> | undefined, k
   return String(configs?.[key] ?? (fallback ? 'on' : 'off')) !== 'off';
 }
 
-function resolveOldSurgeConfigKey(alert: Pick<AlertEntry, 'ruleKey' | 'surgeWindow'>) {
+function resolveOldSurgeConfigKey(alert: Pick<AlertEntry, 'ruleKey' | 'surgeWindow' | 'ageBucket'>) {
   switch (alert.ruleKey) {
     case 'recent-surge-1h':
       return 'alert-recent-surge-1h-enabled';
@@ -75,6 +75,10 @@ function resolveOldSurgeConfigKey(alert: Pick<AlertEntry, 'ruleKey' | 'surgeWind
       return 'alert-old-week-surge-1h-enabled';
     case 'old-week-surge-6h':
       return 'alert-old-week-surge-6h-enabled';
+    case 'surge-continuation-6h':
+      return alert.ageBucket === 'recent'
+        ? 'alert-recent-surge-6h-enabled'
+        : 'alert-old-week-surge-6h-enabled';
     default:
       return alert.surgeWindow === '6H' ? 'alert-old-surge-6h-enabled' : 'alert-old-surge-1h-enabled';
   }
@@ -209,6 +213,9 @@ function getCustomAlertMetricLine(alert: AlertEntry) {
 }
 
 function getOldSurgePrefix(alert: AlertEntry) {
+  if (alert.ruleKey === 'surge-continuation-6h') {
+    return 'SURGE CONTINUATION 6H';
+  }
   const bucket = alert.ageBucket === 'recent' ? 'RECENT' : 'OLD';
   return `${bucket} ${alert.surgeWindow === '6H' ? '6H' : '1H'} surge`;
 }

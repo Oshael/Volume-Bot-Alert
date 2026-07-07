@@ -255,6 +255,7 @@ const BACKEND_OWNED_ALERT_RULE_KEYS = [
   'recent-surge-6h',
   'old-week-surge-1h',
   'old-week-surge-6h',
+  'surge-continuation-6h',
   'meteora-surge',
 ] as const;
 const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
@@ -3558,7 +3559,7 @@ export function createAppController(): AppController {
     }
   }
 
-  function resolveBackendSurgeAlertEnabled(entry: Pick<AlertEntry, 'ruleKey' | 'surgeWindow'>) {
+  function resolveBackendSurgeAlertEnabled(entry: Pick<AlertEntry, 'ruleKey' | 'surgeWindow' | 'ageBucket'>) {
     switch (entry.ruleKey) {
       case 'recent-surge-1h':
         return isConfigEnabled('alert-recent-surge-1h-enabled');
@@ -3568,6 +3569,10 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-old-week-surge-1h-enabled');
       case 'old-week-surge-6h':
         return isConfigEnabled('alert-old-week-surge-6h-enabled');
+      case 'surge-continuation-6h':
+        return isConfigEnabled(entry.ageBucket === 'recent'
+          ? 'alert-recent-surge-6h-enabled'
+          : 'alert-old-week-surge-6h-enabled');
       default:
         return isConfigEnabled(entry.surgeWindow === '6H' ? 'alert-old-surge-6h-enabled' : 'alert-old-surge-1h-enabled');
     }

@@ -14,11 +14,14 @@ const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
 const SURGE_1H_MIN_MCAP = 60_000;
-const SURGE_6H_MIN_MCAP = 60_000;
+const SURGE_6H_MIN_MCAP = 40_000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_POST_ALERT_REPEAT_GROWTH_PCT = 50;
-const SURGE_6H_REPEAT_COOLDOWN_MS = 20 * 60 * 1000;
-const SURGE_6H_REPEAT_MCAP_GROWTH_PCT = 15;
+const SURGE_6H_REPEAT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const SURGE_CONTINUATION_6H_RULE_KEY = 'surge-continuation-6h';
+const SURGE_CONTINUATION_6H_MCAP_MULTIPLIER = 3;
+const SURGE_CONTINUATION_6H_MIN_BASE_ALERT_AGE_MS = 60 * 60 * 1000;
+const SURGE_CONTINUATION_6H_BASE_EVENT_METADATA_KEY = 'surgeContinuation6hLastBaseEventId';
 const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
   '1H': 5,
   '6H': 10,
@@ -95,6 +98,16 @@ const ANCHORED_REPEAT_RULE_KEYS = new Set([
 function toNumberOrNull(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function hasNumericInput(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return false;
+  }
+  return Number.isFinite(Number(value));
 }
 
 function toTextOrNull(value) {
@@ -373,12 +386,14 @@ function buildSurgeCandidate(input) {
     shared,
     signals,
   } = input;
-  const currentPct = surgeWindow === '6H'
-    ? toNumberOrNull(signals.currentPriceChange6h)
-    : toNumberOrNull(signals.currentPriceChange1h);
-  const previousPct = surgeWindow === '6H'
-    ? toNumberOrNull(signals.prevPriceChange6h)
-    : toNumberOrNull(signals.prevPriceChange1h);
+  const currentPctInput = surgeWindow === '6H'
+    ? signals.currentPriceChange6h
+    : signals.currentPriceChange1h;
+  const previousPctInput = surgeWindow === '6H'
+    ? signals.prevPriceChange6h
+    : signals.prevPriceChange1h;
+  const currentPct = toNumberOrNull(currentPctInput);
+  const previousPct = toNumberOrNull(previousPctInput);
   const normalizedThresholdPct = toNumberOrNull(thresholdPct) ?? null;
   const ageGatePassed = ageBucket === 'recent'
     ? signals.recentSurgeAgeGatePassed
@@ -394,7 +409,8 @@ function buildSurgeCandidate(input) {
     return null;
   }
 
-  const crossedThreshold = previousPct != null
+  const crossedThreshold = hasNumericInput(previousPctInput)
+    && previousPct != null
     && normalizedThresholdPct != null
     && previousPct < normalizedThresholdPct
     && currentPct >= normalizedThresholdPct;
@@ -848,6 +864,11 @@ function isSurgeAnchorExpired(candidate, state, nowMs) {
     return false;
   }
 
+  if (isSixHourSurgeRuleKey(candidate?.ruleKey)
+    && isSixHourSurgeCooldownActive(candidate, state, nowMs)) {
+    return false;
+  }
+
   const pchangeSinceMs = getSurgeResetPchangeSinceMs(state);
   if (pchangeSinceMs != null && (nowMs - pchangeSinceMs) >= config.pchangeDurationMs) {
     return true;
@@ -1179,6 +1200,19 @@ function isSameSurgeSessionState(candidate, state, profile) {
   return Boolean(profileLoadedAt && stateSessionStartedAt && profileLoadedAt === stateSessionStartedAt);
 }
 
+function isSixHourSurgeCandidate(candidate) {
+  return candidate?.kind === 'old-surge' && candidate?.payload?.surgeWindow === '6H';
+}
+
+function isSixHourSurgeCooldownActive(candidate, state, nowMs) {
+  if (!isSixHourSurgeCandidate(candidate) && !isSixHourSurgeRuleKey(candidate?.ruleKey)) {
+    return false;
+  }
+
+  const lastAlertedAtMs = toTimestampMs(state?.lastAlertedAt);
+  return lastAlertedAtMs != null && (nowMs - lastAlertedAtMs) < SURGE_6H_REPEAT_COOLDOWN_MS;
+}
+
 function getRequiredSurgeRepeatAdvancePct(candidate, state) {
   const sameSessionPrimedHot = toTextOrNull(state?.metadata?.lastDecision) === 'primed-hot'
     && toTimestampMs(state?.lastAlertedAt) == null;
@@ -1209,32 +1243,21 @@ function hasRequiredSurgePctAdvance(candidate, state) {
   return nextPct >= requiredNextPct;
 }
 
-function hasRequiredSixHourSurgeMcapAdvance(candidate, state) {
-  const lastAlertedMcap = toNumberOrNull(state?.metadata?.lastAlertedMcap);
-  const nextMcap = toNumberOrNull(candidate?.payload?.mcap);
-  if (!(lastAlertedMcap > 0) || !(nextMcap > 0)) {
-    return false;
-  }
-
-  const requiredNextMcap = lastAlertedMcap * (1 + (SURGE_6H_REPEAT_MCAP_GROWTH_PCT / 100));
-  return nextMcap >= requiredNextMcap;
-}
-
 function canRepeatSurgeInSession(candidate, state) {
   if (candidate?.kind !== 'old-surge') {
     return true;
   }
 
   const { sameSessionPrimedHot } = getRequiredSurgeRepeatAdvancePct(candidate, state);
+  if (!sameSessionPrimedHot && candidate?.payload?.surgeWindow === '6H') {
+    return Boolean(candidate?.crossedThreshold);
+  }
+
   if (!hasRequiredSurgePctAdvance(candidate, state)) {
     return false;
   }
 
-  if (sameSessionPrimedHot || candidate?.payload?.surgeWindow !== '6H') {
-    return true;
-  }
-
-  return hasRequiredSixHourSurgeMcapAdvance(candidate, state);
+  return true;
 }
 
 function isSameSessionMeteoraPrimedState(candidate, state, profile) {
@@ -1336,6 +1359,147 @@ function getRelatedSurgeRuleKeys(ruleKey) {
   return SURGE_RULE_KEYS.includes(ruleKey) ? SURGE_RULE_KEYS : [];
 }
 
+function buildSurgeContinuation6hRuleSpecs(profile, signals) {
+  const specs = [];
+  if (profile?.ruleEnabled?.recentSurge6h && signals.recentSurgeAgeGatePassed) {
+    specs.push({
+      baseRuleKey: 'recent-surge-6h',
+      ageBucket: 'recent',
+      thresholdPct: toNumberOrNull(profile?.recentSurge6hThresholdPct),
+    });
+  }
+  if (profile?.ruleEnabled?.oldWeekSurge6h && signals.oldWeekSurgeAgeGatePassed) {
+    specs.push({
+      baseRuleKey: 'old-week-surge-6h',
+      ageBucket: 'old-week',
+      thresholdPct: toNumberOrNull(profile?.oldWeekSurge6hThresholdPct),
+    });
+  }
+  return specs;
+}
+
+function getSurgeContinuation6hBaseContext(state, nowMs) {
+  const baseMcap = toNumberOrNull(state?.metadata?.lastAlertedMcap);
+  const baseEventId = toNumberOrNull(state?.metadata?.lastEventId);
+  const baseAlertedAtMs = toTimestampMs(state?.lastAlertedAt);
+  if (!(baseMcap > 0) || !(baseEventId > 0) || baseAlertedAtMs == null) {
+    return null;
+  }
+  if ((nowMs - baseAlertedAtMs) < SURGE_CONTINUATION_6H_MIN_BASE_ALERT_AGE_MS) {
+    return null;
+  }
+  if (toNumberOrNull(state?.metadata?.[SURGE_CONTINUATION_6H_BASE_EVENT_METADATA_KEY]) === baseEventId) {
+    return null;
+  }
+
+  return { baseMcap, baseEventId };
+}
+
+function buildSurgeContinuation6hPayload(tokenAfter, signals, state, spec, nowMs) {
+  const baseContext = getSurgeContinuation6hBaseContext(state, nowMs);
+  const currentMcap = toNumberOrNull(signals?.currentMcap);
+  const currentPchange6h = toNumberOrNull(signals?.currentPriceChange6h);
+  const thresholdPct = toNumberOrNull(spec?.thresholdPct);
+  if (!baseContext || !(currentMcap > 0)
+    || currentPchange6h == null || thresholdPct == null || currentPchange6h < thresholdPct) {
+    return null;
+  }
+  if (currentMcap < baseContext.baseMcap * SURGE_CONTINUATION_6H_MCAP_MULTIPLIER) {
+    return null;
+  }
+
+  return {
+    ...buildSharedPayload(tokenAfter, signals),
+    prevMcap: baseContext.baseMcap,
+    pct: currentPchange6h,
+    label: 'SURGE CONTINUATION 6H',
+    ageBucket: spec.ageBucket,
+    isOldSurge: true,
+    surgeWindow: '6H',
+    thresholdPct,
+    tokenAgeMs: toNumberOrNull(signals.ageMs),
+    surgeContinuation: true,
+    surgeContinuationBaseEventId: baseContext.baseEventId,
+    surgeContinuationBaseRuleKey: spec.baseRuleKey,
+    surgeContinuationBaseMcap: baseContext.baseMcap,
+    surgeContinuationMultiplier: currentMcap / baseContext.baseMcap,
+    surgeContinuationRequiredMultiplier: SURGE_CONTINUATION_6H_MCAP_MULTIPLIER,
+  };
+}
+
+function buildSurgeContinuation6hDedupeKey(profile, tokenAfter, baseEventId) {
+  return `${profile.userId}:${SURGE_CONTINUATION_6H_RULE_KEY}:${tokenAfter.address}:${baseEventId}`;
+}
+
+async function emitSurgeContinuation6h(profile, tokenAfter, spec, state, payload, nowMs, deps) {
+  const client = await deps.db.getClient();
+  let event = null;
+  const baseEventId = toNumberOrNull(payload.surgeContinuationBaseEventId);
+  try {
+    await client.query('BEGIN');
+
+    event = await deps.userAlertEvent.createEvent({
+      userId: profile.userId,
+      ruleKey: SURGE_CONTINUATION_6H_RULE_KEY,
+      kind: 'old-surge',
+      tokenAddress: tokenAfter.address,
+      dedupeKey: buildSurgeContinuation6hDedupeKey(profile, tokenAfter, baseEventId),
+      payload,
+      triggeredAt: new Date(nowMs),
+    }, client);
+
+    await deps.userAlertRuleState.markRearmed({
+      userId: profile.userId,
+      ruleKey: spec.baseRuleKey,
+      tokenAddress: tokenAfter.address,
+      cooldownUntil: state.cooldownUntil,
+      lastFingerprint: state.lastFingerprint,
+      metadata: {
+        ...(state?.metadata || {}),
+        lastDecision: 'rearmed',
+        [SURGE_CONTINUATION_6H_BASE_EVENT_METADATA_KEY]: baseEventId,
+        surgeContinuation6hAlertedAt: new Date(nowMs).toISOString(),
+        surgeContinuation6hEventId: event?.id || null,
+        surgeContinuation6hMcap: toNumberOrNull(payload.mcap),
+        surgeContinuation6hMultiplier: toNumberOrNull(payload.surgeContinuationMultiplier),
+      },
+    }, client);
+
+    await client.query('COMMIT');
+    await deps.backendAlertPublisher.publishEventSafe(event, {
+      logLabel: 'UserAlertMatcher',
+    });
+    return event;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function evaluateSurgeContinuation6h(profile, tokenAfter, signals, nowMs, deps, summary) {
+  const currentMcap = toNumberOrNull(signals?.currentMcap);
+  if (!(currentMcap >= SURGE_6H_MIN_MCAP)) {
+    return;
+  }
+
+  for (const spec of buildSurgeContinuation6hRuleSpecs(profile, signals)) {
+    const state = await deps.userAlertRuleState.getState(profile.userId, spec.baseRuleKey, tokenAfter.address);
+    const payload = buildSurgeContinuation6hPayload(tokenAfter, signals, state, spec, nowMs);
+    if (!payload) {
+      continue;
+    }
+
+    const event = await emitSurgeContinuation6h(profile, tokenAfter, spec, state, payload, nowMs, deps);
+    summary.emitted += 1;
+    summary.events.push(event);
+  }
+}
+
 async function hasBlockingRelatedSurgeAlert(profile, tokenAfter, candidate, nowMs, deps) {
   if (candidate?.kind !== 'old-surge') {
     return false;
@@ -1350,6 +1514,11 @@ async function hasBlockingRelatedSurgeAlert(profile, tokenAfter, candidate, nowM
     const lastAlertedAtMs = toTimestampMs(relatedState?.lastAlertedAt);
     if (lastAlertedAtMs == null) {
       continue;
+    }
+    if (isSixHourSurgeCandidate(candidate)
+      && isSixHourSurgeRuleKey(relatedRuleKey)
+      && isSixHourSurgeCooldownActive({ ruleKey: relatedRuleKey }, relatedState, nowMs)) {
+      return true;
     }
     if ((nowMs - lastAlertedAtMs) < SURGE_CROSS_WINDOW_COOLDOWN_MS) {
       return true;
@@ -1659,6 +1828,7 @@ function hasSatisfiedRepeatAdvance(candidate, state, profile, repeatAllowed) {
 function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   const triggered = state?.status === 'triggered' && state?.rearmRequired === true;
   const cooldownActive = isCooldownActive(state, nowMs);
+  const sixHourSurgeCooldownActive = isSixHourSurgeCooldownActive(candidate, state, nowMs);
   const repeatAllowed = resolveRepeatAllowed(candidate, state, profile);
   const hasAdvancedRepeat = hasSatisfiedRepeatAdvance(candidate, state, profile, repeatAllowed);
 
@@ -1677,10 +1847,10 @@ function getCandidateLifecycleDecision(candidate, state, profile, nowMs) {
   if (!hasAdvancedRepeat) {
     return 'suppress';
   }
-  if (triggered && (cooldownActive || !repeatAllowed)) {
+  if (triggered && (cooldownActive || sixHourSurgeCooldownActive || !repeatAllowed)) {
     return 'suppress';
   }
-  return cooldownActive ? 'suppress' : 'emit';
+  return cooldownActive || sixHourSurgeCooldownActive ? 'suppress' : 'emit';
 }
 
 async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKeys, nowMs, deps, summary) {
@@ -1801,6 +1971,7 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
       const ruleDecision = buildRuleCandidate(profile, tokenAfter, signals);
       const rearmRuleKeys = buildRearmRuleKeys(profile, ruleDecision.qualifiedRuleKeys);
       await handleRuleLifecycle(profile, tokenAfter, ruleDecision.candidates, rearmRuleKeys, nowMs, deps, summary);
+      await evaluateSurgeContinuation6h(profile, tokenAfter, signals, nowMs, deps, summary);
     } catch (error) {
       summary.errors += 1;
       console.error(`[UserAlertMatcher] Failed to evaluate token ${tokenAfter.address} for user ${profile?.userId || 'unknown'}:`, error.message);
@@ -1818,6 +1989,8 @@ module.exports = {
   SURGE_6H_MIN_MCAP,
   SURGE_STARTUP_SUPPRESS_MS,
   SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
+  SURGE_CONTINUATION_6H_RULE_KEY,
+  SURGE_CONTINUATION_6H_MCAP_MULTIPLIER,
   SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW,
   METEORA_ALERT_COOLDOWN_MS,
   METEORA_STARTUP_SUPPRESS_MS,

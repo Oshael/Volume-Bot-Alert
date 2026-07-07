@@ -7,6 +7,7 @@ const RECENT_SURGE_1H_RULE_KEY = 'recent-surge-1h';
 const RECENT_SURGE_6H_RULE_KEY = 'recent-surge-6h';
 const OLD_WEEK_SURGE_1H_RULE_KEY = 'old-week-surge-1h';
 const OLD_WEEK_SURGE_6H_RULE_KEY = 'old-week-surge-6h';
+const SURGE_CONTINUATION_6H_RULE_KEY = 'surge-continuation-6h';
 const METEORA_SURGE_RULE_KEY = 'meteora-surge';
 const CUSTOM_ALERT_RULE_KEY = 'custom-alert';
 
@@ -88,6 +89,14 @@ const BACKEND_ALERT_RULES = Object.freeze({
     ruleKey: OLD_WEEK_SURGE_6H_RULE_KEY,
     kind: 'old-surge',
     displayName: 'Old Week Surge 6H',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [SURGE_CONTINUATION_6H_RULE_KEY]: Object.freeze({
+    ruleKey: SURGE_CONTINUATION_6H_RULE_KEY,
+    kind: 'old-surge',
+    displayName: 'Surge Continuation 6H',
     scope: 'user-token',
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),

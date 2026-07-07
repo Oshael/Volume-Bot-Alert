@@ -2282,6 +2282,13 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null, address: stri
   return wrapper;
 }
 
+function getOldSurgeAlertTitle(alert: AlertEntry, toneClass: string) {
+  if (alert.ruleKey === 'surge-continuation-6h') {
+    return 'SURGE CONTINUATION 6H';
+  }
+  return toneClass === 'recent-surge' ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
+}
+
 function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
   const badge = document.createElement('span');
   if (alert.kind === 'admin-token-review') {
@@ -2290,7 +2297,7 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
     return badge;
   }
   if (alert.isOldSurge) {
-    const surgeTitle = toneClass === 'recent-surge' ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
+    const surgeTitle = getOldSurgeAlertTitle(alert, toneClass);
     badge.className = `alert-badge-v68 ${toneClass}`;
     badge.append(`🔥 ${surgeTitle}`, document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'PCHANGE')));
     return badge;

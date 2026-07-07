@@ -55,6 +55,7 @@ const ALERT_VISUAL_META: Record<string, AlertVisualMeta> = {
   'recent-surge-6h': { code: 'S', tone: 'surge', priority: 40, title: 'Price surge alert' },
   'old-week-surge-1h': { code: 'S', tone: 'surge', priority: 40, title: 'Price surge alert' },
   'old-week-surge-6h': { code: 'S', tone: 'surge', priority: 40, title: 'Price surge alert' },
+  'surge-continuation-6h': { code: 'S', tone: 'surge', priority: 40, title: 'Surge continuation alert' },
   'meteora-surge': { code: 'L', tone: 'liquidity', priority: 30, title: 'Liquidity alert' },
 };
 

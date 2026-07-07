@@ -28,6 +28,7 @@ const CHART_ALERT_RULE_KEYS = Object.freeze([
   'recent-surge-6h',
   'old-week-surge-1h',
   'old-week-surge-6h',
+  'surge-continuation-6h',
   'meteora-surge',
   'custom-alert',
 ]);

@@ -63,6 +63,16 @@ describe('chart alert marker projection', () => {
     assert.match(marker.summary, /\$100\.0K/);
   });
 
+  it('projects surge continuation alerts with the surge marker style', () => {
+    const [marker] = markers.projectChartAlertMarkers([
+      event({ ruleKey: 'surge-continuation-6h', kind: 'old-surge' }),
+    ], candles, scale(), 5);
+
+    assert.equal(marker.code, 'S');
+    assert.equal(marker.tone, 'surge');
+    assert.equal(marker.title, 'Surge continuation alert');
+  });
+
   it('prefers chart time coordinates over logical indexes to stay beside the candle', () => {
     const [marker] = markers.projectChartAlertMarkers([event()], candles, {
       logicalToCoordinate: () => 0,

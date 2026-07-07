@@ -1968,7 +1968,7 @@ describe('user alert matcher', () => {
     );
   });
 
-  it('suppresses 6h surge alerts for tokens below 60k market cap', async () => {
+  it('suppresses 6h surge alerts for tokens below 40k market cap', async () => {
     const nowMs = Date.UTC(2026, 3, 17, 19, 17, 48);
     const createdAt = nowMs - (3 * 24 * 60 * 60 * 1000);
     const context = createDeps({
@@ -1996,7 +1996,7 @@ describe('user alert matcher', () => {
       tokenAfter: {
         address: TOKEN_ADDRESS,
         symbol: 'YUJI',
-        last_mcap: 50000,
+        last_mcap: 39000,
         last_vol_24h: 10000,
         last_token_created_at_ms: createdAt,
         last_price_change_6h: 149,
@@ -2206,7 +2206,7 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites.length, 0);
   });
 
-  it('suppresses repeated surge alerts in the same session unless the price change grows 50% from the last alert', async () => {
+  it('suppresses repeated 6h surge alerts when no previous price-change sample proves a fresh crossing', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 39, 29);
     const createdAt = nowMs - (281 * 24 * 60 * 60 * 1000);
@@ -2311,7 +2311,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('suppresses a rearmed 6h surge after reload until price change and market cap beat the last alert', async () => {
+  it('suppresses a rearmed 6h surge after reload until the six-hour cooldown elapses', async () => {
     const previousLoadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 9, 6, 0);
     const loadedAt = new Date(nowMs - (3 * 60 * 1000)).toISOString();
@@ -2412,7 +2412,7 @@ describe('user alert matcher', () => {
     assert.equal(context.triggeredWrites[0].metadata.surgePostAlertHighMcap, 250000);
   });
 
-  it('treats a rearmed 6h surge as fresh after pchange stays cold for 2h', async () => {
+  it('treats a rearmed 6h surge as fresh after pchange stays cold and the six-hour cooldown elapsed', async () => {
     const nowMs = Date.UTC(2026, 3, 17, 11, 0, 0);
     const loadedAt = new Date(nowMs - (30 * 60 * 1000)).toISOString();
     const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
@@ -2427,7 +2427,7 @@ describe('user alert matcher', () => {
         'old-week-surge-6h': {
           status: 'rearmed',
           rearmRequired: false,
-          lastAlertedAt: new Date(nowMs - (4 * 60 * 60 * 1000)).toISOString(),
+          lastAlertedAt: new Date(nowMs - ((6 * 60 * 60 * 1000) + (60 * 1000))).toISOString(),
           lastAlertedPct: 200,
           lastAlertedValue: 200,
           metadata: {
@@ -2463,10 +2463,10 @@ describe('user alert matcher', () => {
     assert.equal(context.rearmWrites[0].metadata.lastDecision, 'rearmed');
     assert.equal(context.rearmWrites[0].metadata.lastEventId, 11);
     assert.equal(context.rearmWrites[0].metadata.lastAlertedMcap, 240000);
-    assert.equal(context.rearmWrites[0].cooldownUntil.toISOString(), new Date(nowMs + (20 * 60 * 1000)).toISOString());
+    assert.equal(context.rearmWrites[0].cooldownUntil.toISOString(), new Date(nowMs + (6 * 60 * 60 * 1000)).toISOString());
   });
 
-  it('treats a rearmed 6h surge as fresh after market cap stays 40% below the post-alert high for 1h', async () => {
+  it('treats a rearmed 6h surge as fresh after drawdown reset and the six-hour cooldown elapsed', async () => {
     const nowMs = Date.UTC(2026, 3, 17, 11, 30, 0);
     const loadedAt = new Date(nowMs - (40 * 60 * 1000)).toISOString();
     const createdAt = nowMs - (5 * 24 * 60 * 60 * 1000);
@@ -2481,7 +2481,7 @@ describe('user alert matcher', () => {
         'recent-surge-6h': {
           status: 'rearmed',
           rearmRequired: false,
-          lastAlertedAt: new Date(nowMs - (3 * 60 * 60 * 1000)).toISOString(),
+          lastAlertedAt: new Date(nowMs - ((6 * 60 * 60 * 1000) + (60 * 1000))).toISOString(),
           lastAlertedPct: 180,
           lastAlertedValue: 180,
           metadata: {
@@ -2999,7 +2999,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].ruleKey, 'old-week-surge-6h');
   });
 
-  it('allows a same-session surge repeat after 50% relative price-change growth', async () => {
+  it('allows a rearmed 6h surge after six hours when price change crosses the threshold again', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 7, 45, 0);
     const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
@@ -3024,6 +3024,7 @@ describe('user alert matcher', () => {
           status: 'rearmed',
           rearmRequired: false,
           lastAlertedPct: 100,
+          lastAlertedAt: new Date(nowMs - ((6 * 60 * 60 * 1000) + (60 * 1000))).toISOString(),
           cooldownUntil: new Date(nowMs - (1 * 60 * 1000)).toISOString(),
           metadata: {
             lastDecision: 'rearmed',
@@ -3035,6 +3036,10 @@ describe('user alert matcher', () => {
     });
 
     const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 99,
+      },
       tokenAfter: {
         address: TOKEN_ADDRESS,
         symbol: 'INCOME',
@@ -3050,7 +3055,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites[0].ruleKey, 'old-week-surge-6h');
   });
 
-  it('suppresses a 6h surge repeat until market cap advances by at least 15% from the last alerted mcap', async () => {
+  it('suppresses a 6h surge repeat after cooldown when price change was already above threshold', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 8, 10, 0);
     const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
@@ -3075,6 +3080,7 @@ describe('user alert matcher', () => {
           status: 'rearmed',
           rearmRequired: false,
           lastAlertedPct: 100,
+          lastAlertedAt: new Date(nowMs - ((6 * 60 * 60 * 1000) + (60 * 1000))).toISOString(),
           cooldownUntil: new Date(nowMs - (1 * 60 * 1000)).toISOString(),
           metadata: {
             lastDecision: 'rearmed',
@@ -3086,6 +3092,10 @@ describe('user alert matcher', () => {
     });
 
     const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 145,
+      },
       tokenAfter: {
         address: TOKEN_ADDRESS,
         symbol: 'INCOME',
@@ -3101,7 +3111,7 @@ describe('user alert matcher', () => {
     assert.equal(context.eventWrites.length, 0);
   });
 
-  it('suppresses a 6h surge repeat during the 20m cooldown even when pct and mcap advanced enough', async () => {
+  it('suppresses a 6h surge repeat during the six-hour cooldown even when price change crosses again', async () => {
     const loadedAt = '2026-04-17T07:35:00.000Z';
     const nowMs = Date.UTC(2026, 3, 17, 8, 10, 0);
     const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
@@ -3126,7 +3136,8 @@ describe('user alert matcher', () => {
           status: 'rearmed',
           rearmRequired: false,
           lastAlertedPct: 100,
-          cooldownUntil: new Date(nowMs + (5 * 60 * 1000)).toISOString(),
+          lastAlertedAt: new Date(nowMs - (5 * 60 * 60 * 1000)).toISOString(),
+          cooldownUntil: new Date(nowMs - (1 * 60 * 1000)).toISOString(),
           metadata: {
             lastDecision: 'rearmed',
             lastAlertedMcap: 400000,
@@ -3137,6 +3148,10 @@ describe('user alert matcher', () => {
     });
 
     const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price_change_6h: 99,
+      },
       tokenAfter: {
         address: TOKEN_ADDRESS,
         symbol: 'INCOME',
@@ -3149,6 +3164,224 @@ describe('user alert matcher', () => {
 
     assert.equal(result.emitted, 0);
     assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('emits one surge continuation 6h after current market cap reaches 3x the previous 6h surge alert mcap', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 9, 0, 0);
+    const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 86,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (90 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 140,
+          lastAlertedValue: 140,
+          cooldownUntil: new Date(nowMs + (4 * 60 * 60 * 1000)).toISOString(),
+          metadata: {
+            lastDecision: 'rearmed',
+            lastEventId: 501,
+            lastAlertedMcap: 100000,
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'RUN',
+        last_mcap: 300000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 220,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, userAlertMatcher.SURGE_CONTINUATION_6H_RULE_KEY);
+    assert.equal(context.eventWrites[0].kind, 'old-surge');
+    assert.equal(context.eventWrites[0].payload.label, 'SURGE CONTINUATION 6H');
+    assert.equal(context.eventWrites[0].payload.prevMcap, 100000);
+    assert.equal(context.eventWrites[0].payload.mcap, 300000);
+    assert.equal(context.eventWrites[0].payload.surgeContinuationBaseEventId, 501);
+    assert.equal(context.rearmWrites.at(-1).ruleKey, 'old-week-surge-6h');
+    assert.equal(context.rearmWrites.at(-1).metadata.surgeContinuation6hLastBaseEventId, 501);
+  });
+
+  it('suppresses surge continuation 6h during the first hour after the base 6h surge alert', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 9, 15, 0);
+    const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 89,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (59 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 140,
+          lastAlertedValue: 140,
+          metadata: {
+            lastDecision: 'rearmed',
+            lastEventId: 504,
+            lastAlertedMcap: 100000,
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'RUN',
+        last_mcap: 360000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 260,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('does not repeat surge continuation 6h for the same base surge event', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 9, 30, 0);
+    const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 87,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (2 * 60 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 140,
+          lastAlertedValue: 140,
+          metadata: {
+            lastDecision: 'rearmed',
+            lastEventId: 502,
+            lastAlertedMcap: 100000,
+            surgeContinuation6hLastBaseEventId: 502,
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'RUN',
+        last_mcap: 360000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 260,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('suppresses surge continuation 6h when current 6h price change is below the user threshold', async () => {
+    const loadedAt = '2026-04-17T07:35:00.000Z';
+    const nowMs = Date.UTC(2026, 3, 17, 9, 45, 0);
+    const createdAt = nowMs - (33 * 24 * 60 * 60 * 1000);
+    const context = createDeps({
+      profiles: [{
+        userId: 88,
+        loadedAt,
+        ruleEnabled: {
+          monitoredVol: false,
+          monitoredMcap: false,
+          hvnc: false,
+          recentSurge1h: false,
+          recentSurge6h: false,
+          oldWeekSurge1h: false,
+          oldWeekSurge6h: true,
+          meteoraSurge: false,
+        },
+        oldWeekSurge6hThresholdPct: 100,
+      }],
+      stateByRule: {
+        'old-week-surge-6h': {
+          status: 'rearmed',
+          rearmRequired: false,
+          lastAlertedAt: new Date(nowMs - (2 * 60 * 60 * 1000)).toISOString(),
+          lastAlertedPct: 140,
+          lastAlertedValue: 140,
+          metadata: {
+            lastDecision: 'rearmed',
+            lastEventId: 503,
+            lastAlertedMcap: 100000,
+            sessionStartedAt: loadedAt,
+          },
+        },
+      },
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'RUN',
+        last_mcap: 360000,
+        last_vol_24h: 299000,
+        last_token_created_at_ms: createdAt,
+        last_price_change_6h: 90,
+      },
+    }, { now: new Date(nowMs), deps: context.deps });
+
+    assert.equal(result.emitted, 0);
     assert.equal(context.eventWrites.length, 0);
   });
 

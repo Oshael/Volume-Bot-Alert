@@ -2459,6 +2459,7 @@ function formatChartAlertTimeShort(event: ChartAlertEvent) {
 }
 
 function getChartAlertHeader(event: ChartAlertEvent) {
+  if (event.ruleKey === 'surge-continuation-6h') return 'SURGE CONTINUATION 6H';
   if (event.ruleKey === 'recent-surge-1h' || event.ruleKey === 'recent-surge-6h') return 'RECENT TOKEN SURGE';
   if (event.ruleKey === 'old-week-surge-1h' || event.ruleKey === 'old-week-surge-6h') return 'OLD TOKEN SURGE';
   if (event.ruleKey === 'monitored-vol') return 'VOLUME ALERT';
@@ -2511,7 +2512,8 @@ function renderChartAlertPrimaryMcap(event: ChartAlertEvent) {
   const isPriceSurge = event.ruleKey === 'recent-surge-1h'
     || event.ruleKey === 'recent-surge-6h'
     || event.ruleKey === 'old-week-surge-1h'
-    || event.ruleKey === 'old-week-surge-6h';
+    || event.ruleKey === 'old-week-surge-6h'
+    || event.ruleKey === 'surge-continuation-6h';
   if (!isPriceSurge || previousMcap == null || previousMcap <= 0) {
     return `<strong>${escapeHtml(fmtMoney(currentMcap))}</strong>`;
   }

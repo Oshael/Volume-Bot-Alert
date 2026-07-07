@@ -391,12 +391,13 @@ describe('backend alert feed service', () => {
         'recent-surge-6h',
         'old-week-surge-1h',
         'old-week-surge-6h',
+        'surge-continuation-6h',
         'meteora-surge',
         'custom-alert',
       ]);
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 1);
-      assert.equal(payload.feeds.length, 11);
+      assert.equal(payload.feeds.length, 12);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
     }
