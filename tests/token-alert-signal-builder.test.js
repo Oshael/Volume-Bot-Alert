@@ -61,6 +61,49 @@ describe('token alert signal builder', () => {
     assert.equal(signals.passesMeteoraPrereqs, true);
   });
 
+  it('prioritizes internal market-bucket surge changes over catalog price change fields', () => {
+    const nowMs = Date.UTC(2026, 6, 7, 8, 0, 0);
+
+    const signals = tokenAlertSignalBuilder.buildTokenAlertSignals({
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      internal_surge_current_ts: new Date('2026-07-07T08:00:00.000Z'),
+      internal_surge_current_mcap: 1900000,
+      internal_surge_baseline_1h_ts: new Date('2026-07-07T07:00:00.000Z'),
+      internal_surge_baseline_1h_mcap: 800000,
+      internal_surge_baseline_6h_ts: new Date('2026-07-07T02:00:00.000Z'),
+      internal_surge_baseline_6h_mcap: 760000,
+      last_price_change_1h: 12,
+      last_price_change_6h: 18,
+    }, { nowMs });
+
+    assert.equal(signals.currentMcap, null);
+    assert.equal(Math.round(signals.currentPriceChange1h * 100) / 100, 137.5);
+    assert.equal(Math.round(signals.currentPriceChange6h * 100) / 100, 150);
+    assert.equal(signals.internalSurge1hAvailable, true);
+    assert.equal(signals.internalSurge6hAvailable, true);
+    assert.equal(signals.internalSurgeCurrentMcap, 1900000);
+    assert.equal(signals.internalSurgeBaseline1hMcap, 800000);
+    assert.equal(signals.internalSurgeCurrentTs, '2026-07-07T08:00:00.000Z');
+    assert.equal(signals.internalSurgeBaseline1hTs, '2026-07-07T07:00:00.000Z');
+    assert.equal(signals.internalSurgeBaseline6hTs, '2026-07-07T02:00:00.000Z');
+  });
+
+  it('falls back to catalog surge changes when an internal market-bucket baseline is missing', () => {
+    const nowMs = Date.UTC(2026, 6, 7, 8, 0, 0);
+
+    const signals = tokenAlertSignalBuilder.buildTokenAlertSignals({
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      internal_surge_current_mcap: 1900000,
+      last_price_change_1h: 44,
+      last_price_change_6h: 88,
+    }, { nowMs });
+
+    assert.equal(signals.currentPriceChange1h, 44);
+    assert.equal(signals.currentPriceChange6h, 88);
+    assert.equal(signals.internalSurge1hAvailable, false);
+    assert.equal(signals.internalSurge6hAvailable, false);
+  });
+
   it('uses post-migration age instead of pre-migration token age for PumpFun HVNC', () => {
     const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
 
@@ -199,6 +242,10 @@ describe('token alert signal builder', () => {
 
   it('exposes recent and old-week surge age gates from token age', () => {
     const nowMs = Date.UTC(2026, 3, 16, 12, 0, 0);
+    const oneAndHalfDaySignals = tokenAlertSignalBuilder.buildTokenAlertSignals({
+      address: 'So11111111111111111111111111111111111111112',
+      tokenCreatedAt: nowMs - (36 * 60 * 60 * 1000),
+    }, { nowMs });
     const recentSignals = tokenAlertSignalBuilder.buildTokenAlertSignals({
       address: 'So11111111111111111111111111111111111111112',
       tokenCreatedAt: nowMs - (3 * 24 * 60 * 60 * 1000),
@@ -208,9 +255,17 @@ describe('token alert signal builder', () => {
       tokenCreatedAt: nowMs - (9 * 24 * 60 * 60 * 1000),
     }, { nowMs });
 
+    assert.equal(oneAndHalfDaySignals.recentSurgeAgeGatePassed, true);
+    assert.equal(oneAndHalfDaySignals.recentSurge1hAgeGatePassed, true);
+    assert.equal(oneAndHalfDaySignals.recentSurge6hAgeGatePassed, false);
+    assert.equal(oneAndHalfDaySignals.oldWeekSurgeAgeGatePassed, false);
     assert.equal(recentSignals.recentSurgeAgeGatePassed, true);
+    assert.equal(recentSignals.recentSurge1hAgeGatePassed, true);
+    assert.equal(recentSignals.recentSurge6hAgeGatePassed, true);
     assert.equal(recentSignals.oldWeekSurgeAgeGatePassed, false);
     assert.equal(oldWeekSignals.recentSurgeAgeGatePassed, false);
+    assert.equal(oldWeekSignals.recentSurge1hAgeGatePassed, false);
+    assert.equal(oldWeekSignals.recentSurge6hAgeGatePassed, false);
     assert.equal(oldWeekSignals.oldWeekSurgeAgeGatePassed, true);
   });
 });

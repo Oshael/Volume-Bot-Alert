@@ -1043,4 +1043,62 @@ describe('token market 1m bucket helpers', () => {
       db.query = originalQuery;
     }
   });
+
+  it('normalizes allowed surge baseline windows without accepting arbitrary windows', () => {
+    assert.deepEqual(
+      tokenMarketBucket1m.__private.normalizeSurgeBaselineWindows([360, 60, 60, 5, 'bad']),
+      [360, 60]
+    );
+    assert.deepEqual(
+      tokenMarketBucket1m.__private.normalizeSurgeBaselineWindows([5, null]),
+      tokenMarketBucket1m.__private.SURGE_BASELINE_WINDOW_MINUTES
+    );
+  });
+
+  it('queries current market bucket and exact surge baselines without fallback rows', async () => {
+    const originalQuery = db.query;
+    const calls = [];
+
+    db.query = async (sql, params) => {
+      calls.push({ sql, params });
+      return {
+        rows: [
+          {
+            token_address: 'So11111111111111111111111111111111111111112',
+            current_ts: '2026-07-07T08:00:00.000Z',
+            current_mcap: '1900000',
+            baseline_60m_ts: '2026-07-07T07:00:00.000Z',
+            baseline_60m_mcap: '800000',
+            baseline_360m_ts: '2026-07-07T02:00:00.000Z',
+            baseline_360m_mcap: '700000',
+          },
+        ],
+      };
+    };
+
+    try {
+      const rows = await tokenMarketBucket1m.listCurrentAndWindowBaselinesByAddresses(
+        [
+          'So11111111111111111111111111111111111111112',
+          'invalid',
+          'So11111111111111111111111111111111111111112',
+        ],
+        [60, 360, 5]
+      );
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].baseline_60m_mcap, '800000');
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0].params, [['So11111111111111111111111111111111111111112']]);
+      assert.match(calls[0].sql, /baseline_60m\.close_mcap AS baseline_60m_mcap/);
+      assert.match(calls[0].sql, /baseline_360m\.close_mcap AS baseline_360m_mcap/);
+      assert.doesNotMatch(calls[0].sql, /baseline_5m/);
+      assert.doesNotMatch(calls[0].sql, /fallback/);
+      assert.match(calls[0].sql, /AND close_mcap IS NOT NULL\s+ORDER BY bucket_ts DESC\s+LIMIT 1\s+\) AS current_row/);
+      assert.match(calls[0].sql, /bucket_ts <= current_row\.current_ts - \(60::int \* INTERVAL '1 minute'\)/);
+      assert.match(calls[0].sql, /bucket_ts <= current_row\.current_ts - \(360::int \* INTERVAL '1 minute'\)/);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
 });

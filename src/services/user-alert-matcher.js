@@ -13,7 +13,7 @@ const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
-const SURGE_1H_MIN_MCAP = 60_000;
+const SURGE_1H_MIN_MCAP = 45_000;
 const SURGE_6H_MIN_MCAP = 40_000;
 const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_POST_ALERT_REPEAT_GROWTH_PCT = 50;
@@ -23,7 +23,7 @@ const SURGE_CONTINUATION_6H_MCAP_MULTIPLIER = 3;
 const SURGE_CONTINUATION_6H_MIN_BASE_ALERT_AGE_MS = 60 * 60 * 1000;
 const SURGE_CONTINUATION_6H_BASE_EVENT_METADATA_KEY = 'surgeContinuation6hLastBaseEventId';
 const SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW = Object.freeze({
-  '1H': 5,
+  '1H': 10,
   '6H': 10,
 });
 const METEORA_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
@@ -375,6 +375,94 @@ function estimateSurgeBaselineMcap(currentMcap, priceChangePct) {
   return current / ratio;
 }
 
+function getInternalSurgeWindowState(signals, surgeWindow) {
+  if (surgeWindow === '6H') {
+    return {
+      available: signals?.internalSurge6hAvailable === true,
+      currentMcap: toNumberOrNull(signals?.internalSurgeCurrentMcap),
+      currentTs: toTextOrNull(signals?.internalSurgeCurrentTs),
+      baselineMcap: toNumberOrNull(signals?.internalSurgeBaseline6hMcap),
+      baselineTs: toTextOrNull(signals?.internalSurgeBaseline6hTs),
+      priceChangePct: toNumberOrNull(signals?.internalPriceChange6h),
+    };
+  }
+
+  return {
+    available: signals?.internalSurge1hAvailable === true,
+    currentMcap: toNumberOrNull(signals?.internalSurgeCurrentMcap),
+    currentTs: toTextOrNull(signals?.internalSurgeCurrentTs),
+    baselineMcap: toNumberOrNull(signals?.internalSurgeBaseline1hMcap),
+    baselineTs: toTextOrNull(signals?.internalSurgeBaseline1hTs),
+    priceChangePct: toNumberOrNull(signals?.internalPriceChange1h),
+  };
+}
+
+function getSurgeWindowPctInputs(signals, surgeWindow) {
+  return surgeWindow === '6H'
+    ? {
+        currentPctInput: signals.currentPriceChange6h,
+        previousPctInput: signals.prevPriceChange6h,
+      }
+    : {
+        currentPctInput: signals.currentPriceChange1h,
+        previousPctInput: signals.prevPriceChange1h,
+      };
+}
+
+function getSurgeAgeGatePassed(signals, ageBucket, surgeWindow) {
+  if (ageBucket !== 'recent') {
+    return signals.oldWeekSurgeAgeGatePassed;
+  }
+
+  if (surgeWindow === '1H') {
+    return signals.recentSurge1hAgeGatePassed ?? signals.recentSurgeAgeGatePassed;
+  }
+
+  return signals.recentSurge6hAgeGatePassed ?? signals.recentSurgeAgeGatePassed;
+}
+
+function qualifiesForSurgeCandidate(input) {
+  return Boolean(input.enabled)
+    && input.ageGatePassed
+    && input.currentPct != null
+    && input.thresholdPct != null
+    && (toNumberOrNull(input.currentMcap) || 0) >= input.minMcap
+    && input.currentPct >= input.thresholdPct;
+}
+
+function didSurgeCrossThreshold(input) {
+  return hasNumericInput(input.previousPctInput)
+    && input.previousPct != null
+    && input.thresholdPct != null
+    && input.previousPct < input.thresholdPct
+    && input.currentPct >= input.thresholdPct;
+}
+
+function buildSurgeBaselinePayload(internalSurge, currentMcap, currentPct) {
+  if (internalSurge.available) {
+    return {
+      prevMcap: internalSurge.baselineMcap,
+      surgeBaselineMcapEstimated: false,
+      surgeMetricSource: 'market-buckets-1m',
+      surgeBaselineMcap: internalSurge.baselineMcap,
+      surgeBaselineTs: internalSurge.baselineTs,
+      surgeCurrentMcap: internalSurge.currentMcap,
+      surgeCurrentTs: internalSurge.currentTs,
+    };
+  }
+
+  const estimatedBaselineMcap = estimateSurgeBaselineMcap(currentMcap, currentPct);
+  return {
+    prevMcap: estimatedBaselineMcap,
+    surgeBaselineMcapEstimated: estimatedBaselineMcap != null,
+    surgeMetricSource: 'catalog-price-change',
+    surgeBaselineMcap: null,
+    surgeBaselineTs: null,
+    surgeCurrentMcap: null,
+    surgeCurrentTs: null,
+  };
+}
+
 function buildSurgeCandidate(input) {
   const {
     profile,
@@ -386,35 +474,31 @@ function buildSurgeCandidate(input) {
     shared,
     signals,
   } = input;
-  const currentPctInput = surgeWindow === '6H'
-    ? signals.currentPriceChange6h
-    : signals.currentPriceChange1h;
-  const previousPctInput = surgeWindow === '6H'
-    ? signals.prevPriceChange6h
-    : signals.prevPriceChange1h;
+  const { currentPctInput, previousPctInput } = getSurgeWindowPctInputs(signals, surgeWindow);
+  const internalSurge = getInternalSurgeWindowState(signals, surgeWindow);
   const currentPct = toNumberOrNull(currentPctInput);
   const previousPct = toNumberOrNull(previousPctInput);
   const normalizedThresholdPct = toNumberOrNull(thresholdPct) ?? null;
-  const ageGatePassed = ageBucket === 'recent'
-    ? signals.recentSurgeAgeGatePassed
-    : signals.oldWeekSurgeAgeGatePassed;
+  const ageGatePassed = getSurgeAgeGatePassed(signals, ageBucket, surgeWindow);
   const minMcap = surgeWindow === '6H' ? SURGE_6H_MIN_MCAP : SURGE_1H_MIN_MCAP;
-  const qualifies = Boolean(enabled)
-    && ageGatePassed
-    && currentPct != null
-    && normalizedThresholdPct != null
-    && (toNumberOrNull(signals.currentMcap) || 0) >= minMcap
-    && currentPct >= normalizedThresholdPct;
-  if (!qualifies) {
+  if (!qualifiesForSurgeCandidate({
+    enabled,
+    ageGatePassed,
+    currentPct,
+    thresholdPct: normalizedThresholdPct,
+    currentMcap: signals.currentMcap,
+    minMcap,
+  })) {
     return null;
   }
 
-  const crossedThreshold = hasNumericInput(previousPctInput)
-    && previousPct != null
-    && normalizedThresholdPct != null
-    && previousPct < normalizedThresholdPct
-    && currentPct >= normalizedThresholdPct;
-  const estimatedBaselineMcap = estimateSurgeBaselineMcap(signals.currentMcap, currentPct);
+  const crossedThreshold = didSurgeCrossThreshold({
+    previousPctInput,
+    previousPct,
+    currentPct,
+    thresholdPct: normalizedThresholdPct,
+  });
+  const baselinePayload = buildSurgeBaselinePayload(internalSurge, signals.currentMcap, currentPct);
 
   return {
     ruleKey,
@@ -426,15 +510,14 @@ function buildSurgeCandidate(input) {
     repeatStepPct: null,
     fingerprint: buildFingerprint([ruleKey, previousPct, currentPct, signals.currentMcap, signals.volume24h]),
     crossedThreshold,
-    primeOnFirstSeen: !crossedThreshold,
+    primeOnFirstSeen: !crossedThreshold && !internalSurge.available,
     startupSuppressUntilMs: (() => {
       const loadedAtMs = toProfileLoadedAtMs(profile);
       return loadedAtMs != null ? loadedAtMs + SURGE_STARTUP_SUPPRESS_MS : null;
     })(),
     payload: {
       ...shared,
-      prevMcap: estimatedBaselineMcap,
-      surgeBaselineMcapEstimated: estimatedBaselineMcap != null,
+      ...baselinePayload,
       ageBucket,
       isOldSurge: true,
       surgeWindow,
@@ -528,7 +611,7 @@ function buildMonitoredMcapCandidate(profile, shared, signals) {
 }
 
 function buildSurgeCandidates(profile, shared, signals) {
-  if (signals.recentSurgeAgeGatePassed) {
+  if (signals.recentSurge1hAgeGatePassed || signals.recentSurge6hAgeGatePassed || signals.recentSurgeAgeGatePassed) {
     return [
       buildSurgeCandidate({
         profile,
@@ -639,6 +722,13 @@ function needsMcapBaseline(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.monitoredMcap);
 }
 
+function needsSurgeBaseline(profiles = []) {
+  return profiles.some((profile) => profile?.ruleEnabled?.recentSurge1h
+    || profile?.ruleEnabled?.recentSurge6h
+    || profile?.ruleEnabled?.oldWeekSurge1h
+    || profile?.ruleEnabled?.oldWeekSurge6h);
+}
+
 function needsMeteoraState(profiles = []) {
   return profiles.some((profile) => profile?.ruleEnabled?.meteoraSurge);
 }
@@ -677,6 +767,15 @@ async function loadMcapRows(address, profiles, deps) {
   return deps.tokenMarketBucket1m.listCurrentAndBaselineByAddresses([address], 5);
 }
 
+async function loadSurgeRows(address, profiles, deps) {
+  if (!needsSurgeBaseline(profiles)
+    || typeof deps.tokenMarketBucket1m.listCurrentAndWindowBaselinesByAddresses !== 'function') {
+    return [];
+  }
+
+  return deps.tokenMarketBucket1m.listCurrentAndWindowBaselinesByAddresses([address], [60, 360]);
+}
+
 async function loadMeteoraRows(address, profiles, deps) {
   if (!needsMeteoraState(profiles)) {
     return [];
@@ -710,10 +809,21 @@ function buildVolumeSignalInput(tokenBefore, tokenAfter, volumeRow) {
   };
 }
 
-function buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow) {
+function buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow, surgeRow) {
   return {
-    last_mcap: mcapRow?.current_mcap ?? tokenAfter?.last_mcap,
+    last_mcap: mcapRow?.current_mcap ?? surgeRow?.current_mcap ?? tokenAfter?.last_mcap,
     baseline_mcap: mcapRow?.baseline_mcap ?? tokenBefore?.last_mcap ?? null,
+  };
+}
+
+function buildInternalSurgeSignalInput(surgeRow) {
+  return {
+    internal_surge_current_ts: surgeRow?.current_ts ?? null,
+    internal_surge_current_mcap: surgeRow?.current_mcap ?? null,
+    internal_surge_baseline_1h_ts: surgeRow?.baseline_60m_ts ?? null,
+    internal_surge_baseline_1h_mcap: surgeRow?.baseline_60m_mcap ?? null,
+    internal_surge_baseline_6h_ts: surgeRow?.baseline_360m_ts ?? null,
+    internal_surge_baseline_6h_mcap: surgeRow?.baseline_360m_mcap ?? null,
   };
 }
 
@@ -726,13 +836,14 @@ function buildPriceChangeSignalInput(tokenBefore, tokenAfter) {
   };
 }
 
-function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, context = {}) {
+function buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, context = {}) {
   return {
     tokenAddress: String(tokenAfter?.address || '').trim(),
     alertSource: toTextOrNull(context.alertSource),
     ...buildMigrationSignalInput(tokenAfter),
     ...buildVolumeSignalInput(tokenBefore, tokenAfter, volumeRow),
-    ...buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow),
+    ...buildMcapSignalInput(tokenBefore, tokenAfter, mcapRow, surgeRow),
+    ...buildInternalSurgeSignalInput(surgeRow),
     last_token_created_at_ms: tokenAfter?.last_token_created_at_ms,
     ...buildPriceChangeSignalInput(tokenBefore, tokenAfter),
   };
@@ -748,9 +859,9 @@ function buildMeteoraSignalInput(meteoraRow) {
   };
 }
 
-function buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, meteoraRow, context = {}) {
+function buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, meteoraRow, context = {}) {
   return {
-    ...buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, context),
+    ...buildCoreSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, context),
     ...buildMeteoraSignalInput(meteoraRow),
   };
 }
@@ -1361,7 +1472,8 @@ function getRelatedSurgeRuleKeys(ruleKey) {
 
 function buildSurgeContinuation6hRuleSpecs(profile, signals) {
   const specs = [];
-  if (profile?.ruleEnabled?.recentSurge6h && signals.recentSurgeAgeGatePassed) {
+  if (profile?.ruleEnabled?.recentSurge6h
+    && (signals.recentSurge6hAgeGatePassed ?? signals.recentSurgeAgeGatePassed)) {
     specs.push({
       baseRuleKey: 'recent-surge-6h',
       ageBucket: 'recent',
@@ -1910,18 +2022,20 @@ async function handleRuleLifecycle(profile, tokenAfter, candidates, rearmRuleKey
 
 async function loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps, context = {}) {
   const address = String(tokenAfter?.address || '').trim();
-  const [volumeRows, mcapRows, meteoraRows] = await Promise.all([
+  const [volumeRows, mcapRows, surgeRows, meteoraRows] = await Promise.all([
     loadVolumeRows(address, profiles, deps, context),
     loadMcapRows(address, profiles, deps),
+    loadSurgeRows(address, profiles, deps),
     loadMeteoraRows(address, profiles, deps),
   ]);
 
   const volumeRow = volumeRows[0] || null;
   const mcapRow = mcapRows[0] || null;
+  const surgeRow = surgeRows[0] || null;
   const meteoraRow = meteoraRows[0] || null;
 
   return deps.tokenAlertSignalBuilder.buildTokenAlertSignals(
-    buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, meteoraRow, context),
+    buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow, meteoraRow, context),
     { nowMs }
   );
 }

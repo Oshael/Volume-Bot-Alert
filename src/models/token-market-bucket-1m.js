@@ -42,6 +42,7 @@ const DEFAULT_EXPANDED_SPARKLINE_POINTS = 720;
 const DEFAULT_SPARKLINE_AGGREGATE_MIN_EFFECTIVE_HOURS_RATIO = 0.5;
 const DEFAULT_SPARKLINE_CACHE_TTL_MS = 30_000;
 const DEFAULT_SPARKLINE_CACHE_MAX_ENTRIES = 500;
+const SURGE_BASELINE_WINDOW_MINUTES = Object.freeze([60, 360]);
 const sparklineCache = new Map();
 
 function toNumberOrNull(value) {
@@ -2019,6 +2020,80 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   return rows;
 }
 
+function normalizeSurgeBaselineWindows(windowsMinutes = SURGE_BASELINE_WINDOW_MINUTES) {
+  const requested = Array.isArray(windowsMinutes) ? windowsMinutes : [windowsMinutes];
+  const allowed = new Set(SURGE_BASELINE_WINDOW_MINUTES);
+  const normalized = [];
+
+  for (const item of requested) {
+    const minutes = Number(item);
+    if (!Number.isInteger(minutes) || !allowed.has(minutes) || normalized.includes(minutes)) {
+      continue;
+    }
+    normalized.push(minutes);
+  }
+
+  return normalized.length > 0 ? normalized : [...SURGE_BASELINE_WINDOW_MINUTES];
+}
+
+async function listCurrentAndWindowBaselinesByAddresses(addresses, windowsMinutes = SURGE_BASELINE_WINDOW_MINUTES) {
+  const unique = Array.from(
+    new Set(
+      (Array.isArray(addresses) ? addresses : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => isValidAddress(item))
+    )
+  );
+  if (!unique.length) {
+    return [];
+  }
+
+  const windows = normalizeSurgeBaselineWindows(windowsMinutes);
+  const baselineJoins = windows.map((minutes) => (
+    `LEFT JOIN LATERAL (
+       SELECT bucket_ts, close_mcap
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND close_mcap IS NOT NULL
+         AND current_row.current_ts IS NOT NULL
+         AND bucket_ts <= current_row.current_ts - (${minutes}::int * INTERVAL '1 minute')
+       ORDER BY bucket_ts DESC
+       LIMIT 1
+     ) AS baseline_${minutes}m ON TRUE`
+  ));
+  const baselineColumns = windows.flatMap((minutes) => [
+    `baseline_${minutes}m.bucket_ts AS baseline_${minutes}m_ts`,
+    `baseline_${minutes}m.close_mcap AS baseline_${minutes}m_mcap`,
+  ]);
+
+  const { rows } = await db.query(
+    `WITH requested AS (
+       SELECT UNNEST($1::varchar[]) AS token_address
+     )
+     SELECT
+       requested.token_address,
+       current_row.current_ts,
+       current_row.current_mcap,
+       ${baselineColumns.join(',\n       ')}
+     FROM requested
+     LEFT JOIN LATERAL (
+       SELECT
+         bucket_ts AS current_ts,
+         close_mcap AS current_mcap
+       FROM token_market_buckets_1m
+       WHERE token_address = requested.token_address
+         AND close_mcap IS NOT NULL
+       ORDER BY bucket_ts DESC
+       LIMIT 1
+     ) AS current_row ON TRUE
+     ${baselineJoins.join('\n     ')}
+     ORDER BY requested.token_address ASC`,
+    [unique]
+  );
+
+  return rows;
+}
+
 async function computeBidZoneCandidates(options = {}) {
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_BID_ZONE_HOURS, 48));
   const minMcap = Math.max(DEFAULT_BID_ZONE_MIN_MCAP, Number(options.minMcap) || DEFAULT_BID_ZONE_MIN_MCAP);
@@ -2319,6 +2394,7 @@ module.exports = {
   deleteByAddresses,
   deleteChunkByAddress,
   listCurrentAndBaselineByAddresses,
+  listCurrentAndWindowBaselinesByAddresses,
   listBidZoneCandidates,
   __private: {
     computeAgeHours,
@@ -2359,6 +2435,8 @@ module.exports = {
     downsampleSparklineSeries,
     largestTriangleThreeBuckets,
     normalizeSparklineGranularityMinutes,
+    normalizeSurgeBaselineWindows,
+    SURGE_BASELINE_WINDOW_MINUTES,
     toTimestampMs,
   },
 };

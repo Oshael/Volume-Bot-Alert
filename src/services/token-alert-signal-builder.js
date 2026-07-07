@@ -3,7 +3,9 @@ const HVNC_MAX_AGE_MS = 5 * 60 * 1000;
 const PUMPFUN_MIGRATION_GRACE_MS = 10 * 60 * 1000;
 const MCAP_ALERT_MIN_TOKEN_AGE_MS = 60 * 60 * 1000;
 const METEORA_ALERT_MIN_TVL = 10000;
-const SURGE_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+const SURGE_1H_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+const SURGE_6H_MIN_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+const SURGE_MIN_AGE_MS = SURGE_6H_MIN_AGE_MS;
 const OLD_WEEK_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function toNumberOrNull(value) {
@@ -39,6 +41,31 @@ function firstNumber(...values) {
 function firstText(...values) {
   for (const value of values) {
     const text = typeof value === 'string' ? value.trim() : '';
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+function toIsoTimestampText(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text || null;
+  }
+
+  const timestampMs = toTimestampMs(value);
+  return timestampMs != null ? new Date(timestampMs).toISOString() : null;
+}
+
+function firstTimestampText(...values) {
+  for (const value of values) {
+    const text = toIsoTimestampText(value);
     if (text) {
       return text;
     }
@@ -215,6 +242,39 @@ function normalizeMeteora(input = {}) {
 }
 
 function normalizeCoreFacts(input = {}, nowMs = Date.now()) {
+  const internalSurgeCurrentTs = firstTimestampText(
+    input.internalSurgeCurrentTs,
+    input.internal_surge_current_ts,
+  );
+  const internalSurgeCurrentMcap = firstNumber(
+    input.internalSurgeCurrentMcap,
+    input.internal_surge_current_mcap,
+  );
+  const internalSurgeBaseline1hTs = firstTimestampText(
+    input.internalSurgeBaseline1hTs,
+    input.internal_surge_baseline_1h_ts,
+  );
+  const internalSurgeBaseline1hMcap = firstNumber(
+    input.internalSurgeBaseline1hMcap,
+    input.internal_surge_baseline_1h_mcap,
+  );
+  const internalSurgeBaseline6hTs = firstTimestampText(
+    input.internalSurgeBaseline6hTs,
+    input.internal_surge_baseline_6h_ts,
+  );
+  const internalSurgeBaseline6hMcap = firstNumber(
+    input.internalSurgeBaseline6hMcap,
+    input.internal_surge_baseline_6h_mcap,
+  );
+  const internalPriceChange1h = firstNumber(
+    input.internalPriceChange1h,
+    derivePctChangeFromBaseline(internalSurgeCurrentMcap, internalSurgeBaseline1hMcap),
+  );
+  const internalPriceChange6h = firstNumber(
+    input.internalPriceChange6h,
+    derivePctChangeFromBaseline(internalSurgeCurrentMcap, internalSurgeBaseline6hMcap),
+  );
+
   return {
     address: firstText(input.address, input.tokenAddress),
     source: firstText(input.source),
@@ -261,7 +321,16 @@ function normalizeCoreFacts(input = {}, nowMs = Date.now()) {
       input.last_token_created_at_ms,
     ),
     migrationAgeMs: computeMigrationAgeMs(input, nowMs),
+    internalSurgeCurrentTs,
+    internalSurgeCurrentMcap,
+    internalSurgeBaseline1hTs,
+    internalSurgeBaseline1hMcap,
+    internalSurgeBaseline6hTs,
+    internalSurgeBaseline6hMcap,
+    internalPriceChange1h,
+    internalPriceChange6h,
     currentPriceChange1h: firstNumber(
+      internalPriceChange1h,
       input.currentPriceChange1h,
       input.priceChange1h,
       input.last_price_change_1h,
@@ -272,6 +341,7 @@ function normalizeCoreFacts(input = {}, nowMs = Date.now()) {
       input.baseline_price_change_1h,
     ),
     currentPriceChange6h: firstNumber(
+      internalPriceChange6h,
       input.currentPriceChange6h,
       input.priceChange6h,
       input.last_price_change_6h,
@@ -296,6 +366,10 @@ function passesHvncAgeGate(facts, ageMs) {
   return ageMs != null && ageMs <= HVNC_MAX_AGE_MS;
 }
 
+function passesRecentSurgeAgeGate(ageMs, minAgeMs) {
+  return ageMs != null && ageMs >= minAgeMs && ageMs < OLD_WEEK_MIN_AGE_MS;
+}
+
 function buildSignalFlags(facts, meteora, nowMs) {
   const ageMs = computeAgeMs(facts.tokenCreatedAt, nowMs);
   const vol5mChangePct = computePctChange(facts.currentVolume5m, facts.prevVolume5m);
@@ -310,9 +384,9 @@ function buildSignalFlags(facts, meteora, nowMs) {
   const hvncVolume24hGatePassed = facts.volume24h != null && facts.volume24h > 0;
   const passesHvncPrereqs = hvncAgeGatePassed && hvncVolume24hGatePassed;
   const mcapAlertTokenAgeGatePassed = ageMs == null || ageMs >= MCAP_ALERT_MIN_TOKEN_AGE_MS;
-  const recentSurgeAgeGatePassed = ageMs != null
-    && ageMs >= SURGE_MIN_AGE_MS
-    && ageMs < OLD_WEEK_MIN_AGE_MS;
+  const recentSurge1hAgeGatePassed = passesRecentSurgeAgeGate(ageMs, SURGE_1H_MIN_AGE_MS);
+  const recentSurge6hAgeGatePassed = passesRecentSurgeAgeGate(ageMs, SURGE_6H_MIN_AGE_MS);
+  const recentSurgeAgeGatePassed = recentSurge1hAgeGatePassed || recentSurge6hAgeGatePassed;
   const oldWeekSurgeAgeGatePassed = ageMs != null && ageMs >= OLD_WEEK_MIN_AGE_MS;
   const meteoraHasPool = meteora.hasState && !meteora.noPool;
   const meteoraMinTvlGatePassed = meteora.currentTvl != null && meteora.currentTvl >= METEORA_ALERT_MIN_TVL;
@@ -329,6 +403,8 @@ function buildSignalFlags(facts, meteora, nowMs) {
     hvncVolume24hGatePassed,
     passesHvncPrereqs,
     mcapAlertTokenAgeGatePassed,
+    recentSurge1hAgeGatePassed,
+    recentSurge6hAgeGatePassed,
     recentSurgeAgeGatePassed,
     oldWeekSurgeAgeGatePassed,
     meteoraHasPool,
@@ -364,6 +440,20 @@ function buildTokenAlertSignals(input = {}, options = {}) {
     prevPriceChange1h: facts.prevPriceChange1h,
     currentPriceChange6h: facts.currentPriceChange6h,
     prevPriceChange6h: facts.prevPriceChange6h,
+    internalSurgeCurrentTs: facts.internalSurgeCurrentTs,
+    internalSurgeCurrentMcap: facts.internalSurgeCurrentMcap,
+    internalSurgeBaseline1hTs: facts.internalSurgeBaseline1hTs,
+    internalSurgeBaseline1hMcap: facts.internalSurgeBaseline1hMcap,
+    internalSurgeBaseline6hTs: facts.internalSurgeBaseline6hTs,
+    internalSurgeBaseline6hMcap: facts.internalSurgeBaseline6hMcap,
+    internalPriceChange1h: facts.internalPriceChange1h,
+    internalPriceChange6h: facts.internalPriceChange6h,
+    internalSurge1hAvailable: facts.internalSurgeCurrentMcap != null
+      && facts.internalSurgeBaseline1hMcap != null
+      && facts.internalPriceChange1h != null,
+    internalSurge6hAvailable: facts.internalSurgeCurrentMcap != null
+      && facts.internalSurgeBaseline6hMcap != null
+      && facts.internalPriceChange6h != null,
     ageMs: flags.ageMs,
     migrationAgeMs: flags.migrationAgeMs,
     vol5mChangePct: flags.vol5mChangePct,
@@ -377,6 +467,8 @@ function buildTokenAlertSignals(input = {}, options = {}) {
     hvncAgeGatePassed: flags.hvncAgeGatePassed,
     hvncVolume24hGatePassed: flags.hvncVolume24hGatePassed,
     passesHvncPrereqs: flags.passesHvncPrereqs,
+    recentSurge1hAgeGatePassed: flags.recentSurge1hAgeGatePassed,
+    recentSurge6hAgeGatePassed: flags.recentSurge6hAgeGatePassed,
     recentSurgeAgeGatePassed: flags.recentSurgeAgeGatePassed,
     oldWeekSurgeAgeGatePassed: flags.oldWeekSurgeAgeGatePassed,
     meteoraCurrentTvl: meteora.currentTvl,
@@ -396,6 +488,8 @@ module.exports = {
   MCAP_ALERT_MIN_TOKEN_AGE_MS,
   METEORA_ALERT_MIN_TVL,
   OLD_WEEK_MIN_AGE_MS,
+  SURGE_1H_MIN_AGE_MS,
+  SURGE_6H_MIN_AGE_MS,
   SURGE_MIN_AGE_MS,
   buildTokenAlertSignals,
   __private: {
