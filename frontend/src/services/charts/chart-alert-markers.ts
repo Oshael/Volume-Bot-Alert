@@ -104,19 +104,63 @@ type BucketProjection = {
   candle: ChartAlertCandlePoint;
   eventSeconds: number;
   bucketStart: number;
+  candleIndex: number;
+  nextCandleIndex: number | null;
 };
+
+function getSortedFiniteCandles(candles: ChartAlertCandlePoint[]) {
+  let sorted = true;
+  let previousTime = -Infinity;
+  const finiteCandles: ChartAlertCandlePoint[] = [];
+
+  for (const candle of candles) {
+    if (!Number.isFinite(candle.time)) {
+      continue;
+    }
+    if (candle.time < previousTime) {
+      sorted = false;
+    }
+    previousTime = candle.time;
+    finiteCandles.push(candle);
+  }
+
+  return sorted
+    ? finiteCandles
+    : finiteCandles.sort((left, right) => left.time - right.time);
+}
+
+function findFirstCandleIndexAtOrAfter(candles: ChartAlertCandlePoint[], time: number) {
+  let low = 0;
+  let high = candles.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (candles[middle].time < time) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
 
 function findBucketProjection(candles: ChartAlertCandlePoint[], eventSeconds: number, granularityMinutes: number): BucketProjection | null {
   const granularitySeconds = Math.max(60, Math.round(Number(granularityMinutes) || 5) * 60);
   const bucketStart = Math.floor(eventSeconds / granularitySeconds) * granularitySeconds;
-  const exactIndex = candles.findIndex((candle) => candle.time === bucketStart);
-  if (exactIndex >= 0) {
+  const exactIndex = findFirstCandleIndexAtOrAfter(candles, bucketStart);
+  if (candles[exactIndex]?.time === bucketStart) {
     const fraction = Math.max(0, Math.min(0.999, (eventSeconds - bucketStart) / granularitySeconds));
-    return { logical: exactIndex + fraction, candle: candles[exactIndex], eventSeconds, bucketStart };
+    return {
+      logical: exactIndex + fraction,
+      candle: candles[exactIndex],
+      eventSeconds,
+      bucketStart,
+      candleIndex: exactIndex,
+      nextCandleIndex: candles[exactIndex + 1] ? exactIndex + 1 : null,
+    };
   }
 
-  const nextIndex = candles.findIndex((candle) => candle.time > eventSeconds);
-  const previousIndex = nextIndex > 0 ? nextIndex - 1 : candles.length - 1;
+  const nextIndex = findFirstCandleIndexAtOrAfter(candles, eventSeconds);
+  const previousIndex = nextIndex > 0 ? nextIndex - 1 : -1;
   const previous = candles[previousIndex];
   const next = candles[nextIndex];
   if (!previous || !next || previous.time >= eventSeconds || next.time <= eventSeconds) {
@@ -129,6 +173,8 @@ function findBucketProjection(candles: ChartAlertCandlePoint[], eventSeconds: nu
     candle: previous,
     eventSeconds,
     bucketStart,
+    candleIndex: previousIndex,
+    nextCandleIndex: nextIndex,
   };
 }
 
@@ -147,7 +193,9 @@ function interpolateTimeCoordinate(candles: ChartAlertCandlePoint[], projection:
     return exact;
   }
 
-  const currentIndex = candles.findIndex((candle) => candle.time === projection.bucketStart);
+  const currentIndex = candles[projection.candleIndex]?.time === projection.bucketStart
+    ? projection.candleIndex
+    : -1;
   if (currentIndex >= 0) {
     const startX = getCoordinateFromTime(scale.timeToCoordinate, candles[currentIndex].time);
     const next = candles[currentIndex + 1];
@@ -161,9 +209,8 @@ function interpolateTimeCoordinate(candles: ChartAlertCandlePoint[], projection:
     }
   }
 
-  const nextIndex = candles.findIndex((candle) => candle.time > projection.eventSeconds);
-  const previous = candles[nextIndex - 1];
-  const next = candles[nextIndex];
+  const previous = candles[projection.candleIndex];
+  const next = projection.nextCandleIndex == null ? null : candles[projection.nextCandleIndex];
   if (!previous || !next || previous.time >= projection.eventSeconds || next.time <= projection.eventSeconds) {
     return null;
   }
@@ -213,9 +260,11 @@ export function projectChartAlertMarkers(
   scale: ChartAlertScaleAdapter,
   granularityMinutes: number,
 ) {
-  const sortedCandles = candles
-    .filter((candle) => Number.isFinite(candle.time))
-    .sort((left, right) => left.time - right.time);
+  if (!events.length || !candles.length) {
+    return [];
+  }
+
+  const sortedCandles = getSortedFiniteCandles(candles);
   const markers: ProjectedChartAlertMarker[] = [];
 
   for (const event of events) {

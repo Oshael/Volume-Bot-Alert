@@ -2775,6 +2775,19 @@ function mountExpandedChartAlertOverlay(
     expandedPanel?.classList.remove('is-showing-alert-recap');
   };
 
+  const clearEmptyAlertOverlay = () => {
+    latestClusters = [];
+    if (overlay.childElementCount > 0) {
+      overlay.replaceChildren();
+    }
+    if (hoveredClusterId || pinnedClusterId) {
+      hideTooltip();
+    }
+    if (activeRecapClusterId) {
+      closeRecap();
+    }
+  };
+
   // Delegated on the persistent layer: chart pointer interactions re-render the
   // card between pointerup and click, destroying any listener attached to the
   // close button itself before its click event ever fires.
@@ -2858,6 +2871,10 @@ function mountExpandedChartAlertOverlay(
       return;
     }
     const events = readChartAlertHistory(address).events;
+    if (!events.length) {
+      clearEmptyAlertOverlay();
+      return;
+    }
     const projected = projectChartAlertMarkers(events, candlePoints, {
       logicalToCoordinate: (logical) => chart.timeScale().logicalToCoordinate(logical as Logical),
       timeToCoordinate: (time) => chart.timeScale().timeToCoordinate(time as UTCTimestamp),
@@ -2965,6 +2982,7 @@ function mountExpandedChartAlertOverlay(
   }
 
   const scheduleRenderBurstDefault = () => scheduleRenderBurst();
+  const scheduleRenderFrame = () => scheduleRender();
 
   const onChartAlert = (event: Event) => {
     const detail = (event as CustomEvent<ChartAlertEvent>).detail;
@@ -2999,12 +3017,11 @@ function mountExpandedChartAlertOverlay(
     }
   };
 
-  chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleRenderBurstDefault);
-  chart.timeScale().subscribeSizeChange(scheduleRenderBurstDefault);
-  const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleRenderBurstDefault) : null;
+  chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleRenderFrame);
+  chart.timeScale().subscribeSizeChange(scheduleRenderFrame);
+  const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleRenderFrame) : null;
   resizeObserver?.observe(container);
-  container.addEventListener('wheel', scheduleRenderBurstDefault, { passive: true });
-  container.addEventListener('pointermove', scheduleRenderBurstDefault, { passive: true });
+  container.addEventListener('wheel', scheduleRenderFrame, { passive: true });
   container.addEventListener('pointerup', scheduleRenderBurstDefault);
   window.addEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
@@ -3039,11 +3056,10 @@ function mountExpandedChartAlertOverlay(
       window.cancelAnimationFrame(syncRaf);
       window.clearTimeout(expiryTimer);
       expandedPanel?.classList.remove('is-showing-alert-recap');
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleRenderBurstDefault);
-      chart.timeScale().unsubscribeSizeChange(scheduleRenderBurstDefault);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleRenderFrame);
+      chart.timeScale().unsubscribeSizeChange(scheduleRenderFrame);
       resizeObserver?.disconnect();
-      container.removeEventListener('wheel', scheduleRenderBurstDefault);
-      container.removeEventListener('pointermove', scheduleRenderBurstDefault);
+      container.removeEventListener('wheel', scheduleRenderFrame);
       container.removeEventListener('pointerup', scheduleRenderBurstDefault);
       window.removeEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
       document.removeEventListener('pointerdown', onDocumentPointerDown, true);
