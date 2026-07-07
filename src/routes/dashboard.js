@@ -4,6 +4,7 @@ const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
 const userPinnedMonitoredToken = require('../models/user-pinned-monitored-token');
+const userCustomAlertRule = require('../models/user-custom-alert-rule');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-1m');
 const backendAlertFeed = require('../services/backend-alert-feed');
@@ -753,6 +754,82 @@ router.delete('/monitored-pins/:address', dashboardLimiter, requireTrustedOrigin
   } catch (err) {
     console.error('DELETE /dashboard/monitored-pins/:address error:', err.message);
     return res.status(500).json({ error: 'Failed to remove monitored pin' });
+  }
+});
+
+router.get('/custom-alert-rules', dashboardLimiter, async (req, res) => {
+  try {
+    const rules = await userCustomAlertRule.listRules(req.user.id, {
+      status: req.query?.status,
+    });
+    return res.json({ rules, count: rules.length });
+  } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('GET /dashboard/custom-alert-rules error:', err.message);
+    return res.status(500).json({ error: 'Failed to load custom alert rules' });
+  }
+});
+
+async function buildCustomAlertBaselineMetadata(tokenAddress) {
+  try {
+    const row = await tokenCatalog.getMarketBaselineByAddress(tokenAddress);
+    if (!row) return {};
+    const baselineMcap = Number(row.last_mcap);
+    const baselinePrice = Number(row.last_price);
+    return {
+      baselineMcap: Number.isFinite(baselineMcap) ? baselineMcap : null,
+      baselinePrice: Number.isFinite(baselinePrice) ? baselinePrice : null,
+      baselineAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error('Custom alert baseline lookup failed:', err.message);
+    return {};
+  }
+}
+
+router.post('/custom-alert-rules', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  try {
+    const metadata = await buildCustomAlertBaselineMetadata(req.body?.tokenAddress);
+    const rule = await userCustomAlertRule.createRule(req.user.id, { ...(req.body || {}), metadata });
+    return res.status(201).json({ rule });
+  } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('POST /dashboard/custom-alert-rules error:', err.message);
+    return res.status(500).json({ error: 'Failed to create custom alert rule' });
+  }
+});
+
+router.patch('/custom-alert-rules/:id', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  try {
+    const metadata = await buildCustomAlertBaselineMetadata(req.body?.tokenAddress);
+    const rule = await userCustomAlertRule.updateRule(req.params.id, req.user.id, { ...(req.body || {}), metadata });
+    if (!rule) {
+      return res.status(404).json({ error: 'Custom alert rule not found' });
+    }
+    return res.json({ rule });
+  } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('PATCH /dashboard/custom-alert-rules/:id error:', err.message);
+    return res.status(500).json({ error: 'Failed to update custom alert rule' });
+  }
+});
+
+router.delete('/custom-alert-rules/:id', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  try {
+    const rule = await userCustomAlertRule.disableRule(req.params.id, req.user.id);
+    return res.json({ rule, disabled: Boolean(rule) });
+  } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('DELETE /dashboard/custom-alert-rules/:id error:', err.message);
+    return res.status(500).json({ error: 'Failed to disable custom alert rule' });
   }
 });
 

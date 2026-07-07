@@ -877,6 +877,36 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage48-user-custom-alert-rules',
+    name: 'Stage 48 user custom alert rules',
+    repair: 'node src/utils/db-init-stage48.js',
+    tables: [
+      {
+        table: 'user_custom_alert_rules',
+        columns: [
+          'id',
+          'user_id',
+          'token_address',
+          'title',
+          'metric',
+          'operator',
+          'target_value',
+          'color_hex',
+          'sound_name',
+          'status',
+          'metadata',
+          'triggered_at',
+          'created_at',
+          'updated_at',
+        ],
+        defaults: {
+          status: "'active'::character varying",
+          metadata: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
+  {
     key: 'stage39-admin-block-evidence',
     name: 'Stage 39 admin block evidence snapshots',
     repair: 'node src/utils/db-init-stage39.js',

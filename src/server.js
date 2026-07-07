@@ -100,7 +100,16 @@ app.options('*', cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: '1mb' }));
+// Custom alert rules accept an inline MP3 data URL (5 MB file → ~7 MB base64), so
+// that single route gets a larger JSON limit; everything else stays at 1 MB.
+const defaultJsonParser = express.json({ limit: '1mb' });
+const largeJsonParser = express.json({ limit: '8mb' });
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path === '/api/dashboard/custom-alert-rules') {
+    return largeJsonParser(req, res, next);
+  }
+  return defaultJsonParser(req, res, next);
+});
 app.use(cookieParser());
 
 // Trust only local/private proxy hops so direct clients cannot spoof forwarded IPs.
@@ -186,6 +195,12 @@ app.use((req, res) => {
 
 // ---- Global error handler ----
 app.use((err, req, res, _next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body is too large' });
+  }
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });

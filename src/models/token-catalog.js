@@ -1400,6 +1400,21 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
   return rows;
 }
 
+async function getMarketBaselineByAddress(address) {
+  const normalized = String(address || '').trim();
+  if (!isValidAddress(normalized)) {
+    return null;
+  }
+
+  const { rows } = await db.query(
+    `SELECT address, last_mcap, last_price
+     FROM token_catalog
+     WHERE address = $1`,
+    [normalized]
+  );
+  return rows[0] || null;
+}
+
 async function listDashboardMetadataByAddresses(addresses) {
   const unique = Array.from(
     new Set(
@@ -1962,6 +1977,7 @@ module.exports = {
   listDashboardHistoryBucketDebugProbe,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,
+  getMarketBaselineByAddress,
   listRiskEnrichmentCandidates,
   markMeteoraChecked,
   scheduleImmediateEvaluation,

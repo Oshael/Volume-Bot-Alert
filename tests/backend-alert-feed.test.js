@@ -129,6 +129,62 @@ describe('backend alert feed service', () => {
     }
   });
 
+  it('maps custom alert event payload fields for dashboard feeds', async () => {
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+
+    tokenCatalog.listDashboardMetadataByAddresses = async () => [{
+      address: 'So11111111111111111111111111111111111111112',
+      symbol: 'WSOL',
+      name: 'Wrapped SOL',
+      last_mcap: 260000,
+      last_price: 0.00011,
+    }];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.buildDashboardAlertEventFromEvent({
+        id: 45,
+        userId: 7,
+        ruleKey: 'custom-alert',
+        kind: 'custom-alert',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+        payload: {
+          address: 'So11111111111111111111111111111111111111112',
+          customRuleId: 12,
+          customTitle: 'Mcap target',
+          customMetric: 'Market Cap',
+          customOperator: 'crosses above',
+          customTarget: 250000,
+          customColorHex: '#22c55e',
+          customSoundDataUrl: 'data:audio/mpeg;base64,SUQzBAAAAAAA',
+          customCurrentValue: 260000,
+          customPreviousValue: 240000,
+          mcap: 260000,
+          label: 'CUSTOM',
+        },
+        triggeredAt: '2026-07-06T06:00:00.000Z',
+      });
+
+      assert.equal(payload.kind, 'custom-alert');
+      assert.equal(payload.ruleKey, 'custom-alert');
+      assert.equal(payload.symbol, 'WSOL');
+      assert.equal(payload.customRuleId, 12);
+      assert.equal(payload.customTitle, 'Mcap target');
+      assert.equal(payload.customMetric, 'Market Cap');
+      assert.equal(payload.customOperator, 'crosses above');
+      assert.equal(payload.customTarget, 250000);
+      assert.equal(payload.customColorHex, '#22c55e');
+      assert.equal(payload.customSoundDataUrl, 'data:audio/mpeg;base64,SUQzBAAAAAAA');
+      assert.equal(payload.customCurrentValue, 260000);
+      assert.equal(payload.customPreviousValue, 240000);
+      assert.equal(payload.mcap, 260000);
+    } finally {
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
   it('suppresses historical replay for realtime-only GMGN claim alerts', async () => {
     const originalGetLatestEventId = gmgnClaimAlertEvent.getLatestEventId;
     const originalListRecentEvents = gmgnClaimAlertEvent.listRecentEvents;
@@ -336,10 +392,11 @@ describe('backend alert feed service', () => {
         'old-week-surge-1h',
         'old-week-surge-6h',
         'meteora-surge',
+        'custom-alert',
       ]);
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 1);
-      assert.equal(payload.feeds.length, 10);
+      assert.equal(payload.feeds.length, 11);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
     }

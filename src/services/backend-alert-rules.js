@@ -8,6 +8,7 @@ const RECENT_SURGE_6H_RULE_KEY = 'recent-surge-6h';
 const OLD_WEEK_SURGE_1H_RULE_KEY = 'old-week-surge-1h';
 const OLD_WEEK_SURGE_6H_RULE_KEY = 'old-week-surge-6h';
 const METEORA_SURGE_RULE_KEY = 'meteora-surge';
+const CUSTOM_ALERT_RULE_KEY = 'custom-alert';
 
 const BACKEND_ALERT_RULES = Object.freeze({
   [GMGN_CLAIM_SIGNAL_RULE_KEY]: Object.freeze({
@@ -99,6 +100,14 @@ const BACKEND_ALERT_RULES = Object.freeze({
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
+  [CUSTOM_ALERT_RULE_KEY]: Object.freeze({
+    ruleKey: CUSTOM_ALERT_RULE_KEY,
+    kind: 'custom-alert',
+    displayName: 'Custom Alert',
+    scope: 'user-token',
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
 });
 
 function normalizeBackendAlertRuleKey(value) {
@@ -131,6 +140,7 @@ function getDefaultDashboardAlertRuleKey() {
 
 module.exports = {
   BACKEND_ALERT_RULES,
+  CUSTOM_ALERT_RULE_KEY,
   GMGN_CLAIM_SIGNAL_RULE_KEY,
   GMGN_VOL_1M_RULE_KEY,
   HVNC_RULE_KEY,

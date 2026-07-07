@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const userAlertMatcher = require('../src/services/user-alert-matcher');
 
 const TOKEN_ADDRESS = 'So11111111111111111111111111111111111111112';
+const SAMPLE_SOUND_DATA_URL = 'data:audio/mpeg;base64,SUQzBAAAAAAA';
 
 function createClient(log) {
   return {
@@ -22,6 +23,7 @@ function createDeps(overrides = {}) {
   const transactionLog = [];
   const eventWrites = [];
   const triggeredWrites = [];
+  const customTriggeredWrites = [];
   const rearmWrites = [];
   const getStateImpl = overrides.getState;
 
@@ -85,6 +87,20 @@ function createDeps(overrides = {}) {
           };
         },
       },
+      userCustomAlertRule: {
+        async listActiveByTokenAddress() {
+          return overrides.customRules || [];
+        },
+        async markTriggered(id, userId, options) {
+          customTriggeredWrites.push({ id, userId, ...options });
+          return overrides.customMarkTriggeredReturnsNull ? null : {
+            id,
+            userId,
+            status: 'triggered',
+            triggeredAt: options?.triggeredAt || null,
+          };
+        },
+      },
       backendAlertPublisher: {
         async publishEventSafe(event) {
           return { payload: { id: event.id }, delivered: true };
@@ -97,6 +113,7 @@ function createDeps(overrides = {}) {
       },
       tokenAlertSignalBuilder: overrides.tokenAlertSignalBuilder,
     },
+    customTriggeredWrites,
     eventWrites,
     rearmWrites,
     stateByRule,
@@ -138,6 +155,153 @@ async function withGmgnVol1mAlertsEnabled(callback) {
 }
 
 describe('user alert matcher', () => {
+  it('emits and marks a custom mcap cross alert without active presence', async () => {
+    const context = createDeps({
+      customRules: [{
+        id: 42,
+        userId: 15,
+        tokenAddress: TOKEN_ADDRESS,
+        title: 'Mcap target',
+        metric: 'mcap',
+        operator: 'cross_above',
+        targetValue: 250000,
+        colorHex: '#22c55e',
+        soundName: 'alert.mp3',
+        soundDataUrl: SAMPLE_SOUND_DATA_URL,
+        status: 'active',
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 240000,
+        last_price: 0.00009,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        name: 'Wrapped SOL',
+        last_mcap: 260000,
+        last_price: 0.00011,
+        last_vol_24h: 350000,
+      },
+    }, { now: '2026-07-06T06:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.evaluatedProfiles, 0);
+    assert.equal(result.emitted, 1);
+    assert.equal(context.customTriggeredWrites.length, 1);
+    assert.equal(context.customTriggeredWrites[0].id, 42);
+    assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].ruleKey, 'custom-alert');
+    assert.equal(context.eventWrites[0].kind, 'custom-alert');
+    assert.equal(context.eventWrites[0].payload.customRuleId, 42);
+    assert.equal(context.eventWrites[0].payload.customMetric, 'Market Cap');
+    assert.equal(context.eventWrites[0].payload.customOperator, 'hits');
+    assert.equal(context.eventWrites[0].payload.customTarget, 250000);
+    assert.equal(context.eventWrites[0].payload.customSoundDataUrl, SAMPLE_SOUND_DATA_URL);
+    assert.equal(context.eventWrites[0].payload.customCurrentValue, 260000);
+    assert.equal(context.eventWrites[0].payload.customPreviousValue, 240000);
+    assert.deepEqual(context.transactionLog, ['BEGIN', 'COMMIT', 'RELEASE']);
+  });
+
+  it('emits an armed custom alert even when no evaluation pair straddles the target', async () => {
+    const context = createDeps({
+      customRules: [{
+        id: 44,
+        userId: 15,
+        tokenAddress: TOKEN_ADDRESS,
+        title: 'Mcap drop',
+        metric: 'mcap',
+        operator: 'cross_below',
+        targetValue: 412000000,
+        status: 'active',
+        metadata: { baselineMcap: 412500000, baselineAt: '2026-07-06T05:59:00.000Z' },
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 411900000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'ANSEM',
+        last_mcap: 411130000,
+      },
+    }, { now: '2026-07-06T06:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 1);
+    assert.equal(context.customTriggeredWrites.length, 1);
+    assert.equal(context.eventWrites[0].payload.customCurrentValue, 411130000);
+  });
+
+  it('does not fire an already-satisfied rule without a real cross', async () => {
+    const context = createDeps({
+      customRules: [{
+        id: 45,
+        userId: 15,
+        tokenAddress: TOKEN_ADDRESS,
+        title: 'Mcap drop',
+        metric: 'mcap',
+        operator: 'cross_below',
+        targetValue: 412000000,
+        status: 'active',
+        metadata: { baselineMcap: 411000000 },
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_mcap: 411500000,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'ANSEM',
+        last_mcap: 411130000,
+      },
+    }, { now: '2026-07-06T06:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
+  it('does not emit a custom alert until the metric crosses the target', async () => {
+    const context = createDeps({
+      customRules: [{
+        id: 43,
+        userId: 15,
+        tokenAddress: TOKEN_ADDRESS,
+        title: 'Price target',
+        metric: 'price',
+        operator: 'cross_above',
+        targetValue: 0.0001,
+        status: 'active',
+      }],
+    });
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenBefore: {
+        address: TOKEN_ADDRESS,
+        last_price: 0.00011,
+      },
+      tokenAfter: {
+        address: TOKEN_ADDRESS,
+        symbol: 'WSOL',
+        last_price: 0.00012,
+        last_mcap: 260000,
+      },
+    }, { now: '2026-07-06T06:00:00.000Z', deps: context.deps });
+
+    assert.equal(result.emitted, 0);
+    assert.equal(result.suppressed, 1);
+    assert.equal(context.customTriggeredWrites.length, 0);
+    assert.equal(context.eventWrites.length, 0);
+  });
+
   it('emits a monitored-vol event for active users who match the backend signal', async () => {
     const profile = {
       userId: 15,

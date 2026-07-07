@@ -29,6 +29,7 @@ const CHART_ALERT_RULE_KEYS = Object.freeze([
   'old-week-surge-1h',
   'old-week-surge-6h',
   'meteora-surge',
+  'custom-alert',
 ]);
 const WRAPPED_SOL_ADDRESS = 'so11111111111111111111111111111111111111112';
 const USDC_ADDRESS = 'epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v';
@@ -373,6 +374,19 @@ function buildDashboardUserAlertMetricPayload(payload, catalogRow) {
     meteoraCurrentTvl: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'meteoraCurrentTvl')),
     meteoraBaselineTvl24h: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'meteoraBaselineTvl24h')),
     thresholdPct: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'thresholdPct')),
+    customRuleId: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'customRuleId')),
+    customColorHex: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customColorHex')),
+    customTitle: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customTitle')),
+    customMetric: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customMetric')),
+    customOperator: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customOperator')),
+    customTarget: normalizeUserAlertPayloadValue(payload, 'customTarget'),
+    customRepeatMode: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customRepeatMode')),
+    customExpires: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customExpires')),
+    customFilters: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customFilters')),
+    customSoundName: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customSoundName')),
+    customSoundDataUrl: toTextOrNull(normalizeUserAlertPayloadValue(payload, 'customSoundDataUrl')),
+    customCurrentValue: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'customCurrentValue')),
+    customPreviousValue: toNumberOrNull(normalizeUserAlertPayloadValue(payload, 'customPreviousValue')),
     tickerPeers: normalizeTickerPeersSnapshot(normalizeUserAlertPayloadValue(payload, 'tickerPeers')),
   };
 }

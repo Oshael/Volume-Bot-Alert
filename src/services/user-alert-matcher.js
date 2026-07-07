@@ -4,6 +4,7 @@ const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-
 const tokenMeteoraState = require('../models/token-meteora-state');
 const userAlertEvent = require('../models/user-alert-event');
 const userAlertRuleState = require('../models/user-alert-rule-state');
+const userCustomAlertRule = require('../models/user-custom-alert-rule');
 const backendAlertPublisher = require('./backend-alert-publisher');
 const alertTickerPeers = require('./alert-ticker-peers');
 const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
@@ -50,6 +51,7 @@ const GMGN_VOL_1M_ALERT_THRESHOLD_PCT = 50;
 const GMGN_VOL_1M_ALERT_COOLDOWN_MS = 60 * 1000;
 const GMGN_VOL_1M_REPEAT_STEP_PCT = 50;
 const GMGN_VOL_1M_ALERT_ENABLED = false;
+const CUSTOM_ALERT_RULE_KEY = 'custom-alert';
 const MATCHER_RULE_KEYS = Object.freeze([
   'monitored-vol',
   GMGN_VOL_1M_RULE_KEY,
@@ -186,6 +188,77 @@ function buildSharedPayload(tokenAfter, signals) {
     mcap: signals.currentMcap,
     priceChange1h: signals.currentPriceChange1h,
     priceChange6h: signals.currentPriceChange6h,
+  };
+}
+
+function getCustomAlertMetricLabel(metric) {
+  return metric === 'price' ? 'Price' : 'Market Cap';
+}
+
+function getCustomAlertOperatorLabel() {
+  return 'hits';
+}
+
+function getCustomAlertComparableValue(rule, token) {
+  if (rule?.metric === 'price') {
+    return toNumberOrNull(token?.last_price ?? token?.price ?? token?.priceUsd);
+  }
+  return toNumberOrNull(token?.last_mcap ?? token?.mcap ?? token?.marketCap);
+}
+
+function getCustomAlertBaselineValue(rule) {
+  const metadata = rule?.metadata || {};
+  return toNumberOrNull(rule?.metric === 'price' ? metadata.baselinePrice : metadata.baselineMcap);
+}
+
+// "When it hits" semantics: the side the market sat on when the rule was created
+// (or, lacking a baseline, on the previous evaluation) decides the direction, and
+// the rule fires on the first evaluation that reaches the target from that side.
+function didCustomAlertCross(rule, previousValue, currentValue) {
+  const targetValue = toNumberOrNull(rule?.targetValue);
+  if (currentValue == null || !(targetValue > 0)) {
+    return false;
+  }
+
+  const reference = getCustomAlertBaselineValue(rule) ?? toNumberOrNull(previousValue);
+  if (reference == null) {
+    return false;
+  }
+  return reference >= targetValue ? currentValue <= targetValue : currentValue >= targetValue;
+}
+
+function buildCustomAlertPayload(rule, tokenBefore, tokenAfter, currentValue, previousValue) {
+  const address = String(tokenAfter?.address || rule?.tokenAddress || '').trim();
+  const shared = buildSharedPayload(tokenAfter, {
+    prevVolume1m: null,
+    currentVolume1m: null,
+    prevVolume5m: null,
+    currentVolume5m: toNumberOrNull(tokenAfter?.last_vol_5m),
+    volume24h: toNumberOrNull(tokenAfter?.last_vol_24h),
+    prevMcap: toNumberOrNull(tokenBefore?.last_mcap),
+    currentMcap: toNumberOrNull(tokenAfter?.last_mcap),
+    currentPriceChange1h: readPriceChange(tokenAfter, '1h'),
+    currentPriceChange6h: readPriceChange(tokenAfter, '6h'),
+  });
+
+  return {
+    ...shared,
+    address,
+    label: 'CUSTOM',
+    pct: null,
+    customRuleId: rule.id,
+    customColorHex: rule.colorHex,
+    customTitle: rule.title,
+    customMetric: getCustomAlertMetricLabel(rule.metric),
+    customOperator: getCustomAlertOperatorLabel(rule.operator),
+    customTarget: rule.targetValue,
+    customRepeatMode: 'trigger once',
+    customExpires: rule.expiresAt || 'never',
+    customFilters: 'none',
+    customSoundName: rule.soundName,
+    customSoundDataUrl: rule.soundDataUrl,
+    customCurrentValue: currentValue,
+    customPreviousValue: previousValue,
   };
 }
 
@@ -1406,6 +1479,76 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
   }
 }
 
+function buildCustomAlertDedupeKey(rule) {
+  return `${rule.userId}:${CUSTOM_ALERT_RULE_KEY}:${rule.id}:triggered`;
+}
+
+async function emitCustomAlertRule(rule, tokenBefore, tokenAfter, currentValue, previousValue, nowMs, deps) {
+  const client = await deps.db.getClient();
+  let event = null;
+
+  try {
+    await client.query('BEGIN');
+
+    const triggeredRule = await deps.userCustomAlertRule.markTriggered(rule.id, rule.userId, {
+      triggeredAt: new Date(nowMs),
+    }, client);
+    if (!triggeredRule) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    event = await deps.userAlertEvent.createEvent({
+      userId: rule.userId,
+      ruleKey: CUSTOM_ALERT_RULE_KEY,
+      kind: CUSTOM_ALERT_RULE_KEY,
+      tokenAddress: tokenAfter.address,
+      dedupeKey: buildCustomAlertDedupeKey(rule),
+      payload: buildCustomAlertPayload(rule, tokenBefore, tokenAfter, currentValue, previousValue),
+      triggeredAt: new Date(nowMs),
+    }, client);
+
+    await client.query('COMMIT');
+    await deps.backendAlertPublisher.publishEventSafe(event, {
+      logLabel: 'UserAlertMatcher',
+    });
+    return event;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function evaluateCustomAlertRules(tokenBefore, tokenAfter, nowMs, deps, summary) {
+  const rules = await deps.userCustomAlertRule.listActiveByTokenAddress(tokenAfter.address);
+  for (const rule of rules) {
+    try {
+      const previousValue = getCustomAlertComparableValue(rule, tokenBefore);
+      const currentValue = getCustomAlertComparableValue(rule, tokenAfter);
+      if (!didCustomAlertCross(rule, previousValue, currentValue)) {
+        summary.suppressed += 1;
+        continue;
+      }
+
+      const event = await emitCustomAlertRule(rule, tokenBefore, tokenAfter, currentValue, previousValue, nowMs, deps);
+      if (event) {
+        summary.emitted += 1;
+        summary.events.push(event);
+      } else {
+        summary.suppressed += 1;
+      }
+    } catch (error) {
+      summary.errors += 1;
+      console.error(`[UserAlertMatcher] Failed to evaluate custom alert ${rule?.id || 'unknown'} for token ${tokenAfter.address}:`, error.message);
+    }
+  }
+}
+
 function shouldPreserveCooldownOnRearm(ruleKey) {
   return REARM_PRESERVE_COOLDOWN_RULE_KEYS.has(String(ruleKey || '').trim().toLowerCase());
 }
@@ -1621,6 +1764,7 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
     tokenMeteoraState,
     userAlertEvent,
     userAlertRuleState,
+    userCustomAlertRule,
     backendAlertPublisher,
     tokenAlertSignalBuilder,
     userAlertProfileCache,
@@ -1635,6 +1779,13 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
 
   if (!tokenAfter?.address) {
     return summary;
+  }
+
+  try {
+    await evaluateCustomAlertRules(tokenBefore, tokenAfter, nowMs, deps, summary);
+  } catch (error) {
+    summary.errors += 1;
+    console.error(`[UserAlertMatcher] Failed to evaluate custom alert rules for token ${tokenAfter.address}:`, error.message);
   }
 
   const profiles = await deps.userAlertProfileCache.listActiveProfiles({ nowMs });
