@@ -2341,7 +2341,7 @@ type ExpandedChartViewport = {
 };
 const expandedChartViewportByAddress = new Map<string, ExpandedChartViewport>();
 const EXPANDED_CHART_DEBUG_STORAGE_KEY = 'trendscope:expanded-chart-debug';
-const EXPANDED_CHART_DEBUG_REPORT_INTERVAL_MS = 2500;
+const EXPANDED_CHART_DEBUG_SNAPSHOT_STORAGE_KEY = 'trendscope:expanded-chart-debug:last';
 const EXPANDED_CHART_DEBUG_FRAME_GAP_MS = 34;
 
 type ExpandedChartDebugCounters = {
@@ -2367,14 +2367,41 @@ type ExpandedChartDebugSession = {
   count(name: keyof Pick<ExpandedChartDebugCounters, 'rangeChanges' | 'sizeChanges' | 'wheels' | 'pointerUps' | 'liveUpdates'>): void;
   markTiming(name: string, durationMs: number): void;
   recordOverlayRender(durationMs: number, details: { events: number; clusters: number; nodes: number; empty: boolean }): void;
-  flush(reason?: string): void;
+  flush(reason?: string): ExpandedChartDebugSnapshot | null;
   cleanup(): void;
 };
 
 type ExpandedChartDebugWindow = Window & {
   __trendScopeExpandedChartDebug?: {
-    flush(reason?: string): void;
+    flush(reason?: string): ExpandedChartDebugSnapshot | null;
+    read(): ExpandedChartDebugSnapshot | null;
   };
+};
+
+type ExpandedChartDebugSnapshot = {
+  reason: string;
+  capturedAt: string;
+  address: string;
+  granularityMinutes: number;
+  sourceCandles: number;
+  chartCandles: number;
+  timings: Record<string, number>;
+  rangeChanges: number;
+  sizeChanges: number;
+  wheels: number;
+  pointerUps: number;
+  liveUpdates: number;
+  overlayRenders: number;
+  overlayAvgMs: number | null;
+  overlayMaxMs: number | null;
+  overlaySlowRenders: number;
+  overlayEmptyRenders: number;
+  latestOverlay: { events: number; clusters: number; nodes: number };
+  frameGaps: number;
+  maxFrameGapMs: number | null;
+  longTasks: number;
+  longTaskTotalMs: number | null;
+  longTaskMaxMs: number | null;
 };
 
 function isExpandedChartDebugEnabled() {
@@ -2396,6 +2423,14 @@ function roundExpandedChartDebugMetric(value: number, digits = 2) {
   return Number(value.toFixed(digits));
 }
 
+function writeExpandedChartDebugSnapshot(snapshot: ExpandedChartDebugSnapshot) {
+  try {
+    window.localStorage.setItem(EXPANDED_CHART_DEBUG_SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Debug-only persistence should never affect chart interaction.
+  }
+}
+
 function createExpandedChartDebugSession(context: {
   address: string;
   granularityMinutes: number;
@@ -2409,7 +2444,7 @@ function createExpandedChartDebugSession(context: {
       count: () => {},
       markTiming: () => {},
       recordOverlayRender: () => {},
-      flush: () => {},
+      flush: () => null,
       cleanup: () => {},
     };
   }
@@ -2465,10 +2500,11 @@ function createExpandedChartDebugSession(context: {
     longTaskObserver?.disconnect();
   }
 
-  const flush = (reason = 'interval') => {
+  const buildSnapshot = (reason: string): ExpandedChartDebugSnapshot => {
     const overlayAvgMs = counters.overlayRenders > 0 ? counters.overlayTotalMs / counters.overlayRenders : 0;
-    console.info('[ExpandedChartDebug]', {
+    return {
       reason,
+      capturedAt: new Date().toISOString(),
       address: context.address,
       granularityMinutes: context.granularityMinutes,
       sourceCandles: context.sourceCandles,
@@ -2490,15 +2526,17 @@ function createExpandedChartDebugSession(context: {
       longTasks: counters.longTasks,
       longTaskTotalMs: roundExpandedChartDebugMetric(counters.longTaskTotalMs, 2),
       longTaskMaxMs: roundExpandedChartDebugMetric(counters.longTaskMaxMs, 2),
-    });
+    };
   };
-  const interval = window.setInterval(() => flush(), EXPANDED_CHART_DEBUG_REPORT_INTERVAL_MS);
-  (window as ExpandedChartDebugWindow).__trendScopeExpandedChartDebug = { flush };
-
-  console.info('[ExpandedChartDebug] enabled', {
-    disable: `localStorage.removeItem('${EXPANDED_CHART_DEBUG_STORAGE_KEY}')`,
-    context,
-  });
+  const flush = (reason = 'manual') => {
+    const snapshot = buildSnapshot(reason);
+    writeExpandedChartDebugSnapshot(snapshot);
+    return snapshot;
+  };
+  (window as ExpandedChartDebugWindow).__trendScopeExpandedChartDebug = {
+    flush,
+    read: () => buildSnapshot('read'),
+  };
 
   return {
     enabled: true,
@@ -2519,7 +2557,6 @@ function createExpandedChartDebugSession(context: {
     flush,
     cleanup() {
       disposed = true;
-      window.clearInterval(interval);
       window.cancelAnimationFrame(frameRaf);
       longTaskObserver?.disconnect();
       flush('cleanup');
