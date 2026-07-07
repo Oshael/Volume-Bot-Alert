@@ -34,6 +34,7 @@ const LIVE_PRESENCE_HEARTBEAT_MS = 15 * 1000;
 const PERF_DEBUG_SAMPLE_INTERVAL_MS = 10 * 1000;
 const FOREGROUND_STATE_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
 const SESSION_RESTORE_CATCHUP_AUDIO_SUPPRESSION_MS = 15_000;
+const EXPANDED_CHART_DEBUG_STORAGE_KEY = 'trendscope:expanded-chart-debug';
 let pendingState: AppState | null = null;
 let pendingDirtyRegions: Set<AppRenderRegion> | null = null;
 let hiddenPendingState: AppState | null = null;
@@ -87,6 +88,27 @@ function isRuntimePerfDebugActive(state: AppState | null = latestState) {
 
 function formatDirtyRegions(dirtyRegions: ReadonlySet<AppRenderRegion>) {
   return dirtyRegions.has('all') ? 'all' : [...dirtyRegions].sort().join(',');
+}
+
+function isExpandedChartDebugActive() {
+  try {
+    return window.localStorage.getItem(EXPANDED_CHART_DEBUG_STORAGE_KEY) === '1'
+      || new URLSearchParams(window.location.search).get('chartDebug') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function recordExpandedChartAppRender(durationMs: number, dirtyRegions: ReadonlySet<AppRenderRegion>) {
+  if (!isExpandedChartDebugActive()) {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent('trendscope:expanded-chart-app-render', {
+    detail: {
+      durationMs,
+      regions: formatDirtyRegions(dirtyRegions),
+    },
+  }));
 }
 
 function buildRuntimePerfSample(state: AppState) {
@@ -496,7 +518,14 @@ function performRender(
       manual: state.data.manualTokenAddresses.length,
       alerts: state.data.alerts.length,
     },
-    () => renderAppShell(root, state, controller, dirtyRegions),
+    () => {
+      const startedAt = isExpandedChartDebugActive() ? performance.now() : 0;
+      const result = renderAppShell(root, state, controller, dirtyRegions);
+      if (startedAt > 0) {
+        recordExpandedChartAppRender(performance.now() - startedAt, dirtyRegions);
+      }
+      return result;
+    },
   );
 }
 

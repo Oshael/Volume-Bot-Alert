@@ -2357,6 +2357,13 @@ type ExpandedChartDebugCounters = {
   overlayTotalMs: number;
   overlayMaxMs: number;
   liveUpdates: number;
+  liveUpdateTotalMs: number;
+  liveUpdateMaxMs: number;
+  liveUpdateSlowUpdates: number;
+  appRenders: number;
+  appRenderTotalMs: number;
+  appRenderMaxMs: number;
+  appRenderSlowRenders: number;
   frameGaps: number;
   maxFrameGapMs: number;
   longTasks: number;
@@ -2369,8 +2376,14 @@ type ExpandedChartDebugSession = {
   count(name: keyof Pick<ExpandedChartDebugCounters, 'rangeChanges' | 'sizeChanges' | 'wheels' | 'pointerUps' | 'liveUpdates'>): void;
   markTiming(name: string, durationMs: number): void;
   recordOverlayRender(durationMs: number, details: { events: number; clusters: number; nodes: number; empty: boolean }): void;
+  recordLiveUpdate(durationMs: number): void;
   flush(reason?: string): ExpandedChartDebugSnapshot | null;
   cleanup(): void;
+};
+
+type ExpandedChartAppRenderDetail = {
+  durationMs?: number;
+  regions?: string;
 };
 
 type ExpandedChartDebugWindow = Window & {
@@ -2393,6 +2406,14 @@ type ExpandedChartDebugSnapshot = {
   wheels: number;
   pointerUps: number;
   liveUpdates: number;
+  liveUpdateAvgMs: number | null;
+  liveUpdateMaxMs: number | null;
+  liveUpdateSlowUpdates: number;
+  appRenders: number;
+  appRenderAvgMs: number | null;
+  appRenderMaxMs: number | null;
+  appRenderSlowRenders: number;
+  latestAppRender: { durationMs: number | null; regions: string };
   overlayRenders: number;
   overlayAvgMs: number | null;
   overlayMaxMs: number | null;
@@ -2446,6 +2467,7 @@ function createExpandedChartDebugSession(context: {
       count: () => {},
       markTiming: () => {},
       recordOverlayRender: () => {},
+      recordLiveUpdate: () => {},
       flush: () => null,
       cleanup: () => {},
     };
@@ -2462,6 +2484,13 @@ function createExpandedChartDebugSession(context: {
     overlayTotalMs: 0,
     overlayMaxMs: 0,
     liveUpdates: 0,
+    liveUpdateTotalMs: 0,
+    liveUpdateMaxMs: 0,
+    liveUpdateSlowUpdates: 0,
+    appRenders: 0,
+    appRenderTotalMs: 0,
+    appRenderMaxMs: 0,
+    appRenderSlowRenders: 0,
     frameGaps: 0,
     maxFrameGapMs: 0,
     longTasks: 0,
@@ -2470,6 +2499,7 @@ function createExpandedChartDebugSession(context: {
   };
   const timings: Record<string, number> = { normalizeCandlesMs: roundExpandedChartDebugMetric(context.normalizeMs, 2) ?? 0 };
   let latestOverlay = { events: 0, clusters: 0, nodes: 0 };
+  let latestAppRender = { durationMs: null as number | null, regions: '' };
   let lastFrameAt = performance.now();
   let disposed = false;
   let frameRaf = 0;
@@ -2502,8 +2532,27 @@ function createExpandedChartDebugSession(context: {
     longTaskObserver?.disconnect();
   }
 
+  const onAppRender = (event: Event) => {
+    const detail = (event as CustomEvent<ExpandedChartAppRenderDetail>).detail;
+    const durationMs = Number(detail?.durationMs);
+    if (!Number.isFinite(durationMs)) {
+      return;
+    }
+    counters.appRenders += 1;
+    counters.appRenderTotalMs += durationMs;
+    counters.appRenderMaxMs = Math.max(counters.appRenderMaxMs, durationMs);
+    counters.appRenderSlowRenders += durationMs > 16 ? 1 : 0;
+    latestAppRender = {
+      durationMs: roundExpandedChartDebugMetric(durationMs, 2),
+      regions: String(detail?.regions || ''),
+    };
+  };
+  window.addEventListener('trendscope:expanded-chart-app-render', onAppRender);
+
   const buildSnapshot = (reason: string): ExpandedChartDebugSnapshot => {
     const overlayAvgMs = counters.overlayRenders > 0 ? counters.overlayTotalMs / counters.overlayRenders : 0;
+    const liveUpdateAvgMs = counters.liveUpdates > 0 ? counters.liveUpdateTotalMs / counters.liveUpdates : 0;
+    const appRenderAvgMs = counters.appRenders > 0 ? counters.appRenderTotalMs / counters.appRenders : 0;
     return {
       reason,
       capturedAt: new Date().toISOString(),
@@ -2517,6 +2566,14 @@ function createExpandedChartDebugSession(context: {
       wheels: counters.wheels,
       pointerUps: counters.pointerUps,
       liveUpdates: counters.liveUpdates,
+      liveUpdateAvgMs: roundExpandedChartDebugMetric(liveUpdateAvgMs, 2),
+      liveUpdateMaxMs: roundExpandedChartDebugMetric(counters.liveUpdateMaxMs, 2),
+      liveUpdateSlowUpdates: counters.liveUpdateSlowUpdates,
+      appRenders: counters.appRenders,
+      appRenderAvgMs: roundExpandedChartDebugMetric(appRenderAvgMs, 2),
+      appRenderMaxMs: roundExpandedChartDebugMetric(counters.appRenderMaxMs, 2),
+      appRenderSlowRenders: counters.appRenderSlowRenders,
+      latestAppRender,
       overlayRenders: counters.overlayRenders,
       overlayAvgMs: roundExpandedChartDebugMetric(overlayAvgMs, 2),
       overlayMaxMs: roundExpandedChartDebugMetric(counters.overlayMaxMs, 2),
@@ -2556,11 +2613,17 @@ function createExpandedChartDebugSession(context: {
       counters.overlaySlowRenders += durationMs > 16 ? 1 : 0;
       counters.overlayEmptyRenders += details.empty ? 1 : 0;
     },
+    recordLiveUpdate(durationMs) {
+      counters.liveUpdateTotalMs += durationMs;
+      counters.liveUpdateMaxMs = Math.max(counters.liveUpdateMaxMs, durationMs);
+      counters.liveUpdateSlowUpdates += durationMs > 16 ? 1 : 0;
+    },
     flush,
     cleanup() {
       disposed = true;
       window.cancelAnimationFrame(frameRaf);
       longTaskObserver?.disconnect();
+      window.removeEventListener('trendscope:expanded-chart-app-render', onAppRender);
       flush('cleanup');
     },
   };
@@ -3523,6 +3586,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     });
   };
   const onLiveCandle = (event: Event) => {
+    const liveUpdateStartedAt = debug.enabled ? performance.now() : 0;
     const detail = (event as CustomEvent<ExpandedChartLiveCandleDetail>).detail;
     if (detail?.address !== address) {
       return;
@@ -3551,6 +3615,9 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     chartAlertOverlay.upsertCandle(liveCandle);
     if (legend) {
       legend.textContent = formatExpandedChartLegend(liveCandle);
+    }
+    if (debug.enabled) {
+      debug.recordLiveUpdate(performance.now() - liveUpdateStartedAt);
     }
   };
   window.addEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
