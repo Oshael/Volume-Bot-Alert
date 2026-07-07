@@ -2340,6 +2340,192 @@ type ExpandedChartViewport = {
   priceRange: { from: number; to: number } | null;
 };
 const expandedChartViewportByAddress = new Map<string, ExpandedChartViewport>();
+const EXPANDED_CHART_DEBUG_STORAGE_KEY = 'trendscope:expanded-chart-debug';
+const EXPANDED_CHART_DEBUG_REPORT_INTERVAL_MS = 2500;
+const EXPANDED_CHART_DEBUG_FRAME_GAP_MS = 34;
+
+type ExpandedChartDebugCounters = {
+  rangeChanges: number;
+  sizeChanges: number;
+  wheels: number;
+  pointerUps: number;
+  overlayRenders: number;
+  overlayEmptyRenders: number;
+  overlaySlowRenders: number;
+  overlayTotalMs: number;
+  overlayMaxMs: number;
+  liveUpdates: number;
+  frameGaps: number;
+  maxFrameGapMs: number;
+  longTasks: number;
+  longTaskTotalMs: number;
+  longTaskMaxMs: number;
+};
+
+type ExpandedChartDebugSession = {
+  enabled: boolean;
+  count(name: keyof Pick<ExpandedChartDebugCounters, 'rangeChanges' | 'sizeChanges' | 'wheels' | 'pointerUps' | 'liveUpdates'>): void;
+  markTiming(name: string, durationMs: number): void;
+  recordOverlayRender(durationMs: number, details: { events: number; clusters: number; nodes: number; empty: boolean }): void;
+  flush(reason?: string): void;
+  cleanup(): void;
+};
+
+type ExpandedChartDebugWindow = Window & {
+  __trendScopeExpandedChartDebug?: {
+    flush(reason?: string): void;
+  };
+};
+
+function isExpandedChartDebugEnabled() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(EXPANDED_CHART_DEBUG_STORAGE_KEY) === '1'
+      || new URLSearchParams(window.location.search).get('chartDebug') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function roundExpandedChartDebugMetric(value: number, digits = 2) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Number(value.toFixed(digits));
+}
+
+function createExpandedChartDebugSession(context: {
+  address: string;
+  granularityMinutes: number;
+  sourceCandles: number;
+  chartCandles: number;
+  normalizeMs: number;
+}): ExpandedChartDebugSession {
+  if (!isExpandedChartDebugEnabled()) {
+    return {
+      enabled: false,
+      count: () => {},
+      markTiming: () => {},
+      recordOverlayRender: () => {},
+      flush: () => {},
+      cleanup: () => {},
+    };
+  }
+
+  const counters: ExpandedChartDebugCounters = {
+    rangeChanges: 0,
+    sizeChanges: 0,
+    wheels: 0,
+    pointerUps: 0,
+    overlayRenders: 0,
+    overlayEmptyRenders: 0,
+    overlaySlowRenders: 0,
+    overlayTotalMs: 0,
+    overlayMaxMs: 0,
+    liveUpdates: 0,
+    frameGaps: 0,
+    maxFrameGapMs: 0,
+    longTasks: 0,
+    longTaskTotalMs: 0,
+    longTaskMaxMs: 0,
+  };
+  const timings: Record<string, number> = { normalizeCandlesMs: roundExpandedChartDebugMetric(context.normalizeMs, 2) ?? 0 };
+  let latestOverlay = { events: 0, clusters: 0, nodes: 0 };
+  let lastFrameAt = performance.now();
+  let disposed = false;
+  let frameRaf = 0;
+
+  const frameTick = (timestamp: number) => {
+    const gap = timestamp - lastFrameAt;
+    if (gap > EXPANDED_CHART_DEBUG_FRAME_GAP_MS) {
+      counters.frameGaps += 1;
+      counters.maxFrameGapMs = Math.max(counters.maxFrameGapMs, gap);
+    }
+    lastFrameAt = timestamp;
+    if (!disposed) {
+      frameRaf = window.requestAnimationFrame(frameTick);
+    }
+  };
+  frameRaf = window.requestAnimationFrame(frameTick);
+
+  const longTaskObserver = typeof PerformanceObserver !== 'undefined'
+    ? new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        counters.longTasks += 1;
+        counters.longTaskTotalMs += entry.duration;
+        counters.longTaskMaxMs = Math.max(counters.longTaskMaxMs, entry.duration);
+      }
+    })
+    : null;
+  try {
+    longTaskObserver?.observe({ entryTypes: ['longtask'] });
+  } catch {
+    longTaskObserver?.disconnect();
+  }
+
+  const flush = (reason = 'interval') => {
+    const overlayAvgMs = counters.overlayRenders > 0 ? counters.overlayTotalMs / counters.overlayRenders : 0;
+    console.info('[ExpandedChartDebug]', {
+      reason,
+      address: context.address,
+      granularityMinutes: context.granularityMinutes,
+      sourceCandles: context.sourceCandles,
+      chartCandles: context.chartCandles,
+      timings,
+      rangeChanges: counters.rangeChanges,
+      sizeChanges: counters.sizeChanges,
+      wheels: counters.wheels,
+      pointerUps: counters.pointerUps,
+      liveUpdates: counters.liveUpdates,
+      overlayRenders: counters.overlayRenders,
+      overlayAvgMs: roundExpandedChartDebugMetric(overlayAvgMs, 2),
+      overlayMaxMs: roundExpandedChartDebugMetric(counters.overlayMaxMs, 2),
+      overlaySlowRenders: counters.overlaySlowRenders,
+      overlayEmptyRenders: counters.overlayEmptyRenders,
+      latestOverlay,
+      frameGaps: counters.frameGaps,
+      maxFrameGapMs: roundExpandedChartDebugMetric(counters.maxFrameGapMs, 2),
+      longTasks: counters.longTasks,
+      longTaskTotalMs: roundExpandedChartDebugMetric(counters.longTaskTotalMs, 2),
+      longTaskMaxMs: roundExpandedChartDebugMetric(counters.longTaskMaxMs, 2),
+    });
+  };
+  const interval = window.setInterval(() => flush(), EXPANDED_CHART_DEBUG_REPORT_INTERVAL_MS);
+  (window as ExpandedChartDebugWindow).__trendScopeExpandedChartDebug = { flush };
+
+  console.info('[ExpandedChartDebug] enabled', {
+    disable: `localStorage.removeItem('${EXPANDED_CHART_DEBUG_STORAGE_KEY}')`,
+    context,
+  });
+
+  return {
+    enabled: true,
+    count(name) {
+      counters[name] += 1;
+    },
+    markTiming(name, durationMs) {
+      timings[name] = roundExpandedChartDebugMetric(durationMs, 2) ?? 0;
+    },
+    recordOverlayRender(durationMs, details) {
+      latestOverlay = { events: details.events, clusters: details.clusters, nodes: details.nodes };
+      counters.overlayRenders += 1;
+      counters.overlayTotalMs += durationMs;
+      counters.overlayMaxMs = Math.max(counters.overlayMaxMs, durationMs);
+      counters.overlaySlowRenders += durationMs > 16 ? 1 : 0;
+      counters.overlayEmptyRenders += details.empty ? 1 : 0;
+    },
+    flush,
+    cleanup() {
+      disposed = true;
+      window.clearInterval(interval);
+      window.cancelAnimationFrame(frameRaf);
+      longTaskObserver?.disconnect();
+      flush('cleanup');
+    },
+  };
+}
 
 function captureExpandedCandlestickChartViewport() {
   expandedCandlestickChartCaptureViewport?.();
@@ -2735,6 +2921,7 @@ function mountExpandedChartAlertOverlay(
   address: string,
   granularityMinutes: number,
   sessionToken: string | null,
+  debug: ExpandedChartDebugSession,
 ) {
   const overlay = document.createElement('div');
   overlay.className = 'expanded-chart-alert-overlay';
@@ -2866,6 +3053,7 @@ function mountExpandedChartAlertOverlay(
   };
 
   const render = () => {
+    const renderStartedAt = debug.enabled ? performance.now() : 0;
     raf = 0;
     if (disposed) {
       return;
@@ -2873,6 +3061,14 @@ function mountExpandedChartAlertOverlay(
     const events = readChartAlertHistory(address).events;
     if (!events.length) {
       clearEmptyAlertOverlay();
+      if (debug.enabled) {
+        debug.recordOverlayRender(performance.now() - renderStartedAt, {
+          events: 0,
+          clusters: 0,
+          nodes: overlay.childElementCount,
+          empty: true,
+        });
+      }
       return;
     }
     const projected = projectChartAlertMarkers(events, candlePoints, {
@@ -2943,6 +3139,14 @@ function mountExpandedChartAlertOverlay(
         hideTooltip();
       }
     }
+    if (debug.enabled) {
+      debug.recordOverlayRender(performance.now() - renderStartedAt, {
+        events: events.length,
+        clusters: latestClusters.length,
+        nodes: overlay.childElementCount,
+        empty: false,
+      });
+    }
   };
 
   function scheduleRender() {
@@ -2983,6 +3187,22 @@ function mountExpandedChartAlertOverlay(
 
   const scheduleRenderBurstDefault = () => scheduleRenderBurst();
   const scheduleRenderFrame = () => scheduleRender();
+  const onVisibleLogicalRangeChange = () => {
+    debug.count('rangeChanges');
+    scheduleRenderFrame();
+  };
+  const onSizeChange = () => {
+    debug.count('sizeChanges');
+    scheduleRenderFrame();
+  };
+  const onWheel = () => {
+    debug.count('wheels');
+    scheduleRenderFrame();
+  };
+  const onPointerUp = () => {
+    debug.count('pointerUps');
+    scheduleRenderBurstDefault();
+  };
 
   const onChartAlert = (event: Event) => {
     const detail = (event as CustomEvent<ChartAlertEvent>).detail;
@@ -3017,21 +3237,23 @@ function mountExpandedChartAlertOverlay(
     }
   };
 
-  chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleRenderFrame);
-  chart.timeScale().subscribeSizeChange(scheduleRenderFrame);
-  const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleRenderFrame) : null;
+  chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+  chart.timeScale().subscribeSizeChange(onSizeChange);
+  const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onSizeChange) : null;
   resizeObserver?.observe(container);
-  container.addEventListener('wheel', scheduleRenderFrame, { passive: true });
-  container.addEventListener('pointerup', scheduleRenderBurstDefault);
+  container.addEventListener('wheel', onWheel, { passive: true });
+  container.addEventListener('pointerup', onPointerUp);
   window.addEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
   document.addEventListener('pointermove', onDocumentPointerMove, true);
   document.addEventListener('keydown', onDocumentKeydown);
 
   if (sessionToken) {
+    const alertFetchStartedAt = performance.now();
     fetchDashboardChartAlertEvents(address, sessionToken)
       .then((payload) => {
         if (disposed) return;
+        debug.markTiming('fetchAlertMarkersMs', performance.now() - alertFetchStartedAt);
         mergeChartAlertHistory(payload);
         scheduleRenderBurst();
         scheduleExpiry();
@@ -3056,11 +3278,11 @@ function mountExpandedChartAlertOverlay(
       window.cancelAnimationFrame(syncRaf);
       window.clearTimeout(expiryTimer);
       expandedPanel?.classList.remove('is-showing-alert-recap');
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleRenderFrame);
-      chart.timeScale().unsubscribeSizeChange(scheduleRenderFrame);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+      chart.timeScale().unsubscribeSizeChange(onSizeChange);
       resizeObserver?.disconnect();
-      container.removeEventListener('wheel', scheduleRenderFrame);
-      container.removeEventListener('pointerup', scheduleRenderBurstDefault);
+      container.removeEventListener('wheel', onWheel);
+      container.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener(EXPANDED_CHART_ALERT_EVENT, onChartAlert);
       document.removeEventListener('pointerdown', onDocumentPointerDown, true);
       document.removeEventListener('pointermove', onDocumentPointerMove, true);
@@ -3075,17 +3297,30 @@ function mountExpandedChartAlertOverlay(
 async function mountExpandedCandlestickChart(section: ParentNode, state: AppState, sparkline: TokenSparklineEntry, address: string) {
   const container = section.querySelector<HTMLElement>('[data-expanded-candlestick-chart]');
   const legend = section.querySelector<HTMLElement>('[data-expanded-chart-legend]');
+  const normalizeStartedAt = performance.now();
   const data = toLightweightCandles(sparkline);
+  const debug = createExpandedChartDebugSession({
+    address,
+    granularityMinutes: sparkline.granularityMinutes ?? 5,
+    sourceCandles: Array.isArray(sparkline.candles) ? sparkline.candles.length : 0,
+    chartCandles: data.length,
+    normalizeMs: performance.now() - normalizeStartedAt,
+  });
   if (!container || data.length < 2) {
+    debug.cleanup();
     return;
   }
 
   destroyExpandedCandlestickChart();
   const mountId = expandedCandlestickChartMountId;
+  const importStartedAt = performance.now();
   const { CandlestickSeries, ColorType, CrosshairMode, LineStyle, createChart } = await import('lightweight-charts');
+  debug.markTiming('importLightweightChartsMs', performance.now() - importStartedAt);
   if (mountId !== expandedCandlestickChartMountId || !container.isConnected) {
+    debug.cleanup();
     return;
   }
+  const createStartedAt = performance.now();
   const chart = createChart(container, {
     autoSize: true,
     layout: {
@@ -3118,6 +3353,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
     handleScale: { axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true }, mouseWheel: true, pinch: true },
   });
+  debug.markTiming('createChartMs', performance.now() - createStartedAt);
   const candleSeries = chart.addSeries(CandlestickSeries, {
     upColor: '#18c79a',
     downColor: '#ff4f67',
@@ -3126,7 +3362,9 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     wickUpColor: '#18c79a',
     wickDownColor: '#ff4f67',
   });
+  const setDataStartedAt = performance.now();
   candleSeries.setData(data);
+  debug.markTiming('setDataMs', performance.now() - setDataStartedAt);
   const latest = data[data.length - 1];
   const liveMcap = Number(getTrackedToken(state, address)?.mcap);
   const referenceValue = Number.isFinite(liveMcap) && liveMcap > 0 ? liveMcap : latest.close;
@@ -3161,6 +3399,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     address,
     sparkline.granularityMinutes ?? 5,
     state.session.token,
+    debug,
   );
   if (legend) {
     legend.textContent = formatExpandedChartLegend(latest);
@@ -3214,6 +3453,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
       close: normalized.close,
     } satisfies CandlestickData<UTCTimestamp>;
     candleSeries.update(liveCandle);
+    debug.count('liveUpdates');
     referenceLine.applyOptions({
       price: normalized.close,
       color: normalized.close >= normalized.open ? '#18c79a' : '#ff4f67',
@@ -3229,6 +3469,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     chartAlertOverlay.cleanup();
     removePriceScaleWheel();
     chart.remove();
+    debug.cleanup();
   };
 }
 
