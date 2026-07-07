@@ -1,7 +1,17 @@
-﻿import { defineConfig } from 'vite';
+﻿import { fileURLToPath } from 'node:url';
+import { defineConfig } from 'vite';
+
+const lightweightChartsProductionEntry = fileURLToPath(
+  new URL('./node_modules/lightweight-charts/dist/lightweight-charts.production.mjs', import.meta.url),
+);
 
 export default defineConfig({
   envDir: '..',
+  resolve: {
+    alias: {
+      'lightweight-charts': lightweightChartsProductionEntry,
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,
