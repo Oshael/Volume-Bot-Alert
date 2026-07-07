@@ -2470,6 +2470,18 @@ function getChartAlertHeader(event: ChartAlertEvent) {
   return String(event.label || event.kind || 'ALERT').toUpperCase();
 }
 
+function renderChartAlertHeaderIcon(event: ChartAlertEvent) {
+  if (event.ruleKey !== 'surge-continuation-6h') {
+    return '🔥';
+  }
+  return `
+    <svg class="surge-continuation-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M5 19 18 6"></path>
+      <path d="M9 6h9v9"></path>
+    </svg>
+  `;
+}
+
 function getChartAlertMetricLabel(event: ChartAlertEvent) {
   if (event.ruleKey.includes('surge')) return `PCHANGE ${event.surgeWindow || (event.ruleKey.includes('6h') ? '6H' : '1H')}`;
   if (event.ruleKey === 'monitored-vol') return 'VOLUME';
@@ -2668,7 +2680,7 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
   const clusterLabel = cluster.markers.length > 1 ? ` · +${cluster.markers.length - 1}` : '';
   return `
     <div class="expanded-chart-alert-tooltip-head">
-      <strong>🔥 ${escapeHtml(getChartAlertHeader(event))}${escapeHtml(clusterLabel)}</strong>
+      <strong>${renderChartAlertHeaderIcon(event)} ${escapeHtml(getChartAlertHeader(event))}${escapeHtml(clusterLabel)}</strong>
       <time>${escapeHtml(formatChartAlertTimeShort(event))}</time>
     </div>
     <div class="expanded-chart-alert-tooltip-hero">
@@ -6673,7 +6685,7 @@ function renderSurgeThresholdMenu(state: AppState) {
         <span class="config-help-hover" tabindex="0" aria-label="What is Surge alert?">
           <span class="config-help-trigger">?</span>
           <span class="config-help-panel">
-            Surge uses token age and Dex price change. Recent surge covers tokens from 2d up to 7d old, and old surge covers tokens from 7d+. Already-hot tokens are suppressed on startup until a real new crossing happens.
+            Surge uses token age and Dex price change. Recent 1H covers tokens from 1d up to 7d old, recent 6H covers tokens from 2d up to 7d old, and old surge covers tokens from 7d+. Already-hot tokens are suppressed on startup until a real new crossing happens.
           </span>
         </span>
       </label>
@@ -6682,7 +6694,7 @@ function renderSurgeThresholdMenu(state: AppState) {
         <div class="sort-menu-dropdown config-menu-dropdown config-threshold-dropdown">
           <div class="config-threshold-grid">
             <div class="config-threshold-field">
-              <span>Recent 1H (2d-7d)</span>
+              <span>Recent 1H (1d-7d)</span>
               <input type="number" min="0" name="recent-surge-1h-threshold" />
             </div>
             <div class="config-threshold-field">

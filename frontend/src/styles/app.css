@@ -3000,6 +3000,13 @@ body:has(.workspace-topbar)::before {
   white-space: nowrap;
 }
 
+.expanded-chart-alert-tooltip-head .surge-continuation-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+  vertical-align: -4px;
+}
+
 .expanded-chart-alert-tooltip-head time {
   flex: 0 0 auto;
   color: #5b6675;
@@ -11685,15 +11692,15 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-token-row-v68 {
-  grid-template-columns: 42px minmax(0, 1fr) 78px;
+  grid-template-columns: 48px minmax(0, 1fr) 78px;
   gap: 12px !important;
   padding: 12px 12px !important;
 }
 
 .monitored-token-row .tok-avatar,
 .monitored-token-row .tok-avatar-placeholder {
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
 }
 
 .monitored-row-main .panel-row-title {
@@ -12107,7 +12114,7 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .monitored-panel-mini-chart-enabled .monitored-token-row-v68 {
-  grid-template-columns: 36px minmax(0, 1fr) minmax(224px, 312px) 88px;
+  grid-template-columns: 48px minmax(0, 1fr) minmax(224px, 312px) 88px;
   align-items: center;
 }
 
@@ -13520,6 +13527,124 @@ TEMP_LEGACY_BAR_TITLE {
   color: var(--green);
 }
 
+.surge-continuation-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+  vertical-align: -2px;
+  overflow: visible;
+  filter: drop-shadow(0 0 4px rgba(38, 255, 128, 0.45));
+}
+
+.surge-continuation-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.alert-badge-v68.surge-continuation-badge {
+  display: inline-grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 5px;
+  align-items: start;
+  text-align: left;
+  width: 312px;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+.surge-continuation-icon-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 1px;
+}
+
+.surge-continuation-copy {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.surge-continuation-title-row,
+.surge-continuation-sub-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: baseline;
+  column-gap: 6px;
+  min-width: 0;
+}
+
+.surge-continuation-sub-row {
+  grid-template-columns: auto minmax(0, auto) auto;
+  column-gap: 5px;
+  font-size: 10px;
+}
+
+.surge-continuation-title {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surge-continuation-sub-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surge-continuation-window,
+.surge-continuation-sub-pct {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.alert-badge-v68.has-timeframe-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.alert-badge-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.alert-badge-v68 .alert-timeframe-chip.timeframe-6h {
+  background: #ffa028;
+}
+
+.alert-badge-v68.recent-surge .alert-timeframe-chip {
+  background: #22c55e;
+  color: #08130b;
+}
+
+.alert-badge-v68 .alert-timeframe-chip {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: #ff8a00;
+  color: #14100a;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
 .alert-badge-v68.meteora-surge {
   color: #d0a7ff;
 }
@@ -13808,6 +13933,14 @@ TEMP_LEGACY_BAR_TITLE {
 .alert-dismiss-button:hover {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.22);
+}
+
+.alert-grid > .alert-dismiss-button {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  z-index: 2;
 }
 
 .alert-time-v68 {
@@ -14114,6 +14247,11 @@ TEMP_LEGACY_BAR_TITLE {
 .alerts-panel[data-alerts-layout="compact"] .alert-badge-v68,
 .live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-badge-v68 {
   font-size: 13px;
+}
+
+.alerts-panel[data-alerts-layout="compact"] .alert-badge-v68.surge-continuation-badge,
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-badge-v68.surge-continuation-badge {
+  font-size: 11px;
 }
 
 .alerts-panel[data-alerts-layout="compact"] .alert-dismiss-button,

@@ -2016,7 +2016,7 @@ function buildAlertRowContent(
   const chart = buildAlertSparklineBlock(alert.id, alert.address, sparkline);
   const side = document.createElement('div');
   side.className = 'alert-side-v68';
-  side.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id));
+  side.append(buildAlertHeadline(alert, topClass));
   const rail = document.createElement('div');
   rail.className = 'alert-rail-v68';
   rail.append(chart, side);
@@ -2051,7 +2051,7 @@ function buildAlertRowContent(
 
   content.append(main, statsLine, links, actions);
   body.append(content, rail);
-  grid.append(body, time);
+  grid.append(body, time, buildAlertDismissButton(alert.id));
   return grid;
 }
 
@@ -2157,13 +2157,13 @@ function buildAdminReviewAlertRowContent(
 
   const side = document.createElement('div');
   side.className = 'alert-side-v68';
-  side.append(buildAlertHeadline(alert, topClass), buildAlertDismissButton(alert.id, reviewAlertId));
+  side.append(buildAlertHeadline(alert, topClass));
   const rail = document.createElement('div');
   rail.className = 'alert-rail-v68';
   rail.append(side);
 
   body.append(content, rail);
-  grid.append(body, time);
+  grid.append(body, time, buildAlertDismissButton(alert.id, reviewAlertId));
   return grid;
 }
 
@@ -2289,6 +2289,82 @@ function getOldSurgeAlertTitle(alert: AlertEntry, toneClass: string) {
   return toneClass === 'recent-surge' ? 'RECENT TOKEN SURGE' : 'OLD TOKEN SURGE';
 }
 
+function isSurgeContinuation6hAlert(alert: AlertEntry) {
+  return alert.ruleKey === 'surge-continuation-6h';
+}
+
+function buildSurgeContinuationIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('surge-continuation-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  line.setAttribute('d', 'M5 19 18 6');
+
+  const head = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  head.setAttribute('d', 'M9 6h9v9');
+
+  svg.append(line, head);
+  return svg;
+}
+
+function buildOldSurgeAlertHeadline(alert: AlertEntry, toneClass: string) {
+  const surgeTitle = getOldSurgeAlertTitle(alert, toneClass);
+  const badge = document.createElement('span');
+  badge.className = `alert-badge-v68 ${toneClass}`;
+  const surgeWindow = alert.ruleKey === 'surge-continuation-6h'
+    ? null
+    : alert.surgeWindow === '1H' || alert.surgeWindow === '6H' ? alert.surgeWindow : null;
+  if (surgeWindow) {
+    badge.className = `alert-badge-v68 ${toneClass} has-timeframe-chip`;
+    const chip = document.createElement('span');
+    chip.className = `alert-timeframe-chip${surgeWindow === '6H' ? ' timeframe-6h' : ''}`;
+    chip.textContent = surgeWindow === '1H' ? '⚡ 1H' : '6H';
+    const titleRow = document.createElement('span');
+    titleRow.className = 'alert-badge-title-row';
+    titleRow.append(surgeTitle, chip);
+    const subLabel = String(alert.label || 'PCHANGE').replace(/\s*(1H|6H)\s*$/i, '') || 'PCHANGE';
+    badge.append(titleRow, buildAlertBadgeSub(fmtPct(alert.pct), subLabel));
+    return badge;
+  }
+  if (isSurgeContinuation6hAlert(alert)) {
+    badge.className = `alert-badge-v68 ${toneClass} surge-continuation-badge`;
+    const iconCell = document.createElement('span');
+    iconCell.className = 'surge-continuation-icon-cell';
+    iconCell.append(buildSurgeContinuationIcon());
+    const copy = document.createElement('span');
+    copy.className = 'surge-continuation-copy';
+    const titleRow = document.createElement('span');
+    titleRow.className = 'surge-continuation-title-row';
+    const title = document.createElement('span');
+    title.className = 'surge-continuation-title';
+    title.textContent = 'SURGE CONTINUATION';
+    const titleWindow = document.createElement('span');
+    titleWindow.className = 'surge-continuation-window';
+    titleWindow.textContent = '6H';
+    titleRow.append(title, titleWindow);
+    const subRow = document.createElement('span');
+    subRow.className = 'surge-continuation-sub-row';
+    const subPct = document.createElement('span');
+    subPct.className = 'surge-continuation-sub-pct';
+    subPct.textContent = fmtPct(alert.pct);
+    const subLabel = document.createElement('span');
+    subLabel.className = 'surge-continuation-sub-label';
+    subLabel.textContent = 'SURGE CONTINUATION';
+    const subWindow = document.createElement('span');
+    subWindow.className = 'surge-continuation-window';
+    subWindow.textContent = '6H';
+    subRow.append(subPct, subLabel, subWindow);
+    copy.append(titleRow, subRow);
+    badge.append(iconCell, copy);
+    return badge;
+  }
+  badge.append(`🔥 ${surgeTitle}`, document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'PCHANGE')));
+  return badge;
+}
+
 function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
   const badge = document.createElement('span');
   if (alert.kind === 'admin-token-review') {
@@ -2297,10 +2373,7 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
     return badge;
   }
   if (alert.isOldSurge) {
-    const surgeTitle = getOldSurgeAlertTitle(alert, toneClass);
-    badge.className = `alert-badge-v68 ${toneClass}`;
-    badge.append(`🔥 ${surgeTitle}`, document.createElement('br'), buildAlertBadgeSub(fmtPct(alert.pct), String(alert.label || 'PCHANGE')));
-    return badge;
+    return buildOldSurgeAlertHeadline(alert, toneClass);
   }
   if (alert.kind === 'meteora-surge') {
     badge.className = `alert-badge-v68 ${toneClass}`;
