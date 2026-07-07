@@ -1056,6 +1056,7 @@ export function createAppController(): AppController {
   let sparklineRefreshInFlight = false;
   let sparklineRefreshQueued = false;
   const expandedSparklineRequests = new Set<string>();
+  const deferredExpandedSparklineRenderRegions = new Set<AppRenderRegion>();
   let preferredExpandedSparklineGranularityMinutes = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
   let historyBootstrapRefreshInFlight = false;
   let historyBootstrapInFlightRequestKey = '';
@@ -6974,11 +6975,14 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
+    const historySparklineRegions: AppRenderRegion[] = ['top-performers', 'manual', 'monitored', 'recent', 'old-week'];
     if (state.ui.expandedSparklineAddress) {
-      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week', 'overlay');
+      for (const region of historySparklineRegions) {
+        deferredExpandedSparklineRenderRegions.add(region);
+      }
       return;
     }
-    emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
+    emit(...historySparklineRegions);
   }
 
   function buildExpandedSparklineCacheEntry(
@@ -11318,6 +11322,12 @@ export function createAppController(): AppController {
       unsubscribeMarketChart(state.ui.expandedSparklineAddress);
       state.ui.expandedSparklineAddress = null;
       clearWorkspaceSparklineUrl();
+      if (deferredExpandedSparklineRenderRegions.size > 0) {
+        const deferredRegions = [...deferredExpandedSparklineRenderRegions];
+        deferredExpandedSparklineRenderRegions.clear();
+        emit('overlay', ...deferredRegions);
+        return;
+      }
       emit('overlay');
     },
     setExpandedSparklineGranularity(granularityMinutes: number) {
