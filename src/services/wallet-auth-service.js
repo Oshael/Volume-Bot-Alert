@@ -221,7 +221,7 @@ async function verifyExistingWallet({ walletAddress, existingWallet, input, deps
     user,
     wallet: existingWallet,
     snapshot,
-    access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user), snapshot, input.now || new Date(), deps.config || config.tokenGate),
+    access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user, input.now || new Date()), snapshot, input.now || new Date(), deps.config || config.tokenGate),
     mode: 'existing_wallet',
   });
 }
@@ -270,7 +270,7 @@ async function verifyNewWallet({ walletAddress, input, deps, walletModel, snapsh
       user,
       wallet,
       snapshot,
-      access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user), snapshot, checkedAt, deps.config || config.tokenGate),
+      access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user, checkedAt), snapshot, checkedAt, deps.config || config.tokenGate),
       mode: hasTokenAccess ? 'created_wallet_user' : 'created_wallet_discount_user',
     });
   } catch (err) {
@@ -327,7 +327,7 @@ async function refreshLinkedWallet({ user, walletAddress, existingWallet, input,
     user,
     wallet: existingWallet,
     snapshot,
-    access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user), snapshot, input.now || new Date(), deps.config || config.tokenGate),
+    access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user, input.now || new Date()), snapshot, input.now || new Date(), deps.config || config.tokenGate),
     mode: 'wallet_already_linked',
   });
 }
@@ -363,7 +363,7 @@ async function createAuthenticatedWalletLink({ user, walletAddress, input, deps,
       user,
       wallet,
       snapshot,
-      access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user), snapshot, checkedAt, deps.config || config.tokenGate),
+      access: userAccess.mergeTokenAccess(userAccess.buildAccessSnapshot(user, checkedAt), snapshot, checkedAt, deps.config || config.tokenGate),
       mode: 'linked_wallet',
     });
   } catch (err) {
