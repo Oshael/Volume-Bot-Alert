@@ -1,6 +1,6 @@
 export interface AlertEntry {
   id: string;
-  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'gmgn-claim-signal' | 'admin-token-review';
+  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'gmgn-claim-signal' | 'admin-token-review' | 'custom-alert';
   ruleKey?: string | null;
   address: string;
   mintAddress?: string | null;
@@ -44,6 +44,19 @@ export interface AlertEntry {
   meteoraBaselineTvl24h?: number | null;
   pct: number;
   label: string;
+  customColorHex?: string | null;
+  customTitle?: string | null;
+  customMetric?: string | null;
+  customOperator?: string | null;
+  customTarget?: string | number | null;
+  customRepeatMode?: string | null;
+  customExpires?: string | null;
+  customFilters?: string | null;
+  customSoundName?: string | null;
+  customSoundDataUrl?: string | null;
+  customRuleId?: number | null;
+  customCurrentValue?: number | null;
+  customPreviousValue?: number | null;
   surgeWindow?: '1H' | '6H' | null;
   ageBucket?: 'recent' | 'old-week' | null;
   isHvnc?: boolean;
@@ -69,6 +82,34 @@ export interface AlertEntry {
       matchType?: 'exact' | 'subticker' | null;
     }>;
   } | null;
+}
+
+export interface CustomAlertPreviewInput {
+  tokenAddress: string;
+  title: string;
+  metric: string;
+  operator: string;
+  target: string;
+  repeatMode: string;
+  expires: string;
+  colorHex: string;
+  filters: string;
+  soundName: string | null;
+  soundDataUrl: string | null;
+}
+
+export interface CustomAlertRuleEntry {
+  id: number;
+  tokenAddress: string;
+  title: string;
+  metric: 'price' | 'mcap';
+  operator: 'cross_above' | 'cross_below';
+  targetValue: number;
+  colorHex: string | null;
+  soundName: string | null;
+  expiresAt: string | null;
+  status: 'active' | 'triggered' | 'disabled';
+  triggeredAt: string | null;
 }
 
 export interface ManualTokenEntry {
@@ -700,6 +741,7 @@ export interface AppState {
     mockTradingTradesByAddress: Record<string, MockTradingTradeEntry[]>;
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
+    customAlertRules: CustomAlertRuleEntry[];
     pumpTokens: PumpTokenEntry[];
     recentPumpMigrations: PumpMigrationEntry[];
     pumpToasts: PumpToastEntry[];
@@ -728,6 +770,14 @@ export interface AppState {
     oldWeekSearchPending: boolean;
     expandedSparklineAddress: string | null;
     expandedSparklineGranularityMinutes: number;
+    sparklineRange: {
+      global: boolean;
+      globalDays: number;
+      monitoredDays: number;
+      recentDays: number;
+      oldWeekDays: number;
+      tokenDaysByAddress: Record<string, number>;
+    };
     activeMockTradingWalletId: number | null;
     mockTradingTicket: MockTradingTicketState | null;
     floatingQuickBuy: FloatingQuickBuyState;
@@ -891,6 +941,7 @@ export function createAppState(): AppState {
       mockTradingTradesByAddress: {},
       bidZoneTokens: [],
       alerts: [],
+      customAlertRules: [],
       pumpTokens: [],
       recentPumpMigrations: [],
       pumpToasts: [],
@@ -919,6 +970,14 @@ export function createAppState(): AppState {
       oldWeekSearchPending: false,
       expandedSparklineAddress: null,
       expandedSparklineGranularityMinutes: 5,
+      sparklineRange: {
+        global: true,
+        globalDays: 14,
+        monitoredDays: 14,
+        recentDays: 14,
+        oldWeekDays: 14,
+        tokenDaysByAddress: {},
+      },
       activeMockTradingWalletId: null,
       mockTradingTicket: null,
       floatingQuickBuy: {

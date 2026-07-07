@@ -43,6 +43,10 @@ const ALERT_PATTERNS: Partial<Record<AlertEntry['kind'], ToneStep[]>> = {
     { frequency: 1760, durationMs: 180 },
     { frequency: 1174.66, durationMs: 260 },
   ],
+  'custom-alert': [
+    { frequency: 659.25, durationMs: 110 },
+    { frequency: 880, durationMs: 160 },
+  ],
 };
 
 const MIGRATE_PATTERN: ToneStep[] = [
@@ -144,6 +148,12 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
     return 'skipped' as const;
   }
 
+  return playAudioSource(asset.dataUrl, options?.volume);
+}
+
+async function playAudioSource(dataUrl: string, volume?: number) {
+  if (!dataUrl || typeof window === 'undefined') return 'skipped' as const;
+
   const cleanup = (audio: HTMLAudioElement) => {
     activeCustomAudioElements.delete(audio);
     audio.onended = null;
@@ -151,9 +161,9 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
   };
 
   try {
-    const audio = new Audio(asset.dataUrl);
+    const audio = new Audio(dataUrl);
     audio.preload = 'auto';
-    audio.volume = clampVolume(options?.volume ?? DEFAULT_ALERT_SOUND_VOLUME);
+    audio.volume = clampVolume(volume ?? DEFAULT_ALERT_SOUND_VOLUME);
     activeCustomAudioElements.add(audio);
     audio.onended = () => cleanup(audio);
     audio.onerror = () => cleanup(audio);
@@ -161,7 +171,7 @@ async function playCustomSound(slot: CustomSoundSlot, options?: { volume?: numbe
     return 'played' as const;
   } catch {
     for (const audio of activeCustomAudioElements) {
-      if (audio.src === asset.dataUrl) {
+      if (audio.src === dataUrl) {
         cleanup(audio);
       }
     }
@@ -196,17 +206,13 @@ export async function playAlertSound(
   alert: AlertEntry,
   options?: { enabled?: boolean; volume?: number; scope?: string; configs?: Record<string, string | number> },
 ): Promise<AlertSoundPlaybackResult> {
-  if (alert.kind === 'admin-token-review') {
+  if (shouldSkipAlertSound(alert, options)) {
     return 'skipped';
   }
 
-  if (options?.enabled === false) {
-    return 'skipped';
-  }
-
-  const configKey = resolveAlertSoundConfigKey(alert);
-  if (configKey && String(options?.configs?.[configKey] ?? 'on') === 'off') {
-    return 'skipped';
+  const customAlertResult = await playInlineCustomAlertSound(alert, options?.volume);
+  if (customAlertResult) {
+    return customAlertResult;
   }
 
   const slot = resolveAlertSoundSlot(alert);
@@ -229,6 +235,30 @@ export async function playAlertSound(
   }
 
   return customResult === 'blocked' ? 'blocked' : patternResult;
+}
+
+function shouldSkipAlertSound(
+  alert: AlertEntry,
+  options?: { enabled?: boolean; configs?: Record<string, string | number> },
+) {
+  if (alert.kind === 'admin-token-review' || options?.enabled === false) {
+    return true;
+  }
+
+  const configKey = resolveAlertSoundConfigKey(alert);
+  if (configKey && String(options?.configs?.[configKey] ?? 'on') === 'off') {
+    return true;
+  }
+
+  return false;
+}
+
+async function playInlineCustomAlertSound(alert: AlertEntry, volume?: number) {
+  if (alert.customSoundDataUrl) {
+    return playAudioSource(alert.customSoundDataUrl, volume);
+  }
+
+  return null;
 }
 
 export async function playMigrateSound(options?: { enabled?: boolean; volume?: number }): Promise<AlertSoundPlaybackResult> {

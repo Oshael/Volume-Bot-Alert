@@ -1,4 +1,4 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import {
   changePassword as changePasswordRequest,
@@ -57,7 +57,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -229,6 +229,11 @@ const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_AGE_5M_MAX_MS = 72 * 60 * 60 * 1000;
 const SPARKLINE_AGE_15M_MAX_MS = 11 * 24 * 60 * 60 * 1000;
 const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 30;
+const SPARKLINE_RANGE_MIN_DAYS = 1;
+const SPARKLINE_RANGE_MAX_DAYS = 14;
+const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
+const SPARKLINE_RANGE_DAY_MS = 24 * 60 * 60 * 1000;
+const SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX = 250;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
 const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
@@ -342,9 +347,12 @@ type HistoryPeerState = {
 };
 
 type SparklineBatchRequest = {
+  hours: number;
   granularityMinutes: number;
   addresses: string[];
 };
+
+type SparklineRangeScope = 'monitored' | 'recent' | 'oldWeek';
 
 type HistoryBootstrapRefreshOptions = {
   token?: string;
@@ -466,6 +474,11 @@ export interface AppController {
   dismissOldWeekToken(address: string): void;
   clearAllAlerts(): void;
   removeAlert(id: string): void;
+  previewCustomAlert(input: CustomAlertPreviewInput): void;
+  createCustomAlert(input: CustomAlertPreviewInput): Promise<void>;
+  loadCustomAlertRules(): Promise<void>;
+  updateCustomAlert(ruleId: number, input: CustomAlertPreviewInput): Promise<void>;
+  disableCustomAlert(ruleId: number): Promise<void>;
   openExpandedSparkline(address: string): void;
   openAlertExpandedSparkline(alertId: string, address: string): void;
   closeExpandedSparkline(): void;
@@ -489,6 +502,10 @@ export interface AppController {
   setMonitoredPerPage(perPage: number): void;
   setRecentPerPage(perPage: number): void;
   setOldWeekPerPage(perPage: number): void;
+  setSparklineRangeDays(scope: SparklineRangeScope, days: number): void;
+  setSparklineRangeGlobal(enabled: boolean, scope: SparklineRangeScope): void;
+  setTokenSparklineRangeDays(address: string, days: number): void;
+  resetTokenSparklineRangeDays(address: string): void;
   setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
@@ -3408,6 +3425,57 @@ export function createAppController(): AppController {
     state.ui.expandedSparklineGranularityMinutes = preferredExpandedSparklineGranularityMinutes;
   }
 
+  function normalizeSparklineRangeDays(days: unknown, fallback = SPARKLINE_RANGE_DEFAULT_DAYS) {
+    const parsed = Math.round(Number(days));
+    const fallbackDays = Math.round(Number(fallback));
+    const safeFallback = Number.isFinite(fallbackDays)
+      ? Math.min(SPARKLINE_RANGE_MAX_DAYS, Math.max(SPARKLINE_RANGE_MIN_DAYS, fallbackDays))
+      : SPARKLINE_RANGE_DEFAULT_DAYS;
+    return Number.isFinite(parsed)
+      ? Math.min(SPARKLINE_RANGE_MAX_DAYS, Math.max(SPARKLINE_RANGE_MIN_DAYS, parsed))
+      : safeFallback;
+  }
+
+  function normalizeSparklineRangeTokenDays(input: unknown) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return {};
+    }
+
+    const next: Record<string, number> = {};
+    for (const [rawAddress, rawDays] of Object.entries(input).slice(0, SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX)) {
+      const address = String(rawAddress || '').trim();
+      if (!address) {
+        continue;
+      }
+      next[address] = normalizeSparklineRangeDays(rawDays);
+    }
+    return next;
+  }
+
+  function pruneSparklineRangeTokenDays(input: Record<string, number>) {
+    return Object.fromEntries(
+      Object.entries(input)
+        .filter(([address]) => Boolean(String(address || '').trim()))
+        .slice(-SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX)
+        .map(([address, days]) => [address, normalizeSparklineRangeDays(days)]),
+    );
+  }
+
+  function normalizeSparklineRange(input: unknown): AppState['ui']['sparklineRange'] {
+    const source = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Partial<UiPrefsPayload['sparklineRange']>
+      : null;
+    const defaults = createAppState().ui.sparklineRange;
+    return {
+      global: source?.global == null ? defaults.global : Boolean(source.global),
+      globalDays: normalizeSparklineRangeDays(source?.globalDays, defaults.globalDays),
+      monitoredDays: normalizeSparklineRangeDays(source?.monitoredDays, defaults.monitoredDays),
+      recentDays: normalizeSparklineRangeDays(source?.recentDays, defaults.recentDays),
+      oldWeekDays: normalizeSparklineRangeDays(source?.oldWeekDays, defaults.oldWeekDays),
+      tokenDaysByAddress: normalizeSparklineRangeTokenDays(source?.tokenDaysByAddress),
+    };
+  }
+
   function buildUiPrefsPayload(): UiPrefsPayload {
     return {
       collapsed: {
@@ -3430,6 +3498,14 @@ export function createAppController(): AppController {
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
       expandedSparklineGranularityMinutes: preferredExpandedSparklineGranularityMinutes,
+      sparklineRange: {
+        global: Boolean(state.ui.sparklineRange.global),
+        globalDays: normalizeSparklineRangeDays(state.ui.sparklineRange.globalDays),
+        monitoredDays: normalizeSparklineRangeDays(state.ui.sparklineRange.monitoredDays),
+        recentDays: normalizeSparklineRangeDays(state.ui.sparklineRange.recentDays),
+        oldWeekDays: normalizeSparklineRangeDays(state.ui.sparklineRange.oldWeekDays),
+        tokenDaysByAddress: pruneSparklineRangeTokenDays(state.ui.sparklineRange.tokenDaysByAddress),
+      },
       enabledTradeTerminals: [...state.ui.enabledTradeTerminals],
       livePanelLayout: {
         order: [...state.ui.livePanelLayout.order],
@@ -3757,7 +3833,7 @@ export function createAppController(): AppController {
     }, 120);
   }
 
-  function applyUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
+  function applyCollapsedUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
     const defaults = getDefaultCollapsedSections();
     const collapsed = uiPrefs?.collapsed || defaults;
     state.ui.collapsed = {
@@ -3769,12 +3845,9 @@ export function createAppController(): AppController {
       bidZone: Boolean(collapsed.bidZone),
       pumpfun: Boolean(collapsed.pumpfun),
     };
+  }
 
-    state.ui.manualStarredOnly = Boolean(uiPrefs?.manualStarredOnly);
-    state.ui.manualFolderDeleteWarningDismissed = Boolean(uiPrefs?.manualFolderDeleteWarningDismissed);
-    state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
-    state.ui.oldWeekStarredOnly = Boolean(uiPrefs?.oldWeekStarredOnly);
-
+  function applyPaginationUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
     state.ui.monitoredPerPage = normalizeUiPerPage(uiPrefs?.monitoredPerPage, 30);
     state.ui.recentPerPage = normalizeUiPerPage(
       uiPrefs?.recentPerPage,
@@ -3784,12 +3857,25 @@ export function createAppController(): AppController {
       uiPrefs?.oldWeekPerPage,
       getConfigNumber('old-week-per-page', state.ui.oldWeekPerPage || ROUTED_BUCKET_DEFAULT_PER_PAGE),
     );
+  }
 
+  function applySortUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
     state.ui.manualSorts = normalizeBucketSorts(uiPrefs?.manualSorts, 'manual');
     state.ui.recentSorts = normalizeBucketSorts(uiPrefs?.recentSorts, 'recent');
     state.ui.oldWeekSorts = normalizeBucketSorts(uiPrefs?.oldWeekSorts, 'old-week');
     state.ui.monitoredSorts = normalizeMonitoredSorts(uiPrefs?.monitoredSorts);
+  }
+
+  function applyUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
+    applyCollapsedUiPreferences(uiPrefs);
+    state.ui.manualStarredOnly = Boolean(uiPrefs?.manualStarredOnly);
+    state.ui.manualFolderDeleteWarningDismissed = Boolean(uiPrefs?.manualFolderDeleteWarningDismissed);
+    state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
+    state.ui.oldWeekStarredOnly = Boolean(uiPrefs?.oldWeekStarredOnly);
+    applyPaginationUiPreferences(uiPrefs);
+    applySortUiPreferences(uiPrefs);
     applyExpandedSparklineUiPreferences(uiPrefs);
+    state.ui.sparklineRange = normalizeSparklineRange(uiPrefs?.sparklineRange);
     state.ui.enabledTradeTerminals = normalizeTradeTerminals(uiPrefs?.enabledTradeTerminals);
     state.ui.livePanelLayout = normalizeLivePanelLayout(uiPrefs?.livePanelLayout);
     syncRoutedPagination();
@@ -5437,6 +5523,53 @@ export function createAppController(): AppController {
     };
   }
 
+  function buildBackendCustomAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
+    const address = String(event.address || '').trim();
+    if (!address) {
+      return null;
+    }
+
+    const eventId = Number(event.id);
+    if (!Number.isFinite(eventId) || eventId <= 0) {
+      return null;
+    }
+
+    return {
+      id: `backend:custom-alert:${eventId}`,
+      kind: 'custom-alert',
+      ruleKey: toOptionalText(event.ruleKey) || 'custom-alert',
+      address,
+      mintAddress: address,
+      createdAt: getBackendAlertCreatedAt(event.triggeredAt),
+      label: toOptionalText(event.label) || 'CUSTOM',
+      tickerPeers: event.tickerPeers ?? null,
+      ...buildBackendAlertMetaFields(event, address),
+      priceChange1h: toOptionalNumber(event.priceChange1h),
+      priceChange6h: toOptionalNumber(event.priceChange6h),
+      volume1m: toOptionalNumber(event.volume1m),
+      volume5m: toOptionalNumber(event.volume5m),
+      volume1h: toOptionalNumber(event.volume1h),
+      volume6h: toOptionalNumber(event.volume6h),
+      volume24h: toOptionalNumber(event.volume24h),
+      prevMcap: toOptionalNumber(event.prevMcap),
+      mcap: toOptionalNumber(event.mcap),
+      pct: toOptionalNumber(event.pct) ?? 0,
+      customRuleId: toOptionalNumber(event.customRuleId),
+      customColorHex: toOptionalText(event.customColorHex),
+      customTitle: toOptionalText(event.customTitle),
+      customMetric: toOptionalText(event.customMetric),
+      customOperator: toOptionalText(event.customOperator),
+      customTarget: event.customTarget ?? null,
+      customRepeatMode: toOptionalText(event.customRepeatMode),
+      customExpires: toOptionalText(event.customExpires),
+      customFilters: toOptionalText(event.customFilters),
+      customSoundName: toOptionalText(event.customSoundName),
+      customSoundDataUrl: toOptionalText(event.customSoundDataUrl),
+      customCurrentValue: toOptionalNumber(event.customCurrentValue),
+      customPreviousValue: toOptionalNumber(event.customPreviousValue),
+    };
+  }
+
   function buildBackendSurgeAlertEntry(event: DashboardAlertEvent): AlertEntry | null {
     const address = String(event.address || '').trim();
     if (!address) {
@@ -5499,9 +5632,192 @@ export function createAppController(): AppController {
         return buildBackendSurgeAlertEntry(event);
       case 'meteora-surge':
         return buildBackendSimpleAlertEntry(event, 'meteora-surge');
+      case 'custom-alert':
+        return buildBackendCustomAlertEntry(event);
       default:
         return null;
     }
+  }
+
+  function firstCustomPreviewText(...values: unknown[]) {
+    for (const value of values) {
+      const text = String(value ?? '').trim();
+      if (text) return text;
+    }
+    return '';
+  }
+
+  function customPreviewValue<T>(value: T | null | undefined) {
+    return value ?? null;
+  }
+
+  function buildCustomAlertPreviewIdentity(address: string, tracked: ManualTokenEntry | null) {
+    const symbol = firstCustomPreviewText(tracked?.symbol, tracked?.label, address.slice(0, 8));
+    return {
+      address,
+      mintAddress: firstCustomPreviewText(tracked?.mintAddress, address),
+      pairAddress: customPreviewValue(tracked?.pairAddress),
+      symbol,
+      name: firstCustomPreviewText(tracked?.name, tracked?.label, 'Custom alert preview'),
+      pairUrl: customPreviewValue(tracked?.pairUrl),
+      imageUrl: customPreviewValue(tracked?.imageUrl),
+      twitterUrl: customPreviewValue(tracked?.twitterUrl),
+      communityUrl: customPreviewValue(tracked?.communityUrl),
+    };
+  }
+
+  function buildCustomAlertPreviewMetrics(tracked: ManualTokenEntry | null) {
+    return {
+      tokenCreatedAt: tracked?.createdAt ?? tracked?.catalogFirstSeenAt ?? null,
+      priceChange1h: customPreviewValue(tracked?.priceChange1h),
+      priceChange6h: customPreviewValue(tracked?.priceChange6h),
+      volume5m: customPreviewValue(tracked?.volume5m),
+      volume1h: customPreviewValue(tracked?.volume1h),
+      volume6h: customPreviewValue(tracked?.volume6h),
+      volume24h: customPreviewValue(tracked?.volume24h),
+      prevMcap: customPreviewValue(tracked?.prevMcap),
+      mcap: customPreviewValue(tracked?.mcap),
+    };
+  }
+
+  function buildCustomAlertPreviewFields(input: CustomAlertPreviewInput) {
+    return {
+      customColorHex: input.colorHex,
+      customTitle: input.title,
+      customMetric: input.metric,
+      customOperator: input.operator,
+      customTarget: input.target,
+      customRepeatMode: input.repeatMode,
+      customExpires: input.expires,
+      customFilters: input.filters,
+      customSoundName: input.soundName,
+      customSoundDataUrl: input.soundDataUrl,
+    };
+  }
+
+  function buildCustomAlertPreviewEntry(input: CustomAlertPreviewInput, address: string, now: number): AlertEntry {
+    const tracked = state.data.trackedTokensByAddress[address] || null;
+    return {
+      id: `custom-preview:${now}:${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'custom-alert',
+      ruleKey: 'custom-token-alert-preview',
+      createdAt: now,
+      pct: 0,
+      label: 'CUSTOM',
+      ...buildCustomAlertPreviewIdentity(address, tracked),
+      ...buildCustomAlertPreviewMetrics(tracked),
+      ...buildCustomAlertPreviewFields(input),
+    };
+  }
+
+  function getCustomAlertBackendMetric(metric: string): 'price' | 'mcap' {
+    return String(metric || '').trim().toLowerCase() === 'price' ? 'price' : 'mcap';
+  }
+
+  function parseCustomAlertTargetValue(value: string) {
+    const text = String(value || '').trim().replace(/[$,\s]/g, '');
+    const shorthand = /^(\d+(?:\.\d+)?)([kmb])$/i.exec(text);
+    const multipliers: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
+    const parsed = shorthand
+      ? Number(shorthand[1]) * multipliers[shorthand[2].toLowerCase()]
+      : Number(text);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  function requireCustomAlertSessionToken() {
+    const token = state.session.token;
+    if (!token || !isAuthenticatedSession()) {
+      throw new Error('Sign in before saving a custom alert.');
+    }
+    return token;
+  }
+
+  function parseCustomAlertExpiresInHours(value: string): number | null | undefined {
+    const text = String(value || '').trim().toLowerCase();
+    if (text === 'keep') return undefined;
+    if (!text || text === 'never') return null;
+    const hours = Number(text);
+    return Number.isFinite(hours) && hours > 0 ? hours : null;
+  }
+
+  function buildCustomAlertRulePayload(input: CustomAlertPreviewInput) {
+    const targetValue = parseCustomAlertTargetValue(input.target);
+    if (targetValue == null) {
+      throw new Error('Custom alert target must be greater than 0.');
+    }
+
+    const payload: CreateCustomAlertRulePayload = {
+      tokenAddress: input.tokenAddress,
+      title: input.title,
+      metric: getCustomAlertBackendMetric(input.metric),
+      operator: input.operator === 'cross_below' ? 'cross_below' : 'cross_above',
+      targetValue,
+      colorHex: input.colorHex,
+      soundName: input.soundName,
+      soundDataUrl: input.soundDataUrl,
+    };
+    const expiresInHours = parseCustomAlertExpiresInHours(input.expires);
+    if (expiresInHours !== undefined) {
+      payload.expiresInHours = expiresInHours;
+    }
+    return payload;
+  }
+
+  async function createCustomAlertRule(input: CustomAlertPreviewInput) {
+    const token = requireCustomAlertSessionToken();
+    const response = await createCustomAlertRuleRequest(buildCustomAlertRulePayload(input), token);
+    upsertCustomAlertRuleEntry(response.rule);
+    return response;
+  }
+
+  function mapCustomAlertRuleEntry(rule: CustomAlertRule): CustomAlertRuleEntry | null {
+    const id = Number(rule?.id);
+    const tokenAddress = String(rule?.tokenAddress || '').trim();
+    if (!Number.isFinite(id) || id <= 0 || !tokenAddress) {
+      return null;
+    }
+    return {
+      id,
+      tokenAddress,
+      title: String(rule.title || 'Custom alert'),
+      metric: rule.metric === 'price' ? 'price' : 'mcap',
+      operator: rule.operator === 'cross_below' ? 'cross_below' : 'cross_above',
+      targetValue: Number(rule.targetValue) || 0,
+      colorHex: rule.colorHex ?? null,
+      soundName: rule.soundName ?? null,
+      expiresAt: rule.expiresAt ?? null,
+      status: rule.status === 'triggered' ? 'triggered' : rule.status === 'disabled' ? 'disabled' : 'active',
+      triggeredAt: rule.triggeredAt ?? null,
+    };
+  }
+
+  function upsertCustomAlertRuleEntry(rule: CustomAlertRule) {
+    const mapped = mapCustomAlertRuleEntry(rule);
+    if (!mapped) {
+      return;
+    }
+    state.data.customAlertRules = [
+      mapped,
+      ...state.data.customAlertRules.filter((item) => item.id !== mapped.id),
+    ].filter((item) => item.status !== 'disabled');
+  }
+
+  async function refreshCustomAlertRules() {
+    const token = state.session.token;
+    if (!token || !isAuthenticatedSession()) {
+      return;
+    }
+    const payload = await fetchCustomAlertRulesRequest(token);
+    const nextRules = (Array.isArray(payload.rules) ? payload.rules : [])
+      .map(mapCustomAlertRuleEntry)
+      .filter((rule): rule is CustomAlertRuleEntry => Boolean(rule) && rule?.status !== 'disabled');
+    const changed = JSON.stringify(nextRules) !== JSON.stringify(state.data.customAlertRules);
+    state.data.customAlertRules = nextRules;
+    emit('alerts');
+    if (changed && state.ui.expandedSparklineAddress) {
+      emit('overlay');
+    }
+    flushEmit();
   }
 
   function syncBackendAlertEvents(events: DashboardAlertEvent[] = []) {
@@ -6300,10 +6616,10 @@ export function createAppController(): AppController {
       .filter(Boolean);
   }
 
-  function getVisibleRoutedHistorySparklineAddresses() {
+  function getVisibleRoutedHistorySparklineAddressScopes() {
     const recentAddresses = state.data.recentTokenAddresses.filter(Boolean);
     const oldWeekAddresses = state.data.oldWeekTokenAddresses.filter(Boolean);
-    const selected = [];
+    const selected: Array<{ address: string; scope: SparklineRangeScope }> = [];
     const seen = new Set();
     const maxLength = Math.max(recentAddresses.length, oldWeekAddresses.length);
 
@@ -6311,7 +6627,7 @@ export function createAppController(): AppController {
       const recentAddress = recentAddresses[index];
       if (recentAddress && !seen.has(recentAddress)) {
         seen.add(recentAddress);
-        selected.push(recentAddress);
+        selected.push({ address: recentAddress, scope: 'recent' });
       }
 
       if (selected.length >= SPARKLINE_VISIBLE_LIMIT_TOTAL) {
@@ -6321,79 +6637,106 @@ export function createAppController(): AppController {
       const oldWeekAddress = oldWeekAddresses[index];
       if (oldWeekAddress && !seen.has(oldWeekAddress)) {
         seen.add(oldWeekAddress);
-        selected.push(oldWeekAddress);
+        selected.push({ address: oldWeekAddress, scope: 'oldWeek' });
       }
     }
 
     return selected;
   }
 
-  function resolveSparklineGranularityMinutes(anchorAt?: number | null, referenceTs = Date.now()) {
-    const anchorAtMs = Number(anchorAt);
-    if (!Number.isFinite(anchorAtMs) || anchorAtMs <= 0 || anchorAtMs > referenceTs) {
-      return SPARKLINE_GRANULARITY_FALLBACK_MINUTES;
-    }
-
-    const ageMs = Math.max(0, referenceTs - anchorAtMs);
-    if (ageMs < SPARKLINE_AGE_1M_MAX_MS) {
-      return 1;
-    }
-    if (ageMs < SPARKLINE_AGE_5M_MAX_MS) {
-      return 5;
-    }
-    if (ageMs < SPARKLINE_AGE_15M_MAX_MS) {
-      return 15;
-    }
-    return 30;
+  function getTokenSparklineRangeDays(address: string) {
+    const normalizedAddress = String(address || '').trim();
+    const days = normalizedAddress ? state.ui.sparklineRange.tokenDaysByAddress[normalizedAddress] : null;
+    return Number.isFinite(Number(days)) ? normalizeSparklineRangeDays(days) : null;
   }
 
-  function getVisibleWorkspaceSparklineAddresses() {
+  function getSparklineRangeDays(scope: SparklineRangeScope, address?: string) {
+    const tokenDays = address ? getTokenSparklineRangeDays(address) : null;
+    if (tokenDays != null) {
+      return tokenDays;
+    }
+
+    const range = state.ui.sparklineRange;
+    if (range.global) {
+      return normalizeSparklineRangeDays(range.globalDays);
+    }
+    if (scope === 'recent') {
+      return normalizeSparklineRangeDays(range.recentDays);
+    }
+    if (scope === 'oldWeek') {
+      return normalizeSparklineRangeDays(range.oldWeekDays);
+    }
+    return normalizeSparklineRangeDays(range.monitoredDays);
+  }
+
+  function resolveSparklineGranularityMinutes(anchorAt: number | null | undefined, rangeDays: number, referenceTs = Date.now()) {
+    const rangeMs = normalizeSparklineRangeDays(rangeDays) * SPARKLINE_RANGE_DAY_MS;
+    const anchorAtMs = Number(anchorAt);
+    if (!Number.isFinite(anchorAtMs) || anchorAtMs <= 0 || anchorAtMs > referenceTs) {
+      const fallbackDays = Math.ceil(rangeMs / SPARKLINE_RANGE_DAY_MS);
+      return fallbackDays <= 1 ? 1 : 5;
+    }
+
+    const effectiveMs = Math.max(0, Math.min(referenceTs - anchorAtMs, rangeMs));
+    const effectiveDays = Math.max(1, Math.ceil(effectiveMs / SPARKLINE_RANGE_DAY_MS));
+    return effectiveDays <= 1 ? 1 : 5;
+  }
+
+  function getVisibleWorkspaceSparklineAddressScopes() {
     if (isLiveWorkspace()) {
-      const selected = [];
+      const selected: Array<{ address: string; scope: SparklineRangeScope }> = [];
       const seen = new Set<string>();
-      for (const address of [
-        ...getVisibleMonitoredSparklineAddresses(),
-        ...getVisibleManualSparklineAddresses(),
-      ]) {
+      for (const address of getVisibleMonitoredSparklineAddresses()) {
         if (!address || seen.has(address)) {
           continue;
         }
         seen.add(address);
-        selected.push(address);
+        selected.push({ address, scope: 'monitored' });
+      }
+      for (const address of getVisibleManualSparklineAddresses()) {
+        if (!address || seen.has(address)) {
+          continue;
+        }
+        seen.add(address);
+        selected.push({ address, scope: 'monitored' });
       }
       return selected;
     }
     if (isHistoryWorkspace()) {
-      return getVisibleRoutedHistorySparklineAddresses();
+      return getVisibleRoutedHistorySparklineAddressScopes();
     }
     return [];
   }
 
   function getVisibleWorkspaceSparklineBatches(referenceTs = Date.now()) {
-    const grouped = new Map<number, string[]>();
-    const selectedAddresses = getVisibleWorkspaceSparklineAddresses();
+    const grouped = new Map<string, SparklineBatchRequest>();
+    const selectedAddresses = getVisibleWorkspaceSparklineAddressScopes();
 
-    for (const address of selectedAddresses) {
+    for (const { address, scope } of selectedAddresses) {
       const trackedToken = getTrackedToken(state, address);
       const sparklineAnchorAt = trackedToken?.catalogFirstSeenAt ?? trackedToken?.createdAt ?? null;
-      const granularityMinutes = resolveSparklineGranularityMinutes(sparklineAnchorAt, referenceTs);
-      const batch = grouped.get(granularityMinutes);
-      if (batch?.includes(address)) {
+      const rangeDays = getSparklineRangeDays(scope, address);
+      const hours = rangeDays * 24;
+      const granularityMinutes = resolveSparklineGranularityMinutes(sparklineAnchorAt, rangeDays, referenceTs);
+      const key = `${hours}:${granularityMinutes}`;
+      const batch = grouped.get(key);
+      if (batch?.addresses.includes(address)) {
         continue;
       }
       if (batch) {
-        batch.push(address);
+        batch.addresses.push(address);
         continue;
       }
 
-      grouped.set(granularityMinutes, [address]);
+      grouped.set(key, {
+        hours,
+        granularityMinutes,
+        addresses: [address],
+      });
     }
 
-    return [1, 5, 15, 30]
-      .map((granularityMinutes) => ({
-        granularityMinutes,
-        addresses: grouped.get(granularityMinutes) || [],
-      }))
+    return Array.from(grouped.values())
+      .sort((left, right) => left.hours - right.hours || left.granularityMinutes - right.granularityMinutes)
       .filter((item) => item.addresses.length > 0);
   }
 
@@ -6418,6 +6761,25 @@ export function createAppController(): AppController {
     return null;
   }
 
+  function resolveAlertSparklineGranularityMinutes(anchorAt?: number | null, referenceTs = Date.now()) {
+    const anchorAtMs = Number(anchorAt);
+    if (!Number.isFinite(anchorAtMs) || anchorAtMs <= 0 || anchorAtMs > referenceTs) {
+      return SPARKLINE_GRANULARITY_FALLBACK_MINUTES;
+    }
+
+    const ageMs = Math.max(0, referenceTs - anchorAtMs);
+    if (ageMs < SPARKLINE_AGE_1M_MAX_MS) {
+      return 1;
+    }
+    if (ageMs < SPARKLINE_AGE_5M_MAX_MS) {
+      return 5;
+    }
+    if (ageMs < SPARKLINE_AGE_15M_MAX_MS) {
+      return 15;
+    }
+    return 30;
+  }
+
   function getPendingAlertSparklineBatches(referenceTs = Date.now()) {
     const grouped = new Map<number, { addresses: string[]; alertIdsByAddress: Map<string, string[]> }>();
     const activeAlertIds = getActiveAlertIdSet();
@@ -6425,7 +6787,7 @@ export function createAppController(): AppController {
       .filter(([alertId, address]) => activeAlertIds.has(alertId) && Boolean(String(address || '').trim()));
 
     for (const [alertId, address] of pendingRequests) {
-      const granularityMinutes = resolveSparklineGranularityMinutes(
+      const granularityMinutes = resolveAlertSparklineGranularityMinutes(
         resolveAlertSparklineCreatedAt(alertId, address),
         referenceTs,
       );
@@ -6464,7 +6826,7 @@ export function createAppController(): AppController {
 
   function buildSparklineBatchKey(batches: SparklineBatchRequest[]) {
     return batches
-      .map((item) => `${item.granularityMinutes}:${item.addresses.join(',')}`)
+      .map((item) => `${item.hours}:${item.granularityMinutes}:${item.addresses.join(',')}`)
       .join('|');
   }
 
@@ -6491,11 +6853,12 @@ export function createAppController(): AppController {
     return series.length >= 2;
   }
 
-  function buildWorkspaceSparklineLoadingEntry(address: string, existing?: TokenSparklineEntry) {
+  function buildWorkspaceSparklineLoadingEntry(address: string, existing?: TokenSparklineEntry, hours?: number) {
     return {
       ...(existing || { address, series: [] }),
       address,
       series: [],
+      hours: Number.isFinite(Number(hours)) && Number(hours) > 0 ? Number(hours) : existing?.hours,
       loading: true,
     } satisfies TokenSparklineEntry;
   }
@@ -7311,7 +7674,7 @@ export function createAppController(): AppController {
         batches.map(async (batch): Promise<WorkspaceSparklineBatchResult> => {
           try {
             const payload = await fetchTokenSparklines(batch.addresses, {
-              hours: SPARKLINE_WINDOW_HOURS,
+              hours: batch.hours,
               points: SPARKLINE_POINT_COUNT,
               granularityMinutes: batch.granularityMinutes,
               allowOneMinuteFallback: true,
@@ -7416,6 +7779,28 @@ export function createAppController(): AppController {
       return;
     }
     void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+  }
+
+  function refreshWorkspaceSparklinesAfterRangeChange(addresses?: string[]) {
+    const normalizedAddresses = (addresses || []).map((address) => String(address || '').trim()).filter(Boolean);
+    if (normalizedAddresses.length > 0) {
+      const nextCache = { ...state.data.sparklineByAddress };
+      const selectedScopes = getVisibleWorkspaceSparklineAddressScopes();
+      for (const address of normalizedAddresses) {
+        const scope = selectedScopes.find((item) => item.address === address)?.scope || 'monitored';
+        const hours = getSparklineRangeDays(scope, address) * 24;
+        nextCache[address] = buildWorkspaceSparklineLoadingEntry(address, nextCache[address], hours);
+      }
+      state.data.sparklineByAddress = nextCache;
+      lastSparklineAddressKey = '';
+      nextSparklineRefreshAt = 0;
+    } else {
+      clearHistorySparklineCache();
+    }
+    emit('manual', 'monitored', 'recent', 'old-week');
+    if (state.session.token) {
+      void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+    }
   }
 
   function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
@@ -8212,6 +8597,7 @@ export function createAppController(): AppController {
       dismissedPump: [],
       blocklist: [],
       adminTokenReviewAlerts: [],
+      customAlertRules: [],
       starredTokens: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
@@ -10791,6 +11177,76 @@ export function createAppController(): AppController {
       emit('alerts');
       flushEmit();
     },
+    previewCustomAlert(input: CustomAlertPreviewInput) {
+      const address = String(input.tokenAddress || '').trim();
+      if (!address) {
+        setNotice('Pick a token before testing a custom alert.');
+        emit('overlay');
+        return;
+      }
+
+      const now = Date.now();
+      const entry = buildCustomAlertPreviewEntry(input, address, now);
+      if (pushAlert(entry)) {
+        setNotice('Custom alert preview added to Alerts.');
+      }
+      emit('overlay');
+      flushEmit();
+    },
+    async createCustomAlert(input: CustomAlertPreviewInput) {
+      try {
+        await createCustomAlertRule(input);
+        setNotice('Custom alert saved.');
+        emit('overlay');
+        flushEmit();
+        void refreshCustomAlertRules().catch(() => {});
+      } catch (error) {
+        state.ui.error = error instanceof Error ? error.message : 'Failed to save custom alert.';
+        emit('overlay');
+        throw error;
+      }
+    },
+    async loadCustomAlertRules() {
+      try {
+        await refreshCustomAlertRules();
+      } catch {
+        // list stays as-is; the modal shows the last known rules
+      }
+    },
+    async updateCustomAlert(ruleId: number, input: CustomAlertPreviewInput) {
+      try {
+        const token = requireCustomAlertSessionToken();
+        await updateCustomAlertRuleRequest(ruleId, buildCustomAlertRulePayload(input), token);
+        setNotice('Custom alert updated.');
+        emit('overlay');
+        flushEmit();
+        void refreshCustomAlertRules().catch(() => {});
+      } catch (error) {
+        state.ui.error = error instanceof Error ? error.message : 'Failed to update custom alert.';
+        emit('overlay');
+        throw error;
+      }
+    },
+    async disableCustomAlert(ruleId: number) {
+      const previousRules = state.data.customAlertRules;
+      state.data.customAlertRules = previousRules.filter((rule) => rule.id !== ruleId);
+      emit('alerts');
+      flushEmit();
+      try {
+        const token = requireCustomAlertSessionToken();
+        await disableCustomAlertRuleRequest(ruleId, token);
+        setNotice('Custom alert canceled.');
+        emit('overlay');
+        flushEmit();
+      } catch (error) {
+        state.data.customAlertRules = previousRules;
+        state.ui.error = error instanceof Error ? error.message : 'Failed to cancel custom alert.';
+        emit('alerts');
+        emit('overlay');
+        flushEmit();
+        throw error;
+      }
+    },
     openExpandedSparkline(address: string) {
       const normalized = String(address || '').trim();
       if (!normalized) {
@@ -10812,6 +11268,7 @@ export function createAppController(): AppController {
         }
       }
       emit('overlay');
+      void refreshCustomAlertRules().catch(() => {});
       if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(normalized))) {
         return;
       }
@@ -10826,6 +11283,7 @@ export function createAppController(): AppController {
       }
 
       restorePreferredExpandedSparklineGranularityForAddress(normalized);
+      void refreshCustomAlertRules().catch(() => {});
       const seed = seedExpandedSparklineFromAlert(alertId, normalized);
 
       if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
@@ -11050,6 +11508,80 @@ export function createAppController(): AppController {
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
       }
+    },
+    setSparklineRangeDays(scope: SparklineRangeScope, days: number) {
+      const safeDays = normalizeSparklineRangeDays(days);
+      if (state.ui.sparklineRange.global) {
+        if (state.ui.sparklineRange.globalDays === safeDays) {
+          return;
+        }
+        state.ui.sparklineRange.globalDays = safeDays;
+      } else if (scope === 'recent') {
+        if (state.ui.sparklineRange.recentDays === safeDays) {
+          return;
+        }
+        state.ui.sparklineRange.recentDays = safeDays;
+      } else if (scope === 'oldWeek') {
+        if (state.ui.sparklineRange.oldWeekDays === safeDays) {
+          return;
+        }
+        state.ui.sparklineRange.oldWeekDays = safeDays;
+      } else {
+        if (state.ui.sparklineRange.monitoredDays === safeDays) {
+          return;
+        }
+        state.ui.sparklineRange.monitoredDays = safeDays;
+      }
+      queueUiPrefsPersist();
+      refreshWorkspaceSparklinesAfterRangeChange();
+    },
+    setSparklineRangeGlobal(enabled: boolean, scope: SparklineRangeScope) {
+      if (state.ui.sparklineRange.global === enabled) {
+        return;
+      }
+      const activeDays = getSparklineRangeDays(scope);
+      if (enabled) {
+        state.ui.sparklineRange.globalDays = activeDays;
+      } else if (scope === 'recent') {
+        state.ui.sparklineRange.recentDays = activeDays;
+      } else if (scope === 'oldWeek') {
+        state.ui.sparklineRange.oldWeekDays = activeDays;
+      } else {
+        state.ui.sparklineRange.monitoredDays = activeDays;
+      }
+      state.ui.sparklineRange.global = enabled;
+      queueUiPrefsPersist();
+      refreshWorkspaceSparklinesAfterRangeChange();
+    },
+    setTokenSparklineRangeDays(address: string, days: number) {
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress) {
+        return;
+      }
+
+      const safeDays = normalizeSparklineRangeDays(days);
+      if (state.ui.sparklineRange.tokenDaysByAddress[normalizedAddress] === safeDays) {
+        return;
+      }
+
+      state.ui.sparklineRange.tokenDaysByAddress = pruneSparklineRangeTokenDays({
+        ...state.ui.sparklineRange.tokenDaysByAddress,
+        [normalizedAddress]: safeDays,
+      });
+      queueUiPrefsPersist();
+      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress]);
+    },
+    resetTokenSparklineRangeDays(address: string) {
+      const normalizedAddress = String(address || '').trim();
+      if (!normalizedAddress || state.ui.sparklineRange.tokenDaysByAddress[normalizedAddress] == null) {
+        return;
+      }
+
+      const nextTokenDaysByAddress = { ...state.ui.sparklineRange.tokenDaysByAddress };
+      delete nextTokenDaysByAddress[normalizedAddress];
+      state.ui.sparklineRange.tokenDaysByAddress = nextTokenDaysByAddress;
+      queueUiPrefsPersist();
+      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress]);
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.manualSorts = toggleSortCriterion(

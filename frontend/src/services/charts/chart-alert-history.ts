@@ -11,6 +11,7 @@ const CHART_ALERT_RULE_KEYS = new Set([
   'old-week-surge-1h',
   'old-week-surge-6h',
   'meteora-surge',
+  'custom-alert',
 ]);
 
 type ChartAlertBucket = {
@@ -58,6 +59,9 @@ export function normalizeChartAlertEvent(input: Partial<ChartAlertEvent> | Dashb
     volume24h: toOptionalNumber(input.volume24h),
     pct: toOptionalNumber(input.pct),
     label: normalizeText(input.label) || null,
+    customRuleId: toOptionalNumber(input.customRuleId),
+    customCurrentValue: toOptionalNumber(input.customCurrentValue),
+    customPreviousValue: toOptionalNumber(input.customPreviousValue),
   } as ChartAlertEvent;
 }
 

@@ -2465,6 +2465,7 @@ function getChartAlertHeader(event: ChartAlertEvent) {
   if (event.ruleKey === 'monitored-mcap') return 'MCAP ALERT';
   if (event.ruleKey === 'meteora-surge') return 'METEORA SURGE';
   if (event.ruleKey === 'hvnc') return 'HVNC ALERT';
+  if (event.ruleKey === 'custom-alert') return 'CUSTOM ALERT';
   return String(event.label || event.kind || 'ALERT').toUpperCase();
 }
 
@@ -2473,6 +2474,7 @@ function getChartAlertMetricLabel(event: ChartAlertEvent) {
   if (event.ruleKey === 'monitored-vol') return 'VOLUME';
   if (event.ruleKey === 'monitored-mcap') return 'MCAP';
   if (event.ruleKey === 'meteora-surge') return 'TVL';
+  if (event.ruleKey === 'custom-alert') return String(event.customMetric || 'TARGET').toUpperCase();
   return 'CHANGE';
 }
 
@@ -3100,6 +3102,19 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   const referenceValue = Number.isFinite(liveMcap) && liveMcap > 0 ? liveMcap : latest.close;
   const referenceColor = latest.close >= latest.open ? '#18c79a' : '#ff4f67';
   const referenceLine = candleSeries.createPriceLine({ price: referenceValue, color: referenceColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
+  for (const rule of state.data.customAlertRules) {
+    if (rule.tokenAddress !== address || rule.metric !== 'mcap' || rule.status !== 'active') continue;
+    if (rule.expiresAt && new Date(rule.expiresAt).getTime() <= Date.now()) continue;
+    if (!(rule.targetValue > 0)) continue;
+    candleSeries.createPriceLine({
+      price: rule.targetValue,
+      color: /^#[0-9a-fA-F]{6}$/.test(rule.colorHex || '') ? String(rule.colorHex) : '#22c55e',
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      axisLabelVisible: true,
+      title: rule.title,
+    });
+  }
   const priceScale = chart.priceScale('right');
   const preservedViewport = expandedChartViewportByAddress.get(address);
   if (!preservedViewport) {

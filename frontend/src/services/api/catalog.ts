@@ -253,6 +253,19 @@ export interface DashboardAlertEvent {
   meteoraCurrentTvl?: number | null;
   meteoraBaselineTvl24h?: number | null;
   thresholdPct?: number | null;
+  customRuleId?: number | null;
+  customColorHex?: string | null;
+  customTitle?: string | null;
+  customMetric?: string | null;
+  customOperator?: string | null;
+  customTarget?: string | number | null;
+  customRepeatMode?: string | null;
+  customExpires?: string | null;
+  customFilters?: string | null;
+  customSoundName?: string | null;
+  customSoundDataUrl?: string | null;
+  customCurrentValue?: number | null;
+  customPreviousValue?: number | null;
   signalType?: number | null;
   claimSequence?: number | null;
   claimId?: string | null;
@@ -308,6 +321,36 @@ export interface DashboardAlertFeedsPayload {
   feeds: DashboardAlertEventsPayload[];
 }
 
+export interface CustomAlertRule {
+  id: number;
+  userId?: number | null;
+  tokenAddress: string;
+  title: string;
+  metric: 'price' | 'mcap';
+  operator: 'cross_above' | 'cross_below';
+  targetValue: number;
+  colorHex?: string | null;
+  soundName?: string | null;
+  soundDataUrl?: string | null;
+  expiresAt?: string | null;
+  status: 'active' | 'triggered' | 'disabled';
+  triggeredAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface CreateCustomAlertRulePayload {
+  tokenAddress: string;
+  title: string;
+  metric: 'price' | 'mcap';
+  operator: 'cross_above' | 'cross_below';
+  targetValue: number;
+  colorHex?: string | null;
+  soundName?: string | null;
+  soundDataUrl?: string | null;
+  expiresInHours?: number | null;
+}
+
 export interface ChartAlertEvent {
   id: number;
   ruleKey: string;
@@ -337,6 +380,15 @@ export interface ChartAlertEvent {
   meteoraCurrentTvl?: number | null;
   meteoraBaselineTvl24h?: number | null;
   thresholdPct?: number | null;
+  customRuleId?: number | null;
+  customColorHex?: string | null;
+  customTitle?: string | null;
+  customMetric?: string | null;
+  customOperator?: string | null;
+  customTarget?: string | number | null;
+  customSoundDataUrl?: string | null;
+  customCurrentValue?: number | null;
+  customPreviousValue?: number | null;
   surgeWindow?: '1H' | '6H' | null;
 }
 
@@ -812,6 +864,33 @@ export function fetchDashboardAlertFeeds(token?: string | null, options?: { limi
           }))
         : [],
     }));
+}
+
+export function createCustomAlertRule(payload: CreateCustomAlertRulePayload, token?: string | null) {
+  return apiFetch<{ rule: CustomAlertRule }>('/api/dashboard/custom-alert-rules', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    token,
+  });
+}
+
+export function fetchCustomAlertRules(token?: string | null) {
+  return apiFetch<{ rules: CustomAlertRule[]; count: number }>('/api/dashboard/custom-alert-rules', { token });
+}
+
+export function updateCustomAlertRule(id: number, payload: CreateCustomAlertRulePayload, token?: string | null) {
+  return apiFetch<{ rule: CustomAlertRule }>(`/api/dashboard/custom-alert-rules/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+    token,
+  });
+}
+
+export function disableCustomAlertRule(id: number, token?: string | null) {
+  return apiFetch<{ rule: CustomAlertRule; disabled: boolean }>(`/api/dashboard/custom-alert-rules/${id}`, {
+    method: 'DELETE',
+    token,
+  });
 }
 
 export function fetchDashboardChartAlertEvents(address: string, token?: string | null) {

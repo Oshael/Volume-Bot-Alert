@@ -44,6 +44,10 @@ export function getAlertToneClass(alert: AlertEntry, now = Date.now()) {
     return 'admin-token-review';
   }
 
+  if (alert.kind === 'custom-alert') {
+    return 'custom-alert';
+  }
+
   if (alert.isOldSurge) {
     return getOldSurgeToneClass(alert, now);
   }

@@ -119,6 +119,16 @@ function formatMoney(value?: number | null) {
   return `$${value.toFixed(0)}`;
 }
 
+function formatPrice(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return null;
+  }
+  if (Math.abs(value) >= 1) {
+    return `$${value.toFixed(4)}`;
+  }
+  return `$${value.toPrecision(4)}`;
+}
+
 function formatPercent(value?: number | null) {
   if (value == null || !Number.isFinite(value)) {
     return null;
@@ -186,6 +196,18 @@ function getNotificationVolumeLine(alert: AlertEntry) {
   return formatMoneyTransition('VOL 5M', alert.prevVolume5m, currentVolume);
 }
 
+function getCustomAlertMetricLine(alert: AlertEntry) {
+  const metric = String(alert.customMetric || '').toLowerCase();
+  const formatter = metric === 'price' ? formatPrice : formatMoney;
+  const label = metric === 'price' ? 'PRICE' : 'MCAP';
+  const current = formatter(alert.customCurrentValue);
+  const target = formatter(Number(alert.customTarget));
+  if (current && target) {
+    return `${label} ${current} / target ${target}`;
+  }
+  return target ? `${label} target ${target}` : null;
+}
+
 function getOldSurgePrefix(alert: AlertEntry) {
   const bucket = alert.ageBucket === 'recent' ? 'RECENT' : 'OLD';
   return `${bucket} ${alert.surgeWindow === '6H' ? '6H' : '1H'} surge`;
@@ -207,6 +229,8 @@ function getNotificationTitle(alert: AlertEntry) {
       return `METEORA 1H: ${symbol}`;
     case 'gmgn-claim-signal':
       return `${alert.signalType === 17 ? 'BAGS' : 'PUMP'} CLAIM #${alert.claimSequence || '?'}: ${symbol}`;
+    case 'custom-alert':
+      return `${alert.customTitle || 'Custom alert'}: ${symbol}`;
     case 'admin-token-review':
       return `ADMIN REVIEW: ${symbol}`;
     default:
@@ -235,6 +259,13 @@ function buildNotificationBody(alert: AlertEntry) {
       formatClaimFee(alert),
       getNotificationMcapLine(alert),
       alert.claimedAt ? `claimed ${new Date(alert.claimedAt).toLocaleTimeString()}` : null,
+      formatAddressFragment(alert.address),
+    ].filter(Boolean).join(' · ');
+  }
+
+  if (alert.kind === 'custom-alert') {
+    return [
+      getCustomAlertMetricLine(alert),
       formatAddressFragment(alert.address),
     ].filter(Boolean).join(' · ');
   }

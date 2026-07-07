@@ -1,5 +1,5 @@
 import type { AppController } from '../../state/app-controller';
-import type { AdminTokenReviewAlertEntry, AlertEntry, AppState, TokenSparklineEntry } from '../../state/app-state';
+import type { AdminTokenReviewAlertEntry, AlertEntry, AppState, CustomAlertRuleEntry, TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
 import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
@@ -16,6 +16,7 @@ const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
 const TICKER_PEERS_MAX_HEIGHT_PX = 360;
 const TICKER_PEERS_MIN_HEIGHT_PX = 120;
+const CUSTOM_ALERT_SOUND_MAX_BYTES = 5 * 1024 * 1024;
 
 type AlertRowView = {
   element: HTMLElement;
@@ -38,6 +39,9 @@ type AlertsSectionView = {
   count: HTMLElement;
   searchInput: HTMLInputElement;
   searchWrap: HTMLElement;
+  customAlertModal: HTMLElement;
+  customAlertTokenInput: HTMLInputElement;
+  customAlertPreview: HTMLElement;
   pageJumpInput: HTMLInputElement;
   pageTotal: HTMLElement;
   prevButton: HTMLButtonElement;
@@ -45,6 +49,7 @@ type AlertsSectionView = {
   emptyState: HTMLElement;
   fxGhostHost: HTMLElement;
   controller: AppController;
+  latestState: AppState | null;
   rowViews: Map<string, AlertRowView>;
   fxStates: Map<string, AlertFxState>;
   layoutMeasureRaf: number | null;
@@ -53,6 +58,7 @@ type AlertsSectionView = {
 
 let alertsSectionView: AlertsSectionView | null = null;
 const alertRowShakeAnimations = new WeakMap<HTMLElement, Animation>();
+const customAlertSoundAssets = new WeakMap<HTMLElement, { name: string; dataUrl: string }>();
 
 export function renderAlertsSection(state: AppState, controller: AppController) {
   const renderNow = Date.now();
@@ -61,6 +67,10 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   const pinnedReviewAlerts = buildPinnedAdminReviewAlerts(state);
   const visibleAlerts = [...pinnedReviewAlerts, ...state.data.alerts];
   view.controller = controller;
+  view.latestState = state;
+  if (!view.customAlertModal.hidden) {
+    renderCustomAlertRulesList();
+  }
   syncAlertFxStates(view, visibleAlerts, renderNow);
   if (!cardEffectsEnabled && view.fxGhostHost.childElementCount > 0) {
     view.fxGhostHost.replaceChildren();
@@ -96,6 +106,7 @@ function getOrCreateAlertsSectionView(controller: AppController) {
           <button type="button" class="compact-search-toggle" data-action="alerts-search-focus" aria-label="Search alerts">&#128269;</button>
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
         </div>
+        <button type="button" class="action-button small custom-alert-open-button" data-action="open-custom-alert-prototype">Custom</button>
         <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
         <div class="alerts-page-controls" aria-label="Alerts pages">
           <button type="button" class="action-button small" data-action="alerts-prev">Prev</button>
@@ -119,11 +130,14 @@ function getOrCreateAlertsSectionView(controller: AppController) {
   const count = section.querySelector<HTMLElement>('.alerts-panel-count');
   const searchInput = section.querySelector<HTMLInputElement>('[data-action="alerts-search"]');
   const searchWrap = section.querySelector<HTMLElement>('.compact-search');
+  const customAlertModal = buildCustomAlertPrototypeModal();
+  const customAlertTokenInput = customAlertModal.querySelector<HTMLInputElement>('[data-custom-alert-field="tokenQuery"]');
+  const customAlertPreview = customAlertModal.querySelector<HTMLElement>('[data-custom-alert-preview]');
   const pageJumpInput = section.querySelector<HTMLInputElement>('[data-action="alerts-page-jump"]');
   const pageTotal = section.querySelector<HTMLElement>('.alerts-page-total');
   const prevButton = section.querySelector<HTMLButtonElement>('[data-action="alerts-prev"]');
   const nextButton = section.querySelector<HTMLButtonElement>('[data-action="alerts-next"]');
-  if (!list || !count || !searchInput || !searchWrap || !pageJumpInput || !pageTotal || !prevButton || !nextButton) {
+  if (!list || !count || !searchInput || !searchWrap || !customAlertTokenInput || !customAlertPreview || !pageJumpInput || !pageTotal || !prevButton || !nextButton) {
     throw new Error('Alerts section view failed to initialize.');
   }
 
@@ -136,6 +150,9 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     count,
     searchInput,
     searchWrap,
+    customAlertModal,
+    customAlertTokenInput,
+    customAlertPreview,
     pageJumpInput,
     pageTotal,
     prevButton,
@@ -143,11 +160,14 @@ function getOrCreateAlertsSectionView(controller: AppController) {
     emptyState,
     fxGhostHost: getOrCreateAlertFxGhostHost(),
     controller,
+    latestState: null,
     rowViews: new Map<string, AlertRowView>(),
     fxStates: new Map<string, AlertFxState>(),
     layoutMeasureRaf: null,
     resizeObserver: null,
   };
+
+  section.append(customAlertModal);
 
   if (typeof ResizeObserver !== 'undefined') {
     const resizeObserver = new ResizeObserver(() => {
@@ -168,6 +188,12 @@ function getOrCreateAlertsSectionView(controller: AppController) {
 
   section.querySelector<HTMLButtonElement>('[data-action="alerts-clear-all"]')?.addEventListener('click', () => {
     alertsSectionView?.controller.clearAllAlerts();
+  });
+
+  bindCustomAlertPrototypeModal(customAlertModal);
+
+  section.querySelector<HTMLButtonElement>('[data-action="open-custom-alert-prototype"]')?.addEventListener('click', () => {
+    openCustomAlertPrototypeModal();
   });
 
   prevButton.addEventListener('click', () => {
@@ -334,6 +360,785 @@ function buildEmptyState() {
   return emptyState;
 }
 
+function buildCustomAlertPrototypeModal() {
+  const modal = document.createElement('div');
+  modal.className = 'custom-alert-prototype-modal';
+  modal.hidden = true;
+  modal.innerHTML = `
+    <div class="custom-alert-prototype-backdrop" data-action="close-custom-alert-prototype"></div>
+    <section class="custom-alert-prototype-dialog" role="dialog" aria-modal="true" aria-label="Custom alert prototype">
+      <header class="custom-alert-prototype-header">
+        <div>
+          <span class="custom-alert-prototype-kicker">Custom rule</span>
+          <h2>Custom Alert</h2>
+        </div>
+        <button type="button" class="alert-dismiss-button" data-action="close-custom-alert-prototype" aria-label="Close custom alert prototype">×</button>
+      </header>
+      <div class="custom-alert-prototype-grid">
+        <div class="custom-alert-prototype-form">
+          <div class="custom-alert-field custom-alert-token-field">
+            <span>Token</span>
+            <div class="custom-alert-token-picker">
+              <img class="custom-alert-token-image" data-custom-alert-token-image alt="" hidden>
+              <input data-custom-alert-field="tokenQuery" type="text" placeholder="Ticker or contract address" autocomplete="off" spellcheck="false">
+              <input data-custom-alert-field="token" type="hidden">
+            </div>
+            <div class="custom-alert-token-suggestions" data-custom-alert-token-suggestions hidden></div>
+          </div>
+          <label class="custom-alert-field">
+            <span>Alert name</span>
+            <input data-custom-alert-field="title" type="text" value="Custom breakout" maxlength="48">
+          </label>
+          <div class="custom-alert-condition-grid">
+            <label class="custom-alert-field">
+              <span>Metric</span>
+              <select data-custom-alert-field="metric">
+                <option value="Market Cap">Market Cap</option>
+                <option value="Price">Price</option>
+              </select>
+            </label>
+            <label class="custom-alert-field">
+              <span>When it hits</span>
+              <input data-custom-alert-field="target" type="text" value="$250k" maxlength="24" placeholder="$100k / $2m / $1b">
+            </label>
+            <label class="custom-alert-field">
+              <span>Expires</span>
+              <select data-custom-alert-field="expires">
+                <option value="never">Never</option>
+                <option value="1">1 hour</option>
+                <option value="6">6 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">24 hours</option>
+                <option value="72">3 days</option>
+                <option value="168">7 days</option>
+              </select>
+            </label>
+          </div>
+          <div class="custom-alert-inline-grid">
+            <div class="custom-alert-field custom-alert-sound-field">
+              <span>Alert sound (optional)</span>
+              <label class="custom-alert-file-button">
+                Choose MP3
+                <input data-custom-alert-field="soundFile" type="file" accept="audio/mpeg,.mp3">
+              </label>
+              <small data-custom-alert-sound-status>Default alert sound - MP3 up to 5 MB</small>
+            </div>
+            <div class="custom-alert-field">
+              <span>Color</span>
+              <div class="custom-alert-color-row">
+                <button type="button" class="custom-alert-swatch" data-color="#22c55e" style="--swatch:#22c55e" aria-label="Green"></button>
+                <button type="button" class="custom-alert-swatch" data-color="#2ea8ff" style="--swatch:#2ea8ff" aria-label="Blue"></button>
+                <button type="button" class="custom-alert-swatch" data-color="#facc15" style="--swatch:#facc15" aria-label="Yellow"></button>
+                <button type="button" class="custom-alert-swatch" data-color="#fb7185" style="--swatch:#fb7185" aria-label="Red"></button>
+                <button type="button" class="custom-alert-swatch" data-color="#c084fc" style="--swatch:#c084fc" aria-label="Purple"></button>
+                <input data-custom-alert-field="colorHex" type="color" value="#22c55e" aria-label="Custom alert color">
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="custom-alert-prototype-preview">
+          <span class="custom-alert-prototype-kicker">Preview</span>
+          <div data-custom-alert-preview></div>
+        </aside>
+      </div>
+      <div class="custom-alert-rules-section">
+        <span class="custom-alert-prototype-kicker">My alerts</span>
+        <div class="custom-alert-rules-list" data-custom-alert-rules></div>
+      </div>
+      <footer class="custom-alert-prototype-footer">
+        <button type="button" class="action-button small" data-action="close-custom-alert-prototype">Cancel</button>
+        <button type="button" class="action-button small" data-action="test-custom-alert-prototype">Test Alert</button>
+        <button type="button" class="action-button small" data-action="save-custom-alert-prototype">Save Alert</button>
+      </footer>
+    </section>
+  `;
+  return modal;
+}
+
+function openCustomAlertPrototypeModal() {
+  if (!alertsSectionView) return;
+  alertsSectionView.customAlertModal.hidden = false;
+  updateCustomAlertPrototypePreview();
+  renderCustomAlertRulesList();
+  void alertsSectionView.controller.loadCustomAlertRules();
+  alertsSectionView.customAlertTokenInput.focus();
+}
+
+function closeCustomAlertPrototypeModal() {
+  if (!alertsSectionView) return;
+  const modal = alertsSectionView.customAlertModal;
+  delete modal.dataset.savingCustomAlert;
+  endCustomAlertRuleEdit(modal);
+  modal.hidden = true;
+}
+
+function getCustomAlertSaveButton(modal: HTMLElement) {
+  return modal.querySelector<HTMLButtonElement>('[data-action="save-custom-alert-prototype"]');
+}
+
+function endCustomAlertRuleEdit(modal: HTMLElement) {
+  delete modal.dataset.editingRuleId;
+  const saveButton = getCustomAlertSaveButton(modal);
+  if (saveButton) saveButton.textContent = 'Save Alert';
+  const expiresSelect = getCustomAlertExpiresSelect(modal);
+  if (expiresSelect) removeCustomAlertKeepExpiryOption(expiresSelect);
+}
+
+function formatCustomAlertRuleTarget(rule: CustomAlertRuleEntry) {
+  if (rule.metric === 'price') {
+    return `$${rule.targetValue}`;
+  }
+  return formatCustomAlertCompactMoney(rule.targetValue);
+}
+
+function describeCustomAlertRuleCondition(rule: CustomAlertRuleEntry) {
+  const metricLabel = rule.metric === 'price' ? 'Price' : 'Market Cap';
+  return `${metricLabel} hits ${formatCustomAlertRuleTarget(rule)}`;
+}
+
+function fillCustomAlertEditToken(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
+  const candidate = getCustomAlertTokenCandidateByAddress(rule.tokenAddress);
+  if (hiddenInput) hiddenInput.value = rule.tokenAddress;
+  if (queryInput) queryInput.value = candidate?.symbol || rule.tokenAddress;
+  setCustomAlertTokenImage(image, candidate?.imageUrl ?? null);
+  hideCustomAlertTokenSuggestions(modal);
+  return queryInput;
+}
+
+function fillCustomAlertEditFields(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  const titleInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="title"]');
+  if (titleInput) titleInput.value = rule.title;
+
+  const metricSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="metric"]');
+  if (metricSelect) metricSelect.value = rule.metric === 'price' ? 'Price' : 'Market Cap';
+
+  const targetInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]');
+  if (targetInput) {
+    targetInput.dataset.targetMode = rule.metric === 'price' ? 'price' : 'market-cap';
+    targetInput.value = formatCustomAlertRuleTarget(rule);
+  }
+
+  const colorInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="colorHex"]');
+  if (colorInput) colorInput.value = normalizeCustomAlertColor(rule.colorHex);
+}
+
+function fillCustomAlertEditExpiry(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  const expiresSelect = getCustomAlertExpiresSelect(modal);
+  if (!expiresSelect) return;
+  removeCustomAlertKeepExpiryOption(expiresSelect);
+  if (rule.expiresAt && !isCustomAlertRuleExpired(rule)) {
+    const keep = document.createElement('option');
+    keep.value = 'keep';
+    keep.textContent = `Keep (until ${formatCustomAlertExpiryDate(rule.expiresAt)})`;
+    expiresSelect.prepend(keep);
+    expiresSelect.value = 'keep';
+  } else {
+    expiresSelect.value = 'never';
+  }
+}
+
+function fillCustomAlertEditSound(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  const soundInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="soundFile"]');
+  if (soundInput) soundInput.value = '';
+  customAlertSoundAssets.delete(modal);
+  setCustomAlertSoundStatus(modal, rule.soundName ? `Keeps ${rule.soundName} unless you pick a new MP3` : 'Default alert sound - MP3 up to 5 MB');
+}
+
+function beginCustomAlertRuleEdit(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  const queryInput = fillCustomAlertEditToken(modal, rule);
+  fillCustomAlertEditFields(modal, rule);
+  fillCustomAlertEditExpiry(modal, rule);
+  fillCustomAlertEditSound(modal, rule);
+
+  modal.dataset.editingRuleId = String(rule.id);
+  const saveButton = getCustomAlertSaveButton(modal);
+  if (saveButton) saveButton.textContent = 'Update Alert';
+  updateCustomAlertPrototypePreview();
+  queryInput?.focus();
+}
+
+function buildCustomAlertRuleRow(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  const row = document.createElement('div');
+  row.className = 'custom-alert-rule-row';
+  row.style.setProperty('--custom-alert-color', normalizeCustomAlertColor(rule.colorHex));
+
+  const image = document.createElement('img');
+  image.alt = '';
+  setCustomAlertTokenImage(image, getCustomAlertTokenCandidateByAddress(rule.tokenAddress)?.imageUrl ?? null);
+
+  const main = document.createElement('div');
+  main.className = 'custom-alert-rule-main';
+  const title = document.createElement('strong');
+  const symbol = getCustomAlertTokenCandidateByAddress(rule.tokenAddress)?.symbol || `${rule.tokenAddress.slice(0, 4)}...${rule.tokenAddress.slice(-4)}`;
+  title.textContent = `${symbol} - ${rule.title}`;
+  const condition = document.createElement('small');
+  const expired = isCustomAlertRuleExpired(rule);
+  const expirySuffix = rule.expiresAt && !expired ? ` · expires ${formatCustomAlertExpiryDate(rule.expiresAt)}` : '';
+  condition.textContent = `${describeCustomAlertRuleCondition(rule)}${expirySuffix}`;
+  main.append(title, condition);
+
+  const status = document.createElement('span');
+  status.className = `custom-alert-rule-status ${expired ? 'expired' : rule.status}`;
+  status.textContent = expired ? 'EXPIRED' : rule.status === 'triggered' ? 'TRIGGERED' : 'ACTIVE';
+
+  const editButton = document.createElement('button');
+  editButton.type = 'button';
+  editButton.className = 'action-button small';
+  editButton.textContent = 'Edit';
+  editButton.addEventListener('click', () => beginCustomAlertRuleEdit(modal, rule));
+
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'action-button small custom-alert-rule-cancel';
+  cancelButton.textContent = 'Cancel';
+  cancelButton.addEventListener('click', () => {
+    cancelButton.disabled = true;
+    // disableCustomAlert removes the rule from state synchronously before the API
+    // call; re-rendering the modal list right away makes the row vanish instantly
+    // instead of waiting for the app render queue (which defers during pointer
+    // interaction).
+    const request = alertsSectionView?.controller.disableCustomAlert(rule.id);
+    renderCustomAlertRulesList();
+    void request
+      ?.then(() => showCustomAlertToast('Custom alert canceled.'))
+      .catch((error) => {
+        renderCustomAlertRulesList();
+        showCustomAlertToast(getCustomAlertToastError(error, 'Failed to cancel custom alert.'), 'error');
+      });
+  });
+
+  row.append(image, main, status, editButton, cancelButton);
+  return row;
+}
+
+function renderCustomAlertRulesList() {
+  const view = alertsSectionView;
+  if (!view) return;
+  const list = view.customAlertModal.querySelector<HTMLElement>('[data-custom-alert-rules]');
+  if (!list) return;
+  const rules = view.latestState?.data.customAlertRules ?? [];
+  if (!rules.length) {
+    list.replaceChildren();
+    const empty = document.createElement('small');
+    empty.className = 'custom-alert-rules-empty';
+    empty.textContent = 'No custom alerts yet. Saved alerts show up here.';
+    list.append(empty);
+    return;
+  }
+  list.replaceChildren(...rules.map((rule) => buildCustomAlertRuleRow(view.customAlertModal, rule)));
+}
+
+const CUSTOM_ALERT_TOAST_MS = 2_600;
+const CUSTOM_ALERT_ERROR_TOAST_MS = 4_200;
+
+function showCustomAlertToast(message: string, tone: 'success' | 'error' = 'success') {
+  if (typeof document === 'undefined') return;
+  const durationMs = tone === 'error' ? CUSTOM_ALERT_ERROR_TOAST_MS : CUSTOM_ALERT_TOAST_MS;
+  const toast = document.createElement('div');
+  toast.className = `custom-alert-toast${tone === 'error' ? ' error' : ''}`;
+  toast.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+  toast.textContent = message;
+  document.body.append(toast);
+  window.setTimeout(() => toast.classList.add('fade-out'), durationMs - 400);
+  window.setTimeout(() => toast.remove(), durationMs);
+}
+
+function getCustomAlertToastError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function parseCustomAlertTargetText(text: string) {
+  const clean = String(text || '').trim().replace(/[$,\s]/g, '');
+  const shorthand = /^(\d+(?:\.\d+)?)([kmb])$/i.exec(clean);
+  const multipliers: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
+  const parsed = shorthand
+    ? Number(shorthand[1]) * multipliers[shorthand[2].toLowerCase()]
+    : Number(clean);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatCustomAlertCompactMoney(value: number) {
+  const units = [
+    { limit: 1e9, suffix: 'b' },
+    { limit: 1e6, suffix: 'm' },
+    { limit: 1e3, suffix: 'k' },
+  ];
+  for (const { limit, suffix } of units) {
+    if (value >= limit) {
+      const scaled = value / limit;
+      return `$${Number(scaled.toFixed(scaled >= 100 ? 0 : 2))}${suffix}`;
+    }
+  }
+  return `$${Number(value.toFixed(6))}`;
+}
+
+function reformatCustomAlertTargetInput(modal: HTMLElement) {
+  const target = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]');
+  if (!target) return;
+  const value = parseCustomAlertTargetText(target.value);
+  if (value == null) return;
+  const isPrice = readCustomAlertField('metric') === 'Price';
+  target.value = isPrice ? `$${value}` : formatCustomAlertCompactMoney(value);
+}
+
+function resetCustomAlertTokenPicker(modal: HTMLElement) {
+  const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
+  if (queryInput) queryInput.value = '';
+  if (hiddenInput) hiddenInput.value = '';
+  setCustomAlertTokenImage(image, null);
+  hideCustomAlertTokenSuggestions(modal);
+}
+
+function resolveCustomAlertTokenSelection(modal: HTMLElement) {
+  const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
+  if (!queryInput || !hiddenInput || hiddenInput.value) return;
+  const raw = queryInput.value.trim();
+  if (!raw) return;
+
+  if (isCustomAlertTokenAddress(raw)) {
+    hiddenInput.value = raw;
+    setCustomAlertTokenImage(image, getCustomAlertTokenCandidateByAddress(raw)?.imageUrl ?? null);
+    hideCustomAlertTokenSuggestions(modal);
+    return;
+  }
+
+  const matches = filterCustomAlertTokenCandidates(raw);
+  const exact = matches.find((candidate) => candidate.symbol.toLowerCase() === raw.toLowerCase());
+  const candidate = exact || (matches.length === 1 ? matches[0] : null);
+  if (candidate) {
+    selectCustomAlertToken(modal, candidate);
+  }
+}
+
+function bindCustomAlertPrototypeModal(modal: HTMLElement) {
+  bindCustomAlertTokenPicker(modal);
+  modal.addEventListener('input', updateCustomAlertPrototypePreview);
+  modal.addEventListener('change', updateCustomAlertPrototypePreview);
+  modal.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]')?.addEventListener('change', () => {
+    reformatCustomAlertTargetInput(modal);
+  });
+  modal.querySelector<HTMLInputElement>('[data-custom-alert-field="soundFile"]')?.addEventListener('change', (event) => {
+    readCustomAlertSoundFile(modal, event.currentTarget as HTMLInputElement);
+  });
+  modal.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const colorButton = target?.closest<HTMLButtonElement>('.custom-alert-swatch');
+    if (colorButton) {
+      const input = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="colorHex"]');
+      if (input && colorButton.dataset.color) {
+        input.value = colorButton.dataset.color;
+        updateCustomAlertPrototypePreview();
+      }
+      return;
+    }
+
+    if (target?.closest('[data-action="close-custom-alert-prototype"]')) {
+      closeCustomAlertPrototypeModal();
+      return;
+    }
+
+    if (target?.closest('[data-action="test-custom-alert-prototype"]')) {
+      handleCustomAlertTestClick();
+    }
+
+    if (target?.closest('[data-action="save-custom-alert-prototype"]')) {
+      handleCustomAlertSaveClick(modal);
+    }
+  });
+}
+
+function handleCustomAlertTestClick() {
+  const payload = readCustomAlertPrototypeInput();
+  if (!payload) {
+    showCustomAlertToast('Pick a token from the suggestions or paste its contract address.', 'error');
+    return;
+  }
+  alertsSectionView?.controller.previewCustomAlert(payload);
+  closeCustomAlertPrototypeModal();
+}
+
+function handleCustomAlertSaveClick(modal: HTMLElement) {
+  if (modal.dataset.savingCustomAlert === 'true') return;
+  const payload = readCustomAlertPrototypeInput();
+  if (!payload) {
+    showCustomAlertToast('Pick a token from the suggestions or paste its contract address.', 'error');
+    return;
+  }
+  const saveButton = getCustomAlertSaveButton(modal);
+  const editingRuleId = Number(modal.dataset.editingRuleId);
+  const isEditing = Number.isFinite(editingRuleId) && editingRuleId > 0;
+  modal.dataset.savingCustomAlert = 'true';
+  if (saveButton) saveButton.disabled = true;
+  const request = isEditing
+    ? alertsSectionView?.controller.updateCustomAlert(editingRuleId, payload)
+    : alertsSectionView?.controller.createCustomAlert(payload);
+  void request
+    ?.then(() => {
+      closeCustomAlertPrototypeModal();
+      resetCustomAlertTokenPicker(modal);
+      updateCustomAlertPrototypePreview();
+      showCustomAlertToast(isEditing ? 'Custom alert updated.' : 'Custom alert saved.');
+    })
+    .catch((error) => {
+      delete modal.dataset.savingCustomAlert;
+      showCustomAlertToast(getCustomAlertToastError(error, isEditing ? 'Failed to update custom alert.' : 'Failed to save custom alert.'), 'error');
+    })
+    .finally(() => {
+      if (saveButton) saveButton.disabled = false;
+    });
+}
+
+type CustomAlertTokenCandidate = {
+  address: string;
+  symbol: string;
+  mcap: number | null;
+  imageUrl: string | null;
+};
+
+function buildCustomAlertTokenCandidates(state: AppState): CustomAlertTokenCandidate[] {
+  const addresses = [
+    ...state.data.monitoredTokenAddresses,
+    ...state.data.manualTokenAddresses,
+    ...state.data.recentTokenAddresses,
+    ...state.data.oldWeekTokenAddresses,
+    ...state.data.pumpTokens.map((token) => token.mint || token.mintAddress || ''),
+  ];
+  const seen = new Set<string>();
+  return addresses
+    .map((address) => String(address || '').trim())
+    .filter((address) => {
+      if (!address || seen.has(address)) return false;
+      seen.add(address);
+      return true;
+    })
+    .map((address) => {
+      const tracked = state.data.trackedTokensByAddress[address];
+      const pump = state.data.pumpTokens.find((token) => token.mint === address || token.mintAddress === address);
+      return {
+        address,
+        symbol: String(tracked?.symbol || pump?.symbol || address.slice(0, 6)).trim(),
+        mcap: tracked?.mcap ?? pump?.mcap ?? null,
+        imageUrl: tracked?.imageUrl ?? pump?.imageUrl ?? null,
+      };
+    });
+}
+
+function isCustomAlertTokenAddress(value: string) {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value) || /^0x[0-9a-fA-F]{40}$/.test(value);
+}
+
+function sanitizeCustomAlertImageUrl(value: string | null | undefined) {
+  const url = String(value || '').trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+function getCustomAlertTokenCandidateByAddress(address: string): CustomAlertTokenCandidate | null {
+  const state = alertsSectionView?.latestState;
+  if (!state) return null;
+  const tracked = state.data.trackedTokensByAddress[address];
+  const pump = state.data.pumpTokens.find((token) => token.mint === address || token.mintAddress === address);
+  if (!tracked && !pump) return null;
+  return {
+    address,
+    symbol: String(tracked?.symbol || pump?.symbol || address.slice(0, 6)).trim(),
+    mcap: tracked?.mcap ?? pump?.mcap ?? null,
+    imageUrl: tracked?.imageUrl ?? pump?.imageUrl ?? null,
+  };
+}
+
+function filterCustomAlertTokenCandidates(query: string) {
+  const state = alertsSectionView?.latestState;
+  const normalized = query.trim().toLowerCase();
+  if (!state || !normalized) return [];
+  return buildCustomAlertTokenCandidates(state)
+    .filter((candidate) => candidate.symbol.toLowerCase().includes(normalized) || candidate.address.toLowerCase().startsWith(normalized))
+    .slice(0, 8);
+}
+
+function getCustomAlertTokenElements(modal: HTMLElement) {
+  return {
+    queryInput: modal.querySelector<HTMLInputElement>('[data-custom-alert-field="tokenQuery"]'),
+    hiddenInput: modal.querySelector<HTMLInputElement>('[data-custom-alert-field="token"]'),
+    suggestions: modal.querySelector<HTMLElement>('[data-custom-alert-token-suggestions]'),
+    image: modal.querySelector<HTMLImageElement>('[data-custom-alert-token-image]'),
+  };
+}
+
+function setCustomAlertTokenImage(image: HTMLImageElement | null, imageUrl: string | null | undefined) {
+  if (!image) return;
+  const url = sanitizeCustomAlertImageUrl(imageUrl);
+  if (!url) {
+    image.hidden = true;
+    image.removeAttribute('src');
+    return;
+  }
+  image.hidden = false;
+  image.src = url;
+  image.onerror = () => {
+    image.hidden = true;
+  };
+}
+
+function hideCustomAlertTokenSuggestions(modal: HTMLElement) {
+  const { suggestions } = getCustomAlertTokenElements(modal);
+  if (suggestions) {
+    suggestions.hidden = true;
+    suggestions.replaceChildren();
+  }
+}
+
+function selectCustomAlertToken(modal: HTMLElement, candidate: CustomAlertTokenCandidate) {
+  const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
+  if (!queryInput || !hiddenInput) return;
+  hiddenInput.value = candidate.address;
+  queryInput.value = candidate.symbol || candidate.address;
+  setCustomAlertTokenImage(image, candidate.imageUrl);
+  hideCustomAlertTokenSuggestions(modal);
+  updateCustomAlertPrototypePreview();
+}
+
+function buildCustomAlertTokenSuggestionRow(modal: HTMLElement, candidate: CustomAlertTokenCandidate) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'custom-alert-token-suggestion';
+
+  const image = document.createElement('img');
+  image.alt = '';
+  setCustomAlertTokenImage(image, candidate.imageUrl);
+
+  const symbol = document.createElement('strong');
+  symbol.textContent = candidate.symbol;
+  const mcap = document.createElement('span');
+  mcap.textContent = fmtMoney(candidate.mcap);
+  const addr = document.createElement('small');
+  addr.textContent = `${candidate.address.slice(0, 4)}...${candidate.address.slice(-4)}`;
+
+  row.append(image, symbol, mcap, addr);
+  row.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    selectCustomAlertToken(modal, candidate);
+  });
+  return row;
+}
+
+function renderCustomAlertTokenSuggestions(modal: HTMLElement, query: string) {
+  const { suggestions } = getCustomAlertTokenElements(modal);
+  if (!suggestions) return;
+  const matches = filterCustomAlertTokenCandidates(query);
+  if (!matches.length) {
+    hideCustomAlertTokenSuggestions(modal);
+    return;
+  }
+  suggestions.replaceChildren(...matches.map((candidate) => buildCustomAlertTokenSuggestionRow(modal, candidate)));
+  suggestions.hidden = false;
+}
+
+function handleCustomAlertTokenQueryInput(modal: HTMLElement) {
+  const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
+  if (!queryInput || !hiddenInput) return;
+  const raw = queryInput.value.trim();
+
+  if (isCustomAlertTokenAddress(raw)) {
+    const known = getCustomAlertTokenCandidateByAddress(raw);
+    hiddenInput.value = raw;
+    setCustomAlertTokenImage(image, known?.imageUrl ?? null);
+    hideCustomAlertTokenSuggestions(modal);
+    return;
+  }
+
+  hiddenInput.value = '';
+  setCustomAlertTokenImage(image, null);
+  renderCustomAlertTokenSuggestions(modal, raw);
+}
+
+function bindCustomAlertTokenPicker(modal: HTMLElement) {
+  const { queryInput } = getCustomAlertTokenElements(modal);
+  if (!queryInput) return;
+
+  queryInput.addEventListener('input', () => {
+    handleCustomAlertTokenQueryInput(modal);
+  });
+  queryInput.addEventListener('focus', () => {
+    const { hiddenInput } = getCustomAlertTokenElements(modal);
+    if (!hiddenInput?.value) {
+      renderCustomAlertTokenSuggestions(modal, queryInput.value.trim());
+    }
+  });
+  queryInput.addEventListener('blur', () => {
+    window.setTimeout(() => hideCustomAlertTokenSuggestions(modal), 120);
+  });
+}
+
+function readCustomAlertField(name: string) {
+  const field = alertsSectionView?.customAlertModal.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-custom-alert-field="${name}"]`);
+  return String(field?.value || '').trim();
+}
+
+function readCustomAlertFieldOr(name: string, fallback: string) {
+  return readCustomAlertField(name) || fallback;
+}
+
+function readCustomAlertFilters() {
+  return 'none';
+}
+
+function setCustomAlertSoundStatus(modal: HTMLElement, message: string) {
+  const status = modal.querySelector<HTMLElement>('[data-custom-alert-sound-status]');
+  if (status) {
+    status.textContent = message;
+  }
+}
+
+function resetCustomAlertSound(modal: HTMLElement, input: HTMLInputElement, message: string) {
+  input.value = '';
+  customAlertSoundAssets.delete(modal);
+  setCustomAlertSoundStatus(modal, message);
+  updateCustomAlertPrototypePreview();
+}
+
+function isCustomAlertMp3(file: File) {
+  return file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3');
+}
+
+function readCustomAlertSoundFile(modal: HTMLElement, input: HTMLInputElement) {
+  const file = input.files?.[0] || null;
+  if (!file) {
+    resetCustomAlertSound(modal, input, 'Default alert sound - MP3 up to 5 MB');
+    return;
+  }
+
+  if (!isCustomAlertMp3(file)) {
+    resetCustomAlertSound(modal, input, 'Use an MP3 file.');
+    return;
+  }
+
+  if (file.size > CUSTOM_ALERT_SOUND_MAX_BYTES) {
+    resetCustomAlertSound(modal, input, 'MP3 must be 5 MB or smaller.');
+    return;
+  }
+
+  setCustomAlertSoundStatus(modal, `Loading ${file.name}...`);
+  const reader = new FileReader();
+  reader.addEventListener('load', () => {
+    const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+    if (!dataUrl.startsWith('data:audio/')) {
+      resetCustomAlertSound(modal, input, 'Could not read this MP3.');
+      return;
+    }
+
+    customAlertSoundAssets.set(modal, { name: file.name, dataUrl });
+    setCustomAlertSoundStatus(modal, `Using ${file.name}`);
+    updateCustomAlertPrototypePreview();
+  });
+  reader.addEventListener('error', () => {
+    resetCustomAlertSound(modal, input, 'Could not read this MP3.');
+  });
+  reader.readAsDataURL(file);
+}
+
+function syncCustomAlertTargetMetric() {
+  const modal = alertsSectionView?.customAlertModal;
+  const target = modal?.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]');
+  if (!target) return;
+  const priceMode = readCustomAlertField('metric') === 'Price';
+  const nextMode = priceMode ? 'price' : 'market-cap';
+  const previousMode = target.dataset.targetMode;
+  if (previousMode === 'price') target.dataset.priceValue = target.value;
+  if (previousMode === 'market-cap') target.dataset.marketCapValue = target.value;
+  if (target.dataset.targetMode !== nextMode) {
+    target.value = priceMode
+      ? target.dataset.priceValue || '$0.0001'
+      : target.dataset.marketCapValue || '$250k';
+    target.dataset.targetMode = nextMode;
+  }
+}
+
+function readCustomAlertPrototypeInput() {
+  if (!alertsSectionView) return null;
+  resolveCustomAlertTokenSelection(alertsSectionView.customAlertModal);
+  syncCustomAlertTargetMetric();
+  const tokenAddress = readCustomAlertField('token');
+  if (!tokenAddress) return null;
+  const sound = customAlertSoundAssets.get(alertsSectionView.customAlertModal) || null;
+  return {
+    tokenAddress,
+    title: readCustomAlertFieldOr('title', 'Custom alert'),
+    metric: readCustomAlertFieldOr('metric', 'Market Cap'),
+    operator: 'hits',
+    target: readCustomAlertFieldOr('target', '$250k'),
+    repeatMode: 'trigger once',
+    expires: readCustomAlertFieldOr('expires', 'never'),
+    colorHex: normalizeCustomAlertColor(readCustomAlertField('colorHex')),
+    filters: readCustomAlertFilters(),
+    soundName: sound?.name || null,
+    soundDataUrl: sound?.dataUrl || null,
+  };
+}
+
+function updateCustomAlertPrototypePreview() {
+  const input = readCustomAlertPrototypeInput();
+  const preview = alertsSectionView?.customAlertPreview;
+  if (!preview) return;
+  if (!input) {
+    preview.textContent = 'Load or pick a token to preview this alert.';
+    return;
+  }
+  const candidate = getCustomAlertTokenCandidateByAddress(input.tokenAddress);
+  const symbol = candidate?.symbol || input.tokenAddress.slice(0, 8);
+  preview.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'custom-alert-preview-card';
+  card.style.setProperty('--custom-alert-color', input.colorHex);
+  const titleRow = document.createElement('div');
+  titleRow.className = 'custom-alert-preview-title';
+  const tokenImage = document.createElement('img');
+  tokenImage.alt = '';
+  setCustomAlertTokenImage(tokenImage, candidate?.imageUrl ?? null);
+  const title = document.createElement('strong');
+  title.textContent = input.title;
+  titleRow.append(tokenImage, title);
+  const condition = document.createElement('div');
+  condition.textContent = `${symbol}: ${input.metric} ${input.operator} ${input.target}`;
+  const behavior = document.createElement('small');
+  behavior.textContent = `${input.repeatMode} / expires ${getCustomAlertExpiresLabel(input.expires)}`;
+  const filters = document.createElement('small');
+  filters.textContent = `${input.filters} / sound ${input.soundName || 'default'}`;
+  card.append(titleRow, condition, behavior, filters);
+  preview.append(card);
+}
+
+function getCustomAlertExpiresSelect(modal: HTMLElement) {
+  return modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="expires"]');
+}
+
+function getCustomAlertExpiresLabel(value: string) {
+  const select = alertsSectionView ? getCustomAlertExpiresSelect(alertsSectionView.customAlertModal) : null;
+  const option = select ? Array.from(select.options).find((item) => item.value === value) : null;
+  return (option?.textContent || value || 'never').toLowerCase();
+}
+
+function removeCustomAlertKeepExpiryOption(select: HTMLSelectElement) {
+  const keep = Array.from(select.options).find((option) => option.value === 'keep');
+  if (keep) {
+    if (select.value === 'keep') select.value = 'never';
+    keep.remove();
+  }
+}
+
+function formatCustomAlertExpiryDate(expiresAt: string) {
+  return new Date(expiresAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function isCustomAlertRuleExpired(rule: CustomAlertRuleEntry, now = Date.now()) {
+  return Boolean(rule.expiresAt && new Date(rule.expiresAt).getTime() <= now);
+}
+
+function normalizeCustomAlertColor(value: string | null | undefined) {
+  const text = String(value || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(text) ? text : '#22c55e';
+}
+
 function buildPinnedAdminReviewAlerts(state: AppState): AlertEntry[] {
   if (state.session.role !== 'admin' || state.data.adminTokenReviewAlerts.length === 0) {
     return [];
@@ -443,8 +1248,9 @@ function filterAlerts(alerts: AlertEntry[], searchQuery: string) {
     const symbol = String(alert.symbol || '').toLowerCase();
     const name = String(alert.name || '').toLowerCase();
     const address = String(alert.address || '').toLowerCase();
+    const customTitle = String(alert.customTitle || '').toLowerCase();
     const reasons = (alert.reviewReasons || []).join(' ').toLowerCase();
-    return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery) || reasons.includes(normalizedQuery);
+    return symbol.includes(normalizedQuery) || name.includes(normalizedQuery) || address.includes(normalizedQuery) || customTitle.includes(normalizedQuery) || reasons.includes(normalizedQuery);
   });
 }
 
@@ -1080,6 +1886,15 @@ function getAlertRowRenderKey(
     reviewWebsiteUrl: alert.reviewWebsiteUrl,
     reviewTop10Pct: alert.reviewTop10Pct,
     reviewTop20Pct: alert.reviewTop20Pct,
+    customColorHex: alert.customColorHex,
+    customTitle: alert.customTitle,
+    customMetric: alert.customMetric,
+    customOperator: alert.customOperator,
+    customTarget: alert.customTarget,
+    customRepeatMode: alert.customRepeatMode,
+    customExpires: alert.customExpires,
+    customFilters: alert.customFilters,
+    customSoundName: alert.customSoundName,
     tickerPeers: alert.tickerPeers ?? null,
     busy,
     isStarred,
@@ -1124,7 +1939,13 @@ function syncAlertRowShell(
   article.className = `alert-row ${visualClasses}${isStarred ? ' token-starred starred-card' : ''}`;
   article.dataset.hoverKey = `alert:${alert.id}`;
   article.dataset.alertId = alert.id;
-  article.style.setProperty('--alert-fx-color', getAlertAccentColor(toneClass));
+  const customColor = alert.kind === 'custom-alert' ? normalizeCustomAlertColor(alert.customColorHex) : null;
+  article.style.setProperty('--alert-fx-color', customColor || getAlertAccentColor(toneClass));
+  if (customColor) {
+    article.style.setProperty('--custom-alert-color', customColor);
+  } else {
+    article.style.removeProperty('--custom-alert-color');
+  }
 }
 
 function buildAlertRowContent(
@@ -1424,6 +2245,8 @@ function getAlertAccentColor(toneClass: string) {
       return '#53fc18';
     case 'recent-surge':
       return 'var(--green)';
+    case 'custom-alert':
+      return 'var(--custom-alert-color, #22c55e)';
     case 'normal':
     default:
       return '#2ea8ff';
@@ -1433,19 +2256,25 @@ function getAlertAccentColor(toneClass: string) {
 function buildAlertAvatar(symbol: string, imageUrl: string | null, address: string) {
   const wrapper = document.createElement('span');
   wrapper.className = 'token-avatar-wrap alert-avatar-wrap';
+  wrapper.dataset.tokenAddress = address;
+  wrapper.dataset.tokenFallback = symbol.slice(0, 2).toUpperCase();
 
   if (imageUrl) {
+    wrapper.dataset.tokenImageState = 'pending';
     const image = document.createElement('img');
     image.src = imageUrl;
-    image.alt = symbol;
+    image.alt = '';
+    image.setAttribute('aria-label', symbol);
     image.className = 'alert-avatar';
     image.dataset.tokenImagePreview = 'true';
     image.dataset.tokenImagePreviewSrc = imageUrl;
+    image.dataset.tokenAddress = address;
     wrapper.append(image);
   } else {
     const placeholder = document.createElement('div');
     placeholder.className = 'alert-avatar-placeholder';
     placeholder.textContent = symbol.slice(0, 2).toUpperCase();
+    placeholder.dataset.tokenAddress = address;
     wrapper.append(placeholder);
   }
 
@@ -1475,6 +2304,11 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
     badge.className = `alert-badge-v68 ${toneClass}`;
     const title = alert.signalType === 18 ? 'PUMP CLAIM' : 'BAGS CLAIM';
     badge.append(title, document.createElement('br'), buildAlertBadgeSub(`#${alert.claimSequence || '?'}`, String(alert.label || 'CLAIM')));
+    return badge;
+  }
+  if (alert.kind === 'custom-alert') {
+    badge.className = 'alert-badge-v68 custom-alert';
+    badge.append('CUSTOM ALERT', document.createElement('br'), buildAlertBadgeSub(String(alert.customTitle || alert.label || 'Custom'), String(alert.customMetric || 'condition')));
     return badge;
   }
   if (alert.isHvnc) {
@@ -1516,8 +2350,26 @@ function appendSpecialAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   return false;
 }
 
+function formatCustomAlertTargetDisplay(alert: AlertEntry) {
+  const value = Number(alert.customTarget);
+  if (!Number.isFinite(value) || value <= 0) {
+    return String(alert.customTarget || '-');
+  }
+  const isPrice = String(alert.customMetric || '').toLowerCase().includes('price');
+  return isPrice ? `$${value}` : formatCustomAlertCompactMoney(value);
+}
+
+function appendCustomAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
+  if (alert.kind !== 'custom-alert') return false;
+  container.append(
+    buildMetricPair(String(alert.customMetric || 'Metric').toUpperCase(), `${alert.customOperator || 'hits'} ${formatCustomAlertTargetDisplay(alert)}`, 'up'),
+    buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up'),
+  );
+  return true;
+}
+
 function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
-  if (appendSpecialAlertFlowLine(container, alert)) {
+  if (appendSpecialAlertFlowLine(container, alert) || appendCustomAlertFlowLine(container, alert)) {
     return;
   }
 
@@ -1578,7 +2430,7 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
     ]);
   } else {
-    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap' && alert.kind !== 'meteora-surge';
+    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap' && alert.kind !== 'meteora-surge' && alert.kind !== 'custom-alert';
     const compactMcap = shouldShowCompactMcap ? buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up', '', 'current-mcap') : null;
     compactMcap?.classList.add('compact-only-metric');
     const row = appendMetricRow(container, [
