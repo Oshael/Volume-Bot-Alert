@@ -1,6 +1,6 @@
 ﻿import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionsViewByAddress, getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
-import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, fmtConfig, renderPagedAgeBucketList } from './shared';
+import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, fmtConfig, renderPagedAgeBucketList, renderSparklineRangeControl } from './shared';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
 const RECENT_MAX_AGE_MINUTES = 7 * 24 * 60;
@@ -261,6 +261,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
           <button type="button" class="compact-icon-toggle ${state.ui.recentStarredOnly ? 'active' : ''}" data-action="recent-starred-only" aria-label="Show only starred recent tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
         <div class="recent-ctrl-filters">
+        ${renderSparklineRangeControl(state, 'recent')}
         <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
           <span class="recent-ctrl-cluster-label">AGE</span>
           <input type="text" name="recent-age-min" inputmode="numeric" placeholder="30m / 1d" aria-label="Age min">
@@ -381,6 +382,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindSparklineRangeControls(section, controller);
   bindTokenImagePreview(section);
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
@@ -526,6 +528,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
           <button type="button" class="compact-icon-toggle ${state.ui.oldWeekStarredOnly ? 'active' : ''}" data-action="old-week-starred-only" aria-label="Show only starred old tokens"><span class="compact-icon-glyph">&#9733;</span></button>
         </div>
         <div class="recent-ctrl-filters">
+          ${renderSparklineRangeControl(state, 'oldWeek')}
           <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
             <span class="recent-ctrl-cluster-label">AGE</span>
             <input type="text" name="old-week-age-min" inputmode="numeric" placeholder="7d / 30d" aria-label="Age min">
@@ -646,6 +649,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindTokenActions(section, controller);
   bindCopyButtons(section);
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindSparklineRangeControls(section, controller);
   bindTokenImagePreview(section);
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');

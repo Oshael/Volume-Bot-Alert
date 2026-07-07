@@ -116,6 +116,39 @@ describe('user-ui-pref', () => {
     assert.equal(validation.prefs.expandedSparklineGranularityMinutes, 1);
   });
 
+  it('accepts individual token sparkline range preferences', () => {
+    const validation = userUiPref.validatePatch({
+      sparklineRange: {
+        global: true,
+        globalDays: 14,
+        monitoredDays: 14,
+        recentDays: 7,
+        oldWeekDays: 14,
+        tokenDaysByAddress: {
+          TokenRange111111111111111111111111111111111: 2,
+        },
+      },
+    });
+
+    assert.equal(validation.valid, true);
+    assert.deepEqual(validation.prefs.sparklineRange.tokenDaysByAddress, {
+      TokenRange111111111111111111111111111111111: 2,
+    });
+  });
+
+  it('rejects invalid individual token sparkline range preferences', () => {
+    const validation = userUiPref.validatePatch({
+      sparklineRange: {
+        tokenDaysByAddress: {
+          TokenRange111111111111111111111111111111111: 30,
+        },
+      },
+    });
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.some((error) => error.includes('tokenDaysByAddress.TokenRange111111111111111111111111111111111 must be between 1 and 14')));
+  });
+
   it('rejects invalid expanded chart granularity preferences', () => {
     const validation = userUiPref.validatePatch({
       expandedSparklineGranularityMinutes: 10,

@@ -6,10 +6,13 @@ import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
 function renderTokenAvatar(token: ManualTokenEntry) {
   const symbol = String(token.symbol || token.label || token.address.slice(0, 4)).trim();
   const imageUrl = sanitizeOptionalHttpUrl(token.imageUrl);
-  if (imageUrl) {
-    return `<img class="top-performer-avatar" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(symbol)}" data-token-image-preview="true" data-token-image-preview-src="${escapeHtml(imageUrl)}" />`;
-  }
-  return `<span class="top-performer-avatar top-performer-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
+  const safeAddress = escapeHtml(token.address);
+  const fallback = escapeHtml(symbol.slice(0, 2).toUpperCase());
+  const stateAttr = imageUrl ? ' data-token-image-state="pending"' : '';
+  const avatar = imageUrl
+    ? `<img class="top-performer-avatar" src="${escapeHtml(imageUrl)}" alt="" aria-label="${escapeHtml(symbol)}" data-token-image-preview="true" data-token-image-preview-src="${escapeHtml(imageUrl)}" data-token-address="${safeAddress}" />`
+    : `<span class="top-performer-avatar top-performer-avatar-placeholder" data-token-address="${safeAddress}">${fallback}</span>`;
+  return `<span class="token-avatar-wrap top-performer-avatar-wrap" data-token-address="${safeAddress}" data-token-fallback="${fallback}"${stateAttr}>${avatar}</span>`;
 }
 
 const TOP_PERFORMERS_MANUAL_PAUSE_MS = 4000;

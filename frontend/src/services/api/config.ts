@@ -101,6 +101,14 @@ export interface UiPrefsPayload {
   oldWeekSorts: BucketSortCriterionPayload[];
   monitoredSorts: MonitoredSortCriterionPayload[];
   expandedSparklineGranularityMinutes: number;
+  sparklineRange: {
+    global: boolean;
+    globalDays: number;
+    monitoredDays: number;
+    recentDays: number;
+    oldWeekDays: number;
+    tokenDaysByAddress: Record<string, number>;
+  };
   enabledTradeTerminals: TradeTerminalKey[];
   livePanelLayout: LivePanelLayoutPayload;
 }

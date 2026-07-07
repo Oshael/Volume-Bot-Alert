@@ -4,6 +4,7 @@ import { getAuthFeedbackKind, getAuthFlashBadge } from './auth-feedback';
 import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { sortBucketTokens } from '../../utils/token-table';
 import { fmtMockSol, fmtMockSolAmount, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
+import { resolveApiBase } from '../../services/api/base';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -55,6 +56,7 @@ const SPARKLINE_HOVER_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   hour12: true,
 });
 const TOP_EDGE_PAGE_SCROLL_BRIDGE_DELAY_MS = 400;
+const SPARKLINE_RANGE_OPTIONS = Array.from({ length: 14 }, (_, index) => index + 1);
 const sparklineExpandBoundElements = new WeakSet<HTMLElement>();
 const sparklineHoverBoundElements = new WeakSet<HTMLElement>();
 const tokenImagePreviewBoundRoots = new WeakSet<EventTarget>();
@@ -65,6 +67,8 @@ let tokenImagePreviewGlobalBound = false;
 let tokenImagePreviewLastPointerAt = 0;
 let manualQuickAddOpenKey: string | null = null;
 let manualQuickAddDocumentCloseBound = false;
+
+type SparklineRangeControlScope = 'monitored' | 'recent' | 'oldWeek';
 
 export function resolveTokenLaunchpad(address: string): TokenLaunchpadKey {
   const normalized = String(address || '').trim().toLowerCase();
@@ -81,6 +85,62 @@ export function renderTokenLaunchpadBadge(address: string) {
   return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}">${escapeHtml(meta.mark)}</span>`;
 }
 
+function getSparklineRangeDaysForScope(state: AppState, scope: SparklineRangeControlScope) {
+  const range = state.ui.sparklineRange;
+  if (range.global) return range.globalDays;
+  if (scope === 'recent') return range.recentDays;
+  if (scope === 'oldWeek') return range.oldWeekDays;
+  return range.monitoredDays;
+}
+
+export function renderSparklineRangeControl(state: AppState, scope: SparklineRangeControlScope) {
+  const activeDays = Math.min(14, Math.max(1, Math.round(Number(getSparklineRangeDaysForScope(state, scope))) || 14));
+  const global = state.ui.sparklineRange.global;
+  return `
+    <div class="sparkline-range-control" data-sparkline-range-scope="${scope}">
+      <span class="sparkline-range-label">CHART</span>
+      <div class="sort-menu-wrap sparkline-range-menu" data-sort-wrap>
+        <button type="button" class="old-filter-btn active sparkline-range-button" data-sort-toggle="sparkline-range-${scope}" aria-label="Sparkline range">${activeDays}D</button>
+        <div class="sort-menu-dropdown sparkline-range-dropdown">
+          ${SPARKLINE_RANGE_OPTIONS.map((days) => (
+            `<button type="button" class="sort-menu-item ${days === activeDays ? 'active' : ''}" data-action="set-sparkline-range-days" data-sparkline-range-scope="${scope}" data-sparkline-range-days="${days}">${days}D</button>`
+          )).join('')}
+        </div>
+      </div>
+      <button type="button" class="sparkline-range-scope-toggle${global ? ' active' : ''}" data-action="toggle-sparkline-range-global" data-sparkline-range-scope="${scope}" data-sparkline-range-global="${global ? 'true' : 'false'}" aria-pressed="${global ? 'true' : 'false'}">${global ? 'GLOBAL' : 'LOCAL'}</button>
+    </div>
+  `;
+}
+
+function closeSparklineRangeMenu(button: HTMLButtonElement) {
+  const wrap = button.closest<HTMLElement>('[data-sort-wrap]');
+  wrap?.classList.remove('open');
+  button.blur();
+}
+
+export function bindSparklineRangeControls(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLButtonElement>('[data-action="set-sparkline-range-days"]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeSparklineRangeMenu(button);
+      const scope = button.dataset.sparklineRangeScope as SparklineRangeControlScope;
+      controller.setSparklineRangeDays(scope, Number(button.dataset.sparklineRangeDays));
+    });
+  });
+
+  section.querySelectorAll<HTMLButtonElement>('[data-action="toggle-sparkline-range-global"]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      button.blur();
+      const scope = button.dataset.sparklineRangeScope as SparklineRangeControlScope;
+      const enabled = button.dataset.sparklineRangeGlobal !== 'true';
+      controller.setSparklineRangeGlobal(enabled, scope);
+    });
+  });
+}
+
 type SparklineRenderOptions = {
   expanded?: boolean;
   expandable?: boolean;
@@ -93,6 +153,10 @@ type SparklineRenderOptions = {
   preserveTerminalMove?: boolean;
   preserveTerminalScaleShift?: boolean;
 };
+
+function shouldRenderTokenSparklineRangeControl(address: string, options: SparklineRenderOptions) {
+  return Boolean(address && !options.expanded && options.variant !== 'alert');
+}
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
@@ -350,12 +414,175 @@ export function bindCopyButtons(section: ParentNode) {
 }
 
 export function bindTokenImagePreview(section: ParentNode) {
-  if (!(section instanceof EventTarget) || tokenImagePreviewBoundRoots.has(section)) {
+  if (!(section instanceof EventTarget)) {
     return;
   }
 
+  bindTokenImageLoadState(section);
+  recoverMissingPumpTokenImages(section);
+  if (tokenImagePreviewBoundRoots.has(section)) {
+    return;
+  }
   tokenImagePreviewBoundRoots.add(section);
+  section.addEventListener('error', handleTokenImageLoadError, true);
   bindTokenImagePreviewGlobalEvents();
+}
+
+function bindTokenImageLoadState(section: ParentNode) {
+  for (const image of section.querySelectorAll<HTMLImageElement>('img[data-token-image-preview="true"]')) {
+    bindTokenImageElementLoadState(image);
+  }
+}
+
+function bindTokenImageElementLoadState(image: HTMLImageElement) {
+  if (image.dataset.tokenImageLoadStateBound === 'true') {
+    return;
+  }
+
+  image.dataset.tokenImageLoadStateBound = 'true';
+  const wrap = image.closest<HTMLElement>('.token-avatar-wrap');
+  if (wrap && wrap.dataset.tokenImageState !== 'loaded') {
+    wrap.dataset.tokenFallback = wrap.dataset.tokenFallback || getTokenImageFallbackText(image.alt);
+    wrap.dataset.tokenImageState = 'pending';
+  }
+  const markLoaded = () => {
+    image.dataset.tokenImageLoaded = 'true';
+    wrap?.setAttribute('data-token-image-state', 'loaded');
+  };
+
+  const hasRequestedSource = Boolean(image.currentSrc || image.getAttribute('src'));
+  if (image.complete && hasRequestedSource) {
+    if (image.naturalWidth > 0) {
+      markLoaded();
+    } else {
+      window.setTimeout(() => handleTokenImageFailure(image), 0);
+    }
+    return;
+  }
+
+  image.addEventListener('load', markLoaded, { once: true });
+}
+
+function handleTokenImageLoadError(event: Event) {
+  if (!(event.target instanceof HTMLImageElement) || event.target.dataset.tokenImagePreview !== 'true') {
+    return;
+  }
+
+  handleTokenImageFailure(event.target);
+}
+
+function handleTokenImageFailure(image: HTMLImageElement) {
+  if (!image.isConnected || image.dataset.tokenImagePreview !== 'true') {
+    return;
+  }
+
+  const failedSrc = image.currentSrc || image.src || image.dataset.tokenImagePreviewSrc || '';
+  const wrap = image.closest<HTMLElement>('.token-avatar-wrap');
+  const fallback = document.createElement('span');
+  const fallbackLabel = wrap?.dataset.tokenFallback || getTokenImageFallbackText(image.alt);
+  fallback.className = getTokenImageFallbackClassName(image);
+  fallback.textContent = fallbackLabel;
+  fallback.setAttribute('aria-label', fallbackLabel);
+  fallback.dataset.tokenImageRecoveredPlaceholder = 'true';
+  hideTokenImagePreview('image-error');
+  image.replaceWith(fallback);
+  wrap?.removeAttribute('data-token-image-state');
+  void recoverPumpTokenImage(getTokenImageAddress(image), fallback, failedSrc, fallbackLabel);
+}
+
+function getTokenImageFallbackClassName(image: HTMLImageElement) {
+  if (image.classList.contains('alert-avatar')) {
+    return 'alert-avatar-placeholder';
+  }
+  if (image.classList.contains('tok-avatar')) {
+    return 'tok-avatar-placeholder';
+  }
+  if (image.classList.contains('top-performer-avatar')) {
+    return 'top-performer-avatar top-performer-avatar-placeholder';
+  }
+  return 'token-avatar placeholder';
+}
+
+function getTokenImageFallbackText(label: string) {
+  const normalized = String(label || '').trim();
+  return (normalized.slice(0, 2) || '?').toUpperCase();
+}
+
+function getTokenImageAddress(element: HTMLElement) {
+  const explicitAddress = String(element.dataset.tokenAddress || '').trim();
+  if (explicitAddress) {
+    return explicitAddress;
+  }
+
+  const addressHost = element.closest<HTMLElement>('[data-token-address], [data-address]');
+  return String(addressHost?.dataset.tokenAddress || addressHost?.dataset.address || '').trim();
+}
+
+function recoverMissingPumpTokenImages(section: ParentNode) {
+  const placeholders = section.querySelectorAll<HTMLElement>(
+    '.tok-avatar-placeholder, .alert-avatar-placeholder, .token-avatar.placeholder, .top-performer-avatar-placeholder',
+  );
+
+  for (const placeholder of placeholders) {
+    if (placeholder.dataset.tokenImageRecoveryRequested === 'true') {
+      continue;
+    }
+    placeholder.dataset.tokenImageRecoveryRequested = 'true';
+    void recoverPumpTokenImage(getTokenImageAddress(placeholder), placeholder, '', placeholder.textContent || '');
+  }
+}
+
+async function recoverPumpTokenImage(address: string, fallback: HTMLElement, failedSrc: string, altText: string) {
+  if (!address.toLowerCase().endsWith('pump') || !fallback.isConnected) {
+    return;
+  }
+
+  try {
+    const apiBase = resolveApiBase();
+    const response = await fetch(`${apiBase}/api/catalog/pumpfun/${encodeURIComponent(address)}/meta`, {
+      cache: 'no-store',
+      credentials: 'include',
+    });
+    if (!response.ok || !fallback.isConnected) {
+      return;
+    }
+
+    const body = await response.json() as { imageUrl?: string | null };
+    const recoveredSrc = sanitizeOptionalHttpUrl(body.imageUrl);
+    if (!recoveredSrc || recoveredSrc === failedSrc || !fallback.isConnected) {
+      return;
+    }
+
+    const recovered = document.createElement('img');
+    recovered.alt = '';
+    recovered.className = getRecoveredTokenImageClassName(fallback);
+    recovered.dataset.tokenImagePreview = 'true';
+    recovered.dataset.tokenImagePreviewSrc = recoveredSrc;
+    recovered.dataset.tokenAddress = address;
+    const wrap = fallback.closest<HTMLElement>('.token-avatar-wrap');
+    if (wrap) {
+      wrap.dataset.tokenFallback = getTokenImageFallbackText(altText);
+      wrap.dataset.tokenImageState = 'pending';
+    }
+    bindTokenImageElementLoadState(recovered);
+    fallback.replaceWith(recovered);
+    recovered.src = recoveredSrc;
+  } catch (_) {
+    // Keep the placeholder when metadata recovery is unavailable.
+  }
+}
+
+function getRecoveredTokenImageClassName(fallback: HTMLElement) {
+  if (fallback.classList.contains('alert-avatar-placeholder')) {
+    return 'alert-avatar';
+  }
+  if (fallback.classList.contains('tok-avatar-placeholder')) {
+    return 'tok-avatar';
+  }
+  if (fallback.classList.contains('top-performer-avatar-placeholder')) {
+    return 'top-performer-avatar';
+  }
+  return 'token-avatar';
 }
 
 function getTokenImagePreviewTarget(target: EventTarget | null) {
@@ -712,6 +939,7 @@ export function bindSparklineHover(
       preserveTerminalScaleShift: isFreshSparklineTerminal(entry),
     });
     bindExpandableSparkline(wrap, address, lookupKey, options.controller);
+    bindTokenSparklineRangeControls(wrap, address, options.controller);
     const hoverParts = resolveBindableSparklineHover(wrap, entry, series, displaySeries);
     if (!hoverParts) {
       continue;
@@ -723,6 +951,7 @@ export function bindSparklineHover(
 
     const hide = () => {
       activeIndex = -1;
+      closeTokenSparklineRangeMenu(wrap);
       hover.classList.remove('active');
     };
 
@@ -766,6 +995,56 @@ export function bindSparklineHover(
     wrap.addEventListener('pointerleave', hide);
     wrap.addEventListener('pointercancel', hide);
   }
+}
+
+function updateTokenSparklineRangeMenuState(wrap: HTMLElement, address: string, controller: AppController) {
+  const overrideDays = controller.state.ui.sparklineRange.tokenDaysByAddress[address] ?? null;
+  wrap.querySelectorAll<HTMLButtonElement>('[data-action="reset-token-sparkline-range"]').forEach((button) => {
+    button.classList.toggle('active', overrideDays == null);
+  });
+  wrap.querySelectorAll<HTMLButtonElement>('[data-action="set-token-sparkline-range-days"]').forEach((button) => {
+    button.classList.toggle('active', Number(button.dataset.sparklineRangeDays) === overrideDays);
+  });
+}
+
+function closeTokenSparklineRangeMenu(wrap: HTMLElement) {
+  wrap.querySelector<HTMLElement>('[data-sparkline-token-range]')?.classList.remove('open');
+}
+
+function bindTokenSparklineRangeControls(wrap: HTMLElement, address: string, controller?: AppController) {
+  const menu = wrap.querySelector<HTMLElement>('[data-sparkline-token-range]');
+  if (!menu || !controller || !address || menu.dataset.sparklineTokenRangeBound === 'true') {
+    return;
+  }
+
+  menu.dataset.sparklineTokenRangeBound = 'true';
+  updateTokenSparklineRangeMenuState(wrap, address, controller);
+  menu.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+  menu.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.target as HTMLElement | null;
+    const trigger = target?.closest<HTMLButtonElement>('[data-action="toggle-token-sparkline-range"]');
+    if (trigger) {
+      menu.classList.toggle('open');
+      return;
+    }
+
+    const resetButton = target?.closest<HTMLButtonElement>('[data-action="reset-token-sparkline-range"]');
+    if (resetButton) {
+      closeTokenSparklineRangeMenu(wrap);
+      controller.resetTokenSparklineRangeDays(address);
+      return;
+    }
+
+    const daysButton = target?.closest<HTMLButtonElement>('[data-action="set-token-sparkline-range-days"]');
+    if (daysButton) {
+      closeTokenSparklineRangeMenu(wrap);
+      controller.setTokenSparklineRangeDays(address, Number(daysButton.dataset.sparklineRangeDays));
+    }
+  });
 }
 
 function bindExpandableSparkline(
@@ -1705,7 +1984,7 @@ function renderSparklineTradeMarkers(entry: TokenSparklineEntry, displaySeries: 
 
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
   const parts = [`Mini chart`, `${series.length} pts`];
-  parts.push(`${formatSparklineSpan(entry.effectiveHours)} span`);
+  parts.push(`${formatSparklineSpan(entry.effectiveHours, entry.hours)} span`);
   parts.push(`${formatSparklineGranularity(entry.granularityMinutes)} resolution`);
 
   if (entry.coverageRatio != null && Number.isFinite(entry.coverageRatio)) {
@@ -1718,18 +1997,22 @@ function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
   return parts.join(' · ');
 }
 
-function formatSparklineSpan(hours?: number | null) {
+function formatSparklineSpan(hours?: number | null, maxHours?: number | null) {
   const safeHours = Number(hours);
+  const safeMaxHours = Number(maxHours);
+  const maxLabel = Number.isFinite(safeMaxHours) && safeMaxHours > 0
+    ? `${Math.max(1, Math.round(safeMaxHours / 24))}D max`
+    : '14D max';
   if (!Number.isFinite(safeHours) || safeHours <= 0) {
-    return '14D max';
+    return maxLabel;
   }
 
   if (safeHours >= 24) {
     const days = Math.max(1, Math.round(safeHours / 24));
-    return `${days}D of 14D max`;
+    return `${days}D of ${maxLabel}`;
   }
 
-  return `${Math.max(1, Math.round(safeHours))}H of 14D max`;
+  return `${Math.max(1, Math.round(safeHours))}H of ${maxLabel}`;
 }
 
 function formatSparklineGranularity(granularityMinutes?: number | null) {
@@ -1801,6 +2084,29 @@ function buildSparklineWrapMeta(
   };
 }
 
+function renderTokenSparklineRangeHoverControl(address: string, entry: TokenSparklineEntry, options: SparklineRenderOptions) {
+  if (!shouldRenderTokenSparklineRangeControl(address, options)) {
+    return '';
+  }
+
+  const safeAddress = escapeHtml(address);
+  const requestedHours = Number(entry.hours);
+  const activeDays = Number.isFinite(requestedHours) && requestedHours > 0
+    ? Math.min(14, Math.max(1, Math.round(requestedHours / 24)))
+    : 14;
+  return `
+    <span class="sparkline-token-range" data-sparkline-token-range>
+      <button type="button" class="sparkline-token-range-trigger" data-action="toggle-token-sparkline-range" data-address="${safeAddress}" aria-label="Token chart range" title="Token chart range">${activeDays}D</button>
+      <span class="sparkline-token-range-menu" role="menu">
+        <button type="button" class="sparkline-token-range-item" data-action="reset-token-sparkline-range" data-address="${safeAddress}" role="menuitem">AUTO</button>
+        ${SPARKLINE_RANGE_OPTIONS.map((days) => (
+          `<button type="button" class="sparkline-token-range-item" data-action="set-token-sparkline-range-days" data-address="${safeAddress}" data-sparkline-range-days="${days}" role="menuitem">${days}D</button>`
+        )).join('')}
+      </span>
+    </span>
+  `;
+}
+
 export function renderSparklineFigure(entry: TokenSparklineEntry | null, address?: string, options: SparklineRenderOptions = {}) {
   if (!entry) {
     return renderSparklinePlaceholder(entry);
@@ -1822,6 +2128,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   const areaPolyline = options.areaFill ? buildSparklineAreaPolyline(displaySeries, options) : '';
   const tradeMarkers = renderSparklineTradeMarkers(entry, displaySeries, options);
   const wrapMeta = buildSparklineWrapMeta(entry, address, options, buildSparklineTitle(entry, series));
+  const rangeControl = renderTokenSparklineRangeHoverControl(wrapMeta.safeAddress, entry, options);
 
   return `
     <div class="sparkline-wrap ${trendClass}${wrapMeta.expandedClass}${wrapMeta.filledClass}${wrapMeta.variantClass}" data-address="${wrapMeta.safeAddress}" data-sparkline-key="${wrapMeta.safeLookupKey}" data-sparkline-summary="${wrapMeta.summaryAttr}"${wrapMeta.expandableAttr}${wrapMeta.variantAttr}>
@@ -1831,10 +2138,11 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
         <polyline class="token-sparkline-line" points="${polyline}"></polyline>
         ${tradeMarkers}
       </svg>
-      <div class="sparkline-hover" aria-hidden="true">
-        <span class="sparkline-hover-line"></span>
-        <span class="sparkline-hover-dot"></span>
+      <div class="sparkline-hover">
+        <span class="sparkline-hover-line" aria-hidden="true"></span>
+        <span class="sparkline-hover-dot" aria-hidden="true"></span>
         <span class="sparkline-hover-tooltip"></span>
+        ${rangeControl}
       </div>
     </div>
   `;
@@ -2138,12 +2446,14 @@ export function renderMeteoraCell(address: string, entry: MeteoraEntry | undefin
 
 function renderAvatar(item: ManualTokenEntry, symbol: string) {
   const safeSymbol = escapeHtml(symbol);
+  const safeAddress = escapeHtml(item.address);
+  const fallback = escapeHtml(symbol.slice(0, 2).toUpperCase());
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
   const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : '';
   const avatar = imageUrl
-    ? `<img src="${safeImageUrl}" alt="${safeSymbol}" class="token-avatar" data-token-image-preview="true" data-token-image-preview-src="${safeImageUrl}" />`
-    : `<div class="token-avatar placeholder">${safeSymbol.slice(0, 2).toUpperCase()}</div>`;
-  return `<span class="token-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(item.address)}</span>`;
+    ? `<img src="${safeImageUrl}" alt="" aria-label="${safeSymbol}" class="token-avatar" data-token-image-preview="true" data-token-image-preview-src="${safeImageUrl}" data-token-address="${safeAddress}" />`
+    : `<div class="token-avatar placeholder" data-token-address="${safeAddress}">${fallback}</div>`;
+  return `<span class="token-avatar-wrap" data-token-address="${safeAddress}" data-token-fallback="${fallback}"${imageUrl ? ' data-token-image-state="pending"' : ''}>${avatar}${renderTokenLaunchpadBadge(item.address)}</span>`;
 }
 
 function renderPctSpan(value?: number | null) {

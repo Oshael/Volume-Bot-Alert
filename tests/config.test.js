@@ -204,6 +204,14 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.uiPrefs.recentSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
     assert.deepEqual(response.body.uiPrefs.oldWeekSorts, [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }]);
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 5);
+    assert.deepEqual(response.body.uiPrefs.sparklineRange, {
+      global: true,
+      globalDays: 14,
+      monitoredDays: 14,
+      recentDays: 14,
+      oldWeekDays: 14,
+      tokenDaysByAddress: {},
+    });
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['monitored', 'pumpfun', 'alerts'],
       spans: {
@@ -649,6 +657,16 @@ describe('Config routes', () => {
           enabledTradeTerminals: ['photon', 'bullx'],
           monitoredPerPage: 50,
           expandedSparklineGranularityMinutes: 60,
+          sparklineRange: {
+            global: false,
+            globalDays: 7,
+            monitoredDays: 2,
+            recentDays: 3,
+            oldWeekDays: 10,
+            tokenDaysByAddress: {
+              TokenRange111111111111111111111111111111111: 1,
+            },
+          },
           livePanelLayout: {
             order: ['alerts', 'monitored', 'pumpfun'],
             spans: {
@@ -669,6 +687,16 @@ describe('Config routes', () => {
     assert.equal(response.body.uiPrefs.manualFolderDeleteWarningDismissed, true);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 60);
+    assert.deepEqual(response.body.uiPrefs.sparklineRange, {
+      global: false,
+      globalDays: 7,
+      monitoredDays: 2,
+      recentDays: 3,
+      oldWeekDays: 10,
+      tokenDaysByAddress: {
+        TokenRange111111111111111111111111111111111: 1,
+      },
+    });
     assert.deepEqual(response.body.uiPrefs.enabledTradeTerminals, ['photon', 'bullx']);
     assert.deepEqual(response.body.uiPrefs.livePanelLayout, {
       order: ['alerts', 'monitored', 'pumpfun'],

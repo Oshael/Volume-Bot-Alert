@@ -20,6 +20,10 @@ const LIVE_PANEL_DEFAULT_HEIGHT = 620;
 const LIVE_PANEL_MAX_HEIGHT = 100000;
 const EXPANDED_SPARKLINE_GRANULARITIES = [1, 5, 15, 30, 60, 240, 1440];
 const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
+const SPARKLINE_RANGE_MIN_DAYS = 1;
+const SPARKLINE_RANGE_MAX_DAYS = 14;
+const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
+const SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX = 250;
 
 const DEFAULT_UI_PREFS = {
   collapsed: {
@@ -42,6 +46,14 @@ const DEFAULT_UI_PREFS = {
   oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
   expandedSparklineGranularityMinutes: EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
+  sparklineRange: {
+    global: true,
+    globalDays: SPARKLINE_RANGE_DEFAULT_DAYS,
+    monitoredDays: SPARKLINE_RANGE_DEFAULT_DAYS,
+    recentDays: SPARKLINE_RANGE_DEFAULT_DAYS,
+    oldWeekDays: SPARKLINE_RANGE_DEFAULT_DAYS,
+    tokenDaysByAddress: {},
+  },
   enabledTradeTerminals: [...TRADE_TERMINAL_KEYS],
   livePanelLayout: {
     order: [...LIVE_PANEL_KEYS],
@@ -89,6 +101,78 @@ function validateExpandedSparklineGranularity(key, value) {
     return { valid: false, error: `${key} must be one of ${EXPANDED_SPARKLINE_GRANULARITIES.join(', ')}` };
   }
   return { valid: true, value: parsed };
+}
+
+function normalizeSparklineRangeDays(value, fallback = SPARKLINE_RANGE_DEFAULT_DAYS) {
+  const parsed = Math.round(Number(value));
+  const fallbackDays = Math.round(Number(fallback));
+  const safeFallback = Number.isFinite(fallbackDays)
+    ? Math.min(SPARKLINE_RANGE_MAX_DAYS, Math.max(SPARKLINE_RANGE_MIN_DAYS, fallbackDays))
+    : SPARKLINE_RANGE_DEFAULT_DAYS;
+  return Number.isFinite(parsed)
+    ? Math.min(SPARKLINE_RANGE_MAX_DAYS, Math.max(SPARKLINE_RANGE_MIN_DAYS, parsed))
+    : safeFallback;
+}
+
+function validateSparklineRangeTokenDays(key, value) {
+  if (value == null) {
+    return { valid: true, value: {} };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key}.tokenDaysByAddress must be an object` };
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length > SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX) {
+    return { valid: false, error: `${key}.tokenDaysByAddress must contain at most ${SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX} tokens` };
+  }
+
+  const tokenDaysByAddress = {};
+  for (const [rawAddress, rawDays] of entries) {
+    const address = String(rawAddress || '').trim();
+    const days = Math.round(Number(rawDays));
+    if (!address) {
+      return { valid: false, error: `${key}.tokenDaysByAddress has an empty token address` };
+    }
+    if (!Number.isFinite(days) || days < SPARKLINE_RANGE_MIN_DAYS || days > SPARKLINE_RANGE_MAX_DAYS) {
+      return { valid: false, error: `${key}.tokenDaysByAddress.${address} must be between ${SPARKLINE_RANGE_MIN_DAYS} and ${SPARKLINE_RANGE_MAX_DAYS}` };
+    }
+    tokenDaysByAddress[address] = days;
+  }
+
+  return { valid: true, value: tokenDaysByAddress };
+}
+
+function validateSparklineRange(key, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key} must be an object` };
+  }
+  if (value.global != null && typeof value.global !== 'boolean') {
+    return { valid: false, error: `${key}.global must be a boolean` };
+  }
+  const tokenDaysByAddress = validateSparklineRangeTokenDays(key, value.tokenDaysByAddress);
+  if (!tokenDaysByAddress.valid) {
+    return tokenDaysByAddress;
+  }
+
+  const next = {
+    global: value.global == null ? true : Boolean(value.global),
+    globalDays: normalizeSparklineRangeDays(value.globalDays),
+    monitoredDays: normalizeSparklineRangeDays(value.monitoredDays),
+    recentDays: normalizeSparklineRangeDays(value.recentDays),
+    oldWeekDays: normalizeSparklineRangeDays(value.oldWeekDays),
+    tokenDaysByAddress: tokenDaysByAddress.value,
+  };
+
+  for (const dayKey of ['globalDays', 'monitoredDays', 'recentDays', 'oldWeekDays']) {
+    const raw = value[dayKey];
+    const parsed = Math.round(Number(raw));
+    if (raw != null && (!Number.isFinite(parsed) || parsed < SPARKLINE_RANGE_MIN_DAYS || parsed > SPARKLINE_RANGE_MAX_DAYS)) {
+      return { valid: false, error: `${key}.${dayKey} must be between ${SPARKLINE_RANGE_MIN_DAYS} and ${SPARKLINE_RANGE_MAX_DAYS}` };
+    }
+  }
+
+  return { valid: true, value: next };
 }
 
 function validateCollapsed(value) {
@@ -371,6 +455,11 @@ function normalizePrefs(raw) {
 
   defaults.expandedSparklineGranularityMinutes = normalizeExpandedSparklineGranularity(source.expandedSparklineGranularityMinutes);
 
+  const sparklineRange = validateSparklineRange('sparklineRange', source.sparklineRange);
+  if (sparklineRange.valid) {
+    defaults.sparklineRange = sparklineRange.value;
+  }
+
   const enabledTradeTerminals = validateTradeTerminals('enabledTradeTerminals', source.enabledTradeTerminals);
   if (enabledTradeTerminals.valid) {
     defaults.enabledTradeTerminals = enabledTradeTerminals.value;
@@ -425,6 +514,16 @@ function validatePatch(input) {
 
     if (key === 'expandedSparklineGranularityMinutes') {
       const result = validateExpandedSparklineGranularity(key, value);
+      if (!result.valid) {
+        errors.push(result.error);
+      } else {
+        prefs[key] = result.value;
+      }
+      continue;
+    }
+
+    if (key === 'sparklineRange') {
+      const result = validateSparklineRange(key, value);
       if (!result.valid) {
         errors.push(result.error);
       } else {

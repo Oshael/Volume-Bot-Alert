@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderMeteoraCell, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderMeteoraCell, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -21,7 +21,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   section.className = `panel legacy-panel monitored-panel${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
   section.innerHTML = view.isCollapsed
     ? renderCollapsedMonitoredHeader(view.filteredTracked.length, view.pinCount)
-    : renderExpandedMonitoredMarkup(view);
+    : renderExpandedMonitoredMarkup(state, view);
 
   if (view.isCollapsed) {
     bindMonitoredCollapseToggle(section, controller);
@@ -97,7 +97,7 @@ function renderCollapsedMonitoredHeader(count: number, pinCount: number) {
   `;
 }
 
-function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
+function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionView) {
   const sortClasses = view.sortClasses;
   return `
     <div class="panel-header monitored-panel-header">
@@ -144,6 +144,7 @@ function renderExpandedMonitoredMarkup(view: MonitoredSectionView) {
               <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="monitored-search" data-search-input="monitored">
             </div>
             <div class="monitored-inline-controls">
+              ${view.miniChartEnabled ? renderSparklineRangeControl(state, 'monitored') : ''}
               <label class="legacy-mini-field monitored-per-page-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
               <label class="legacy-mini-field monitored-page-field">
                 PAGE
@@ -246,6 +247,7 @@ function bindMonitoredSectionControls(
   bindTokenImagePreview(section);
   bindTopEdgePageScrollBridge(section.querySelector<HTMLElement>('.monitored-list'));
   bindSparklineHover(section, state.data.sparklineByAddress, { controller });
+  bindSparklineRangeControls(section, controller);
   bindMonitoredTickerPeerPanelClose(section);
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
@@ -836,19 +838,25 @@ function formatMockTradingTakeProfitSummary(orders: NonNullable<AppState['data']
 function buildMonitoredAvatar(symbol: string, imageUrl: string | null, address: string) {
   const wrapper = document.createElement('span');
   wrapper.className = 'token-avatar-wrap monitored-avatar-wrap';
+  wrapper.dataset.tokenAddress = address;
+  wrapper.dataset.tokenFallback = symbol.slice(0, 2).toUpperCase();
 
   if (imageUrl) {
+    wrapper.dataset.tokenImageState = 'pending';
     const image = document.createElement('img');
     image.src = imageUrl;
-    image.alt = symbol;
+    image.alt = '';
+    image.setAttribute('aria-label', symbol);
     image.className = 'tok-avatar';
     image.dataset.tokenImagePreview = 'true';
     image.dataset.tokenImagePreviewSrc = imageUrl;
+    image.dataset.tokenAddress = address;
     wrapper.append(image);
   } else {
     const placeholder = document.createElement('div');
     placeholder.className = 'tok-avatar-placeholder';
     placeholder.textContent = symbol.slice(0, 2).toUpperCase();
+    placeholder.dataset.tokenAddress = address;
     wrapper.append(placeholder);
   }
 
