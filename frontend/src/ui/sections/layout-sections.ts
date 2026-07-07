@@ -70,6 +70,7 @@ const CHART_ALERT_RECAP_CARD_HEIGHT_PX = 620;
 const CHART_ALERT_RECAP_CARD_MARGIN_PX = 24;
 const CHART_ALERT_RECAP_LOGO_URL = new URL('../../../favicon.png', import.meta.url).href;
 const CHART_ALERT_RECAP_X_PROFILE_URL = 'https://x.com/TrendScope_pro';
+const EXPANDED_PRICE_SCALE_WHEEL_SENSITIVITY = 0.0007;
 const LOGIN_OTP_TRANSIENT_NOTICES = new Set([
   'Sending verification code...',
   'Verifying code...',
@@ -2674,29 +2675,51 @@ function getExpandedChartInitialTimeRange(data: CandlestickData<UTCTimestamp>[],
 }
 
 function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceScaleApi) {
-  const onWheel = (event: WheelEvent) => {
-    const rect = container.getBoundingClientRect();
-    const axisWidth = Math.max(48, priceScale.width());
-    if (event.clientX < rect.right - axisWidth) {
-      return;
-    }
+  let wheelRaf = 0;
+  let pendingDeltaY = 0;
+  let pendingClientY = 0;
+
+  const applyPendingWheel = () => {
+    wheelRaf = 0;
     const range = priceScale.getVisibleRange();
-    if (!range || !(range.to > range.from)) {
+    if (!range || !(range.to > range.from) || pendingDeltaY === 0) {
+      pendingDeltaY = 0;
       return;
     }
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const cursorRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)));
+    const rect = container.getBoundingClientRect();
+    const cursorRatio = Math.max(0, Math.min(1, (pendingClientY - rect.top) / Math.max(1, rect.height)));
     const anchor = range.to - ((range.to - range.from) * cursorRatio);
-    const factor = Math.exp(Math.max(-1.5, Math.min(1.5, event.deltaY * 0.0015)));
+    const factor = Math.exp(Math.max(-1, Math.min(1, pendingDeltaY * EXPANDED_PRICE_SCALE_WHEEL_SENSITIVITY)));
+    pendingDeltaY = 0;
     priceScale.setAutoScale(false);
     priceScale.setVisibleRange({
       from: anchor - ((anchor - range.from) * factor),
       to: anchor + ((range.to - anchor) * factor),
     });
   };
+
+  const onWheel = (event: WheelEvent) => {
+    const rect = container.getBoundingClientRect();
+    const axisWidth = Math.max(48, priceScale.width());
+    if (event.clientX < rect.right - axisWidth) {
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pendingDeltaY += event.deltaY;
+    pendingClientY = event.clientY;
+    if (!wheelRaf) {
+      wheelRaf = window.requestAnimationFrame(applyPendingWheel);
+    }
+  };
   container.addEventListener('wheel', onWheel, { passive: false, capture: true });
-  return () => container.removeEventListener('wheel', onWheel, true);
+  return () => {
+    if (wheelRaf) {
+      window.cancelAnimationFrame(wheelRaf);
+      wheelRaf = 0;
+    }
+    container.removeEventListener('wheel', onWheel, true);
+  };
 }
 
 type ExpandedChartTimeScaleApi = {
