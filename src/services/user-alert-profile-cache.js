@@ -1,12 +1,19 @@
 const userConfig = require('../models/user-config');
+const db = require('../models/db');
+const config = require('../../config');
 
 const FOREGROUND_TTL_MS = 45 * 1000;
 const HIDDEN_GRACE_MAX_MS = 20 * 60 * 1000;
+const SESSION_FALLBACK_TTL_MS = 10 * 1000;
 const PRESENCE_MODES = new Set(['foreground', 'hidden', 'inactive']);
 
 const profileCacheByUserId = new Map();
 const livePresenceBySocketId = new Map();
 const socketIdsByUserId = new Map();
+let activeSessionUserIdsCache = {
+  expiresAtMs: 0,
+  userIds: [],
+};
 
 function normalizeUserId(value) {
   const userId = Number.parseInt(String(value || '').trim(), 10);
@@ -348,6 +355,54 @@ function listActiveUserIds(options = {}) {
   return activeUserIds.sort((a, b) => a - b);
 }
 
+function shouldUseSessionFallback(options = {}) {
+  if (options.sessionFallback === true) {
+    return true;
+  }
+  if (options.sessionFallback === false) {
+    return false;
+  }
+  return Boolean(config.runtime?.runBackgroundJobs) && !config.runtime?.runSocketHub;
+}
+
+async function listActiveSessionUserIds(options = {}) {
+  const nowMs = getNowMs(options);
+  const useCache = options.db == null && options.sessionFallbackCache !== false;
+  if (useCache && activeSessionUserIdsCache.expiresAtMs > nowMs) {
+    return activeSessionUserIdsCache.userIds.slice();
+  }
+
+  const executor = options.db && typeof options.db.query === 'function' ? options.db : db;
+  const { rows } = await executor.query(
+    `SELECT DISTINCT s.user_id
+     FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.expires_at > NOW()
+       AND u.is_active = TRUE
+       AND (
+         LOWER(u.role) = 'admin'
+         OR (
+           u.access_status IN ('active', 'grace')
+           AND (u.access_expires_at IS NULL OR u.access_expires_at > NOW())
+         )
+       )
+     ORDER BY s.user_id ASC`
+  );
+
+  const userIds = rows
+    .map((row) => Number.parseInt(String(row.user_id || '').trim(), 10))
+    .filter((userId) => Number.isInteger(userId) && userId > 0);
+
+  if (useCache) {
+    activeSessionUserIdsCache = {
+      expiresAtMs: nowMs + SESSION_FALLBACK_TTL_MS,
+      userIds,
+    };
+  }
+
+  return userIds.slice();
+}
+
 async function refreshUserProfile(userId) {
   const normalizedUserId = normalizeUserId(userId);
   const configResult = typeof userConfig.getAllWithStoredKeys === 'function'
@@ -366,7 +421,10 @@ function invalidateUserProfile(userId) {
 
 async function listActiveProfiles(options = {}) {
   const nowMs = getNowMs(options);
-  const activeUserIds = listActiveUserIds(options);
+  let activeUserIds = listActiveUserIds(options);
+  if (activeUserIds.length === 0 && shouldUseSessionFallback(options)) {
+    activeUserIds = await listActiveSessionUserIds(options);
+  }
   const missingUserIds = activeUserIds.filter((userId) => !profileCacheByUserId.has(userId));
 
   if (missingUserIds.length > 0) {
@@ -397,6 +455,7 @@ function getStatus(options = {}) {
   return {
     foregroundTtlMs: FOREGROUND_TTL_MS,
     hiddenGraceMaxMs: HIDDEN_GRACE_MAX_MS,
+    sessionFallbackTtlMs: SESSION_FALLBACK_TTL_MS,
     trackedSockets: livePresenceBySocketId.size,
     trackedUsers: socketIdsByUserId.size,
     activeUsers: listActiveUserIds(options).length,
@@ -407,12 +466,14 @@ function getStatus(options = {}) {
 module.exports = {
   FOREGROUND_TTL_MS,
   HIDDEN_GRACE_MAX_MS,
+  SESSION_FALLBACK_TTL_MS,
   PRESENCE_MODES,
   buildNormalizedAlertProfile,
   clearLivePresence,
   getStatus,
   invalidateUserProfile,
   isPresenceEntryActive,
+  listActiveSessionUserIds,
   listActiveProfiles,
   listActiveUserIds,
   refreshUserProfile,
@@ -425,9 +486,11 @@ module.exports = {
     isPresenceEntryForegroundActive,
     isPresenceEntryHiddenActive,
     listActivePresenceEntriesForUser,
+    listActiveSessionUserIds,
     normalizeHiddenGraceMs,
     normalizeMode,
     normalizePresencePayload,
+    shouldUseSessionFallback,
     normalizeSocketId,
     normalizeStoredKeys,
     normalizeUserId,

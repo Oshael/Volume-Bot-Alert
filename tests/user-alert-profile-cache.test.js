@@ -253,4 +253,55 @@ describe('user alert profile cache', () => {
       userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
     }
   });
+
+  it('falls back to active database sessions when no local socket presence exists', async () => {
+    const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
+    const queries = [];
+    let getAllCalls = 0;
+    const db = {
+      async query(sql) {
+        queries.push(sql);
+        return { rows: [{ user_id: 3 }, { user_id: 9 }] };
+      },
+    };
+    userConfig.getAllWithStoredKeys = async (userId) => {
+      getAllCalls += 1;
+      return {
+        configs: {
+          threshold: userId === 3 ? 70 : 40,
+          'mcap-threshold': 50,
+          'min-vol': 10000,
+          'min-mcap': 30000,
+          'max-mcap': 0,
+          'hvnc-min-vol': 300000,
+          'old-alert-1h-threshold': 50,
+          'old-alert-6h-threshold': 100,
+          'meteora-alert-1h-threshold': 50,
+          'alert-vol-enabled': 'on',
+          'alert-mcap-enabled': 'on',
+          'alert-hvnc-enabled': 'on',
+          'alert-old-surge-1h-enabled': 'on',
+          'alert-old-surge-6h-enabled': 'on',
+          'alert-meteora-surge-enabled': 'on',
+        },
+        storedKeys: new Set(['threshold']),
+      };
+    };
+
+    try {
+      const profiles = await userAlertProfileCache.listActiveProfiles({ db, sessionFallback: true });
+
+      assert.deepEqual(profiles.map((profile) => profile.userId), [3, 9]);
+      assert.equal(profiles[0].thresholdPct, 70);
+      assert.equal(profiles[0].presenceMode, null);
+      assert.equal(getAllCalls, 2);
+      assert.equal(queries.length, 1);
+      assert.match(queries[0], /FROM sessions s/);
+      assert.match(queries[0], /u\.access_status IN \('active', 'grace'\)/);
+    } finally {
+      userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
+      userAlertProfileCache.invalidateUserProfile(3);
+      userAlertProfileCache.invalidateUserProfile(9);
+    }
+  });
 });
