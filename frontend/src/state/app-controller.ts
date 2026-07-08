@@ -357,6 +357,12 @@ type SparklineBatchRequest = {
   addresses: string[];
 };
 
+type WorkspaceSparklineRefreshOptions = {
+  force?: boolean;
+  token?: string;
+  caller?: string;
+};
+
 type SparklineDebugEntry = {
   event: string;
   meta: Record<string, unknown>;
@@ -1078,6 +1084,7 @@ export function createAppController(): AppController {
   let sparklineRefreshInFlight = false;
   let sparklineRefreshQueued = false;
   let sparklineRefreshQueuedForce = false;
+  let sparklineRefreshQueuedCaller = '';
   const expandedSparklineRequests = new Set<string>();
   const deferredExpandedSparklineRenderRegions = new Set<AppRenderRegion>();
   let preferredExpandedSparklineGranularityMinutes = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
@@ -1119,6 +1126,7 @@ export function createAppController(): AppController {
   let nextBidZoneRefreshAt = 0;
   let nextSparklineRefreshAt = 0;
   let lastSparklineAddressKey = '';
+  let lastSparklineVisibleAddresses: string[] = [];
   let manualMetadataBatchCacheKey = '';
   let manualMetadataBatchCacheExpiresAt = 0;
   let manualMetadataMeteoraCacheKey = '';
@@ -2101,6 +2109,23 @@ export function createAppController(): AppController {
       head: normalized.slice(0, 8),
       hash: hashSparklineDebugValue(normalized.join(',')),
     };
+  }
+
+  function summarizeSparklineDebugAddressDiff(previous: string[] = [], next: string[] = []) {
+    const previousSet = new Set(previous.map((address) => String(address || '').trim()).filter(Boolean));
+    const nextSet = new Set(next.map((address) => String(address || '').trim()).filter(Boolean));
+    const added = [...nextSet].filter((address) => !previousSet.has(address));
+    const removed = [...previousSet].filter((address) => !nextSet.has(address));
+    return {
+      added: summarizeSparklineDebugAddresses(added),
+      removed: summarizeSparklineDebugAddresses(removed),
+      changed: added.length > 0 || removed.length > 0,
+    };
+  }
+
+  function normalizeSparklineDebugCaller(value: unknown, fallback = 'unknown') {
+    const caller = String(value || '').trim();
+    return caller ? caller.slice(0, 80) : fallback;
   }
 
   function summarizeSparklineDebugBatches(batches: SparklineBatchRequest[] = []) {
@@ -6727,6 +6752,7 @@ export function createAppController(): AppController {
     });
     state.data.sparklineByAddress = {};
     lastSparklineAddressKey = '';
+    lastSparklineVisibleAddresses = [];
     if (options?.resetSchedule !== false) {
       nextSparklineRefreshAt = 0;
     }
@@ -7033,6 +7059,13 @@ export function createAppController(): AppController {
     let nextCache: Record<string, TokenSparklineEntry> | null = null;
     let changed = false;
     const addedLoading: string[] = [];
+    const addedDetails: Array<{
+      address: string;
+      hadEntry: boolean;
+      seriesCount: number;
+      loading: boolean;
+      hours?: number;
+    }> = [];
 
     for (const address of addresses) {
       const existing = (nextCache || state.data.sparklineByAddress)[address];
@@ -7044,6 +7077,15 @@ export function createAppController(): AppController {
       nextCache[address] = buildWorkspaceSparklineLoadingEntry(address, existing);
       changed = true;
       addedLoading.push(address);
+      if (addedDetails.length < 8) {
+        addedDetails.push({
+          address,
+          hadEntry: Boolean(existing),
+          seriesCount: Array.isArray(existing?.series) ? existing.series.length : 0,
+          loading: Boolean(existing?.loading),
+          hours: existing?.hours,
+        });
+      }
     }
 
     if (!nextCache || !changed) {
@@ -7054,6 +7096,11 @@ export function createAppController(): AppController {
     recordSparklineDebug('loading.add', {
       added: summarizeSparklineDebugAddresses(addedLoading),
       requested: summarizeSparklineDebugAddresses(addresses),
+      addedDetails,
+    });
+    recordSparklineDebug('loading.without-series', {
+      added: summarizeSparklineDebugAddresses(addedLoading),
+      addedDetails,
     });
     return true;
   }
@@ -7802,11 +7849,13 @@ export function createAppController(): AppController {
     return !force && addressKey === lastSparklineAddressKey && now < nextSparklineRefreshAt;
   }
 
-  function queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses: string[], force: boolean) {
+  function queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses: string[], force: boolean, caller: string) {
     showWorkspaceSparklineLoadingEntries(visibleAddresses);
     sparklineRefreshQueued = true;
     sparklineRefreshQueuedForce = sparklineRefreshQueuedForce || force;
+    sparklineRefreshQueuedCaller = sparklineRefreshQueuedCaller || caller;
     recordSparklineDebug('refresh.queued-in-flight', {
+      caller,
       force,
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
     });
@@ -7898,30 +7947,55 @@ export function createAppController(): AppController {
     return !isWorkspaceSparklineSessionValid(token);
   }
 
-  function applyWorkspaceSparklineBatchPayload(payload: TokenSparklinesPayload) {
+  function applyWorkspaceSparklineBatchPayload(payload: TokenSparklinesPayload, batch?: SparklineBatchRequest, caller = 'unknown') {
     const items = Array.isArray(payload.items) ? payload.items : [];
+    const returnedAddresses = items.map((item) => item.address);
+    const requestedAddresses = batch?.addresses || [];
+    const missingAddresses = requestedAddresses.filter((address) => !returnedAddresses.includes(address));
+    const emptySeriesAddresses = items
+      .filter((item) => !Array.isArray(item.series) || item.series.length < 2)
+      .map((item) => item.address);
     recordSparklineDebug('payload.apply', {
+      caller,
       count: items.length,
-      emptySeries: items.filter((item) => !Array.isArray(item.series) || item.series.length < 2).length,
+      emptySeries: emptySeriesAddresses.length,
+      missing: missingAddresses.length,
       granularityMinutes: payload.granularityMinutes ?? null,
       hours: payload.hours ?? null,
-      addresses: summarizeSparklineDebugAddresses(items.map((item) => item.address)),
+      requested: summarizeSparklineDebugAddresses(requestedAddresses),
+      returned: summarizeSparklineDebugAddresses(returnedAddresses),
+      emptySeriesAddresses: summarizeSparklineDebugAddresses(emptySeriesAddresses),
+      missingAddresses: summarizeSparklineDebugAddresses(missingAddresses),
     });
+    if (items.length === 0 || emptySeriesAddresses.length > 0 || missingAddresses.length > 0) {
+      recordSparklineDebug('payload.empty-or-partial', {
+        caller,
+        batch: batch ? summarizeSparklineDebugBatches([batch]) : null,
+        count: items.length,
+        emptySeries: emptySeriesAddresses.length,
+        missing: missingAddresses.length,
+        returned: summarizeSparklineDebugAddresses(returnedAddresses),
+        emptySeriesAddresses: summarizeSparklineDebugAddresses(emptySeriesAddresses),
+        missingAddresses: summarizeSparklineDebugAddresses(missingAddresses),
+      });
+    }
     applyHistorySparklinePayload(payload);
     broadcastHistorySparklineSnapshot(payload);
   }
 
-  function completeWorkspaceSparklineRefreshSuccess(addressKey: string) {
+  function completeWorkspaceSparklineRefreshSuccess(addressKey: string, caller: string) {
     lastSparklineAddressKey = addressKey;
     nextSparklineRefreshAt = Date.now() + SPARKLINE_REFRESH_INTERVAL_MS;
     recordSparklineDebug('refresh.success', {
+      caller,
       addressKey: hashSparklineDebugValue(addressKey),
       nextRefreshInMs: SPARKLINE_REFRESH_INTERVAL_MS,
     });
   }
 
-  function handleWorkspaceSparklineBatchRefreshError(batch: SparklineBatchRequest, error: unknown) {
+  function handleWorkspaceSparklineBatchRefreshError(batch: SparklineBatchRequest, error: unknown, caller: string) {
     recordSparklineDebug('refresh.batch-error', {
+      caller,
       batch: summarizeSparklineDebugBatches([batch]),
       error: formatDebugErrorMessage(error),
     });
@@ -7935,17 +8009,39 @@ export function createAppController(): AppController {
     );
   }
 
-  function handleWorkspaceSparklineRefreshError(visibleAddresses: string[], error: unknown) {
+  function handleWorkspaceSparklineRefreshError(visibleAddresses: string[], error: unknown, caller: string) {
     recordSparklineDebug('refresh.error', {
+      caller,
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
       error: formatDebugErrorMessage(error),
     });
     handleWorkspaceSparklineRefreshFailure(visibleAddresses, error);
   }
 
-  async function refreshHistoryWorkspaceSparklines(options?: { force?: boolean; token?: string }) {
+  function applyWorkspaceSparklineRefreshResults(
+    results: WorkspaceSparklineBatchResult[],
+    addressKey: string,
+    caller: string,
+  ) {
+    const failedResults = results.filter((result) => result.error);
+    recordSparklineDebug('refresh.fetch-complete', {
+      caller,
+      failed: failedResults.length,
+      total: results.length,
+      failedBatches: summarizeSparklineDebugBatches(failedResults.map((result) => result.batch)),
+    });
+    for (const result of failedResults) {
+      handleWorkspaceSparklineBatchRefreshError(result.batch, result.error, caller);
+    }
+    if (failedResults.length === 0) {
+      completeWorkspaceSparklineRefreshSuccess(addressKey, caller);
+    }
+  }
+
+  async function refreshHistoryWorkspaceSparklines(options?: WorkspaceSparklineRefreshOptions) {
     const token = options?.token ?? state.session.token ?? undefined;
     const force = Boolean(options?.force);
+    const caller = normalizeSparklineDebugCaller(options?.caller);
     if (!isWorkspaceSparklineRefreshAllowed(token)) {
       return;
     }
@@ -7953,14 +8049,19 @@ export function createAppController(): AppController {
     const batches = getVisibleWorkspaceSparklineBatches();
     const addressKey = buildSparklineBatchKey(batches);
     const visibleAddresses = collectWorkspaceSparklineAddresses(batches);
+    const visibleDiff = summarizeSparklineDebugAddressDiff(lastSparklineVisibleAddresses, visibleAddresses);
     recordSparklineDebug('refresh.request', {
+      caller,
       force,
       batches: summarizeSparklineDebugBatches(batches),
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      previousVisible: summarizeSparklineDebugAddresses(lastSparklineVisibleAddresses),
+      visibleDiff,
       addressKey: hashSparklineDebugValue(addressKey),
       previousKey: lastSparklineAddressKey ? hashSparklineDebugValue(lastSparklineAddressKey) : '',
       keyChanged: addressKey !== lastSparklineAddressKey,
     });
+    lastSparklineVisibleAddresses = visibleAddresses.slice();
     if (batches.length === 0) {
       abortEmptyWorkspaceSparklineBatches();
       return;
@@ -7968,11 +8069,12 @@ export function createAppController(): AppController {
 
     const now = Date.now();
     if (sparklineRefreshInFlight) {
-      queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses, force);
+      queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses, force, caller);
       return;
     }
     if (isWorkspaceSparklineCacheFresh(addressKey, force, now)) {
       recordSparklineDebug('refresh.cache-hit', {
+        caller,
         addressKey: hashSparklineDebugValue(addressKey),
         nextRefreshInMs: Math.max(0, nextSparklineRefreshAt - now),
       });
@@ -7982,56 +8084,52 @@ export function createAppController(): AppController {
     sparklineRefreshInFlight = true;
     showWorkspaceSparklineLoadingEntries(visibleAddresses);
     recordSparklineDebug('refresh.fetch-start', {
+      caller,
       force,
       batches: summarizeSparklineDebugBatches(batches),
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
       addressKey: hashSparklineDebugValue(addressKey),
     });
     try {
-      const results = await fetchWorkspaceSparklinePayloads(batches, token, (_batch, payload) => {
+      const results = await fetchWorkspaceSparklinePayloads(batches, token, (batch, payload) => {
         if (shouldDiscardWorkspaceSparklinePayload(token)) {
           return;
         }
-        applyWorkspaceSparklineBatchPayload(payload);
+        applyWorkspaceSparklineBatchPayload(payload, batch, caller);
       });
       if (shouldDiscardWorkspaceSparklinePayload(token)) {
         return;
       }
 
-      const failedResults = results.filter((result) => result.error);
-      recordSparklineDebug('refresh.fetch-complete', {
-        failed: failedResults.length,
-        total: results.length,
-        failedBatches: summarizeSparklineDebugBatches(failedResults.map((result) => result.batch)),
-      });
-      for (const result of failedResults) {
-        handleWorkspaceSparklineBatchRefreshError(result.batch, result.error);
-      }
-      if (failedResults.length === 0) {
-        completeWorkspaceSparklineRefreshSuccess(addressKey);
-      }
+      applyWorkspaceSparklineRefreshResults(results, addressKey, caller);
     } catch (error) {
-      handleWorkspaceSparklineRefreshError(visibleAddresses, error);
+      handleWorkspaceSparklineRefreshError(visibleAddresses, error, caller);
     } finally {
       sparklineRefreshInFlight = false;
       const shouldRunQueuedRefresh = sparklineRefreshQueued;
       const queuedForce = sparklineRefreshQueuedForce;
+      const queuedCaller = sparklineRefreshQueuedCaller;
       sparklineRefreshQueued = false;
       sparklineRefreshQueuedForce = false;
+      sparklineRefreshQueuedCaller = '';
       if (shouldRunQueuedRefresh && isWorkspaceSparklineRefreshAllowed(state.session.token ?? token)) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token ?? token, force: queuedForce });
+        void refreshHistoryWorkspaceSparklines({
+          token: state.session.token ?? token,
+          force: queuedForce,
+          caller: queuedCaller || 'queued-in-flight',
+        });
       }
     }
   }
 
-  function refreshMonitoredSparklinesIfExpanded() {
+  function refreshMonitoredSparklinesIfExpanded(caller = 'monitored-expanded') {
     if (state.ui.livePanelLayout.spans.monitored <= 1 || !state.session.token || !isLiveWorkspace()) {
       return;
     }
-    void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+    void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller });
   }
 
-  function refreshWorkspaceSparklinesAfterRangeChange(addresses?: string[]) {
+  function refreshWorkspaceSparklinesAfterRangeChange(addresses?: string[], caller = 'range-change') {
     const normalizedAddresses = (addresses || []).map((address) => String(address || '').trim()).filter(Boolean);
     if (normalizedAddresses.length > 0) {
       const nextCache = { ...state.data.sparklineByAddress };
@@ -8049,7 +8147,7 @@ export function createAppController(): AppController {
     }
     emit('manual', 'monitored', 'recent', 'old-week');
     if (state.session.token) {
-      void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+      void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller });
     }
   }
 
@@ -8191,7 +8289,7 @@ export function createAppController(): AppController {
       clearHistorySearchPending({ emitRegions: false });
       applyHistoryBootstrapPayload(payload, options?.manualTokensOverride, requestPayload);
       broadcastHistoryBootstrapSnapshot(payload, requestPayload);
-      void refreshHistoryWorkspaceSparklines({ token });
+      void refreshHistoryWorkspaceSparklines({ token, caller: 'history-bootstrap' });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
       if (lastMonitoredDashboardError && state.ui.error === lastMonitoredDashboardError) {
@@ -8261,7 +8359,7 @@ export function createAppController(): AppController {
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
       void refreshDashboardTopPerformers(token);
-      void refreshHistoryWorkspaceSparklines({ token });
+      void refreshHistoryWorkspaceSparklines({ token, caller: 'monitored-poll' });
       void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: isLiveWorkspace() });
       refreshMockTradingStateForMarketPoll();
       await executeFloatingQuickBuyIfReady();
@@ -11679,13 +11777,13 @@ export function createAppController(): AppController {
       state.ui.monitoredSearchQuery = String(query || '');
       state.ui.monitoredPage = 0;
       emit('monitored');
-      refreshMonitoredSparklinesIfExpanded();
+      refreshMonitoredSparklinesIfExpanded('monitored-search');
     },
     setManualSearchQuery(query: string) {
       state.ui.manualSearchQuery = String(query || '');
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-search' });
       }
     },
     setRecentSearchQuery(query: string) {
@@ -11713,7 +11811,7 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-starred' });
       }
     },
     setManualFolderDeleteWarningDismissed(enabled: boolean) {
@@ -11744,7 +11842,7 @@ export function createAppController(): AppController {
     setMonitoredPage(page: number) {
       state.ui.monitoredPage = clampPage(page, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       emit('monitored');
-      refreshMonitoredSparklinesIfExpanded();
+      refreshMonitoredSparklinesIfExpanded('monitored-page');
     },
     setAlertPage(page: number) {
       state.ui.alertPage = clampPage(page, getFilteredAlertsForPagination().length, ALERTS_PER_PAGE);
@@ -11777,7 +11875,7 @@ export function createAppController(): AppController {
       state.ui.monitoredPage = clampPage(state.ui.monitoredPage, getVisibleMonitoredTokens().length, state.ui.monitoredPerPage);
       queueUiPrefsPersist();
       emit('monitored');
-      refreshMonitoredSparklinesIfExpanded();
+      refreshMonitoredSparklinesIfExpanded('monitored-per-page');
     },
     setRecentPerPage(perPage: number) {
       clearHistoryBucketOrderLock('recent', { applyPending: false });
@@ -11823,7 +11921,7 @@ export function createAppController(): AppController {
         state.ui.sparklineRange.monitoredDays = safeDays;
       }
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange();
+      refreshWorkspaceSparklinesAfterRangeChange(undefined, `range-days:${scope}`);
     },
     setSparklineRangeGlobal(enabled: boolean, scope: SparklineRangeScope) {
       if (state.ui.sparklineRange.global === enabled) {
@@ -11841,7 +11939,7 @@ export function createAppController(): AppController {
       }
       state.ui.sparklineRange.global = enabled;
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange();
+      refreshWorkspaceSparklinesAfterRangeChange(undefined, `range-global:${scope}`);
     },
     setTokenSparklineRangeDays(address: string, days: number) {
       const normalizedAddress = String(address || '').trim();
@@ -11859,7 +11957,7 @@ export function createAppController(): AppController {
         [normalizedAddress]: safeDays,
       });
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress]);
+      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress], 'token-range-days');
     },
     resetTokenSparklineRangeDays(address: string) {
       const normalizedAddress = String(address || '').trim();
@@ -11871,7 +11969,7 @@ export function createAppController(): AppController {
       delete nextTokenDaysByAddress[normalizedAddress];
       state.ui.sparklineRange.tokenDaysByAddress = nextTokenDaysByAddress;
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress]);
+      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress], 'token-range-reset');
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.manualSorts = toggleSortCriterion(
@@ -11881,7 +11979,7 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit('manual');
       if (state.session.token && isLiveWorkspace()) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token, force: true, caller: 'manual-sort' });
       }
     },
     setRecentSort(mode: BucketSortMode, window?: BucketSortWindow) {
@@ -11945,7 +12043,7 @@ export function createAppController(): AppController {
       state.ui.monitoredPage = 0;
       queueUiPrefsPersist();
       emit('monitored');
-      refreshMonitoredSparklinesIfExpanded();
+      refreshMonitoredSparklinesIfExpanded('monitored-sort');
       if (state.session.token && !usesHistoryBucketBootstrap()) {
         void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
           address: item.address,
@@ -12045,7 +12143,7 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       emit(panel);
       if (panel === 'monitored' && nextSpan > 1) {
-        refreshMonitoredSparklinesIfExpanded();
+        refreshMonitoredSparklinesIfExpanded('live-panel-span');
       }
     },
     setLivePanelHeight(panel: 'monitored' | 'alerts', height: number) {
