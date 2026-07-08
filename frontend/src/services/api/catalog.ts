@@ -1,4 +1,5 @@
 import { apiFetch } from './base';
+import type { ApiResponseMetadata } from './response-metadata';
 import type { MonitoredSortCriterion } from '../../state/app-state';
 
 export interface ReportMigratedTokenPayload {
@@ -643,7 +644,7 @@ export function resetMonitoredPins(token?: string | null) {
 export function fetchMonitoredMetadataBatch(
   addresses: string[],
   token?: string | null,
-  options?: { includeMeteora?: boolean },
+  options?: { includeMeteora?: boolean; onResponse?: (metadata: ApiResponseMetadata) => void },
 ) {
   return apiFetch<{
     generatedAt?: string | null;
@@ -656,6 +657,7 @@ export function fetchMonitoredMetadataBatch(
       includeMeteora: options?.includeMeteora ?? true,
     }),
     token,
+    onResponse: options?.onResponse,
   }).then((response) => response.tokens || []);
 }
 
@@ -724,7 +726,13 @@ export function fetchDashboardTopPerformers(
 
 export function fetchTokenSparklines(
   addresses: string[],
-  options?: { hours?: number; points?: number; granularityMinutes?: number; allowOneMinuteFallback?: boolean },
+  options?: {
+    hours?: number;
+    points?: number;
+    granularityMinutes?: number;
+    allowOneMinuteFallback?: boolean;
+    onResponse?: (metadata: ApiResponseMetadata) => void;
+  },
   token?: string | null,
 ) {
   return apiFetch<TokenSparklinesPayload>('/api/catalog/sparklines', {
@@ -737,6 +745,7 @@ export function fetchTokenSparklines(
       allowOneMinuteFallback: options?.allowOneMinuteFallback ?? false,
     }),
     token,
+    onResponse: options?.onResponse,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
     hours: Number(response.hours) || (14 * 24),

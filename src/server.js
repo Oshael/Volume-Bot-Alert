@@ -51,6 +51,14 @@ const app = express();
 let server = null;
 let bootstrapped = false;
 let startupInFlight = false;
+const exposedResponseHeaders = [
+  'RateLimit',
+  'RateLimit-Policy',
+  'RateLimit-Limit',
+  'RateLimit-Remaining',
+  'RateLimit-Reset',
+  'Retry-After',
+];
 
 // ---- Security middlewares ----
 const cspDirectives = {
@@ -93,12 +101,14 @@ app.use(cors({
     return callback(null, isAllowedOrigin(origin));
   },
   credentials: true,
+  exposedHeaders: exposedResponseHeaders,
 }));
 app.options('*', cors({
   origin: (origin, callback) => {
     return callback(null, isAllowedOrigin(origin));
   },
   credentials: true,
+  exposedHeaders: exposedResponseHeaders,
 }));
 // Custom alert rules accept an inline MP3 data URL (5 MB file → ~7 MB base64), so
 // that single route gets a larger JSON limit; everything else stays at 1 MB.

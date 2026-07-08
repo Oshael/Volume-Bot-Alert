@@ -272,7 +272,7 @@ const ALERT_DEBUG_LOG_KEY = 'trendscope-alert-debug-log';
 const ALERT_DEBUG_MAX_ENTRIES = 500;
 const SPARKLINE_DEBUG_ENABLED_KEY = 'trendscope:sparkline-debug';
 const SPARKLINE_DEBUG_LOG_KEY = 'trendscope:sparkline-debug-log';
-const SPARKLINE_DEBUG_MAX_ENTRIES = 140;
+const SPARKLINE_DEBUG_MAX_ENTRIES = 400;
 const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
@@ -386,6 +386,15 @@ type SparklineDebugWindow = Window & {
 };
 
 type SparklineRangeScope = 'monitored' | 'recent' | 'oldWeek';
+
+function createSparklineDebugId(prefix: string) {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+const sparklineDebugTabId = createSparklineDebugId('tab');
 
 type HistoryBootstrapRefreshOptions = {
   token?: string;
@@ -1137,6 +1146,7 @@ export function createAppController(): AppController {
   let manualMetadataNextMeteoraRefreshAt = 0;
   let manualMetadataBatchRefreshInFlight: Promise<void> | null = null;
   let manualMetadataBatchRefreshInFlightKey = '';
+  const sparklineDebugControllerId = createSparklineDebugId('controller');
   const pendingManualFolderDeleteIds = new Set<number>();
   const pendingManualFolderDeleteAddresses = new Set<string>();
   let suppressSocketStatusNoticeUntil = 0;
@@ -2189,6 +2199,8 @@ export function createAppController(): AppController {
       t: Math.round(typeof performance !== 'undefined' ? performance.now() : Date.now()),
       ts: new Date().toISOString(),
       meta: {
+        controllerId: sparklineDebugControllerId,
+        tabId: sparklineDebugTabId,
         workspace: state.ui.workspace,
         session: state.session.status,
         runtime: state.runtime.mode,
@@ -7794,15 +7806,29 @@ export function createAppController(): AppController {
     alertSparklineRefreshInFlight = true;
     try {
       const payloads = await Promise.all(
-        batches.map(async (batch) => ({
-          batch,
-          payload: await fetchTokenSparklines(batch.addresses, {
-            hours: SPARKLINE_WINDOW_HOURS,
-            points: SPARKLINE_POINT_COUNT,
-            granularityMinutes: batch.granularityMinutes,
-            allowOneMinuteFallback: true,
-          }, token),
-        })),
+        batches.map(async (batch) => {
+          const startedAt = Date.now();
+          return {
+            batch,
+            payload: await fetchTokenSparklines(batch.addresses, {
+              hours: SPARKLINE_WINDOW_HOURS,
+              points: SPARKLINE_POINT_COUNT,
+              granularityMinutes: batch.granularityMinutes,
+              allowOneMinuteFallback: true,
+              onResponse: (response) => recordSparklineDebug('http.response', {
+                endpoint: 'sparklines',
+                source: 'alert',
+                durationMs: Date.now() - startedAt,
+                batch: summarizeSparklineDebugBatches([{
+                  hours: SPARKLINE_WINDOW_HOURS,
+                  granularityMinutes: batch.granularityMinutes,
+                  addresses: batch.addresses,
+                }]),
+                response,
+              }),
+            }, token),
+          };
+        }),
       );
 
       if (state.session.token !== token || !isAuthenticatedSession()) {
@@ -7955,12 +7981,20 @@ export function createAppController(): AppController {
       },
       () => Promise.all(
         batches.map(async (batch): Promise<WorkspaceSparklineBatchResult> => {
+          const startedAt = Date.now();
           try {
             const payload = await fetchTokenSparklines(batch.addresses, {
               hours: batch.hours,
               points: SPARKLINE_POINT_COUNT,
               granularityMinutes: batch.granularityMinutes,
               allowOneMinuteFallback: true,
+              onResponse: (response) => recordSparklineDebug('http.response', {
+                endpoint: 'sparklines',
+                source: 'workspace',
+                durationMs: Date.now() - startedAt,
+                batch: summarizeSparklineDebugBatches([batch]),
+                response,
+              }),
             }, token);
             onPayload(batch, payload);
             return { batch, payload };
@@ -10867,13 +10901,31 @@ export function createAppController(): AppController {
     }
 
     const manualMetadataBatchCacheKeyCandidate = buildManualMetadataBatchCacheCandidate(normalizedManualTokens);
+    const criticalGapAddresses = normalizedManualTokens
+      .filter((item) => hasCriticalColdFieldGap(state.data.trackedTokensByAddress[item.address]))
+      .map((item) => item.address);
+    recordSparklineDebug('metadata.request', {
+      addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
+      criticalGaps: summarizeSparklineDebugAddresses(criticalGapAddresses),
+      cacheKeyMatches: manualMetadataBatchCacheKeyCandidate === manualMetadataBatchCacheKey,
+      cacheExpiresInMs: Math.max(0, manualMetadataBatchCacheExpiresAt - Date.now()),
+      inFlight: Boolean(manualMetadataBatchRefreshInFlight),
+    });
     if (shouldReuseManualMetadataBatch(manualMetadataBatchCacheKeyCandidate, normalizedManualTokens)) {
+      recordSparklineDebug('metadata.cache-hit', {
+        addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
+        cacheExpiresInMs: Math.max(0, manualMetadataBatchCacheExpiresAt - Date.now()),
+      });
       return;
     }
 
     const includeMeteora = shouldIncludeMeteoraInManualMetadataBatch(manualMetadataBatchCacheKeyCandidate);
     const refreshKey = `${manualMetadataBatchCacheKeyCandidate}:${includeMeteora ? 'meteora' : 'base'}`;
     if (manualMetadataBatchRefreshInFlight && manualMetadataBatchRefreshInFlightKey === refreshKey) {
+      recordSparklineDebug('metadata.joined-in-flight', {
+        addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
+        includeMeteora,
+      });
       await manualMetadataBatchRefreshInFlight;
       if (options?.emitOnComplete !== false && state.session.token === token && isAuthenticatedSession()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'header');
@@ -10915,11 +10967,40 @@ export function createAppController(): AppController {
       }
 
       const chunk = normalizedManualTokens.slice(index, index + 500);
-      const dashboardItems = await fetchMonitoredMetadataBatch(
-        chunk.map((item) => item.address),
-        token,
-        { includeMeteora },
-      );
+      const chunkAddresses = chunk.map((item) => item.address);
+      const startedAt = Date.now();
+      recordSparklineDebug('metadata.fetch-start', {
+        chunk: Math.floor(index / 500) + 1,
+        chunks: Math.ceil(normalizedManualTokens.length / 500),
+        includeMeteora,
+        addresses: summarizeSparklineDebugAddresses(chunkAddresses),
+      });
+      let dashboardItems: DashboardMonitoredToken[];
+      try {
+        dashboardItems = await fetchMonitoredMetadataBatch(
+          chunkAddresses,
+          token,
+          {
+            includeMeteora,
+            onResponse: (response) => recordSparklineDebug('http.response', {
+              endpoint: 'monitored-metadata-batch',
+              source: 'manual-metadata-batch',
+              durationMs: Date.now() - startedAt,
+              includeMeteora,
+              addresses: summarizeSparklineDebugAddresses(chunkAddresses),
+              response,
+            }),
+          },
+        );
+      } catch (error) {
+        recordSparklineDebug('metadata.fetch-error', {
+          durationMs: Date.now() - startedAt,
+          includeMeteora,
+          addresses: summarizeSparklineDebugAddresses(chunkAddresses),
+          error: formatDebugErrorMessage(error),
+        });
+        throw error;
+      }
       if (state.session.token !== token || !isAuthenticatedSession()) {
         return;
       }
@@ -10962,7 +11043,21 @@ export function createAppController(): AppController {
       return true;
     }
 
-    const [dashboardItem] = await fetchMonitoredMetadataBatch([address], token);
+    const startedAt = Date.now();
+    recordSparklineDebug('metadata.fetch-start', {
+      source: 'manual-token-dashboard-attempt',
+      includeMeteora: true,
+      addresses: summarizeSparklineDebugAddresses([address]),
+    });
+    const [dashboardItem] = await fetchMonitoredMetadataBatch([address], token, {
+      onResponse: (response) => recordSparklineDebug('http.response', {
+        endpoint: 'monitored-metadata-batch',
+        source: 'manual-token-dashboard-attempt',
+        durationMs: Date.now() - startedAt,
+        addresses: summarizeSparklineDebugAddresses([address]),
+        response,
+      }),
+    });
     if (state.session.token !== token || !isAuthenticatedSession()) {
       return true;
     }

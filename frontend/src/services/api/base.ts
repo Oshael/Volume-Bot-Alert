@@ -1,3 +1,5 @@
+import { readApiResponseMetadata, type ApiResponseMetadata } from './response-metadata';
+
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
   || 'https://api.trendscope.pro';
 const PROD_API_ORIGIN = new URL(PROD_API_BASE).origin.toLowerCase();
@@ -71,10 +73,12 @@ export function resolveApiBase(locationLike: Location = window.location): string
 
 export interface ApiFetchOptions extends RequestInit {
   token?: string | null;
+  onResponse?: (metadata: ApiResponseMetadata) => void;
 }
 
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
   const headers = new Headers(init?.headers || {});
+  const { onResponse, ...requestInit } = init || {};
 
   if (!headers.has('Content-Type') && init?.body) {
     headers.set('Content-Type', 'application/json');
@@ -84,7 +88,7 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
   try {
     const apiBase = resolveApiBase();
     response = await fetch(`${apiBase}${path}`, {
-      ...init,
+      ...requestInit,
       cache: 'no-store',
       credentials: 'include',
       headers,
@@ -94,6 +98,12 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
       ? `Network error: ${error.message}`
       : 'Network error: unable to reach API';
     throw new Error(message);
+  }
+
+  try {
+    onResponse?.(readApiResponseMetadata(response));
+  } catch (_) {
+    // Debug-only response observers must not affect API requests.
   }
 
   if (!response.ok) {
