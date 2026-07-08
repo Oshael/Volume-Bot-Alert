@@ -266,6 +266,9 @@ const ALERTS_PER_PAGE = 40;
 const ALERT_STORAGE_DEBOUNCE_MS = 250;
 const ALERT_DEBUG_LOG_KEY = 'trendscope-alert-debug-log';
 const ALERT_DEBUG_MAX_ENTRIES = 500;
+const SPARKLINE_DEBUG_ENABLED_KEY = 'trendscope:sparkline-debug';
+const SPARKLINE_DEBUG_LOG_KEY = 'trendscope:sparkline-debug-log';
+const SPARKLINE_DEBUG_MAX_ENTRIES = 140;
 const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
@@ -352,6 +355,24 @@ type SparklineBatchRequest = {
   hours: number;
   granularityMinutes: number;
   addresses: string[];
+};
+
+type SparklineDebugEntry = {
+  event: string;
+  meta: Record<string, unknown>;
+  t: number;
+  ts: string;
+};
+
+type SparklineDebugWindow = Window & {
+  trendscopeSparklineDebug?: {
+    clear: () => void;
+    copy: () => Promise<string | undefined>;
+    disable: () => void;
+    dump: () => SparklineDebugEntry[];
+    enable: () => void;
+    text: () => string;
+  };
 };
 
 type SparklineRangeScope = 'monitored' | 'recent' | 'oldWeek';
@@ -2050,6 +2071,136 @@ export function createAppController(): AppController {
 
   function formatDebugErrorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  function isSparklineDebugEnabled() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(SPARKLINE_DEBUG_ENABLED_KEY) === '1'
+        || new URLSearchParams(window.location.search).has('sparklineDebug');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function hashSparklineDebugValue(value: string) {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = ((hash << 5) - hash) + value.charCodeAt(index);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+  }
+
+  function summarizeSparklineDebugAddresses(addresses: string[] = []) {
+    const normalized = addresses.map((address) => String(address || '').trim()).filter(Boolean);
+    return {
+      count: normalized.length,
+      head: normalized.slice(0, 8),
+      hash: hashSparklineDebugValue(normalized.join(',')),
+    };
+  }
+
+  function summarizeSparklineDebugBatches(batches: SparklineBatchRequest[] = []) {
+    return {
+      batchCount: batches.length,
+      addressCount: batches.reduce((total, batch) => total + batch.addresses.length, 0),
+      batches: batches.slice(0, 6).map((batch) => ({
+        hours: batch.hours,
+        granularityMinutes: batch.granularityMinutes,
+        addresses: summarizeSparklineDebugAddresses(batch.addresses),
+      })),
+    };
+  }
+
+  function readSparklineDebugLog(): SparklineDebugEntry[] {
+    if (typeof window === 'undefined') {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(SPARKLINE_DEBUG_LOG_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed as SparklineDebugEntry[] : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeSparklineDebugLog(entries: SparklineDebugEntry[]) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(SPARKLINE_DEBUG_LOG_KEY, JSON.stringify(entries.slice(0, SPARKLINE_DEBUG_MAX_ENTRIES)));
+    } catch (_) {
+      // Debug-only persistence must not affect the app.
+    }
+  }
+
+  function clearSparklineDebugLog() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.removeItem(SPARKLINE_DEBUG_LOG_KEY);
+    } catch (_) {
+      // Ignore debug storage errors.
+    }
+  }
+
+  function recordSparklineDebug(event: string, meta: Record<string, unknown> = {}) {
+    if (!isSparklineDebugEnabled()) {
+      return;
+    }
+
+    const cacheEntries = Object.values(state.data.sparklineByAddress);
+    const entry: SparklineDebugEntry = {
+      event,
+      t: Math.round(typeof performance !== 'undefined' ? performance.now() : Date.now()),
+      ts: new Date().toISOString(),
+      meta: {
+        workspace: state.ui.workspace,
+        session: state.session.status,
+        runtime: state.runtime.mode,
+        cacheCount: cacheEntries.length,
+        loadingCount: cacheEntries.filter((item) => item.loading).length,
+        lastKey: lastSparklineAddressKey ? hashSparklineDebugValue(lastSparklineAddressKey) : '',
+        nextRefreshInMs: Math.max(0, nextSparklineRefreshAt - Date.now()),
+        inFlight: sparklineRefreshInFlight,
+        queued: sparklineRefreshQueued,
+        ...meta,
+      },
+    };
+
+    writeSparklineDebugLog([entry, ...readSparklineDebugLog()]);
+  }
+
+  function installSparklineDebugConsole() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    (window as SparklineDebugWindow).trendscopeSparklineDebug = {
+      clear: clearSparklineDebugLog,
+      copy: async () => {
+        const text = JSON.stringify(readSparklineDebugLog(), null, 2);
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch (_) {
+          return text;
+        }
+        return undefined;
+      },
+      disable: () => {
+        window.localStorage.removeItem(SPARKLINE_DEBUG_ENABLED_KEY);
+      },
+      dump: readSparklineDebugLog,
+      enable: () => {
+        window.localStorage.setItem(SPARKLINE_DEBUG_ENABLED_KEY, '1');
+      },
+      text: () => JSON.stringify(readSparklineDebugLog(), null, 2),
+    };
   }
 
   function recordRestoreControllerDebug(label: string, meta: Record<string, unknown> = {}) {
@@ -6567,8 +6718,13 @@ export function createAppController(): AppController {
       });
   }
 
-  function clearHistorySparklineCache(options?: { resetSchedule?: boolean }) {
+  function clearHistorySparklineCache(options?: { debugReason?: string; resetSchedule?: boolean }) {
     const hasEntries = Object.keys(state.data.sparklineByAddress).length > 0;
+    recordSparklineDebug('cache.clear', {
+      reason: options?.debugReason ?? 'unspecified',
+      hadEntries: hasEntries,
+      resetSchedule: options?.resetSchedule !== false,
+    });
     state.data.sparklineByAddress = {};
     lastSparklineAddressKey = '';
     if (options?.resetSchedule !== false) {
@@ -6876,6 +7032,7 @@ export function createAppController(): AppController {
   function ensureWorkspaceSparklineLoadingEntries(addresses: string[]) {
     let nextCache: Record<string, TokenSparklineEntry> | null = null;
     let changed = false;
+    const addedLoading: string[] = [];
 
     for (const address of addresses) {
       const existing = (nextCache || state.data.sparklineByAddress)[address];
@@ -6886,6 +7043,7 @@ export function createAppController(): AppController {
       nextCache ||= { ...state.data.sparklineByAddress };
       nextCache[address] = buildWorkspaceSparklineLoadingEntry(address, existing);
       changed = true;
+      addedLoading.push(address);
     }
 
     if (!nextCache || !changed) {
@@ -6893,12 +7051,17 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
+    recordSparklineDebug('loading.add', {
+      added: summarizeSparklineDebugAddresses(addedLoading),
+      requested: summarizeSparklineDebugAddresses(addresses),
+    });
     return true;
   }
 
   function clearWorkspaceSparklineLoadingEntries(addresses: Iterable<string>) {
     let nextCache: Record<string, TokenSparklineEntry> | null = null;
     let changed = false;
+    const clearedLoading: string[] = [];
 
     for (const address of addresses) {
       const normalizedAddress = String(address || '').trim();
@@ -6914,6 +7077,7 @@ export function createAppController(): AppController {
       nextCache ||= { ...state.data.sparklineByAddress };
       delete nextCache[normalizedAddress];
       changed = true;
+      clearedLoading.push(normalizedAddress);
     }
 
     if (!nextCache || !changed) {
@@ -6921,6 +7085,9 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
+    recordSparklineDebug('loading.clear', {
+      addresses: summarizeSparklineDebugAddresses(clearedLoading),
+    });
     return true;
   }
 
@@ -7622,12 +7789,13 @@ export function createAppController(): AppController {
       return true;
     }
 
-    clearHistorySparklineCache();
+    recordSparklineDebug('refresh.blocked', { reason: 'invalid-session-or-workspace', hasToken: Boolean(token) });
+    clearHistorySparklineCache({ debugReason: 'invalid-session-or-workspace' });
     return false;
   }
 
   function abortEmptyWorkspaceSparklineBatches() {
-    clearHistorySparklineCache();
+    clearHistorySparklineCache({ debugReason: 'empty-visible-batches' });
   }
 
   function isWorkspaceSparklineCacheFresh(addressKey: string, force: boolean, now: number) {
@@ -7638,6 +7806,10 @@ export function createAppController(): AppController {
     showWorkspaceSparklineLoadingEntries(visibleAddresses);
     sparklineRefreshQueued = true;
     sparklineRefreshQueuedForce = sparklineRefreshQueuedForce || force;
+    recordSparklineDebug('refresh.queued-in-flight', {
+      force,
+      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+    });
   }
 
   function pruneWorkspaceSparklineCache(visible: Set<string>) {
@@ -7666,6 +7838,11 @@ export function createAppController(): AppController {
     }
 
     state.data.sparklineByAddress = nextCache;
+    recordSparklineDebug('cache.prune', {
+      before: cachedAddresses.length,
+      after: remaining,
+      visible: visible.size,
+    });
     return true;
   }
 
@@ -7722,6 +7899,14 @@ export function createAppController(): AppController {
   }
 
   function applyWorkspaceSparklineBatchPayload(payload: TokenSparklinesPayload) {
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    recordSparklineDebug('payload.apply', {
+      count: items.length,
+      emptySeries: items.filter((item) => !Array.isArray(item.series) || item.series.length < 2).length,
+      granularityMinutes: payload.granularityMinutes ?? null,
+      hours: payload.hours ?? null,
+      addresses: summarizeSparklineDebugAddresses(items.map((item) => item.address)),
+    });
     applyHistorySparklinePayload(payload);
     broadcastHistorySparklineSnapshot(payload);
   }
@@ -7729,9 +7914,17 @@ export function createAppController(): AppController {
   function completeWorkspaceSparklineRefreshSuccess(addressKey: string) {
     lastSparklineAddressKey = addressKey;
     nextSparklineRefreshAt = Date.now() + SPARKLINE_REFRESH_INTERVAL_MS;
+    recordSparklineDebug('refresh.success', {
+      addressKey: hashSparklineDebugValue(addressKey),
+      nextRefreshInMs: SPARKLINE_REFRESH_INTERVAL_MS,
+    });
   }
 
   function handleWorkspaceSparklineBatchRefreshError(batch: SparklineBatchRequest, error: unknown) {
+    recordSparklineDebug('refresh.batch-error', {
+      batch: summarizeSparklineDebugBatches([batch]),
+      error: formatDebugErrorMessage(error),
+    });
     if (clearWorkspaceSparklineLoadingEntries(batch.addresses)) {
       emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
@@ -7743,6 +7936,10 @@ export function createAppController(): AppController {
   }
 
   function handleWorkspaceSparklineRefreshError(visibleAddresses: string[], error: unknown) {
+    recordSparklineDebug('refresh.error', {
+      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      error: formatDebugErrorMessage(error),
+    });
     handleWorkspaceSparklineRefreshFailure(visibleAddresses, error);
   }
 
@@ -7756,6 +7953,14 @@ export function createAppController(): AppController {
     const batches = getVisibleWorkspaceSparklineBatches();
     const addressKey = buildSparklineBatchKey(batches);
     const visibleAddresses = collectWorkspaceSparklineAddresses(batches);
+    recordSparklineDebug('refresh.request', {
+      force,
+      batches: summarizeSparklineDebugBatches(batches),
+      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      addressKey: hashSparklineDebugValue(addressKey),
+      previousKey: lastSparklineAddressKey ? hashSparklineDebugValue(lastSparklineAddressKey) : '',
+      keyChanged: addressKey !== lastSparklineAddressKey,
+    });
     if (batches.length === 0) {
       abortEmptyWorkspaceSparklineBatches();
       return;
@@ -7767,11 +7972,21 @@ export function createAppController(): AppController {
       return;
     }
     if (isWorkspaceSparklineCacheFresh(addressKey, force, now)) {
+      recordSparklineDebug('refresh.cache-hit', {
+        addressKey: hashSparklineDebugValue(addressKey),
+        nextRefreshInMs: Math.max(0, nextSparklineRefreshAt - now),
+      });
       return;
     }
 
     sparklineRefreshInFlight = true;
     showWorkspaceSparklineLoadingEntries(visibleAddresses);
+    recordSparklineDebug('refresh.fetch-start', {
+      force,
+      batches: summarizeSparklineDebugBatches(batches),
+      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      addressKey: hashSparklineDebugValue(addressKey),
+    });
     try {
       const results = await fetchWorkspaceSparklinePayloads(batches, token, (_batch, payload) => {
         if (shouldDiscardWorkspaceSparklinePayload(token)) {
@@ -7784,6 +7999,11 @@ export function createAppController(): AppController {
       }
 
       const failedResults = results.filter((result) => result.error);
+      recordSparklineDebug('refresh.fetch-complete', {
+        failed: failedResults.length,
+        total: results.length,
+        failedBatches: summarizeSparklineDebugBatches(failedResults.map((result) => result.batch)),
+      });
       for (const result of failedResults) {
         handleWorkspaceSparklineBatchRefreshError(result.batch, result.error);
       }
@@ -10772,6 +10992,7 @@ export function createAppController(): AppController {
   }
 
   installAlertDebugConsole();
+  installSparklineDebugConsole();
 
   return {
     state,
