@@ -9707,7 +9707,7 @@ export function createAppController(): AppController {
       generatedAt,
     });
     void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-    queueDashboardAlertFeedRefresh(token, Boolean(options.includeAlertFeed), alertFeedMode);
+    queueDashboardAlertFeedRefresh(token, options.includeAlertFeed, alertFeedMode);
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
       generatedAt,
       returned: firstPage.tokens.length,
