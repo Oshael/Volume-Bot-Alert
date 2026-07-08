@@ -1055,6 +1055,7 @@ export function createAppController(): AppController {
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
   let sparklineRefreshQueued = false;
+  let sparklineRefreshQueuedForce = false;
   const expandedSparklineRequests = new Set<string>();
   const deferredExpandedSparklineRenderRegions = new Set<AppRenderRegion>();
   let preferredExpandedSparklineGranularityMinutes = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
@@ -1100,6 +1101,8 @@ export function createAppController(): AppController {
   let manualMetadataBatchCacheExpiresAt = 0;
   let manualMetadataMeteoraCacheKey = '';
   let manualMetadataNextMeteoraRefreshAt = 0;
+  let manualMetadataBatchRefreshInFlight: Promise<void> | null = null;
+  let manualMetadataBatchRefreshInFlightKey = '';
   const pendingManualFolderDeleteIds = new Set<number>();
   const pendingManualFolderDeleteAddresses = new Set<string>();
   let suppressSocketStatusNoticeUntil = 0;
@@ -7630,9 +7633,10 @@ export function createAppController(): AppController {
     return !force && addressKey === lastSparklineAddressKey && now < nextSparklineRefreshAt;
   }
 
-  function queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses: string[]) {
+  function queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses: string[], force: boolean) {
     showWorkspaceSparklineLoadingEntries(visibleAddresses);
     sparklineRefreshQueued = true;
+    sparklineRefreshQueuedForce = sparklineRefreshQueuedForce || force;
   }
 
   function showWorkspaceSparklineLoadingEntries(
@@ -7744,7 +7748,7 @@ export function createAppController(): AppController {
 
     const now = Date.now();
     if (sparklineRefreshInFlight) {
-      queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses);
+      queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses, force);
       return;
     }
     if (isWorkspaceSparklineCacheFresh(addressKey, force, now)) {
@@ -7776,9 +7780,11 @@ export function createAppController(): AppController {
     } finally {
       sparklineRefreshInFlight = false;
       const shouldRunQueuedRefresh = sparklineRefreshQueued;
+      const queuedForce = sparklineRefreshQueuedForce;
       sparklineRefreshQueued = false;
+      sparklineRefreshQueuedForce = false;
       if (shouldRunQueuedRefresh && isWorkspaceSparklineRefreshAllowed(state.session.token ?? token)) {
-        void refreshHistoryWorkspaceSparklines({ token: state.session.token ?? token, force: true });
+        void refreshHistoryWorkspaceSparklines({ token: state.session.token ?? token, force: queuedForce });
       }
     }
   }
@@ -8063,7 +8069,6 @@ export function createAppController(): AppController {
       );
       applyDashboardTopPerformers(payload);
       emit('top-performers');
-      void refreshHistoryWorkspaceSparklines({ token });
     } catch (error) {
       console.warn('[AppController] Failed to refresh dashboard top performers:', error instanceof Error ? error.message : error);
     } finally {
@@ -10477,7 +10482,41 @@ export function createAppController(): AppController {
     }
 
     const includeMeteora = shouldIncludeMeteoraInManualMetadataBatch(manualMetadataBatchCacheKeyCandidate);
+    const refreshKey = `${manualMetadataBatchCacheKeyCandidate}:${includeMeteora ? 'meteora' : 'base'}`;
+    if (manualMetadataBatchRefreshInFlight && manualMetadataBatchRefreshInFlightKey === refreshKey) {
+      await manualMetadataBatchRefreshInFlight;
+      if (options?.emitOnComplete !== false && state.session.token === token && isAuthenticatedSession()) {
+        emit('monitored', 'manual', 'recent', 'old-week', 'header');
+      }
+      return;
+    }
 
+    const refreshPromise = hydrateManualTokensMetadataBatchInternal(
+      token,
+      normalizedManualTokens,
+      manualMetadataBatchCacheKeyCandidate,
+      includeMeteora,
+      options,
+    );
+    manualMetadataBatchRefreshInFlight = refreshPromise;
+    manualMetadataBatchRefreshInFlightKey = refreshKey;
+    try {
+      await refreshPromise;
+    } finally {
+      if (manualMetadataBatchRefreshInFlight === refreshPromise) {
+        manualMetadataBatchRefreshInFlight = null;
+        manualMetadataBatchRefreshInFlightKey = '';
+      }
+    }
+  }
+
+  async function hydrateManualTokensMetadataBatchInternal(
+    token: string,
+    normalizedManualTokens: Array<{ address: string; label?: string | null }>,
+    manualMetadataBatchCacheKeyCandidate: string,
+    includeMeteora: boolean,
+    options?: { emitOnComplete?: boolean },
+  ) {
     let changed = false;
 
     for (let index = 0; index < normalizedManualTokens.length; index += 500) {
