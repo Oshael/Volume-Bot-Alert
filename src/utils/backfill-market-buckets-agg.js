@@ -11,7 +11,6 @@ const DEFAULT_WINDOW_HOURS = 24;
 const SUPPORTED_GRANULARITIES = AGGREGATE_GRANULARITY_MINUTES;
 const FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY = 5;
 const FIVE_MINUTE_AGGREGATE_ROLLUP_MIN_GRANULARITY = 60;
-const FALLBACK_MARKET_SOURCE = 'gmgn';
 
 function parseBooleanFlag(value) {
   return value === true || value === 'true' || value === '1';
@@ -294,31 +293,10 @@ async function resetAggregateBuckets(addresses, granularityMinutes, options) {
   return result.rowCount || 0;
 }
 
-function buildAggregateInsertSql(sourceRowsSql, sourceLabel, options = {}) {
-  const preferPrimarySources = options.preferPrimarySources === true;
-  const sourceRowsCte = preferPrimarySources
-    ? `source_rows AS (
-       SELECT *
-       FROM raw_source_rows candidate
-       WHERE COALESCE(candidate.source, '') <> '${FALLBACK_MARKET_SOURCE}'
-          OR NOT EXISTS (
-            SELECT 1
-            FROM raw_source_rows sibling
-            WHERE sibling.token_address = candidate.token_address
-              AND sibling.target_granularity_minutes = candidate.target_granularity_minutes
-              AND sibling.aggregate_bucket_ts = candidate.aggregate_bucket_ts
-              AND COALESCE(sibling.source, '') <> '${FALLBACK_MARKET_SOURCE}'
-          )
-     )`
-    : `source_rows AS (
-       SELECT *
-       FROM raw_source_rows
-     )`;
-
-  return `WITH raw_source_rows AS (
+function buildAggregateInsertSql(sourceRowsSql, sourceLabel) {
+  return `WITH source_rows AS (
        ${sourceRowsSql}
      ),
-     ${sourceRowsCte},
      aggregated AS (
        SELECT
          token_address,
@@ -401,8 +379,7 @@ function buildOneMinuteSourceRowsSql(targetGranularityParam, timestampPrefix = '
          b.high_price,
          b.low_price,
          b.close_price,
-         b.sample_count,
-         b.source
+         b.sample_count
        FROM token_market_buckets_1m b
        WHERE ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
 }
@@ -444,9 +421,7 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
     ? `${buildOneMinuteSourceRowsSql('$2')}\n         AND b.token_address = ANY($1::varchar[])\n         ${lookback.sql}`
     : `${buildFiveMinuteAggregateSourceRowsSql('$2', '$3')}\n         AND b.token_address = ANY($1::varchar[])\n         ${lookback.sql}`;
   const result = await queryWithOptionalTimeout(
-    buildAggregateInsertSql(sourceRowsSql, 'aggregate_backfill', {
-      preferPrimarySources: sourceGranularity == null,
-    }),
+    buildAggregateInsertSql(sourceRowsSql, 'aggregate_backfill'),
     lookback.params,
     options
   );
@@ -476,9 +451,7 @@ async function backfillAggregateBucketsForWindow(granularityMinutes, windowStart
     ? `${buildOneMinuteSourceRowsSql('$1')}\n         AND b.bucket_ts >= $2::timestamptz\n         AND b.bucket_ts < $3::timestamptz`
     : `${buildFiveMinuteAggregateSourceRowsSql('$1', '$4')}\n         AND b.bucket_ts >= $2::timestamptz\n         AND b.bucket_ts < $3::timestamptz`;
   const result = await queryWithOptionalTimeout(
-    buildAggregateInsertSql(sourceRowsSql, 'aggregate_window_backfill', {
-      preferPrimarySources: sourceGranularity == null,
-    }),
+    buildAggregateInsertSql(sourceRowsSql, 'aggregate_window_backfill'),
     params,
     options
   );

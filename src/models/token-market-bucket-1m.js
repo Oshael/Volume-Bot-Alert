@@ -43,7 +43,6 @@ const DEFAULT_SPARKLINE_AGGREGATE_MIN_EFFECTIVE_HOURS_RATIO = 0.5;
 const DEFAULT_SPARKLINE_CACHE_TTL_MS = 30_000;
 const DEFAULT_SPARKLINE_CACHE_MAX_ENTRIES = 500;
 const SURGE_BASELINE_WINDOW_MINUTES = Object.freeze([60, 360]);
-const FALLBACK_MARKET_SOURCE = 'gmgn';
 const sparklineCache = new Map();
 
 function toNumberOrNull(value) {
@@ -253,21 +252,6 @@ function invalidateSparklineCacheForAddresses(addresses) {
 
 function clearSparklineCache() {
   sparklineCache.clear();
-}
-
-function buildPreferredOneMinuteSourceRowsSql({ rawCte = 'raw', outputCte = 'source_rows', bucketColumn = 'spark_bucket_ts' } = {}) {
-  return `${outputCte} AS (
-       SELECT *
-       FROM ${rawCte} candidate
-       WHERE COALESCE(candidate.source, '') <> '${FALLBACK_MARKET_SOURCE}'
-          OR NOT EXISTS (
-            SELECT 1
-            FROM ${rawCte} sibling
-            WHERE sibling.token_address = candidate.token_address
-              AND sibling.${bucketColumn} = candidate.${bucketColumn}
-              AND COALESCE(sibling.source, '') <> '${FALLBACK_MARKET_SOURCE}'
-          )
-     )`;
 }
 
 function markSparklineCacheAddresses(cacheKey, addresses) {
@@ -837,7 +821,7 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
     `WITH requested(granularity_minutes, bucket_start) AS (
        VALUES ${valuesSql}
      ),
-     raw_source_rows AS (
+     source_rows AS (
        SELECT
          b.token_address,
          requested.granularity_minutes,
@@ -852,8 +836,7 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
          b.high_price,
          b.low_price,
          b.close_price,
-         b.sample_count,
-         b.source
+         b.sample_count
        FROM requested
        INNER JOIN token_market_buckets_1m b
          ON b.token_address = $1
@@ -861,10 +844,6 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
         AND b.bucket_ts < requested.bucket_start + (requested.granularity_minutes * INTERVAL '1 minute')
         AND (b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)
      ),
-     ${buildPreferredOneMinuteSourceRowsSql({
-       rawCte: 'raw_source_rows',
-       bucketColumn: 'bucket_start',
-     })},
      aggregated AS (
        SELECT
          token_address,
@@ -1650,7 +1629,6 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
         low_price,
         close_price,
         sample_count,
-        source,
         to_timestamp(
           FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($2::int * 60)) * ($2::int * 60)
         ) AS spark_bucket_ts
@@ -1658,7 +1636,6 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
        WHERE token_address = $1
          AND close_mcap IS NOT NULL
      ),
-     ${buildPreferredOneMinuteSourceRowsSql()},
      aggregated AS (
        SELECT
          token_address,
@@ -1673,7 +1650,7 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
          MIN(low_price) AS low_price,
          (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
          COALESCE(SUM(sample_count), 0)::int AS sample_count
-       FROM source_rows
+       FROM raw
        GROUP BY token_address, spark_bucket_ts
      )
      SELECT
@@ -1731,7 +1708,6 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
         pair_address,
         bucket_ts,
         close_mcap,
-        source,
         to_timestamp(
           FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($3::int * 60)) * ($3::int * 60)
         ) AS spark_bucket_ts
@@ -1740,7 +1716,6 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
          AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
          AND close_mcap IS NOT NULL
      ),
-     ${buildPreferredOneMinuteSourceRowsSql()},
      ranked AS (
        SELECT
          token_address,
@@ -1751,7 +1726,7 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
            PARTITION BY token_address, spark_bucket_ts
            ORDER BY bucket_ts DESC
          ) AS rn_close
-       FROM source_rows
+       FROM raw
      )
      SELECT
        token_address,
@@ -2451,7 +2426,6 @@ module.exports = {
     shouldRefreshAggregatesForUpsertedBucket,
     shouldFallbackAggregateSparkline,
     shouldUseAggregateSparklines,
-    queryAllAvailableOneMinuteSparklineRows,
     resolveExpandedSparklineGranularityMinutes,
     upsertAggregateBucketsForSourceBucket,
     buildExpandedCandlesFromRows,

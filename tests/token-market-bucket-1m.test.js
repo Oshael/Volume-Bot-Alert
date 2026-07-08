@@ -84,9 +84,6 @@ describe('token market 1m bucket helpers', () => {
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
       assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
       assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
-      assert.match(calls[1].sql, /raw_source_rows AS/);
-      assert.match(calls[1].sql, /COALESCE\(candidate\.source, ''\) <> 'gmgn'/);
-      assert.match(calls[1].sql, /sibling\.bucket_start = candidate\.bucket_start/);
       assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
       assert.match(calls[2].sql, /WITH requested\(target_granularity_minutes, bucket_start\)/);
       assert.match(calls[2].sql, /INNER JOIN token_market_buckets_agg b/);
@@ -114,31 +111,6 @@ describe('token market 1m bucket helpers', () => {
         1440,
         '2026-03-24T00:00:00.000Z',
       ]);
-    } finally {
-      db.query = originalQuery;
-    }
-  });
-
-  it('prefers non-GMGN 1m rows when building expanded fallback candles', async () => {
-    const originalQuery = db.query;
-    let capturedSql = '';
-
-    db.query = async (sql) => {
-      capturedSql = sql;
-      return { rows: [] };
-    };
-
-    try {
-      await tokenMarketBucket1m.__private.queryAllAvailableOneMinuteSparklineRows(
-        'So11111111111111111111111111111111111111112',
-        5
-      );
-
-      assert.match(capturedSql, /source,/);
-      assert.match(capturedSql, /source_rows AS/);
-      assert.match(capturedSql, /COALESCE\(candidate\.source, ''\) <> 'gmgn'/);
-      assert.match(capturedSql, /sibling\.spark_bucket_ts = candidate\.spark_bucket_ts/);
-      assert.match(capturedSql, /FROM source_rows/);
     } finally {
       db.query = originalQuery;
     }
