@@ -274,6 +274,7 @@ export interface TokenSparklineEntry {
   latestBucketAt?: string | null;
   oneMinuteAvailable?: boolean;
   generatedAt?: string | null;
+  refreshedAt?: number;
   hours?: number;
   points?: number;
   series: number[];

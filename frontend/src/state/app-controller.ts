@@ -90,6 +90,10 @@ import { validateInviteCode, type InviteValidationResponse } from '../services/a
 import { resolveApiBase } from '../services/api/base';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
+  getWorkspaceSparklineNextRefreshAt,
+  selectWorkspaceSparklineRefreshBatches,
+} from './workspace-sparkline-refresh';
+import {
   findPreviousPasswordMatch,
   formatPasswordChangedDate,
   rememberPreviousPassword,
@@ -7153,6 +7157,7 @@ export function createAppController(): AppController {
   function buildHistorySparklineCacheEntry(
     item: TokenSparklinesPayload['items'][number] | null | undefined,
     payload: TokenSparklinesPayload,
+    refreshedAt = Date.now(),
   ) {
     if (!item?.address) {
       return null;
@@ -7169,6 +7174,7 @@ export function createAppController(): AppController {
       firstBucketAt: item.firstBucketAt ?? null,
       latestBucketAt: item.latestBucketAt ?? null,
       generatedAt: payload.generatedAt ?? null,
+      refreshedAt,
       hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
       points: Number(payload.points) || SPARKLINE_POINT_COUNT,
       series,
@@ -7176,15 +7182,35 @@ export function createAppController(): AppController {
     } satisfies TokenSparklineEntry;
   }
 
-  function applyHistorySparklinePayload(payload: TokenSparklinesPayload) {
+  function applyHistorySparklinePayload(payload: TokenSparklinesPayload, expectedBatch?: SparklineBatchRequest) {
     const nextCache: Record<string, TokenSparklineEntry> = { ...state.data.sparklineByAddress };
+    const refreshedAt = Date.now();
+    const returnedAddresses = new Set<string>();
     let changed = false;
     for (const item of payload.items || []) {
-      const entry = buildHistorySparklineCacheEntry(item, payload);
+      const entry = buildHistorySparklineCacheEntry(item, payload, refreshedAt);
       if (!entry) {
         continue;
       }
       nextCache[entry.address] = entry;
+      returnedAddresses.add(entry.address);
+      changed = true;
+    }
+
+    for (const address of expectedBatch?.addresses || []) {
+      if (returnedAddresses.has(address)) {
+        continue;
+      }
+      nextCache[address] = {
+        address,
+        generatedAt: payload.generatedAt ?? null,
+        refreshedAt,
+        hours: expectedBatch?.hours,
+        points: Number(payload.points) || SPARKLINE_POINT_COUNT,
+        granularityMinutes: expectedBatch?.granularityMinutes,
+        series: [],
+        loading: false,
+      };
       changed = true;
     }
 
@@ -7845,18 +7871,20 @@ export function createAppController(): AppController {
     clearHistorySparklineCache({ debugReason: 'empty-visible-batches' });
   }
 
-  function isWorkspaceSparklineCacheFresh(addressKey: string, force: boolean, now: number) {
-    return !force && addressKey === lastSparklineAddressKey && now < nextSparklineRefreshAt;
-  }
-
-  function queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses: string[], force: boolean, caller: string) {
-    showWorkspaceSparklineLoadingEntries(visibleAddresses);
+  function queueWorkspaceSparklineRefreshAfterInFlight(
+    refreshAddresses: string[],
+    visibleAddresses: string[],
+    force: boolean,
+    caller: string,
+  ) {
+    showWorkspaceSparklineLoadingEntries(refreshAddresses, visibleAddresses);
     sparklineRefreshQueued = true;
     sparklineRefreshQueuedForce = sparklineRefreshQueuedForce || force;
     sparklineRefreshQueuedCaller = sparklineRefreshQueuedCaller || caller;
     recordSparklineDebug('refresh.queued-in-flight', {
       caller,
       force,
+      refresh: summarizeSparklineDebugAddresses(refreshAddresses),
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
     });
   }
@@ -7896,11 +7924,12 @@ export function createAppController(): AppController {
   }
 
   function showWorkspaceSparklineLoadingEntries(
-    visibleAddresses: string[],
+    loadingAddresses: string[],
+    visibleAddresses: string[] = loadingAddresses,
   ) {
     const visible = new Set(visibleAddresses.map((address) => String(address || '').trim()).filter(Boolean));
     const pruned = pruneWorkspaceSparklineCache(visible);
-    const loadingChanged = ensureWorkspaceSparklineLoadingEntries(visibleAddresses);
+    const loadingChanged = ensureWorkspaceSparklineLoadingEntries(loadingAddresses);
     if (pruned || loadingChanged) {
       emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
@@ -7979,17 +8008,25 @@ export function createAppController(): AppController {
         missingAddresses: summarizeSparklineDebugAddresses(missingAddresses),
       });
     }
-    applyHistorySparklinePayload(payload);
+    applyHistorySparklinePayload(payload, batch);
     broadcastHistorySparklineSnapshot(payload);
   }
 
-  function completeWorkspaceSparklineRefreshSuccess(addressKey: string, caller: string) {
+  function updateWorkspaceSparklineRefreshSchedule(
+    batches: SparklineBatchRequest[],
+    addressKey: string,
+    caller: string,
+  ) {
     lastSparklineAddressKey = addressKey;
-    nextSparklineRefreshAt = Date.now() + SPARKLINE_REFRESH_INTERVAL_MS;
-    recordSparklineDebug('refresh.success', {
+    nextSparklineRefreshAt = getWorkspaceSparklineNextRefreshAt(
+      batches,
+      state.data.sparklineByAddress,
+      SPARKLINE_REFRESH_INTERVAL_MS,
+    );
+    recordSparklineDebug('refresh.schedule-updated', {
       caller,
       addressKey: hashSparklineDebugValue(addressKey),
-      nextRefreshInMs: SPARKLINE_REFRESH_INTERVAL_MS,
+      nextRefreshInMs: Math.max(0, nextSparklineRefreshAt - Date.now()),
     });
   }
 
@@ -8020,6 +8057,7 @@ export function createAppController(): AppController {
 
   function applyWorkspaceSparklineRefreshResults(
     results: WorkspaceSparklineBatchResult[],
+    visibleBatches: SparklineBatchRequest[],
     addressKey: string,
     caller: string,
   ) {
@@ -8033,8 +8071,13 @@ export function createAppController(): AppController {
     for (const result of failedResults) {
       handleWorkspaceSparklineBatchRefreshError(result.batch, result.error, caller);
     }
+    updateWorkspaceSparklineRefreshSchedule(visibleBatches, addressKey, caller);
     if (failedResults.length === 0) {
-      completeWorkspaceSparklineRefreshSuccess(addressKey, caller);
+      recordSparklineDebug('refresh.success', {
+        caller,
+        addressKey: hashSparklineDebugValue(addressKey),
+        nextRefreshInMs: Math.max(0, nextSparklineRefreshAt - Date.now()),
+      });
     }
   }
 
@@ -8046,14 +8089,27 @@ export function createAppController(): AppController {
       return;
     }
 
-    const batches = getVisibleWorkspaceSparklineBatches();
-    const addressKey = buildSparklineBatchKey(batches);
-    const visibleAddresses = collectWorkspaceSparklineAddresses(batches);
+    const visibleBatches = getVisibleWorkspaceSparklineBatches();
+    const addressKey = buildSparklineBatchKey(visibleBatches);
+    const visibleAddresses = collectWorkspaceSparklineAddresses(visibleBatches);
+    const now = Date.now();
+    const refreshBatches = selectWorkspaceSparklineRefreshBatches(
+      visibleBatches,
+      state.data.sparklineByAddress,
+      {
+        force,
+        now,
+        refreshIntervalMs: SPARKLINE_REFRESH_INTERVAL_MS,
+      },
+    );
+    const refreshAddresses = collectWorkspaceSparklineAddresses(refreshBatches);
     const visibleDiff = summarizeSparklineDebugAddressDiff(lastSparklineVisibleAddresses, visibleAddresses);
     recordSparklineDebug('refresh.request', {
       caller,
       force,
-      batches: summarizeSparklineDebugBatches(batches),
+      batches: summarizeSparklineDebugBatches(visibleBatches),
+      refreshBatches: summarizeSparklineDebugBatches(refreshBatches),
+      refresh: summarizeSparklineDebugAddresses(refreshAddresses),
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
       previousVisible: summarizeSparklineDebugAddresses(lastSparklineVisibleAddresses),
       visibleDiff,
@@ -8062,17 +8118,13 @@ export function createAppController(): AppController {
       keyChanged: addressKey !== lastSparklineAddressKey,
     });
     lastSparklineVisibleAddresses = visibleAddresses.slice();
-    if (batches.length === 0) {
+    if (visibleBatches.length === 0) {
       abortEmptyWorkspaceSparklineBatches();
       return;
     }
 
-    const now = Date.now();
-    if (sparklineRefreshInFlight) {
-      queueWorkspaceSparklineRefreshAfterInFlight(visibleAddresses, force, caller);
-      return;
-    }
-    if (isWorkspaceSparklineCacheFresh(addressKey, force, now)) {
+    if (refreshBatches.length === 0) {
+      updateWorkspaceSparklineRefreshSchedule(visibleBatches, addressKey, caller);
       recordSparklineDebug('refresh.cache-hit', {
         caller,
         addressKey: hashSparklineDebugValue(addressKey),
@@ -8080,18 +8132,23 @@ export function createAppController(): AppController {
       });
       return;
     }
+    if (sparklineRefreshInFlight) {
+      queueWorkspaceSparklineRefreshAfterInFlight(refreshAddresses, visibleAddresses, force, caller);
+      return;
+    }
 
     sparklineRefreshInFlight = true;
-    showWorkspaceSparklineLoadingEntries(visibleAddresses);
+    showWorkspaceSparklineLoadingEntries(refreshAddresses, visibleAddresses);
     recordSparklineDebug('refresh.fetch-start', {
       caller,
       force,
-      batches: summarizeSparklineDebugBatches(batches),
+      batches: summarizeSparklineDebugBatches(refreshBatches),
+      refresh: summarizeSparklineDebugAddresses(refreshAddresses),
       visible: summarizeSparklineDebugAddresses(visibleAddresses),
       addressKey: hashSparklineDebugValue(addressKey),
     });
     try {
-      const results = await fetchWorkspaceSparklinePayloads(batches, token, (batch, payload) => {
+      const results = await fetchWorkspaceSparklinePayloads(refreshBatches, token, (batch, payload) => {
         if (shouldDiscardWorkspaceSparklinePayload(token)) {
           return;
         }
@@ -8101,9 +8158,9 @@ export function createAppController(): AppController {
         return;
       }
 
-      applyWorkspaceSparklineRefreshResults(results, addressKey, caller);
+      applyWorkspaceSparklineRefreshResults(results, visibleBatches, addressKey, caller);
     } catch (error) {
-      handleWorkspaceSparklineRefreshError(visibleAddresses, error, caller);
+      handleWorkspaceSparklineRefreshError(refreshAddresses, error, caller);
     } finally {
       sparklineRefreshInFlight = false;
       const shouldRunQueuedRefresh = sparklineRefreshQueued;
