@@ -1905,10 +1905,16 @@ function buildExpandedCandlesFromRows(rows, granularityMinutes) {
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
       const openMcap = row.open_mcap == null ? null : Number(row.open_mcap);
+      const openPrice = row.open_price == null ? null : Number(row.open_price);
+      const lowPrice = row.low_price == null ? null : Number(row.low_price);
+      const closePrice = row.close_price == null ? null : Number(row.close_price);
       const lowMcap = normalizeOhlcLow({
         open: openMcap,
         low: row.low_mcap,
         close: row.close_mcap,
+        openPrice,
+        lowPrice,
+        closePrice,
       });
       const closeMcap = row.close_mcap == null ? null : Number(row.close_mcap);
       const highMcap = normalizeOhlcHigh({
@@ -1924,10 +1930,10 @@ function buildExpandedCandlesFromRows(rows, granularityMinutes) {
         highMcap,
         lowMcap,
         closeMcap,
-        openPrice: row.open_price == null ? null : Number(row.open_price),
+        openPrice,
         highPrice: row.high_price == null ? null : Number(row.high_price),
-        lowPrice: row.low_price == null ? null : Number(row.low_price),
-        closePrice: row.close_price == null ? null : Number(row.close_price),
+        lowPrice,
+        closePrice,
         sampleCount: Number(row.sample_count) || 0,
       };
     })

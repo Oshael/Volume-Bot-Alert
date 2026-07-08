@@ -11,7 +11,31 @@ function toFiniteNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeOhlcLow({ open, low, close, outlierRatio = MCAP_LOWER_WICK_OUTLIER_RATIO } = {}) {
+function isConfirmedLowerPriceWick({
+  openPrice,
+  lowPrice,
+  closePrice,
+  outlierRatio = MCAP_LOWER_WICK_OUTLIER_RATIO,
+} = {}) {
+  const openPriceValue = toFiniteNumberOrNull(openPrice);
+  const lowPriceValue = toFiniteNumberOrNull(lowPrice);
+  const closePriceValue = toFiniteNumberOrNull(closePrice);
+  if (!(openPriceValue > 0) || !(lowPriceValue > 0) || !(closePriceValue > 0)) {
+    return false;
+  }
+
+  return lowPriceValue < Math.min(openPriceValue, closePriceValue) * outlierRatio;
+}
+
+function normalizeOhlcLow({
+  open,
+  low,
+  close,
+  openPrice,
+  lowPrice,
+  closePrice,
+  outlierRatio = MCAP_LOWER_WICK_OUTLIER_RATIO,
+} = {}) {
   const openValue = toFiniteNumberOrNull(open);
   const lowValue = toFiniteNumberOrNull(low);
   const closeValue = toFiniteNumberOrNull(close);
@@ -23,7 +47,17 @@ function normalizeOhlcLow({ open, low, close, outlierRatio = MCAP_LOWER_WICK_OUT
   }
 
   const bodyLow = Math.min(openValue, closeValue);
-  return lowValue <= 0 || lowValue < bodyLow * outlierRatio ? bodyLow : lowValue;
+  const mcapLowIsOutlier = lowValue <= 0 || lowValue < bodyLow * outlierRatio;
+  if (!mcapLowIsOutlier || isConfirmedLowerPriceWick({
+    openPrice,
+    lowPrice,
+    closePrice,
+    outlierRatio,
+  })) {
+    return lowValue;
+  }
+
+  return bodyLow;
 }
 
 function normalizeOhlcHigh({ open, high, close, outlierRatio = MCAP_UPPER_WICK_OUTLIER_RATIO } = {}) {
@@ -63,6 +97,9 @@ function buildNormalizedOhlcLowSql({
   openColumn = 'open_mcap',
   lowColumn = 'low_mcap',
   closeColumn = 'close_mcap',
+  openPriceColumn = 'open_price',
+  lowPriceColumn = 'low_price',
+  closePriceColumn = 'close_price',
   outlierRatio = MCAP_LOWER_WICK_OUTLIER_RATIO,
 } = {}) {
   return `CASE
@@ -71,6 +108,12 @@ function buildNormalizedOhlcLowSql({
             AND (
               ${lowColumn} <= 0
               OR ${lowColumn} < LEAST(${openColumn}, ${closeColumn}) * ${outlierRatio}
+            )
+            AND NOT (
+              ${openPriceColumn} > 0
+              AND ${lowPriceColumn} > 0
+              AND ${closePriceColumn} > 0
+              AND ${lowPriceColumn} < LEAST(${openPriceColumn}, ${closePriceColumn}) * ${outlierRatio}
             )
              THEN LEAST(${openColumn}, ${closeColumn})
            ELSE ${lowColumn}

@@ -174,6 +174,7 @@ describe('token market 1m bucket helpers', () => {
       assert.match(capturedSql, /source_stats AS/);
       assert.match(capturedSql, /COALESCE\(source, ''\) = 'gmgn'/);
       assert.match(capturedSql, /primary_low_mcap/);
+      assert.match(capturedSql, /low_price < LEAST\(open_price, close_price\) \* 0.65/);
       assert.match(capturedSql, /FROM normalized_source_rows/);
     } finally {
       db.query = originalQuery;
@@ -406,6 +407,10 @@ describe('token market 1m bucket helpers', () => {
         high_mcap: '2000000',
         low_mcap: '135352',
         close_mcap: '635437',
+        open_price: '0.000642',
+        high_price: '0.000650',
+        low_price: '0.000635',
+        close_price: '0.000635',
         sample_count: 35,
       },
       {
@@ -434,6 +439,26 @@ describe('token market 1m bucket helpers', () => {
     assert.equal(candles[2].lowMcap, 690463);
   });
 
+  it('preserves an extreme market cap wick when price confirms the same move', () => {
+    const [candle] = tokenMarketBucket1m.__private.buildExpandedCandlesFromRows([
+      {
+        bucket_ts: '2026-06-23T21:09:00.000Z',
+        open_mcap: '642339',
+        high_mcap: '650000',
+        low_mcap: '135352',
+        close_mcap: '635437',
+        open_price: '0.000642',
+        high_price: '0.000650',
+        low_price: '0.000135',
+        close_price: '0.000635',
+        sample_count: 35,
+      },
+    ], 1);
+
+    assert.equal(candle.lowMcap, 135352);
+    assert.equal(candle.lowPrice, 0.000135);
+  });
+
   it('builds live market bucket update payloads for chart sockets', () => {
     const payload = tokenMarketBucket1m.__private.buildLiveMarketBucketPayload({
       token_address: 'So11111111111111111111111111111111111111112',
@@ -445,7 +470,7 @@ describe('token market 1m bucket helpers', () => {
       close_mcap: '635437',
       open_price: '0.000642',
       high_price: '0.002',
-      low_price: '0.000135',
+      low_price: '0.000635',
       close_price: '0.000635',
       sample_count: 35,
     });
