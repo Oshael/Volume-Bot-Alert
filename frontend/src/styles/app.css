@@ -12498,7 +12498,7 @@ TEMP_LEGACY_BAR_TITLE {
   overflow: visible;
   z-index: 1;
   position: relative;
-  will-change: transform, opacity, box-shadow;
+  will-change: opacity, box-shadow;
   --alert-arrival-delay: 0ms;
 }
 
@@ -14172,6 +14172,12 @@ TEMP_LEGACY_BAR_TITLE {
   z-index: 50;
 }
 
+.alerts-panel[data-alerts-layout="compact"] .alert-row:has(.alert-ticker-peers-panel[open]),
+.live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-row:has(.alert-ticker-peers-panel[open]) {
+  overflow: visible;
+  z-index: 50;
+}
+
 .alerts-panel[data-alerts-layout="compact"] .alert-grid,
 .live-panel-item[data-panel-key="alerts"][data-span="1"] .alert-grid {
   display: grid;
@@ -14393,7 +14399,6 @@ TEMP_LEGACY_BAR_TITLE {
 }
 
 .alert-row.forced-hover {
-  filter: brightness(1.04);
   z-index: 10;
 }
 
