@@ -225,6 +225,7 @@ const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
 const EXPANDED_SPARKLINE_ONE_MINUTE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
+const SPARKLINE_CACHE_MAX_ENTRIES = 300;
 const SPARKLINE_AGE_1M_MAX_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_AGE_5M_MAX_MS = 72 * 60 * 60 * 1000;
 const SPARKLINE_AGE_15M_MAX_MS = 11 * 24 * 60 * 60 * 1000;
@@ -6835,7 +6836,7 @@ export function createAppController(): AppController {
 
   function buildSparklineBatchKey(batches: SparklineBatchRequest[]) {
     return batches
-      .map((item) => `${item.hours}:${item.granularityMinutes}:${item.addresses.join(',')}`)
+      .map((item) => `${item.hours}:${item.granularityMinutes}:${[...item.addresses].sort((left, right) => left.localeCompare(right)).join(',')}`)
       .join('|');
   }
 
@@ -7639,28 +7640,42 @@ export function createAppController(): AppController {
     sparklineRefreshQueuedForce = sparklineRefreshQueuedForce || force;
   }
 
+  function pruneWorkspaceSparklineCache(visible: Set<string>) {
+    const cachedAddresses = Object.keys(state.data.sparklineByAddress);
+    if (cachedAddresses.length <= SPARKLINE_CACHE_MAX_ENTRIES) {
+      return false;
+    }
+
+    const nextCache = { ...state.data.sparklineByAddress };
+    let remaining = cachedAddresses.length;
+    let changed = false;
+    for (const address of cachedAddresses) {
+      if (remaining <= SPARKLINE_CACHE_MAX_ENTRIES) {
+        break;
+      }
+      if (visible.has(address)) {
+        continue;
+      }
+      delete nextCache[address];
+      remaining -= 1;
+      changed = true;
+    }
+
+    if (!changed) {
+      return false;
+    }
+
+    state.data.sparklineByAddress = nextCache;
+    return true;
+  }
+
   function showWorkspaceSparklineLoadingEntries(
     visibleAddresses: string[],
   ) {
     const visible = new Set(visibleAddresses.map((address) => String(address || '').trim()).filter(Boolean));
-    let nextCache: Record<string, TokenSparklineEntry> | null = null;
-    let changed = false;
-
-    for (const address of Object.keys(state.data.sparklineByAddress)) {
-      if (visible.has(address)) {
-        continue;
-      }
-      nextCache ||= { ...state.data.sparklineByAddress };
-      delete nextCache[address];
-      changed = true;
-    }
-
-    if (nextCache) {
-      state.data.sparklineByAddress = nextCache;
-    }
-
+    const pruned = pruneWorkspaceSparklineCache(visible);
     const loadingChanged = ensureWorkspaceSparklineLoadingEntries(visibleAddresses);
-    if (changed || loadingChanged) {
+    if (pruned || loadingChanged) {
       emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
   }
@@ -8021,7 +8036,7 @@ export function createAppController(): AppController {
           token,
           manualTokens,
           options?.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE,
-          { includeAlertFeed: Boolean(options?.includeAlertFeed) },
+          { includeAlertFeed: options?.includeAlertFeed },
         ),
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
