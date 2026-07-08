@@ -13635,6 +13635,7 @@ TEMP_LEGACY_BAR_TITLE {
   display: inline-flex;
   align-items: center;
   vertical-align: middle;
+  gap: 3px;
   padding: 1px 8px;
   border-radius: 6px;
   background: #ff8a00;
@@ -13643,6 +13644,12 @@ TEMP_LEGACY_BAR_TITLE {
   font-weight: 800;
   letter-spacing: 0.4px;
   white-space: nowrap;
+}
+
+.alert-timeframe-chip .alert-timeframe-bolt {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
 }
 
 .alert-badge-v68.meteora-surge {

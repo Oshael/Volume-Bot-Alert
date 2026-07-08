@@ -2310,6 +2310,21 @@ function buildSurgeContinuationIcon() {
   return svg;
 }
 
+function buildTimeframeBoltIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('alert-timeframe-bolt');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  const bolt = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  bolt.setAttribute('d', 'M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641l2.5-8.5z');
+  bolt.setAttribute('fill', 'currentColor');
+
+  svg.append(bolt);
+  return svg;
+}
+
 function buildOldSurgeAlertHeadline(alert: AlertEntry, toneClass: string) {
   const surgeTitle = getOldSurgeAlertTitle(alert, toneClass);
   const badge = document.createElement('span');
@@ -2321,7 +2336,11 @@ function buildOldSurgeAlertHeadline(alert: AlertEntry, toneClass: string) {
     badge.className = `alert-badge-v68 ${toneClass} has-timeframe-chip`;
     const chip = document.createElement('span');
     chip.className = `alert-timeframe-chip${surgeWindow === '6H' ? ' timeframe-6h' : ''}`;
-    chip.textContent = surgeWindow === '1H' ? '⚡ 1H' : '6H';
+    if (surgeWindow === '1H') {
+      chip.append(buildTimeframeBoltIcon(), '1H');
+    } else {
+      chip.textContent = '6H';
+    }
     const titleRow = document.createElement('span');
     titleRow.className = 'alert-badge-title-row';
     titleRow.append(surgeTitle, chip);
