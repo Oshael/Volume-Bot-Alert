@@ -23,6 +23,13 @@ const TOP_PERFORMERS_OLD_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 let topPerformersManualPauseUntil = 0;
 let topPerformersProgrammaticScrollUntil = 0;
 
+type TopPerformersLayoutMetrics = {
+  clientWidth: number;
+  loopWidth: number;
+  maxScrollLeft: number;
+  scrollWidth: number;
+};
+
 type TopPerformersDebugEvent = {
   event: string;
   t: number;
@@ -169,12 +176,26 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
   let lastFrameAt = 0;
   let lastLoggedScrollLeft = -1;
   let autoScrollLeft = viewport.scrollLeft;
+  let layoutMetrics: TopPerformersLayoutMetrics = {
+    clientWidth: 0,
+    loopWidth: 0,
+    maxScrollLeft: 0,
+    scrollWidth: 0,
+  };
+  let resizeObserver: ResizeObserver | null = null;
 
-  const getLoopWidth = () => {
+  const refreshLayoutMetrics = () => {
     const track = viewport.querySelector<HTMLElement>('.top-performers-track:not(.top-performers-track-clone)');
-    if (!track) return 0;
     const gap = Number.parseFloat(getComputedStyle(viewport).columnGap || getComputedStyle(viewport).gap || '0') || 0;
-    return track.offsetWidth + gap;
+    const scrollWidth = viewport.scrollWidth;
+    const clientWidth = viewport.clientWidth;
+    layoutMetrics = {
+      clientWidth,
+      loopWidth: track ? track.offsetWidth + gap : 0,
+      maxScrollLeft: Math.max(0, scrollWidth - clientWidth),
+      scrollWidth,
+    };
+    return layoutMetrics;
   };
 
   const pauseForManualInput = (reason: string) => {
@@ -194,6 +215,8 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
       window.cancelAnimationFrame(animationFrameId);
       animationFrameId = 0;
     }
+    resizeObserver?.disconnect();
+    resizeObserver = null;
   };
 
   const scheduleResume = (delayMs: number) => {
@@ -212,15 +235,14 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
     }
 
     const now = Date.now();
-    const loopWidth = getLoopWidth();
-    const maxScrollLeft = viewport.scrollWidth - viewport.clientWidth;
+    const { clientWidth, loopWidth, maxScrollLeft, scrollWidth } = layoutMetrics;
     if (maxScrollLeft <= 4 || loopWidth <= 4) {
       logTopPerformersDebug('auto-scroll-skip', {
         reason: 'no-overflow',
         remainingPauseMs: 0,
         scrollLeft: Math.round(viewport.scrollLeft),
-        scrollWidth: Math.round(viewport.scrollWidth),
-        clientWidth: Math.round(viewport.clientWidth),
+        scrollWidth: Math.round(scrollWidth),
+        clientWidth: Math.round(clientWidth),
       });
       scheduleResume(1000);
       return;
@@ -232,8 +254,8 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
         reason: 'manual-pause-active',
         remainingPauseMs: Number.isFinite(remainingPauseMs) ? remainingPauseMs : 'hover',
         scrollLeft: Math.round(viewport.scrollLeft),
-        scrollWidth: Math.round(viewport.scrollWidth),
-        clientWidth: Math.round(viewport.clientWidth),
+        scrollWidth: Math.round(scrollWidth),
+        clientWidth: Math.round(clientWidth),
       });
       if (Number.isFinite(remainingPauseMs)) {
         scheduleResume(remainingPauseMs);
@@ -268,7 +290,8 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
       return;
     }
 
-    const hasOverflow = viewport.scrollWidth > viewport.clientWidth + 4;
+    const metrics = refreshLayoutMetrics();
+    const hasOverflow = metrics.maxScrollLeft > 4;
     if (!hasOverflow && attempt < 20) {
       layoutRetryId = window.setTimeout(() => startAutoScroll(attempt + 1), 100);
       return;
@@ -277,10 +300,10 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
     logTopPerformersDebug('auto-scroll-start', {
       attempt,
       hasOverflow,
-      loopWidth: Math.round(getLoopWidth()),
+      loopWidth: Math.round(metrics.loopWidth),
       scrollLeft: Math.round(viewport.scrollLeft),
-      scrollWidth: Math.round(viewport.scrollWidth),
-      clientWidth: Math.round(viewport.clientWidth),
+      scrollWidth: Math.round(metrics.scrollWidth),
+      clientWidth: Math.round(metrics.clientWidth),
     });
 
     const startDelayMs = Math.max(0, options.autoScrollStartDelayMs ?? TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS);
@@ -294,6 +317,19 @@ function bindTopPerformersAutoScroll(section: HTMLElement, options: TopPerformer
       animationFrameId = window.requestAnimationFrame(tick);
     }, startDelayMs);
   };
+
+  refreshLayoutMetrics();
+  const observedTrack = viewport.querySelector<HTMLElement>('.top-performers-track:not(.top-performers-track-clone)');
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => {
+      refreshLayoutMetrics();
+      autoScrollLeft = Math.min(viewport.scrollLeft, layoutMetrics.maxScrollLeft);
+    });
+    resizeObserver.observe(viewport);
+    if (observedTrack) {
+      resizeObserver.observe(observedTrack);
+    }
+  }
 
   window.requestAnimationFrame(() => startAutoScroll());
 
