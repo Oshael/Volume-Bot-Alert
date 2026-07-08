@@ -84,6 +84,10 @@ describe('token market 1m bucket helpers', () => {
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
       assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
       assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
+      assert.match(calls[1].sql, /normalized_source_rows AS/);
+      assert.match(calls[1].sql, /source_stats AS/);
+      assert.match(calls[1].sql, /COALESCE\(source, ''\) = 'gmgn'/);
+      assert.match(calls[1].sql, /primary_high_mcap/);
       assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
       assert.match(calls[2].sql, /WITH requested\(target_granularity_minutes, bucket_start\)/);
       assert.match(calls[2].sql, /INNER JOIN token_market_buckets_agg b/);
@@ -146,6 +150,31 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(row.sample_count, 2);
       assert.equal(calls.length, 1);
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
+  it('uses source-aware wick bounds when building expanded fallback candles from 1m rows', async () => {
+    const originalQuery = db.query;
+    let capturedSql = '';
+
+    db.query = async (sql) => {
+      capturedSql = sql;
+      return { rows: [] };
+    };
+
+    try {
+      await tokenMarketBucket1m.__private.queryAllAvailableOneMinuteSparklineRows(
+        'So11111111111111111111111111111111111111112',
+        5
+      );
+
+      assert.match(capturedSql, /normalized_source_rows AS/);
+      assert.match(capturedSql, /source_stats AS/);
+      assert.match(capturedSql, /COALESCE\(source, ''\) = 'gmgn'/);
+      assert.match(capturedSql, /primary_low_mcap/);
+      assert.match(capturedSql, /FROM normalized_source_rows/);
     } finally {
       db.query = originalQuery;
     }

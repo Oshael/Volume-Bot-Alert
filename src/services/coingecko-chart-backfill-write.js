@@ -3,6 +3,8 @@ const path = require('path');
 const {
   buildNormalizedOhlcHighSql,
   buildNormalizedOhlcLowSql,
+  buildSourceAwareOhlcHighAggregateSql,
+  buildSourceAwareOhlcLowAggregateSql,
 } = require('../utils/market-bucket-ohlc');
 const { ONE_MINUTE_PROTECTION_DAYS } = require('./coingecko-chart-backfill-plan');
 
@@ -288,10 +290,45 @@ function buildAggregateRollupSql(sourceGranularityMinutes) {
     ? 'token_market_buckets_1m'
     : 'token_market_buckets_agg';
   const sourceFilter = sourceGranularityMinutes === 1 ? '' : '\n         AND granularity_minutes = $5::int';
+  const sourceColumn = sourceGranularityMinutes === 1 ? 'source' : "'aggregate' AS source";
+  const sourceStatsSql = sourceGranularityMinutes === 1
+    ? `, normalized_source_rows AS (
+       SELECT
+         *,
+         ${buildNormalizedOhlcHighSql()} AS normalized_high_mcap,
+         ${buildNormalizedOhlcLowSql()} AS normalized_low_mcap
+       FROM source_rows
+     ),
+     source_stats AS (
+       SELECT
+         token_address,
+         rollup_bucket_ts,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') <> 'gmgn')::int AS primary_count,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') = 'gmgn')::int AS fallback_count,
+         MAX(normalized_high_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_high_mcap,
+         MIN(normalized_low_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_low_mcap
+       FROM normalized_source_rows
+       GROUP BY token_address, rollup_bucket_ts
+     )`
+    : '';
+  const aggregateSourceSql = sourceGranularityMinutes === 1
+    ? `normalized_source_rows
+       INNER JOIN source_stats
+         ON source_stats.token_address = normalized_source_rows.token_address
+        AND source_stats.rollup_bucket_ts = normalized_source_rows.rollup_bucket_ts`
+    : 'source_rows';
+  const groupByPrefix = sourceGranularityMinutes === 1 ? 'normalized_source_rows.' : '';
+  const highMcapSql = sourceGranularityMinutes === 1
+    ? buildSourceAwareOhlcHighAggregateSql()
+    : `MAX(${buildNormalizedOhlcHighSql()})`;
+  const lowMcapSql = sourceGranularityMinutes === 1
+    ? buildSourceAwareOhlcLowAggregateSql()
+    : `MIN(${buildNormalizedOhlcLowSql()})`;
   return `WITH source_rows AS (
        SELECT
          token_address,
          bucket_ts,
+         to_timestamp(FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($4::int * 60)) * ($4::int * 60)) AS rollup_bucket_ts,
          pair_address,
          open_mcap,
          high_mcap,
@@ -301,29 +338,32 @@ function buildAggregateRollupSql(sourceGranularityMinutes) {
          high_price,
          low_price,
          close_price,
-         sample_count
+         sample_count,
+         ${sourceColumn}
        FROM ${sourceTable}
        WHERE token_address = $1
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts < $3::timestamptz${sourceFilter}
          AND (close_mcap IS NOT NULL OR close_price IS NOT NULL)
-     ), aggregated AS (
+     )${sourceStatsSql}, aggregated AS (
        SELECT
-         token_address,
+         ${groupByPrefix}token_address,
          $4::int AS granularity_minutes,
-         to_timestamp(FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($4::int * 60)) * ($4::int * 60)) AS bucket_ts,
+         ${groupByPrefix}rollup_bucket_ts AS bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
-         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
+         ${highMcapSql} AS high_mcap,
+         ${lowMcapSql} AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
          MAX(high_price) AS high_price,
          MIN(low_price) AS low_price,
          (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
          COALESCE(SUM(sample_count), 0)::int AS sample_count
-       FROM source_rows
-       GROUP BY token_address, granularity_minutes, to_timestamp(FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($4::int * 60)) * ($4::int * 60))
+       FROM ${aggregateSourceSql}
+       GROUP BY ${groupByPrefix}token_address,
+         granularity_minutes,
+         ${groupByPrefix}rollup_bucket_ts
      )
      INSERT INTO token_market_buckets_agg (
        token_address, granularity_minutes, bucket_ts, pair_address,

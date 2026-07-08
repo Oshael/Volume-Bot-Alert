@@ -2,6 +2,8 @@ const db = require('../models/db');
 const {
   buildNormalizedOhlcHighSql,
   buildNormalizedOhlcLowSql,
+  buildSourceAwareOhlcHighAggregateSql,
+  buildSourceAwareOhlcLowAggregateSql,
 } = require('./market-bucket-ohlc');
 const { AGGREGATE_GRANULARITY_MINUTES } = require('./market-bucket-granularities');
 
@@ -293,27 +295,66 @@ async function resetAggregateBuckets(addresses, granularityMinutes, options) {
   return result.rowCount || 0;
 }
 
-function buildAggregateInsertSql(sourceRowsSql, sourceLabel) {
-  return `WITH source_rows AS (
-       ${sourceRowsSql}
+function buildAggregateInsertSql(sourceRowsSql, sourceLabel, options = {}) {
+  const sourceAwareOhlc = options.sourceAwareOhlc === true;
+  const highMcapSql = sourceAwareOhlc
+    ? buildSourceAwareOhlcHighAggregateSql()
+    : `MAX(${buildNormalizedOhlcHighSql()})`;
+  const lowMcapSql = sourceAwareOhlc
+    ? buildSourceAwareOhlcLowAggregateSql()
+    : `MIN(${buildNormalizedOhlcLowSql()})`;
+  const sourceStatsSql = sourceAwareOhlc
+    ? `, normalized_source_rows AS (
+       SELECT
+         *,
+         ${buildNormalizedOhlcHighSql()} AS normalized_high_mcap,
+         ${buildNormalizedOhlcLowSql()} AS normalized_low_mcap
+       FROM source_rows
      ),
-     aggregated AS (
+     source_stats AS (
        SELECT
          token_address,
-         target_granularity_minutes AS granularity_minutes,
-         aggregate_bucket_ts AS bucket_ts,
+         target_granularity_minutes,
+         aggregate_bucket_ts,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') <> 'gmgn')::int AS primary_count,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') = 'gmgn')::int AS fallback_count,
+         MAX(normalized_high_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_high_mcap,
+         MIN(normalized_low_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_low_mcap
+       FROM normalized_source_rows
+       GROUP BY token_address, target_granularity_minutes, aggregate_bucket_ts
+     )`
+    : '';
+  const aggregateSourceSql = sourceAwareOhlc
+    ? `normalized_source_rows
+       INNER JOIN source_stats
+         ON source_stats.token_address = normalized_source_rows.token_address
+        AND source_stats.target_granularity_minutes = normalized_source_rows.target_granularity_minutes
+        AND source_stats.aggregate_bucket_ts = normalized_source_rows.aggregate_bucket_ts`
+    : 'source_rows';
+  const groupByPrefix = sourceAwareOhlc ? 'normalized_source_rows.' : '';
+
+  return `WITH source_rows AS (
+       ${sourceRowsSql}
+     )${sourceStatsSql},
+     aggregated AS (
+       SELECT
+         ${groupByPrefix}token_address,
+         ${groupByPrefix}target_granularity_minutes AS granularity_minutes,
+         ${groupByPrefix}aggregate_bucket_ts AS bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
-         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
+         ${highMcapSql} AS high_mcap,
+         ${lowMcapSql} AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
          MAX(high_price) AS high_price,
          MIN(low_price) AS low_price,
          (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
          COALESCE(SUM(sample_count), 0)::int AS sample_count
-       FROM source_rows
-       GROUP BY token_address, target_granularity_minutes, aggregate_bucket_ts
+       FROM ${aggregateSourceSql}
+       GROUP BY ${groupByPrefix}token_address,
+         ${groupByPrefix}target_granularity_minutes,
+         ${groupByPrefix}aggregate_bucket_ts
      )
      INSERT INTO token_market_buckets_agg (
        token_address,
@@ -379,7 +420,8 @@ function buildOneMinuteSourceRowsSql(targetGranularityParam, timestampPrefix = '
          b.high_price,
          b.low_price,
          b.close_price,
-         b.sample_count
+         b.sample_count,
+         b.source
        FROM token_market_buckets_1m b
        WHERE ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
 }
@@ -421,7 +463,9 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
     ? `${buildOneMinuteSourceRowsSql('$2')}\n         AND b.token_address = ANY($1::varchar[])\n         ${lookback.sql}`
     : `${buildFiveMinuteAggregateSourceRowsSql('$2', '$3')}\n         AND b.token_address = ANY($1::varchar[])\n         ${lookback.sql}`;
   const result = await queryWithOptionalTimeout(
-    buildAggregateInsertSql(sourceRowsSql, 'aggregate_backfill'),
+    buildAggregateInsertSql(sourceRowsSql, 'aggregate_backfill', {
+      sourceAwareOhlc: sourceGranularity == null,
+    }),
     lookback.params,
     options
   );
@@ -451,7 +495,9 @@ async function backfillAggregateBucketsForWindow(granularityMinutes, windowStart
     ? `${buildOneMinuteSourceRowsSql('$1')}\n         AND b.bucket_ts >= $2::timestamptz\n         AND b.bucket_ts < $3::timestamptz`
     : `${buildFiveMinuteAggregateSourceRowsSql('$1', '$4')}\n         AND b.bucket_ts >= $2::timestamptz\n         AND b.bucket_ts < $3::timestamptz`;
   const result = await queryWithOptionalTimeout(
-    buildAggregateInsertSql(sourceRowsSql, 'aggregate_window_backfill'),
+    buildAggregateInsertSql(sourceRowsSql, 'aggregate_window_backfill', {
+      sourceAwareOhlc: sourceGranularity == null,
+    }),
     params,
     options
   );

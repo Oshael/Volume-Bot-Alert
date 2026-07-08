@@ -109,6 +109,16 @@ function buildFakeFs(options = {}) {
 }
 
 describe('CoinGecko chart backfill writer', () => {
+  it('uses source-aware wick bounds when rolling up replaced 1m buckets', () => {
+    const sql = writer.buildAggregateRollupSql(1);
+
+    assert.match(sql, /FROM token_market_buckets_1m/);
+    assert.match(sql, /normalized_source_rows AS/);
+    assert.match(sql, /source_stats AS/);
+    assert.match(sql, /COALESCE\(source, ''\) = 'gmgn'/);
+    assert.match(sql, /primary_high_mcap/);
+  });
+
   it('replaces recent 5m aggregate rows without touching native 1m rows', async () => {
     const plan = buildPlan();
     const buckets = planner.buildBackfillBuckets([
@@ -156,6 +166,7 @@ describe('CoinGecko chart backfill writer', () => {
     assert.deepEqual(rollupCalls.map((call) => call.params[3]), [15, 30, 60, 240, 1440]);
     assert.ok(rollupCalls.every((call) => /FROM token_market_buckets_agg/.test(call.sql)));
     assert.ok(rollupCalls.every((call) => /granularity_minutes = \$5::int/.test(call.sql)));
+    assert.ok(rollupCalls.every((call) => !/source_stats AS/.test(call.sql)));
     assert.deepEqual(rollupCalls[0].params.slice(1, 4), [
       '2026-07-02T18:00:00.000Z',
       '2026-07-02T18:15:00.000Z',

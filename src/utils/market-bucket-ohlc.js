@@ -1,5 +1,10 @@
 const MCAP_LOWER_WICK_OUTLIER_RATIO = 0.65;
 const MCAP_UPPER_WICK_OUTLIER_RATIO = 1.35;
+const MCAP_FALLBACK_SOURCE = 'gmgn';
+const MCAP_FALLBACK_UPPER_WICK_PRIMARY_RATIO = 1.08;
+const MCAP_FALLBACK_LOWER_WICK_PRIMARY_RATIO = 0.92;
+const MCAP_FALLBACK_CONFIRMED_UPPER_WICK_PRIMARY_RATIO = 1.18;
+const MCAP_FALLBACK_CONFIRMED_LOWER_WICK_PRIMARY_RATIO = 0.82;
 
 function toFiniteNumberOrNull(value) {
   const parsed = Number(value);
@@ -72,11 +77,82 @@ function buildNormalizedOhlcLowSql({
          END`;
 }
 
+function buildSourceAwareOhlcHighAggregateSql({
+  highColumn = 'normalized_high_mcap',
+  sourceColumn = 'source',
+  primaryHighColumn = 'source_stats.primary_high_mcap',
+  primaryCountColumn = 'source_stats.primary_count',
+  fallbackCountColumn = 'source_stats.fallback_count',
+  fallbackSource = MCAP_FALLBACK_SOURCE,
+  fallbackRatio = MCAP_FALLBACK_UPPER_WICK_PRIMARY_RATIO,
+  confirmedFallbackRatio = MCAP_FALLBACK_CONFIRMED_UPPER_WICK_PRIMARY_RATIO,
+} = {}) {
+  return `CASE
+           WHEN COALESCE(MAX(${primaryCountColumn}), 0) <= 0 THEN MAX(${highColumn})
+           ELSE GREATEST(
+             MAX(${primaryHighColumn}),
+             COALESCE(
+               MAX(${highColumn}) FILTER (
+                 WHERE COALESCE(${sourceColumn}, '') = '${fallbackSource}'
+                   AND ${primaryHighColumn} > 0
+                   AND (
+                     ${highColumn} <= ${primaryHighColumn} * ${fallbackRatio}
+                     OR (
+                       COALESCE(${fallbackCountColumn}, 0) >= 2
+                       AND ${highColumn} <= ${primaryHighColumn} * ${confirmedFallbackRatio}
+                     )
+                   )
+               ),
+               MAX(${primaryHighColumn})
+             )
+           )
+         END`;
+}
+
+function buildSourceAwareOhlcLowAggregateSql({
+  lowColumn = 'normalized_low_mcap',
+  sourceColumn = 'source',
+  primaryLowColumn = 'source_stats.primary_low_mcap',
+  primaryCountColumn = 'source_stats.primary_count',
+  fallbackCountColumn = 'source_stats.fallback_count',
+  fallbackSource = MCAP_FALLBACK_SOURCE,
+  fallbackRatio = MCAP_FALLBACK_LOWER_WICK_PRIMARY_RATIO,
+  confirmedFallbackRatio = MCAP_FALLBACK_CONFIRMED_LOWER_WICK_PRIMARY_RATIO,
+} = {}) {
+  return `CASE
+           WHEN COALESCE(MAX(${primaryCountColumn}), 0) <= 0 THEN MIN(${lowColumn})
+           ELSE LEAST(
+             MIN(${primaryLowColumn}),
+             COALESCE(
+               MIN(${lowColumn}) FILTER (
+                 WHERE COALESCE(${sourceColumn}, '') = '${fallbackSource}'
+                   AND ${primaryLowColumn} > 0
+                   AND (
+                     ${lowColumn} >= ${primaryLowColumn} * ${fallbackRatio}
+                     OR (
+                       COALESCE(${fallbackCountColumn}, 0) >= 2
+                       AND ${lowColumn} >= ${primaryLowColumn} * ${confirmedFallbackRatio}
+                     )
+                   )
+               ),
+               MIN(${primaryLowColumn})
+             )
+           )
+         END`;
+}
+
 module.exports = {
+  MCAP_FALLBACK_CONFIRMED_LOWER_WICK_PRIMARY_RATIO,
+  MCAP_FALLBACK_CONFIRMED_UPPER_WICK_PRIMARY_RATIO,
+  MCAP_FALLBACK_LOWER_WICK_PRIMARY_RATIO,
+  MCAP_FALLBACK_SOURCE,
+  MCAP_FALLBACK_UPPER_WICK_PRIMARY_RATIO,
   MCAP_LOWER_WICK_OUTLIER_RATIO,
   MCAP_UPPER_WICK_OUTLIER_RATIO,
   buildNormalizedOhlcHighSql,
   buildNormalizedOhlcLowSql,
+  buildSourceAwareOhlcHighAggregateSql,
+  buildSourceAwareOhlcLowAggregateSql,
   normalizeOhlcHigh,
   normalizeOhlcLow,
 };

@@ -11,6 +11,8 @@ const {
 const {
   buildNormalizedOhlcHighSql,
   buildNormalizedOhlcLowSql,
+  buildSourceAwareOhlcHighAggregateSql,
+  buildSourceAwareOhlcLowAggregateSql,
   normalizeOhlcHigh,
   normalizeOhlcLow,
 } = require('../utils/market-bucket-ohlc');
@@ -836,7 +838,8 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
          b.high_price,
          b.low_price,
          b.close_price,
-         b.sample_count
+         b.sample_count,
+         b.source
        FROM requested
        INNER JOIN token_market_buckets_1m b
          ON b.token_address = $1
@@ -844,23 +847,48 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
         AND b.bucket_ts < requested.bucket_start + (requested.granularity_minutes * INTERVAL '1 minute')
         AND (b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)
      ),
-     aggregated AS (
+     normalized_source_rows AS (
+       SELECT
+         *,
+         ${buildNormalizedOhlcHighSql()} AS normalized_high_mcap,
+         ${buildNormalizedOhlcLowSql()} AS normalized_low_mcap
+       FROM source_rows
+     ),
+     source_stats AS (
        SELECT
          token_address,
          granularity_minutes,
-         bucket_start AS bucket_ts,
+         bucket_start,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') <> 'gmgn')::int AS primary_count,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') = 'gmgn')::int AS fallback_count,
+         MAX(normalized_high_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_high_mcap,
+         MIN(normalized_low_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_low_mcap
+       FROM normalized_source_rows
+       GROUP BY token_address, granularity_minutes, bucket_start
+     ),
+     aggregated AS (
+       SELECT
+         normalized_source_rows.token_address,
+         normalized_source_rows.granularity_minutes,
+         normalized_source_rows.bucket_start AS bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
-         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
+         ${buildSourceAwareOhlcHighAggregateSql()} AS high_mcap,
+         ${buildSourceAwareOhlcLowAggregateSql()} AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
          MAX(high_price) AS high_price,
          MIN(low_price) AS low_price,
          (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
          COALESCE(SUM(sample_count), 0)::int AS sample_count
-       FROM source_rows
-       GROUP BY token_address, granularity_minutes, bucket_start
+       FROM normalized_source_rows
+       INNER JOIN source_stats
+         ON source_stats.token_address = normalized_source_rows.token_address
+        AND source_stats.granularity_minutes = normalized_source_rows.granularity_minutes
+        AND source_stats.bucket_start = normalized_source_rows.bucket_start
+       GROUP BY normalized_source_rows.token_address,
+         normalized_source_rows.granularity_minutes,
+         normalized_source_rows.bucket_start
      )
      INSERT INTO token_market_buckets_agg (
        token_address,
@@ -1629,6 +1657,7 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
         low_price,
         close_price,
         sample_count,
+        source,
         to_timestamp(
           FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($2::int * 60)) * ($2::int * 60)
         ) AS spark_bucket_ts
@@ -1636,22 +1665,43 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
        WHERE token_address = $1
          AND close_mcap IS NOT NULL
      ),
-     aggregated AS (
+     normalized_source_rows AS (
+       SELECT
+         *,
+         ${buildNormalizedOhlcHighSql()} AS normalized_high_mcap,
+         ${buildNormalizedOhlcLowSql()} AS normalized_low_mcap
+       FROM raw
+     ),
+     source_stats AS (
        SELECT
          token_address,
          spark_bucket_ts,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') <> 'gmgn')::int AS primary_count,
+         COUNT(*) FILTER (WHERE COALESCE(source, '') = 'gmgn')::int AS fallback_count,
+         MAX(normalized_high_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_high_mcap,
+         MIN(normalized_low_mcap) FILTER (WHERE COALESCE(source, '') <> 'gmgn') AS primary_low_mcap
+       FROM normalized_source_rows
+       GROUP BY token_address, spark_bucket_ts
+     ),
+     aggregated AS (
+       SELECT
+         normalized_source_rows.token_address,
+         normalized_source_rows.spark_bucket_ts,
          (ARRAY_AGG(pair_address ORDER BY bucket_ts DESC) FILTER (WHERE pair_address IS NOT NULL))[1] AS pair_address,
          (ARRAY_AGG(open_mcap ORDER BY bucket_ts ASC) FILTER (WHERE open_mcap IS NOT NULL))[1] AS open_mcap,
-         MAX(${buildNormalizedOhlcHighSql()}) AS high_mcap,
-         MIN(${buildNormalizedOhlcLowSql()}) AS low_mcap,
+         ${buildSourceAwareOhlcHighAggregateSql()} AS high_mcap,
+         ${buildSourceAwareOhlcLowAggregateSql()} AS low_mcap,
          (ARRAY_AGG(close_mcap ORDER BY bucket_ts DESC) FILTER (WHERE close_mcap IS NOT NULL))[1] AS close_mcap,
          (ARRAY_AGG(open_price ORDER BY bucket_ts ASC) FILTER (WHERE open_price IS NOT NULL))[1] AS open_price,
          MAX(high_price) AS high_price,
          MIN(low_price) AS low_price,
          (ARRAY_AGG(close_price ORDER BY bucket_ts DESC) FILTER (WHERE close_price IS NOT NULL))[1] AS close_price,
          COALESCE(SUM(sample_count), 0)::int AS sample_count
-       FROM raw
-       GROUP BY token_address, spark_bucket_ts
+       FROM normalized_source_rows
+       INNER JOIN source_stats
+         ON source_stats.token_address = normalized_source_rows.token_address
+        AND source_stats.spark_bucket_ts = normalized_source_rows.spark_bucket_ts
+       GROUP BY normalized_source_rows.token_address, normalized_source_rows.spark_bucket_ts
      )
      SELECT
        token_address,
@@ -2426,6 +2476,7 @@ module.exports = {
     shouldRefreshAggregatesForUpsertedBucket,
     shouldFallbackAggregateSparkline,
     shouldUseAggregateSparklines,
+    queryAllAvailableOneMinuteSparklineRows,
     resolveExpandedSparklineGranularityMinutes,
     upsertAggregateBucketsForSourceBucket,
     buildExpandedCandlesFromRows,

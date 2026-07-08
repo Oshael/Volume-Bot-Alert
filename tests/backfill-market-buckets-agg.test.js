@@ -99,6 +99,9 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 7);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_1m b/);
+      assert.match(capturedSql, /normalized_source_rows AS/);
+      assert.match(capturedSql, /source_stats AS/);
+      assert.match(capturedSql, /COALESCE\(source, ''\) = 'gmgn'/);
       assert.match(capturedSql, /to_timestamp\(/);
       assert.match(capturedSql, /FLOOR\(EXTRACT\(EPOCH FROM b\.bucket_ts\) \/ \(\$2::int \* 60\)\) \* \(\$2::int \* 60\)/);
       assert.match(capturedSql, /ON CONFLICT \(token_address, granularity_minutes, bucket_ts\) DO UPDATE SET/);
@@ -131,6 +134,7 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 4);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.doesNotMatch(capturedSql, /source_stats AS/);
       assert.match(capturedSql, /b\.granularity_minutes = \$3::int/);
       assert.match(capturedSql, /FLOOR\(EXTRACT\(EPOCH FROM b\.bucket_ts\) \/ \(\$2::int \* 60\)\) \* \(\$2::int \* 60\)/);
       assert.deepEqual(capturedParams, [[
@@ -160,6 +164,8 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 11);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_1m b/);
+      assert.match(capturedSql, /normalized_source_rows AS/);
+      assert.match(capturedSql, /source_stats AS/);
       assert.match(capturedSql, /b\.bucket_ts >= \$2::timestamptz/);
       assert.match(capturedSql, /b\.bucket_ts < \$3::timestamptz/);
       assert.doesNotMatch(capturedSql, /token_address = ANY/);
@@ -188,6 +194,7 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 3);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.doesNotMatch(capturedSql, /source_stats AS/);
       assert.match(capturedSql, /b\.granularity_minutes = \$4::int/);
       assert.match(capturedSql, /b\.bucket_ts >= \$2::timestamptz/);
       assert.match(capturedSql, /b\.bucket_ts < \$3::timestamptz/);
