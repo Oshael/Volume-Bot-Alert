@@ -57,7 +57,7 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
@@ -252,24 +252,9 @@ const MANUAL_METADATA_BATCH_CACHE_MS = 12 * 1000;
 const MANUAL_METADATA_METEORA_REFRESH_MS = 12 * 1000;
 const RESTORED_SESSION_CONFIG_REFRESH_MS = 60 * 1000;
 const ALERT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
-const BACKEND_ALERT_FEED_LIMIT = 50;
 const ADMIN_TOKEN_REVIEW_ALERT_REFRESH_INTERVAL_MS = 15 * 1000;
-const BOOTSTRAP_ALERT_FEED_MODE = 'unseen';
 const ADMIN_TOKEN_REVIEW_EXCLUDED_SUFFIXES = ['pump', 'bonk', 'bags'];
 const GMGN_CLAIM_SIGNAL_RULE_KEY = 'gmgn-claim-signal';
-const BACKEND_OWNED_ALERT_RULE_KEYS = [
-  GMGN_CLAIM_SIGNAL_RULE_KEY,
-  'monitored-vol',
-  'gmgn-vol-1m',
-  'monitored-mcap',
-  'hvnc',
-  'recent-surge-1h',
-  'recent-surge-6h',
-  'old-week-surge-1h',
-  'old-week-surge-6h',
-  'surge-continuation-6h',
-  'meteora-surge',
-] as const;
 const BLOCK_WARNING_ENABLED_CONFIG_KEY = 'block-warning-enabled';
 const ROUTED_BUCKET_DEFAULT_PER_PAGE = 15;
 const ALERTS_MAX_ENTRIES = 120;
@@ -291,8 +276,6 @@ const LEGACY_NETWORK_DEBUG_STORAGE_KEYS = [
   'trendscope-network-debug-enabled',
   'trendscope-network-debug-log',
 ];
-
-type DashboardAlertFeedMode = 'all' | 'unseen';
 
 type HistorySyncPresenceMessage = {
   type: 'presence';
@@ -1104,7 +1087,6 @@ export function createAppController(): AppController {
   let floatingQuickBuyDashboardRefreshInFlight = false;
   let nextFloatingQuickBuyDashboardRefreshAt = 0;
   let floatingQuickBuyResetTimer: ReturnType<typeof setTimeout> | null = null;
-  let dashboardAlertFeedRefreshInFlight = false;
   let supplementalMeteoraRefreshInFlight = false;
   let nextMonitoredDashboardPollAt = 0;
   let bidZoneRefreshInFlight = false;
@@ -6779,98 +6761,6 @@ export function createAppController(): AppController {
     emit('bid-zone');
   }
 
-  function loadDashboardAlertFeedsForWorkspace(
-    token: string,
-    includeAlertFeed?: boolean,
-    mode: DashboardAlertFeedMode = 'unseen',
-  ) {
-    const shouldLoadDashboardAlerts = includeAlertFeed ?? isLiveWorkspace();
-    if (!shouldLoadDashboardAlerts) {
-      return Promise.resolve(null);
-    }
-
-    return fetchDashboardAlertFeeds(token, {
-      limit: BACKEND_ALERT_FEED_LIMIT,
-      mode,
-      ruleKeys: [...BACKEND_OWNED_ALERT_RULE_KEYS],
-    }).catch(() => null);
-  }
-
-  function applyDashboardAlertFeedRefreshSuccess(
-    token: string,
-    dashboardAlertFeeds: Awaited<ReturnType<typeof loadDashboardAlertFeedsForWorkspace>>,
-  ) {
-    if (!dashboardAlertFeeds?.feeds?.length) {
-      recordAlertDebug('backend.feed.empty', {
-        mode: dashboardAlertFeeds?.mode ?? null,
-        feedCount: dashboardAlertFeeds?.feeds?.length ?? 0,
-      });
-      return;
-    }
-
-    const beforeAlerts = state.data.alerts.slice();
-    const events = dashboardAlertFeeds.feeds
-      .flatMap((feed) => feed?.events || [])
-      .sort((a, b) => getBackendAlertCreatedAt(a.triggeredAt) - getBackendAlertCreatedAt(b.triggeredAt));
-    recordAlertDebug('backend.feed.apply-start', {
-      mode: dashboardAlertFeeds.mode ?? null,
-      feedCount: dashboardAlertFeeds.feeds.length,
-      feeds: dashboardAlertFeeds.feeds.map((feed) => ({
-        ruleKey: feed?.ruleKey || null,
-        mode: feed?.mode || null,
-        count: Number(feed?.count) || 0,
-        cursor: feed?.cursor || null,
-        events: summarizeDashboardAlertEventsDebug(feed?.events || []),
-      })),
-      mergedEvents: summarizeDashboardAlertEventsDebug(events),
-    });
-    const addedEvents = syncBackendAlertEvents(events);
-
-    for (const feed of dashboardAlertFeeds.feeds) {
-      if (!feed?.events?.length) {
-        continue;
-      }
-
-      void markDashboardAlertEventsSeen(token, feed.events, feed.ruleKey || GMGN_CLAIM_SIGNAL_RULE_KEY);
-    }
-
-    if (addedEvents > 0) {
-      emit('alerts', 'header', 'legacy');
-    }
-    recordAlertMutationDebug('backend.feed.apply-complete', beforeAlerts, {
-      mode: dashboardAlertFeeds.mode ?? null,
-      addedEvents,
-      mergedEvents: summarizeDashboardAlertEventsDebug(events),
-    });
-  }
-
-  function queueDashboardAlertFeedRefresh(
-    token: string,
-    includeAlertFeed?: boolean,
-    mode: DashboardAlertFeedMode = 'unseen',
-  ) {
-    if (isLiveWorkspaceHiddenForUiWork()) {
-      return;
-    }
-
-    if (dashboardAlertFeedRefreshInFlight) {
-      return;
-    }
-
-    dashboardAlertFeedRefreshInFlight = true;
-    void loadDashboardAlertFeedsForWorkspace(token, includeAlertFeed, mode)
-      .then((dashboardAlertFeeds) => {
-        if (state.session.token !== token || !isAuthenticatedSession()) {
-          return;
-        }
-
-        applyDashboardAlertFeedRefreshSuccess(token, dashboardAlertFeeds);
-      })
-      .finally(() => {
-        dashboardAlertFeedRefreshInFlight = false;
-      });
-  }
-
   function queueSupplementalMeteoraRefresh(
     token: string,
     monitoredDashboardTokens: DashboardMonitoredToken[] = [],
@@ -8552,7 +8442,7 @@ export function createAppController(): AppController {
     }
   }
 
-  async function refreshMonitoredDashboard(options?: { includeAlertFeed?: boolean; alertFeedMode?: DashboardAlertFeedMode }) {
+  async function refreshMonitoredDashboard() {
     const token = state.session.token;
     if (!token) {
       return;
@@ -8589,8 +8479,6 @@ export function createAppController(): AppController {
         () => hydratePagedDashboardMonitored(
           token,
           manualTokens,
-          options?.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE,
-          { includeAlertFeed: options?.includeAlertFeed },
         ),
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
@@ -9641,7 +9529,7 @@ export function createAppController(): AppController {
     await hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
       address: item.address,
       label: item.label ?? null,
-    })), 'unseen');
+    })));
   }
 
   function emitMonitoredWorkspaceRegions() {
@@ -10264,8 +10152,6 @@ export function createAppController(): AppController {
   async function hydratePagedDashboardMonitored(
     token: string,
     manualTokens: AddressItem[],
-    alertFeedMode: DashboardAlertFeedMode,
-    options: { includeAlertFeed?: boolean } = { includeAlertFeed: true },
   ) {
     const requestRevision = monitoredBootstrapHydrationRevision + 1;
     monitoredBootstrapHydrationRevision = requestRevision;
@@ -10303,7 +10189,6 @@ export function createAppController(): AppController {
       generatedAt,
     });
     void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-    queueDashboardAlertFeedRefresh(token, options.includeAlertFeed, alertFeedMode);
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.first-page', {
       generatedAt,
       returned: firstPage.tokens.length,
@@ -10381,7 +10266,6 @@ export function createAppController(): AppController {
   async function hydrateDashboardMonitoredInternal(
     token: string,
     manualTokens: AddressItem[],
-    alertFeedMode: DashboardAlertFeedMode,
   ) {
     recordRestoreControllerDebug('controller.dashboard-hydrate.start', {
       manualTokens: manualTokens.length,
@@ -10409,7 +10293,7 @@ export function createAppController(): AppController {
         return;
       }
 
-      await hydratePagedDashboardMonitored(token, manualTokens, alertFeedMode);
+      await hydratePagedDashboardMonitored(token, manualTokens);
       void refreshDashboardTopPerformers(token);
     } catch (error) {
       recordRestoreControllerDebug('controller.dashboard-hydrate.error', {
@@ -10418,7 +10302,7 @@ export function createAppController(): AppController {
     }
   }
 
-  async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean; alertFeedMode?: DashboardAlertFeedMode }) {
+  async function reloadConfigInternal(token: string, options?: { deferDashboard?: boolean }) {
     const requestRevision = configReloadRevision + 1;
     configReloadRevision = requestRevision;
     recordRestoreControllerDebug('controller.config-reload.start', {
@@ -10440,11 +10324,11 @@ export function createAppController(): AppController {
     });
 
     if (options?.deferDashboard) {
-      void hydrateDashboardMonitoredInternal(token, payload.tokens, options.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE);
+      void hydrateDashboardMonitoredInternal(token, payload.tokens);
       return;
     }
 
-    await hydrateDashboardMonitoredInternal(token, payload.tokens, options?.alertFeedMode ?? BOOTSTRAP_ALERT_FEED_MODE);
+    await hydrateDashboardMonitoredInternal(token, payload.tokens);
   }
 
   async function reloadConfigPreservingMonitoredSnapshot(token: string) {
@@ -10585,7 +10469,7 @@ export function createAppController(): AppController {
 
       applyConfig(payload, getCurrentMonitoredDashboardSnapshot(), getCurrentPinnedMonitoredDashboardSnapshot(), tokenFolders);
       emit('all');
-      void hydrateDashboardMonitoredInternal(token, payload.tokens, 'unseen');
+      void hydrateDashboardMonitoredInternal(token, payload.tokens);
       recordRestoreControllerDebug('controller.restored-refresh.apply-preserved-snapshot', {
         force: Boolean(options.force),
         manualTokens: payload.tokens.length,
@@ -12387,7 +12271,7 @@ export function createAppController(): AppController {
         void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
           address: item.address,
           label: item.label ?? null,
-        })), 'unseen');
+        })));
       }
     },
     async pinMonitoredToken(address: string, position = 0) {
@@ -12612,7 +12496,7 @@ export function createAppController(): AppController {
           if (documentHiddenForUi || state.session.status !== 'authenticated' || state.runtime.mode !== 'active' || !isLiveWorkspace()) {
             return;
           }
-          void refreshMonitoredDashboard({ includeAlertFeed: true });
+          void refreshMonitoredDashboard();
         }, 250);
       }
     },
@@ -13622,7 +13506,7 @@ export function createAppController(): AppController {
       try {
         const result = await adminUnblockTokenRequest(normalized, token);
         setNotice(`${result.message}. Dex evaluation was queued.`);
-        void refreshMonitoredDashboard({ includeAlertFeed: true });
+        void refreshMonitoredDashboard();
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Failed to remove token from backend blocklist');
       } finally {

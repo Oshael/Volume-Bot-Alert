@@ -140,6 +140,42 @@ describe('user alert event model', () => {
     }
   });
 
+  it('loads an event only when the id belongs to the expected user', async () => {
+    const originalQuery = db.query;
+    let capturedSql = null;
+    let capturedParams = null;
+
+    db.query = async (sql, params) => {
+      capturedSql = String(sql);
+      capturedParams = params;
+      return {
+        rows: [{
+          id: 33,
+          user_id: 12,
+          rule_key: 'monitored-vol',
+          kind: 'monitored-vol',
+          token_address: 'So11111111111111111111111111111111111111112',
+          dedupe_key: 'dedupe-33',
+          payload: {},
+          triggered_at: '2026-07-09T12:00:00.000Z',
+          created_at: '2026-07-09T12:00:00.000Z',
+        }],
+      };
+    };
+
+    try {
+      const event = await userAlertEvent.getEventForUser(33, 12);
+
+      assert.match(capturedSql, /WHERE id = \$1/);
+      assert.match(capturedSql, /AND user_id = \$2/);
+      assert.deepEqual(capturedParams, [33, 12]);
+      assert.equal(event.id, 33);
+      assert.equal(event.userId, 12);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('lists chart events by user, token, cutoff and explicit rules', async () => {
     const originalQuery = db.query;
     let capturedSql = null;

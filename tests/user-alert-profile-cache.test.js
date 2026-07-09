@@ -254,54 +254,209 @@ describe('user alert profile cache', () => {
     }
   });
 
-  it('falls back to active database sessions when no local socket presence exists', async () => {
+  it('uses shared presence for worker active profiles without querying session fallback', async () => {
     const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
-    const queries = [];
     let getAllCalls = 0;
+    let sessionQueries = 0;
     const db = {
-      async query(sql) {
-        queries.push(sql);
-        return { rows: [{ user_id: 3 }, { user_id: 9 }] };
+      async query() {
+        sessionQueries += 1;
+        return { rows: [{ user_id: 21 }] };
       },
     };
+    userConfig.getAllWithStoredKeys = async () => {
+      getAllCalls += 1;
+      return { configs: {}, storedKeys: new Set() };
+    };
+
+    try {
+      const profiles = await userAlertProfileCache.listActiveProfiles({
+        db,
+        sharedPresence: true,
+        sharedPresenceRows: [],
+      });
+
+      assert.deepEqual(profiles, []);
+      assert.equal(getAllCalls, 0);
+      assert.equal(sessionQueries, 0);
+    } finally {
+      userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
+      userAlertProfileCache.invalidateUserProfile(21);
+    }
+  });
+
+  it('aggregates shared foreground and hidden presences into alert profiles', async () => {
+    const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
+    let getAllCalls = 0;
+    const baseNowMs = Date.UTC(2026, 6, 8, 12, 0, 0);
     userConfig.getAllWithStoredKeys = async (userId) => {
       getAllCalls += 1;
       return {
         configs: {
-          threshold: userId === 3 ? 70 : 40,
-          'mcap-threshold': 50,
-          'min-vol': 10000,
-          'min-mcap': 30000,
-          'max-mcap': 0,
-          'hvnc-min-vol': 300000,
-          'old-alert-1h-threshold': 50,
-          'old-alert-6h-threshold': 100,
-          'meteora-alert-1h-threshold': 50,
+          threshold: userId === 31 ? 85 : 45,
           'alert-vol-enabled': 'on',
-          'alert-mcap-enabled': 'on',
-          'alert-hvnc-enabled': 'on',
-          'alert-old-surge-1h-enabled': 'on',
-          'alert-old-surge-6h-enabled': 'on',
-          'alert-meteora-surge-enabled': 'on',
         },
+        storedKeys: new Set(['threshold', 'alert-vol-enabled']),
+      };
+    };
+
+    try {
+      const profiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs,
+        sharedPresence: true,
+        sharedPresenceRows: [
+          {
+            userId: 31,
+            mode: 'hidden',
+            hiddenStartedAt: new Date(baseNowMs - 30_000).toISOString(),
+            activeUntilAt: new Date(baseNowMs + 60_000).toISOString(),
+          },
+          {
+            userId: 32,
+            mode: 'foreground',
+            foregroundSeenAt: new Date(baseNowMs).toISOString(),
+            activeUntilAt: new Date(baseNowMs + 45_000).toISOString(),
+          },
+        ],
+      });
+
+      assert.deepEqual(profiles.map((profile) => profile.userId), [31, 32]);
+      assert.equal(profiles[0].presenceMode, 'hidden');
+      assert.equal(profiles[0].hiddenSessionKey, `hidden:${baseNowMs - 30_000}`);
+      assert.equal(profiles[0].thresholdPct, 85);
+      assert.equal(profiles[1].presenceMode, 'foreground');
+      assert.equal(profiles[1].hiddenSessionKey, null);
+      assert.equal(getAllCalls, 2);
+    } finally {
+      userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
+      userAlertProfileCache.invalidateUserProfile(31);
+      userAlertProfileCache.invalidateUserProfile(32);
+    }
+  });
+
+  it('bounds shared profile cache by the next presence expiration', async () => {
+    const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
+    const baseNowMs = Date.UTC(2026, 6, 8, 13, 0, 0);
+    let getAllCalls = 0;
+    userConfig.getAllWithStoredKeys = async () => {
+      getAllCalls += 1;
+      return {
+        configs: { threshold: 60 + getAllCalls },
         storedKeys: new Set(['threshold']),
       };
     };
 
     try {
-      const profiles = await userAlertProfileCache.listActiveProfiles({ db, sessionFallback: true });
+      const firstProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs,
+        sharedPresence: true,
+        sharedPresenceRows: [{
+          userId: 41,
+          mode: 'foreground',
+          activeUntilAt: new Date(baseNowMs + 1_000).toISOString(),
+        }],
+      });
 
-      assert.deepEqual(profiles.map((profile) => profile.userId), [3, 9]);
-      assert.equal(profiles[0].thresholdPct, 70);
-      assert.equal(profiles[0].presenceMode, null);
+      const secondProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 500,
+        sharedPresence: true,
+        sharedPresenceRows: [{
+          userId: 41,
+          mode: 'foreground',
+          activeUntilAt: new Date(baseNowMs + 1_000).toISOString(),
+        }],
+      });
+
+      const thirdProfiles = await userAlertProfileCache.listActiveProfiles({
+        nowMs: baseNowMs + 1_500,
+        sharedPresence: true,
+        sharedPresenceRows: [{
+          userId: 41,
+          mode: 'foreground',
+          activeUntilAt: new Date(baseNowMs + 10_000).toISOString(),
+        }],
+      });
+
+      assert.equal(firstProfiles[0].thresholdPct, 61);
+      assert.equal(secondProfiles[0].thresholdPct, 61);
+      assert.equal(thirdProfiles[0].thresholdPct, 62);
       assert.equal(getAllCalls, 2);
-      assert.equal(queries.length, 1);
-      assert.match(queries[0], /FROM sessions s/);
-      assert.match(queries[0], /u\.access_status IN \('active', 'grace'\)/);
     } finally {
       userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
-      userAlertProfileCache.invalidateUserProfile(3);
-      userAlertProfileCache.invalidateUserProfile(9);
+      userAlertProfileCache.invalidateUserProfile(41);
+    }
+  });
+
+  it('persists shared socket presence writes with authenticated session context', async () => {
+    const calls = [];
+    const sharedPresenceModel = {
+      async upsert(payload, options) {
+        calls.push({ type: 'upsert', payload, options });
+        return { id: 1, ...payload };
+      },
+      async disconnect(payload, options) {
+        calls.push({ type: 'disconnect', payload, options });
+        return { id: 1, ...payload };
+      },
+    };
+
+    await userAlertProfileCache.upsertSharedLivePresence(51, 'socket-51', {
+      workspace: 'live',
+      mode: 'hidden',
+      hiddenGraceMs: 120_000,
+    }, {
+      nowMs: 1000,
+      sessionKey: 'session-51',
+      webInstanceId: 'web-1',
+      sharedPresenceModel,
+    });
+    await userAlertProfileCache.clearSharedLivePresence('socket-51', {
+      nowMs: 2000,
+      webInstanceId: 'web-1',
+      sharedPresenceModel,
+    });
+
+    assert.deepEqual(calls[0].payload, {
+      userId: 51,
+      sessionKey: 'session-51',
+      socketId: 'socket-51',
+      webInstanceId: 'web-1',
+      mode: 'hidden',
+      hiddenGraceMs: 120_000,
+    });
+    assert.equal(calls[0].options.nowMs, 1000);
+    assert.deepEqual(calls[1].payload, {
+      socketId: 'socket-51',
+      webInstanceId: 'web-1',
+    });
+  });
+
+  it('ignores stale config invalidations for a newer cached profile', async () => {
+    const originalGetAllWithStoredKeys = userConfig.getAllWithStoredKeys;
+    userConfig.getAllWithStoredKeys = async () => ({
+      configs: { threshold: 77 },
+      storedKeys: new Set(['threshold']),
+      configVersion: '2026-07-09T14:00:00.000Z',
+    });
+
+    try {
+      await userAlertProfileCache.refreshUserProfile(61);
+      const staleResult = userAlertProfileCache.invalidateUserProfile(61, {
+        configVersion: '2026-07-09T13:59:59.000Z',
+      });
+      const cachedAfterStale = userAlertProfileCache.__private.getCachedUserProfile(61);
+      const freshResult = userAlertProfileCache.invalidateUserProfile(61, {
+        configVersion: '2026-07-09T14:00:01.000Z',
+      });
+      const cachedAfterFresh = userAlertProfileCache.__private.getCachedUserProfile(61);
+
+      assert.equal(staleResult, false);
+      assert.equal(cachedAfterStale.thresholdPct, 77);
+      assert.equal(freshResult, true);
+      assert.equal(cachedAfterFresh, null);
+    } finally {
+      userConfig.getAllWithStoredKeys = originalGetAllWithStoredKeys;
+      userAlertProfileCache.invalidateUserProfile(61);
     }
   });
 });

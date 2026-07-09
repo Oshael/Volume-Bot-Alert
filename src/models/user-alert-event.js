@@ -216,8 +216,27 @@ async function getLatestEventId(filters = {}, runner = db) {
   return Number.isInteger(latestId) && latestId > 0 ? latestId : null;
 }
 
+async function getEventForUser(eventId, userId, runner = db) {
+  const normalizedEventId = Number.parseInt(String(eventId || '').trim(), 10);
+  if (!Number.isInteger(normalizedEventId) || normalizedEventId <= 0) {
+    throw new Error('Valid alert event id is required');
+  }
+
+  const normalizedUserId = normalizeUserId(userId);
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM user_alert_events
+     WHERE id = $1
+       AND user_id = $2`,
+    [normalizedEventId, normalizedUserId]
+  );
+
+  return mapEventRow(rows[0] || null);
+}
+
 module.exports = {
   createEvent,
+  getEventForUser,
   getLatestEventId,
   listChartEvents,
   listRecentEvents,

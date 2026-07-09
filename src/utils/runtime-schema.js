@@ -907,6 +907,41 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage49-shared-user-alert-presence',
+    name: 'Stage 49 shared user alert presence',
+    repair: 'node src/utils/db-init-stage49.js',
+    tables: [
+      {
+        table: 'user_alert_presences',
+        columns: [
+          'id',
+          'user_id',
+          'session_key',
+          'socket_id',
+          'web_instance_id',
+          'mode',
+          'last_heartbeat_at',
+          'foreground_seen_at',
+          'hidden_started_at',
+          'hidden_grace_until_at',
+          'active_until_at',
+          'disconnected_at',
+          'created_at',
+          'updated_at',
+        ],
+        defaults: {
+          mode: "'inactive'::character varying",
+        },
+        constraints: [
+          {
+            name: 'user_alert_presences_mode_check',
+            includes: ['foreground', 'hidden', 'inactive'],
+          },
+        ],
+      },
+    ],
+  },
+  {
     key: 'stage39-admin-block-evidence',
     name: 'Stage 39 admin block evidence snapshots',
     repair: 'node src/utils/db-init-stage39.js',

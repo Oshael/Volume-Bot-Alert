@@ -1,19 +1,16 @@
 const userConfig = require('../models/user-config');
-const db = require('../models/db');
+const userAlertPresence = require('../models/user-alert-presence');
 const config = require('../../config');
 
-const FOREGROUND_TTL_MS = 45 * 1000;
+const FOREGROUND_TTL_MS = 2 * 60 * 1000;
 const HIDDEN_GRACE_MAX_MS = 20 * 60 * 1000;
-const SESSION_FALLBACK_TTL_MS = 10 * 1000;
+const SHARED_PRESENCE_PROFILE_CACHE_TTL_MS = 15 * 1000;
 const PRESENCE_MODES = new Set(['foreground', 'hidden', 'inactive']);
 
 const profileCacheByUserId = new Map();
+const profileCacheExpiresAtByUserId = new Map();
 const livePresenceBySocketId = new Map();
 const socketIdsByUserId = new Map();
-let activeSessionUserIdsCache = {
-  expiresAtMs: 0,
-  userIds: [],
-};
 
 function normalizeUserId(value) {
   const userId = Number.parseInt(String(value || '').trim(), 10);
@@ -48,6 +45,22 @@ function normalizeHiddenGraceMs(value) {
 function getNowMs(options = {}) {
   const nowMs = Number(options.nowMs);
   return Number.isFinite(nowMs) ? nowMs : Date.now();
+}
+
+function toTimestampMs(value) {
+  if (value == null || value === '') {
+    return 0;
+  }
+  const parsed = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRequiredText(value, fieldName) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    throw new Error(`${fieldName} is required`);
+  }
+  return normalized;
 }
 
 function isEnabled(configs, key, fallback = true) {
@@ -95,6 +108,7 @@ function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
   return {
     userId,
     source: 'user_config',
+    configVersion: options.configVersion || null,
     ruleEnabled: {
       monitoredVol: isEnabled(configs, 'alert-vol-enabled'),
       monitoredMcap: isEnabled(configs, 'alert-mcap-enabled'),
@@ -184,6 +198,7 @@ function untrackSocketForUser(userId, socketId) {
   if (socketIds.size === 0) {
     socketIdsByUserId.delete(userId);
     profileCacheByUserId.delete(userId);
+    profileCacheExpiresAtByUserId.delete(userId);
   }
 }
 
@@ -355,77 +370,226 @@ function listActiveUserIds(options = {}) {
   return activeUserIds.sort((a, b) => a - b);
 }
 
-function shouldUseSessionFallback(options = {}) {
-  if (options.sessionFallback === true) {
+function shouldUseSharedPresence(options = {}) {
+  if (options.sharedPresence === true) {
     return true;
   }
-  if (options.sessionFallback === false) {
+  if (options.sharedPresence === false) {
     return false;
+  }
+  if (options.sharedPresenceModel || options.sharedPresenceRows) {
+    return true;
   }
   return Boolean(config.runtime?.runBackgroundJobs) && !config.runtime?.runSocketHub;
 }
 
-async function listActiveSessionUserIds(options = {}) {
+function getCachedUserProfile(userId, options = {}) {
+  const normalizedUserId = normalizeUserId(userId);
+  const profile = profileCacheByUserId.get(normalizedUserId) || null;
+  if (!profile) {
+    return null;
+  }
+
   const nowMs = getNowMs(options);
-  const useCache = options.db == null && options.sessionFallbackCache !== false;
-  if (useCache && activeSessionUserIdsCache.expiresAtMs > nowMs) {
-    return activeSessionUserIdsCache.userIds.slice();
+  const expiresAtMs = Number(profileCacheExpiresAtByUserId.get(normalizedUserId));
+  if (options.requireExpiry === true && !Number.isFinite(expiresAtMs)) {
+    profileCacheByUserId.delete(normalizedUserId);
+    return null;
   }
 
-  const executor = options.db && typeof options.db.query === 'function' ? options.db : db;
-  const { rows } = await executor.query(
-    `SELECT DISTINCT s.user_id
-     FROM sessions s
-     JOIN users u ON u.id = s.user_id
-     WHERE s.expires_at > NOW()
-       AND u.is_active = TRUE
-       AND (
-         LOWER(u.role) = 'admin'
-         OR (
-           u.access_status IN ('active', 'grace')
-           AND (u.access_expires_at IS NULL OR u.access_expires_at > NOW())
-         )
-       )
-     ORDER BY s.user_id ASC`
-  );
-
-  const userIds = rows
-    .map((row) => Number.parseInt(String(row.user_id || '').trim(), 10))
-    .filter((userId) => Number.isInteger(userId) && userId > 0);
-
-  if (useCache) {
-    activeSessionUserIdsCache = {
-      expiresAtMs: nowMs + SESSION_FALLBACK_TTL_MS,
-      userIds,
-    };
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
+    profileCacheByUserId.delete(normalizedUserId);
+    profileCacheExpiresAtByUserId.delete(normalizedUserId);
+    return null;
   }
 
-  return userIds.slice();
+  return profile;
 }
 
-async function refreshUserProfile(userId) {
+async function refreshUserProfile(userId, options = {}) {
   const normalizedUserId = normalizeUserId(userId);
   const configResult = typeof userConfig.getAllWithStoredKeys === 'function'
     ? await userConfig.getAllWithStoredKeys(normalizedUserId)
     : { configs: await userConfig.getAll(normalizedUserId), storedKeys: [] };
   const profile = buildNormalizedAlertProfile(normalizedUserId, configResult.configs, {
+    configVersion: configResult.configVersion,
     storedKeys: configResult.storedKeys,
   });
   profileCacheByUserId.set(normalizedUserId, profile);
+  const expiresAtMs = Number(options.cacheExpiresAtMs);
+  if (Number.isFinite(expiresAtMs)) {
+    profileCacheExpiresAtByUserId.set(normalizedUserId, expiresAtMs);
+  } else {
+    profileCacheExpiresAtByUserId.delete(normalizedUserId);
+  }
   return profile;
 }
 
-function invalidateUserProfile(userId) {
-  profileCacheByUserId.delete(normalizeUserId(userId));
+function shouldInvalidateProfile(profile, options = {}) {
+  const incomingVersionMs = toTimestampMs(options.configVersion);
+  if (!incomingVersionMs || !profile?.configVersion) {
+    return true;
+  }
+
+  const cachedVersionMs = toTimestampMs(profile.configVersion);
+  return !cachedVersionMs || incomingVersionMs > cachedVersionMs;
 }
 
-async function listActiveProfiles(options = {}) {
-  const nowMs = getNowMs(options);
-  let activeUserIds = listActiveUserIds(options);
-  if (activeUserIds.length === 0 && shouldUseSessionFallback(options)) {
-    activeUserIds = await listActiveSessionUserIds(options);
+function invalidateUserProfile(userId, options = {}) {
+  const normalizedUserId = normalizeUserId(userId);
+  const current = profileCacheByUserId.get(normalizedUserId) || null;
+  if (current && !shouldInvalidateProfile(current, options)) {
+    return false;
   }
-  const missingUserIds = activeUserIds.filter((userId) => !profileCacheByUserId.has(userId));
+
+  profileCacheByUserId.delete(normalizedUserId);
+  profileCacheExpiresAtByUserId.delete(normalizedUserId);
+  return Boolean(current);
+}
+
+function getProfileCacheExpiresAtMs(context, nowMs) {
+  const activeUntilMs = Number(context?.activeUntilMs);
+  const shortTtlExpiresAtMs = nowMs + SHARED_PRESENCE_PROFILE_CACHE_TTL_MS;
+  if (!Number.isFinite(activeUntilMs) || activeUntilMs <= nowMs) {
+    return shortTtlExpiresAtMs;
+  }
+  return Math.max(nowMs + 1, Math.min(shortTtlExpiresAtMs, activeUntilMs));
+}
+
+function getSharedPresenceUserId(row) {
+  const userId = Number.parseInt(String(row?.userId || row?.user_id || '').trim(), 10);
+  return Number.isInteger(userId) && userId > 0 ? userId : null;
+}
+
+function getSharedPresenceHiddenStartedAtMs(row, nowMs) {
+  return toTimestampMs(row.hiddenStartedAt || row.hidden_started_at)
+    || toTimestampMs(row.lastHeartbeatAt || row.last_heartbeat_at)
+    || nowMs;
+}
+
+function mergeSharedPresenceContext(current, row, mode, activeUntilMs, nowMs) {
+  const next = current || {
+    userId: getSharedPresenceUserId(row),
+    mode: 'hidden',
+    hiddenStartedAtMs: null,
+    activeUntilMs,
+  };
+  next.activeUntilMs = Math.min(Number(next.activeUntilMs) || activeUntilMs, activeUntilMs);
+
+  if (mode === 'foreground') {
+    next.mode = 'foreground';
+    next.hiddenStartedAtMs = null;
+    return next;
+  }
+
+  if (next.mode !== 'foreground') {
+    const hiddenStartedAtMs = getSharedPresenceHiddenStartedAtMs(row, nowMs);
+    next.hiddenStartedAtMs = next.hiddenStartedAtMs == null
+      ? hiddenStartedAtMs
+      : Math.min(next.hiddenStartedAtMs, hiddenStartedAtMs);
+  }
+
+  return next;
+}
+
+function buildSharedPresenceContexts(rows = [], options = {}) {
+  const nowMs = getNowMs(options);
+  const byUserId = new Map();
+
+  for (const row of rows) {
+    const userId = getSharedPresenceUserId(row);
+    if (!userId) {
+      continue;
+    }
+
+    const mode = normalizeMode(row.mode);
+    if (mode === 'inactive') {
+      continue;
+    }
+
+    const activeUntilMs = toTimestampMs(row.activeUntilAt || row.active_until_at);
+    if (activeUntilMs <= nowMs) {
+      continue;
+    }
+
+    byUserId.set(
+      userId,
+      mergeSharedPresenceContext(byUserId.get(userId), row, mode, activeUntilMs, nowMs)
+    );
+  }
+
+  return byUserId;
+}
+
+async function listSharedPresenceContexts(options = {}, nowMs = getNowMs(options)) {
+  const rows = Array.isArray(options.sharedPresenceRows)
+    ? options.sharedPresenceRows
+    : await (options.sharedPresenceModel || userAlertPresence).listActive(
+      {},
+      { now: new Date(nowMs) },
+      options.db
+    );
+  return buildSharedPresenceContexts(rows, { nowMs });
+}
+
+async function upsertSharedLivePresence(userId, socketId, payload = {}, options = {}) {
+  const normalizedPresence = normalizePresencePayload(payload);
+  return (options.sharedPresenceModel || userAlertPresence).upsert({
+    userId: normalizeUserId(userId),
+    sessionKey: normalizeRequiredText(options.sessionKey, 'Session key'),
+    socketId: normalizeSocketId(socketId),
+    webInstanceId: normalizeRequiredText(options.webInstanceId, 'Web instance id'),
+    mode: normalizedPresence.mode,
+    hiddenGraceMs: normalizedPresence.hiddenGraceMs,
+  }, options, options.db);
+}
+
+async function clearSharedLivePresence(socketId, options = {}) {
+  return (options.sharedPresenceModel || userAlertPresence).disconnect({
+    socketId: normalizeSocketId(socketId),
+    webInstanceId: normalizeRequiredText(options.webInstanceId, 'Web instance id'),
+  }, options, options.db);
+}
+
+async function listSharedActiveProfiles(options, nowMs) {
+  const contextsByUserId = await listSharedPresenceContexts(options, nowMs);
+  const activeUserIds = [...contextsByUserId.keys()].sort((a, b) => a - b);
+  const missingUserIds = activeUserIds.filter((userId) => !getCachedUserProfile(userId, {
+    nowMs,
+    requireExpiry: true,
+  }));
+
+  if (missingUserIds.length > 0) {
+    await Promise.all(missingUserIds.map((userId) => refreshUserProfile(userId, {
+      cacheExpiresAtMs: getProfileCacheExpiresAtMs(contextsByUserId.get(userId), nowMs),
+    })));
+  }
+
+  return activeUserIds
+    .map((userId) => {
+      const profile = getCachedUserProfile(userId, { nowMs, requireExpiry: true });
+      const presence = contextsByUserId.get(userId);
+      if (!profile || !presence) {
+        return null;
+      }
+
+      return {
+        ...profile,
+        presenceMode: presence.mode,
+        hiddenSessionKey: presence.mode === 'hidden' && presence.hiddenStartedAtMs
+          ? `hidden:${presence.hiddenStartedAtMs}`
+          : null,
+        hiddenStartedAt: presence.mode === 'hidden' && presence.hiddenStartedAtMs
+          ? new Date(presence.hiddenStartedAtMs).toISOString()
+          : null,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function listLocalActiveProfiles(options, nowMs) {
+  const activeUserIds = listActiveUserIds(options);
+  const missingUserIds = activeUserIds.filter((userId) => !getCachedUserProfile(userId, { nowMs }));
 
   if (missingUserIds.length > 0) {
     await Promise.all(missingUserIds.map((userId) => refreshUserProfile(userId)));
@@ -433,7 +597,7 @@ async function listActiveProfiles(options = {}) {
 
   return activeUserIds
     .map((userId) => {
-      const profile = profileCacheByUserId.get(userId) || null;
+      const profile = getCachedUserProfile(userId, { nowMs });
       if (!profile) {
         return null;
       }
@@ -451,11 +615,18 @@ async function listActiveProfiles(options = {}) {
     .filter(Boolean);
 }
 
+async function listActiveProfiles(options = {}) {
+  const nowMs = getNowMs(options);
+  return shouldUseSharedPresence(options)
+    ? listSharedActiveProfiles(options, nowMs)
+    : listLocalActiveProfiles(options, nowMs);
+}
+
 function getStatus(options = {}) {
   return {
     foregroundTtlMs: FOREGROUND_TTL_MS,
     hiddenGraceMaxMs: HIDDEN_GRACE_MAX_MS,
-    sessionFallbackTtlMs: SESSION_FALLBACK_TTL_MS,
+    sharedPresenceProfileCacheTtlMs: SHARED_PRESENCE_PROFILE_CACHE_TTL_MS,
     trackedSockets: livePresenceBySocketId.size,
     trackedUsers: socketIdsByUserId.size,
     activeUsers: listActiveUserIds(options).length,
@@ -466,35 +637,43 @@ function getStatus(options = {}) {
 module.exports = {
   FOREGROUND_TTL_MS,
   HIDDEN_GRACE_MAX_MS,
-  SESSION_FALLBACK_TTL_MS,
+  SHARED_PRESENCE_PROFILE_CACHE_TTL_MS,
   PRESENCE_MODES,
   buildNormalizedAlertProfile,
+  clearSharedLivePresence,
   clearLivePresence,
   getStatus,
   invalidateUserProfile,
   isPresenceEntryActive,
-  listActiveSessionUserIds,
   listActiveProfiles,
   listActiveUserIds,
   refreshUserProfile,
+  upsertSharedLivePresence,
   upsertLivePresence,
   __private: {
+    buildSharedPresenceContexts,
+    getSharedPresenceHiddenStartedAtMs,
+    getSharedPresenceUserId,
     getActivePresenceContextForUser,
+    getCachedUserProfile,
+    getProfileCacheExpiresAtMs,
     getNowMs,
     getNumber,
     isEnabled,
     isPresenceEntryForegroundActive,
     isPresenceEntryHiddenActive,
     listActivePresenceEntriesForUser,
-    listActiveSessionUserIds,
     normalizeHiddenGraceMs,
     normalizeMode,
     normalizePresencePayload,
-    shouldUseSessionFallback,
+    normalizeRequiredText,
+    shouldInvalidateProfile,
+    shouldUseSharedPresence,
     normalizeSocketId,
     normalizeStoredKeys,
     normalizeUserId,
     profileCacheByUserId,
+    profileCacheExpiresAtByUserId,
     livePresenceBySocketId,
     resolveEnabledWithFallback,
     resolveNumberWithFallback,

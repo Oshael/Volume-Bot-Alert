@@ -167,12 +167,13 @@ function applyLegacyGmgnClaimConfigFallbacks(configs, storedKeys = new Set()) {
 
 async function getAllWithStoredKeys(userId) {
   const { rows } = await db.query(
-    'SELECT config_key, config_value FROM user_configs WHERE user_id = $1',
+    'SELECT config_key, config_value, updated_at FROM user_configs WHERE user_id = $1',
     [userId]
   );
 
   const configs = buildDefaultConfigs();
   const storedKeys = new Set();
+  let configVersion = null;
 
   for (const row of rows) {
     const schema = CONFIG_SCHEMA[row.config_key];
@@ -182,11 +183,22 @@ async function getAllWithStoredKeys(userId) {
         ? Number(row.config_value)
         : row.config_value;
     }
+
+    const updatedAtMs = row.updated_at instanceof Date
+      ? row.updated_at.getTime()
+      : new Date(row.updated_at || 0).getTime();
+    if (Number.isFinite(updatedAtMs) && (!configVersion || updatedAtMs > configVersion.getTime())) {
+      configVersion = new Date(updatedAtMs);
+    }
   }
 
   applyLegacySurgeConfigFallbacks(configs, storedKeys);
   applyLegacyGmgnClaimConfigFallbacks(configs, storedKeys);
-  return { configs, storedKeys };
+  return {
+    configs,
+    storedKeys,
+    configVersion: configVersion ? configVersion.toISOString() : null,
+  };
 }
 
 async function getAll(userId) {
@@ -246,12 +258,23 @@ async function remove(userId, key) {
   return rowCount > 0;
 }
 
+async function getVersion(userId) {
+  const { rows } = await db.query(
+    'SELECT MAX(updated_at) AS config_version FROM user_configs WHERE user_id = $1',
+    [userId]
+  );
+  const value = rows[0]?.config_version || null;
+  const parsed = value instanceof Date ? value : new Date(value || 0);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+
 module.exports = {
   CONFIG_SCHEMA,
   applyLegacyGmgnClaimConfigFallbacks,
   applyLegacySurgeConfigFallbacks,
   buildDefaultConfigs,
   getAllWithStoredKeys,
+  getVersion,
   validateConfigEntry,
   validateConfigs,
   getAll,

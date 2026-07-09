@@ -16,6 +16,7 @@
 const { Server } = require('socket.io');
 const cookie = require('cookie');
 const jwt = require('jsonwebtoken');
+const os = require('os');
 const config = require('../../config');
 const Session = require('../models/session');
 const User = require('../models/user');
@@ -33,6 +34,11 @@ let io = null;
 let accessSweepTimer = null;
 
 const ACCESS_SWEEP_INTERVAL = 60000;
+const WEB_INSTANCE_ID = String(
+  process.env.WEB_INSTANCE_ID
+  || process.env.INSTANCE_ID
+  || `${os.hostname()}:${process.pid}`
+).trim();
 const sessionSockets = new Map();
 const userSessions = new Map();
 const ipSockets = new Map();
@@ -62,6 +68,30 @@ function getSocketMarketRooms(socket) {
     socket.marketRooms = new Set();
   }
   return socket.marketRooms;
+}
+
+function enqueueSharedPresenceWrite(socket, operation, context = {}) {
+  const previous = socket.sharedPresenceWrite || Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(operation)
+    .catch((error) => {
+      logSecurityEvent(context.event || 'socket_shared_presence_write_failed', {
+        socketId: socket.id,
+        userId: socket.user?.id,
+        sessionId: socket.sessionId,
+        ip: socket.clientIp,
+        error: error.message,
+      });
+    });
+
+  socket.sharedPresenceWrite = next;
+  return next;
+}
+
+function enqueueAlertBacklogReplay(socket, trigger) {
+  const backendAlertReplay = require('./backend-alert-replay');
+  return backendAlertReplay.replayForSocket(socket, { trigger });
 }
 
 function queueCatalogUpsert(token, source = 'unknown') {
@@ -374,11 +404,23 @@ function init(httpServer) {
     if (userRoom) {
       socket.join(userRoom);
     }
+    void enqueueAlertBacklogReplay(socket, 'connect');
 
     socket.on('live:presence', (data) => {
       if (!noteSocketAction(socket, 'live:presence')) return;
       try {
-        userAlertProfileCache.upsertLivePresence(socket.user.id, socket.id, data);
+        const presence = userAlertProfileCache.upsertLivePresence(socket.user.id, socket.id, data);
+        if (presence.mode === 'foreground') {
+          void enqueueAlertBacklogReplay(socket, 'foreground');
+        }
+        enqueueSharedPresenceWrite(
+          socket,
+          () => userAlertProfileCache.upsertSharedLivePresence(socket.user.id, socket.id, data, {
+            sessionKey: socket.sessionId,
+            webInstanceId: WEB_INSTANCE_ID,
+          }),
+          { event: 'socket_shared_presence_upsert_failed' }
+        );
       } catch (error) {
         logSecurityEvent('socket_live_presence_rejected', {
           socketId: socket.id,
@@ -436,6 +478,13 @@ function init(httpServer) {
     socket.on('disconnect', (reason) => {
       untrackSessionSocket(socket);
       userAlertProfileCache.clearLivePresence(socket.id);
+      enqueueSharedPresenceWrite(
+        socket,
+        () => userAlertProfileCache.clearSharedLivePresence(socket.id, {
+          webInstanceId: WEB_INSTANCE_ID,
+        }),
+        { event: 'socket_shared_presence_disconnect_failed' }
+      );
       socketActionState.delete(socket.id);
       socket.marketRooms?.clear?.();
       console.log(`[Socket.io] ${socket.user.username} disconnected (${reason})`);

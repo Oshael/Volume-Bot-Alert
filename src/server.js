@@ -43,6 +43,8 @@ const tokenRiskReviewSyncWorker = require('./services/token-risk-review-sync-wor
 const mockTradingTakeProfitWorker = require('./services/mock-trading-take-profit-worker');
 const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
+const backendAlertRealtime = require('./services/backend-alert-realtime');
+const userConfigSync = require('./services/user-config-sync');
 const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
 const solUsdPrice = require('./services/sol-usd-price-service');
@@ -274,6 +276,9 @@ function startBackgroundCleanup() {
 }
 
 function startWorkerSet() {
+  userConfigSync.start().catch((err) => {
+    console.error('[UserConfigSync] Failed to start listener:', err.message);
+  });
   catalogWorker.start();
   catalogCleanupWorker.start();
   meteoraSnapshotWorker.start();
@@ -294,6 +299,9 @@ function bootstrapWebRuntime(httpServer) {
   }
 
   socketHub.init(httpServer);
+  backendAlertRealtime.start().catch((err) => {
+    console.error('[BackendAlertRealtime] Failed to start listener:', err.message);
+  });
 }
 
 function bootstrapBackgroundRuntime() {

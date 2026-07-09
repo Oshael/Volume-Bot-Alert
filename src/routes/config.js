@@ -10,6 +10,7 @@ const userBlocklist = require('../models/user-blocklist');
 const userStarredToken = require('../models/user-starred-token');
 const tokenCatalog = require('../models/token-catalog');
 const userAlertProfileCache = require('../services/user-alert-profile-cache');
+const userConfigSync = require('../services/user-config-sync');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const { normalizeText } = require('../utils/url-safety');
 const config = require('../../config');
@@ -129,6 +130,21 @@ function buildRuntimeFlags() {
   return {
     mockTradingEnabled: Boolean(config.mockTrading.enabled),
   };
+}
+
+async function notifyUserConfigChanged(userId) {
+  try {
+    await userConfigSync.publishUserConfigInvalidated(userId);
+  } catch (err) {
+    console.error('[UserConfigSync] Failed to publish config invalidation:', err.message);
+  }
+}
+
+async function notifyUserConfigChangedIfNeeded(userId, shouldNotify) {
+  if (!shouldNotify) {
+    return;
+  }
+  await notifyUserConfigChanged(userId);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -312,6 +328,7 @@ router.put('/', async (req, res) => {
       ...removedManualTokenCandidates.map((address) => tokenCatalog.demoteFormerManualAddress(address)),
     ]);
     userAlertProfileCache.invalidateUserProfile(req.user.id);
+    await notifyUserConfigChangedIfNeeded(req.user.id, validatedConfigs !== null);
     const result = {
       configs: await userConfig.getAll(req.user.id),
       uiPrefs: await userUiPref.getAll(req.user.id),
@@ -357,6 +374,7 @@ router.patch('/', async (req, res) => {
 
     await userConfig.setMultiple(req.user.id, validation.configs);
     userAlertProfileCache.invalidateUserProfile(req.user.id);
+    await notifyUserConfigChanged(req.user.id);
     const responsePayload = { message: 'Config updated', configs: validation.configs };
     res.json(responsePayload);
   } catch (err) {

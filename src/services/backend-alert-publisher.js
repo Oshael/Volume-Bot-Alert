@@ -1,15 +1,19 @@
 const backendAlertFeed = require('./backend-alert-feed');
-const socketHub = require('./socket-hub');
+const backendAlertRealtime = require('./backend-alert-realtime');
 
 async function publishEvent(eventRow) {
   const payload = await backendAlertFeed.buildDashboardAlertEventFromEvent(eventRow);
-  const delivered = socketHub.emitBackendAlertEvent(payload, {
-    userId: eventRow?.userId ?? null,
-  });
+  let notified = false;
+
+  if (backendAlertRealtime.canPublishEvent(eventRow)) {
+    await backendAlertRealtime.publishEventCreated(eventRow);
+    notified = true;
+  }
 
   return {
     payload,
-    delivered: Boolean(delivered),
+    delivered: false,
+    notified,
   };
 }
 
@@ -24,6 +28,7 @@ async function publishEventSafe(eventRow, options = {}) {
     return {
       payload: null,
       delivered: false,
+      notified: false,
       error,
     };
   }

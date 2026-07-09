@@ -3,53 +3,13 @@ const assert = require('node:assert/strict');
 
 const backendAlertFeed = require('../src/services/backend-alert-feed');
 const backendAlertPublisher = require('../src/services/backend-alert-publisher');
-const socketHub = require('../src/services/socket-hub');
+const backendAlertRealtime = require('../src/services/backend-alert-realtime');
 
 describe('backend alert publisher', () => {
-  it('builds and emits the realtime payload for a persisted backend alert event', async () => {
+  it('builds the dashboard payload and notifies the web runtime for a user event', async () => {
     const originalBuildDashboardAlertEventFromEvent = backendAlertFeed.buildDashboardAlertEventFromEvent;
-    const originalEmitBackendAlertEvent = socketHub.emitBackendAlertEvent;
-    const emittedPayloads = [];
-    const emittedOptions = [];
-
-    backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
-      id: event.id,
-      kind: 'gmgn-claim-signal',
-      ruleKey: event.ruleKey,
-      address: event.tokenAddress,
-    });
-    socketHub.emitBackendAlertEvent = (payload, options) => {
-      emittedPayloads.push(payload);
-      emittedOptions.push(options || null);
-      return true;
-    };
-
-    try {
-      const result = await backendAlertPublisher.publishEvent({
-        id: 11,
-        ruleKey: 'gmgn-claim-signal',
-        tokenAddress: 'So11111111111111111111111111111111111111112',
-      });
-
-      assert.equal(result.delivered, true);
-      assert.deepEqual(result.payload, {
-        id: 11,
-        kind: 'gmgn-claim-signal',
-        ruleKey: 'gmgn-claim-signal',
-        address: 'So11111111111111111111111111111111111111112',
-      });
-      assert.deepEqual(emittedPayloads, [result.payload]);
-      assert.deepEqual(emittedOptions, [{ userId: null }]);
-    } finally {
-      backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
-      socketHub.emitBackendAlertEvent = originalEmitBackendAlertEvent;
-    }
-  });
-
-  it('targets user-owned realtime events to the matching authenticated sockets', async () => {
-    const originalBuildDashboardAlertEventFromEvent = backendAlertFeed.buildDashboardAlertEventFromEvent;
-    const originalEmitBackendAlertEvent = socketHub.emitBackendAlertEvent;
-    const emittedOptions = [];
+    const originalPublishEventCreated = backendAlertRealtime.publishEventCreated;
+    const notifications = [];
 
     backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
       id: event.id,
@@ -57,24 +17,102 @@ describe('backend alert publisher', () => {
       ruleKey: event.ruleKey,
       address: event.tokenAddress,
     });
-    socketHub.emitBackendAlertEvent = (_payload, options) => {
-      emittedOptions.push(options || null);
-      return true;
+    backendAlertRealtime.publishEventCreated = async (event) => {
+      notifications.push(event);
+      return {
+        type: backendAlertRealtime.PAYLOAD_TYPE,
+        eventId: event.id,
+        userId: event.userId,
+      };
     };
 
     try {
-      const result = await backendAlertPublisher.publishEvent({
+      const event = {
         id: 12,
         userId: 15,
         ruleKey: 'monitored-vol',
         tokenAddress: 'So11111111111111111111111111111111111111112',
-      });
+      };
+      const result = await backendAlertPublisher.publishEvent(event);
 
-      assert.equal(result.delivered, true);
-      assert.deepEqual(emittedOptions, [{ userId: 15 }]);
+      assert.equal(result.delivered, false);
+      assert.equal(result.notified, true);
+      assert.deepEqual(result.payload, {
+        id: 12,
+        kind: 'monitored-vol',
+        ruleKey: 'monitored-vol',
+        address: 'So11111111111111111111111111111111111111112',
+      });
+      assert.deepEqual(notifications, [event]);
     } finally {
       backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
-      socketHub.emitBackendAlertEvent = originalEmitBackendAlertEvent;
+      backendAlertRealtime.publishEventCreated = originalPublishEventCreated;
+    }
+  });
+
+  it('notifies the web runtime for global GMGN claim events', async () => {
+    const originalBuildDashboardAlertEventFromEvent = backendAlertFeed.buildDashboardAlertEventFromEvent;
+    const originalPublishEventCreated = backendAlertRealtime.publishEventCreated;
+    const notifications = [];
+
+    backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
+      id: event.id,
+      kind: 'gmgn-claim-signal',
+      ruleKey: event.ruleKey,
+      address: event.tokenAddress,
+    });
+    backendAlertRealtime.publishEventCreated = async (event) => {
+      notifications.push(event);
+      return {
+        type: backendAlertRealtime.GLOBAL_ALERT_PAYLOAD_TYPE,
+        eventId: event.id,
+        userId: null,
+      };
+    };
+
+    try {
+      const event = {
+        id: 13,
+        ruleKey: 'gmgn-claim-signal',
+        tokenAddress: 'So11111111111111111111111111111111111111112',
+      };
+      const result = await backendAlertPublisher.publishEvent(event);
+
+      assert.equal(result.delivered, false);
+      assert.equal(result.notified, true);
+      assert.deepEqual(notifications, [event]);
+    } finally {
+      backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
+      backendAlertRealtime.publishEventCreated = originalPublishEventCreated;
+    }
+  });
+
+  it('does not notify unsupported global events without a realtime transport contract', async () => {
+    const originalBuildDashboardAlertEventFromEvent = backendAlertFeed.buildDashboardAlertEventFromEvent;
+    const originalPublishEventCreated = backendAlertRealtime.publishEventCreated;
+    let notified = false;
+
+    backendAlertFeed.buildDashboardAlertEventFromEvent = async (event) => ({
+      id: event.id,
+      kind: event.ruleKey,
+      ruleKey: event.ruleKey,
+    });
+    backendAlertRealtime.publishEventCreated = async () => {
+      notified = true;
+    };
+
+    try {
+      const result = await backendAlertPublisher.publishEvent({
+        id: 14,
+        ruleKey: 'unknown-global',
+      });
+
+      assert.equal(result.delivered, false);
+      assert.equal(result.notified, false);
+      assert.equal(notified, false);
+    } finally {
+      backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
+      backendAlertRealtime.publishEventCreated = originalPublishEventCreated;
     }
   });
 
@@ -94,6 +132,7 @@ describe('backend alert publisher', () => {
 
       assert.equal(result.payload, null);
       assert.equal(result.delivered, false);
+      assert.equal(result.notified, false);
       assert.equal(result.error?.message, 'boom');
     } finally {
       backendAlertFeed.buildDashboardAlertEventFromEvent = originalBuildDashboardAlertEventFromEvent;
