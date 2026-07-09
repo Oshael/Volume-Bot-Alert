@@ -88,6 +88,10 @@ import {
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
 import { resolveApiBase } from '../services/api/base';
+import {
+  getApiRateLimitBackoffRemainingMs,
+  isApiRateLimitBackoffError,
+} from '../services/api/rate-limit-backoff';
 import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
@@ -214,6 +218,7 @@ const REPEAT_LOCAL_ALERT_STEP_PCT = 40;
 const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
+const MONITORED_DASHBOARD_POLL_INTERVAL_MS = 15 * 1000;
 const MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE = 500;
 const MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS = 3 * 1000;
 const FLOATING_QUICK_BUY_NOTIONAL_SOL = 0.3;
@@ -1101,6 +1106,7 @@ export function createAppController(): AppController {
   let floatingQuickBuyResetTimer: ReturnType<typeof setTimeout> | null = null;
   let dashboardAlertFeedRefreshInFlight = false;
   let supplementalMeteoraRefreshInFlight = false;
+  let nextMonitoredDashboardPollAt = 0;
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
   let sparklineRefreshQueued = false;
@@ -8467,6 +8473,18 @@ export function createAppController(): AppController {
     }
   }
 
+  function shouldIgnoreHistoryBootstrapRefreshError(input: {
+    requestRevision: number;
+    token: string;
+    suppressErrors?: boolean;
+    error: unknown;
+  }) {
+    return input.requestRevision !== historyBootstrapRequestRevision
+      || Boolean(input.suppressErrors)
+      || state.session.token !== input.token
+      || isApiRateLimitBackoffError(input.error);
+  }
+
   async function refreshHistoryWorkspaceBootstrap(options?: HistoryBootstrapRefreshOptions) {
     const token = options?.token ?? state.session.token;
     if (!token) {
@@ -8515,11 +8533,12 @@ export function createAppController(): AppController {
       lastMonitoredDashboardError = null;
       emit('recent', 'old-week', 'bid-zone', 'header');
     } catch (error) {
-      if (
-        requestRevision !== historyBootstrapRequestRevision
-        || options?.suppressErrors
-        || state.session.token !== token
-      ) {
+      if (shouldIgnoreHistoryBootstrapRefreshError({
+        requestRevision,
+        token,
+        suppressErrors: options?.suppressErrors,
+        error,
+      })) {
         return;
       }
 
@@ -8595,6 +8614,11 @@ export function createAppController(): AppController {
         emit('recent', 'old-week', 'header');
       }
     } catch (error) {
+      if (isApiRateLimitBackoffError(error)) {
+        deferMonitoredDashboardPoll(error.retryAfterMs);
+        refreshWorkspaceSparklinesForMonitoringCycle();
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Failed to refresh monitored dashboard';
       lastMonitoredDashboardError = message;
       setError(message);
@@ -8620,10 +8644,43 @@ export function createAppController(): AppController {
       applyDashboardTopPerformers(payload);
       emit('top-performers');
     } catch (error) {
+      if (isApiRateLimitBackoffError(error)) {
+        return;
+      }
       console.warn('[AppController] Failed to refresh dashboard top performers:', error instanceof Error ? error.message : error);
     } finally {
       topPerformersRefreshInFlight = false;
     }
+  }
+
+  function deferMonitoredDashboardPoll(delayMs: number) {
+    nextMonitoredDashboardPollAt = Math.max(
+      nextMonitoredDashboardPollAt,
+      Date.now() + Math.max(MONITORED_DASHBOARD_POLL_INTERVAL_MS, Math.ceil(delayMs)),
+    );
+  }
+
+  function shouldStartMonitoredDashboardPoll(now = Date.now()) {
+    if (now < nextMonitoredDashboardPollAt) {
+      return false;
+    }
+
+    const dashboardBackoffMs = getApiRateLimitBackoffRemainingMs('dashboard', now);
+    if (dashboardBackoffMs > 0) {
+      deferMonitoredDashboardPoll(dashboardBackoffMs);
+      return false;
+    }
+
+    nextMonitoredDashboardPollAt = now + MONITORED_DASHBOARD_POLL_INTERVAL_MS;
+    return true;
+  }
+
+  function refreshWorkspaceSparklinesForMonitoringCycle(caller = 'monitored-poll') {
+    const token = state.session.token;
+    if (!token || usesHistoryBucketBootstrap()) {
+      return;
+    }
+    void refreshHistoryWorkspaceSparklines({ token, caller });
   }
 
   function runMonitoringCycle() {
@@ -8639,7 +8696,11 @@ export function createAppController(): AppController {
     } else {
       sweepMinMcapRemove();
       refreshMonitoredPanelCounts();
-      void refreshMonitoredDashboard();
+      if (shouldStartMonitoredDashboardPoll()) {
+        void refreshMonitoredDashboard();
+      } else {
+        refreshWorkspaceSparklinesForMonitoringCycle();
+      }
     }
     if (shouldRefreshFloatingQuickBuyDashboard()) {
       void refreshFloatingQuickBuyDashboardSnapshot();

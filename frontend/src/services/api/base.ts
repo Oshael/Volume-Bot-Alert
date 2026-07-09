@@ -4,6 +4,12 @@ import {
   shouldEmitApiResponseDebug,
   type ApiResponseMetadata,
 } from './response-metadata';
+import {
+  ApiRateLimitBackoffError,
+  getApiRateLimitBackoffRemainingMs,
+  noteApiRateLimitResponse,
+  type ApiRateLimitScope,
+} from './rate-limit-backoff';
 
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
   || 'https://api.trendscope.pro';
@@ -79,6 +85,7 @@ export function resolveApiBase(locationLike: Location = window.location): string
 export interface ApiFetchOptions extends RequestInit {
   token?: string | null;
   onResponse?: (metadata: ApiResponseMetadata) => void;
+  rateLimitScope?: ApiRateLimitScope;
 }
 
 function emitApiResponseDebug(path: string, init: RequestInit | undefined, metadata: ApiResponseMetadata) {
@@ -99,9 +106,67 @@ function emitApiResponseDebug(path: string, init: RequestInit | undefined, metad
   }
 }
 
+function assertApiRateLimitBackoffInactive(scope?: ApiRateLimitScope) {
+  if (!scope) {
+    return;
+  }
+
+  const backoffRemainingMs = getApiRateLimitBackoffRemainingMs(scope);
+  if (backoffRemainingMs > 0) {
+    throw new ApiRateLimitBackoffError(scope, backoffRemainingMs);
+  }
+}
+
+function observeApiResponse(
+  path: string,
+  requestInit: RequestInit,
+  metadata: ApiResponseMetadata,
+  onResponse?: (metadata: ApiResponseMetadata) => void,
+) {
+  if (onResponse) {
+    try {
+      onResponse(metadata);
+    } catch (_) {
+      // Debug-only response observers must not affect API requests.
+    }
+    return;
+  }
+
+  emitApiResponseDebug(path, requestInit, metadata);
+}
+
+async function readApiErrorMessage(response: Response) {
+  let message = `API request failed: ${response.status}`;
+  try {
+    const body = await response.json() as { error?: string; retryAfterSeconds?: number };
+    if (body?.error) {
+      message = body.error;
+    }
+    if (body?.retryAfterSeconds) {
+      message = `${message} Try again in ${body.retryAfterSeconds}s.`;
+    }
+  } catch (_) {
+    // Keep fallback message.
+  }
+  return message;
+}
+
+async function throwApiResponseError(
+  response: Response,
+  rateLimitScope: ApiRateLimitScope | undefined,
+  rateLimitBackoffMs: number,
+): Promise<never> {
+  const message = await readApiErrorMessage(response);
+  if (response.status === 429 && rateLimitScope) {
+    throw new ApiRateLimitBackoffError(rateLimitScope, rateLimitBackoffMs, message);
+  }
+  throw new Error(message);
+}
+
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
   const headers = new Headers(init?.headers || {});
-  const { onResponse, ...requestInit } = init || {};
+  const { onResponse, rateLimitScope, ...requestInit } = init || {};
+  assertApiRateLimitBackoffInactive(rateLimitScope);
 
   if (!headers.has('Content-Type') && init?.body) {
     headers.set('Content-Type', 'application/json');
@@ -124,30 +189,13 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
   }
 
   const responseMetadata = readApiResponseMetadata(response);
-  if (onResponse) {
-    try {
-      onResponse(responseMetadata);
-    } catch (_) {
-      // Debug-only response observers must not affect API requests.
-    }
-  } else {
-    emitApiResponseDebug(path, requestInit, responseMetadata);
-  }
+  const rateLimitBackoffMs = rateLimitScope
+    ? noteApiRateLimitResponse(rateLimitScope, responseMetadata)
+    : 0;
+  observeApiResponse(path, requestInit, responseMetadata, onResponse);
 
   if (!response.ok) {
-    let message = `API request failed: ${response.status}`;
-    try {
-      const body = await response.json() as { error?: string; retryAfterSeconds?: number };
-      if (body?.error) {
-        message = body.error;
-      }
-      if (body?.retryAfterSeconds) {
-        message = `${message} Try again in ${body.retryAfterSeconds}s.`;
-      }
-    } catch (_) {
-      // Keep fallback message.
-    }
-    throw new Error(message);
+    return throwApiResponseError(response, rateLimitScope, rateLimitBackoffMs);
   }
 
   return response.json() as Promise<T>;

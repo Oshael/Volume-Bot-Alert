@@ -602,7 +602,10 @@ export function fetchDashboardMonitored(
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
 
-  return apiFetch<DashboardMonitoredPayload>(`/api/dashboard/monitored${suffix}`, { token })
+  return apiFetch<DashboardMonitoredPayload>(`/api/dashboard/monitored${suffix}`, {
+    token,
+    rateLimitScope: 'dashboard',
+  })
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
       tokens: response.tokens || [],
@@ -683,6 +686,7 @@ export function fetchDashboardHistoryBootstrap(
       recentDebugProbeAddresses: payload.recentDebugProbeAddresses ?? [],
     }),
     token,
+    rateLimitScope: 'dashboard',
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,
     recent: normalizeDashboardHistoryBucketSlice(response.recent),
@@ -707,7 +711,10 @@ export function fetchDashboardTopPerformers(
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
 
-  return apiFetch<DashboardTopPerformersPayload>(`/api/dashboard/top-performers${suffix}`, { token })
+  return apiFetch<DashboardTopPerformersPayload>(`/api/dashboard/top-performers${suffix}`, {
+    token,
+    rateLimitScope: 'dashboard',
+  })
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
       source: response.source ?? null,
@@ -832,7 +839,10 @@ export function fetchDashboardAlertEvents(token?: string | null, options?: { lim
     params.set('afterId', String(options.afterId));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  return apiFetch<DashboardAlertEventsPayload>(`/api/dashboard/alert-events${suffix}`, { token })
+  return apiFetch<DashboardAlertEventsPayload>(`/api/dashboard/alert-events${suffix}`, {
+    token,
+    rateLimitScope: 'dashboard',
+  })
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
       kind: response.kind ?? null,
@@ -856,7 +866,10 @@ export function fetchDashboardAlertFeeds(token?: string | null, options?: { limi
     params.set('ruleKeys', options.ruleKeys.join(','));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  return apiFetch<DashboardAlertFeedsPayload>(`/api/dashboard/alert-feeds${suffix}`, { token })
+  return apiFetch<DashboardAlertFeedsPayload>(`/api/dashboard/alert-feeds${suffix}`, {
+    token,
+    rateLimitScope: 'dashboard',
+  })
     .then((response) => ({
       generatedAt: response.generatedAt ?? null,
       mode: response.mode ?? null,
