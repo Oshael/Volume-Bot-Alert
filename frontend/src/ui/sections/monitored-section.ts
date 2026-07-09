@@ -567,12 +567,21 @@ function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
 
   section.addEventListener('toggle', (event) => {
     const panel = (event.target as HTMLElement | null)?.closest<HTMLDetailsElement>('.monitored-ticker-peers-panel');
-    if (!panel || !panel.open) {
+    if (!panel) {
       return;
     }
+    if (!panel.open) {
+      delete panel.dataset.positioned;
+      return;
+    }
+    delete panel.dataset.positioned;
     closeOpenMonitoredTickerPeerPanels(section, panel);
     positionMonitoredTickerPeerPanel(panel);
   }, true);
+
+  section.addEventListener('wheel', (event) => {
+    isolateMonitoredTickerPeerListWheel(event as WheelEvent);
+  }, { capture: true, passive: false });
 
   section.addEventListener('scroll', () => {
     positionOpenMonitoredTickerPeerPanels(section);
@@ -582,6 +591,7 @@ function bindMonitoredTickerPeerPanelClose(section: ParentNode) {
 function closeOpenMonitoredTickerPeerPanels(root: ParentNode, exceptPanel: HTMLDetailsElement | null) {
   for (const panel of root.querySelectorAll<HTMLDetailsElement>('.monitored-ticker-peers-panel[open]')) {
     if (panel !== exceptPanel) {
+      delete panel.dataset.positioned;
       panel.open = false;
     }
   }
@@ -629,6 +639,25 @@ function positionMonitoredTickerPeerPanel(panel: HTMLDetailsElement) {
   list.style.setProperty('--ticker-peers-left', `${Math.round(left)}px`);
   list.style.setProperty('--ticker-peers-top', `${Math.max(TICKER_PEERS_VIEWPORT_MARGIN_PX, Math.round(top))}px`);
   list.style.setProperty('--ticker-peers-max-height', `${Math.round(panelHeight)}px`);
+  panel.dataset.positioned = 'true';
+}
+
+function isolateMonitoredTickerPeerListWheel(event: WheelEvent) {
+  const list = (event.target as HTMLElement | null)
+    ?.closest<HTMLElement>('.monitored-ticker-peers-list');
+  if (!list?.closest('.monitored-ticker-peers-panel[open]')) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const deltaMultiplier = event.deltaMode === 1
+    ? 16
+    : event.deltaMode === 2
+      ? list.clientHeight
+      : 1;
+  list.scrollTop += event.deltaY * deltaMultiplier;
+  list.scrollLeft += event.deltaX * deltaMultiplier;
 }
 
 function bindMonitoredCollapseToggle(section: ParentNode, controller: AppController) {
