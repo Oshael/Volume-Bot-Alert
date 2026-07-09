@@ -93,6 +93,7 @@ import {
   getWorkspaceSparklineNextRefreshAt,
   selectWorkspaceSparklineRefreshBatches,
 } from './workspace-sparkline-refresh';
+import { evaluateSparklineDebugEvent } from './sparkline-debug-policy';
 import {
   findPreviousPasswordMatch,
   formatPasswordChangedDate,
@@ -273,6 +274,9 @@ const ALERT_DEBUG_MAX_ENTRIES = 500;
 const SPARKLINE_DEBUG_ENABLED_KEY = 'trendscope:sparkline-debug';
 const SPARKLINE_DEBUG_LOG_KEY = 'trendscope:sparkline-debug-log';
 const SPARKLINE_DEBUG_MAX_ENTRIES = 400;
+const SPARKLINE_DEBUG_CONTEXT_MAX_ENTRIES = 160;
+const SPARKLINE_DEBUG_TRIGGER_CAPTURE_MS = 5 * 60 * 1000;
+const SPARKLINE_DEBUG_LOW_REMAINING_THRESHOLD = 80;
 const ALERT_SPARKLINE_BATCH_DELAY_MS = 150;
 const HISTORY_SYNC_CHANNEL_NAME = 'trendscope-history-sync';
 const HISTORY_SYNC_HEARTBEAT_MS = 2000;
@@ -376,11 +380,14 @@ type SparklineDebugEntry = {
 
 type SparklineDebugWindow = Window & {
   trendscopeSparklineDebug?: {
+    arm: () => void;
     clear: () => void;
     copy: () => Promise<string | undefined>;
+    capture: (durationMs?: number) => void;
     disable: () => void;
     dump: () => SparklineDebugEntry[];
     enable: () => void;
+    status: () => Record<string, unknown>;
     text: () => string;
   };
 };
@@ -1147,6 +1154,8 @@ export function createAppController(): AppController {
   let manualMetadataBatchRefreshInFlight: Promise<void> | null = null;
   let manualMetadataBatchRefreshInFlightKey = '';
   const sparklineDebugControllerId = createSparklineDebugId('controller');
+  let sparklineDebugCaptureUntil = 0;
+  let sparklineDebugRecentEntries: SparklineDebugEntry[] = [];
   const pendingManualFolderDeleteIds = new Set<number>();
   const pendingManualFolderDeleteAddresses = new Set<string>();
   let suppressSocketStatusNoticeUntil = 0;
@@ -2177,12 +2186,64 @@ export function createAppController(): AppController {
     }
   }
 
+  function getSparklineDebugEntryKey(entry: SparklineDebugEntry) {
+    const controllerId = typeof entry.meta?.controllerId === 'string' ? entry.meta.controllerId : '';
+    return `${entry.ts}|${entry.t}|${entry.event}|${controllerId}`;
+  }
+
+  function mergeSparklineDebugEntries(
+    primary: SparklineDebugEntry[],
+    secondary: SparklineDebugEntry[],
+  ) {
+    const seen = new Set<string>();
+    const merged: SparklineDebugEntry[] = [];
+    for (const entry of [...primary, ...secondary]) {
+      const key = getSparklineDebugEntryKey(entry);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(entry);
+    }
+    return merged;
+  }
+
+  function rememberSparklineDebugEntry(entry: SparklineDebugEntry) {
+    sparklineDebugRecentEntries = [entry, ...sparklineDebugRecentEntries]
+      .slice(0, SPARKLINE_DEBUG_CONTEXT_MAX_ENTRIES);
+  }
+
+  function persistSparklineDebugEntries(entries: SparklineDebugEntry[]) {
+    writeSparklineDebugLog(mergeSparklineDebugEntries(entries, readSparklineDebugLog()));
+  }
+
+  function activateSparklineDebugCapture(reason: string, entry: SparklineDebugEntry, now: number) {
+    sparklineDebugCaptureUntil = Math.max(
+      sparklineDebugCaptureUntil,
+      now + SPARKLINE_DEBUG_TRIGGER_CAPTURE_MS,
+    );
+    const triggerEntry: SparklineDebugEntry = {
+      event: 'debug.capture-triggered',
+      t: entry.t,
+      ts: entry.ts,
+      meta: {
+        ...entry.meta,
+        triggerReason: reason,
+        captureForMs: SPARKLINE_DEBUG_TRIGGER_CAPTURE_MS,
+        bufferedEntries: sparklineDebugRecentEntries.length,
+      },
+    };
+    persistSparklineDebugEntries([triggerEntry, ...sparklineDebugRecentEntries]);
+  }
+
   function clearSparklineDebugLog() {
     if (typeof window === 'undefined') {
       return;
     }
     try {
       window.localStorage.removeItem(SPARKLINE_DEBUG_LOG_KEY);
+      sparklineDebugRecentEntries = [];
+      sparklineDebugCaptureUntil = 0;
     } catch (_) {
       // Ignore debug storage errors.
     }
@@ -2214,7 +2275,21 @@ export function createAppController(): AppController {
       },
     };
 
-    writeSparklineDebugLog([entry, ...readSparklineDebugLog()]);
+    rememberSparklineDebugEntry(entry);
+    const now = Date.now();
+    const decision = evaluateSparklineDebugEvent(event, meta, {
+      now,
+      captureUntil: sparklineDebugCaptureUntil,
+      lowRemainingThreshold: SPARKLINE_DEBUG_LOW_REMAINING_THRESHOLD,
+    });
+
+    if (decision.trigger) {
+      activateSparklineDebugCapture(decision.reason || event, entry, now);
+      return;
+    }
+    if (decision.persist) {
+      persistSparklineDebugEntries([entry]);
+    }
   }
 
   function installSparklineDebugConsole() {
@@ -2223,6 +2298,10 @@ export function createAppController(): AppController {
     }
 
     (window as SparklineDebugWindow).trendscopeSparklineDebug = {
+      arm: () => {
+        clearSparklineDebugLog();
+        window.localStorage.setItem(SPARKLINE_DEBUG_ENABLED_KEY, '1');
+      },
       clear: clearSparklineDebugLog,
       copy: async () => {
         const text = JSON.stringify(readSparklineDebugLog(), null, 2);
@@ -2233,13 +2312,27 @@ export function createAppController(): AppController {
         }
         return undefined;
       },
+      capture: (durationMs = SPARKLINE_DEBUG_TRIGGER_CAPTURE_MS) => {
+        window.localStorage.setItem(SPARKLINE_DEBUG_ENABLED_KEY, '1');
+        sparklineDebugCaptureUntil = Math.max(sparklineDebugCaptureUntil, Date.now() + Math.max(1, Number(durationMs) || 1));
+        persistSparklineDebugEntries(sparklineDebugRecentEntries);
+      },
       disable: () => {
         window.localStorage.removeItem(SPARKLINE_DEBUG_ENABLED_KEY);
+        sparklineDebugCaptureUntil = 0;
       },
       dump: readSparklineDebugLog,
       enable: () => {
         window.localStorage.setItem(SPARKLINE_DEBUG_ENABLED_KEY, '1');
       },
+      status: () => ({
+        enabled: isSparklineDebugEnabled(),
+        bufferedEntries: sparklineDebugRecentEntries.length,
+        persistedEntries: readSparklineDebugLog().length,
+        captureActive: sparklineDebugCaptureUntil > Date.now(),
+        captureRemainingMs: Math.max(0, sparklineDebugCaptureUntil - Date.now()),
+        lowRemainingThreshold: SPARKLINE_DEBUG_LOW_REMAINING_THRESHOLD,
+      }),
       text: () => JSON.stringify(readSparklineDebugLog(), null, 2),
     };
   }
