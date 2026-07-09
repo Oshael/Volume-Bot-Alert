@@ -88,6 +88,7 @@ import {
 } from './auth-flow-utils';
 import { validateInviteCode, type InviteValidationResponse } from '../services/api/invites';
 import { resolveApiBase } from '../services/api/base';
+import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   getWorkspaceSparklineNextRefreshAt,
@@ -1156,6 +1157,7 @@ export function createAppController(): AppController {
   const sparklineDebugControllerId = createSparklineDebugId('controller');
   let sparklineDebugCaptureUntil = 0;
   let sparklineDebugRecentEntries: SparklineDebugEntry[] = [];
+  let sparklineDebugApiResponseListenerBound = false;
   const pendingManualFolderDeleteIds = new Set<number>();
   const pendingManualFolderDeleteAddresses = new Set<string>();
   let suppressSocketStatusNoticeUntil = 0;
@@ -2175,6 +2177,11 @@ export function createAppController(): AppController {
     }
   }
 
+  function readSparklineDebugOutputLog() {
+    const persisted = readSparklineDebugLog();
+    return persisted.length > 0 ? persisted : sparklineDebugRecentEntries;
+  }
+
   function writeSparklineDebugLog(entries: SparklineDebugEntry[]) {
     if (typeof window === 'undefined') {
       return;
@@ -2249,6 +2256,29 @@ export function createAppController(): AppController {
     }
   }
 
+  function installApiResponseDebugListener() {
+    if (typeof window === 'undefined' || sparklineDebugApiResponseListenerBound) {
+      return;
+    }
+
+    sparklineDebugApiResponseListenerBound = true;
+    window.addEventListener(API_RESPONSE_DEBUG_EVENT, (event) => {
+      const detail = (event as CustomEvent<{
+        path?: unknown;
+        method?: unknown;
+        response?: unknown;
+      }>).detail || {};
+      recordSparklineDebug('http.response', {
+        endpoint: String(detail.path || 'apiFetch'),
+        method: String(detail.method || 'GET').toUpperCase(),
+        source: 'apiFetch',
+        response: detail.response && typeof detail.response === 'object'
+          ? detail.response as Record<string, unknown>
+          : {},
+      });
+    });
+  }
+
   function recordSparklineDebug(event: string, meta: Record<string, unknown> = {}) {
     if (!isSparklineDebugEnabled()) {
       return;
@@ -2296,15 +2326,17 @@ export function createAppController(): AppController {
     if (typeof window === 'undefined') {
       return;
     }
+    installApiResponseDebugListener();
 
     (window as SparklineDebugWindow).trendscopeSparklineDebug = {
       arm: () => {
         clearSparklineDebugLog();
         window.localStorage.setItem(SPARKLINE_DEBUG_ENABLED_KEY, '1');
+        recordSparklineDebug('debug.armed', { mode: 'trigger' });
       },
       clear: clearSparklineDebugLog,
       copy: async () => {
-        const text = JSON.stringify(readSparklineDebugLog(), null, 2);
+        const text = JSON.stringify(readSparklineDebugOutputLog(), null, 2);
         try {
           await navigator.clipboard.writeText(text);
         } catch (_) {
@@ -2321,9 +2353,10 @@ export function createAppController(): AppController {
         window.localStorage.removeItem(SPARKLINE_DEBUG_ENABLED_KEY);
         sparklineDebugCaptureUntil = 0;
       },
-      dump: readSparklineDebugLog,
+      dump: readSparklineDebugOutputLog,
       enable: () => {
         window.localStorage.setItem(SPARKLINE_DEBUG_ENABLED_KEY, '1');
+        recordSparklineDebug('debug.enabled', { mode: 'passive' });
       },
       status: () => ({
         enabled: isSparklineDebugEnabled(),
@@ -2333,7 +2366,7 @@ export function createAppController(): AppController {
         captureRemainingMs: Math.max(0, sparklineDebugCaptureUntil - Date.now()),
         lowRemainingThreshold: SPARKLINE_DEBUG_LOW_REMAINING_THRESHOLD,
       }),
-      text: () => JSON.stringify(readSparklineDebugLog(), null, 2),
+      text: () => JSON.stringify(readSparklineDebugOutputLog(), null, 2),
     };
   }
 

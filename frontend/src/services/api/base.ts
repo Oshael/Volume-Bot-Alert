@@ -1,4 +1,9 @@
-import { readApiResponseMetadata, type ApiResponseMetadata } from './response-metadata';
+import {
+  API_RESPONSE_DEBUG_EVENT,
+  readApiResponseMetadata,
+  shouldEmitApiResponseDebug,
+  type ApiResponseMetadata,
+} from './response-metadata';
 
 const PROD_API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '')
   || 'https://api.trendscope.pro';
@@ -76,6 +81,24 @@ export interface ApiFetchOptions extends RequestInit {
   onResponse?: (metadata: ApiResponseMetadata) => void;
 }
 
+function emitApiResponseDebug(path: string, init: RequestInit | undefined, metadata: ApiResponseMetadata) {
+  if (typeof window === 'undefined' || !shouldEmitApiResponseDebug(metadata)) {
+    return;
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent(API_RESPONSE_DEBUG_EVENT, {
+      detail: {
+        path,
+        method: String(init?.method || 'GET').toUpperCase(),
+        response: metadata,
+      },
+    }));
+  } catch (_) {
+    // Debug-only response observers must not affect API requests.
+  }
+}
+
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
   const headers = new Headers(init?.headers || {});
   const { onResponse, ...requestInit } = init || {};
@@ -100,10 +123,15 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
     throw new Error(message);
   }
 
-  try {
-    onResponse?.(readApiResponseMetadata(response));
-  } catch (_) {
-    // Debug-only response observers must not affect API requests.
+  const responseMetadata = readApiResponseMetadata(response);
+  if (onResponse) {
+    try {
+      onResponse(responseMetadata);
+    } catch (_) {
+      // Debug-only response observers must not affect API requests.
+    }
+  } else {
+    emitApiResponseDebug(path, requestInit, responseMetadata);
   }
 
   if (!response.ok) {

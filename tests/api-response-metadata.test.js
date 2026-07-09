@@ -2,9 +2,10 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let readApiResponseMetadata;
+let shouldEmitApiResponseDebug;
 
 before(async () => {
-  ({ readApiResponseMetadata } = await import('../frontend/src/services/api/response-metadata.ts'));
+  ({ readApiResponseMetadata, shouldEmitApiResponseDebug } = await import('../frontend/src/services/api/response-metadata.ts'));
 });
 
 describe('API response metadata', () => {
@@ -28,5 +29,40 @@ describe('API response metadata', () => {
       rateLimitReset: '42',
       retryAfter: '42',
     });
+  });
+
+  it('emits debug metadata only for failures, retry hints, or rate-limit headers', () => {
+    assert.equal(shouldEmitApiResponseDebug({
+      status: 200,
+      ok: true,
+      rateLimit: null,
+      rateLimitPolicy: null,
+      rateLimitLimit: null,
+      rateLimitRemaining: null,
+      rateLimitReset: null,
+      retryAfter: null,
+    }), false);
+
+    assert.equal(shouldEmitApiResponseDebug({
+      status: 429,
+      ok: false,
+      rateLimit: null,
+      rateLimitPolicy: null,
+      rateLimitLimit: null,
+      rateLimitRemaining: null,
+      rateLimitReset: null,
+      retryAfter: null,
+    }), true);
+
+    assert.equal(shouldEmitApiResponseDebug({
+      status: 200,
+      ok: true,
+      rateLimit: null,
+      rateLimitPolicy: null,
+      rateLimitLimit: null,
+      rateLimitRemaining: '585',
+      rateLimitReset: null,
+      retryAfter: null,
+    }), true);
   });
 });
