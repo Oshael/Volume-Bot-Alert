@@ -270,12 +270,21 @@ function getOrCreateAlertsSectionView(controller: AppController) {
 
   section.addEventListener('toggle', (event) => {
     const panel = (event.target as HTMLElement | null)?.closest<HTMLDetailsElement>('.alert-ticker-peers-panel');
-    if (!panel || !panel.open) {
+    if (!panel) {
       return;
     }
+    if (!panel.open) {
+      delete panel.dataset.positioned;
+      return;
+    }
+    delete panel.dataset.positioned;
     closeOpenTickerPeerPanels(section, panel);
     positionTickerPeerPanel(panel);
   }, true);
+
+  section.addEventListener('wheel', (event) => {
+    isolateTickerPeerListWheel(event);
+  }, { capture: true, passive: false });
 
   section.addEventListener('scroll', () => {
     positionOpenTickerPeerPanels(section);
@@ -301,6 +310,7 @@ function getOrCreateAlertsSectionView(controller: AppController) {
 function closeOpenTickerPeerPanels(root: ParentNode, exceptPanel: HTMLDetailsElement | null = null) {
   for (const panel of root.querySelectorAll<HTMLDetailsElement>('.alert-ticker-peers-panel[open]')) {
     if (panel !== exceptPanel) {
+      delete panel.dataset.positioned;
       panel.open = false;
     }
   }
@@ -348,6 +358,25 @@ function positionTickerPeerPanel(panel: HTMLDetailsElement) {
   list.style.setProperty('--ticker-peers-left', `${Math.round(left)}px`);
   list.style.setProperty('--ticker-peers-top', `${Math.max(TICKER_PEERS_VIEWPORT_MARGIN_PX, Math.round(top))}px`);
   list.style.setProperty('--ticker-peers-max-height', `${Math.round(panelHeight)}px`);
+  panel.dataset.positioned = 'true';
+}
+
+function isolateTickerPeerListWheel(event: WheelEvent) {
+  const list = (event.target as HTMLElement | null)
+    ?.closest<HTMLElement>('.alert-ticker-peers-list');
+  if (!list?.closest('.alert-ticker-peers-panel[open]')) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const deltaMultiplier = event.deltaMode === 1
+    ? 16
+    : event.deltaMode === 2
+      ? list.clientHeight
+      : 1;
+  list.scrollTop += event.deltaY * deltaMultiplier;
+  list.scrollLeft += event.deltaX * deltaMultiplier;
 }
 
 function buildEmptyState() {

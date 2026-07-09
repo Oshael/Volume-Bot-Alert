@@ -13391,6 +13391,11 @@ TEMP_LEGACY_BAR_TITLE {
   overscroll-behavior: contain;
 }
 
+.alert-row .alert-ticker-peers-panel:not([data-positioned="true"]) .alert-ticker-peers-list {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .alert-ticker-peers-panel[data-placement="top"] .alert-ticker-peers-list {
   transform-origin: bottom left;
 }
