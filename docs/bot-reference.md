@@ -2156,8 +2156,10 @@ Rules:
   - `old-week-surge-1h`
   - `old-week-surge-6h`
 - age gates are backend-enforced:
-  - no surge for tokens younger than `2d`
-  - `2d <= age < 7d` qualifies only for recent-surge
+  - no `1H` surge for tokens younger than `1d`
+  - no `6H` surge for tokens younger than `2d`
+  - `1d <= age < 7d` qualifies only for `recent-surge-1h`
+  - `2d <= age < 7d` qualifies for `recent-surge-6h`
   - `age >= 7d` qualifies only for old-week-surge
 - thresholds are now split by age bucket/window:
   - recent `1H`
@@ -2166,16 +2168,18 @@ Rules:
   - old-week `6H`
 - backend anti-spam behavior:
   - if a token is already hot when the current matcher session begins, the rule can be primed instead of alerting immediately
+  - `1H` same-session primed-hot release requires `+10pp` PCHANGE advance
+  - `6H` same-session primed-hot release requires `+10pp` PCHANGE advance
   - `1H` same-session repeat now requires `+50%` relative PCHANGE growth after the first emitted alert
   - `6H` repeat is now stricter after the first emitted alert:
     - `20m` cooldown
     - `+50%` relative PCHANGE growth
     - and at least `+15%` MCAP growth versus the last alerted MCAP
   - `1H` and `6H` surge variants in the same age bucket cross-block each other for `1h`
-  - surge requires `mcap >= 60k` for both `1H` and `6H`
+  - surge requires `mcap >= 45k` for `1H` and `mcap >= 40k` for `6H`
 
 Badge label in alert card:
-- `RECENT TOKEN SURGE` for `2d <= age < 7d`
+- `RECENT TOKEN SURGE` for recent surge age buckets
 - `OLD TOKEN SURGE` for `age >= 7d`
 
 Current visual contract:
