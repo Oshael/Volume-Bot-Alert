@@ -440,6 +440,62 @@ async function listDueForEvaluation(limit = 25) {
   return rows;
 }
 
+async function claimDueForEvaluation(limit = 25, options = {}, runner = db) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 25, 5000));
+  const claimTtlMs = Math.max(1000, Math.min(Math.trunc(Number(options.claimTtlMs) || 120000), 10 * 60 * 1000));
+  const executor = runner && typeof runner.query === 'function' ? runner : db;
+  const { rows } = await executor.query(
+    `WITH claimed AS (
+       SELECT address
+       FROM token_catalog
+       WHERE is_active_monitor_candidate = TRUE
+         AND next_evaluation_at <= NOW()
+       ORDER BY CASE
+                  WHEN source = 'user-manual'
+                    OR EXISTS (
+                      SELECT 1
+                      FROM user_tokens ut
+                      WHERE ut.address = token_catalog.address
+                    ) THEN 0
+                  ELSE 1
+                END ASC,
+                CASE
+                  WHEN COALESCE(monitor_priority, 'dormant') = 'high'
+                    AND COALESCE(last_mcap, 0) >= 100000
+                    AND COALESCE(last_vol_6h, 0) >= 30000 THEN 0
+                  WHEN COALESCE(monitor_priority, 'dormant') = 'high'
+                    AND COALESCE(last_mcap, 0) >= 100000
+                    AND COALESCE(last_vol_6h, 0) >= 15000 THEN 1
+                  WHEN COALESCE(monitor_priority, 'dormant') = 'high'
+                    AND COALESCE(last_mcap, 0) >= 100000 THEN 2
+                  WHEN source = 'pumpfun-migrated'
+                    AND (
+                      last_evaluated_at IS NULL
+                      OR (migration_grace_until IS NOT NULL AND migration_grace_until > NOW() AND last_eligible_at IS NULL)
+                    ) THEN 3
+                  WHEN COALESCE(monitor_priority, 'dormant') = 'normal' THEN 4
+                  WHEN COALESCE(monitor_priority, 'dormant') = 'low'
+                    AND COALESCE(last_mcap, 0) >= 15000 THEN 5
+                  WHEN COALESCE(monitor_priority, 'dormant') = 'low' THEN 6
+                  ELSE 7
+                END ASC,
+                next_evaluation_at ASC,
+                COALESCE(last_mcap, 0) DESC,
+                COALESCE(last_vol_24h, last_vol_6h, last_vol_1h, last_vol_5m, 0) DESC,
+                last_seen_at DESC
+       LIMIT $1
+       FOR UPDATE SKIP LOCKED
+     )
+     UPDATE token_catalog tc
+     SET next_evaluation_at = NOW() + ($2::int * INTERVAL '1 millisecond')
+     FROM claimed
+     WHERE tc.address = claimed.address
+     RETURNING tc.*`,
+    [safeLimit, claimTtlMs]
+  );
+  return rows;
+}
+
 async function countDueForEvaluationSummary() {
   const { rows } = await db.query(
     `SELECT
@@ -1964,6 +2020,7 @@ module.exports = {
   demoteFormerManualAddress,
   listRecent,
   listDueForEvaluation,
+  claimDueForEvaluation,
   countDueForEvaluationSummary,
   countDueForMeteoraSnapshots,
   countDueForMeteoraSnapshotsByTier,

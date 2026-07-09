@@ -301,6 +301,22 @@ CREATE INDEX IF NOT EXISTS idx_token_holding_snapshots_user_checked
 CREATE INDEX IF NOT EXISTS idx_token_holding_snapshots_wallet_mint_checked
   ON token_holding_snapshots(wallet_address, mint_address, checked_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_token_holding_snapshots_expires ON token_holding_snapshots(expires_at);
+
+CREATE TABLE IF NOT EXISTS worker_leases (
+  lease_key VARCHAR(128) PRIMARY KEY,
+  owner_id VARCHAR(128) NOT NULL,
+  owner_pid INTEGER,
+  owner_hostname VARCHAR(128),
+  acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  lease_until TIMESTAMPTZ NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_leases_lease_until
+  ON worker_leases(lease_until);
+CREATE INDEX IF NOT EXISTS idx_worker_leases_owner
+  ON worker_leases(owner_id);
 `;
 
 async function init() {

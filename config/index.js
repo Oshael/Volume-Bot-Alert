@@ -215,6 +215,28 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
   return 'idle';
 }
 
+const WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
+const WORKER_GROUP_SET = new Set(WORKER_GROUPS);
+
+function normalizeWorkerGroups(value) {
+  const raw = String(value || 'all').trim();
+  const requested = raw
+    ? raw.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)
+    : ['all'];
+  const uniqueRequested = [...new Set(requested.length ? requested : ['all'])];
+  const invalid = uniqueRequested.filter((group) => group !== 'all' && !WORKER_GROUP_SET.has(group));
+  const active = uniqueRequested.includes('all')
+    ? [...WORKER_GROUPS]
+    : uniqueRequested.filter((group) => WORKER_GROUP_SET.has(group));
+
+  return {
+    requested: uniqueRequested,
+    active,
+    skipped: WORKER_GROUPS.filter((group) => !active.includes(group)),
+    invalid,
+  };
+}
+
 function getDefaultMoonpayApiBaseUrl(network) {
   return network === 'test'
     ? 'https://api.dev.hel.io/v1'
@@ -401,6 +423,7 @@ function validateTestDbTarget(dbConfig) {
 }
 
 const db = getDbConfig(nodeEnv);
+const workerGroups = normalizeWorkerGroups(process.env.BACKGROUND_WORKER_GROUPS);
 
 const missing = [];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.startsWith('CHANGE_ME')) {
@@ -414,6 +437,9 @@ if (!hasDbParts && !hasDbUrl) {
 }
 
 missing.push(...validateTestDbTarget(db));
+if (workerGroups.invalid.length > 0) {
+  missing.push(`BACKGROUND_WORKER_GROUPS invalid values: ${workerGroups.invalid.join(', ')}`);
+}
 
 if (missing.length > 0) {
   console.error(`Missing required env configuration: ${missing.join(', ')}`);
@@ -426,6 +452,9 @@ const runtime = {
 };
 
 runtime.role = getRuntimeRole(runtime.runSocketHub, runtime.runBackgroundJobs);
+runtime.workerGroupsRequested = workerGroups.requested;
+runtime.workerGroupsActive = workerGroups.active;
+runtime.workerGroupsSkipped = workerGroups.skipped;
 
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
@@ -513,6 +542,8 @@ module.exports = {
     concurrency: Math.max(1, Math.min(parseInt(process.env.CATALOG_WORKER_CONCURRENCY || '24', 10), 48)),
     loopIntervalMs: parseIntegerInRange(process.env.CATALOG_WORKER_LOOP_INTERVAL_MS, 2000, 1000, 60000),
     tokenBudgetPerCycle: parseIntegerInRange(process.env.CATALOG_WORKER_TOKEN_BUDGET_PER_CYCLE, 300, 1, 300),
+    distributedClaimEnabled: parseBoolean(process.env.CATALOG_WORKER_DISTRIBUTED_CLAIM_ENABLED, false),
+    distributedClaimTtlMs: parseIntegerInRange(process.env.CATALOG_WORKER_DISTRIBUTED_CLAIM_TTL_MS, 120000, 1000, 600000),
   },
 
   marketBuckets: {

@@ -22,6 +22,8 @@ const DEX_TOKENS_PER_REQUEST = 30;
 const LOOP_INTERVAL_MS = config.catalogWorker.loopIntervalMs;
 const MAX_TOKEN_BUDGET_PER_CYCLE = config.catalogWorker.tokenBudgetPerCycle;
 const CONCURRENCY = config.catalogWorker.concurrency;
+const DISTRIBUTED_CLAIM_ENABLED = config.catalogWorker.distributedClaimEnabled;
+const DISTRIBUTED_CLAIM_TTL_MS = config.catalogWorker.distributedClaimTtlMs;
 const DEX_BATCH_LIMIT = DEX_TOKENS_PER_REQUEST;
 const DORMANT_RECHECK_MS = 30 * 60 * 1000;
 const LOW_NEAR_RECHECK_MS = 15 * 1000;
@@ -97,6 +99,9 @@ let status = {
   lastThrottleMode: 'normal',
   lastRecoveryPhase: null,
   lastThrottleBatchDelayMs: DEX_BATCH_DELAY_MS,
+  distributedClaimEnabled: DISTRIBUTED_CLAIM_ENABLED,
+  lastSelectionMode: 'list',
+  lastDistributedClaimFallbackReason: null,
   lastDueByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   lastBacklogByPriority: { high: 0, normal: 0, low: 0, dormant: 0, other: 0 },
   lastMaxOverdueMs: 0,
@@ -1432,6 +1437,40 @@ function prioritizeTokensForThrottle(tokens, throttleState = { mode: 'normal' },
     .slice(0, safeLimit);
 }
 
+async function selectDueForEvaluationCycle(throttleState = { mode: 'normal' }, options = {}) {
+  const catalog = options.tokenCatalog || tokenCatalog;
+  const tokenBudget = Math.max(1, Math.min(Number(options.tokenBudget) || MAX_TOKEN_BUDGET_PER_CYCLE, 5000));
+  const throttleListLimit = Math.max(
+    tokenBudget,
+    Math.min(THROTTLE_LIST_LIMIT_CAP, tokenBudget * THROTTLE_LIST_LIMIT_MULTIPLIER)
+  );
+  const throttleActive = String(throttleState?.mode || 'normal').trim().toLowerCase() !== 'normal';
+  const distributedClaimEnabled = options.distributedClaimEnabled ?? DISTRIBUTED_CLAIM_ENABLED;
+  const claimTtlMs = options.claimTtlMs || DISTRIBUTED_CLAIM_TTL_MS;
+
+  if (distributedClaimEnabled && !throttleActive) {
+    const claimedDue = await catalog.claimDueForEvaluation(tokenBudget, { claimTtlMs });
+    return {
+      listedDue: claimedDue,
+      due: claimedDue,
+      selectionMode: 'distributed-claim',
+      fallbackReason: null,
+    };
+  }
+
+  const listedDue = await catalog.listDueForEvaluation(throttleActive ? throttleListLimit : tokenBudget);
+  const due = throttleActive
+    ? prioritizeTokensForThrottle(listedDue, throttleState, tokenBudget)
+    : listedDue;
+
+  return {
+    listedDue,
+    due,
+    selectionMode: distributedClaimEnabled ? 'list-fallback' : 'list',
+    fallbackReason: distributedClaimEnabled && throttleActive ? 'throttle-active' : null,
+  };
+}
+
 async function evaluateDexUnavailableToken(token, traceInitialEval) {
   if (isGmgnDexUnavailableZombie(token)) {
     const blockedToken = await maybeAutoBlockGmgnDexUnavailableLowLiquidity(token);
@@ -1730,18 +1769,9 @@ async function runOnce() {
 
   const cycleStartedAt = Date.now();
   const throttleState = dexscreener.getThrottleState();
-  const throttleActive = throttleState.mode !== 'normal';
   const dueSummaryPromise = tokenCatalog.countDueForEvaluationSummary();
-  const throttleListLimit = Math.max(
-    MAX_TOKEN_BUDGET_PER_CYCLE,
-    Math.min(THROTTLE_LIST_LIMIT_CAP, MAX_TOKEN_BUDGET_PER_CYCLE * THROTTLE_LIST_LIMIT_MULTIPLIER)
-  );
-  const listedDue = await tokenCatalog.listDueForEvaluation(
-    throttleActive ? throttleListLimit : MAX_TOKEN_BUDGET_PER_CYCLE
-  );
-  const due = throttleActive
-    ? prioritizeTokensForThrottle(listedDue, throttleState, MAX_TOKEN_BUDGET_PER_CYCLE)
-    : listedDue;
+  const selection = await selectDueForEvaluationCycle(throttleState);
+  const { listedDue, due } = selection;
   const dueSummary = await dueSummaryPromise;
   const processedByPriority = summarizePriorityCounts(due);
   const backlogByPriority = subtractPriorityCounts(dueSummary.byPriority, processedByPriority);
@@ -1758,6 +1788,8 @@ async function runOnce() {
   status.lastThrottleMode = throttleState.mode || 'normal';
   status.lastRecoveryPhase = throttleState.recoveryPhase || null;
   status.lastThrottleBatchDelayMs = Number(throttleState.batchDelayMs) || DEX_BATCH_DELAY_MS;
+  status.lastSelectionMode = selection.selectionMode;
+  status.lastDistributedClaimFallbackReason = selection.fallbackReason;
   status.lastDueByPriority = processedByPriority;
   status.lastBacklogByPriority = backlogByPriority;
   status.lastMaxOverdueMs = Number(dueSummary.maxOverdueMs) || 0;
@@ -1896,6 +1928,7 @@ module.exports = {
     isTokenAllowedByThrottle,
     normalizeDelayMs,
     prioritizeTokensForThrottle,
+    selectDueForEvaluationCycle,
     evaluateTokenWithData,
   },
 };

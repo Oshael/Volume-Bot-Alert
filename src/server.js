@@ -48,11 +48,14 @@ const userConfigSync = require('./services/user-config-sync');
 const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
 const solUsdPrice = require('./services/sol-usd-price-service');
+const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
+const workerLease = require('./models/worker-lease');
 
 const app = express();
 let server = null;
 let bootstrapped = false;
 let startupInFlight = false;
+const workerLeaseManager = createWorkerLeaseManager();
 const exposedResponseHeaders = [
   'RateLimit',
   'RateLimit-Policy',
@@ -175,12 +178,23 @@ app.use('/api/dashboard', dashboardRoutes);
 
 // ---- WebSocket Hub Status (admin only) ----
 const { authenticate, requireAdmin } = require('./middleware/auth');
-app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
+app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => {
+  let workerLeases = [];
+  let workerLeaseError = null;
+  try {
+    workerLeases = await workerLease.list();
+  } catch (err) {
+    workerLeaseError = err.message;
+  }
+
   res.json({
     runtime: {
       role: config.runtime.role,
       socketEnabled: Boolean(config.runtime.runSocketHub),
       backgroundJobsEnabled: Boolean(config.runtime.runBackgroundJobs),
+      workerGroupsRequested: config.runtime.workerGroupsRequested || [],
+      workerGroupsActive: config.runtime.workerGroupsActive || [],
+      workerGroupsSkipped: config.runtime.workerGroupsSkipped || [],
     },
     ...socketHub.getStatus(),
     security: getSecurityEventStats(),
@@ -195,6 +209,9 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, (req, res) => {
     solUsdPrice: solUsdPrice.getStatus(),
     gmgnDiscoveryWorker: gmgnDiscoveryWorker.getStatus(),
     gmgnClaimSignalWorker: gmgnClaimSignalWorker.getStatus(),
+    workerLeases,
+    workerLeaseProcess: workerLeaseManager.getStatus(),
+    workerLeaseError,
     gmgn: gmgnClient.getStatus(),
     dexscreener: dexscreener.getCacheStats(),
   });
@@ -275,22 +292,60 @@ function startBackgroundCleanup() {
   }, 3600000);
 }
 
-function startWorkerSet() {
-  userConfigSync.start().catch((err) => {
-    console.error('[UserConfigSync] Failed to start listener:', err.message);
+function hasWorkerGroup(group) {
+  return (config.runtime.workerGroupsActive || []).includes(group);
+}
+
+function startLockedWorker(group, key, label, start) {
+  workerLeaseManager.start({
+    key,
+    label,
+    metadata: {
+      group,
+      runtimeRole: config.runtime.role,
+    },
+    start,
   });
-  catalogWorker.start();
-  catalogCleanupWorker.start();
-  meteoraSnapshotWorker.start();
-  dexDiscoveryWorker.start();
-  if (config.bidZoneWorker.enabled) {
-    bidZoneWorker.start(config.bidZoneWorker);
+}
+
+function startWorkerSet() {
+  if (hasWorkerGroup('core')) {
+    startLockedWorker('core', 'user-config-sync', 'User config sync', () => userConfigSync.start());
+    startLockedWorker('core', 'catalog-worker', 'Catalog worker', () => catalogWorker.start());
+    startLockedWorker('core', 'dex-discovery-worker', 'Dex discovery worker', () => dexDiscoveryWorker.start());
+    startLockedWorker('core', 'token-risk-enrichment-worker', 'Token risk enrichment worker', () => {
+      tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
+    });
+    startLockedWorker('core', 'token-risk-review-sync-worker', 'Token risk review sync worker', () => {
+      tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
+    });
   }
-  tokenRiskEnrichmentWorker.start(config.tokenRiskEnrichmentWorker);
-  tokenRiskReviewSyncWorker.start(config.tokenRiskReviewSyncWorker);
-  mockTradingTakeProfitWorker.start(config.mockTradingTakeProfitWorker);
-  gmgnDiscoveryWorker.start(config.gmgnDiscoveryWorker);
-  gmgnClaimSignalWorker.start(config.gmgnClaimSignalWorker);
+
+  if (hasWorkerGroup('market')) {
+    startLockedWorker('market', 'meteora-snapshot-worker', 'Meteora snapshot worker', () => {
+      meteoraSnapshotWorker.start();
+    });
+    if (config.bidZoneWorker.enabled) {
+      startLockedWorker('market', 'bid-zone-worker', 'Bid-zone worker', () => {
+        bidZoneWorker.start(config.bidZoneWorker);
+      });
+    }
+    startLockedWorker('market', 'gmgn-discovery-worker', 'GMGN discovery worker', () => {
+      gmgnDiscoveryWorker.start(config.gmgnDiscoveryWorker);
+    });
+    startLockedWorker('market', 'gmgn-claim-signal-worker', 'GMGN claim signal worker', () => {
+      gmgnClaimSignalWorker.start(config.gmgnClaimSignalWorker);
+    });
+  }
+
+  if (hasWorkerGroup('maintenance')) {
+    startLockedWorker('maintenance', 'catalog-cleanup-worker', 'Catalog cleanup worker', () => {
+      catalogCleanupWorker.start();
+    });
+    startLockedWorker('maintenance', 'mock-trading-take-profit-worker', 'Mock trading take-profit worker', () => {
+      mockTradingTakeProfitWorker.start(config.mockTradingTakeProfitWorker);
+    });
+  }
 }
 
 function bootstrapWebRuntime(httpServer) {
@@ -339,6 +394,7 @@ function startServer(port = config.port) {
         console.log(`???? Volume Alert Server running on port ${port}`);
         console.log(`   Environment: ${config.nodeEnv}`);
         console.log(`   Runtime: socket=${config.runtime.runSocketHub ? 'on' : 'off'} background=${config.runtime.runBackgroundJobs ? 'on' : 'off'}`);
+        console.log(`   Worker groups: ${(config.runtime.workerGroupsActive || []).join(', ') || 'none'}`);
         console.log(`   CORS origins: ${config.corsOrigins.join(', ')}`);
         console.log('');
         console.log('   Endpoints:');
@@ -391,8 +447,53 @@ function startServer(port = config.port) {
   return server;
 }
 
-if (require.main === module) {
-  startServer();
+let shutdownInFlight = false;
+
+async function shutdownGracefully(signal = 'SIGTERM') {
+  if (shutdownInFlight) {
+    return;
+  }
+  shutdownInFlight = true;
+
+  console.log(`[Shutdown] Received ${signal}; releasing worker leases...`);
+  const forceExitTimer = setTimeout(() => {
+    console.error('[Shutdown] Timed out; forcing exit.');
+    process.exit(1);
+  }, 10000);
+  forceExitTimer.unref?.();
+
+  try {
+    const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
+    console.log(`[Shutdown] Worker leases released=${releaseResult.released} missed=${releaseResult.missed} errors=${releaseResult.errors}`);
+  } catch (err) {
+    console.error('[Shutdown] Failed to release worker leases:', err.message);
+  }
+
+  if (server?.listening) {
+    server.close(() => {
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    });
+    return;
+  }
+
+  clearTimeout(forceExitTimer);
+  process.exit(0);
 }
 
-module.exports = { app, startServer, get server() { return server; } };
+if (require.main === module) {
+  startServer();
+  process.once('SIGINT', () => {
+    void shutdownGracefully('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdownGracefully('SIGTERM');
+  });
+}
+
+module.exports = {
+  app,
+  startServer,
+  shutdownGracefully,
+  get server() { return server; },
+};

@@ -942,6 +942,29 @@ const SCHEMA_GROUPS = [
     ],
   },
   {
+    key: 'stage50-worker-leases',
+    name: 'Stage 50 distributed worker leases',
+    repair: 'node src/utils/db-init-stage50.js',
+    tables: [
+      {
+        table: 'worker_leases',
+        columns: [
+          'lease_key',
+          'owner_id',
+          'owner_pid',
+          'owner_hostname',
+          'acquired_at',
+          'heartbeat_at',
+          'lease_until',
+          'metadata',
+        ],
+        defaults: {
+          metadata: "'{}'::jsonb",
+        },
+      },
+    ],
+  },
+  {
     key: 'stage39-admin-block-evidence',
     name: 'Stage 39 admin block evidence snapshots',
     repair: 'node src/utils/db-init-stage39.js',

@@ -39,7 +39,7 @@ Preparar o TrendScope / Volume Bot Alert para um lancamento controlado com vario
 
 ## Progresso Operacional
 
-Atualizado em `2026-07-08`.
+Atualizado em `2026-07-09`.
 
 Concluido:
 - confirmado que antes havia apenas um processo `node src/server.js`;
@@ -87,11 +87,49 @@ Validacao local:
 - `npm run lint` passou sem erros, mantendo warnings antigos de complexidade;
 - `npm --prefix frontend run build` passou, mantendo aviso antigo de chunk grande.
 
+Leitura atual por bloco, confrontada com o codigo local:
+- Bloco 1 esta tratado como concluido com ressalva operacional:
+  - o frontend de producao tem fallback para `https://api.trendscope.pro`;
+  - `.env.test` existe e `config/index.js` tem guardrails para DB de teste;
+  - ainda depende de conferencia no VPS para garantir que nao ha processo `combined`, env de teste em producao ou background duplicado.
+- Bloco 2 esta tratado como concluido no codigo e no relato operacional:
+  - scripts `start:web` e `start:worker` existem;
+  - `GET /api/health` e `GET /api/admin/ws-status` expoem `runtime.role`, `socketEnabled` e `backgroundJobsEnabled`;
+  - a prova final continua sendo a configuracao real do systemd/nginx no VPS.
+- Bloco 3 esta parcialmente implementado:
+  - existe lease distribuido por worker via tabela `worker_leases`;
+  - workers do worker set so iniciam depois de adquirir lease;
+  - `/api/admin/ws-status` expoe leases do banco e estado local do processo;
+  - `worker_runtime_state` continua guardando apenas cadencia/ultima execucao e nao e usado como leader election.
+  - plano de separacao por categoria + lock: `docs/worker-category-lock-plan.md`.
+- Bloco 4 esta parcialmente feito:
+  - schema guard, metricas de worker, cleanup de artifacts bloqueados e slow-query config existem;
+  - falta medir backlog, overrun, degradacao Meteora, crescimento de buckets e slow queries recorrentes no banco real.
+- Bloco 5 esta parcialmente feito:
+  - rotas e testes de auth, billing e token gate existem;
+  - falta validar em producao email real, Google/Discord, MoonPay/Helio, webhooks, token gate e envs finais.
+- Bloco 6 esta tratado como concluido:
+  - status admin expoe workers criticos;
+  - testes cobrem matcher/feed/GMGN claim signal;
+  - GMGN `1m` continua desabilitado por default quando ruidoso.
+- Bloco 7 esta parcialmente feito:
+  - a correcao local de dedupe/in-flight de metadata batch e sparkline foi aplicada;
+  - falta deployar/monitorar no VPS, medir hit rate/cache e decidir se o workspace `live` tambem precisa de leader-tab.
+- Bloco 8 esta parcialmente feito:
+  - existem health/admin status, slow-query config e script de coleta VPS;
+  - falta checklist operacional explicito de rollback e switches de emergencia.
+- Bloco 9 ainda esta parcial/faltando:
+  - `README.md` e `docs/bot-reference.md` ainda misturam a topologia antiga de processo unico com o runtime split atual;
+  - falta atualizar data de revisao, runtime split, regra de unico background worker, status QuickNode/Jupiter e scripts de probe.
+- Bloco 10 ainda nao esta pronto para Go:
+  - depende principalmente dos blocos 3, 4, 5, 7, 8 e 9.
+
 ## Pontos importantes
 
 - Nao subir dois processos com `RUN_BACKGROUND_JOBS=true` em producao antes de implementar trava distribuida.
 - `worker_runtime_state` guarda cadencia/ultima execucao, mas nao e leader election.
 - `catalog-worker`, `meteora-snapshot-worker`, discovery, GMGN, Helius, mock take-profit e cleanup podem duplicar trabalho se dois workers rodarem.
+- Trava distribuida por worker nao e o mesmo que escalar processamento automaticamente; ela evita duplicacao do mesmo job. Para aliviar pressao com multi-worker, cada worker precisa ter ownership/particionamento claro do trabalho ou uma fila que distribua tarefas.
 - Rate limit atual usa memoria do processo; se houver mais de uma instancia web, cada uma tera contadores proprios.
 - Integracao de testes e destrutiva contra o banco selecionado; so rodar com `.env.test` e DB claramente isolado.
 - QuickNode/Jupiter/onchain estao em modo laboratorio/probe e nao devem virar caminho de producao sem decisao explicita.
@@ -179,7 +217,7 @@ Objetivo:
 - preparar o bot para falhas operacionais e futura escala sem duplicar jobs.
 
 Primeira versao recomendada:
-- lock distribuido por worker usando Postgres advisory lock ou tabela de lease;
+- lock distribuido por worker usando tabela de lease Postgres;
 - cada worker tenta adquirir lock antes de rodar;
 - lock com identificador estavel por worker:
   - `catalog-worker`
@@ -208,6 +246,16 @@ Pronto quando:
 - processo sem lock fica idle/standby;
 - queda do worker libera ou expira o lock;
 - admin consegue enxergar quem e o dono.
+
+Status local em `2026-07-09`:
+- tabela `worker_leases` e Stage 50 criados;
+- `catalog-worker`, `catalog-cleanup-worker`, `meteora-snapshot-worker`, `dex-discovery-worker`, `token-risk-enrichment-worker`, `token-risk-review-sync-worker`, `mock-trading-take-profit-worker`, `gmgn-discovery-worker`, `gmgn-claim-signal-worker`, `bid-zone-worker` e `user-config-sync` passam pelo lease antes de iniciar;
+- heartbeat renova o lease enquanto o worker esta ativo;
+- se o processo perder ownership de um lease ja iniciado, ele encerra para evitar duplicacao;
+- shutdown limpo via `SIGINT`/`SIGTERM` libera leases imediatamente;
+- standby tenta assumir leases livres a cada 5s;
+- crash real, `kill -9` ou queda da maquina ainda dependem da expiracao do TTL do lease;
+- ainda falta validar em producao com duas unidades tentando o mesmo grupo e observar expiracao real de lease.
 
 ## Bloco 4 - Banco, Indices E Backlog
 

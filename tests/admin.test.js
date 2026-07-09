@@ -289,9 +289,13 @@ describe('Admin panel auth and management', () => {
       const res = await request('GET', '/api/admin/ws-status', { token: adminToken });
       assert.equal(res.status, 200);
       assert.ok(res.body.runtime);
+      assert.deepEqual(res.body.runtime.workerGroupsRequested, ['all']);
+      assert.deepEqual(res.body.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
+      assert.deepEqual(res.body.runtime.workerGroupsSkipped, []);
       assert.ok(res.body.catalogWorker);
       assert.ok(res.body.tokenRiskEnrichmentWorker);
       assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
+      assert.ok(Array.isArray(res.body.workerLeases));
       assert.ok(res.body.gmgnDiscoveryWorker);
       assert.equal(typeof res.body.gmgnDiscoveryWorker.lastGmgnSecurityChecks, 'number');
       assert.equal(typeof res.body.gmgnDiscoveryWorker.lastGmgnInfoChecks, 'number');
