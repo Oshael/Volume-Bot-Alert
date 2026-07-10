@@ -9360,20 +9360,24 @@ TEMP_LEGACY_BAR_TITLE {
 
 .live-panel-item[data-panel-key="monitored"][data-span="2"] .monitored-inline-pagination .compact-search-fixed,
 .live-panel-item[data-panel-key="monitored"][data-span="3"] .monitored-inline-pagination .compact-search-fixed {
-  position: relative;
-  left: auto;
-  top: auto;
-  transform: none;
+  position: absolute;
+  left: 36px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .live-panel-item[data-panel-key="monitored"][data-span="2"] .monitored-inline-controls,
-.live-panel-item[data-panel-key="monitored"][data-span="3"] .monitored-inline-controls,
+.live-panel-item[data-panel-key="monitored"][data-span="3"] .monitored-inline-controls {
+  flex: 1 1 auto;
+  margin-left: 38px;
+}
+
 .live-panel-item[data-panel-key="monitored"][data-span="2"] .monitored-inline-pagination:has(.compact-search-fixed.has-query) .monitored-inline-controls,
 .live-panel-item[data-panel-key="monitored"][data-span="2"] .monitored-inline-pagination:has(.compact-search-fixed:focus-within) .monitored-inline-controls,
 .live-panel-item[data-panel-key="monitored"][data-span="3"] .monitored-inline-pagination:has(.compact-search-fixed.has-query) .monitored-inline-controls,
 .live-panel-item[data-panel-key="monitored"][data-span="3"] .monitored-inline-pagination:has(.compact-search-fixed:focus-within) .monitored-inline-controls {
   flex: 1 1 auto;
-  margin-left: 0;
+  margin-left: 182px;
 }
 
 .live-panel-item[data-panel-key="monitored"][data-span="2"] .monitored-inline-controls .monitored-token-pill-wrap,
