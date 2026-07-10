@@ -14,7 +14,7 @@ Use this document for:
 
 Use `README.md` as the primary operational entry point.
 
-Last reviewed against code and the live deployment model on `2026-05-23` after reconciling the current runtime workers, alert-feed routes, history bootstrap route, billing/pre-access endpoints, PumpFun pre-migration capture, mock-trading take-profit worker, mock-trading wallets, current rate limit buckets, the `/monitor` visible rename to `RADAR`, manual GMGN fallback behavior, GMGN dex-unavailable zombie handling, selected mock wallet persistence, and floating Quick Buy.
+Last reviewed against code and the launch deployment model on `2026-07-10` after reconciling the web/worker runtime split, distributed worker leases, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, and the operations runbook.
 
 ## Current Deployment Topology
 
@@ -24,16 +24,34 @@ Current production-like topology:
   - currently served from Vercel
   - public host: `https://www.trendscope.pro`
 - backend:
-  - runs as a single Node process on a private VPS
-  - managed by `systemd`
+  - runs on a private VPS
+  - managed by split `systemd` units:
+    - `volume-bot-alert-web.service`
+    - `volume-bot-alert-worker.service`
   - reverse-proxied by `nginx`
   - public host: `https://api.trendscope.pro`
+  - intended launch runtime:
+    - web: `RUN_SOCKET_HUB=true`, `RUN_BACKGROUND_JOBS=false`
+    - worker: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`
 - database:
   - PostgreSQL runs on the same VPS as the backend
   - intended to stay private/local rather than publicly exposed
 - repository note:
   - `railway.json` remains in the repo, but it is now legacy deployment residue / historical context rather than the primary production deployment contract
   - current frontend runtime defaults and CSP allowlists now point at `https://api.trendscope.pro` rather than Railway
+
+Operational runbook:
+- `docs/ops-runbook.md`
+
+Lab/probe status:
+- QuickNode/Jupiter/onchain scripts and docs are not launch-critical production paths unless explicitly promoted later.
+- Reference probe commands:
+  - `npm run quicknode:smoke`
+  - `npm run quicknode:probe`
+  - `npm run quicknode:dry-run`
+  - `npm run quicknode:continuous-dry-run`
+  - `npm run quicknode:logs-dry-run`
+  - `npm run jupiter:probe`
 
 ## Test Environment And Database Safety
 
@@ -201,21 +219,26 @@ Responsibilities:
 - trusted-origin checks for mutating cookie-authenticated requests
 - backend CSP via `helmet`
 
-Deployment caveat:
-- the current production model still assumes one backend process
-- the code now supports explicit runtime-role separation through:
+Deployment model:
+- the launch production model uses split runtime roles through:
   - `RUN_SOCKET_HUB`
   - `RUN_BACKGROUND_JOBS`
+  - `BACKGROUND_WORKER_GROUPS`
 - current runtime roles are:
   - `combined`
   - `web`
   - `background`
   - `idle`
 - current default remains `combined`
-- if the backend is ever scaled to multiple replicas, or another process uses the same production DB, each process will still start the full worker set unless runtime roles are intentionally split
-- that duplicates `catalog`, `cleanup`, `discovery`, `meteora`, and `bid-zone` execution against the same DB/upstreams
-- it also duplicates Helius enrichment, automatic token-risk review sync, GMGN discovery, mock-trading take-profit execution, and any enabled bid-zone worker runs
-- do not horizontally scale the full backend unless it is explicitly separated into web/background runtime roles or stronger coordination is introduced
+- `combined` is local development / emergency rollback shape
+- public web process should run with:
+  - `RUN_SOCKET_HUB=true`
+  - `RUN_BACKGROUND_JOBS=false`
+- background worker process should run with:
+  - `RUN_SOCKET_HUB=false`
+  - `RUN_BACKGROUND_JOBS=true`
+- the code now uses distributed worker leases in Postgres for the worker set, but operators should still avoid starting arbitrary extra background processes without checking `workerLeases`
+- rate limit state is process-local memory, so multiple web instances need shared-store work or deliberate rate-limit tuning before they become the normal production shape
 
 Admin worker status endpoint:
 - `GET /api/admin/ws-status`
@@ -224,6 +247,9 @@ Admin worker status endpoint:
   - `runtime.role`
   - `runtime.socketEnabled`
   - `runtime.backgroundJobsEnabled`
+  - `runtime.workerGroupsRequested`
+  - `runtime.workerGroupsActive`
+  - `runtime.workerGroupsSkipped`
 - returns socket hub status plus:
   - `catalogWorker`
   - `catalogCleanupWorker`
@@ -234,6 +260,9 @@ Admin worker status endpoint:
   - `tokenRiskReviewSyncWorker`
   - `mockTradingTakeProfitWorker`
   - `gmgnDiscoveryWorker`
+  - `gmgnClaimSignalWorker`
+  - `solUsdPrice`
+  - `workerLeases`
   - `gmgn`
   - `dexscreener`
 
@@ -1214,16 +1243,21 @@ High-level behavior:
   - PumpFun frontend runtime
 
 Multi-tab coordination:
-- `/monitor` tabs now coordinate with `BroadcastChannel`
-- one active `/monitor` tab becomes leader
-- only the leader continues the repeating polling loop for:
+- `/monitor` and `/alerts` tabs coordinate with `BroadcastChannel`
+- one active tab per coordinated workspace becomes leader
+- only the `/monitor` leader continues the repeating polling loop for:
   - `GET /api/dashboard/monitored`
   - `POST /api/dashboard/history-bootstrap`
   - `GET /api/catalog/bid-zone`
 - leader also owns routed-chart refresh for:
   - `POST /api/catalog/sparklines`
 - follower monitor tabs receive monitored/bid-zone/sparkline snapshots from the leader
-- this coordination still does **not** apply to `/alerts`, because live presence, hidden-light behavior, and backend alert acceptance remain scoped to the active browser tab/session
+- the `/alerts` workspace now uses a conservative leader-tab model for expensive shared polling/visual data:
+  - monitored dashboard snapshots
+  - monitored sparklines
+  - top performers snapshots
+- hidden `/alerts` tabs are not leader candidates
+- socket connection, live presence, alert acceptance, sound/browser-notification state, and direct user actions remain per tab
 
 Workspace header status:
 - the header now exposes runtime health through a compact status indicator:
@@ -2667,6 +2701,9 @@ Current intended exposure model:
 - backend traffic is routed through `https://api.trendscope.pro`
 - the public frontend remains separate at `https://www.trendscope.pro`
 - PostgreSQL stays local/private on the VPS and should not be publicly exposed
+- web traffic should only reach `volume-bot-alert-web.service`
+- background workers should run in `volume-bot-alert-worker.service`
+- the old combined runtime is an emergency rollback shape
 
 Operational review points that now matter continuously:
 - only intended public ports exposed
@@ -2676,7 +2713,7 @@ Operational review points that now matter continuously:
 - production cookie/origin/rate-limit settings revalidated for the actual public topology
 - backend kept behind local/private proxy hops because the app now resolves trusted client IPs through proxy-aware private/loopback trust instead of raw `X-Forwarded-For`
 - explicit `CORS_ORIGINS` maintained for every frontend host that should be allowed; implicit preview trust is no longer part of the code contract
-- code-level runtime split support now exists:
+- runtime split commands:
   - `npm run start:web`
   - `npm run start:worker`
   - `npm run dev:web`
@@ -2688,7 +2725,8 @@ Operational review points that now matter continuously:
     - `runtime.backgroundJobsEnabled`
   - `GET /api/admin/ws-status`
     - same runtime block for admin inspection
-- until the VPS deployment is explicitly split into separate web/background processes, the production runtime should still be treated as single-process
+- admin status also exposes `workerLeases`, `gmgnClaimSignalWorker`, and `solUsdPrice`
+- operational rollback and emergency switches are documented in `docs/ops-runbook.md`
 
 Railway-specific deployment assumptions are now legacy context only.
 

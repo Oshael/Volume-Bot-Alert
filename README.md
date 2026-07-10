@@ -11,10 +11,17 @@ Use this README as the primary project entry point. Use `docs/bot-reference.md` 
 Current production-like shape:
 
 - Public frontend is hosted separately from the backend, currently at `https://www.trendscope.pro`.
-- Backend/API runs as a single Node process on a private VPS, behind `nginx`, currently at `https://api.trendscope.pro`.
+- Backend/API runs on a private VPS behind `nginx`, currently at `https://api.trendscope.pro`.
+- The intended VPS runtime is split into two `systemd` services:
+  - `volume-bot-alert-web.service`
+    - `RUN_SOCKET_HUB=true`
+    - `RUN_BACKGROUND_JOBS=false`
+  - `volume-bot-alert-worker.service`
+    - `RUN_SOCKET_HUB=false`
+    - `RUN_BACKGROUND_JOBS=true`
 - PostgreSQL runs locally on the same VPS as the backend and is not intended to be exposed publicly.
 - `railway.json` still exists, but Railway is legacy deployment context rather than the current production contract.
-- Current production assumption is still one backend process unless runtime roles are deliberately split.
+- The old single-process/combined runtime is a local fallback or emergency rollback shape, not the preferred launch topology.
 
 ## Architecture
 
@@ -52,12 +59,20 @@ Public/account surfaces include `/`, `/login`, `/access`, and `/account-security
 
 ## Runtime Roles
 
-The default backend runtime is `combined`, meaning the web server, socket hub, and background workers run together.
+The default backend runtime remains `combined`, meaning the web server, socket hub, and background workers run together. That is useful for local development and emergency rollback.
+
+The launch topology should use split roles:
+
+```bash
+npm run start:web
+npm run start:worker
+```
 
 Role controls:
 
 - `RUN_SOCKET_HUB`
 - `RUN_BACKGROUND_JOBS`
+- `BACKGROUND_WORKER_GROUPS`
 
 Available scripts:
 
@@ -65,12 +80,24 @@ Available scripts:
 npm run start
 npm run start:web
 npm run start:worker
+npm run start:worker:core
+npm run start:worker:market
+npm run start:worker:maintenance
 npm run dev
 npm run dev:web
 npm run dev:worker
+npm run dev:worker:core
+npm run dev:worker:market
+npm run dev:worker:maintenance
 ```
 
-Important: do not horizontally scale the full backend by simply starting more complete backend processes against the same production DB. Unless the runtime is intentionally split into web/background roles, each process can start its own workers and duplicate catalog, cleanup, discovery, Meteora, bid-zone, Helius, GMGN, token-risk, and mock-trading work.
+Important: do not horizontally scale the full backend by simply starting more complete backend processes against the same production DB. The launch rule is:
+
+- web process: socket/API only, no background jobs
+- worker process: background jobs only, no public traffic
+- exactly one active owner per worker lease
+
+Worker leases protect the individual worker loops from duplicate execution, but they are still an operational guardrail, not a reason to run arbitrary extra background processes without checking `/api/admin/ws-status`.
 
 ## Local Setup
 
@@ -256,19 +283,25 @@ Useful quick checks when reviewing a running bot:
 
 1. `GET /api/health`
 2. `GET /api/admin/ws-status`
-3. Confirm workers are running and the expected runtime role is active.
-4. Confirm recent token discovery is entering `token_catalog`.
-5. Confirm catalog reevaluation updates `last_seen_at`.
-6. Log in and open `/alerts`.
-7. Add a manual token and refresh the page.
-8. Confirm `D`, alert behavior, and manual-token persistence are stable after refresh.
+3. Confirm the public service reports `runtime.role = web`.
+4. Confirm the worker service reports `runtime.role = background`.
+5. Confirm `workerLeases` has one current owner per active worker.
+6. Confirm recent token discovery is entering `token_catalog`.
+7. Confirm catalog reevaluation updates `last_seen_at`.
+8. Log in and open `/alerts`.
+9. Add a manual token and refresh the page.
+10. Confirm `D`, alert behavior, and manual-token persistence are stable after refresh.
+
+Emergency operation and rollback commands live in `docs/ops-runbook.md`.
 
 ## Current Weak Spots
 
 Known areas that deserve extra care during changes:
 
-- Full backend horizontal scaling can duplicate worker execution unless runtime roles are split.
+- Full backend horizontal scaling can duplicate worker execution unless runtime roles and worker leases are verified.
+- Rate limits are process-local memory counters; multiple web instances need a shared store or deliberately adjusted limits.
 - GMGN discovery intervals near a few seconds can be CPU-heavy on small VPS hosts.
+- QuickNode/Jupiter/onchain files and scripts are lab/probe work unless explicitly promoted.
 - Test safety depends on keeping `.env.test` pointed at a clearly isolated local test DB.
 - Billing, auth, account recovery, and cookie/session behavior are high-impact surfaces and need broader validation than isolated unit tests.
 - Browser-local state and account-scoped backend state both exist; reload and cross-device restore paths must be checked after related changes.
@@ -291,6 +324,10 @@ This repository intentionally keeps two primary docs:
   - persistence details
   - alert behavior
   - endpoint map
+- `docs/ops-runbook.md`
+  - launch operations
+  - emergency switches
+  - rollback checks
 
 Avoid creating another broad "current bot state" document. New long-lived technical details should go into `docs/bot-reference.md`; short operational guidance should go into this README.
 

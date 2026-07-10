@@ -39,7 +39,7 @@ Preparar o TrendScope / Volume Bot Alert para um lancamento controlado com vario
 
 ## Progresso Operacional
 
-Atualizado em `2026-07-09`.
+Atualizado em `2026-07-10`.
 
 Concluido:
 - confirmado que antes havia apenas um processo `node src/server.js`;
@@ -60,10 +60,8 @@ Concluido:
 - o risco imediato de duplicacao de workers foi reduzido, desde que somente o worker novo rode background jobs.
 
 Em andamento:
-- calibragem de rate limits de producao;
-- investigacao de excesso de chamadas frontend para:
-  - `POST /api/catalog/monitored-metadata-batch`
-  - `POST /api/catalog/sparklines`
+- validacao final de producao/VPS dos blocos ja tratados localmente;
+- Go/no-go final.
 
 Incidente observado:
 - um unico usuario ativo atingiu `catalog-read` mesmo apos subir `CATALOG_READ_RATE_LIMIT_MAX_REQUESTS` para `600` por `15m`;
@@ -78,10 +76,13 @@ Diagnostico inicial:
 - chamadas de sparklines que chegavam enquanto outra estava em voo eram sempre reexecutadas como `force=true`, podendo ignorar a janela de cache se a query demorasse mais que o ciclo de polling;
 - o `BroadcastChannel` reduz polling somente no workspace `history`; varias abas no workspace `live` ainda multiplicam o ciclo de `3s`.
 
-Correcao aplicada localmente:
+Correcao aplicada localmente para performance multiusuario:
 - dedupe/in-flight para `hydrateManualTokensMetadataBatch()` por chave de enderecos + modo Meteora;
 - preservacao do `force` original quando um refresh de sparkline e enfileirado durante outro em voo;
 - remocao do refresh extra de sparklines disparado por `refreshDashboardTopPerformers()`.
+- logs resumidos de performance para `POST /api/catalog/monitored-metadata-batch`;
+- leader-tab conservador tambem no workspace `live` para monitored/top performers/sparklines compartilhados;
+- correcao de layout do Monitored para impedir overflow lateral ao abrir a busca.
 
 Validacao local:
 - `npm run lint` passou sem erros, mantendo warnings antigos de complexidade;
@@ -112,17 +113,18 @@ Leitura atual por bloco, confrontada com o codigo local:
   - status admin expoe workers criticos;
   - testes cobrem matcher/feed/GMGN claim signal;
   - GMGN `1m` continua desabilitado por default quando ruidoso.
-- Bloco 7 esta parcialmente feito:
-  - a correcao local de dedupe/in-flight de metadata batch e sparkline foi aplicada;
-  - falta deployar/monitorar no VPS, medir hit rate/cache e decidir se o workspace `live` tambem precisa de leader-tab.
-- Bloco 8 esta parcialmente feito:
-  - existem health/admin status, slow-query config e script de coleta VPS;
-  - falta checklist operacional explicito de rollback e switches de emergencia.
-- Bloco 9 ainda esta parcial/faltando:
-  - `README.md` e `docs/bot-reference.md` ainda misturam a topologia antiga de processo unico com o runtime split atual;
-  - falta atualizar data de revisao, runtime split, regra de unico background worker, status QuickNode/Jupiter e scripts de probe.
+- Bloco 7 esta tratado no codigo local:
+  - dedupe/in-flight e leader-tab `live` foram aplicados;
+  - logs de performance foram adicionados e testados localmente;
+  - falta apenas deployar/monitorar no VPS e medir comportamento real com usuarios/tabs.
+- Bloco 8 esta tratado na documentacao operacional:
+  - `docs/ops-runbook.md` documenta logs, health/status, restart separado, rollback e switches de emergencia;
+  - ainda depende de validacao no VPS dos comandos e caminhos reais de log.
+- Bloco 9 esta tratado na documentacao local:
+  - `README.md` e `docs/bot-reference.md` foram atualizados para runtime split, um background worker, status admin, leader-tab live, switches e QuickNode/Jupiter como laboratorio;
+  - planos experimentais continuam separados.
 - Bloco 10 ainda nao esta pronto para Go:
-  - depende principalmente dos blocos 3, 4, 5, 7, 8 e 9.
+  - depende principalmente da validacao real de producao/VPS dos blocos 3, 4, 5, 7 e 8.
 
 ## Pontos importantes
 
