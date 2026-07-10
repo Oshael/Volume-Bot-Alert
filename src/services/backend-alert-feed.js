@@ -446,6 +446,21 @@ function resolveAlertEventModel(rule) {
   return null;
 }
 
+function getMaxEventId(...values) {
+  let maxEventId = null;
+  for (const value of values) {
+    const eventId = Number(value);
+    if (Number.isInteger(eventId) && eventId > 0) {
+      maxEventId = maxEventId == null ? eventId : Math.max(maxEventId, eventId);
+    }
+  }
+  return maxEventId;
+}
+
+function shouldListEventsAscending({ hasExplicitAfterId, mode }) {
+  return hasExplicitAfterId || mode === 'unseen';
+}
+
 async function listDashboardAlertEvents(options = {}) {
   const limit = normalizeAlertFeedLimit(options.limit);
   const rule = resolveDashboardFeedRule(options.ruleKey);
@@ -467,9 +482,13 @@ async function listDashboardAlertEvents(options = {}) {
 
   let cursor = options.userId == null ? null : await alertDeliveryCursor.getCursor(options.userId, rule.ruleKey);
   const hasExplicitAfterId = options.afterId != null && String(options.afterId).trim() !== '';
-  let afterId = hasExplicitAfterId
+  const cursorAfterId = hasExplicitAfterId
     ? options.afterId
     : (mode === 'unseen' ? cursor?.lastSeenEventId : null);
+  let afterId = getMaxEventId(
+    cursorAfterId,
+    mode === 'all' ? cursor?.lastAckedEventId : null,
+  );
 
   if (mode === 'unseen' && !hasExplicitAfterId && cursor == null && options.userId != null) {
     const latestEventFilters = { ruleKey: rule.ruleKey };
@@ -488,7 +507,7 @@ async function listDashboardAlertEvents(options = {}) {
     ruleKey: rule.ruleKey,
     limit,
     afterId,
-    sort: afterId != null ? 'asc' : 'desc',
+    sort: shouldListEventsAscending({ hasExplicitAfterId, mode }) ? 'asc' : 'desc',
   };
   if (rule.scope === 'user-token') {
     eventFilters.userId = options.userId;
@@ -506,6 +525,43 @@ async function listDashboardAlertEvents(options = {}) {
     cursor: mapDeliveryCursor(cursor, rule),
     count: events.length,
     events: events.map((item) => buildDashboardAlertEventItem(item, metadataByAddress.get(item.tokenAddress) || null, rule)),
+  };
+}
+
+async function getLatestDashboardRuleEventId(userId, rule, eventModel) {
+  const filters = { ruleKey: rule.ruleKey };
+  if (rule.scope === 'user-token') {
+    filters.userId = userId;
+  }
+  return eventModel.getLatestEventId(filters);
+}
+
+async function clearDashboardAlertFeeds(userId, options = {}) {
+  const rules = resolveDashboardFeedRules(options.ruleKeys);
+  const cursors = [];
+
+  for (const rule of rules) {
+    const eventModel = resolveAlertEventModel(rule);
+    const latestEventId = await getLatestDashboardRuleEventId(userId, rule, eventModel);
+    if (latestEventId == null) {
+      const cursor = await alertDeliveryCursor.getCursor(userId, rule.ruleKey);
+      cursors.push(mapDeliveryCursor(cursor, rule));
+      continue;
+    }
+
+    const cursor = await alertDeliveryCursor.upsertCursor({
+      userId,
+      ruleKey: rule.ruleKey,
+      lastSeenEventId: latestEventId,
+      lastAckedEventId: latestEventId,
+    });
+    cursors.push(mapDeliveryCursor(cursor, rule));
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    count: cursors.length,
+    cursors,
   };
 }
 
@@ -582,6 +638,7 @@ module.exports = {
   DEFAULT_ALERT_FEED_LIMIT,
   buildDashboardAlertEventFromEvent,
   buildDashboardAlertEventItem,
+  clearDashboardAlertFeeds,
   listDashboardAlertFeeds,
   listDashboardAlertEvents,
   listDashboardChartAlertEvents,
@@ -599,6 +656,7 @@ module.exports = {
     buildDashboardUserAlertEventPayload,
     buildDashboardChartAlertEvent,
     bootstrapRealtimeOnlyCursor,
+    getMaxEventId,
     loadDashboardCatalogRowsWithMeteora,
     mapDeliveryCursor,
     resolveAlertEventModel,

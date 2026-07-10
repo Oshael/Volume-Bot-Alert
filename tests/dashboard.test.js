@@ -641,6 +641,40 @@ describe('Dashboard routes', () => {
     }
   });
 
+  it('clears dashboard alert feeds for the authenticated user', async () => {
+    const originalClearDashboardAlertFeeds = backendAlertFeed.clearDashboardAlertFeeds;
+    let capturedArgs = null;
+
+    backendAlertFeed.clearDashboardAlertFeeds = async (clearUserId, options) => {
+      capturedArgs = [clearUserId, options];
+      return {
+        generatedAt: '2026-04-16T12:06:10.000Z',
+        count: 1,
+        cursors: [{
+          ruleKey: 'monitored-vol',
+          lastSeenEventId: 31,
+          lastAckedEventId: 31,
+          updatedAt: '2026-04-16T12:06:11.000Z',
+        }],
+      };
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/dashboard/alert-events/clear')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({ ruleKeys: ['monitored-vol'] });
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedArgs, [userId, { ruleKeys: ['monitored-vol'] }]);
+      assert.equal(res.body.count, 1);
+      assert.equal(res.body.cursors[0].lastAckedEventId, 31);
+    } finally {
+      backendAlertFeed.clearDashboardAlertFeeds = originalClearDashboardAlertFeeds;
+    }
+  });
+
   it('rejects unsupported dashboard alert rule keys', async () => {
     const originalListDashboardAlertEvents = backendAlertFeed.listDashboardAlertEvents;
 

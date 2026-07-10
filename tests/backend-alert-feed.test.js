@@ -541,6 +541,53 @@ describe('backend alert feed service', () => {
     }
   });
 
+  it('uses the acked cursor to hide cleared dashboard alert events from the full feed', async () => {
+    const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalListRecentEvents = userAlertEvent.listRecentEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    let capturedFilters = null;
+
+    alertDeliveryCursor.getCursor = async (userId, ruleKey) => ({
+      userId,
+      ruleKey,
+      lastSeenEventId: 35,
+      lastAckedEventId: 33,
+      updatedAt: '2026-04-05T18:15:00.000Z',
+    });
+    userAlertEvent.listRecentEvents = async (filters) => {
+      capturedFilters = filters;
+      return [];
+    };
+    tokenCatalog.listDashboardMetadataByAddresses = async () => [];
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 9,
+        ruleKey: 'monitored-vol',
+        mode: 'all',
+        limit: 10,
+      });
+
+      assert.deepEqual(capturedFilters, {
+        userId: 9,
+        ruleKey: 'monitored-vol',
+        limit: 10,
+        afterId: 33,
+        sort: 'desc',
+      });
+      assert.equal(payload.mode, 'all');
+      assert.equal(payload.cursor.lastAckedEventId, 33);
+      assert.equal(payload.count, 0);
+    } finally {
+      alertDeliveryCursor.getCursor = originalGetCursor;
+      userAlertEvent.listRecentEvents = originalListRecentEvents;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
   it('bootstraps the per-user unseen cursor instead of replaying historical events for first-time viewers', async () => {
     const originalGetCursor = alertDeliveryCursor.getCursor;
     const originalGetLatestEventId = userAlertEvent.getLatestEventId;
@@ -643,6 +690,55 @@ describe('backend alert feed service', () => {
         updatedAt: '2026-04-05T18:20:00.000Z',
       });
     } finally {
+      alertDeliveryCursor.upsertCursor = originalUpsertCursor;
+    }
+  });
+
+  it('marks dashboard alert feeds cleared through the latest event id', async () => {
+    const originalGetLatestEventId = userAlertEvent.getLatestEventId;
+    const originalUpsertCursor = alertDeliveryCursor.upsertCursor;
+    const capturedLatestFilters = [];
+    const capturedCursorPayloads = [];
+
+    userAlertEvent.getLatestEventId = async (filters) => {
+      capturedLatestFilters.push(filters);
+      return 72;
+    };
+    alertDeliveryCursor.upsertCursor = async (payload) => {
+      capturedCursorPayloads.push(payload);
+      return {
+        userId: payload.userId,
+        ruleKey: payload.ruleKey,
+        lastSeenEventId: payload.lastSeenEventId,
+        lastAckedEventId: payload.lastAckedEventId,
+        updatedAt: '2026-04-05T18:25:00.000Z',
+      };
+    };
+
+    try {
+      const payload = await backendAlertFeed.clearDashboardAlertFeeds(9, {
+        ruleKeys: ['monitored-vol'],
+      });
+
+      assert.deepEqual(capturedLatestFilters, [{
+        userId: 9,
+        ruleKey: 'monitored-vol',
+      }]);
+      assert.deepEqual(capturedCursorPayloads, [{
+        userId: 9,
+        ruleKey: 'monitored-vol',
+        lastSeenEventId: 72,
+        lastAckedEventId: 72,
+      }]);
+      assert.equal(payload.count, 1);
+      assert.deepEqual(payload.cursors[0], {
+        ruleKey: 'monitored-vol',
+        lastSeenEventId: 72,
+        lastAckedEventId: 72,
+        updatedAt: '2026-04-05T18:25:00.000Z',
+      });
+    } finally {
+      userAlertEvent.getLatestEventId = originalGetLatestEventId;
       alertDeliveryCursor.upsertCursor = originalUpsertCursor;
     }
   });

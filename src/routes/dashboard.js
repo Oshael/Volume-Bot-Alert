@@ -1026,6 +1026,22 @@ router.get('/alert-feeds', dashboardLimiter, async (req, res) => {
   }
 });
 
+router.post('/alert-events/clear', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  try {
+    const payload = await backendAlertFeed.clearDashboardAlertFeeds(req.user.id, {
+      ruleKeys: req.body?.ruleKeys,
+    });
+    res.json(payload);
+  } catch (err) {
+    if (err.code === 'UNSUPPORTED_ALERT_RULE') {
+      res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
+      return;
+    }
+    console.error('POST /dashboard/alert-events/clear error:', err.message);
+    res.status(500).json({ error: 'Failed to clear dashboard alert events' });
+  }
+});
+
 router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   const lastSeenEventId = parseOptionalEventId(req.body?.lastSeenEventId, 'lastSeenEventId');
   if (!lastSeenEventId.ok) {

@@ -950,6 +950,26 @@ export function updateDashboardAlertCursor(
   });
 }
 
+export function clearDashboardAlertEvents(token?: string | null, options?: { ruleKeys?: string[] }) {
+  return apiFetch<{
+    generatedAt?: string | null;
+    count?: number;
+    cursors?: Array<{
+      ruleKey?: string | null;
+      lastSeenEventId?: number | null;
+      lastAckedEventId?: number | null;
+      updatedAt?: string | null;
+    } | null>;
+  }>('/api/dashboard/alert-events/clear', {
+    method: 'POST',
+    keepalive: true,
+    body: JSON.stringify({
+      ruleKeys: Array.isArray(options?.ruleKeys) ? options.ruleKeys : null,
+    }),
+    token,
+  });
+}
+
 export function fetchBidZoneCandidates(token?: string | null, options?: { limit?: number }) {
   const params = new URLSearchParams();
   if (options?.limit) {
