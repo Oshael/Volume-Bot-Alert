@@ -14,7 +14,7 @@ Use this document for:
 
 Use `README.md` as the primary operational entry point.
 
-Last reviewed against code and the launch deployment model on `2026-07-10` after reconciling the web/worker runtime split, distributed worker leases, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, and the operations runbook.
+Last reviewed against code and the launch deployment model on `2026-07-10` after reconciling the web/worker runtime split, distributed worker leases, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, the operations runbook, and the current `Total Liq` / Meteora hover contract.
 
 ## Current Deployment Topology
 
@@ -789,7 +789,9 @@ Execution notes:
 - unused slots from an underfilled higher tier can spill into lower tiers
 - current state is persisted in `token_meteora_state`
 - positive checks also append history into `token_meteora_snapshots`
-- worker writes `last_snapshot_at` and `1h`/`6h`/`24h` baseline TVLs into `token_meteora_state`, so summary reads no longer hit `token_meteora_snapshots`
+- worker writes `last_snapshot_at` and `1h`/`4h`/`6h`/`24h` baseline TVLs into `token_meteora_state`, so summary reads no longer hit `token_meteora_snapshots`
+- current UI surfaces use Meteora TVL change windows `1H` / `4H` / `24H`; `change6h` remains in the backend payload only for compatibility with older consumers
+- worker also persists current aggregated Meteora pool volumes in `token_meteora_state.volume_1h`, `volume_4h`, and `volume_24h`
 
 ## Data Sources
 
@@ -853,10 +855,14 @@ Files:
 
 Used for:
 - pool TVL summary/history
+- aggregated Meteora pool volume for the current `1H` / `4H` / `24H` windows
 
 Current API shape:
 - client uses the current DLMM Datapi pools endpoint, not the legacy `pair/all_by_groups` route
 - worker queries `token_x` and `token_y` sides separately per token and merges the results
+- TVL is summed across all returned relevant pools
+- volume is summed across all returned relevant pools using the upstream `volume["1h"]`, `volume["4h"]`, and `volume["24h"]` fields
+- volume aggregation does not add extra Meteora requests; it reuses the same pool payload already fetched for TVL
 - summary endpoints read only `token_meteora_state`; historical TVL baselines are persisted there by the worker
 - current `meteora-surge` alerting layer on top of this data now includes:
   - hot-token priming instead of always alerting immediately on session start
@@ -993,6 +999,27 @@ Workspace placement:
 Bootstrap behavior:
 - authenticated frontend bootstrap now loads monitored page `0` first using the current `monitoredPerPage` and persisted monitored sorts
 - remaining pages continue hydrating in background and merge into the shared tracked-token store without blocking the first paint of the monitored panel
+
+### Total liquidity display
+- shown in Manual, Recent, Old Week, and monitored-card compact metric surfaces as `Total Liq`
+- combines the selected Dex pair liquidity with current Meteora TVL when both are present
+- calculation:
+  - if the selected Dex pair address equals the best Meteora pool address, display `max(dexLiquidityUsd, meteoraTvl)`
+  - otherwise display `dexLiquidityUsd + meteoraTvl`
+  - if only one source is present, display that source alone
+- visual color:
+  - purple when both Dex liquidity and a visible Meteora pool are present
+  - white when only one liquidity source is present
+- hover details:
+  - first line identifies the selected pair source from `dexId` when available, for example `Raydium`, `PumpSwap`, or `Meteora`
+  - `Meteora TVL` is colored purple when present
+  - below the source lines, Meteora metrics are rendered side by side:
+    - `MET 1H`: `Pool Chg` and `Vol`
+    - `MET 4H`: `Pool Chg` and `Vol`
+    - `MET 24H`: `Pool Chg` and `Vol`
+- `Pool Chg` uses Meteora TVL baselines from `token_meteora_state`
+- `Vol` uses the aggregated Meteora pool volume persisted in `token_meteora_state`
+- no extra Dex or Meteora API calls are made for hover rendering; the dashboard/catalog payload carries the required fields
 
 ### Recent / Old Week bars
 - frontend-derived from monitored token state
@@ -1891,6 +1918,7 @@ Table features:
 - supports a compact `starred only` toggle using the same small-square visual language as the search control
 - panel can be collapsed
   - collapse currently affects the UI/render surface only
+- table rows show `Total Liq` instead of the older standalone `Meteora` metric, using the shared total-liquidity rule and hover contract described above
 
 ## Recent Tokens
 
@@ -1944,6 +1972,7 @@ Sorting rules:
 - multiple criteria can be active at the same time
 - `AGE` remains exclusive inside its own group
 - `MCAP` remains exclusive inside its own group
+- rows show `Total Liq` instead of the older standalone `Meteora` metric, using the shared total-liquidity rule and hover contract described above
 
 ## Old Tokens 1 Week+
 
@@ -1989,6 +2018,7 @@ Sorting rules:
 - multiple criteria can be active at the same time
 - `AGE` remains exclusive inside its own group
 - `MCAP` remains exclusive inside its own group
+- rows show `Total Liq` instead of the older standalone `Meteora` metric, using the shared total-liquidity rule and hover contract described above
 
 ## Starred Tokens
 
