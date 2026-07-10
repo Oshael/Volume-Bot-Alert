@@ -147,6 +147,7 @@ describe('Dashboard routes', () => {
       last_token_created_at_ms: Date.UTC(2026, 3, 1, 12, 0, 0),
       last_pair_address: 'pair_test_123',
       last_pair_url: 'https://dexscreener.com/solana/testpair',
+      last_dex_id: 'raydium',
       last_image_url: 'https://example.com/token.png',
       last_twitter_url: 'https://x.com/wsol',
       monitor_priority: 'normal',
@@ -164,8 +165,12 @@ describe('Dashboard routes', () => {
       lastCheckedAt: '2026-04-05T21:08:00.000Z',
       lastSnapshotAt: '2026-04-05T21:08:00.000Z',
       baselineTvl1h: 100000,
+      baselineTvl4h: 95000,
       baselineTvl6h: 90000,
       baselineTvl24h: 80000,
+      volume1h: 7500,
+      volume4h: 18000,
+      volume24h: 52000,
     }));
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
@@ -177,6 +182,7 @@ describe('Dashboard routes', () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.body.tokens.length, 1);
+      assert.equal(res.body.tokens[0].pairDexId, 'raydium');
       assert.deepEqual(res.body.tokens[0].meteora, {
         address: 'So11111111111111111111111111111111111111112',
         tvl: 125000,
@@ -185,8 +191,12 @@ describe('Dashboard routes', () => {
         lastCheckedAt: '2026-04-05T21:08:00.000Z',
         lastSnapshotAt: '2026-04-05T21:08:00.000Z',
         change1h: 25,
+        change4h: 31.57894736842105,
         change6h: 38.88888888888889,
         change24h: 56.25,
+        volume1h: 7500,
+        volume4h: 18000,
+        volume24h: 52000,
         noPool: false,
       });
       assert.equal(res.body.tokens[0].riskReview, undefined);
@@ -926,6 +936,7 @@ describe('Dashboard routes', () => {
       lastError: null,
       lastSnapshotAt: '2026-04-15T19:00:00.000Z',
       baselineTvl1h: null,
+      baselineTvl4h: null,
       baselineTvl6h: null,
       baselineTvl24h: null,
     }));

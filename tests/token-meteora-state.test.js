@@ -111,8 +111,12 @@ describe('token meteora state model', () => {
             source: 'meteora',
             last_snapshot_at: null,
             baseline_tvl_1h: null,
+            baseline_tvl_4h: null,
             baseline_tvl_6h: null,
             baseline_tvl_24h: null,
+            volume_1h: null,
+            volume_4h: null,
+            volume_24h: null,
             updated_at: '2026-04-05T21:05:00.000Z',
           },
           {
@@ -126,8 +130,12 @@ describe('token meteora state model', () => {
             source: 'meteora',
             last_snapshot_at: '2026-04-05T21:05:00.000Z',
             baseline_tvl_1h: '40000',
+            baseline_tvl_4h: '30000',
             baseline_tvl_6h: '20000',
             baseline_tvl_24h: '10000',
+            volume_1h: '1500',
+            volume_4h: '4500',
+            volume_24h: '12000',
             updated_at: '2026-04-05T21:05:00.000Z',
           },
         ],
@@ -154,7 +162,11 @@ describe('token meteora state model', () => {
       assert.equal(positivePoolRow.hasPool, true);
       assert.equal(positivePoolRow.currentTvl, 82000);
       assert.equal(positivePoolRow.lastSnapshotAt, '2026-04-05T21:05:00.000Z');
+      assert.equal(positivePoolRow.baselineTvl4h, 30000);
       assert.equal(positivePoolRow.baselineTvl24h, 10000);
+      assert.equal(positivePoolRow.volume1h, 1500);
+      assert.equal(positivePoolRow.volume4h, 4500);
+      assert.equal(positivePoolRow.volume24h, 12000);
       assert.equal(noPoolRow.hasPool, false);
       assert.equal(noPoolRow.lastSnapshotAt, null);
       assert.equal(noPoolRow.baselineTvl24h, null);

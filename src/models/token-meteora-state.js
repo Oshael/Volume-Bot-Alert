@@ -56,8 +56,12 @@ function mapStateRow(row) {
     source: row.source || 'meteora',
     lastSnapshotAt: row.last_snapshot_at || null,
     baselineTvl1h: toNumberOrNull(row.baseline_tvl_1h),
+    baselineTvl4h: toNumberOrNull(row.baseline_tvl_4h),
     baselineTvl6h: toNumberOrNull(row.baseline_tvl_6h),
     baselineTvl24h: toNumberOrNull(row.baseline_tvl_24h),
+    volume1h: toNumberOrNull(row.volume_1h),
+    volume4h: toNumberOrNull(row.volume_4h),
+    volume24h: toNumberOrNull(row.volume_24h),
     updatedAt: row.updated_at || null,
   };
 }
@@ -75,8 +79,12 @@ function mapSummaryRow(row) {
     source: row.source || 'meteora',
     lastSnapshotAt: row.last_snapshot_at || null,
     baselineTvl1h: toNumberOrNull(row.baseline_tvl_1h),
+    baselineTvl4h: toNumberOrNull(row.baseline_tvl_4h),
     baselineTvl6h: toNumberOrNull(row.baseline_tvl_6h),
     baselineTvl24h: toNumberOrNull(row.baseline_tvl_24h),
+    volume1h: toNumberOrNull(row.volume_1h),
+    volume4h: toNumberOrNull(row.volume_4h),
+    volume24h: toNumberOrNull(row.volume_24h),
     updatedAt: row.updated_at || null,
   };
 }
@@ -104,8 +112,12 @@ async function upsertState(payload = {}, runner = db) {
   const source = normalizeSource(payload.source);
   const lastSnapshotAt = toTimestampOrNull(payload.lastSnapshotAt);
   const baselineTvl1h = toNumberOrNull(payload.baselineTvl1h);
+  const baselineTvl4h = toNumberOrNull(payload.baselineTvl4h);
   const baselineTvl6h = toNumberOrNull(payload.baselineTvl6h);
   const baselineTvl24h = toNumberOrNull(payload.baselineTvl24h);
+  const volume1h = toNumberOrNull(payload.volume1h);
+  const volume4h = toNumberOrNull(payload.volume4h);
+  const volume24h = toNumberOrNull(payload.volume24h);
 
   const { rows } = await runner.query(
     `INSERT INTO token_meteora_state (
@@ -119,11 +131,15 @@ async function upsertState(payload = {}, runner = db) {
        source,
        last_snapshot_at,
        baseline_tvl_1h,
+       baseline_tvl_4h,
        baseline_tvl_6h,
        baseline_tvl_24h,
+       volume_1h,
+       volume_4h,
+       volume_24h,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
      ON CONFLICT (token_address) DO UPDATE SET
        last_checked_at = EXCLUDED.last_checked_at,
        has_pool = EXCLUDED.has_pool,
@@ -134,8 +150,12 @@ async function upsertState(payload = {}, runner = db) {
        source = EXCLUDED.source,
        last_snapshot_at = EXCLUDED.last_snapshot_at,
        baseline_tvl_1h = EXCLUDED.baseline_tvl_1h,
+       baseline_tvl_4h = EXCLUDED.baseline_tvl_4h,
        baseline_tvl_6h = EXCLUDED.baseline_tvl_6h,
        baseline_tvl_24h = EXCLUDED.baseline_tvl_24h,
+       volume_1h = EXCLUDED.volume_1h,
+       volume_4h = EXCLUDED.volume_4h,
+       volume_24h = EXCLUDED.volume_24h,
        updated_at = NOW()
      RETURNING *`,
     [
@@ -149,8 +169,12 @@ async function upsertState(payload = {}, runner = db) {
       source,
       lastSnapshotAt,
       baselineTvl1h,
+      baselineTvl4h,
       baselineTvl6h,
       baselineTvl24h,
+      volume1h,
+      volume4h,
+      volume24h,
     ]
   );
 
@@ -197,8 +221,12 @@ async function listStateSummaryRowsByAddresses(addresses, runner = db) {
        source,
        last_snapshot_at,
        baseline_tvl_1h,
+       baseline_tvl_4h,
        baseline_tvl_6h,
        baseline_tvl_24h,
+       volume_1h,
+       volume_4h,
+       volume_24h,
        updated_at
      FROM token_meteora_state
      WHERE token_address = ANY($1::varchar[])

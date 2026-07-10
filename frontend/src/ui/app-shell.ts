@@ -1042,8 +1042,12 @@ function serializeMeteoraForView(state: AppState, address: string) {
     entry?.noPool,
     serializeRenderedMoneyValue(entry?.tvl),
     entry?.change1h == null ? null : Number(entry.change1h).toFixed(1),
+    entry?.change4h == null ? null : Number(entry.change4h).toFixed(1),
     entry?.change6h == null ? null : Number(entry.change6h).toFixed(1),
     entry?.change24h == null ? null : Number(entry.change24h).toFixed(1),
+    serializeRenderedMoneyValue(entry?.volume1h),
+    serializeRenderedMoneyValue(entry?.volume4h),
+    serializeRenderedMoneyValue(entry?.volume24h),
   ]);
 }
 

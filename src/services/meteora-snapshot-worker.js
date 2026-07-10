@@ -222,21 +222,29 @@ function mapRowsByTokenAddress(rows = []) {
   return new Map(rows.map((row) => [String(row.token_address || '').trim(), row]));
 }
 
+function valueWhenHasPool(hasPool, value, fallback = null) {
+  return hasPool ? (value ?? fallback) : fallback;
+}
+
 function buildStatePayload(address, result, checkedAt, snapshot, baseline) {
   const hasPool = Boolean(result && Number(result.tvl) > 0);
   return {
     tokenAddress: address,
     lastCheckedAt: checkedAt,
     hasPool,
-    currentTvl: hasPool ? result.tvl : null,
-    bestPoolAddress: hasPool ? result.poolAddress : null,
-    poolCount: hasPool ? result.poolCount : 0,
+    currentTvl: valueWhenHasPool(hasPool, result?.tvl),
+    bestPoolAddress: valueWhenHasPool(hasPool, result?.poolAddress),
+    poolCount: valueWhenHasPool(hasPool, result?.poolCount, 0),
     lastError: null,
     source: 'meteora',
-    lastSnapshotAt: hasPool ? (snapshot?.ts || checkedAt) : null,
-    baselineTvl1h: hasPool ? (baseline?.baseline_tvl_1h ?? null) : null,
-    baselineTvl6h: hasPool ? (baseline?.baseline_tvl_6h ?? null) : null,
-    baselineTvl24h: hasPool ? (baseline?.baseline_tvl_24h ?? null) : null,
+    lastSnapshotAt: valueWhenHasPool(hasPool, snapshot?.ts || checkedAt),
+    baselineTvl1h: valueWhenHasPool(hasPool, baseline?.baseline_tvl_1h),
+    baselineTvl4h: valueWhenHasPool(hasPool, baseline?.baseline_tvl_4h),
+    baselineTvl6h: valueWhenHasPool(hasPool, baseline?.baseline_tvl_6h),
+    baselineTvl24h: valueWhenHasPool(hasPool, baseline?.baseline_tvl_24h),
+    volume1h: valueWhenHasPool(hasPool, result?.volume1h),
+    volume4h: valueWhenHasPool(hasPool, result?.volume4h),
+    volume24h: valueWhenHasPool(hasPool, result?.volume24h),
   };
 }
 

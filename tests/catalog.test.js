@@ -78,6 +78,7 @@ async function completeLogin(email, password) {
 function buildPair(overrides = {}) {
   return {
     chainId: 'solana',
+    dexId: 'raydium',
     pairAddress: 'pair_test_123',
     url: 'https://dexscreener.com/solana/testpair',
     marketCap: 123456,
@@ -265,7 +266,7 @@ describe('Catalog routes', () => {
     assert.equal(res.body.token.source, 'monitored-token');
 
     const { rows } = await db.query(
-      'SELECT address, source, symbol, name, last_mcap, last_pair_url, last_image_url, last_twitter_url, last_community_url FROM token_catalog WHERE address = $1',
+      'SELECT address, source, symbol, name, last_mcap, last_pair_url, last_dex_id, last_image_url, last_twitter_url, last_community_url FROM token_catalog WHERE address = $1',
       [VALID_ADDR]
     );
 
@@ -276,6 +277,7 @@ describe('Catalog routes', () => {
     assert.equal(rows[0].name, 'Wrapped SOL');
     assert.equal(Number(rows[0].last_mcap), 123456);
     assert.equal(rows[0].last_pair_url, 'https://dexscreener.com/solana/testpair');
+    assert.equal(rows[0].last_dex_id, 'raydium');
     assert.equal(rows[0].last_image_url, 'https://example.com/token.png');
     assert.equal(rows[0].last_twitter_url, 'https://x.com/wsol');
     assert.equal(rows[0].last_community_url, 'https://coincommunities.org/communities/wsol');
@@ -543,8 +545,12 @@ describe('Catalog routes', () => {
         lastError: null,
         lastSnapshotAt: '2026-04-05T22:00:00.000Z',
         baselineTvl1h: 21000,
+        baselineTvl4h: 16800,
         baselineTvl6h: 14000,
         baselineTvl24h: 7000,
+        volume1h: 1500,
+        volume4h: 3600,
+        volume24h: 9000,
       }];
     };
 
@@ -562,6 +568,10 @@ describe('Catalog routes', () => {
       assert.equal(res.body.items[0].poolCount, 2);
       assert.equal(res.body.items[0].noPool, false);
       assert.equal(res.body.items[0].change1h, 100);
+      assert.equal(res.body.items[0].change4h, 150);
+      assert.equal(res.body.items[0].volume1h, 1500);
+      assert.equal(res.body.items[0].volume4h, 3600);
+      assert.equal(res.body.items[0].volume24h, 9000);
     } finally {
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }
@@ -589,6 +599,7 @@ describe('Catalog routes', () => {
       lastError: null,
       lastSnapshotAt: '2026-04-05T18:00:00.000Z',
       baselineTvl1h: null,
+      baselineTvl4h: null,
       baselineTvl6h: null,
       baselineTvl24h: null,
     });

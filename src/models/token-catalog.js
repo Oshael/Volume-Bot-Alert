@@ -84,6 +84,7 @@ const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
    tc.last_token_created_at_ms,
    tc.last_pair_address,
    tc.last_pair_url,
+   tc.last_dex_id,
    tc.last_image_url,
    tc.last_twitter_url,
    tc.last_community_url,
@@ -115,6 +116,7 @@ const DASHBOARD_MONITORED_LEAN_SELECT_SQL = `SELECT
    tc.eligible_for_monitoring,
    tc.last_mcap,
    tc.last_price,
+   tc.last_liquidity_usd,
    tc.last_vol_5m,
    tc.last_vol_1h,
    tc.last_vol_6h,
@@ -125,6 +127,7 @@ const DASHBOARD_MONITORED_LEAN_SELECT_SQL = `SELECT
    tc.last_token_created_at_ms,
    tc.last_pair_address,
    tc.last_pair_url,
+   tc.last_dex_id,
    tc.last_image_url,
    tc.last_twitter_url,
    tc.last_community_url,
@@ -256,6 +259,7 @@ async function upsertToken(token) {
   const name = normalizeText(token.name, 160);
   const lastPairAddress = isValidAddress(String(token.pairAddress || '').trim()) ? String(token.pairAddress).trim() : null;
   const lastPairUrl = sanitizeHttpUrl(token.pairUrl);
+  const lastDexId = normalizeText(token.dexId, 64);
   const lastImageUrl = sanitizeAssetUrl(token.imageUrl);
   const socialLinks = normalizeSocialLinkFields(token);
   const lastTwitterUrl = socialLinks.twitterUrl;
@@ -285,6 +289,7 @@ async function upsertToken(token) {
        last_price_change_1h, last_price_change_6h, last_price_change_24h,
        last_liquidity_usd, last_txns_1h_buys, last_txns_1h_sells, last_txns_24h_buys, last_txns_24h_sells,
        last_token_created_at_ms, migration_grace_until,
+       last_dex_id,
        is_active_monitor_candidate
      )
      VALUES (
@@ -292,6 +297,7 @@ async function upsertToken(token) {
        $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
        $16, $17, $18, $19, $20,
        $21, $22,
+       $26,
        CASE
          WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $24)
            THEN FALSE
@@ -308,6 +314,7 @@ async function upsertToken(token) {
        last_price = COALESCE(EXCLUDED.last_price, token_catalog.last_price),
        last_pair_address = COALESCE(EXCLUDED.last_pair_address, token_catalog.last_pair_address),
        last_pair_url = COALESCE(EXCLUDED.last_pair_url, token_catalog.last_pair_url),
+       last_dex_id = COALESCE(EXCLUDED.last_dex_id, token_catalog.last_dex_id),
        last_image_url = COALESCE(EXCLUDED.last_image_url, token_catalog.last_image_url),
        last_twitter_url = COALESCE(EXCLUDED.last_twitter_url, token_catalog.last_twitter_url),
        last_community_url = COALESCE(EXCLUDED.last_community_url, token_catalog.last_community_url),
@@ -367,6 +374,7 @@ async function upsertToken(token) {
       isActiveMonitorCandidate,
       address,
       isPumpfunMigrated,
+      lastDexId,
     ]
   );
 
@@ -1406,6 +1414,7 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
        tc.last_token_created_at_ms,
        tc.last_pair_address,
        tc.last_pair_url,
+       tc.last_dex_id,
        tc.last_image_url,
        tc.last_twitter_url,
        tc.last_community_url,
@@ -1490,6 +1499,7 @@ async function listDashboardMetadataByAddresses(addresses) {
        tc.name,
        tc.last_pair_address,
        tc.last_pair_url,
+       tc.last_dex_id,
        tc.last_image_url,
        tc.last_twitter_url,
        tc.last_community_url,
@@ -1704,6 +1714,7 @@ async function applyEvaluationResult(address, result) {
   const name = toNullableText(result.name, 160);
   const pairAddress = isValidAddress(String(result.pairAddress || '').trim()) ? String(result.pairAddress).trim() : null;
   const pairUrl = sanitizeHttpUrl(result.pairUrl);
+  const dexId = toNullableText(result.dexId, 64);
   const imageUrl = sanitizeAssetUrl(result.imageUrl);
   const socialLinks = normalizeSocialLinkFields(result);
   const twitterUrl = socialLinks.twitterUrl;
@@ -1742,6 +1753,7 @@ async function applyEvaluationResult(address, result) {
          name = COALESCE($9, name),
          last_pair_address = COALESCE($10, last_pair_address),
          last_pair_url = COALESCE($11, last_pair_url),
+         last_dex_id = COALESCE($31, last_dex_id),
          last_image_url = COALESCE($12, last_image_url),
          last_twitter_url = COALESCE($13, last_twitter_url),
          last_community_url = COALESCE($14, last_community_url),
@@ -1762,7 +1774,7 @@ async function applyEvaluationResult(address, result) {
          last_txns_24h_sells = COALESCE($29, last_txns_24h_sells),
          last_token_created_at_ms = COALESCE($30, last_token_created_at_ms),
          metadata_updated_at = CASE
-           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $16 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL OR $21 IS NOT NULL OR $22 IS NOT NULL OR $23 IS NOT NULL OR $24 IS NOT NULL OR $25 IS NOT NULL OR $26 IS NOT NULL OR $27 IS NOT NULL OR $28 IS NOT NULL OR $29 IS NOT NULL OR $30 IS NOT NULL
+           WHEN $8 IS NOT NULL OR $9 IS NOT NULL OR $10 IS NOT NULL OR $11 IS NOT NULL OR $12 IS NOT NULL OR $13 IS NOT NULL OR $14 IS NOT NULL OR $15 IS NOT NULL OR $16 IS NOT NULL OR $18 IS NOT NULL OR $19 IS NOT NULL OR $20 IS NOT NULL OR $21 IS NOT NULL OR $22 IS NOT NULL OR $23 IS NOT NULL OR $24 IS NOT NULL OR $25 IS NOT NULL OR $26 IS NOT NULL OR $27 IS NOT NULL OR $28 IS NOT NULL OR $29 IS NOT NULL OR $30 IS NOT NULL OR $31 IS NOT NULL
            THEN NOW()
            ELSE metadata_updated_at
          END
@@ -1805,6 +1817,7 @@ async function applyEvaluationResult(address, result) {
       lastTxns24hBuys,
       lastTxns24hSells,
       lastTokenCreatedAtMs,
+      dexId,
     ]
   );
 

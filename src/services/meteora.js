@@ -45,6 +45,11 @@ function markChunkError(errorsByAddress, chunk, message) {
   }
 }
 
+function toPositiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
 function collectChunkResults(chunk, allPairs, results) {
   for (const address of chunk) {
     const relevant = allPairs.filter((pair) => {
@@ -57,12 +62,18 @@ function collectChunkResults(chunk, allPairs, results) {
     }
 
     let totalTvl = 0;
+    let volume1h = 0;
+    let volume4h = 0;
+    let volume24h = 0;
     let bestPool = null;
     let bestTvl = 0;
 
     for (const pair of relevant) {
       const tvl = Number(pair?.tvl) || 0;
       totalTvl += tvl;
+      volume1h += toPositiveNumber(pair?.volume?.['1h']);
+      volume4h += toPositiveNumber(pair?.volume?.['4h']);
+      volume24h += toPositiveNumber(pair?.volume?.['24h']);
       if (tvl > bestTvl) {
         bestTvl = tvl;
         bestPool = typeof pair?.address === 'string' ? pair.address : null;
@@ -71,6 +82,9 @@ function collectChunkResults(chunk, allPairs, results) {
 
     results[address] = {
       tvl: totalTvl,
+      volume1h,
+      volume4h,
+      volume24h,
       poolAddress: bestPool,
       poolCount: relevant.length,
       source: 'meteora',

@@ -10,6 +10,8 @@ const STATEMENTS = [
   `ALTER TABLE token_meteora_state
      ADD COLUMN IF NOT EXISTS baseline_tvl_1h NUMERIC(20, 2)`,
   `ALTER TABLE token_meteora_state
+     ADD COLUMN IF NOT EXISTS baseline_tvl_4h NUMERIC(20, 2)`,
+  `ALTER TABLE token_meteora_state
      ADD COLUMN IF NOT EXISTS baseline_tvl_6h NUMERIC(20, 2)`,
   `ALTER TABLE token_meteora_state
      ADD COLUMN IF NOT EXISTS baseline_tvl_24h NUMERIC(20, 2)`,
@@ -24,6 +26,7 @@ async function init(options = {}) {
     console.log('Stage 37 Meteora state baseline fields created successfully');
     console.log('   - token_meteora_state.last_snapshot_at');
     console.log('   - token_meteora_state.baseline_tvl_1h');
+    console.log('   - token_meteora_state.baseline_tvl_4h');
     console.log('   - token_meteora_state.baseline_tvl_6h');
     console.log('   - token_meteora_state.baseline_tvl_24h');
   } catch (err) {

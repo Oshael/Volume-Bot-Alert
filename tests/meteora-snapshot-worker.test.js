@@ -190,7 +190,14 @@ describe('Meteora snapshot worker scheduling', () => {
     };
     meteora.fetchMeteoraBulk = async () => ({
       results: {
-        So11111111111111111111111111111111111111112: { tvl: 32000, poolAddress: 'pool_test_123', poolCount: 2 },
+        So11111111111111111111111111111111111111112: {
+          tvl: 32000,
+          poolAddress: 'pool_test_123',
+          poolCount: 2,
+          volume1h: 9000,
+          volume4h: 19000,
+          volume24h: 45000,
+        },
       },
       checkedAddresses: [
         'So11111111111111111111111111111111111111112',
@@ -217,6 +224,7 @@ describe('Meteora snapshot worker scheduling', () => {
       return [{
         token_address: 'So11111111111111111111111111111111111111112',
         baseline_tvl_1h: '22000',
+        baseline_tvl_4h: '20000',
         baseline_tvl_6h: '18000',
         baseline_tvl_24h: '14000',
       }];
@@ -257,13 +265,19 @@ describe('Meteora snapshot worker scheduling', () => {
       assert.equal(upserts[0].hasPool, true);
       assert.equal(upserts[0].lastSnapshotAt, inserted[0].ts);
       assert.equal(upserts[0].baselineTvl1h, '22000');
+      assert.equal(upserts[0].baselineTvl4h, '20000');
       assert.equal(upserts[0].baselineTvl6h, '18000');
       assert.equal(upserts[0].baselineTvl24h, '14000');
+      assert.equal(upserts[0].volume1h, 9000);
+      assert.equal(upserts[0].volume4h, 19000);
+      assert.equal(upserts[0].volume24h, 45000);
       assert.equal(upserts[1].tokenAddress, '11111111111111111111111111111111');
       assert.equal(upserts[1].hasPool, false);
       assert.equal(upserts[1].currentTvl, null);
       assert.equal(upserts[1].lastSnapshotAt, null);
       assert.equal(upserts[1].baselineTvl1h, null);
+      assert.equal(upserts[1].baselineTvl4h, null);
+      assert.equal(upserts[1].volume1h, null);
       assert.equal(recordedErrors.length, 1);
       assert.deepEqual(recordedErrors[0], ['34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb', 'HTTP 503']);
       assert.deepEqual(markedArgs[0], [

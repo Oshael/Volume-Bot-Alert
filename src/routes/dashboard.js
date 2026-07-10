@@ -46,6 +46,11 @@ function toTimestampMsOrNull(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function toTextOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  return String(value);
+}
+
 function parseOptionalEventId(value, name) {
   if (value === undefined || value === null || String(value).trim() === '') {
     return { ok: true, value: undefined };
@@ -360,8 +365,12 @@ function buildMeteoraSummary(address, summaryRow) {
       lastCheckedAt: null,
       lastSnapshotAt: null,
       change1h: null,
+      change4h: null,
       change6h: null,
       change24h: null,
+      volume1h: null,
+      volume4h: null,
+      volume24h: null,
       noPool: true,
     };
   }
@@ -376,8 +385,12 @@ function buildMeteoraSummary(address, summaryRow) {
     lastCheckedAt: summaryRow.lastCheckedAt || null,
     lastSnapshotAt: summaryRow.lastSnapshotAt || null,
     change1h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl1h) : null,
+    change4h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl4h) : null,
     change6h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl6h) : null,
     change24h: hasPool ? computePctChange(summaryRow.currentTvl, summaryRow.baselineTvl24h) : null,
+    volume1h: hasPool ? summaryRow.volume1h : null,
+    volume4h: hasPool ? summaryRow.volume4h : null,
+    volume24h: hasPool ? summaryRow.volume24h : null,
     noPool: !hasPool,
   };
 }
@@ -422,6 +435,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     name: item.name || null,
     pairAddress: item.last_pair_address || null,
     pairUrl: item.last_pair_url || null,
+    pairDexId: toTextOrNull(item.last_dex_id),
     imageUrl: item.last_image_url || null,
     twitterUrl: socialLinks.twitterUrl,
     communityUrl: socialLinks.communityUrl,
@@ -429,6 +443,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     monitorPriority: item.monitor_priority || 'dormant',
     mcap: toNumberOrNull(item.last_mcap),
     priceUsd: toNumberOrNull(item.last_price),
+    liquidityUsd: toNumberOrNull(item.last_liquidity_usd),
     volume5m: toNumberOrNull(item.last_vol_5m),
     volume1h: toNumberOrNull(item.last_vol_1h),
     volume6h: toNumberOrNull(item.last_vol_6h),

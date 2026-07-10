@@ -139,6 +139,7 @@ async function listBaselineTvlsByAddresses(addresses, anchorTs, runner = db) {
      SELECT
        requested.token_address,
        before_1h.total_tvl AS baseline_tvl_1h,
+       before_4h.total_tvl AS baseline_tvl_4h,
        before_6h.total_tvl AS baseline_tvl_6h,
        before_24h.total_tvl AS baseline_tvl_24h
      FROM requested
@@ -149,6 +150,7 @@ async function listBaselineTvlsByAddresses(addresses, anchorTs, runner = db) {
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
          AND ts <= $2::timestamptz - INTERVAL '1 hour'
+         AND ts >= $2::timestamptz - INTERVAL '1 hour' - INTERVAL '20 minutes'
        ORDER BY ts DESC
        LIMIT 1
      ) AS before_1h ON TRUE
@@ -158,7 +160,19 @@ async function listBaselineTvlsByAddresses(addresses, anchorTs, runner = db) {
        WHERE token_address = requested.token_address
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
+         AND ts <= $2::timestamptz - INTERVAL '4 hour'
+         AND ts >= $2::timestamptz - INTERVAL '4 hour' - INTERVAL '1 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_4h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = requested.token_address
+         AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts <= $2::timestamptz - INTERVAL '6 hour'
+         AND ts >= $2::timestamptz - INTERVAL '6 hour' - INTERVAL '1 hour'
        ORDER BY ts DESC
        LIMIT 1
      ) AS before_6h ON TRUE
@@ -169,6 +183,7 @@ async function listBaselineTvlsByAddresses(addresses, anchorTs, runner = db) {
          AND total_tvl IS NOT NULL
          AND total_tvl > 0
          AND ts <= $2::timestamptz - INTERVAL '24 hour'
+         AND ts >= $2::timestamptz - INTERVAL '24 hour' - INTERVAL '3 hour'
        ORDER BY ts DESC
        LIMIT 1
      ) AS before_24h ON TRUE
@@ -204,6 +219,7 @@ async function listLatestSummaryByAddresses(addresses) {
        latest.best_pool_address,
        latest.pool_count,
        COALESCE(before_1h.total_tvl, after_1h.total_tvl) AS baseline_tvl_1h,
+       COALESCE(before_4h.total_tvl, after_4h.total_tvl) AS baseline_tvl_4h,
        COALESCE(before_6h.total_tvl, after_6h.total_tvl) AS baseline_tvl_6h,
        COALESCE(before_24h.total_tvl, after_24h.total_tvl) AS baseline_tvl_24h
      FROM latest
@@ -212,7 +228,9 @@ async function listLatestSummaryByAddresses(addresses) {
        FROM token_meteora_snapshots
        WHERE token_address = latest.token_address
          AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts <= latest.current_ts - INTERVAL '1 hour'
+         AND ts >= latest.current_ts - INTERVAL '1 hour' - INTERVAL '20 minutes'
        ORDER BY ts DESC
        LIMIT 1
      ) AS before_1h ON TRUE
@@ -221,7 +239,9 @@ async function listLatestSummaryByAddresses(addresses) {
        FROM token_meteora_snapshots
        WHERE token_address = latest.token_address
          AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts > latest.current_ts - INTERVAL '1 hour'
+         AND ts <= latest.current_ts - INTERVAL '1 hour' + INTERVAL '20 minutes'
        ORDER BY ts ASC
        LIMIT 1
      ) AS after_1h ON TRUE
@@ -230,7 +250,31 @@ async function listLatestSummaryByAddresses(addresses) {
        FROM token_meteora_snapshots
        WHERE token_address = latest.token_address
          AND total_tvl IS NOT NULL
+         AND total_tvl > 0
+         AND ts <= latest.current_ts - INTERVAL '4 hour'
+         AND ts >= latest.current_ts - INTERVAL '4 hour' - INTERVAL '1 hour'
+       ORDER BY ts DESC
+       LIMIT 1
+     ) AS before_4h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND total_tvl > 0
+         AND ts > latest.current_ts - INTERVAL '4 hour'
+         AND ts <= latest.current_ts - INTERVAL '4 hour' + INTERVAL '1 hour'
+       ORDER BY ts ASC
+       LIMIT 1
+     ) AS after_4h ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT total_tvl
+       FROM token_meteora_snapshots
+       WHERE token_address = latest.token_address
+         AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts <= latest.current_ts - INTERVAL '6 hour'
+         AND ts >= latest.current_ts - INTERVAL '6 hour' - INTERVAL '1 hour'
        ORDER BY ts DESC
        LIMIT 1
      ) AS before_6h ON TRUE
@@ -239,7 +283,9 @@ async function listLatestSummaryByAddresses(addresses) {
        FROM token_meteora_snapshots
        WHERE token_address = latest.token_address
          AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts > latest.current_ts - INTERVAL '6 hour'
+         AND ts <= latest.current_ts - INTERVAL '6 hour' + INTERVAL '1 hour'
        ORDER BY ts ASC
        LIMIT 1
      ) AS after_6h ON TRUE
@@ -248,7 +294,9 @@ async function listLatestSummaryByAddresses(addresses) {
        FROM token_meteora_snapshots
        WHERE token_address = latest.token_address
          AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts <= latest.current_ts - INTERVAL '24 hour'
+         AND ts >= latest.current_ts - INTERVAL '24 hour' - INTERVAL '3 hour'
        ORDER BY ts DESC
        LIMIT 1
      ) AS before_24h ON TRUE
@@ -257,7 +305,9 @@ async function listLatestSummaryByAddresses(addresses) {
        FROM token_meteora_snapshots
        WHERE token_address = latest.token_address
          AND total_tvl IS NOT NULL
+         AND total_tvl > 0
          AND ts > latest.current_ts - INTERVAL '24 hour'
+         AND ts <= latest.current_ts - INTERVAL '24 hour' + INTERVAL '3 hour'
        ORDER BY ts ASC
        LIMIT 1
      ) AS after_24h ON TRUE

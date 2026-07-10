@@ -1260,6 +1260,7 @@ describe('catalog worker drift compensation', () => {
       applyCalls += 1;
       if (applyCalls <= 2) {
         assert.equal(payload.vol5m, 120000);
+        assert.equal(payload.dexId, 'meteora');
         return updatedToken;
       }
 

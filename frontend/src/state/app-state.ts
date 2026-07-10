@@ -116,6 +116,7 @@ export interface ManualTokenEntry {
   address: string;
   mintAddress?: string | null;
   pairAddress?: string | null;
+  pairDexId?: string | null;
   label?: string | null;
   symbol?: string | null;
   name?: string | null;
@@ -129,6 +130,7 @@ export interface ManualTokenEntry {
   catalogFirstSeenAt?: number | null;
   mcap?: number | null;
   priceUsd?: number | null;
+  liquidityUsd?: number | null;
   volume5m?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;
@@ -230,8 +232,12 @@ export interface MeteoraEntry {
   lastCheckedAt?: string | null;
   lastSnapshotAt?: string | null;
   change1h?: number | null;
+  change4h?: number | null;
   change6h?: number | null;
   change24h?: number | null;
+  volume1h?: number | null;
+  volume4h?: number | null;
+  volume24h?: number | null;
   history?: MeteoraTvlPoint[];
 }
 
@@ -244,8 +250,12 @@ export interface ManualTokenMeteoraEntry {
   lastCheckedAt?: string | null;
   lastSnapshotAt?: string | null;
   change1h?: number | null;
+  change4h?: number | null;
   change6h?: number | null;
   change24h?: number | null;
+  volume1h?: number | null;
+  volume4h?: number | null;
+  volume24h?: number | null;
 }
 
 export interface TokenSparklineCandleEntry {

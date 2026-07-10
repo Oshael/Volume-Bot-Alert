@@ -160,6 +160,7 @@ const SCHEMA_GROUPS = [
           'last_price',
           'last_pair_address',
           'last_pair_url',
+          'last_dex_id',
           'last_image_url',
           'last_twitter_url',
           'is_active_monitor_candidate',
@@ -327,6 +328,7 @@ const SCHEMA_GROUPS = [
         table: 'token_catalog',
         columns: [
           'last_liquidity_usd',
+          'last_dex_id',
           'last_txns_1h_buys',
           'last_txns_1h_sells',
           'last_txns_24h_buys',
@@ -525,6 +527,9 @@ const SCHEMA_GROUPS = [
           'pool_count',
           'last_error',
           'source',
+          'volume_1h',
+          'volume_4h',
+          'volume_24h',
           'updated_at',
         ],
       },
@@ -819,6 +824,7 @@ const SCHEMA_GROUPS = [
         columns: [
           'last_snapshot_at',
           'baseline_tvl_1h',
+          'baseline_tvl_4h',
           'baseline_tvl_6h',
           'baseline_tvl_24h',
         ],

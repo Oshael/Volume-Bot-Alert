@@ -14,6 +14,7 @@ const TABLES = `
     last_price                NUMERIC(20, 12),
     last_pair_address         VARCHAR(128),
     last_pair_url             TEXT,
+    last_dex_id               VARCHAR(64),
     last_image_url            TEXT,
     last_twitter_url          TEXT,
     last_community_url        TEXT,

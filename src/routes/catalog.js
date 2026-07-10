@@ -551,8 +551,12 @@ function buildMeteoraSummary(address, summaryRow) {
       lastCheckedAt: null,
       lastSnapshotAt: null,
       change1h: null,
+      change4h: null,
       change6h: null,
       change24h: null,
+      volume1h: null,
+      volume4h: null,
+      volume24h: null,
       noPool: true,
     };
   }
@@ -567,8 +571,12 @@ function buildMeteoraSummary(address, summaryRow) {
     lastCheckedAt: summaryRow.lastCheckedAt || null,
     lastSnapshotAt: summaryRow.lastSnapshotAt || null,
     change1h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl1h) : null,
+    change4h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl4h) : null,
     change6h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl6h) : null,
     change24h: hasPool ? computePctChange(latestTvl, summaryRow.baselineTvl24h) : null,
+    volume1h: hasPool ? summaryRow.volume1h : null,
+    volume4h: hasPool ? summaryRow.volume4h : null,
+    volume24h: hasPool ? summaryRow.volume24h : null,
     noPool: !hasPool,
   };
 }
@@ -597,6 +605,7 @@ function buildMonitoredMetadataPayload(
     name: item.name || null,
     pairAddress: item.last_pair_address || null,
     pairUrl: item.last_pair_url || null,
+    pairDexId: normalizeText(item.last_dex_id, 64),
     imageUrl: item.last_image_url || null,
     twitterUrl: socialLinks.twitterUrl,
     communityUrl: socialLinks.communityUrl,
@@ -604,6 +613,7 @@ function buildMonitoredMetadataPayload(
     monitorPriority: item.monitor_priority || 'dormant',
     mcap: toNumber(item.last_mcap),
     priceUsd: toNumber(item.last_price),
+    liquidityUsd: toNumber(item.last_liquidity_usd),
     volume5m: toNumber(item.last_vol_5m),
     volume1h: toNumber(item.last_vol_1h),
     volume6h: toNumber(item.last_vol_6h),
@@ -635,6 +645,10 @@ async function loadTickerPeerSummariesSafe(items = []) {
 
 function getMarketCap(pair) {
   return dexscreener.resolveOperationalMarketCap(pair) || 0;
+}
+
+function getPairDexId(pair) {
+  return normalizeText(pair?.dexId, 64);
 }
 
 function getRetryKey(userId, address, source) {
@@ -1148,6 +1162,7 @@ async function buildValidatedPromotion(user, body = {}) {
 
   clearTransientRetry(user.id, address, source);
   const socialLinks = extractDexSocialLinks(bestPair);
+  const pairDexId = getPairDexId(bestPair);
 
   return {
     status: 200,
@@ -1165,6 +1180,7 @@ async function buildValidatedPromotion(user, body = {}) {
       tokenCreatedAt: toNumber(bestPair?.pairCreatedAt),
       pairAddress: bestPair.pairAddress || requested.pairAddress,
       pairUrl: bestPair.url || requested.pairUrl,
+      dexId: pairDexId,
       imageUrl: bestPair.info?.imageUrl || requested.imageUrl,
       twitterUrl: socialLinks.twitterUrl || requested.twitterUrl,
       communityUrl: socialLinks.communityUrl || requested.communityUrl,

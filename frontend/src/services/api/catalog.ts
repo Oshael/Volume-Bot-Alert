@@ -71,6 +71,7 @@ export interface DashboardMonitoredToken {
   name?: string | null;
   pairAddress?: string | null;
   pairUrl?: string | null;
+  pairDexId?: string | null;
   imageUrl?: string | null;
   twitterUrl?: string | null;
   communityUrl?: string | null;
@@ -78,6 +79,7 @@ export interface DashboardMonitoredToken {
   monitorPriority?: string | null;
   mcap?: number | null;
   priceUsd?: number | null;
+  liquidityUsd?: number | null;
   volume5m?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;
@@ -558,8 +560,12 @@ export interface MeteoraBatchItem {
   lastCheckedAt?: string | null;
   lastSnapshotAt?: string | null;
   change1h?: number | null;
+  change4h?: number | null;
   change6h?: number | null;
   change24h?: number | null;
+  volume1h?: number | null;
+  volume4h?: number | null;
+  volume24h?: number | null;
   noPool?: boolean;
 }
 

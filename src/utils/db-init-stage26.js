@@ -5,6 +5,7 @@
 const db = require('../models/db');
 
 const STATEMENTS = [
+  `ALTER TABLE token_catalog ADD COLUMN IF NOT EXISTS last_dex_id VARCHAR(64)`,
   `ALTER TABLE token_catalog ADD COLUMN IF NOT EXISTS last_liquidity_usd NUMERIC(20, 2)`,
   `ALTER TABLE token_catalog ADD COLUMN IF NOT EXISTS last_txns_1h_buys INTEGER`,
   `ALTER TABLE token_catalog ADD COLUMN IF NOT EXISTS last_txns_1h_sells INTEGER`,

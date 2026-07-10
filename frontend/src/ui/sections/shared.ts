@@ -1683,7 +1683,7 @@ function renderTokenTableShell(options: {
             <th class="num-col">PChg 1H</th>
             <th class="num-col">PChg 6H</th>
             <th class="num-col">PChg 24H</th>
-            <th class="num-col">Meteora</th>
+            <th class="num-col">Total Liq</th>
             <th class="action-col"></th>
           </tr>
         </thead>
@@ -2358,7 +2358,7 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
       <td class="num-col">${renderPctSpan(item.priceChange1h)}</td>
       <td class="num-col">${renderPctSpan(item.priceChange6h)}</td>
       <td class="num-col">${renderPctSpan(item.priceChange24h)}</td>
-      <td class="num-col meteora-col">${renderMeteoraCell(item.address, meteoraByAddress[item.address], meteoraMinPool)}</td>
+      <td class="num-col">${renderTotalLiquidityCell(item, meteoraByAddress[item.address], meteoraMinPool)}</td>
       <td class="action-col">${actionButton}</td>
     </tr>
   `;
@@ -2371,15 +2371,15 @@ function buildXSearchUrl(symbol: string, address: string) {
 }
 
 const METEORA_TVL_HISTORY_1H = 3600000;
-const METEORA_TVL_HISTORY_6H = 21600000;
+const METEORA_TVL_HISTORY_4H = 14400000;
 const METEORA_TVL_HISTORY_24H = 86400000;
 
 function getMeteoraTvlChange(entry: MeteoraEntry, windowMs: number) {
   if (windowMs === METEORA_TVL_HISTORY_1H && entry.change1h != null) {
     return entry.change1h;
   }
-  if (windowMs === METEORA_TVL_HISTORY_6H && entry.change6h != null) {
-    return entry.change6h;
+  if (windowMs === METEORA_TVL_HISTORY_4H && entry.change4h != null) {
+    return entry.change4h;
   }
   if (windowMs === METEORA_TVL_HISTORY_24H && entry.change24h != null) {
     return entry.change24h;
@@ -2428,7 +2428,7 @@ export function renderMeteoraCell(address: string, entry: MeteoraEntry | undefin
   }
 
   const ch1h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_1H);
-  const ch6h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_6H);
+  const ch4h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_4H);
   const ch24h = getMeteoraTvlChange(entry, METEORA_TVL_HISTORY_24H);
   const poolLabel = escapeHtml((entry.poolCount || 0) > 1 ? `${entry.poolCount} pools` : '1 pool');
 
@@ -2438,8 +2438,163 @@ export function renderMeteoraCell(address: string, entry: MeteoraEntry | undefin
       <div class="met-tip-dd">
         <div class="meteora-tip-head"><span>🌊 Meteora TVL</span><span>${poolLabel}</span></div>
         ${renderMeteoraDelta('1H', ch1h)}
-        ${renderMeteoraDelta('6H', ch6h)}
+        ${renderMeteoraDelta('4H', ch4h)}
         ${renderMeteoraDelta('24H', ch24h)}
+      </div>
+    </div>
+  `;
+}
+
+function normalizePoolAddress(value?: string | null) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getPositiveNumber(value?: number | null) {
+  return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function getNonNegativeNumber(value?: number | null) {
+  return value != null && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function hasVisibleMeteoraPool(entry: MeteoraEntry | undefined, minPool: number) {
+  return Boolean(entry && !entry.noPool && getPositiveNumber(entry.tvl) != null && !(minPool > 0 && Number(entry.tvl) < minPool));
+}
+
+function getVisibleMeteoraTvl(entry: MeteoraEntry | undefined, minPool: number) {
+  if (!hasVisibleMeteoraPool(entry, minPool)) {
+    return null;
+  }
+  return getPositiveNumber(entry?.tvl);
+}
+
+function getTotalLiquidityValue(item: ManualTokenEntry, entry: MeteoraEntry | undefined, minPool: number) {
+  const dexLiquidity = getPositiveNumber(item.liquidityUsd);
+  const meteoraTvl = getVisibleMeteoraTvl(entry, minPool);
+
+  if (dexLiquidity != null && meteoraTvl != null) {
+    const dexPairAddress = normalizePoolAddress(item.pairAddress);
+    const meteoraPoolAddress = normalizePoolAddress(entry?.poolAddress);
+    return dexPairAddress && dexPairAddress === meteoraPoolAddress
+      ? Math.max(dexLiquidity, meteoraTvl)
+      : dexLiquidity + meteoraTvl;
+  }
+
+  return dexLiquidity ?? meteoraTvl;
+}
+
+function renderLiquidityTipLine(label: string, value: string, valueClass = '') {
+  const classAttr = valueClass ? ` class="${escapeHtml(valueClass)}"` : '';
+  return `<div class="meteora-tip-line"><span>${escapeHtml(label)}</span><span${classAttr}>${escapeHtml(value)}</span></div>`;
+}
+
+function renderMeteoraChangeValue(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return '<span class="muted">-</span>';
+  }
+  const cls = value >= 0 ? 'pct-pos' : 'pct-neg';
+  return `<span class="${cls}">${value >= 0 ? '+' : ''}${value.toFixed(1)}%</span>`;
+}
+
+function renderMeteoraVolumeValue(value?: number | null) {
+  const volume = getNonNegativeNumber(value);
+  return volume != null ? escapeHtml(fmtMoney(volume)) : '<span class="muted">-</span>';
+}
+
+function renderMoneyTipLine(label: string, value?: number | null, valueClass = '') {
+  return renderLiquidityTipLine(label, value != null ? fmtMoney(value) : '-', valueClass);
+}
+
+function getMeteoraPoolLabel(entry: MeteoraEntry | undefined, hasMeteora: boolean) {
+  if (!hasMeteora) return 'no Meteora pool';
+  const poolCount = Number(entry?.poolCount) || 0;
+  return poolCount > 1 ? `${poolCount} pools` : '1 pool';
+}
+
+function getMeteoraTooltipDelta(entry: MeteoraEntry | undefined, hasMeteora: boolean, windowMs: number) {
+  if (!hasMeteora || !entry) return null;
+  return getMeteoraTvlChange(entry, windowMs);
+}
+
+function getMeteoraTooltipVolume(
+  entry: MeteoraEntry | undefined,
+  hasMeteora: boolean,
+  key: 'volume1h' | 'volume4h' | 'volume24h',
+) {
+  if (!hasMeteora || !entry) return null;
+  return entry[key];
+}
+
+function renderMeteoraMetricHeader() {
+  return `
+    <div class="meteora-tip-metric-head">
+      <span></span>
+      <span>Pool Chg</span>
+      <span>Vol</span>
+    </div>
+  `;
+}
+
+function renderMeteoraMetricLine(label: string, change?: number | null, volume?: number | null) {
+  return `
+    <div class="meteora-tip-metric-line">
+      <span>${escapeHtml(label)}</span>
+      <span>${renderMeteoraChangeValue(change)}</span>
+      <span>${renderMeteoraVolumeValue(volume)}</span>
+    </div>
+  `;
+}
+
+function formatPairDexSource(value?: string | null) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'DEX pair';
+  if (normalized === 'pumpswap') return 'PumpSwap';
+  if (normalized === 'pumpfun') return 'Pump.fun';
+  if (normalized === 'raydium') return 'Raydium';
+  if (normalized === 'meteora') return 'Meteora';
+  return normalized
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function renderTotalLiquidityTooltip(
+  item: ManualTokenEntry,
+  entry: MeteoraEntry | undefined,
+  hasMeteora: boolean,
+  dexLiquidity?: number | null,
+  meteoraTvl?: number | null,
+) {
+  const tvlClass = meteoraTvl != null ? 'meteora-liq-tip-value' : '';
+  return `
+    <div class="meteora-tip-head"><span>Total Liq</span><span>${escapeHtml(getMeteoraPoolLabel(entry, hasMeteora))}</span></div>
+    ${renderMoneyTipLine(formatPairDexSource(item.pairDexId), dexLiquidity)}
+    ${renderMoneyTipLine('Meteora TVL', meteoraTvl, tvlClass)}
+    ${renderMeteoraMetricHeader()}
+    ${renderMeteoraMetricLine('MET 1H', getMeteoraTooltipDelta(entry, hasMeteora, METEORA_TVL_HISTORY_1H), getMeteoraTooltipVolume(entry, hasMeteora, 'volume1h'))}
+    ${renderMeteoraMetricLine('MET 4H', getMeteoraTooltipDelta(entry, hasMeteora, METEORA_TVL_HISTORY_4H), getMeteoraTooltipVolume(entry, hasMeteora, 'volume4h'))}
+    ${renderMeteoraMetricLine('MET 24H', getMeteoraTooltipDelta(entry, hasMeteora, METEORA_TVL_HISTORY_24H), getMeteoraTooltipVolume(entry, hasMeteora, 'volume24h'))}
+  `;
+}
+
+export function renderTotalLiquidityCell(item: ManualTokenEntry, entry: MeteoraEntry | undefined, minPool: number) {
+  const totalLiquidity = getTotalLiquidityValue(item, entry, minPool);
+  if (totalLiquidity == null) {
+    return '-';
+  }
+
+  const dexLiquidity = getPositiveNumber(item.liquidityUsd);
+  const hasMeteora = hasVisibleMeteoraPool(entry, minPool);
+  const meteoraTvl = getVisibleMeteoraTvl(entry, minPool);
+  const hasCombinedSources = dexLiquidity != null && meteoraTvl != null;
+  const valueClass = hasCombinedSources ? 'total-liq-value has-meteora' : 'total-liq-value';
+
+  return `
+    <div class="met-tip-wrap total-liq-tip-wrap">
+      <span class="${valueClass}">${escapeHtml(fmtMoney(totalLiquidity))}</span>
+      <div class="met-tip-dd total-liq-tip-dd">
+        ${renderTotalLiquidityTooltip(item, entry, hasMeteora, dexLiquidity, meteoraTvl)}
       </div>
     </div>
   `;

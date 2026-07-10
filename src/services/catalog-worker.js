@@ -300,6 +300,11 @@ function isPumpLikeToken(token, pair) {
   return source.includes('pump') || dexId.includes('pump');
 }
 
+function getPairDexId(pair) {
+  const value = String(pair?.dexId || '').trim();
+  return value || null;
+}
+
 function resolveInitialMcap(initialBucket, snapshot) {
   const candidates = [
     initialBucket?.openMcap,
@@ -1622,12 +1627,14 @@ async function evaluateTokenWithData(token, data) {
   if (isEligible) status.totalEligible++;
   else status.totalIneligible++;
 
+  const pairDexId = getPairDexId(bestPair);
+
   if (traceInitialEval) {
     logTrace('catalog_eval_result', {
       tokenAddress: token.address,
       source: token.source || null,
       result: snapshot.eligibilityState,
-      dexId: bestPair.dexId || null,
+      dexId: pairDexId,
       pairAddress: bestPair.pairAddress || null,
       marketCap,
       eligibleForMonitoring: isEligible,
@@ -1640,7 +1647,7 @@ async function evaluateTokenWithData(token, data) {
     logTrace('dashboard_eligible_first_seen', {
       tokenAddress: token.address,
       source: token.source || null,
-      dexId: bestPair.dexId || null,
+      dexId: pairDexId,
       pairAddress: bestPair.pairAddress || null,
       marketCap,
       eligibilityState: snapshot.eligibilityState,
@@ -1662,6 +1669,7 @@ async function evaluateTokenWithData(token, data) {
     name: bestPair.baseToken?.name || null,
     pairAddress: bestPair.pairAddress || null,
     pairUrl: bestPair.url || null,
+    dexId: pairDexId,
     imageUrl: bestPair.info?.imageUrl || null,
     twitterUrl: socialLinks.twitterUrl,
     communityUrl: socialLinks.communityUrl,

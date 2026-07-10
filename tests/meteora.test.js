@@ -54,6 +54,7 @@ describe('meteora service', () => {
               token_x: { address: 'So11111111111111111111111111111111111111112' },
               token_y: { address: 'USDC111111111111111111111111111111111111111' },
               tvl: 12500,
+              volume: { '1h': 300, '4h': 1200, '24h': 5000 },
               address: 'pool_test_123',
             }],
           }),
@@ -74,6 +75,9 @@ describe('meteora service', () => {
       });
 
       assert.equal(result.results.So11111111111111111111111111111111111111112.tvl, 12500);
+      assert.equal(result.results.So11111111111111111111111111111111111111112.volume1h, 300);
+      assert.equal(result.results.So11111111111111111111111111111111111111112.volume4h, 1200);
+      assert.equal(result.results.So11111111111111111111111111111111111111112.volume24h, 5000);
       assert.deepEqual(result.checkedAddresses, ['So11111111111111111111111111111111111111112']);
       assert.equal(result.errorsByAddress['34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb'], 'socket hang up');
       assert.equal(fetchCount, 4);

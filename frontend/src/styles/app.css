@@ -8520,6 +8520,18 @@ TEMP_LEGACY_BAR_TITLE {
   white-space: nowrap;
 }
 
+.total-liq-value {
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.total-liq-value.has-meteora {
+  color: #c4a6ff;
+}
+
 .met-tip-dd {
   position: absolute;
   right: 0;
@@ -8564,6 +8576,18 @@ TEMP_LEGACY_BAR_TITLE {
   text-transform: none;
 }
 
+.total-liq-tip-dd .meteora-tip-head {
+  color: #fff;
+}
+
+.total-liq-tip-dd {
+  min-width: 230px;
+}
+
+.meteora-liq-tip-value {
+  color: #c4a6ff;
+}
+
 .meteora-tip-line {
   display: flex;
   align-items: center;
@@ -8575,6 +8599,37 @@ TEMP_LEGACY_BAR_TITLE {
 
 .meteora-tip-line + .meteora-tip-line {
   margin-top: 4px;
+}
+
+.meteora-tip-metric-head,
+.meteora-tip-metric-line {
+  display: grid;
+  grid-template-columns: minmax(54px, 1fr) minmax(58px, auto) minmax(58px, auto);
+  align-items: center;
+  column-gap: 10px;
+}
+
+.meteora-tip-metric-head {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.meteora-tip-metric-line {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.meteora-tip-metric-line span:nth-child(2),
+.meteora-tip-metric-line span:nth-child(3),
+.meteora-tip-metric-head span:nth-child(2),
+.meteora-tip-metric-head span:nth-child(3) {
+  justify-self: end;
 }
 
 .meteora-tip-line .muted {

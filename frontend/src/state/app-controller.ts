@@ -425,6 +425,7 @@ type AuthRouteIntent = {
 const TRACKED_MARKET_FIELD_KEYS = [
   'mcap',
   'priceUsd',
+  'liquidityUsd',
   'volume5m',
   'volume1h',
   'volume6h',
@@ -885,7 +886,7 @@ function getSocialLoginFailureMessage(intent: SocialIntent) {
     return `This ${providerLabel} account is not linked to a TrendScope login yet. Sign in with email and password first, then link it from User Settings.`;
   }
   if (intent.status === 'email_conflict') {
-    return 'That verified Google email already belongs to an existing TrendScope account. Sign in with its current method, then link Google from User Settings.';
+    return 'A TrendScope account already exists with this Google email, but Google sign-in is not linked to it yet. Sign in with email and password first, then link Google from User Settings.';
   }
   if (intent.status === 'provider_denied') {
     return `The ${providerLabel} sign-in request was not approved.`;
@@ -1702,6 +1703,7 @@ export function createAppController(): AppController {
       mintAddress: firstDefinedTrackedValue(existing.mintAddress, dashboard.address, base.address),
       pairAddress: selectTrackedColdField(shouldApplyColdFields, dashboard.pairAddress, existing.pairAddress, base.pairAddress),
       pairUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.pairUrl, existing.pairUrl, base.pairUrl),
+      pairDexId: selectTrackedColdField(shouldApplyColdFields, dashboard.pairDexId, existing.pairDexId, base.pairDexId),
       imageUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.imageUrl, existing.imageUrl, base.imageUrl),
       twitterUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.twitterUrl, existing.twitterUrl, base.twitterUrl),
       communityUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.communityUrl, existing.communityUrl, base.communityUrl),
@@ -9507,8 +9509,12 @@ export function createAppController(): AppController {
       lastCheckedAt: toNullableTrackedValue(meteora.lastCheckedAt),
       lastSnapshotAt: toNullableTrackedValue(meteora.lastSnapshotAt),
       change1h: toNullableTrackedValue(meteora.change1h),
+      change4h: toNullableTrackedValue(meteora.change4h),
       change6h: toNullableTrackedValue(meteora.change6h),
       change24h: toNullableTrackedValue(meteora.change24h),
+      volume1h: toNullableTrackedValue(meteora.volume1h),
+      volume4h: toNullableTrackedValue(meteora.volume4h),
+      volume24h: toNullableTrackedValue(meteora.volume24h),
       noPool: meteora.noPool ?? false,
     };
   }
@@ -9525,11 +9531,13 @@ export function createAppController(): AppController {
       name: toNullableTrackedValue(item.name),
       pairAddress: toNullableTrackedValue(item.pairAddress),
       pairUrl: toNullableTrackedValue(item.pairUrl),
+      pairDexId: toNullableTrackedValue(item.pairDexId),
       imageUrl: toNullableTrackedValue(item.imageUrl),
       twitterUrl: toNullableTrackedValue(item.twitterUrl),
       communityUrl: toNullableTrackedValue(item.communityUrl),
       mcap: toNullableTrackedValue(item.mcap),
       priceUsd: toNullableTrackedValue(item.priceUsd),
+      liquidityUsd: toNullableTrackedValue(item.liquidityUsd),
       volume5m: toNullableTrackedValue(item.volume5m),
       volume1h: toNullableTrackedValue(item.volume1h),
       volume6h: toNullableTrackedValue(item.volume6h),
@@ -10115,40 +10123,38 @@ export function createAppController(): AppController {
     }
 
     for (const item of mergeDashboardTokenSnapshots(monitoredDashboardTokens, pinnedDashboardTokens)) {
-      if (!item?.address || !item.meteora) continue;
-      state.data.meteoraByAddress[item.address] = {
-        ...(state.data.meteoraByAddress[item.address] || {}),
-        tvl: Number(item.meteora.tvl) || 0,
-        poolAddress: item.meteora.poolAddress || null,
-        poolCount: Number(item.meteora.poolCount) || 0,
-        noPool: Boolean(item.meteora.noPool),
-        lastFetch: Date.now(),
-        lastCheckedAt: item.meteora.lastCheckedAt || null,
-        lastSnapshotAt: item.meteora.lastSnapshotAt || null,
-        change1h: item.meteora.change1h ?? null,
-        change6h: item.meteora.change6h ?? null,
-        change24h: item.meteora.change24h ?? null,
-      };
+      const meteoraItem = buildDashboardMeteoraBatchItem(item);
+      if (meteoraItem) {
+        syncMeteoraCacheEntry(item.address, meteoraItem);
+      }
     }
   }
 
   function syncMeteoraBatchCache(items: MeteoraBatchItem[] = []) {
     for (const item of items) {
       if (!item?.address) continue;
-      state.data.meteoraByAddress[item.address] = {
-        ...(state.data.meteoraByAddress[item.address] || {}),
-        tvl: Number(item.tvl) || 0,
-        poolAddress: item.poolAddress || null,
-        poolCount: Number(item.poolCount) || 0,
-        noPool: Boolean(item.noPool),
-        lastFetch: Date.now(),
-        lastCheckedAt: item.lastCheckedAt || null,
-        lastSnapshotAt: item.lastSnapshotAt || null,
-        change1h: item.change1h ?? null,
-        change6h: item.change6h ?? null,
-        change24h: item.change24h ?? null,
-      };
+      syncMeteoraCacheEntry(item.address, item);
     }
+  }
+
+  function syncMeteoraCacheEntry(address: string, item: MeteoraBatchItem) {
+    state.data.meteoraByAddress[address] = {
+      ...(state.data.meteoraByAddress[address] || {}),
+      tvl: Number(item.tvl) || 0,
+      poolAddress: item.poolAddress || null,
+      poolCount: Number(item.poolCount) || 0,
+      noPool: Boolean(item.noPool),
+      lastFetch: Date.now(),
+      lastCheckedAt: item.lastCheckedAt || null,
+      lastSnapshotAt: item.lastSnapshotAt || null,
+      change1h: item.change1h ?? null,
+      change4h: item.change4h ?? null,
+      change6h: item.change6h ?? null,
+      change24h: item.change24h ?? null,
+      volume1h: item.volume1h ?? null,
+      volume4h: item.volume4h ?? null,
+      volume24h: item.volume24h ?? null,
+    };
   }
 
   function getSupplementalMeteoraAddresses(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
@@ -10986,8 +10992,12 @@ export function createAppController(): AppController {
       lastCheckedAt: dashboardItem.meteora.lastCheckedAt ?? null,
       lastSnapshotAt: dashboardItem.meteora.lastSnapshotAt ?? null,
       change1h: dashboardItem.meteora.change1h ?? null,
+      change4h: dashboardItem.meteora.change4h ?? null,
       change6h: dashboardItem.meteora.change6h ?? null,
       change24h: dashboardItem.meteora.change24h ?? null,
+      volume1h: dashboardItem.meteora.volume1h ?? null,
+      volume4h: dashboardItem.meteora.volume4h ?? null,
+      volume24h: dashboardItem.meteora.volume24h ?? null,
       noPool: dashboardItem.meteora.noPool ?? false,
     };
   }

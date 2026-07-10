@@ -1,6 +1,6 @@
 import type { AppController } from '../../state/app-controller';
 import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
-import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderMeteoraCell, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
@@ -731,7 +731,7 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
     buildMetaMetric('VOL 1H', fmtMoney(item.volume1h)),
     buildMetaMetric('VOL 6H', fmtMoney(item.volume6h)),
     buildMetaMetric('VOL 24H', fmtMoney(item.volume24h)),
-    buildMetaMetric('METEORA', buildMonitoredMeteoraPoolValue(item)),
+    buildMetaMetric('TOTAL LIQ', buildMonitoredTotalLiquidityValue(item)),
   );
 
   const actions = document.createElement('div');
@@ -920,15 +920,15 @@ function buildMetaMetric(label: string, value: string | HTMLElement, valueClassN
   return wrapper;
 }
 
-function buildMonitoredMeteoraPoolValue(item: ManualTokenEntry) {
+function buildMonitoredTotalLiquidityValue(item: ManualTokenEntry) {
   const value = document.createElement('span');
   const meteoraEntry = normalizeMonitoredMeteoraEntry(item);
-  if (!meteoraEntry) {
+  if (!meteoraEntry && !(Number(item.liquidityUsd) > 0)) {
     value.textContent = '-';
     return value;
   }
 
-  value.innerHTML = renderMeteoraCell(item.address, meteoraEntry, 0);
+  value.innerHTML = renderTotalLiquidityCell(item, meteoraEntry, 0);
   return value;
 }
 
@@ -950,8 +950,12 @@ function normalizeMonitoredMeteoraEntry(item: ManualTokenEntry): MeteoraEntry | 
     lastCheckedAt: item.meteora.lastCheckedAt ?? null,
     lastSnapshotAt: item.meteora.lastSnapshotAt ?? null,
     change1h: item.meteora.change1h ?? null,
+    change4h: item.meteora.change4h ?? null,
     change6h: item.meteora.change6h ?? null,
     change24h: item.meteora.change24h ?? null,
+    volume1h: item.meteora.volume1h ?? null,
+    volume4h: item.meteora.volume4h ?? null,
+    volume24h: item.meteora.volume24h ?? null,
   };
 }
 
