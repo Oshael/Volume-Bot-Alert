@@ -295,6 +295,7 @@ type HistorySyncClosingMessage = {
 type HistorySyncMonitoredSnapshotMessage = {
   type: 'monitored-snapshot';
   tabId: string;
+  workspace: WorkspaceView;
   generatedAt: string | null;
   tokens: DashboardMonitoredToken[];
   ts: number;
@@ -314,6 +315,7 @@ type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBo
 type HistorySyncBootstrapSnapshotMessage = {
   type: 'history-bootstrap-snapshot';
   tabId: string;
+  workspace: WorkspaceView;
   requestPayload: HistoryBootstrapRequestPayload;
   payload: HistoryBootstrapPayload;
   ts: number;
@@ -322,13 +324,23 @@ type HistorySyncBootstrapSnapshotMessage = {
 type HistorySyncBidZoneSnapshotMessage = {
   type: 'bid-zone-snapshot';
   tabId: string;
+  workspace: WorkspaceView;
   payload: BidZonePayload;
+  ts: number;
+};
+
+type HistorySyncTopPerformersSnapshotMessage = {
+  type: 'top-performers-snapshot';
+  tabId: string;
+  workspace: WorkspaceView;
+  payload: DashboardTopPerformersPayload;
   ts: number;
 };
 
 type HistorySyncSparklineSnapshotMessage = {
   type: 'sparkline-snapshot';
   tabId: string;
+  workspace: WorkspaceView;
   payload: TokenSparklinesPayload;
   ts: number;
 };
@@ -339,6 +351,7 @@ type HistorySyncMessage =
   | HistorySyncMonitoredSnapshotMessage
   | HistorySyncBootstrapSnapshotMessage
   | HistorySyncBidZoneSnapshotMessage
+  | HistorySyncTopPerformersSnapshotMessage
   | HistorySyncSparklineSnapshotMessage;
 
 type HistoryPeerState = {
@@ -1487,9 +1500,14 @@ export function createAppController(): AppController {
     return state.session.status === 'authenticated';
   }
 
-  function isActiveHistorySyncCandidate() {
+  function isWorkspacePollingSyncWorkspace(workspace = state.ui.workspace) {
+    return workspace === 'history' || workspace === 'live';
+  }
+
+  function isActiveWorkspacePollingSyncCandidate() {
     return isAuthenticatedSession()
-      && isHistoryWorkspace()
+      && isWorkspacePollingSyncWorkspace()
+      && !isLiveWorkspaceHiddenForUiWork()
       && state.runtime.mode === 'active';
   }
 
@@ -1497,14 +1515,21 @@ export function createAppController(): AppController {
     return typeof BroadcastChannel !== 'undefined';
   }
 
-  function isHistorySyncLeader() {
-    if (!isHistoryWorkspace()) {
+  function isWorkspacePollingLeader() {
+    if (!isWorkspacePollingSyncWorkspace()) {
       return true;
     }
     if (!shouldUseHistorySyncChannel()) {
       return true;
     }
     return historySyncLeaderTabId === null || historySyncLeaderTabId === historySyncTabId;
+  }
+
+  function isHistorySyncLeader() {
+    if (!isHistoryWorkspace()) {
+      return true;
+    }
+    return isWorkspacePollingLeader();
   }
 
   function shouldRunLocalMonitoringPolling() {
@@ -1515,10 +1540,10 @@ export function createAppController(): AppController {
       return false;
     }
     if (isLiveWorkspace()) {
-      return true;
+      return isWorkspacePollingLeader();
     }
     if (isHistoryWorkspace()) {
-      return isHistorySyncLeader();
+      return isWorkspacePollingLeader();
     }
     return true;
   }
@@ -1869,11 +1894,17 @@ export function createAppController(): AppController {
     const previousLeader = historySyncLeaderTabId;
     pruneHistorySyncPeers();
 
+    if (!isWorkspacePollingSyncWorkspace()) {
+      historySyncLeaderTabId = null;
+      return;
+    }
+
+    const workspace = state.ui.workspace;
     const candidates = [historySyncTabId]
-      .filter(() => isActiveHistorySyncCandidate());
+      .filter(() => isActiveWorkspacePollingSyncCandidate());
 
     for (const [tabId, peer] of historySyncPeers) {
-      if (peer.authenticated && peer.monitoringActive && peer.workspace === 'history') {
+      if (peer.authenticated && peer.monitoringActive && peer.workspace === workspace) {
         candidates.push(tabId);
       }
     }
@@ -1882,7 +1913,7 @@ export function createAppController(): AppController {
       ? candidates.sort((a, b) => a.localeCompare(b))[0] || null
       : null;
 
-    if (state.runtime.mode === 'active' && isHistoryWorkspace() && previousLeader !== historySyncLeaderTabId) {
+    if (state.runtime.mode === 'active' && isWorkspacePollingSyncWorkspace() && previousLeader !== historySyncLeaderTabId) {
       syncMonitoringPolling({ runImmediately: Boolean(options?.runImmediatelyOnGain) && historySyncLeaderTabId === historySyncTabId });
     }
   }
@@ -1897,7 +1928,7 @@ export function createAppController(): AppController {
       tabId: historySyncTabId,
       workspace: state.ui.workspace,
       authenticated: isAuthenticatedSession(),
-      monitoringActive: state.runtime.mode === 'active',
+      monitoringActive: isActiveWorkspacePollingSyncCandidate(),
       ts: Date.now(),
     });
   }
@@ -6742,6 +6773,10 @@ export function createAppController(): AppController {
 
   function applyHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
     applyMonitoredDashboard(tokens, undefined, generatedAt ?? null, getCurrentPinnedMonitoredDashboardSnapshot());
+    if (isLiveWorkspace()) {
+      emit('monitored', 'manual', 'recent', 'old-week', 'header');
+      return;
+    }
     emit('recent', 'old-week', 'bid-zone', 'header');
   }
 
@@ -7739,14 +7774,19 @@ export function createAppController(): AppController {
     }
   }
 
-  function broadcastHistorySparklineSnapshot(payload: TokenSparklinesPayload) {
-    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+  function shouldBroadcastWorkspacePollingSnapshot() {
+    return isWorkspacePollingSyncWorkspace() && isWorkspacePollingLeader();
+  }
+
+  function broadcastWorkspaceSparklineSnapshot(payload: TokenSparklinesPayload) {
+    if (!shouldBroadcastWorkspacePollingSnapshot()) {
       return;
     }
 
     postHistorySyncMessage({
       type: 'sparkline-snapshot',
       tabId: historySyncTabId,
+      workspace: state.ui.workspace,
       payload,
       ts: Date.now(),
     });
@@ -8117,7 +8157,7 @@ export function createAppController(): AppController {
       });
     }
     applyHistorySparklinePayload(payload, batch);
-    broadcastHistorySparklineSnapshot(payload);
+    broadcastWorkspaceSparklineSnapshot(payload);
   }
 
   function updateWorkspaceSparklineRefreshSchedule(
@@ -8316,16 +8356,31 @@ export function createAppController(): AppController {
     }
   }
 
-  function broadcastHistoryMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
-    if (!isHistoryWorkspace() || !isHistorySyncLeader()) {
+  function broadcastWorkspaceMonitoredSnapshot(tokens: DashboardMonitoredToken[], generatedAt?: string | null) {
+    if (!shouldBroadcastWorkspacePollingSnapshot()) {
       return;
     }
 
     postHistorySyncMessage({
       type: 'monitored-snapshot',
       tabId: historySyncTabId,
+      workspace: state.ui.workspace,
       generatedAt: generatedAt ?? null,
       tokens,
+      ts: Date.now(),
+    });
+  }
+
+  function broadcastLiveTopPerformersSnapshot(payload: DashboardTopPerformersPayload) {
+    if (!isLiveWorkspace() || !isWorkspacePollingLeader()) {
+      return;
+    }
+
+    postHistorySyncMessage({
+      type: 'top-performers-snapshot',
+      tabId: historySyncTabId,
+      workspace: state.ui.workspace,
+      payload,
       ts: Date.now(),
     });
   }
@@ -8341,6 +8396,7 @@ export function createAppController(): AppController {
     postHistorySyncMessage({
       type: 'history-bootstrap-snapshot',
       tabId: historySyncTabId,
+      workspace: state.ui.workspace,
       requestPayload,
       payload,
       ts: Date.now(),
@@ -8355,9 +8411,44 @@ export function createAppController(): AppController {
     postHistorySyncMessage({
       type: 'bid-zone-snapshot',
       tabId: historySyncTabId,
+      workspace: state.ui.workspace,
       payload,
       ts: Date.now(),
     });
+  }
+
+  function handleWorkspacePollingSnapshotMessage(message: HistorySyncMessage) {
+    switch (message.type) {
+      case 'monitored-snapshot':
+        if (usesHistoryBucketBootstrap()) {
+          return true;
+        }
+        applyHistoryMonitoredSnapshot(message.tokens || [], message.generatedAt ?? null);
+        return true;
+      case 'history-bootstrap-snapshot':
+        if (!isCurrentHistoryBootstrapRequest(message.requestPayload)) {
+          return true;
+        }
+        clearHistorySearchPending({ emitRegions: false });
+        applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload);
+        emit('recent', 'old-week', 'bid-zone', 'header');
+        return true;
+      case 'bid-zone-snapshot':
+        applyBidZonePayload(message.payload);
+        return true;
+      case 'top-performers-snapshot':
+        if (!isLiveWorkspace()) {
+          return true;
+        }
+        applyDashboardTopPerformers(message.payload);
+        emit('top-performers', 'monitored', 'manual', 'header');
+        return true;
+      case 'sparkline-snapshot':
+        applyHistorySparklinePayload(message.payload);
+        return true;
+      default:
+        return false;
+    }
   }
 
   function handleHistorySyncMessage(message: HistorySyncMessage | undefined) {
@@ -8382,37 +8473,15 @@ export function createAppController(): AppController {
       return;
     }
 
-    if (!isActiveHistorySyncCandidate() || isHistorySyncLeader()) {
+    if ('workspace' in message && normalizeWorkspace(message.workspace) !== state.ui.workspace) {
       return;
     }
 
-    if (message.type === 'monitored-snapshot') {
-      if (usesHistoryBucketBootstrap()) {
-        return;
-      }
-      applyHistoryMonitoredSnapshot(message.tokens || [], message.generatedAt ?? null);
+    if (!isActiveWorkspacePollingSyncCandidate() || isWorkspacePollingLeader()) {
       return;
     }
 
-    if (message.type === 'history-bootstrap-snapshot') {
-      if (!isCurrentHistoryBootstrapRequest(message.requestPayload)) {
-        return;
-      }
-
-      clearHistorySearchPending({ emitRegions: false });
-      applyHistoryBootstrapPayload(message.payload, undefined, message.requestPayload);
-      emit('recent', 'old-week', 'bid-zone', 'header');
-      return;
-    }
-
-    if (message.type === 'bid-zone-snapshot') {
-      applyBidZonePayload(message.payload);
-      return;
-    }
-
-    if (message.type === 'sparkline-snapshot') {
-      applyHistorySparklinePayload(message.payload);
-    }
+    handleWorkspacePollingSnapshotMessage(message);
   }
 
   function shouldIgnoreHistoryBootstrapRefreshError(input: {
@@ -8543,8 +8612,8 @@ export function createAppController(): AppController {
         setError(null);
       }
       lastMonitoredDashboardError = null;
-      if (isHistoryWorkspace() && isHistorySyncLeader()) {
-        broadcastHistoryMonitoredSnapshot(monitoredSnapshot, null);
+      if (shouldBroadcastWorkspacePollingSnapshot()) {
+        broadcastWorkspaceMonitoredSnapshot(monitoredSnapshot, null);
       }
       if (isLiveWorkspace()) {
         emit('monitored', 'manual', 'recent', 'old-week', 'header');
@@ -8582,6 +8651,7 @@ export function createAppController(): AppController {
         () => fetchDashboardTopPerformers(token),
       );
       applyDashboardTopPerformers(payload);
+      broadcastLiveTopPerformersSnapshot(payload);
       emit('top-performers');
     } catch (error) {
       if (isApiRateLimitBackoffError(error)) {
@@ -12557,6 +12627,7 @@ export function createAppController(): AppController {
       }
 
       if (hidden) {
+        syncHistorySyncState({ runImmediatelyOnGain: true });
         syncMonitoringPolling();
         if (isLiveWorkspace()) {
           stopPumpGcTimer();
@@ -12564,11 +12635,18 @@ export function createAppController(): AppController {
         return;
       }
 
+      syncHistorySyncState({ runImmediatelyOnGain: true });
       syncMonitoringPolling();
       if (isLiveWorkspace()) {
         startPumpGcTimer();
         window.setTimeout(() => {
-          if (documentHiddenForUi || state.session.status !== 'authenticated' || state.runtime.mode !== 'active' || !isLiveWorkspace()) {
+          if (
+            documentHiddenForUi
+            || state.session.status !== 'authenticated'
+            || state.runtime.mode !== 'active'
+            || !isLiveWorkspace()
+            || !isWorkspacePollingLeader()
+          ) {
             return;
           }
           void refreshMonitoredDashboard();

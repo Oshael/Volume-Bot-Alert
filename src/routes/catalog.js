@@ -263,6 +263,7 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
   }
 
   try {
+    const startedAt = nowMs();
     const addresses = parsed.addresses;
     const [metadataRows, meteoraSummaryRows, primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
       tokenCatalog.listDashboardMetadataByAddresses(addresses),
@@ -294,11 +295,29 @@ router.post('/monitored-metadata-batch', catalogReadLimiter, async (req, res) =>
       })
       .filter(Boolean);
 
-    res.json({
+    const payload = {
       generatedAt: new Date().toISOString(),
       count: tokens.length,
       tokens,
+    };
+    const totalDurationMs = nowMs() - startedAt;
+    const perf = attachResponsePerfHeaders(res, 'catalog.monitored-metadata-batch', payload, {
+      total: totalDurationMs,
     });
+    logRequestPerf(req, 'catalog.monitored-metadata-batch', {
+      addresses: addresses.length,
+      includeMeteora: includeMeteora.value,
+      metadataRows: metadataRows.length,
+      meteoraRows: meteoraSummaryRows.length,
+      marketBaselineRows: primaryMarketBaselineRows.length,
+      volumeBaselineRows: primaryVolumeBaselineRows.length,
+      tickerPeerRows: tickerPeersByAddress.size,
+      items: tokens.length,
+      totalMs: totalDurationMs,
+      responseBytes: perf.responseBytes,
+    });
+
+    res.json(payload);
   } catch (err) {
     console.error('POST /catalog/monitored-metadata-batch error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored metadata batch' });
