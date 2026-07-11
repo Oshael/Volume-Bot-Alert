@@ -14,7 +14,7 @@ Use this document for:
 
 Use `README.md` as the primary operational entry point.
 
-Last reviewed against code and the launch deployment model on `2026-07-10` after reconciling the web/worker runtime split, distributed worker leases, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, the operations runbook, and the current `Total Liq` / Meteora hover contract.
+Last reviewed against code and the launch deployment model on `2026-07-10` after reconciling the web/worker runtime split, split production `systemd` workers, distributed worker leases, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, the operations runbook, and the current `Total Liq` / Meteora hover contract.
 
 ## Current Deployment Topology
 
@@ -27,18 +27,23 @@ Current production-like topology:
   - runs on a private VPS
   - managed by split `systemd` units:
     - `volume-bot-alert-web.service`
-    - `volume-bot-alert-worker.service`
+    - `volume-bot-alert-worker-core.service`
+    - `volume-bot-alert-worker-market.service`
+    - `volume-bot-alert-worker-maintenance.service`
   - reverse-proxied by `nginx`
   - public host: `https://api.trendscope.pro`
   - intended launch runtime:
     - web: `RUN_SOCKET_HUB=true`, `RUN_BACKGROUND_JOBS=false`
-    - worker: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`
+    - worker-core: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=core`
+    - worker-market: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=market`
+    - worker-maintenance: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=maintenance`
 - database:
   - PostgreSQL runs on the same VPS as the backend
   - intended to stay private/local rather than publicly exposed
 - repository note:
   - `railway.json` remains in the repo, but it is now legacy deployment residue / historical context rather than the primary production deployment contract
   - current frontend runtime defaults and CSP allowlists now point at `https://api.trendscope.pro` rather than Railway
+  - legacy `volume-bot-alert-worker.service` should not be used for normal production deploy/restart operations
 
 Operational runbook:
 - `docs/ops-runbook.md`
@@ -234,9 +239,14 @@ Deployment model:
 - public web process should run with:
   - `RUN_SOCKET_HUB=true`
   - `RUN_BACKGROUND_JOBS=false`
-- background worker process should run with:
+- production background worker processes should run as separated groups:
+  - core: `BACKGROUND_WORKER_GROUPS=core`
+  - market: `BACKGROUND_WORKER_GROUPS=market`
+  - maintenance: `BACKGROUND_WORKER_GROUPS=maintenance`
+- every background worker process should run with:
   - `RUN_SOCKET_HUB=false`
   - `RUN_BACKGROUND_JOBS=true`
+- the old all-groups `npm run start:worker` / `volume-bot-alert-worker.service` shape is legacy and should be used only as an intentional emergency rollback path
 - the code now uses distributed worker leases in Postgres for the worker set, but operators should still avoid starting arbitrary extra background processes without checking `workerLeases`
 - rate limit state is process-local memory, so multiple web instances need shared-store work or deliberate rate-limit tuning before they become the normal production shape
 
@@ -2732,7 +2742,11 @@ Current intended exposure model:
 - the public frontend remains separate at `https://www.trendscope.pro`
 - PostgreSQL stays local/private on the VPS and should not be publicly exposed
 - web traffic should only reach `volume-bot-alert-web.service`
-- background workers should run in `volume-bot-alert-worker.service`
+- background workers should run through the split units:
+  - `volume-bot-alert-worker-core.service`
+  - `volume-bot-alert-worker-market.service`
+  - `volume-bot-alert-worker-maintenance.service`
+- `volume-bot-alert-worker.service` is legacy/deprecated in production and should stay disabled unless intentionally doing emergency rollback
 - the old combined runtime is an emergency rollback shape
 
 Operational review points that now matter continuously:
@@ -2745,9 +2759,29 @@ Operational review points that now matter continuously:
 - explicit `CORS_ORIGINS` maintained for every frontend host that should be allowed; implicit preview trust is no longer part of the code contract
 - runtime split commands:
   - `npm run start:web`
-  - `npm run start:worker`
+  - `npm run start:worker:core`
+  - `npm run start:worker:market`
+  - `npm run start:worker:maintenance`
   - `npm run dev:web`
-  - `npm run dev:worker`
+  - `npm run dev:worker:core`
+  - `npm run dev:worker:market`
+  - `npm run dev:worker:maintenance`
+- production `systemd` restart commands:
+  - `sudo systemctl restart volume-bot-alert-web`
+  - `sudo systemctl restart volume-bot-alert-worker-core`
+  - `sudo systemctl restart volume-bot-alert-worker-market`
+  - `sudo systemctl restart volume-bot-alert-worker-maintenance`
+- expected production service enablement:
+  - `volume-bot-alert-web`: `enabled`
+  - `volume-bot-alert-worker-core`: `enabled`
+  - `volume-bot-alert-worker-market`: `enabled`
+  - `volume-bot-alert-worker-maintenance`: `enabled`
+  - `volume-bot-alert-worker`: `disabled` or masked
+- expected local listen ports on the VPS:
+  - web: `3000`
+  - worker-core: `3001`
+  - worker-market: `3002`
+  - worker-maintenance: `3003`
 - health/runtime visibility now exists through:
   - `GET /api/health`
     - `runtime.role`

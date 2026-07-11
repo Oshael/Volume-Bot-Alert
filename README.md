@@ -12,16 +12,26 @@ Current production-like shape:
 
 - Public frontend is hosted separately from the backend, currently at `https://www.trendscope.pro`.
 - Backend/API runs on a private VPS behind `nginx`, currently at `https://api.trendscope.pro`.
-- The intended VPS runtime is split into two `systemd` services:
+- The intended VPS runtime is split into four `systemd` services:
   - `volume-bot-alert-web.service`
     - `RUN_SOCKET_HUB=true`
     - `RUN_BACKGROUND_JOBS=false`
-  - `volume-bot-alert-worker.service`
+  - `volume-bot-alert-worker-core.service`
     - `RUN_SOCKET_HUB=false`
     - `RUN_BACKGROUND_JOBS=true`
+    - `BACKGROUND_WORKER_GROUPS=core`
+  - `volume-bot-alert-worker-market.service`
+    - `RUN_SOCKET_HUB=false`
+    - `RUN_BACKGROUND_JOBS=true`
+    - `BACKGROUND_WORKER_GROUPS=market`
+  - `volume-bot-alert-worker-maintenance.service`
+    - `RUN_SOCKET_HUB=false`
+    - `RUN_BACKGROUND_JOBS=true`
+    - `BACKGROUND_WORKER_GROUPS=maintenance`
 - PostgreSQL runs locally on the same VPS as the backend and is not intended to be exposed publicly.
 - `railway.json` still exists, but Railway is legacy deployment context rather than the current production contract.
 - The old single-process/combined runtime is a local fallback or emergency rollback shape, not the preferred launch topology.
+- Do not use the legacy monolithic `volume-bot-alert-worker.service` in production deploy/restart commands.
 
 ## Architecture
 
@@ -65,7 +75,9 @@ The launch topology should use split roles:
 
 ```bash
 npm run start:web
-npm run start:worker
+npm run start:worker:core
+npm run start:worker:market
+npm run start:worker:maintenance
 ```
 
 Role controls:
@@ -98,6 +110,24 @@ Important: do not horizontally scale the full backend by simply starting more co
 - exactly one active owner per worker lease
 
 Worker leases protect the individual worker loops from duplicate execution, but they are still an operational guardrail, not a reason to run arbitrary extra background processes without checking `/api/admin/ws-status`.
+
+Production `systemd` operations should target the current split services:
+
+```bash
+sudo systemctl status volume-bot-alert-web volume-bot-alert-worker-core volume-bot-alert-worker-market volume-bot-alert-worker-maintenance -l --no-pager
+
+sudo systemctl restart volume-bot-alert-web
+sudo systemctl restart volume-bot-alert-worker-core
+sudo systemctl restart volume-bot-alert-worker-market
+sudo systemctl restart volume-bot-alert-worker-maintenance
+
+sudo systemctl is-enabled volume-bot-alert-web
+sudo systemctl is-enabled volume-bot-alert-worker-core
+sudo systemctl is-enabled volume-bot-alert-worker-market
+sudo systemctl is-enabled volume-bot-alert-worker-maintenance
+```
+
+Expected production ports are `3000` for web, `3001` for worker-core, `3002` for worker-market, and `3003` for worker-maintenance. If `volume-bot-alert-worker.service` exists on a host, treat it as legacy and keep it disabled unless intentionally performing an emergency rollback.
 
 ## Local Setup
 
