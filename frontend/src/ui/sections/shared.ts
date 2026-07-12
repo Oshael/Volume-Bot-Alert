@@ -1675,15 +1675,14 @@ function renderTokenTableShell(options: {
             ${showSparkline ? '<th class="sparkline-col">Chart</th>' : ''}
             <th class="num-col">Age</th>
             <th class="num-col">MCAP</th>
-            <th class="delta-col">D</th>
-            ${options.mode === 'manual' ? '<th class="num-col">Vol 5M</th>' : ''}
-            <th class="num-col">Vol 1H</th>
+            ${options.mode === 'manual' ? '<th class="num-col metric-group-start">Vol 5M</th>' : ''}
+            <th class="num-col ${options.mode === 'manual' ? '' : 'metric-group-start'}">Vol 1H</th>
             <th class="num-col">Vol 6H</th>
             <th class="num-col">Vol 24H</th>
-            <th class="num-col">PChg 1H</th>
+            <th class="num-col metric-group-start">PChg 1H</th>
             <th class="num-col">PChg 6H</th>
             <th class="num-col">PChg 24H</th>
-            <th class="num-col">Total Liq</th>
+            <th class="num-col metric-group-start">Total Liq</th>
             <th class="action-col"></th>
           </tr>
         </thead>
@@ -2153,17 +2152,6 @@ function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string
   return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers, mockSolUsdcRate, liveMcap });
 }
 
-function resolveTokenMcapDelta(item: ManualTokenEntry) {
-  if (item.mcapDelta != null) {
-    return item.mcapDelta;
-  }
-  if (!(item.prevMcap && item.prevMcap > 0) || item.mcap == null) {
-    return null;
-  }
-
-  return ((item.mcap - item.prevMcap) / item.prevMcap) * 100;
-}
-
 function renderBucketDismissButton(mode: 'manual' | 'recent' | 'old-week', safeAddress: string, busy: boolean) {
   if (mode === 'manual') {
     return `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
@@ -2296,7 +2284,7 @@ function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: Ma
     return '';
   }
 
-  return `<td class="num-col">${fmtMoney(item.volume5m)}</td>`;
+  return `<td class="num-col metric-group-start">${fmtMoney(item.volume5m)}</td>`;
 }
 
 function renderBucketSparklineCell(
@@ -2319,7 +2307,6 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
   const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
   const communityUrl = sanitizeOptionalHttpUrl(item.communityUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const mcapDelta = resolveTokenMcapDelta(item);
   const actionButton = renderBucketDismissButton(mode, safeAddress, busy);
 
   return `
@@ -2350,15 +2337,14 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
       ${renderBucketSparklineCell(mode, sparkline, item, mockTradingTrades, mockSolUsdcRate)}
       <td class="num-col">${age}</td>
       <td class="num-col strong">${fmtMoney(item.mcap)}</td>
-      <td class="delta-col">${renderPctSpan(mcapDelta)}</td>
       ${renderBucketVolumeCell(mode, item)}
-      <td class="num-col">${fmtMoney(item.volume1h)}</td>
+      <td class="num-col ${mode === 'manual' ? '' : 'metric-group-start'}">${fmtMoney(item.volume1h)}</td>
       <td class="num-col">${fmtMoney(item.volume6h)}</td>
       <td class="num-col">${fmtMoney(item.volume24h)}</td>
-      <td class="num-col">${renderPctSpan(item.priceChange1h)}</td>
+      <td class="num-col metric-group-start">${renderPctSpan(item.priceChange1h)}</td>
       <td class="num-col">${renderPctSpan(item.priceChange6h)}</td>
       <td class="num-col">${renderPctSpan(item.priceChange24h)}</td>
-      <td class="num-col">${renderTotalLiquidityCell(item, meteoraByAddress[item.address], meteoraMinPool)}</td>
+      <td class="num-col metric-group-start">${renderTotalLiquidityCell(item, meteoraByAddress[item.address], meteoraMinPool)}</td>
       <td class="action-col">${actionButton}</td>
     </tr>
   `;

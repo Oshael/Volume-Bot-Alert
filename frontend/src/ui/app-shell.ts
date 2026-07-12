@@ -993,16 +993,6 @@ function serializeRenderedPctValue(value?: number | null) {
   return value.toFixed(2);
 }
 
-function resolveRenderedMcapDelta(token: ReturnType<typeof getMonitoredTokens>[number]) {
-  if (token.mcapDelta != null) {
-    return token.mcapDelta;
-  }
-  if (!(token.prevMcap && token.prevMcap > 0) || token.mcap == null) {
-    return null;
-  }
-  return ((token.mcap - token.prevMcap) / token.prevMcap) * 100;
-}
-
 function serializeSparklineForView(state: AppState, address: string) {
   const entry = state.data.sparklineByAddress[address] || null;
   const series = Array.isArray(entry?.series) ? entry.series : [];
@@ -1103,7 +1093,6 @@ function serializeRoutedTokenForView(state: AppState, token: ReturnType<typeof g
     token.label,
     token.createdAt,
     serializeRenderedMoneyValue(token.mcap),
-    serializeRenderedPctValue(resolveRenderedMcapDelta(token)),
     serializeRenderedMoneyValue(token.volume1h),
     serializeRenderedMoneyValue(token.volume6h),
     serializeRenderedMoneyValue(token.volume24h),
@@ -1641,6 +1630,7 @@ function getExpandedSparklineOverlaySnapshot(state: AppState) {
   return {
     address,
     granularityMinutes: state.ui.expandedSparklineGranularityMinutes,
+    timeZone: state.ui.expandedSparklineTimeZone,
     loading: Boolean(sparkline?.loading),
   };
 }

@@ -657,6 +657,7 @@ describe('Config routes', () => {
           enabledTradeTerminals: ['photon', 'bullx'],
           monitoredPerPage: 50,
           expandedSparklineGranularityMinutes: 60,
+          expandedSparklineTimeZone: 'America/Sao_Paulo',
           sparklineRange: {
             global: false,
             globalDays: 7,
@@ -687,6 +688,7 @@ describe('Config routes', () => {
     assert.equal(response.body.uiPrefs.manualFolderDeleteWarningDismissed, true);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 60);
+    assert.equal(response.body.uiPrefs.expandedSparklineTimeZone, 'America/Sao_Paulo');
     assert.deepEqual(response.body.uiPrefs.sparklineRange, {
       global: false,
       globalDays: 7,

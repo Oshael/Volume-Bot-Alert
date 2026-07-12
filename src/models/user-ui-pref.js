@@ -20,6 +20,22 @@ const LIVE_PANEL_DEFAULT_HEIGHT = 620;
 const LIVE_PANEL_MAX_HEIGHT = 100000;
 const EXPANDED_SPARKLINE_GRANULARITIES = [1, 5, 15, 30, 60, 240, 1440];
 const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
+const EXPANDED_CHART_TIME_ZONES = [
+  'browser',
+  'UTC',
+  'America/Fortaleza',
+  'America/Sao_Paulo',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Berlin',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'Australia/Sydney',
+];
+const EXPANDED_CHART_DEFAULT_TIME_ZONE = 'browser';
 const SPARKLINE_RANGE_MIN_DAYS = 1;
 const SPARKLINE_RANGE_MAX_DAYS = 14;
 const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
@@ -46,6 +62,7 @@ const DEFAULT_UI_PREFS = {
   oldWeekSorts: [{ mode: 'vol', window: '1h' }, { mode: 'vol', window: '6h' }],
   monitoredSorts: [{ mode: 'vol', window: '5m' }],
   expandedSparklineGranularityMinutes: EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
+  expandedSparklineTimeZone: EXPANDED_CHART_DEFAULT_TIME_ZONE,
   sparklineRange: {
     global: true,
     globalDays: SPARKLINE_RANGE_DEFAULT_DAYS,
@@ -101,6 +118,21 @@ function validateExpandedSparklineGranularity(key, value) {
     return { valid: false, error: `${key} must be one of ${EXPANDED_SPARKLINE_GRANULARITIES.join(', ')}` };
   }
   return { valid: true, value: parsed };
+}
+
+function normalizeExpandedChartTimeZone(value) {
+  const timeZone = String(value || '').trim();
+  return EXPANDED_CHART_TIME_ZONES.includes(timeZone)
+    ? timeZone
+    : EXPANDED_CHART_DEFAULT_TIME_ZONE;
+}
+
+function validateExpandedChartTimeZone(key, value) {
+  const timeZone = String(value || '').trim();
+  if (!EXPANDED_CHART_TIME_ZONES.includes(timeZone)) {
+    return { valid: false, error: `${key} must be one of ${EXPANDED_CHART_TIME_ZONES.join(', ')}` };
+  }
+  return { valid: true, value: timeZone };
 }
 
 function normalizeSparklineRangeDays(value, fallback = SPARKLINE_RANGE_DEFAULT_DAYS) {
@@ -454,6 +486,7 @@ function normalizePrefs(raw) {
   }
 
   defaults.expandedSparklineGranularityMinutes = normalizeExpandedSparklineGranularity(source.expandedSparklineGranularityMinutes);
+  defaults.expandedSparklineTimeZone = normalizeExpandedChartTimeZone(source.expandedSparklineTimeZone);
 
   const sparklineRange = validateSparklineRange('sparklineRange', source.sparklineRange);
   if (sparklineRange.valid) {
@@ -514,6 +547,16 @@ function validatePatch(input) {
 
     if (key === 'expandedSparklineGranularityMinutes') {
       const result = validateExpandedSparklineGranularity(key, value);
+      if (!result.valid) {
+        errors.push(result.error);
+      } else {
+        prefs[key] = result.value;
+      }
+      continue;
+    }
+
+    if (key === 'expandedSparklineTimeZone') {
+      const result = validateExpandedChartTimeZone(key, value);
       if (!result.valid) {
         errors.push(result.error);
       } else {

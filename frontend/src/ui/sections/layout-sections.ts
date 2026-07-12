@@ -1,4 +1,4 @@
-import type { CandlestickData, IPriceScaleApi, Logical, UTCTimestamp } from 'lightweight-charts';
+import type { CandlestickData, IPriceScaleApi, Logical, TickMarkType, Time, UTCTimestamp, WhitespaceData } from 'lightweight-charts';
 import type { AppController } from '../../state/app-controller';
 import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { fetchDashboardChartAlertEvents, type ChartAlertEvent } from '../../services/api/catalog';
@@ -21,7 +21,7 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
@@ -49,6 +49,30 @@ const EXPANDED_CHART_GRANULARITY_OPTIONS = [
   { label: '1h', value: 60 },
   { label: '4h', value: 240 },
   { label: '24h', value: 1440 },
+];
+const EXPANDED_CHART_FUTURE_DAYS_BY_GRANULARITY = new Map<number, number>([
+  [1, 1],
+  [5, 14],
+  [15, 30],
+  [30, 60],
+  [60, 90],
+  [240, 180],
+  [1440, 730],
+]);
+const EXPANDED_CHART_TIME_ZONE_OPTIONS = [
+  { value: 'browser', label: 'Browser time' },
+  { value: 'UTC', label: 'UTC' },
+  { value: 'America/Fortaleza', label: 'Fortaleza' },
+  { value: 'America/Sao_Paulo', label: 'São Paulo' },
+  { value: 'America/New_York', label: 'New York' },
+  { value: 'America/Chicago', label: 'Chicago' },
+  { value: 'America/Denver', label: 'Denver' },
+  { value: 'America/Los_Angeles', label: 'Los Angeles' },
+  { value: 'Europe/London', label: 'London' },
+  { value: 'Europe/Berlin', label: 'Berlin' },
+  { value: 'Asia/Tokyo', label: 'Tokyo' },
+  { value: 'Asia/Singapore', label: 'Singapore' },
+  { value: 'Australia/Sydney', label: 'Sydney' },
 ];
 const EXPANDED_TOKEN_AGE_MINUTE_MS = 60 * 1000;
 const EXPANDED_TOKEN_AGE_HOUR_MS = 60 * EXPANDED_TOKEN_AGE_MINUTE_MS;
@@ -2322,6 +2346,52 @@ function toLightweightCandles(sparkline: TokenSparklineEntry): CandlestickData<U
   return [...byTime.values()].sort((a, b) => Number(a.time) - Number(b.time));
 }
 
+function getExpandedChartGranularitySeconds(granularityMinutes: number) {
+  return Math.max(1, Math.round(Number(granularityMinutes) || 5)) * 60;
+}
+
+function getExpandedChartFuturePointCount(granularityMinutes: number) {
+  const safeGranularityMinutes = Math.max(1, Math.round(Number(granularityMinutes) || 5));
+  const days = EXPANDED_CHART_FUTURE_DAYS_BY_GRANULARITY.get(safeGranularityMinutes) || 14;
+  return Math.round((days * 86400) / getExpandedChartGranularitySeconds(safeGranularityMinutes));
+}
+
+function getExpandedChartTimeZoneLabel(option: typeof EXPANDED_CHART_TIME_ZONE_OPTIONS[number]) {
+  const timeZone = option.value === 'browser'
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : option.value;
+  const offset = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'shortOffset',
+  }).formatToParts(new Date()).find((part) => part.type === 'timeZoneName')?.value || 'GMT';
+  return `${option.label} (${offset.replace('GMT', 'UTC').replace('-', '−')})`;
+}
+
+function withExpandedChartFutureTimePoints(
+  data: CandlestickData<UTCTimestamp>[],
+  granularityMinutes: number,
+): Array<CandlestickData<UTCTimestamp> | WhitespaceData<UTCTimestamp>> {
+  const latest = data[data.length - 1];
+  if (!latest) {
+    return data;
+  }
+  const granularitySeconds = getExpandedChartGranularitySeconds(granularityMinutes);
+  const futurePoints = Array.from({ length: getExpandedChartFuturePointCount(granularityMinutes) }, (_, index) => ({
+    time: (Number(latest.time) + (granularitySeconds * (index + 1))) as UTCTimestamp,
+  }));
+  return [...data, ...futurePoints];
+}
+
+function upsertExpandedChartCandle(data: CandlestickData<UTCTimestamp>[], candle: CandlestickData<UTCTimestamp>) {
+  const index = data.findIndex((item) => Number(item.time) === Number(candle.time));
+  if (index >= 0) {
+    data[index] = candle;
+    return;
+  }
+  data.push(candle);
+  data.sort((left, right) => Number(left.time) - Number(right.time));
+}
+
 function renderExpandedCandleChart(sparkline: TokenSparklineEntry) {
   const candleCount = getRenderableExpandedCandles(sparkline).length;
   if (candleCount < 2) {
@@ -2642,8 +2712,59 @@ function destroyExpandedCandlestickChart() {
   expandedCandlestickChartCleanup = null;
 }
 
-function formatExpandedChartLegend(candle: CandlestickData<UTCTimestamp>) {
-  const timestamp = new Date(Number(candle.time) * 1000).toLocaleString();
+function resolveExpandedChartTimeZone(timeZone: string) {
+  return timeZone === 'browser' ? undefined : timeZone;
+}
+
+function getExpandedChartTimestamp(time: Time) {
+  if (typeof time === 'number') {
+    return time * 1000;
+  }
+  if (typeof time === 'string') {
+    return Date.parse(time);
+  }
+  return Date.UTC(time.year, time.month - 1, time.day);
+}
+
+function formatExpandedChartTime(
+  time: Time,
+  timeZone: string,
+  options: Intl.DateTimeFormatOptions,
+) {
+  const timestamp = getExpandedChartTimestamp(time);
+  if (!Number.isFinite(timestamp)) {
+    return '--';
+  }
+  const resolvedTimeZone = resolveExpandedChartTimeZone(timeZone);
+  return new Intl.DateTimeFormat(undefined, {
+    ...options,
+    ...(resolvedTimeZone ? { timeZone: resolvedTimeZone } : {}),
+  }).format(timestamp);
+}
+
+function formatExpandedChartTickMark(time: Time, tickMarkType: TickMarkType, timeZone: string) {
+  const options: Intl.DateTimeFormatOptions = tickMarkType === 0
+    ? { year: 'numeric' }
+    : tickMarkType === 1
+      ? { month: 'short' }
+      : tickMarkType === 2
+        ? { day: 'numeric' }
+        : tickMarkType === 4
+          ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }
+          : { hour: '2-digit', minute: '2-digit', hour12: false };
+  return formatExpandedChartTime(time, timeZone, options);
+}
+
+function formatExpandedChartLegend(candle: CandlestickData<UTCTimestamp>, timeZone: string) {
+  const timestamp = formatExpandedChartTime(candle.time, timeZone, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
   return `${timestamp} | MCAP ${fmtMoney(candle.close)}`;
 }
 
@@ -2671,7 +2792,12 @@ function getExpandedChartInitialTimeRange(data: CandlestickData<UTCTimestamp>[],
   ]);
   const recentDays = recentDaysByGranularity.get(Math.round(Number(granularityMinutes))) || 7;
   const from = Math.max(first, latest - (recentDays * 86400));
-  return from < latest ? { from: from as UTCTimestamp, to: latest as UTCTimestamp } : null;
+  const totalFutureSeconds = getExpandedChartGranularitySeconds(granularityMinutes) * getExpandedChartFuturePointCount(granularityMinutes);
+  const initialFutureSeconds = Math.min(
+    totalFutureSeconds,
+    Math.max(getExpandedChartGranularitySeconds(granularityMinutes) * 12, Math.round((latest - from) * 0.25)),
+  );
+  return from < latest ? { from: from as UTCTimestamp, to: (latest + initialFutureSeconds) as UTCTimestamp } : null;
 }
 
 function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceScaleApi) {
@@ -2725,6 +2851,9 @@ function bindExpandedPriceScaleWheel(container: HTMLElement, priceScale: IPriceS
 type ExpandedChartTimeScaleApi = {
   logicalToCoordinate(logical: Logical): number | null;
   timeToCoordinate(time: UTCTimestamp): number | null;
+  getVisibleLogicalRange(): { from: Logical; to: Logical } | null;
+  scrollPosition(): number;
+  scrollToPosition(position: number, animated: boolean): void;
   subscribeVisibleLogicalRangeChange(handler: () => void): void;
   unsubscribeVisibleLogicalRangeChange(handler: () => void): void;
   subscribeSizeChange(handler: () => void): void;
@@ -2738,6 +2867,101 @@ type ExpandedChartApi = {
 type ExpandedCandleSeriesApi = {
   priceToCoordinate(price: number): number | null;
 };
+
+function isMacPlatform() {
+  return typeof navigator !== 'undefined' && /Macintosh|Mac OS X/.test(navigator.userAgent);
+}
+
+function bindExpandedMacTrackpadDrag(
+  container: HTMLElement,
+  chart: ExpandedChartApi,
+  priceScale: IPriceScaleApi,
+) {
+  if (!isMacPlatform()) {
+    return () => {};
+  }
+
+  let drag: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    scrollPosition: number;
+    priceRange: { from: number; to: number } | null;
+    direction: 'pending' | 'time' | 'price';
+  } | null = null;
+
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.pointerType !== 'mouse' || event.button !== 0) {
+      return;
+    }
+    const target = event.target as Element | null;
+    if (target?.closest('.expanded-chart-alert-marker, .expanded-chart-alert-tooltip, .expanded-chart-alert-recap-layer')) {
+      return;
+    }
+    const rect = container.getBoundingClientRect();
+    if (event.clientX >= rect.right - priceScale.width()) {
+      return;
+    }
+    drag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollPosition: chart.timeScale().scrollPosition(),
+      priceRange: priceScale.getVisibleRange(),
+      direction: 'pending',
+    };
+  };
+
+  const onPointerMove = (event: PointerEvent) => {
+    if (!drag || event.pointerId !== drag.pointerId || !(event.buttons & 1)) {
+      return;
+    }
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (drag.direction === 'pending') {
+      if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 2) {
+        return;
+      }
+      drag.direction = Math.abs(deltaX) >= Math.abs(deltaY) ? 'time' : 'price';
+    }
+    if (drag.direction === 'price') {
+      if (!drag.priceRange || !(drag.priceRange.to > drag.priceRange.from)) {
+        return;
+      }
+      const priceDelta = (deltaY / Math.max(1, container.clientHeight)) * (drag.priceRange.to - drag.priceRange.from);
+      priceScale.setAutoScale(false);
+      priceScale.setVisibleRange({
+        from: drag.priceRange.from + priceDelta,
+        to: drag.priceRange.to + priceDelta,
+      });
+      return;
+    }
+    const visibleRange = chart.timeScale().getVisibleLogicalRange();
+    const plotWidth = Math.max(1, container.clientWidth - priceScale.width());
+    if (!visibleRange || !(Number(visibleRange.to) > Number(visibleRange.from))) {
+      return;
+    }
+    const barsPerPixel = (Number(visibleRange.to) - Number(visibleRange.from)) / plotWidth;
+    chart.timeScale().scrollToPosition(drag.scrollPosition - (deltaX * barsPerPixel), false);
+  };
+
+  const endDrag = (event: PointerEvent) => {
+    if (drag?.pointerId === event.pointerId) {
+      drag = null;
+    }
+  };
+
+  container.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('pointermove', onPointerMove, true);
+  document.addEventListener('pointerup', endDrag, true);
+  document.addEventListener('pointercancel', endDrag, true);
+  return () => {
+    container.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('pointermove', onPointerMove, true);
+    document.removeEventListener('pointerup', endDrag, true);
+    document.removeEventListener('pointercancel', endDrag, true);
+  };
+}
 
 function toChartAlertCandlePoints(data: CandlestickData<UTCTimestamp>[]): ChartAlertCandlePoint[] {
   return data.map((candle) => ({
@@ -2770,10 +2994,10 @@ function upsertChartAlertCandlePoint(candles: ChartAlertCandlePoint[], candle: C
   }
 }
 
-function formatChartAlertTimeShort(event: ChartAlertEvent) {
+function formatChartAlertTimeShort(event: ChartAlertEvent, timeZone: string) {
   const timestamp = Date.parse(event.triggeredAt);
   return Number.isFinite(timestamp)
-    ? new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    ? formatExpandedChartTime(Math.floor(timestamp / 1000) as UTCTimestamp, timeZone, { hour: 'numeric', minute: '2-digit' })
     : '--:--';
 }
 
@@ -2990,7 +3214,7 @@ function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][nu
   `;
 }
 
-function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
+function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster, timeZone: string) {
   const marker = cluster.markers[0];
   const event = marker.event;
   const hero = getChartAlertHeroPercent(event);
@@ -3000,7 +3224,7 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster) {
   return `
     <div class="expanded-chart-alert-tooltip-head">
       <strong>${renderChartAlertHeaderIcon(event)} ${escapeHtml(getChartAlertHeader(event))}${escapeHtml(clusterLabel)}</strong>
-      <time>${escapeHtml(formatChartAlertTimeShort(event))}</time>
+      <time>${escapeHtml(formatChartAlertTimeShort(event, timeZone))}</time>
     </div>
     <div class="expanded-chart-alert-tooltip-hero">
       <strong>${escapeHtml(fmtPct(hero))}</strong>
@@ -3053,6 +3277,7 @@ function mountExpandedChartAlertOverlay(
   data: CandlestickData<UTCTimestamp>[],
   address: string,
   granularityMinutes: number,
+  timeZone: string,
   sessionToken: string | null,
   debug: ExpandedChartDebugSession,
 ) {
@@ -3155,7 +3380,7 @@ function mountExpandedChartAlertOverlay(
   };
 
   const showTooltip = (cluster: ChartAlertMarkerCluster, pinned: boolean) => {
-    tooltip.innerHTML = renderChartAlertTooltip(cluster);
+    tooltip.innerHTML = renderChartAlertTooltip(cluster, timeZone);
     tooltip.dataset.visible = 'true';
     if (pinned) {
       hoveredClusterId = null;
@@ -3475,9 +3700,12 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   const legend = section.querySelector<HTMLElement>('[data-expanded-chart-legend]');
   const normalizeStartedAt = performance.now();
   const data = toLightweightCandles(sparkline);
+  const granularityMinutes = sparkline.granularityMinutes ?? 5;
+  const useMacTrackpadDrag = isMacPlatform();
+  const chartData = withExpandedChartFutureTimePoints(data, granularityMinutes);
   const debug = createExpandedChartDebugSession({
     address,
-    granularityMinutes: sparkline.granularityMinutes ?? 5,
+    granularityMinutes,
     sourceCandles: Array.isArray(sparkline.candles) ? sparkline.candles.length : 0,
     chartCandles: data.length,
     normalizeMs: performance.now() - normalizeStartedAt,
@@ -3520,13 +3748,29 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     },
     timeScale: {
       borderColor: 'rgba(112, 168, 226, 0.2)',
-      rightOffset: 6,
+      rightOffset: 0,
       timeVisible: true,
       secondsVisible: false,
       minBarSpacing: 0.05,
+      tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => formatExpandedChartTickMark(
+        time,
+        tickMarkType,
+        state.ui.expandedSparklineTimeZone,
+      ),
     },
-    localization: { priceFormatter: (price: number) => fmtMoney(price) },
-    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+    localization: {
+      priceFormatter: (price: number) => fmtMoney(price),
+      timeFormatter: (time: Time) => formatExpandedChartTime(time, state.ui.expandedSparklineTimeZone, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }),
+    },
+    handleScroll: { mouseWheel: true, pressedMouseMove: !useMacTrackpadDrag, horzTouchDrag: true, vertTouchDrag: true },
     handleScale: { axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true }, mouseWheel: true, pinch: true },
   });
   debug.markTiming('createChartMs', performance.now() - createStartedAt);
@@ -3539,13 +3783,11 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     wickDownColor: '#ff4f67',
   });
   const setDataStartedAt = performance.now();
-  candleSeries.setData(data);
+  candleSeries.setData(chartData);
   debug.markTiming('setDataMs', performance.now() - setDataStartedAt);
   const latest = data[data.length - 1];
   const liveMcap = Number(getTrackedToken(state, address)?.mcap);
   const referenceValue = Number.isFinite(liveMcap) && liveMcap > 0 ? liveMcap : latest.close;
-  const referenceColor = latest.close >= latest.open ? '#18c79a' : '#ff4f67';
-  const referenceLine = candleSeries.createPriceLine({ price: referenceValue, color: referenceColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
   for (const rule of state.data.customAlertRules) {
     if (rule.tokenAddress !== address || rule.metric !== 'mcap' || rule.status !== 'active') continue;
     if (rule.expiresAt && new Date(rule.expiresAt).getTime() <= Date.now()) continue;
@@ -3567,29 +3809,31 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   priceScale.setVisibleRange(preservedViewport?.priceRange || getExpandedChartInitialPriceRange(data, referenceValue));
   priceScale.setAutoScale(false);
   const removePriceScaleWheel = bindExpandedPriceScaleWheel(container, priceScale);
+  const removeMacTrackpadDrag = bindExpandedMacTrackpadDrag(container, chart, priceScale);
   const chartAlertOverlay = mountExpandedChartAlertOverlay(
     container,
     chart,
     candleSeries,
     data,
     address,
-    sparkline.granularityMinutes ?? 5,
+    granularityMinutes,
+    state.ui.expandedSparklineTimeZone,
     state.session.token,
     debug,
   );
   if (legend) {
-    legend.textContent = formatExpandedChartLegend(latest);
+    legend.textContent = formatExpandedChartLegend(latest, state.ui.expandedSparklineTimeZone);
   }
   chart.subscribeCrosshairMove((param) => {
     const candle = param.seriesData.get(candleSeries) as CandlestickData<UTCTimestamp> | undefined;
     if (legend && candle) {
-      legend.textContent = formatExpandedChartLegend(candle);
+      legend.textContent = formatExpandedChartLegend(candle, state.ui.expandedSparklineTimeZone);
     }
   });
   if (preservedViewport?.timeRange) {
     chart.timeScale().setVisibleRange(preservedViewport.timeRange);
   } else {
-    const initialTimeRange = getExpandedChartInitialTimeRange(data, sparkline.granularityMinutes ?? 5);
+    const initialTimeRange = getExpandedChartInitialTimeRange(data, granularityMinutes);
     if (initialTimeRange) {
       chart.timeScale().setVisibleRange(initialTimeRange);
     } else {
@@ -3629,15 +3873,12 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
       low: normalized.low,
       close: normalized.close,
     } satisfies CandlestickData<UTCTimestamp>;
-    candleSeries.update(liveCandle);
+    upsertExpandedChartCandle(data, liveCandle);
+    candleSeries.setData(withExpandedChartFutureTimePoints(data, granularityMinutes));
     debug.count('liveUpdates');
-    referenceLine.applyOptions({
-      price: normalized.close,
-      color: normalized.close >= normalized.open ? '#18c79a' : '#ff4f67',
-    });
     chartAlertOverlay.upsertCandle(liveCandle);
     if (legend) {
-      legend.textContent = formatExpandedChartLegend(liveCandle);
+      legend.textContent = formatExpandedChartLegend(liveCandle, state.ui.expandedSparklineTimeZone);
     }
     if (debug.enabled) {
       debug.recordLiveUpdate(performance.now() - liveUpdateStartedAt);
@@ -3648,6 +3889,7 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     window.removeEventListener('trendscope:expanded-chart-live-candle', onLiveCandle);
     chartAlertOverlay.cleanup();
     removePriceScaleWheel();
+    removeMacTrackpadDrag();
     chart.remove();
     debug.cleanup();
   };
@@ -3698,13 +3940,30 @@ function renderExpandedGranularityControls(activeGranularityMinutes: number, one
   `;
 }
 
-function renderExpandedSparklineFootnote(loadingText: string, address: string) {
+function renderExpandedTimeZoneControl(activeTimeZone: string) {
+  const activeOption = EXPANDED_CHART_TIME_ZONE_OPTIONS.find((option) => option.value === activeTimeZone)
+    || EXPANDED_CHART_TIME_ZONE_OPTIONS[0];
+  const activeLabel = getExpandedChartTimeZoneLabel(activeOption);
+  return `
+    <label class="expanded-sparkline-time-zone-control" aria-label="Expanded chart time zone">
+      <select data-action="set-expanded-sparkline-time-zone" aria-label="Expanded chart time zone">
+        ${EXPANDED_CHART_TIME_ZONE_OPTIONS.map((option) => `
+          <option value="${escapeHtml(option.value)}" ${option.value === activeTimeZone ? 'selected' : ''}>${escapeHtml(getExpandedChartTimeZoneLabel(option))}</option>
+        `).join('')}
+      </select>
+      <span data-expanded-sparkline-time-zone-label aria-hidden="true">${escapeHtml(activeLabel)}</span>
+    </label>
+  `;
+}
+
+function renderExpandedSparklineFootnote(loadingText: string, address: string, timeZone: string) {
   const safeAddress = escapeHtml(address);
   return `
     <div class="expanded-sparkline-footnote">
       <span>${loadingText}</span>
       <button type="button" class="expanded-sparkline-address-copy" data-action="copy-expanded-sparkline-address" data-address="${safeAddress}" title="Copy contract address" aria-label="Copy contract address">${safeAddress}</button>
       <span class="expanded-sparkline-copy-status" data-expanded-sparkline-copy-status aria-live="polite"></span>
+      ${renderExpandedTimeZoneControl(timeZone)}
     </div>
   `;
 }
@@ -3718,7 +3977,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
 
   const symbol = token?.symbol || token?.label || address.slice(0, 8);
   const name = token?.name || token?.label || address;
-  const stats = getExpandedSparklineStats(sparkline);
+  const stats = getExpandedSparklineStats(sparkline, state.ui.expandedSparklineTimeZone);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl);
   const ageLabel = formatExpandedTokenAge(token?.createdAt);
   const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline);
@@ -3730,7 +3989,13 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
           ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address)}
-          ${renderExpandedSparklineStatsRow(token, state.data.meteoraByAddress[address], stats.latestValue, ageLabel)}
+          ${renderExpandedSparklineStatsRow(
+            token,
+            state.data.meteoraByAddress[address],
+            Number(state.data.configs['meteora-min-pool']) || 5000,
+            stats.latestValue,
+            ageLabel,
+          )}
           ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
@@ -3738,7 +4003,7 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
           ${renderExpandedChartBody(state, sparkline, address)}
           ${sparkline.loading ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>' : ''}
         </div>
-        ${renderExpandedSparklineFootnote(loadingText, address)}
+        ${renderExpandedSparklineFootnote(loadingText, address, state.ui.expandedSparklineTimeZone)}
       </div>
     </div>
   `;
@@ -3762,10 +4027,10 @@ function renderExpandedSparklineIdentity(symbol: string, name: string, imageUrl:
 function renderExpandedSparklineStatsRow(
   token: ReturnType<typeof getTrackedToken>,
   meteoraEntry: AppState['data']['meteoraByAddress'][string] | undefined,
+  meteoraMinPool: number,
   latestValue: number | null,
   ageLabel: string,
 ) {
-  const meteoraPoolValue = formatExpandedMeteoraPoolValue(token, meteoraEntry);
   return `
     <div class="expanded-sparkline-popover-subhead">
       ${renderExpandedSparklineStat('mcap', 'MCAP', fmtMoney(latestValue))}
@@ -3773,7 +4038,7 @@ function renderExpandedSparklineStatsRow(
       ${renderExpandedSparklineStat('vol-1h', 'VOL 1H', fmtMoney(token?.volume1h))}
       ${renderExpandedSparklineStat('vol-6h', 'VOL 6H', fmtMoney(token?.volume6h))}
       ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
-      ${renderExpandedSparklineStat('meteora-pool', 'METEORA', meteoraPoolValue)}
+      ${renderExpandedTotalLiquidityStat(token, meteoraEntry, meteoraMinPool)}
     </div>
   `;
 }
@@ -3782,20 +4047,27 @@ function renderExpandedSparklineStat(variant: string, label: string, value: stri
   return `<span class="expanded-sparkline-stat expanded-sparkline-stat-${escapeHtml(variant)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></span>`;
 }
 
-function formatExpandedMeteoraPoolValue(
+function renderExpandedTotalLiquidityStat(
   token: ReturnType<typeof getTrackedToken>,
   meteoraEntry: AppState['data']['meteoraByAddress'][string] | undefined,
+  meteoraMinPool: number,
 ) {
-  const meteora = meteoraEntry || token?.meteora;
-  if (!meteora || meteora.noPool) {
-    return '-';
+  if (!token) {
+    return renderExpandedSparklineStat('total-liq', 'TOTAL LIQ', '-');
   }
-  const poolAddress = String(meteora.poolAddress || '').trim();
-  const poolCount = Number(meteora.poolCount) || 0;
-  const tvl = Number(meteora.tvl);
-  const hasPool = Boolean(poolAddress) || poolCount > 0 || tvl > 0;
 
-  return hasPool ? fmtMoney(Number.isFinite(tvl) ? tvl : null) : '-';
+  const trackedMeteora = token.meteora;
+  const resolvedMeteora = meteoraEntry || (trackedMeteora ? {
+    ...trackedMeteora,
+    tvl: Number(trackedMeteora.tvl) || 0,
+  } : undefined);
+
+  return `
+    <div class="expanded-sparkline-stat expanded-sparkline-stat-total-liq">
+      <span>TOTAL LIQ</span>
+      <div class="expanded-sparkline-stat-rich-value">${renderTotalLiquidityCell(token, resolvedMeteora, meteoraMinPool)}</div>
+    </div>
+  `;
 }
 
 function formatExpandedTokenAge(createdAt: number | null | undefined) {
@@ -3820,11 +4092,19 @@ function formatExpandedTokenAge(createdAt: number | null | undefined) {
   return `${Math.floor(ageDays / EXPANDED_TOKEN_AGE_YEAR_DAYS)}y`;
 }
 
-function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>) {
+function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>, timeZone: string) {
   const candles = normalizeExpandedCandles(sparkline);
   const latestValue = getExpandedCandleLatestValue(sparkline);
   const updatedLabel = sparkline.generatedAt
-    ? new Date(sparkline.generatedAt).toLocaleString()
+    ? formatExpandedChartTime(Math.floor(new Date(sparkline.generatedAt).getTime() / 1000) as UTCTimestamp, timeZone, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
     : 'unknown';
   return {
     latestValue,
@@ -3859,6 +4139,18 @@ function bindExpandedSparklineModal(
       captureExpandedCandlestickChartViewport();
       controller.setExpandedSparklineGranularity(Number(element.dataset.granularityMinutes));
     });
+  });
+  section.querySelector<HTMLSelectElement>('[data-action="set-expanded-sparkline-time-zone"]')?.addEventListener('change', (event) => {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) {
+      return;
+    }
+    select
+      .closest<HTMLElement>('.expanded-sparkline-time-zone-control')
+      ?.querySelector<HTMLElement>('[data-expanded-sparkline-time-zone-label]')
+      ?.replaceChildren(select.selectedOptions[0]?.textContent || 'Browser time');
+    captureExpandedCandlestickChartViewport();
+    controller.setExpandedSparklineTimeZone(select.value);
   });
   section.querySelectorAll<HTMLButtonElement>('[data-action="copy-expanded-sparkline-address"]').forEach((element) => {
     element.addEventListener('click', async (event) => {

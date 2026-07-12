@@ -101,6 +101,7 @@ export interface UiPrefsPayload {
   oldWeekSorts: BucketSortCriterionPayload[];
   monitoredSorts: MonitoredSortCriterionPayload[];
   expandedSparklineGranularityMinutes: number;
+  expandedSparklineTimeZone: string;
   sparklineRange: {
     global: boolean;
     globalDays: number;

@@ -2648,7 +2648,7 @@ body:has(.workspace-topbar)::before {
   justify-content: space-between;
   gap: 16px;
   position: relative;
-  z-index: 1;
+  z-index: 40;
 }
 
 .expanded-sparkline-identity {
@@ -2735,7 +2735,7 @@ body:has(.workspace-topbar)::before {
   backdrop-filter: blur(10px);
 }
 
-.expanded-sparkline-popover-subhead .expanded-sparkline-stat span {
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat > span {
   display: inline;
   color: rgba(168, 202, 232, 0.86);
   font: inherit;
@@ -2743,7 +2743,7 @@ body:has(.workspace-topbar)::before {
   text-transform: inherit;
 }
 
-.expanded-sparkline-popover-subhead .expanded-sparkline-stat strong {
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat > strong {
   color: #8fe7ff;
   font: inherit;
   font-size: 10.5px;
@@ -2751,8 +2751,10 @@ body:has(.workspace-topbar)::before {
   line-height: 1;
 }
 
-.expanded-sparkline-popover-subhead .expanded-sparkline-stat-meteora-pool strong {
-  color: #d18cff;
+.expanded-sparkline-popover-subhead .expanded-sparkline-stat-rich-value {
+  color: #fff;
+  font: inherit;
+  line-height: 1;
 }
 
 .expanded-sparkline-resolution-control {
@@ -2765,6 +2767,64 @@ body:has(.workspace-topbar)::before {
   background: rgba(5, 12, 22, 0.38);
   box-shadow: 0 0 0 1px rgba(14, 25, 40, 0.18) inset;
   backdrop-filter: blur(10px);
+}
+
+.expanded-sparkline-time-zone-control {
+  position: relative;
+  align-self: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: block;
+  width: 98px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(63, 113, 176, 0.32);
+  border-radius: 6px;
+  background: rgba(5, 12, 22, 0.38);
+  box-shadow: 0 0 0 1px rgba(14, 25, 40, 0.18) inset;
+  backdrop-filter: blur(10px);
+}
+
+.expanded-sparkline-time-zone-control::after {
+  content: "⌄";
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-58%);
+  color: #d6ecff;
+  font-size: 15px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.expanded-sparkline-time-zone-control select {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.expanded-sparkline-time-zone-control > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 22px;
+  color: #d6ecff;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
+.expanded-sparkline-time-zone-control option {
+  background: #07101a;
+  color: #d6ecff;
 }
 
 .expanded-sparkline-resolution-button {
@@ -3574,6 +3634,9 @@ body:has(.workspace-topbar)::before {
 .expanded-sparkline-footnote {
   display: flex;
   align-items: center;
+  min-height: 44px;
+  padding: 0 0 12px;
+  box-sizing: border-box;
   gap: 8px;
   min-width: 0;
   color: #7593af;
@@ -8131,6 +8194,11 @@ TEMP_LEGACY_BAR_TITLE {
   white-space: nowrap;
 }
 
+.token-table th.metric-group-start,
+.token-table td.metric-group-start {
+  box-shadow: inset 1px 0 rgba(125, 163, 197, 0.14);
+}
+
 .token-table.manual th,
 .token-table.manual td {
   border-bottom: 1px solid rgba(0, 212, 255, 0.12);
@@ -8164,14 +8232,9 @@ TEMP_LEGACY_BAR_TITLE {
 
 .rank-col,
 .action-col,
-.delta-col,
 .num-col,
 .sparkline-col {
   text-align: right;
-}
-
-.delta-col {
-  text-align: left;
 }
 
 .sparkline-col {
@@ -9285,6 +9348,12 @@ TEMP_LEGACY_BAR_TITLE {
 .monitored-inline-pagination .monitored-per-page-field input {
   width: 48px;
   text-align: center;
+}
+
+.monitored-inline-pagination .monitored-per-page-field {
+  gap: 2px;
+  margin-left: 12px;
+  white-space: nowrap;
 }
 
 .monitored-inline-controls .monitored-token-pill-wrap {

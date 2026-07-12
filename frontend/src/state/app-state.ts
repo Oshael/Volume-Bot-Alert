@@ -781,6 +781,7 @@ export interface AppState {
     oldWeekSearchPending: boolean;
     expandedSparklineAddress: string | null;
     expandedSparklineGranularityMinutes: number;
+    expandedSparklineTimeZone: string;
     sparklineRange: {
       global: boolean;
       globalDays: number;
@@ -981,6 +982,7 @@ export function createAppState(): AppState {
       oldWeekSearchPending: false,
       expandedSparklineAddress: null,
       expandedSparklineGranularityMinutes: 5,
+      expandedSparklineTimeZone: 'browser',
       sparklineRange: {
         global: true,
         globalDays: 14,

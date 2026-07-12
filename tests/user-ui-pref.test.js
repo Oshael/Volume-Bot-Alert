@@ -9,6 +9,7 @@ describe('user-ui-pref', () => {
     assert.deepEqual(prefs.enabledTradeTerminals, ['axiom', 'photon', 'bullx', 'gmgn', 'padre']);
     assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
     assert.equal(prefs.expandedSparklineGranularityMinutes, 5);
+    assert.equal(prefs.expandedSparklineTimeZone, 'browser');
   });
 
   it('defaults new live layouts with monitored spanning two thirds', () => {
@@ -116,6 +117,15 @@ describe('user-ui-pref', () => {
     assert.equal(validation.prefs.expandedSparklineGranularityMinutes, 1);
   });
 
+  it('accepts supported expanded chart time zones', () => {
+    const validation = userUiPref.validatePatch({
+      expandedSparklineTimeZone: 'America/Fortaleza',
+    });
+
+    assert.equal(validation.valid, true);
+    assert.equal(validation.prefs.expandedSparklineTimeZone, 'America/Fortaleza');
+  });
+
   it('accepts individual token sparkline range preferences', () => {
     const validation = userUiPref.validatePatch({
       sparklineRange: {
@@ -156,6 +166,15 @@ describe('user-ui-pref', () => {
 
     assert.equal(validation.valid, false);
     assert.ok(validation.errors.includes('expandedSparklineGranularityMinutes must be one of 1, 5, 15, 30, 60, 240, 1440'));
+  });
+
+  it('rejects unsupported expanded chart time zones', () => {
+    const validation = userUiPref.validatePatch({
+      expandedSparklineTimeZone: 'Mars/Olympus_Mons',
+    });
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.some((error) => error.includes('expandedSparklineTimeZone must be one of')));
   });
 
   it('rejects empty trade terminal selection', () => {

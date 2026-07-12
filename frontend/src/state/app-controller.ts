@@ -233,6 +233,22 @@ const EXPANDED_SPARKLINE_POINT_COUNT = 720;
 const EXPANDED_SPARKLINE_FRONTEND_CACHE_MS = 30 * 1000;
 const EXPANDED_SPARKLINE_GRANULARITIES = [1, 5, 15, 30, 60, 240, 1440] as const;
 const EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES = 5;
+const EXPANDED_CHART_TIME_ZONES = [
+  'browser',
+  'UTC',
+  'America/Fortaleza',
+  'America/Sao_Paulo',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Berlin',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'Australia/Sydney',
+] as const;
+const EXPANDED_CHART_DEFAULT_TIME_ZONE = 'browser';
 const EXPANDED_SPARKLINE_ONE_MINUTE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const SPARKLINE_VISIBLE_LIMIT_TOTAL = 100;
 const SPARKLINE_VISIBLE_LIMIT_MANUAL = 30;
@@ -535,6 +551,7 @@ export interface AppController {
   openAlertExpandedSparkline(alertId: string, address: string): void;
   closeExpandedSparkline(): void;
   setExpandedSparklineGranularity(granularityMinutes: number): void;
+  setExpandedSparklineTimeZone(timeZone: string): void;
   clearDismissedRecent(): void;
   clearDismissedOldWeek(): void;
   toggleSectionCollapsed(section: CollapsibleSectionKey): void;
@@ -3768,6 +3785,7 @@ export function createAppController(): AppController {
   function applyExpandedSparklineUiPreferences(uiPrefs?: Partial<UiPrefsPayload> | null) {
     preferredExpandedSparklineGranularityMinutes = normalizeExpandedSparklineGranularity(uiPrefs?.expandedSparklineGranularityMinutes);
     state.ui.expandedSparklineGranularityMinutes = preferredExpandedSparklineGranularityMinutes;
+    state.ui.expandedSparklineTimeZone = normalizeExpandedChartTimeZone(uiPrefs?.expandedSparklineTimeZone);
   }
 
   function normalizeSparklineRangeDays(days: unknown, fallback = SPARKLINE_RANGE_DEFAULT_DAYS) {
@@ -3843,6 +3861,7 @@ export function createAppController(): AppController {
       oldWeekSorts: [...state.ui.oldWeekSorts],
       monitoredSorts: [...state.ui.monitoredSorts],
       expandedSparklineGranularityMinutes: preferredExpandedSparklineGranularityMinutes,
+      expandedSparklineTimeZone: normalizeExpandedChartTimeZone(state.ui.expandedSparklineTimeZone),
       sparklineRange: {
         global: Boolean(state.ui.sparklineRange.global),
         globalDays: normalizeSparklineRangeDays(state.ui.sparklineRange.globalDays),
@@ -7386,6 +7405,13 @@ export function createAppController(): AppController {
     return EXPANDED_SPARKLINE_GRANULARITIES.includes(parsed as typeof EXPANDED_SPARKLINE_GRANULARITIES[number])
       ? parsed
       : EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
+  }
+
+  function normalizeExpandedChartTimeZone(timeZone: unknown) {
+    const normalized = String(timeZone || '').trim();
+    return EXPANDED_CHART_TIME_ZONES.includes(normalized as typeof EXPANDED_CHART_TIME_ZONES[number])
+      ? normalized
+      : EXPANDED_CHART_DEFAULT_TIME_ZONE;
   }
 
   function getActiveExpandedSparklineGranularity() {
@@ -12113,6 +12139,15 @@ export function createAppController(): AppController {
       setExpandedSparklineLoading(address, null, safeGranularity);
       emit('overlay');
       void refreshExpandedSparkline(address, undefined, safeGranularity);
+    },
+    setExpandedSparklineTimeZone(timeZone: string) {
+      const safeTimeZone = normalizeExpandedChartTimeZone(timeZone);
+      if (state.ui.expandedSparklineTimeZone === safeTimeZone) {
+        return;
+      }
+      state.ui.expandedSparklineTimeZone = safeTimeZone;
+      queueUiPrefsPersist();
+      emit('overlay');
     },
     clearDismissedRecent() {
       state.data.dismissedRecent = [];
