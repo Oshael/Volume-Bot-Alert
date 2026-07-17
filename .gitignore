@@ -5,6 +5,7 @@ node_modules/
 *.dump
 *.sql
 .DS_Store
+/AGENTS.md
 frontend/dist/
 data/coingecko/
 Volume-Bot-Alert.git.backup/
