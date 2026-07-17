@@ -9166,6 +9166,7 @@ export function createAppController(): AppController {
         setError(null);
       }
       lastMonitoredDashboardError = null;
+      state.ui.monitoredLoadError = null;
       emit('recent', 'old-week', 'bid-zone', 'header');
     } catch (error) {
       if (shouldIgnoreHistoryBootstrapRefreshError({
@@ -9245,6 +9246,7 @@ export function createAppController(): AppController {
         setError(null);
       }
       lastMonitoredDashboardError = null;
+      state.ui.monitoredLoadError = null;
       if (shouldBroadcastWorkspacePollingSnapshot()) {
         broadcastWorkspaceMonitoredSnapshot(monitoredSnapshot, null);
       }
@@ -9266,8 +9268,9 @@ export function createAppController(): AppController {
       }
       const message = error instanceof Error ? error.message : 'Failed to refresh monitored dashboard';
       lastMonitoredDashboardError = message;
+      state.ui.monitoredLoadError = message;
       setError(message);
-      emit('legacy', 'overlay');
+      emit('monitored', 'legacy', 'overlay');
     } finally {
       monitoredRefreshKeysInFlight.delete(requestKey);
     }
@@ -11285,11 +11288,16 @@ export function createAppController(): AppController {
       }
 
       await hydratePagedDashboardMonitored(token, manualTokens);
+      state.ui.monitoredLoadError = null;
+      emitMonitoredWorkspaceRegions();
       void refreshDashboardTopPerformers(token);
     } catch (error) {
+      state.ui.monitoredLoadError = error instanceof Error
+        ? error.message : 'Failed to load monitored tokens';
       recordRestoreControllerDebug('controller.dashboard-hydrate.error', {
         message: formatDebugErrorMessage(error),
       });
+      emitMonitoredWorkspaceRegions();
     }
   }
 

@@ -873,6 +873,7 @@ export interface AppState {
     blockTokenWarning: BlockTokenWarningState | null;
     alertSearchQuery: string;
     monitoredSearchQuery: string;
+    monitoredLoadError: string | null;
     manualSearchQuery: string;
     recentSearchQuery: string;
     oldWeekSearchQuery: string;
@@ -1106,6 +1107,7 @@ export function createAppState(): AppState {
       blockTokenWarning: null,
       alertSearchQuery: '',
       monitoredSearchQuery: '',
+      monitoredLoadError: null,
       manualSearchQuery: '',
       recentSearchQuery: '',
       oldWeekSearchQuery: '',

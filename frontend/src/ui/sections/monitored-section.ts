@@ -7,6 +7,7 @@ import { resolveMonitoredTableRows } from '../../utils/token-table';
 import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 import { resolveCoveredMetric, resolveTokenValuation, type ResolvedCoveredMetric, type TokenMetricCoverage } from '../../utils/token-valuation';
 import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
+import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-state';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -42,7 +43,7 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
     return section;
   }
 
-  renderMonitoredRows(section, state, view.pageItems);
+  renderMonitoredRows(section, state, view);
   bindMonitoredSectionControls(section, state, controller, view);
   return section;
 }
@@ -63,6 +64,7 @@ function resolveMonitoredSectionView(state: AppState) {
     capabilityNotice: getChainCapabilityNotice(state, 'monitored'),
     isCollapsed: state.ui.collapsed.monitored,
     searchQuery,
+    loadError: state.ui.monitoredLoadError,
     safePerPage,
     filteredTracked,
     filteredTotalPages,
@@ -202,19 +204,23 @@ function renderMonitoredResetPinsButton(pinCount: number) {
   return `<button type="button" class="monitored-reset-pins" data-action="reset-monitored-pins" title="Reset all pinned tokens" aria-label="Reset all pinned tokens"><span aria-hidden="true">&#8634;</span> PINS</button>`;
 }
 
-function renderMonitoredRows(section: ParentNode, state: AppState, pageItems: ManualTokenEntry[]) {
+function renderMonitoredRows(
+  section: ParentNode,
+  state: AppState,
+  view: MonitoredSectionView,
+) {
   const monitoredList = section.querySelector<HTMLElement>('.monitored-list');
   if (!monitoredList) {
     return;
   }
 
-  if (pageItems.length === 0) {
-    monitoredList.append(buildMonitoredEmptyState());
+  if (view.pageItems.length === 0) {
+    monitoredList.append(buildMonitoredEmptyState(view.loadError, Boolean(view.searchQuery)));
     return;
   }
 
   const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
-  for (const item of pageItems) {
+  for (const item of view.pageItems) {
     const chain = item.chain || 'solana';
     const isSolana = chain === 'solana';
     const miniChartEnabled = state.ui.livePanelLayout.spans.monitored > 1
@@ -235,15 +241,16 @@ function renderMonitoredRows(section: ParentNode, state: AppState, pageItems: Ma
   }
 }
 
-function buildMonitoredEmptyState() {
+function buildMonitoredEmptyState(loadError: string | null, hasSearchQuery: boolean) {
+  const content = resolveMonitoredEmptyStateContent({ loadError, hasSearchQuery });
   const emptyState = document.createElement('div');
-  emptyState.className = 'empty-state';
+  emptyState.className = `empty-state${content.isError ? ' load-error' : ''}`;
   const emptyIcon = document.createElement('div');
   emptyIcon.className = 'empty-icon';
-  emptyIcon.textContent = '?';
+  emptyIcon.textContent = content.icon;
   const emptyText = document.createElement('div');
   emptyText.className = 'empty-text';
-  emptyText.textContent = 'No monitored tokens match the current search.';
+  emptyText.textContent = content.text;
   emptyState.append(emptyIcon, emptyText);
   return emptyState;
 }
