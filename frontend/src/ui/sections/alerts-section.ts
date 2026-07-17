@@ -1,9 +1,12 @@
 import type { AppController } from '../../state/app-controller';
-import type { AdminTokenReviewAlertEntry, AlertEntry, AppState, CustomAlertRuleEntry, TokenSparklineEntry } from '../../state/app-state';
+import { getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, isChainSelectedForSurface, isTokenStarred, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type CustomAlertCapabilityEntry, type CustomAlertRuleEntry, type ManualTokenEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { getAlertImpactTier, getAlertToneClass, getAlertVisualClasses, isHvncAlert, type AlertImpactTier } from '../../services/alerts/impact-tier';
 import { formatClaimFee } from '../../services/alerts/claim-fee-format';
-import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
+import { bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, formatPriceUsd, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderSparklineFigure, renderTokenLaunchpadBadge } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { buildTokenExplorerUrl, buildTokenMarketUrl, createLegacyCompatibleTokenIdentity, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
+import { resolveTokenValuation } from '../../utils/token-valuation';
+import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
 
 const ALERT_FX_SETTLE_MS = 1_600;
 const ALERTS_PER_PAGE = 40;
@@ -17,6 +20,7 @@ const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
 const TICKER_PEERS_MAX_HEIGHT_PX = 360;
 const TICKER_PEERS_MIN_HEIGHT_PX = 120;
 const CUSTOM_ALERT_SOUND_MAX_BYTES = 5 * 1024 * 1024;
+const ROBINHOOD_HVNC_RULE_KEY = 'robinhood-hvnc-v2';
 
 type AlertRowView = {
   element: HTMLElement;
@@ -65,10 +69,12 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   const view = getOrCreateAlertsSectionView(controller);
   const cardEffectsEnabled = areAlertCardEffectsEnabled(state);
   const pinnedReviewAlerts = buildPinnedAdminReviewAlerts(state);
-  const visibleAlerts = [...pinnedReviewAlerts, ...state.data.alerts];
+  const feedAlerts = getAlertFeedAlerts(state);
+  const visibleAlerts = [...pinnedReviewAlerts, ...feedAlerts];
   view.controller = controller;
   view.latestState = state;
   if (!view.customAlertModal.hidden) {
+    syncCustomAlertCapabilityControls(view.customAlertModal);
     renderCustomAlertRulesList();
   }
   syncAlertFxStates(view, visibleAlerts, renderNow);
@@ -77,7 +83,7 @@ export function renderAlertsSection(state: AppState, controller: AppController) 
   }
 
   const searchQuery = String(state.ui.alertSearchQuery || '');
-  const filteredAlerts = filterAlerts(state.data.alerts, searchQuery);
+  const filteredAlerts = filterAlerts(feedAlerts, searchQuery);
   const pagination = paginateAlerts(filteredAlerts, state.ui.alertPage);
   const displayedAlerts = [...pinnedReviewAlerts, ...pagination.pageItems];
 
@@ -107,7 +113,7 @@ function getOrCreateAlertsSectionView(controller: AppController) {
           <input class="compact-search-input" type="text" placeholder="ticker / ca" data-action="alerts-search" data-search-input="alerts">
         </div>
         <button type="button" class="action-button small custom-alert-open-button" data-action="open-custom-alert-prototype">Custom</button>
-        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean All</button>
+        <button type="button" class="action-button small" data-action="alerts-clear-all">Clean Visible</button>
         <div class="alerts-page-controls" aria-label="Alerts pages">
           <button type="button" class="action-button small" data-action="alerts-prev">Prev</button>
           <label class="legacy-mini-field alerts-page-field">
@@ -405,15 +411,22 @@ function buildCustomAlertPrototypeModal() {
       </header>
       <div class="custom-alert-prototype-grid">
         <div class="custom-alert-prototype-form">
-          <div class="custom-alert-field custom-alert-token-field">
-            <span>Token</span>
-            <div class="custom-alert-token-picker">
-              <img class="custom-alert-token-image" data-custom-alert-token-image alt="" hidden>
-              <input data-custom-alert-field="tokenQuery" type="text" placeholder="Ticker or contract address" autocomplete="off" spellcheck="false">
-              <input data-custom-alert-field="token" type="hidden">
+          <div class="custom-alert-identity-grid">
+            <label class="custom-alert-field">
+              <span>Network</span>
+              <select data-custom-alert-field="chain" aria-label="Custom alert network"></select>
+            </label>
+            <div class="custom-alert-field custom-alert-token-field">
+              <span>Token</span>
+              <div class="custom-alert-token-picker">
+                <img class="custom-alert-token-image" data-custom-alert-token-image alt="" hidden>
+                <input data-custom-alert-field="tokenQuery" type="text" placeholder="Ticker or contract address" autocomplete="off" spellcheck="false">
+                <input data-custom-alert-field="token" type="hidden">
+              </div>
+              <div class="custom-alert-token-suggestions" data-custom-alert-token-suggestions hidden></div>
             </div>
-            <div class="custom-alert-token-suggestions" data-custom-alert-token-suggestions hidden></div>
           </div>
+          <small class="custom-alert-capability-note" data-custom-alert-capability-note role="status"></small>
           <label class="custom-alert-field">
             <span>Alert name</span>
             <input data-custom-alert-field="title" type="text" value="Custom breakout" maxlength="48">
@@ -421,9 +434,12 @@ function buildCustomAlertPrototypeModal() {
           <div class="custom-alert-condition-grid">
             <label class="custom-alert-field">
               <span>Metric</span>
-              <select data-custom-alert-field="metric">
-                <option value="Market Cap">Market Cap</option>
-                <option value="Price">Price</option>
+              <select data-custom-alert-field="metric"></select>
+            </label>
+            <label class="custom-alert-field">
+              <span>Window</span>
+              <select data-custom-alert-field="window" disabled>
+                <option value="spot">Spot</option>
               </select>
             </label>
             <label class="custom-alert-field">
@@ -487,6 +503,7 @@ function buildCustomAlertPrototypeModal() {
 function openCustomAlertPrototypeModal() {
   if (!alertsSectionView) return;
   alertsSectionView.customAlertModal.hidden = false;
+  syncCustomAlertCapabilityControls(alertsSectionView.customAlertModal);
   updateCustomAlertPrototypePreview();
   renderCustomAlertRulesList();
   void alertsSectionView.controller.loadCustomAlertRules();
@@ -505,12 +522,112 @@ function getCustomAlertSaveButton(modal: HTMLElement) {
   return modal.querySelector<HTMLButtonElement>('[data-action="save-custom-alert-prototype"]');
 }
 
+function getCustomAlertMetricLabel(metric: string) {
+  if (metric === 'price') return 'Price USD';
+  if (metric === 'fdv') return 'FDV USD';
+  return 'Market Cap USD';
+}
+
+function getCustomAlertChainLabel(chain: TokenChain) {
+  return chain === 'robinhood' ? 'Robinhood' : 'Solana';
+}
+
+function formatCustomAlertCapabilityReason(reason: string | null | undefined) {
+  return String(reason || 'runtime_not_ready').replace(/_/g, ' ');
+}
+
+function buildCustomAlertOption(value: string, label: string) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function syncCustomAlertChainSelect(
+  state: AppState,
+  select: HTMLSelectElement,
+  editingRule: CustomAlertRuleEntry | undefined,
+) {
+  const previousChain = editingRule?.chain || normalizeTokenChain(select.value)
+    || state.ui.chainFilters.enabledChains.find((chain) => chain === 'solana' || chain === 'robinhood')
+    || 'solana';
+  const chains: TokenChain[] = state.data.availableChains.filter((chain) => chain === 'solana' || chain === 'robinhood');
+  select.replaceChildren(...chains.map((chain) => buildCustomAlertOption(chain, getCustomAlertChainLabel(chain))));
+  select.value = chains.includes(previousChain) ? previousChain : chains[0] || '';
+  select.disabled = Boolean(editingRule);
+  return normalizeTokenChain(select.value) || 'solana';
+}
+
+function syncCustomAlertMetricSelect(
+  select: HTMLSelectElement,
+  capability: CustomAlertCapabilityEntry | undefined,
+  editingRule: CustomAlertRuleEntry | undefined,
+) {
+  const previousMetric = editingRule?.metric || select.value;
+  select.replaceChildren(...(capability?.metrics || []).map((metric) => (
+    buildCustomAlertOption(metric, getCustomAlertMetricLabel(metric))
+  )));
+  select.value = capability?.metrics.includes(previousMetric as 'price' | 'mcap' | 'fdv')
+    ? previousMetric
+    : capability?.metrics[0] || '';
+}
+
+function getCustomAlertCapabilityMessage(capability: CustomAlertCapabilityEntry | undefined) {
+  if (!capability) return 'Loading custom-alert capabilities...';
+  if (!capability.supported) return 'Custom alerts are unsupported for this network.';
+  const supported = capability.metrics.map(getCustomAlertMetricLabel).join(' and ');
+  const unsupported = (['price', 'mcap', 'fdv'] as const)
+    .filter((metric) => !capability.metrics.includes(metric))
+    .map(getCustomAlertMetricLabel)
+    .join(' and ');
+  const metricSummary = `${supported} supported${unsupported ? `; ${unsupported} unsupported` : ''}`;
+  if (!capability.ready) {
+    return `Temporarily unavailable: ${formatCustomAlertCapabilityReason(capability.reason)}. ${metricSummary}.`;
+  }
+  return `${getCustomAlertChainLabel(capability.chain)}: ${metricSummary} at Spot.`;
+}
+
+function syncCustomAlertAvailability(
+  modal: HTMLElement,
+  ready: boolean,
+  editingRule: CustomAlertRuleEntry | undefined,
+) {
+  const tokenInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="tokenQuery"]');
+  if (tokenInput) tokenInput.disabled = Boolean(editingRule);
+  const unavailable = !ready || !readCustomAlertField('token');
+  const saveButton = getCustomAlertSaveButton(modal);
+  const testButton = modal.querySelector<HTMLButtonElement>('[data-action="test-custom-alert-prototype"]');
+  if (saveButton) saveButton.disabled = unavailable || modal.dataset.savingCustomAlert === 'true';
+  if (testButton) testButton.disabled = unavailable;
+}
+
+function syncCustomAlertCapabilityControls(modal: HTMLElement) {
+  const state = alertsSectionView?.latestState;
+  const chainSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="chain"]');
+  const metricSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="metric"]');
+  const windowSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="window"]');
+  const note = modal.querySelector<HTMLElement>('[data-custom-alert-capability-note]');
+  if (!state || !chainSelect || !metricSelect || !windowSelect || !note) return;
+  const editingRule = state.data.customAlertRules.find((rule) => String(rule.id) === modal.dataset.editingRuleId);
+  const chain = syncCustomAlertChainSelect(state, chainSelect, editingRule);
+  const capability = state.data.customAlertCapabilities[chain];
+  syncCustomAlertMetricSelect(metricSelect, capability, editingRule);
+  windowSelect.value = capability?.windows.includes('spot') ? 'spot' : '';
+  const ready = capability?.supported === true && capability.ready === true;
+  note.classList.toggle('unavailable', !ready);
+  note.textContent = getCustomAlertCapabilityMessage(capability);
+  metricSelect.disabled = !ready || Boolean(editingRule && editingRule.status === 'triggered');
+  syncCustomAlertAvailability(modal, ready, editingRule);
+}
+
 function endCustomAlertRuleEdit(modal: HTMLElement) {
   delete modal.dataset.editingRuleId;
   const saveButton = getCustomAlertSaveButton(modal);
   if (saveButton) saveButton.textContent = 'Save Alert';
   const expiresSelect = getCustomAlertExpiresSelect(modal);
   if (expiresSelect) removeCustomAlertKeepExpiryOption(expiresSelect);
+  const tokenInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="tokenQuery"]');
+  if (tokenInput) tokenInput.disabled = false;
 }
 
 function formatCustomAlertRuleTarget(rule: CustomAlertRuleEntry) {
@@ -521,13 +638,14 @@ function formatCustomAlertRuleTarget(rule: CustomAlertRuleEntry) {
 }
 
 function describeCustomAlertRuleCondition(rule: CustomAlertRuleEntry) {
-  const metricLabel = rule.metric === 'price' ? 'Price' : 'Market Cap';
-  return `${metricLabel} hits ${formatCustomAlertRuleTarget(rule)}`;
+  return `${getCustomAlertMetricLabel(rule.metric)} hits ${formatCustomAlertRuleTarget(rule)}`;
 }
 
 function fillCustomAlertEditToken(modal: HTMLElement, rule: CustomAlertRuleEntry) {
   const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
-  const candidate = getCustomAlertTokenCandidateByAddress(rule.tokenAddress);
+  const candidate = getCustomAlertTokenCandidate(rule.chain, rule.tokenAddress);
+  const chainSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="chain"]');
+  if (chainSelect) chainSelect.value = rule.chain;
   if (hiddenInput) hiddenInput.value = rule.tokenAddress;
   if (queryInput) queryInput.value = candidate?.symbol || rule.tokenAddress;
   setCustomAlertTokenImage(image, candidate?.imageUrl ?? null);
@@ -540,11 +658,11 @@ function fillCustomAlertEditFields(modal: HTMLElement, rule: CustomAlertRuleEntr
   if (titleInput) titleInput.value = rule.title;
 
   const metricSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="metric"]');
-  if (metricSelect) metricSelect.value = rule.metric === 'price' ? 'Price' : 'Market Cap';
+  if (metricSelect) metricSelect.value = rule.metric;
 
   const targetInput = modal.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]');
   if (targetInput) {
-    targetInput.dataset.targetMode = rule.metric === 'price' ? 'price' : 'market-cap';
+    targetInput.dataset.targetMode = rule.metric === 'price' ? 'price' : 'valuation';
     targetInput.value = formatCustomAlertRuleTarget(rule);
   }
 
@@ -575,12 +693,14 @@ function fillCustomAlertEditSound(modal: HTMLElement, rule: CustomAlertRuleEntry
 }
 
 function beginCustomAlertRuleEdit(modal: HTMLElement, rule: CustomAlertRuleEntry) {
+  modal.dataset.editingRuleId = String(rule.id);
+  syncCustomAlertCapabilityControls(modal);
   const queryInput = fillCustomAlertEditToken(modal, rule);
   fillCustomAlertEditFields(modal, rule);
   fillCustomAlertEditExpiry(modal, rule);
   fillCustomAlertEditSound(modal, rule);
+  syncCustomAlertCapabilityControls(modal);
 
-  modal.dataset.editingRuleId = String(rule.id);
   const saveButton = getCustomAlertSaveButton(modal);
   if (saveButton) saveButton.textContent = 'Update Alert';
   updateCustomAlertPrototypePreview();
@@ -594,17 +714,17 @@ function buildCustomAlertRuleRow(modal: HTMLElement, rule: CustomAlertRuleEntry)
 
   const image = document.createElement('img');
   image.alt = '';
-  setCustomAlertTokenImage(image, getCustomAlertTokenCandidateByAddress(rule.tokenAddress)?.imageUrl ?? null);
+  setCustomAlertTokenImage(image, getCustomAlertTokenCandidate(rule.chain, rule.tokenAddress)?.imageUrl ?? null);
 
   const main = document.createElement('div');
   main.className = 'custom-alert-rule-main';
   const title = document.createElement('strong');
-  const symbol = getCustomAlertTokenCandidateByAddress(rule.tokenAddress)?.symbol || `${rule.tokenAddress.slice(0, 4)}...${rule.tokenAddress.slice(-4)}`;
+  const symbol = getCustomAlertTokenCandidate(rule.chain, rule.tokenAddress)?.symbol || `${rule.tokenAddress.slice(0, 4)}...${rule.tokenAddress.slice(-4)}`;
   title.textContent = `${symbol} - ${rule.title}`;
   const condition = document.createElement('small');
   const expired = isCustomAlertRuleExpired(rule);
   const expirySuffix = rule.expiresAt && !expired ? ` · expires ${formatCustomAlertExpiryDate(rule.expiresAt)}` : '';
-  condition.textContent = `${describeCustomAlertRuleCondition(rule)}${expirySuffix}`;
+  condition.textContent = `${getCustomAlertChainLabel(rule.chain)} · ${describeCustomAlertRuleCondition(rule)}${expirySuffix}`;
   main.append(title, condition);
 
   const status = document.createElement('span');
@@ -707,7 +827,7 @@ function reformatCustomAlertTargetInput(modal: HTMLElement) {
   if (!target) return;
   const value = parseCustomAlertTargetText(target.value);
   if (value == null) return;
-  const isPrice = readCustomAlertField('metric') === 'Price';
+  const isPrice = readCustomAlertField('metric') === 'price';
   target.value = isPrice ? `$${value}` : formatCustomAlertCompactMoney(value);
 }
 
@@ -724,15 +844,17 @@ function resolveCustomAlertTokenSelection(modal: HTMLElement) {
   if (!queryInput || !hiddenInput || hiddenInput.value) return;
   const raw = queryInput.value.trim();
   if (!raw) return;
+  const chain = normalizeTokenChain(readCustomAlertField('chain')) || 'solana';
 
-  if (isCustomAlertTokenAddress(raw)) {
+  if (isCustomAlertTokenAddress(raw, chain)) {
     hiddenInput.value = raw;
-    setCustomAlertTokenImage(image, getCustomAlertTokenCandidateByAddress(raw)?.imageUrl ?? null);
+    setCustomAlertTokenImage(image, getCustomAlertTokenCandidate(chain, raw)?.imageUrl ?? null);
     hideCustomAlertTokenSuggestions(modal);
+    syncCustomAlertCapabilityControls(modal);
     return;
   }
 
-  const matches = filterCustomAlertTokenCandidates(raw);
+  const matches = filterCustomAlertTokenCandidates(raw, chain);
   const exact = matches.find((candidate) => candidate.symbol.toLowerCase() === raw.toLowerCase());
   const candidate = exact || (matches.length === 1 ? matches[0] : null);
   if (candidate) {
@@ -746,6 +868,10 @@ function bindCustomAlertPrototypeModal(modal: HTMLElement) {
   modal.addEventListener('change', updateCustomAlertPrototypePreview);
   modal.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]')?.addEventListener('change', () => {
     reformatCustomAlertTargetInput(modal);
+  });
+  modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="chain"]')?.addEventListener('change', () => {
+    resetCustomAlertTokenPicker(modal);
+    syncCustomAlertCapabilityControls(modal);
   });
   modal.querySelector<HTMLInputElement>('[data-custom-alert-field="soundFile"]')?.addEventListener('change', (event) => {
     readCustomAlertSoundFile(modal, event.currentTarget as HTMLInputElement);
@@ -814,47 +940,75 @@ function handleCustomAlertSaveClick(modal: HTMLElement) {
       showCustomAlertToast(getCustomAlertToastError(error, isEditing ? 'Failed to update custom alert.' : 'Failed to save custom alert.'), 'error');
     })
     .finally(() => {
-      if (saveButton) saveButton.disabled = false;
+      syncCustomAlertCapabilityControls(modal);
     });
 }
 
 type CustomAlertTokenCandidate = {
+  chain: TokenChain;
+  identityKey: string;
   address: string;
   symbol: string;
-  mcap: number | null;
+  valuation: number | null;
   imageUrl: string | null;
 };
 
-function buildCustomAlertTokenCandidates(state: AppState): CustomAlertTokenCandidate[] {
-  const addresses = [
-    ...state.data.monitoredTokenAddresses,
-    ...state.data.manualTokenAddresses,
-    ...state.data.recentTokenAddresses,
-    ...state.data.oldWeekTokenAddresses,
-    ...state.data.pumpTokens.map((token) => token.mint || token.mintAddress || ''),
-  ];
-  const seen = new Set<string>();
-  return addresses
-    .map((address) => String(address || '').trim())
-    .filter((address) => {
-      if (!address || seen.has(address)) return false;
-      seen.add(address);
-      return true;
-    })
-    .map((address) => {
-      const tracked = state.data.trackedTokensByAddress[address];
-      const pump = state.data.pumpTokens.find((token) => token.mint === address || token.mintAddress === address);
-      return {
-        address,
-        symbol: String(tracked?.symbol || pump?.symbol || address.slice(0, 6)).trim(),
-        mcap: tracked?.mcap ?? pump?.mcap ?? null,
-        imageUrl: tracked?.imageUrl ?? pump?.imageUrl ?? null,
-      };
-    });
+function addTrackedCustomAlertCandidate(
+  state: AppState,
+  candidates: Map<string, CustomAlertTokenCandidate>,
+  token: ManualTokenEntry,
+) {
+  const chain = normalizeTokenChain(token.chain) || 'solana';
+  if (state.data.customAlertCapabilities[chain]?.supported !== true) return;
+  const identity = createLegacyCompatibleTokenIdentity(chain, token.address);
+  candidates.set(identity.key, {
+    chain,
+    identityKey: identity.key,
+    address: identity.address,
+    symbol: String(token.symbol || token.label || identity.address.slice(0, 6)).trim(),
+    valuation: chain === 'robinhood' ? token.fdv ?? null : token.mcap ?? null,
+    imageUrl: token.imageUrl ?? null,
+  });
 }
 
-function isCustomAlertTokenAddress(value: string) {
-  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value) || /^0x[0-9a-fA-F]{40}$/.test(value);
+function addPumpCustomAlertCandidates(
+  state: AppState,
+  candidates: Map<string, CustomAlertTokenCandidate>,
+) {
+  if (state.data.customAlertCapabilities.solana?.supported !== true) return;
+  for (const token of state.data.pumpTokens) {
+    const address = String(token.mint || token.mintAddress || '').trim();
+    if (!address) continue;
+    const identity = createLegacyCompatibleTokenIdentity('solana', address);
+    if (candidates.has(identity.key)) continue;
+    candidates.set(identity.key, {
+      chain: 'solana',
+      identityKey: identity.key,
+      address: identity.address,
+      symbol: String(token.symbol || identity.address.slice(0, 6)).trim(),
+      valuation: token.mcap ?? null,
+      imageUrl: token.imageUrl ?? null,
+    });
+  }
+}
+
+function buildCustomAlertTokenCandidates(state: AppState): CustomAlertTokenCandidate[] {
+  const candidates = new Map<string, CustomAlertTokenCandidate>();
+  const trackedTokens = [
+    ...getMonitoredTokens(state),
+    ...getManualTokens(state),
+    ...getRecentTokens(state),
+    ...getOldWeekTokens(state),
+  ];
+  trackedTokens.forEach((token) => addTrackedCustomAlertCandidate(state, candidates, token));
+  addPumpCustomAlertCandidates(state, candidates);
+  return [...candidates.values()];
+}
+
+function isCustomAlertTokenAddress(value: string, chain: TokenChain) {
+  return chain === 'robinhood'
+    ? /^0x[0-9a-fA-F]{40}$/.test(value)
+    : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
 }
 
 function sanitizeCustomAlertImageUrl(value: string | null | undefined) {
@@ -862,25 +1016,19 @@ function sanitizeCustomAlertImageUrl(value: string | null | undefined) {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
-function getCustomAlertTokenCandidateByAddress(address: string): CustomAlertTokenCandidate | null {
+function getCustomAlertTokenCandidate(chain: TokenChain, address: string): CustomAlertTokenCandidate | null {
   const state = alertsSectionView?.latestState;
   if (!state) return null;
-  const tracked = state.data.trackedTokensByAddress[address];
-  const pump = state.data.pumpTokens.find((token) => token.mint === address || token.mintAddress === address);
-  if (!tracked && !pump) return null;
-  return {
-    address,
-    symbol: String(tracked?.symbol || pump?.symbol || address.slice(0, 6)).trim(),
-    mcap: tracked?.mcap ?? pump?.mcap ?? null,
-    imageUrl: tracked?.imageUrl ?? pump?.imageUrl ?? null,
-  };
+  const identity = createLegacyCompatibleTokenIdentity(chain, address);
+  return buildCustomAlertTokenCandidates(state).find((candidate) => candidate.identityKey === identity.key) || null;
 }
 
-function filterCustomAlertTokenCandidates(query: string) {
+function filterCustomAlertTokenCandidates(query: string, chain: TokenChain) {
   const state = alertsSectionView?.latestState;
   const normalized = query.trim().toLowerCase();
   if (!state || !normalized) return [];
   return buildCustomAlertTokenCandidates(state)
+    .filter((candidate) => candidate.chain === chain)
     .filter((candidate) => candidate.symbol.toLowerCase().includes(normalized) || candidate.address.toLowerCase().startsWith(normalized))
     .slice(0, 8);
 }
@@ -920,10 +1068,13 @@ function hideCustomAlertTokenSuggestions(modal: HTMLElement) {
 function selectCustomAlertToken(modal: HTMLElement, candidate: CustomAlertTokenCandidate) {
   const { queryInput, hiddenInput, image } = getCustomAlertTokenElements(modal);
   if (!queryInput || !hiddenInput) return;
+  const chainSelect = modal.querySelector<HTMLSelectElement>('[data-custom-alert-field="chain"]');
+  if (chainSelect) chainSelect.value = candidate.chain;
   hiddenInput.value = candidate.address;
   queryInput.value = candidate.symbol || candidate.address;
   setCustomAlertTokenImage(image, candidate.imageUrl);
   hideCustomAlertTokenSuggestions(modal);
+  syncCustomAlertCapabilityControls(modal);
   updateCustomAlertPrototypePreview();
 }
 
@@ -939,9 +1090,9 @@ function buildCustomAlertTokenSuggestionRow(modal: HTMLElement, candidate: Custo
   const symbol = document.createElement('strong');
   symbol.textContent = candidate.symbol;
   const mcap = document.createElement('span');
-  mcap.textContent = fmtMoney(candidate.mcap);
+  mcap.textContent = `${candidate.chain === 'robinhood' ? 'FDV' : 'MCAP'} ${fmtMoney(candidate.valuation)}`;
   const addr = document.createElement('small');
-  addr.textContent = `${candidate.address.slice(0, 4)}...${candidate.address.slice(-4)}`;
+  addr.textContent = `${getCustomAlertChainLabel(candidate.chain)} · ${candidate.address.slice(0, 4)}...${candidate.address.slice(-4)}`;
 
   row.append(image, symbol, mcap, addr);
   row.addEventListener('mousedown', (event) => {
@@ -954,7 +1105,8 @@ function buildCustomAlertTokenSuggestionRow(modal: HTMLElement, candidate: Custo
 function renderCustomAlertTokenSuggestions(modal: HTMLElement, query: string) {
   const { suggestions } = getCustomAlertTokenElements(modal);
   if (!suggestions) return;
-  const matches = filterCustomAlertTokenCandidates(query);
+  const chain = normalizeTokenChain(readCustomAlertField('chain')) || 'solana';
+  const matches = filterCustomAlertTokenCandidates(query, chain);
   if (!matches.length) {
     hideCustomAlertTokenSuggestions(modal);
     return;
@@ -968,17 +1120,20 @@ function handleCustomAlertTokenQueryInput(modal: HTMLElement) {
   if (!queryInput || !hiddenInput) return;
   const raw = queryInput.value.trim();
 
-  if (isCustomAlertTokenAddress(raw)) {
-    const known = getCustomAlertTokenCandidateByAddress(raw);
+  const chain = normalizeTokenChain(readCustomAlertField('chain')) || 'solana';
+  if (isCustomAlertTokenAddress(raw, chain)) {
+    const known = getCustomAlertTokenCandidate(chain, raw);
     hiddenInput.value = raw;
     setCustomAlertTokenImage(image, known?.imageUrl ?? null);
     hideCustomAlertTokenSuggestions(modal);
+    syncCustomAlertCapabilityControls(modal);
     return;
   }
 
   hiddenInput.value = '';
   setCustomAlertTokenImage(image, null);
   renderCustomAlertTokenSuggestions(modal, raw);
+  syncCustomAlertCapabilityControls(modal);
 }
 
 function bindCustomAlertTokenPicker(modal: HTMLElement) {
@@ -1070,15 +1225,15 @@ function syncCustomAlertTargetMetric() {
   const modal = alertsSectionView?.customAlertModal;
   const target = modal?.querySelector<HTMLInputElement>('[data-custom-alert-field="target"]');
   if (!target) return;
-  const priceMode = readCustomAlertField('metric') === 'Price';
-  const nextMode = priceMode ? 'price' : 'market-cap';
+  const priceMode = readCustomAlertField('metric') === 'price';
+  const nextMode = priceMode ? 'price' : 'valuation';
   const previousMode = target.dataset.targetMode;
   if (previousMode === 'price') target.dataset.priceValue = target.value;
-  if (previousMode === 'market-cap') target.dataset.marketCapValue = target.value;
+  if (previousMode === 'valuation') target.dataset.valuationValue = target.value;
   if (target.dataset.targetMode !== nextMode) {
     target.value = priceMode
       ? target.dataset.priceValue || '$0.0001'
-      : target.dataset.marketCapValue || '$250k';
+      : target.dataset.valuationValue || '$250k';
     target.dataset.targetMode = nextMode;
   }
 }
@@ -1088,12 +1243,15 @@ function readCustomAlertPrototypeInput() {
   resolveCustomAlertTokenSelection(alertsSectionView.customAlertModal);
   syncCustomAlertTargetMetric();
   const tokenAddress = readCustomAlertField('token');
-  if (!tokenAddress) return null;
+  const chain = normalizeTokenChain(readCustomAlertField('chain'));
+  if (!tokenAddress || !chain || !isCustomAlertTokenAddress(tokenAddress, chain)) return null;
   const sound = customAlertSoundAssets.get(alertsSectionView.customAlertModal) || null;
   return {
+    chain,
     tokenAddress,
     title: readCustomAlertFieldOr('title', 'Custom alert'),
-    metric: readCustomAlertFieldOr('metric', 'Market Cap'),
+    metric: readCustomAlertField('metric'),
+    window: 'spot' as const,
     operator: 'hits',
     target: readCustomAlertFieldOr('target', '$250k'),
     repeatMode: 'trigger once',
@@ -1113,7 +1271,7 @@ function updateCustomAlertPrototypePreview() {
     preview.textContent = 'Load or pick a token to preview this alert.';
     return;
   }
-  const candidate = getCustomAlertTokenCandidateByAddress(input.tokenAddress);
+  const candidate = getCustomAlertTokenCandidate(input.chain || 'solana', input.tokenAddress);
   const symbol = candidate?.symbol || input.tokenAddress.slice(0, 8);
   preview.innerHTML = '';
   const card = document.createElement('div');
@@ -1128,7 +1286,7 @@ function updateCustomAlertPrototypePreview() {
   title.textContent = input.title;
   titleRow.append(tokenImage, title);
   const condition = document.createElement('div');
-  condition.textContent = `${symbol}: ${input.metric} ${input.operator} ${input.target}`;
+  condition.textContent = `${getCustomAlertChainLabel(input.chain || 'solana')} · ${symbol}: ${getCustomAlertMetricLabel(input.metric)} ${input.operator} ${input.target}`;
   const behavior = document.createElement('small');
   behavior.textContent = `${input.repeatMode} / expires ${getCustomAlertExpiresLabel(input.expires)}`;
   const filters = document.createElement('small');
@@ -1176,7 +1334,9 @@ function buildPinnedAdminReviewAlerts(state: AppState): AlertEntry[] {
   const reviewAlerts = state.data.adminTokenReviewAlerts
     .filter((alert) => String(alert.status || 'open').toLowerCase() === 'open')
     .map(buildAdminReviewAlertEntry)
-    .filter((alert): alert is AlertEntry => Boolean(alert));
+    .filter((alert): alert is AlertEntry => Boolean(
+      alert && isChainSelectedForSurface(state, 'alertFeedChains', alert.chain),
+    ));
 
   return reviewAlerts;
 }
@@ -1194,6 +1354,7 @@ function buildAdminReviewAlertEntry(review: AdminTokenReviewAlertEntry): AlertEn
 
   return {
     id: `admin-review:${review.id}`,
+    chain: review.chain || 'solana',
     kind: 'admin-token-review',
     address,
     ...identity,
@@ -1327,7 +1488,7 @@ function reconcileAlertRows(
 
   for (const alert of filteredAlerts) {
     const fxState = getOrCreateAlertFxState(view, alert, renderNow);
-    const isStarred = state.data.starredTokens.includes(alert.address);
+    const isStarred = isTokenStarred(state, alert.address, alert.chain);
     const sparkline = state.data.alertSparklineById[alert.id] || null;
     const renderKey = getAlertRowRenderKey(
       alert,
@@ -1944,6 +2105,14 @@ function createAlertRowShell(alertId: string) {
   return article;
 }
 
+function resolveAlertMarketLink(alert: Pick<AlertEntry, 'chain' | 'address' | 'pairUrl'>) {
+  const marketUrl = buildTokenMarketUrl(alert.chain, alert.address, alert.pairUrl);
+  return {
+    label: marketUrl ? 'Market' : 'Explorer',
+    url: sanitizeHttpUrl(marketUrl || buildTokenExplorerUrl(alert.chain, alert.address)),
+  };
+}
+
 function getOrCreateAlertFxGhostHost() {
   const existing = document.body.querySelector<HTMLElement>('.alert-fx-ghost-host');
   if (existing) {
@@ -1987,9 +2156,9 @@ function buildAlertRowContent(
   sparkline: TokenSparklineEntry | null,
   _fxState: AlertFxState,
 ) {
-  const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
-  const symbol = String(alert.symbol || '');
-  const safeName = String(alert.name || '');
+  const marketLink = resolveAlertMarketLink(alert);
+  const symbol = String(alert.symbol || alert.address.slice(0, 8));
+  const safeName = String(alert.name || 'Metadata pending');
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
   const xSearch = buildXSearchUrl(symbol, alert.address);
   const topClass = getAlertToneClass(alert, renderNow);
@@ -2022,10 +2191,7 @@ function buildAlertRowContent(
   tokenName.className = 'alert-token-name';
   tokenName.textContent = safeName;
   const tickerPeersControl = buildTickerPeersControl(alert);
-  if (tickerPeersControl) {
-    tokenLine.append(' ', tickerPeersControl);
-  }
-  tokenLine.append(' ', tokenName);
+  tokenLine.append(' ', buildTokenIdentityBadgeGroup(tickerPeersControl, alert.chain, alert.address), ' ', tokenName);
   top.append(tokenLine);
 
   const flowLine = document.createElement('div');
@@ -2054,7 +2220,7 @@ function buildAlertRowContent(
   links.className = 'alert-links-v68';
   const socialLinks = splitTokenSocialUrls(alert.twitterUrl, alert.communityUrl);
   links.append(
-    buildInlineLink('Dex Screener', dexUrl),
+    buildInlineLink(marketLink.label, marketLink.url),
     buildTextSeparator(),
     buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(xSearch)),
     buildTextSeparator(),
@@ -2064,17 +2230,24 @@ function buildAlertRowContent(
 
   const actions = document.createElement('div');
   actions.className = 'alert-actions-v68';
+  const chartActions = alert.chain === 'solana' ? [buildAlertChartButton(alert)] : [];
+  const legacyAddressActions = alert.chain === 'solana'
+    ? [
+        buildStarButton(alert.address, isStarred, busy, 'Star token'),
+        buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy),
+      ]
+    : [];
   actions.append(
     buildAlertCopyButton(alert.address),
-    buildAlertChartButton(alert),
+    ...chartActions,
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
+      chain: alert.chain,
       enabledTradeTerminals,
     }),
-    buildStarButton(alert.address, isStarred, busy, 'Star token'),
-    buildActionButton('Block', 'alert-action-button danger', 'block-token', alert.address, symbol, busy),
+    ...legacyAddressActions,
   );
 
-  if (isAdmin) {
+  if (isAdmin && alert.chain === 'solana') {
     actions.append(buildActionButton('Admin Block', 'alert-action-button danger', 'admin-block-token', alert.address, symbol, busy));
   }
 
@@ -2092,8 +2265,8 @@ function buildAdminReviewAlertRowContent(
   timeLabel: string,
   topClass: string,
 ) {
-  const dexUrl = sanitizeHttpUrl(alert.pairUrl || `https://dexscreener.com/solana/${alert.address}`);
-  const symbol = String(alert.symbol || '');
+  const marketLink = resolveAlertMarketLink(alert);
+  const symbol = String(alert.symbol || alert.address.slice(0, 8));
   const imageUrl = sanitizeOptionalHttpUrl(alert.imageUrl);
   const reviewAlertId = Number(alert.reviewAlertId || 0);
   const reasons = Array.isArray(alert.reviewReasons) ? alert.reviewReasons : [];
@@ -2124,11 +2297,10 @@ function buildAdminReviewAlertRowContent(
   top.className = 'alert-top-v68';
   const tokenLine = document.createElement('span');
   tokenLine.className = 'alert-token-v68';
-  tokenLine.append(symbol, ' ');
   const tokenName = document.createElement('span');
   tokenName.className = 'alert-token-name';
-  tokenName.textContent = String(alert.name || '');
-  tokenLine.append(tokenName);
+  tokenName.textContent = String(alert.name || 'Metadata pending');
+  tokenLine.append(symbol, ' ', buildTokenIdentityBadgeGroup(null, alert.chain, alert.address), ' ', tokenName);
   top.append(tokenLine);
 
   const flowLine = document.createElement('div');
@@ -2155,9 +2327,9 @@ function buildAdminReviewAlertRowContent(
   links.className = 'alert-links-v68';
   const socialLinks = splitTokenSocialUrls(alert.twitterUrl, alert.communityUrl);
   links.append(
-    buildInlineLink('Dex Screener', dexUrl),
+    buildInlineLink(marketLink.label, marketLink.url),
     buildTextSeparator(),
-    buildInlineLink('Website', sanitizeHttpUrl(alert.reviewWebsiteUrl || dexUrl)),
+    buildInlineLink('Website', sanitizeHttpUrl(alert.reviewWebsiteUrl || marketLink.url)),
     buildTextSeparator(),
     buildInlineLink('X Buscar CA / ', sanitizeHttpUrl(buildXSearchUrl(symbol, alert.address))),
     buildTextSeparator(),
@@ -2167,13 +2339,18 @@ function buildAdminReviewAlertRowContent(
 
   const actions = document.createElement('div');
   actions.className = 'alert-actions-v68';
+  const chartActions = alert.chain === 'solana' ? [buildAlertChartButton(alert)] : [];
+  const legacyAddressActions = alert.chain === 'solana'
+    ? [buildStarButton(alert.address, isStarred, busy, 'Star token')]
+    : [];
   actions.append(
     buildAlertCopyButton(alert.address),
-    buildAlertChartButton(alert),
+    ...chartActions,
     buildTradeTerminalMenuElement(alert.address, alert.mintAddress, alert.pairAddress, {
+      chain: alert.chain,
       enabledTradeTerminals,
     }),
-    buildStarButton(alert.address, isStarred, busy, 'Star token'),
+    ...legacyAddressActions,
     buildReviewActionButton('Valid', 'mark_valid', reviewAlertId, busy),
     buildReviewActionButton('Weak', 'mark_weak', reviewAlertId, busy),
     buildReviewActionButton('Dismiss', 'dismiss', reviewAlertId, busy),
@@ -2436,19 +2613,31 @@ function buildAlertHeadline(alert: AlertEntry, toneClass: string) {
   }
   if (alert.kind === 'custom-alert') {
     badge.className = 'alert-badge-v68 custom-alert';
-    badge.append('CUSTOM ALERT', document.createElement('br'), buildAlertBadgeSub(String(alert.customTitle || alert.label || 'Custom'), String(alert.customMetric || 'condition')));
+    badge.append('CUSTOM ALERT', document.createElement('br'), buildAlertBadgeSub(String(alert.customTitle || alert.label || 'Custom'), getCustomAlertMetricLabel(String(alert.customMetric || 'condition'))));
     return badge;
   }
   if (alert.isHvnc) {
-    badge.className = 'alert-badge-v68 mega';
-    badge.append('🚨 High Volume New Coin', document.createElement('br'), buildAlertBadgeSub(fmtMoney(alert.volume24h), 'total vol'));
-    return badge;
+    return buildHvncAlertHeadline(alert, badge);
   }
   badge.className = `alert-pct-v68 ${toneClass}`;
   badge.append(`${fmtPct(alert.pct)} `);
   const label = document.createElement('span');
   label.textContent = String(alert.label || 'VOL');
   badge.append(label);
+  return badge;
+}
+
+function buildHvncAlertHeadline(alert: AlertEntry, badge: HTMLSpanElement) {
+  const isRobinhoodHvnc = alert.chain === 'robinhood' && alert.ruleKey === ROBINHOOD_HVNC_RULE_KEY;
+  badge.className = 'alert-badge-v68 mega';
+  badge.append(
+    '🚨 High Volume New Coin',
+    document.createElement('br'),
+    buildAlertBadgeSub(
+      fmtMoney(isRobinhoodHvnc ? alert.volume5m : alert.volume24h),
+      isRobinhoodHvnc ? '5m vol' : 'total vol',
+    ),
+  );
   return badge;
 }
 
@@ -2489,11 +2678,26 @@ function formatCustomAlertTargetDisplay(alert: AlertEntry) {
 
 function appendCustomAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   if (alert.kind !== 'custom-alert') return false;
+  const metric = String(alert.customMetric || '').toLowerCase();
+  const metricLabel = metric === 'price' ? 'PRICE' : metric === 'fdv' ? 'FDV' : 'MCAP';
+  const valuation = resolveTokenValuation(alert);
   container.append(
-    buildMetricPair(String(alert.customMetric || 'Metric').toUpperCase(), `${alert.customOperator || 'hits'} ${formatCustomAlertTargetDisplay(alert)}`, 'up'),
-    buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up'),
+    buildMetricPair(metricLabel, `${alert.customOperator || 'hits'} ${formatCustomAlertTargetDisplay(alert)}`, 'up'),
+    buildMetricPair(valuation.label, fmtMoney(valuation.value), 'up'),
   );
   return true;
+}
+
+function buildAlertValuationFlowMetric(alert: AlertEntry, tone: 'up' | 'down') {
+  const valuation = resolveTokenValuation(alert);
+  const previousMcap = valuation.type === 'market-cap' && alert.prevMcap != null
+    ? fmtMoney(alert.prevMcap)
+    : null;
+  const currentValuation = fmtMoney(valuation.value);
+
+  return previousMcap
+    ? buildFlowTransition('MCAP', previousMcap, currentValuation, tone)
+    : buildMetricPair(valuation.label, currentValuation, tone);
 }
 
 function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
@@ -2503,18 +2707,14 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 
   const isGmgnVol1m = alert.ruleKey === 'gmgn-vol-1m';
   const currentVol = fmtMoney(isGmgnVol1m ? alert.volume1m : alert.volume5m);
-  const currentMcap = fmtMoney(alert.mcap);
   const prevVolRaw = isGmgnVol1m ? alert.prevVolume1m : alert.prevVolume5m;
   const prevVol = prevVolRaw != null ? fmtMoney(prevVolRaw) : null;
-  const prevMcap = alert.prevMcap != null ? fmtMoney(alert.prevMcap) : null;
   const mcapTone = alert.prevMcap != null && alert.mcap != null && alert.mcap < alert.prevMcap ? 'down' : 'up';
   const volumeLabel = isGmgnVol1m ? 'VOL 1M' : 'VOL 5M';
 
   if (alert.isOldSurge) {
     container.append(
-      prevMcap
-        ? buildFlowTransition('MCAP', prevMcap, currentMcap, mcapTone)
-        : buildMetricPair('MCAP', currentMcap, 'up'),
+      buildAlertValuationFlowMetric(alert, 'up'),
       buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
     );
     return;
@@ -2535,21 +2735,35 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
     container.append(gap);
   }
   container.append(
-    prevMcap
-      ? buildFlowTransition('MCAP', prevMcap, currentMcap, mcapTone)
-      : buildMetricPair('MCAP', currentMcap, mcapTone),
+    buildAlertValuationFlowMetric(alert, mcapTone),
   );
 }
 
-function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
+function appendSpecialAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
   if (alert.kind === 'gmgn-claim-signal') {
     appendMetricRow(container, [
       buildMetricPair('SOURCE', alert.signalType === 17 ? 'BAGS' : 'PUMP', 'white'),
       buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
       buildMetricPair('AT', alert.claimedAt ? new Date(alert.claimedAt).toLocaleTimeString() : '-', 'white'),
     ]);
-    return;
+    return true;
   }
+
+  if (alert.chain === 'robinhood' && alert.ruleKey === ROBINHOOD_HVNC_RULE_KEY) {
+    appendMetricRow(container, [
+      buildMetricPair('AGE', alert.tokenCreatedAt ? fmtAge(alert.tokenCreatedAt) : '-', getAlertAgeToneClass(alert)),
+      buildMetricPair('PRICE', formatPriceUsd(alert.priceUsd), 'white'),
+      buildMetricPair('LIQ', fmtMoney(alert.liquidityUsd), 'white'),
+      buildMetricPair('TX 5M', alert.transactions == null ? '-' : String(alert.transactions), 'white'),
+    ]);
+    return true;
+  }
+
+  return false;
+}
+
+function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
+  if (appendSpecialAlertStatsLine(container, alert)) return;
 
   if (alert.isOldSurge) {
     appendMetricRow(container, [
@@ -2559,7 +2773,8 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
     ]);
   } else {
     const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap' && alert.kind !== 'meteora-surge' && alert.kind !== 'custom-alert';
-    const compactMcap = shouldShowCompactMcap ? buildMetricPair('MCAP', fmtMoney(alert.mcap), 'up', '', 'current-mcap') : null;
+    const valuation = resolveTokenValuation(alert);
+    const compactMcap = shouldShowCompactMcap ? buildMetricPair(valuation.label, fmtMoney(valuation.value), 'up', '', 'current-mcap') : null;
     compactMcap?.classList.add('compact-only-metric');
     const row = appendMetricRow(container, [
       compactMcap,

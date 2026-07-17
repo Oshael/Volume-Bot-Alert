@@ -10,6 +10,7 @@ const gmgnRiskReviewQueue = require('./gmgn-risk-review-queue');
 const userAlertMatcher = require('./user-alert-matcher');
 const { classifyTokenJunk } = require('./token-junk-metric');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const { deriveRollingVolumeCoverage } = require('./rolling-volume-coverage');
 const {
   isCumulativeVolumeWindowCoherent,
   normalizeVolume24hWithShorterWindows,
@@ -493,6 +494,7 @@ function buildCatalogPayload(snapshot, tokenBefore = null, options = {}) {
 
 function buildVolumeBucketPayload(snapshot, now) {
   return {
+    chain: 'solana',
     tokenAddress: normalizeAddress(snapshot.address || snapshot.tokenAddress),
     ts: now,
     vol1m: snapshot.vol1m,
@@ -500,6 +502,7 @@ function buildVolumeBucketPayload(snapshot, now) {
     vol1h: snapshot.vol1h,
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
+    volumeCoverage: snapshot.volumeCoverage,
     source: 'gmgn',
   };
 }
@@ -1940,10 +1943,17 @@ async function ingestGmgnToken(snapshot, options = {}) {
 
   const tokenBefore = await resolved.tokenCatalogModel.getByAddress(address);
   const manualProtected = await isManualTokenProtected(address, tokenBefore, resolved);
-  const filledSnapshot = preserveExistingPositiveVolumeWindows(
+  const normalizedSnapshot = preserveExistingPositiveVolumeWindows(
     fillYoungTokenVolumeWindows(snapshot, { now }),
     tokenBefore
   );
+  const filledSnapshot = {
+    ...normalizedSnapshot,
+    volumeCoverage: deriveRollingVolumeCoverage(snapshot, normalizedSnapshot, {
+      now,
+      tokenCreatedAt: snapshot.tokenCreatedAt,
+    }),
+  };
   const recoveredMarketSnapshot = recoverMissingGmgnMarketCap(
     preserveDexMarketDataForGmgnSnapshot(filledSnapshot, tokenBefore, now),
     tokenBefore,

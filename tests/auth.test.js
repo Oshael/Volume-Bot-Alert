@@ -358,7 +358,7 @@ describe('Volume Alert Server auth flow', () => {
       assert.equal(res.body.runtime.backgroundJobsEnabled, true);
       assert.deepEqual(res.body.runtime.workerGroupsRequested, ['all']);
       assert.deepEqual(res.body.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(res.body.runtime.workerGroupsSkipped, []);
+      assert.deepEqual(res.body.runtime.workerGroupsSkipped, ['robinhood']);
     });
 
     it('GET /api/health sanitizes DB failures', async () => {

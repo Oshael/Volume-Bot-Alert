@@ -1,7 +1,8 @@
 import type { AppController } from '../../state/app-controller';
-import { getTrackedToken, type AppState, type BidZoneTokenEntry } from '../../state/app-state';
+import { getTrackedToken, isTokenStarred, type AppState, type BidZoneTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindTokenActions, buildTradeTerminalMenuElement, fmtAge, fmtMoney } from './shared';
 import { sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
+import { buildTokenMarketUrl } from '../../utils/token-chain';
 
 export function renderBidZoneSection(state: AppState, controller: AppController) {
   const section = document.createElement('section');
@@ -48,7 +49,7 @@ export function renderBidZoneSection(state: AppState, controller: AppController)
   if (list) {
     if (state.data.bidZoneTokens.length > 0) {
       state.data.bidZoneTokens.forEach((item, index) => {
-        list.append(buildBidZoneRow(state, item, index, state.ui.busy, state.data.starredTokens.includes(item.address), state.session.role === 'admin'));
+        list.append(buildBidZoneRow(state, item, index, state.ui.busy, isTokenStarred(state, item.address), state.session.role === 'admin'));
       });
     } else {
       const emptyState = document.createElement('div');
@@ -187,7 +188,7 @@ function resolveBidZoneSymbol(tracked: ReturnType<typeof getTrackedToken>, item:
 
 function resolveBidZoneLinks(pairUrl: string | null | undefined, address: string, symbol: string) {
   return {
-    pairUrl: sanitizeHttpUrl(pairUrl || `https://dexscreener.com/solana/${address}`),
+    pairUrl: sanitizeHttpUrl(buildTokenMarketUrl('solana', address, pairUrl)),
     xSearchUrl: sanitizeHttpUrl(buildXSearchUrl(symbol, address)),
   };
 }

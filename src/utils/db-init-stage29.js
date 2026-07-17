@@ -4,6 +4,7 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS user_alert_rule_state (
      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
      rule_key VARCHAR(64) NOT NULL,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      token_address VARCHAR(64) NOT NULL,
      status VARCHAR(32) NOT NULL DEFAULT 'idle',
      last_alerted_at TIMESTAMPTZ,
@@ -14,7 +15,7 @@ const STATEMENTS = [
      last_fingerprint VARCHAR(255),
      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     PRIMARY KEY (user_id, rule_key, token_address)
+     PRIMARY KEY (user_id, rule_key, chain, token_address)
    )`,
   `CREATE INDEX IF NOT EXISTS idx_user_alert_rule_state_user_rule_updated
      ON user_alert_rule_state(user_id, rule_key, updated_at DESC)`,

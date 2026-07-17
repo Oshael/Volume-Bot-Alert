@@ -1,10 +1,13 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 function toNumberOrNull(value) {
+  if (value == null || value === '') return null;
   const num = Number(value);
-  return Number.isFinite(num) ? num : null;
+  return Number.isFinite(num) && num >= 0 ? num : null;
 }
+
+const COVERAGE_STATES = new Set(['complete', 'partial', 'unavailable']);
 
 const VOLUME_COLUMN_BY_WINDOW = Object.freeze({
   '1m': 'close_vol_1m',
@@ -13,6 +16,22 @@ const VOLUME_COLUMN_BY_WINDOW = Object.freeze({
   '6h': 'close_vol_6h',
   '24h': 'close_vol_24h',
 });
+
+function normalizeWindowCoverage(snapshot, values, source) {
+  const supplied = snapshot.volumeCoverage && typeof snapshot.volumeCoverage === 'object'
+    ? snapshot.volumeCoverage
+    : {};
+  const coverage = {};
+  for (const [window, value] of Object.entries(values)) {
+    if (value == null) continue;
+    const state = String(supplied[window] || 'partial').trim().toLowerCase();
+    coverage[window] = {
+      state: COVERAGE_STATES.has(state) ? state : 'partial',
+      source,
+    };
+  }
+  return coverage;
+}
 
 function normalizeVolumeWindow(value) {
   const normalized = String(value || '5m').trim().toLowerCase();
@@ -30,10 +49,8 @@ function getBucketDate(value = new Date()) {
 }
 
 async function upsertSnapshotBucket(snapshot) {
-  const address = String(snapshot.tokenAddress || snapshot.address || '').trim();
-  if (!isValidAddress(address)) {
-    throw new Error('Invalid token address format');
-  }
+  const chain = normalizeTokenChain(snapshot.chain || 'solana');
+  const address = normalizeTokenAddress(chain, snapshot.tokenAddress || snapshot.address);
 
   const bucketTs = getBucketDate(snapshot.ts || new Date());
   const vol1m = toNumberOrNull(snapshot.vol1m);
@@ -42,9 +59,13 @@ async function upsertSnapshotBucket(snapshot) {
   const vol6h = toNumberOrNull(snapshot.vol6h);
   const vol24h = toNumberOrNull(snapshot.vol24h);
   const source = String(snapshot.source || 'dexscreener').trim().toLowerCase() || 'dexscreener';
+  const windowCoverage = normalizeWindowCoverage(snapshot, {
+    '1m': vol1m, '5m': vol5m, '1h': vol1h, '6h': vol6h, '24h': vol24h,
+  }, source);
 
   const { rows } = await db.query(
     `INSERT INTO token_market_volume_buckets_1m (
+       chain,
        token_address,
        bucket_ts,
        close_vol_1m,
@@ -53,30 +74,39 @@ async function upsertSnapshotBucket(snapshot) {
        close_vol_6h,
        close_vol_24h,
        sample_count,
-       source
+       source,
+       window_coverage
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
-     ON CONFLICT (token_address, bucket_ts) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10::jsonb)
+     ON CONFLICT (chain, token_address, bucket_ts) DO UPDATE SET
        close_vol_1m = COALESCE(EXCLUDED.close_vol_1m, token_market_volume_buckets_1m.close_vol_1m),
        close_vol_5m = COALESCE(EXCLUDED.close_vol_5m, token_market_volume_buckets_1m.close_vol_5m),
        close_vol_1h = COALESCE(EXCLUDED.close_vol_1h, token_market_volume_buckets_1m.close_vol_1h),
        close_vol_6h = COALESCE(EXCLUDED.close_vol_6h, token_market_volume_buckets_1m.close_vol_6h),
        close_vol_24h = COALESCE(EXCLUDED.close_vol_24h, token_market_volume_buckets_1m.close_vol_24h),
        sample_count = token_market_volume_buckets_1m.sample_count + 1,
-       source = COALESCE(EXCLUDED.source, token_market_volume_buckets_1m.source)
+       source = COALESCE(EXCLUDED.source, token_market_volume_buckets_1m.source),
+       window_coverage = token_market_volume_buckets_1m.window_coverage
+         || EXCLUDED.window_coverage
      RETURNING *`,
-    [address, bucketTs, vol1m, vol5m, vol1h, vol6h, vol24h, source]
+    [
+      chain, address, bucketTs, vol1m, vol5m, vol1h, vol6h, vol24h,
+      source, JSON.stringify(windowCoverage),
+    ]
   );
 
   return rows[0];
 }
 
 async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5, options = {}) {
+  const chain = normalizeTokenChain(options.chain || 'solana');
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
-        .map((item) => String(item || '').trim())
-        .filter((item) => isValidAddress(item))
+        .map((item) => {
+          try { return normalizeTokenAddress(chain, item); } catch (_) { return null; }
+        })
+        .filter(Boolean)
     )
   );
   if (!unique.length) {
@@ -104,14 +134,16 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5, o
          bucket_ts AS current_ts,
          ${volumeColumn} AS current_volume
        FROM token_market_volume_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = $3
+         AND token_address = requested.token_address
        ORDER BY bucket_ts DESC
        LIMIT 1
      ) AS current_row ON TRUE
      LEFT JOIN LATERAL (
        SELECT bucket_ts, ${volumeColumn} AS baseline_volume
        FROM token_market_volume_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = $3
+         AND token_address = requested.token_address
          AND ${volumeColumn} IS NOT NULL
          AND current_row.current_ts IS NOT NULL
          AND bucket_ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
@@ -121,7 +153,8 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5, o
      LEFT JOIN LATERAL (
        SELECT bucket_ts, ${volumeColumn} AS baseline_volume
        FROM token_market_volume_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = $3
+         AND token_address = requested.token_address
          AND ${volumeColumn} IS NOT NULL
          AND current_row.current_ts IS NOT NULL
          AND bucket_ts < current_row.current_ts
@@ -129,18 +162,21 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5, o
        LIMIT 1
      ) AS fallback ON target.bucket_ts IS NULL
      ORDER BY requested.token_address ASC`,
-    [unique, safeWindowMinutes]
+    [unique, safeWindowMinutes, chain]
   );
 
   return rows;
 }
 
-async function deleteByAddresses(addresses) {
+async function deleteByAddresses(addresses, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
-        .map((item) => String(item || '').trim())
-        .filter((item) => isValidAddress(item))
+        .map((item) => {
+          try { return normalizeTokenAddress(chain, item); } catch (_) { return null; }
+        })
+        .filter(Boolean)
     )
   );
   if (!unique.length) {
@@ -149,18 +185,18 @@ async function deleteByAddresses(addresses) {
 
   const result = await db.query(
     `DELETE FROM token_market_volume_buckets_1m
-     WHERE token_address = ANY($1::varchar[])`,
-    [unique]
+     WHERE chain = $1
+       AND token_address = ANY($2::varchar[])`,
+    [chain, unique]
   );
 
   return result.rowCount || 0;
 }
 
 async function deleteChunkByAddress(address, options = {}) {
-  const normalized = String(address || '').trim();
-  if (!isValidAddress(normalized)) {
-    return 0;
-  }
+  const chain = normalizeTokenChain(options.chain || 'solana');
+  let normalized;
+  try { normalized = normalizeTokenAddress(chain, address); } catch (_) { return 0; }
 
   const limit = Math.max(1, Math.min(Math.trunc(Number(options.limit) || 250), 1000));
   const statementTimeoutMs = Math.max(0, Math.trunc(Number(options.statementTimeoutMs) || 0));
@@ -168,12 +204,13 @@ async function deleteChunkByAddress(address, options = {}) {
     `WITH doomed AS (
        SELECT ctid
        FROM token_market_volume_buckets_1m
-       WHERE token_address = $1
-       LIMIT $2
+       WHERE chain = $1
+         AND token_address = $2
+       LIMIT $3
      )
      DELETE FROM token_market_volume_buckets_1m
      WHERE ctid IN (SELECT ctid FROM doomed)`,
-    [normalized, limit],
+    [chain, normalized, limit],
     statementTimeoutMs
   );
 
@@ -187,6 +224,7 @@ module.exports = {
   deleteChunkByAddress,
   __private: {
     getBucketDate,
+    normalizeWindowCoverage,
     normalizeVolumeWindow,
   },
 };

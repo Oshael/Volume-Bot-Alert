@@ -3,7 +3,7 @@ import './styles/app.css';
 import { playAlertSound, playMigrateSound, primeAlertAudio } from './services/alerts/sound';
 import { maybeNotifyAlert, resetBrowserNotificationSession } from './services/alerts/browser-notifications';
 import { updateLivePresence } from './services/socket/client';
-import { isProfileAuthPanel, type AppState } from './state/app-state';
+import { isChainSelectedForSurface, isProfileAuthPanel, type AppState } from './state/app-state';
 import { createAppController, type AppRenderRegion } from './state/app-controller';
 import { renderAppShell } from './ui/app-shell';
 import {
@@ -115,13 +115,13 @@ function buildRuntimePerfSample(state: AppState) {
   return {
     workspace: state.ui.workspace,
     runtimeMode: state.runtime.mode,
-    trackedTokens: Object.keys(state.data.trackedTokensByAddress).length,
-    monitored: state.data.monitoredTokenAddresses.length,
-    manual: state.data.manualTokenAddresses.length,
-    recent: state.data.recentTokenAddresses.length,
-    oldWeek: state.data.oldWeekTokenAddresses.length,
-    recentHead: state.data.recentTokenAddresses.slice(0, 8),
-    oldWeekHead: state.data.oldWeekTokenAddresses.slice(0, 8),
+    trackedTokens: Object.keys(state.data.trackedTokensByIdentity).length,
+    monitored: state.data.monitoredTokenIdentities.length,
+    manual: state.data.manualTokenIdentities.length,
+    recent: state.data.recentTokenIdentities.length,
+    oldWeek: state.data.oldWeekTokenIdentities.length,
+    recentHead: state.data.recentTokenIdentities.slice(0, 8),
+    oldWeekHead: state.data.oldWeekTokenIdentities.slice(0, 8),
     alerts: state.data.alerts.length,
     pumpTokens: state.data.pumpTokens.length,
     pumpToasts: state.data.pumpToasts.length,
@@ -170,6 +170,10 @@ function isEditingInteractiveField() {
 function syncAudioSideEffects(state: AppState) {
   for (const alert of state.data.alerts) {
     if (playedAlertIds.has(alert.id) || pendingAlertSoundIds.has(alert.id)) {
+      continue;
+    }
+    if (!isChainSelectedForSurface(state, 'alertFeedChains', alert.chain)) {
+      playedAlertIds.add(alert.id);
       continue;
     }
 
@@ -267,6 +271,11 @@ function syncBrowserNotificationSideEffects(state: AppState) {
 
   for (const alert of state.data.alerts) {
     if (handledBrowserNotificationAlertIds.has(alert.id)) {
+      continue;
+    }
+
+    if (!isChainSelectedForSurface(state, 'browserNotificationChains', alert.chain)) {
+      handledBrowserNotificationAlertIds.add(alert.id);
       continue;
     }
 
@@ -395,7 +404,7 @@ function flushPendingRender() {
   pendingDirtyRegions = null;
 }
 
-function getRestorePriorityRegions(state: AppState) {
+function getRestorePriorityRegions(state: AppState): AppRenderRegion[] {
   if (state.session.status !== 'authenticated') {
     return ['header', 'overlay', 'legacy'] satisfies AppRenderRegion[];
   }
@@ -405,7 +414,7 @@ function getRestorePriorityRegions(state: AppState) {
   }
 
   if (state.ui.workspace === 'history') {
-    return ['header', 'overlay', 'legacy', 'recent', 'old-week', 'bid-zone'] satisfies AppRenderRegion[];
+    return ['header', 'overlay', 'legacy', 'recent', 'old-week'] satisfies AppRenderRegion[];
   }
 
   return ['header', 'overlay', 'legacy'] satisfies AppRenderRegion[];
@@ -514,8 +523,8 @@ function performRender(
     {
       workspace: state.ui.workspace,
       regions: formatDirtyRegions(dirtyRegions),
-      monitored: state.data.monitoredTokenAddresses.length,
-      manual: state.data.manualTokenAddresses.length,
+      monitored: state.data.monitoredTokenIdentities.length,
+      manual: state.data.manualTokenIdentities.length,
       alerts: state.data.alerts.length,
     },
     () => {

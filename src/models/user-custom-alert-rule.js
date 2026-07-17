@@ -1,13 +1,37 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+const {
+  CAPABILITY_MATRIX,
+  ERROR_CODES,
+  SPOT_WINDOW,
+  evaluateCustomAlertCapability,
+  getCustomAlertCapability,
+} = require('../services/custom-alert-capability-policy');
+const {
+  assertAutomaticAlertPublicationAuthorized,
+} = require('../services/automatic-alert-publication-guard');
 
-const VALID_METRICS = new Set(['price', 'mcap']);
+const VALID_METRICS = new Set(Object.values(CAPABILITY_MATRIX).flatMap(({ metrics }) => metrics));
 const VALID_OPERATORS = new Set(['cross_above', 'cross_below']);
 const VALID_STATUSES = new Set(['active', 'triggered', 'disabled']);
 const MAX_SOUND_DATA_URL_LENGTH = 7 * 1024 * 1024;
 
 function validationError(message) {
   return Object.assign(new Error(message), { status: 400 });
+}
+
+function capabilityError(result) {
+  const labels = {
+    [ERROR_CODES.chainUnsupported]: 'Custom alert chain is unsupported',
+    [ERROR_CODES.metricUnsupported]: 'Custom alert metric is unsupported for this chain',
+    [ERROR_CODES.windowUnsupported]: 'Custom alert window is unsupported for this chain',
+    [ERROR_CODES.notReady]: 'Custom alerts are not ready for this chain',
+  };
+  return Object.assign(validationError(labels[result.code] || 'Invalid custom alert capability'), {
+    code: result.code,
+    reason: result.reason,
+    capability: result.capability,
+  });
 }
 
 function normalizeUserId(value) {
@@ -18,12 +42,24 @@ function normalizeUserId(value) {
   return userId;
 }
 
-function normalizeAddress(value) {
-  const address = String(value || '').trim();
-  if (!isValidAddress(address)) {
-    throw validationError('Invalid token address format');
+function normalizeIdentity(address, chainValue = 'solana') {
+  try {
+    const chain = normalizeTokenChain(chainValue);
+    return { chain, address: normalizeTokenAddress(chain, address) };
+  } catch (error) {
+    throw validationError(error.message);
   }
-  return address;
+}
+
+function assertAutomaticTriggerEnabled(chain, authorization) {
+  if (chain === 'solana') return;
+  try {
+    assertAutomaticAlertPublicationAuthorized(authorization, chain);
+  } catch (_) {
+    const error = validationError('Custom alert triggering is disabled outside Solana');
+    error.code = 'NON_SOLANA_CUSTOM_ALERT_TRIGGER_DISABLED';
+    throw error;
+  }
 }
 
 function normalizeTitle(value) {
@@ -31,12 +67,30 @@ function normalizeTitle(value) {
   return title.slice(0, 64);
 }
 
-function normalizeMetric(value) {
-  const metric = String(value || '').trim().toLowerCase();
-  if (!VALID_METRICS.has(metric)) {
-    throw validationError('Custom alert metric must be price or mcap');
+function normalizeRuleCapability(chain, metric, window) {
+  const result = evaluateCustomAlertCapability({ chain, metric, window, ready: true });
+  if (!result.ok) throw capabilityError(result);
+  return { metric: result.metric, window: result.window };
+}
+
+function normalizeMetric(value, chain = 'solana', window = SPOT_WINDOW) {
+  return normalizeRuleCapability(chain, value, window).metric;
+}
+
+function normalizeFilterChains(filters = {}) {
+  const requested = Array.isArray(filters.chains)
+    ? filters.chains
+    : [filters.chain || 'solana'];
+  if (requested.length === 0) {
+    throw capabilityError(evaluateCustomAlertCapability({ chain: null, ready: true }));
   }
-  return metric;
+  return [...new Set(requested.map((value) => {
+    const capability = getCustomAlertCapability({ chain: value, ready: true });
+    if (!capability.supported) {
+      throw capabilityError(evaluateCustomAlertCapability({ chain: value, ready: true }));
+    }
+    return capability.chain;
+  }))];
 }
 
 function normalizeOperator(value) {
@@ -54,7 +108,8 @@ function normalizeOperator(value) {
 // baseline above the target means we are waiting for a drop, otherwise a rise.
 function deriveOperator(explicitOperator, metric, targetValue, metadata) {
   if (explicitOperator) return explicitOperator;
-  const baseline = Number(metric === 'price' ? metadata?.baselinePrice : metadata?.baselineMcap);
+  const baselineKeys = { price: 'baselinePrice', mcap: 'baselineMcap', fdv: 'baselineFdv' };
+  const baseline = Number(metadata?.[baselineKeys[metric]]);
   return Number.isFinite(baseline) && baseline > targetValue ? 'cross_below' : 'cross_above';
 }
 
@@ -130,9 +185,11 @@ function mapRuleRow(row) {
   return {
     id: Number(row.id) || null,
     userId: Number(row.user_id) || null,
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     title: row.title || null,
     metric: row.metric || null,
+    window: row.window || SPOT_WINDOW,
     operator: row.operator || null,
     targetValue: Number(row.target_value),
     colorHex: row.color_hex || null,
@@ -149,9 +206,9 @@ function mapRuleRow(row) {
 
 async function createRule(userId, payload = {}, runner = db) {
   const normalizedUserId = normalizeUserId(userId);
-  const tokenAddress = normalizeAddress(payload.tokenAddress);
+  const identity = normalizeIdentity(payload.tokenAddress, payload.chain || 'solana');
   const title = normalizeTitle(payload.title);
-  const metric = normalizeMetric(payload.metric);
+  const { metric, window } = normalizeRuleCapability(identity.chain, payload.metric, payload.window);
   const targetValue = normalizeTargetValue(payload.targetValue ?? payload.target);
   const operator = deriveOperator(normalizeOperator(payload.operator), metric, targetValue, normalizeMetadata(payload.metadata));
   const colorHex = normalizeColorHex(payload.colorHex);
@@ -166,6 +223,7 @@ async function createRule(userId, payload = {}, runner = db) {
   const { rows } = await runner.query(
     `INSERT INTO user_custom_alert_rules (
        user_id,
+       chain,
        token_address,
        title,
        metric,
@@ -173,13 +231,15 @@ async function createRule(userId, payload = {}, runner = db) {
        target_value,
        color_hex,
        sound_name,
-       metadata
+       metadata,
+       "window"
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
      RETURNING *`,
     [
       normalizedUserId,
-      tokenAddress,
+      identity.chain,
+      identity.address,
       title,
       metric,
       operator,
@@ -187,6 +247,7 @@ async function createRule(userId, payload = {}, runner = db) {
       colorHex,
       soundName,
       JSON.stringify(storedMetadata),
+      window,
     ]
   );
 
@@ -195,8 +256,9 @@ async function createRule(userId, payload = {}, runner = db) {
 
 async function listRules(userId, filters = {}, runner = db) {
   const normalizedUserId = normalizeUserId(userId);
-  const values = [normalizedUserId];
-  const clauses = ['user_id = $1'];
+  const chains = normalizeFilterChains(filters);
+  const values = [normalizedUserId, chains];
+  const clauses = ['user_id = $1', 'chain = ANY($2::text[])'];
   const status = normalizeStatus(filters.status);
 
   if (status) {
@@ -215,22 +277,50 @@ async function listRules(userId, filters = {}, runner = db) {
   return rows.map(mapRuleRow);
 }
 
-async function listActiveByTokenAddress(tokenAddress, runner = db) {
-  const normalizedAddress = String(tokenAddress || '').trim();
-  if (!isValidAddress(normalizedAddress)) {
+async function listActiveByTokenIdentity(identityValue, runner = db) {
+  let identity;
+  try {
+    identity = normalizeIdentity(identityValue?.address, identityValue?.chain);
+    if (!getCustomAlertCapability({ chain: identity.chain, ready: true }).supported) return [];
+  } catch (_) {
     return [];
   }
   const { rows } = await runner.query(
     `SELECT *
      FROM user_custom_alert_rules
-     WHERE token_address = $1
+     WHERE chain = $1
+       AND token_address = $2
        AND status = 'active'
        AND (metadata->>'expiresAt' IS NULL OR (metadata->>'expiresAt')::timestamptz > NOW())
      ORDER BY updated_at ASC, id ASC`,
-    [normalizedAddress]
+    [identity.chain, identity.address]
   );
 
   return rows.map(mapRuleRow);
+}
+
+async function listActiveByTokenIdentities(identityValues, runner = db) {
+  const identities = [...new Map((Array.isArray(identityValues) ? identityValues : [])
+    .map((value) => normalizeIdentity(value?.address, value?.chain))
+    .map((identity) => [`${identity.chain}:${identity.address}`, identity])).values()];
+  if (!identities.length) return [];
+  const { rows } = await runner.query(
+    `SELECT rules.*
+     FROM user_custom_alert_rules rules
+     INNER JOIN UNNEST($1::text[], $2::text[]) AS identity(chain, address)
+       ON identity.chain = rules.chain
+      AND identity.address = rules.token_address
+     WHERE rules.status = 'active'
+       AND (rules.metadata->>'expiresAt' IS NULL
+         OR (rules.metadata->>'expiresAt')::timestamptz > NOW())
+     ORDER BY rules.updated_at ASC, rules.id ASC`,
+    [identities.map(({ chain }) => chain), identities.map(({ address }) => address)]
+  );
+  return rows.map(mapRuleRow);
+}
+
+async function listActiveByTokenAddress(tokenAddress, runner = db, chainValue = 'solana') {
+  return listActiveByTokenIdentity({ chain: chainValue, address: tokenAddress }, runner);
 }
 
 async function markTriggered(id, userId, options = {}, runner = db) {
@@ -239,6 +329,8 @@ async function markTriggered(id, userId, options = {}, runner = db) {
     throw validationError('Valid custom alert rule id is required');
   }
   const normalizedUserId = normalizeUserId(userId);
+  const chain = normalizeTokenChain(options.chain || 'solana');
+  assertAutomaticTriggerEnabled(chain, options.authorization);
   const triggeredAt = options.triggeredAt instanceof Date ? options.triggeredAt : new Date(options.triggeredAt || Date.now());
   if (!Number.isFinite(triggeredAt.getTime())) {
     throw validationError('Valid triggeredAt is required');
@@ -251,9 +343,10 @@ async function markTriggered(id, userId, options = {}, runner = db) {
          updated_at = NOW()
      WHERE id = $1
        AND user_id = $2
+       AND chain = $4
        AND status = 'active'
      RETURNING *`,
-    [ruleId, normalizedUserId, triggeredAt]
+    [ruleId, normalizedUserId, triggeredAt, chain]
   );
 
   return mapRuleRow(rows[0] || null);
@@ -265,8 +358,9 @@ async function updateRule(id, userId, payload = {}, runner = db) {
     throw validationError('Valid custom alert rule id is required');
   }
   const normalizedUserId = normalizeUserId(userId);
+  const chain = normalizeFilterChains({ chain: payload.chain || 'solana' })[0];
   const title = normalizeTitle(payload.title);
-  const metric = normalizeMetric(payload.metric);
+  const { metric, window } = normalizeRuleCapability(chain, payload.metric, payload.window);
   const targetValue = normalizeTargetValue(payload.targetValue ?? payload.target);
   const colorHex = normalizeColorHex(payload.colorHex);
   const newSoundName = normalizeSoundName(payload.soundName);
@@ -276,8 +370,9 @@ async function updateRule(id, userId, payload = {}, runner = db) {
     `SELECT metadata, sound_name
      FROM user_custom_alert_rules
      WHERE id = $1
-       AND user_id = $2`,
-    [ruleId, normalizedUserId]
+       AND user_id = $2
+       AND chain = $3`,
+    [ruleId, normalizedUserId, chain]
   );
   const existing = existingRows[0];
   if (!existing) {
@@ -286,7 +381,7 @@ async function updateRule(id, userId, payload = {}, runner = db) {
 
   const metadata = { ...normalizeMetadata(existing.metadata) };
   const incomingMetadata = normalizeMetadata(payload.metadata);
-  for (const key of ['baselineMcap', 'baselinePrice', 'baselineAt']) {
+  for (const key of ['baselineMcap', 'baselinePrice', 'baselineFdv', 'baselineAt']) {
     if (incomingMetadata[key] !== undefined) {
       metadata[key] = incomingMetadata[key];
     }
@@ -316,11 +411,13 @@ async function updateRule(id, userId, payload = {}, runner = db) {
          color_hex = $7,
          sound_name = $8,
          metadata = $9::jsonb,
+         "window" = $10,
          status = 'active',
          triggered_at = NULL,
          updated_at = NOW()
      WHERE id = $1
        AND user_id = $2
+       AND chain = $11
      RETURNING *`,
     [
       ruleId,
@@ -332,26 +429,30 @@ async function updateRule(id, userId, payload = {}, runner = db) {
       colorHex,
       soundName,
       JSON.stringify(metadata),
+      window,
+      chain,
     ]
   );
 
   return mapRuleRow(rows[0] || null);
 }
 
-async function disableRule(id, userId, runner = db) {
+async function disableRule(id, userId, options = {}, runner = db) {
   const ruleId = Number.parseInt(String(id || '').trim(), 10);
   if (!Number.isInteger(ruleId) || ruleId <= 0) {
     throw validationError('Valid custom alert rule id is required');
   }
   const normalizedUserId = normalizeUserId(userId);
+  const chain = normalizeFilterChains({ chain: options.chain || 'solana' })[0];
   const { rows } = await runner.query(
     `UPDATE user_custom_alert_rules
      SET status = 'disabled',
          updated_at = NOW()
      WHERE id = $1
        AND user_id = $2
+       AND chain = $3
      RETURNING *`,
-    [ruleId, normalizedUserId]
+    [ruleId, normalizedUserId, chain]
   );
 
   return mapRuleRow(rows[0] || null);
@@ -363,6 +464,8 @@ module.exports = {
   VALID_STATUSES,
   createRule,
   disableRule,
+  listActiveByTokenIdentities,
+  listActiveByTokenIdentity,
   listActiveByTokenAddress,
   listRules,
   markTriggered,
@@ -370,7 +473,8 @@ module.exports = {
   __private: {
     buildExpiresAtIso,
     mapRuleRow,
-    normalizeAddress,
+    normalizeIdentity,
+    normalizeFilterChains,
     normalizeColorHex,
     normalizeExpiresInHours,
     normalizeMetric,

@@ -179,6 +179,7 @@ function buildCandidateSourceSql(options, params) {
   const granularities = options.granularities || SUPPORTED_GRANULARITIES;
   if (shouldScanOneMinuteCandidates(granularities)) {
     const clauses = [
+      "b.chain = 'solana'",
       '(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)',
     ];
     const lookback = buildLookbackClause(options, 'b', params);
@@ -194,6 +195,7 @@ function buildCandidateSourceSql(options, params) {
 
   if (shouldScanFiveMinuteAggregateCandidates(granularities)) {
     const clauses = [
+      "b.chain = 'solana'",
       `b.granularity_minutes = ${FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY}`,
       '(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)',
     ];
@@ -285,7 +287,8 @@ async function resetAggregateBuckets(addresses, granularityMinutes, options) {
   const lookback = buildLookbackClause(options, 'agg', params);
   const result = await queryWithOptionalTimeout(
     `DELETE FROM token_market_buckets_agg agg
-     WHERE agg.token_address = ANY($1::varchar[])
+     WHERE agg.chain = 'solana'
+       AND agg.token_address = ANY($1::varchar[])
        AND agg.granularity_minutes = $2::int
        ${lookback.sql}`,
     lookback.params,
@@ -357,6 +360,7 @@ function buildAggregateInsertSql(sourceRowsSql, sourceLabel, options = {}) {
          ${groupByPrefix}aggregate_bucket_ts
      )
      INSERT INTO token_market_buckets_agg (
+       chain,
        token_address,
        granularity_minutes,
        bucket_ts,
@@ -373,6 +377,7 @@ function buildAggregateInsertSql(sourceRowsSql, sourceLabel, options = {}) {
        source
      )
      SELECT
+       'solana',
        token_address,
        granularity_minutes,
        bucket_ts,
@@ -388,7 +393,7 @@ function buildAggregateInsertSql(sourceRowsSql, sourceLabel, options = {}) {
        sample_count,
        '${sourceLabel}'
      FROM aggregated
-     ON CONFLICT (token_address, granularity_minutes, bucket_ts) DO UPDATE SET
+     ON CONFLICT (chain, token_address, granularity_minutes, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_agg.pair_address),
        open_mcap = EXCLUDED.open_mcap,
        high_mcap = EXCLUDED.high_mcap,
@@ -423,7 +428,8 @@ function buildOneMinuteSourceRowsSql(targetGranularityParam, timestampPrefix = '
          b.sample_count,
          b.source
        FROM token_market_buckets_1m b
-       WHERE ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
+       WHERE b.chain = 'solana'
+         AND ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
 }
 
 function buildFiveMinuteAggregateSourceRowsSql(targetGranularityParam, sourceGranularityParam, timestampPrefix = '') {
@@ -445,7 +451,8 @@ function buildFiveMinuteAggregateSourceRowsSql(targetGranularityParam, sourceGra
          b.close_price,
          b.sample_count
        FROM token_market_buckets_agg b
-       WHERE b.granularity_minutes = ${sourceGranularityParam}::int
+       WHERE b.chain = 'solana'
+         AND b.granularity_minutes = ${sourceGranularityParam}::int
          AND ${timestampPrefix}(b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)`;
 }
 
@@ -476,7 +483,8 @@ async function backfillAggregateBuckets(addresses, granularityMinutes, options) 
 async function resetAggregateBucketsForWindow(granularityMinutes, windowStart, windowEnd, options = {}) {
   const result = await queryWithOptionalTimeout(
     `DELETE FROM token_market_buckets_agg
-     WHERE granularity_minutes = $1::int
+     WHERE chain = 'solana'
+       AND granularity_minutes = $1::int
        AND bucket_ts >= $2::timestamptz
        AND bucket_ts < $3::timestamptz`,
     [granularityMinutes, windowStart, windowEnd],

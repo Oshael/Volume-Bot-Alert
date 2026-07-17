@@ -14,7 +14,7 @@ Use this document for:
 
 Use `README.md` as the primary operational entry point.
 
-Last reviewed against code and the launch deployment model on `2026-07-10` after reconciling the web/worker runtime split, split production `systemd` workers, distributed worker leases, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, the operations runbook, and the current `Total Liq` / Meteora hover contract.
+Last reviewed against code and the launch deployment model on `2026-07-15` after reconciling the web/worker runtime split, split production `systemd` workers, distributed worker leases, Robinhood fatal lease visibility, workspace window metric provenance, Live leader-tab polling, performance metrics, emergency switches, QuickNode/Jupiter lab status, `gmgnClaimSignalWorker`, `solUsdPrice`, the operations runbook, and the current `Total Liq` / Meteora hover contract.
 
 ## Current Deployment Topology
 
@@ -30,6 +30,7 @@ Current production-like topology:
     - `volume-bot-alert-worker-core.service`
     - `volume-bot-alert-worker-market.service`
     - `volume-bot-alert-worker-maintenance.service`
+    - suggested optional rollout unit: `volume-bot-alert-worker-robinhood.service`
   - reverse-proxied by `nginx`
   - public host: `https://api.trendscope.pro`
   - intended launch runtime:
@@ -37,6 +38,7 @@ Current production-like topology:
     - worker-core: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=core`
     - worker-market: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=market`
     - worker-maintenance: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=maintenance`
+    - worker-robinhood: `RUN_SOCKET_HUB=false`, `RUN_BACKGROUND_JOBS=true`, `BACKGROUND_WORKER_GROUPS=robinhood`, `ROBINHOOD_INGESTION_ENABLED=true`
 - database:
   - PostgreSQL runs on the same VPS as the backend
   - intended to stay private/local rather than publicly exposed
@@ -243,6 +245,12 @@ Deployment model:
   - core: `BACKGROUND_WORKER_GROUPS=core`
   - market: `BACKGROUND_WORKER_GROUPS=market`
   - maintenance: `BACKGROUND_WORKER_GROUPS=maintenance`
+- `robinhood` is an isolated group: it is excluded from `all`, the config
+  rejects combining it with shared groups, and `start:worker:robinhood` is the
+  only startup script that explicitly enables its persistent writer
+- the first persistent Robinhood bootstrap requires `ROBINHOOD_START_BLOCK`
+  until both discovery and market cursors exist; subsequent restarts prefer
+  those independent DB cursors and restore active pools from the registry
 - every background worker process should run with:
   - `RUN_SOCKET_HUB=false`
   - `RUN_BACKGROUND_JOBS=true`
@@ -263,6 +271,8 @@ Admin worker status endpoint:
 - returns socket hub status plus:
   - `catalogWorker`
   - `catalogCleanupWorker`
+  - `robinhoodRetentionWorker`
+  - `robinhoodIngestionWorker`
   - `meteoraSnapshotWorker`
   - `dexDiscoveryWorker`
   - `bidZoneWorker`
@@ -275,6 +285,29 @@ Admin worker status endpoint:
   - `workerLeases`
   - `gmgn`
   - `dexscreener`
+
+`robinhoodIngestionWorker` validates `eth_chainId = 4663` independently on
+every configured RPC provider before constructing persistence. Its admin status
+also includes `sharedLease`, read from Postgres, so the web process exposes a
+durable `metadata.state = halted` plus fatal code/message even though ingestion
+runs in a separate process. A halted tombstone blocks automatic lease takeover
+until an operator diagnoses and explicitly clears it.
+
+Robinhood `eth_getLogs` address arrays are partitioned by
+`ROBINHOOD_MAX_ADDRESSES_PER_LOG_REQUEST` (default `100`). Shards share one
+logical range and cursor boundary: one failed shard prevents the range commit.
+NOXA `TokenLaunched` events are validated against historical factory state,
+Uniswap v3 and bytecode, then enrich the existing v3 pool metadata rather than
+creating another market identity. Those historical reads explicitly allow the
+configured Alchemy provider to take over when the public RPC returns a
+non-retryable JSON-RPC state error.
+
+The persistent Robinhood writer does not retain accepted observations or
+read-only analytical windows in process memory. Its compact status exposes this
+as `inMemoryState`, which should keep `observations`, `discoveries` and
+`windowEvents` at zero. The standalone dry-run retains analytical windows and a
+rollback map bounded to the same 10,000-log ceiling as the poller. This memory
+separation does not change timestamp batching, persistence or cursor atomicity.
 
 ### Backend workers
 
@@ -880,6 +913,102 @@ Current API shape:
   - fingerprint bucketing by `change1h` and TVL instead of drifting `mcap` / `volume24h`
 
 ## Source Of Truth By Area
+
+### Workspace catalog visibility boundary
+
+`src/services/workspace-visibility-policy.js` is the pure policy boundary for
+future Monitored and Radar catalog reads. It separates permanent safety
+exclusions, reversible valuation filters, risk/signal state, activity state
+and valuation freshness without writing catalog lifecycle fields.
+
+The policy treats `admin_blocked_tokens` and per-user block input as explicit
+authority. A manual Solana `junk_permanent` review is a hard exclusion;
+`junk_probable`, legacy `eligible_for_monitoring`, inactivity and cleanup state
+are not workspace blocks. Legacy monitoring eligibility is also not interpreted
+as risk approval; risk state comes from explicit chain/review input. Solana
+accepts explicit MCAP valuation and Robinhood accepts explicit FDV valuation;
+values are never copied between types.
+
+Known identity chains and available workspace chains are separate. BSC and
+Base identities remain valid but are rejected by workspace policy until chain
+adapters and readiness are supplied. This boundary is not wired into product
+queries until later blocks of
+`docs/workspace-catalog-activity-views-architecture-plan.md`.
+
+### Robinhood persistent workspace catalog reader
+
+`src/models/robinhood-workspace-catalog-read.js` is the read-only identity
+repository prepared for future Monitored and Radar queries. Its bounded page
+starts from every persistent Robinhood `token_catalog` identity and does not
+filter by recent swaps, `eligible_for_monitoring`, `demoteInactive` state or
+active pool-registry membership.
+
+The Robinhood catalog projection worker no longer runs `demoteInactive` or
+writes `robinhood-dashboard-inactive` / `robinhood-no-swaps-15m` when a token
+has no swap for 15 minutes. Existing rows with those values remain readable as
+legacy diagnostic history and do not control workspace visibility. The worker
+temporarily keeps `lastSummary.demoted = 0` as a response compatibility field;
+operators must use normalized valuation/activity freshness and window coverage
+instead of that counter.
+
+`monitored_token_exit_events` remains a Solana-only audit stream for the
+legacy `eligible_for_monitoring` plus USD 30,000 signal rule. New and historical
+rows are exposed with `semantics.scope = legacy-signal-eligibility` and
+`workspaceExit = false`; neither the admin endpoint nor the CLI may interpret
+them as removal from Monitored, Radar or the persistent workspace catalog. New
+rows also persist that consumer label inside `details`, without rewriting old
+audit evidence.
+
+The socket `{ address }` market-subscription adapter remains Solana-only while
+deprecation is measured. `socketHub.getStatus().marketSubscriptionProtocol`
+reports the process-local `observedSince`, canonical and legacy request counts,
+and their last observation times. A mixed `market:sync` increments both request
+classes. Removing the adapter requires a declared observation window with zero
+`legacyAddressOnlyRequests`; repository callers alone are not sufficient
+evidence because external clients may remain deployed.
+
+Activity and FDV observation time come from permanent
+`robinhood_market_buckets_1h` evidence across Uniswap V2/V3/V4. The repository
+does not treat `token_catalog.last_seen_at` as activity because manual catalog
+insertion initializes that column without a swap. The 15-minute rule is only a
+fresh/stale classification applied through the workspace visibility policy;
+tokens without bucket evidence are returned with unknown activity/valuation.
+
+Rolling `5m/1h/6h/24h` metrics deliberately report adapter-required coverage
+instead of reusing projected catalog snapshots as complete windows. The
+normalized readers are `src/models/robinhood-workspace-window-read.js` and
+`src/models/solana-workspace-window-read.js`; both return the shared semantics
+defined by `src/services/workspace-window-metrics.js`.
+
+Robinhood proves coverage from an explicit, immutable origin on the continuous
+market cursor and aggregates accepted Uniswap V2/V3/V4 minute buckets by token.
+Cursor creation time is not treated as processed-chain evidence. Solana reads
+rolling snapshots and requires explicit per-window provenance stored in
+`token_market_volume_buckets_1m.window_coverage`. Legacy Solana rows have empty
+provenance and remain partial instead of being coerced to complete or zero.
+New entries bind `{ state, source }` per window, so same-minute writes from
+different upstreams cannot relabel values retained from another source. Legacy
+string entries remain readable but do not claim a per-window source.
+Current Solana snapshots do not expose equivalent exact swap counts or exact
+last-swap timestamps, so those normalized fields are unavailable. PumpFun
+pre-migration buckets are minute-aligned and its in-memory capture has no
+restart-safe continuity cursor, so bucket age alone is not accepted as proof.
+
+Stage 74 initializes existing Robinhood origins at their last persisted
+checkpoint. This intentionally makes longer windows incomplete until the
+continuous cursor accumulates the corresponding duration again.
+
+Stage 75 rejects invalid coverage keys, states and structured source entries on
+new writes. Its constraint is `NOT VALID`, so deployment does not scan legacy
+rows. The test schema profile requires both Stage 73 and Stage 75.
+
+GMGN, Dexscreener and manual pre-migration writes derive provenance before
+persisting normalized/preserved windows. Preserved or cross-window-filled
+values stay partial unless token age proves lifetime-complete coverage. Stage
+73 adds the provenance column without rewriting legacy values; its JSON object
+check is installed `NOT VALID` to avoid an immediate full-table validation
+scan and still protects new writes. These readers are not yet connected to
+product routes and do not modify catalog lifecycle or alert state.
 
 ### Auth/session
 - backend
@@ -2433,13 +2562,13 @@ Backend file:
 
 Related models:
 - `src/models/token-market-bucket-1m.js`
-- legacy fallback: `src/models/token-market-snapshot.js`
 
 Current behavior:
 - backend reads the primary baseline from `token_market_buckets_1m`
 - it uses the newest valid bucket row as current
 - it looks for a valid baseline around `~5m` back
-- if the bucket baseline is missing, it can still fall back to legacy `token_market_snapshots`
+- no runtime fallback reads `token_market_snapshots`; that legacy table is
+  Solana-only and retained only as a source for manual historical backfills
 
 If no valid pair exists:
 - `mcapDelta` remains `null`
@@ -2456,7 +2585,7 @@ If no valid pair exists:
 - starred tokens
 - token catalog
 - market bucket history
-- legacy market snapshots
+- legacy Solana-only market snapshots (manual backfill source; no runtime writes)
 - Meteora snapshots
 
 ### Browser-local and account-scoped

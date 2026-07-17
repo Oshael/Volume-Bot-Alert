@@ -86,6 +86,7 @@ function loadBrowserNotificationModule(options = {}) {
 function buildAlert(overrides = {}) {
   return {
     id: 'alert-1',
+    chain: 'solana',
     kind: 'monitored-vol',
     address: 'So11111111111111111111111111111111111111112',
     symbol: 'sol',
@@ -131,7 +132,7 @@ describe('browser notification service', () => {
     assert.equal(content.body, '+123.46% · MCAP $250K->$1.25M · VOL 5M $2K->$45K · So11...1112');
     assert.equal(content.tag, 'alert:alert-1');
     assert.equal(content.icon, 'https://example.com/token.png');
-    assert.equal(JSON.stringify(content.data), '{"address":"So11111111111111111111111111111111111111112","alertId":"alert-1","ruleKey":null}');
+    assert.equal(JSON.stringify(content.data), '{"address":"So11111111111111111111111111111111111111112","chain":"solana","alertId":"alert-1","ruleKey":null,"navigationTarget":"/alerts/So11111111111111111111111111111111111111112"}');
 
     const unsafe = service.formatBrowserNotificationContent(buildAlert({ imageUrl: 'javascript:alert(1)' }), {
       fallbackIconUrl: '/fallback.png',
@@ -147,15 +148,42 @@ describe('browser notification service', () => {
     assert.equal(surge.body, '+123.46% · MCAP $250K->$1.25M · VOL 6H $1.64M · So11...1112');
   });
 
+  it('labels Robinhood custom FDV alerts without calling them market cap', () => {
+    const service = loadBrowserNotificationModule();
+    const content = service.formatBrowserNotificationContent(buildAlert({
+      id: 'rh-fdv-1',
+      chain: 'robinhood',
+      kind: 'custom-alert',
+      address: '0xabcdef0123456789abcdef0123456789abcdef01',
+      symbol: 'rhfdv',
+      customTitle: 'FDV breakout',
+      customMetric: 'fdv',
+      customCurrentValue: 2_500_000,
+      customTarget: 3_000_000,
+    }));
+
+    assert.equal(content.title, 'FDV breakout: RHFDV');
+    assert.equal(content.body, 'FDV $2.50M / target $3.00M · 0xab...ef01');
+    assert.doesNotMatch(content.body, /MCAP/);
+    assert.equal(content.data.chain, 'robinhood');
+    assert.equal(content.data.navigationTarget, '/alerts/robinhood/0xabcdef0123456789abcdef0123456789abcdef01');
+  });
+
   it('creates notifications only when eligible and avoids duplicates', () => {
     const Notification = createNotificationMock('granted');
     const documentState = { hidden: true };
     let focusCount = 0;
+    const navigationTargets = [];
     const service = loadBrowserNotificationModule({
       window: {
         isSecureContext: true,
         localStorage: createLocalStorage(),
         Notification,
+        location: {
+          assign(target) {
+            navigationTargets.push(target);
+          },
+        },
         focus() {
           focusCount += 1;
         },
@@ -170,6 +198,7 @@ describe('browser notification service', () => {
 
     Notification.instances[0].onclick();
     assert.equal(focusCount, 1);
+    assert.deepEqual(navigationTargets, ['/alerts/So11111111111111111111111111111111111111112']);
 
     service.resetBrowserNotificationSession();
     assert.equal(service.maybeNotifyAlert(buildAlert({ id: 'alert-2' }), {

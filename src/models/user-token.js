@@ -1,4 +1,5 @@
 const db = require('./db');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 // Solana address: base58, 32-44 chars
 // Ethereum/BSC/Base: hex, 42 chars (0x + 40)
@@ -14,16 +15,43 @@ function isValidAddress(address) {
   return SOLANA_ADDR_RE.test(trimmed) || EVM_ADDR_RE.test(trimmed);
 }
 
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
+
 /**
  * Get all manual tokens for a user.
  */
-async function getAll(userId) {
+async function getAll(userId, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
   const { rows } = await db.query(
-    `SELECT address, label, added_at
+    `SELECT chain, address, label, added_at
      FROM user_tokens
-     WHERE user_id = $1
+     WHERE user_id = $1 AND chain = $2
      ORDER BY added_at ASC`,
-    [userId]
+    [userId, chain]
+  );
+  return rows;
+}
+
+async function getAllForChains(userId, chainValues = ['solana', 'robinhood']) {
+  const chains = [...new Set(chainValues.map(normalizeTokenChain))];
+  if (chains.length === 0) return [];
+  const { rows } = await db.query(
+    `SELECT ut.chain, ut.address, ut.label, ut.added_at,
+            tc.symbol, tc.name, tc.last_image_url,
+            tc.last_price, tc.last_mcap, tc.last_fdv,
+            tc.last_liquidity_usd, tc.last_vol_5m, tc.last_vol_1h,
+            tc.last_vol_6h, tc.last_vol_24h, tc.last_price_change_1h,
+            tc.last_price_change_6h, tc.last_price_change_24h,
+            tc.last_token_created_at_ms, tc.first_seen_at, tc.last_seen_at
+     FROM user_tokens ut
+     LEFT JOIN token_catalog tc
+       ON tc.chain = ut.chain AND tc.address = ut.address
+     WHERE ut.user_id = $1 AND ut.chain = ANY($2::varchar[])
+     ORDER BY ut.added_at ASC, ut.chain ASC, ut.address ASC`,
+    [userId, chains]
   );
   return rows;
 }
@@ -31,13 +59,14 @@ async function getAll(userId) {
 /**
  * Check whether a manual token already exists for a user.
  */
-async function exists(userId, address) {
+async function exists(userId, address, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
   const { rows } = await db.query(
     `SELECT 1
      FROM user_tokens
-     WHERE user_id = $1 AND address = $2
+     WHERE user_id = $1 AND chain = $2 AND address = $3
      LIMIT 1`,
-    [userId, address.trim()]
+    [userId, identity.chain, identity.address]
   );
   return rows.length > 0;
 }
@@ -45,41 +74,38 @@ async function exists(userId, address) {
 /**
  * Add a manual token. Returns the created row or null if duplicate.
  */
-async function add(userId, address, label = null) {
-  const addr = address.trim();
-  try {
-    const { rows } = await db.query(
-      `INSERT INTO user_tokens (user_id, address, label)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (user_id, address) DO NOTHING
-       RETURNING address, label, added_at`,
-      [userId, addr, label]
-    );
-    return rows[0] || null; // null = already existed
-  } catch (err) {
-    throw err;
-  }
+async function add(userId, address, label = null, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
+  const { rows } = await db.query(
+    `INSERT INTO user_tokens (user_id, chain, address, label)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, chain, address) DO NOTHING
+     RETURNING chain, address, label, added_at`,
+    [userId, identity.chain, identity.address, label]
+  );
+  return rows[0] || null;
 }
 
 /**
  * Add multiple tokens at once (for PUT sync). Ignores duplicates.
  */
-async function setAll(userId, tokens) {
+async function setAll(userId, tokens, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
   const client = await db.getClient();
   try {
     await client.query('BEGIN');
     // Clear existing
-    await client.query('DELETE FROM user_tokens WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM user_tokens WHERE user_id = $1 AND chain = $2', [userId, chain]);
     // Insert new
     for (const tok of tokens) {
-      const addr = (tok.address || tok).toString().trim();
-      const label = tok.label || null;
-      if (isValidAddress(addr)) {
-        await client.query(
-          'INSERT INTO user_tokens (user_id, address, label) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-          [userId, addr, label]
-        );
-      }
+      const label = tok?.label || null;
+      let addr;
+      try { addr = normalizeTokenAddress(chain, tok?.address || tok); } catch (_) { continue; }
+      await client.query(
+        `INSERT INTO user_tokens (user_id, chain, address, label)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, chain, address) DO NOTHING`,
+        [userId, chain, addr, label]
+      );
     }
     await client.query('COMMIT');
   } catch (err) {
@@ -93,10 +119,11 @@ async function setAll(userId, tokens) {
 /**
  * Remove a manual token. Returns true if deleted.
  */
-async function remove(userId, address) {
+async function remove(userId, address, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
   const { rowCount } = await db.query(
-    'DELETE FROM user_tokens WHERE user_id = $1 AND address = $2',
-    [userId, address.trim()]
+    'DELETE FROM user_tokens WHERE user_id = $1 AND chain = $2 AND address = $3',
+    [userId, identity.chain, identity.address]
   );
   return rowCount > 0;
 }
@@ -104,10 +131,11 @@ async function remove(userId, address) {
 /**
  * Count tokens for a user (for rate limiting).
  */
-async function count(userId) {
+async function count(userId, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
   const { rows } = await db.query(
-    'SELECT COUNT(*)::int AS count FROM user_tokens WHERE user_id = $1',
-    [userId]
+    'SELECT COUNT(*)::int AS count FROM user_tokens WHERE user_id = $1 AND chain = $2',
+    [userId, chain]
   );
   return rows[0].count;
 }
@@ -115,9 +143,11 @@ async function count(userId) {
 module.exports = {
   isValidAddress,
   getAll,
+  getAllForChains,
   exists,
   add,
   setAll,
   remove,
   count,
+  normalizeIdentity,
 };

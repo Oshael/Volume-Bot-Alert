@@ -38,16 +38,18 @@ export function isChartAlertRuleKey(value: unknown) {
 
 export function normalizeChartAlertEvent(input: Partial<ChartAlertEvent> | DashboardAlertEvent): ChartAlertEvent | null {
   const id = Number(input.id);
+  const chain = normalizeText(input.chain).toLowerCase() || 'solana';
   const ruleKey = normalizeText(input.ruleKey).toLowerCase();
   const address = normalizeText(input.address);
   const triggeredAtMs = Date.parse(normalizeText(input.triggeredAt));
-  if (!Number.isInteger(id) || id <= 0 || !isChartAlertRuleKey(ruleKey) || !address || !Number.isFinite(triggeredAtMs)) {
+  if (chain !== 'solana' || !Number.isInteger(id) || id <= 0 || !isChartAlertRuleKey(ruleKey) || !address || !Number.isFinite(triggeredAtMs)) {
     return null;
   }
 
   return {
     ...input,
     id,
+    chain: 'solana',
     ruleKey,
     kind: normalizeText(input.kind) || ruleKey,
     address,

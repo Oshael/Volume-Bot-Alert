@@ -8,6 +8,7 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS user_custom_alert_rules (
      id SERIAL PRIMARY KEY,
      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      token_address VARCHAR(64) NOT NULL,
      title VARCHAR(64) NOT NULL,
      metric VARCHAR(16) NOT NULL,
@@ -25,10 +26,12 @@ const STATEMENTS = [
      CONSTRAINT user_custom_alert_rules_status_check CHECK (status IN ('active', 'triggered', 'disabled')),
      CONSTRAINT user_custom_alert_rules_target_positive_check CHECK (target_value > 0)
    )`,
+  `ALTER TABLE user_custom_alert_rules
+     ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana'`,
   `CREATE INDEX IF NOT EXISTS idx_user_custom_alert_rules_user_status
      ON user_custom_alert_rules(user_id, status, updated_at DESC, id DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_user_custom_alert_rules_token_active
-     ON user_custom_alert_rules(token_address, status, updated_at DESC, id DESC)
+  `CREATE INDEX IF NOT EXISTS idx_user_custom_alert_rules_chain_token_active
+     ON user_custom_alert_rules(chain, token_address, status, updated_at DESC, id DESC)
      WHERE status = 'active'`,
 ];
 

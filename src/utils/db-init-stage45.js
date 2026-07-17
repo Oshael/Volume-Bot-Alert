@@ -28,15 +28,16 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS user_token_folder_items (
      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
      folder_id INTEGER NOT NULL,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      address VARCHAR(64) NOT NULL,
      sort_order INTEGER NOT NULL DEFAULT 0,
      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     PRIMARY KEY (user_id, folder_id, address),
+     CONSTRAINT user_token_folder_items_chain_pkey PRIMARY KEY (user_id, folder_id, chain, address),
      FOREIGN KEY (user_id, folder_id)
        REFERENCES user_token_folders(user_id, id)
        ON DELETE CASCADE,
-     FOREIGN KEY (user_id, address)
-       REFERENCES user_tokens(user_id, address)
+     CONSTRAINT user_token_folder_items_user_chain_address_fkey FOREIGN KEY (user_id, chain, address)
+       REFERENCES user_tokens(user_id, chain, address)
        ON DELETE CASCADE
    )`,
   `CREATE INDEX IF NOT EXISTS idx_user_token_folder_items_folder

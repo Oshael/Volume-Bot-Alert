@@ -12,8 +12,14 @@ const request = require('supertest');
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
+const adminBlockEvidence = require('../src/models/admin-block-evidence');
+const adminBlockedToken = require('../src/models/admin-blocked-token');
 const tokenCatalog = require('../src/models/token-catalog');
+const stage4 = require('../src/utils/db-init-stage4');
 const stage45 = require('../src/utils/db-init-stage45');
+const stage53 = require('../src/utils/db-init-stage53');
+const stage54 = require('../src/utils/db-init-stage54');
+const stage55 = require('../src/utils/db-init-stage55');
 const { CONFIG_SCHEMA } = require('../src/models/user-config');
 const { assertUsingTestDatabase } = require('./helpers/test-db');
 
@@ -21,8 +27,9 @@ const VALID_ADDR_1 = 'So11111111111111111111111111111111111111112';
 const VALID_ADDR_2 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const VALID_ADDR_3 = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const INVALID_ADDR = 'not-a-valid-address!!!';
-const VALID_EVM_ADDR = `0x${'a'.repeat(40)}`;
-const FOLDER_ONLY_ADDR = `0x${'b'.repeat(40)}`;
+const FOLDER_ONLY_ADDR = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6QXgB263vZyVfSRm';
+const ROBINHOOD_ADDR_MIXED = '0xAbCdEf0123456789aBCdef0123456789aBCDEf01';
+const ROBINHOOD_ADDR = ROBINHOOD_ADDR_MIXED.toLowerCase();
 
 function getQueryToken(actionUrl) {
   assert.ok(actionUrl, 'Expected actionUrl in email debug payload');
@@ -109,7 +116,13 @@ describe('Config routes', () => {
   before(async () => {
     await assertUsingTestDatabase(db);
     await ensureAccessSchema();
+    await stage4.init({ closePool: false });
     await stage45.init({ closePool: false });
+    await stage53.init({ closePool: false });
+    await stage54.init({ closePool: false });
+    await adminBlockedToken.ensureTable();
+    await adminBlockEvidence.ensureTable();
+    await stage55.init({ closePool: false });
     await db.query('DELETE FROM user_token_folder_items');
     await db.query('DELETE FROM user_token_folders');
     await db.query('DELETE FROM user_starred_tokens');
@@ -167,7 +180,16 @@ describe('Config routes', () => {
     assert.deepEqual(response.body.tokens, []);
     assert.deepEqual(response.body.blocklist, []);
     assert.deepEqual(response.body.starredTokens, []);
+    assert.deepEqual(response.body.availableChains, ['solana']);
+    assert.equal(response.body.chainReadiness.solana.status, 'ready');
     assert.ok(response.body.uiPrefs);
+
+    const readinessResponse = await request(app)
+      .get('/api/config/chain-readiness')
+      .set('Authorization', `Bearer ${userToken}`);
+    assert.equal(readinessResponse.status, 200);
+    assert.deepEqual(readinessResponse.body.availableChains, ['solana']);
+    assert.equal(readinessResponse.body.chainReadiness.solana.workspaceReady, true);
 
     for (const key of Object.keys(CONFIG_SCHEMA)) {
       assert.ok(Object.hasOwn(response.body.configs, key), `missing config key ${key}`);
@@ -181,6 +203,8 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['card-effects-mode'], 'on');
     assert.equal(response.body.configs['old-mcap-min'], 120000);
     assert.equal(response.body.configs['old-mcap-max'], 100000000);
+    assert.equal(response.body.configs['old-fdv-min'], 120000);
+    assert.equal(response.body.configs['old-fdv-max'], 100000000);
     assert.equal(response.body.configs['recent-age-min'], 0);
     assert.equal(response.body.configs['recent-age-max'], 10080);
     assert.equal(response.body.configs['recent-surge-1h-threshold'], 50);
@@ -193,6 +217,10 @@ describe('Config routes', () => {
     assert.equal(response.body.configs['alert-old-week-surge-6h-enabled'], 'on');
     assert.equal(response.body.configs['old-week-mcap-min'], 120000);
     assert.equal(response.body.configs['old-week-mcap-max'], 100000000);
+    assert.equal(response.body.configs['old-week-fdv-min'], 120000);
+    assert.equal(response.body.configs['old-week-fdv-max'], 100000000);
+    assert.equal(response.body.configs['monitored-mcap-min'], 30000);
+    assert.equal(response.body.configs['monitored-fdv-min'], 30000);
     assert.equal(response.body.configs['old-week-age-min'], 10080);
     assert.equal(response.body.configs['old-week-age-max'], 0);
     assert.equal(response.body.configs['old-per-page'], 15);
@@ -244,6 +272,12 @@ describe('Config routes', () => {
           'recent-age-max': 120,
           'old-week-age-min': 20160,
           'old-week-age-max': 43200,
+          'monitored-mcap-min': 45000,
+          'monitored-fdv-min': 65000,
+          'old-fdv-min': 140000,
+          'old-fdv-max': 90000000,
+          'old-week-fdv-min': 160000,
+          'old-week-fdv-max': 80000000,
         },
       });
 
@@ -259,6 +293,12 @@ describe('Config routes', () => {
       'recent-age-max': 120,
       'old-week-age-min': 20160,
       'old-week-age-max': 43200,
+      'monitored-mcap-min': 45000,
+      'monitored-fdv-min': 65000,
+      'old-fdv-min': 140000,
+      'old-fdv-max': 90000000,
+      'old-week-fdv-min': 160000,
+      'old-week-fdv-max': 80000000,
     });
 
     const getResponse = await request(app)
@@ -276,6 +316,12 @@ describe('Config routes', () => {
     assert.equal(getResponse.body.configs['recent-age-max'], 120);
     assert.equal(getResponse.body.configs['old-week-age-min'], 20160);
     assert.equal(getResponse.body.configs['old-week-age-max'], 43200);
+    assert.equal(getResponse.body.configs['monitored-mcap-min'], 45000);
+    assert.equal(getResponse.body.configs['monitored-fdv-min'], 65000);
+    assert.equal(getResponse.body.configs['old-fdv-min'], 140000);
+    assert.equal(getResponse.body.configs['old-fdv-max'], 90000000);
+    assert.equal(getResponse.body.configs['old-week-fdv-min'], 160000);
+    assert.equal(getResponse.body.configs['old-week-fdv-max'], 80000000);
   });
 
   it('mirrors legacy surge config values into the new recent and old-week keys on read when the new keys were never stored', async () => {
@@ -401,7 +447,6 @@ describe('Config routes', () => {
         },
         tokens: [
           { address: VALID_ADDR_1, label: 'SOL' },
-          { address: VALID_EVM_ADDR, label: 'EVM' },
         ],
         blocklist: [
           { address: VALID_ADDR_3, label: 'SCAM' },
@@ -416,9 +461,13 @@ describe('Config routes', () => {
     assert.equal(response.body.configs.threshold, 75);
     assert.equal(response.body.configs.interval, 45);
     assert.equal(response.body.configs['block-warning-enabled'], 'on');
-    assert.equal(response.body.tokens.length, 2);
+    assert.equal(response.body.tokens.length, 1);
     assert.equal(response.body.blocklist.length, 1);
-    assert.deepEqual(response.body.starredTokens.map((item) => item.address), [VALID_ADDR_1, VALID_ADDR_3]);
+    assert.deepEqual(
+      response.body.starredTokens.map((item) => item.address).sort(),
+      [VALID_ADDR_1, VALID_ADDR_3].sort(),
+    );
+    assert.deepEqual(response.body.availableChains, ['solana']);
   });
 
   it('rejects invalid full sync requests without persisting partial changes', async () => {
@@ -563,6 +612,99 @@ describe('Config routes', () => {
     assert.equal(configResponse.body.tokens.some((item) => item.address === FOLDER_ONLY_ADDR), false);
   });
 
+  it('persists Robinhood collections immediately and keeps destructive folder deletion chain-aware', async () => {
+    const invalidResponse = await request(app)
+      .post('/api/config/tokens')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ chain: 'robinhood', address: INVALID_ADDR });
+    assert.equal(invalidResponse.status, 400);
+
+    const manualResponse = await request(app)
+      .post('/api/config/tokens')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ chain: 'robinhood', address: ROBINHOOD_ADDR_MIXED, label: 'RH manual' });
+    assert.equal(manualResponse.status, 201);
+    assert.deepEqual(
+      { chain: manualResponse.body.token.chain, address: manualResponse.body.token.address },
+      { chain: 'robinhood', address: ROBINHOOD_ADDR },
+    );
+
+    const [starResponse, blockResponse, folderResponse] = await Promise.all([
+      request(app)
+        .post('/api/config/starred')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ chain: 'robinhood', address: ROBINHOOD_ADDR_MIXED }),
+      request(app)
+        .post('/api/config/blocklist')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ chain: 'robinhood', address: ROBINHOOD_ADDR_MIXED, label: 'RH blocked' }),
+      request(app)
+        .post('/api/config/token-folders')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ name: 'Robinhood destructive folder' }),
+    ]);
+    assert.equal(starResponse.status, 201);
+    assert.equal(blockResponse.status, 201);
+    assert.equal(folderResponse.status, 201);
+
+    const addFolderItem = await request(app)
+      .post(`/api/config/token-folders/${folderResponse.body.folder.id}/tokens`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ chain: 'robinhood', address: ROBINHOOD_ADDR_MIXED });
+    assert.equal(addFolderItem.status, 201);
+    assert.equal(addFolderItem.body.tokenCreated, false);
+    assert.equal(addFolderItem.body.item.chain, 'robinhood');
+
+    const legacySync = await request(app)
+      .put('/api/config')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ tokens: [], blocklist: [], starredTokens: [] });
+    assert.equal(legacySync.status, 200);
+    assert.equal(legacySync.body.tokens.some((item) => (
+      item.chain === 'robinhood' && item.address === ROBINHOOD_ADDR
+    )), true);
+    assert.equal(legacySync.body.starredTokens.some((item) => item.chain === 'robinhood'), true);
+    assert.equal(legacySync.body.blocklist.some((item) => item.chain === 'robinhood'), true);
+
+    const deleteFolder = await request(app)
+      .delete(`/api/config/token-folders/${folderResponse.body.folder.id}`)
+      .set('Authorization', `Bearer ${userToken}`);
+    assert.equal(deleteFolder.status, 200);
+    assert.deepEqual(deleteFolder.body.removedTokens, [ROBINHOOD_ADDR]);
+    assert.deepEqual(deleteFolder.body.removedTokenIdentities, [{
+      chain: 'robinhood', address: ROBINHOOD_ADDR,
+    }]);
+
+    const afterDelete = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+    assert.equal(afterDelete.body.tokens.some((item) => item.address === ROBINHOOD_ADDR), false);
+    assert.equal(afterDelete.body.starredTokens.some((item) => item.address === ROBINHOOD_ADDR), true);
+    assert.equal(afterDelete.body.blocklist.some((item) => item.address === ROBINHOOD_ADDR), true);
+
+    const [removeStar, removeBlock] = await Promise.all([
+      request(app)
+        .delete(`/api/config/starred/${ROBINHOOD_ADDR}?chain=robinhood`)
+        .set('Authorization', `Bearer ${userToken}`),
+      request(app)
+        .delete(`/api/config/blocklist/${ROBINHOOD_ADDR}?chain=robinhood`)
+        .set('Authorization', `Bearer ${userToken}`),
+    ]);
+    assert.equal(removeStar.status, 200);
+    assert.equal(removeBlock.status, 200);
+
+    const afterInverseReload = await request(app)
+      .get('/api/config')
+      .set('Authorization', `Bearer ${userToken}`);
+    assert.equal(afterInverseReload.status, 200);
+    assert.equal(afterInverseReload.body.starredTokens.some((item) => (
+      item.chain === 'robinhood' && item.address === ROBINHOOD_ADDR
+    )), false);
+    assert.equal(afterInverseReload.body.blocklist.some((item) => (
+      item.chain === 'robinhood' && item.address === ROBINHOOD_ADDR
+    )), false);
+  });
+
   it('rejects manual token subfolders', async () => {
     const createRoot = await request(app)
       .post('/api/config/token-folders')
@@ -654,6 +796,12 @@ describe('Config routes', () => {
         uiPrefs: {
           manualStarredOnly: true,
           manualFolderDeleteWarningDismissed: true,
+          chainFilters: {
+            enabledChains: ['solana'],
+            radarChains: ['solana'],
+            alertFeedChains: ['solana'],
+            browserNotificationChains: ['solana'],
+          },
           enabledTradeTerminals: ['photon', 'bullx'],
           monitoredPerPage: 50,
           expandedSparklineGranularityMinutes: 60,
@@ -686,6 +834,7 @@ describe('Config routes', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.uiPrefs.manualStarredOnly, true);
     assert.equal(response.body.uiPrefs.manualFolderDeleteWarningDismissed, true);
+    assert.deepEqual(response.body.uiPrefs.chainFilters.enabledChains, ['solana']);
     assert.equal(response.body.uiPrefs.monitoredPerPage, 50);
     assert.equal(response.body.uiPrefs.expandedSparklineGranularityMinutes, 60);
     assert.equal(response.body.uiPrefs.expandedSparklineTimeZone, 'America/Sao_Paulo');
@@ -715,6 +864,22 @@ describe('Config routes', () => {
   });
 
   it('keeps config data isolated per user', async () => {
+    const setupResponses = await Promise.all([
+      request(app)
+        .post('/api/config/tokens')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ address: VALID_ADDR_1, label: 'Isolation manual' }),
+      request(app)
+        .post('/api/config/blocklist')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ address: VALID_ADDR_1, label: 'Isolation block' }),
+      request(app)
+        .post('/api/config/starred')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ address: VALID_ADDR_1 }),
+    ]);
+    assert.deepEqual(setupResponses.map((response) => response.status), [201, 201, 201]);
+
     const userResponse = await request(app)
       .get('/api/config')
       .set('Authorization', `Bearer ${userToken}`);
@@ -729,5 +894,18 @@ describe('Config routes', () => {
     assert.notDeepEqual(userResponse.body.tokens, adminResponse.body.tokens);
     assert.notDeepEqual(userResponse.body.blocklist, adminResponse.body.blocklist);
     assert.notDeepEqual(userResponse.body.starredTokens, adminResponse.body.starredTokens);
+
+    const cleanupResponses = await Promise.all([
+      request(app)
+        .delete(`/api/config/tokens/${VALID_ADDR_1}`)
+        .set('Authorization', `Bearer ${userToken}`),
+      request(app)
+        .delete(`/api/config/blocklist/${VALID_ADDR_1}`)
+        .set('Authorization', `Bearer ${userToken}`),
+      request(app)
+        .delete(`/api/config/starred/${VALID_ADDR_1}`)
+        .set('Authorization', `Bearer ${userToken}`),
+    ]);
+    assert.deepEqual(cleanupResponses.map((response) => response.status), [200, 200, 200]);
   });
 });

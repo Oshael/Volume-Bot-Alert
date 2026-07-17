@@ -1,5 +1,7 @@
 const db = require('../models/db');
 
+// Legacy Solana-only source retained for manual bucket backfills. Robinhood
+// observations use the dedicated exact EVM persistence introduced in Block 10.
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_market_snapshots (
      id SERIAL PRIMARY KEY,

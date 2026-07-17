@@ -9,23 +9,33 @@ const USER_RULE = Object.freeze({
   scope: 'user-token',
   dashboardFeedEnabled: true,
 });
+const COMBINED_RULE = Object.freeze({
+  ruleKey: 'custom-alert',
+  scope: 'user-token',
+  chains: Object.freeze(['solana', 'robinhood']),
+  dashboardFeedEnabled: true,
+});
 
 function createCursorModel(initialSeenByRule = {}) {
   const marked = [];
+  const read = [];
   const state = new Map(Object.entries(initialSeenByRule));
   return {
     marked,
-    async getCursor(userId, ruleKey) {
-      const lastSeenEventId = state.get(ruleKey) || null;
+    read,
+    async getCursor(userId, ruleKey, chain) {
+      read.push({ userId, ruleKey, chain });
+      const lastSeenEventId = state.get(`${ruleKey}:${chain}`) || state.get(ruleKey) || null;
       return lastSeenEventId == null
         ? null
         : { userId, ruleKey, lastSeenEventId, lastAckedEventId: null };
     },
-    async markSeen(userId, ruleKey, lastSeenEventId) {
-      const previous = state.get(ruleKey) || 0;
+    async markSeen(userId, ruleKey, lastSeenEventId, chain) {
+      const stateKey = `${ruleKey}:${chain}`;
+      const previous = state.get(stateKey) || state.get(ruleKey) || 0;
       const next = Math.max(previous, lastSeenEventId);
-      state.set(ruleKey, next);
-      marked.push({ userId, ruleKey, lastSeenEventId });
+      state.set(stateKey, next);
+      marked.push({ userId, ruleKey, chain, lastSeenEventId });
       return { userId, ruleKey, lastSeenEventId: next, lastAckedEventId: null };
     },
   };
@@ -40,6 +50,7 @@ function createEventModel(events) {
       return events
         .filter((event) => event.userId === filters.userId)
         .filter((event) => event.ruleKey === filters.ruleKey)
+        .filter((event) => !event.chain || event.chain === filters.chain)
         .filter((event) => event.id > afterId)
         .sort((a, b) => a.id - b.id)
         .slice(0, filters.limit);
@@ -48,6 +59,7 @@ function createEventModel(events) {
       const ids = events
         .filter((event) => event.userId === filters.userId)
         .filter((event) => event.ruleKey === filters.ruleKey)
+        .filter((event) => !event.chain || event.chain === filters.chain)
         .map((event) => event.id);
       return ids.length ? Math.max(...ids) : null;
     },
@@ -93,9 +105,10 @@ describe('backend alert replay', () => {
     assert.equal(result.emitted, 2);
     assert.deepEqual(emitted.map((payload) => payload.eventId), [11, 12]);
     assert.deepEqual(cursorModel.marked, [
-      { userId: 7, ruleKey: 'monitored-vol', lastSeenEventId: 12 },
+      { userId: 7, ruleKey: 'monitored-vol', chain: 'solana', lastSeenEventId: 12 },
     ]);
     assert.deepEqual(eventModel.queries.map((query) => query.afterId), [10]);
+    assert.deepEqual(eventModel.queries.map((query) => query.dismissedByUserId), [7]);
   });
 
   it('drains a backlog in pages using the cursor from the previous page', async () => {
@@ -128,6 +141,31 @@ describe('backend alert replay', () => {
     assert.deepEqual(emitted, [21, 22, 23, 24, 25]);
     assert.deepEqual(eventModel.queries.map((query) => query.afterId), [20, 22, 24]);
     assert.deepEqual(cursorModel.marked.map((item) => item.lastSeenEventId), [22, 24, 25]);
+  });
+
+  it('replays and advances each chain of a combined custom-alert rule independently', async () => {
+    const eventModel = createEventModel([
+      { id: 60, userId: 7, ruleKey: 'custom-alert', chain: 'solana' },
+      { id: 61, userId: 7, ruleKey: 'custom-alert', chain: 'robinhood' },
+    ]);
+
+    const cursorModel = createCursorModel();
+    const result = await backendAlertReplay.replayUserBacklog(7, {
+      alertDeliveryCursor: cursorModel,
+      userAlertEventModel: eventModel,
+      backendAlertRealtime: {
+        USER_ALERT_PAYLOAD_TYPE: backendAlertRealtime.USER_ALERT_PAYLOAD_TYPE,
+        async emitPersistedEvent() {
+          return { emitted: true };
+        },
+      },
+      listBackendAlertRules: () => [COMBINED_RULE],
+    });
+
+    assert.equal(result.emitted, 2);
+    assert.deepEqual(eventModel.queries.map((query) => query.chain), ['solana', 'robinhood']);
+    assert.deepEqual(cursorModel.read.map((cursor) => cursor.chain), ['solana', 'robinhood']);
+    assert.deepEqual(cursorModel.marked.map((cursor) => cursor.chain), ['solana', 'robinhood']);
   });
 
   it('does not run two simultaneous replays for the same user across sockets', async () => {
@@ -210,7 +248,7 @@ describe('backend alert replay', () => {
     assert.equal(result.emitted, 0);
     assert.deepEqual(emitted, []);
     assert.deepEqual(cursorModel.marked, [
-      { userId: 7, ruleKey: 'monitored-vol', lastSeenEventId: 43 },
+      { userId: 7, ruleKey: 'monitored-vol', chain: 'solana', lastSeenEventId: 43 },
     ]);
   });
 

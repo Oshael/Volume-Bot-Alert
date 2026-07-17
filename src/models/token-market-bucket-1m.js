@@ -1,5 +1,6 @@
 const db = require('./db');
 const { isValidAddress } = require('./user-token');
+const { normalizeTokenChain } = require('../utils/token-identity');
 const config = require('../../config');
 const {
   FIVE_MINUTE_AGGREGATE_SOURCE_GRANULARITY,
@@ -46,6 +47,16 @@ const DEFAULT_SPARKLINE_CACHE_TTL_MS = 30_000;
 const DEFAULT_SPARKLINE_CACHE_MAX_ENTRIES = 500;
 const SURGE_BASELINE_WINDOW_MINUTES = Object.freeze([60, 360]);
 const sparklineCache = new Map();
+
+function requireLegacySolanaChain(chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  if (chain !== 'solana') {
+    const error = new Error('Non-Solana legacy market bucket access is disabled');
+    error.code = 'NON_SOLANA_LEGACY_MARKET_BUCKET_DISABLED';
+    throw error;
+  }
+  return chain;
+}
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -129,6 +140,7 @@ function buildRollupAggregateBucketParams(address, bucketTsValues) {
 
 function getSparklineCacheKey(addresses, options) {
   return JSON.stringify({
+    chain: options.chain || 'solana',
     addresses,
     hours: options.hours,
     points: options.points,
@@ -140,6 +152,7 @@ function getSparklineCacheKey(addresses, options) {
 function getExpandedSparklineCacheKey(address, options) {
   return JSON.stringify({
     expanded: true,
+    chain: options.chain || 'solana',
     address,
     points: options.points,
     granularityMinutes: options.granularityMinutes,
@@ -338,8 +351,12 @@ function buildLiveMarketBucketPayload(row) {
   }
 
   return {
+    type: 'market:bucket',
+    chain: 'solana',
     address: String(row.token_address),
     pairAddress: row.pair_address || null,
+    bucketTs: candle.bucketTs,
+    sequence: `solana:${candle.bucketTs}:${String(candle.sampleCount).padStart(12, '0')}`,
     granularityMinutes: 1,
     generatedAt: new Date().toISOString(),
     candle,
@@ -732,6 +749,7 @@ function scoreBidZoneCandidate(row, options = {}) {
 }
 
 async function upsertSnapshotBucket(snapshot) {
+  const chain = requireLegacySolanaChain(snapshot.chain);
   const address = String(snapshot.tokenAddress || snapshot.address || '').trim();
   if (!isValidAddress(address)) {
     throw new Error('Invalid token address format');
@@ -747,6 +765,7 @@ async function upsertSnapshotBucket(snapshot) {
 
   const { rows } = await db.query(
     `INSERT INTO token_market_buckets_1m (
+       chain,
        token_address,
        bucket_ts,
        pair_address,
@@ -762,13 +781,13 @@ async function upsertSnapshotBucket(snapshot) {
        source
      )
      VALUES (
-       $1, $2, $3,
-       $4, $4, $4, $4,
+       $1, $2, $3, $4,
        $5, $5, $5, $5,
+       $6, $6, $6, $6,
        1,
-       $6
+       $7
      )
-     ON CONFLICT (token_address, bucket_ts) DO UPDATE SET
+     ON CONFLICT (chain, token_address, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_1m.pair_address),
        high_mcap = CASE
          WHEN EXCLUDED.high_mcap IS NULL THEN token_market_buckets_1m.high_mcap
@@ -795,7 +814,7 @@ async function upsertSnapshotBucket(snapshot) {
        sample_count = token_market_buckets_1m.sample_count + 1,
        source = COALESCE(EXCLUDED.source, token_market_buckets_1m.source)
      RETURNING *`,
-    [address, bucketTs, pairAddress, mcap, price, source]
+    [chain, address, bucketTs, pairAddress, mcap, price, source]
   );
 
   const row = rows[0];
@@ -842,7 +861,8 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
          b.source
        FROM requested
        INNER JOIN token_market_buckets_1m b
-         ON b.token_address = $1
+         ON b.chain = 'solana'
+        AND b.token_address = $1
         AND b.bucket_ts >= requested.bucket_start
         AND b.bucket_ts < requested.bucket_start + (requested.granularity_minutes * INTERVAL '1 minute')
         AND (b.close_mcap IS NOT NULL OR b.close_price IS NOT NULL)
@@ -891,6 +911,7 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
          normalized_source_rows.bucket_start
      )
      INSERT INTO token_market_buckets_agg (
+       chain,
        token_address,
        granularity_minutes,
        bucket_ts,
@@ -907,6 +928,7 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
        source
      )
      SELECT
+       'solana',
        token_address,
        granularity_minutes,
        bucket_ts,
@@ -922,7 +944,7 @@ async function upsertAggregateBucketsForSourceBucket(address, bucketTsValues) {
        sample_count,
        'aggregate'
      FROM aggregated
-     ON CONFLICT (token_address, granularity_minutes, bucket_ts) DO UPDATE SET
+     ON CONFLICT (chain, token_address, granularity_minutes, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_agg.pair_address),
        open_mcap = EXCLUDED.open_mcap,
        high_mcap = EXCLUDED.high_mcap,
@@ -969,7 +991,8 @@ async function upsertRollupAggregateBucketsFromFiveMinuteSource(address, bucketT
          b.sample_count
        FROM requested
        INNER JOIN token_market_buckets_agg b
-         ON b.token_address = $1
+         ON b.chain = 'solana'
+        AND b.token_address = $1
         AND b.granularity_minutes = $2::int
         AND b.bucket_ts >= requested.bucket_start
         AND b.bucket_ts < requested.bucket_start + (requested.target_granularity_minutes * INTERVAL '1 minute')
@@ -994,6 +1017,7 @@ async function upsertRollupAggregateBucketsFromFiveMinuteSource(address, bucketT
        GROUP BY token_address, granularity_minutes, bucket_start
      )
      INSERT INTO token_market_buckets_agg (
+       chain,
        token_address,
        granularity_minutes,
        bucket_ts,
@@ -1010,6 +1034,7 @@ async function upsertRollupAggregateBucketsFromFiveMinuteSource(address, bucketT
        source
      )
      SELECT
+       'solana',
        token_address,
        granularity_minutes,
        bucket_ts,
@@ -1025,7 +1050,7 @@ async function upsertRollupAggregateBucketsFromFiveMinuteSource(address, bucketT
        sample_count,
        'aggregate'
      FROM aggregated
-     ON CONFLICT (token_address, granularity_minutes, bucket_ts) DO UPDATE SET
+     ON CONFLICT (chain, token_address, granularity_minutes, bucket_ts) DO UPDATE SET
        pair_address = COALESCE(EXCLUDED.pair_address, token_market_buckets_agg.pair_address),
        open_mcap = EXCLUDED.open_mcap,
        high_mcap = EXCLUDED.high_mcap,
@@ -1043,6 +1068,7 @@ async function upsertRollupAggregateBucketsFromFiveMinuteSource(address, bucketT
 }
 
 async function listHistoryByAddress(address, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const addr = String(address || '').trim();
   if (!isValidAddress(addr)) {
     throw new Error('Invalid token address format');
@@ -1080,7 +1106,8 @@ async function listHistoryByAddress(address, options = {}) {
        sample_count,
        source
      FROM token_market_buckets_1m
-     WHERE token_address = $1
+     WHERE chain = 'solana'
+       AND token_address = $1
        ${whereExtra}
      ORDER BY bucket_ts DESC
      LIMIT $2`,
@@ -1106,7 +1133,8 @@ async function listHistoryByAddress(address, options = {}) {
   }));
 }
 
-async function getInitialBucketByAddress(address) {
+async function getInitialBucketByAddress(address, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const addr = String(address || '').trim();
   if (!isValidAddress(addr)) {
     throw new Error('Invalid token address format');
@@ -1128,7 +1156,8 @@ async function getInitialBucketByAddress(address) {
        sample_count,
        source
      FROM token_market_buckets_1m
-     WHERE token_address = $1
+     WHERE chain = 'solana'
+       AND token_address = $1
      ORDER BY bucket_ts ASC
      LIMIT 1`,
     [addr]
@@ -1426,6 +1455,7 @@ function largestTriangleThreeBuckets(series, targetPoints) {
 }
 
 async function listSparklineByAddresses(addresses, options = {}) {
+  const chain = requireLegacySolanaChain(options.chain);
   const startedAt = Date.now();
   const unique = Array.from(
     new Set(
@@ -1442,6 +1472,7 @@ async function listSparklineByAddresses(addresses, options = {}) {
   const safePoints = Math.max(10, Math.min(Number(options.points) || DEFAULT_SPARKLINE_POINTS, 500));
   const safeGranularityMinutes = normalizeSparklineGranularityMinutes(options.granularityMinutes);
   const cacheOptions = {
+    chain,
     hours: safeHours,
     points: safePoints,
     granularityMinutes: safeGranularityMinutes,
@@ -1516,6 +1547,7 @@ async function listSparklineByAddresses(addresses, options = {}) {
 }
 
 async function listExpandedSparklineByAddress(address, options = {}) {
+  const chain = requireLegacySolanaChain(options.chain);
   const normalizedAddress = String(address || '').trim();
   if (!isValidAddress(normalizedAddress)) {
     return null;
@@ -1526,6 +1558,7 @@ async function listExpandedSparklineByAddress(address, options = {}) {
   const allowOneMinuteFallback = options.allowOneMinuteFallback === true;
   const cacheEnabled = options.disableCache !== true && Number(options.cacheTtlMs ?? DEFAULT_SPARKLINE_CACHE_TTL_MS) > 0;
   const cacheKey = cacheEnabled ? getExpandedSparklineCacheKey(normalizedAddress, {
+    chain,
     points: safePoints,
     granularityMinutes: requestedGranularityMinutes,
     allowOneMinuteFallback,
@@ -1574,7 +1607,8 @@ async function getExpandedSparklineBounds(address) {
          MIN(bucket_ts) AS first_bucket_at,
          MAX(bucket_ts) AS latest_bucket_at
        FROM token_market_buckets_1m
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND close_mcap IS NOT NULL
      ),
      aggregate_bounds AS (
@@ -1582,7 +1616,8 @@ async function getExpandedSparklineBounds(address) {
          MIN(bucket_ts) AS first_bucket_at,
          MAX(bucket_ts) AS latest_bucket_at
        FROM token_market_buckets_agg
-       WHERE token_address = $2
+       WHERE chain = 'solana'
+         AND token_address = $2
          AND close_mcap IS NOT NULL
      ),
      bounds AS (
@@ -1662,7 +1697,8 @@ async function queryAllAvailableOneMinuteSparklineRows(address, granularityMinut
           FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($2::int * 60)) * ($2::int * 60)
         ) AS spark_bucket_ts
        FROM token_market_buckets_1m
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND close_mcap IS NOT NULL
      ),
      normalized_source_rows AS (
@@ -1740,7 +1776,8 @@ async function queryAllAvailableAggregateSparklineRows(address, granularityMinut
        close_price,
        sample_count
      FROM token_market_buckets_agg
-     WHERE token_address = $1
+     WHERE chain = 'solana'
+       AND token_address = $1
        AND granularity_minutes = $2::int
        AND close_mcap IS NOT NULL
      ORDER BY bucket_ts ASC`,
@@ -1762,7 +1799,8 @@ async function queryOneMinuteSparklineRows(addresses, hours, granularityMinutes)
           FLOOR(EXTRACT(EPOCH FROM bucket_ts) / ($3::int * 60)) * ($3::int * 60)
         ) AS spark_bucket_ts
        FROM token_market_buckets_1m
-       WHERE token_address = ANY($1::varchar[])
+       WHERE chain = 'solana'
+         AND token_address = ANY($1::varchar[])
          AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
          AND close_mcap IS NOT NULL
      ),
@@ -1800,7 +1838,8 @@ async function queryAggregateSparklineRows(addresses, hours, granularityMinutes,
        pair_address,
        close_mcap
      FROM token_market_buckets_agg
-     WHERE token_address = ANY($1::varchar[])
+     WHERE chain = 'solana'
+       AND token_address = ANY($1::varchar[])
        AND granularity_minutes = $3::int
        AND bucket_ts >= NOW() - ($2::int * INTERVAL '1 hour')
        AND close_mcap IS NOT NULL
@@ -1940,7 +1979,8 @@ function buildExpandedCandlesFromRows(rows, granularityMinutes) {
     .filter((item) => item.bucketTs && (item.closeMcap != null || item.closePrice != null));
 }
 
-async function deleteByAddresses(addresses) {
+async function deleteByAddresses(addresses, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -1954,14 +1994,16 @@ async function deleteByAddresses(addresses) {
 
   await db.query(
     `DELETE FROM token_market_buckets_agg
-     WHERE token_address = ANY($1::varchar[])`,
+     WHERE chain = 'solana'
+       AND token_address = ANY($1::varchar[])`,
     [unique]
   );
   invalidateSparklineCacheForAddresses(unique);
 
   const result = await db.query(
     `DELETE FROM token_market_buckets_1m
-     WHERE token_address = ANY($1::varchar[])`,
+     WHERE chain = 'solana'
+       AND token_address = ANY($1::varchar[])`,
     [unique]
   );
 
@@ -1969,6 +2011,7 @@ async function deleteByAddresses(addresses) {
 }
 
 async function deleteChunkByAddress(address, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const normalized = String(address || '').trim();
   if (!isValidAddress(normalized)) {
     return {
@@ -1983,7 +2026,8 @@ async function deleteChunkByAddress(address, options = {}) {
     `WITH doomed AS (
        SELECT ctid
        FROM token_market_buckets_agg
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
        LIMIT $2
      )
      DELETE FROM token_market_buckets_agg
@@ -1995,7 +2039,8 @@ async function deleteChunkByAddress(address, options = {}) {
     `WITH doomed AS (
        SELECT ctid
        FROM token_market_buckets_1m
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
        LIMIT $2
      )
      DELETE FROM token_market_buckets_1m
@@ -2016,7 +2061,8 @@ async function deleteChunkByAddress(address, options = {}) {
   };
 }
 
-async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
+async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -2045,14 +2091,16 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
          bucket_ts AS current_ts,
          close_mcap AS current_mcap
        FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = 'solana'
+         AND token_address = requested.token_address
        ORDER BY bucket_ts DESC
        LIMIT 1
      ) AS current_row ON TRUE
      LEFT JOIN LATERAL (
        SELECT bucket_ts, close_mcap
        FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = 'solana'
+         AND token_address = requested.token_address
          AND close_mcap IS NOT NULL
          AND current_row.current_ts IS NOT NULL
          AND bucket_ts <= current_row.current_ts - ($2::int * INTERVAL '1 minute')
@@ -2062,7 +2110,8 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
      LEFT JOIN LATERAL (
        SELECT bucket_ts, close_mcap
        FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = 'solana'
+         AND token_address = requested.token_address
          AND close_mcap IS NOT NULL
          AND current_row.current_ts IS NOT NULL
          AND bucket_ts < current_row.current_ts
@@ -2092,7 +2141,12 @@ function normalizeSurgeBaselineWindows(windowsMinutes = SURGE_BASELINE_WINDOW_MI
   return normalized.length > 0 ? normalized : [...SURGE_BASELINE_WINDOW_MINUTES];
 }
 
-async function listCurrentAndWindowBaselinesByAddresses(addresses, windowsMinutes = SURGE_BASELINE_WINDOW_MINUTES) {
+async function listCurrentAndWindowBaselinesByAddresses(
+  addresses,
+  windowsMinutes = SURGE_BASELINE_WINDOW_MINUTES,
+  options = {},
+) {
+  requireLegacySolanaChain(options.chain);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -2109,7 +2163,8 @@ async function listCurrentAndWindowBaselinesByAddresses(addresses, windowsMinute
     `LEFT JOIN LATERAL (
        SELECT bucket_ts, close_mcap
        FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = 'solana'
+         AND token_address = requested.token_address
          AND close_mcap IS NOT NULL
          AND current_row.current_ts IS NOT NULL
          AND bucket_ts <= current_row.current_ts - (${minutes}::int * INTERVAL '1 minute')
@@ -2137,7 +2192,8 @@ async function listCurrentAndWindowBaselinesByAddresses(addresses, windowsMinute
          bucket_ts AS current_ts,
          close_mcap AS current_mcap
        FROM token_market_buckets_1m
-       WHERE token_address = requested.token_address
+       WHERE chain = 'solana'
+         AND token_address = requested.token_address
          AND close_mcap IS NOT NULL
        ORDER BY bucket_ts DESC
        LIMIT 1
@@ -2151,6 +2207,7 @@ async function listCurrentAndWindowBaselinesByAddresses(addresses, windowsMinute
 }
 
 async function computeBidZoneCandidates(options = {}) {
+  requireLegacySolanaChain(options.chain);
   const requestedHours = Math.max(1, Math.min(Number(options.hours) || DEFAULT_BID_ZONE_HOURS, 48));
   const minMcap = Math.max(DEFAULT_BID_ZONE_MIN_MCAP, Number(options.minMcap) || DEFAULT_BID_ZONE_MIN_MCAP);
   const minVol1h = Math.max(250, Number(options.minVol1h) || DEFAULT_BID_ZONE_MIN_VOL_1H);
@@ -2174,7 +2231,8 @@ async function computeBidZoneCandidates(options = {}) {
          monitor_priority,
          last_seen_at
        FROM token_catalog
-       WHERE eligible_for_monitoring = TRUE
+       WHERE chain = 'solana'
+         AND eligible_for_monitoring = TRUE
          AND is_active_monitor_candidate = TRUE
          AND COALESCE(last_mcap, 0) >= $1
          AND COALESCE(last_vol_24h, 0) >= $2
@@ -2251,7 +2309,8 @@ async function computeBidZoneCandidates(options = {}) {
        b.sample_count
      FROM catalog_candidates c
      INNER JOIN token_market_buckets_1m b
-       ON b.token_address = c.address
+       ON b.chain = 'solana'
+      AND b.token_address = c.address
      WHERE b.bucket_ts >= NOW() - ($6::int * INTERVAL '1 hour')
      ORDER BY c.address ASC, b.bucket_ts ASC`,
     [
@@ -2470,6 +2529,7 @@ module.exports = {
     getLiquidityRankingAdjustment,
     passesDeadLiquidityFilter,
     normalizeCandidateScanLimit,
+    requireLegacySolanaChain,
     normalizeStatementTimeoutMs,
     computeSampleStddev,
     scoreBidZoneCandidate,

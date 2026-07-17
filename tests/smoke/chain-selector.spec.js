@@ -1,0 +1,1022 @@
+const { expect, test } = require('@playwright/test');
+
+const SOLANA_MANUAL = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const SOLANA_MONITORED = 'So11111111111111111111111111111111111111112';
+const SOLANA_TOP = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const SOLANA_BLOCKED = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6QXgB263vZyVfSRm';
+const ROBINHOOD_TOKEN = '0xabcdef0123456789abcdef0123456789abcdef01';
+const ROBINHOOD_TOP = '0xabcdef0123456789abcdef0123456789abcdef02';
+
+const SOLANA_CAPABILITIES = {
+  alertFeed: true,
+  radar: true,
+  monitored: true,
+  topPerformers: true,
+  manualTokens: true,
+  starred: true,
+  blocklist: true,
+  history: true,
+  customAlerts: true,
+  charts: true,
+  explorerLinks: true,
+  tradeLinks: true,
+  mockTrading: false,
+  solanaNative: true,
+};
+
+const SOLANA_READINESS = {
+  chain: 'solana',
+  status: 'ready',
+  phase: 'ready',
+  publicationReady: true,
+  workspaceReady: true,
+  checkedAt: '2026-07-14T18:00:00.000Z',
+  blockers: [],
+  message: 'Solana workspace data is ready.',
+  capabilities: SOLANA_CAPABILITIES,
+};
+
+const ROBINHOOD_READINESS = {
+  chain: 'robinhood',
+  status: 'syncing',
+  phase: 'dry-run-ready',
+  publicationReady: false,
+  workspaceReady: false,
+  checkedAt: '2026-07-14T18:00:00.000Z',
+  blockers: ['ingestion_not_caught_up'],
+  message: 'Robinhood is syncing market coverage. Solana data is hidden.',
+  capabilities: {
+    ...Object.fromEntries(Object.keys(SOLANA_CAPABILITIES).map((key) => [key, false])),
+    manualTokens: true,
+    starred: true,
+    blocklist: true,
+  },
+};
+
+const ROBINHOOD_MARKET_READINESS = {
+  ...ROBINHOOD_READINESS,
+  status: 'ready',
+  blockers: ['alerts_disabled'],
+  message: 'Robinhood monitored and top-performer market data is ready.',
+  capabilities: {
+    ...ROBINHOOD_READINESS.capabilities,
+    monitored: true,
+    topPerformers: true,
+    history: true,
+    charts: true,
+    explorerLinks: true,
+  },
+};
+
+const SMOKE_CONFIG = {
+  configs: {},
+  uiPrefs: {
+    chainFilters: {
+      enabledChains: ['solana'],
+      radarChains: ['solana'],
+      alertFeedChains: ['solana'],
+      browserNotificationChains: ['solana'],
+    },
+    enabledTradeTerminals: ['axiom', 'photon', 'bullx', 'gmgn', 'padre'],
+  },
+  tokens: [],
+  blocklist: [],
+  starredTokens: [],
+  availableChains: ['solana'],
+  chainReadiness: { solana: SOLANA_READINESS },
+  runtimeFlags: {
+    mockTradingEnabled: false,
+  },
+};
+
+const API_FIXTURES = {
+  'GET /api/auth/me': {
+    user: {
+      id: 1,
+      username: 'smoke_user',
+      email: 'smoke@example.test',
+      role: 'user',
+      isActive: true,
+      isEmailVerified: true,
+      emailVerifiedAt: '2026-07-14T00:00:00.000Z',
+    },
+  },
+  'GET /api/account/access': {
+    accessStatus: 'active',
+    accessGrantedAt: '2026-07-14T00:00:00.000Z',
+    accessExpiresAt: null,
+    accessSource: 'manual',
+    accessUpdatedAt: '2026-07-14T00:00:00.000Z',
+    isExpired: false,
+    isTimed: false,
+    hasProductAccess: true,
+    denialReason: null,
+    denialCode: null,
+    daysRemaining: null,
+  },
+  'GET /api/config': SMOKE_CONFIG,
+  'GET /api/config/chain-readiness': {
+    availableChains: ['solana'],
+    chainReadiness: { solana: SOLANA_READINESS },
+  },
+  'GET /api/config/token-folders': { folders: [], items: [] },
+  'GET /api/account/identities': { providers: [], hasPasswordLogin: true },
+  'GET /api/billing/state': {
+    enabled: false,
+    provider: 'none',
+    providerReady: false,
+    providerMocked: false,
+    plans: [],
+    orders: [],
+  },
+  'GET /api/dashboard/monitored': {
+    generatedAt: null,
+    tokens: [],
+    pinnedTokens: [],
+    total: 0,
+    page: 0,
+    perPage: 30,
+    hasMore: false,
+  },
+  'GET /api/dashboard/top-performers': {
+    generatedAt: null,
+    source: null,
+    ranking: null,
+    minMcap: null,
+    minVol24h: null,
+    count: 0,
+    cached: false,
+    tokens: [],
+  },
+  'GET /api/dashboard/alert-events': {
+    generatedAt: null,
+    kind: null,
+    ruleKey: null,
+    mode: 'bootstrap',
+    cursor: null,
+    count: 0,
+    events: [],
+  },
+  'GET /api/dashboard/alert-feeds': {
+    generatedAt: null,
+    mode: 'bootstrap',
+    count: 0,
+    feeds: [],
+  },
+  'GET /api/dashboard/custom-alert-rules': { rules: [], count: 0 },
+  'POST /api/catalog/sparklines': {
+    generatedAt: '2026-07-14T18:00:00.000Z',
+    hours: 336,
+    points: 336,
+    granularityMinutes: 30,
+    count: 0,
+    items: [],
+  },
+};
+
+const ROBINHOOD_CONFIG = {
+  ...SMOKE_CONFIG,
+  uiPrefs: {
+    ...SMOKE_CONFIG.uiPrefs,
+    chainFilters: {
+      enabledChains: ['solana', 'robinhood'],
+      radarChains: ['solana', 'robinhood'],
+      alertFeedChains: ['solana'],
+      browserNotificationChains: ['solana'],
+    },
+  },
+  tokens: [{ address: SOLANA_MANUAL, label: 'MANUALSOL' }],
+  blocklist: [{ address: SOLANA_BLOCKED, label: 'BLOCKSOL' }],
+  availableChains: ['solana', 'robinhood'],
+  chainReadiness: {
+    solana: SOLANA_READINESS,
+    robinhood: ROBINHOOD_READINESS,
+  },
+};
+
+const ROBINHOOD_API_FIXTURES = {
+  ...API_FIXTURES,
+  'GET /api/config': ROBINHOOD_CONFIG,
+  'GET /api/config/chain-readiness': {
+    availableChains: ['solana', 'robinhood'],
+    chainReadiness: ROBINHOOD_CONFIG.chainReadiness,
+  },
+  'GET /api/dashboard/monitored': {
+    generatedAt: '2026-07-14T18:00:00.000Z',
+    tokens: [{
+      chain: 'solana',
+      address: SOLANA_MONITORED,
+      symbol: 'MONSOL',
+      name: 'Monitored Solana',
+      mcap: 400000,
+      volume5m: 12000,
+      volume1h: 50000,
+      volume6h: 150000,
+      volume24h: 500000,
+    }],
+    pinnedTokens: [],
+    total: 1,
+    page: 0,
+    perPage: 30,
+    hasMore: false,
+  },
+  'GET /api/dashboard/top-performers': {
+    generatedAt: '2026-07-14T18:00:00.000Z',
+    source: 'catalog',
+    ranking: 'performance',
+    count: 1,
+    cached: false,
+    tokens: [{
+      chain: 'solana',
+      address: SOLANA_TOP,
+      symbol: 'TOPSOL',
+      name: 'Top Solana',
+      performanceRank: 1,
+      mcap: 800000,
+      volume24h: 900000,
+      priceChange24h: 42,
+    }],
+  },
+  'POST /api/catalog/monitored-metadata-batch': {
+    generatedAt: '2026-07-14T18:00:00.000Z',
+    count: 1,
+    tokens: [{
+      chain: 'solana',
+      address: SOLANA_MANUAL,
+      symbol: 'MANUALSOL',
+      name: 'Manual Solana',
+      mcap: 200000,
+      volume24h: 250000,
+    }],
+  },
+  'POST /api/catalog/meteora/batch': { count: 0, items: [] },
+  'GET /api/dashboard/alert-feeds': {
+    generatedAt: '2026-07-14T18:00:00.000Z',
+    mode: 'all',
+    count: 2,
+    feeds: [
+      {
+        ruleKey: 'hvnc',
+        kind: 'hvnc',
+        count: 1,
+        events: [{
+          id: 101,
+          chain: 'solana',
+          kind: 'hvnc',
+          ruleKey: 'hvnc',
+          address: 'So11111111111111111111111111111111111111112',
+          symbol: 'SOLHV',
+          mcap: 300000,
+          volume24h: 500000,
+          isHvnc: true,
+          label: 'HVNC',
+          triggeredAt: '2026-07-14T17:59:00.000Z',
+        }],
+      },
+      {
+        ruleKey: 'robinhood-hvnc-v2',
+        kind: 'hvnc',
+        count: 1,
+        events: [{
+          id: 102,
+          chain: 'robinhood',
+          kind: 'hvnc',
+          ruleKey: 'robinhood-hvnc-v2',
+          address: '0xabcdef0123456789abcdef0123456789abcdef01',
+          symbol: 'RHV',
+          mcap: null,
+          fdv: 500000,
+          valuationType: 'fdv',
+          priceUsd: 0.0042,
+          liquidityUsd: 5000,
+          transactions: 15,
+          volume5m: 2000,
+          isHvnc: true,
+          label: 'HVNC',
+          triggeredAt: '2026-07-14T18:00:00.000Z',
+        }],
+      },
+    ],
+  },
+};
+
+const ROBINHOOD_MARKET_CONFIG = {
+  ...ROBINHOOD_CONFIG,
+  uiPrefs: {
+    ...ROBINHOOD_CONFIG.uiPrefs,
+    livePanelLayout: {
+      order: ['monitored', 'pumpfun', 'alerts'],
+      spans: { monitored: 2, pumpfun: 1, alerts: 1 },
+      heights: { monitored: 620, alerts: 620 },
+    },
+    chainFilters: {
+      enabledChains: ['solana'],
+      radarChains: ['solana'],
+      alertFeedChains: ['solana'],
+      browserNotificationChains: ['solana'],
+    },
+  },
+  tokens: [],
+  blocklist: [],
+  chainReadiness: {
+    solana: SOLANA_READINESS,
+    robinhood: ROBINHOOD_MARKET_READINESS,
+  },
+};
+const marketPinPayloads = [];
+const collectionMutationPayloads = [];
+const radarBootstrapPayloads = [];
+const chartRequestPayloads = [];
+const compactChartRequestPayloads = [];
+
+function marketToken(chain, symbol) {
+  const isTop = symbol.startsWith('TOP');
+  return chain === 'robinhood'
+    ? {
+        chain,
+        address: isTop ? ROBINHOOD_TOP : ROBINHOOD_TOKEN,
+        symbol,
+        name: `${symbol} Robinhood`,
+        fdv: 350000,
+        valuationType: 'fdv',
+        valuation: {
+          type: 'fdv',
+          usd: 350000,
+          observedAt: '2026-07-14T17:30:00.000Z',
+          freshness: 'stale',
+        },
+        volume5m: 0,
+        volume1h: 70000,
+        volume6h: null,
+        volume24h: 850000,
+        coverage: { '5m': 'complete', '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
+        activityState: 'stale',
+        priceChange24h: 38,
+      }
+    : {
+        chain,
+        address: isTop ? SOLANA_TOP : SOLANA_MONITORED,
+        symbol,
+        name: `${symbol} Solana`,
+        mcap: 400000,
+        volume5m: 12000,
+        volume1h: 50000,
+        volume6h: 150000,
+        volume24h: 500000,
+        priceChange24h: 22,
+      };
+}
+
+async function buildMarketPanelFixture(request, panel) {
+  const requestUrl = new URL(request.url());
+  const chains = requestUrl.searchParams.get('chains') || 'solana';
+  const page = Number(requestUrl.searchParams.get('page')) || 0;
+  const snapshotAsOf = '2026-07-14T18:00:00.000Z';
+  if (chains === 'solana,robinhood') {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  const isRobinhoodOnly = chains === 'robinhood';
+  const tokens = isRobinhoodOnly
+    ? [marketToken('robinhood', panel === 'top' ? 'TOPRHFRESH' : 'RHFRESH')]
+    : chains === 'solana,robinhood'
+      ? [
+          marketToken('solana', panel === 'top' ? 'TOPSOLSTALE' : 'SOLSTALE'),
+          marketToken('robinhood', panel === 'top' ? 'TOPRHSTALE' : 'RHSTALE'),
+        ]
+      : [marketToken('solana', panel === 'top' ? 'TOPSOL' : 'MONSOL')];
+  if (panel === 'top') {
+    return {
+      generatedAt: '2026-07-14T18:00:00.000Z',
+      source: 'chain_read_models',
+      ranking: 'performance',
+      count: tokens.length,
+      cached: false,
+      tokens: tokens.map((token, index) => ({
+        ...token,
+        performanceRank: index + 1,
+      })),
+    };
+  }
+  const pagedRobinhoodMonitored = panel === 'monitored' && isRobinhoodOnly;
+  return {
+    generatedAt: snapshotAsOf,
+    asOf: snapshotAsOf,
+    tokens,
+    pinnedTokens: [],
+    total: pagedRobinhoodMonitored ? 101 : tokens.length,
+    page,
+    perPage: 100,
+    hasMore: pagedRobinhoodMonitored && page === 0,
+  };
+}
+
+const ROBINHOOD_MARKET_API_FIXTURES = {
+  ...ROBINHOOD_API_FIXTURES,
+  'GET /api/config': ROBINHOOD_MARKET_CONFIG,
+  'GET /api/config/chain-readiness': {
+    availableChains: ['solana', 'robinhood'],
+    chainReadiness: ROBINHOOD_MARKET_CONFIG.chainReadiness,
+  },
+  'GET /api/dashboard/monitored': (request) => buildMarketPanelFixture(request, 'monitored'),
+  'GET /api/dashboard/top-performers': (request) => buildMarketPanelFixture(request, 'top'),
+  'PUT /api/dashboard/monitored-pins': (request) => {
+    const payload = request.postDataJSON();
+    marketPinPayloads.push(payload);
+    return { pinnedTokens: payload.pinnedTokens || [] };
+  },
+  'POST /api/catalog/sparklines': (request) => {
+    const payload = request.postDataJSON();
+    compactChartRequestPayloads.push(payload);
+    const identities = Array.isArray(payload.identities) ? payload.identities : [];
+    return {
+      generatedAt: '2026-07-15T12:00:00.000Z',
+      chains: [...new Set(identities.map((identity) => identity.chain))],
+      hours: payload.hours,
+      points: payload.points,
+      granularityMinutes: payload.granularityMinutes,
+      count: identities.length,
+      items: identities.map((identity) => ({
+        ...identity,
+        valuationType: identity.chain === 'robinhood' ? 'fdv' : 'market-cap',
+        effectiveHours: 2,
+        latestBucketAt: '2026-07-15T12:00:00.000Z',
+        series: identity.chain === 'robinhood'
+          ? [300000, null, 350000]
+          : [200000, 250000],
+      })),
+    };
+  },
+  'POST /api/catalog/sparklines/expanded': (request) => {
+    const payload = request.postDataJSON();
+    chartRequestPayloads.push(payload);
+    return {
+      generatedAt: '2026-07-15T12:00:00.000Z',
+      chain: 'robinhood',
+      valuationType: 'fdv',
+      resolution: 'mixed',
+      minuteStartsAt: '2026-07-01T13:00:00.000Z',
+      points: 720,
+      granularityMinutes: payload.granularityMinutes || 5,
+      count: 1,
+      item: {
+        chain: 'robinhood',
+        address: ROBINHOOD_TOKEN,
+        valuationType: 'fdv',
+        resolution: 'mixed',
+        minuteStartsAt: '2026-07-01T13:00:00.000Z',
+        truncated: false,
+        oneMinuteAvailable: false,
+        series: [300000, 350000],
+        candles: [
+          {
+            bucketTs: '2026-07-15T10:00:00.000Z', granularityMinutes: 60,
+            valuationType: 'fdv', openFdvUsd: 290000, highFdvUsd: 310000,
+            lowFdvUsd: 285000, closeFdvUsd: 300000,
+          },
+          {
+            bucketTs: '2026-07-15T11:00:00.000Z', granularityMinutes: 60,
+            valuationType: 'fdv', openFdvUsd: 300000, highFdvUsd: 360000,
+            lowFdvUsd: 295000, closeFdvUsd: 350000,
+          },
+        ],
+      },
+    };
+  },
+};
+
+const ROBINHOOD_RADAR_READINESS = {
+  ...ROBINHOOD_MARKET_READINESS,
+  capabilities: {
+    ...ROBINHOOD_MARKET_READINESS.capabilities,
+    history: true,
+  },
+};
+
+const ROBINHOOD_RADAR_CONFIG = {
+  ...ROBINHOOD_MARKET_CONFIG,
+  configs: {
+    'old-mcap-min': 120000,
+    'old-mcap-max': 100000000,
+    'old-fdv-min': 130000,
+    'old-fdv-max': 90000000,
+    'old-week-mcap-min': 140000,
+    'old-week-mcap-max': 80000000,
+    'old-week-fdv-min': 150000,
+    'old-week-fdv-max': 70000000,
+  },
+  uiPrefs: {
+    ...ROBINHOOD_MARKET_CONFIG.uiPrefs,
+    chainFilters: {
+      ...ROBINHOOD_MARKET_CONFIG.uiPrefs.chainFilters,
+      enabledChains: ['solana', 'robinhood'],
+      radarChains: ['solana', 'robinhood'],
+    },
+  },
+  chainReadiness: {
+    solana: SOLANA_READINESS,
+    robinhood: ROBINHOOD_RADAR_READINESS,
+  },
+};
+
+const ROBINHOOD_RADAR_API_FIXTURES = {
+  ...ROBINHOOD_MARKET_API_FIXTURES,
+  'GET /api/config': ROBINHOOD_RADAR_CONFIG,
+  'GET /api/config/chain-readiness': {
+    availableChains: ['solana', 'robinhood'],
+    chainReadiness: ROBINHOOD_RADAR_CONFIG.chainReadiness,
+  },
+  'GET /api/catalog/bid-zone': { generatedAt: null, count: 0, candidates: [] },
+  'POST /api/dashboard/history-bootstrap': (request) => {
+    radarBootstrapPayloads.push(request.postDataJSON());
+    const token = {
+      ...marketToken('robinhood', 'RADARST'),
+      valuation: {
+        type: 'fdv', usd: 350000, observedAt: '2026-07-14T17:30:00.000Z', freshness: 'stale',
+      },
+      volume1h: 70000,
+      volume6h: null,
+      volume24h: 0,
+      coverage: { '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
+      priceChange1h: 3.5,
+      priceChange6h: null,
+      priceChange24h: 0,
+      priceChangeCoverage: { '1h': 'partial', '6h': 'unavailable', '24h': 'complete' },
+      activityState: 'stale',
+      createdAt: Date.parse('2026-07-14T16:00:00.000Z'),
+    };
+    return {
+      generatedAt: '2026-07-14T18:00:00.000Z',
+      asOf: '2026-07-14T18:00:00.000Z',
+      recent: { total: 1, page: 0, perPage: 15, count: 1, hasMore: false, tokens: [token], pinnedTokens: [] },
+      oldWeek: { total: 0, page: 0, perPage: 15, count: 0, hasMore: false, tokens: [], pinnedTokens: [] },
+    };
+  },
+};
+
+const ROBINHOOD_COLLECTION_API_FIXTURES = {
+  ...ROBINHOOD_MARKET_API_FIXTURES,
+  'GET /api/config': {
+    ...ROBINHOOD_MARKET_CONFIG,
+    configs: { 'block-warning-enabled': 'off' },
+  },
+  'POST /api/config/starred': (request) => {
+    const payload = request.postDataJSON();
+    collectionMutationPayloads.push({ action: 'star', payload });
+    return { message: 'Token starred', starred: payload };
+  },
+  'POST /api/config/tokens': (request) => {
+    const payload = request.postDataJSON();
+    collectionMutationPayloads.push({ action: 'manual', payload });
+    return { message: 'Token added', token: payload };
+  },
+  'POST /api/config/blocklist': (request) => {
+    const payload = request.postDataJSON();
+    collectionMutationPayloads.push({ action: 'block', payload });
+    return { message: 'Token blocked', blocked: payload };
+  },
+};
+
+function fixtureKey(request) {
+  const url = new URL(request.url());
+  return `${request.method()} ${url.pathname}`;
+}
+
+async function installApiFixtures(page, unexpectedRequests, fixtures = API_FIXTURES, apiRequests = []) {
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.pathname.startsWith('/api/')) {
+      await route.continue();
+      return;
+    }
+    const key = fixtureKey(route.request());
+    apiRequests.push(route.request().url());
+    if (key === 'PATCH /api/config/ui-prefs') {
+      const patchPayload = route.request().postDataJSON()?.uiPrefs || {};
+      const basePrefs = fixtures['GET /api/config']?.uiPrefs || {};
+      await route.fulfill({
+        status: 200,
+        json: {
+          message: 'UI preferences updated',
+          uiPrefs: { ...basePrefs, ...patchPayload },
+        },
+      });
+      return;
+    }
+    if (key === 'PATCH /api/config') {
+      const configs = route.request().postDataJSON()?.configs || {};
+      await route.fulfill({ status: 200, json: { message: 'Config updated', configs } });
+      return;
+    }
+    const fixtureSource = fixtures[key];
+    const fixture = typeof fixtureSource === 'function'
+      ? await fixtureSource(route.request())
+      : fixtureSource;
+    if (!fixture) {
+      unexpectedRequests.push(key);
+      await route.fulfill({ status: 404, json: { error: `Missing smoke fixture for ${key}` } });
+      return;
+    }
+    await route.fulfill({ status: 200, json: fixture });
+  });
+}
+
+async function installSocketFixture(page, scenario) {
+  await page.routeWebSocket('**/socket.io/**', (socket) => {
+    if (!scenario) {
+      void socket.close();
+      return;
+    }
+    scenario.socket = socket;
+    socket.onMessage((message) => {
+      const frame = String(message);
+      scenario.clientFrames.push(frame);
+      if (frame === '40') {
+        socket.send('40{"sid":"smoke-socket"}');
+      }
+    });
+    socket.send('0{"sid":"smoke-engine","upgrades":[],"pingInterval":60000,"pingTimeout":20000,"maxPayload":1000000}');
+  });
+}
+
+function sendSocketEvent(scenario, event, payload) {
+  scenario.socket?.send(`42${JSON.stringify([event, payload])}`);
+}
+
+async function openAuthenticatedWorkspace(
+  page,
+  fixtures = API_FIXTURES,
+  pathname = '/alerts',
+  socketScenario = null,
+) {
+  const unexpectedRequests = [];
+  const pageErrors = [];
+  const apiRequests = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await installSocketFixture(page, socketScenario);
+  await installApiFixtures(page, unexpectedRequests, fixtures, apiRequests);
+  await page.goto(pathname);
+  await expect(page.getByRole('group', { name: 'Filter workspace by blockchain' })).toBeVisible();
+  return { apiRequests, pageErrors, unexpectedRequests };
+}
+
+test('keeps the publishable chain selector SOL-only and exposes matching settings', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(page);
+  const topbar = page.locator('.workspace-topbar-inner');
+  const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
+  const solana = selector.locator('[data-chain="solana"]');
+
+  await expect(selector.locator('.workspace-chain-selector-btn')).toHaveCount(1);
+  await expect(selector.locator('[data-chain="robinhood"]')).toHaveCount(0);
+  await expect(solana).toHaveAttribute('aria-pressed', 'true');
+  await expect(solana).toBeDisabled();
+  await expect(solana).toHaveAttribute('title', /Solana is the only selected blockchain/);
+
+  await expect(topbar.locator(':scope > *')).toHaveCount(4);
+  await expect(topbar.locator(':scope > *').nth(0)).toHaveClass(/workspace-brand/);
+  await expect(topbar.locator(':scope > *').nth(1)).toHaveClass(/workspace-chain-selector/);
+  await expect(topbar.locator(':scope > *').nth(2)).toHaveClass(/workspace-route-group/);
+  await expect(topbar.locator(':scope > *').nth(3)).toHaveClass(/workspace-userbar/);
+
+  await page.getByRole('button', { name: 'Open user menu' }).click();
+  await page.getByRole('button', { name: 'Bot Settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('tab', { name: 'Alerts & Chains' }).click();
+
+  const alertFeedMenu = dialog.locator('[data-chain-filter-surface="alertFeedChains"]');
+  const alertFeedToggle = alertFeedMenu.locator('.config-menu-button');
+  await expect(alertFeedToggle).toHaveText('1/1 on');
+  await alertFeedToggle.click();
+  await expect(alertFeedMenu.locator('[data-chain-filter-chain="solana"]')).toBeVisible();
+  await expect(alertFeedMenu.locator('[data-chain-filter-chain="solana"]')).toBeDisabled();
+  await alertFeedToggle.click();
+  await expect(alertFeedMenu.locator('.config-menu-dropdown')).toBeHidden();
+
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('uses the confirmed full-width scrollable selector below 980px', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 900 });
+  const diagnostics = await openAuthenticatedWorkspace(page);
+  const topbar = page.locator('.workspace-topbar-inner');
+  const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
+
+  await expect(topbar).toHaveCSS('flex-direction', 'column');
+  await expect(selector).toHaveCSS('overflow-x', 'auto');
+  const dimensions = await topbar.evaluate((element) => {
+    const chainSelector = element.querySelector('.workspace-chain-selector');
+    const topbarRect = element.getBoundingClientRect();
+    const selectorRect = chainSelector?.getBoundingClientRect();
+    const styles = window.getComputedStyle(element);
+    return {
+      topbarContentWidth: topbarRect.width
+        - Number.parseFloat(styles.paddingLeft)
+        - Number.parseFloat(styles.paddingRight),
+      selectorWidth: selectorRect?.width ?? 0,
+    };
+  });
+  expect(dimensions.selectorWidth).toBeGreaterThan(0);
+  expect(Math.abs(dimensions.topbarContentWidth - dimensions.selectorWidth)).toBeLessThanOrEqual(2);
+  await expect(page.locator('.workspace-route-group')).toBeVisible();
+  await expect(page.locator('.workspace-userbar')).toBeVisible();
+
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('filters a combined Solana and Robinhood alert feed through master and surface selectors', async ({ page }) => {
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_API_FIXTURES);
+  const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
+  const solanaButton = selector.locator('[data-chain="solana"]');
+  const robinhoodButton = selector.locator('[data-chain="robinhood"]');
+  const solanaAlert = page.locator('article.alert-row[data-alert-id="backend:hvnc:101"]');
+  const robinhoodAlert = page.locator('article.alert-row[data-alert-id="backend:hvnc:102"]');
+
+  const monitoredSolanaRow = page.locator('.monitored-panel article.monitored-token-row[data-address="So11111111111111111111111111111111111111112"]');
+  await expect(monitoredSolanaRow).toBeVisible();
+  await expect(page.locator('#top-performers-section')).toContainText('TOPSOL');
+  await expect(page.locator('#manual-tokens-section')).toContainText('MANUALSOL');
+
+  await expect(selector.locator('.workspace-chain-selector-btn')).toHaveCount(2);
+  await expect(solanaButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(robinhoodButton).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(async () => page.evaluate(() => window.trendscopeAlertDebug?.snapshot()?.memory?.count)).toBe(2);
+  await expect(solanaAlert).toBeVisible();
+  await expect(robinhoodAlert).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Open user menu' }).click();
+  await page.getByRole('button', { name: 'Bot Settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Bot Settings' });
+  await dialog.getByRole('tab', { name: 'Alerts & Chains' }).click();
+  const alertFeedMenu = dialog.locator('[data-chain-filter-surface="alertFeedChains"]');
+  await expect(alertFeedMenu.locator('.config-menu-button')).toHaveText('1/2 on');
+  await alertFeedMenu.locator('.config-menu-button').click();
+  await alertFeedMenu.locator('[data-chain-filter-chain="robinhood"]').click();
+  await expect(alertFeedMenu.locator('.config-menu-button')).toHaveText('2/2 on');
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+
+  await expect(solanaAlert).toBeVisible();
+  await expect(robinhoodAlert).toBeVisible();
+  await expect(robinhoodAlert).toContainText('5m vol');
+  await expect(robinhoodAlert).toContainText('FDV');
+
+  await solanaButton.click();
+
+  await expect(page.locator('article.alert-row[data-alert-id="backend:hvnc:101"]')).toHaveCount(0);
+  await expect(page.locator('article.alert-row[data-alert-id="backend:hvnc:102"]')).toBeVisible();
+  await expect(selector.locator('[data-chain="solana"]')).toHaveAttribute('aria-pressed', 'false');
+  await expect(selector.locator('[data-chain="robinhood"]')).toBeDisabled();
+  await expect(monitoredSolanaRow).toHaveCount(0);
+  await expect(page.locator('#top-performers-section')).not.toContainText('TOPSOL');
+  await expect(page.locator('#manual-tokens-section')).not.toContainText('MANUALSOL');
+  await expect(page.locator('[data-chain-readiness-surface="monitored"]')).toContainText('syncing market coverage');
+  await expect(page.locator('[data-chain-readiness-surface="top-performers"]')).toContainText('syncing market coverage');
+  await expect(page.locator('#manual-tokens-section [data-chain-readiness-surface="manual"]')).toHaveCount(0);
+  await expect(page.locator('#manual-tokens-section select[name="chain"]')).toHaveValue('robinhood');
+  await page.getByRole('button', { name: 'Open user menu' }).click();
+  await page.getByRole('button', { name: 'Blocked Tokens' }).click();
+  const blockedTokensModal = page.locator('[data-auth-modal="blocked-tokens"]');
+  await expect(blockedTokensModal).not.toContainText('BLOCKSOL');
+  await expect(blockedTokensModal.locator('[data-chain-readiness-surface="blocklist"]')).toHaveCount(0);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('refetches market panels by chain and rejects a stale combined response', async ({ page }) => {
+  marketPinPayloads.length = 0;
+  compactChartRequestPayloads.length = 0;
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_MARKET_API_FIXTURES);
+  const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
+  const solanaButton = selector.locator('[data-chain="solana"]');
+  const robinhoodButton = selector.locator('[data-chain="robinhood"]');
+
+  await expect(page.locator('.monitored-panel')).toContainText('MONSOL');
+  await expect(page.locator('#top-performers-section')).toContainText('TOPSOL');
+
+  await robinhoodButton.click();
+  await expect.poll(() => diagnostics.apiRequests.some((requestUrl) => {
+    const url = new URL(requestUrl);
+    return url.pathname === '/api/dashboard/monitored'
+      && url.searchParams.get('chains') === 'solana,robinhood';
+  })).toBe(true);
+  await solanaButton.click();
+
+  const robinhoodRow = page.locator(`.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`);
+  await expect(robinhoodRow).toBeVisible();
+  await expect(robinhoodRow).toContainText('RHFRESH');
+  await expect(robinhoodRow).toContainText('FDV');
+  await expect(robinhoodRow).toHaveAttribute('data-identity', `robinhood:${ROBINHOOD_TOKEN}`);
+  await expect(robinhoodRow).toContainText('STALE VALUATION');
+  await expect(robinhoodRow).toContainText('NO RECENT ACTIVITY');
+  await expect(robinhoodRow.locator('.monitored-main-metric')).toHaveText('$0');
+  await expect(robinhoodRow.locator('.monitored-coverage-partial')).toContainText('~');
+  await expect(robinhoodRow.locator('.monitored-coverage-unavailable')).toHaveText('-');
+  await expect(page.locator('[data-action="monitored-mcap-min"]')).toHaveValue('30000');
+  await expect(page.locator('[data-action="monitored-fdv-min"]')).toHaveValue('30000');
+  await page.locator('[data-action="monitored-mcap-min"]').fill('45000');
+  await page.locator('[data-action="monitored-fdv-min"]').fill('65000');
+  await page.locator('[data-action="monitored-valuation-apply"]').click();
+  await expect.poll(() => diagnostics.apiRequests.some((requestUrl) => {
+    const url = new URL(requestUrl);
+    return url.pathname === '/api/dashboard/monitored'
+      && url.searchParams.get('minMcap') === '45000'
+      && url.searchParams.get('minFdv') === '65000';
+  })).toBe(true);
+  await expect(page.locator('#top-performers-section')).toContainText('TOPRHFRESH');
+  await expect(page.locator('#top-performers-section')).toContainText('FDV');
+  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
+    payload.identities?.some((identity) => (
+      identity.chain === 'robinhood' && identity.address === ROBINHOOD_TOP
+    ))
+  ))).toBe(true);
+  const topSparkline = page.locator(
+    `.top-performer-card:not(.is-duplicate)[data-address="${ROBINHOOD_TOP}"] .sparkline-wrap`,
+  );
+  await expect(topSparkline).toHaveAttribute('data-chain', 'robinhood');
+  await expect(topSparkline).toHaveAttribute('data-sparkline-key', `robinhood:${ROBINHOOD_TOP}`);
+  await expect(topSparkline).toHaveAttribute('data-sparkline-summary', /Mini FDV chart · 2 pts/);
+  const monitoredSparkline = robinhoodRow.locator('.monitored-mini-chart .sparkline-wrap');
+  await expect(monitoredSparkline).toHaveAttribute('data-sparkline-key', `robinhood:${ROBINHOOD_TOKEN}`);
+  await topSparkline.hover();
+  await expect(topSparkline.locator('.sparkline-hover-tooltip')).toContainText('FDV');
+  await topSparkline.locator('[data-action="toggle-token-sparkline-range"]').click();
+  await topSparkline.locator('[data-action="set-token-sparkline-range-days"][data-sparkline-range-days="7"]').click();
+  await expect.poll(() => compactChartRequestPayloads.some((payload) => (
+    payload.hours === 168 && payload.identities?.some((identity) => (
+      identity.chain === 'robinhood' && identity.address === ROBINHOOD_TOP
+    ))
+  ))).toBe(true);
+  await page.waitForTimeout(500);
+  await expect(page.locator('.monitored-panel')).not.toContainText('RHSTALE');
+  await expect(page.locator('#top-performers-section')).not.toContainText('TOPRHSTALE');
+
+  const pinHandle = robinhoodRow.locator('.monitored-pin-handle');
+  await pinHandle.click();
+  await expect.poll(() => marketPinPayloads.length).toBe(1);
+  expect(marketPinPayloads[0].chains).toEqual(['robinhood']);
+  expect(marketPinPayloads[0].pinnedTokens[0].chain).toBe('robinhood');
+  await expect(pinHandle).toHaveAttribute('data-pinned', 'true');
+  await pinHandle.dblclick();
+  await expect.poll(() => marketPinPayloads.length).toBe(2);
+  expect(marketPinPayloads[1]).toEqual({ chains: ['robinhood'], pinnedTokens: [] });
+
+  const marketRequests = diagnostics.apiRequests
+    .map((requestUrl) => new URL(requestUrl))
+    .filter((url) => (
+      url.pathname === '/api/dashboard/monitored'
+      || url.pathname === '/api/dashboard/top-performers'
+    ));
+  for (const path of ['/api/dashboard/monitored', '/api/dashboard/top-performers']) {
+    const robinhoodRequest = marketRequests.find((url) => (
+      url.pathname === path && url.searchParams.get('chains') === 'robinhood'
+    ));
+    expect(robinhoodRequest).toBeTruthy();
+    expect(robinhoodRequest.searchParams.get('minMcap')).toBe('30000');
+    expect(robinhoodRequest.searchParams.get('minFdv')).toBe('30000');
+  }
+  const robinhoodMonitoredPages = marketRequests.filter((url) => (
+    url.pathname === '/api/dashboard/monitored'
+      && url.searchParams.get('chains') === 'robinhood'
+  ));
+  expect(robinhoodMonitoredPages[0].searchParams.get('perPage')).toBe('100');
+  expect(robinhoodMonitoredPages.some((url) => (
+    url.searchParams.get('page') === '1'
+      && url.searchParams.get('asOf') === '2026-07-14T18:00:00.000Z'
+  ))).toBe(true);
+
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('sends Robinhood identity through manual, star and block actions', async ({ page }) => {
+  collectionMutationPayloads.length = 0;
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_COLLECTION_API_FIXTURES);
+  const selector = page.getByRole('group', { name: 'Filter workspace by blockchain' });
+  await selector.locator('[data-chain="robinhood"]').click();
+  await selector.locator('[data-chain="solana"]').click();
+
+  const robinhoodRow = page.locator(
+    `.monitored-panel article.monitored-token-row[data-address="${ROBINHOOD_TOKEN}"]`,
+  );
+  await expect(robinhoodRow).toBeVisible();
+
+  await robinhoodRow.locator('[data-action="toggle-star"]').click();
+  await expect.poll(() => collectionMutationPayloads.length).toBe(1);
+
+  await robinhoodRow.locator('[data-action="manual-quick-add"]').click();
+  await expect.poll(() => collectionMutationPayloads.length).toBe(2);
+
+  await robinhoodRow.locator('[data-action="block-token"]').click();
+  await expect.poll(() => collectionMutationPayloads.length).toBe(3);
+
+  assertCollectionMutation('star', {
+    chain: 'robinhood', address: ROBINHOOD_TOKEN,
+  });
+  assertCollectionMutation('manual', {
+    chain: 'robinhood', address: ROBINHOOD_TOKEN, label: null,
+  });
+  assertCollectionMutation('block', {
+    chain: 'robinhood', address: ROBINHOOD_TOKEN,
+  });
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('opens a Robinhood FDV chart and applies only its realtime updates', async ({ page }) => {
+  chartRequestPayloads.length = 0;
+  const socketScenario = { socket: null, clientFrames: [] };
+  const diagnostics = await openAuthenticatedWorkspace(
+    page,
+    ROBINHOOD_MARKET_API_FIXTURES,
+    `/alerts/robinhood/${ROBINHOOD_TOKEN}`,
+    socketScenario,
+  );
+
+  const dialog = page.locator('[data-auth-modal="expanded-sparkline"]');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.expanded-sparkline-stat-mcap')).toContainText('FDV');
+  await expect(dialog.locator('.expanded-sparkline-footnote')).toContainText('Minute and hourly history');
+  await expect(dialog.locator('[data-expanded-candlestick-chart]')).toHaveAttribute(
+    'aria-label',
+    'Interactive FDV candlestick chart',
+  );
+  await expect.poll(() => chartRequestPayloads.length).toBe(1);
+  expect(chartRequestPayloads[0]).toMatchObject({
+    chain: 'robinhood', address: ROBINHOOD_TOKEN, granularityMinutes: 5,
+  });
+  await expect.poll(() => socketScenario.clientFrames.some((frame) => (
+    frame.includes('"market:sync"') && frame.includes(`"address":"${ROBINHOOD_TOKEN}"`)
+  ))).toBe(true);
+
+  const legend = dialog.locator('[data-expanded-chart-legend]');
+  await expect(legend).toContainText('350K');
+  const livePayload = {
+    type: 'market:bucket', address: ROBINHOOD_TOKEN,
+    bucketTs: '2026-07-15T11:01:00.000Z', granularityMinutes: 1,
+    sequence: 'robinhood:000000000000000000000002:000000000000000000000001:000000000000000000000001',
+    valuation: { type: 'fdv', fdvUsd: 420000, observedAt: '2026-07-15T11:01:10.000Z' },
+    candle: {
+      bucketTs: '2026-07-15T11:01:00.000Z', granularityMinutes: 1,
+      openFdvUsd: 350000, highFdvUsd: 425000, lowFdvUsd: 340000,
+      closeFdvUsd: 420000, sampleCount: 4,
+    },
+  };
+  sendSocketEvent(socketScenario, 'market:bucket', { ...livePayload, chain: 'robinhood' });
+  await expect(legend).toContainText('420K');
+
+  sendSocketEvent(socketScenario, 'market:bucket', {
+    ...livePayload,
+    chain: 'base',
+    sequence: 'base:000000000000000000000003:000000000000000000000001:000000000000000000000001',
+    valuation: { ...livePayload.valuation, fdvUsd: 999000 },
+    candle: { ...livePayload.candle, closeFdvUsd: 999000 },
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(legend).not.toContainText('999K');
+  expect(diagnostics.apiRequests.some((requestUrl) => (
+    new URL(requestUrl).pathname === '/api/dashboard/chart-alert-events'
+  ))).toBe(false);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+test('renders Radar valuation freshness, coverage and independent chain filters honestly', async ({ page }) => {
+  radarBootstrapPayloads.length = 0;
+  compactChartRequestPayloads.length = 0;
+  const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
+  await page.goto('/radar');
+
+  const identity = `robinhood:${ROBINHOOD_TOKEN}`;
+  const row = page.locator(`.recent-bar tbody tr[data-token-identity="${identity}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('RADARST');
+  await expect(row).toContainText('FDV $350K');
+  await expect(row).toContainText('STALE VALUATION');
+  await expect(row).toContainText('NO RECENT ACTIVITY');
+  await expect(row.locator('.radar-coverage-partial')).toContainText(['~', '~']);
+  await expect(row.locator('.radar-coverage-unavailable').first()).toHaveText('-');
+  await expect(row.locator('.radar-coverage-complete')).toContainText(['$0', '+0.00%']);
+  const radarSparkline = row.locator('.sparkline-wrap');
+  await expect(radarSparkline).toHaveAttribute('data-chain', 'robinhood');
+  await expect(radarSparkline).toHaveAttribute('data-sparkline-summary', /Mini FDV chart · 2 pts/);
+
+  const recentBar = page.locator('.recent-bar');
+  await expect(recentBar.locator('input[name="old-mcap-min"]')).toHaveValue('120000');
+  await expect(recentBar.locator('input[name="old-fdv-min"]')).toHaveValue('130000');
+  await expect(recentBar.locator('input[name="old-fdv-max"]')).toHaveValue('90000000');
+  const fdvMinInput = recentBar.locator('input[name="old-fdv-min"]');
+  await fdvMinInput.fill('175000');
+  await fdvMinInput.dispatchEvent('change');
+  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
+    payload.recent?.mcapMin === 120000 && payload.recent?.fdvMin === 175000
+  ))).toBe(true);
+
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+  expect(diagnostics.pageErrors).toEqual([]);
+});
+
+function assertCollectionMutation(action, expectedPayload) {
+  expect(collectionMutationPayloads.find((item) => item.action === action)?.payload)
+    .toMatchObject(expectedPayload);
+}

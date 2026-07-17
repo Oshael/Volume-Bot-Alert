@@ -1,7 +1,12 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 const DEFAULT_MONITORED_MIN_MCAP = 30000;
+const EVENT_SEMANTICS = Object.freeze({
+  version: 1,
+  scope: 'legacy-signal-eligibility',
+  workspaceExit: false,
+});
 
 let ensureTablePromise = null;
 
@@ -10,6 +15,7 @@ function ensureTable() {
     ensureTablePromise = db.query(`
       CREATE TABLE IF NOT EXISTS monitored_token_exit_events (
         id SERIAL PRIMARY KEY,
+        chain VARCHAR(16) NOT NULL DEFAULT 'solana',
         token_address VARCHAR(64) NOT NULL,
         exit_reason VARCHAR(96) NOT NULL,
         exit_source VARCHAR(64),
@@ -19,8 +25,11 @@ function ensureTable() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
-      CREATE INDEX IF NOT EXISTS idx_monitored_token_exit_events_token_created
-        ON monitored_token_exit_events(token_address, created_at DESC, id DESC);
+      ALTER TABLE monitored_token_exit_events
+        ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana';
+
+      CREATE INDEX IF NOT EXISTS idx_monitored_exit_events_chain_token
+        ON monitored_token_exit_events(chain, token_address, created_at DESC, id DESC);
 
       CREATE INDEX IF NOT EXISTS idx_monitored_token_exit_events_reason_created
         ON monitored_token_exit_events(exit_reason, created_at DESC, id DESC);
@@ -30,12 +39,16 @@ function ensureTable() {
   return ensureTablePromise;
 }
 
-function normalizeAddress(address) {
-  const value = String(address || '').trim();
-  if (!isValidAddress(value)) {
-    throw new Error('Invalid token address format');
-  }
-  return value;
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
+
+function assertExitDetectionEnabled(chain) {
+  if (chain === 'solana') return;
+  const error = new Error('Legacy signal-eligibility exit detection only supports Solana');
+  error.code = 'NON_SOLANA_EXIT_EVENT_DISABLED';
+  throw error;
 }
 
 function normalizeText(value, maxLength = 96) {
@@ -50,12 +63,21 @@ function normalizeJsonObject(value) {
   return value;
 }
 
+function normalizeEventDetails(value) {
+  return {
+    ...normalizeJsonObject(value),
+    semanticVersion: EVENT_SEMANTICS.version,
+    scope: EVENT_SEMANTICS.scope,
+    workspaceExit: EVENT_SEMANTICS.workspaceExit,
+  };
+}
+
 function toNumberOrNull(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function isDashboardMonitored(row, minMcap = DEFAULT_MONITORED_MIN_MCAP) {
+function isLegacySignalEligible(row, minMcap = DEFAULT_MONITORED_MIN_MCAP) {
   if (!row) {
     return false;
   }
@@ -93,6 +115,7 @@ function buildSnapshot(row) {
 
   return {
     address: row.address || row.token_address || null,
+    chain: row.chain || 'solana',
     source: row.source || null,
     eligibilityState: row.eligibility_state || null,
     eligibleForMonitoring: row.eligible_for_monitoring ?? null,
@@ -117,6 +140,7 @@ function mapRow(row) {
   if (!row) return null;
   return {
     id: Number(row.id) || null,
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     exitReason: row.exit_reason || null,
     exitSource: row.exit_source || null,
@@ -124,12 +148,17 @@ function mapRow(row) {
     currentSnapshot: row.current_snapshot || {},
     details: row.details || {},
     createdAt: row.created_at || null,
+    semantics: EVENT_SEMANTICS,
   };
 }
 
 async function createEvent(payload = {}, runner = db) {
+  const identity = normalizeIdentity(
+    payload.tokenAddress || payload.address,
+    payload.chain || 'solana'
+  );
+  assertExitDetectionEnabled(identity.chain);
   await ensureTable();
-  const tokenAddress = normalizeAddress(payload.tokenAddress || payload.address);
   const exitReason = normalizeText(payload.exitReason || payload.reason, 96);
   if (!exitReason) {
     throw new Error('Monitored token exit reason is required');
@@ -137,6 +166,7 @@ async function createEvent(payload = {}, runner = db) {
 
   const { rows } = await runner.query(
     `INSERT INTO monitored_token_exit_events (
+       chain,
        token_address,
        exit_reason,
        exit_source,
@@ -144,15 +174,16 @@ async function createEvent(payload = {}, runner = db) {
        current_snapshot,
        details
      )
-     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)
      RETURNING *`,
     [
-      tokenAddress,
+      identity.chain,
+      identity.address,
       exitReason,
       normalizeText(payload.exitSource || payload.source, 64),
       JSON.stringify(normalizeJsonObject(payload.previousSnapshot)),
       JSON.stringify(normalizeJsonObject(payload.currentSnapshot)),
-      JSON.stringify(normalizeJsonObject(payload.details)),
+      JSON.stringify(normalizeEventDetails(payload.details)),
     ]
   );
 
@@ -163,11 +194,15 @@ async function recordIfExited(previousRow, currentRow, options = {}, runner = db
   const minMcap = Number.isFinite(Number(options.minMcap))
     ? Math.max(0, Number(options.minMcap))
     : DEFAULT_MONITORED_MIN_MCAP;
-  if (!isDashboardMonitored(previousRow, minMcap) || isDashboardMonitored(currentRow, minMcap)) {
+  if (
+    !isLegacySignalEligible(previousRow, minMcap)
+    || isLegacySignalEligible(currentRow, minMcap)
+  ) {
     return null;
   }
 
   return createEvent({
+    chain: options.chain || previousRow?.chain || currentRow?.chain || 'solana',
     tokenAddress: previousRow.address || currentRow?.address,
     exitReason: options.exitReason || resolveExitReason(previousRow, currentRow, minMcap),
     exitSource: options.exitSource,
@@ -186,9 +221,12 @@ async function listRecent(options = {}, runner = db) {
   const limit = Math.max(1, Math.min(Number(options.limit) || 100, 500));
   const values = [];
   const clauses = [];
+  const chain = normalizeTokenChain(options.chain || 'solana');
+  values.push(chain);
+  clauses.push(`chain = $${values.length}`);
 
   if (options.address != null && String(options.address).trim() !== '') {
-    values.push(normalizeAddress(options.address));
+    values.push(normalizeTokenAddress(chain, options.address));
     clauses.push(`token_address = $${values.length}`);
   }
 
@@ -213,15 +251,17 @@ async function listRecent(options = {}, runner = db) {
 
 module.exports = {
   DEFAULT_MONITORED_MIN_MCAP,
+  EVENT_SEMANTICS,
   ensureTable,
   createEvent,
   recordIfExited,
   listRecent,
   __private: {
     buildSnapshot,
-    isDashboardMonitored,
+    isLegacySignalEligible,
     mapRow,
-    normalizeAddress,
+    normalizeEventDetails,
+    normalizeIdentity,
     normalizeJsonObject,
     normalizeText,
     resolveExitReason,

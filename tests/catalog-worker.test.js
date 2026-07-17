@@ -313,11 +313,12 @@ describe('catalog worker drift compensation', () => {
   });
 
   it('preserves stronger existing cumulative volume windows when Dex reports incoherent lower windows', () => {
-    const snapshot = catalogWorker.__private.derivePrioritySnapshot({
+    const pair = {
       marketCap: 250000,
       volume: { h24: 1200, h6: 1200, h1: 64000 },
       priceChange: {},
-    }, {
+    };
+    const snapshot = catalogWorker.__private.derivePrioritySnapshot(pair, {
       source: 'gmgn',
       last_vol_6h: 360000,
       last_vol_24h: 1760000,
@@ -328,6 +329,10 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.monitorPriority, 'high');
     assert.equal(snapshot.eligibleForMonitoring, true);
     assert.equal(snapshot.suppressedReason, null);
+    const coverage = catalogWorker.__private.buildDexscreenerVolumeCoverage(pair, snapshot);
+    assert.equal(coverage['1h'], 'complete');
+    assert.equal(coverage['6h'], 'partial');
+    assert.equal(coverage['24h'], 'partial');
   });
 
   it('does not accelerate low-dust auto tokens that are already slower than 3m', () => {
@@ -396,6 +401,12 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.vol24h, 751000);
     assert.equal(snapshot.monitorPriority, 'high');
     assert.equal(snapshot.eligibleForMonitoring, true);
+    const coverage = catalogWorker.__private.buildDexscreenerVolumeCoverage({
+      pairCreatedAt: Date.now() - (25 * 60 * 1000),
+      volume: { m5: 58000, h1: 751000, h6: 0, h24: 0 },
+    }, snapshot);
+    assert.equal(coverage['6h'], 'complete');
+    assert.equal(coverage['24h'], 'complete');
   });
 
   it('normalizes missing Dex volume windows to zero so stale volume is cleared', () => {
@@ -409,6 +420,9 @@ describe('catalog worker drift compensation', () => {
     assert.equal(snapshot.vol1h, 0);
     assert.equal(snapshot.vol6h, 0);
     assert.equal(snapshot.vol24h, 0);
+    const coverage = catalogWorker.__private.buildDexscreenerVolumeCoverage({ volume: {} }, snapshot);
+    assert.equal(coverage['5m'], 'partial');
+    assert.equal(coverage['24h'], 'partial');
   });
 
   it('treats low-activity auto tokens as low-dust for throttle and as low-activity for Dex cache TTL', () => {

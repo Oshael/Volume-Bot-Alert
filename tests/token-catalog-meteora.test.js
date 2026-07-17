@@ -76,7 +76,7 @@ describe('token catalog Meteora scheduling', () => {
       await tokenCatalog.listDueForMeteoraSnapshots(45);
       assert.deepEqual(capturedParams, [45]);
       assert.match(capturedSql, /LEFT JOIN token_meteora_state ms/i);
-      assert.match(capturedSql, /WHERE tc\.is_active_monitor_candidate = TRUE/i);
+      assert.match(capturedSql, /WHERE tc\.chain = 'solana'\s+AND tc\.is_active_monitor_candidate = TRUE/i);
       assert.match(capturedSql, /COALESCE\(tc\.last_mcap, 0\) >= 100000/i);
       assert.match(capturedSql, /ms\.has_pool = TRUE/i);
       assert.match(capturedSql, /COALESCE\(tc\.source, ''\) <> 'gmgn'/i);

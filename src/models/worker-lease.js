@@ -34,6 +34,15 @@ function normalizeTtlMs(value) {
   return Math.max(5000, Math.min(ttlMs, 10 * 60 * 1000));
 }
 
+function haltMetadata(error) {
+  return {
+    state: 'halted',
+    haltCode: String(error?.code || error?.name || 'fatal_error').slice(0, 64),
+    haltMessage: String(error?.message || error || 'Worker halted').slice(0, 500),
+    haltedAt: new Date().toISOString(),
+  };
+}
+
 function mapRow(row) {
   if (!row) return null;
   return {
@@ -75,8 +84,9 @@ async function acquire(key, ownerId, options = {}, runner = db) {
        heartbeat_at = EXCLUDED.heartbeat_at,
        lease_until = EXCLUDED.lease_until,
        metadata = EXCLUDED.metadata
-     WHERE worker_leases.owner_id = EXCLUDED.owner_id
-        OR worker_leases.lease_until <= NOW()
+     WHERE (worker_leases.owner_id = EXCLUDED.owner_id
+        OR worker_leases.lease_until <= NOW())
+       AND COALESCE(worker_leases.metadata->>'state', '') <> 'halted'
      RETURNING *`,
     [
       normalizeKey(key),
@@ -94,17 +104,40 @@ async function acquire(key, ownerId, options = {}, runner = db) {
 async function heartbeat(key, ownerId, options = {}, runner = db) {
   const executor = getRunner(runner);
   const ttlMs = normalizeTtlMs(options.ttlMs);
+  const metadata = options.metadata && typeof options.metadata === 'object'
+    ? JSON.stringify(options.metadata)
+    : null;
   const { rows } = await executor.query(
     `UPDATE worker_leases
      SET heartbeat_at = NOW(),
-         lease_until = NOW() + ($3::int * INTERVAL '1 millisecond')
+         lease_until = NOW() + ($3::int * INTERVAL '1 millisecond'),
+         metadata = CASE
+           WHEN $4::jsonb IS NULL THEN metadata
+           ELSE $4::jsonb
+         END
      WHERE lease_key = $1
        AND owner_id = $2
        AND lease_until > NOW()
+       AND COALESCE(metadata->>'state', '') <> 'halted'
      RETURNING *`,
-    [normalizeKey(key), normalizeOwner(ownerId), ttlMs]
+    [normalizeKey(key), normalizeOwner(ownerId), ttlMs, metadata]
   );
 
+  return mapRow(rows[0] || null);
+}
+
+async function halt(key, ownerId, error, runner = db) {
+  const executor = getRunner(runner);
+  const { rows } = await executor.query(
+    `UPDATE worker_leases
+     SET heartbeat_at = NOW(),
+         lease_until = NOW(),
+         metadata = metadata || $3::jsonb
+     WHERE lease_key = $1
+       AND owner_id = $2
+     RETURNING *`,
+    [normalizeKey(key), normalizeOwner(ownerId), JSON.stringify(haltMetadata(error))]
+  );
   return mapRow(rows[0] || null);
 }
 
@@ -132,11 +165,13 @@ async function list(runner = db) {
 module.exports = {
   DEFAULT_TTL_MS,
   acquire,
+  halt,
   heartbeat,
   release,
   list,
   __private: {
     mapRow,
+    haltMetadata,
     normalizeKey,
     normalizeOwner,
     normalizeTtlMs,

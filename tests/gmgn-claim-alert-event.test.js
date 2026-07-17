@@ -5,6 +5,28 @@ const db = require('../src/models/db');
 const gmgnClaimAlertEvent = require('../src/models/gmgn-claim-alert-event');
 
 describe('gmgn claim alert event model', () => {
+  it('excludes dismissals belonging to the requesting user before applying the limit', async () => {
+    const originalQuery = db.query;
+    let capturedSql = null;
+    let capturedParams = null;
+    db.query = async (sql, params) => {
+      capturedSql = String(sql);
+      capturedParams = params;
+      return { rows: [] };
+    };
+
+    try {
+      await gmgnClaimAlertEvent.listRecentEvents({
+        ruleKey: 'gmgn-claim-signal', dismissedByUserId: 7, limit: 20,
+      });
+      assert.match(capturedSql, /FROM alert_event_dismissals dismissal/);
+      assert.match(capturedSql, /dismissal\.chain = 'solana'/);
+      assert.deepEqual(capturedParams, ['gmgn-claim-signal', 7, 20]);
+    } finally {
+      db.query = originalQuery;
+    }
+  });
+
   it('loads visible events by id without returning baseline rows', async () => {
     const originalQuery = db.query;
     let capturedSql = null;

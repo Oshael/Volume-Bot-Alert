@@ -50,9 +50,10 @@ describe('admin blocked token model', () => {
       if (/INSERT INTO admin_blocked_tokens/.test(sql)) {
         return {
           rows: [{
-            address: params[0],
-            label: params[1],
-            created_by: params[2],
+            chain: params[0],
+            address: params[1],
+            label: params[2],
+            created_by: params[3],
           }],
         };
       }
@@ -68,6 +69,7 @@ describe('admin blocked token model', () => {
 
       assert.ok(calls.some((call) => /FROM token_risk_reviews/.test(call.sql)));
       assert.deepEqual(row, {
+        chain: 'solana',
         address: 'So11111111111111111111111111111111111111112',
         label: 'catalog-liquidity:under-1k-48h:500:30000',
         created_by: null,
@@ -119,9 +121,10 @@ describe('admin blocked token model', () => {
       if (/INSERT INTO admin_blocked_tokens/.test(sql)) {
         return {
           rows: [{
-            address: params[0],
-            label: params[1],
-            created_by: params[2],
+            chain: params[0],
+            address: params[1],
+            label: params[2],
+            created_by: params[3],
           }],
         };
       }
@@ -136,6 +139,7 @@ describe('admin blocked token model', () => {
       });
 
       assert.deepEqual(row, {
+        chain: 'solana',
         address: 'So11111111111111111111111111111111111111112',
         label: 'manual-admin-block',
         created_by: 7,
@@ -178,7 +182,9 @@ describe('admin blocked token model', () => {
       assert.deepEqual(selectCall.params, [500, 24 * 60 * 60 * 1000]);
       assert.match(selectCall.sql, /FROM admin_blocked_tokens ab/);
       assert.match(selectCall.sql, /LEFT JOIN token_risk_reviews trr/i);
+      assert.match(selectCall.sql, /trr\.chain = ab\.chain/);
       assert.match(selectCall.sql, /trr\.token_address = ab\.address/);
+      assert.match(selectCall.sql, /WHERE ab\.chain = 'solana'/);
       assert.match(selectCall.sql, /ab\.created_at <= NOW\(\) - \(\$2 \* INTERVAL '1 millisecond'\)/);
       assert.match(selectCall.sql, /COALESCE\(LOWER\(trr\.label\), ''\) <> 'valid'/);
       assert.match(selectCall.sql, /COALESCE\(LOWER\(trr\.source\), ''\) <> 'manual'/);
@@ -186,6 +192,7 @@ describe('admin blocked token model', () => {
       assert.match(selectCall.sql, /token_market_buckets_agg/);
       assert.match(selectCall.sql, /token_market_volume_buckets_1m/);
       assert.match(selectCall.sql, /token_meteora_snapshots/);
+      assert.equal((selectCall.sql.match(/buckets\.chain = ab\.chain/g) || []).length, 3);
     } finally {
       db.query = originalQuery;
     }

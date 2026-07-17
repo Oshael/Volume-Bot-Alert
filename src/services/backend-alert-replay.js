@@ -6,7 +6,17 @@ const backendAlertRealtime = require('./backend-alert-realtime');
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
+const USER_ALERT_CHAIN = 'solana';
 const replayInFlightByUserId = new Map();
+
+function getRuleChain(rule) {
+  return String(rule?.chain || USER_ALERT_CHAIN).trim().toLowerCase();
+}
+
+function getRuleChains(rule) {
+  const chains = Array.isArray(rule?.chains) ? rule.chains : [getRuleChain(rule)];
+  return [...new Set(chains.map((chain) => String(chain || '').trim().toLowerCase()).filter(Boolean))];
+}
 
 function normalizePositiveInteger(value, fallback, max = Number.MAX_SAFE_INTEGER) {
   const parsed = Number.parseInt(String(value || '').trim(), 10);
@@ -23,7 +33,8 @@ function getReplayableRules(options = {}) {
       rule
       && rule.scope === 'user-token'
       && rule.historicalReplayEnabled !== false
-    ));
+    ))
+    .flatMap((rule) => getRuleChains(rule).map((chain) => ({ ...rule, chain })));
 }
 
 function getUserReplayKey(userId) {
@@ -63,6 +74,7 @@ async function bootstrapRuleCursorToLatest(userId, rule, options = {}) {
   const latestEventId = await eventModel.getLatestEventId({
     userId,
     ruleKey: rule.ruleKey,
+    chain: getRuleChain(rule),
   });
 
   if (!latestEventId) {
@@ -73,7 +85,7 @@ async function bootstrapRuleCursorToLatest(userId, rule, options = {}) {
     };
   }
 
-  const cursor = await cursorModel.markSeen(userId, rule.ruleKey, latestEventId);
+  const cursor = await cursorModel.markSeen(userId, rule.ruleKey, latestEventId, getRuleChain(rule));
   return {
     ruleKey: rule.ruleKey,
     bootstrapped: true,
@@ -109,10 +121,12 @@ function buildReplayPayload(realtime, userId, eventId) {
   };
 }
 
-async function listReplayPage(eventModel, userId, ruleKey, afterId, pageLimit) {
+async function listReplayPage(eventModel, userId, rule, afterId, pageLimit) {
   return eventModel.listRecentEvents({
     userId,
-    ruleKey,
+    ruleKey: rule.ruleKey,
+    chain: getRuleChain(rule),
+    dismissedByUserId: userId,
     afterId,
     sort: 'asc',
     limit: pageLimit,
@@ -144,13 +158,14 @@ async function replayRuleEvents(userId, rule, options = {}) {
     realtime,
     pageLimit,
   } = resolveReplayDependencies(options);
-  let cursor = await cursorModel.getCursor(userId, rule.ruleKey);
+  const chain = getRuleChain(rule);
+  let cursor = await cursorModel.getCursor(userId, rule.ruleKey, chain);
   let afterId = cursor?.lastSeenEventId || null;
   let emitted = 0;
   let pages = 0;
 
   while (true) {
-    const events = await listReplayPage(eventModel, userId, rule.ruleKey, afterId, pageLimit);
+    const events = await listReplayPage(eventModel, userId, rule, afterId, pageLimit);
     if (!events.length) {
       break;
     }
@@ -163,7 +178,7 @@ async function replayRuleEvents(userId, rule, options = {}) {
       break;
     }
 
-    cursor = await cursorModel.markSeen(userId, rule.ruleKey, pageResult.highestEventId);
+    cursor = await cursorModel.markSeen(userId, rule.ruleKey, pageResult.highestEventId, chain);
     afterId = cursor?.lastSeenEventId || pageResult.highestEventId;
 
     if (events.length < pageLimit) {
@@ -173,6 +188,7 @@ async function replayRuleEvents(userId, rule, options = {}) {
 
   return {
     ruleKey: rule.ruleKey,
+    chain,
     emitted,
     pages,
     lastSeenEventId: afterId,

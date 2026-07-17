@@ -1,30 +1,32 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
-async function getAll(userId) {
+async function getAll(userId, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
   const { rows } = await db.query(
-    `SELECT address, added_at
+    `SELECT chain, address, added_at
      FROM user_bootstrap_tokens
-     WHERE user_id = $1
+     WHERE user_id = $1 AND chain = $2
      ORDER BY added_at ASC`,
-    [userId]
+    [userId, chain]
   );
   return rows;
 }
 
-async function setAll(userId, addresses) {
+async function setAll(userId, addresses, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
   const client = await db.getClient();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM user_bootstrap_tokens WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM user_bootstrap_tokens WHERE user_id = $1 AND chain = $2', [userId, chain]);
     for (const item of addresses) {
-      const addr = (item.address || item).toString().trim();
-      if (isValidAddress(addr)) {
-        await client.query(
-          'INSERT INTO user_bootstrap_tokens (user_id, address) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [userId, addr]
-        );
-      }
+      let addr;
+      try { addr = normalizeTokenAddress(chain, item?.address || item); } catch (_) { continue; }
+      await client.query(
+        `INSERT INTO user_bootstrap_tokens (user_id, chain, address)
+         VALUES ($1, $2, $3) ON CONFLICT (user_id, chain, address) DO NOTHING`,
+        [userId, chain, addr]
+      );
     }
     await client.query('COMMIT');
   } catch (err) {

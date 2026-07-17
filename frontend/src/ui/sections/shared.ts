@@ -5,6 +5,10 @@ import { escapeHtml, sanitizeAssetUrl, sanitizeHttpUrl, sanitizeOptionalHttpUrl 
 import { sortBucketTokens } from '../../utils/token-table';
 import { fmtMockSol, fmtMockSolAmount, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveApiBase } from '../../services/api/base';
+import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, normalizeTokenChain, supportsConfiguredTradeTerminals, type TokenChain } from '../../utils/token-chain';
+import { resolveCoveredMetric, resolveTokenValuation, type TokenMetricCoverage } from '../../utils/token-valuation';
+import { buildTokenChainBadge } from '../token-chain-badge';
+import { getTokenChartValuationLabel } from '../../utils/token-chart';
 
 const DEFAULT_TRADE_TERMINALS: TradeTerminalKey[] = ['axiom', 'photon', 'bullx', 'gmgn', 'padre'];
 const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
@@ -13,6 +17,13 @@ const TRADE_TERMINAL_ICON_URLS: Record<TradeTerminalKey, string> = {
   bullx: new URL('../../../terminal-bullx.png', import.meta.url).href,
   gmgn: new URL('../../../terminal-gmgn.svg', import.meta.url).href,
   padre: new URL('../../../terminal-padre.svg', import.meta.url).href,
+};
+const TRADE_TERMINAL_LABELS: Record<TradeTerminalKey, string> = {
+  axiom: 'Axiom',
+  photon: 'Photon',
+  bullx: 'BullX',
+  gmgn: 'GMGN',
+  padre: 'Pump',
 };
 
 type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora';
@@ -31,6 +42,12 @@ type TradeTerminalLink = {
   href: string;
   cls: TradeTerminalKey;
   iconHref: string;
+};
+
+type TradeTerminalOptions = {
+  axiomAddress?: string | null;
+  chain?: TokenChain;
+  enabledTradeTerminals?: TradeTerminalKey[];
 };
 
 const SPARKLINE_SVG_WIDTH = 144;
@@ -159,12 +176,21 @@ function shouldRenderTokenSparklineRangeControl(address: string, options: Sparkl
 }
 
 export function bindTokenActions(section: ParentNode, controller: AppController) {
+  section.querySelectorAll<HTMLElement>('[data-table-chain-badge]').forEach((placeholder) => {
+    const chain = normalizeTokenChain(placeholder.dataset.chain) || 'solana';
+    const address = placeholder.dataset.address;
+    if (address) {
+      placeholder.replaceChildren(buildTokenChainBadge(chain, address));
+    }
+  });
+
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="remove-manual"]')) {
     if (button.dataset.tokenActionBound === 'true') continue;
     button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
-      if (address) void controller.removeManualToken(address);
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
+      if (address) void controller.removeManualToken(address, chain);
     });
   }
 
@@ -174,7 +200,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       const label = button.dataset.label || null;
-      if (address) void controller.addBlockedToken(address, label);
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
+      if (address) void controller.addBlockedToken(address, label, chain);
     });
   }
 
@@ -214,7 +241,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
-      if (address) controller.dismissRecentToken(address);
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
+      if (address) controller.dismissRecentToken(address, chain);
     });
   }
 
@@ -223,7 +251,8 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
-      if (address) controller.dismissOldWeekToken(address);
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
+      if (address) controller.dismissOldWeekToken(address, chain);
     });
   }
 
@@ -232,11 +261,12 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
     button.dataset.tokenActionBound = 'true';
     button.addEventListener('click', () => {
       const address = button.dataset.address;
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
       if (!address) return;
 
       const willBeStarred = !button.classList.contains('active');
       const root = button.ownerDocument || document;
-      const selector = `[data-action="toggle-star"][data-address="${CSS.escape(address)}"]`;
+      const selector = `[data-action="toggle-star"][data-chain="${chain}"][data-address="${CSS.escape(address)}"]`;
 
       for (const starButton of root.querySelectorAll<HTMLButtonElement>(selector)) {
         starButton.classList.toggle('active', willBeStarred);
@@ -248,7 +278,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
         }
       }
 
-      void controller.toggleStarredToken(address);
+      void controller.toggleStarredToken(address, chain);
     });
   }
 
@@ -257,7 +287,7 @@ export function bindTokenActions(section: ParentNode, controller: AppController)
 
 function bindManualQuickAddControls(section: ParentNode, controller: AppController) {
   const scope = resolveManualQuickAddScope(section);
-  const buildOpenKey = (address: string) => `${scope}:${address}`;
+  const buildOpenKey = (chain: TokenChain, address: string) => `${scope}:${chain}:${address}`;
   const ownerDocument = (section instanceof Node && section.ownerDocument) || document;
   const closeMenus = (except?: HTMLElement | null) => {
     ownerDocument.querySelectorAll<HTMLElement>('.manual-quick-add-wrap.open').forEach((wrap) => {
@@ -272,7 +302,8 @@ function bindManualQuickAddControls(section: ParentNode, controller: AppControll
 
   section.querySelectorAll<HTMLElement>('.manual-quick-add-wrap').forEach((wrap) => {
     const address = wrap.querySelector<HTMLButtonElement>('[data-action="manual-quick-add"]')?.dataset.address;
-    wrap.classList.toggle('open', Boolean(address && buildOpenKey(address) === manualQuickAddOpenKey));
+    const chain = normalizeTokenChain(wrap.dataset.chain) || 'solana';
+    wrap.classList.toggle('open', Boolean(address && buildOpenKey(chain, address) === manualQuickAddOpenKey));
   });
 
   for (const button of section.querySelectorAll<HTMLButtonElement>('[data-action="manual-quick-add"]')) {
@@ -281,19 +312,20 @@ function bindManualQuickAddControls(section: ParentNode, controller: AppControll
     button.addEventListener('click', (event) => {
       event.stopPropagation();
       const address = button.dataset.address;
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
       if (!address) {
         return;
       }
 
       const wrap = button.closest<HTMLElement>('.manual-quick-add-wrap');
       if (controller.state.data.manualTokenFolders.length === 0 || !wrap) {
-        void controller.addManualToken(address);
+        void controller.addManualToken(address, null, chain);
         return;
       }
 
       const wasOpen = wrap.classList.contains('open');
       closeMenus(wrap);
-      manualQuickAddOpenKey = wasOpen ? null : buildOpenKey(address);
+      manualQuickAddOpenKey = wasOpen ? null : buildOpenKey(chain, address);
       wrap.classList.toggle('open', !wasOpen);
     });
   }
@@ -304,6 +336,7 @@ function bindManualQuickAddControls(section: ParentNode, controller: AppControll
     button.addEventListener('click', (event) => {
       event.stopPropagation();
       const address = button.dataset.address;
+      const chain = normalizeTokenChain(button.dataset.chain) || 'solana';
       if (!address) {
         return;
       }
@@ -312,12 +345,12 @@ function bindManualQuickAddControls(section: ParentNode, controller: AppControll
       if (button.dataset.target === 'folder') {
         const folderId = Number(button.dataset.folderId);
         if (Number.isInteger(folderId) && folderId > 0) {
-          void controller.addManualTokenToFolder(folderId, address);
+          void controller.addManualTokenToFolder(folderId, address, chain);
         }
         return;
       }
 
-      void controller.addManualToken(address);
+      void controller.addManualToken(address, null, chain);
     });
   }
 
@@ -933,14 +966,21 @@ export function bindSparklineHover(
     const lookupKey = String(wrap.dataset.sparklineKey || wrap.dataset.address || '').trim();
     const address = String(wrap.dataset.address || '').trim();
     const entry = sparklineByLookupKey[lookupKey];
+    const chain = normalizeTokenChain(wrap.dataset.chain) || entry?.chain || 'solana';
     const series = normalizeSparklineSeries(entry?.series);
     const displaySeries = buildDisplaySparklineSeries(series, {
       expanded: wrap.classList.contains('sparkline-wrap-expanded'),
       variant: wrap.dataset.sparklineVariant === 'alert' ? 'alert' : 'default',
       preserveTerminalScaleShift: isFreshSparklineTerminal(entry),
     });
-    bindExpandableSparkline(wrap, address, lookupKey, options.controller);
-    bindTokenSparklineRangeControls(wrap, address, options.controller);
+    bindExpandableSparkline(
+      wrap,
+      address,
+      lookupKey,
+      chain,
+      options.controller,
+    );
+    bindTokenSparklineRangeControls(wrap, address, chain, options.controller);
     const hoverParts = resolveBindableSparklineHover(wrap, entry, series, displaySeries);
     if (!hoverParts) {
       continue;
@@ -977,7 +1017,7 @@ export function bindSparklineHover(
       dot.style.top = `${point.y}px`;
       tooltip.style.left = `${tooltipLeft}px`;
       const hoverValue = displaySeries[index] ?? series[index];
-      tooltip.textContent = `MCAP ${fmtMoney(hoverValue)} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
+      tooltip.textContent = `${getTokenChartValuationLabel(entry)} ${fmtMoney(hoverValue)} · ~ ${formatApproxSparklineTime(entry, index, series.length)}`;
       hover.classList.add('active');
     };
 
@@ -998,8 +1038,15 @@ export function bindSparklineHover(
   }
 }
 
-function updateTokenSparklineRangeMenuState(wrap: HTMLElement, address: string, controller: AppController) {
-  const overrideDays = controller.state.ui.sparklineRange.tokenDaysByAddress[address] ?? null;
+function updateTokenSparklineRangeMenuState(
+  wrap: HTMLElement,
+  address: string,
+  chain: TokenChain,
+  controller: AppController,
+) {
+  const identityKey = buildTokenIdentityKey(chain, address);
+  const overrideDays = controller.state.ui.sparklineRange.tokenDaysByAddress[identityKey]
+    ?? (chain === 'solana' ? controller.state.ui.sparklineRange.tokenDaysByAddress[address] : null);
   wrap.querySelectorAll<HTMLButtonElement>('[data-action="reset-token-sparkline-range"]').forEach((button) => {
     button.classList.toggle('active', overrideDays == null);
   });
@@ -1012,14 +1059,19 @@ function closeTokenSparklineRangeMenu(wrap: HTMLElement) {
   wrap.querySelector<HTMLElement>('[data-sparkline-token-range]')?.classList.remove('open');
 }
 
-function bindTokenSparklineRangeControls(wrap: HTMLElement, address: string, controller?: AppController) {
+function bindTokenSparklineRangeControls(
+  wrap: HTMLElement,
+  address: string,
+  chain: TokenChain,
+  controller?: AppController,
+) {
   const menu = wrap.querySelector<HTMLElement>('[data-sparkline-token-range]');
   if (!menu || !controller || !address || menu.dataset.sparklineTokenRangeBound === 'true') {
     return;
   }
 
   menu.dataset.sparklineTokenRangeBound = 'true';
-  updateTokenSparklineRangeMenuState(wrap, address, controller);
+  updateTokenSparklineRangeMenuState(wrap, address, chain, controller);
   menu.addEventListener('pointerdown', (event) => {
     event.stopPropagation();
   });
@@ -1036,14 +1088,14 @@ function bindTokenSparklineRangeControls(wrap: HTMLElement, address: string, con
     const resetButton = target?.closest<HTMLButtonElement>('[data-action="reset-token-sparkline-range"]');
     if (resetButton) {
       closeTokenSparklineRangeMenu(wrap);
-      controller.resetTokenSparklineRangeDays(address);
+      controller.resetTokenSparklineRangeDays(address, chain);
       return;
     }
 
     const daysButton = target?.closest<HTMLButtonElement>('[data-action="set-token-sparkline-range-days"]');
     if (daysButton) {
       closeTokenSparklineRangeMenu(wrap);
-      controller.setTokenSparklineRangeDays(address, Number(daysButton.dataset.sparklineRangeDays));
+      controller.setTokenSparklineRangeDays(address, Number(daysButton.dataset.sparklineRangeDays), chain);
     }
   });
 }
@@ -1052,6 +1104,7 @@ function bindExpandableSparkline(
   wrap: HTMLElement,
   address: string,
   lookupKey: string,
+  chain: TokenChain,
   controller?: AppController,
 ) {
   const expandable = wrap.dataset.sparklineExpandable === 'true';
@@ -1071,7 +1124,7 @@ function bindExpandableSparkline(
       controller.openAlertExpandedSparkline(lookupKey, address);
       return;
     }
-    controller.openExpandedSparkline(address);
+    controller.openExpandedSparkline(address, chain);
   };
 
   wrap.addEventListener('pointerdown', (event) => {
@@ -1129,9 +1182,12 @@ export function renderTradeTerminalMenu(
   address: string,
   mintAddress?: string | null,
   pairAddress?: string | null,
-  options?: { axiomAddress?: string | null; enabledTradeTerminals?: TradeTerminalKey[] },
+  options?: TradeTerminalOptions,
 ) {
   const links = getTradeTerminalLinks(address, mintAddress, pairAddress, options);
+  if (links.length === 0) {
+    return '';
+  }
   if (links.length === 1) {
     const link = links[0];
     return `
@@ -1153,9 +1209,12 @@ export function buildTradeTerminalMenuElement(
   address: string,
   mintAddress?: string | null,
   pairAddress?: string | null,
-  options?: { axiomAddress?: string | null; enabledTradeTerminals?: TradeTerminalKey[] },
+  options?: TradeTerminalOptions,
 ) {
   const links = getTradeTerminalLinks(address, mintAddress, pairAddress, options);
+  if (links.length === 0) {
+    return document.createDocumentFragment();
+  }
   if (links.length === 1) {
     const link = links[0];
     const anchor = document.createElement('a');
@@ -1203,20 +1262,37 @@ function getTradeTerminalLinks(
   address: string,
   mintAddress?: string | null,
   pairAddress?: string | null,
-  options?: { axiomAddress?: string | null; enabledTradeTerminals?: TradeTerminalKey[] },
+  options?: TradeTerminalOptions,
 ): TradeTerminalLink[] {
+  if (!supportsConfiguredTradeTerminals(options?.chain || 'solana')) {
+    return [];
+  }
   const tokenAddress = mintAddress || address;
   const terminalAddress = pairAddress || mintAddress || address;
   const axiomAddress = options?.axiomAddress || pairAddress || tokenAddress;
   const enabledTradeTerminals = normalizeEnabledTradeTerminals(options?.enabledTradeTerminals);
   const links: TradeTerminalLink[] = [
-    { key: 'axiom', label: 'Axiom', href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
-    { key: 'photon', label: 'Photon', href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon', iconHref: TRADE_TERMINAL_ICON_URLS.photon },
-    { key: 'bullx', label: 'BullX', href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx', iconHref: TRADE_TERMINAL_ICON_URLS.bullx },
-    { key: 'gmgn', label: 'GMGN', href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
-    { key: 'padre', label: 'Padre', href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
+    { key: 'axiom', label: getTradeTerminalLabel('axiom'), href: `https://axiom.trade/meme/${axiomAddress}?chain=sol`, cls: 'axiom', iconHref: TRADE_TERMINAL_ICON_URLS.axiom },
+    { key: 'photon', label: getTradeTerminalLabel('photon'), href: `https://photon-sol.tinyastro.io/en/lp/${tokenAddress}`, cls: 'photon', iconHref: TRADE_TERMINAL_ICON_URLS.photon },
+    { key: 'bullx', label: getTradeTerminalLabel('bullx'), href: `https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`, cls: 'bullx', iconHref: TRADE_TERMINAL_ICON_URLS.bullx },
+    { key: 'gmgn', label: getTradeTerminalLabel('gmgn'), href: `https://gmgn.ai/sol/token/${tokenAddress}`, cls: 'gmgn', iconHref: TRADE_TERMINAL_ICON_URLS.gmgn },
+    { key: 'padre', label: getTradeTerminalLabel('padre'), href: `https://trade.padre.gg/trade/solana/${terminalAddress}`, cls: 'padre', iconHref: TRADE_TERMINAL_ICON_URLS.padre },
   ];
   return links.filter((link) => enabledTradeTerminals.includes(link.key));
+}
+
+export function getTradeTerminalLabel(key: TradeTerminalKey) {
+  return TRADE_TERMINAL_LABELS[key];
+}
+
+export function renderTradeTerminalIconForKey(key: TradeTerminalKey, className: string) {
+  return renderTradeTerminalIconMarkup({
+    key,
+    label: getTradeTerminalLabel(key),
+    href: '',
+    cls: key,
+    iconHref: TRADE_TERMINAL_ICON_URLS[key],
+  }, className);
 }
 
 function renderTradeTerminalLinkInner(link: TradeTerminalLink) {
@@ -1503,7 +1579,7 @@ export function renderFlash(state: AppState) {
 }
 
 function getAgeBucketEmptyState(mode: 'recent' | 'old-week') {
-  return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed MCAP and age filters.</p>`;
+  return `<p class="muted-block">No ${mode === 'recent' ? 'recent' : 'old-week'} tokens currently match the routed valuation and age filters.</p>`;
 }
 
 function resolveAgeBucketRows(
@@ -1665,6 +1741,7 @@ function renderTokenTableShell(options: {
   mockSolUsdcRate?: number;
 }) {
   const showSparkline = Boolean(options.showSparkline);
+  const hasFdvOnlyRows = options.rows.some((item) => resolveTokenValuation(item).type === 'fdv');
   return `
     <div class="token-table-wrap token-table-${options.tone}">
       <table class="token-table ${options.tone}">
@@ -1674,7 +1751,7 @@ function renderTokenTableShell(options: {
             <th>Token</th>
             ${showSparkline ? '<th class="sparkline-col">Chart</th>' : ''}
             <th class="num-col">Age</th>
-            <th class="num-col">MCAP</th>
+            <th class="num-col">${hasFdvOnlyRows ? 'MCAP / FDV' : 'MCAP'}</th>
             ${options.mode === 'manual' ? '<th class="num-col metric-group-start">Vol 5M</th>' : ''}
             <th class="num-col ${options.mode === 'manual' ? '' : 'metric-group-start'}">Vol 1H</th>
             <th class="num-col">Vol 6H</th>
@@ -1691,14 +1768,18 @@ function renderTokenTableShell(options: {
             item,
             options.mode,
             options.busy,
-            options.starredSet.has(item.address),
+            options.starredSet.has(buildTokenIdentityKey(item.chain || 'solana', item.address)),
             options.meteoraByAddress,
             options.meteoraMinPool,
             (options.startRank ?? 1) + index,
             Boolean(options.isAdmin),
             options.enabledTradeTerminals,
             options.manualTokenFolders ?? [],
-            showSparkline ? options.sparklineByAddress?.[item.address] || null : null,
+            showSparkline
+              ? options.sparklineByAddress?.[buildTokenIdentityKey(item.chain || 'solana', item.address)]
+                || ((item.chain || 'solana') === 'solana' ? options.sparklineByAddress?.[item.address] : null)
+                || null
+              : null,
             options.mockTradingPositionsByAddress?.[item.address] || null,
             options.mockTradingTradesByAddress?.[item.address] || [],
             options.mockSolUsdcRate,
@@ -1933,7 +2014,7 @@ function resolveSparklineMarkerPoint(
   };
 }
 
-function formatPriceUsd(value?: number | null) {
+export function formatPriceUsd(value?: number | null) {
   if (value == null || !Number.isFinite(value)) {
     return '-';
   }
@@ -1983,7 +2064,7 @@ function renderSparklineTradeMarkers(entry: TokenSparklineEntry, displaySeries: 
 }
 
 function buildSparklineTitle(entry: TokenSparklineEntry, series: number[]) {
-  const parts = [`Mini chart`, `${series.length} pts`];
+  const parts = [`Mini ${getTokenChartValuationLabel(entry)} chart`, `${series.length} pts`];
   parts.push(`${formatSparklineSpan(entry.effectiveHours, entry.hours)} span`);
   parts.push(`${formatSparklineGranularity(entry.granularityMinutes)} resolution`);
 
@@ -2131,7 +2212,7 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   const rangeControl = renderTokenSparklineRangeHoverControl(wrapMeta.safeAddress, entry, options);
 
   return `
-    <div class="sparkline-wrap ${trendClass}${wrapMeta.expandedClass}${wrapMeta.filledClass}${wrapMeta.variantClass}" data-address="${wrapMeta.safeAddress}" data-sparkline-key="${wrapMeta.safeLookupKey}" data-sparkline-summary="${wrapMeta.summaryAttr}"${wrapMeta.expandableAttr}${wrapMeta.variantAttr}>
+    <div class="sparkline-wrap ${trendClass}${wrapMeta.expandedClass}${wrapMeta.filledClass}${wrapMeta.variantClass}" data-chain="${entry.chain || 'solana'}" data-address="${wrapMeta.safeAddress}" data-sparkline-key="${wrapMeta.safeLookupKey}" data-sparkline-summary="${wrapMeta.summaryAttr}"${wrapMeta.expandableAttr}${wrapMeta.variantAttr}>
       <svg class="token-sparkline${wrapMeta.svgExpandedClass}" viewBox="0 0 ${dimensions.width} ${dimensions.height}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
         ${areaPolyline ? `<polygon class="token-sparkline-area" points="${areaPolyline}"></polygon>` : ''}
         <polyline class="token-sparkline-glow" points="${polyline}"></polyline>
@@ -2148,17 +2229,30 @@ export function renderSparklineFigure(entry: TokenSparklineEntry | null, address
   `;
 }
 
-function renderSparklineCell(entry: TokenSparklineEntry | null, address?: string, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number, liveMcap?: number | null) {
-  return renderSparklineFigure(entry, address, { expandable: true, areaFill: true, markers, mockSolUsdcRate, liveMcap });
+function renderSparklineCell(entry: TokenSparklineEntry | null, item: ManualTokenEntry, markers: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
+  const chain = normalizeTokenChain(item.chain) || 'solana';
+  return renderSparklineFigure(entry, item.address, {
+    expandable: true,
+    areaFill: true,
+    lookupKey: buildTokenIdentityKey(chain, item.address),
+    markers,
+    mockSolUsdcRate,
+    liveMcap: resolveTokenValuation(item).value,
+  });
 }
 
-function renderBucketDismissButton(mode: 'manual' | 'recent' | 'old-week', safeAddress: string, busy: boolean) {
+function renderBucketDismissButton(
+  mode: 'manual' | 'recent' | 'old-week',
+  safeAddress: string,
+  chain: TokenChain,
+  busy: boolean,
+) {
   if (mode === 'manual') {
-    return `<button type="button" class="inline-icon danger" data-action="remove-manual" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
+    return `<button type="button" class="inline-icon danger" data-action="remove-manual" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
   }
 
   const action = mode === 'recent' ? 'dismiss-recent' : 'dismiss-old-week';
-  return `<button type="button" class="inline-icon danger" data-action="${action}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
+  return `<button type="button" class="inline-icon danger" data-action="${action}" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''}>X</button>`;
 }
 
 function renderTokenSocialActions(twitterUrl: string | null, communityUrl: string | null) {
@@ -2220,21 +2314,22 @@ export function renderManualQuickAddAction(
   safeAddress: string,
   busy: boolean,
   folders: AppState['data']['manualTokenFolders'] = [],
+  chain: TokenChain = 'solana',
 ) {
   const menu = folders.length > 0
     ? `
       <span class="manual-quick-add-menu" role="menu">
-        <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="all" data-address="${safeAddress}" role="menuitem">All</button>
+        <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="all" data-chain="${chain}" data-address="${safeAddress}" role="menuitem">All</button>
         ${folders.map((folder) => `
-          <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="folder" data-folder-id="${folder.id}" data-address="${safeAddress}" role="menuitem">${escapeHtml(folder.name)}</button>
+          <button type="button" class="manual-quick-add-option" data-action="manual-quick-add-target" data-target="folder" data-folder-id="${folder.id}" data-chain="${chain}" data-address="${safeAddress}" role="menuitem">${escapeHtml(folder.name)}</button>
         `).join('')}
       </span>
     `
     : '';
 
   return `
-    <span class="manual-quick-add-wrap">
-      <button type="button" class="action-glyph manual-quick-add-button" data-action="manual-quick-add" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Add to manual tokens">+</button>
+    <span class="manual-quick-add-wrap" data-chain="${chain}">
+      <button type="button" class="action-glyph manual-quick-add-button" data-action="manual-quick-add" data-chain="${chain}" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Add to manual tokens">+</button>
       ${menu}
     </span>
   `;
@@ -2284,33 +2379,139 @@ function renderBucketVolumeCell(mode: 'manual' | 'recent' | 'old-week', item: Ma
     return '';
   }
 
-  return `<td class="num-col metric-group-start">${fmtMoney(item.volume5m)}</td>`;
+  return `<td class="num-col metric-group-start">${renderBucketMoneyMetric(mode, item.volume5m, item.coverage?.['5m'])}</td>`;
+}
+
+function renderBucketMoneyMetric(
+  mode: 'manual' | 'recent' | 'old-week',
+  value: number | null | undefined,
+  coverage?: TokenMetricCoverage,
+) {
+  if (mode === 'manual') return fmtMoney(value);
+  const metric = resolveCoveredMetric(value, coverage);
+  const state = metric.available ? metric.coverage : 'unavailable';
+  const title = state === 'complete'
+    ? 'Complete rolling-window coverage'
+    : state === 'partial' ? 'Partial rolling-window coverage' : 'Rolling-window value unavailable';
+  const formatted = metric.available ? `${metric.isPartial ? '~' : ''}${fmtMoney(metric.value)}` : '-';
+  return `<span class="radar-coverage radar-coverage-${state}" title="${title}">${formatted}</span>`;
+}
+
+function renderBucketPriceChangeMetric(
+  mode: 'manual' | 'recent' | 'old-week',
+  value: number | null | undefined,
+  coverage?: TokenMetricCoverage,
+) {
+  if (mode === 'manual') return renderPctSpan(value);
+  const metric = resolveCoveredMetric(value, coverage);
+  if (!metric.available) {
+    return '<span class="pct-neutral radar-coverage radar-coverage-unavailable" title="Rolling-window value unavailable">-</span>';
+  }
+  const cls = Number(metric.value) >= 0 ? 'pct-pos' : 'pct-neg';
+  const title = metric.isPartial ? 'Partial rolling-window coverage' : 'Complete rolling-window coverage';
+  const prefix = `${metric.isPartial ? '~' : ''}${Number(metric.value) >= 0 ? '+' : ''}`;
+  return `<span class="${cls} radar-coverage radar-coverage-${metric.coverage}" title="${title}">${prefix}${Number(metric.value).toFixed(2)}%</span>`;
+}
+
+function renderRadarDataState(mode: 'manual' | 'recent' | 'old-week', item: ManualTokenEntry) {
+  if (mode === 'manual') return '';
+  const valuation = resolveTokenValuation(item);
+  const valuationBadge = valuation.freshness === 'stale'
+    ? `<span class="radar-data-state radar-data-state-stale" title="Valuation observed at ${escapeHtml(valuation.observedAt || 'an earlier snapshot')}">STALE VALUATION</span>`
+    : '';
+  const activityBadge = item.activityState === 'stale'
+    ? '<span class="radar-data-state radar-activity-state" title="Token remains in Radar; no recent accepted activity was observed">NO RECENT ACTIVITY</span>'
+    : '';
+  return `${valuationBadge}${activityBadge}`;
+}
+
+function buildTokenTableRowClass(
+  mode: 'manual' | 'recent' | 'old-week',
+  item: ManualTokenEntry,
+  isStarred: boolean,
+) {
+  const activityClass = mode !== 'manual' && item.activityState === 'stale' ? ' radar-activity-stale' : '';
+  return `${isStarred ? 'token-starred' : ''}${activityClass}`.trim();
 }
 
 function renderBucketSparklineCell(
-  mode: 'manual' | 'recent' | 'old-week',
   sparkline: TokenSparklineEntry | null,
   item: ManualTokenEntry,
   markers: MockTradingTradeEntry[] = [],
   mockSolUsdcRate?: number,
 ) {
-  return `<td class="sparkline-col">${renderSparklineCell(sparkline, item.address, markers, mockSolUsdcRate, item.mcap)}</td>`;
+  return `<td class="sparkline-col">${renderSparklineCell(sparkline, item, markers, mockSolUsdcRate)}</td>`;
+}
+
+function resolveTokenTablePrimaryUrl(item: ManualTokenEntry, chain: TokenChain) {
+  return buildTokenMarketUrl(chain, item.address, item.pairUrl)
+    || buildTokenExplorerUrl(chain, item.address)
+    || '';
+}
+
+function renderTokenTableActions(options: {
+  busy: boolean;
+  chain: TokenChain;
+  isAdmin: boolean;
+  isStarred: boolean;
+  manualTokenFolders: AppState['data']['manualTokenFolders'];
+  mockTradingPosition: MockTradingPositionEntry | null;
+  mode: 'manual' | 'recent' | 'old-week';
+  safeAddress: string;
+  safeSymbol: string;
+}) {
+  const quickAdd = options.mode === 'manual'
+    ? ''
+    : renderManualQuickAddAction(
+      options.safeAddress, options.busy, options.manualTokenFolders, options.chain,
+    );
+  const star = `<button type="button" class="action-glyph starred-button ${options.isStarred ? 'active' : ''}" data-action="toggle-star" data-chain="${options.chain}" data-address="${options.safeAddress}" ${options.busy ? 'disabled' : ''} title="Star token">${options.isStarred ? '&#9733;' : '&#9734;'}</button>`;
+  const block = `<button type="button" class="action-glyph danger-glyph" data-action="block-token" data-chain="${options.chain}" data-address="${options.safeAddress}" data-label="${options.safeSymbol}" ${options.busy ? 'disabled' : ''} title="Block token">&#8855;</button>`;
+  const solanaOnly = options.chain === 'solana'
+    ? `${renderMockTradingActions(
+      options.isAdmin,
+      options.safeAddress,
+      options.mockTradingPosition,
+      options.busy,
+    )}${renderTokenAdminAction(options.isAdmin, options.safeAddress, options.safeSymbol, options.busy)}`
+    : '';
+  return `${quickAdd}${star}${block}${solanaOnly}`;
 }
 
 function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' | 'old-week', busy: boolean, isStarred: boolean, meteoraByAddress: Record<string, MeteoraEntry>, meteoraMinPool: number, rank: number, isAdmin: boolean, enabledTradeTerminals: TradeTerminalKey[], manualTokenFolders: AppState['data']['manualTokenFolders'] = [], sparkline: TokenSparklineEntry | null = null, mockTradingPosition: MockTradingPositionEntry | null = null, mockTradingTrades: MockTradingTradeEntry[] = [], mockSolUsdcRate?: number) {
+  const chain = normalizeTokenChain(item.chain) || 'solana';
+  const isSolana = chain === 'solana';
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
   const safeAddress = escapeHtml(item.address);
   const safeSymbol = escapeHtml(symbol);
   const safeName = escapeHtml(item.name || item.label || item.address);
-  const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
+  const dexUrl = sanitizeHttpUrl(resolveTokenTablePrimaryUrl(item, chain));
   const xSearch = buildXSearchUrl(symbol, item.address);
   const twitterUrl = sanitizeOptionalHttpUrl(item.twitterUrl);
   const communityUrl = sanitizeOptionalHttpUrl(item.communityUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
-  const actionButton = renderBucketDismissButton(mode, safeAddress, busy);
+  const actionButton = renderBucketDismissButton(mode, safeAddress, chain, busy);
+  const tokenActions = renderTokenTableActions({
+    busy,
+    chain,
+    isAdmin,
+    isStarred,
+    manualTokenFolders,
+    mockTradingPosition,
+    mode,
+    safeAddress,
+    safeSymbol,
+  });
+  const mockTradingLine = isSolana
+    ? renderMockTradingLine(mockTradingPosition, mockTradingTrades, mockSolUsdcRate)
+    : '';
+  const meteora = isSolana ? meteoraByAddress[item.address] : undefined;
+  const safeIdentity = escapeHtml(buildTokenIdentityKey(chain, item.address));
+  const volumeCoverage = { ...item.coverage };
+  const priceChangeCoverage = { ...item.priceChangeCoverage };
 
   return `
-    <tr class="${isStarred ? 'token-starred' : ''}" data-hover-key="${mode}:${safeAddress}">
+    <tr class="${buildTokenTableRowClass(mode, item, isStarred)}" data-hover-key="${mode}:${safeIdentity}" data-token-identity="${safeIdentity}">
       <td class="rank-col">#${rank}</td>
       <td>
         <div class="token-cell">
@@ -2318,36 +2519,43 @@ function renderTokenTableRow(item: ManualTokenEntry, mode: 'manual' | 'recent' |
           <div class="token-main">
             <div class="token-line">
               <a class="token-symbol" href="${dexUrl}" target="_blank" rel="noreferrer">${safeSymbol}</a>
+              <span data-table-chain-badge data-chain="${chain}" data-address="${safeAddress}"></span>
+              ${renderRadarDataState(mode, item)}
               <div class="token-actions-inline">
                 <a class="action-glyph x-search" href="${sanitizeHttpUrl(xSearch)}" target="_blank" rel="noreferrer" title="Search contract or ticker on X">X</a>
                 ${renderTokenSocialActions(twitterUrl, communityUrl)}
                 <button type="button" class="action-glyph copy-button" data-action="copy-address" data-address="${safeAddress}" title="Copy contract">&#10697;</button>
-                ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { enabledTradeTerminals })}
-                ${mode === 'manual' ? '' : renderManualQuickAddAction(safeAddress, busy, manualTokenFolders)}
-                <button type="button" class="action-glyph starred-button ${isStarred ? 'active' : ''}" data-action="toggle-star" data-address="${safeAddress}" ${busy ? 'disabled' : ''} title="Star token">${isStarred ? '&#9733;' : '&#9734;'}</button>
-                ${renderMockTradingActions(isAdmin, safeAddress, mockTradingPosition, busy)}
-                ${renderTokenAdminAction(isAdmin, safeAddress, safeSymbol, busy)}
+                ${renderTradeTerminalMenu(item.address, item.mintAddress, item.pairAddress, { chain: item.chain, enabledTradeTerminals })}
+                ${tokenActions}
               </div>
             </div>
             <div class="token-subline">${safeName}</div>
-            ${renderMockTradingLine(mockTradingPosition, mockTradingTrades, mockSolUsdcRate)}
+            ${mockTradingLine}
           </div>
         </div>
       </td>
-      ${renderBucketSparklineCell(mode, sparkline, item, mockTradingTrades, mockSolUsdcRate)}
+      ${renderBucketSparklineCell(sparkline, item, isSolana ? mockTradingTrades : [], mockSolUsdcRate)}
       <td class="num-col">${age}</td>
-      <td class="num-col strong">${fmtMoney(item.mcap)}</td>
+      <td class="num-col strong">${renderTokenTableValuation(item)}</td>
       ${renderBucketVolumeCell(mode, item)}
-      <td class="num-col ${mode === 'manual' ? '' : 'metric-group-start'}">${fmtMoney(item.volume1h)}</td>
-      <td class="num-col">${fmtMoney(item.volume6h)}</td>
-      <td class="num-col">${fmtMoney(item.volume24h)}</td>
-      <td class="num-col metric-group-start">${renderPctSpan(item.priceChange1h)}</td>
-      <td class="num-col">${renderPctSpan(item.priceChange6h)}</td>
-      <td class="num-col">${renderPctSpan(item.priceChange24h)}</td>
-      <td class="num-col metric-group-start">${renderTotalLiquidityCell(item, meteoraByAddress[item.address], meteoraMinPool)}</td>
+      <td class="num-col ${mode === 'manual' ? '' : 'metric-group-start'}">${renderBucketMoneyMetric(mode, item.volume1h, volumeCoverage['1h'])}</td>
+      <td class="num-col">${renderBucketMoneyMetric(mode, item.volume6h, volumeCoverage['6h'])}</td>
+      <td class="num-col">${renderBucketMoneyMetric(mode, item.volume24h, volumeCoverage['24h'])}</td>
+      <td class="num-col metric-group-start">${renderBucketPriceChangeMetric(mode, item.priceChange1h, priceChangeCoverage['1h'])}</td>
+      <td class="num-col">${renderBucketPriceChangeMetric(mode, item.priceChange6h, priceChangeCoverage['6h'])}</td>
+      <td class="num-col">${renderBucketPriceChangeMetric(mode, item.priceChange24h, priceChangeCoverage['24h'])}</td>
+      <td class="num-col metric-group-start">${renderTotalLiquidityCell(item, meteora, meteoraMinPool)}</td>
       <td class="action-col">${actionButton}</td>
     </tr>
   `;
+}
+
+function renderTokenTableValuation(item: ManualTokenEntry) {
+  const valuation = resolveTokenValuation(item);
+  const prefix = valuation.type === 'fdv' ? 'FDV ' : '';
+  const freshnessClass = valuation.freshness === 'stale' ? ' radar-valuation-stale' : '';
+  const title = valuation.observedAt ? ` title="Observed at ${escapeHtml(valuation.observedAt)}"` : '';
+  return `<span class="radar-valuation${freshnessClass}"${title}>${prefix}${fmtMoney(valuation.value)}</span>`;
 }
 
 function buildXSearchUrl(symbol: string, address: string) {
@@ -2680,6 +2888,11 @@ export function fmtConfig(state: AppState, key: string, fallback: number) {
 
 export function renderTokenCard(item: ManualTokenEntry, busy: boolean, options: { mode: 'manual' | 'monitored' | 'recent' | 'old-week'; isStarred?: boolean; isAdmin?: boolean; enabledTradeTerminals?: TradeTerminalKey[] }) {
   const wrapper = document.createElement('div');
-  wrapper.innerHTML = renderManualTokenTable([item], busy, options.isStarred ? [item.address] : [], [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin), options.enabledTradeTerminals ?? DEFAULT_TRADE_TERMINALS);
+  wrapper.innerHTML = renderManualTokenTable(
+    [item], busy,
+    options.isStarred ? [buildTokenIdentityKey(item.chain || 'solana', item.address)] : [],
+    [{ mode: 'mcap', window: 'highest' }], {}, 5000, Boolean(options.isAdmin),
+    options.enabledTradeTerminals ?? DEFAULT_TRADE_TERMINALS,
+  );
   return wrapper.innerHTML;
 }

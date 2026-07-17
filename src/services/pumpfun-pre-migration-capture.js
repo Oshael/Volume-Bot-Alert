@@ -208,6 +208,7 @@ async function persistObservation(address, data, state, nowMs, tradeUsd) {
   appendVolumeEvent(state, tradeUsd, nowMs);
   if (tradeUsd > 0) {
     await tokenMarketVolumeBucket1m.upsertSnapshotBucket({
+      chain: 'solana',
       tokenAddress: address,
       ts: new Date(nowMs),
       ...buildVolumeSnapshot(state, nowMs),

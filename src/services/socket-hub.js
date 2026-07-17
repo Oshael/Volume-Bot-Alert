@@ -9,8 +9,9 @@
  *
  * Events received from clients:
  * - live:presence     - { workspace, mode, hiddenGraceMs? } - live alert presence
- * - market:subscribe  - { address } - subscribe socket to token market bucket updates
- * - market:unsubscribe - { address } - unsubscribe socket from token market bucket updates
+ * - market:subscribe  - { chain, address } - subscribe to token market bucket updates
+ * - market:unsubscribe - { chain, address } - unsubscribe from token market bucket updates
+ *   Legacy { address } input is interpreted as Solana only during migration.
  */
 
 const { Server } = require('socket.io');
@@ -29,6 +30,7 @@ const userAlertProfileCache = require('./user-alert-profile-cache');
 const { getSocketClientIp, isAllowedOrigin } = require('../utils/request-security');
 const { logSecurityEvent } = require('../utils/security-events');
 const { logTrace } = require('../utils/pump-migrate-trace');
+const { createTokenIdentity } = require('../utils/token-identity');
 
 let io = null;
 let accessSweepTimer = null;
@@ -44,6 +46,35 @@ const userSessions = new Map();
 const ipSockets = new Map();
 const socketActionState = new Map();
 
+function createMarketSubscriptionProtocolTelemetry(now = Date.now()) {
+  return {
+    observedSince: new Date(now).toISOString(),
+    canonicalRequests: 0,
+    legacyAddressOnlyRequests: 0,
+    lastCanonicalAt: null,
+    lastLegacyAddressOnlyAt: null,
+  };
+}
+
+const marketSubscriptionProtocolTelemetry = createMarketSubscriptionProtocolTelemetry();
+
+function recordMarketSubscriptionProtocolUsage(telemetry, payload, now = Date.now()) {
+  const entries = Array.isArray(payload?.subscriptions) ? payload.subscriptions : [payload];
+  const identities = entries.filter((entry) => (
+    entry && typeof entry === 'object' && String(entry.address ?? '').trim()
+  ));
+  const observedAt = new Date(now).toISOString();
+  if (identities.some((entry) => String(entry.chain ?? '').trim())) {
+    telemetry.canonicalRequests += 1;
+    telemetry.lastCanonicalAt = observedAt;
+  }
+  if (identities.some((entry) => !String(entry.chain ?? '').trim())) {
+    telemetry.legacyAddressOnlyRequests += 1;
+    telemetry.lastLegacyAddressOnlyAt = observedAt;
+  }
+  return telemetry;
+}
+
 function getUserRoom(userId) {
   const normalizedUserId = Number.parseInt(String(userId || '').trim(), 10);
   return Number.isInteger(normalizedUserId) && normalizedUserId > 0
@@ -51,9 +82,52 @@ function getUserRoom(userId) {
     : null;
 }
 
-function getMarketRoom(address) {
-  const normalized = sanitizeMint(address);
-  return normalized ? `market:${normalized}` : null;
+function resolveMarketIdentity(payload, options = {}) {
+  const explicitChain = String(payload?.chain ?? '').trim();
+  const chain = explicitChain || (options.allowLegacySolana ? 'solana' : null);
+  if (!chain) return null;
+  try {
+    return createTokenIdentity(chain, payload?.address);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getMarketRoom(identity) {
+  return identity?.key ? `market:${identity.key}` : null;
+}
+
+function getMarketSubscriptionRoom(payload) {
+  return getMarketRoom(resolveMarketIdentity(payload, { allowLegacySolana: true }));
+}
+
+function getMarketSubscriptionRooms(payload) {
+  if (!Array.isArray(payload?.subscriptions)) return null;
+  const rooms = new Set();
+  for (const subscription of payload.subscriptions) {
+    const room = getMarketSubscriptionRoom(subscription);
+    if (!room) return null;
+    rooms.add(room);
+  }
+  return rooms;
+}
+
+function normalizeMarketBucketUpdate(payload) {
+  const identity = resolveMarketIdentity(payload);
+  const bucketTsValue = payload?.bucketTs || payload?.candle?.bucketTs;
+  const bucketTsMs = new Date(bucketTsValue || '').getTime();
+  const sequence = String(payload?.sequence ?? '').trim();
+  if (!identity || !Number.isFinite(bucketTsMs) || !sequence) {
+    return null;
+  }
+  return {
+    ...payload,
+    type: 'market:bucket',
+    chain: identity.chain,
+    address: identity.address,
+    bucketTs: new Date(bucketTsMs).toISOString(),
+    sequence,
+  };
 }
 
 function sanitizeMint(rawMint) {
@@ -434,7 +508,8 @@ function init(httpServer) {
 
     socket.on('market:subscribe', (data) => {
       if (!noteSocketAction(socket, 'market:subscribe')) return;
-      const room = getMarketRoom(data?.address);
+      recordMarketSubscriptionProtocolUsage(marketSubscriptionProtocolTelemetry, data);
+      const room = getMarketSubscriptionRoom(data);
       if (!room) {
         logSecurityEvent('socket_market_subscribe_rejected', {
           socketId: socket.id,
@@ -466,13 +541,44 @@ function init(httpServer) {
 
     socket.on('market:unsubscribe', (data) => {
       if (!noteSocketAction(socket, 'market:unsubscribe')) return;
-      const room = getMarketRoom(data?.address);
+      recordMarketSubscriptionProtocolUsage(marketSubscriptionProtocolTelemetry, data);
+      const room = getMarketSubscriptionRoom(data);
       if (!room) {
         return;
       }
 
       getSocketMarketRooms(socket).delete(room);
       socket.leave(room);
+    });
+
+    socket.on('market:sync', (data) => {
+      if (!noteSocketAction(socket, 'market:sync')) return;
+      recordMarketSubscriptionProtocolUsage(marketSubscriptionProtocolTelemetry, data);
+      const nextRooms = getMarketSubscriptionRooms(data);
+      const maxSubscriptions = Math.max(
+        1,
+        Number(config.security?.socket?.maxSubscriptionsPerSocket) || 350
+      );
+      if (!nextRooms || nextRooms.size > maxSubscriptions) {
+        logSecurityEvent('socket_market_sync_rejected', {
+          socketId: socket.id,
+          userId: socket.user?.id,
+          sessionId: socket.sessionId,
+          ip: socket.clientIp,
+          requestedSubscriptions: nextRooms?.size ?? null,
+          maxSubscriptions,
+        });
+        return;
+      }
+
+      const currentRooms = getSocketMarketRooms(socket);
+      for (const room of currentRooms) {
+        if (!nextRooms.has(room)) socket.leave(room);
+      }
+      for (const room of nextRooms) {
+        if (!currentRooms.has(room)) socket.join(room);
+      }
+      socket.marketRooms = nextRooms;
     });
 
     socket.on('disconnect', (reason) => {
@@ -552,6 +658,7 @@ function getStatus() {
     trackedAuthenticatedSessions: sessionSockets.size,
     trackedClientIps: ipSockets.size,
     trackedSocketActionWindows: socketActionState.size,
+    marketSubscriptionProtocol: { ...marketSubscriptionProtocolTelemetry },
     liveAlertPresence: userAlertProfileCache.getStatus(),
     pumpfun: pumpfun.getStatus(),
     pumpfunPreMigrationCapture: pumpfunPreMigrationCapture.getStatus(),
@@ -588,8 +695,9 @@ function emitMarketBucketUpdate(payload) {
     return false;
   }
 
-  const room = getMarketRoom(payload.address);
-  if (!room) {
+  const event = normalizeMarketBucketUpdate(payload);
+  const room = getMarketRoom(resolveMarketIdentity(event));
+  if (!event || !room) {
     return false;
   }
 
@@ -598,7 +706,7 @@ function emitMarketBucketUpdate(payload) {
     return false;
   }
 
-  io.to(room).emit('market:bucket', payload);
+  io.to(room).emit('market:bucket', event);
   return true;
 }
 
@@ -611,4 +719,13 @@ module.exports = {
   emitMarketBucketUpdate,
   revokeSessionSockets,
   revokeUserSockets,
+  __private: {
+    createMarketSubscriptionProtocolTelemetry,
+    getMarketRoom,
+    getMarketSubscriptionRoom,
+    getMarketSubscriptionRooms,
+    normalizeMarketBucketUpdate,
+    recordMarketSubscriptionProtocolUsage,
+    resolveMarketIdentity,
+  },
 };

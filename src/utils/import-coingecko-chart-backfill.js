@@ -143,7 +143,8 @@ async function resolveLocalToken(tokenAddress) {
        last_seen_at,
        last_evaluated_at
      FROM token_catalog
-     WHERE address = $1
+     WHERE chain = 'solana'
+       AND address = $1
      LIMIT 1`,
     [tokenAddress]
   );
@@ -169,7 +170,8 @@ async function countExistingRows(tokenAddress, fromBucketAt, toBucketAt) {
     db.query(
       `SELECT COUNT(*)::int AS row_count
        FROM token_market_buckets_1m
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts <= $3::timestamptz`,
       [tokenAddress, fromBucketAt, toBucketAt]
@@ -177,7 +179,8 @@ async function countExistingRows(tokenAddress, fromBucketAt, toBucketAt) {
     db.query(
       `SELECT granularity_minutes, COUNT(*)::int AS row_count
        FROM token_market_buckets_agg
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts <= $3::timestamptz
        GROUP BY granularity_minutes

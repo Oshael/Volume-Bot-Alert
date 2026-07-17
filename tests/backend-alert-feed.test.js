@@ -2,6 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const alertDeliveryCursor = require('../src/models/alert-delivery-cursor');
+const alertEventDismissal = require('../src/models/alert-event-dismissal');
 const gmgnClaimAlertEvent = require('../src/models/gmgn-claim-alert-event');
 const tokenCatalog = require('../src/models/token-catalog');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
@@ -16,6 +17,16 @@ describe('backend alert feed service', () => {
         assert.equal(error.code, 'UNSUPPORTED_ALERT_RULE');
         return true;
       }
+    );
+    await assert.rejects(
+      () => backendAlertFeed.updateDashboardAlertCursor(7, {
+        ruleKey: 'custom-alert', chain: 'base', lastSeenEventId: 1,
+      }),
+      (error) => error.code === 'UNSUPPORTED_ALERT_CHAIN',
+    );
+    await assert.rejects(
+      () => backendAlertFeed.clearDashboardAlertFeeds(7, { chains: [] }),
+      (error) => error.code === 'UNSUPPORTED_ALERT_CHAIN',
     );
   });
 
@@ -55,6 +66,7 @@ describe('backend alert feed service', () => {
       });
 
       assert.equal(capturedFilters.userId, 8);
+      assert.equal(capturedFilters.chain, 'solana');
       assert.equal(capturedFilters.tokenAddress, 'So11111111111111111111111111111111111111112');
       assert.equal(capturedFilters.triggeredAfter.toISOString(), '2026-07-02T06:00:00.000Z');
       assert.deepEqual(capturedFilters.ruleKeys, backendAlertFeed.CHART_ALERT_RULE_KEYS);
@@ -63,6 +75,7 @@ describe('backend alert feed service', () => {
       assert.equal(payload.windowHours, 24);
       assert.equal(payload.count, 1);
       assert.equal(payload.truncated, false);
+      assert.equal(payload.events[0].chain, 'solana');
       assert.equal(payload.events[0].mcap, 100000);
       assert.equal(payload.events[0].triggeredAt, '2026-07-03T05:47:42.000Z');
     } finally {
@@ -108,6 +121,7 @@ describe('backend alert feed service', () => {
       });
 
       assert.equal(payload.kind, 'gmgn-claim-signal');
+      assert.equal(payload.chain, 'solana');
       assert.equal(payload.address, 'So11111111111111111111111111111111111111112');
       assert.equal(payload.symbol, 'PUMP');
       assert.equal(payload.name, 'Pump Example');
@@ -134,6 +148,7 @@ describe('backend alert feed service', () => {
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
 
     tokenCatalog.listDashboardMetadataByAddresses = async () => [{
+      chain: 'solana',
       address: 'So11111111111111111111111111111111111111112',
       symbol: 'WSOL',
       name: 'Wrapped SOL',
@@ -199,8 +214,8 @@ describe('backend alert feed service', () => {
     gmgnClaimAlertEvent.listRecentEvents = async () => {
       throw new Error('GMGN claim historical events must not replay through dashboard feed');
     };
-    alertDeliveryCursor.markSeen = async (userId, ruleKey, lastSeenEventId) => {
-      capturedMarkSeenArgs = [userId, ruleKey, lastSeenEventId];
+    alertDeliveryCursor.markSeen = async (userId, ruleKey, lastSeenEventId, chain) => {
+      capturedMarkSeenArgs = [userId, ruleKey, lastSeenEventId, chain];
       return {
         userId,
         ruleKey,
@@ -219,7 +234,7 @@ describe('backend alert feed service', () => {
       });
 
       assert.deepEqual(capturedLatestFilters, { ruleKey: 'gmgn-claim-signal' });
-      assert.deepEqual(capturedMarkSeenArgs, [12, 'gmgn-claim-signal', 88]);
+      assert.deepEqual(capturedMarkSeenArgs, [12, 'gmgn-claim-signal', 88, 'solana']);
       assert.equal(payload.ruleKey, 'gmgn-claim-signal');
       assert.equal(payload.kind, 'gmgn-claim-signal');
       assert.equal(payload.mode, 'all');
@@ -227,6 +242,7 @@ describe('backend alert feed service', () => {
       assert.deepEqual(payload.events, []);
       assert.deepEqual(payload.cursor, {
         ruleKey: 'gmgn-claim-signal',
+        chain: 'solana',
         lastSeenEventId: 88,
         lastAckedEventId: null,
         updatedAt: '2026-05-04T04:13:05.000Z',
@@ -269,6 +285,7 @@ describe('backend alert feed service', () => {
           prevMcap: 250000,
           mcap: 300000,
           tickerPeers: {
+            chain: 'solana',
             sourceSymbol: 'WSOL',
             normalizedSymbol: 'WSOL',
             count: 2,
@@ -322,16 +339,20 @@ describe('backend alert feed service', () => {
 
       assert.deepEqual(capturedFilters, {
         userId: 7,
+        chain: 'solana',
         ruleKey: 'monitored-vol',
         limit: 20,
         afterId: null,
         sort: 'desc',
+        dismissedByUserId: 7,
       });
       assert.equal(payload.ruleKey, 'monitored-vol');
       assert.equal(payload.kind, 'monitored-vol');
       assert.equal(payload.count, 1);
+      assert.equal(payload.events[0].chain, 'solana');
       assert.equal(payload.events[0].label, 'VOL');
       assert.equal(payload.events[0].tickerPeers?.count, 2);
+      assert.equal(payload.events[0].tickerPeers?.chain, 'solana');
       assert.equal(payload.events[0].tickerPeers?.hasSubtickerMatch, true);
       assert.equal(payload.events[0].tickerPeers?.sourcePeerRole, 'peer_warning');
       assert.equal(payload.events[0].tickerPeers?.subtickerCount, 1);
@@ -394,12 +415,159 @@ describe('backend alert feed service', () => {
         'surge-continuation-6h',
         'meteora-surge',
         'custom-alert',
+        'robinhood-hvnc-v2',
       ]);
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 1);
-      assert.equal(payload.feeds.length, 12);
+      assert.equal(payload.feeds.length, 13);
     } finally {
       backendAlertFeed.listDashboardAlertEvents = originalListDashboardAlertEvents;
+    }
+  });
+
+  it('keeps Robinhood HVNC feed queries and valuation metadata chain-aware', async () => {
+    const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalListRecentEvents = userAlertEvent.listRecentEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    const address = '0xabcdef0123456789abcdef0123456789abcdef01';
+    let capturedEventFilters = null;
+    let capturedCatalogOptions = null;
+
+    alertDeliveryCursor.getCursor = async () => null;
+    userAlertEvent.listRecentEvents = async (filters) => {
+      capturedEventFilters = filters;
+      return [{
+        id: 90,
+        userId: 7,
+        chain: 'robinhood',
+        ruleKey: 'robinhood-hvnc-v2',
+        kind: 'hvnc',
+        tokenAddress: address,
+        payload: {
+          chain: 'robinhood',
+          address,
+          symbol: 'RHV',
+          fdv: 500000,
+          mcap: null,
+          priceUsd: 0.0042,
+          liquidityUsd: 5000,
+          transactions: 15,
+          volume5m: 2000,
+          isHvnc: true,
+          label: 'HVNC',
+        },
+        triggeredAt: '2026-07-14T06:00:00.000Z',
+      }];
+    };
+    tokenCatalog.listDashboardMetadataByAddresses = async (_addresses, options) => {
+      capturedCatalogOptions = options;
+      return [{ chain: 'robinhood', address, last_fdv: '500000' }];
+    };
+    tokenMeteoraState.listSummaryByAddresses = async () => {
+      throw new Error('Robinhood feed must not load Solana Meteora state');
+    };
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 7,
+        ruleKey: 'robinhood-hvnc-v2',
+        limit: 20,
+      });
+
+      assert.deepEqual(capturedEventFilters, {
+        userId: 7,
+        chain: 'robinhood',
+        ruleKey: 'robinhood-hvnc-v2',
+        limit: 20,
+        afterId: null,
+        sort: 'desc',
+        dismissedByUserId: 7,
+      });
+      assert.deepEqual(capturedCatalogOptions, { chain: 'robinhood' });
+      assert.equal(payload.count, 1);
+      assert.equal(payload.events[0].chain, 'robinhood');
+      assert.equal(payload.events[0].mcap, null);
+      assert.equal(payload.events[0].fdv, 500000);
+      assert.equal(payload.events[0].valuationType, 'fdv');
+      assert.equal(payload.events[0].priceUsd, 0.0042);
+      assert.equal(payload.events[0].liquidityUsd, 5000);
+      assert.equal(payload.events[0].transactions, 15);
+      assert.equal(payload.events[0].volume5m, 2000);
+      assert.equal(payload.events[0].junkAssessment, null);
+    } finally {
+      alertDeliveryCursor.getCursor = originalGetCursor;
+      userAlertEvent.listRecentEvents = originalListRecentEvents;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+    }
+  });
+
+  it('merges Solana and Robinhood custom alerts without collapsing chain identity', async () => {
+    const originalGetCursor = alertDeliveryCursor.getCursor;
+    const originalListRecentEvents = userAlertEvent.listRecentEvents;
+    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
+    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    const solanaAddress = 'So11111111111111111111111111111111111111112';
+    const robinhoodAddress = '0xabcdef0123456789abcdef0123456789abcdef01';
+    const cursorChains = [];
+    const eventFilters = [];
+    const metadataChains = [];
+
+    alertDeliveryCursor.getCursor = async (_userId, _ruleKey, chain) => {
+      cursorChains.push(chain);
+      return {
+        chain,
+        lastSeenEventId: chain === 'solana' ? 81 : 90,
+        lastAckedEventId: chain === 'solana' ? 80 : 89,
+      };
+    };
+    userAlertEvent.listRecentEvents = async (filters) => {
+      eventFilters.push(filters);
+      const robinhood = filters.chain === 'robinhood';
+      return [{
+        id: robinhood ? 92 : 91,
+        userId: 7,
+        chain: filters.chain,
+        ruleKey: 'custom-alert',
+        kind: 'custom-alert',
+        tokenAddress: robinhood ? robinhoodAddress : solanaAddress,
+        payload: robinhood
+          ? { chain: 'robinhood', address: robinhoodAddress, fdv: 500000, mcap: null }
+          : { chain: 'solana', address: solanaAddress, mcap: 300000 },
+        triggeredAt: '2026-07-14T18:00:00.000Z',
+      }];
+    };
+    tokenCatalog.listDashboardMetadataByAddresses = async (addresses, options) => {
+      metadataChains.push(options.chain);
+      return addresses.map((address) => ({ chain: options.chain, address }));
+    };
+    tokenMeteoraState.listSummaryByAddresses = async () => [];
+
+    try {
+      const payload = await backendAlertFeed.listDashboardAlertEvents({
+        userId: 7, ruleKey: 'custom-alert', limit: 20, mode: 'all',
+      });
+
+      assert.deepEqual(cursorChains, ['solana', 'robinhood']);
+      assert.deepEqual(eventFilters.map(({ chain, afterId }) => ({ chain, afterId })), [
+        { chain: 'solana', afterId: 80 },
+        { chain: 'robinhood', afterId: 89 },
+      ]);
+      assert.deepEqual(metadataChains.sort(), ['robinhood', 'solana']);
+      assert.equal(payload.cursor, null);
+      assert.deepEqual(payload.cursors.map((cursor) => cursor.chain), ['solana', 'robinhood']);
+      assert.deepEqual(payload.events.map((event) => event.id), [92, 91]);
+      assert.equal(payload.events[0].chain, 'robinhood');
+      assert.equal(payload.events[0].mcap, null);
+      assert.equal(payload.events[0].fdv, 500000);
+      assert.equal(payload.events[1].chain, 'solana');
+      assert.equal(payload.events[1].mcap, 300000);
+    } finally {
+      alertDeliveryCursor.getCursor = originalGetCursor;
+      userAlertEvent.listRecentEvents = originalListRecentEvents;
+      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
+      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
     }
   });
 
@@ -488,8 +656,8 @@ describe('backend alert feed service', () => {
     let capturedCursorArgs = null;
     let capturedFilters = null;
 
-    alertDeliveryCursor.getCursor = async (userId, ruleKey) => {
-      capturedCursorArgs = [userId, ruleKey];
+    alertDeliveryCursor.getCursor = async (userId, ruleKey, chain) => {
+      capturedCursorArgs = [userId, ruleKey, chain];
       return {
         userId,
         ruleKey,
@@ -519,13 +687,15 @@ describe('backend alert feed service', () => {
         limit: 10,
       });
 
-      assert.deepEqual(capturedCursorArgs, [9, 'monitored-vol']);
+      assert.deepEqual(capturedCursorArgs, [9, 'monitored-vol', 'solana']);
       assert.deepEqual(capturedFilters, {
         userId: 9,
+        chain: 'solana',
         ruleKey: 'monitored-vol',
         limit: 10,
         afterId: 21,
         sort: 'asc',
+        dismissedByUserId: 9,
       });
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.cursor.lastSeenEventId, 21);
@@ -572,10 +742,12 @@ describe('backend alert feed service', () => {
 
       assert.deepEqual(capturedFilters, {
         userId: 9,
+        chain: 'solana',
         ruleKey: 'monitored-vol',
         limit: 10,
         afterId: 33,
         sort: 'desc',
+        dismissedByUserId: 9,
       });
       assert.equal(payload.mode, 'all');
       assert.equal(payload.cursor.lastAckedEventId, 33);
@@ -595,17 +767,17 @@ describe('backend alert feed service', () => {
     const originalListRecentEvents = userAlertEvent.listRecentEvents;
     const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
     const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
-    let capturedLatestRuleKey = null;
+    let capturedLatestFilters = null;
     let capturedMarkSeenArgs = null;
     let capturedFilters = null;
 
     alertDeliveryCursor.getCursor = async () => null;
     userAlertEvent.getLatestEventId = async (filters) => {
-      capturedLatestRuleKey = filters?.ruleKey || null;
+      capturedLatestFilters = filters;
       return 59;
     };
-    alertDeliveryCursor.markSeen = async (userId, ruleKey, lastSeenEventId) => {
-      capturedMarkSeenArgs = [userId, ruleKey, lastSeenEventId];
+    alertDeliveryCursor.markSeen = async (userId, ruleKey, lastSeenEventId, chain) => {
+      capturedMarkSeenArgs = [userId, ruleKey, lastSeenEventId, chain];
       return {
         userId,
         ruleKey,
@@ -629,19 +801,26 @@ describe('backend alert feed service', () => {
         limit: 50,
       });
 
-      assert.equal(capturedLatestRuleKey, 'monitored-vol');
-      assert.deepEqual(capturedMarkSeenArgs, [4, 'monitored-vol', 59]);
+      assert.deepEqual(capturedLatestFilters, {
+        userId: 4,
+        chain: 'solana',
+        ruleKey: 'monitored-vol',
+      });
+      assert.deepEqual(capturedMarkSeenArgs, [4, 'monitored-vol', 59, 'solana']);
       assert.deepEqual(capturedFilters, {
         userId: 4,
+        chain: 'solana',
         ruleKey: 'monitored-vol',
         limit: 50,
         afterId: 59,
         sort: 'asc',
+        dismissedByUserId: 4,
       });
       assert.equal(payload.mode, 'unseen');
       assert.equal(payload.count, 0);
       assert.deepEqual(payload.cursor, {
         ruleKey: 'monitored-vol',
+        chain: 'solana',
         lastSeenEventId: 59,
         lastAckedEventId: null,
         updatedAt: '2026-04-07T08:09:24.867Z',
@@ -673,18 +852,21 @@ describe('backend alert feed service', () => {
 
     try {
       const cursor = await backendAlertFeed.updateDashboardAlertCursor(9, {
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'robinhood',
         lastSeenEventId: 31,
       });
 
       assert.deepEqual(capturedPayload, {
         userId: 9,
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'robinhood',
         lastSeenEventId: 31,
         lastAckedEventId: undefined,
       });
       assert.deepEqual(cursor, {
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'robinhood',
         lastSeenEventId: 31,
         lastAckedEventId: null,
         updatedAt: '2026-04-05T18:20:00.000Z',
@@ -694,7 +876,7 @@ describe('backend alert feed service', () => {
     }
   });
 
-  it('marks dashboard alert feeds cleared through the latest event id', async () => {
+  it('clears only the selected chain for a multi-chain alert rule', async () => {
     const originalGetLatestEventId = userAlertEvent.getLatestEventId;
     const originalUpsertCursor = alertDeliveryCursor.upsertCursor;
     const capturedLatestFilters = [];
@@ -717,22 +899,26 @@ describe('backend alert feed service', () => {
 
     try {
       const payload = await backendAlertFeed.clearDashboardAlertFeeds(9, {
-        ruleKeys: ['monitored-vol'],
+        ruleKeys: ['custom-alert'],
+        chains: ['solana'],
       });
 
       assert.deepEqual(capturedLatestFilters, [{
         userId: 9,
-        ruleKey: 'monitored-vol',
+        chain: 'solana',
+        ruleKey: 'custom-alert',
       }]);
       assert.deepEqual(capturedCursorPayloads, [{
         userId: 9,
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'solana',
         lastSeenEventId: 72,
         lastAckedEventId: 72,
       }]);
       assert.equal(payload.count, 1);
       assert.deepEqual(payload.cursors[0], {
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'solana',
         lastSeenEventId: 72,
         lastAckedEventId: 72,
         updatedAt: '2026-04-05T18:25:00.000Z',
@@ -740,6 +926,42 @@ describe('backend alert feed service', () => {
     } finally {
       userAlertEvent.getLatestEventId = originalGetLatestEventId;
       alertDeliveryCursor.upsertCursor = originalUpsertCursor;
+    }
+  });
+
+  it('persists one dismissal only after validating event ownership and chain', async () => {
+    const originalGetEventForUser = userAlertEvent.getEventForUser;
+    const originalDismissEvent = alertEventDismissal.dismissEvent;
+    let capturedLookup = null;
+    let capturedDismissal = null;
+    userAlertEvent.getEventForUser = async (eventId, userId) => {
+      capturedLookup = [eventId, userId];
+      return { id: eventId, userId, ruleKey: 'custom-alert', chain: 'robinhood' };
+    };
+    alertEventDismissal.dismissEvent = async (payload) => {
+      capturedDismissal = payload;
+      return { ...payload, dismissedAt: '2026-07-16T12:00:00.000Z' };
+    };
+
+    try {
+      const dismissal = await backendAlertFeed.dismissDashboardAlertEvent(7, {
+        ruleKey: 'custom-alert', chain: 'robinhood', eventId: 91,
+      });
+      assert.deepEqual(capturedLookup, [91, 7]);
+      assert.deepEqual(capturedDismissal, {
+        userId: 7, ruleKey: 'custom-alert', chain: 'robinhood', eventId: 91,
+      });
+      assert.equal(dismissal.eventId, 91);
+
+      await assert.rejects(
+        () => backendAlertFeed.dismissDashboardAlertEvent(7, {
+          ruleKey: 'custom-alert', chain: 'solana', eventId: 91,
+        }),
+        (error) => error.code === 'ALERT_EVENT_NOT_FOUND',
+      );
+    } finally {
+      userAlertEvent.getEventForUser = originalGetEventForUser;
+      alertEventDismissal.dismissEvent = originalDismissEvent;
     }
   });
 });

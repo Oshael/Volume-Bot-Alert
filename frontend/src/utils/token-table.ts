@@ -1,4 +1,5 @@
 import type { BucketSortCriterion, BucketSortMode, BucketSortWindow, ManualTokenEntry, MonitoredSortCriterion, MonitoredSortMode, MonitoredSortWindow } from '../state/app-state';
+import { buildTokenIdentityKey } from './token-chain';
 
 function getBucketMetric(item: ManualTokenEntry, mode: BucketSortMode, window: BucketSortWindow) {
   if (mode === 'age') return item.createdAt || 0;
@@ -46,7 +47,7 @@ export function filterManualTableTokens(
   const starredSet = new Set(Array.isArray(options.starredTokens) ? options.starredTokens : []);
 
   return tokens.filter((item) => {
-    if (options.starredOnly && !starredSet.has(item.address)) {
+    if (options.starredOnly && !starredSet.has(buildTokenIdentityKey(item.chain || 'solana', item.address))) {
       return false;
     }
     if (!searchQuery) {

@@ -83,4 +83,33 @@ describe('workspace sparkline refresh selection', () => {
       refreshIntervalMs: 60_000,
     }), []);
   });
+
+  it('keeps same-address identities isolated by chain cache key', () => {
+    const now = Date.UTC(2026, 6, 15, 12, 0, 0);
+    const address = '0xabcdef0123456789abcdef0123456789abcdef01';
+    const base = { chain: 'base', address, key: `base:${address}` };
+    const robinhood = { chain: 'robinhood', address, key: `robinhood:${address}` };
+    const batches = [{
+      hours: 24,
+      granularityMinutes: 30,
+      identities: [base, robinhood],
+    }];
+    const cache = {
+      [base.key]: {
+        hours: 24,
+        granularityMinutes: 30,
+        refreshedAt: now - 1_000,
+      },
+    };
+
+    assert.deepEqual(selectWorkspaceSparklineRefreshBatches(batches, cache, {
+      now,
+      refreshIntervalMs: 60_000,
+    }), [{
+      hours: 24,
+      granularityMinutes: 30,
+      identities: [robinhood],
+    }]);
+    assert.equal(getWorkspaceSparklineNextRefreshAt(batches, cache, 60_000), 0);
+  });
 });

@@ -20,7 +20,9 @@ const dexscreener = require('../services/dexscreener');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
+const catalogMarketHistory = require('../services/catalog-market-history');
 const { isValidAddress } = require('../models/user-token');
+const { createTokenIdentity } = require('../utils/token-identity');
 const { logSecurityEvent } = require('../utils/security-events');
 const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
 const { extractDexSocialLinks, normalizeSocialLinkFields } = require('../utils/dex-social-links');
@@ -107,10 +109,42 @@ function parseOptionalIntegerBodyField(value, name, { min = 1, max = Number.MAX_
   return { ok: true, value: parsed };
 }
 
+function parseSparklineIdentities(values) {
+  if (!Array.isArray(values) || !values.length) {
+    return { ok: false, error: 'identities is required' };
+  }
+  if (values.length > 500) {
+    return { ok: false, error: 'identities must contain 500 items or fewer' };
+  }
+  const byKey = new Map();
+  try {
+    for (const value of values) {
+      const identity = createTokenIdentity(value?.chain, value?.address);
+      if (identity.chain !== 'solana' && identity.chain !== 'robinhood') {
+        return { ok: false, error: `Market history is unavailable for ${identity.chain}` };
+      }
+      byKey.set(identity.key, identity);
+    }
+  } catch (_) {
+    return { ok: false, error: 'Invalid token identity' };
+  }
+  const identities = [...byKey.values()];
+  if (identities.filter((identity) => identity.chain === 'robinhood').length > 100) {
+    return { ok: false, error: 'identities must contain 100 Robinhood items or fewer' };
+  }
+  return { ok: true, identities };
+}
+
 function parseSparklineBatchRequest(body = {}) {
-  const addresses = parseMeteoraBatchAddresses(body.addresses);
-  if (!addresses.ok) {
-    return addresses;
+  let identities;
+  if (body.identities == null) {
+    const addresses = parseMeteoraBatchAddresses(body.addresses);
+    if (!addresses.ok) return addresses;
+    identities = addresses.addresses.map((address) => createTokenIdentity('solana', address));
+  } else {
+    const parsed = parseSparklineIdentities(body.identities);
+    if (!parsed.ok) return parsed;
+    identities = parsed.identities;
   }
 
   const hours = parseOptionalIntegerBodyField(body.hours, 'hours', { min: 1, max: 24 * 30 });
@@ -147,7 +181,7 @@ function parseSparklineBatchRequest(body = {}) {
   return {
     ok: true,
     value: {
-      addresses: addresses.addresses,
+      identities,
       hours: hours.value || (14 * 24),
       points: points.value || 336,
       granularityMinutes: granularityMinutes.value || 30,
@@ -157,9 +191,14 @@ function parseSparklineBatchRequest(body = {}) {
 }
 
 function parseExpandedSparklineRequest(body = {}) {
-  const address = String(body.address || '').trim();
-  if (!isValidAddress(address)) {
+  let identity;
+  try {
+    identity = createTokenIdentity(body.chain || 'solana', body.address);
+  } catch (_) {
     return { ok: false, error: 'Invalid token address' };
+  }
+  if (identity.chain !== 'solana' && identity.chain !== 'robinhood') {
+    return { ok: false, error: `Expanded market history is unavailable for ${identity.chain}` };
   }
 
   const points = parseOptionalIntegerBodyField(body.points, 'points', { min: 120, max: 1000 });
@@ -191,7 +230,8 @@ function parseExpandedSparklineRequest(body = {}) {
   return {
     ok: true,
     value: {
-      address,
+      chain: identity.chain,
+      address: identity.address,
       points: points.value || 720,
       granularityMinutes: granularityMinutes.value,
       allowOneMinuteFallback: allowOneMinuteFallback.value,
@@ -333,31 +373,14 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
   try {
     const startedAt = nowMs();
     let modelMetrics = null;
-    const sparklineOptions = {
-      hours: parsed.value.hours,
-      points: parsed.value.points,
-      granularityMinutes: parsed.value.granularityMinutes,
-      allowOneMinuteFallback: parsed.value.allowOneMinuteFallback,
-    };
+    const sparklineOptions = { ...parsed.value };
     if (isPerfMetricsEnabled()) {
       sparklineOptions.onMetrics = (metrics) => {
         modelMetrics = metrics;
       };
     }
 
-    const items = await tokenMarketBucket1m.listSparklineByAddresses(
-      parsed.value.addresses,
-      sparklineOptions
-    );
-
-    const payload = {
-      generatedAt: new Date().toISOString(),
-      hours: parsed.value.hours,
-      points: parsed.value.points,
-      granularityMinutes: parsed.value.granularityMinutes,
-      count: items.length,
-      items,
-    };
+    const payload = await catalogMarketHistory.getSparklineBatch(sparklineOptions);
     const totalDurationMs = nowMs() - startedAt;
     const perf = attachResponsePerfHeaders(res, 'catalog.sparklines', payload, {
       total: totalDurationMs,
@@ -365,7 +388,7 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
       build: modelMetrics?.buildDurationMs,
     });
     logRequestPerf(req, 'catalog.sparklines', {
-      addresses: parsed.value.addresses.length,
+      identities: parsed.value.identities.length,
       uniqueAddresses: modelMetrics?.addresses,
       rows: modelMetrics?.rows,
       source: modelMetrics?.source,
@@ -373,7 +396,7 @@ router.post('/sparklines', catalogReadLimiter, async (req, res) => {
       aggregateRows: modelMetrics?.aggregateRows,
       fallbackRows: modelMetrics?.fallbackRows,
       fallbackAddresses: modelMetrics?.fallbackAddresses,
-      items: items.length,
+      items: payload.items.length,
       hours: parsed.value.hours,
       points: parsed.value.points,
       granularityMinutes: parsed.value.granularityMinutes,
@@ -398,22 +421,7 @@ router.post('/sparklines/expanded', catalogReadLimiter, async (req, res) => {
   }
 
   try {
-    const item = await tokenMarketBucket1m.listExpandedSparklineByAddress(
-      parsed.value.address,
-      {
-        points: parsed.value.points,
-        granularityMinutes: parsed.value.granularityMinutes,
-        allowOneMinuteFallback: parsed.value.allowOneMinuteFallback,
-      }
-    );
-
-    res.json({
-      generatedAt: new Date().toISOString(),
-      points: parsed.value.points,
-      granularityMinutes: item?.granularityMinutes ?? parsed.value.granularityMinutes ?? null,
-      count: item ? 1 : 0,
-      item,
-    });
+    res.json(await catalogMarketHistory.getExpandedSparkline(parsed.value));
   } catch (err) {
     console.error('POST /catalog/sparklines/expanded error:', err.message);
     res.status(500).json({ error: 'Failed to load expanded token sparkline' });
@@ -451,7 +459,7 @@ router.post('/admin-blocklist', catalogWriteLimiter, requireAdmin, async (req, r
       monitorPriority: 'dormant',
       symbol: label,
     });
-    await tokenRiskReview.removeAutoReview(address);
+    await tokenRiskReview.removeAutoReview(address, undefined, 'solana');
 
     res.status(201).json({
       message: 'Token permanently blocked in backend catalog',

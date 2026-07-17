@@ -15,6 +15,7 @@ describe('user alert rule state model', () => {
         rows: [{
           user_id: 17,
           rule_key: 'monitored-vol',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           status: 'triggered',
           last_alerted_at: '2026-04-16T12:05:10.000Z',
@@ -44,13 +45,15 @@ describe('user alert rule state model', () => {
         metadata: { source: 'matcher-test' },
       });
 
-      assert.deepEqual(capturedParams.slice(0, 4), [
+      assert.deepEqual(capturedParams.slice(0, 5), [
         17,
         'monitored-vol',
+        'solana',
         'So11111111111111111111111111111111111111112',
         'triggered',
       ]);
       assert.equal(state.userId, 17);
+      assert.equal(state.chain, 'solana');
       assert.equal(state.status, 'triggered');
       assert.equal(state.lastAlertedValue, 18000);
       assert.equal(state.lastAlertedPct, 80);
@@ -70,6 +73,7 @@ describe('user alert rule state model', () => {
         rows: [{
           user_id: 7,
           rule_key: 'meteora-surge',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           status: 'rearmed',
           last_alerted_at: '2026-04-16T11:05:10.000Z',
@@ -91,7 +95,7 @@ describe('user alert rule state model', () => {
         'So11111111111111111111111111111111111111112'
       );
 
-      assert.deepEqual(capturedParams, [7, 'meteora-surge', 'So11111111111111111111111111111111111111112']);
+      assert.deepEqual(capturedParams, [7, 'meteora-surge', 'solana', 'So11111111111111111111111111111111111111112']);
       assert.equal(state.status, 'rearmed');
       assert.equal(state.rearmRequired, false);
       assert.equal(state.lastFingerprint, '60|300000|60000');
@@ -111,6 +115,7 @@ describe('user alert rule state model', () => {
         rows: [{
           user_id: 21,
           rule_key: 'hvnc',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           status: 'triggered',
           last_alerted_at: '2026-04-16T12:05:10.000Z',
@@ -137,8 +142,8 @@ describe('user alert rule state model', () => {
         lastFingerprint: 'hvnc:350000',
       });
 
-      assert.equal(capturedParams[3], 'triggered');
-      assert.equal(capturedParams[8], true);
+      assert.equal(capturedParams[4], 'triggered');
+      assert.equal(capturedParams[9], true);
       assert.equal(state.status, 'triggered');
       assert.equal(state.rearmRequired, true);
     } finally {
@@ -157,6 +162,7 @@ describe('user alert rule state model', () => {
           rows: [{
             user_id: 8,
             rule_key: 'monitored-mcap',
+            chain: 'solana',
             token_address: 'So11111111111111111111111111111111111111112',
             status: 'triggered',
             last_alerted_at: '2026-04-16T12:05:10.000Z',
@@ -175,6 +181,7 @@ describe('user alert rule state model', () => {
         rows: [{
           user_id: 8,
           rule_key: 'monitored-mcap',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           status: 'rearmed',
           last_alerted_at: '2026-04-16T12:05:10.000Z',
@@ -198,10 +205,10 @@ describe('user alert rule state model', () => {
       });
 
       assert.equal(queries.length, 2);
-      assert.deepEqual(queries[0].params, [8, 'monitored-mcap', 'So11111111111111111111111111111111111111112']);
-      assert.equal(queries[1].params[3], 'rearmed');
-      assert.equal(queries[1].params[7], null);
-      assert.equal(queries[1].params[8], false);
+      assert.deepEqual(queries[0].params, [8, 'monitored-mcap', 'solana', 'So11111111111111111111111111111111111111112']);
+      assert.equal(queries[1].params[4], 'rearmed');
+      assert.equal(queries[1].params[8], null);
+      assert.equal(queries[1].params[9], false);
       assert.equal(state.status, 'rearmed');
       assert.equal(state.rearmRequired, false);
       assert.equal(state.cooldownUntil, null);
@@ -221,6 +228,7 @@ describe('user alert rule state model', () => {
           rows: [{
             user_id: 9,
             rule_key: 'monitored-vol',
+            chain: 'solana',
             token_address: 'So11111111111111111111111111111111111111112',
             status: 'triggered',
             last_alerted_at: '2026-04-16T12:05:10.000Z',
@@ -239,6 +247,7 @@ describe('user alert rule state model', () => {
         rows: [{
           user_id: 9,
           rule_key: 'monitored-vol',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           status: 'rearmed',
           last_alerted_at: '2026-04-16T12:05:10.000Z',
@@ -263,11 +272,23 @@ describe('user alert rule state model', () => {
       });
 
       assert.equal(queries.length, 2);
-      assert.equal(queries[1].params[7]?.toISOString(), '2026-04-16T12:06:10.000Z');
+      assert.equal(queries[1].params[8]?.toISOString(), '2026-04-16T12:06:10.000Z');
       assert.equal(state.status, 'rearmed');
       assert.equal(state.cooldownUntil, '2026-04-16T12:06:10.000Z');
     } finally {
       db.query = originalQuery;
     }
+  });
+
+  it('keeps Robinhood automatic state writes disabled', async () => {
+    await assert.rejects(
+      () => userAlertRuleState.upsertState({
+        userId: 9,
+        ruleKey: 'monitored-vol',
+        chain: 'robinhood',
+        tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      }),
+      (error) => error.code === 'NON_SOLANA_ALERT_TRIGGER_DISABLED'
+    );
   });
 });

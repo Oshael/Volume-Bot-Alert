@@ -1,5 +1,16 @@
 ﻿const db = require('./db');
 const { isValidAddress } = require('./user-token');
+const { normalizeTokenChain } = require('../utils/token-identity');
+
+function requireLegacySolanaChain(chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  if (chain !== 'solana') {
+    const error = new Error('Non-Solana legacy market snapshot access is disabled');
+    error.code = 'NON_SOLANA_LEGACY_MARKET_SNAPSHOT_DISABLED';
+    throw error;
+  }
+  return chain;
+}
 
 function toNumberOrNull(value) {
   const num = Number(value);
@@ -7,6 +18,7 @@ function toNumberOrNull(value) {
 }
 
 async function insertSnapshot(snapshot) {
+  requireLegacySolanaChain(snapshot.chain);
   const address = String(snapshot.tokenAddress || snapshot.address || '').trim();
   if (!isValidAddress(address)) {
     throw new Error('Invalid token address format');
@@ -34,7 +46,8 @@ async function insertSnapshot(snapshot) {
   return rows[0];
 }
 
-async function listRecentByAddress(address, limit = 100) {
+async function listRecentByAddress(address, limit = 100, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const addr = String(address || '').trim();
   const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
   const { rows } = await db.query(
@@ -49,6 +62,7 @@ async function listRecentByAddress(address, limit = 100) {
 }
 
 async function listHistoryByAddress(address, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const addr = String(address || '').trim();
   if (!isValidAddress(addr)) {
     throw new Error('Invalid token address format');
@@ -83,7 +97,8 @@ async function listHistoryByAddress(address, options = {}) {
   return rows.reverse();
 }
 
-async function listLatestByAddresses(addresses, limitPerAddress = 2) {
+async function listLatestByAddresses(addresses, limitPerAddress = 2, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -122,7 +137,8 @@ async function listLatestByAddresses(addresses, limitPerAddress = 2) {
   return rows;
 }
 
-async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
+async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -185,7 +201,8 @@ async function listCurrentAndBaselineByAddresses(addresses, windowMinutes = 5) {
   return rows;
 }
 
-async function deleteByAddresses(addresses) {
+async function deleteByAddresses(addresses, options = {}) {
+  requireLegacySolanaChain(options.chain);
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
@@ -213,4 +230,5 @@ module.exports = {
   listLatestByAddresses,
   listCurrentAndBaselineByAddresses,
   deleteByAddresses,
+  __private: { requireLegacySolanaChain },
 };

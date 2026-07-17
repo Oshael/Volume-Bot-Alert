@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   extractDexSocialLinks,
   isCommunityUrl,
+  isTelegramUrl,
   normalizeSocialLinkFields,
 } = require('../src/utils/dex-social-links');
 
@@ -46,6 +47,21 @@ describe('Dex social link extraction', () => {
 
     assert.equal(links.twitterUrl, 'https://x.com/example');
     assert.equal(links.communityUrl, 'https://x.com/i/communities/123456');
+  });
+
+  it('extracts only canonical Telegram links from Dex social metadata', () => {
+    const links = extractDexSocialLinks({
+      info: {
+        socials: [
+          { type: 'telegram', url: 'https://example.com/fake' },
+          { type: 'telegram', url: 'https://t.me/example' },
+        ],
+      },
+    });
+
+    assert.equal(links.telegramUrl, 'https://t.me/example');
+    assert.equal(isTelegramUrl('https://telegram.me/example'), true);
+    assert.equal(isTelegramUrl('https://example.com/t.me/example'), false);
   });
 
   it('recognizes supported community URL formats', () => {

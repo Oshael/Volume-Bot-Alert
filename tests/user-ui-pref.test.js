@@ -10,6 +10,12 @@ describe('user-ui-pref', () => {
     assert.equal(prefs.manualFolderDeleteWarningDismissed, false);
     assert.equal(prefs.expandedSparklineGranularityMinutes, 5);
     assert.equal(prefs.expandedSparklineTimeZone, 'browser');
+    assert.deepEqual(prefs.chainFilters, {
+      enabledChains: ['solana'],
+      radarChains: ['solana'],
+      alertFeedChains: ['solana'],
+      browserNotificationChains: ['solana'],
+    });
   });
 
   it('defaults new live layouts with monitored spanning two thirds', () => {
@@ -184,5 +190,41 @@ describe('user-ui-pref', () => {
 
     assert.equal(validation.valid, false);
     assert.ok(validation.errors.includes('enabledTradeTerminals must contain at least one terminal'));
+  });
+
+  it('accepts complete chain filters constrained by the master selection', () => {
+    const chainFilters = {
+      enabledChains: ['solana'],
+      radarChains: ['solana'],
+      alertFeedChains: ['solana'],
+      browserNotificationChains: ['solana'],
+    };
+    const validation = userUiPref.validatePatch({ chainFilters });
+
+    assert.equal(validation.valid, true);
+    assert.deepEqual(validation.prefs.chainFilters, chainFilters);
+  });
+
+  it('rejects empty or unavailable chain filters', () => {
+    const empty = userUiPref.validatePatch({
+      chainFilters: {
+        enabledChains: [],
+        radarChains: ['solana'],
+        alertFeedChains: ['solana'],
+        browserNotificationChains: ['solana'],
+      },
+    });
+    const unavailable = userUiPref.validatePatch({
+      chainFilters: {
+        enabledChains: ['solana', 'base'],
+        radarChains: ['solana'],
+        alertFeedChains: ['solana'],
+        browserNotificationChains: ['solana'],
+      },
+    });
+
+    assert.equal(empty.valid, false);
+    assert.equal(unavailable.valid, false);
+    assert.ok(unavailable.errors.some((error) => error.includes('unavailable chain: base')));
   });
 });

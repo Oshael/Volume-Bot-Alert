@@ -7,6 +7,7 @@ const db = require('../models/db');
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS monitored_token_exit_events (
      id SERIAL PRIMARY KEY,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      token_address VARCHAR(64) NOT NULL,
      exit_reason VARCHAR(96) NOT NULL,
      exit_source VARCHAR(64),
@@ -15,8 +16,10 @@ const STATEMENTS = [
      details JSONB NOT NULL DEFAULT '{}'::jsonb,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
    )`,
-  `CREATE INDEX IF NOT EXISTS idx_monitored_token_exit_events_token_created
-     ON monitored_token_exit_events(token_address, created_at DESC, id DESC)`,
+  `ALTER TABLE monitored_token_exit_events
+     ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana'`,
+  `CREATE INDEX IF NOT EXISTS idx_monitored_exit_events_chain_token
+     ON monitored_token_exit_events(chain, token_address, created_at DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_monitored_token_exit_events_reason_created
      ON monitored_token_exit_events(exit_reason, created_at DESC, id DESC)`,
 ];

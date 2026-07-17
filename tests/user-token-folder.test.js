@@ -35,7 +35,7 @@ describe('manual token folders model', () => {
 
     assert.match(joined, /CREATE TABLE IF NOT EXISTS user_token_folders/);
     assert.match(joined, /CREATE TABLE IF NOT EXISTS user_token_folder_items/);
-    assert.match(joined, /REFERENCES user_tokens\(user_id, address\)/);
+    assert.match(joined, /REFERENCES user_tokens\(user_id, chain, address\)/);
     assert.match(joined, /idx_user_token_folders_parent/);
     assert.match(joined, /idx_user_token_folder_items_address/);
   });
@@ -90,6 +90,7 @@ describe('manual token folders model', () => {
         rows: [{
           user_id: 3,
           folder_id: 9,
+          chain: 'solana',
           address: 'So11111111111111111111111111111111111111112',
           sort_order: 1,
           added_at: '2026-06-28T12:00:00.000Z',
@@ -107,8 +108,14 @@ describe('manual token folders model', () => {
     );
 
     assert.equal(item.address, 'So11111111111111111111111111111111111111112');
+    assert.equal(item.chain, 'solana');
     assert.equal(runner.calls[0].params[0], 3);
     assert.equal(runner.calls[0].params[1], 9);
+    assert.deepEqual(runner.calls[0].params.slice(2), [
+      'solana',
+      'So11111111111111111111111111111111111111112',
+      1,
+    ]);
   });
 
   it('deletes a folder transactionally and removes contained user tokens', async () => {
@@ -119,11 +126,11 @@ describe('manual token folders model', () => {
       if (sql.includes('SELECT id') && sql.includes('FROM user_token_folders') && sql.includes('LIMIT 1')) {
         return { rows: [{ id: 9 }], rowCount: 1 };
       }
-      if (sql.includes('SELECT DISTINCT address')) {
+      if (sql.includes('SELECT DISTINCT chain, address')) {
         return {
           rows: [
-            { address: 'So11111111111111111111111111111111111111112' },
-            { address: '0x1111111111111111111111111111111111111111' },
+            { chain: 'solana', address: 'So11111111111111111111111111111111111111112' },
+            { chain: 'robinhood', address: '0x1111111111111111111111111111111111111111' },
           ],
           rowCount: 2,
         };
@@ -131,8 +138,8 @@ describe('manual token folders model', () => {
       if (sql.includes('DELETE FROM user_tokens')) {
         return {
           rows: [
-            { address: 'So11111111111111111111111111111111111111112' },
-            { address: '0x1111111111111111111111111111111111111111' },
+            { chain: 'solana', address: 'So11111111111111111111111111111111111111112' },
+            { chain: 'robinhood', address: '0x1111111111111111111111111111111111111111' },
           ],
           rowCount: 2,
         };
@@ -150,6 +157,7 @@ describe('manual token folders model', () => {
       'So11111111111111111111111111111111111111112',
       '0x1111111111111111111111111111111111111111',
     ]);
+    assert.deepEqual(result.removedIdentities.map((item) => item.chain), ['solana', 'robinhood']);
     assert.equal(database.client.calls[0].sql, 'BEGIN');
     assert.equal(database.client.calls.at(-1).sql.trim(), 'COMMIT');
     assert.equal(database.client.released, true);
@@ -166,7 +174,7 @@ describe('manual token folders model', () => {
       }
       if (sql.includes('DELETE FROM user_tokens')) {
         return {
-          rows: [{ address: 'So11111111111111111111111111111111111111112' }],
+          rows: [{ chain: 'solana', address: 'So11111111111111111111111111111111111111112' }],
           rowCount: 1,
         };
       }

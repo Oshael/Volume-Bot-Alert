@@ -102,6 +102,7 @@ async function enrichCandidate(candidate, deps = {}) {
   const enrichmentStore = deps.tokenRiskEnrichmentModel || tokenRiskEnrichment;
 
   const saved = await enrichmentStore.upsertEnrichment({
+    chain: 'solana',
     tokenAddress: address,
     source: 'helius',
     lastAttemptedAt: now,
@@ -124,6 +125,7 @@ async function handleCandidateFailure(candidate, error, deps = {}) {
 
   if (address) {
     await enrichmentStore.recordError(address, message, {
+      chain: 'solana',
       source: 'helius',
       lastAttemptedAt: new Date(),
     });

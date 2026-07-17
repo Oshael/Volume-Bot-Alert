@@ -48,6 +48,7 @@ describe('token junk evidence model', () => {
         JSON.stringify({ symbol: 'SOL' }),
         JSON.stringify({ summary: { snapshotCount: 2 } }),
         JSON.stringify({ summary: { snapshotCount: 1 } }),
+        'solana',
       ]);
       assert.equal(row.id, 12);
       assert.equal(row.label, 'junk_probable');
@@ -55,6 +56,22 @@ describe('token junk evidence model', () => {
     } finally {
       db.query = originalQuery;
     }
+  });
+
+  it('rejects Robinhood junk evidence until a chain-specific classifier exists', async () => {
+    let queried = false;
+    const runner = { query: async () => { queried = true; return { rows: [] }; } };
+
+    await assert.rejects(
+      tokenJunkEvidence.createEvidence({
+        chain: 'robinhood',
+        tokenAddress: '0x1111111111111111111111111111111111111111',
+        label: 'junk_probable',
+        assessmentFingerprint: 'not-calibrated',
+      }, runner),
+      { code: 'NON_SOLANA_JUNK_EVIDENCE_DISABLED' }
+    );
+    assert.equal(queried, false);
   });
 });
 

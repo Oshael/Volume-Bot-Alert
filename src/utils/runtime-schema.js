@@ -433,6 +433,7 @@ const SCHEMA_GROUPS = [
       {
         table: 'token_market_volume_buckets_1m',
         columns: [
+          'chain',
           'token_address',
           'bucket_ts',
           'close_vol_1m',
@@ -545,6 +546,7 @@ const SCHEMA_GROUPS = [
         columns: [
           'user_id',
           'rule_key',
+          'chain',
           'token_address',
           'status',
           'last_alerted_at',
@@ -576,6 +578,7 @@ const SCHEMA_GROUPS = [
           'user_id',
           'rule_key',
           'kind',
+          'chain',
           'token_address',
           'dedupe_key',
           'payload',
@@ -597,6 +600,7 @@ const SCHEMA_GROUPS = [
         table: 'token_junk_evidence',
         columns: [
           'id',
+          'chain',
           'token_address',
           'label',
           'source',
@@ -892,6 +896,7 @@ const SCHEMA_GROUPS = [
         columns: [
           'id',
           'user_id',
+          'chain',
           'token_address',
           'title',
           'metric',
@@ -979,6 +984,7 @@ const SCHEMA_GROUPS = [
         table: 'admin_block_evidence',
         columns: [
           'id',
+          'chain',
           'token_address',
           'ban_label',
           'created_by',
@@ -1014,6 +1020,7 @@ const SCHEMA_GROUPS = [
         table: 'monitored_token_exit_events',
         columns: [
           'id',
+          'chain',
           'token_address',
           'exit_reason',
           'exit_source',
@@ -1156,6 +1163,7 @@ const SCHEMA_GROUPS = [
         table: 'admin_token_review_alerts',
         columns: [
           'id',
+          'chain',
           'token_address',
           'status',
           'priority',
@@ -1188,10 +1196,553 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage51-chain-aware-catalog-market',
+    name: 'Stage 51 chain-aware catalog and generic market schema',
+    repair: 'node src/utils/db-init-stage51.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: ['chain', 'address'],
+        defaults: { chain: "'solana'::character varying" },
+      },
+      {
+        table: 'token_market_buckets_1m',
+        columns: ['chain', 'token_address', 'bucket_ts'],
+        defaults: { chain: "'solana'::character varying" },
+      },
+      {
+        table: 'token_market_volume_buckets_1m',
+        columns: ['chain', 'token_address', 'bucket_ts'],
+        defaults: { chain: "'solana'::character varying" },
+      },
+      {
+        table: 'token_market_buckets_agg',
+        columns: ['chain', 'token_address', 'granularity_minutes', 'bucket_ts'],
+        defaults: { chain: "'solana'::character varying" },
+      },
+    ],
+  },
+  {
+    key: 'stage52-chain-aware-user-risk-alerts',
+    name: 'Stage 52 chain-aware user, risk, and alert schema',
+    repair: 'node src/utils/db-init-stage52.js',
+    tables: [
+      ...[
+        ['user_tokens', ['user_id', 'chain', 'address']],
+        ['user_blocklist', ['user_id', 'chain', 'address']],
+        ['user_starred_tokens', ['user_id', 'chain', 'address']],
+        ['user_pinned_monitored_tokens', ['user_id', 'chain', 'address']],
+        ['user_bootstrap_tokens', ['user_id', 'chain', 'address']],
+        ['user_token_folder_items', ['user_id', 'folder_id', 'chain', 'address']],
+        ['token_risk_enrichment', ['chain', 'token_address']],
+        ['token_risk_reviews', ['chain', 'token_address']],
+        ['token_junk_evidence', ['chain', 'token_address', 'assessment_fingerprint']],
+        ['bid_zone_results', ['run_id', 'chain', 'token_address']],
+        ['user_alert_rule_state', ['user_id', 'rule_key', 'chain', 'token_address']],
+        ['user_alert_events', ['user_id', 'chain', 'token_address']],
+        ['admin_block_evidence', ['chain', 'token_address']],
+        ['monitored_token_exit_events', ['chain', 'token_address']],
+        ['user_custom_alert_rules', ['user_id', 'chain', 'token_address']],
+        ['admin_token_review_alerts', ['chain', 'token_address', 'alert_kind']],
+      ].map(([table, columns]) => ({
+        table,
+        columns,
+        defaults: { chain: "'solana'::character varying" },
+      })),
+    ],
+  },
+  {
+    key: 'stage53-token-catalog-composite-identity',
+    name: 'Stage 53 token catalog composite chain identity',
+    repair: 'node src/utils/db-init-stage53.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: ['chain', 'address'],
+        constraints: [
+          {
+            name: 'token_catalog_chain_address_key',
+            includes: ['UNIQUE', 'chain', 'address'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage54-chain-aware-user-token-preferences',
+    name: 'Stage 54 chain-aware user token preferences',
+    repair: 'node src/utils/db-init-stage54.js',
+    tables: [
+      ...[
+        ['user_tokens', 'user_tokens_user_chain_address_key'],
+        ['user_starred_tokens', 'user_starred_tokens_user_chain_address_key'],
+        ['user_pinned_monitored_tokens', 'user_pinned_tokens_user_chain_address_key'],
+        ['user_bootstrap_tokens', 'user_bootstrap_tokens_user_chain_address_key'],
+      ].map(([table, constraintName]) => ({
+        table,
+        columns: ['user_id', 'chain', 'address'],
+        constraints: [{ name: constraintName, includes: ['UNIQUE', 'user_id', 'chain', 'address'] }],
+      })),
+      {
+        table: 'user_token_folder_items',
+        columns: ['user_id', 'folder_id', 'chain', 'address'],
+        constraints: [
+          { name: 'user_token_folder_items_chain_pkey', includes: ['PRIMARY KEY', 'user_id', 'folder_id', 'chain', 'address'] },
+          { name: 'user_token_folder_items_user_chain_address_fkey', includes: ['FOREIGN KEY', 'user_id', 'chain', 'address'] },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage55-chain-aware-blocklists-evidence',
+    name: 'Stage 55 chain-aware blocklists and evidence',
+    repair: 'node src/utils/db-init-stage55.js',
+    tables: [
+      {
+        table: 'user_blocklist',
+        columns: ['user_id', 'chain', 'address'],
+        constraints: [{
+          name: 'user_blocklist_user_chain_address_key',
+          includes: ['UNIQUE', 'user_id', 'chain', 'address'],
+        }],
+      },
+      {
+        table: 'admin_blocked_tokens',
+        columns: ['chain', 'address'],
+        constraints: [{
+          name: 'admin_blocked_tokens_chain_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'address'],
+        }],
+      },
+      {
+        table: 'admin_block_evidence',
+        columns: ['chain', 'token_address'],
+      },
+    ],
+  },
+  {
+    key: 'stage56-chain-aware-risk-storage',
+    name: 'Stage 56 chain-aware risk storage',
+    repair: 'node src/utils/db-init-stage56.js',
+    tables: [
+      {
+        table: 'token_risk_enrichment',
+        columns: ['chain', 'token_address'],
+        constraints: [{ name: 'token_risk_enrichment_chain_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address'] }],
+      },
+      {
+        table: 'token_risk_reviews',
+        columns: ['chain', 'token_address'],
+        constraints: [{ name: 'token_risk_reviews_chain_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address'] }],
+      },
+      {
+        table: 'token_junk_evidence',
+        columns: ['chain', 'token_address', 'assessment_fingerprint'],
+        constraints: [{ name: 'token_junk_evidence_chain_key', includes: ['UNIQUE', 'chain', 'token_address', 'assessment_fingerprint'] }],
+      },
+    ],
+  },
+  {
+    key: 'stage57-chain-aware-alert-identity',
+    name: 'Stage 57 chain-aware alert state and event identity',
+    repair: 'node src/utils/db-init-stage57.js',
+    tables: [
+      {
+        table: 'user_alert_rule_state',
+        columns: ['user_id', 'rule_key', 'chain', 'token_address'],
+        constraints: [{ name: 'user_alert_rule_state_chain_pkey', includes: ['PRIMARY KEY', 'user_id', 'rule_key', 'chain', 'token_address'] }],
+      },
+      {
+        table: 'user_alert_events',
+        columns: ['user_id', 'chain', 'dedupe_key'],
+        constraints: [{ name: 'user_alert_events_user_chain_dedupe_key', includes: ['UNIQUE', 'user_id', 'chain', 'dedupe_key'] }],
+      },
+    ],
+  },
+  {
+    key: 'stage58-chain-aware-custom-admin-exit-alerts',
+    name: 'Stage 58 chain-aware custom, admin, and exit alert storage',
+    repair: 'node src/utils/db-init-stage58.js',
+    tables: [
+      { table: 'user_custom_alert_rules', columns: ['user_id', 'chain', 'token_address'] },
+      { table: 'admin_token_review_alerts', columns: ['chain', 'token_address', 'alert_kind'] },
+      { table: 'monitored_token_exit_events', columns: ['chain', 'token_address'] },
+    ],
+  },
+  {
+    key: 'stage59-chain-aware-minute-volume-buckets',
+    name: 'Stage 59 chain-aware minute volume bucket identity',
+    repair: 'node src/utils/db-init-stage59.js',
+    tables: [
+      {
+        table: 'token_market_volume_buckets_1m',
+        columns: ['chain', 'token_address', 'bucket_ts'],
+        constraints: [{
+          name: 'token_market_volume_buckets_1m_chain_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'token_address', 'bucket_ts'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage60-chain-aware-minute-ohlc-buckets',
+    name: 'Stage 60 chain-aware minute OHLC bucket identity',
+    repair: 'node src/utils/db-init-stage60.js',
+    tables: [
+      {
+        table: 'token_market_buckets_1m',
+        columns: ['chain', 'token_address', 'bucket_ts'],
+        constraints: [{
+          name: 'token_market_buckets_1m_chain_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'token_address', 'bucket_ts'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage62-chain-aware-aggregate-ohlc-buckets',
+    name: 'Stage 62 chain-aware aggregate OHLC bucket identity',
+    repair: 'node src/utils/db-init-stage62.js',
+    tables: [
+      {
+        table: 'token_market_buckets_agg',
+        columns: ['chain', 'token_address', 'granularity_minutes', 'bucket_ts'],
+        constraints: [{
+          name: 'token_market_buckets_agg_chain_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'token_address', 'granularity_minutes', 'bucket_ts'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage63-robinhood-persistence-control-plane',
+    name: 'Stage 63 Robinhood persistence control plane',
+    repair: 'node src/utils/db-init-stage63.js',
+    tables: [
+      {
+        table: 'robinhood_pool_registry',
+        columns: [
+          'chain', 'protocol', 'market_key', 'pool_address', 'pool_id', 'origin_address',
+          'token_address', 'quote_address', 'discovery_block', 'active',
+        ],
+        constraints: [{
+          name: 'robinhood_pool_registry_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'protocol', 'market_key'],
+        }],
+      },
+      {
+        table: 'robinhood_ingestion_cursors',
+        columns: [
+          'chain', 'stream', 'next_block', 'safe_head', 'checkpoint_block',
+          'checkpoint_hash', 'checkpoint_timestamp', 'version',
+        ],
+        constraints: [{
+          name: 'robinhood_ingestion_cursors_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'stream'],
+        }],
+      },
+      {
+        table: 'robinhood_processed_logs',
+        columns: [
+          'chain', 'transaction_hash', 'log_index', 'stream', 'block_number',
+          'block_hash', 'topic0', 'event_kind', 'protocol', 'market_key',
+          'processed_at', 'expires_at',
+        ],
+        constraints: [{
+          name: 'robinhood_processed_logs_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage64-robinhood-market-observations',
+    name: 'Stage 64 exact Robinhood market observations',
+    repair: 'node src/utils/db-init-stage64.js',
+    tables: [
+      {
+        table: 'robinhood_market_observations',
+        columns: [
+          'chain', 'transaction_hash', 'log_index', 'block_number', 'protocol',
+          'market_key', 'pool_address', 'pool_id', 'token_address', 'quote_address',
+          'side', 'status', 'rejection_reason', 'observed_at', 'token_decimals', 'quote_decimals',
+          'token_total_supply_raw', 'token_amount_raw', 'quote_amount_raw',
+          'price_quote', 'quote_usd_price', 'price_usd', 'volume_usd', 'fdv_usd',
+          'expires_at',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_market_observations_pkey',
+            includes: ['PRIMARY KEY', 'chain', 'transaction_hash', 'log_index'],
+          },
+          {
+            name: 'robinhood_market_observations_log_fkey',
+            includes: ['FOREIGN KEY', 'chain', 'transaction_hash', 'log_index'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage65-robinhood-market-buckets-1m',
+    name: 'Stage 65 persistent Robinhood one-minute market buckets',
+    repair: 'node src/utils/db-init-stage65.js',
+    tables: [
+      {
+        table: 'robinhood_market_buckets_1m',
+        columns: [
+          'chain', 'protocol', 'market_key', 'token_address', 'quote_address',
+          'bucket_ts', 'open_price_usd', 'high_price_usd', 'low_price_usd',
+          'close_price_usd', 'open_fdv_usd', 'high_fdv_usd', 'low_fdv_usd',
+          'close_fdv_usd', 'volume_usd', 'swaps', 'buys', 'sells',
+          'transactions', 'first_observed_at', 'first_block_number',
+          'first_log_index', 'last_observed_at', 'last_block_number',
+          'last_log_index', 'expires_at',
+        ],
+        constraints: [{
+          name: 'robinhood_market_buckets_1m_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'protocol', 'market_key', 'bucket_ts'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage66-robinhood-market-buckets-1h',
+    name: 'Stage 66 permanent Robinhood one-hour market buckets',
+    repair: 'node src/utils/db-init-stage66.js',
+    tables: [
+      {
+        table: 'robinhood_market_buckets_1h',
+        columns: [
+          'chain', 'protocol', 'market_key', 'token_address', 'quote_address',
+          'bucket_ts', 'open_price_usd', 'high_price_usd', 'low_price_usd',
+          'close_price_usd', 'open_fdv_usd', 'high_fdv_usd', 'low_fdv_usd',
+          'close_fdv_usd', 'volume_usd', 'swaps', 'buys', 'sells',
+          'transactions', 'source_minute_buckets', 'first_observed_at',
+          'first_block_number', 'first_log_index', 'last_observed_at',
+          'last_block_number', 'last_log_index',
+        ],
+        constraints: [{
+          name: 'robinhood_market_buckets_1h_pkey',
+          includes: ['PRIMARY KEY', 'chain', 'protocol', 'market_key', 'bucket_ts'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage67-robinhood-observation-liquidity',
+    name: 'Stage 67 Robinhood observation liquidity evidence',
+    repair: 'node src/utils/db-init-stage67.js',
+    tables: [
+      {
+        table: 'robinhood_market_observations',
+        columns: [
+          'liquidity_usd', 'liquidity_raw', 'liquidity_status',
+          'liquidity_confidence', 'liquidity_warning',
+        ],
+        constraints: [
+          {
+            name: 'robinhood_market_observations_liquidity_values_check',
+            includes: ['CHECK', 'liquidity_usd', 'liquidity_raw'],
+          },
+          {
+            name: 'robinhood_market_observations_liquidity_protocol_check',
+            includes: ['CHECK', 'protocol', 'liquidity_usd', 'liquidity_raw'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage68-robinhood-bucket-liquidity',
+    name: 'Stage 68 Robinhood bucket liquidity snapshots',
+    repair: 'node src/utils/db-init-stage68.js',
+    tables: [
+      'robinhood_market_buckets_1m',
+      'robinhood_market_buckets_1h',
+    ].map((table) => ({
+      table,
+      columns: [
+        'close_liquidity_usd', 'close_liquidity_raw', 'close_liquidity_status',
+        'close_liquidity_confidence', 'close_liquidity_warning',
+      ],
+      constraints: [{
+        name: `${table}_liquidity_check`,
+        includes: [
+          'CHECK', 'protocol', 'close_liquidity_usd', 'close_liquidity_raw',
+          'close_liquidity_status', 'close_liquidity_confidence',
+        ],
+      }],
+    })),
+  },
+  {
+    key: 'stage69-token-catalog-fdv',
+    name: 'Stage 69 token catalog FDV field',
+    repair: 'node src/utils/db-init-stage69.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: ['last_fdv'],
+      },
+    ],
+  },
+  {
+    key: 'stage71-token-catalog-website',
+    name: 'Stage 71 token catalog website field',
+    repair: 'node src/utils/db-init-stage71.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: ['last_website_url'],
+      },
+    ],
+  },
+  {
+    key: 'stage72-robinhood-metadata-source-checks',
+    name: 'Stage 72 Robinhood metadata source check fields',
+    repair: 'node src/utils/db-init-stage72.js',
+    tables: [
+      {
+        table: 'token_catalog',
+        columns: [
+          'robinhood_blockscout_checked_at',
+          'robinhood_dexscreener_checked_at',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage73-rolling-volume-coverage',
+    name: 'Stage 73 rolling-volume coverage provenance',
+    repair: 'node src/utils/db-init-stage73.js',
+    tables: [
+      {
+        table: 'token_market_volume_buckets_1m',
+        columns: ['window_coverage'],
+        constraints: [{
+          name: 'token_market_volume_buckets_1m_window_coverage_check',
+          includes: ['CHECK', 'jsonb_typeof', 'window_coverage', 'object'],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage74-robinhood-coverage-origin',
+    name: 'Stage 74 Robinhood continuous-coverage origin',
+    repair: 'node src/utils/db-init-stage74.js',
+    tables: [
+      {
+        table: 'robinhood_ingestion_cursors',
+        columns: ['coverage_start_block', 'coverage_start_timestamp'],
+        constraints: [
+          {
+            name: 'robinhood_ingestion_cursors_coverage_pair_check',
+            includes: ['CHECK', 'coverage_start_block', 'coverage_start_timestamp'],
+          },
+          {
+            name: 'robinhood_ingestion_cursors_coverage_boundary_check',
+            includes: [
+              'CHECK', 'coverage_start_block', 'checkpoint_block',
+              'coverage_start_timestamp', 'checkpoint_timestamp',
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage75-structured-volume-coverage',
+    name: 'Stage 75 structured rolling-volume coverage provenance',
+    repair: 'node src/utils/db-init-stage75.js',
+    tables: [
+      {
+        table: 'token_market_volume_buckets_1m',
+        columns: ['window_coverage'],
+        constraints: [{
+          name: 'token_market_volume_buckets_1m_coverage_entries_check',
+          includes: [
+            'CHECK', 'window_coverage', 'complete', 'partial', 'unavailable',
+            'state', 'source',
+          ],
+        }],
+      },
+    ],
+  },
+  {
+    key: 'stage76-custom-alert-capabilities',
+    name: 'Stage 76 custom-alert FDV and spot window',
+    repair: 'node src/utils/db-init-stage76.js',
+    tables: [
+      {
+        table: 'user_custom_alert_rules',
+        columns: ['window'],
+        constraints: [
+          {
+            name: 'user_custom_alert_rules_metric_check',
+            includes: ['CHECK', 'price', 'mcap', 'fdv'],
+          },
+          {
+            name: 'user_custom_alert_rules_window_check',
+            includes: ['CHECK', 'window', 'spot'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'stage77-chain-scoped-alert-state',
+    name: 'Stage 77 chain-scoped alert cursors and event dismissals',
+    repair: 'node src/utils/db-init-stage77.js',
+    tables: [
+      {
+        table: 'alert_delivery_cursors',
+        columns: ['user_id', 'rule_key', 'chain', 'last_seen_event_id', 'last_acked_event_id', 'updated_at'],
+        defaults: { chain: "'solana'::character varying" },
+        constraints: [
+          {
+            name: 'alert_delivery_cursors_pkey',
+            includes: ['PRIMARY KEY', 'user_id', 'rule_key', 'chain'],
+          },
+          {
+            name: 'alert_delivery_cursors_chain_check',
+            includes: ['CHECK', 'chain', 'solana', 'robinhood'],
+          },
+        ],
+      },
+      {
+        table: 'alert_event_dismissals',
+        columns: ['user_id', 'rule_key', 'chain', 'event_id', 'dismissed_at'],
+        constraints: [
+          {
+            name: 'alert_event_dismissals_pkey',
+            includes: ['PRIMARY KEY', 'user_id', 'rule_key', 'chain', 'event_id'],
+          },
+          {
+            name: 'alert_event_dismissals_chain_check',
+            includes: ['CHECK', 'chain', 'solana', 'robinhood'],
+          },
+          {
+            name: 'alert_event_dismissals_event_id_check',
+            includes: ['CHECK', 'event_id'],
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
-  test: ['core-auth-billing'],
+  test: [
+    'core-auth-billing',
+    'stage48-user-custom-alert-rules',
+    'stage63-robinhood-persistence-control-plane',
+    'stage73-rolling-volume-coverage',
+    'stage74-robinhood-coverage-origin',
+    'stage75-structured-volume-coverage',
+    'stage76-custom-alert-capabilities',
+    'stage77-chain-scoped-alert-state',
+  ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
 
@@ -1416,6 +1967,7 @@ async function assertRuntimeSchema(options = {}) {
 
 module.exports = {
   SCHEMA_GROUPS,
+  getGroupsForProfile,
   inspectRuntimeSchema,
   assertRuntimeSchema,
   createRuntimeSchemaError,

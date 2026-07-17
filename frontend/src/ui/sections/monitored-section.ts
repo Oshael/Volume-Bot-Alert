@@ -1,9 +1,12 @@
 import type { AppController } from '../../state/app-controller';
-import { getMockTradingPositionView, getMonitoredTokens, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getMockTradingPositionView, getMonitoredTokens, getTokenSparkline, isTokenStarred, type AppState, type ManualTokenEntry, type MeteoraEntry } from '../../state/app-state';
 import { bindCompactSearch, bindCopyButtons, bindMonitoredSortControls, bindPagedMonitoredControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, bindTopEdgePageScrollBridge, buildTradeTerminalMenuElement, fmtAge, fmtMoney, fmtPct, getAgeToneClassFromAgeMs, getAgeToneClassFromCreatedAt, renderManualQuickAddAction, renderSparklineFigure, renderSparklineRangeControl, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
 import { escapeHtml, sanitizeHttpUrl, sanitizeOptionalHttpUrl } from './html-safety';
 import { fmtMockSol, resolveLiveMockSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
 import { resolveMonitoredTableRows } from '../../utils/token-table';
+import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
+import { resolveCoveredMetric, resolveTokenValuation, type ResolvedCoveredMetric, type TokenMetricCoverage } from '../../utils/token-valuation';
+import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -19,6 +22,16 @@ export function renderMonitoredSection(state: AppState, controller: AppControlle
   const section = document.createElement('section');
   const view = resolveMonitoredSectionView(state);
   section.className = `panel legacy-panel monitored-panel${view.isCollapsed ? ' panel-collapsed' : ''}${view.miniChartEnabled ? ' monitored-panel-mini-chart-enabled' : ''}`;
+  if (view.capabilityNotice) {
+    section.innerHTML = `
+      <div class="panel-header monitored-panel-header">
+        <span class="monitored-panel-title">MONITORED<br>TOKENS</span>
+        <span class="count monitored-token-count-pill">0</span>
+      </div>
+      <div class="chain-readiness-empty" data-chain-readiness-surface="monitored">${escapeHtml(view.capabilityNotice)}</div>
+    `;
+    return section;
+  }
   section.innerHTML = view.isCollapsed
     ? renderCollapsedMonitoredHeader(view.filteredTracked.length, view.pinCount)
     : renderExpandedMonitoredMarkup(state, view);
@@ -47,6 +60,7 @@ function resolveMonitoredSectionView(state: AppState) {
   const filteredSafePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), filteredTotalPages - 1);
   const filteredPageStart = filteredSafePage * safePerPage;
   return {
+    capabilityNotice: getChainCapabilityNotice(state, 'monitored'),
     isCollapsed: state.ui.collapsed.monitored,
     searchQuery,
     safePerPage,
@@ -56,8 +70,15 @@ function resolveMonitoredSectionView(state: AppState) {
     pageItems: filteredTracked.slice(filteredPageStart, filteredPageStart + safePerPage),
     sortClasses: resolveMonitoredSortClasses(state),
     miniChartEnabled: state.ui.livePanelLayout.spans.monitored > 1,
-    pinCount: state.data.pinnedMonitoredTokenAddresses.length,
+    pinCount: state.data.pinnedMonitoredTokenIdentities.length,
+    minMcap: resolveMonitoredFilterValue(state, 'monitored-mcap-min'),
+    minFdv: resolveMonitoredFilterValue(state, 'monitored-fdv-min'),
   };
+}
+
+function resolveMonitoredFilterValue(state: AppState, key: string) {
+  const value = Number(state.data.configs[key]);
+  return Number.isFinite(value) ? Math.max(0, value) : 30000;
 }
 
 function resolveMonitoredSortClasses(state: AppState) {
@@ -116,7 +137,7 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${sortClasses.mcapActive}" data-sort-toggle="monitored-mcap">MCAP</button>
+              <button type="button" class="old-filter-btn ${sortClasses.mcapActive}" data-sort-toggle="monitored-mcap">MCAP / FDV</button>
               <div class="sort-menu-dropdown">
                 <button type="button" class="sort-menu-item ${sortClasses.mcapHighest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="highest">HIGHEST</button>
                 <button type="button" class="sort-menu-item ${sortClasses.mcapLowest}" data-monitored-sort-mode="mcap" data-monitored-sort-window="lowest">LOWEST</button>
@@ -145,6 +166,11 @@ function renderExpandedMonitoredMarkup(state: AppState, view: MonitoredSectionVi
             </div>
             <div class="monitored-inline-controls">
               ${view.miniChartEnabled ? renderSparklineRangeControl(state, 'monitored') : ''}
+              <div class="monitored-valuation-filters" aria-label="Monitored valuation filters">
+                <label class="legacy-mini-field">MCAP MIN <input type="number" min="0" step="1000" value="${view.minMcap}" data-action="monitored-mcap-min" aria-label="Minimum market cap" /></label>
+                <label class="legacy-mini-field">FDV MIN <input type="number" min="0" step="1000" value="${view.minFdv}" data-action="monitored-fdv-min" aria-label="Minimum fully diluted valuation" /></label>
+                <button type="button" class="action-button small monitored-filter-apply" data-action="monitored-valuation-apply">Apply</button>
+              </div>
               <label class="legacy-mini-field monitored-per-page-field">PER PAGE <input type="number" min="10" step="1" data-action="monitored-per-page" /></label>
               <label class="legacy-mini-field monitored-page-field">
                 PAGE
@@ -189,17 +215,21 @@ function renderMonitoredRows(section: ParentNode, state: AppState, pageItems: Ma
 
   const mockSolUsdcRate = resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs);
   for (const item of pageItems) {
+    const chain = item.chain || 'solana';
+    const isSolana = chain === 'solana';
+    const miniChartEnabled = state.ui.livePanelLayout.spans.monitored > 1
+      && state.data.chainReadiness[chain]?.capabilities.charts === true;
     monitoredList.append(buildMonitoredRow(
       item,
       state.data.manualTokenFolders,
       state.ui.busy,
-      state.data.starredTokens.includes(item.address),
+      isTokenStarred(state, item.address, item.chain || 'solana'),
       state.session.role === 'admin',
       state.ui.enabledTradeTerminals,
-      state.ui.livePanelLayout.spans.monitored > 1 ? state.data.sparklineByAddress[item.address] || null : null,
-      state.ui.livePanelLayout.spans.monitored > 1,
-      getMockTradingPositionView(state, item.address),
-      state.data.mockTradingTradesByAddress[item.address],
+      miniChartEnabled ? getTokenSparkline(state, item.address, chain) : null,
+      miniChartEnabled,
+      isSolana ? getMockTradingPositionView(state, item.address) : null,
+      isSolana ? state.data.mockTradingTradesByAddress[item.address] : [],
       mockSolUsdcRate,
     ));
   }
@@ -252,9 +282,43 @@ function bindMonitoredSectionControls(
   bindMonitoredSortControls(section, controller);
   bindPagedMonitoredControls(section, controller);
   bindMonitoredPinControls(section, state, controller);
+  bindMonitoredValuationFilters(section, controller, view);
+}
+
+function bindMonitoredValuationFilters(
+  section: ParentNode,
+  controller: AppController,
+  view: MonitoredSectionView,
+) {
+  const mcapInput = section.querySelector<HTMLInputElement>('[data-action="monitored-mcap-min"]');
+  const fdvInput = section.querySelector<HTMLInputElement>('[data-action="monitored-fdv-min"]');
+  const applyButton = section.querySelector<HTMLButtonElement>('[data-action="monitored-valuation-apply"]');
+  if (!mcapInput || !fdvInput || !applyButton) return;
+
+  const readValue = (input: HTMLInputElement, fallback: number) => {
+    const value = Number(input.value);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const applyFilters = () => {
+    const minMcap = readValue(mcapInput, view.minMcap);
+    const minFdv = readValue(fdvInput, view.minFdv);
+    mcapInput.value = String(minMcap);
+    fdvInput.value = String(minFdv);
+    void controller.saveMonitoringConfig({
+      'monitored-mcap-min': minMcap,
+      'monitored-fdv-min': minFdv,
+    });
+  };
+  applyButton.addEventListener('click', applyFilters);
+  for (const input of [mcapInput, fdvInput]) {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') applyFilters();
+    });
+  }
 }
 
 type MonitoredPinClickDraft = {
+  chain: TokenChain;
   address: string;
   pinned: boolean;
   timer: ReturnType<typeof window.setTimeout>;
@@ -265,6 +329,7 @@ type MonitoredPinDropTarget = {
 };
 
 type MonitoredPinDragDraft = {
+  chain: TokenChain;
   address: string;
   handle: HTMLButtonElement;
   list: HTMLElement;
@@ -295,12 +360,12 @@ function bindMonitoredPinControls(section: ParentNode, state: AppState, controll
   });
 
   let pendingClick: MonitoredPinClickDraft | null = null;
-  const registerPinTap = (address: string, pinned: boolean) => {
-    if (pendingClick?.address === address) {
+  const registerPinTap = (chain: TokenChain, address: string, pinned: boolean) => {
+    if (pendingClick?.chain === chain && pendingClick.address === address) {
       window.clearTimeout(pendingClick.timer);
       pendingClick = null;
       if (pinned) {
-        void controller.unpinMonitoredToken(address);
+        void controller.unpinMonitoredToken(address, chain);
         dispatchMonitoredPinCommit(section);
       }
       return;
@@ -310,11 +375,11 @@ function bindMonitoredPinControls(section: ParentNode, state: AppState, controll
     const timer = window.setTimeout(() => {
       pendingClick = null;
       if (!pinned) {
-        void controller.pinMonitoredToken(address, 0);
+        void controller.pinMonitoredToken(address, 0, chain);
         dispatchMonitoredPinCommit(section);
       }
     }, MONITORED_PIN_CLICK_DELAY_MS);
-    pendingClick = { address, pinned, timer };
+    pendingClick = { chain, address, pinned, timer };
   };
 
   section.addEventListener('click', (event) => {
@@ -322,7 +387,8 @@ function bindMonitoredPinControls(section: ParentNode, state: AppState, controll
     if (mouseEvent.detail !== 0) return;
     const handle = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.monitored-pin-handle');
     const address = handle?.dataset.address || '';
-    if (handle && address) registerPinTap(address, handle.dataset.pinned === 'true');
+    const chain = normalizeTokenChain(handle?.dataset.chain) || 'solana';
+    if (handle && address) registerPinTap(chain, address, handle.dataset.pinned === 'true');
   });
 
   let dragDraft: MonitoredPinDragDraft | null = null;
@@ -349,8 +415,8 @@ function bindMonitoredPinControls(section: ParentNode, state: AppState, controll
       draft.pendingClientY = null;
     }
     if (shouldCommitDrag) {
-      const position = resolveMonitoredAbsoluteDropPosition(state, draft.address, draft.previewIndex);
-      void controller.pinMonitoredToken(draft.address, position);
+      const position = resolveMonitoredAbsoluteDropPosition(state, draft.chain, draft.address, draft.previewIndex);
+      void controller.pinMonitoredToken(draft.address, position, draft.chain);
       dispatchMonitoredPinCommit(section);
       window.setTimeout(() => finishMonitoredPinDragVisuals(draft), MONITORED_PIN_DROP_VISUAL_SETTLE_MS);
       return;
@@ -387,7 +453,7 @@ function bindMonitoredPinControls(section: ParentNode, state: AppState, controll
     const completedDraft = dragDraft;
     const wasDrag = completedDraft.active;
     cleanupDrag(true);
-    if (!wasDrag) registerPinTap(completedDraft.address, completedDraft.handle.dataset.pinned === 'true');
+    if (!wasDrag) registerPinTap(completedDraft.chain, completedDraft.address, completedDraft.handle.dataset.pinned === 'true');
   };
   const onPointerCancel = (event: PointerEvent) => {
     if (dragDraft && event.pointerId === dragDraft.pointerId) cleanupDrag(false);
@@ -400,10 +466,12 @@ function bindMonitoredPinControls(section: ParentNode, state: AppState, controll
     const row = handle?.closest<HTMLElement>('.monitored-token-row');
     const list = row?.closest<HTMLElement>('.monitored-list');
     const address = handle?.dataset.address || '';
+    const chain = normalizeTokenChain(handle?.dataset.chain) || 'solana';
     if (!handle || !row || !list || !address) return;
 
     const rect = row.getBoundingClientRect();
     dragDraft = {
+      chain,
       address,
       handle,
       list,
@@ -537,25 +605,33 @@ function clearMonitoredPinPreviewTransforms(draft: MonitoredPinDragDraft) {
   }
 }
 
-function resolveMonitoredAbsoluteDropPosition(state: AppState, address: string, previewIndex: number) {
+function resolveMonitoredAbsoluteDropPosition(
+  state: AppState,
+  chain: TokenChain,
+  address: string,
+  previewIndex: number,
+) {
+  const draggedIdentity = buildTokenIdentityKey(chain, address);
   const fullRows = resolveMonitoredTableRows(getMonitoredTokens(state), {
     searchQuery: '',
     sortCriteria: state.ui.monitoredSorts,
-  }).map((item) => item.address).filter((item) => item !== address);
+  }).map((item) => buildTokenIdentityKey(item.chain || 'solana', item.address))
+    .filter((identity) => identity !== draggedIdentity);
   const safePerPage = Math.max(10, Math.floor(state.ui.monitoredPerPage) || 30);
   const searchQuery = String(state.ui.monitoredSearchQuery || '').trim().toLowerCase();
   const filteredRows = resolveMonitoredTableRows(getMonitoredTokens(state), {
     searchQuery,
     sortCriteria: state.ui.monitoredSorts,
-  }).map((item) => item.address).filter((item) => item !== address);
+  }).map((item) => buildTokenIdentityKey(item.chain || 'solana', item.address))
+    .filter((identity) => identity !== draggedIdentity);
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / safePerPage));
   const safePage = Math.min(Math.max(0, Math.floor(state.ui.monitoredPage) || 0), totalPages - 1);
   const requestedIndex = Math.min(Math.max(0, (safePage * safePerPage) + previewIndex), filteredRows.length);
-  const nextAddress = filteredRows[requestedIndex];
-  const previousAddress = filteredRows[requestedIndex - 1];
-  const nextIndex = nextAddress ? fullRows.indexOf(nextAddress) : -1;
+  const nextIdentity = filteredRows[requestedIndex];
+  const previousIdentity = filteredRows[requestedIndex - 1];
+  const nextIndex = nextIdentity ? fullRows.indexOf(nextIdentity) : -1;
   if (nextIndex >= 0) return nextIndex;
-  const previousIndex = previousAddress ? fullRows.indexOf(previousAddress) : -1;
+  const previousIndex = previousIdentity ? fullRows.indexOf(previousIdentity) : -1;
   return previousIndex >= 0 ? previousIndex + 1 : 0;
 }
 
@@ -685,10 +761,20 @@ function bindMonitoredSearchInput(searchInput: HTMLInputElement | null, controll
   });
 }
 
-function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
+function resolveMonitoredIdentityPresentation(item: ManualTokenEntry) {
+  const chain = item.chain || 'solana';
   const symbol = item.symbol || item.label || item.address.slice(0, 6);
-  const subtitle = String(item.name || item.label || '');
-  const dexUrl = sanitizeHttpUrl(item.pairUrl || `https://dexscreener.com/solana/${item.address}`);
+  const subtitle = String(item.name || item.label || 'Metadata pending');
+  const primaryUrl = sanitizeHttpUrl(
+    buildTokenMarketUrl(chain, item.address, item.pairUrl)
+      || buildTokenExplorerUrl(chain, item.address),
+  );
+  return { chain, primaryUrl, subtitle, symbol };
+}
+
+function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState['data']['manualTokenFolders'], busy: boolean, isStarred: boolean, isAdmin: boolean, enabledTradeTerminals: AppState['ui']['enabledTradeTerminals'], sparkline: AppState['data']['sparklineByAddress'][string] | null, miniChartEnabled: boolean, mockTradingPosition: AppState['data']['mockTradingPositionsByAddress'][string] | null, mockTradingTrades: AppState['data']['mockTradingTradesByAddress'][string] = [], mockSolUsdcRate?: number) {
+  const { chain, primaryUrl, subtitle, symbol } = resolveMonitoredIdentityPresentation(item);
+  const valuation = resolveTokenValuation(item);
   const xSearch = buildXSearchUrl(symbol, item.address);
   const socialLinks = splitTokenSocialUrls(item.twitterUrl, item.communityUrl);
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
@@ -699,8 +785,15 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
     ? ((item.volume5m - volDeltaBaseline) / volDeltaBaseline) * 100
     : null;
   const article = document.createElement('article');
-  article.className = buildMonitoredRowClassName(isStarred, Boolean(item._isPinnedMonitored));
-  article.dataset.hoverKey = `monitored:${item.address}`;
+  article.className = buildMonitoredRowClassName(
+    isStarred,
+    Boolean(item._isPinnedMonitored),
+    item.activityState,
+  );
+  const identityKey = buildTokenIdentityKey(chain, item.address);
+  article.dataset.hoverKey = `monitored:${identityKey}`;
+  article.dataset.identity = identityKey;
+  article.dataset.chain = chain;
   article.dataset.address = item.address;
 
   article.append(buildMonitoredPinHandle(item));
@@ -713,24 +806,26 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   titleLine.className = 'panel-row-title monitored-title-line';
   const tokenName = document.createElement('a');
   tokenName.className = 'token-name';
-  tokenName.href = dexUrl;
+  tokenName.href = primaryUrl;
   tokenName.target = '_blank';
   tokenName.rel = 'noreferrer';
   tokenName.textContent = symbol;
   const tickerPeerBadge = buildTickerPeerBadge(item.tickerPeers);
+  const identityBadges = buildTokenIdentityBadgeGroup(tickerPeerBadge, chain, item.address);
   const tokenAddr = document.createElement('span');
   tokenAddr.className = 'token-addr';
   tokenAddr.textContent = subtitle;
-  titleLine.append(...[tokenName, tokenAddr, tickerPeerBadge].filter((item): item is HTMLElement => Boolean(item)));
+  titleLine.append(tokenName, tokenAddr, identityBadges);
+  appendMonitoredFreshnessBadges(titleLine, item, valuation);
 
   const metaLine = document.createElement('div');
   metaLine.className = 'panel-row-meta monitored-meta-line';
   metaLine.append(
-    buildMetaMetric('MCAP', fmtMoney(item.mcap)),
+    buildValuationMetric(valuation),
     buildMetaMetric('AGE', age, ageToneClass),
-    buildMetaMetric('VOL 1H', fmtMoney(item.volume1h)),
-    buildMetaMetric('VOL 6H', fmtMoney(item.volume6h)),
-    buildMetaMetric('VOL 24H', fmtMoney(item.volume24h)),
+    buildCoveredMoneyMetric('VOL 1H', item.volume1h, item.coverage?.['1h']),
+    buildCoveredMoneyMetric('VOL 6H', item.volume6h, item.coverage?.['6h']),
+    buildCoveredMoneyMetric('VOL 24H', item.volume24h, item.coverage?.['24h']),
     buildMetaMetric('TOTAL LIQ', buildMonitoredTotalLiquidityValue(item)),
   );
 
@@ -745,14 +840,25 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   }
   actions.append(
     buildGlyphButton('⧉', 'action-glyph copy-button', 'copy-address', item.address, null, false, 'Copy contract'),
-    buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress, {
-      enabledTradeTerminals,
-    }),
-    buildManualQuickAddElement(item.address, busy, manualTokenFolders),
-    buildStarButton(item.address, isStarred, busy),
-    buildGlyphButton('⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token'),
   );
-  appendMonitoredAdminActions(actions, item, symbol, busy, isAdmin, mockTradingPosition);
+  if (chain === 'solana') {
+    actions.append(buildTradeTerminalMenuElement(item.address, item.mintAddress, item.pairAddress, {
+      chain: item.chain,
+      enabledTradeTerminals,
+    }));
+  }
+  const blockButton = buildGlyphButton(
+    '⊗', 'action-glyph danger-glyph', 'block-token', item.address, symbol, busy, 'Block token',
+  );
+  blockButton.dataset.chain = chain;
+  actions.append(
+    buildManualQuickAddElement(item.address, chain, busy, manualTokenFolders),
+    buildStarButton(item.address, chain, isStarred, busy),
+    blockButton,
+  );
+  if (chain === 'solana') {
+    appendMonitoredAdminActions(actions, item, symbol, busy, isAdmin, mockTradingPosition);
+  }
 
   main.append(titleLine, metaLine, actions);
   appendMonitoredMockTradingLine(main, mockTradingPosition, mockTradingTrades, mockSolUsdcRate);
@@ -763,8 +869,10 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   volLabel.className = 'vol5m-label';
   volLabel.textContent = 'VOL 5M';
   const mainMetric = document.createElement('div');
-  mainMetric.className = 'panel-main-metric monitored-main-metric';
-  mainMetric.textContent = fmtMoney(item.volume5m);
+  const volume5m = resolveCoveredMetric(item.volume5m, item.coverage?.['5m']);
+  mainMetric.className = `panel-main-metric monitored-main-metric ${buildCoverageClassName(volume5m)}`;
+  mainMetric.textContent = formatCoveredMoney(volume5m);
+  mainMetric.title = buildCoverageTitle(volume5m);
   const delta = document.createElement('div');
   delta.className = `panel-side-delta ${volDelta != null && volDelta < 0 ? 'down' : 'up'}`;
   delta.textContent = fmtPct(volDelta);
@@ -778,8 +886,62 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   return article;
 }
 
-function buildMonitoredRowClassName(isStarred: boolean, isPinned: boolean) {
-  return `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}${isPinned ? ' monitored-token-pinned' : ''}`;
+function appendMonitoredFreshnessBadges(
+  titleLine: HTMLElement,
+  item: ManualTokenEntry,
+  valuation: ReturnType<typeof resolveTokenValuation>,
+) {
+  if (valuation.freshness === 'stale') {
+    const badge = document.createElement('span');
+    badge.className = 'monitored-data-state monitored-data-state-stale';
+    badge.textContent = 'STALE VALUATION';
+    badge.title = valuation.observedAt ? `Valuation observed at ${valuation.observedAt}` : 'Valuation is stale';
+    titleLine.append(badge);
+  }
+  if (item.activityState === 'stale') {
+    const badge = document.createElement('span');
+    badge.className = 'monitored-data-state monitored-activity-state';
+    badge.textContent = 'NO RECENT ACTIVITY';
+    badge.title = 'Token remains monitored; no recent accepted activity was observed';
+    titleLine.append(badge);
+  }
+}
+
+function buildValuationMetric(valuation: ReturnType<typeof resolveTokenValuation>) {
+  const freshnessClass = valuation.freshness === 'stale' ? 'monitored-valuation-stale' : '';
+  const metric = buildMetaMetric(valuation.label, fmtMoney(valuation.value), freshnessClass);
+  if (valuation.observedAt) metric.title = `Observed at ${valuation.observedAt}`;
+  return metric;
+}
+
+function buildCoveredMoneyMetric(label: string, value: number | null | undefined, coverage?: TokenMetricCoverage) {
+  const metric = resolveCoveredMetric(value, coverage);
+  const element = buildMetaMetric(label, formatCoveredMoney(metric), buildCoverageClassName(metric));
+  element.title = buildCoverageTitle(metric);
+  return element;
+}
+
+function formatCoveredMoney(metric: ResolvedCoveredMetric) {
+  if (!metric.available) return '-';
+  return `${metric.isPartial ? '~' : ''}${fmtMoney(metric.value)}`;
+}
+
+function buildCoverageClassName(metric: ResolvedCoveredMetric) {
+  return `monitored-coverage-${metric.coverage}`;
+}
+
+function buildCoverageTitle(metric: ResolvedCoveredMetric) {
+  if (metric.coverage === 'complete') return 'Complete rolling-window coverage';
+  if (metric.coverage === 'partial') return 'Partial rolling-window coverage';
+  return 'Rolling-window value unavailable';
+}
+
+function buildMonitoredRowClassName(
+  isStarred: boolean,
+  isPinned: boolean,
+  activityState?: ManualTokenEntry['activityState'],
+) {
+  return `token-row monitored-token-row monitored-token-row-v68${isStarred ? ' token-starred' : ''}${isPinned ? ' monitored-token-pinned' : ''}${activityState === 'stale' ? ' monitored-activity-stale' : ''}`;
 }
 
 function buildMonitoredPinHandle(item: ManualTokenEntry) {
@@ -789,6 +951,7 @@ function buildMonitoredPinHandle(item: ManualTokenEntry) {
   button.className = 'monitored-pin-handle';
   button.dataset.action = 'monitored-pin-handle';
   button.dataset.address = item.address;
+  button.dataset.chain = item.chain || 'solana';
   button.dataset.pinned = String(pinned);
   button.setAttribute('aria-label', pinned ? 'Move pinned token; double click to unpin' : 'Pin or move token');
   button.setAttribute('aria-pressed', String(pinned));
@@ -797,12 +960,14 @@ function buildMonitoredPinHandle(item: ManualTokenEntry) {
 }
 
 function buildMonitoredMiniChart(item: ManualTokenEntry, sparkline: AppState['data']['sparklineByAddress'][string] | null) {
+  const chain = item.chain || 'solana';
   const miniChart = document.createElement('div');
   miniChart.className = 'monitored-mini-chart';
   miniChart.innerHTML = renderSparklineFigure(sparkline, item.address, {
     areaFill: true,
     expandable: true,
-    liveMcap: item.mcap,
+    lookupKey: buildTokenIdentityKey(chain, item.address),
+    liveMcap: resolveTokenValuation(item).value,
   });
   return miniChart;
 }
@@ -1218,25 +1383,32 @@ function buildGlyphButton(
 
 function buildManualQuickAddElement(
   address: string,
+  chain: TokenChain,
   busy: boolean,
   folders: AppState['data']['manualTokenFolders'],
 ) {
   const template = document.createElement('template');
-  template.innerHTML = renderManualQuickAddAction(escapeHtml(address), busy, folders).trim();
+  template.innerHTML = renderManualQuickAddAction(escapeHtml(address), busy, folders, chain).trim();
   const element = template.content.firstElementChild;
   if (element instanceof HTMLElement) {
     return element;
   }
 
-  return buildGlyphButton('+', 'action-glyph manual-quick-add-button', 'manual-quick-add', address, null, busy, 'Add to manual tokens');
+  const fallback = buildGlyphButton(
+    '+', 'action-glyph manual-quick-add-button', 'manual-quick-add', address, null, busy,
+    'Add to manual tokens',
+  );
+  fallback.dataset.chain = chain;
+  return fallback;
 }
 
-function buildStarButton(address: string, isStarred: boolean, disabled: boolean) {
+function buildStarButton(address: string, chain: TokenChain, isStarred: boolean, disabled: boolean) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `action-glyph starred-button${isStarred ? ' active' : ''}`;
   button.dataset.action = 'toggle-star';
   button.dataset.address = address;
+  button.dataset.chain = chain;
   button.disabled = disabled;
   button.title = 'Star token';
   button.textContent = isStarred ? '★' : '☆';

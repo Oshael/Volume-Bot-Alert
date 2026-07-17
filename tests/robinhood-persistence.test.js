@@ -1,0 +1,744 @@
+const assert = require('node:assert/strict');
+const { describe, it } = require('node:test');
+
+const {
+  createRobinhoodPersistenceRepository,
+  __private,
+} = require('../src/models/robinhood-persistence');
+
+const ADDRESS = '0x1111111111111111111111111111111111111111';
+const TOKEN = '0x2222222222222222222222222222222222222222';
+const QUOTE = '0x3333333333333333333333333333333333333333';
+const POOL = '0x4444444444444444444444444444444444444444';
+const HASH_A = `0x${'a'.repeat(64)}`;
+const HASH_B = `0x${'b'.repeat(64)}`;
+const TOPIC = `0x${'c'.repeat(64)}`;
+const POOL_ID = `0x${'d'.repeat(64)}`;
+
+function discoveryEntry(overrides = {}) {
+  return {
+    log: {
+      blockNumber: '8069000',
+      blockHash: HASH_A,
+      transactionHash: HASH_B,
+      logIndex: '7',
+      topics: [TOPIC],
+      data: `0x${'f'.repeat(256)}`,
+    },
+    event: {
+      tracked: true,
+      kind: 'pair-created',
+      chain: 'robinhood',
+      protocol: 'uniswap-v2',
+      blockNumber: '8069000',
+      blockHash: HASH_A,
+      transactionHash: HASH_B,
+      logIndex: '7',
+      timestampMs: '1783900800000',
+      factoryAddress: ADDRESS,
+      pairAddress: POOL,
+      marketKey: `robinhood:uniswap-v2:${POOL}`,
+      token0: TOKEN,
+      token1: QUOTE,
+      tokenAddress: TOKEN,
+      quoteAddress: QUOTE,
+      quoteIndex: 1,
+      pairIndex: '10',
+      ...overrides,
+    },
+  };
+}
+
+function noxaEntry(overrides = {}) {
+  return {
+    log: {
+      blockNumber: '8069000',
+      blockHash: HASH_A,
+      transactionHash: HASH_B,
+      logIndex: '8',
+      topics: [TOPIC],
+      data: `0x${'d'.repeat(256)}`,
+    },
+    event: {
+      kind: 'token-launched',
+      accepted: true,
+      validationErrors: [],
+      chain: 'robinhood',
+      protocol: 'uniswap-v3',
+      blockNumber: '8069000',
+      blockHash: HASH_A,
+      transactionHash: HASH_B,
+      logIndex: '8',
+      timestampMs: '1783900800000',
+      factoryAddress: ADDRESS,
+      tokenAddress: TOKEN,
+      deployerAddress: '0x5555555555555555555555555555555555555555',
+      dexFactoryAddress: ADDRESS,
+      pairTokenAddress: QUOTE,
+      poolAddress: POOL,
+      marketKey: `robinhood:uniswap-v3:${POOL}`,
+      dexId: '0',
+      launchConfigId: '1',
+      positionId: '2',
+      restrictionsEndBlockL1: '3',
+      initialBuyAmountRaw: '4',
+      launchSource: 'noxa-fun',
+      marketDiscoveryKey: `robinhood:uniswap-v3:${POOL}`,
+      isNewMarket: false,
+      deduplicatedWith: 'uniswap-v3',
+      factoryRecord: {
+        exists: true,
+        positionManagerAddress: '0x6666666666666666666666666666666666666666',
+        supplyRaw: '1000000000000000000000000000',
+      },
+      ...overrides,
+    },
+  };
+}
+
+function cursor() {
+  return {
+    nextBlock: '8069001',
+    safeHead: '8069010',
+    checkpoint: {
+      number: '8069000',
+      hash: HASH_A,
+      timestampMs: 1783900800000,
+    },
+  };
+}
+
+function marketEntry(overrides = {}) {
+  const marketKey = `robinhood:uniswap-v3:${POOL}`;
+  return {
+    log: {
+      blockNumber: '8069000',
+      blockHash: HASH_A,
+      transactionHash: HASH_B,
+      logIndex: '7',
+      topics: [TOPIC],
+      data: `0x${'e'.repeat(320)}`,
+    },
+    event: {
+      kind: 'swap',
+      accepted: true,
+      protocol: 'uniswap-v3',
+      blockNumber: '8069000',
+      transactionHash: HASH_B,
+      logIndex: '7',
+      timestampMs: 1783900800000,
+      marketKey,
+      poolAddress: POOL,
+      poolId: null,
+      tokenAddress: TOKEN,
+      quoteAddress: QUOTE,
+      side: 'buy',
+      tokenAmountRaw: '123456789012345678901234567890',
+      quoteAmountRaw: '98765432109876543210',
+    },
+    observation: {
+      accepted: true,
+      chain: 'robinhood',
+      protocol: 'uniswap-v3',
+      blockNumber: '8069000',
+      transactionHash: HASH_B,
+      logIndex: '7',
+      timestampMs: 1783900800000,
+      marketKey,
+      poolAddress: POOL,
+      poolId: null,
+      tokenAddress: TOKEN,
+      quoteAddress: QUOTE,
+      side: 'buy',
+      tokenDecimals: 18,
+      quoteDecimals: 6,
+      tokenTotalSupplyRaw: '1000000000000000000000000000',
+      tokenAmountRaw: '123456789012345678901234567890',
+      quoteAmountRaw: '98765432109876543210',
+      tokenAmount: '123456789012.34567890123456789',
+      quoteAmount: '98765432109876.54321',
+      priceQuote: '0.000000000000000000123456789012',
+      quoteUsdPrice: '1',
+      priceUsd: '0.000000000000000000123456789012',
+      volumeUsd: '98765432109876.54321',
+      fdvUsd: '123456.789012',
+      marketCapUsd: null,
+      valuationType: 'fdv',
+      quoteUsdSource: 'usdg-peg-assumption',
+      quoteUsdStatus: 'assumed',
+      liquidityUsd: null,
+      liquidityRaw: '12345678901234567890',
+      liquidityStatus: 'requires_tick_liquidity_distribution',
+      liquidityConfidence: 'none',
+      liquidityWarning: null,
+      ...overrides,
+    },
+  };
+}
+
+function liveBucketRow(overrides = {}) {
+  return {
+    chain: 'robinhood',
+    tokenAddress: TOKEN,
+    bucketTs: '2026-07-13T00:00:00.000Z',
+    openPriceUsd: '0.10',
+    highPriceUsd: '0.14',
+    lowPriceUsd: '0.09',
+    closePriceUsd: '0.12',
+    openFdvUsd: '100000',
+    highFdvUsd: '140000',
+    lowFdvUsd: '90000',
+    closeFdvUsd: '120000',
+    volumeUsd: '450.25',
+    swaps: 3,
+    buys: 2,
+    sells: 1,
+    transactions: 3,
+    lastObservedAt: '2026-07-13T00:00:20.000Z',
+    lastBlockNumber: '8069000',
+    lastLogIndex: '7',
+    protocols: {
+      'uniswap-v2': { volumeUsd: '150.25', swaps: 1, buys: 1, sells: 0, transactions: 1 },
+      'uniswap-v3': { volumeUsd: '300', swaps: 2, buys: 1, sells: 1, transactions: 2 },
+    },
+    ...overrides,
+  };
+}
+
+function createFakeDatabase(options = {}) {
+  const calls = [];
+  let released = false;
+  const client = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/INSERT INTO robinhood_processed_logs/.test(sql)) {
+        if (/jsonb_to_recordset/.test(sql)) {
+          const rows = JSON.parse(params[0]);
+          return options.duplicate
+            ? { rows: [], rowCount: 0 }
+            : {
+              rows: rows.map((row) => ({
+                transaction_hash: row.transactionHash,
+                log_index: row.logIndex,
+              })),
+              rowCount: rows.length,
+            };
+        }
+        return options.duplicate
+          ? { rows: [], rowCount: 0 }
+          : { rows: [{ transaction_hash: HASH_B }], rowCount: 1 };
+      }
+      if (/INSERT INTO robinhood_pool_registry/.test(sql) && options.failPool) {
+        throw new Error('pool write failed');
+      }
+      if (/UPDATE robinhood_pool_registry/.test(sql) && /metadata = metadata/.test(sql)) {
+        return options.missingNoxaPool ? { rows: [], rowCount: 0 } : { rows: [{}], rowCount: 1 };
+      }
+      if (/INSERT INTO robinhood_market_observations/.test(sql)) {
+        if (options.failObservation) throw new Error('observation write failed');
+        const rows = JSON.parse(params[0]);
+        const expectedBuckets = rows.filter((row) => row.status === 'accepted').length;
+        return {
+          rows: [{
+            inserted_observations: rows.length,
+            expected_buckets: expectedBuckets,
+            touched_buckets: options.bucketIdentityConflict ? 0 : expectedBuckets,
+            live_buckets: options.liveBuckets || [],
+          }],
+          rowCount: 1,
+        };
+      }
+      if (/INSERT INTO robinhood_market_buckets_1h/.test(sql)) {
+        if (options.failHourlyBucket) throw new Error('hourly bucket write failed');
+        const rows = JSON.parse(params[0]);
+        const expectedBuckets = rows.length;
+        return {
+          rows: [{
+            target_buckets: expectedBuckets,
+            expected_buckets: expectedBuckets,
+            touched_buckets: options.hourlyBucketConflict ? 0 : expectedBuckets,
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release() { released = true; },
+  };
+  return {
+    database: {
+      async getClient() { return client; },
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: options.readRows || [], rowCount: options.readRows?.length || 0 };
+      },
+    },
+    calls,
+    isReleased: () => released,
+  };
+}
+
+describe('Robinhood persistence repository', () => {
+  it('commits log identity, pool registry, and cursor in one transaction', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitDiscoveryRange({
+      entries: [discoveryEntry()],
+      cursor: cursor(),
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 1,
+      duplicateLogs: 0,
+      upsertedPools: 1,
+      updatedNoxaLaunches: 0,
+    });
+    assert.equal(fake.calls[0].sql, 'BEGIN');
+    assert.match(fake.calls[1].sql, /INSERT INTO robinhood_processed_logs/);
+    assert.match(fake.calls[2].sql, /INSERT INTO robinhood_pool_registry/);
+    assert.match(fake.calls[3].sql, /INSERT INTO robinhood_ingestion_cursors/);
+    assert.match(fake.calls[3].sql,
+      /coverage_start_block, coverage_start_timestamp/);
+    assert.match(fake.calls[3].sql,
+      /coverage_start_block = COALESCE\(\s*robinhood_ingestion_cursors\.coverage_start_block,\s*EXCLUDED\.coverage_start_block/);
+    assert.match(fake.calls[3].sql,
+      /coverage_start_timestamp = COALESCE\(\s*robinhood_ingestion_cursors\.coverage_start_timestamp,\s*EXCLUDED\.coverage_start_timestamp/);
+    assert.match(fake.calls[3].sql,
+      /WHERE robinhood_ingestion_cursors\.next_block <= EXCLUDED\.next_block/);
+    assert.equal(fake.calls[4].sql, 'COMMIT');
+    assert.equal(fake.isReleased(), true);
+
+    assert.equal(fake.calls[1].params.includes(discoveryEntry().log.data), false);
+    assert.deepEqual(fake.calls[2].params.slice(0, 5), [
+      'uniswap-v2', `robinhood:uniswap-v2:${POOL}`, POOL, null, ADDRESS,
+    ]);
+  });
+
+  it('treats a replayed log as duplicate without rewriting its pool', async () => {
+    const fake = createFakeDatabase({ duplicate: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitDiscoveryRange({
+      entries: [discoveryEntry()],
+      cursor: cursor(),
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 0,
+      duplicateLogs: 1,
+      upsertedPools: 0,
+      updatedNoxaLaunches: 0,
+    });
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_pool_registry/.test(call.sql)), false);
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), true);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
+  it('rolls back and does not advance the cursor when a pool write fails', async () => {
+    const fake = createFakeDatabase({ failPool: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      () => repository.commitDiscoveryRange({ entries: [discoveryEntry()], cursor: cursor() }),
+      /pool write failed/
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+    assert.equal(fake.isReleased(), true);
+  });
+
+  it('attaches a validated NOXA launch to its v3 pool in the same transaction', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+    const v3PoolEntry = discoveryEntry({
+      kind: 'pool-created',
+      protocol: 'uniswap-v3',
+      pairAddress: undefined,
+      poolAddress: POOL,
+      marketKey: `robinhood:uniswap-v3:${POOL}`,
+      fee: 10000,
+      tickSpacing: 200,
+    });
+
+    const result = await repository.commitDiscoveryRange({
+      entries: [noxaEntry(), v3PoolEntry],
+      cursor: cursor(),
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 2,
+      duplicateLogs: 0,
+      upsertedPools: 1,
+      updatedNoxaLaunches: 1,
+    });
+    const poolWriteIndex = fake.calls.findIndex((call) => /INSERT INTO robinhood_pool_registry/.test(call.sql));
+    const noxaWriteIndex = fake.calls.findIndex((call) => /UPDATE robinhood_pool_registry/.test(call.sql));
+    assert.equal(poolWriteIndex < noxaWriteIndex, true);
+    const noxaMetadata = JSON.parse(fake.calls[noxaWriteIndex].params[2]);
+    assert.equal(noxaMetadata.noxa.launchSource, 'noxa-fun');
+    assert.equal(noxaMetadata.noxa.restrictionsEndBlockL1, '3');
+    assert.equal(noxaMetadata.noxa.supplyRaw, '1000000000000000000000000000');
+  });
+
+  it('rolls back the cursor when a validated NOXA launch has no active v3 pool', async () => {
+    const fake = createFakeDatabase({ missingNoxaPool: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      repository.commitDiscoveryRange({ entries: [noxaEntry()], cursor: cursor() }),
+      /could not attach to its active v3 pool/
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+  });
+
+  it('preserves v4 pool identity without inventing a pool address', () => {
+    const event = discoveryEntry({
+      kind: 'initialize',
+      protocol: 'uniswap-v4',
+      marketKey: `robinhood:uniswap-v4:${POOL_ID}`,
+      poolAddress: null,
+      poolId: POOL_ID,
+      factoryAddress: undefined,
+      poolManagerAddress: ADDRESS,
+      token0: undefined,
+      token1: undefined,
+      currency0: TOKEN,
+      currency1: QUOTE,
+      fee: 3000,
+      tickSpacing: 60,
+      hooksAddress: '0x0000000000000000000000000000000000000000',
+    }).event;
+
+    const pool = __private.normalizePool(event);
+
+    assert.equal(pool.protocol, 'uniswap-v4');
+    assert.equal(pool.poolAddress, null);
+    assert.equal(pool.poolId, POOL_ID);
+    assert.equal(pool.originAddress, ADDRESS);
+  });
+
+  it('loads persistent cursors and active pools with explicit Robinhood scope', async () => {
+    const fake = createFakeDatabase({ readRows: [{ stream: 'discovery' }] });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    assert.deepEqual(await repository.loadCursor('discovery'), { stream: 'discovery' });
+    assert.deepEqual(await repository.listActivePools(), [{ stream: 'discovery' }]);
+    assert.ok(fake.calls.every((call) => /chain = 'robinhood'/.test(call.sql)));
+    const poolRead = fake.calls.find((call) => /FROM robinhood_pool_registry/.test(call.sql));
+    assert.doesNotMatch(poolRead.sql, /SELECT \*/);
+    assert.match(poolRead.sql, /protocol, market_key, pool_address/);
+  });
+
+  it('reads signal candidates per active market from closed minute buckets only', async () => {
+    const fake = createFakeDatabase({
+      readRows: [{
+        protocol: 'uniswap-v2',
+        market_key: `robinhood:uniswap-v2:${POOL}`,
+        token_address: TOKEN.toUpperCase(),
+        quote_address: QUOTE,
+        discovered_at: new Date('2026-07-13T08:00:00.000Z'),
+        window_start: new Date('2026-07-13T11:00:00.000Z'),
+        window_end: new Date('2026-07-13T12:00:00.000Z'),
+        volume_usd: '12345.67',
+        swaps: '14',
+        buys: '8',
+        sells: '6',
+        transactions: '12',
+        last_price_usd: '0.25',
+        last_fdv_usd: '250000',
+        last_liquidity_usd: '75000',
+        last_liquidity_raw: null,
+        last_liquidity_status: 'spot_estimate_from_double_quote_reserve',
+        last_liquidity_confidence: 'medium',
+        last_liquidity_warning: 'spot_price_and_reserves_are_manipulable',
+        last_observed_at: new Date('2026-07-13T11:59:30.000Z'),
+        admin_blocked: false,
+      }],
+    });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const rows = await repository.listSignalDryRunCandidates({
+      protocols: ['uniswap-v2'],
+      windowMs: 60 * 60 * 1000,
+      limit: 25,
+      asOf: '2026-07-13T12:00:45.000Z',
+    });
+
+    assert.equal(rows[0].marketKey, `robinhood:uniswap-v2:${POOL}`);
+    assert.equal(rows[0].tokenAddress, TOKEN);
+    assert.equal(rows[0].volumeUsd, '12345.67');
+    assert.equal(rows[0].transactions, 12);
+    assert.equal(rows[0].liquidityUsd, '75000');
+    assert.equal(rows[0].liquidityRaw, null);
+    assert.equal(rows[0].liquidityStatus, 'spot_estimate_from_double_quote_reserve');
+    assert.equal(rows[0].liquidityConfidence, 'medium');
+    assert.equal(rows[0].liquidityWarning, 'spot_price_and_reserves_are_manipulable');
+    assert.equal(rows[0].adminBlocked, false);
+    const call = fake.calls[0];
+    assert.deepEqual(call.params, [60 * 60 * 1000, 25, new Date('2026-07-13T12:00:45.000Z'), [
+      'uniswap-v2',
+    ]]);
+    assert.match(call.sql, /date_trunc\('minute', COALESCE\(\$3::timestamptz, NOW\(\)\)\)/);
+    assert.match(call.sql, /bucket\.bucket_ts < bounds\.window_end/);
+    assert.match(call.sql, /bucket\.protocol = ANY\(\$4::text\[\]\)/);
+    assert.match(call.sql, /registry\.market_key = activity\.market_key/);
+    assert.match(call.sql, /registry\.active = true/);
+    assert.match(call.sql, /bucket\.close_liquidity_usd/);
+    assert.match(call.sql, /AS last_liquidity_status/);
+    assert.match(call.sql, /blocked\.chain = 'robinhood'/);
+    assert.match(call.sql, /blocked\.address = activity\.token_address/);
+    assert.doesNotMatch(call.sql, /\b(?:INSERT|UPDATE|DELETE)\b/);
+  });
+
+  it('rejects signal windows that exceed bucket precision or retention', () => {
+    assert.throws(
+      () => __private.normalizeSignalCandidateQuery({ protocols: ['uniswap-v2'], windowMs: 90_000 }),
+      /whole minute/
+    );
+    assert.throws(
+      () => __private.normalizeSignalCandidateQuery({
+        protocols: ['uniswap-v2'],
+        windowMs: 15 * 24 * 60 * 60 * 1000,
+      }),
+      /between 1 minute and 14 days/
+    );
+    assert.throws(
+      () => __private.normalizeSignalCandidateQuery({
+        protocols: ['uniswap-v2'],
+        windowMs: 60_000,
+        statementTimeoutMs: 999,
+      }),
+      /statementTimeoutMs must be between 1000 and 60000/
+    );
+    assert.throws(
+      () => __private.normalizeSignalCandidateQuery({ protocols: [], windowMs: 60_000 }),
+      /signal protocols must contain supported Robinhood protocols/
+    );
+  });
+
+  it('bulk commits market dedupe, exact observations, and cursor atomically', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const emitted = [];
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      emitMarketBucketUpdate(payload) {
+        emitted.push({ payload, lastDatabaseCall: fake.calls.at(-1).sql });
+      },
+    });
+
+    const result = await repository.commitMarketRange({
+      entries: [marketEntry()],
+      cursor: cursor(),
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 1,
+      duplicateLogs: 0,
+      insertedObservations: 1,
+      touchedBuckets: 1,
+      touchedHourlyBuckets: 1,
+    });
+    assert.equal(fake.calls[0].sql, 'BEGIN');
+    assert.match(fake.calls[1].sql, /jsonb_to_recordset/);
+    assert.match(fake.calls[2].sql, /INSERT INTO robinhood_market_observations/);
+    assert.match(fake.calls[2].sql, /liquidity_usd, liquidity_raw/);
+    assert.match(fake.calls[2].sql, /"liquidityUsd"::numeric, "liquidityRaw"::numeric/);
+    assert.match(fake.calls[2].sql, /INSERT INTO robinhood_market_buckets_1m/);
+    assert.match(fake.calls[2].sql, /COUNT\(DISTINCT transaction_hash\)/);
+    assert.match(fake.calls[2].sql, /bucket_ts \+ INTERVAL '14 days'/);
+    assert.match(fake.calls[2].sql, /AS close_liquidity_usd/);
+    assert.match(fake.calls[2].sql, /close_liquidity_status = CASE/);
+    assert.match(fake.calls[2].sql, /all_token_buckets AS/);
+    assert.match(fake.calls[2].sql, /jsonb_object_agg\(protocol/);
+    assert.match(fake.calls[2].sql, /SUM\(bucket\.swaps\)/);
+    assert.match(fake.calls[2].sql,
+      /ORDER BY block_number DESC, log_index DESC/);
+    assert.match(fake.calls[3].sql, /INSERT INTO robinhood_market_buckets_1h/);
+    assert.match(fake.calls[3].sql, /FROM targets[\s\S]*robinhood_market_buckets_1m/);
+    assert.match(fake.calls[3].sql, /SUM\(minute\.transactions\)/);
+    assert.match(fake.calls[3].sql, /minute\.close_liquidity_usd/);
+    assert.match(fake.calls[3].sql, /close_liquidity_status = EXCLUDED\.close_liquidity_status/);
+    assert.match(fake.calls[4].sql, /INSERT INTO robinhood_ingestion_cursors/);
+    assert.equal(fake.calls[5].sql, 'COMMIT');
+    assert.equal(emitted.length, 1);
+    assert.equal(emitted[0].lastDatabaseCall, 'COMMIT');
+    assert.equal(emitted[0].payload.chain, 'robinhood');
+    assert.equal(emitted[0].payload.address, TOKEN);
+    assert.equal(emitted[0].payload.activity.volumeUsd, '450.25');
+    assert.equal(emitted[0].payload.activity.swaps, 3);
+    assert.deepEqual(Object.keys(emitted[0].payload.activity.protocols), [
+      'uniswap-v2', 'uniswap-v3',
+    ]);
+    assert.equal(emitted[0].payload.valuation.type, 'fdv');
+    assert.equal(emitted[0].payload.candle.closeFdvUsd, 120000);
+    assert.equal('closeMcap' in emitted[0].payload.candle, false);
+    assert.equal(emitted[0].payload.coverage.state, 'partial');
+    assert.match(emitted[0].payload.sequence, /^robinhood:\d{24}:\d{24}:\d{24}$/);
+
+    const logPayload = JSON.parse(fake.calls[1].params[0]);
+    const observationPayload = JSON.parse(fake.calls[2].params[0]);
+    assert.equal('data' in logPayload[0], false);
+    assert.equal(observationPayload[0].status, 'accepted');
+    assert.equal(observationPayload[0].tokenAmountRaw, '123456789012345678901234567890');
+    assert.equal(observationPayload[0].priceUsd, '0.000000000000000000123456789012');
+    assert.equal(observationPayload[0].liquidityRaw, '12345678901234567890');
+    assert.equal(observationPayload[0].liquidityStatus, 'requires_tick_liquidity_distribution');
+  });
+
+  it('keeps a committed market range successful when socket emission fails', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const repository = createRobinhoodPersistenceRepository({
+        database: fake.database,
+        emitMarketBucketUpdate() { throw new Error('socket unavailable'); },
+      });
+      const result = await repository.commitMarketRange({
+        entries: [marketEntry()],
+        cursor: cursor(),
+      });
+
+      assert.equal(result.touchedBuckets, 1);
+      assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+      assert.equal(fake.calls.some((call) => call.sql === 'ROLLBACK'), false);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it('does not rewrite an observation when its market log is replayed', async () => {
+    const fake = createFakeDatabase({ duplicate: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitMarketRange({
+      entries: [marketEntry()],
+      cursor: cursor(),
+    });
+
+    assert.deepEqual(result, {
+      insertedLogs: 0,
+      duplicateLogs: 1,
+      insertedObservations: 0,
+      touchedBuckets: 0,
+      touchedHourlyBuckets: 0,
+    });
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_market_observations/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'COMMIT');
+  });
+
+  it('preserves exact decoded swap facts when USD enrichment is temporarily unavailable', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    const result = await repository.commitMarketRange({
+      entries: [marketEntry({ accepted: false, reason: 'quote_usd_unavailable' })],
+      cursor: cursor(),
+    });
+
+    assert.equal(result.insertedObservations, 1);
+    assert.equal(result.touchedBuckets, 0);
+    assert.equal(result.touchedHourlyBuckets, 0);
+    const insert = fake.calls.find((call) => /INSERT INTO robinhood_market_observations/.test(call.sql));
+    const payload = JSON.parse(insert.params[0])[0];
+    assert.equal(payload.status, 'pending');
+    assert.equal(payload.rejectionReason, 'quote_usd_unavailable');
+    assert.equal(payload.tokenAmountRaw, '123456789012345678901234567890');
+    assert.equal(payload.quoteAmountRaw, '98765432109876543210');
+    assert.equal(payload.priceUsd, null);
+    assert.equal(payload.liquidityUsd, null);
+    assert.equal(payload.liquidityRaw, null);
+    assert.equal(payload.liquidityStatus, null);
+  });
+
+  it('rejects a concentrated-liquidity observation mislabeled as USD', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      repository.commitMarketRange({
+        entries: [marketEntry({
+          liquidityUsd: '100',
+          liquidityRaw: null,
+          liquidityStatus: 'spot_estimate_from_double_quote_reserve',
+          liquidityConfidence: 'medium',
+        })],
+        cursor: cursor(),
+      }),
+      /Concentrated-liquidity observation evidence is inconsistent/
+    );
+    assert.equal(fake.calls.length, 0);
+  });
+
+  it('rejects an enrichment result paired with different decoded swap amounts', async () => {
+    const fake = createFakeDatabase();
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      () => repository.commitMarketRange({
+        entries: [marketEntry({ tokenAmountRaw: '1' })],
+        cursor: cursor(),
+      }),
+      /metrics do not match their decoded swap/
+    );
+
+    assert.equal(fake.calls.length, 0);
+  });
+
+  it('rolls back the market cursor when an observation batch fails', async () => {
+    const fake = createFakeDatabase({ failObservation: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      () => repository.commitMarketRange({ entries: [marketEntry()], cursor: cursor() }),
+      /observation write failed/
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+    assert.equal(fake.isReleased(), true);
+  });
+
+  it('rolls back when an existing market bucket has different token dimensions', async () => {
+    const fake = createFakeDatabase({ bucketIdentityConflict: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      () => repository.commitMarketRange({ entries: [marketEntry()], cursor: cursor() }),
+      /bucket identity conflicts/
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+  });
+
+  it('rolls back observations and cursor when hourly rollup fails', async () => {
+    const fake = createFakeDatabase({ failHourlyBucket: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      () => repository.commitMarketRange({ entries: [marketEntry()], cursor: cursor() }),
+      /hourly bucket write failed/
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+  });
+
+  it('rolls back when an hourly bucket has conflicting token dimensions', async () => {
+    const fake = createFakeDatabase({ hourlyBucketConflict: true });
+    const repository = createRobinhoodPersistenceRepository({ database: fake.database });
+
+    await assert.rejects(
+      () => repository.commitMarketRange({ entries: [marketEntry()], cursor: cursor() }),
+      /hourly bucket refresh is incomplete/
+    );
+
+    assert.equal(fake.calls.some((call) => /INSERT INTO robinhood_ingestion_cursors/.test(call.sql)), false);
+    assert.equal(fake.calls.at(-1).sql, 'ROLLBACK');
+  });
+});

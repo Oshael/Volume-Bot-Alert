@@ -28,6 +28,13 @@ Current production-like shape:
     - `RUN_SOCKET_HUB=false`
     - `RUN_BACKGROUND_JOBS=true`
     - `BACKGROUND_WORKER_GROUPS=maintenance`
+- Robinhood ingestion has a prepared optional fifth isolated runtime. It is not
+  included in `all` and should only be activated during its controlled rollout:
+  - suggested future unit name: `volume-bot-alert-worker-robinhood.service`
+    - `RUN_SOCKET_HUB=false`
+    - `RUN_BACKGROUND_JOBS=true`
+    - `BACKGROUND_WORKER_GROUPS=robinhood`
+    - `ROBINHOOD_INGESTION_ENABLED=true`
 - PostgreSQL runs locally on the same VPS as the backend and is not intended to be exposed publicly.
 - `railway.json` still exists, but Railway is legacy deployment context rather than the current production contract.
 - The old single-process/combined runtime is a local fallback or emergency rollback shape, not the preferred launch topology.
@@ -78,6 +85,8 @@ npm run start:web
 npm run start:worker:core
 npm run start:worker:market
 npm run start:worker:maintenance
+# Controlled Robinhood rollout only (requires ROBINHOOD_START_BLOCK initially)
+npm run start:worker:robinhood
 ```
 
 Role controls:
@@ -101,6 +110,7 @@ npm run dev:worker
 npm run dev:worker:core
 npm run dev:worker:market
 npm run dev:worker:maintenance
+npm run dev:worker:robinhood
 ```
 
 Important: do not horizontally scale the full backend by simply starting more complete backend processes against the same production DB. The launch rule is:

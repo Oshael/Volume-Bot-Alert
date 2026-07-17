@@ -10,6 +10,7 @@ const OLD_WEEK_SURGE_6H_RULE_KEY = 'old-week-surge-6h';
 const SURGE_CONTINUATION_6H_RULE_KEY = 'surge-continuation-6h';
 const METEORA_SURGE_RULE_KEY = 'meteora-surge';
 const CUSTOM_ALERT_RULE_KEY = 'custom-alert';
+const ROBINHOOD_HVNC_V2_RULE_KEY = 'robinhood-hvnc-v2';
 
 const BACKEND_ALERT_RULES = Object.freeze({
   [GMGN_CLAIM_SIGNAL_RULE_KEY]: Object.freeze({
@@ -114,6 +115,16 @@ const BACKEND_ALERT_RULES = Object.freeze({
     kind: 'custom-alert',
     displayName: 'Custom Alert',
     scope: 'user-token',
+    chains: Object.freeze(['solana', 'robinhood']),
+    dashboardFeedEnabled: true,
+    defaults: Object.freeze({}),
+  }),
+  [ROBINHOOD_HVNC_V2_RULE_KEY]: Object.freeze({
+    ruleKey: ROBINHOOD_HVNC_V2_RULE_KEY,
+    kind: 'hvnc',
+    displayName: 'Robinhood HVNC',
+    scope: 'user-token',
+    chain: 'robinhood',
     dashboardFeedEnabled: true,
     defaults: Object.freeze({}),
   }),
@@ -160,6 +171,7 @@ module.exports = {
   OLD_WEEK_SURGE_6H_RULE_KEY,
   RECENT_SURGE_1H_RULE_KEY,
   RECENT_SURGE_6H_RULE_KEY,
+  ROBINHOOD_HVNC_V2_RULE_KEY,
   getBackendAlertRule,
   getDefaultDashboardAlertRuleKey,
   listBackendAlertRules,

@@ -165,6 +165,13 @@ describe('gmgn catalog ingestion', () => {
         assert.equal(payload.vol1m, 4000);
         assert.equal(payload.vol5m, 10000);
         assert.equal(payload.source, 'gmgn');
+        assert.deepEqual(payload.volumeCoverage, {
+          '1m': 'complete',
+          '5m': 'partial',
+          '1h': 'complete',
+          '6h': 'complete',
+          '24h': 'complete',
+        });
         return payload;
       },
     };
@@ -813,6 +820,7 @@ describe('gmgn catalog ingestion', () => {
     );
 
     assert.equal(payload.source, 'user-manual');
+    assert.equal(bucketPayload.chain, 'solana');
     assert.equal(bucketPayload.source, 'gmgn');
   });
 

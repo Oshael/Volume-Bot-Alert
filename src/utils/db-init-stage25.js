@@ -6,13 +6,15 @@ const db = require('../models/db');
 
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_risk_reviews (
-     token_address VARCHAR(64) PRIMARY KEY,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
+     token_address VARCHAR(64) NOT NULL,
      label VARCHAR(32) NOT NULL,
      notes TEXT,
      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
      updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT token_risk_reviews_chain_pkey PRIMARY KEY (chain, token_address)
    )`,
   `CREATE INDEX IF NOT EXISTS idx_token_risk_reviews_label_updated_at
      ON token_risk_reviews(label, updated_at DESC)`,

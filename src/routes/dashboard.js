@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticate, requireTrustedOrigin } = require('../middleware/auth');
 const { dashboardLimiter } = require('../middleware/rate-limit');
 const tokenCatalog = require('../models/token-catalog');
+const userBlocklist = require('../models/user-blocklist');
 const userPinnedMonitoredToken = require('../models/user-pinned-monitored-token');
 const userCustomAlertRule = require('../models/user-custom-alert-rule');
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
@@ -10,6 +11,19 @@ const tokenMarketVolumeBucket1m = require('../models/token-market-volume-bucket-
 const backendAlertFeed = require('../services/backend-alert-feed');
 const uiMeteoraSummaryCache = require('../services/ui-meteora-summary-cache');
 const alertTickerPeers = require('../services/alert-ticker-peers');
+const dashboardChainReader = require('../services/dashboard-chain-reader');
+const dashboardRadarReader = require('../services/dashboard-radar-reader');
+const {
+  buildDashboardMonitoredPayload,
+  buildDashboardMonitoredToken,
+} = require('../services/dashboard-monitored-response');
+const workspaceChainReadiness = require('../services/workspace-chain-readiness');
+const {
+  ERROR_CODES: CUSTOM_ALERT_ERROR_CODES,
+  evaluateCustomAlertCapability,
+  getCustomAlertCapability,
+} = require('../services/custom-alert-capability-policy');
+const { normalizeAsOf } = require('../services/workspace-window-metrics');
 const { isValidAddress } = require('../models/user-token');
 const { classifyTokenJunk } = require('../services/token-junk-metric');
 const {
@@ -20,18 +34,60 @@ const {
   toNumberOrNull,
 } = require('../services/token-risk-summary');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
+const {
+  getAvailableTokenChains,
+  isRobinhoodTokenChainConfigured,
+} = require('../utils/token-chain-availability');
+const {
+  normalizeTokenAddress,
+  normalizeTokenChain,
+  parseTokenIdentityKey,
+  tokenIdentityKey,
+} = require('../utils/token-identity');
+const config = require('../../config');
 
 const MONITORED_MIN_MCAP = 30000;
+const MONITORED_MIN_FDV = 30000;
 const TOP_PERFORMERS_DEFAULT_LIMIT = 15;
 const TOP_PERFORMERS_MAX_LIMIT = 20;
 const TOP_PERFORMERS_MIN_VOL_24H = 200000;
 const TOP_PERFORMERS_CACHE_TTL_MS = 30000;
+const MONITORED_CACHE_TTL_MS = 5000;
+const MONITORED_CACHE_MAX_ENTRIES = 500;
+const MONITORED_CACHE_VERSION = 2;
 
-let topPerformersCache = null;
+const topPerformersCache = new Map();
+const monitoredCache = new Map();
 
 function normalizeMinMcap(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_MCAP;
+}
+
+function normalizeMinFdv(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : MONITORED_MIN_FDV;
+}
+
+function normalizeMaxValuation(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
+function parseMonitoredValuationFilters(query, chains) {
+  const value = {
+    chains,
+    minMcap: normalizeMinMcap(query?.minMcap),
+    maxMcap: normalizeMaxValuation(query?.maxMcap),
+    minFdv: normalizeMinFdv(query?.minFdv),
+    maxFdv: normalizeMaxValuation(query?.maxFdv),
+  };
+  if ((value.maxMcap > 0 && value.maxMcap < value.minMcap)
+    || (value.maxFdv > 0 && value.maxFdv < value.minFdv)) {
+    return { ok: false, error: 'maximum valuation must not be below minimum' };
+  }
+  return { ok: true, value };
 }
 
 function normalizeMinVol24h(value) {
@@ -161,10 +217,122 @@ function parseAddressArray(value, name) {
   return { ok: true, value: next };
 }
 
+function parseAvailableChainArray(value, name = 'chains') {
+  const source = value == null ? ['solana'] : value;
+  if (!Array.isArray(source) || source.length === 0) {
+    return { ok: false, error: `${name} must be a non-empty array` };
+  }
+
+  const available = new Set(getAvailableTokenChains({
+    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+  }));
+  const chains = [];
+  for (const item of source) {
+    let chain;
+    try {
+      chain = normalizeTokenChain(item);
+    } catch (_) {
+      return { ok: false, error: `${name} contains an unsupported chain` };
+    }
+    if (!available.has(chain)) {
+      return { ok: false, error: `${name} contains a chain that is not available` };
+    }
+    if (!chains.includes(chain)) {
+      chains.push(chain);
+    }
+  }
+  return { ok: true, value: chains };
+}
+
+function parseWorkspaceChainArray(value, name = 'chains') {
+  let source = value == null ? ['solana'] : value;
+  if (!Array.isArray(source)) {
+    const text = String(source).trim();
+    if (text.startsWith('[')) {
+      try { source = JSON.parse(text); } catch (_) { source = []; }
+    } else {
+      source = text.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  if (!Array.isArray(source) || source.length === 0) {
+    return { ok: false, error: `${name} must select at least one chain` };
+  }
+  const available = new Set(getAvailableTokenChains({
+    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+  }));
+  const chains = [];
+  for (const item of source) {
+    let chain;
+    try { chain = normalizeTokenChain(item); } catch (_) {
+      return { ok: false, error: `${name} contains an unsupported chain` };
+    }
+    if (!available.has(chain)) {
+      return { ok: false, error: `${name} contains a chain that is not available` };
+    }
+    if (!chains.includes(chain)) chains.push(chain);
+  }
+  return { ok: true, value: chains };
+}
+
+function parseCustomAlertChainArray(value, name = 'chains') {
+  let source = value == null ? ['solana'] : value;
+  if (!Array.isArray(source)) {
+    const text = String(source).trim();
+    if (text.startsWith('[')) {
+      try { source = JSON.parse(text); } catch (_) { source = []; }
+    } else {
+      source = text.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  if (source.length === 0) {
+    return { ok: false, error: `${name} must select at least one chain` };
+  }
+  const chains = [];
+  for (const valueItem of source) {
+    const capability = getCustomAlertCapability({ chain: valueItem });
+    if (!capability.supported) {
+      return { ok: false, error: `${name} contains an unsupported chain` };
+    }
+    if (!chains.includes(capability.chain)) chains.push(capability.chain);
+  }
+  return { ok: true, value: chains };
+}
+
+function parseTokenIdentityArray(value, legacyValue, name) {
+  if (value == null) {
+    const legacy = parseAddressArray(legacyValue, name);
+    return legacy.ok
+      ? { ok: true, value: legacy.value.map((address) => tokenIdentityKey('solana', address)) }
+      : legacy;
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, error: `${name} must be an array` };
+  }
+
+  const identities = [];
+  for (const item of value) {
+    try {
+      const identity = parseTokenIdentityKey(item);
+      if (!identities.includes(identity.key)) {
+        identities.push(identity.key);
+      }
+    } catch (_) {
+      return { ok: false, error: `${name} contains an invalid token identity` };
+    }
+  }
+  return { ok: true, value: identities };
+}
+
 function parsePinnedOrderItem(item, index) {
-  const address = String(typeof item === 'string' ? item : item?.address || '').trim();
-  if (!isValidAddress(address)) {
-    return { ok: false, error: 'addresses contains an invalid token address' };
+  let chain;
+  let address;
+  try {
+    chain = normalizeTokenChain(typeof item === 'object' ? item?.chain || 'solana' : 'solana');
+    address = normalizeTokenAddress(
+      chain, typeof item === 'string' ? item : item?.address,
+    );
+  } catch (_) {
+    return { ok: false, error: 'pinnedTokens contains an invalid token identity' };
   }
   const sortOrder = typeof item === 'object' && item?.sortOrder != null
     ? Number(item.sortOrder)
@@ -172,7 +340,7 @@ function parsePinnedOrderItem(item, index) {
   if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 1_000_000) {
     return { ok: false, error: 'pinnedTokens contains an invalid sortOrder' };
   }
-  return { ok: true, value: { address, sortOrder } };
+  return { ok: true, value: { chain, address, sortOrder } };
 }
 
 function parsePinnedOrderPayload(body = {}) {
@@ -185,11 +353,20 @@ function parsePinnedOrderPayload(body = {}) {
   for (const [index, item] of source.entries()) {
     const parsed = parsePinnedOrderItem(item, index);
     if (!parsed.ok) return parsed;
-    if (seen.has(parsed.value.address)) continue;
-    seen.add(parsed.value.address);
+    const key = tokenIdentityKey(parsed.value.chain, parsed.value.address);
+    if (seen.has(key)) continue;
+    seen.add(key);
     value.push(parsed.value);
   }
-  return { ok: true, value };
+  const requestedChains = body.chains == null
+    ? { ok: true, value: [...new Set(value.map((item) => item.chain))] }
+    : parseWorkspaceChainArray(body.chains);
+  if (!requestedChains.ok) return requestedChains;
+  const chains = requestedChains.value.length ? requestedChains.value : ['solana'];
+  if (value.some((item) => !chains.includes(item.chain))) {
+    return { ok: false, error: 'pinnedTokens contains a chain outside chains' };
+  }
+  return { ok: true, value: { chains, items: value } };
 }
 
 const DEFAULT_RECENT_AGE_MAX_MINUTES = 7 * 24 * 60;
@@ -245,18 +422,25 @@ function parseHistoryBucketRequest(body = {}, name) {
 
   const page = parseNonNegativeInteger(body.page, `${name}.page`, { min: 0, max: 10000 });
   if (!page.ok) return page;
-  const perPage = parseNonNegativeInteger(body.perPage, `${name}.perPage`, { min: 10, max: 500 });
+  const perPage = parseNonNegativeInteger(body.perPage, `${name}.perPage`, { min: 10, max: 100 });
   if (!perPage.ok) return perPage;
   const starredOnly = parseOptionalBoolean(body.starredOnly, `${name}.starredOnly`);
   if (!starredOnly.ok) return starredOnly;
   const sorts = parseSorts(body.sorts, `${name}.sorts`);
   if (!sorts.ok) return sorts;
-  const dismissed = parseAddressArray(body.dismissedAddresses, `${name}.dismissedAddresses`);
+  const dismissed = parseTokenIdentityArray(
+    body.dismissedTokenIdentities,
+    body.dismissedAddresses,
+    `${name}.dismissedTokenIdentities`,
+  );
   if (!dismissed.ok) return dismissed;
 
   const mcapMin = normalizeMinMcap(body.mcapMin);
   const parsedMax = Number(body.mcapMax);
   const mcapMax = Number.isFinite(parsedMax) ? Math.max(0, parsedMax) : 0;
+  const fdvMin = normalizeMinFdv(body.fdvMin);
+  const parsedFdvMax = Number(body.fdvMax);
+  const fdvMax = Number.isFinite(parsedFdvMax) ? Math.max(0, parsedFdvMax) : 0;
   const { ageMinMinutes, ageMaxMinutes } = parseHistoryBucketAgeRange(body, name);
 
   return {
@@ -267,78 +451,137 @@ function parseHistoryBucketRequest(body = {}, name) {
       searchQuery: String(body.searchQuery || '').trim().slice(0, 120),
       starredOnly: starredOnly.value,
       sorts: sorts.value,
-      dismissedAddresses: dismissed.value,
+      dismissedTokenIdentities: dismissed.value,
       mcapMin,
       mcapMax,
+      fdvMin,
+      fdvMax,
       ageMinMinutes,
       ageMaxMinutes,
     },
   };
 }
 
-function buildHistoryBootstrapPayload(
-  recentResult,
-  oldWeekResult,
-  meteoraByAddress,
-  marketMcapBaselineByAddress,
-  marketVolumeBaselineByAddress,
-  debug = null,
-  options = {}
-) {
-  const recentPinnedRows = Array.isArray(options.recentPinnedRows) ? options.recentPinnedRows : [];
-  const oldWeekPinnedRows = Array.isArray(options.oldWeekPinnedRows) ? options.oldWeekPinnedRows : [];
-  const payload = {
-    generatedAt: new Date().toISOString(),
-    recent: {
-      total: recentResult.total,
-      page: recentResult.page,
-      perPage: recentResult.perPage,
-      count: recentResult.rows.length,
-      tokens: recentResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
-      pinnedTokens: recentPinnedRows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
-    },
-    oldWeek: {
-      total: oldWeekResult.total,
-      page: oldWeekResult.page,
-      perPage: oldWeekResult.perPage,
-      count: oldWeekResult.rows.length,
-      tokens: oldWeekResult.rows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
-      pinnedTokens: oldWeekPinnedRows.map((item) => buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress)),
-    },
-  };
-
-  if (debug) {
-    payload.debug = debug;
-  }
-
-  return payload;
-}
-
-function getPinnedHistoryRows(pinnedRows, pageRows, requestedAddresses) {
-  const pinnedByAddress = new Map(pinnedRows.map((item) => [item.address, item]));
-  const pageAddresses = new Set(pageRows.map((item) => item.address));
-  return requestedAddresses
-    .map((address) => pinnedByAddress.get(address))
-    .filter((item) => item && !pageAddresses.has(item.address));
-}
-
 function parseHistoryBootstrapPinnedAddresses(body = {}) {
-  const recentPinnedAddresses = parseAddressArray(body.recentPinnedAddresses, 'recentPinnedAddresses');
-  if (!recentPinnedAddresses.ok) {
-    return recentPinnedAddresses;
+  const recentPinnedIdentities = parseTokenIdentityArray(
+    body.recentPinnedIdentities,
+    body.recentPinnedAddresses,
+    'recentPinnedIdentities',
+  );
+  if (!recentPinnedIdentities.ok) {
+    return recentPinnedIdentities;
   }
 
-  const oldWeekPinnedAddresses = parseAddressArray(body.oldWeekPinnedAddresses, 'oldWeekPinnedAddresses');
-  if (!oldWeekPinnedAddresses.ok) {
-    return oldWeekPinnedAddresses;
+  const oldWeekPinnedIdentities = parseTokenIdentityArray(
+    body.oldWeekPinnedIdentities,
+    body.oldWeekPinnedAddresses,
+    'oldWeekPinnedIdentities',
+  );
+  if (!oldWeekPinnedIdentities.ok) {
+    return oldWeekPinnedIdentities;
   }
 
   return {
     ok: true,
     value: {
-      recent: recentPinnedAddresses.value,
-      oldWeek: oldWeekPinnedAddresses.value,
+      recent: recentPinnedIdentities.value,
+      oldWeek: oldWeekPinnedIdentities.value,
     },
+  };
+}
+
+function filterTokenIdentitiesToChains(identities, chains) {
+  const allowedChains = new Set(chains);
+  return identities.filter((identityKey) => allowedChains.has(parseTokenIdentityKey(identityKey).chain));
+}
+
+function scopeHistoryBootstrapIdentitiesToChains(value) {
+  const scope = (identities) => filterTokenIdentitiesToChains(identities, value.chains);
+  return {
+    ...value,
+    starredIdentities: scope(value.starredIdentities),
+    recentDebugProbeIdentities: scope(value.recentDebugProbeIdentities),
+    pinnedIdentitiesByBucket: {
+      recent: scope(value.pinnedIdentitiesByBucket.recent),
+      oldWeek: scope(value.pinnedIdentitiesByBucket.oldWeek),
+    },
+    recent: {
+      ...value.recent,
+      dismissedTokenIdentities: scope(value.recent.dismissedTokenIdentities),
+    },
+    oldWeek: {
+      ...value.oldWeek,
+      dismissedTokenIdentities: scope(value.oldWeek.dismissedTokenIdentities),
+    },
+  };
+}
+
+function parseHistoryBootstrapRequestPayload(body = {}) {
+  const parsed = {
+    chains: parseAvailableChainArray(body.chains),
+    starredIdentities: parseTokenIdentityArray(
+      body.starredTokenIdentities,
+      body.starredTokens,
+      'starredTokenIdentities',
+    ),
+    recent: parseHistoryBucketRequest(body.recent, 'recent'),
+    oldWeek: parseHistoryBucketRequest(body.oldWeek, 'oldWeek'),
+    recentDebugProbeIdentities: parseTokenIdentityArray(
+      body.recentDebugProbeIdentities,
+      body.recentDebugProbeAddresses,
+      'recentDebugProbeIdentities',
+    ),
+    pinnedIdentitiesByBucket: parseHistoryBootstrapPinnedAddresses(body),
+  };
+
+  for (const result of Object.values(parsed)) {
+    if (!result.ok) {
+      return result;
+    }
+  }
+
+  const value = Object.fromEntries(
+    Object.entries(parsed).map(([key, result]) => [key, result.value])
+  );
+  return { ok: true, value: scopeHistoryBootstrapIdentitiesToChains(value) };
+}
+
+function buildRadarReaderInput(bucketName, bucket, common) {
+  return {
+    ...common,
+    bucket: bucketName,
+    page: bucket.page,
+    perPage: bucket.perPage,
+    searchQuery: bucket.searchQuery,
+    starredOnly: bucket.starredOnly,
+    sorts: bucket.sorts,
+    dismissedIdentities: [...bucket.dismissedTokenIdentities, ...common.blockedIdentities],
+    minMcap: bucket.mcapMin,
+    maxMcap: bucket.mcapMax,
+    minFdv: bucket.fdvMin,
+    maxFdv: bucket.fdvMax,
+    ageMinMinutes: bucket.ageMinMinutes,
+    ageMaxMinutes: bucket.ageMaxMinutes,
+  };
+}
+
+function buildRadarTokenPayload(row) {
+  return buildDashboardMonitoredToken({
+    ...row,
+    tokenCreatedAt: row.tokenCreatedAt ?? row.tokenAge?.timestampMs ?? null,
+    tokenAgeProvenance: row.tokenAgeProvenance ?? row.tokenAge?.provenance ?? 'unknown',
+  });
+}
+
+function buildRadarBucketPayload(page, pinnedRows) {
+  return {
+    total: page.total,
+    page: page.page,
+    perPage: page.perPage,
+    count: page.rows.length,
+    hasMore: page.hasMore,
+    tokens: page.rows.map(buildRadarTokenPayload),
+    pinnedTokens: pinnedRows.map(buildRadarTokenPayload),
   };
 }
 
@@ -414,6 +657,34 @@ function normalizePinnedSortOrder(value) {
   return value != null ? Number(value) : null;
 }
 
+function buildValuationPayload(item) {
+  const isRobinhood = item.chain === 'robinhood';
+  const mcap = isRobinhood ? null : toNumberOrNull(item.last_mcap);
+  const fdv = toNumberOrNull(item.last_fdv);
+  return {
+    mcap,
+    fdv,
+    valuationType: mcap != null ? 'market-cap' : (fdv != null ? 'fdv' : null),
+  };
+}
+
+function getDashboardLiquidityUsd(item) {
+  if (item.chain === 'robinhood') return null;
+  return toNumberOrNull(item.last_liquidity_usd);
+}
+
+function appendOptionalMonitoredPayload(payload, item, meteora, options) {
+  if (options.includeRisk) {
+    payload.blockStatus = buildBlockStatusSummary(item);
+    payload.effectiveRiskLabel = buildEffectiveRiskLabel(item);
+    payload.riskReview = buildRiskReviewSummary(item);
+    payload.structuralRisk = buildStructuralRiskSummary(item);
+    payload.junkAssessment = classifyTokenJunk({ ...item, meteora });
+  }
+  if (options.includeMeteora) payload.meteora = meteora;
+  return payload;
+}
+
 function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineByAddress, marketVolumeBaselineByAddress, options = {}) {
   const includeRisk = options.includeRisk !== false;
   const includeMeteora = options.includeMeteora !== false;
@@ -430,6 +701,7 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
   });
 
   const payload = {
+    chain: item.chain || 'solana',
     address: item.address,
     symbol: item.symbol || null,
     name: item.name || null,
@@ -441,9 +713,9 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     communityUrl: socialLinks.communityUrl,
     eligibleForMonitoring: Boolean(item.eligible_for_monitoring),
     monitorPriority: item.monitor_priority || 'dormant',
-    mcap: toNumberOrNull(item.last_mcap),
+    ...buildValuationPayload(item),
     priceUsd: toNumberOrNull(item.last_price),
-    liquidityUsd: toNumberOrNull(item.last_liquidity_usd),
+    liquidityUsd: getDashboardLiquidityUsd(item),
     volume5m: toNumberOrNull(item.last_vol_5m),
     volume1h: toNumberOrNull(item.last_vol_1h),
     volume6h: toNumberOrNull(item.last_vol_6h),
@@ -463,22 +735,9 @@ function buildMonitoredTokenPayload(item, meteoraByAddress, marketMcapBaselineBy
     tickerPeers: options.tickerPeersByAddress?.get(item.address) || null,
   };
 
-  if (includeRisk) {
-    payload.blockStatus = buildBlockStatusSummary(item);
-    payload.effectiveRiskLabel = buildEffectiveRiskLabel(item);
-    payload.riskReview = buildRiskReviewSummary(item);
-    payload.structuralRisk = buildStructuralRiskSummary(item);
-    payload.junkAssessment = classifyTokenJunk({
-      ...item,
-      meteora,
-    });
-  }
-
-  if (includeMeteora) {
-    payload.meteora = meteora;
-  }
-
-  return payload;
+  return appendOptionalMonitoredPayload(payload, item, meteora, {
+    includeMeteora, includeRisk,
+  });
 }
 
 function buildTopPerformersPayload(rows, options = {}) {
@@ -487,9 +746,11 @@ function buildTopPerformersPayload(rows, options = {}) {
   const emptyMarketVolumeBaselineByAddress = new Map();
   return {
     generatedAt: new Date().toISOString(),
-    source: 'token_catalog',
+    source: options.chains?.includes('robinhood') ? 'chain_read_models' : 'token_catalog',
     ranking: 'split_volume24h_7_pchange24h_8',
+    chains: options.chains || ['solana'],
     minMcap: options.minMcap,
+    minFdv: options.minFdv,
     minVol24h: options.minVol24h,
     count: rows.length,
     tokens: rows.map((item, index) => ({
@@ -508,55 +769,112 @@ function buildTopPerformersPayload(rows, options = {}) {
 
 function getTopPerformersCacheKey(options) {
   return JSON.stringify({
+    chains: options.chains,
     limit: options.limit,
     minMcap: options.minMcap,
+    minFdv: options.minFdv,
     minVol24h: options.minVol24h,
   });
 }
 
 function getCachedTopPerformersPayload(cacheKey, nowMs = Date.now()) {
-  if (!topPerformersCache || topPerformersCache.key !== cacheKey || topPerformersCache.expiresAt <= nowMs) {
+  const cached = topPerformersCache.get(cacheKey);
+  if (!cached || cached.expiresAt <= nowMs) {
+    topPerformersCache.delete(cacheKey);
     return null;
   }
   return {
-    ...topPerformersCache.payload,
+    ...cached.payload,
     cached: true,
-    cacheAgeMs: nowMs - topPerformersCache.createdAt,
+    cacheAgeMs: nowMs - cached.createdAt,
   };
 }
 
 function setCachedTopPerformersPayload(cacheKey, payload, nowMs = Date.now()) {
-  topPerformersCache = {
-    key: cacheKey,
+  topPerformersCache.set(cacheKey, {
     payload,
     createdAt: nowMs,
     expiresAt: nowMs + TOP_PERFORMERS_CACHE_TTL_MS,
-  };
+  });
 }
 
-function resetTopPerformersCache() {
-  topPerformersCache = null;
+function resetTopPerformersCache(chains = null) {
+  if (!Array.isArray(chains) || !chains.length) {
+    topPerformersCache.clear();
+    return;
+  }
+  for (const key of topPerformersCache.keys()) {
+    const cachedChains = JSON.parse(key).chains || [];
+    if (chains.some((chain) => cachedChains.includes(chain))) {
+      topPerformersCache.delete(key);
+    }
+  }
+}
+
+function getMonitoredCacheKey(input) {
+  const identities = (values) => values.map((item) => (
+    `${item.chain}:${item.address}:${item.sortOrder ?? ''}`
+  )).sort();
+  return JSON.stringify({
+    version: MONITORED_CACHE_VERSION,
+    userId: input.userId,
+    asOf: input.asOf,
+    chains: input.chains,
+    page: input.page,
+    perPage: input.perPage,
+    sorts: input.sorts,
+    minMcap: input.minMcap,
+    maxMcap: input.maxMcap,
+    minFdv: input.minFdv,
+    maxFdv: input.maxFdv,
+    blocked: identities(input.blockedItems),
+    pinned: identities(input.pinnedItems),
+  });
+}
+
+function getCachedMonitoredPayload(key, nowMs = Date.now()) {
+  const cached = monitoredCache.get(key);
+  if (!cached || cached.expiresAt <= nowMs) {
+    monitoredCache.delete(key);
+    return null;
+  }
+  return { ...cached.payload, cached: true, cacheAgeMs: nowMs - cached.createdAt };
+}
+
+function setCachedMonitoredPayload(key, payload, userId, nowMs = Date.now()) {
+  if (monitoredCache.size >= MONITORED_CACHE_MAX_ENTRIES) {
+    monitoredCache.delete(monitoredCache.keys().next().value);
+  }
+  monitoredCache.set(key, {
+    payload, userId, createdAt: nowMs, expiresAt: nowMs + MONITORED_CACHE_TTL_MS,
+  });
+}
+
+function resetMonitoredCache(userId = null) {
+  if (userId == null) return monitoredCache.clear();
+  for (const [key, value] of monitoredCache) {
+    if (value.userId === userId) monitoredCache.delete(key);
+  }
 }
 
 function parseMonitoredSliceQuery(query) {
-  if (query?.page === undefined && query?.perPage === undefined) {
-    return { ok: true, value: null };
-  }
-
   const page = query?.page === undefined
     ? { ok: true, value: 0 }
-    : parseNonNegativeInteger(query.page, 'page', { min: 0, max: 1000 });
+    : parseNonNegativeInteger(query.page, 'page', { min: 0, max: 499 });
   if (!page.ok) {
     return page;
   }
 
   const perPage = query?.perPage === undefined
     ? { ok: true, value: 30 }
-    : parseNonNegativeInteger(query.perPage, 'perPage', { min: 1, max: 500 });
+    : parseNonNegativeInteger(query.perPage, 'perPage', { min: 1, max: 100 });
   if (!perPage.ok) {
     return perPage;
   }
 
+  if ((page.value + 1) * perPage.value > 500) {
+    return { ok: false, error: 'requested monitored prefix cannot exceed 500' };
+  }
   return {
     ok: true,
     value: {
@@ -568,7 +886,7 @@ function parseMonitoredSliceQuery(query) {
 
 function parseMonitoredSortsQuery(value) {
   if (value === undefined || value === null || String(value).trim() === '') {
-    return { ok: true, value: [] };
+    return { ok: true, value: [{ mode: 'vol', window: '5m' }] };
   }
 
   let parsed;
@@ -632,8 +950,11 @@ async function loadTickerPeerSummariesSafe(items = []) {
   }
 }
 
-async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = null, pinnedItems = []) {
-  const addresses = [...new Set([...items, ...pinnedItems].map((item) => item.address).filter(Boolean))];
+async function buildExactMonitoredDashboardResponse(page, pinnedRows, filters, coverage) {
+  const mapped = buildDashboardMonitoredPayload(page, { pinnedRows, coverage });
+  const solanaItems = [...mapped.tokens, ...mapped.pinnedTokens]
+    .filter((item) => item.chain === 'solana');
+  const addresses = [...new Set(solanaItems.map((item) => item.address))];
   const meteoraByAddress = new Map();
   const marketMcapBaselineByAddress = new Map();
   const marketVolumeBaselineByAddress = new Map();
@@ -642,7 +963,7 @@ async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = 
     uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses),
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
-    loadTickerPeerSummariesSafe(items),
+    loadTickerPeerSummariesSafe(solanaItems),
   ]);
 
   for (const row of meteoraSummaryRows) {
@@ -657,41 +978,39 @@ async function buildLeanMonitoredDashboardResponse(items, minMcap, pagination = 
     marketVolumeBaselineByAddress.set(row.token_address, row);
   }
 
-  const payload = {
-    generatedAt: new Date().toISOString(),
-    source: 'token_catalog',
-    minMcap,
-    count: items.length,
-    tokens: items.map((item) => buildMonitoredTokenPayload(
-      item,
-      meteoraByAddress,
-      marketMcapBaselineByAddress,
-      marketVolumeBaselineByAddress,
-      { includeRisk: false, tickerPeersByAddress }
-    )),
-    pinnedTokens: pinnedItems.map((item) => buildMonitoredTokenPayload(
-      item,
-      meteoraByAddress,
-      marketMcapBaselineByAddress,
-      marketVolumeBaselineByAddress,
-      { includeRisk: false, tickerPeersByAddress }
-    )),
+  const enrich = (item) => {
+    if (item.chain !== 'solana') return item;
+    return {
+      ...item,
+      ...buildMarketBaseline(
+        marketMcapBaselineByAddress.get(item.address) || null,
+        marketVolumeBaselineByAddress.get(item.address) || null,
+      ),
+      meteora: buildMeteoraSummary(item.address, meteoraByAddress.get(item.address) || null),
+      tickerPeers: tickerPeersByAddress.get(item.address) || null,
+    };
   };
-
-  if (!pagination) {
-    return payload;
-  }
-
   return {
-    ...payload,
-    total: pagination.total,
-    page: pagination.page,
-    perPage: pagination.perPage,
-    hasMore: ((pagination.page + 1) * pagination.perPage) < pagination.total,
+    ...mapped,
+    source: 'workspace-catalog-v2',
+    chains: filters.chains,
+    minMcap: filters.minMcap,
+    maxMcap: filters.maxMcap,
+    minFdv: filters.minFdv,
+    maxFdv: filters.maxFdv,
+    count: mapped.tokens.length,
+    cached: false,
+    cacheAgeMs: 0,
+    tokens: mapped.tokens.map(enrich),
+    pinnedTokens: mapped.pinnedTokens.map(enrich),
   };
 }
 
 router.get('/monitored', dashboardLimiter, async (req, res) => {
+  const chainsQuery = parseWorkspaceChainArray(req.query?.chains);
+  if (!chainsQuery.ok) {
+    return res.status(400).json({ error: chainsQuery.error });
+  }
   const monitoredSliceQuery = parseMonitoredSliceQuery(req.query);
   if (!monitoredSliceQuery.ok) {
     return res.status(400).json({ error: monitoredSliceQuery.error });
@@ -701,21 +1020,45 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     return res.status(400).json({ error: monitoredSortsQuery.error });
   }
 
+  let asOf;
   try {
-    const minMcap = normalizeMinMcap(req.query?.minMcap);
-    const pinnedTokens = await tokenCatalog.listDashboardPinnedMonitored(req.user.id);
-    if (monitoredSliceQuery.value) {
-      const monitoredSlice = await tokenCatalog.listDashboardMonitoredSlice(
-        monitoredSliceQuery.value.page,
-        monitoredSliceQuery.value.perPage,
-        minMcap,
-        monitoredSortsQuery.value,
-      );
-      return res.json(await buildLeanMonitoredDashboardResponse(monitoredSlice.rows, minMcap, monitoredSlice, pinnedTokens));
-    }
+    asOf = normalizeAsOf(req.query?.asOf || new Date()).toISOString();
+  } catch (_) {
+    return res.status(400).json({ error: 'asOf must be a valid timestamp' });
+  }
 
-    const tokens = await tokenCatalog.listDashboardMonitored(req.query?.limit, minMcap);
-    res.json(await buildLeanMonitoredDashboardResponse(tokens, minMcap, null, pinnedTokens));
+  try {
+    const parsedFilters = parseMonitoredValuationFilters(req.query, chainsQuery.value);
+    if (!parsedFilters.ok) return res.status(400).json({ error: parsedFilters.error });
+    const filters = parsedFilters.value;
+    const [blockedItems, pinnedItems] = await Promise.all([
+      userBlocklist.getAllForChains(req.user.id, filters.chains),
+      userPinnedMonitoredToken.getAllForChains(req.user.id, filters.chains),
+    ]);
+    const requestInput = {
+      ...filters, ...monitoredSliceQuery.value, asOf,
+      sorts: monitoredSortsQuery.value,
+      excludedIdentities: blockedItems,
+    };
+    const cacheKey = getMonitoredCacheKey({
+      ...requestInput, userId: req.user.id, blockedItems, pinnedItems,
+    });
+    const cached = getCachedMonitoredPayload(cacheKey);
+    if (cached) return res.json(cached);
+
+    const [page, pinnedRows, readiness] = await Promise.all([
+      dashboardChainReader.listExactMonitored(requestInput),
+      dashboardChainReader.listExactPinned({ ...requestInput, pinnedItems }),
+      workspaceChainReadiness.getWorkspaceChainReadiness(),
+    ]);
+    const coverage = Object.fromEntries(filters.chains.map((chain) => [
+      chain, readiness[chain]?.status || 'unavailable',
+    ]));
+    const payload = await buildExactMonitoredDashboardResponse(
+      page, pinnedRows, filters, coverage,
+    );
+    setCachedMonitoredPayload(cacheKey, payload, req.user.id);
+    return res.json(payload);
   } catch (err) {
     console.error('GET /dashboard/monitored error:', err.message);
     res.status(500).json({ error: 'Failed to load monitored dashboard' });
@@ -723,8 +1066,12 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
 });
 
 router.get('/monitored-pins', dashboardLimiter, async (req, res) => {
+  const chains = parseWorkspaceChainArray(req.query?.chains);
+  if (!chains.ok) return res.status(400).json({ error: chains.error });
   try {
-    const pinnedTokens = await userPinnedMonitoredToken.getAll(req.user.id);
+    const pinnedTokens = await userPinnedMonitoredToken.getAllForChains(
+      req.user.id, chains.value,
+    );
     return res.json({ pinnedTokens });
   } catch (err) {
     console.error('GET /dashboard/monitored-pins error:', err.message);
@@ -739,7 +1086,10 @@ router.put('/monitored-pins', dashboardLimiter, requireTrustedOrigin, async (req
   }
 
   try {
-    const pinnedTokens = await userPinnedMonitoredToken.setAll(req.user.id, parsed.value);
+    const pinnedTokens = await userPinnedMonitoredToken.setAllForChains(
+      req.user.id, parsed.value.items, parsed.value.chains,
+    );
+    resetMonitoredCache(req.user.id);
     return res.json({ pinnedTokens });
   } catch (err) {
     console.error('PUT /dashboard/monitored-pins error:', err.message);
@@ -748,8 +1098,13 @@ router.put('/monitored-pins', dashboardLimiter, requireTrustedOrigin, async (req
 });
 
 router.delete('/monitored-pins', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const chains = parseWorkspaceChainArray(req.query?.chains);
+  if (!chains.ok) return res.status(400).json({ error: chains.error });
   try {
-    const removed = await userPinnedMonitoredToken.removeAll(req.user.id);
+    const removed = await userPinnedMonitoredToken.removeAllForChains(
+      req.user.id, chains.value,
+    );
+    resetMonitoredCache(req.user.id);
     return res.json({ removed });
   } catch (err) {
     console.error('DELETE /dashboard/monitored-pins error:', err.message);
@@ -758,13 +1113,20 @@ router.delete('/monitored-pins', dashboardLimiter, requireTrustedOrigin, async (
 });
 
 router.delete('/monitored-pins/:address', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
-  const address = String(req.params.address || '').trim();
-  if (!isValidAddress(address)) {
-    return res.status(400).json({ error: 'Invalid token address' });
+  const chains = parseWorkspaceChainArray(req.query?.chain);
+  if (!chains.ok || chains.value.length !== 1) {
+    return res.status(400).json({ error: chains.error || 'chain must select one chain' });
+  }
+  let address;
+  try { address = normalizeTokenAddress(chains.value[0], req.params.address); } catch (_) {
+    return res.status(400).json({ error: 'Invalid token address for chain' });
   }
 
   try {
-    const removed = await userPinnedMonitoredToken.remove(req.user.id, address);
+    const removed = await userPinnedMonitoredToken.remove(
+      req.user.id, address, chains.value[0],
+    );
+    resetMonitoredCache(req.user.id);
     return res.json({ removed });
   } catch (err) {
     console.error('DELETE /dashboard/monitored-pins/:address error:', err.message);
@@ -773,29 +1135,105 @@ router.delete('/monitored-pins/:address', dashboardLimiter, requireTrustedOrigin
 });
 
 router.get('/custom-alert-rules', dashboardLimiter, async (req, res) => {
+  const chains = parseCustomAlertChainArray(req.query?.chains ?? req.query?.chain);
+  if (!chains.ok) return res.status(400).json({ error: chains.error });
   try {
+    const readiness = await workspaceChainReadiness.getWorkspaceChainReadiness();
     const rules = await userCustomAlertRule.listRules(req.user.id, {
+      chains: chains.value,
       status: req.query?.status,
     });
-    return res.json({ rules, count: rules.length });
+    return res.json({
+      rules,
+      count: rules.length,
+      capabilities: buildCustomAlertCapabilities(chains.value, readiness),
+    });
   } catch (err) {
-    if (err.status === 400) {
-      return res.status(400).json({ error: err.message });
-    }
+    if (err.status === 400) return sendCustomAlertError(res, err);
     console.error('GET /dashboard/custom-alert-rules error:', err.message);
     return res.status(500).json({ error: 'Failed to load custom alert rules' });
   }
 });
 
-async function buildCustomAlertBaselineMetadata(tokenAddress) {
-  try {
-    const row = await tokenCatalog.getMarketBaselineByAddress(tokenAddress);
-    if (!row) return {};
-    const baselineMcap = Number(row.last_mcap);
-    const baselinePrice = Number(row.last_price);
+function getCustomAlertReadiness(chain, readiness = {}) {
+  const value = readiness[chain];
+  if (chain === 'solana') {
     return {
-      baselineMcap: Number.isFinite(baselineMcap) ? baselineMcap : null,
-      baselinePrice: Number.isFinite(baselinePrice) ? baselinePrice : null,
+      ready: value?.capabilities?.customAlerts === true,
+      reason: value?.capabilities?.customAlerts === true ? null : 'custom_alert_runtime_not_ready',
+    };
+  }
+  const ready = value?.capabilities?.customAlerts === true
+    && value?.publicationReady === true;
+  const reason = ready
+    ? null
+    : value?.blockers?.[0]
+      || (value?.publicationReady === true
+        ? 'custom_alert_runtime_not_ready'
+        : 'rollout_not_publishable');
+  return { ready, reason };
+}
+
+function buildCustomAlertCapabilities(chains, readiness) {
+  return Object.fromEntries(chains.map((chain) => {
+    const state = getCustomAlertReadiness(chain, readiness);
+    return [chain, getCustomAlertCapability({ chain, ...state })];
+  }));
+}
+
+function sendCustomAlertError(res, error) {
+  const status = error.code === CUSTOM_ALERT_ERROR_CODES.notReady ? 409 : 400;
+  return res.status(status).json({
+    error: error.message || 'Invalid custom alert request',
+    code: error.code || null,
+    reason: error.reason || null,
+    capability: error.capability || null,
+  });
+}
+
+function customAlertBaselineNumber(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function validateCustomAlertMutation(payload = {}) {
+  const readiness = await workspaceChainReadiness.getWorkspaceChainReadiness();
+  const structural = getCustomAlertCapability({ chain: payload.chain || 'solana' });
+  const chain = structural.chain || payload.chain;
+  const state = getCustomAlertReadiness(chain, readiness);
+  const result = evaluateCustomAlertCapability({
+    chain,
+    metric: payload.metric,
+    window: payload.window,
+    ...state,
+  });
+  if (result.ok) return result;
+  const error = Object.assign(new Error(
+    result.code === CUSTOM_ALERT_ERROR_CODES.notReady
+      ? 'Custom alerts are not ready for this chain'
+      : 'Unsupported custom alert chain, metric, or window'
+  ), {
+    status: 400,
+    code: result.code,
+    reason: result.reason,
+    capability: result.capability,
+  });
+  throw error;
+}
+
+async function buildCustomAlertBaselineMetadata(chain, tokenAddress, metric) {
+  try {
+    const row = await tokenCatalog.getMarketBaselineByAddress(tokenAddress, chain);
+    if (!row) return {};
+    const baselineMcap = customAlertBaselineNumber(row.last_mcap);
+    const baselineFdv = customAlertBaselineNumber(row.last_fdv);
+    const baselinePrice = customAlertBaselineNumber(row.last_price);
+    return {
+      baselineMcap: chain === 'solana' ? baselineMcap : null,
+      baselineFdv: chain === 'robinhood' ? baselineFdv : null,
+      baselinePrice,
+      baselineValuationType: metric === 'fdv' ? 'fdv' : (metric === 'mcap' ? 'market-cap' : 'price'),
       baselineAt: new Date().toISOString(),
     };
   } catch (err) {
@@ -806,13 +1244,20 @@ async function buildCustomAlertBaselineMetadata(tokenAddress) {
 
 router.post('/custom-alert-rules', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   try {
-    const metadata = await buildCustomAlertBaselineMetadata(req.body?.tokenAddress);
-    const rule = await userCustomAlertRule.createRule(req.user.id, { ...(req.body || {}), metadata });
+    const capability = await validateCustomAlertMutation(req.body);
+    const metadata = await buildCustomAlertBaselineMetadata(
+      capability.chain, req.body?.tokenAddress, capability.metric,
+    );
+    const rule = await userCustomAlertRule.createRule(req.user.id, {
+      ...(req.body || {}),
+      chain: capability.chain,
+      metric: capability.metric,
+      window: capability.window,
+      metadata,
+    });
     return res.status(201).json({ rule });
   } catch (err) {
-    if (err.status === 400) {
-      return res.status(400).json({ error: err.message });
-    }
+    if (err.status === 400) return sendCustomAlertError(res, err);
     console.error('POST /dashboard/custom-alert-rules error:', err.message);
     return res.status(500).json({ error: 'Failed to create custom alert rule' });
   }
@@ -820,35 +1265,47 @@ router.post('/custom-alert-rules', dashboardLimiter, requireTrustedOrigin, async
 
 router.patch('/custom-alert-rules/:id', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
   try {
-    const metadata = await buildCustomAlertBaselineMetadata(req.body?.tokenAddress);
-    const rule = await userCustomAlertRule.updateRule(req.params.id, req.user.id, { ...(req.body || {}), metadata });
+    const capability = await validateCustomAlertMutation(req.body);
+    const rule = await userCustomAlertRule.updateRule(req.params.id, req.user.id, {
+      ...(req.body || {}),
+      chain: capability.chain,
+      metric: capability.metric,
+      window: capability.window,
+      metadata: {},
+    });
     if (!rule) {
       return res.status(404).json({ error: 'Custom alert rule not found' });
     }
     return res.json({ rule });
   } catch (err) {
-    if (err.status === 400) {
-      return res.status(400).json({ error: err.message });
-    }
+    if (err.status === 400) return sendCustomAlertError(res, err);
     console.error('PATCH /dashboard/custom-alert-rules/:id error:', err.message);
     return res.status(500).json({ error: 'Failed to update custom alert rule' });
   }
 });
 
 router.delete('/custom-alert-rules/:id', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const chains = parseCustomAlertChainArray(req.query?.chain, 'chain');
+  if (!chains.ok || chains.value.length !== 1) {
+    return res.status(400).json({ error: chains.error || 'chain must select one chain' });
+  }
   try {
-    const rule = await userCustomAlertRule.disableRule(req.params.id, req.user.id);
+    const rule = await userCustomAlertRule.disableRule(
+      req.params.id, req.user.id, { chain: chains.value[0] },
+    );
     return res.json({ rule, disabled: Boolean(rule) });
   } catch (err) {
-    if (err.status === 400) {
-      return res.status(400).json({ error: err.message });
-    }
+    if (err.status === 400) return sendCustomAlertError(res, err);
     console.error('DELETE /dashboard/custom-alert-rules/:id error:', err.message);
     return res.status(500).json({ error: 'Failed to disable custom alert rule' });
   }
 });
 
 router.get('/top-performers', dashboardLimiter, async (req, res) => {
+  const chainsQuery = parseWorkspaceChainArray(req.query?.chains);
+  if (!chainsQuery.ok) {
+    return res.status(400).json({ error: chainsQuery.error });
+  }
   const parsedLimit = req.query?.limit === undefined
     ? { ok: true, value: TOP_PERFORMERS_DEFAULT_LIMIT }
     : parseNonNegativeInteger(req.query.limit, 'limit', { min: 1, max: TOP_PERFORMERS_MAX_LIMIT });
@@ -857,8 +1314,10 @@ router.get('/top-performers', dashboardLimiter, async (req, res) => {
   }
 
   const options = {
+    chains: chainsQuery.value,
     limit: parsedLimit.value,
     minMcap: normalizeMinMcap(req.query?.minMcap),
+    minFdv: normalizeMinFdv(req.query?.minFdv),
     minVol24h: normalizeMinVol24h(req.query?.minVol24h),
   };
   const cacheKey = getTopPerformersCacheKey(options);
@@ -868,7 +1327,7 @@ router.get('/top-performers', dashboardLimiter, async (req, res) => {
   }
 
   try {
-    const rows = await tokenCatalog.listDashboardTopPerformers(options);
+    const rows = await dashboardChainReader.listTopPerformers(options);
     const payload = {
       ...buildTopPerformersPayload(rows, options),
       cached: false,
@@ -883,96 +1342,51 @@ router.get('/top-performers', dashboardLimiter, async (req, res) => {
 });
 
 router.post('/history-bootstrap', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
-  const starredAddresses = parseAddressArray(req.body?.starredTokens, 'starredTokens');
-  if (!starredAddresses.ok) {
-    return res.status(400).json({ error: starredAddresses.error });
+  const parsed = parseHistoryBootstrapRequestPayload(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: parsed.error });
   }
+  const {
+    chains,
+    oldWeek,
+    pinnedIdentitiesByBucket,
+    recent,
+    starredIdentities,
+  } = parsed.value;
 
-  const recent = parseHistoryBucketRequest(req.body?.recent, 'recent');
-  if (!recent.ok) {
-    return res.status(400).json({ error: recent.error });
-  }
-
-  const oldWeek = parseHistoryBucketRequest(req.body?.oldWeek, 'oldWeek');
-  if (!oldWeek.ok) {
-    return res.status(400).json({ error: oldWeek.error });
-  }
-
-  const recentDebugProbeAddresses = parseAddressArray(req.body?.recentDebugProbeAddresses, 'recentDebugProbeAddresses');
-  if (!recentDebugProbeAddresses.ok) {
-    return res.status(400).json({ error: recentDebugProbeAddresses.error });
-  }
-
-  const pinnedAddressesByBucket = parseHistoryBootstrapPinnedAddresses(req.body);
-  if (!pinnedAddressesByBucket.ok) {
-    return res.status(400).json({ error: pinnedAddressesByBucket.error });
+  let asOf;
+  try {
+    asOf = normalizeAsOf(req.body?.asOf || new Date()).toISOString();
+  } catch (_) {
+    return res.status(400).json({ error: 'asOf must be a valid timestamp' });
   }
 
   try {
-    const pinnedAddresses = Array.from(new Set([
-      ...pinnedAddressesByBucket.value.recent,
-      ...pinnedAddressesByBucket.value.oldWeek,
-    ]));
-    const [recentResult, oldWeekResult, recentDebugProbe, pinnedRows] = await Promise.all([
-      tokenCatalog.listDashboardHistoryBucket('recent', {
-        ...recent.value,
-        starredAddresses: starredAddresses.value,
-      }),
-      tokenCatalog.listDashboardHistoryBucket('oldWeek', {
-        ...oldWeek.value,
-        starredAddresses: starredAddresses.value,
-      }),
-      recentDebugProbeAddresses.value.length > 0
-        ? tokenCatalog.listDashboardHistoryBucketDebugProbe('recent', {
-            ...recent.value,
-            starredAddresses: starredAddresses.value,
-          }, recentDebugProbeAddresses.value)
-        : Promise.resolve([]),
-      tokenCatalog.listDashboardMetadataByAddresses(pinnedAddresses),
+    const blockedItems = await userBlocklist.getAllForChains(req.user.id, chains);
+    const blockedIdentities = blockedItems.map((item) => tokenIdentityKey(item.chain, item.address));
+    const common = { asOf, chains, starredIdentities, blockedIdentities };
+    const recentInput = buildRadarReaderInput('recent', recent, common);
+    const oldWeekInput = buildRadarReaderInput('oldWeek', oldWeek, common);
+    const [recentResult, oldWeekResult] = await Promise.all([
+      dashboardRadarReader.listExactRadar(recentInput),
+      dashboardRadarReader.listExactRadar(oldWeekInput),
     ]);
-    const recentPinnedRows = getPinnedHistoryRows(pinnedRows, recentResult.rows, pinnedAddressesByBucket.value.recent);
-    const oldWeekPinnedRows = getPinnedHistoryRows(pinnedRows, oldWeekResult.rows, pinnedAddressesByBucket.value.oldWeek);
-
-    const addresses = Array.from(new Set([
-      ...recentResult.rows.map((item) => item.address),
-      ...oldWeekResult.rows.map((item) => item.address),
-      ...recentPinnedRows.map((item) => item.address),
-      ...oldWeekPinnedRows.map((item) => item.address),
-    ]));
-
-    const meteoraSummaryRows = await uiMeteoraSummaryCache.listUiSummaryByAddresses(addresses);
-    const meteoraByAddress = new Map();
-    const marketMcapBaselineByAddress = new Map();
-    const marketVolumeBaselineByAddress = new Map();
-
-    for (const row of meteoraSummaryRows) {
-      meteoraByAddress.set(row.tokenAddress, row);
-    }
-
-    const [primaryMarketBaselineRows, primaryVolumeBaselineRows] = await Promise.all([
-      tokenMarketBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
-      tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses(addresses, 5),
+    const [recentPinnedRows, oldWeekPinnedRows] = await Promise.all([
+      dashboardRadarReader.listRadarPins({ ...recentInput,
+        pinnedIdentities: pinnedIdentitiesByBucket.recent,
+        excludedIdentities: blockedIdentities, pageRows: recentResult.rows }),
+      dashboardRadarReader.listRadarPins({ ...oldWeekInput,
+        pinnedIdentities: pinnedIdentitiesByBucket.oldWeek,
+        excludedIdentities: blockedIdentities, pageRows: oldWeekResult.rows }),
     ]);
-
-    for (const row of primaryMarketBaselineRows) {
-      marketMcapBaselineByAddress.set(row.token_address, row);
-    }
-
-    for (const row of primaryVolumeBaselineRows) {
-      marketVolumeBaselineByAddress.set(row.token_address, row);
-    }
-
-    const payload = buildHistoryBootstrapPayload(
-      recentResult,
-      oldWeekResult,
-      meteoraByAddress,
-      marketMcapBaselineByAddress,
-      marketVolumeBaselineByAddress,
-      recentDebugProbe.length > 0 ? { recentProbe: recentDebugProbe } : null,
-      { recentPinnedRows, oldWeekPinnedRows },
-    );
-
-    res.json(payload);
+    return res.json({
+      generatedAt: asOf,
+      asOf,
+      chains,
+      source: 'workspace-catalog-v2',
+      recent: buildRadarBucketPayload(recentResult, recentPinnedRows),
+      oldWeek: buildRadarBucketPayload(oldWeekResult, oldWeekPinnedRows),
+    });
   } catch (err) {
     console.error('POST /dashboard/history-bootstrap error:', err.message);
     res.status(500).json({ error: 'Failed to load history workspace bootstrap' });
@@ -992,11 +1406,17 @@ router.get('/alert-events', dashboardLimiter, async (req, res) => {
       limit: req.query?.limit,
       mode: req.query?.mode,
       afterId: afterId.value,
+      ...((req.query?.chains ?? req.query?.chain) == null
+        ? {} : { chains: req.query?.chains ?? req.query?.chain }),
     });
     res.json(payload);
   } catch (err) {
     if (err.code === 'UNSUPPORTED_ALERT_RULE') {
       res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
+      return;
+    }
+    if (err.code === 'UNSUPPORTED_ALERT_CHAIN') {
+      res.status(400).json({ error: 'Unsupported dashboard alert chain' });
       return;
     }
     console.error('GET /dashboard/alert-events error:', err.message);
@@ -1029,11 +1449,17 @@ router.get('/alert-feeds', dashboardLimiter, async (req, res) => {
       ruleKeys: req.query?.ruleKeys,
       limit: req.query?.limit,
       mode: req.query?.mode,
+      ...((req.query?.chains ?? req.query?.chain) == null
+        ? {} : { chains: req.query?.chains ?? req.query?.chain }),
     });
     res.json(payload);
   } catch (err) {
     if (err.code === 'UNSUPPORTED_ALERT_RULE') {
       res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
+      return;
+    }
+    if (err.code === 'UNSUPPORTED_ALERT_CHAIN') {
+      res.status(400).json({ error: 'Unsupported dashboard alert chain' });
       return;
     }
     console.error('GET /dashboard/alert-feeds error:', err.message);
@@ -1045,6 +1471,8 @@ router.post('/alert-events/clear', dashboardLimiter, requireTrustedOrigin, async
   try {
     const payload = await backendAlertFeed.clearDashboardAlertFeeds(req.user.id, {
       ruleKeys: req.body?.ruleKeys,
+      ...((req.body?.chains ?? req.body?.chain) == null
+        ? {} : { chains: req.body?.chains ?? req.body?.chain }),
     });
     res.json(payload);
   } catch (err) {
@@ -1052,8 +1480,39 @@ router.post('/alert-events/clear', dashboardLimiter, requireTrustedOrigin, async
       res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
       return;
     }
+    if (err.code === 'UNSUPPORTED_ALERT_CHAIN') {
+      res.status(400).json({ error: 'Unsupported dashboard alert chain' });
+      return;
+    }
     console.error('POST /dashboard/alert-events/clear error:', err.message);
     res.status(500).json({ error: 'Failed to clear dashboard alert events' });
+  }
+});
+
+router.post('/alert-events/dismiss', dashboardLimiter, requireTrustedOrigin, async (req, res) => {
+  const eventId = parseOptionalEventId(req.body?.eventId, 'eventId');
+  if (!eventId.ok || eventId.value == null) {
+    return res.status(400).json({ error: eventId.error || 'eventId is required' });
+  }
+
+  try {
+    const dismissal = await backendAlertFeed.dismissDashboardAlertEvent(req.user.id, {
+      ruleKey: req.body?.ruleKey,
+      chain: req.body?.chain,
+      eventId: eventId.value,
+    });
+    res.json({ dismissal });
+  } catch (err) {
+    if (err.code === 'ALERT_EVENT_NOT_FOUND') {
+      res.status(404).json({ error: 'Dashboard alert event not found' });
+      return;
+    }
+    if (['UNSUPPORTED_ALERT_RULE', 'UNSUPPORTED_ALERT_CHAIN', 'INVALID_ALERT_EVENT'].includes(err.code)) {
+      res.status(400).json({ error: 'Invalid dashboard alert event dismissal' });
+      return;
+    }
+    console.error('POST /dashboard/alert-events/dismiss error:', err.message);
+    res.status(500).json({ error: 'Failed to dismiss dashboard alert event' });
   }
 });
 
@@ -1075,6 +1534,7 @@ router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, asyn
   try {
     const cursor = await backendAlertFeed.updateDashboardAlertCursor(req.user.id, {
       ruleKey: req.body?.ruleKey,
+      ...(req.body?.chain == null ? {} : { chain: req.body.chain }),
       lastSeenEventId: lastSeenEventId.value,
       lastAckedEventId: lastAckedEventId.value,
     });
@@ -1085,6 +1545,10 @@ router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, asyn
       res.status(400).json({ error: 'Unsupported dashboard alert rule key' });
       return;
     }
+    if (err.code === 'UNSUPPORTED_ALERT_CHAIN') {
+      res.status(400).json({ error: 'Unsupported dashboard alert chain' });
+      return;
+    }
     console.error('POST /dashboard/alert-events/cursor error:', err.message);
     res.status(500).json({ error: 'Failed to update dashboard alert cursor' });
   }
@@ -1092,13 +1556,17 @@ router.post('/alert-events/cursor', dashboardLimiter, requireTrustedOrigin, asyn
 
 router.__private = {
   buildMeteoraSummary,
+  buildExactMonitoredDashboardResponse,
   buildMarketBaseline,
   buildMonitoredTokenPayload,
+  buildValuationPayload,
   buildTopPerformersPayload,
   buildRiskReviewSummary,
   buildStructuralRiskSummary,
   parseOptionalEventId,
   parsePinnedOrderPayload,
+  getMonitoredCacheKey,
+  resetMonitoredCache,
   resetTopPerformersCache,
 };
 

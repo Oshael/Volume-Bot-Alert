@@ -2,7 +2,13 @@
 const adminBlockedToken = require('./admin-blocked-token');
 const monitoredTokenExitEvent = require('./monitored-token-exit-event');
 const { isValidAddress } = require('./user-token');
-const { normalizeChain, normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
+const { normalizeText, sanitizeHttpUrl, sanitizeAssetUrl } = require('../utils/url-safety');
+const {
+  normalizeTokenAddress,
+  normalizeTokenChain,
+  parseTokenIdentityKey,
+  tokenIdentityKey,
+} = require('../utils/token-identity');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { normalizeCumulativeVolumeWindows } = require('../services/volume-window-consistency');
 
@@ -63,11 +69,13 @@ const MONITORED_SORT_COLUMNS = Object.freeze({
 });
 
 const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
+   tc.chain,
    tc.address,
    tc.symbol,
    tc.name,
    tc.eligible_for_monitoring,
    tc.last_mcap,
+   tc.last_fdv,
    tc.last_price,
    tc.last_vol_5m,
    tc.last_vol_1h,
@@ -110,11 +118,13 @@ const DASHBOARD_MONITORED_SELECT_SQL = `SELECT
    tre.reason_codes AS risk_reason_codes`;
 
 const DASHBOARD_MONITORED_LEAN_SELECT_SQL = `SELECT
+   tc.chain,
    tc.address,
    tc.symbol,
    tc.name,
    tc.eligible_for_monitoring,
    tc.last_mcap,
+   tc.last_fdv,
    tc.last_price,
    tc.last_liquidity_usd,
    tc.last_vol_5m,
@@ -197,7 +207,7 @@ function emptyMeteoraPriorityCounts() {
   };
 }
 
-async function getMonitoredExitSnapshot(address) {
+async function getLegacySignalExitSnapshot(address) {
   const { rows } = await db.query(
     `SELECT
        address,
@@ -226,15 +236,16 @@ async function getMonitoredExitSnapshot(address) {
   return rows[0] || null;
 }
 
-async function recordMonitoredExit(previousRow, currentRow, context = {}) {
+async function recordLegacySignalExit(previousRow, currentRow, context = {}) {
   try {
     await monitoredTokenExitEvent.recordIfExited(previousRow, currentRow, {
+      chain: 'solana',
       pipeline: context.pipeline || 'token-catalog.applyEvaluationResult',
       evaluationSource: context.evaluationSource,
       exitSource: context.exitSource || context.evaluationSource,
     });
   } catch (err) {
-    console.warn('[TokenCatalog] Failed to record monitored token exit:', err instanceof Error ? err.message : err);
+    console.warn('[TokenCatalog] Failed to record legacy signal-eligibility exit:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -247,13 +258,9 @@ function normalizeRiskCandidateLimit(value, fallback = 250) {
 }
 
 async function upsertToken(token) {
+  const chain = normalizeTokenChain(token.chain || 'solana');
+  const address = normalizeTokenAddress(chain, token.address);
   await adminBlockedToken.ensureTable();
-  const address = String(token.address || '').trim();
-  if (!isValidAddress(address)) {
-    throw new Error('Invalid token address format');
-  }
-
-  const chain = normalizeChain(token.chain);
   const source = normalizeSource(token.source);
   const symbol = normalizeText(token.symbol, 64);
   const name = normalizeText(token.name, 160);
@@ -293,19 +300,18 @@ async function upsertToken(token) {
        is_active_monitor_candidate
      )
      VALUES (
-       $1, $2, $3, $4, $5,
+       $1, $2::text, $3, $4, $5,
        $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
        $16, $17, $18, $19, $20,
        $21, $22,
        $26,
        CASE
-         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = $24)
+         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.chain = $2::text AND ab.address = $24)
            THEN FALSE
          ELSE $23
        END
      )
-     ON CONFLICT (address) DO UPDATE SET
-       chain = EXCLUDED.chain,
+     ON CONFLICT (chain, address) DO UPDATE SET
        symbol = COALESCE(EXCLUDED.symbol, token_catalog.symbol),
        name = COALESCE(EXCLUDED.name, token_catalog.name),
        source = EXCLUDED.source,
@@ -337,7 +343,10 @@ async function upsertToken(token) {
          ELSE token_catalog.migration_grace_until
        END,
        is_active_monitor_candidate = CASE
-         WHEN EXISTS (SELECT 1 FROM admin_blocked_tokens ab WHERE ab.address = token_catalog.address)
+         WHEN EXISTS (
+           SELECT 1 FROM admin_blocked_tokens ab
+           WHERE ab.chain = token_catalog.chain AND ab.address = token_catalog.address
+         )
            THEN FALSE
          ELSE EXCLUDED.is_active_monitor_candidate
        END,
@@ -381,23 +390,26 @@ async function upsertToken(token) {
   return rows[0];
 }
 
-async function getByAddress(address) {
-  const addr = String(address || '').trim();
+async function getByAddress(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  const addr = normalizeTokenAddress(chain, address);
   const { rows } = await db.query(
-    'SELECT * FROM token_catalog WHERE address = $1 LIMIT 1',
-    [addr]
+    'SELECT * FROM token_catalog WHERE chain = $1 AND address = $2 LIMIT 1',
+    [chain, addr]
   );
   return rows[0] || null;
 }
 
-async function listRecent(limit = 100) {
+async function listRecent(limit = 100, chainValue = 'solana') {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+  const chain = normalizeTokenChain(chainValue);
   const { rows } = await db.query(
     `SELECT *
      FROM token_catalog
+     WHERE chain = $2
      ORDER BY last_seen_at DESC
      LIMIT $1`,
-    [safeLimit]
+    [safeLimit, chain]
   );
   return rows;
 }
@@ -407,14 +419,16 @@ async function listDueForEvaluation(limit = 25) {
   const { rows } = await db.query(
     `SELECT *
      FROM token_catalog
-     WHERE is_active_monitor_candidate = TRUE
+     WHERE chain = 'solana'
+       AND is_active_monitor_candidate = TRUE
        AND next_evaluation_at <= NOW()
      ORDER BY CASE
                 WHEN source = 'user-manual'
                   OR EXISTS (
                     SELECT 1
                     FROM user_tokens ut
-                    WHERE ut.address = token_catalog.address
+                    WHERE ut.chain = token_catalog.chain
+                      AND ut.address = token_catalog.address
                   ) THEN 0
                 ELSE 1
               END ASC,
@@ -454,16 +468,18 @@ async function claimDueForEvaluation(limit = 25, options = {}, runner = db) {
   const executor = runner && typeof runner.query === 'function' ? runner : db;
   const { rows } = await executor.query(
     `WITH claimed AS (
-       SELECT address
+       SELECT id
        FROM token_catalog
-       WHERE is_active_monitor_candidate = TRUE
+       WHERE chain = 'solana'
+         AND is_active_monitor_candidate = TRUE
          AND next_evaluation_at <= NOW()
        ORDER BY CASE
                   WHEN source = 'user-manual'
                     OR EXISTS (
                       SELECT 1
                       FROM user_tokens ut
-                      WHERE ut.address = token_catalog.address
+                      WHERE ut.chain = token_catalog.chain
+                        AND ut.address = token_catalog.address
                     ) THEN 0
                   ELSE 1
                 END ASC,
@@ -497,7 +513,7 @@ async function claimDueForEvaluation(limit = 25, options = {}, runner = db) {
      UPDATE token_catalog tc
      SET next_evaluation_at = NOW() + ($2::int * INTERVAL '1 millisecond')
      FROM claimed
-     WHERE tc.address = claimed.address
+     WHERE tc.id = claimed.id
      RETURNING tc.*`,
     [safeLimit, claimTtlMs]
   );
@@ -511,7 +527,8 @@ async function countDueForEvaluationSummary() {
        COUNT(*)::int AS count,
        COALESCE(MAX((EXTRACT(EPOCH FROM (NOW() - next_evaluation_at)) * 1000)::bigint), 0)::bigint AS max_overdue_ms
      FROM token_catalog
-     WHERE is_active_monitor_candidate = TRUE
+     WHERE chain = 'solana'
+       AND is_active_monitor_candidate = TRUE
        AND next_evaluation_at <= NOW()
      GROUP BY COALESCE(monitor_priority, 'dormant')`
   );
@@ -581,7 +598,8 @@ async function listDueForMeteoraSnapshots(limit = 25, tier = null, checkedBefore
      FROM token_catalog tc
      LEFT JOIN token_meteora_state ms
        ON ms.token_address = tc.address
-     WHERE ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
+     WHERE tc.chain = 'solana'
+       AND ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
        ${tierFilterSql}
        ${checkedBeforeSql}
      ORDER BY tc.last_meteora_checked_at ASC NULLS FIRST,
@@ -599,7 +617,8 @@ async function countDueForMeteoraSnapshots() {
      FROM token_catalog tc
      LEFT JOIN token_meteora_state ms
        ON ms.token_address = tc.address
-     WHERE ${buildMeteoraEligibilityWhereSql('tc', 'ms')}`
+     WHERE tc.chain = 'solana'
+       AND ${buildMeteoraEligibilityWhereSql('tc', 'ms')}`
   );
 
   return Number(rows[0]?.count) || 0;
@@ -613,7 +632,8 @@ async function countDueForMeteoraSnapshotsByTier() {
      FROM token_catalog tc
      LEFT JOIN token_meteora_state ms
        ON ms.token_address = tc.address
-     WHERE ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
+     WHERE tc.chain = 'solana'
+       AND ${buildMeteoraEligibilityWhereSql('tc', 'ms')}
      GROUP BY ${buildMeteoraPriorityTierSql('tc')}`
   );
 
@@ -652,7 +672,8 @@ async function markMeteoraChecked(addresses, checkedAt = new Date(), runner = db
   const result = await runner.query(
     `UPDATE token_catalog
      SET last_meteora_checked_at = $2
-     WHERE address = ANY($1::varchar[])`,
+     WHERE chain = 'solana'
+       AND address = ANY($1::varchar[])`,
     [unique, timestamp]
   );
 
@@ -672,7 +693,8 @@ async function listEligibleVisible(limit = 500, minMcap = 30000) {
        last_seen_at,
        last_evaluated_at
      FROM token_catalog
-     WHERE eligible_for_monitoring = TRUE
+     WHERE chain = 'solana'
+       AND eligible_for_monitoring = TRUE
        AND COALESCE(last_mcap, 0) >= $2
      ORDER BY last_seen_at DESC, last_evaluated_at DESC NULLS LAST
      LIMIT $1`,
@@ -687,11 +709,26 @@ async function listDashboardMonitored(limit = 500, minMcap = 30000) {
   const { rows } = await db.query(
     `${DASHBOARD_MONITORED_LEAN_SELECT_SQL}
      FROM token_catalog tc
-     WHERE tc.eligible_for_monitoring = TRUE
+     WHERE tc.chain = 'solana'
+       AND tc.eligible_for_monitoring = TRUE
        AND COALESCE(tc.last_mcap, 0) >= $2
      ORDER BY tc.last_seen_at DESC, tc.last_evaluated_at DESC NULLS LAST
      LIMIT $1`,
     [safeLimit, safeMinMcap]
+  );
+  return rows;
+}
+
+async function listDashboardMonitoredForMerge(minMcap = 30000) {
+  const safeMinMcap = Math.max(0,
+    Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
+  const { rows } = await db.query(
+    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL}
+     FROM token_catalog tc
+     WHERE tc.chain = 'solana'
+       AND tc.eligible_for_monitoring = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $1`,
+    [safeMinMcap]
   );
   return rows;
 }
@@ -755,7 +792,8 @@ async function listDashboardMonitoredSlice(page = 0, perPage = 30, minMcap = 300
     `${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
        COUNT(*) OVER() AS total_count
      FROM token_catalog tc
-     WHERE tc.eligible_for_monitoring = TRUE
+     WHERE tc.chain = 'solana'
+       AND tc.eligible_for_monitoring = TRUE
        AND COALESCE(tc.last_mcap, 0) >= $3
      ORDER BY ${orderSql}
      LIMIT $1
@@ -771,11 +809,14 @@ async function listDashboardMonitoredSlice(page = 0, perPage = 30, minMcap = 300
   };
 }
 
-async function listDashboardPinnedMonitored(userId) {
+async function listDashboardPinnedMonitored(userId, chainValues = ['solana']) {
   const safeUserId = Number(userId);
   if (!Number.isInteger(safeUserId) || safeUserId <= 0) {
     return [];
   }
+  const chains = [...new Set((Array.isArray(chainValues) ? chainValues : [chainValues])
+    .map((chain) => normalizeTokenChain(chain)))];
+  if (!chains.length) return [];
 
   const { rows } = await db.query(
     `${DASHBOARD_MONITORED_LEAN_SELECT_SQL},
@@ -784,17 +825,22 @@ async function listDashboardPinnedMonitored(userId) {
        upmt.updated_at AS pinned_updated_at
      FROM user_pinned_monitored_tokens upmt
      JOIN token_catalog tc
-       ON tc.address = upmt.address
+       ON tc.chain = upmt.chain
+      AND tc.address = upmt.address
      LEFT JOIN user_blocklist ub
        ON ub.user_id = upmt.user_id
+      AND ub.chain = upmt.chain
       AND ub.address = upmt.address
      LEFT JOIN admin_blocked_tokens ab
-       ON ab.address = upmt.address
+       ON ab.chain = upmt.chain
+      AND ab.address = upmt.address
      WHERE upmt.user_id = $1
+       AND upmt.chain = ANY($2::varchar[])
        AND ub.address IS NULL
        AND ab.address IS NULL
-     ORDER BY upmt.sort_order ASC, upmt.updated_at DESC, upmt.address ASC`,
-    [safeUserId]
+     ORDER BY upmt.sort_order ASC, upmt.updated_at DESC, upmt.chain ASC,
+       upmt.address ASC`,
+    [safeUserId, chains]
   );
   return rows;
 }
@@ -825,8 +871,10 @@ async function listDashboardTopPerformers(options = {}) {
        LN(1 + GREATEST(COALESCE(tc.last_vol_24h, 0), 0)) AS volume_score_input
        FROM token_catalog tc
        LEFT JOIN token_risk_reviews trr
-         ON trr.token_address = tc.address
-       WHERE tc.eligible_for_monitoring = TRUE
+         ON trr.chain = tc.chain
+        AND trr.token_address = tc.address
+       WHERE tc.chain = 'solana'
+         AND tc.eligible_for_monitoring = TRUE
          AND tc.is_active_monitor_candidate = TRUE
          AND COALESCE(tc.last_mcap, 0) >= $2
          AND COALESCE(tc.last_vol_24h, 0) >= $3
@@ -835,7 +883,8 @@ async function listDashboardTopPerformers(options = {}) {
          AND NOT EXISTS (
            SELECT 1
            FROM admin_blocked_tokens ab
-           WHERE ab.address = tc.address
+           WHERE ab.chain = tc.chain
+             AND ab.address = tc.address
          )
      ),
      ranked AS (
@@ -908,6 +957,32 @@ async function listDashboardTopPerformers(options = {}) {
     normalized.statementTimeoutMs
   );
 
+  return rows;
+}
+
+async function listDashboardTopPerformerCandidates(options = {}) {
+  const normalized = normalizeTopPerformersOptions(options);
+  const { rows } = await db.queryWithStatementTimeout(
+    `${DASHBOARD_MONITORED_LEAN_SELECT_SQL}
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.chain = tc.chain
+      AND trr.token_address = tc.address
+     WHERE tc.chain = 'solana'
+       AND tc.eligible_for_monitoring = TRUE
+       AND tc.is_active_monitor_candidate = TRUE
+       AND COALESCE(tc.last_mcap, 0) >= $1
+       AND COALESCE(tc.last_vol_24h, 0) >= $2
+       AND COALESCE(tc.last_price_change_24h, 0) > 0
+       AND COALESCE(trr.label, '') NOT IN ('junk_probable', 'junk_permanent')
+       AND NOT EXISTS (
+         SELECT 1 FROM admin_blocked_tokens blocked
+         WHERE blocked.chain = tc.chain AND blocked.address = tc.address
+       )
+     ORDER BY COALESCE(tc.last_vol_24h, 0) DESC, tc.address ASC`,
+    [normalized.minMcap, normalized.minVol24h],
+    normalized.statementTimeoutMs
+  );
   return rows;
 }
 
@@ -1026,6 +1101,7 @@ function buildHistoryBucketOrderSql(sorts) {
   const clauses = ['history_sort_score DESC', ...buildHistoryBucketSortClauses(sorts)];
   clauses.push('COALESCE(tc.last_token_created_at_ms, 0) DESC');
   clauses.push('COALESCE(tc.last_mcap, 0) DESC');
+  clauses.push('tc.chain ASC');
   clauses.push('tc.address ASC');
   return clauses.join(', ');
 }
@@ -1076,18 +1152,17 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
   const safeMaxMcap = Number.isFinite(Number(options.mcapMax)) ? Number(options.mcapMax) : 0;
   const searchQuery = String(options.searchQuery || '').trim().toLowerCase();
   const searchPattern = searchQuery ? `%${searchQuery}%` : null;
-  const dismissedAddresses = Array.from(new Set(
-    (Array.isArray(options.dismissedAddresses) ? options.dismissedAddresses : [])
-      .map((item) => String(item || '').trim())
-      .filter((item) => isValidAddress(item))
-  ));
-  const starredAddresses = Array.from(new Set(
-    (Array.isArray(options.starredAddresses) ? options.starredAddresses : [])
-      .map((item) => String(item || '').trim())
-      .filter((item) => isValidAddress(item))
-  ));
+  const chains = normalizeHistoryChains(options.chains);
+  const dismissedIdentities = normalizeHistoryIdentityKeys(
+    options.dismissedTokenIdentities,
+    options.dismissedAddresses,
+  );
+  const starredIdentities = normalizeHistoryIdentityKeys(
+    options.starredTokenIdentities,
+    options.starredAddresses,
+  );
 
-  if (Boolean(options.starredOnly) && starredAddresses.length === 0) {
+  if (Boolean(options.starredOnly) && starredIdentities.length === 0) {
     return {
       ok: false,
       empty: true,
@@ -1135,8 +1210,9 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
       minMcap: safeMinMcap,
       maxMcap: safeMaxMcap,
       searchPattern,
-      dismissedAddresses,
-      starredAddresses,
+      chains,
+      dismissedIdentities,
+      starredIdentities,
       starredOnly: Boolean(options.starredOnly),
       scoreSql: buildHistoryBucketScoreSql(options.sorts),
       orderSql: buildHistoryBucketOrderSql(options.sorts),
@@ -1145,8 +1221,33 @@ function buildHistoryBucketQueryParams(bucket, options = {}) {
   };
 }
 
+function normalizeHistoryChains(values) {
+  const source = Array.isArray(values) && values.length > 0 ? values : ['solana'];
+  return Array.from(new Set(source.map((value) => normalizeTokenChain(value))));
+}
+
+function normalizeHistoryIdentityKeys(identityValues, legacyAddresses) {
+  const keys = [];
+  for (const value of Array.isArray(identityValues) ? identityValues : []) {
+    try {
+      keys.push(parseTokenIdentityKey(value).key);
+    } catch (_) {
+      // Invalid identities are ignored at the model boundary; routes reject them.
+    }
+  }
+  for (const value of Array.isArray(legacyAddresses) ? legacyAddresses : []) {
+    try {
+      keys.push(tokenIdentityKey('solana', value));
+    } catch (_) {
+      // Preserve the legacy behavior of ignoring malformed addresses.
+    }
+  }
+  return Array.from(new Set(keys));
+}
+
 function buildHistoryBucketWhereSql(params) {
   return [
+    `tc.chain = ANY($${params.ageParams.length + 7}::varchar[])`,
     'tc.eligible_for_monitoring = TRUE',
     'tc.last_token_created_at_ms IS NOT NULL',
     'tc.last_token_created_at_ms > 0',
@@ -1158,8 +1259,8 @@ function buildHistoryBucketWhereSql(params) {
       OR LOWER(COALESCE(tc.name, '')) LIKE $${params.ageParams.length + 3}
       OR LOWER(tc.address) LIKE $${params.ageParams.length + 3}
     ))`,
-    `($${params.ageParams.length + 4}::varchar[] = '{}'::varchar[] OR tc.address <> ALL($${params.ageParams.length + 4}::varchar[]))`,
-    `($${params.ageParams.length + 5}::boolean = FALSE OR tc.address = ANY($${params.ageParams.length + 6}::varchar[]))`,
+    `($${params.ageParams.length + 4}::varchar[] = '{}'::varchar[] OR (tc.chain || ':' || tc.address) <> ALL($${params.ageParams.length + 4}::varchar[]))`,
+    `($${params.ageParams.length + 5}::boolean = FALSE OR (tc.chain || ':' || tc.address) = ANY($${params.ageParams.length + 6}::varchar[]))`,
   ];
 }
 
@@ -1169,9 +1270,10 @@ function buildHistoryBucketWhereParams(params) {
     params.minMcap,
     params.maxMcap,
     params.searchPattern,
-    params.dismissedAddresses,
+    params.dismissedIdentities,
     params.starredOnly,
-    params.starredAddresses,
+    params.starredIdentities,
+    params.chains,
   ];
 }
 
@@ -1226,17 +1328,14 @@ function diagnoseHistoryBucketProbe(row, params) {
   if (mcap < params.minMcap) return 'mcap_below_min';
   if (params.maxMcap > 0 && mcap > params.maxMcap) return 'mcap_above_max';
   if (!matchesHistoryBucketSearch(row, params.searchPattern)) return 'search_mismatch';
-  if (params.dismissedAddresses.includes(row.address)) return 'dismissed';
-  if (params.starredOnly && !params.starredAddresses.includes(row.address)) return 'starred_only_mismatch';
+  const identityKey = tokenIdentityKey(row.chain || 'solana', row.address);
+  if (params.dismissedIdentities.includes(identityKey)) return 'dismissed';
+  if (params.starredOnly && !params.starredIdentities.includes(identityKey)) return 'starred_only_mismatch';
   return 'excluded_unknown';
 }
 
 async function listDashboardHistoryBucketDebugProbe(bucket, options = {}, addresses = []) {
-  const unique = Array.from(new Set(
-    (Array.isArray(addresses) ? addresses : [])
-      .map((item) => String(item || '').trim())
-      .filter((item) => isValidAddress(item))
-  )).slice(0, 50);
+  const unique = normalizeHistoryIdentityKeys(addresses, addresses).slice(0, 50);
 
   if (!unique.length) {
     return [];
@@ -1244,8 +1343,8 @@ async function listDashboardHistoryBucketDebugProbe(bucket, options = {}, addres
 
   const normalized = buildHistoryBucketQueryParams(bucket, options);
   if (!normalized.ok) {
-    return unique.map((address) => ({
-      address,
+    return unique.map((identityKey) => ({
+      address: parseTokenIdentityKey(identityKey).address,
       included: false,
       diagnosis: 'starred_only_empty',
     }));
@@ -1258,12 +1357,13 @@ async function listDashboardHistoryBucketDebugProbe(bucket, options = {}, addres
 
   const { rows } = await db.query(
     `WITH requested AS (
-       SELECT address, ordinality AS input_order
-       FROM unnest($1::varchar[]) WITH ORDINALITY AS probe(address, ordinality)
+       SELECT identity_key, ordinality AS input_order
+       FROM unnest($1::varchar[]) WITH ORDINALITY AS probe(identity_key, ordinality)
      ),
      scored AS (
        SELECT
          tc.address,
+         tc.chain,
          tc.last_mcap,
          tc.last_vol_1h,
          tc.last_vol_6h,
@@ -1275,24 +1375,29 @@ async function listDashboardHistoryBucketDebugProbe(bucket, options = {}, addres
          ${params.scoreSql} AS history_sort_score
        FROM token_catalog tc
        LEFT JOIN token_risk_reviews trr
-         ON trr.token_address = tc.address
+         ON trr.chain = tc.chain
+        AND trr.token_address = tc.address
        LEFT JOIN admin_blocked_tokens ab
-         ON ab.address = tc.address
+         ON ab.chain = tc.chain
+        AND ab.address = tc.address
        LEFT JOIN token_risk_enrichment tre
-         ON tre.token_address = tc.address
+         ON tre.chain = tc.chain
+        AND tre.token_address = tc.address
        WHERE ${whereSql.join('\n         AND ')}
      ),
      ranked AS (
        SELECT
+         scored.chain,
          scored.address,
          scored.history_sort_score,
          ROW_NUMBER() OVER (ORDER BY ${rankedOrderSql}) AS included_rank
        FROM scored
      )
      SELECT
-       requested.address,
+       requested.identity_key,
        requested.input_order,
        tc.address IS NOT NULL AS catalog_present,
+       tc.chain,
        tc.symbol,
        tc.name,
        tc.eligible_for_monitoring,
@@ -1313,14 +1418,15 @@ async function listDashboardHistoryBucketDebugProbe(bucket, options = {}, addres
        ranked.history_sort_score
      FROM requested
      LEFT JOIN token_catalog tc
-       ON tc.address = requested.address
+       ON (tc.chain || ':' || tc.address) = requested.identity_key
      LEFT JOIN ranked
-       ON ranked.address = requested.address
+       ON (ranked.chain || ':' || ranked.address) = requested.identity_key
      ORDER BY requested.input_order ASC`,
     [unique, ...whereParams]
   );
 
   return rows.map((row) => ({
+    chain: row.chain || null,
     address: row.address,
     symbol: row.symbol || null,
     included: Boolean(row.included_rank),
@@ -1365,15 +1471,18 @@ async function listDashboardHistoryBucket(bucket, options = {}) {
        COUNT(*) OVER() AS total_count
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
-       ON trr.token_address = tc.address
+       ON trr.chain = tc.chain
+      AND trr.token_address = tc.address
      LEFT JOIN admin_blocked_tokens ab
-       ON ab.address = tc.address
+       ON ab.chain = tc.chain
+      AND ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
-       ON tre.token_address = tc.address
+       ON tre.chain = tc.chain
+      AND tre.token_address = tc.address
      WHERE ${whereSql.join('\n       AND ')}
      ORDER BY ${params.orderSql}
-     LIMIT $${params.ageParams.length + 7}
-     OFFSET $${params.ageParams.length + 8}`,
+     LIMIT $${params.ageParams.length + 8}
+     OFFSET $${params.ageParams.length + 9}`,
     queryParams
   );
 
@@ -1391,6 +1500,7 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
   const safeMinMcap = Math.max(0, Number.isFinite(Number(minMcap)) ? Number(minMcap) : 30000);
   const { rows } = await db.query(
     `SELECT
+       tc.chain,
        tc.address,
        tc.source,
        tc.symbol,
@@ -1439,12 +1549,16 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
        tre.reason_codes AS risk_reason_codes
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
-       ON trr.token_address = tc.address
+       ON trr.chain = tc.chain
+      AND trr.token_address = tc.address
      LEFT JOIN admin_blocked_tokens ab
-       ON ab.address = tc.address
+       ON ab.chain = tc.chain
+      AND ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
-       ON tre.token_address = tc.address
-     WHERE (tc.eligible_for_monitoring = TRUE OR tc.suppressed_reason = 'gmgn_needs_risk_enrichment')
+       ON tre.chain = tc.chain
+      AND tre.token_address = tc.address
+     WHERE tc.chain = 'solana'
+       AND (tc.eligible_for_monitoring = TRUE OR tc.suppressed_reason = 'gmgn_needs_risk_enrichment')
        AND COALESCE(tc.last_mcap, 0) >= $3
        AND COALESCE(trr.label, '') <> 'valid'
      ORDER BY CASE
@@ -1465,27 +1579,37 @@ async function listAutoRiskReviewCandidates(limit = 250, offset = 0, minMcap = 3
   return rows;
 }
 
-async function getMarketBaselineByAddress(address) {
-  const normalized = String(address || '').trim();
-  if (!isValidAddress(normalized)) {
+async function getMarketBaselineByAddress(address, chainValue = 'solana') {
+  let chain;
+  let normalized;
+  try {
+    chain = normalizeTokenChain(chainValue);
+    normalized = normalizeTokenAddress(chain, address);
+  } catch (_) {
     return null;
   }
 
   const { rows } = await db.query(
-    `SELECT address, last_mcap, last_price
+    `SELECT address, last_mcap, last_fdv, last_price
      FROM token_catalog
-     WHERE address = $1`,
-    [normalized]
+     WHERE chain = $1 AND address = $2`,
+    [chain, normalized]
   );
   return rows[0] || null;
 }
 
-async function listDashboardMetadataByAddresses(addresses) {
+async function listDashboardMetadataByAddresses(addresses, options = {}) {
+  const chain = normalizeTokenChain(options.chain || 'solana');
   const unique = Array.from(
     new Set(
       (Array.isArray(addresses) ? addresses : [])
-        .map((item) => String(item || '').trim())
-        .filter((item) => isValidAddress(item))
+        .flatMap((item) => {
+          try {
+            return [normalizeTokenAddress(chain, item)];
+          } catch (_) {
+            return [];
+          }
+        })
     )
   );
   if (!unique.length) {
@@ -1494,6 +1618,7 @@ async function listDashboardMetadataByAddresses(addresses) {
 
   const { rows } = await db.query(
     `SELECT
+       tc.chain,
        tc.address,
        tc.symbol,
        tc.name,
@@ -1505,6 +1630,8 @@ async function listDashboardMetadataByAddresses(addresses) {
        tc.last_community_url,
        tc.eligible_for_monitoring,
        tc.last_mcap,
+       tc.last_fdv,
+       tc.last_price,
        tc.last_vol_5m,
        tc.last_vol_1h,
        tc.last_vol_6h,
@@ -1540,13 +1667,42 @@ async function listDashboardMetadataByAddresses(addresses) {
        tre.reason_codes AS risk_reason_codes
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
-       ON trr.token_address = tc.address
+       ON trr.chain = tc.chain
+      AND trr.token_address = tc.address
      LEFT JOIN admin_blocked_tokens ab
-       ON ab.address = tc.address
+       ON ab.chain = tc.chain
+      AND ab.address = tc.address
      LEFT JOIN token_risk_enrichment tre
-       ON tre.token_address = tc.address
-     WHERE tc.address = ANY($1::varchar[])`,
-    [unique]
+       ON tre.chain = tc.chain
+      AND tre.token_address = tc.address
+     WHERE tc.chain = $1
+       AND tc.address = ANY($2::varchar[])`,
+    [chain, unique]
+  );
+
+  return rows;
+}
+
+async function listDashboardMetadataByIdentities(identityValues) {
+  const identities = normalizeHistoryIdentityKeys(identityValues, identityValues);
+  if (!identities.length) {
+    return [];
+  }
+
+  const { rows } = await db.query(
+    `${DASHBOARD_MONITORED_SELECT_SQL}
+     FROM token_catalog tc
+     LEFT JOIN token_risk_reviews trr
+       ON trr.chain = tc.chain
+      AND trr.token_address = tc.address
+     LEFT JOIN admin_blocked_tokens ab
+       ON ab.chain = tc.chain
+      AND ab.address = tc.address
+     LEFT JOIN token_risk_enrichment tre
+       ON tre.chain = tc.chain
+      AND tre.token_address = tc.address
+     WHERE (tc.chain || ':' || tc.address) = ANY($1::varchar[])`,
+    [identities]
   );
 
   return rows;
@@ -1591,14 +1747,18 @@ async function listRiskEnrichmentCandidates(limit = 250, runner = db) {
        tre.top_20_pct
      FROM token_catalog tc
      LEFT JOIN token_risk_reviews trr
-       ON trr.token_address = tc.address
+       ON trr.chain = tc.chain
+      AND trr.token_address = tc.address
      LEFT JOIN token_risk_enrichment tre
-       ON tre.token_address = tc.address
-     WHERE tc.is_active_monitor_candidate = TRUE
+       ON tre.chain = tc.chain
+      AND tre.token_address = tc.address
+     WHERE tc.chain = 'solana'
+       AND tc.is_active_monitor_candidate = TRUE
        AND NOT EXISTS (
          SELECT 1
          FROM admin_blocked_tokens ab
-         WHERE ab.address = tc.address
+         WHERE ab.chain = tc.chain
+           AND ab.address = tc.address
        )
      ORDER BY CASE
                 WHEN COALESCE(tc.monitor_priority, 'dormant') = 'high' THEN 0
@@ -1703,7 +1863,7 @@ async function reactivateAdminBlockedToken(address) {
 async function applyEvaluationResult(address, result) {
   await adminBlockedToken.ensureTable();
   const addr = String(address || '').trim();
-  const previousMonitoringRow = await getMonitoredExitSnapshot(addr);
+  const previousMonitoringRow = await getLegacySignalExitSnapshot(addr);
   const eligibilityState = toNullableText(result.eligibilityState) || 'unknown';
   const eligibleForMonitoring = !!result.eligibleForMonitoring;
   const suppressedReason = toNullableText(result.suppressedReason);
@@ -1822,7 +1982,7 @@ async function applyEvaluationResult(address, result) {
   );
 
   if (updateResult.rows[0]) {
-    await recordMonitoredExit(previousMonitoringRow, updateResult.rows[0], {
+    await recordLegacySignalExit(previousMonitoringRow, updateResult.rows[0], {
       evaluationSource: result.evaluationSource || result.source,
     });
     return updateResult.rows[0];
@@ -1856,7 +2016,7 @@ async function applyEvaluationResult(address, result) {
   );
 
   if (blockedResult.rows[0]) {
-    await recordMonitoredExit(previousMonitoringRow, blockedResult.rows[0], {
+    await recordLegacySignalExit(previousMonitoringRow, blockedResult.rows[0], {
       evaluationSource: 'admin-blocked',
     });
   }
@@ -1987,41 +2147,40 @@ async function applyAutomatedCleanup(options = {}) {
   };
 }
 
-async function hasUserManualAddress(address) {
-  const addr = String(address || '').trim();
-  if (!isValidAddress(addr)) {
-    return false;
-  }
+async function hasUserManualAddress(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  let addr;
+  try { addr = normalizeTokenAddress(chain, address); } catch (_) { return false; }
 
   const { rows } = await db.query(
     `SELECT 1
      FROM user_tokens
-     WHERE address = $1
+     WHERE chain = $1 AND address = $2
      LIMIT 1`,
-    [addr]
+    [chain, addr]
   );
   return rows.length > 0;
 }
 
-async function demoteFormerManualAddress(address) {
-  const addr = String(address || '').trim();
-  if (!isValidAddress(addr)) {
-    return null;
-  }
+async function demoteFormerManualAddress(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  let addr;
+  try { addr = normalizeTokenAddress(chain, address); } catch (_) { return null; }
 
   const { rows } = await db.query(
     `UPDATE token_catalog tc
-     SET source = 'dexscreener-discovery',
+     SET source = CASE WHEN tc.chain = 'solana'
+           THEN 'dexscreener-discovery' ELSE 'unknown' END,
          metadata_updated_at = NOW()
-     WHERE tc.address = $1
+     WHERE tc.chain = $1 AND tc.address = $2
        AND tc.source = 'user-manual'
        AND NOT EXISTS (
          SELECT 1
          FROM user_tokens ut
-         WHERE ut.address = tc.address
+         WHERE ut.chain = tc.chain AND ut.address = tc.address
        )
      RETURNING *`,
-    [addr]
+    [chain, addr]
   );
   return rows[0] || null;
 }
@@ -2040,13 +2199,16 @@ module.exports = {
   listDueForMeteoraSnapshots,
   listEligibleVisible,
   listDashboardMonitored,
+  listDashboardMonitoredForMerge,
   listDashboardMonitoredSlice,
   listDashboardPinnedMonitored,
   listDashboardTopPerformers,
+  listDashboardTopPerformerCandidates,
   listDashboardHistoryBucket,
   listDashboardHistoryBucketDebugProbe,
   listAutoRiskReviewCandidates,
   listDashboardMetadataByAddresses,
+  listDashboardMetadataByIdentities,
   getMarketBaselineByAddress,
   listRiskEnrichmentCandidates,
   markMeteoraChecked,

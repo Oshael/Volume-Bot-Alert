@@ -1,8 +1,24 @@
-export type WorkspaceSparklineBatch = {
+import type { TokenChain } from '../utils/token-chain';
+
+export type WorkspaceSparklineIdentity = {
+  chain: TokenChain;
+  address: string;
+  key: string;
+};
+
+export type WorkspaceIdentitySparklineBatch = {
+  hours: number;
+  granularityMinutes: number;
+  identities: WorkspaceSparklineIdentity[];
+};
+
+export type LegacyWorkspaceSparklineBatch = {
   hours: number;
   granularityMinutes: number;
   addresses: string[];
 };
+
+export type WorkspaceSparklineBatch = WorkspaceIdentitySparklineBatch | LegacyWorkspaceSparklineBatch;
 
 export type WorkspaceSparklineCacheValue = {
   generatedAt?: string | null;
@@ -38,24 +54,48 @@ function isWorkspaceSparklineEntryFresh(
   return refreshedAt > 0 && refreshedAt + refreshIntervalMs > now;
 }
 
+function getBatchCacheKeys(batch: WorkspaceSparklineBatch) {
+  return 'identities' in batch
+    ? batch.identities.map((identity) => identity.key)
+    : batch.addresses;
+}
+
+function filterBatchCacheKeys(
+  batch: WorkspaceSparklineBatch,
+  shouldInclude: (cacheKey: string) => boolean,
+): WorkspaceSparklineBatch {
+  if ('identities' in batch) {
+    return { ...batch, identities: batch.identities.filter((identity) => shouldInclude(identity.key)) };
+  }
+  return { ...batch, addresses: batch.addresses.filter(shouldInclude) };
+}
+
+export function selectWorkspaceSparklineRefreshBatches(
+  batches: WorkspaceIdentitySparklineBatch[],
+  cache: Record<string, WorkspaceSparklineCacheValue>,
+  options: { force?: boolean; now: number; refreshIntervalMs: number },
+): WorkspaceIdentitySparklineBatch[];
+export function selectWorkspaceSparklineRefreshBatches(
+  batches: LegacyWorkspaceSparklineBatch[],
+  cache: Record<string, WorkspaceSparklineCacheValue>,
+  options: { force?: boolean; now: number; refreshIntervalMs: number },
+): LegacyWorkspaceSparklineBatch[];
 export function selectWorkspaceSparklineRefreshBatches(
   batches: WorkspaceSparklineBatch[],
   cache: Record<string, WorkspaceSparklineCacheValue>,
   options: { force?: boolean; now: number; refreshIntervalMs: number },
-) {
+): WorkspaceSparklineBatch[] {
   return batches
-    .map((batch) => ({
-      ...batch,
-      addresses: options.force
-        ? batch.addresses.slice()
-        : batch.addresses.filter((address) => !isWorkspaceSparklineEntryFresh(
-          cache[address],
-          batch,
-          options.now,
-          options.refreshIntervalMs,
-        )),
-    }))
-    .filter((batch) => batch.addresses.length > 0);
+    .map((batch) => filterBatchCacheKeys(
+      batch,
+      (cacheKey) => options.force || !isWorkspaceSparklineEntryFresh(
+        cache[cacheKey],
+        batch,
+        options.now,
+        options.refreshIntervalMs,
+      ),
+    ))
+    .filter((batch) => getBatchCacheKeys(batch).length > 0);
 }
 
 export function getWorkspaceSparklineNextRefreshAt(
@@ -66,8 +106,8 @@ export function getWorkspaceSparklineNextRefreshAt(
   let nextRefreshAt = Number.POSITIVE_INFINITY;
 
   for (const batch of batches) {
-    for (const address of batch.addresses) {
-      const entry = cache[address];
+    for (const cacheKey of getBatchCacheKeys(batch)) {
+      const entry = cache[cacheKey];
       if (
         !entry
         || Number(entry.hours) !== batch.hours

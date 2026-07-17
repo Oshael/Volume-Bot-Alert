@@ -1,5 +1,5 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 let ensureTablePromise = null;
 
@@ -15,12 +15,16 @@ function ensureTable() {
   return ensureTablePromise;
 }
 
-function normalizeAddress(value) {
-  const address = String(value || '').trim();
-  if (!isValidAddress(address)) {
-    throw new Error('Invalid token address format');
-  }
-  return address;
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
+
+function assertAutomaticReviewEnabled(chain) {
+  if (chain === 'solana') return;
+  const error = new Error('Automatic token review alerts are disabled outside Solana');
+  error.code = 'NON_SOLANA_ADMIN_REVIEW_ALERT_DISABLED';
+  throw error;
 }
 
 function normalizeText(value, fallback, maxLength = 160) {
@@ -58,6 +62,7 @@ function mapRow(row) {
   if (!row) return null;
   return {
     id: Number(row.id) || null,
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     status: row.status || null,
     priority: row.priority || null,
@@ -80,14 +85,16 @@ function mapRow(row) {
 }
 
 async function enqueue(payload = {}, runner = db) {
+  const identity = normalizeIdentity(payload.tokenAddress || payload.address, payload.chain || 'solana');
+  assertAutomaticReviewEnabled(identity.chain);
   await ensureTable();
-  const tokenAddress = normalizeAddress(payload.tokenAddress || payload.address);
   const alertKind = normalizeText(payload.alertKind, 'manual-review-socials-present', 64);
   const priority = normalizeText(payload.priority, 'normal', 24);
   const pipeline = normalizeText(payload.pipeline, 'unknown', 64);
 
   const { rows } = await runner.query(
     `INSERT INTO admin_token_review_alerts (
+       chain,
        token_address,
        status,
        priority,
@@ -104,8 +111,8 @@ async function enqueue(payload = {}, runner = db) {
        created_at,
        updated_at
      )
-     VALUES ($1, 'open', $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12, NOW(), NOW())
-     ON CONFLICT (token_address, alert_kind) WHERE status = 'open'
+     VALUES ($1, $2, 'open', $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13, NOW(), NOW())
+     ON CONFLICT (chain, token_address, alert_kind) WHERE status = 'open'
      DO UPDATE SET
        priority = EXCLUDED.priority,
        pipeline = EXCLUDED.pipeline,
@@ -120,7 +127,8 @@ async function enqueue(payload = {}, runner = db) {
        updated_at = NOW()
      RETURNING *`,
     [
-      tokenAddress,
+      identity.chain,
+      identity.address,
       priority,
       alertKind,
       pipeline,
@@ -142,12 +150,15 @@ async function listRecent(filters = {}, runner = db) {
   await ensureTable();
   const values = [];
   const clauses = [];
+  const chain = normalizeTokenChain(filters.chain || 'solana');
+  values.push(chain);
+  clauses.push(`chain = $${values.length}`);
   const status = normalizeStatus(filters.status, 'open');
   values.push(status);
   clauses.push(`status = $${values.length}`);
 
   if (filters.address) {
-    values.push(normalizeAddress(filters.address));
+    values.push(normalizeTokenAddress(chain, filters.address));
     clauses.push(`token_address = $${values.length}`);
   }
 
@@ -223,7 +234,7 @@ module.exports = {
   resolve,
   __private: {
     mapRow,
-    normalizeAddress,
+    normalizeIdentity,
     normalizeJsonArray,
     normalizeJsonObject,
     normalizeLimit,

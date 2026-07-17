@@ -13,6 +13,12 @@ const userAlertProfileCache = require('../services/user-alert-profile-cache');
 const userConfigSync = require('../services/user-config-sync');
 const manualTokenBootstrap = require('../services/manual-token-bootstrap');
 const { normalizeText } = require('../utils/url-safety');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+const {
+  getAvailableTokenChains,
+  isRobinhoodTokenChainConfigured,
+} = require('../utils/token-chain-availability');
+const { getWorkspaceChainReadiness } = require('../services/workspace-chain-readiness');
 const config = require('../../config');
 
 // All config routes require authentication
@@ -20,10 +26,32 @@ router.use(authenticate);
 router.use(requireTrustedOrigin);
 
 // ── Limites ────────────────────────────────────────────────────────
-const MAX_TOKENS = 200;      // máx tokens manuais por user
-const MAX_BLOCKLIST = 500;   // máx blocklist por user
-const MAX_STARRED = 500;     // max favorites per user
+const MAX_TOKENS = 200;      // per user and chain
+const MAX_BLOCKLIST = 500;   // per user and chain
+const MAX_STARRED = 500;     // per user and chain
+const USER_COLLECTION_CHAINS = Object.freeze(['solana', 'robinhood']);
 const ADMIN_ONLY_CONFIG_KEYS = new Set(['chain', 'mock-sol-usdc-rate']);
+
+function isValidLegacySolanaAddress(address) {
+  try {
+    normalizeTokenAddress('solana', address);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function normalizeCollectionIdentity(addressValue, chainValue = 'solana') {
+  try {
+    const chain = normalizeTokenChain(chainValue || 'solana');
+    if (!USER_COLLECTION_CHAINS.includes(chain)) {
+      throw new Error('Unsupported workspace chain');
+    }
+    return { chain, address: normalizeTokenAddress(chain, addressValue) };
+  } catch (_) {
+    throw Object.assign(new Error('Invalid token identity'), { status: 400 });
+  }
+}
 
 function normalizeAddressItems(items) {
   const deduped = new Map();
@@ -132,6 +160,12 @@ function buildRuntimeFlags() {
   };
 }
 
+function buildAvailableTokenChains() {
+  return getAvailableTokenChains({
+    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+  });
+}
+
 async function notifyUserConfigChanged(userId) {
   try {
     await userConfigSync.publishUserConfigInvalidated(userId);
@@ -157,12 +191,13 @@ async function notifyUserConfigChangedIfNeeded(userId, shouldNotify) {
  */
 router.get('/', async (req, res) => {
   try {
-    const [configs, uiPrefs, tokens, blocklist, starredTokens] = await Promise.all([
+    const [configs, uiPrefs, tokens, blocklist, starredTokens, chainReadiness] = await Promise.all([
       userConfig.getAll(req.user.id),
       userUiPref.getAll(req.user.id),
-      userToken.getAll(req.user.id),
-      userBlocklist.getAll(req.user.id),
-      userStarredToken.getAll(req.user.id),
+      userToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      userBlocklist.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      userStarredToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      getWorkspaceChainReadiness(),
     ]);
 
     const responsePayload = {
@@ -171,12 +206,26 @@ router.get('/', async (req, res) => {
       tokens,
       blocklist,
       starredTokens,
+      availableChains: buildAvailableTokenChains(),
+      chainReadiness,
       runtimeFlags: buildRuntimeFlags(),
     };
     res.json(responsePayload);
   } catch (err) {
     console.error('GET /config error:', err.message);
     res.status(500).json({ error: 'Failed to load configs' });
+  }
+});
+
+router.get('/chain-readiness', async (_req, res) => {
+  try {
+    res.json({
+      availableChains: buildAvailableTokenChains(),
+      chainReadiness: await getWorkspaceChainReadiness(),
+    });
+  } catch (err) {
+    console.error('GET /config/chain-readiness error:', err.message);
+    res.status(500).json({ error: 'Failed to load chain readiness' });
   }
 });
 
@@ -215,7 +264,7 @@ router.put('/', async (req, res) => {
       }
 
       normalizedTokens = normalizeAddressItems(tokens);
-      const invalid = normalizedTokens.filter((t) => !userToken.isValidAddress(t.address));
+      const invalid = normalizedTokens.filter((t) => !isValidLegacySolanaAddress(t.address));
       if (invalid.length > 0) {
         return res.status(400).json({
           error: `${invalid.length} invalid token address(es)`,
@@ -231,7 +280,7 @@ router.put('/', async (req, res) => {
       }
 
       normalizedBlocklist = normalizeAddressItems(blocklist);
-      const invalid = normalizedBlocklist.filter((item) => !userToken.isValidAddress(item.address));
+      const invalid = normalizedBlocklist.filter((item) => !isValidLegacySolanaAddress(item.address));
       if (invalid.length > 0) {
         return res.status(400).json({
           error: `${invalid.length} invalid blocked token address(es)`,
@@ -247,7 +296,7 @@ router.put('/', async (req, res) => {
       }
 
       normalizedStarred = normalizeAddressItems(starredTokens);
-      const invalid = normalizedStarred.filter((item) => !userToken.isValidAddress(item.address));
+      const invalid = normalizedStarred.filter((item) => !isValidLegacySolanaAddress(item.address));
       if (invalid.length > 0) {
         return res.status(400).json({
           error: `${invalid.length} invalid starred token address(es)`,
@@ -271,7 +320,8 @@ router.put('/', async (req, res) => {
 
       if (normalizedTokens) {
         const previousTokens = await client.query(
-          'SELECT address FROM user_tokens WHERE user_id = $1',
+          `SELECT address FROM user_tokens
+           WHERE user_id = $1 AND chain = 'solana'`,
           [req.user.id]
         );
         const nextTokenAddresses = new Set(normalizedTokens.map((item) => item.address));
@@ -279,36 +329,36 @@ router.put('/', async (req, res) => {
           .map((row) => String(row.address || '').trim())
           .filter((address) => address && !nextTokenAddresses.has(address));
 
-        await client.query('DELETE FROM user_tokens WHERE user_id = $1', [req.user.id]);
+        await client.query("DELETE FROM user_tokens WHERE user_id = $1 AND chain = 'solana'", [req.user.id]);
         for (const tokenItem of normalizedTokens) {
           await client.query(
-            `INSERT INTO user_tokens (user_id, address, label)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (user_id, address) DO NOTHING`,
+            `INSERT INTO user_tokens (user_id, chain, address, label)
+             VALUES ($1, 'solana', $2, $3)
+             ON CONFLICT (user_id, chain, address) DO NOTHING`,
             [req.user.id, tokenItem.address, tokenItem.label]
           );
         }
       }
 
       if (normalizedBlocklist) {
-        await client.query('DELETE FROM user_blocklist WHERE user_id = $1', [req.user.id]);
+        await client.query("DELETE FROM user_blocklist WHERE user_id = $1 AND chain = 'solana'", [req.user.id]);
         for (const blockedItem of normalizedBlocklist) {
           await client.query(
-            `INSERT INTO user_blocklist (user_id, address, label)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (user_id, address) DO NOTHING`,
+            `INSERT INTO user_blocklist (user_id, chain, address, label)
+             VALUES ($1, 'solana', $2, $3)
+             ON CONFLICT (user_id, chain, address) DO NOTHING`,
             [req.user.id, blockedItem.address, blockedItem.label]
           );
         }
       }
 
       if (normalizedStarred) {
-        await client.query('DELETE FROM user_starred_tokens WHERE user_id = $1', [req.user.id]);
+        await client.query("DELETE FROM user_starred_tokens WHERE user_id = $1 AND chain = 'solana'", [req.user.id]);
         for (const starredItem of normalizedStarred) {
           await client.query(
-            `INSERT INTO user_starred_tokens (user_id, address)
-             VALUES ($1, $2)
-             ON CONFLICT (user_id, address) DO NOTHING`,
+            `INSERT INTO user_starred_tokens (user_id, chain, address)
+             VALUES ($1, 'solana', $2)
+             ON CONFLICT (user_id, chain, address) DO NOTHING`,
             [req.user.id, starredItem.address]
           );
         }
@@ -332,9 +382,11 @@ router.put('/', async (req, res) => {
     const result = {
       configs: await userConfig.getAll(req.user.id),
       uiPrefs: await userUiPref.getAll(req.user.id),
-      tokens: await userToken.getAll(req.user.id),
-      blocklist: await userBlocklist.getAll(req.user.id),
-      starredTokens: await userStarredToken.getAll(req.user.id),
+      tokens: await userToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      blocklist: await userBlocklist.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      starredTokens: await userStarredToken.getAllForChains(req.user.id, USER_COLLECTION_CHAINS),
+      availableChains: buildAvailableTokenChains(),
+      chainReadiness: await getWorkspaceChainReadiness(),
       runtimeFlags: buildRuntimeFlags(),
     };
 
@@ -418,41 +470,38 @@ router.patch('/ui-prefs', async (req, res) => {
  */
 router.post('/tokens', async (req, res) => {
   try {
-    const { address, label } = req.body;
+    const { address, label, chain } = req.body;
 
     if (!address || typeof address !== 'string') {
       return res.status(400).json({ error: 'address is required' });
     }
 
-    const addr = address.trim();
-    if (!userToken.isValidAddress(addr)) {
-      return res.status(400).json({ error: 'Invalid token address format' });
-    }
+    const identity = normalizeCollectionIdentity(address, chain);
     const normalizedLabel = normalizeText(label, 128);
 
     // Check limit
-    const currentCount = await userToken.count(req.user.id);
+    const currentCount = await userToken.count(req.user.id, identity.chain);
     if (currentCount >= MAX_TOKENS) {
       return res.status(400).json({
         error: `Maximum ${MAX_TOKENS} manual tokens reached`,
       });
     }
 
-    const result = await userToken.add(req.user.id, addr, normalizedLabel);
+    const result = await userToken.add(req.user.id, identity.address, normalizedLabel, identity.chain);
     if (!result) {
       return res.status(409).json({ error: 'Token already added' });
     }
 
     try {
-      await manualTokenBootstrap.upsertManualCatalogToken(addr);
+      await manualTokenBootstrap.upsertManualCatalogToken(identity.address, { chain: identity.chain });
     } catch (catalogErr) {
-      console.error(`[TokenCatalog] Failed to catalog manual token ${addr}:`, catalogErr.message);
+      console.error(`[TokenCatalog] Failed to catalog manual token ${identity.chain}:${identity.address}:`, catalogErr.message);
     }
 
     res.status(201).json({ message: 'Token added', token: result });
   } catch (err) {
     console.error('POST /config/tokens error:', err.message);
-    res.status(500).json({ error: 'Failed to add token' });
+    sendRouteError(res, err, 'Failed to add token');
   }
 });
 
@@ -462,22 +511,19 @@ router.post('/tokens', async (req, res) => {
  */
 router.delete('/tokens/:address', async (req, res) => {
   try {
-    const { address } = req.params;
-    if (!userToken.isValidAddress(String(address || '').trim())) {
-      return res.status(400).json({ error: 'Invalid token address format' });
-    }
-    const removed = await userToken.remove(req.user.id, address);
+    const identity = normalizeCollectionIdentity(req.params.address, req.query.chain);
+    const removed = await userToken.remove(req.user.id, identity.address, identity.chain);
 
     if (!removed) {
       return res.status(404).json({ error: 'Token not found' });
     }
 
-    await tokenCatalog.demoteFormerManualAddress(address);
+    await tokenCatalog.demoteFormerManualAddress(identity.address, identity.chain);
 
     res.json({ message: 'Token removed' });
   } catch (err) {
     console.error('DELETE /config/tokens error:', err.message);
-    res.status(500).json({ error: 'Failed to remove token' });
+    sendRouteError(res, err, 'Failed to remove token');
   }
 });
 
@@ -541,11 +587,14 @@ router.delete('/token-folders/:folderId', async (req, res) => {
       return res.status(404).json({ error: 'Folder not found' });
     }
 
-    await Promise.all(result.removedAddresses.map((address) => tokenCatalog.demoteFormerManualAddress(address)));
+    await Promise.all(result.removedIdentities.map((identity) => (
+      tokenCatalog.demoteFormerManualAddress(identity.address, identity.chain)
+    )));
 
     res.json({
       message: 'Folder deleted',
       removedTokens: result.removedAddresses,
+      removedTokenIdentities: result.removedIdentities,
     });
   } catch (err) {
     console.error('DELETE /config/token-folders/:folderId error:', err.message);
@@ -555,36 +604,34 @@ router.delete('/token-folders/:folderId', async (req, res) => {
 
 router.post('/token-folders/:folderId/tokens', async (req, res) => {
   try {
-    const address = String(req.body?.address || '').trim();
-    if (!userToken.isValidAddress(address)) {
-      return res.status(400).json({ error: 'Invalid token address format' });
-    }
+    const identity = normalizeCollectionIdentity(req.body?.address, req.body?.chain);
 
     const folderExists = await userTokenFolder.folderExists(req.user.id, req.params.folderId);
     if (!folderExists) {
       return res.status(404).json({ error: 'Folder not found' });
     }
 
-    const alreadyManual = await userToken.exists(req.user.id, address);
+    const alreadyManual = await userToken.exists(req.user.id, identity.address, identity.chain);
     if (!alreadyManual) {
-      const currentCount = await userToken.count(req.user.id);
+      const currentCount = await userToken.count(req.user.id, identity.chain);
       if (currentCount >= MAX_TOKENS) {
         return res.status(400).json({
           error: `Maximum ${MAX_TOKENS} manual tokens reached`,
         });
       }
 
-      const addedToken = await userToken.add(req.user.id, address, null);
+      const addedToken = await userToken.add(req.user.id, identity.address, null, identity.chain);
       if (addedToken) {
         try {
-          await manualTokenBootstrap.upsertManualCatalogToken(address);
+          await manualTokenBootstrap.upsertManualCatalogToken(identity.address, { chain: identity.chain });
         } catch (catalogErr) {
-          console.error(`[TokenCatalog] Failed to catalog manual token ${address}:`, catalogErr.message);
+          console.error(`[TokenCatalog] Failed to catalog manual token ${identity.chain}:${identity.address}:`, catalogErr.message);
         }
       }
     }
 
-    const item = await userTokenFolder.addTokenToFolder(req.user.id, req.params.folderId, address, {
+    const item = await userTokenFolder.addTokenToFolder(req.user.id, req.params.folderId, identity.address, {
+      chain: identity.chain,
       sortOrder: req.body?.sortOrder,
     });
 
@@ -601,17 +648,21 @@ router.post('/token-folders/:folderId/tokens', async (req, res) => {
 
 router.delete('/token-folders/:folderId/tokens/:address', async (req, res) => {
   try {
+    const identity = normalizeCollectionIdentity(req.params.address, req.query.chain);
     const result = await userTokenFolder.deleteFolderTokenAndManualToken(
       req.user.id,
       req.params.folderId,
-      req.params.address
+      identity.address,
+      { chain: identity.chain }
     );
     if (!result.deleted) {
       return res.status(404).json({ error: 'Folder token not found' });
     }
 
-    await tokenCatalog.demoteFormerManualAddress(result.removedAddress);
-    res.json({ message: 'Token removed' });
+    await tokenCatalog.demoteFormerManualAddress(result.removedAddress, result.removedChain);
+    res.json({ message: 'Token removed', removed: {
+      chain: result.removedChain, address: result.removedAddress,
+    } });
   } catch (err) {
     console.error('DELETE /config/token-folders/:folderId/tokens/:address error:', err.message);
     sendRouteError(res, err, 'Failed to remove folder token');
@@ -629,44 +680,45 @@ router.delete('/token-folders/:folderId/tokens/:address', async (req, res) => {
  */
 router.post('/blocklist', async (req, res) => {
   try {
-    const { address, label } = req.body;
+    const { address, label, chain } = req.body;
 
     if (!address || typeof address !== 'string') {
       return res.status(400).json({ error: 'address is required' });
     }
 
-    const addr = address.trim();
-    if (!userToken.isValidAddress(addr)) {
-      return res.status(400).json({ error: 'Invalid token address format' });
-    }
+    const identity = normalizeCollectionIdentity(address, chain);
     const normalizedLabel = normalizeText(label, 128);
 
-    const currentList = await userBlocklist.getAll(req.user.id);
-    if (currentList.length >= MAX_BLOCKLIST) {
+    if (await userBlocklist.count(req.user.id, identity.chain) >= MAX_BLOCKLIST) {
       return res.status(400).json({
         error: `Maximum ${MAX_BLOCKLIST} blocked tokens reached`,
       });
     }
 
-    const result = await userBlocklist.add(req.user.id, addr, normalizedLabel);
+    const result = await userBlocklist.add(
+      req.user.id, identity.address, normalizedLabel, identity.chain,
+    );
     if (!result) {
       return res.status(409).json({ error: 'Token already blocked' });
     }
 
     try {
+      if (identity.chain !== 'solana') {
+        return res.status(201).json({ message: 'Token blocked', blocked: result });
+      }
       await tokenCatalog.upsertToken({
-        address: addr,
+        address: identity.address,
         chain: 'solana',
         source: 'blocklist',
       });
     } catch (catalogErr) {
-      console.error(`[TokenCatalog] Failed to catalog blocked token ${addr}:`, catalogErr.message);
+      console.error(`[TokenCatalog] Failed to catalog blocked token ${identity.address}:`, catalogErr.message);
     }
 
     res.status(201).json({ message: 'Token blocked', blocked: result });
   } catch (err) {
     console.error('POST /config/blocklist error:', err.message);
-    res.status(500).json({ error: 'Failed to block token' });
+    sendRouteError(res, err, 'Failed to block token');
   }
 });
 
@@ -676,11 +728,8 @@ router.post('/blocklist', async (req, res) => {
  */
 router.delete('/blocklist/:address', async (req, res) => {
   try {
-    const { address } = req.params;
-    if (!userToken.isValidAddress(String(address || '').trim())) {
-      return res.status(400).json({ error: 'Invalid token address format' });
-    }
-    const removed = await userBlocklist.remove(req.user.id, address);
+    const identity = normalizeCollectionIdentity(req.params.address, req.query.chain);
+    const removed = await userBlocklist.remove(req.user.id, identity.address, identity.chain);
 
     if (!removed) {
       return res.status(404).json({ error: 'Blocked token not found' });
@@ -689,7 +738,34 @@ router.delete('/blocklist/:address', async (req, res) => {
     res.json({ message: 'Token unblocked' });
   } catch (err) {
     console.error('DELETE /config/blocklist error:', err.message);
-    res.status(500).json({ error: 'Failed to unblock token' });
+    sendRouteError(res, err, 'Failed to unblock token');
+  }
+});
+
+router.post('/starred', async (req, res) => {
+  try {
+    const identity = normalizeCollectionIdentity(req.body?.address, req.body?.chain);
+    if (await userStarredToken.count(req.user.id, identity.chain) >= MAX_STARRED) {
+      return res.status(400).json({ error: `Maximum ${MAX_STARRED} starred tokens reached` });
+    }
+    const starred = await userStarredToken.add(req.user.id, identity.address, identity.chain);
+    if (!starred) return res.status(409).json({ error: 'Token already starred' });
+    res.status(201).json({ message: 'Token starred', starred });
+  } catch (err) {
+    console.error('POST /config/starred error:', err.message);
+    sendRouteError(res, err, 'Failed to star token');
+  }
+});
+
+router.delete('/starred/:address', async (req, res) => {
+  try {
+    const identity = normalizeCollectionIdentity(req.params.address, req.query.chain);
+    const removed = await userStarredToken.remove(req.user.id, identity.address, identity.chain);
+    if (!removed) return res.status(404).json({ error: 'Starred token not found' });
+    res.json({ message: 'Star removed' });
+  } catch (err) {
+    console.error('DELETE /config/starred error:', err.message);
+    sendRouteError(res, err, 'Failed to remove star');
   }
 });
 

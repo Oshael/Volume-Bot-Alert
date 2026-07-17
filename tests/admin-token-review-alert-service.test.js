@@ -80,6 +80,7 @@ describe('admin token review alert service', () => {
     );
 
     assert.equal(enqueues.length, 1);
+    assert.equal(enqueues[0].chain, 'solana');
     assert.equal(alert.alertKind, service.ALERT_KIND_SOCIALS_PRESENT);
     assert.equal(alert.socialSnapshot.twitterUrl, 'https://x.com/rtpbet');
   });

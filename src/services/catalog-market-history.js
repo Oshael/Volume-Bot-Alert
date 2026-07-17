@@ -1,0 +1,216 @@
+const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const {
+  createRobinhoodMarketHistoryReadRepository,
+} = require('../models/robinhood-market-history-read');
+const { createTokenIdentity } = require('../utils/token-identity');
+
+const SUPPORTED_CHAINS = new Set(['solana', 'robinhood']);
+const MINUTE_MS = 60_000;
+
+function normalizeRequest(input = {}) {
+  const identity = createTokenIdentity(input.chain || 'solana', input.address);
+  if (!SUPPORTED_CHAINS.has(identity.chain)) {
+    throw new Error(`Expanded market history is unavailable for ${identity.chain}`);
+  }
+  return {
+    ...identity,
+    points: Number(input.points) || 720,
+    granularityMinutes: input.granularityMinutes == null
+      ? null
+      : Number(input.granularityMinutes),
+    allowOneMinuteFallback: input.allowOneMinuteFallback === true,
+  };
+}
+
+function normalizeBatchRequest(input = {}) {
+  if (!Array.isArray(input.identities) || !input.identities.length) {
+    throw new Error('Market history identities are required');
+  }
+  const byKey = new Map();
+  for (const value of input.identities) {
+    const identity = createTokenIdentity(value?.chain, value?.address);
+    if (!SUPPORTED_CHAINS.has(identity.chain)) {
+      throw new Error(`Market history is unavailable for ${identity.chain}`);
+    }
+    byKey.set(identity.key, identity);
+  }
+  const identities = [...byKey.values()];
+  const robinhoodCount = identities.filter((identity) => identity.chain === 'robinhood').length;
+  if (identities.length > 500 || robinhoodCount > 100) {
+    throw new Error('Market history accepts at most 500 identities and 100 Robinhood identities');
+  }
+  return {
+    identities,
+    hours: Number(input.hours) || (14 * 24),
+    points: Number(input.points) || 336,
+    granularityMinutes: Number(input.granularityMinutes) || 30,
+    allowOneMinuteFallback: input.allowOneMinuteFallback === true,
+    onMetrics: typeof input.onMetrics === 'function' ? input.onMetrics : null,
+  };
+}
+
+function buildSolanaPayload(request, item, generatedAt) {
+  const normalizedItem = item ? {
+    ...item,
+    chain: request.chain,
+    valuationType: 'market-cap',
+  } : null;
+  return {
+    generatedAt,
+    chain: request.chain,
+    valuationType: 'market-cap',
+    resolution: 'solana-aggregate',
+    minuteStartsAt: null,
+    points: request.points,
+    granularityMinutes: normalizedItem?.granularityMinutes
+      ?? request.granularityMinutes ?? null,
+    count: normalizedItem ? 1 : 0,
+    item: normalizedItem,
+  };
+}
+
+function buildRobinhoodItem(history) {
+  const candles = history.candles.map((candle) => ({
+    bucketTs: candle.bucketTs,
+    granularityMinutes: candle.granularityMinutes,
+    sourceGranularityMinutes: candle.sourceGranularityMinutes,
+    valuationType: candle.valuationType,
+    openFdvUsd: candle.openFdvUsd,
+    highFdvUsd: candle.highFdvUsd,
+    lowFdvUsd: candle.lowFdvUsd,
+    closeFdvUsd: candle.closeFdvUsd,
+    openPriceUsd: candle.openPriceUsd,
+    highPriceUsd: candle.highPriceUsd,
+    lowPriceUsd: candle.lowPriceUsd,
+    closePriceUsd: candle.closePriceUsd,
+    activity: candle.activity,
+  }));
+  return {
+    chain: history.chain,
+    address: history.address,
+    valuationType: 'fdv',
+    resolution: history.resolution,
+    minuteStartsAt: history.minuteStartsAt,
+    truncated: history.truncated,
+    bucketCount: candles.length,
+    firstBucketAt: history.firstBucketAt,
+    latestBucketAt: history.latestBucketAt,
+    oneMinuteAvailable: candles.some((candle) => candle.sourceGranularityMinutes === 1),
+    series: candles.map((candle) => candle.closeFdvUsd),
+    candles,
+  };
+}
+
+function buildSolanaItem(item) {
+  return { ...item, chain: 'solana', valuationType: 'market-cap' };
+}
+
+function createCatalogMarketHistoryService(options = {}) {
+  const solanaReader = options.solanaReader || tokenMarketBucket1m;
+  const robinhoodReader = options.robinhoodReader
+    || createRobinhoodMarketHistoryReadRepository();
+  const clock = options.now || (() => new Date());
+
+  async function getSparklineBatch(input = {}) {
+    const request = normalizeBatchRequest(input);
+    const endAt = new Date(clock());
+    const startAt = new Date(endAt.getTime() - (request.hours * 60 * MINUTE_MS));
+    const solanaAddresses = request.identities
+      .filter((identity) => identity.chain === 'solana')
+      .map((identity) => identity.address);
+    const robinhoodAddresses = request.identities
+      .filter((identity) => identity.chain === 'robinhood')
+      .map((identity) => identity.address);
+    const solanaOptions = {
+      hours: request.hours,
+      points: request.points,
+      granularityMinutes: request.granularityMinutes,
+      allowOneMinuteFallback: request.allowOneMinuteFallback,
+    };
+    if (request.onMetrics) solanaOptions.onMetrics = request.onMetrics;
+
+    const [solanaItems, robinhoodHistories] = await Promise.all([
+      solanaAddresses.length
+        ? solanaReader.listSparklineByAddresses(solanaAddresses, solanaOptions)
+        : [],
+      robinhoodAddresses.length
+        ? robinhoodReader.getHistories({
+          addresses: robinhoodAddresses,
+          startAt,
+          endAt,
+          granularityMinutes: request.granularityMinutes,
+          limit: request.points,
+        })
+        : [],
+    ]);
+    const byKey = new Map();
+    for (const item of solanaItems) {
+      byKey.set(createTokenIdentity('solana', item.address).key, buildSolanaItem(item));
+    }
+    for (const history of robinhoodHistories) {
+      byKey.set(createTokenIdentity('robinhood', history.address).key, buildRobinhoodItem(history));
+    }
+    const items = request.identities.map((identity) => byKey.get(identity.key)).filter(Boolean);
+    return {
+      generatedAt: endAt.toISOString(),
+      chains: [...new Set(request.identities.map((identity) => identity.chain))],
+      hours: request.hours,
+      points: request.points,
+      granularityMinutes: request.granularityMinutes,
+      count: items.length,
+      items,
+    };
+  }
+
+  async function getExpandedSparkline(input = {}) {
+    const request = normalizeRequest(input);
+    const endAt = new Date(clock());
+    const generatedAt = endAt.toISOString();
+    if (request.chain === 'solana') {
+      const item = await solanaReader.listExpandedSparklineByAddress(request.address, {
+        points: request.points,
+        granularityMinutes: request.granularityMinutes,
+        allowOneMinuteFallback: request.allowOneMinuteFallback,
+      });
+      return buildSolanaPayload(request, item, generatedAt);
+    }
+
+    const granularityMinutes = request.granularityMinutes || 5;
+    const startAt = new Date(
+      endAt.getTime() - (request.points * granularityMinutes * MINUTE_MS),
+    );
+    const history = await robinhoodReader.getHistory({
+      address: request.address,
+      startAt,
+      endAt,
+      granularityMinutes,
+      limit: request.points,
+    });
+    const item = buildRobinhoodItem(history);
+    return {
+      generatedAt,
+      chain: request.chain,
+      valuationType: 'fdv',
+      resolution: history.resolution,
+      minuteStartsAt: history.minuteStartsAt,
+      points: request.points,
+      granularityMinutes,
+      count: item ? 1 : 0,
+      item,
+    };
+  }
+
+  return Object.freeze({ getExpandedSparkline, getSparklineBatch });
+}
+
+const service = createCatalogMarketHistoryService();
+
+module.exports = {
+  getExpandedSparkline: (...args) => service.getExpandedSparkline(...args),
+  getSparklineBatch: (...args) => service.getSparklineBatch(...args),
+  createCatalogMarketHistoryService,
+  __private: {
+    buildRobinhoodItem, buildSolanaItem, buildSolanaPayload,
+    normalizeBatchRequest, normalizeRequest,
+  },
+};

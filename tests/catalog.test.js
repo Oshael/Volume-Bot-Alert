@@ -18,6 +18,7 @@ const tokenMeteoraState = require('../src/models/token-meteora-state');
 const tokenMarketBidZoneRun = require('../src/models/token-market-bid-zone-run');
 const bidZoneWorker = require('../src/services/bid-zone-worker');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
+const catalogMarketHistory = require('../src/services/catalog-market-history');
 const { app, server } = require('../src/server');
 const db = require('../src/models/db');
 const Invite = require('../src/models/invite');
@@ -29,6 +30,7 @@ const TEST_USER = {
 };
 
 const VALID_ADDR = 'So11111111111111111111111111111111111111112';
+const ROBINHOOD_ADDR = '0xabcdef0123456789abcdef0123456789abcdef01';
 
 const originalGetTokenPairs = dexscreener.getTokenPairs;
 const originalGetBestPair = dexscreener.getBestPair;
@@ -111,6 +113,8 @@ async function ensureAccessSchema() {
     `ALTER TABLE invites ADD COLUMN IF NOT EXISTS grant_access_source VARCHAR(16) NOT NULL DEFAULT 'invite'`,
     `ALTER TABLE invites ALTER COLUMN grant_access_source SET DEFAULT 'invite'`,
     `ALTER TABLE token_catalog ADD COLUMN IF NOT EXISTS last_community_url TEXT`,
+    `ALTER TABLE token_risk_reviews ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana'`,
+    `ALTER TABLE token_risk_enrichment ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana'`,
   ];
   for (const statement of statements) {
     await db.query(statement);
@@ -686,6 +690,57 @@ describe('Catalog routes', () => {
     }
   });
 
+  it('routes canonical mixed-chain identities through the batch history service', async () => {
+    const originalGetSparklineBatch = catalogMarketHistory.getSparklineBatch;
+    let captured = null;
+    catalogMarketHistory.getSparklineBatch = async (input) => {
+      captured = input;
+      return {
+        generatedAt: '2026-07-15T12:00:00.000Z',
+        chains: input.identities.map((identity) => identity.chain),
+        hours: input.hours,
+        points: input.points,
+        granularityMinutes: input.granularityMinutes,
+        count: 2,
+        items: input.identities.map((identity) => ({ ...identity, series: [] })),
+      };
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          identities: [
+            { chain: 'robinhood', address: ROBINHOOD_ADDR.toUpperCase() },
+            { chain: 'solana', address: VALID_ADDR },
+          ],
+          hours: 24,
+          points: 48,
+          granularityMinutes: 30,
+        });
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(captured.identities, [
+        { chain: 'robinhood', address: ROBINHOOD_ADDR, key: `robinhood:${ROBINHOOD_ADDR}` },
+        { chain: 'solana', address: VALID_ADDR, key: `solana:${VALID_ADDR}` },
+      ]);
+      assert.deepEqual(res.body.items.map((item) => item.chain), ['robinhood', 'solana']);
+    } finally {
+      catalogMarketHistory.getSparklineBatch = originalGetSparklineBatch;
+    }
+  });
+
+  it('rejects unsupported chains in sparkline batches before dispatch', async () => {
+    const res = await request(app)
+      .post('/api/catalog/sparklines')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ identities: [{ chain: 'base', address: ROBINHOOD_ADDR }] });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'Market history is unavailable for base');
+  });
+
   it('accepts expanded aggregate granularities for sparkline batches', async () => {
     const originalListSparklineByAddresses = tokenMarketBucket1m.listSparklineByAddresses;
     let capturedOptions = null;
@@ -800,6 +855,47 @@ describe('Catalog routes', () => {
     } finally {
       tokenMarketBucket1m.listExpandedSparklineByAddress = originalListExpandedSparklineByAddress;
     }
+  });
+
+  it('routes canonical Robinhood expanded history without using Solana', async () => {
+    const originalGetExpandedSparkline = catalogMarketHistory.getExpandedSparkline;
+    let captured = null;
+    catalogMarketHistory.getExpandedSparkline = async (input) => {
+      captured = input;
+      return {
+        chain: 'robinhood', valuationType: 'fdv', resolution: 'minute',
+        points: input.points, granularityMinutes: input.granularityMinutes,
+        count: 1, item: { chain: 'robinhood', address: input.address, candles: [] },
+      };
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/catalog/sparklines/expanded')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          chain: 'robinhood', address: ROBINHOOD_ADDR.toUpperCase(),
+          points: 120, granularityMinutes: 5,
+        });
+
+      assert.equal(res.status, 200);
+      assert.equal(captured.chain, 'robinhood');
+      assert.equal(captured.address, ROBINHOOD_ADDR);
+      assert.equal(res.body.valuationType, 'fdv');
+      assert.equal(res.body.item.address, ROBINHOOD_ADDR);
+    } finally {
+      catalogMarketHistory.getExpandedSparkline = originalGetExpandedSparkline;
+    }
+  });
+
+  it('rejects unsupported chart chains before dispatch', async () => {
+    const res = await request(app)
+      .post('/api/catalog/sparklines/expanded')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ chain: 'base', address: ROBINHOOD_ADDR, points: 120 });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'Expanded market history is unavailable for base');
   });
 
   it('serves stored bid-zone snapshots for default monitor parameters', async () => {

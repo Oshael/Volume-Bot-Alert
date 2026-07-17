@@ -1,13 +1,33 @@
 import { apiFetch } from './base';
+import type { ChainFilterPreferences, TokenChain, WorkspaceChainReadinessMap } from '../../utils/token-chain';
 
 export interface AddressItem {
+  chain?: TokenChain;
   address: string;
   label?: string | null;
   imageUrl?: string | null;
+  symbol?: string | null;
+  name?: string | null;
+  last_image_url?: string | null;
+  last_price?: number | string | null;
+  last_mcap?: number | string | null;
+  last_fdv?: number | string | null;
+  last_liquidity_usd?: number | string | null;
+  last_vol_5m?: number | string | null;
+  last_vol_1h?: number | string | null;
+  last_vol_6h?: number | string | null;
+  last_vol_24h?: number | string | null;
+  last_price_change_1h?: number | string | null;
+  last_price_change_6h?: number | string | null;
+  last_price_change_24h?: number | string | null;
+  last_token_created_at_ms?: number | string | null;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
 }
 
 export interface AdminTokenReviewAlert {
   id: number;
+  chain: TokenChain;
   tokenAddress: string | null;
   status: 'open' | 'resolved' | string | null;
   priority: string | null;
@@ -43,6 +63,7 @@ export interface ManualTokenFolderPayload {
 export interface ManualTokenFolderItemPayload {
   userId: number;
   folderId: number;
+  chain: TokenChain;
   address: string;
   sortOrder: number;
   addedAt: string | null;
@@ -93,6 +114,7 @@ export interface UiPrefsPayload {
   manualFolderDeleteWarningDismissed: boolean;
   recentStarredOnly: boolean;
   oldWeekStarredOnly: boolean;
+  chainFilters: ChainFilterPreferences;
   monitoredPerPage: number;
   recentPerPage: number;
   oldWeekPerPage: number;
@@ -119,7 +141,9 @@ export interface ConfigPayload {
   uiPrefs: UiPrefsPayload;
   tokens: AddressItem[];
   blocklist: AddressItem[];
-  starredTokens: Array<{ address: string }>;
+  starredTokens: Array<{ chain?: TokenChain; address: string }>;
+  availableChains?: TokenChain[];
+  chainReadiness?: WorkspaceChainReadinessMap;
   runtimeFlags?: {
     mockTradingEnabled?: boolean;
   };
@@ -129,11 +153,18 @@ export interface ConfigSyncPayload {
   configs?: Record<string, string | number>;
   tokens?: AddressItem[];
   blocklist?: AddressItem[];
-  starredTokens?: Array<{ address: string }>;
+  starredTokens?: Array<{ chain?: TokenChain; address: string }>;
 }
 
 export function fetchConfig(token?: string | null) {
   return apiFetch<ConfigPayload>('/api/config', { token });
+}
+
+export function fetchChainReadiness(token?: string | null) {
+  return apiFetch<{
+    availableChains: TokenChain[];
+    chainReadiness: WorkspaceChainReadinessMap;
+  }>('/api/config/chain-readiness', { token });
 }
 
 export function fetchManualTokenFolders(token?: string | null) {
@@ -170,16 +201,16 @@ export function syncConfig(payload: ConfigSyncPayload, token?: string | null) {
   });
 }
 
-export function addManualToken(address: string, label?: string | null, token?: string | null) {
+export function addManualToken(chain: TokenChain, address: string, label?: string | null, token?: string | null) {
   return apiFetch<{ message: string; token: AddressItem & { added_at?: string } }>('/api/config/tokens', {
     method: 'POST',
-    body: JSON.stringify({ address, label: label ?? null }),
+    body: JSON.stringify({ chain, address, label: label ?? null }),
     token,
   });
 }
 
-export function removeManualToken(address: string, token?: string | null) {
-  return apiFetch<{ message: string }>(`/api/config/tokens/${encodeURIComponent(address)}`, {
+export function removeManualToken(chain: TokenChain, address: string, token?: string | null) {
+  return apiFetch<{ message: string }>(`/api/config/tokens/${encodeURIComponent(address)}?chain=${encodeURIComponent(chain)}`, {
     method: 'DELETE',
     token,
   });
@@ -209,7 +240,7 @@ export function updateManualTokenFolder(
 }
 
 export function deleteManualTokenFolder(folderId: number, token?: string | null) {
-  return apiFetch<{ message: string; removedTokens: string[] }>(`/api/config/token-folders/${encodeURIComponent(String(folderId))}`, {
+  return apiFetch<{ message: string; removedTokens: string[]; removedTokenIdentities?: Array<{ chain: TokenChain; address: string }> }>(`/api/config/token-folders/${encodeURIComponent(String(folderId))}`, {
     method: 'DELETE',
     token,
   });
@@ -217,20 +248,21 @@ export function deleteManualTokenFolder(folderId: number, token?: string | null)
 
 export function addManualTokenToFolder(
   folderId: number,
+  chain: TokenChain,
   address: string,
   token?: string | null,
   sortOrder?: number,
 ) {
   return apiFetch<{ message: string; item: ManualTokenFolderItemPayload; tokenCreated?: boolean }>(`/api/config/token-folders/${encodeURIComponent(String(folderId))}/tokens`, {
     method: 'POST',
-    body: JSON.stringify({ address, sortOrder }),
+    body: JSON.stringify({ chain, address, sortOrder }),
     token,
   });
 }
 
-export function removeManualTokenFromFolder(folderId: number, address: string, token?: string | null) {
+export function removeManualTokenFromFolder(folderId: number, chain: TokenChain, address: string, token?: string | null) {
   return apiFetch<{ message: string }>(
-    `/api/config/token-folders/${encodeURIComponent(String(folderId))}/tokens/${encodeURIComponent(address)}`,
+    `/api/config/token-folders/${encodeURIComponent(String(folderId))}/tokens/${encodeURIComponent(address)}?chain=${encodeURIComponent(chain)}`,
     {
       method: 'DELETE',
       token,
@@ -238,18 +270,30 @@ export function removeManualTokenFromFolder(folderId: number, address: string, t
   );
 }
 
-export function addBlockedToken(address: string, label?: string | null, token?: string | null) {
+export function addBlockedToken(chain: TokenChain, address: string, label?: string | null, token?: string | null) {
   return apiFetch<{ message: string; blocked: AddressItem }>('/api/config/blocklist', {
     method: 'POST',
-    body: JSON.stringify({ address, label: label ?? null }),
+    body: JSON.stringify({ chain, address, label: label ?? null }),
     token,
   });
 }
 
-export function removeBlockedToken(address: string, token?: string | null) {
-  return apiFetch<{ message: string }>(`/api/config/blocklist/${encodeURIComponent(address)}`, {
+export function removeBlockedToken(chain: TokenChain, address: string, token?: string | null) {
+  return apiFetch<{ message: string }>(`/api/config/blocklist/${encodeURIComponent(address)}?chain=${encodeURIComponent(chain)}`, {
     method: 'DELETE',
     token,
+  });
+}
+
+export function addStarredToken(chain: TokenChain, address: string, token?: string | null) {
+  return apiFetch<{ message: string }>('/api/config/starred', {
+    method: 'POST', body: JSON.stringify({ chain, address }), token,
+  });
+}
+
+export function removeStarredToken(chain: TokenChain, address: string, token?: string | null) {
+  return apiFetch<{ message: string }>(`/api/config/starred/${encodeURIComponent(address)}?chain=${encodeURIComponent(chain)}`, {
+    method: 'DELETE', token,
   });
 }
 

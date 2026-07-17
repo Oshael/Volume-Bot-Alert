@@ -1,5 +1,5 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 let ensureTablePromise = null;
 
@@ -8,6 +8,7 @@ function ensureTable() {
     ensureTablePromise = db.query(`
       CREATE TABLE IF NOT EXISTS admin_block_evidence (
         id SERIAL PRIMARY KEY,
+        chain VARCHAR(16) NOT NULL DEFAULT 'solana',
         token_address VARCHAR(64) NOT NULL,
         ban_label VARCHAR(160),
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -26,6 +27,9 @@ function ensureTable() {
       CREATE INDEX IF NOT EXISTS idx_admin_block_evidence_token_created
         ON admin_block_evidence(token_address, created_at DESC, id DESC);
 
+      CREATE INDEX IF NOT EXISTS idx_admin_block_evidence_chain_token_created
+        ON admin_block_evidence(chain, token_address, created_at DESC, id DESC);
+
       CREATE INDEX IF NOT EXISTS idx_admin_block_evidence_pipeline_created
         ON admin_block_evidence(pipeline, created_at DESC, id DESC);
     `);
@@ -34,12 +38,9 @@ function ensureTable() {
   return ensureTablePromise;
 }
 
-function normalizeAddress(address) {
-  const value = String(address || '').trim();
-  if (!isValidAddress(value)) {
-    throw new Error('Invalid token address format');
-  }
-  return value;
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
 }
 
 function normalizeText(value, maxLength = 160) {
@@ -62,6 +63,7 @@ function mapRow(row) {
   if (!row) return null;
   return {
     id: Number(row.id) || null,
+    chain: row.chain || null,
     tokenAddress: row.token_address || null,
     banLabel: row.ban_label || null,
     createdBy: row.created_by || null,
@@ -80,7 +82,7 @@ function mapRow(row) {
 
 async function createEvidence(payload = {}, runner = db) {
   await ensureTable();
-  const tokenAddress = normalizeAddress(payload.tokenAddress || payload.address);
+  const identity = normalizeIdentity(payload.tokenAddress || payload.address, payload.chain || 'solana');
   const pipeline = normalizeText(payload.pipeline, 64);
   if (!pipeline) {
     throw new Error('Admin block evidence pipeline is required');
@@ -88,6 +90,7 @@ async function createEvidence(payload = {}, runner = db) {
 
   const { rows } = await runner.query(
     `INSERT INTO admin_block_evidence (
+       chain,
        token_address,
        ban_label,
        created_by,
@@ -102,10 +105,11 @@ async function createEvidence(payload = {}, runner = db) {
        rule_matches,
        created_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, NOW())
      RETURNING *`,
     [
-      tokenAddress,
+      identity.chain,
+      identity.address,
       normalizeText(payload.banLabel || payload.label, 160),
       payload.createdBy || null,
       pipeline,
@@ -128,7 +132,7 @@ module.exports = {
   createEvidence,
   __private: {
     mapRow,
-    normalizeAddress,
+    normalizeIdentity,
     normalizeJsonArray,
     normalizeJsonObject,
     normalizeText,

@@ -30,6 +30,8 @@ function formatEvent(event) {
     address: event.tokenAddress,
     reason: event.exitReason,
     source: event.exitSource,
+    scope: event.semantics?.scope || monitoredTokenExitEvent.EVENT_SEMANTICS.scope,
+    workspaceExit: false,
     previousMcap: previous.mcap ?? null,
     currentMcap: current.mcap ?? null,
     previousEligible: previous.eligibleForMonitoring ?? null,
@@ -43,10 +45,14 @@ function formatEvent(event) {
 async function run() {
   const options = parseArgs(process.argv);
   try {
-    const events = await monitoredTokenExitEvent.listRecent(options);
+    const events = await monitoredTokenExitEvent.listRecent({ ...options, chain: 'solana' });
     const rows = events.map((event) => options.json ? event : formatEvent(event));
     if (options.json) {
-      console.log(JSON.stringify({ events: rows, count: rows.length }, null, 2));
+      console.log(JSON.stringify({
+        semantics: monitoredTokenExitEvent.EVENT_SEMANTICS,
+        events: rows,
+        count: rows.length,
+      }, null, 2));
     } else {
       console.table(rows);
     }

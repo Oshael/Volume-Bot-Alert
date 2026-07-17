@@ -3,6 +3,7 @@ const db = require('../models/db');
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_junk_evidence (
      id SERIAL PRIMARY KEY,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      token_address VARCHAR(64) NOT NULL,
      label VARCHAR(32) NOT NULL,
      source VARCHAR(32) NOT NULL DEFAULT 'auto_sync',
@@ -12,7 +13,7 @@ const STATEMENTS = [
      market_history JSONB NOT NULL DEFAULT '{}'::jsonb,
      meteora_history JSONB NOT NULL DEFAULT '{}'::jsonb,
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     UNIQUE (token_address, assessment_fingerprint)
+     CONSTRAINT token_junk_evidence_chain_key UNIQUE (chain, token_address, assessment_fingerprint)
    )`,
   `CREATE INDEX IF NOT EXISTS idx_token_junk_evidence_token_created
      ON token_junk_evidence(token_address, created_at DESC, id DESC)`,

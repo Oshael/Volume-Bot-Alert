@@ -6,6 +6,7 @@ const db = require('../models/db');
 
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_market_buckets_agg (
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      token_address VARCHAR(64) NOT NULL,
      granularity_minutes INTEGER NOT NULL CHECK (granularity_minutes IN (5, 15, 30, 60, 240, 1440)),
      bucket_ts TIMESTAMPTZ NOT NULL,
@@ -22,13 +23,14 @@ const STATEMENTS = [
      source VARCHAR(32) NOT NULL DEFAULT 'aggregate',
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     PRIMARY KEY (token_address, granularity_minutes, bucket_ts)
+     CONSTRAINT token_market_buckets_agg_chain_pkey
+       PRIMARY KEY (chain, token_address, granularity_minutes, bucket_ts)
    )`,
-  `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_agg_lookup
-     ON token_market_buckets_agg(token_address, granularity_minutes, bucket_ts DESC)
+  `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_agg_chain_lookup
+     ON token_market_buckets_agg(chain, token_address, granularity_minutes, bucket_ts DESC)
      WHERE close_mcap IS NOT NULL`,
-  `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_agg_bucket_ts
-     ON token_market_buckets_agg(granularity_minutes, bucket_ts DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_token_market_buckets_agg_chain_bucket_ts
+     ON token_market_buckets_agg(chain, granularity_minutes, bucket_ts DESC)`,
 ];
 
 async function init(options = {}) {

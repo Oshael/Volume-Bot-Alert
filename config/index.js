@@ -33,6 +33,26 @@ function parseOptionalTimestamp(value) {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
+function parseOptionalBlock(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (!/^\d+$/.test(normalized) && !/^0x[0-9a-f]+$/i.test(normalized)) return null;
+  return normalized;
+}
+
+function parseOptionalNonNegativeInteger(value, { positive = false } = {}) {
+  const normalized = String(value ?? '').trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < (positive ? 1 : 0)) return null;
+  return parsed;
+}
+
+function parseOptionalNonNegativeDecimal(value) {
+  const normalized = String(value ?? '').trim();
+  return /^\d+(?:\.\d+)?$/.test(normalized) ? normalized : null;
+}
+
 function parseJson(value, fallback) {
   const raw = String(value || '').trim();
   if (!raw) {
@@ -215,7 +235,9 @@ function getRuntimeRole(runSocketHub, runBackgroundJobs) {
   return 'idle';
 }
 
-const WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
+const SHARED_WORKER_GROUPS = Object.freeze(['core', 'market', 'maintenance']);
+const ISOLATED_WORKER_GROUPS = Object.freeze(['robinhood']);
+const WORKER_GROUPS = Object.freeze([...SHARED_WORKER_GROUPS, ...ISOLATED_WORKER_GROUPS]);
 const WORKER_GROUP_SET = new Set(WORKER_GROUPS);
 
 function normalizeWorkerGroups(value) {
@@ -225,8 +247,10 @@ function normalizeWorkerGroups(value) {
     : ['all'];
   const uniqueRequested = [...new Set(requested.length ? requested : ['all'])];
   const invalid = uniqueRequested.filter((group) => group !== 'all' && !WORKER_GROUP_SET.has(group));
+  const isolatedRequested = uniqueRequested.filter((group) => ISOLATED_WORKER_GROUPS.includes(group));
+  const isolationConflict = isolatedRequested.length > 0 && uniqueRequested.length > 1;
   const active = uniqueRequested.includes('all')
-    ? [...WORKER_GROUPS]
+    ? [...SHARED_WORKER_GROUPS]
     : uniqueRequested.filter((group) => WORKER_GROUP_SET.has(group));
 
   return {
@@ -234,6 +258,7 @@ function normalizeWorkerGroups(value) {
     active,
     skipped: WORKER_GROUPS.filter((group) => !active.includes(group)),
     invalid,
+    isolationConflict,
   };
 }
 
@@ -440,6 +465,9 @@ missing.push(...validateTestDbTarget(db));
 if (workerGroups.invalid.length > 0) {
   missing.push(`BACKGROUND_WORKER_GROUPS invalid values: ${workerGroups.invalid.join(', ')}`);
 }
+if (workerGroups.isolationConflict) {
+  missing.push('BACKGROUND_WORKER_GROUPS cannot combine isolated group robinhood with other groups or all');
+}
 
 if (missing.length > 0) {
   console.error(`Missing required env configuration: ${missing.join(', ')}`);
@@ -455,6 +483,28 @@ runtime.role = getRuntimeRole(runtime.runSocketHub, runtime.runBackgroundJobs);
 runtime.workerGroupsRequested = workerGroups.requested;
 runtime.workerGroupsActive = workerGroups.active;
 runtime.workerGroupsSkipped = workerGroups.skipped;
+
+const robinhoodIngestionEnabled = parseBoolean(process.env.ROBINHOOD_INGESTION_ENABLED, false);
+const robinhoodRollout = {
+  transport: {
+    enabled: parseBoolean(
+      process.env.ROBINHOOD_TRANSPORT_ENABLED,
+      robinhoodIngestionEnabled
+    ),
+    explicit: String(process.env.ROBINHOOD_TRANSPORT_ENABLED ?? '').trim() !== '',
+  },
+  persistence: {
+    enabled: parseBoolean(
+      process.env.ROBINHOOD_PERSISTENCE_ENABLED,
+      robinhoodIngestionEnabled
+    ),
+    explicit: String(process.env.ROBINHOOD_PERSISTENCE_ENABLED ?? '').trim() !== '',
+  },
+  alerts: {
+    requested: parseBoolean(process.env.ROBINHOOD_ALERTS_ENABLED, false),
+    explicit: String(process.env.ROBINHOOD_ALERTS_ENABLED ?? '').trim() !== '',
+  },
+};
 
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
@@ -620,6 +670,131 @@ module.exports = {
     intervalMs: Math.max(1000, parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_INTERVAL_MS || '3000', 10) || 3000),
     batchLimit: Math.max(1, Math.min(parseInt(process.env.MOCK_TRADING_TAKE_PROFIT_BATCH_LIMIT || '25', 10) || 25, 100)),
   },
+
+  robinhoodRetentionWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_RETENTION_ENABLED, true),
+    intervalMs: parseIntegerInRange(process.env.ROBINHOOD_RETENTION_INTERVAL_MS, 60 * 1000, 10_000, 60 * 60 * 1000),
+    batchLimit: parseIntegerInRange(process.env.ROBINHOOD_RETENTION_BATCH_LIMIT, 2000, 100, 10_000),
+    maxBatches: parseIntegerInRange(process.env.ROBINHOOD_RETENTION_MAX_BATCHES, 5, 1, 50),
+    statementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_RETENTION_STATEMENT_TIMEOUT_MS,
+      10 * 1000,
+      1000,
+      60 * 1000
+    ),
+  },
+
+  robinhoodCatalogProjectionWorker: {
+    intervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS,
+      10_000,
+      10_000,
+      60 * 60 * 1000
+    ),
+    blockscoutBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_BLOCKSCOUT_METADATA_BATCH_SIZE, 10, 1, 50
+    ),
+    socialMetadataEnabled: parseBoolean(process.env.ROBINHOOD_SOCIAL_METADATA_ENABLED, true),
+    socialBatchSize: parseIntegerInRange(
+      process.env.ROBINHOOD_SOCIAL_METADATA_BATCH_SIZE, 5, 1, 5
+    ),
+    socialDrainIntervalMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SOCIAL_METADATA_INTERVAL_MS, 60_000, 60_000, 60 * 60 * 1000
+    ),
+  },
+
+  robinhoodIngestionWorker: {
+    enabled: robinhoodIngestionEnabled,
+    publicRpcUrl: String(
+      process.env.ROBINHOOD_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com'
+    ).trim(),
+    alchemyRpcUrl: String(process.env.ROBINHOOD_ALCHEMY_RPC_URL || '').trim(),
+    useAlchemy: parseBoolean(process.env.ROBINHOOD_USE_ALCHEMY, false),
+    socialMetadataEnabled: parseBoolean(process.env.ROBINHOOD_SOCIAL_METADATA_ENABLED, false),
+    pollIntervalMs: parseIntegerInRange(process.env.ROBINHOOD_POLL_INTERVAL_MS, 2000, 250, 300_000),
+    maxErrorBackoffMs: parseIntegerInRange(
+      process.env.ROBINHOOD_MAX_ERROR_BACKOFF_MS,
+      30_000,
+      1000,
+      300_000
+    ),
+    rpcTimeoutMs: parseIntegerInRange(process.env.ROBINHOOD_RPC_TIMEOUT_MS, 15_000, 1000, 60_000),
+    rpcMaxRetries: parseIntegerInRange(process.env.ROBINHOOD_RPC_MAX_RETRIES, 1, 0, 5),
+    lookbackBlocks: parseIntegerInRange(process.env.ROBINHOOD_LOOKBACK_BLOCKS, 250, 1, 100_000),
+    startBlock: parseOptionalBlock(process.env.ROBINHOOD_START_BLOCK),
+    confirmations: parseIntegerInRange(process.env.ROBINHOOD_CONFIRMATIONS, 2, 0, 1000),
+    rangeSize: parseIntegerInRange(process.env.ROBINHOOD_RANGE_SIZE, 10, 1, 1000),
+    minRangeSize: parseIntegerInRange(process.env.ROBINHOOD_MIN_RANGE_SIZE, 1, 1, 1000),
+    maxRangeSize: parseIntegerInRange(process.env.ROBINHOOD_MAX_RANGE_SIZE, 100, 1, 10_000),
+    maxRangesPerPoll: parseIntegerInRange(
+      process.env.ROBINHOOD_MAX_RANGES_PER_POLL,
+      20,
+      1,
+      1000
+    ),
+    maxAddressesPerLogRequest: parseIntegerInRange(
+      process.env.ROBINHOOD_MAX_ADDRESSES_PER_LOG_REQUEST,
+      100,
+      1,
+      1000
+    ),
+    marketLogFilterMode: String(process.env.ROBINHOOD_MARKET_LOG_FILTER_MODE || '')
+      .trim().toLowerCase() === 'tracked-addresses'
+      ? 'tracked-addresses'
+      : 'topics-only',
+    timestampConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_TIMESTAMP_CONCURRENCY,
+      16,
+      1,
+      32
+    ),
+    observationConcurrency: parseIntegerInRange(
+      process.env.ROBINHOOD_OBSERVATION_CONCURRENCY,
+      4,
+      1,
+      16
+    ),
+  },
+
+  robinhoodSignalDryRun: {
+    enabled: parseBoolean(process.env.ROBINHOOD_SIGNAL_DRY_RUN_ENABLED, false),
+    protocols: [...new Set(
+      String(process.env.ROBINHOOD_SIGNAL_PROTOCOLS || '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+    )],
+    windowMs: parseOptionalNonNegativeInteger(
+      process.env.ROBINHOOD_SIGNAL_WINDOW_MS,
+      { positive: true }
+    ),
+    minLiquidityUsd: parseOptionalNonNegativeDecimal(
+      process.env.ROBINHOOD_SIGNAL_MIN_LIQUIDITY_USD
+    ),
+    minVolumeUsd: parseOptionalNonNegativeDecimal(process.env.ROBINHOOD_SIGNAL_MIN_VOLUME_USD),
+    minTransactions: parseOptionalNonNegativeInteger(
+      process.env.ROBINHOOD_SIGNAL_MIN_TRANSACTIONS
+    ),
+    maxAgeMs: parseOptionalNonNegativeInteger(
+      process.env.ROBINHOOD_SIGNAL_MAX_AGE_MS,
+      { positive: true }
+    ),
+    candidateLimit: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNAL_CANDIDATE_LIMIT,
+      1000,
+      1,
+      5000
+    ),
+    sampleLimit: parseIntegerInRange(process.env.ROBINHOOD_SIGNAL_SAMPLE_LIMIT, 25, 1, 100),
+    statementTimeoutMs: parseIntegerInRange(
+      process.env.ROBINHOOD_SIGNAL_STATEMENT_TIMEOUT_MS,
+      10_000,
+      1000,
+      60_000
+    ),
+  },
+
+  robinhoodRollout,
 
   mockTrading: {
     enabled: parseBoolean(process.env.MOCK_TRADING_ENABLED, true),

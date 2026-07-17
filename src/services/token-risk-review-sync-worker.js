@@ -720,6 +720,7 @@ async function processRows(rows = [], deps = {}) {
     }
 
     const review = await reviewModel.upsertAutoReview({
+      chain: 'solana',
       tokenAddress: row.address,
       label,
       notes: buildAutoNotes(assessment),

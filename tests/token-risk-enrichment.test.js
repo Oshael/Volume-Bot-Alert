@@ -71,6 +71,7 @@ describe('token risk enrichment model', () => {
       assert.equal(capturedParams[13], false);
       assert.equal(capturedParams[18], JSON.stringify([{ address: 'holder-1', uiAmount: 125, pctOfSupply: 12.5 }]));
       assert.equal(capturedParams[19], JSON.stringify(['mint_authority_active']));
+      assert.equal(capturedParams[20], 'solana');
       assert.equal(state.holderCount, 137);
       assert.equal(state.mintAuthorityActive, true);
       assert.equal(state.freezeAuthorityActive, false);
@@ -128,6 +129,7 @@ describe('token risk enrichment model', () => {
         'helius',
         new Date('2026-04-08T21:10:00.000Z'),
         'HTTP 429',
+        'solana',
       ]);
       assert.equal(state.lastEnrichedAt, null);
       assert.equal(state.lastError, 'HTTP 429');
@@ -175,7 +177,7 @@ describe('token risk enrichment model', () => {
         'So11111111111111111111111111111111111111112',
       ]);
 
-      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112']]);
+      assert.deepEqual(capturedParams, ['solana', ['So11111111111111111111111111111111111111112']]);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].holderCount, 137);
     } finally {

@@ -1,5 +1,5 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 const VALID_LABELS = new Set([
   'valid',
@@ -12,12 +12,13 @@ const VALID_SOURCES = new Set([
   'auto',
 ]);
 
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
+
 function normalizeAddress(address) {
-  const value = String(address || '').trim();
-  if (!isValidAddress(value)) {
-    throw new Error('Invalid token address format');
-  }
-  return value;
+  return normalizeIdentity(address).address;
 }
 
 function normalizeLabel(label) {
@@ -52,6 +53,7 @@ function toPositiveIntegerOrNull(value) {
 function mapRow(row) {
   if (!row) return null;
   return {
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     label: row.label || null,
     source: normalizeSource(row.source, 'manual'),
@@ -63,44 +65,39 @@ function mapRow(row) {
   };
 }
 
-async function getByAddress(address, runner = db) {
-  const tokenAddress = normalizeAddress(address);
+async function getByAddress(address, runner = db, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
   const { rows } = await runner.query(
     `SELECT *
      FROM token_risk_reviews
-     WHERE token_address = $1
+     WHERE chain = $1 AND token_address = $2
      LIMIT 1`,
-    [tokenAddress]
+    [identity.chain, identity.address]
   );
 
   return mapRow(rows[0] || null);
 }
 
-async function listByAddresses(addresses = [], runner = db) {
-  const normalized = [...new Set((addresses || []).map((address) => String(address || '').trim()).filter(Boolean))];
+async function listByAddresses(addresses = [], runner = db, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  const normalized = [...new Set((addresses || []).map((address) => normalizeTokenAddress(chain, address)))];
   if (normalized.length === 0) {
     return [];
-  }
-
-  for (const address of normalized) {
-    if (!isValidAddress(address)) {
-      throw new Error('Invalid token address format');
-    }
   }
 
   const { rows } = await runner.query(
     `SELECT *
      FROM token_risk_reviews
-     WHERE token_address = ANY($1::varchar[])
+     WHERE chain = $1 AND token_address = ANY($2::varchar[])
      ORDER BY token_address ASC`,
-    [normalized]
+    [chain, normalized]
   );
 
   return rows.map(mapRow);
 }
 
 async function upsertReview(payload = {}, runner = db) {
-  const tokenAddress = normalizeAddress(payload.tokenAddress || payload.address);
+  const identity = normalizeIdentity(payload.tokenAddress || payload.address, payload.chain || 'solana');
   const label = normalizeLabel(payload.label);
   const source = normalizeSource(payload.source, 'manual');
   const notes = normalizeNotes(payload.notes);
@@ -115,11 +112,12 @@ async function upsertReview(payload = {}, runner = db) {
        notes,
        created_by,
        updated_by,
+       chain,
        created_at,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-     ON CONFLICT (token_address) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+     ON CONFLICT (chain, token_address) DO UPDATE SET
        label = EXCLUDED.label,
        source = EXCLUDED.source,
        notes = EXCLUDED.notes,
@@ -127,12 +125,13 @@ async function upsertReview(payload = {}, runner = db) {
        updated_at = NOW()
      RETURNING *`,
     [
-      tokenAddress,
+      identity.address,
       label,
       source,
       notes,
       createdBy,
       updatedBy,
+      identity.chain,
     ]
   );
 
@@ -140,7 +139,12 @@ async function upsertReview(payload = {}, runner = db) {
 }
 
 async function upsertAutoReview(payload = {}, runner = db) {
-  const tokenAddress = normalizeAddress(payload.tokenAddress || payload.address);
+  const identity = normalizeIdentity(payload.tokenAddress || payload.address, payload.chain || 'solana');
+  if (identity.chain !== 'solana') {
+    const error = new Error('Automatic risk review is disabled outside Solana');
+    error.code = 'NON_SOLANA_AUTO_RISK_DISABLED';
+    throw error;
+  }
   const label = normalizeLabel(payload.label === 'junk_permanent' ? 'junk_probable' : payload.label);
   const notes = normalizeNotes(payload.notes);
 
@@ -152,11 +156,12 @@ async function upsertAutoReview(payload = {}, runner = db) {
        notes,
        created_by,
        updated_by,
+       chain,
        created_at,
        updated_at
      )
-     VALUES ($1, $2, 'auto', $3, NULL, NULL, NOW(), NOW())
-     ON CONFLICT (token_address) DO UPDATE SET
+     VALUES ($1, $2, 'auto', $3, NULL, NULL, $4, NOW(), NOW())
+     ON CONFLICT (chain, token_address) DO UPDATE SET
        label = CASE
          WHEN token_risk_reviews.source = 'manual' THEN token_risk_reviews.label
          ELSE EXCLUDED.label
@@ -179,31 +184,32 @@ async function upsertAutoReview(payload = {}, runner = db) {
        END
      RETURNING *`,
     [
-      tokenAddress,
+      identity.address,
       label,
       notes,
+      identity.chain,
     ]
   );
 
   return mapRow(rows[0] || null);
 }
 
-async function remove(address, runner = db) {
-  const tokenAddress = normalizeAddress(address);
+async function remove(address, runner = db, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
   const result = await runner.query(
-    'DELETE FROM token_risk_reviews WHERE token_address = $1',
-    [tokenAddress]
+    'DELETE FROM token_risk_reviews WHERE chain = $1 AND token_address = $2',
+    [identity.chain, identity.address]
   );
   return (result.rowCount || 0) > 0;
 }
 
-async function removeAutoReview(address, runner = db) {
-  const tokenAddress = normalizeAddress(address);
+async function removeAutoReview(address, runner = db, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
   const result = await runner.query(
     `DELETE FROM token_risk_reviews
-     WHERE token_address = $1
+     WHERE chain = $1 AND token_address = $2
        AND source = 'auto'`,
-    [tokenAddress]
+    [identity.chain, identity.address]
   );
   return (result.rowCount || 0) > 0;
 }
@@ -220,6 +226,7 @@ module.exports = {
   __private: {
     mapRow,
     normalizeAddress,
+    normalizeIdentity,
     normalizeLabel,
     normalizeNotes,
     normalizeSource,

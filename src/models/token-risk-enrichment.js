@@ -1,12 +1,13 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
 
 function normalizeAddress(address) {
-  const value = String(address || '').trim();
-  if (!isValidAddress(value)) {
-    throw new Error('Invalid token address format');
-  }
-  return value;
+  return normalizeIdentity(address).address;
 }
 
 function normalizeSource(value) {
@@ -84,6 +85,7 @@ function normalizeTopHolders(value) {
 function mapRow(row) {
   if (!row) return null;
   return {
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     source: row.source || 'helius',
     lastAttemptedAt: row.last_attempted_at || null,
@@ -110,44 +112,39 @@ function mapRow(row) {
   };
 }
 
-async function getByAddress(address, runner = db) {
-  const tokenAddress = normalizeAddress(address);
+async function getByAddress(address, runner = db, chainValue = 'solana') {
+  const identity = normalizeIdentity(address, chainValue);
   const { rows } = await runner.query(
     `SELECT *
      FROM token_risk_enrichment
-     WHERE token_address = $1
+     WHERE chain = $1 AND token_address = $2
      LIMIT 1`,
-    [tokenAddress]
+    [identity.chain, identity.address]
   );
 
   return mapRow(rows[0] || null);
 }
 
-async function listByAddresses(addresses = [], runner = db) {
-  const normalized = [...new Set((addresses || []).map((address) => String(address || '').trim()).filter(Boolean))];
+async function listByAddresses(addresses = [], runner = db, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  const normalized = [...new Set((addresses || []).map((address) => normalizeTokenAddress(chain, address)))];
   if (normalized.length === 0) {
     return [];
-  }
-
-  for (const address of normalized) {
-    if (!isValidAddress(address)) {
-      throw new Error('Invalid token address format');
-    }
   }
 
   const { rows } = await runner.query(
     `SELECT *
      FROM token_risk_enrichment
-     WHERE token_address = ANY($1::varchar[])
+     WHERE chain = $1 AND token_address = ANY($2::varchar[])
      ORDER BY token_address ASC`,
-    [normalized]
+    [chain, normalized]
   );
 
   return rows.map(mapRow);
 }
 
 async function upsertEnrichment(payload = {}, runner = db) {
-  const tokenAddress = normalizeAddress(payload.tokenAddress || payload.address);
+  const identity = normalizeIdentity(payload.tokenAddress || payload.address, payload.chain || 'solana');
   const source = normalizeSource(payload.source);
   const lastAttemptedAt = toTimestampOrNull(payload.lastAttemptedAt) || new Date();
   const lastEnrichedAt = toTimestampOrNull(payload.lastEnrichedAt) || lastAttemptedAt;
@@ -191,13 +188,14 @@ async function upsertEnrichment(payload = {}, runner = db) {
        top_20_pct,
        top_holders,
        reason_codes,
+       chain,
        updated_at
      )
      VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-       $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, NOW()
+       $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, NOW()
      )
-     ON CONFLICT (token_address) DO UPDATE SET
+     ON CONFLICT (chain, token_address) DO UPDATE SET
        source = EXCLUDED.source,
        last_attempted_at = EXCLUDED.last_attempted_at,
        last_enriched_at = EXCLUDED.last_enriched_at,
@@ -220,7 +218,7 @@ async function upsertEnrichment(payload = {}, runner = db) {
        updated_at = NOW()
      RETURNING *`,
     [
-      tokenAddress,
+      identity.address,
       source,
       lastAttemptedAt,
       lastEnrichedAt,
@@ -240,6 +238,7 @@ async function upsertEnrichment(payload = {}, runner = db) {
       top20Pct,
       JSON.stringify(topHolders),
       JSON.stringify(reasonCodes),
+      identity.chain,
     ]
   );
 
@@ -247,7 +246,7 @@ async function upsertEnrichment(payload = {}, runner = db) {
 }
 
 async function recordError(address, error, options = {}, runner = db) {
-  const tokenAddress = normalizeAddress(address);
+  const identity = normalizeIdentity(address, options.chain || 'solana');
   const source = normalizeSource(options.source);
   const lastAttemptedAt = toTimestampOrNull(options.lastAttemptedAt) || new Date();
   const lastError = normalizeError(error);
@@ -258,20 +257,22 @@ async function recordError(address, error, options = {}, runner = db) {
        source,
        last_attempted_at,
        last_error,
+       chain,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (token_address) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (chain, token_address) DO UPDATE SET
        source = EXCLUDED.source,
        last_attempted_at = EXCLUDED.last_attempted_at,
        last_error = EXCLUDED.last_error,
        updated_at = NOW()
      RETURNING *`,
     [
-      tokenAddress,
+      identity.address,
       source,
       lastAttemptedAt,
       lastError,
+      identity.chain,
     ]
   );
 
@@ -286,6 +287,7 @@ module.exports = {
   __private: {
     mapRow,
     normalizeAddress,
+    normalizeIdentity,
     normalizeError,
     normalizeReasonCodes,
     normalizeSource,

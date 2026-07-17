@@ -1,4 +1,5 @@
 const db = require('./db');
+const { normalizeTokenChain } = require('../utils/token-identity');
 
 function normalizeRuleKey(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -36,6 +37,7 @@ function mapCursorRow(row) {
   return {
     userId: Number(row.user_id) || null,
     ruleKey: row.rule_key || null,
+    chain: row.chain || 'solana',
     lastSeenEventId: row.last_seen_event_id == null ? null : Number(row.last_seen_event_id),
     lastAckedEventId: row.last_acked_event_id == null ? null : Number(row.last_acked_event_id),
     updatedAt: row.updated_at || null,
@@ -49,6 +51,7 @@ function normalizeCursorPayload(payload = {}) {
   return {
     userId: normalizeUserId(payload.userId),
     ruleKey: normalizeRuleKey(payload.ruleKey),
+    chain: normalizeTokenChain(payload.chain || 'solana'),
     lastSeenEventId: lastSeenEventId == null && lastAckedEventId == null
       ? null
       : Math.max(lastSeenEventId || 0, lastAckedEventId || 0) || null,
@@ -56,16 +59,22 @@ function normalizeCursorPayload(payload = {}) {
   };
 }
 
-async function getCursor(userId, ruleKey, runner = db) {
+async function getCursor(userId, ruleKey, chain = 'solana', runner = db) {
+  if (chain && typeof chain.query === 'function') {
+    runner = chain;
+    chain = 'solana';
+  }
   const normalizedUserId = normalizeUserId(userId);
   const normalizedRuleKey = normalizeRuleKey(ruleKey);
+  const normalizedChain = normalizeTokenChain(chain || 'solana');
   const { rows } = await runner.query(
     `SELECT *
      FROM alert_delivery_cursors
      WHERE user_id = $1
        AND rule_key = $2
+       AND chain = $3
      LIMIT 1`,
-    [normalizedUserId, normalizedRuleKey]
+    [normalizedUserId, normalizedRuleKey, normalizedChain]
   );
 
   return mapCursorRow(rows[0] || null);
@@ -77,12 +86,13 @@ async function upsertCursor(payload = {}, runner = db) {
     `INSERT INTO alert_delivery_cursors (
        user_id,
        rule_key,
+       chain,
        last_seen_event_id,
        last_acked_event_id,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (user_id, rule_key) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (user_id, rule_key, chain) DO UPDATE SET
        last_seen_event_id = CASE
          WHEN EXCLUDED.last_seen_event_id IS NULL THEN alert_delivery_cursors.last_seen_event_id
          WHEN alert_delivery_cursors.last_seen_event_id IS NULL THEN EXCLUDED.last_seen_event_id
@@ -98,6 +108,7 @@ async function upsertCursor(payload = {}, runner = db) {
     [
       normalized.userId,
       normalized.ruleKey,
+      normalized.chain,
       normalized.lastSeenEventId,
       normalized.lastAckedEventId,
     ]
@@ -106,12 +117,20 @@ async function upsertCursor(payload = {}, runner = db) {
   return mapCursorRow(rows[0] || null);
 }
 
-async function markSeen(userId, ruleKey, lastSeenEventId, runner = db) {
-  return upsertCursor({ userId, ruleKey, lastSeenEventId }, runner);
+async function markSeen(userId, ruleKey, lastSeenEventId, chain = 'solana', runner = db) {
+  if (chain && typeof chain.query === 'function') {
+    runner = chain;
+    chain = 'solana';
+  }
+  return upsertCursor({ userId, ruleKey, chain, lastSeenEventId }, runner);
 }
 
-async function markAcked(userId, ruleKey, lastAckedEventId, runner = db) {
-  return upsertCursor({ userId, ruleKey, lastAckedEventId }, runner);
+async function markAcked(userId, ruleKey, lastAckedEventId, chain = 'solana', runner = db) {
+  if (chain && typeof chain.query === 'function') {
+    runner = chain;
+    chain = 'solana';
+  }
+  return upsertCursor({ userId, ruleKey, chain, lastAckedEventId }, runner);
 }
 
 module.exports = {

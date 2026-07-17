@@ -1,7 +1,10 @@
 import type { AppController } from '../../state/app-controller';
-import { getTopPerformerTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getTokenSparkline, getTopPerformerTokens, type AppState, type ManualTokenEntry } from '../../state/app-state';
 import { bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, fmtAge, fmtMoney, fmtPct, renderSparklineFigure } from './shared';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
+import { resolveTokenValuation } from '../../utils/token-valuation';
+import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
+import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl } from '../../utils/token-chain';
 
 function renderTokenAvatar(token: ManualTokenEntry) {
   const symbol = String(token.symbol || token.label || token.address.slice(0, 4)).trim();
@@ -19,6 +22,13 @@ const TOP_PERFORMERS_MANUAL_PAUSE_MS = 4000;
 const TOP_PERFORMERS_INITIAL_AUTO_SCROLL_MS = 1800;
 const TOP_PERFORMERS_AUTO_SCROLL_PX_PER_SEC = 32;
 const TOP_PERFORMERS_OLD_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function resolveTopPerformerPrimaryLink(chain: ManualTokenEntry['chain'], address: string, pairUrl: string | null | undefined) {
+  const marketUrl = buildTokenMarketUrl(chain || 'solana', address, pairUrl);
+  if (marketUrl) return { url: marketUrl, label: 'pair' };
+  const explorerUrl = buildTokenExplorerUrl(chain || 'solana', address);
+  return explorerUrl ? { url: explorerUrl, label: 'explorer' } : null;
+}
 
 let topPerformersManualPauseUntil = 0;
 let topPerformersProgrammaticScrollUntil = 0;
@@ -96,12 +106,15 @@ export function logTopPerformersDebug(event: string, details: Record<string, unk
 function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, options: { duplicate?: boolean } = {}) {
   const address = token.address;
   const symbol = String(token.symbol || token.label || address.slice(0, 8)).trim();
+  const chain = token.chain || 'solana';
   const rank = token.performanceRank ?? 0;
-  const sparkline = state.data.sparklineByAddress[address] || null;
-  const pairUrl = sanitizeOptionalHttpUrl(token.pairUrl);
+  const valuation = resolveTokenValuation(token);
+  const chartEnabled = state.data.chainReadiness[chain]?.capabilities.charts === true;
+  const sparkline = chartEnabled ? getTokenSparkline(state, address, chain) : null;
+  const primaryLink = resolveTopPerformerPrimaryLink(chain, address, token.pairUrl);
   const duplicateAttrs = options.duplicate ? ' aria-hidden="true"' : '';
   const duplicateActionAttrs = options.duplicate ? ' tabindex="-1"' : '';
-  const adminAction = state.session.role === 'admin'
+  const adminAction = state.session.role === 'admin' && chain === 'solana'
     ? `<button type="button" class="inline-icon top-performer-admin-block" data-action="admin-block-token" data-address="${escapeHtml(address)}" data-label="${escapeHtml(symbol)}" title="Admin block permanently" aria-label="Admin block ${escapeHtml(symbol)} permanently"${duplicateActionAttrs}>☠</button>`
     : '';
   const age = token.createdAt ? fmtAge(token.createdAt) : '-';
@@ -112,22 +125,27 @@ function renderTopPerformerCard(state: AppState, token: ManualTokenEntry, option
       <div class="top-performer-header">
         ${renderTokenAvatar(token)}
         <strong class="top-performer-symbol">${escapeHtml(symbol)}</strong>
+        ${buildTokenIdentityBadgeGroup(null, chain, address).outerHTML}
         <span class="top-performer-rank">#${rank || '-'}</span>
       </div>
       <div class="top-performer-metrics">
         <div class="top-performer-change">${escapeHtml(fmtPct(token.priceChange24h))}<span class="top-performer-change-window">24h</span></div>
         <div class="top-performer-stats">
-          <span class="top-performer-stat"><span class="top-performer-stat-label">MCAP</span><span class="top-performer-stat-value">${escapeHtml(fmtMoney(token.mcap))}</span></span>
+          <span class="top-performer-stat"><span class="top-performer-stat-label">${escapeHtml(valuation.label)}</span><span class="top-performer-stat-value">${escapeHtml(fmtMoney(valuation.value))}</span></span>
           <span class="top-performer-stat"><span class="top-performer-stat-label">VOL 24H</span><span class="top-performer-stat-value">${escapeHtml(fmtMoney(token.volume24h))}</span></span>
           <span class="top-performer-stat"><span class="top-performer-stat-label">AGE</span><span class="top-performer-stat-value ${ageToneClass}">${escapeHtml(age)}</span></span>
         </div>
       </div>
       <div class="top-performer-chart">
-        ${renderSparklineFigure(sparkline, address, { areaFill: true, liveMcap: token.mcap })}
+        ${chartEnabled ? renderSparklineFigure(sparkline, address, {
+          areaFill: true,
+          lookupKey: buildTokenIdentityKey(chain, address),
+          liveMcap: valuation.value,
+        }) : ''}
       </div>
       <div class="top-performer-actions">
         <button type="button" class="inline-icon copy-button" data-action="copy-address" data-address="${escapeHtml(address)}" title="Copy contract" aria-label="Copy ${escapeHtml(symbol)} contract"${duplicateActionAttrs}>⧉</button>
-        ${pairUrl ? `<a class="inline-icon top-performer-open" href="${escapeHtml(pairUrl)}" target="_blank" rel="noreferrer" title="Open pair" aria-label="Open ${escapeHtml(symbol)} pair"${duplicateActionAttrs}>↗</a>` : ''}
+        ${primaryLink ? `<a class="inline-icon top-performer-open" href="${escapeHtml(primaryLink.url)}" target="_blank" rel="noreferrer" title="Open ${primaryLink.label}" aria-label="Open ${escapeHtml(symbol)} ${primaryLink.label}"${duplicateActionAttrs}>↗</a>` : ''}
         ${adminAction}
       </div>
     </article>
@@ -380,6 +398,7 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
   const section = document.createElement('section');
   section.id = 'top-performers-section';
   section.className = 'legacy-token-bar top-performers-bar';
+  const capabilityNotice = getChainCapabilityNotice(state, 'topPerformers');
 
   const tokens = getTopPerformerTokens(state)
     .slice()
@@ -387,7 +406,7 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
   logTopPerformersDebug('render', {
     generatedAt: state.data.topPerformersGeneratedAt,
     tokens: tokens.map((token) => `${token.performanceRank ?? '-'}:${token.address.slice(0, 6)}`),
-    sparklineCount: tokens.filter((token) => state.data.sparklineByAddress[token.address]).length,
+    sparklineCount: tokens.filter((token) => getTokenSparkline(state, token.address, token.chain || 'solana')).length,
   });
 
   section.innerHTML = `
@@ -395,7 +414,9 @@ export function renderTopPerformersSection(state: AppState, controller: AppContr
       <span class="legacy-bar-title top-performers">Best Perfomance Coins</span>
     </div>
     ${
-      tokens.length > 0
+      capabilityNotice
+        ? `<div class="chain-readiness-empty" data-chain-readiness-surface="top-performers">${escapeHtml(capabilityNotice)}</div>`
+        : tokens.length > 0
         ? `<div class="top-performers-viewport">
             <div class="top-performers-track">${renderTopPerformerCards(state, tokens)}</div>
           </div>`

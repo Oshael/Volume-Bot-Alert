@@ -235,13 +235,14 @@ async function applyReviewAlertResolution(alert, resolution, userId, notes) {
   if (resolution === 'block') {
     const label = String(alert.label || alert.alertKind || 'admin-review-block').slice(0, 128);
     await adminBlockedToken.add({
+      chain: alert.chain || 'solana',
       address: alert.tokenAddress,
       label,
       createdBy: userId,
     });
     await tokenCatalog.upsertToken({
       address: alert.tokenAddress,
-      chain: 'solana',
+      chain: alert.chain || 'solana',
       source: 'admin-blocked',
       symbol: alert.assessment?.symbol || alert.tokenAddress.slice(0, 8),
       isActiveMonitorCandidate: false,
@@ -253,13 +254,14 @@ async function applyReviewAlertResolution(alert, resolution, userId, notes) {
       nextEvaluationAt: new Date(Date.now() + (10 * 365 * 24 * 60 * 60 * 1000)),
       monitorPriority: 'dormant',
     });
-    await tokenRiskReview.removeAutoReview(alert.tokenAddress);
+    await tokenRiskReview.removeAutoReview(alert.tokenAddress, undefined, alert.chain || 'solana');
     return;
   }
 
   const reviewLabel = resolveReviewLabelForResolution(resolution);
   if (reviewLabel) {
     await tokenRiskReview.upsertReview({
+      chain: alert.chain || 'solana',
       tokenAddress: alert.tokenAddress,
       label: reviewLabel,
       source: 'manual',
@@ -293,6 +295,7 @@ router.get('/token-review-alerts', async (req, res) => {
 
   try {
     const alerts = await adminTokenReviewAlert.listRecent({
+      chain: 'solana',
       status,
       address: address.value,
       limit,
@@ -321,6 +324,9 @@ router.post('/token-review-alerts/:id/resolve', async (req, res) => {
     if (!alert || alert.status !== 'open') {
       return res.status(404).json({ error: 'Open token review alert not found' });
     }
+    if ((alert.chain || 'solana') !== 'solana') {
+      return res.status(409).json({ error: 'Token review resolution is not enabled for this chain' });
+    }
 
     await applyReviewAlertResolution(alert, resolution, req.user.id, notes);
     const resolved = await adminTokenReviewAlert.resolve(id, {
@@ -348,11 +354,13 @@ router.get('/monitored-exit-events', async (req, res) => {
 
   try {
     const events = await monitoredTokenExitEvent.listRecent({
+      chain: 'solana',
       limit,
       address: address.value,
       exitReason: req.query?.reason,
     });
     res.json({
+      semantics: monitoredTokenExitEvent.EVENT_SEMANTICS,
       events,
       count: events.length,
     });
@@ -485,7 +493,7 @@ router.get('/token-risk-enrichment', async (req, res) => {
   if (!parsed.ok) return res.status(400).json({ error: parsed.error });
 
   try {
-    const enrichments = await tokenRiskEnrichment.listByAddresses(parsed.value);
+    const enrichments = await tokenRiskEnrichment.listByAddresses(parsed.value, undefined, 'solana');
     res.json({
       enrichments,
       count: enrichments.length,
@@ -521,7 +529,7 @@ router.get('/token-risk-labels', async (req, res) => {
   if (!parsed.ok) return res.status(400).json({ error: parsed.error });
 
   try {
-    const reviews = await tokenRiskReview.listByAddresses(parsed.value);
+    const reviews = await tokenRiskReview.listByAddresses(parsed.value, undefined, 'solana');
     res.json({
       reviews,
       count: reviews.length,
@@ -548,6 +556,7 @@ router.post('/token-risk-labels', async (req, res) => {
 
   try {
     const review = await tokenRiskReview.upsertReview({
+      chain: 'solana',
       tokenAddress: address,
       label,
       notes,
@@ -572,7 +581,7 @@ router.delete('/token-risk-labels/:address', async (req, res) => {
   }
 
   try {
-    const removed = await tokenRiskReview.remove(address);
+    const removed = await tokenRiskReview.remove(address, undefined, 'solana');
     if (!removed) {
       return res.status(404).json({ error: 'Token risk label not found' });
     }

@@ -1,4 +1,5 @@
 import type { AlertEntry } from '../../state/app-state';
+import { createLegacyCompatibleTokenIdentity } from '../../utils/token-chain';
 import { formatClaimFee } from './claim-fee-format';
 
 const STORAGE_KEY_PREFIX = 'trendscope_browser_notifications_v1';
@@ -203,7 +204,7 @@ function getNotificationVolumeLine(alert: AlertEntry) {
 function getCustomAlertMetricLine(alert: AlertEntry) {
   const metric = String(alert.customMetric || '').toLowerCase();
   const formatter = metric === 'price' ? formatPrice : formatMoney;
-  const label = metric === 'price' ? 'PRICE' : 'MCAP';
+  const label = metric === 'price' ? 'PRICE' : metric === 'fdv' ? 'FDV' : 'MCAP';
   const current = formatter(alert.customCurrentValue);
   const target = formatter(Number(alert.customTarget));
   if (current && target) {
@@ -287,6 +288,18 @@ function buildNotificationBody(alert: AlertEntry) {
   return parts.filter(Boolean).join(' · ');
 }
 
+function buildNotificationNavigationTarget(alert: Pick<AlertEntry, 'chain' | 'address'>) {
+  try {
+    const identity = createLegacyCompatibleTokenIdentity(alert.chain, alert.address);
+    const address = encodeURIComponent(identity.address);
+    return identity.chain === 'solana'
+      ? `/alerts/${address}`
+      : `/alerts/${identity.chain}/${address}`;
+  } catch {
+    return '/alerts';
+  }
+}
+
 export function loadBrowserNotificationSettings(scope: string): BrowserNotificationSettings {
   if (typeof window === 'undefined') {
     return { ...DEFAULT_SETTINGS };
@@ -346,8 +359,10 @@ export function formatBrowserNotificationContent(
     icon: sanitizeHttpUrl(alert.imageUrl) || options?.fallbackIconUrl || DEFAULT_ICON_URL,
     data: {
       address: alert.address,
+      chain: alert.chain,
       alertId: alert.id,
       ruleKey: alert.ruleKey ?? null,
+      navigationTarget: buildNotificationNavigationTarget(alert),
     },
   };
 }
@@ -381,6 +396,7 @@ export function maybeNotifyAlert(alert: AlertEntry, options: BrowserNotification
   notification.onclick = () => {
     if (typeof window !== 'undefined') {
       window.focus();
+      window.location.assign(content.data.navigationTarget);
     }
   };
   notifiedAlertIds.add(alert.id);

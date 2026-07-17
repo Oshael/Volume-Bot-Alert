@@ -6,7 +6,8 @@ const db = require('../models/db');
 
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS token_risk_enrichment (
-     token_address VARCHAR(64) PRIMARY KEY,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
+     token_address VARCHAR(64) NOT NULL,
      source VARCHAR(32) NOT NULL DEFAULT 'helius',
      last_attempted_at TIMESTAMPTZ,
      last_enriched_at TIMESTAMPTZ,
@@ -26,7 +27,8 @@ const STATEMENTS = [
      top_20_pct NUMERIC(10, 2),
      top_holders JSONB NOT NULL DEFAULT '[]'::jsonb,
      reason_codes JSONB NOT NULL DEFAULT '[]'::jsonb,
-     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT token_risk_enrichment_chain_pkey PRIMARY KEY (chain, token_address)
    )`,
   `CREATE INDEX IF NOT EXISTS idx_token_risk_enrichment_attempted_at
      ON token_risk_enrichment(last_attempted_at ASC NULLS FIRST)`,

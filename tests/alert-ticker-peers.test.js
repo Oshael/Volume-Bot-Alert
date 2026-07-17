@@ -5,6 +5,8 @@ const alertTickerPeers = require('../src/services/alert-ticker-peers');
 
 const SOURCE_ADDRESS = 'So11111111111111111111111111111111111111112';
 const PEER_ADDRESS = '34q2KmCvapecJgR6ZrtbCTrzZVtkt3a5mHEA3TuEsWYb';
+const ROBINHOOD_SOURCE_ADDRESS = '0x1111111111111111111111111111111111111111';
+const ROBINHOOD_PEER_ADDRESS = '0x2222222222222222222222222222222222222222';
 
 describe('alert ticker peers', () => {
   it('classifies the source token as OG when it is the oldest exact peer', () => {
@@ -80,6 +82,62 @@ describe('alert ticker peers', () => {
 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].params[1], 3);
+    assert.equal(calls[0].params[4], 'solana');
+    assert.match(calls[0].sql, /WHERE chain = \$5/);
+  });
+
+  it('scopes Robinhood OG peers to Robinhood catalog rows', async () => {
+    const calls = [];
+    const runner = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        return {
+          rows: [
+            {
+              address: ROBINHOOD_SOURCE_ADDRESS,
+              symbol: 'HOOD',
+              last_mcap: '300000',
+              last_token_created_at_ms: '1700000000000',
+              age_ms_at_alert: '2000',
+              match_type: 'exact',
+              exact_count: '2',
+              subticker_count: '0',
+              exact_missing_created_at_count: '0',
+              exact_missing_mcap_count: '0',
+              oldest_exact_address: ROBINHOOD_SOURCE_ADDRESS,
+              highest_mcap_exact_address: ROBINHOOD_SOURCE_ADDRESS,
+            },
+            {
+              address: ROBINHOOD_PEER_ADDRESS,
+              symbol: 'HOOD',
+              last_mcap: '100000',
+              last_token_created_at_ms: '1700000001000',
+              age_ms_at_alert: '1000',
+              match_type: 'exact',
+              exact_count: '2',
+              subticker_count: '0',
+              exact_missing_created_at_count: '0',
+              exact_missing_mcap_count: '0',
+              oldest_exact_address: ROBINHOOD_SOURCE_ADDRESS,
+              highest_mcap_exact_address: ROBINHOOD_SOURCE_ADDRESS,
+            },
+          ],
+        };
+      },
+    };
+
+    const snapshot = await alertTickerPeers.buildTickerPeerSnapshotForAlert({
+      chain: 'robinhood',
+      address: ROBINHOOD_SOURCE_ADDRESS.toUpperCase().replace('0X', '0x'),
+      symbol: 'HOOD',
+    }, {}, runner);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].params[4], 'robinhood');
+    assert.match(calls[0].sql, /WHERE chain = \$5/);
+    assert.equal(snapshot.chain, 'robinhood');
+    assert.equal(snapshot.sourcePeerRole, 'og');
+    assert.equal(snapshot.items.length, 2);
   });
 
   it('does not promote the source token to market-cap leader when exact peer market cap data is incomplete', () => {
@@ -237,6 +295,8 @@ describe('alert ticker peers', () => {
 
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].params[0], ['WSOL']);
+    assert.equal(calls[0].params[3], 'solana');
+    assert.match(calls[0].sql, /WHERE chain = \$4/);
     assert.equal(summaries.get(SOURCE_ADDRESS).sourcePeerRole, 'mcap_leader');
     assert.equal(summaries.get(PEER_ADDRESS).sourcePeerRole, 'og');
     assert.equal(summaries.get(SOURCE_ADDRESS).count, 2);

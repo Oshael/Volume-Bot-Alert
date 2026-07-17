@@ -17,6 +17,7 @@ describe('user alert event model', () => {
           user_id: 15,
           rule_key: 'monitored-vol',
           kind: 'monitored-vol',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           dedupe_key: '15:monitored-vol:So11111111111111111111111111111111111111112:80',
           payload: {
@@ -52,16 +53,18 @@ describe('user alert event model', () => {
         },
       });
 
-      assert.deepEqual(capturedParams.slice(0, 5), [
+      assert.deepEqual(capturedParams.slice(0, 6), [
         15,
         'monitored-vol',
         'monitored-vol',
+        'solana',
         'So11111111111111111111111111111111111111112',
         '15:monitored-vol:So11111111111111111111111111111111111111112:80',
       ]);
       assert.equal(event.userId, 15);
       assert.equal(event.ruleKey, 'monitored-vol');
       assert.equal(event.kind, 'monitored-vol');
+      assert.equal(event.chain, 'solana');
       assert.equal(event.payload.symbol, 'WSOL');
     } finally {
       db.query = originalQuery;
@@ -82,6 +85,7 @@ describe('user alert event model', () => {
           user_id: 5,
           rule_key: 'meteora-surge',
           kind: 'meteora-surge',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           dedupe_key: '5:meteora-surge:So11111111111111111111111111111111111111112:60',
           payload: {
@@ -102,12 +106,14 @@ describe('user alert event model', () => {
         ruleKey: 'meteora-surge',
         tokenAddress: 'So11111111111111111111111111111111111111112',
         afterId: 4,
+        dismissedByUserId: 5,
         limit: 10,
         sort: 'asc',
       });
 
       assert.match(capturedSql, /ORDER BY id ASC/);
-      assert.deepEqual(capturedParams, [5, 'meteora-surge', 'So11111111111111111111111111111111111111112', 4, 10]);
+      assert.match(capturedSql, /FROM alert_event_dismissals dismissal/);
+      assert.deepEqual(capturedParams, [5, 'solana', 'meteora-surge', 'So11111111111111111111111111111111111111112', 4, 5, 10]);
       assert.equal(events.length, 1);
       assert.equal(events[0].id, 9);
       assert.equal(events[0].kind, 'meteora-surge');
@@ -133,7 +139,7 @@ describe('user alert event model', () => {
         ruleKey: 'monitored-mcap',
       });
 
-      assert.deepEqual(capturedParams, [12, 'monitored-mcap']);
+      assert.deepEqual(capturedParams, [12, 'solana', 'monitored-mcap']);
       assert.equal(latestId, 31);
     } finally {
       db.query = originalQuery;
@@ -154,6 +160,7 @@ describe('user alert event model', () => {
           user_id: 12,
           rule_key: 'monitored-vol',
           kind: 'monitored-vol',
+          chain: 'solana',
           token_address: 'So11111111111111111111111111111111111111112',
           dedupe_key: 'dedupe-33',
           payload: {},
@@ -198,11 +205,12 @@ describe('user alert event model', () => {
       });
 
       assert.deepEqual(events, []);
-      assert.match(capturedSql, /triggered_at >= \$3/);
-      assert.match(capturedSql, /rule_key = ANY\(\$4::text\[\]\)/);
+      assert.match(capturedSql, /triggered_at >= \$4/);
+      assert.match(capturedSql, /rule_key = ANY\(\$5::text\[\]\)/);
       assert.match(capturedSql, /ORDER BY triggered_at ASC, id ASC/);
       assert.deepEqual(capturedParams, [
         9,
+        'solana',
         'So11111111111111111111111111111111111111112',
         cutoff,
         ['monitored-vol', 'hvnc'],
@@ -221,6 +229,20 @@ describe('user alert event model', () => {
         ruleKeys: ['monitored-vol'],
       }),
       /Valid chart alert cutoff is required/
+    );
+  });
+
+  it('keeps Robinhood automatic event creation disabled', async () => {
+    await assert.rejects(
+      () => userAlertEvent.createEvent({
+        userId: 15,
+        ruleKey: 'monitored-vol',
+        kind: 'monitored-vol',
+        chain: 'robinhood',
+        tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+        dedupeKey: 'same-dedupe-key',
+      }),
+      (error) => error.code === 'NON_SOLANA_ALERT_TRIGGER_DISABLED'
     );
   });
 });

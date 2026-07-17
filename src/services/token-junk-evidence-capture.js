@@ -337,6 +337,7 @@ async function captureJunkEvidence(row, assessment, meteoraSummary, deps = {}) {
   ]);
 
   const evidence = await evidenceModel.createEvidence({
+    chain: 'solana',
     tokenAddress,
     label: label === 'junk_permanent' ? 'junk_probable' : label,
     source: 'auto_sync',

@@ -82,15 +82,24 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(row.token_address, 'So11111111111111111111111111111111111111112');
       assert.equal(calls.length, 3);
       assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m/);
+      assert.match(calls[0].sql, /INSERT INTO token_market_buckets_1m \(\s+chain,/);
+      assert.match(calls[0].sql, /VALUES \(\s+\$1, \$2/);
+      assert.match(calls[0].sql, /ON CONFLICT \(chain, token_address, bucket_ts\)/);
+      assert.equal(calls[0].params[0], 'solana');
+      assert.equal(calls[0].params[1], 'So11111111111111111111111111111111111111112');
       assert.match(calls[1].sql, /INSERT INTO token_market_buckets_agg/);
+      assert.match(calls[1].sql, /ON CONFLICT \(chain, token_address, granularity_minutes, bucket_ts\)/);
       assert.match(calls[1].sql, /WITH requested\(granularity_minutes, bucket_start\)/);
       assert.match(calls[1].sql, /normalized_source_rows AS/);
       assert.match(calls[1].sql, /source_stats AS/);
       assert.match(calls[1].sql, /COALESCE\(source, ''\) = 'gmgn'/);
       assert.match(calls[1].sql, /primary_high_mcap/);
       assert.match(calls[1].sql, /INNER JOIN token_market_buckets_1m b/);
+      assert.match(calls[1].sql, /ON b\.chain = 'solana'/);
       assert.match(calls[2].sql, /WITH requested\(target_granularity_minutes, bucket_start\)/);
       assert.match(calls[2].sql, /INNER JOIN token_market_buckets_agg b/);
+      assert.match(calls[2].sql, /ON b\.chain = 'solana'/);
+      assert.match(calls[2].sql, /ON CONFLICT \(chain, token_address, granularity_minutes, bucket_ts\)/);
       assert.match(calls[2].sql, /b\.granularity_minutes = \$2::int/);
       assert.deepEqual(calls[1].params.map((value) => (
         value instanceof Date ? value.toISOString() : value
@@ -118,6 +127,62 @@ describe('token market 1m bucket helpers', () => {
     } finally {
       db.query = originalQuery;
     }
+  });
+
+  it('rejects Robinhood writes because the legacy OHLC precision is not EVM-safe', async () => {
+    await assert.rejects(
+      () => tokenMarketBucket1m.upsertSnapshotBucket({
+        chain: 'robinhood',
+        tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+        ts: '2026-07-12T12:00:00.000Z',
+        price: '0.0000000000001',
+      }),
+      (error) => error?.code === 'NON_SOLANA_LEGACY_MARKET_BUCKET_DISABLED'
+    );
+  });
+
+  it('rejects Robinhood across every public legacy OHLC reader and cleanup', async () => {
+    const solanaAddress = 'So11111111111111111111111111111111111111112';
+    const calls = [
+      () => tokenMarketBucket1m.getInitialBucketByAddress(solanaAddress, { chain: 'robinhood' }),
+      () => tokenMarketBucket1m.listHistoryByAddress(solanaAddress, { chain: 'robinhood' }),
+      () => tokenMarketBucket1m.listSparklineByAddresses([solanaAddress], { chain: 'robinhood' }),
+      () => tokenMarketBucket1m.listExpandedSparklineByAddress(solanaAddress, { chain: 'robinhood' }),
+      () => tokenMarketBucket1m.deleteByAddresses([solanaAddress], { chain: 'robinhood' }),
+      () => tokenMarketBucket1m.deleteChunkByAddress(solanaAddress, { chain: 'robinhood' }),
+      () => tokenMarketBucket1m.listCurrentAndBaselineByAddresses(
+        [solanaAddress], 5, { chain: 'robinhood' }
+      ),
+      () => tokenMarketBucket1m.listCurrentAndWindowBaselinesByAddresses(
+        [solanaAddress], [60], { chain: 'robinhood' }
+      ),
+      () => tokenMarketBucket1m.computeBidZoneCandidates({ chain: 'robinhood' }),
+    ];
+
+    for (const call of calls) {
+      await assert.rejects(
+        call,
+        (error) => error?.code === 'NON_SOLANA_LEGACY_MARKET_BUCKET_DISABLED'
+      );
+    }
+  });
+
+  it('namespaces compact and expanded sparkline cache keys by chain', () => {
+    const address = 'So11111111111111111111111111111111111111112';
+    const compact = JSON.parse(tokenMarketBucket1m.__private.getSparklineCacheKey([address], {
+      chain: 'solana',
+      hours: 1,
+      points: 60,
+      granularityMinutes: 5,
+    }));
+    const expanded = JSON.parse(tokenMarketBucket1m.__private.getExpandedSparklineCacheKey(address, {
+      chain: 'solana',
+      points: 720,
+      granularityMinutes: 5,
+    }));
+
+    assert.equal(compact.chain, 'solana');
+    assert.equal(expanded.chain, 'solana');
   });
 
   it('does not recompute aggregate buckets for repeated writes inside the same 1m bucket', async () => {
@@ -282,8 +347,11 @@ describe('token market 1m bucket helpers', () => {
 
   it('includes pairAddress in history rows for bucket-level diagnostics', async () => {
     const originalQuery = db.query;
+    let capturedSql = '';
 
-    db.query = async () => ({
+    db.query = async (sql) => {
+      capturedSql = String(sql);
+      return {
       rows: [
         {
           token_address: 'So11111111111111111111111111111111111111112',
@@ -301,13 +369,15 @@ describe('token market 1m bucket helpers', () => {
           source: 'dexscreener',
         },
       ],
-    });
+      };
+    };
 
     try {
       const rows = await tokenMarketBucket1m.listHistoryByAddress('So11111111111111111111111111111111111111112');
       assert.equal(rows.length, 1);
       assert.equal(rows[0].pairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
       assert.equal(rows[0].sampleCount, 3);
+      assert.match(capturedSql, /WHERE chain = 'solana'/);
     } finally {
       db.query = originalQuery;
     }
@@ -475,8 +545,12 @@ describe('token market 1m bucket helpers', () => {
       sample_count: 35,
     });
 
+    assert.equal(payload.type, 'market:bucket');
+    assert.equal(payload.chain, 'solana');
     assert.equal(payload.address, 'So11111111111111111111111111111111111111112');
     assert.equal(payload.pairAddress, '2AvJj5CpkvT4Qn6tQ3LRek2L4mM4A6h8K5mJ7u8h9iX1');
+    assert.equal(payload.bucketTs, '2026-06-23T21:09:00.000Z');
+    assert.equal(payload.sequence, 'solana:2026-06-23T21:09:00.000Z:000000000035');
     assert.equal(payload.granularityMinutes, 1);
     assert.equal(payload.candle.bucketTs, '2026-06-23T21:09:00.000Z');
     assert.equal(payload.candle.granularityMinutes, 1);
@@ -1088,6 +1162,7 @@ describe('token market 1m bucket helpers', () => {
       assert.equal(calls.length, 2);
       assert.match(calls[0].sql, /DELETE FROM token_market_buckets_agg/);
       assert.match(calls[1].sql, /DELETE FROM token_market_buckets_1m/);
+      assert.ok(calls.every((call) => /chain = 'solana'/.test(call.sql)));
       assert.deepEqual(calls[0].params, [[
         'So11111111111111111111111111111111111111112',
         'So11111111111111111111111111111111111111113',
@@ -1148,6 +1223,7 @@ describe('token market 1m bucket helpers', () => {
       assert.match(calls[0].sql, /baseline_360m\.close_mcap AS baseline_360m_mcap/);
       assert.doesNotMatch(calls[0].sql, /baseline_5m/);
       assert.doesNotMatch(calls[0].sql, /fallback/);
+      assert.equal((calls[0].sql.match(/chain = 'solana'/g) || []).length, 3);
       assert.match(calls[0].sql, /AND close_mcap IS NOT NULL\s+ORDER BY bucket_ts DESC\s+LIMIT 1\s+\) AS current_row/);
       assert.match(calls[0].sql, /bucket_ts <= current_row\.current_ts - \(60::int \* INTERVAL '1 minute'\)/);
       assert.match(calls[0].sql, /bucket_ts <= current_row\.current_ts - \(360::int \* INTERVAL '1 minute'\)/);

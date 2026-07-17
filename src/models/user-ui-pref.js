@@ -1,4 +1,10 @@
 const db = require('./db');
+const { normalizeTokenChain } = require('../utils/token-identity');
+const {
+  getAvailableTokenChains,
+  isRobinhoodTokenChainConfigured,
+} = require('../utils/token-chain-availability');
+const config = require('../../config');
 
 const COLLAPSIBLE_SECTIONS = ['manual', 'recent', 'oldWeek', 'monitored', 'bidZone', 'pumpfun'];
 const BUCKET_SORT_MODES = ['vol', 'mcap', 'pchange', 'age'];
@@ -40,6 +46,24 @@ const SPARKLINE_RANGE_MIN_DAYS = 1;
 const SPARKLINE_RANGE_MAX_DAYS = 14;
 const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
 const SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX = 250;
+const CHAIN_FILTER_KEYS = [
+  'enabledChains',
+  'radarChains',
+  'alertFeedChains',
+  'browserNotificationChains',
+];
+const DEFAULT_CHAIN_FILTERS = Object.freeze({
+  enabledChains: Object.freeze(['solana']),
+  radarChains: Object.freeze(['solana']),
+  alertFeedChains: Object.freeze(['solana']),
+  browserNotificationChains: Object.freeze(['solana']),
+});
+
+function getConfiguredAvailableTokenChains() {
+  return getAvailableTokenChains({
+    robinhoodConfigured: isRobinhoodTokenChainConfigured(config),
+  });
+}
 
 const DEFAULT_UI_PREFS = {
   collapsed: {
@@ -54,6 +78,7 @@ const DEFAULT_UI_PREFS = {
   manualFolderDeleteWarningDismissed: false,
   recentStarredOnly: false,
   oldWeekStarredOnly: false,
+  chainFilters: DEFAULT_CHAIN_FILTERS,
   monitoredPerPage: 30,
   recentPerPage: 30,
   oldWeekPerPage: 30,
@@ -332,6 +357,88 @@ function validateTradeTerminals(key, value) {
   return { valid: true, value: next };
 }
 
+function normalizeStoredChainSelection(value, allowedChains, fallback) {
+  const next = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    let chain;
+    try {
+      chain = normalizeTokenChain(item);
+    } catch (_) {
+      continue;
+    }
+    if (allowedChains.has(chain) && !next.includes(chain)) {
+      next.push(chain);
+    }
+  }
+  return next.length > 0 ? next : [...fallback];
+}
+
+function normalizeChainFilters(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const available = new Set(getConfiguredAvailableTokenChains());
+  const enabledChains = normalizeStoredChainSelection(
+    source.enabledChains,
+    available,
+    DEFAULT_CHAIN_FILTERS.enabledChains,
+  );
+  const enabled = new Set(enabledChains);
+  return {
+    enabledChains,
+    radarChains: normalizeStoredChainSelection(source.radarChains, enabled, enabledChains),
+    alertFeedChains: normalizeStoredChainSelection(source.alertFeedChains, enabled, enabledChains),
+    browserNotificationChains: normalizeStoredChainSelection(
+      source.browserNotificationChains,
+      enabled,
+      enabledChains,
+    ),
+  };
+}
+
+function validateChainSelection(key, value, allowedChains) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return { valid: false, error: `${key} must contain at least one chain` };
+  }
+  const next = [];
+  for (const item of value) {
+    let chain;
+    try {
+      chain = normalizeTokenChain(item);
+    } catch (_) {
+      return { valid: false, error: `${key} contains an unsupported chain` };
+    }
+    if (!allowedChains.has(chain)) {
+      return { valid: false, error: `${key} contains an unavailable chain: ${chain}` };
+    }
+    if (!next.includes(chain)) {
+      next.push(chain);
+    }
+  }
+  return { valid: true, value: next };
+}
+
+function validateChainFilters(key, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, error: `${key} must be an object` };
+  }
+  const unknownKeys = Object.keys(value).filter((item) => !CHAIN_FILTER_KEYS.includes(item));
+  if (unknownKeys.length > 0) {
+    return { valid: false, error: `${key} contains unknown keys: ${unknownKeys.join(', ')}` };
+  }
+
+  const available = new Set(getConfiguredAvailableTokenChains());
+  const enabledResult = validateChainSelection(`${key}.enabledChains`, value.enabledChains, available);
+  if (!enabledResult.valid) return enabledResult;
+
+  const enabled = new Set(enabledResult.value);
+  const next = { enabledChains: enabledResult.value };
+  for (const filterKey of CHAIN_FILTER_KEYS.slice(1)) {
+    const result = validateChainSelection(`${key}.${filterKey}`, value[filterKey], enabled);
+    if (!result.valid) return result;
+    next[filterKey] = result.value;
+  }
+  return { valid: true, value: next };
+}
+
 function normalizeLivePanelOrder(input) {
   const next = [];
   const seen = new Set();
@@ -416,13 +523,28 @@ function validateLivePanelLayout(key, value) {
   };
 }
 
+function normalizedStoredValue(result, fallback) {
+  return result.valid ? result.value : fallback;
+}
+
+function normalizeStoredPerPage(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 10 && numeric <= 500
+    ? Math.floor(numeric)
+    : fallback;
+}
+
+function normalizeStoredSorts(key, value, options, fallback) {
+  return normalizedStoredValue(validateSorts(key, value, options), fallback);
+}
+
 function normalizePrefs(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const defaults = cloneDefaultPrefs();
-
   const collapsed = source.collapsed && typeof source.collapsed === 'object' && !Array.isArray(source.collapsed)
     ? source.collapsed
     : {};
+
   defaults.collapsed = {
     ...defaults.collapsed,
     manual: Boolean(collapsed.manual),
@@ -432,78 +554,81 @@ function normalizePrefs(raw) {
     bidZone: Boolean(collapsed.bidZone),
     pumpfun: Boolean(collapsed.pumpfun),
   };
-
   defaults.manualStarredOnly = Boolean(source.manualStarredOnly);
   defaults.manualFolderDeleteWarningDismissed = Boolean(source.manualFolderDeleteWarningDismissed);
   defaults.recentStarredOnly = Boolean(source.recentStarredOnly);
   defaults.oldWeekStarredOnly = Boolean(source.oldWeekStarredOnly);
-
-  const monitoredPerPage = Number(source.monitoredPerPage);
-  if (Number.isFinite(monitoredPerPage) && monitoredPerPage >= 10 && monitoredPerPage <= 500) {
-    defaults.monitoredPerPage = Math.floor(monitoredPerPage);
-  }
-
-  const recentPerPage = Number(source.recentPerPage);
-  if (Number.isFinite(recentPerPage) && recentPerPage >= 10 && recentPerPage <= 500) {
-    defaults.recentPerPage = Math.floor(recentPerPage);
-  }
-
-  const oldWeekPerPage = Number(source.oldWeekPerPage);
-  if (Number.isFinite(oldWeekPerPage) && oldWeekPerPage >= 10 && oldWeekPerPage <= 500) {
-    defaults.oldWeekPerPage = Math.floor(oldWeekPerPage);
-  }
-
-  const manualSorts = validateSorts('manualSorts', source.manualSorts, {
+  defaults.chainFilters = normalizeChainFilters(source.chainFilters);
+  defaults.monitoredPerPage = normalizeStoredPerPage(source.monitoredPerPage, defaults.monitoredPerPage);
+  defaults.recentPerPage = normalizeStoredPerPage(source.recentPerPage, defaults.recentPerPage);
+  defaults.oldWeekPerPage = normalizeStoredPerPage(source.oldWeekPerPage, defaults.oldWeekPerPage);
+  defaults.manualSorts = normalizeStoredSorts('manualSorts', source.manualSorts, {
     allowedModes: BUCKET_SORT_MODES,
     isAllowedWindow: isAllowedBucketWindow,
-  });
-  if (manualSorts.valid) {
-    defaults.manualSorts = manualSorts.value;
-  }
-
-  const recentSorts = validateSorts('recentSorts', source.recentSorts, {
+  }, defaults.manualSorts);
+  defaults.recentSorts = normalizeStoredSorts('recentSorts', source.recentSorts, {
     allowedModes: BUCKET_SORT_MODES,
     isAllowedWindow: isAllowedBucketWindow,
-  });
-  if (recentSorts.valid) {
-    defaults.recentSorts = recentSorts.value;
-  }
-
-  const oldWeekSorts = validateSorts('oldWeekSorts', source.oldWeekSorts, {
+  }, defaults.recentSorts);
+  defaults.oldWeekSorts = normalizeStoredSorts('oldWeekSorts', source.oldWeekSorts, {
     allowedModes: BUCKET_SORT_MODES,
     isAllowedWindow: isAllowedBucketWindow,
-  });
-  if (oldWeekSorts.valid) {
-    defaults.oldWeekSorts = oldWeekSorts.value;
-  }
-
-  const monitoredSorts = validateSorts('monitoredSorts', source.monitoredSorts, {
+  }, defaults.oldWeekSorts);
+  defaults.monitoredSorts = normalizeStoredSorts('monitoredSorts', source.monitoredSorts, {
     allowedModes: MONITORED_SORT_MODES,
     isAllowedWindow: isAllowedMonitoredWindow,
-  });
-  if (monitoredSorts.valid) {
-    defaults.monitoredSorts = monitoredSorts.value;
-  }
-
+  }, defaults.monitoredSorts);
   defaults.expandedSparklineGranularityMinutes = normalizeExpandedSparklineGranularity(source.expandedSparklineGranularityMinutes);
   defaults.expandedSparklineTimeZone = normalizeExpandedChartTimeZone(source.expandedSparklineTimeZone);
-
-  const sparklineRange = validateSparklineRange('sparklineRange', source.sparklineRange);
-  if (sparklineRange.valid) {
-    defaults.sparklineRange = sparklineRange.value;
-  }
-
-  const enabledTradeTerminals = validateTradeTerminals('enabledTradeTerminals', source.enabledTradeTerminals);
-  if (enabledTradeTerminals.valid) {
-    defaults.enabledTradeTerminals = enabledTradeTerminals.value;
-  }
-
-  const livePanelLayout = validateLivePanelLayout('livePanelLayout', source.livePanelLayout);
-  if (livePanelLayout.valid) {
-    defaults.livePanelLayout = livePanelLayout.value;
-  }
-
+  defaults.sparklineRange = normalizedStoredValue(
+    validateSparklineRange('sparklineRange', source.sparklineRange),
+    defaults.sparklineRange,
+  );
+  defaults.enabledTradeTerminals = normalizedStoredValue(
+    validateTradeTerminals('enabledTradeTerminals', source.enabledTradeTerminals),
+    defaults.enabledTradeTerminals,
+  );
+  defaults.livePanelLayout = normalizedStoredValue(
+    validateLivePanelLayout('livePanelLayout', source.livePanelLayout),
+    defaults.livePanelLayout,
+  );
   return defaults;
+}
+
+const UI_PREF_VALIDATORS = new Map([
+  ['collapsed', (_key, value) => validateCollapsed(value)],
+  ...BOOLEAN_PREF_KEYS.map((key) => [key, validateBoolean]),
+  ['monitoredPerPage', validatePerPage],
+  ['recentPerPage', validatePerPage],
+  ['oldWeekPerPage', validatePerPage],
+  ['expandedSparklineGranularityMinutes', validateExpandedSparklineGranularity],
+  ['expandedSparklineTimeZone', validateExpandedChartTimeZone],
+  ['sparklineRange', validateSparklineRange],
+  ['manualSorts', (key, value) => validateSorts(key, value, {
+    allowedModes: BUCKET_SORT_MODES,
+    isAllowedWindow: isAllowedBucketWindow,
+  })],
+  ['recentSorts', (key, value) => validateSorts(key, value, {
+    allowedModes: BUCKET_SORT_MODES,
+    isAllowedWindow: isAllowedBucketWindow,
+  })],
+  ['oldWeekSorts', (key, value) => validateSorts(key, value, {
+    allowedModes: BUCKET_SORT_MODES,
+    isAllowedWindow: isAllowedBucketWindow,
+  })],
+  ['monitoredSorts', (key, value) => validateSorts(key, value, {
+    allowedModes: MONITORED_SORT_MODES,
+    isAllowedWindow: isAllowedMonitoredWindow,
+  })],
+  ['enabledTradeTerminals', validateTradeTerminals],
+  ['livePanelLayout', validateLivePanelLayout],
+  ['chainFilters', validateChainFilters],
+]);
+
+function validationErrors(result) {
+  return Array.isArray(result.errors) && result.errors.length > 0
+    ? result.errors
+    : [result.error || 'Invalid UI preference value'];
 }
 
 function validatePatch(input) {
@@ -513,122 +638,20 @@ function validatePatch(input) {
 
   const prefs = {};
   const errors = [];
-
   for (const [key, value] of Object.entries(input)) {
-    if (key === 'collapsed') {
-      const result = validateCollapsed(value);
-      if (!result.valid) {
-        errors.push(...result.errors);
-      } else {
-        prefs.collapsed = result.value;
-      }
+    const validator = UI_PREF_VALIDATORS.get(key);
+    if (!validator) {
+      errors.push(`Unknown uiPrefs key: ${key}`);
       continue;
     }
-
-    if (BOOLEAN_PREF_KEYS.includes(key)) {
-      const result = validateBoolean(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
+    const result = validator(key, value);
+    if (!result.valid) {
+      errors.push(...validationErrors(result));
       continue;
     }
-
-    if (key === 'monitoredPerPage' || key === 'recentPerPage' || key === 'oldWeekPerPage') {
-      const result = validatePerPage(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'expandedSparklineGranularityMinutes') {
-      const result = validateExpandedSparklineGranularity(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'expandedSparklineTimeZone') {
-      const result = validateExpandedChartTimeZone(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'sparklineRange') {
-      const result = validateSparklineRange(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'manualSorts' || key === 'recentSorts' || key === 'oldWeekSorts') {
-      const result = validateSorts(key, value, {
-        allowedModes: BUCKET_SORT_MODES,
-        isAllowedWindow: isAllowedBucketWindow,
-      });
-      if (!result.valid) {
-        errors.push(...result.errors);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'monitoredSorts') {
-      const result = validateSorts(key, value, {
-        allowedModes: MONITORED_SORT_MODES,
-        isAllowedWindow: isAllowedMonitoredWindow,
-      });
-      if (!result.valid) {
-        errors.push(...result.errors);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'enabledTradeTerminals') {
-      const result = validateTradeTerminals(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    if (key === 'livePanelLayout') {
-      const result = validateLivePanelLayout(key, value);
-      if (!result.valid) {
-        errors.push(result.error);
-      } else {
-        prefs[key] = result.value;
-      }
-      continue;
-    }
-
-    errors.push(`Unknown uiPrefs key: ${key}`);
+    prefs[key] = result.value;
   }
-
-  return {
-    valid: errors.length === 0,
-    prefs,
-    errors,
-  };
+  return { valid: errors.length === 0, prefs, errors };
 }
 
 function mergePrefs(current, patch) {

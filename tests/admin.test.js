@@ -94,6 +94,21 @@ async function ensureAccessSchema(pool) {
   }
 }
 
+async function ensureWorkerLeaseSchema(pool) {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS worker_leases (
+       lease_key VARCHAR(128) PRIMARY KEY,
+       owner_id VARCHAR(128) NOT NULL,
+       owner_pid INTEGER,
+       owner_hostname VARCHAR(255),
+       acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       lease_until TIMESTAMPTZ NOT NULL,
+       metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+     )`
+  );
+}
+
 describe('Admin panel auth and management', () => {
   let server;
   let adminToken;
@@ -131,6 +146,7 @@ describe('Admin panel auth and management', () => {
 
     await assertUsingTestDatabase(pool);
     await ensureAccessSchema(pool);
+    await ensureWorkerLeaseSchema(pool);
     await adminTokenReviewAlert.ensureTable();
     await pool.query('DELETE FROM admin_token_review_alerts');
     await pool.query('DELETE FROM sessions');
@@ -291,8 +307,19 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.runtime);
       assert.deepEqual(res.body.runtime.workerGroupsRequested, ['all']);
       assert.deepEqual(res.body.runtime.workerGroupsActive, ['core', 'market', 'maintenance']);
-      assert.deepEqual(res.body.runtime.workerGroupsSkipped, []);
+      assert.deepEqual(res.body.runtime.workerGroupsSkipped, ['robinhood']);
       assert.ok(res.body.catalogWorker);
+      assert.ok(res.body.robinhoodIngestionWorker);
+      assert.ok(Object.hasOwn(res.body.robinhoodIngestionWorker, 'sharedLease'));
+      assert.ok(res.body.robinhoodCatalogStagingWorker);
+      assert.ok(Object.hasOwn(res.body.robinhoodCatalogStagingWorker, 'sharedLease'));
+      assert.ok(res.body.robinhoodCatalogProjectionWorker);
+      assert.ok(Object.hasOwn(res.body.robinhoodCatalogProjectionWorker, 'sharedLease'));
+      assert.equal(res.body.robinhoodRollout.publishable, false);
+      assert.equal(res.body.robinhoodRollout.axes.alerts.effective, false);
+      assert.ok(Object.hasOwn(res.body.robinhoodRollout, 'telemetry'));
+      assert.equal(res.body.robinhoodRollout.alertPublicationReady, true);
+      assert.ok(res.body.robinhoodRollout.blockers.includes('alerts_disabled'));
       assert.ok(res.body.tokenRiskEnrichmentWorker);
       assert.equal(typeof res.body.tokenRiskEnrichmentWorker.running, 'boolean');
       assert.ok(Array.isArray(res.body.workerLeases));
@@ -304,6 +331,49 @@ describe('Admin panel auth and management', () => {
       assert.ok(res.body.gmgn);
       assert.equal(typeof res.body.gmgn.riskLookupCache.entries, 'number');
       assert.equal(typeof res.body.gmgn.riskLookupCache.hits, 'number');
+    });
+
+    it('exposes a shared Robinhood fatal lease in administrative status', async () => {
+      const { pool } = require('../src/models/db');
+      await pool.query(
+        `INSERT INTO worker_leases (
+           lease_key, owner_id, owner_pid, owner_hostname,
+           acquired_at, heartbeat_at, lease_until, metadata
+         ) VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW(), $5::jsonb)
+         ON CONFLICT (lease_key) DO UPDATE SET
+           owner_id = EXCLUDED.owner_id,
+           heartbeat_at = EXCLUDED.heartbeat_at,
+           lease_until = EXCLUDED.lease_until,
+           metadata = EXCLUDED.metadata`,
+        [
+          'robinhood-ingestion-worker',
+          'admin-test-owner',
+          process.pid,
+          'admin-test-host',
+          JSON.stringify({
+            state: 'halted',
+            haltCode: 'persistent_reorg',
+            haltMessage: 'checkpoint changed',
+            haltedAt: '2026-07-09T10:00:30.000Z',
+          }),
+        ]
+      );
+
+      try {
+        const res = await request('GET', '/api/admin/ws-status', { token: adminToken });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.robinhoodIngestionWorker.sharedLease.key, 'robinhood-ingestion-worker');
+        assert.equal(res.body.robinhoodIngestionWorker.sharedLease.metadata.state, 'halted');
+        assert.equal(
+          res.body.robinhoodIngestionWorker.sharedLease.metadata.haltCode,
+          'persistent_reorg'
+        );
+      } finally {
+        await pool.query(
+          'DELETE FROM worker_leases WHERE lease_key = $1 AND owner_id = $2',
+          ['robinhood-ingestion-worker', 'admin-test-owner']
+        );
+      }
     });
   });
 
@@ -561,6 +631,7 @@ describe('Admin panel auth and management', () => {
 
         assert.equal(res.status, 201);
         assert.deepEqual(capturedPayload, {
+          chain: 'solana',
           tokenAddress: 'So11111111111111111111111111111111111111112',
           label: 'valid_but_weak',
           notes: 'manual review',
@@ -651,6 +722,31 @@ describe('Admin panel auth and management', () => {
       assert.equal(resolveResponse.status, 200);
       assert.equal(resolveResponse.body.alert.status, 'resolved');
       assert.equal(resolveResponse.body.alert.resolution, 'dismiss');
+
+      const { pool } = require('../src/models/db');
+      const robinhoodResult = await pool.query(
+        `INSERT INTO admin_token_review_alerts (
+           chain, token_address, alert_kind, pipeline
+         ) VALUES ('robinhood', $1, 'stage9c4d-guard', 'test')
+         RETURNING id`,
+        ['0x1234567890abcdef1234567890abcdef12345678']
+      );
+      const robinhoodAlertId = robinhoodResult.rows[0].id;
+      try {
+        const blockedResponse = await request(
+          'POST',
+          `/api/admin/token-review-alerts/${robinhoodAlertId}/resolve`,
+          { token: adminToken, body: { resolution: 'dismiss' } }
+        );
+        assert.equal(blockedResponse.status, 409);
+        const persisted = await pool.query(
+          'SELECT status FROM admin_token_review_alerts WHERE id = $1',
+          [robinhoodAlertId]
+        );
+        assert.equal(persisted.rows[0].status, 'open');
+      } finally {
+        await pool.query('DELETE FROM admin_token_review_alerts WHERE id = $1', [robinhoodAlertId]);
+      }
     });
   });
 

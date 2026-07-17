@@ -102,7 +102,8 @@ async function deleteChangedScope(client, backup) {
   if (backup.granularityMinutes === 1) {
     const result = await client.query(
       `DELETE FROM token_market_buckets_1m
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts <= $3::timestamptz`,
       [backup.tokenAddress, backup.range.from, backup.range.to]
@@ -118,7 +119,8 @@ async function deleteChangedScope(client, backup) {
       : writer.__private.getAlignedRange(backup.range, granularity);
     const result = await client.query(
       `DELETE FROM token_market_buckets_agg
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND granularity_minutes = $2::int
          AND bucket_ts >= $3::timestamptz
          AND bucket_ts < $4::timestamptz`,

@@ -126,7 +126,11 @@ describe('CoinGecko selective chart writes', () => {
     assert.equal(fakeFs.writes.length, 1);
     const sourceInsert = fake.calls.find((call) => /INSERT INTO token_market_buckets_agg/.test(call.sql)
       && !/coingecko_backfill_rollup/.test(call.sql));
-    assert.match(sourceInsert.sql, /ON CONFLICT \(token_address, granularity_minutes, bucket_ts\) DO NOTHING/);
+    assert.match(sourceInsert.sql,
+      /ON CONFLICT \(chain, token_address, granularity_minutes, bucket_ts\) DO NOTHING/);
+    assert.ok(fake.calls
+      .filter((call) => /FROM token_market_buckets_agg/.test(call.sql))
+      .every((call) => /chain = 'solana'/.test(call.sql)));
     assert.equal(fake.calls.some((call) => /token_market_buckets_1m/.test(call.sql)), false);
     assert.deepEqual(Object.keys(result.rebuiltAggregates), ['15', '30', '60', '240', '1440']);
   });
@@ -164,6 +168,9 @@ describe('CoinGecko selective chart writes', () => {
       && !/coingecko_backfill_rollup/.test(call.sql));
     assert.equal(sourceInsert.params.length, 14);
     assert.equal(sourceInsert.params[2], candles[1].bucketTs);
+    assert.ok(fake.calls
+      .filter((call) => /FROM token_market_buckets_agg/.test(call.sql))
+      .every((call) => /chain = 'solana'/.test(call.sql)));
     assert.ok(fake.calls.some((call) => call.sql === 'COMMIT'));
   });
 

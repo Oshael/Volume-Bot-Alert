@@ -201,6 +201,37 @@ describe('CoinGecko chart backfill writer', () => {
     assert.equal(fakeDb.calls.length, 0);
   });
 
+  it('keeps an allowed 1m replace and its rollups scoped to Solana', async () => {
+    const plan = buildPlan(1);
+    plan.readiness = { canReplace: true, blockers: [] };
+    const buckets = planner.buildBackfillBuckets([
+      { bucketTs: '2026-07-02T18:00:00.000Z', open: 0.1, high: 0.12, low: 0.09, close: 0.11, volume: 100 },
+    ], {
+      tokenAddress: TOKEN_ADDRESS,
+      poolAddress: POOL_ADDRESS,
+      granularityMinutes: 1,
+      mcapMultiplier: plan.mcapMultiplier.value,
+    });
+    const fakeDb = buildFakeDb();
+    const fakeFs = buildFakeFs();
+
+    const result = await writer.executeReplaceChart({
+      db: fakeDb.db,
+      fsImpl: fakeFs.fsImpl,
+      backupDir: '/tmp/backups',
+      plan,
+      buckets,
+      now: new Date('2026-07-30T00:00:00.000Z'),
+    });
+
+    assert.equal(result.insertedOrUpdated, 1);
+    const relevant = fakeDb.calls.filter((call) => /token_market_buckets_(?:1m|agg)/.test(call.sql));
+    assert.ok(relevant.every((call) => /chain = 'solana'|'solana'/.test(call.sql)));
+    const insert = relevant.find((call) => /INSERT INTO token_market_buckets_1m/.test(call.sql));
+    assert.match(insert.sql, /chain,\s+token_address/);
+    assert.match(insert.sql, /ON CONFLICT \(chain, token_address, bucket_ts\)/);
+  });
+
   it('rolls back when backup writing fails before deletes run', async () => {
     const plan = buildPlan();
     const buckets = planner.buildBackfillBuckets([
@@ -256,7 +287,11 @@ describe('CoinGecko chart backfill writer', () => {
     );
 
     const sqlOrder = fakeDb.calls.map((call) => call.sql);
-    assert.ok(sqlOrder.some((sql) => /INSERT INTO token_market_buckets_agg/.test(sql)));
+    const aggregateInserts = fakeDb.calls.filter((call) => /INSERT INTO token_market_buckets_agg/.test(call.sql));
+    assert.ok(aggregateInserts.length > 0);
+    assert.ok(aggregateInserts.every((call) => /chain,\s+token_address/.test(call.sql)));
+    assert.match(aggregateInserts[0].sql,
+      /ON CONFLICT \(chain, token_address, granularity_minutes, bucket_ts\)/);
     assert.ok(sqlOrder.includes('ROLLBACK'));
     assert.equal(sqlOrder.includes('COMMIT'), false);
   });

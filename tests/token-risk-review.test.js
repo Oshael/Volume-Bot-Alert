@@ -41,6 +41,7 @@ describe('token risk review model', () => {
         'looks legit',
         1,
         1,
+        'solana',
       ]);
       assert.equal(review.label, 'valid');
       assert.equal(review.source, 'manual');
@@ -81,6 +82,7 @@ describe('token risk review model', () => {
         'So11111111111111111111111111111111111111112',
         'junk_probable',
         'auto/v1_manual_review: holder_concentration_extreme',
+        'solana',
       ]);
       assert.equal(review.label, 'valid');
       assert.equal(review.source, 'manual');
@@ -114,7 +116,7 @@ describe('token risk review model', () => {
         'So11111111111111111111111111111111111111112',
       ]);
 
-      assert.deepEqual(capturedParams, [['So11111111111111111111111111111111111111112']]);
+      assert.deepEqual(capturedParams, ['solana', ['So11111111111111111111111111111111111111112']]);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].label, 'junk_probable');
       assert.equal(rows[0].source, 'auto');
@@ -135,7 +137,7 @@ describe('token risk review model', () => {
 
     try {
       const removed = await tokenRiskReview.remove('So11111111111111111111111111111111111111112');
-      assert.deepEqual(capturedParams, ['So11111111111111111111111111111111111111112']);
+      assert.deepEqual(capturedParams, ['solana', 'So11111111111111111111111111111111111111112']);
       assert.equal(removed, true);
     } finally {
       db.query = originalQuery;
@@ -153,10 +155,25 @@ describe('token risk review model', () => {
 
     try {
       const removed = await tokenRiskReview.removeAutoReview('So11111111111111111111111111111111111111112');
-      assert.deepEqual(capturedParams, ['So11111111111111111111111111111111111111112']);
+      assert.deepEqual(capturedParams, ['solana', 'So11111111111111111111111111111111111111112']);
       assert.equal(removed, true);
     } finally {
       db.query = originalQuery;
     }
+  });
+
+  it('rejects automatic Robinhood reviews before persistence', async () => {
+    let queried = false;
+    const runner = { query: async () => { queried = true; return { rows: [] }; } };
+
+    await assert.rejects(
+      tokenRiskReview.upsertAutoReview({
+        chain: 'robinhood',
+        tokenAddress: '0x1111111111111111111111111111111111111111',
+        label: 'junk_probable',
+      }, runner),
+      { code: 'NON_SOLANA_AUTO_RISK_DISABLED' }
+    );
+    assert.equal(queried, false);
   });
 });

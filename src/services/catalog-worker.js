@@ -6,6 +6,7 @@ const dexscreener = require('./dexscreener');
 const gmgnClient = require('./gmgn-client');
 const userAlertMatcher = require('./user-alert-matcher');
 const { fillYoungTokenVolumeWindows } = require('./young-token-volume-fill');
+const { deriveRollingVolumeCoverage } = require('./rolling-volume-coverage');
 const {
   isCumulativeVolumeWindowCoherent,
   normalizeVolume24hWithShorterWindows,
@@ -586,6 +587,14 @@ function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) 
   }
 
   const filledVolumes = buildManualPreMigrationGmgnVolumes(gmgnInfo, now);
+  const volumeCoverage = deriveRollingVolumeCoverage({
+    tokenCreatedAt: gmgnInfo?.tokenCreatedAt,
+    vol1m: toNumber(gmgnInfo?.vol1m),
+    vol5m: toNumber(gmgnInfo?.vol5m),
+    vol1h: toNumber(gmgnInfo?.vol1h),
+    vol6h: toNumber(gmgnInfo?.vol6h),
+    vol24h: toNumber(gmgnInfo?.vol24h),
+  }, filledVolumes, { now, tokenCreatedAt: gmgnInfo?.tokenCreatedAt });
   const metadata = buildManualPreMigrationGmgnMetadata(token, gmgnInfo);
   const priceChanges = buildManualPreMigrationGmgnPriceChanges(gmgnInfo);
 
@@ -599,6 +608,7 @@ function buildManualPreMigrationGmgnSnapshot(token, gmgnInfo, now = new Date()) 
     vol1h: filledVolumes.vol1h,
     vol6h: filledVolumes.vol6h,
     vol24h: filledVolumes.vol24h,
+    volumeCoverage,
     ...priceChanges,
     liquidityUsd: toNumber(gmgnInfo?.liquidityUsd),
   };
@@ -733,12 +743,14 @@ async function applyManualGmgnInfoSnapshot(token, gmgnInfo, traceInitialEval, re
     source: 'gmgn',
   });
   await tokenMarketVolumeBucket1m.upsertSnapshotBucket({
+    chain: 'solana',
     tokenAddress: token.address,
     vol1m: snapshot.vol1m,
     vol5m: snapshot.vol5m,
     vol1h: snapshot.vol1h,
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
+    volumeCoverage: snapshot.volumeCoverage,
     source: 'gmgn',
   });
 
@@ -1093,6 +1105,17 @@ function buildPriorityVolumeWindows(bestPair, token, now) {
     vol6h: token?.last_vol_6h,
     vol24h: token?.last_vol_24h,
   });
+}
+
+function buildDexscreenerVolumeCoverage(bestPair, normalized, now = new Date()) {
+  const tokenCreatedAt = bestPair?.pairCreatedAt;
+  return deriveRollingVolumeCoverage({
+    tokenCreatedAt,
+    vol5m: toNumber(bestPair?.volume?.m5),
+    vol1h: toNumber(bestPair?.volume?.h1),
+    vol6h: toNumber(bestPair?.volume?.h6),
+    vol24h: toNumber(bestPair?.volume?.h24),
+  }, normalized, { now, tokenCreatedAt });
 }
 
 function derivePrioritySnapshot(bestPair, token = null) {
@@ -1691,6 +1714,7 @@ async function evaluateTokenWithData(token, data) {
   });
 
   const marketSnapshotPayload = {
+    chain: 'solana',
     tokenAddress: token.address,
     pairAddress: bestPair.pairAddress || null,
     mcap: marketCap,
@@ -1699,6 +1723,7 @@ async function evaluateTokenWithData(token, data) {
     vol1h: snapshot.vol1h,
     vol6h: snapshot.vol6h,
     vol24h: snapshot.vol24h,
+    volumeCoverage: buildDexscreenerVolumeCoverage(bestPair, snapshot),
     source: 'dexscreener',
   };
 
@@ -1903,6 +1928,7 @@ module.exports = {
   __private: {
     addPriorityJitter,
     computeNextDelayMs,
+    buildDexscreenerVolumeCoverage,
     derivePrioritySnapshot,
     getLowActivityMinimumRecheckMs,
     LOW_ACTIVITY_24H_MAX_VOL,

@@ -1,6 +1,6 @@
 const db = require('../models/db');
 const tokenCatalog = require('../models/token-catalog');
-const { isValidAddress } = require('../models/user-token');
+const { createTokenIdentity, normalizeTokenChain } = require('../utils/token-identity');
 
 const SUBTICKER_MIN_LENGTH = 3;
 const DEFAULT_LIMIT = 8;
@@ -143,6 +143,18 @@ function normalizeAddressKey(value) {
   return String(value || '').trim();
 }
 
+function normalizePeerChain(value) {
+  return normalizeTokenChain(value || 'solana');
+}
+
+function normalizePeerIdentity(address, chainValue) {
+  try {
+    return createTokenIdentity(normalizePeerChain(chainValue), address);
+  } catch (_) {
+    return null;
+  }
+}
+
 function sameAddress(left, right) {
   return normalizeAddressKey(left) !== '' && normalizeAddressKey(left) === normalizeAddressKey(right);
 }
@@ -180,14 +192,16 @@ function resolveSourcePeerRole(address, stats) {
 }
 
 function buildTickerPeerSummary(input = {}, stats = null, items = []) {
-  const address = String(input.address || '').trim();
+  const identity = normalizePeerIdentity(input.address, input.chain);
+  const address = identity?.address || '';
   const symbol = String(input.symbol || '').trim();
   const normalizedSymbol = normalizeSymbolKey(symbol);
-  if (!isValidAddress(address) || normalizedSymbol.length < 2 || !stats || stats.exactCount <= 1) {
+  if (!identity || normalizedSymbol.length < 2 || !stats || stats.exactCount <= 1) {
     return null;
   }
 
   return {
+    chain: identity.chain,
     sourceSymbol: symbol || null,
     normalizedSymbol,
     count: stats.exactCount,
@@ -202,13 +216,18 @@ function buildTickerPeerSummary(input = {}, stats = null, items = []) {
 }
 
 async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runner = db) {
+  const chain = normalizePeerChain(options.chain || tokens.find((item) => item?.chain)?.chain || 'solana');
   const inputs = Array.from(new Map(
     (Array.isArray(tokens) ? tokens : [])
-      .map((item) => ({
-        address: String(item?.address || '').trim(),
-        symbol: String(item?.symbol || '').trim(),
-      }))
-      .filter((item) => isValidAddress(item.address) && normalizeSymbolKey(item.symbol).length >= 2)
+      .map((item) => {
+        const identity = normalizePeerIdentity(item?.address, item?.chain || chain);
+        return identity?.chain === chain ? {
+          chain,
+          address: identity.address,
+          symbol: String(item?.symbol || '').trim(),
+        } : null;
+      })
+      .filter((item) => item && normalizeSymbolKey(item.symbol).length >= 2)
       .map((item) => [item.address, item])
   ).values());
 
@@ -235,7 +254,8 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
          END AS age_ms_at_alert,
          regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
        FROM token_catalog
-       WHERE symbol IS NOT NULL
+       WHERE chain = $4
+         AND symbol IS NOT NULL
          AND btrim(symbol) <> ''
      ),
      exact_matches AS (
@@ -286,7 +306,7 @@ async function listTickerPeerSummariesForTokens(tokens = [], options = {}, runne
      FROM ranked
      WHERE peer_rank <= $2
      ORDER BY normalized_symbol ASC, peer_rank ASC`,
-    [normalizedSymbols, limit, snapshotTsMs]
+    [normalizedSymbols, limit, snapshotTsMs, chain]
   );
 
   const statsBySymbol = new Map();
@@ -323,6 +343,7 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
 
   const limit = normalizeLimit(options.limit);
   const snapshotTsMs = toNumberOrNull(options.snapshotTsMs) ?? Date.now();
+  const chain = normalizePeerChain(options.chain || 'solana');
   const { rows } = await runner.query(
     `WITH catalog AS (
        SELECT
@@ -339,7 +360,8 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
          END AS age_ms_at_alert,
          regexp_replace(upper(COALESCE(symbol, '')), '[^A-Z0-9]', '', 'g') AS normalized_symbol
        FROM token_catalog
-       WHERE symbol IS NOT NULL
+       WHERE chain = $5
+         AND symbol IS NOT NULL
          AND btrim(symbol) <> ''
      ),
      matches AS (
@@ -409,7 +431,7 @@ async function queryTickerPeerRowsBySymbol(symbol, options = {}, runner = db) {
        COALESCE(last_token_created_at_ms, 0) DESC,
        address ASC
      LIMIT $3`,
-    [normalizedSymbol, SUBTICKER_MIN_LENGTH, limit, snapshotTsMs]
+    [normalizedSymbol, SUBTICKER_MIN_LENGTH, limit, snapshotTsMs, chain]
   );
 
   return rows;
@@ -420,17 +442,22 @@ async function listTickerPeersBySymbol(symbol, options = {}, runner = db) {
   return rows.map(mapPeerRow);
 }
 
+function resolveTickerPeerSnapshotIdentity(input, options) {
+  return normalizePeerIdentity(input.address, input.chain || options.chain || 'solana');
+}
+
 async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner = db) {
-  const address = String(input.address || '').trim();
-  const limit = normalizeLimit(options.limit);
-  if (!isValidAddress(address)) {
+  const identity = resolveTickerPeerSnapshotIdentity(input, options);
+  if (!identity) {
     return null;
   }
+  const address = identity.address;
+  const limit = normalizeLimit(options.limit);
 
   let symbol = String(input.symbol || '').trim();
   let name = String(input.name || '').trim();
   if (!symbol) {
-    const tokenRow = await tokenCatalog.getByAddress(address);
+    const tokenRow = await tokenCatalog.getByAddress(address, identity.chain);
     symbol = String(tokenRow?.symbol || '').trim();
     if (!name) {
       name = String(tokenRow?.name || '').trim();
@@ -443,7 +470,11 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
   }
 
   const snapshotTsMs = toNumberOrNull(options.snapshotTsMs) ?? Date.now();
-  const rows = await queryTickerPeerRowsBySymbol(symbol, { limit, snapshotTsMs }, runner);
+  const rows = await queryTickerPeerRowsBySymbol(symbol, {
+    chain: identity.chain,
+    limit,
+    snapshotTsMs,
+  }, runner);
   const contextualRows = filterContextualTickerPeerRows(rows, { symbol, name });
   const items = contextualRows.map(mapPeerRow);
   if (items.length <= 1) {
@@ -453,6 +484,7 @@ async function buildTickerPeerSnapshotForAlert(input = {}, options = {}, runner 
   const stats = mapPeerStatsRow(rows[0]);
   const subtickerCount = contextualRows.filter((row) => row?.match_type === 'subticker').length;
   return {
+    chain: identity.chain,
     sourceSymbol: symbol,
     normalizedSymbol,
     count: items.length,

@@ -5,18 +5,19 @@ const monitoredTokenExitEvent = require('../src/models/monitored-token-exit-even
 
 const {
   buildSnapshot,
-  isDashboardMonitored,
+  isLegacySignalEligible,
   mapRow,
+  normalizeEventDetails,
   normalizeJsonObject,
   resolveExitReason,
 } = monitoredTokenExitEvent.__private;
 
 describe('monitored token exit event helpers', () => {
-  it('matches the default dashboard monitored membership rule', () => {
-    assert.equal(isDashboardMonitored({ eligible_for_monitoring: true, last_mcap: 30000 }), true);
-    assert.equal(isDashboardMonitored({ eligible_for_monitoring: true, last_mcap: 29999 }), false);
-    assert.equal(isDashboardMonitored({ eligible_for_monitoring: false, last_mcap: 50000 }), false);
-    assert.equal(isDashboardMonitored(null), false);
+  it('matches the frozen legacy Solana signal-eligibility rule', () => {
+    assert.equal(isLegacySignalEligible({ eligible_for_monitoring: true, last_mcap: 30000 }), true);
+    assert.equal(isLegacySignalEligible({ eligible_for_monitoring: true, last_mcap: 29999 }), false);
+    assert.equal(isLegacySignalEligible({ eligible_for_monitoring: false, last_mcap: 50000 }), false);
+    assert.equal(isLegacySignalEligible(null), false);
   });
 
   it('resolves the stored exit reason from the current catalog state', () => {
@@ -47,6 +48,7 @@ describe('monitored token exit event helpers', () => {
   it('builds compact before and after snapshots for inspection', () => {
     assert.deepEqual(buildSnapshot({
       address: 'So11111111111111111111111111111111111111112',
+      chain: 'solana',
       source: 'gmgn',
       eligibility_state: 'dex-low-activity',
       eligible_for_monitoring: false,
@@ -60,6 +62,7 @@ describe('monitored token exit event helpers', () => {
       evaluation_error_count: '2',
     }), {
       address: 'So11111111111111111111111111111111111111112',
+      chain: 'solana',
       source: 'gmgn',
       eligibilityState: 'dex-low-activity',
       eligibleForMonitoring: false,
@@ -82,8 +85,15 @@ describe('monitored token exit event helpers', () => {
 
   it('maps rows to the API shape and normalizes JSON objects', () => {
     assert.deepEqual(normalizeJsonObject(['bad']), {});
+    assert.deepEqual(normalizeEventDetails({ workspaceExit: true, pipeline: 'catalog' }), {
+      pipeline: 'catalog',
+      semanticVersion: 1,
+      scope: 'legacy-signal-eligibility',
+      workspaceExit: false,
+    });
     assert.deepEqual(mapRow({
       id: '9',
+      chain: 'solana',
       token_address: 'So11111111111111111111111111111111111111112',
       exit_reason: 'mcap_below_monitored_min',
       exit_source: 'dexscreener',
@@ -93,6 +103,7 @@ describe('monitored token exit event helpers', () => {
       created_at: '2026-05-17T10:00:00.000Z',
     }), {
       id: 9,
+      chain: 'solana',
       tokenAddress: 'So11111111111111111111111111111111111111112',
       exitReason: 'mcap_below_monitored_min',
       exitSource: 'dexscreener',
@@ -100,6 +111,22 @@ describe('monitored token exit event helpers', () => {
       currentSnapshot: { mcap: 25000 },
       details: { minMcap: 30000 },
       createdAt: '2026-05-17T10:00:00.000Z',
+      semantics: {
+        version: 1,
+        scope: 'legacy-signal-eligibility',
+        workspaceExit: false,
+      },
     });
+  });
+
+  it('keeps Robinhood exit detection disabled until its eligibility rules exist', async () => {
+    await assert.rejects(
+      () => monitoredTokenExitEvent.createEvent({
+        chain: 'robinhood',
+        tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+        exitReason: 'test',
+      }),
+      (error) => error.code === 'NON_SOLANA_EXIT_EVENT_DISABLED'
+    );
   });
 });

@@ -1,5 +1,5 @@
 ﻿import type { AppController } from '../../state/app-controller';
-import { getMockTradingPositionsViewByAddress, getOldWeekTokens, getRecentTokens, type AppState } from '../../state/app-state';
+import { getMockTradingPositionsViewByAddress, getOldWeekTokens, getRecentTokens, isTokenStarred, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindPagedBucketControls, bindSparklineHover, bindSparklineRangeControls, bindTokenActions, bindTokenImagePreview, fmtConfig, renderPagedAgeBucketList, renderSparklineRangeControl } from './shared';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 
@@ -182,6 +182,8 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const usesServerSlice = state.ui.workspace === 'history';
   const min = fmtConfig(state, 'old-mcap-min', 120000);
   const max = fmtConfig(state, 'old-mcap-max', 100000000);
+  const fdvMin = fmtConfig(state, 'old-fdv-min', 120000);
+  const fdvMax = fmtConfig(state, 'old-fdv-max', 100000000);
   const recentAgeMinMinutes = normalizeRecentAgeMinutes(state.data.configs['recent-age-min'], 0);
   const recentAgeMaxMinutes = Math.max(
     recentAgeMinMinutes,
@@ -207,7 +209,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   const recentSearchQuery = String(state.ui.recentSearchQuery || '').trim().toLowerCase();
   const recentSearchPending = usesServerSlice && state.ui.recentSearchPending;
   const filteredRecentTokens = getRecentTokens(state).filter((item) => {
-    if (state.ui.recentStarredOnly && !state.data.starredTokens.includes(item.address)) {
+    if (state.ui.recentStarredOnly && !isTokenStarred(state, item.address, item.chain || 'solana')) {
       return false;
     }
     if (!recentSearchQuery) {
@@ -270,9 +272,15 @@ export function renderRecentSection(state: AppState, controller: AppController) 
         </div>
         <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
           <span class="recent-ctrl-cluster-label">MCAP</span>
-          <input type="number" name="old-mcap-min" aria-label="Mcap min">
+          <input type="number" name="old-mcap-min" value="${min}" aria-label="Mcap min">
           <span class="recent-ctrl-range-sep">–</span>
-          <input type="number" name="old-mcap-max" aria-label="Mcap max">
+          <input type="number" name="old-mcap-max" value="${max}" aria-label="Mcap max">
+        </div>
+        <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
+          <span class="recent-ctrl-cluster-label">FDV</span>
+          <input type="number" name="old-fdv-min" value="${fdvMin}" aria-label="Fdv min">
+          <span class="recent-ctrl-range-sep">–</span>
+          <input type="number" name="old-fdv-max" value="${fdvMax}" aria-label="Fdv max">
         </div>
         <div class="recent-ctrl-cluster">
           <span class="recent-ctrl-cluster-label">PER PAGE</span>
@@ -289,7 +297,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
             </div>
           </div>
           <div class="sort-menu-wrap" data-sort-wrap>
-            <button type="button" class="old-filter-btn ${recentMcapActive}" data-sort-toggle="mcap">MCAP</button>
+            <button type="button" class="old-filter-btn ${recentMcapActive}" data-sort-toggle="mcap">MCAP / FDV</button>
             <div class="sort-menu-dropdown">
               <button type="button" class="sort-menu-item ${recentMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
               <button type="button" class="sort-menu-item ${recentMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
@@ -320,7 +328,7 @@ export function renderRecentSection(state: AppState, controller: AppController) 
       'recent',
       state.ui.recentPage,
       state.ui.recentPerPage,
-      state.data.starredTokens,
+      state.data.starredTokenIdentities,
       state.ui.recentSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
@@ -346,14 +354,6 @@ export function renderRecentSection(state: AppState, controller: AppController) 
     toggleAction: 'recent-search-focus',
     inputAction: 'recent-search',
   });
-  const recentMinInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-min"]');
-  if (recentMinInput) {
-    recentMinInput.value = String(min);
-  }
-  const recentMaxInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-max"]');
-  if (recentMaxInput) {
-    recentMaxInput.value = String(max);
-  }
   const recentAgeMinInput = section.querySelector<HTMLInputElement>('input[name="recent-age-min"]');
   if (recentAgeMinInput) {
     recentAgeMinInput.value = formatRecentAgeInput(recentAgeMinMinutes);
@@ -387,13 +387,17 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
   bindHistoryBucketOrderLock(section, controller, 'recent');
-  section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"]').forEach((input) => {
+  section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"], input[name="old-fdv-min"], input[name="old-fdv-max"]').forEach((input) => {
     input.addEventListener('change', () => {
       const minInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-min"]');
       const maxInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-max"]');
+      const fdvMinInput = section.querySelector<HTMLInputElement>('input[name="old-fdv-min"]');
+      const fdvMaxInput = section.querySelector<HTMLInputElement>('input[name="old-fdv-max"]');
       void controller.saveMonitoringConfig({
         'old-mcap-min': Number(minInput?.value || 120000),
         'old-mcap-max': Number(maxInput?.value || 100000000),
+        'old-fdv-min': Number(fdvMinInput?.value || 120000),
+        'old-fdv-max': Number(fdvMaxInput?.value || 100000000),
       });
     });
   });
@@ -449,6 +453,8 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const usesServerSlice = state.ui.workspace === 'history';
   const min = fmtConfig(state, 'old-week-mcap-min', 120000);
   const max = fmtConfig(state, 'old-week-mcap-max', 100000000);
+  const fdvMin = fmtConfig(state, 'old-week-fdv-min', 120000);
+  const fdvMax = fmtConfig(state, 'old-week-fdv-max', 100000000);
   const oldWeekAgeMinMinutes = normalizeOldWeekAgeMinMinutes(state.data.configs['old-week-age-min'], OLD_WEEK_MIN_AGE_MINUTES);
   const rawOldWeekAgeMaxMinutes = normalizeOldWeekAgeMaxMinutes(state.data.configs['old-week-age-max'], 0);
   const oldWeekAgeMaxMinutes = rawOldWeekAgeMaxMinutes > 0
@@ -474,7 +480,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   const oldWeekSearchQuery = String(state.ui.oldWeekSearchQuery || '').trim().toLowerCase();
   const oldWeekSearchPending = usesServerSlice && state.ui.oldWeekSearchPending;
   const filteredOldWeekTokens = getOldWeekTokens(state).filter((item) => {
-    if (state.ui.oldWeekStarredOnly && !state.data.starredTokens.includes(item.address)) {
+    if (state.ui.oldWeekStarredOnly && !isTokenStarred(state, item.address, item.chain || 'solana')) {
       return false;
     }
     if (!oldWeekSearchQuery) {
@@ -537,9 +543,15 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
           </div>
           <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
             <span class="recent-ctrl-cluster-label">MCAP</span>
-            <input type="number" name="old-week-mcap-min" aria-label="Mcap min">
+            <input type="number" name="old-week-mcap-min" value="${min}" aria-label="Mcap min">
             <span class="recent-ctrl-range-sep">–</span>
-            <input type="number" name="old-week-mcap-max" aria-label="Mcap max">
+            <input type="number" name="old-week-mcap-max" value="${max}" aria-label="Mcap max">
+          </div>
+          <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
+            <span class="recent-ctrl-cluster-label">FDV</span>
+            <input type="number" name="old-week-fdv-min" value="${fdvMin}" aria-label="Fdv min">
+            <span class="recent-ctrl-range-sep">–</span>
+            <input type="number" name="old-week-fdv-max" value="${fdvMax}" aria-label="Fdv max">
           </div>
           <div class="recent-ctrl-cluster">
             <span class="recent-ctrl-cluster-label">PER PAGE</span>
@@ -556,7 +568,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
               </div>
             </div>
             <div class="sort-menu-wrap" data-sort-wrap>
-              <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-toggle="mcap">MCAP</button>
+              <button type="button" class="old-filter-btn ${oldWeekMcapActive}" data-sort-toggle="mcap">MCAP / FDV</button>
               <div class="sort-menu-dropdown">
                 <button type="button" class="sort-menu-item ${oldWeekMcapHighest}" data-sort-mode="mcap" data-sort-window="highest">HIGHEST</button>
                 <button type="button" class="sort-menu-item ${oldWeekMcapLowest}" data-sort-mode="mcap" data-sort-window="lowest">LOWEST</button>
@@ -587,7 +599,7 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
       'old-week',
       state.ui.oldWeekPage,
       state.ui.oldWeekPerPage,
-      state.data.starredTokens,
+      state.data.starredTokenIdentities,
       state.ui.oldWeekSorts,
       state.data.meteoraByAddress,
       Number(state.data.configs['meteora-min-pool']) || 5000,
@@ -613,14 +625,6 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
     toggleAction: 'old-week-search-focus',
     inputAction: 'old-week-search',
   });
-  const oldWeekMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-min"]');
-  if (oldWeekMinInput) {
-    oldWeekMinInput.value = String(min);
-  }
-  const oldWeekMaxInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-max"]');
-  if (oldWeekMaxInput) {
-    oldWeekMaxInput.value = String(max);
-  }
   const oldWeekAgeMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-min"]');
   if (oldWeekAgeMinInput) {
     oldWeekAgeMinInput.value = formatAgeInput(oldWeekAgeMinMinutes);
@@ -654,13 +658,17 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
   bindHistoryBucketOrderLock(section, controller, 'old-week');
-  section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"]').forEach((input) => {
+  section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"], input[name="old-week-fdv-min"], input[name="old-week-fdv-max"]').forEach((input) => {
     input.addEventListener('change', () => {
       const minInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-min"]');
       const maxInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-max"]');
+      const fdvMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-fdv-min"]');
+      const fdvMaxInput = section.querySelector<HTMLInputElement>('input[name="old-week-fdv-max"]');
       void controller.saveMonitoringConfig({
         'old-week-mcap-min': Number(minInput?.value || 120000),
         'old-week-mcap-max': Number(maxInput?.value || 100000000),
+        'old-week-fdv-min': Number(fdvMinInput?.value || 120000),
+        'old-week-fdv-max': Number(fdvMaxInput?.value || 100000000),
       });
     });
   });
@@ -803,6 +811,7 @@ function patchRoutedRow(
 
   currentRow.className = nextRow.className;
   currentRow.dataset.hoverKey = nextRow.dataset.hoverKey || '';
+  currentRow.dataset.tokenIdentity = nextRow.dataset.tokenIdentity || '';
 
   for (const index of ROUTED_STATIC_CELL_INDEXES) {
     if (currentCells[index]?.innerHTML === nextCells[index]?.innerHTML) {

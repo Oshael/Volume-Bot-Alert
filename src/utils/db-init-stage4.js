@@ -23,10 +23,11 @@ const TABLES = `
   CREATE TABLE IF NOT EXISTS user_tokens (
     id        SERIAL PRIMARY KEY,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chain     VARCHAR(16) NOT NULL DEFAULT 'solana',
     address   VARCHAR(64) NOT NULL,
     label     VARCHAR(32),
     added_at  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, address)
+    CONSTRAINT user_tokens_user_chain_address_key UNIQUE(user_id, chain, address)
   );
 
   CREATE INDEX IF NOT EXISTS idx_user_tokens_user
@@ -36,10 +37,11 @@ const TABLES = `
   CREATE TABLE IF NOT EXISTS user_blocklist (
     id          SERIAL PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chain       VARCHAR(16) NOT NULL DEFAULT 'solana',
     address     VARCHAR(64) NOT NULL,
     label       VARCHAR(32),
     blocked_at  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, address)
+    CONSTRAINT user_blocklist_user_chain_address_key UNIQUE(user_id, chain, address)
   );
 
   CREATE INDEX IF NOT EXISTS idx_user_blocklist_user
@@ -49,9 +51,10 @@ const TABLES = `
   CREATE TABLE IF NOT EXISTS user_starred_tokens (
     id          SERIAL PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chain       VARCHAR(16) NOT NULL DEFAULT 'solana',
     address     VARCHAR(64) NOT NULL,
     starred_at  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, address)
+    CONSTRAINT user_starred_tokens_user_chain_address_key UNIQUE(user_id, chain, address)
   );
 
   CREATE INDEX IF NOT EXISTS idx_user_starred_tokens_user
@@ -61,11 +64,12 @@ const TABLES = `
   CREATE TABLE IF NOT EXISTS user_pinned_monitored_tokens (
     id          SERIAL PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chain       VARCHAR(16) NOT NULL DEFAULT 'solana',
     address     VARCHAR(64) NOT NULL,
     sort_order  INTEGER NOT NULL DEFAULT 0,
     pinned_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, address)
+    CONSTRAINT user_pinned_tokens_user_chain_address_key UNIQUE(user_id, chain, address)
   );
 
   CREATE INDEX IF NOT EXISTS idx_user_pinned_monitored_tokens_user_order
@@ -78,9 +82,10 @@ const TABLES = `
   CREATE TABLE IF NOT EXISTS user_bootstrap_tokens (
     id        SERIAL PRIMARY KEY,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chain     VARCHAR(16) NOT NULL DEFAULT 'solana',
     address   VARCHAR(64) NOT NULL,
     added_at  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(user_id, address)
+    CONSTRAINT user_bootstrap_tokens_user_chain_address_key UNIQUE(user_id, chain, address)
   );
 
   CREATE INDEX IF NOT EXISTS idx_user_bootstrap_tokens_user
@@ -94,7 +99,8 @@ const TABLES = `
   );
 `;
 
-async function init() {
+async function init(options = {}) {
+  const closePool = options.closePool !== false;
   try {
     await db.query(TABLES);
     console.log('✅ Stage 4 tables created successfully');
@@ -109,8 +115,12 @@ async function init() {
     console.error('❌ Failed to create tables:', err.message);
     process.exit(1);
   } finally {
-    try { await db.end(); } catch (_) { /* pool already closed or end not available */ }
+    if (closePool) {
+      try { await db.pool.end(); } catch (_) { /* pool already closed */ }
+    }
   }
 }
 
-init();
+if (require.main === module) init();
+
+module.exports = { TABLES, init };

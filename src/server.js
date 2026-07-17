@@ -35,6 +35,18 @@ const tokenGateRoutes = require('./routes/token-gate');
 const socketHub = require('./services/socket-hub');
 const catalogWorker = require('./services/catalog-worker');
 const catalogCleanupWorker = require('./services/catalog-cleanup-worker');
+const robinhoodRetentionWorker = require('./services/robinhood-retention-worker');
+const robinhoodIngestionWorker = require('./services/robinhood-ingestion-worker');
+const robinhoodCatalogStagingWorker = require('./services/robinhood-catalog-staging-worker');
+const { buildRobinhoodCatalogStagingTelemetry } = robinhoodCatalogStagingWorker;
+const robinhoodCatalogProjectionWorker = require('./services/robinhood-catalog-projection-worker');
+const { buildRobinhoodCatalogProjectionTelemetry } = robinhoodCatalogProjectionWorker;
+const {
+  buildRobinhoodLeaseTelemetry,
+  buildRobinhoodRolloutStatus,
+  evaluateRobinhoodCatalogStagingGate,
+  evaluateRobinhoodIngestionGate,
+} = require('./services/robinhood-rollout-status');
 const meteoraSnapshotWorker = require('./services/meteora-snapshot-worker');
 const dexDiscoveryWorker = require('./services/dex-discovery-worker');
 const bidZoneWorker = require('./services/bid-zone-worker');
@@ -51,6 +63,9 @@ const solUsdPrice = require('./services/sol-usd-price-service');
 const { createWorkerLeaseManager } = require('./services/worker-lease-manager');
 const workerLease = require('./models/worker-lease');
 
+const ROBINHOOD_INGESTION_LEASE_KEY = 'robinhood-ingestion-worker';
+const ROBINHOOD_CATALOG_STAGING_LEASE_KEY = 'robinhood-catalog-staging-worker';
+const ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY = 'robinhood-catalog-projection-worker';
 const app = express();
 let server = null;
 let bootstrapped = false;
@@ -186,6 +201,16 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
   } catch (err) {
     workerLeaseError = err.message;
   }
+  const robinhoodIngestionLease = workerLeases.find(
+    (lease) => lease.key === ROBINHOOD_INGESTION_LEASE_KEY
+  ) || null;
+  const robinhoodCatalogStagingLease = workerLeases.find(
+    (lease) => lease.key === ROBINHOOD_CATALOG_STAGING_LEASE_KEY
+  ) || null;
+  const robinhoodCatalogProjectionLease = workerLeases.find(
+    (lease) => lease.key === ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY
+  ) || null;
+  const robinhoodIngestionStatus = robinhoodIngestionWorker.getStatus();
 
   res.json({
     runtime: {
@@ -200,6 +225,24 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     security: getSecurityEventStats(),
     catalogWorker: catalogWorker.getStatus(),
     catalogCleanupWorker: catalogCleanupWorker.getStatus(),
+    robinhoodRetentionWorker: robinhoodRetentionWorker.getStatus(),
+    robinhoodIngestionWorker: {
+      ...robinhoodIngestionStatus,
+      sharedLease: robinhoodIngestionLease,
+    },
+    robinhoodCatalogStagingWorker: {
+      ...robinhoodCatalogStagingWorker.getStatus(),
+      sharedLease: robinhoodCatalogStagingLease,
+    },
+    robinhoodCatalogProjectionWorker: {
+      ...robinhoodCatalogProjectionWorker.getStatus(),
+      sharedLease: robinhoodCatalogProjectionLease,
+    },
+    robinhoodRollout: buildRobinhoodRolloutStatus({
+      config,
+      ingestionStatus: robinhoodIngestionStatus,
+      sharedLease: robinhoodIngestionLease,
+    }),
     meteoraSnapshotWorker: meteoraSnapshotWorker.getStatus(),
     dexDiscoveryWorker: dexDiscoveryWorker.getStatus(),
     bidZoneWorker: bidZoneWorker.getStatus(),
@@ -296,7 +339,7 @@ function hasWorkerGroup(group) {
   return (config.runtime.workerGroupsActive || []).includes(group);
 }
 
-function startLockedWorker(group, key, label, start) {
+function startLockedWorker(group, key, label, start, options = {}) {
   workerLeaseManager.start({
     key,
     label,
@@ -304,6 +347,7 @@ function startLockedWorker(group, key, label, start) {
       group,
       runtimeRole: config.runtime.role,
     },
+    metadataProvider: options.metadataProvider,
     start,
   });
 }
@@ -342,9 +386,92 @@ function startWorkerSet() {
     startLockedWorker('maintenance', 'catalog-cleanup-worker', 'Catalog cleanup worker', () => {
       catalogCleanupWorker.start();
     });
+    if (config.robinhoodRetentionWorker.enabled) {
+      startLockedWorker('maintenance', 'robinhood-retention-worker', 'Robinhood retention worker', () => {
+        robinhoodRetentionWorker.start(config.robinhoodRetentionWorker);
+      });
+    }
     startLockedWorker('maintenance', 'mock-trading-take-profit-worker', 'Mock trading take-profit worker', () => {
       mockTradingTakeProfitWorker.start(config.mockTradingTakeProfitWorker);
     });
+  }
+
+  if (hasWorkerGroup('robinhood')) {
+    const ingestionGate = evaluateRobinhoodIngestionGate(config);
+    if (ingestionGate.allowed) {
+      startLockedWorker('robinhood', ROBINHOOD_INGESTION_LEASE_KEY, 'Robinhood ingestion worker', () => {
+        robinhoodIngestionWorker.start({
+          ...config.robinhoodIngestionWorker,
+          socialMetadataEnabled: false,
+          onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_INGESTION_LEASE_KEY, error),
+        });
+      }, {
+        metadataProvider: () => ({
+          telemetry: buildRobinhoodLeaseTelemetry({
+            ingestionStatus: robinhoodIngestionWorker.getStatus(),
+            confirmations: config.robinhoodIngestionWorker.confirmations,
+          }),
+        }),
+      });
+
+      startLockedWorker(
+        'robinhood',
+        ROBINHOOD_CATALOG_PROJECTION_LEASE_KEY,
+        'Robinhood catalog projection worker',
+        () => robinhoodCatalogProjectionWorker.start({
+          ...config.robinhoodCatalogProjectionWorker,
+          enabled: true,
+          rpcOptions: config.robinhoodIngestionWorker,
+        }),
+        {
+          metadataProvider: () => ({
+            telemetry: buildRobinhoodCatalogProjectionTelemetry(
+              robinhoodCatalogProjectionWorker.getStatus()
+            ),
+          }),
+        }
+      );
+    } else {
+      console.warn(
+        `[RobinhoodIngestionWorker] Group selected but rollout gate is closed: ${ingestionGate.blockers.join(', ')}.`
+      );
+    }
+
+    const stagingGate = evaluateRobinhoodCatalogStagingGate(config);
+    if (stagingGate.allowed) {
+      startLockedWorker(
+        'robinhood',
+        ROBINHOOD_CATALOG_STAGING_LEASE_KEY,
+        'Robinhood catalog staging worker',
+        () => robinhoodCatalogStagingWorker.start({
+          enabled: true,
+          signalConfig: config.robinhoodSignalDryRun,
+          candidateLimit: config.robinhoodSignalDryRun.candidateLimit,
+          statementTimeoutMs: config.robinhoodSignalDryRun.statementTimeoutMs,
+          rolloutProvider: () => {
+            const rollout = buildRobinhoodRolloutStatus({
+              config,
+              ingestionStatus: robinhoodIngestionWorker.getStatus(),
+            });
+            return {
+              alertsRequested: rollout.axes.alerts.requested,
+              publishable: rollout.publishable,
+            };
+          },
+        }),
+        {
+          metadataProvider: () => ({
+            telemetry: buildRobinhoodCatalogStagingTelemetry(
+              robinhoodCatalogStagingWorker.getStatus()
+            ),
+          }),
+        }
+      );
+    } else if (stagingGate.alertsRequested) {
+      console.warn(
+        `[RobinhoodCatalogStagingWorker] Alert intent is set but staging gate is closed: ${stagingGate.blockers.join(', ')}.`
+      );
+    }
   }
 }
 
@@ -364,7 +491,7 @@ function bootstrapBackgroundRuntime() {
     return;
   }
 
-  if (config.nodeEnv !== 'test') {
+  if (config.nodeEnv !== 'test' && hasWorkerGroup('core')) {
     startBackgroundCleanup();
   }
 
@@ -463,6 +590,11 @@ async function shutdownGracefully(signal = 'SIGTERM') {
   forceExitTimer.unref?.();
 
   try {
+    await Promise.all([
+      robinhoodIngestionWorker.stop(),
+      robinhoodCatalogStagingWorker.stop(),
+      robinhoodCatalogProjectionWorker.stop(),
+    ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
     console.log(`[Shutdown] Worker leases released=${releaseResult.released} missed=${releaseResult.missed} errors=${releaseResult.errors}`);
   } catch (err) {

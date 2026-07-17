@@ -138,7 +138,7 @@ async function runArchiveOnce() {
     if (archivedAddresses.length > 0) {
       [deletedMarketBuckets1m, deletedMarketVolumeBuckets1m, deletedMeteoraSnapshots] = await Promise.all([
         tokenMarketBucket1m.deleteByAddresses(archivedAddresses),
-        tokenMarketVolumeBucket1m.deleteByAddresses(archivedAddresses),
+        tokenMarketVolumeBucket1m.deleteByAddresses(archivedAddresses, 'solana'),
         tokenMeteoraSnapshot.deleteByAddresses(archivedAddresses),
       ]);
     }
@@ -184,6 +184,7 @@ async function deleteBlockedArtifactsForAddresses(addresses) {
   let deletedMarketVolumeBuckets1m = 0;
   let deletedMeteoraSnapshots = 0;
   const options = {
+    chain: 'solana',
     limit: BLOCKED_ARTIFACT_CHUNK_LIMIT,
     statementTimeoutMs: BLOCKED_ARTIFACT_STATEMENT_TIMEOUT_MS,
   };

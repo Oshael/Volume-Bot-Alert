@@ -32,6 +32,10 @@ describe('token catalog risk enrichment candidates', () => {
       assert.match(capturedSql, /LEFT JOIN token_risk_reviews/i);
       assert.match(capturedSql, /LEFT JOIN token_risk_enrichment/i);
       assert.match(capturedSql, /admin_blocked_tokens/i);
+      assert.match(capturedSql, /tc\.chain = 'solana'/i);
+      assert.match(capturedSql, /trr\.chain = tc\.chain/i);
+      assert.match(capturedSql, /tre\.chain = tc\.chain/i);
+      assert.match(capturedSql, /ab\.chain = tc\.chain/i);
       assert.match(capturedSql, /is_active_monitor_candidate = TRUE/i);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
@@ -71,6 +75,10 @@ describe('token catalog auto risk review candidates', () => {
       assert.match(capturedSql, /COALESCE\(trr\.label, ''\) <> 'valid'/i);
       assert.match(capturedSql, /trr\.source = 'auto'/i);
       assert.match(capturedSql, /trr\.updated_at < tc\.last_evaluated_at/i);
+      assert.match(capturedSql, /tc\.chain = 'solana'/i);
+      assert.match(capturedSql, /trr\.chain = tc\.chain/i);
+      assert.match(capturedSql, /ab\.chain = tc\.chain/i);
+      assert.match(capturedSql, /tre\.chain = tc\.chain/i);
       assert.equal(rows.length, 1);
       assert.equal(rows[0].address, 'So11111111111111111111111111111111111111112');
     } finally {
@@ -122,6 +130,9 @@ describe('token catalog dashboard top performers', () => {
       assert.match(capturedSql, /COALESCE\(tc\.last_vol_24h, 0\) >= \$3/i);
       assert.match(capturedSql, /COALESCE\(trr\.label, ''\) NOT IN \('junk_probable', 'junk_permanent'\)/i);
       assert.match(capturedSql, /FROM admin_blocked_tokens ab/i);
+      assert.match(capturedSql, /tc\.chain = 'solana'/i);
+      assert.match(capturedSql, /trr\.chain = tc\.chain/i);
+      assert.match(capturedSql, /ab\.chain = tc\.chain/i);
       assert.match(capturedSql, /UNION ALL/i);
       assert.match(capturedSql, /ORDER BY\s+performance_score DESC,\s+volume_rank_score DESC,\s+pchange_rank_score DESC/i);
       assert.equal(rows.length, 1);

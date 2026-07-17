@@ -46,14 +46,28 @@ function createWorkerLeaseManager(options = {}) {
         leaseUntil: null,
         acquiredAt: null,
         heartbeatAt: null,
+        haltedAt: null,
+        haltCode: null,
         standbyOwnerId: null,
         lastError: null,
+        lastMetadataError: null,
         updatedAt: toIso(new Date()),
         retryTimer: null,
         heartbeatTimer: null,
+        pendingHaltError: null,
+        preserveLeaseRecord: false,
+        baseMetadata: {},
+        metadataProvider: null,
       });
     }
-    return entries.get(key);
+    const entry = entries.get(key);
+    entry.baseMetadata = definition.metadata && typeof definition.metadata === 'object'
+      ? { ...definition.metadata }
+      : {};
+    entry.metadataProvider = typeof definition.metadataProvider === 'function'
+      ? definition.metadataProvider
+      : null;
+    return entry;
   }
 
   function publicStatus(entry) {
@@ -66,18 +80,74 @@ function createWorkerLeaseManager(options = {}) {
       leaseUntil: entry.leaseUntil,
       acquiredAt: entry.acquiredAt,
       heartbeatAt: entry.heartbeatAt,
+      haltedAt: entry.haltedAt,
+      haltCode: entry.haltCode,
       standbyOwnerId: entry.standbyOwnerId,
       lastError: entry.lastError,
+      lastMetadataError: entry.lastMetadataError,
       updatedAt: entry.updatedAt,
     };
   }
 
-  async function renew(entry) {
+  async function heartbeatMetadata(entry) {
+    if (!entry.metadataProvider) return { ...entry.baseMetadata };
+    try {
+      const dynamicMetadata = await entry.metadataProvider();
+      if (!dynamicMetadata || typeof dynamicMetadata !== 'object' || Array.isArray(dynamicMetadata)) {
+        throw new TypeError('Worker lease metadata provider must return an object');
+      }
+      entry.lastMetadataError = null;
+      return { ...entry.baseMetadata, ...dynamicMetadata };
+    } catch (error) {
+      entry.lastMetadataError = String(error?.message || error).slice(0, 500);
+      return {
+        ...entry.baseMetadata,
+        metadataProviderError: {
+          message: entry.lastMetadataError,
+          capturedAt: toIso(new Date()),
+        },
+      };
+    }
+  }
+
+  function applyHaltedLease(entry, lease, error) {
+    if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer);
+    entry.heartbeatTimer = null;
+    entry.state = 'halted';
+    entry.started = false;
+    entry.heartbeatAt = lease.heartbeatAt;
+    entry.leaseUntil = lease.leaseUntil;
+    entry.haltedAt = lease.metadata?.haltedAt || toIso(new Date());
+    entry.haltCode = lease.metadata?.haltCode || error?.code || error?.name || 'fatal_error';
+    entry.lastError = lease.metadata?.haltMessage || String(error?.message || error);
+    entry.pendingHaltError = null;
+    entry.preserveLeaseRecord = true;
+    entry.updatedAt = toIso(new Date());
+    return publicStatus(entry);
+  }
+
+  async function renew(inputEntry) {
+    const entry = entries.get(inputEntry.key) || inputEntry;
     if (stopping) {
       return;
     }
     try {
-      const lease = await leaseStore.heartbeat(entry.key, ownerId, { ttlMs });
+      if (entry.pendingHaltError) {
+        try {
+          const haltedLease = await leaseStore.halt(entry.key, ownerId, entry.pendingHaltError);
+          if (haltedLease) {
+            applyHaltedLease(entry, haltedLease, entry.pendingHaltError);
+            return;
+          }
+        } catch (haltError) {
+          entry.lastError = `Fatal state persistence retry failed: ${haltError.message}`;
+        }
+      }
+      const metadata = await heartbeatMetadata(entry);
+      const lease = await leaseStore.heartbeat(entry.key, ownerId, { ttlMs, metadata });
+      if (entry.state === 'halting' || entry.state === 'halted') {
+        return;
+      }
       if (!lease) {
         entry.state = 'lost';
         entry.lastError = 'Lease heartbeat was not renewed';
@@ -85,10 +155,15 @@ function createWorkerLeaseManager(options = {}) {
         onLeaseLost(publicStatus(entry));
         return;
       }
-      entry.state = 'running';
+      entry.state = entry.pendingHaltError ? 'halt-pending' : 'running';
       entry.leaseUntil = lease.leaseUntil;
       entry.heartbeatAt = lease.heartbeatAt;
-      entry.lastError = null;
+      if (!entry.pendingHaltError) {
+        entry.lastError = null;
+        entry.haltedAt = null;
+        entry.haltCode = null;
+        entry.preserveLeaseRecord = false;
+      }
       entry.updatedAt = toIso(new Date());
     } catch (err) {
       entry.state = 'lost';
@@ -130,7 +205,7 @@ function createWorkerLeaseManager(options = {}) {
     try {
       const lease = await leaseStore.acquire(entry.key, ownerId, {
         ttlMs,
-        metadata: definition.metadata || {},
+        metadata: entry.baseMetadata,
       });
       if (stopping) {
         if (lease) {
@@ -153,6 +228,9 @@ function createWorkerLeaseManager(options = {}) {
       entry.heartbeatAt = lease.heartbeatAt;
       entry.leaseUntil = lease.leaseUntil;
       entry.lastError = null;
+      entry.haltedAt = null;
+      entry.haltCode = null;
+      entry.preserveLeaseRecord = false;
       entry.updatedAt = toIso(new Date());
       scheduleHeartbeat(entry);
 
@@ -184,6 +262,30 @@ function createWorkerLeaseManager(options = {}) {
     return publicStatus(entry);
   }
 
+  async function halt(key, error) {
+    const entry = entries.get(String(key || '').trim());
+    if (!entry) throw new Error(`Worker lease is not registered: ${key}`);
+    if (entry.retryTimer) clearTimeout(entry.retryTimer);
+    entry.retryTimer = null;
+    entry.state = 'halting';
+    entry.started = false;
+    entry.haltedAt = toIso(new Date());
+    entry.haltCode = error?.code || error?.name || 'fatal_error';
+    entry.pendingHaltError = error;
+    entry.preserveLeaseRecord = true;
+    entry.updatedAt = toIso(new Date());
+    try {
+      const lease = await leaseStore.halt(entry.key, ownerId, error);
+      if (!lease) throw new Error(`Worker lease halt was not persisted: ${entry.key}`);
+      return applyHaltedLease(entry, lease, error);
+    } catch (haltError) {
+      entry.state = 'halt-pending';
+      entry.lastError = `Fatal state persistence failed: ${haltError.message}`;
+      entry.updatedAt = toIso(new Date());
+      throw haltError;
+    }
+  }
+
   function getStatus() {
     return Array.from(entries.values()).map(publicStatus);
   }
@@ -202,7 +304,11 @@ function createWorkerLeaseManager(options = {}) {
       entry.retryTimer = null;
       entry.heartbeatTimer = null;
 
-      if (releaseLeases && (entry.started || entry.acquiredAt || entry.leaseUntil)) {
+      if (
+        releaseLeases
+        && !entry.preserveLeaseRecord
+        && (entry.started || entry.acquiredAt || entry.leaseUntil)
+      ) {
         releasePromises.push(
           leaseStore.release(entry.key, ownerId)
             .then((released) => {
@@ -243,6 +349,7 @@ function createWorkerLeaseManager(options = {}) {
   return {
     ownerId,
     start,
+    halt,
     getStatus,
     stop,
     __private: {

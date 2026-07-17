@@ -7,10 +7,13 @@ const userAlertRuleState = require('../models/user-alert-rule-state');
 const userCustomAlertRule = require('../models/user-custom-alert-rule');
 const backendAlertPublisher = require('./backend-alert-publisher');
 const alertTickerPeers = require('./alert-ticker-peers');
+const { evaluateCustomAlertRule } = require('./custom-alert-rule-evaluator');
 const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
 const userAlertProfileCache = require('./user-alert-profile-cache');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
+const { normalizeTokenChain } = require('../utils/token-identity');
 
+const ALERT_CHAIN = 'solana';
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
 const SURGE_CROSS_WINDOW_COOLDOWN_MS = 60 * 60 * 1000;
 const SURGE_1H_MIN_MCAP = 45_000;
@@ -212,32 +215,23 @@ function getCustomAlertOperatorLabel() {
   return 'hits';
 }
 
-function getCustomAlertComparableValue(rule, token) {
-  if (rule?.metric === 'price') {
-    return toNumberOrNull(token?.last_price ?? token?.price ?? token?.priceUsd);
-  }
-  return toNumberOrNull(token?.last_mcap ?? token?.mcap ?? token?.marketCap);
-}
-
-function getCustomAlertBaselineValue(rule) {
-  const metadata = rule?.metadata || {};
-  return toNumberOrNull(rule?.metric === 'price' ? metadata.baselinePrice : metadata.baselineMcap);
-}
-
-// "When it hits" semantics: the side the market sat on when the rule was created
-// (or, lacking a baseline, on the previous evaluation) decides the direction, and
-// the rule fires on the first evaluation that reaches the target from that side.
-function didCustomAlertCross(rule, previousValue, currentValue) {
-  const targetValue = toNumberOrNull(rule?.targetValue);
-  if (currentValue == null || !(targetValue > 0)) {
-    return false;
-  }
-
-  const reference = getCustomAlertBaselineValue(rule) ?? toNumberOrNull(previousValue);
-  if (reference == null) {
-    return false;
-  }
-  return reference >= targetValue ? currentValue <= targetValue : currentValue >= targetValue;
+function buildSolanaCustomAlertObservation(token, fallbackObservedAtMs = null) {
+  if (!token?.address) return null;
+  const persistedObservedAtMs = toTimestampMs(
+    token.last_evaluated_at ?? token.lastEvaluatedAt,
+  );
+  const observedAtMs = persistedObservedAtMs
+    ?? (Number.isFinite(fallbackObservedAtMs) ? fallbackObservedAtMs : null);
+  if (observedAtMs == null) return null;
+  return {
+    chain: ALERT_CHAIN,
+    address: token.address,
+    observedAt: new Date(observedAtMs).toISOString(),
+    values: {
+      price: toNumberOrNull(token.last_price ?? token.price ?? token.priceUsd),
+      mcap: toNumberOrNull(token.last_mcap ?? token.mcap ?? token.marketCap),
+    },
+  };
 }
 
 function buildCustomAlertPayload(rule, tokenBefore, tokenAfter, currentValue, previousValue) {
@@ -1158,6 +1152,7 @@ async function syncRearmedMonitoredVolColdState(
   await deps.userAlertRuleState.markRearmed({
     userId: profile.userId,
     ruleKey,
+    chain: ALERT_CHAIN,
     tokenAddress: tokenAfter.address,
     cooldownUntil: state.cooldownUntil,
     metadata: {
@@ -1201,6 +1196,7 @@ async function syncRearmedSurgeResetState(
   await deps.userAlertRuleState.markRearmed({
     userId: profile.userId,
     ruleKey,
+    chain: ALERT_CHAIN,
     tokenAddress: tokenAfter.address,
     cooldownUntil: state.cooldownUntil,
     metadata: {
@@ -1272,6 +1268,7 @@ async function syncTriggeredSurgePostAlertHighState(
   await deps.userAlertRuleState.markTriggered({
     userId: profile.userId,
     ruleKey,
+    chain: ALERT_CHAIN,
     tokenAddress: tokenAfter.address,
     lastAlertedAt: state.lastAlertedAt,
     lastAlertedValue: state.lastAlertedValue,
@@ -1554,6 +1551,7 @@ async function emitSurgeContinuation6h(profile, tokenAfter, spec, state, payload
       userId: profile.userId,
       ruleKey: SURGE_CONTINUATION_6H_RULE_KEY,
       kind: 'old-surge',
+      chain: ALERT_CHAIN,
       tokenAddress: tokenAfter.address,
       dedupeKey: buildSurgeContinuation6hDedupeKey(profile, tokenAfter, baseEventId),
       payload,
@@ -1563,6 +1561,7 @@ async function emitSurgeContinuation6h(profile, tokenAfter, spec, state, payload
     await deps.userAlertRuleState.markRearmed({
       userId: profile.userId,
       ruleKey: spec.baseRuleKey,
+      chain: ALERT_CHAIN,
       tokenAddress: tokenAfter.address,
       cooldownUntil: state.cooldownUntil,
       lastFingerprint: state.lastFingerprint,
@@ -1648,6 +1647,7 @@ async function primeCandidate(profile, tokenAfter, candidate, nowMs, deps) {
   return deps.userAlertRuleState.markTriggered({
     userId: profile.userId,
     ruleKey: candidate.ruleKey,
+    chain: ALERT_CHAIN,
     tokenAddress: tokenAfter.address,
     lastAlertedAt: null,
     lastAlertedValue: candidate.lastAlertedValue,
@@ -1679,6 +1679,7 @@ async function rearmCandidateAfterEmitIfNeeded(profile, tokenAfter, candidate, e
   await deps.userAlertRuleState.markRearmed({
     userId: profile.userId,
     ruleKey: candidate.ruleKey,
+    chain: ALERT_CHAIN,
     tokenAddress: tokenAfter.address,
     cooldownUntil: candidate.cooldownMs > 0 ? new Date(nowMs + candidate.cooldownMs) : null,
     lastFingerprint: candidate.fingerprint,
@@ -1699,6 +1700,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
   const client = await deps.db.getClient();
   let event = null;
   const tickerPeers = await (deps.alertTickerPeers || alertTickerPeers).buildTickerPeerSnapshotForAlert({
+    chain: ALERT_CHAIN,
     address: tokenAfter.address,
     symbol: candidate.payload?.symbol || tokenAfter.symbol || null,
     name: candidate.payload?.name || tokenAfter.name || null,
@@ -1716,6 +1718,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
       userId: profile.userId,
       ruleKey: candidate.ruleKey,
       kind: candidate.kind,
+      chain: ALERT_CHAIN,
       tokenAddress: tokenAfter.address,
       dedupeKey: buildEventDedupeKey(profile, tokenAfter, candidate),
       payload: eventPayload,
@@ -1725,6 +1728,7 @@ async function emitCandidate(profile, tokenAfter, candidate, state, nowMs, deps)
     await deps.userAlertRuleState.markTriggered({
       userId: profile.userId,
       ruleKey: candidate.ruleKey,
+      chain: ALERT_CHAIN,
       tokenAddress: tokenAfter.address,
       lastAlertedAt: new Date(nowMs),
       lastAlertedValue: candidate.lastAlertedValue,
@@ -1772,6 +1776,7 @@ async function emitCustomAlertRule(rule, tokenBefore, tokenAfter, currentValue, 
     await client.query('BEGIN');
 
     const triggeredRule = await deps.userCustomAlertRule.markTriggered(rule.id, rule.userId, {
+      chain: ALERT_CHAIN,
       triggeredAt: new Date(nowMs),
     }, client);
     if (!triggeredRule) {
@@ -1783,6 +1788,7 @@ async function emitCustomAlertRule(rule, tokenBefore, tokenAfter, currentValue, 
       userId: rule.userId,
       ruleKey: CUSTOM_ALERT_RULE_KEY,
       kind: CUSTOM_ALERT_RULE_KEY,
+      chain: ALERT_CHAIN,
       tokenAddress: tokenAfter.address,
       dedupeKey: buildCustomAlertDedupeKey(rule),
       payload: buildCustomAlertPayload(rule, tokenBefore, tokenAfter, currentValue, previousValue),
@@ -1806,17 +1812,27 @@ async function emitCustomAlertRule(rule, tokenBefore, tokenAfter, currentValue, 
 }
 
 async function evaluateCustomAlertRules(tokenBefore, tokenAfter, nowMs, deps, summary) {
-  const rules = await deps.userCustomAlertRule.listActiveByTokenAddress(tokenAfter.address);
+  const identity = { chain: ALERT_CHAIN, address: tokenAfter.address };
+  const rules = await deps.userCustomAlertRule.listActiveByTokenIdentity(identity);
+  const observation = buildSolanaCustomAlertObservation(tokenAfter, nowMs);
+  const previousObservation = buildSolanaCustomAlertObservation(tokenBefore);
   for (const rule of rules) {
     try {
-      const previousValue = getCustomAlertComparableValue(rule, tokenBefore);
-      const currentValue = getCustomAlertComparableValue(rule, tokenAfter);
-      if (!didCustomAlertCross(rule, previousValue, currentValue)) {
+      const evaluation = evaluateCustomAlertRule(rule, observation, previousObservation);
+      if (!evaluation.matched) {
         summary.suppressed += 1;
         continue;
       }
 
-      const event = await emitCustomAlertRule(rule, tokenBefore, tokenAfter, currentValue, previousValue, nowMs, deps);
+      const event = await emitCustomAlertRule(
+        rule,
+        tokenBefore,
+        tokenAfter,
+        evaluation.intent.currentValue,
+        evaluation.intent.previousValue,
+        nowMs,
+        deps,
+      );
       if (event) {
         summary.emitted += 1;
         summary.events.push(event);
@@ -1842,6 +1858,7 @@ async function rearmRule(profile, tokenAfter, ruleKey, state, nowMs, deps, signa
   return deps.userAlertRuleState.markRearmed({
     userId: profile.userId,
     ruleKey,
+    chain: ALERT_CHAIN,
     tokenAddress: tokenAfter.address,
     cooldownUntil: shouldPreserveCooldownOnRearm(ruleKey) ? state?.cooldownUntil : null,
     metadata: {
@@ -2040,6 +2057,15 @@ async function loadSignals(tokenBefore, tokenAfter, profiles, nowMs, deps, conte
   );
 }
 
+function isSupportedAlertToken(token) {
+  if (!token?.address) return false;
+  try {
+    return normalizeTokenChain(token.chain || ALERT_CHAIN) === ALERT_CHAIN;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function evaluateUpdatedToken(input = {}, options = {}) {
   const deps = {
     db,
@@ -2061,7 +2087,7 @@ async function evaluateUpdatedToken(input = {}, options = {}) {
   const nowMs = toTimestampMs(options.now) ?? Date.now();
   const alertSource = toTextOrNull(options.alertSource || input.alertSource);
 
-  if (!tokenAfter?.address) {
+  if (!isSupportedAlertToken(tokenAfter)) {
     return summary;
   }
 

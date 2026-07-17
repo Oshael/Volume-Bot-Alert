@@ -1,6 +1,6 @@
 import type { CandlestickData, IPriceScaleApi, Logical, TickMarkType, Time, UTCTimestamp, WhitespaceData } from 'lightweight-charts';
 import type { AppController } from '../../state/app-controller';
-import { getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
+import { getChainCapabilityNotice, getExpandedTokenSparkline, getMockTradingPositionView, getMockTradingSummaryView, getTokenSparkline, getTrackedToken, isMockTradingEnabled, isProfileAuthPanel, type AdminTokenReviewAlertEntry, type AppState, type LinkedIdentityEntry, type ProfileAuthPanel, type TokenSparklineCandleEntry, type TokenSparklineEntry } from '../../state/app-state';
 import { fetchDashboardChartAlertEvents, type ChartAlertEvent } from '../../services/api/catalog';
 import { EXPANDED_CHART_ALERT_EVENT, mergeChartAlertHistory, readChartAlertHistory } from '../../services/charts/chart-alert-history';
 import { clusterChartAlertMarkers, prepareChartAlertCandlePoints, projectChartAlertMarkers, type ChartAlertCandlePoint, type ChartAlertMarkerCluster } from '../../services/charts/chart-alert-markers';
@@ -21,10 +21,34 @@ import {
   sanitizeLoginEmailValue,
 } from './login-form-utils';
 import { escapeHtml, sanitizeOptionalHttpUrl } from './html-safety';
-import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell } from './shared';
+import { bindCopyButtons, bindSparklineHover, fmtMoney, fmtPct, getTradeTerminalLabel, renderFlash, renderSparklineFigure, renderTokenLaunchpadBadge, renderTotalLiquidityCell, renderTradeTerminalIconForKey } from './shared';
 import { fmtMockSol, fmtMockSolAmount, resolveLiveMockSolUsdcRate, resolveMockTradeSolUsdcRate, resolveMockTradingPositionPnl } from '../../utils/mock-trading-display';
+import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, type TokenChain } from '../../utils/token-chain';
+import { getTokenChartValuationLabel, normalizeTokenChartCandle, normalizeTokenChartCandles, resolveTokenChartValuationType } from '../../utils/token-chart';
+import { resolveTokenValuation } from '../../utils/token-valuation';
+import { buildTokenChainBadge, buildTokenChainIcon, getTokenChainTitle } from '../token-chain-badge';
 
 const SITE_LOGO_URL = new URL('../../../logofinal1.png', import.meta.url).href;
+type ConfigurableChainFilterSurface = 'radarChains' | 'alertFeedChains' | 'browserNotificationChains';
+
+const CHAIN_FILTER_MENU_META: Record<ConfigurableChainFilterSurface, {
+  description: string;
+  label: string;
+}> = {
+  radarChains: {
+    label: 'Radar chains',
+    description: 'Choose which enabled blockchains appear in Recent and Old Week Radar results.',
+  },
+  alertFeedChains: {
+    label: 'Alert feed chains',
+    description: 'Choose which enabled blockchains appear in the alert feed and can play alert audio.',
+  },
+  browserNotificationChains: {
+    label: 'Browser notification chains',
+    description: 'Choose which enabled blockchains can trigger native browser notifications. Browser permission is configured separately.',
+  },
+};
+
 const INVITE_SECURITY_WARNING = 'NEVER share your information with anyone in DMs. The team will never ask for your details via DM. Reach out for help only through tickets in our official server.';
 const REGISTER_TRANSIENT_NOTICES = new Set([
   'Creating account...',
@@ -395,6 +419,15 @@ const SOUND_TOGGLE_FIELDS = [
 const SAFETY_TOGGLE_FIELDS = [
   { key: 'block-warning-enabled', label: 'BLOCK TOKEN WARNING' },
 ] as const;
+
+const BOT_SETTINGS_CATEGORIES = [
+  { key: 'thresholds', label: 'Thresholds', title: 'Alert thresholds' },
+  { key: 'alerts', label: 'Alerts & Chains', title: 'Alerts & chains' },
+  { key: 'notifications', label: 'Notifications', title: 'Notifications' },
+  { key: 'sound', label: 'Sound', title: 'Sound' },
+] as const;
+
+type BotSettingsCategory = typeof BOT_SETTINGS_CATEGORIES[number]['key'];
 
 export function renderLegacyShell(state: AppState, controller: AppController) {
   const wrapper = document.createElement('section');
@@ -1096,6 +1129,55 @@ function renderMockSolPriceStatus(state: AppState) {
   return `<span class="workspace-mock-trading-label">${escapeHtml(label)}</span>`;
 }
 
+function buildWorkspaceChainSelector(state: AppState, controller: AppController) {
+  const selector = document.createElement('div');
+  selector.className = 'workspace-chain-selector';
+  selector.setAttribute('role', 'group');
+  selector.setAttribute('aria-label', 'Filter workspace by blockchain');
+
+  for (const chain of state.data.availableChains) {
+    const title = getTokenChainTitle(chain);
+    const readiness = state.data.chainReadiness[chain];
+    const isEnabled = state.ui.chainFilters.enabledChains.includes(chain);
+    const isLastEnabled = isEnabled && state.ui.chainFilters.enabledChains.length === 1;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'workspace-chain-selector-btn';
+    button.dataset.chain = chain;
+    button.dataset.selected = String(isEnabled);
+    button.dataset.readinessStatus = readiness?.status || 'unavailable';
+    button.setAttribute('aria-label', `${isEnabled ? 'Hide' : 'Show'} ${title}`);
+    button.setAttribute('aria-pressed', String(isEnabled));
+    const selectionTitle = isLastEnabled
+      ? `${title} is the only selected blockchain`
+      : `${isEnabled ? 'Hide' : 'Show'} ${title}`;
+    button.title = readiness?.message
+      ? `${selectionTitle} · ${readiness.message}`
+      : selectionTitle;
+    button.disabled = isLastEnabled;
+    button.append(buildTokenChainIcon(chain));
+    const readinessDot = document.createElement('span');
+    readinessDot.className = 'workspace-chain-readiness-dot';
+    readinessDot.setAttribute('aria-hidden', 'true');
+    button.append(readinessDot);
+    button.addEventListener('click', () => controller.toggleEnabledChain(chain));
+    selector.append(button);
+  }
+
+  return selector;
+}
+
+function mountWorkspaceChainSelector(
+  section: HTMLElement,
+  state: AppState,
+  controller: AppController,
+) {
+  const brand = section.querySelector('.workspace-brand');
+  if (brand) {
+    brand.insertAdjacentElement('afterend', buildWorkspaceChainSelector(state, controller));
+  }
+}
+
 export function renderWorkspaceHeader(state: AppState, controller: AppController) {
   const section = document.createElement('section');
   section.className = 'legacy-topbar workspace-topbar';
@@ -1158,6 +1240,7 @@ export function renderWorkspaceHeader(state: AppState, controller: AppController
   const avatarLabel = (state.session.username ?? state.session.email ?? 'U').trim().charAt(0).toUpperCase() || 'U';
   section.querySelector<HTMLElement>('[data-role="user-menu-label"]')!.textContent = userMenuLabel;
   section.querySelector<HTMLElement>('[data-role="user-avatar"]')!.textContent = avatarLabel;
+  mountWorkspaceChainSelector(section, state, controller);
   section.querySelector<HTMLAnchorElement>('[data-action="open-workspace-live"]')?.addEventListener('click', (event) => {
     if (!isPlainPrimaryClick(event)) {
       return;
@@ -1295,7 +1378,9 @@ function bindWorkspaceLayoutResetActions(section: HTMLElement, controller: AppCo
 export function renderWorkspaceProfileOverlay(state: AppState, controller: AppController) {
   const overlayMode = resolveWorkspaceOverlayMode(state);
   const expandedSparklineAddress = String(state.ui.expandedSparklineAddress || '').trim();
-  const expandedSparkline = expandedSparklineAddress ? getExpandedTokenSparkline(state, expandedSparklineAddress) : null;
+  const expandedSparkline = expandedSparklineAddress
+    ? getExpandedTokenSparkline(state, expandedSparklineAddress, state.ui.expandedSparklineChain)
+    : null;
   if (overlayMode !== 'expanded-sparkline') {
     destroyExpandedCandlestickChart();
   }
@@ -1405,7 +1490,9 @@ function resolveWorkspaceOverlayMode(state: AppState) {
   }
 
   const address = String(state.ui.expandedSparklineAddress || '').trim();
-  const sparkline = address ? getExpandedTokenSparkline(state, address) : null;
+  const sparkline = address
+    ? getExpandedTokenSparkline(state, address, state.ui.expandedSparklineChain)
+    : null;
   const hasExpandedSparkline = Boolean(sparkline && Array.isArray(sparkline.series) && sparkline.series.length >= 2);
   return hasExpandedSparkline ? 'expanded-sparkline' : 'none';
 }
@@ -2270,59 +2357,14 @@ function clampMockTradingPercent(value: number) {
   return Number.isFinite(value) ? Math.min(100, Math.max(1, value)) : 100;
 }
 
-type NormalizedExpandedCandle = {
-  bucketTs: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-};
-
 type ExpandedChartLiveCandleDetail = {
+  chain: TokenChain;
   address: string;
   candle: TokenSparklineCandleEntry;
 };
 
-function toFiniteChartNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function normalizeExpandedCandle(candle: TokenSparklineCandleEntry): NormalizedExpandedCandle | null {
-  const close = toFiniteChartNumber(candle.closeMcap);
-  if (close == null) {
-    return null;
-  }
-
-  const open = toFiniteChartNumber(candle.openMcap) ?? close;
-  const high = Math.max(toFiniteChartNumber(candle.highMcap) ?? close, open, close);
-  const low = Math.min(toFiniteChartNumber(candle.lowMcap) ?? close, open, close);
-  const bucketTs = typeof candle.bucketTs === 'string' ? candle.bucketTs : '';
-  if (!bucketTs) {
-    return null;
-  }
-
-  return {
-    bucketTs,
-    open,
-    high,
-    low,
-    close,
-  };
-}
-
-function normalizeExpandedCandles(sparkline: TokenSparklineEntry) {
-  if (!Array.isArray(sparkline.candles)) {
-    return [];
-  }
-
-  return sparkline.candles
-    .map((candle) => normalizeExpandedCandle(candle))
-    .filter((candle): candle is NormalizedExpandedCandle => Boolean(candle));
-}
-
 function getExpandedCandleLatestValue(sparkline: TokenSparklineEntry) {
-  const candles = normalizeExpandedCandles(sparkline);
+  const candles = normalizeTokenChartCandles(sparkline);
   if (candles.length > 0) {
     return candles[candles.length - 1].close;
   }
@@ -2332,7 +2374,7 @@ function getExpandedCandleLatestValue(sparkline: TokenSparklineEntry) {
 }
 
 function getRenderableExpandedCandles(sparkline: TokenSparklineEntry) {
-  return normalizeExpandedCandles(sparkline);
+  return normalizeTokenChartCandles(sparkline);
 }
 
 function toLightweightCandles(sparkline: TokenSparklineEntry): CandlestickData<UTCTimestamp>[] {
@@ -2397,10 +2439,11 @@ function renderExpandedCandleChart(sparkline: TokenSparklineEntry) {
   if (candleCount < 2) {
     return '';
   }
+  const valuationLabel = getTokenChartValuationLabel(sparkline);
   return `
     <div class="expanded-candles-wrap" data-candle-count="${candleCount}">
       <div class="expanded-lightweight-legend" data-expanded-chart-legend></div>
-      <div class="expanded-lightweight-chart" data-expanded-candlestick-chart role="img" aria-label="Interactive market cap candlestick chart"></div>
+      <div class="expanded-lightweight-chart" data-expanded-candlestick-chart role="img" aria-label="Interactive ${valuationLabel} candlestick chart"></div>
     </div>
   `;
 }
@@ -2755,7 +2798,11 @@ function formatExpandedChartTickMark(time: Time, tickMarkType: TickMarkType, tim
   return formatExpandedChartTime(time, timeZone, options);
 }
 
-function formatExpandedChartLegend(candle: CandlestickData<UTCTimestamp>, timeZone: string) {
+function formatExpandedChartLegend(
+  candle: CandlestickData<UTCTimestamp>,
+  timeZone: string,
+  valuationLabel: string,
+) {
   const timestamp = formatExpandedChartTime(candle.time, timeZone, {
     year: 'numeric',
     month: 'short',
@@ -2765,7 +2812,7 @@ function formatExpandedChartLegend(candle: CandlestickData<UTCTimestamp>, timeZo
     second: '2-digit',
     hour12: false,
   });
-  return `${timestamp} | MCAP ${fmtMoney(candle.close)}`;
+  return `${timestamp} | ${valuationLabel} ${fmtMoney(candle.close)}`;
 }
 
 function getExpandedChartInitialPriceRange(data: CandlestickData<UTCTimestamp>[], referenceValue: number) {
@@ -3695,16 +3742,24 @@ function mountExpandedChartAlertOverlay(
   };
 }
 
-async function mountExpandedCandlestickChart(section: ParentNode, state: AppState, sparkline: TokenSparklineEntry, address: string) {
+async function mountExpandedCandlestickChart(
+  section: ParentNode,
+  state: AppState,
+  sparkline: TokenSparklineEntry,
+  address: string,
+  chain: TokenChain,
+) {
   const container = section.querySelector<HTMLElement>('[data-expanded-candlestick-chart]');
   const legend = section.querySelector<HTMLElement>('[data-expanded-chart-legend]');
   const normalizeStartedAt = performance.now();
   const data = toLightweightCandles(sparkline);
   const granularityMinutes = sparkline.granularityMinutes ?? 5;
+  const valuationLabel = getTokenChartValuationLabel(sparkline);
+  const chartIdentityKey = buildTokenIdentityKey(chain, address);
   const useMacTrackpadDrag = isMacPlatform();
   const chartData = withExpandedChartFutureTimePoints(data, granularityMinutes);
   const debug = createExpandedChartDebugSession({
-    address,
+    address: chartIdentityKey,
     granularityMinutes,
     sourceCandles: Array.isArray(sparkline.candles) ? sparkline.candles.length : 0,
     chartCandles: data.length,
@@ -3786,23 +3841,32 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   candleSeries.setData(chartData);
   debug.markTiming('setDataMs', performance.now() - setDataStartedAt);
   const latest = data[data.length - 1];
-  const liveMcap = Number(getTrackedToken(state, address)?.mcap);
-  const referenceValue = Number.isFinite(liveMcap) && liveMcap > 0 ? liveMcap : latest.close;
-  for (const rule of state.data.customAlertRules) {
-    if (rule.tokenAddress !== address || rule.metric !== 'mcap' || rule.status !== 'active') continue;
-    if (rule.expiresAt && new Date(rule.expiresAt).getTime() <= Date.now()) continue;
-    if (!(rule.targetValue > 0)) continue;
-    candleSeries.createPriceLine({
-      price: rule.targetValue,
-      color: /^#[0-9a-fA-F]{6}$/.test(rule.colorHex || '') ? String(rule.colorHex) : '#22c55e',
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      axisLabelVisible: true,
-      title: rule.title,
-    });
-  }
+  const resolveReferenceValue = () => {
+    const trackedToken = getTrackedToken(state, address, chain);
+    const liveValuation = trackedToken ? Number(resolveTokenValuation(trackedToken).value) : null;
+    return liveValuation != null && Number.isFinite(liveValuation) && liveValuation > 0
+      ? liveValuation
+      : latest.close;
+  };
+  const addCustomRuleLines = () => {
+    for (const rule of chain === 'solana' ? state.data.customAlertRules : []) {
+      if (rule.tokenAddress !== address || rule.metric !== 'mcap' || rule.status !== 'active') continue;
+      if (rule.expiresAt && new Date(rule.expiresAt).getTime() <= Date.now()) continue;
+      if (!(rule.targetValue > 0)) continue;
+      candleSeries.createPriceLine({
+        price: rule.targetValue,
+        color: /^#[0-9a-fA-F]{6}$/.test(rule.colorHex || '') ? String(rule.colorHex) : '#22c55e',
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: rule.title,
+      });
+    }
+  };
+  const referenceValue = resolveReferenceValue();
+  addCustomRuleLines();
   const priceScale = chart.priceScale('right');
-  const preservedViewport = expandedChartViewportByAddress.get(address);
+  const preservedViewport = expandedChartViewportByAddress.get(chartIdentityKey);
   if (!preservedViewport) {
     expandedChartViewportByAddress.clear();
   }
@@ -3810,40 +3874,47 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   priceScale.setAutoScale(false);
   const removePriceScaleWheel = bindExpandedPriceScaleWheel(container, priceScale);
   const removeMacTrackpadDrag = bindExpandedMacTrackpadDrag(container, chart, priceScale);
-  const chartAlertOverlay = mountExpandedChartAlertOverlay(
-    container,
-    chart,
-    candleSeries,
-    data,
-    address,
-    granularityMinutes,
-    state.ui.expandedSparklineTimeZone,
-    state.session.token,
-    debug,
-  );
+  const createChartAlertOverlay = () => (chain === 'solana'
+    ? mountExpandedChartAlertOverlay(
+      container, chart, candleSeries, data, address, granularityMinutes,
+      state.ui.expandedSparklineTimeZone, state.session.token, debug,
+    )
+    : { upsertCandle: () => {}, cleanup: () => {} });
+  const chartAlertOverlay = createChartAlertOverlay();
   if (legend) {
-    legend.textContent = formatExpandedChartLegend(latest, state.ui.expandedSparklineTimeZone);
+    legend.textContent = formatExpandedChartLegend(
+      latest,
+      state.ui.expandedSparklineTimeZone,
+      valuationLabel,
+    );
   }
   chart.subscribeCrosshairMove((param) => {
     const candle = param.seriesData.get(candleSeries) as CandlestickData<UTCTimestamp> | undefined;
     if (legend && candle) {
-      legend.textContent = formatExpandedChartLegend(candle, state.ui.expandedSparklineTimeZone);
+      legend.textContent = formatExpandedChartLegend(
+        candle,
+        state.ui.expandedSparklineTimeZone,
+        valuationLabel,
+      );
     }
   });
-  if (preservedViewport?.timeRange) {
-    chart.timeScale().setVisibleRange(preservedViewport.timeRange);
-  } else {
-    const initialTimeRange = getExpandedChartInitialTimeRange(data, granularityMinutes);
-    if (initialTimeRange) {
-      chart.timeScale().setVisibleRange(initialTimeRange);
+  const restoreTimeViewport = () => {
+    if (preservedViewport?.timeRange) {
+      chart.timeScale().setVisibleRange(preservedViewport.timeRange);
     } else {
-      chart.timeScale().fitContent();
+      const initialTimeRange = getExpandedChartInitialTimeRange(data, granularityMinutes);
+      if (initialTimeRange) {
+        chart.timeScale().setVisibleRange(initialTimeRange);
+      } else {
+        chart.timeScale().fitContent();
+      }
     }
-  }
+  };
+  restoreTimeViewport();
   expandedCandlestickChartCaptureViewport = () => {
     const timeRange = chart.timeScale().getVisibleRange();
     const priceRange = priceScale.getVisibleRange();
-    expandedChartViewportByAddress.set(address, {
+    expandedChartViewportByAddress.set(chartIdentityKey, {
       timeRange: timeRange && Number(timeRange.to) > Number(timeRange.from)
         ? { from: timeRange.from as UTCTimestamp, to: timeRange.to as UTCTimestamp }
         : null,
@@ -3855,10 +3926,13 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   const onLiveCandle = (event: Event) => {
     const liveUpdateStartedAt = debug.enabled ? performance.now() : 0;
     const detail = (event as CustomEvent<ExpandedChartLiveCandleDetail>).detail;
-    if (detail?.address !== address) {
+    if (detail?.chain !== chain || detail.address !== address) {
       return;
     }
-    const normalized = normalizeExpandedCandle(detail.candle);
+    const normalized = normalizeTokenChartCandle(
+      detail.candle,
+      resolveTokenChartValuationType(sparkline, detail.candle),
+    );
     if (!normalized) {
       return;
     }
@@ -3878,7 +3952,11 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
     debug.count('liveUpdates');
     chartAlertOverlay.upsertCandle(liveCandle);
     if (legend) {
-      legend.textContent = formatExpandedChartLegend(liveCandle, state.ui.expandedSparklineTimeZone);
+      legend.textContent = formatExpandedChartLegend(
+        liveCandle,
+        state.ui.expandedSparklineTimeZone,
+        valuationLabel,
+      );
     }
     if (debug.enabled) {
       debug.recordLiveUpdate(performance.now() - liveUpdateStartedAt);
@@ -3895,8 +3973,14 @@ async function mountExpandedCandlestickChart(section: ParentNode, state: AppStat
   };
 }
 
-function renderExpandedChartBody(state: AppState, sparkline: TokenSparklineEntry, address: string) {
-  const liveMcap = getTrackedToken(state, address)?.mcap ?? null;
+function renderExpandedChartBody(
+  state: AppState,
+  sparkline: TokenSparklineEntry,
+  address: string,
+  chain: TokenChain,
+) {
+  const token = getTrackedToken(state, address, chain);
+  const liveValuation = token ? resolveTokenValuation(token).value : null;
   const candleChart = renderExpandedCandleChart(sparkline);
   if (candleChart) {
     return candleChart;
@@ -3904,18 +3988,24 @@ function renderExpandedChartBody(state: AppState, sparkline: TokenSparklineEntry
 
   return renderSparklineFigure(sparkline, address, {
     expanded: true,
-    markers: state.data.mockTradingTradesByAddress[address] || [],
-    mockSolUsdcRate: resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs),
-    liveMcap,
+    markers: chain === 'solana' ? state.data.mockTradingTradesByAddress[address] || [] : [],
+    mockSolUsdcRate: chain === 'solana'
+      ? resolveLiveMockSolUsdcRate(state.data.mockTradingSummary, state.data.configs)
+      : undefined,
+    liveMcap: liveValuation,
   });
 }
 
 function isExpandedOneMinuteChartOptionAvailable(
   token: ReturnType<typeof getTrackedToken>,
   sparkline: TokenSparklineEntry,
+  chain: TokenChain,
 ) {
   if (sparkline.oneMinuteAvailable !== true) {
     return false;
+  }
+  if (chain !== 'solana') {
+    return true;
   }
 
   const createdAt = Number(token?.createdAt);
@@ -3968,9 +4058,22 @@ function renderExpandedSparklineFootnote(loadingText: string, address: string, t
   `;
 }
 
+function getExpandedSparklineStatusText(
+  sparkline: TokenSparklineEntry,
+  updatedLabel: string,
+) {
+  if (sparkline.loading) return 'Loading full available history.';
+  const historyMode = sparkline.resolution === 'mixed'
+    ? 'Minute and hourly history.'
+    : sparkline.resolution === 'hour' ? 'Hourly history.' : 'Minute history.';
+  const truncated = sparkline.truncated ? ' Showing the latest available window.' : '';
+  return `Updated ${escapeHtml(updatedLabel)}. ${historyMode}${truncated}`;
+}
+
 function renderExpandedSparklineModal(state: AppState, address: string) {
-  const token = getTrackedToken(state, address);
-  const sparkline = getExpandedTokenSparkline(state, address);
+  const chain = state.ui.expandedSparklineChain;
+  const token = getTrackedToken(state, address, chain);
+  const sparkline = getExpandedTokenSparkline(state, address, chain);
   if (!sparkline) {
     return '';
   }
@@ -3980,27 +4083,29 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   const stats = getExpandedSparklineStats(sparkline, state.ui.expandedSparklineTimeZone);
   const imageUrl = sanitizeOptionalHttpUrl(token?.imageUrl);
   const ageLabel = formatExpandedTokenAge(token?.createdAt);
-  const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline);
-  const loadingText = sparkline.loading ? 'Loading full available history.' : `Updated ${escapeHtml(stats.updatedLabel)}.`;
+  const oneMinuteAvailable = isExpandedOneMinuteChartOptionAvailable(token, sparkline, chain);
+  const loadingText = getExpandedSparklineStatusText(sparkline, stats.updatedLabel);
 
   return `
     <div class="legacy-auth-modal" data-auth-modal="expanded-sparkline" data-auth-modal-scope="sparkline">
       <div class="legacy-auth-modal-backdrop" data-action="close-expanded-sparkline"></div>
       <div class="legacy-auth-panel legacy-auth-panel-expanded-sparkline" data-auth-panel="expanded-sparkline" role="dialog" aria-modal="true" aria-labelledby="expanded-sparkline-title">
         <div class="expanded-sparkline-toolbar">
-          ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address)}
+          ${renderExpandedSparklineIdentity(symbol, name, imageUrl, address, chain)}
           ${renderExpandedSparklineStatsRow(
             token,
-            state.data.meteoraByAddress[address],
+            chain === 'solana' ? state.data.meteoraByAddress[address] : undefined,
             Number(state.data.configs['meteora-min-pool']) || 5000,
             stats.latestValue,
             ageLabel,
+            chain,
+            getTokenChartValuationLabel(sparkline),
           )}
           ${renderExpandedGranularityControls(state.ui.expandedSparklineGranularityMinutes, oneMinuteAvailable)}
           <button type="button" class="legacy-profile-modal-close" data-action="close-expanded-sparkline" aria-label="Close dialog">X</button>
         </div>
         <div class="expanded-sparkline-chart${sparkline.loading ? ' is-loading' : ''}">
-          ${renderExpandedChartBody(state, sparkline, address)}
+          ${renderExpandedChartBody(state, sparkline, address, chain)}
           ${sparkline.loading ? '<span class="expanded-sparkline-loading" role="status" aria-label="Loading full chart"><span class="expanded-sparkline-loading-spinner" aria-hidden="true"></span></span>' : ''}
         </div>
         ${renderExpandedSparklineFootnote(loadingText, address, state.ui.expandedSparklineTimeZone)}
@@ -4009,15 +4114,21 @@ function renderExpandedSparklineModal(state: AppState, address: string) {
   `;
 }
 
-function renderExpandedSparklineIdentity(symbol: string, name: string, imageUrl: string | null, address: string) {
+function renderExpandedSparklineIdentity(
+  symbol: string,
+  name: string,
+  imageUrl: string | null,
+  address: string,
+  chain: TokenChain,
+) {
   const avatar = imageUrl
     ? `<img src="${escapeHtml(imageUrl)}" alt="" class="expanded-sparkline-avatar" />`
     : `<span class="expanded-sparkline-avatar expanded-sparkline-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
   return `
     <div class="expanded-sparkline-identity">
-      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address)}</span>
+      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${chain === 'solana' ? renderTokenLaunchpadBadge(address) : ''}</span>
       <span class="expanded-sparkline-identity-copy">
-        <strong id="expanded-sparkline-title">${escapeHtml(symbol)}</strong>
+        <strong id="expanded-sparkline-title">${escapeHtml(symbol)} ${buildTokenChainBadge(chain, address).outerHTML}</strong>
         <small>${escapeHtml(name)}</small>
       </span>
     </div>
@@ -4030,15 +4141,19 @@ function renderExpandedSparklineStatsRow(
   meteoraMinPool: number,
   latestValue: number | null,
   ageLabel: string,
+  chain: TokenChain,
+  valuationLabel: string,
 ) {
   return `
     <div class="expanded-sparkline-popover-subhead">
-      ${renderExpandedSparklineStat('mcap', 'MCAP', fmtMoney(latestValue))}
+      ${renderExpandedSparklineStat('mcap', valuationLabel, fmtMoney(latestValue))}
       ${renderExpandedSparklineStat('age', 'AGE', ageLabel)}
       ${renderExpandedSparklineStat('vol-1h', 'VOL 1H', fmtMoney(token?.volume1h))}
       ${renderExpandedSparklineStat('vol-6h', 'VOL 6H', fmtMoney(token?.volume6h))}
       ${renderExpandedSparklineStat('vol-24h', 'VOL 24H', fmtMoney(token?.volume24h))}
-      ${renderExpandedTotalLiquidityStat(token, meteoraEntry, meteoraMinPool)}
+      ${chain === 'solana'
+        ? renderExpandedTotalLiquidityStat(token, meteoraEntry, meteoraMinPool)
+        : renderExpandedSparklineStat('total-liq', 'LIQUIDITY', fmtMoney(token?.liquidityUsd))}
     </div>
   `;
 }
@@ -4093,7 +4208,7 @@ function formatExpandedTokenAge(createdAt: number | null | undefined) {
 }
 
 function getExpandedSparklineStats(sparkline: NonNullable<ReturnType<typeof getTokenSparkline>>, timeZone: string) {
-  const candles = normalizeExpandedCandles(sparkline);
+  const candles = normalizeTokenChartCandles(sparkline);
   const latestValue = getExpandedCandleLatestValue(sparkline);
   const updatedLabel = sparkline.generatedAt
     ? formatExpandedChartTime(Math.floor(new Date(sparkline.generatedAt).getTime() / 1000) as UTCTimestamp, timeZone, {
@@ -4184,10 +4299,18 @@ function bindExpandedSparklineModal(
       }, 1200);
     });
   });
-  void mountExpandedCandlestickChart(section, state, sparkline, address).catch((error) => {
+  void mountExpandedCandlestickChart(
+    section,
+    state,
+    sparkline,
+    address,
+    state.ui.expandedSparklineChain,
+  ).catch((error) => {
     console.warn('[ExpandedChart] Failed to mount Lightweight Charts:', error instanceof Error ? error.message : error);
   });
-  bindSparklineHover(section, { [address]: sparkline });
+  bindSparklineHover(section, {
+    [buildTokenIdentityKey(state.ui.expandedSparklineChain, address)]: sparkline,
+  });
 }
 
 function bindBlockTokenWarningModal(section: ParentNode, controller: AppController) {
@@ -6183,60 +6306,237 @@ function renderUserSettingsModal(state: AppState) {
 }
 
 function renderBotSettingsModal(state: AppState) {
-  return renderProfileModalShell({
-    panel: 'bot-settings',
-    title: 'Bot Settings',
-    description: 'Adjust alerts, thresholds, sound behavior, and operator preferences for your workspace.',
-    labelId: 'bot-settings-title',
-    panelClass: 'legacy-auth-panel-settings',
-    content: `
-      <div class="legacy-config-grid legacy-config-grid-modal">
-        ${renderBotSettingsFields(state)}
+  const enabledAlerts = ALERT_TOGGLE_FIELDS.filter((field) => isConfigEnabled(state, field.key)).length;
+  const availableChainNames = state.data.availableChains.map(getTokenChainTitle).join(', ');
+  return `
+    <div class="legacy-auth-modal" data-auth-modal="bot-settings" data-auth-modal-scope="profile">
+      <div class="legacy-auth-modal-backdrop" data-action="close-profile-modal"></div>
+      <div class="legacy-auth-panel legacy-auth-panel-settings bot-settings-modal" data-auth-panel="bot-settings" role="dialog" aria-modal="true" aria-labelledby="bot-settings-title">
+        <aside class="bot-settings-sidebar">
+          <div class="bot-settings-sidebar-head">
+            <strong id="bot-settings-title">Bot Settings</strong>
+            <span>Operator preferences</span>
+          </div>
+          <div class="bot-settings-nav" role="tablist" aria-label="Bot settings categories">
+            ${BOT_SETTINGS_CATEGORIES.map((category, index) => `
+              <button
+                type="button"
+                id="bot-settings-tab-${category.key}"
+                class="bot-settings-nav-item${index === 0 ? ' active' : ''}"
+                data-bot-settings-nav="${category.key}"
+                role="tab"
+                aria-selected="${index === 0}"
+                aria-controls="bot-settings-section-${category.key}"
+              ><span aria-hidden="true"></span>${escapeHtml(category.label)}</button>
+            `).join('')}
+          </div>
+          <div class="bot-settings-sidebar-foot">
+            <span>Chain: ${escapeHtml(availableChainNames || 'Solana')}</span>
+            <span>${enabledAlerts}/${ALERT_TOGGLE_FIELDS.length} alerts on</span>
+          </div>
+        </aside>
+        <main class="legacy-config-grid-modal bot-settings-content">
+          <header class="bot-settings-content-head">
+            <span class="bot-settings-content-title" data-bot-settings-title>${escapeHtml(BOT_SETTINGS_CATEGORIES[0].title)}</span>
+            <button type="button" class="legacy-profile-modal-close bot-settings-close" data-action="close-profile-modal" aria-label="Close dialog">&times;</button>
+          </header>
+          ${renderBotSettingsFields(state)}
+        </main>
       </div>
-    `,
-  });
+    </div>
+  `;
 }
 
 function renderBotSettingsFields(state: AppState) {
   return `
-    ${getVisibleConfigFields(state).map((field) => renderConfigField(state, field)).join('')}
-    <div class="config-item config-item-sound">
-      <label>Sound alert</label>
-      <select name="sound-mode">
-        <option value="on">Enabled</option>
-        <option value="off">Disabled</option>
-      </select>
-    </div>
-    ${renderBrowserNotificationControl(state)}
-    <div class="config-item config-item-sound">
-      <label>Card effects</label>
-      <select name="card-effects-mode">
-        <option value="on">Enabled</option>
-        <option value="off">Disabled</option>
-      </select>
-    </div>
-    ${renderTradeTerminalPrefsMenu(state)}
-    ${renderSurgeThresholdMenu(state)}
-    ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
-    ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
-    ${renderConfigToggleMenu(
-      state,
-      'Safety prompts',
-      'Choose which confirmation prompts should appear before destructive workspace actions.',
-      SAFETY_TOGGLE_FIELDS,
-      {
-        helpLabel: 'What are safety prompts?',
-        helpText: 'Choose which confirmation prompts should appear before destructive workspace actions.',
-        hideSummary: true,
-      },
-    )}
-    ${state.session.role === 'admin' ? renderAdminChainField(state) : ''}
-    <div class="legacy-sound-row">
-      <div class="config-item config-item-sound config-item-sound-volume">
-        <label>Sound volume: ${Math.round(state.ui.soundVolume * 100)}%</label>
-        <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" />
+    ${renderBotSettingsSection('thresholds', renderBotSettingsThresholds(state), true)}
+    ${renderBotSettingsSection('alerts', renderBotSettingsAlerts(state))}
+    ${renderBotSettingsSection('notifications', renderBotSettingsNotifications(state))}
+    ${renderBotSettingsSection('sound', renderBotSettingsSound(state))}
+  `;
+}
+
+function renderBotSettingsSection(category: BotSettingsCategory, content: string, active = false) {
+  return `
+    <section
+      id="bot-settings-section-${category}"
+      class="bot-settings-section${active ? ' active' : ''}"
+      data-bot-settings-section="${category}"
+      role="tabpanel"
+      aria-labelledby="bot-settings-tab-${category}"
+      ${active ? '' : 'hidden'}
+    >${content}</section>
+  `;
+}
+
+function renderBotSettingsNumberField(
+  field: ConfigField,
+  unit: '%' | '$',
+  help?: { label: string; text: string },
+) {
+  const type = field.type ?? 'number';
+  const label = field.label.replace(/\s*\([%$]\)\s*/g, ' ').trim();
+  return `
+    <div class="config-item bot-settings-field-group">
+      <label for="bot-settings-${escapeHtml(field.key)}">
+        <span>${escapeHtml(label)}</span>
+        ${help ? `
+          <span class="config-help-hover" tabindex="0" aria-label="${escapeHtml(help.label)}">
+            <span class="config-help-trigger">?</span>
+            <span class="config-help-panel">${escapeHtml(help.text)}</span>
+          </span>
+        ` : ''}
+      </label>
+      <div class="bot-settings-field">
+        <input id="bot-settings-${escapeHtml(field.key)}" type="${escapeHtml(type)}" name="${escapeHtml(field.key)}" ${field.min != null ? `min="${field.min}"` : ''} ${field.step != null ? `step="${field.step}"` : ''} ${field.placeholder ? `placeholder="${escapeHtml(field.placeholder)}"` : ''} />
+        <span>${unit}</span>
       </div>
-      ${renderSoundUploadStrip(state)}
+    </div>
+  `;
+}
+
+function renderBotSettingsMarketCapRange(fields: Map<string, ConfigField>) {
+  const minField = fields.get('min-mcap')!;
+  const maxField = fields.get('max-mcap')!;
+  const renderInput = (field: ConfigField, label: string) => `
+    <div class="bot-settings-field">
+      <input type="number" name="${field.key}" min="${field.min ?? 0}" placeholder="${escapeHtml(field.placeholder || '')}" aria-label="${label}" />
+      <span>$</span>
+    </div>
+  `;
+  return `
+    <div class="config-item bot-settings-field-group">
+      <label>Min / max market cap to alert</label>
+      <div class="bot-settings-field-pair">
+        ${renderInput(minField, 'Minimum market cap to alert')}
+        ${renderInput(maxField, 'Maximum market cap to alert')}
+      </div>
+    </div>
+  `;
+}
+
+function renderBotSettingsSurgePair(bucket: 'recent' | 'old-week') {
+  const isRecent = bucket === 'recent';
+  const prefix = isRecent ? 'recent-surge' : 'old-week-surge';
+  const label = isRecent ? 'Recent tokens' : 'Old tokens';
+  return `
+    <div class="config-item bot-settings-field-group bot-settings-surge-group">
+      <label>Surge threshold · ${label}</label>
+      <div class="bot-settings-surge-pair">
+        ${[1, 6].map((hours) => `
+          <label class="bot-settings-surge-cell">
+            <span>${hours}H price change</span>
+            <span><input type="number" min="0" name="${prefix}-${hours}h-threshold" aria-label="${label} ${hours} hour price change" /><b>%</b></span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderBotSettingsThresholds(state: AppState) {
+  const fields = new Map(getVisibleConfigFields(state).map((field) => [field.key, field]));
+  return `
+    <div class="bot-settings-grid">
+      ${renderBotSettingsNumberField(fields.get('threshold')!, '%')}
+      ${renderBotSettingsNumberField(fields.get('mcap-threshold')!, '%')}
+      ${renderBotSettingsNumberField(fields.get('min-vol')!, '$')}
+      ${renderBotSettingsMarketCapRange(fields)}
+      ${renderBotSettingsNumberField(fields.get('meteora-alert-1h-threshold')!, '%')}
+      ${renderBotSettingsNumberField(fields.get('hvnc-min-vol')!, '$', {
+        label: 'What is High Volume New Coin?',
+        text: 'High Volume New Coin (HVNC) alerts when a token reaches at least this reported 24-hour volume within its first 5 minutes. For migrated Pump.fun tokens, the 5-minute window starts at migration instead of token creation. It normally fires once per qualifying lifecycle.',
+      })}
+      ${renderBotSettingsSurgePair('recent')}
+      ${renderBotSettingsSurgePair('old-week')}
+      <div class="bot-settings-subhead"><span></span><strong>Shortcut links</strong><i></i></div>
+      ${renderTradeTerminalPrefsMenu(state)}
+    </div>
+  `;
+}
+
+function renderBotSettingsChainCard(state: AppState, surface: ConfigurableChainFilterSurface) {
+  const meta = CHAIN_FILTER_MENU_META[surface];
+  const chains = state.ui.chainFilters.enabledChains;
+  const selected = state.ui.chainFilters[surface];
+  return `
+    <div class="config-item config-item-menu bot-settings-chain-menu">
+      <label>${escapeHtml(meta.label)}</label>
+      <div class="sort-menu-wrap config-menu-wrap chain-filter-menu-wrap" data-sort-wrap data-chain-filter-surface="${surface}">
+        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="chain-filter-${surface}">${selected.length}/${chains.length} on</button>
+        <div class="sort-menu-dropdown config-menu-dropdown">
+          <div class="config-menu-summary">${escapeHtml(meta.description)}</div>
+          <div class="config-toggle-list">
+            ${chains.map((chain) => {
+              const title = getTokenChainTitle(chain);
+              const isActive = selected.includes(chain);
+              const isLastSelected = isActive && selected.length === 1;
+              return `
+                <button
+                  type="button"
+                  class="config-toggle-item chain-filter-option${isActive ? ' active' : ''}"
+                  data-chain-filter-chain="${chain}"
+                  data-chain-title="${escapeHtml(title)}"
+                  aria-pressed="${isActive}"
+                  ${isLastSelected ? 'disabled' : ''}
+                >
+                  <span class="chain-filter-option-label">
+                    <span class="chain-filter-option-icon" data-chain-filter-icon="${chain}"></span>
+                    <span>${escapeHtml(title)}</span>
+                  </span>
+                  <span class="config-toggle-state">${isActive ? 'ON' : 'OFF'}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderBotSettingsAlerts(state: AppState) {
+  return `
+    <div class="bot-settings-stack">
+      ${renderConfigToggleMenu(state, 'Alert toggles', 'Choose which alert types can fire', ALERT_TOGGLE_FIELDS)}
+      <div class="bot-settings-grid bot-settings-chain-grid">
+        ${renderBotSettingsChainCard(state, 'alertFeedChains')}
+        ${renderBotSettingsChainCard(state, 'radarChains')}
+        ${state.session.role === 'admin' ? renderAdminChainField(state) : ''}
+        <div class="config-item config-item-sound bot-settings-field-group">
+          <label>Card effects</label>
+          <select name="card-effects-mode"><option value="on">Enabled</option><option value="off">Disabled</option></select>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderBotSettingsNotifications(state: AppState) {
+  return `
+    <div class="bot-settings-grid">
+      ${renderBrowserNotificationControl(state)}
+      ${renderBotSettingsChainCard(state, 'browserNotificationChains')}
+      ${renderConfigToggleMenu(state, 'Safety prompts', 'Choose which destructive-action confirmations appear.', SAFETY_TOGGLE_FIELDS, { hideSummary: true })}
+    </div>
+  `;
+}
+
+function renderBotSettingsSound(state: AppState) {
+  return `
+    <div class="bot-settings-stack bot-settings-sound-stack">
+      <div class="bot-settings-grid">
+        <div class="config-item config-item-sound bot-settings-field-group">
+          <label>Sound alert</label>
+          <select name="sound-mode"><option value="on">Enabled</option><option value="off">Disabled</option></select>
+        </div>
+        ${renderConfigToggleMenu(state, 'Sound by alert type', 'Choose which alert types can play sound', SOUND_TOGGLE_FIELDS)}
+        <div class="config-item config-item-sound config-item-sound-volume bot-settings-volume">
+          <label>Sound volume: ${Math.round(state.ui.soundVolume * 100)}%</label>
+          <input name="sound-volume" class="legacy-volume-slider" type="range" min="0" max="100" step="1" />
+        </div>
+      </div>
+      <div class="legacy-sound-row bot-settings-sound-row">${renderSoundUploadStrip(state)}</div>
     </div>
   `;
 }
@@ -6280,11 +6580,11 @@ function getVisibleConfigFields(state: AppState) {
 
 function renderTradeTerminalPrefsMenu(state: AppState) {
   const terminalFields: Array<{ key: AppState['ui']['enabledTradeTerminals'][number]; label: string }> = [
-    { key: 'axiom', label: 'Axiom' },
-    { key: 'photon', label: 'Photon' },
-    { key: 'bullx', label: 'BullX' },
-    { key: 'gmgn', label: 'GMGN' },
-    { key: 'padre', label: 'Padre' },
+    { key: 'axiom', label: getTradeTerminalLabel('axiom') },
+    { key: 'photon', label: getTradeTerminalLabel('photon') },
+    { key: 'bullx', label: getTradeTerminalLabel('bullx') },
+    { key: 'gmgn', label: getTradeTerminalLabel('gmgn') },
+    { key: 'padre', label: getTradeTerminalLabel('padre') },
   ];
   const enabled = new Set(state.ui.enabledTradeTerminals);
 
@@ -6304,7 +6604,10 @@ function renderTradeTerminalPrefsMenu(state: AppState) {
                   class="config-toggle-item ${isActive ? 'active' : ''}"
                   data-trade-terminal-key="${escapeHtml(field.key)}"
                 >
-                  <span>${escapeHtml(field.label)}</span>
+                  <span class="bot-settings-trade-terminal-label">
+                    ${renderTradeTerminalIconForKey(field.key, 'bot-settings-trade-terminal-icon')}
+                    <span>${escapeHtml(field.label)}</span>
+                  </span>
                   <span class="config-toggle-state">${isActive ? 'ON' : 'OFF'}</span>
                 </button>
               `;
@@ -6317,13 +6620,19 @@ function renderTradeTerminalPrefsMenu(state: AppState) {
 }
 
 function renderBlockedTokensModal(state: AppState) {
+  const capabilityNotice = getChainCapabilityNotice(state, 'blocklist');
+  const visibleBlocklist = state.data.blocklist.filter((item) => (
+    state.ui.chainFilters.enabledChains.includes(item.chain || 'solana')
+  ));
   return renderProfileModalShell({
     panel: 'blocked-tokens',
     title: 'Blocked Tokens',
     description: 'Tokens hidden from your workspace and alert flow.',
     labelId: 'blocked-tokens-title',
     panelClass: 'legacy-auth-panel-blocklist',
-    content: `
+    content: capabilityNotice
+      ? `<div class="chain-readiness-empty" data-chain-readiness-surface="blocklist">${escapeHtml(capabilityNotice)}</div>`
+      : `
       ${state.session.role === 'admin' ? `
         <form class="blocked-token-admin-unblock-form" data-role="admin-unblock-token-form">
           <input
@@ -6339,18 +6648,18 @@ function renderBlockedTokensModal(state: AppState) {
         </form>
       ` : ''}
       <div class="blocked-tokens-modal-list">
-        ${state.data.blocklist.length === 0 ? `
+        ${visibleBlocklist.length === 0 ? `
           <div class="blocked-token-empty">No blocked tokens right now.</div>
-        ` : state.data.blocklist.map((item) => `
+        ` : visibleBlocklist.map((item) => `
           <div class="blocked-token-row">
             <div class="blocked-token-main">
               ${renderBlockedTokenAvatar(state, item, item.label || item.address.slice(0, 8))}
               <div class="blocked-token-copy">
                 <strong>${escapeHtml(item.label || item.address.slice(0, 8))}</strong>
-                <span>${escapeHtml(item.address)}</span>
+                <span>${escapeHtml(item.chain || 'solana')} · ${escapeHtml(item.address)}</span>
               </div>
             </div>
-            <button type="button" class="legacy-user-dd-item blocked-token-unblock" data-action="remove-blocked" data-address="${escapeHtml(item.address)}">Unblock</button>
+            <button type="button" class="legacy-user-dd-item blocked-token-unblock" data-action="remove-blocked" data-chain="${escapeHtml(item.chain || 'solana')}" data-address="${escapeHtml(item.address)}">Unblock</button>
           </div>
         `).join('')}
       </div>
@@ -6359,7 +6668,7 @@ function renderBlockedTokensModal(state: AppState) {
 }
 
 function renderBlockedTokenAvatar(state: AppState, item: AppState['data']['blocklist'][number], fallbackLabel: string) {
-  const tracked = getTrackedToken(state, item.address);
+  const tracked = getTrackedToken(state, item.address, item.chain || 'solana');
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl || tracked?.imageUrl);
   const safeLabel = escapeHtml(String(fallbackLabel || '').trim() || item.address.slice(0, 8));
   if (imageUrl) {
@@ -6427,7 +6736,7 @@ function renderTokenReviewAlertRow(alert: AdminTokenReviewAlertEntry, busy: bool
         ${renderTokenReviewLink('Website', getRecordString(social, 'websiteUrl'))}
         ${renderTokenReviewLink('Twitter', getRecordString(social, 'twitterUrl'))}
         ${renderTokenReviewLink('Community', getRecordString(social, 'communityUrl'))}
-        ${renderTokenReviewLink('Pair', getRecordString(social, 'pairUrl'))}
+        ${renderTokenReviewMarketLink(alert.chain, address, getRecordString(social, 'pairUrl'))}
       </div>
       <div class="token-review-metrics">
         ${metricItems.map(([labelText, value]) => `
@@ -6453,6 +6762,14 @@ function renderTokenReviewLink(label: string, value: string | null) {
     return '';
   }
   return `<a href="${url}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`;
+}
+
+function renderTokenReviewMarketLink(chain: TokenChain, address: string, pairUrl: string | null) {
+  const marketUrl = buildTokenMarketUrl(chain, address, pairUrl);
+  return renderTokenReviewLink(
+    marketUrl ? 'Pair' : 'Explorer',
+    marketUrl || buildTokenExplorerUrl(chain, address),
+  );
 }
 
 function getRecordString(record: Record<string, unknown> | null | undefined, key: string) {
@@ -6701,6 +7018,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
   bindFocusTrap(panel);
   hydrateLegacyConfigValues(configSection, state);
+  bindBotSettingsCategoryNavigation(panel);
 
   const commitInputIfNeeded = async (input: HTMLInputElement) => {
     if (input.dataset.pendingCommit !== 'true' || input.dataset.submitInFlight === 'true') {
@@ -6819,6 +7137,7 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
 
   bindConfigToggleMenus(configSection, controller);
   bindTradeTerminalPrefsMenu(configSection, controller);
+  bindChainFilterPrefsMenus(configSection, controller, state);
   bindSoundUploadStrip(configSection, state);
 
   configSection.querySelectorAll<HTMLElement>('.config-toggle-list-scroll').forEach((list) => {
@@ -6831,6 +7150,142 @@ function bindBotSettingsPanel(section: ParentNode, controller: AppController, st
       event.stopPropagation();
       list.scrollTop += event.deltaY;
     }, { passive: false });
+  });
+}
+
+function bindBotSettingsCategoryNavigation(panel: HTMLElement) {
+  const buttons = [...panel.querySelectorAll<HTMLButtonElement>('[data-bot-settings-nav]')];
+  const sections = [...panel.querySelectorAll<HTMLElement>('[data-bot-settings-section]')];
+  const title = panel.querySelector<HTMLElement>('[data-bot-settings-title]');
+
+  const activate = (category: BotSettingsCategory, focus = false) => {
+    const meta = BOT_SETTINGS_CATEGORIES.find((item) => item.key === category);
+    if (!meta) {
+      return;
+    }
+
+    for (const button of buttons) {
+      const isActive = button.dataset.botSettingsNav === category;
+      button.classList.toggle('active', isActive);
+      button.setAttribute('aria-selected', String(isActive));
+      button.tabIndex = isActive ? 0 : -1;
+      if (isActive && focus) {
+        button.focus();
+      }
+    }
+    for (const content of sections) {
+      const isActive = content.dataset.botSettingsSection === category;
+      content.classList.toggle('active', isActive);
+      content.hidden = !isActive;
+      if (!isActive) {
+        content.querySelectorAll<HTMLElement>('.config-menu-wrap.open').forEach((wrap) => {
+          wrap.classList.remove('open');
+        });
+      }
+    }
+    if (title) {
+      title.textContent = meta.title;
+    }
+  };
+
+  for (const [index, button] of buttons.entries()) {
+    button.tabIndex = index === 0 ? 0 : -1;
+    button.addEventListener('click', () => {
+      const category = button.dataset.botSettingsNav as BotSettingsCategory | undefined;
+      if (category) {
+        activate(category);
+      }
+    });
+    button.addEventListener('keydown', (event) => {
+      const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        ? 1
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+          ? -1
+          : 0;
+      const nextIndex = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? buttons.length - 1
+          : direction === 0
+            ? -1
+            : (index + direction + buttons.length) % buttons.length;
+      if (nextIndex < 0) {
+        return;
+      }
+      event.preventDefault();
+      const category = buttons[nextIndex]?.dataset.botSettingsNav as BotSettingsCategory | undefined;
+      if (category) {
+        activate(category, true);
+      }
+    });
+  }
+}
+
+function isConfigurableChainFilterSurface(
+  value: string | undefined,
+): value is ConfigurableChainFilterSurface {
+  return value === 'radarChains'
+    || value === 'alertFeedChains'
+    || value === 'browserNotificationChains';
+}
+
+function bindChainFilterPrefsMenus(
+  section: HTMLElement,
+  controller: AppController,
+  state: AppState,
+) {
+  section.querySelectorAll<HTMLElement>('[data-chain-filter-icon]').forEach((placeholder) => {
+    const chain = state.ui.chainFilters.enabledChains.find((item) => (
+      item === placeholder.dataset.chainFilterIcon
+    ));
+    if (chain) {
+      placeholder.replaceChildren(buildTokenChainIcon(chain));
+    }
+  });
+
+  section.querySelectorAll<HTMLElement>('.chain-filter-menu-wrap').forEach((wrap) => {
+    const surface = wrap.dataset.chainFilterSurface;
+    if (!isConfigurableChainFilterSurface(surface)) {
+      return;
+    }
+
+    const getItems = () => [...wrap.querySelectorAll<HTMLButtonElement>('[data-chain-filter-chain]')];
+    const updateMenuState = () => {
+      const items = getItems();
+      const selectedCount = items.filter((item) => item.classList.contains('active')).length;
+      const summary = wrap.querySelector<HTMLButtonElement>('.config-menu-button');
+      if (summary) {
+        summary.textContent = `${selectedCount}/${items.length} on`;
+      }
+      for (const item of items) {
+        const isActive = item.classList.contains('active');
+        const title = item.dataset.chainTitle || 'Blockchain';
+        item.disabled = isActive && selectedCount === 1;
+        item.setAttribute('aria-pressed', String(isActive));
+        item.setAttribute('aria-label', `${isActive ? 'Hide' : 'Show'} ${title} in ${CHAIN_FILTER_MENU_META[surface].label}`);
+        item.title = item.disabled ? `${title} is the only selected blockchain` : title;
+        const stateLabel = item.querySelector<HTMLElement>('.config-toggle-state');
+        if (stateLabel) {
+          stateLabel.textContent = isActive ? 'ON' : 'OFF';
+        }
+      }
+    };
+
+    for (const button of getItems()) {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const chain = state.ui.chainFilters.enabledChains.find((item) => (
+          item === button.dataset.chainFilterChain
+        ));
+        if (!chain || (button.classList.contains('active') && button.disabled)) {
+          return;
+        }
+        button.classList.toggle('active');
+        updateMenuState();
+        controller.toggleSurfaceChain(surface, chain);
+      });
+    }
   });
 }
 
@@ -6898,7 +7353,8 @@ function bindBlockedTokensPanel(section: ParentNode, controller: AppController) 
     button.addEventListener('click', () => {
       const address = button.dataset.address;
       if (address) {
-        void controller.removeBlockedToken(address);
+        const chain = button.dataset.chain === 'robinhood' ? 'robinhood' : 'solana';
+        void controller.removeBlockedToken(address, chain);
       }
     });
   });
@@ -7402,49 +7858,6 @@ function isConfigEnabled(state: AppState, key: string) {
   return String(state.data.configs[key] ?? 'on') !== 'off';
 }
 
-function renderSurgeThresholdMenu(state: AppState) {
-  const recent1h = Number(state.data.configs['recent-surge-1h-threshold'] ?? 50);
-  const recent6h = Number(state.data.configs['recent-surge-6h-threshold'] ?? 100);
-  const oldWeek1h = Number(state.data.configs['old-week-surge-1h-threshold'] ?? 50);
-  const oldWeek6h = Number(state.data.configs['old-week-surge-6h-threshold'] ?? 100);
-  return `
-    <div class="config-item config-item-menu">
-      <label>
-        <span>Surge threshold</span>
-        <span class="config-help-hover" tabindex="0" aria-label="What is Surge alert?">
-          <span class="config-help-trigger">?</span>
-          <span class="config-help-panel">
-            Surge uses token age and Dex price change. Recent 1H covers tokens from 1d up to 7d old, recent 6H covers tokens from 2d up to 7d old, and old surge covers tokens from 7d+. Already-hot tokens are suppressed on startup until a real new crossing happens.
-          </span>
-        </span>
-      </label>
-      <div class="sort-menu-wrap config-menu-wrap" data-sort-wrap>
-        <button type="button" class="old-filter-btn config-menu-button active" data-sort-toggle="surge-threshold">Recent ${Math.round(recent1h)}%/${Math.round(recent6h)}% · Old ${Math.round(oldWeek1h)}%/${Math.round(oldWeek6h)}%</button>
-        <div class="sort-menu-dropdown config-menu-dropdown config-threshold-dropdown">
-          <div class="config-threshold-grid">
-            <div class="config-threshold-field">
-              <span>Recent 1H (1d-7d)</span>
-              <input type="number" min="0" name="recent-surge-1h-threshold" />
-            </div>
-            <div class="config-threshold-field">
-              <span>Recent 6H (2d-7d)</span>
-              <input type="number" min="0" name="recent-surge-6h-threshold" />
-            </div>
-            <div class="config-threshold-field">
-              <span>Old 1H (7d+)</span>
-              <input type="number" min="0" name="old-week-surge-1h-threshold" />
-            </div>
-            <div class="config-threshold-field">
-              <span>Old 6H (7d+)</span>
-              <input type="number" min="0" name="old-week-surge-6h-threshold" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function renderConfigToggleMenu(
   state: AppState,
   label: string,
@@ -7665,21 +8078,6 @@ function renderLegacyActions(state: AppState, controller: AppController) {
 
   section.querySelector<HTMLButtonElement>('[data-action="dismiss-flash"]')?.addEventListener('click', () => controller.clearNotice());
   return section;
-}
-
-function renderConfigField(_state: AppState, field: ConfigField) {
-  const type = field.type ?? 'number';
-  const safeLabel = escapeHtml(field.label);
-  const safeType = escapeHtml(type);
-  const safeKey = escapeHtml(field.key);
-  const safePlaceholder = field.placeholder ? escapeHtml(field.placeholder) : null;
-
-  return `
-    <div class="config-item">
-      <label>${safeLabel}</label>
-      <input type="${safeType}" name="${safeKey}" ${field.min != null ? `min="${field.min}"` : ''} ${field.step != null ? `step="${field.step}"` : ''} ${safePlaceholder ? `placeholder="${safePlaceholder}"` : ''}>
-    </div>
-  `;
 }
 
 function renderAdminChainField(_state: AppState) {

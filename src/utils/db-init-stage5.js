@@ -3,7 +3,7 @@
 const TABLES = `
   CREATE TABLE IF NOT EXISTS token_catalog (
     id                        SERIAL PRIMARY KEY,
-    address                   VARCHAR(64) NOT NULL UNIQUE,
+    address                   VARCHAR(64) NOT NULL,
     chain                     VARCHAR(32) NOT NULL DEFAULT 'solana',
     symbol                    VARCHAR(64),
     name                      VARCHAR(128),
@@ -19,7 +19,8 @@ const TABLES = `
     last_twitter_url          TEXT,
     last_community_url        TEXT,
     is_active_monitor_candidate BOOLEAN NOT NULL DEFAULT TRUE,
-    metadata_updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    metadata_updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (chain, address)
   );
 
   CREATE INDEX IF NOT EXISTS idx_token_catalog_chain

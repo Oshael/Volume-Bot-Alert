@@ -48,6 +48,7 @@ describe('chart alert history cache', () => {
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume6h, 34000);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume24h, 56000);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'monitored-mcap', mcap: null }).mcap, null);
+    assert.equal(history.normalizeChartAlertEvent({ ...base, chain: 'robinhood', ruleKey: 'monitored-mcap' }), null);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'gmgn-claim-signal' }), null);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'gmgn-vol-1m' }), null);
   });
@@ -63,6 +64,22 @@ describe('chart alert history cache', () => {
 
     const result = history.readChartAlertHistory(address, Date.parse(generatedAt));
     assert.equal(result.events.map((event) => event.id).join(','), '7,8');
+  });
+
+  it('keeps Robinhood realtime alerts out of the Solana address-only cache', () => {
+    const address = '0x1234567890123456789012345678901234567890';
+    const event = history.upsertRealtimeChartAlert({
+      id: 9,
+      chain: 'robinhood',
+      ruleKey: 'monitored-mcap',
+      kind: 'monitored-mcap',
+      address,
+      triggeredAt: '2026-07-03T05:50:00.000Z',
+      mcap: 100000,
+    });
+
+    assert.equal(event, null);
+    assert.equal(history.readChartAlertHistory(address).events.length, 0);
   });
 
   it('expires events using the server clock offset', () => {

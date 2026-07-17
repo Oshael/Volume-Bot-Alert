@@ -24,6 +24,7 @@ function createDeps(overrides = {}) {
   const eventWrites = [];
   const triggeredWrites = [];
   const customTriggeredWrites = [];
+  const activeRuleLookups = [];
   const rearmWrites = [];
   const getStateImpl = overrides.getState;
 
@@ -91,7 +92,8 @@ function createDeps(overrides = {}) {
         },
       },
       userCustomAlertRule: {
-        async listActiveByTokenAddress() {
+        async listActiveByTokenIdentity(identity) {
+          activeRuleLookups.push(identity);
           return overrides.customRules || [];
         },
         async markTriggered(id, userId, options) {
@@ -116,6 +118,7 @@ function createDeps(overrides = {}) {
       },
       tokenAlertSignalBuilder: overrides.tokenAlertSignalBuilder,
     },
+    activeRuleLookups,
     customTriggeredWrites,
     eventWrites,
     rearmWrites,
@@ -163,6 +166,7 @@ describe('user alert matcher', () => {
       customRules: [{
         id: 42,
         userId: 15,
+        chain: 'solana',
         tokenAddress: TOKEN_ADDRESS,
         title: 'Mcap target',
         metric: 'mcap',
@@ -178,6 +182,7 @@ describe('user alert matcher', () => {
     const result = await userAlertMatcher.evaluateUpdatedToken({
       tokenBefore: {
         address: TOKEN_ADDRESS,
+        last_evaluated_at: '2026-07-06T05:59:00.000Z',
         last_mcap: 240000,
         last_price: 0.00009,
       },
@@ -193,9 +198,12 @@ describe('user alert matcher', () => {
 
     assert.equal(result.evaluatedProfiles, 0);
     assert.equal(result.emitted, 1);
+    assert.deepEqual(context.activeRuleLookups, [{ chain: 'solana', address: TOKEN_ADDRESS }]);
     assert.equal(context.customTriggeredWrites.length, 1);
     assert.equal(context.customTriggeredWrites[0].id, 42);
+    assert.equal(context.customTriggeredWrites[0].chain, 'solana');
     assert.equal(context.eventWrites.length, 1);
+    assert.equal(context.eventWrites[0].chain, 'solana');
     assert.equal(context.eventWrites[0].ruleKey, 'custom-alert');
     assert.equal(context.eventWrites[0].kind, 'custom-alert');
     assert.equal(context.eventWrites[0].payload.customRuleId, 42);
@@ -208,11 +216,42 @@ describe('user alert matcher', () => {
     assert.deepEqual(context.transactionLog, ['BEGIN', 'COMMIT', 'RELEASE']);
   });
 
+  it('rejects Robinhood at the matcher boundary before loading rules or profiles', async () => {
+    const context = createDeps();
+    context.deps.userCustomAlertRule.listActiveByTokenIdentity = async () => {
+      throw new Error('Robinhood must not load Solana custom rules');
+    };
+    context.deps.userAlertProfileCache.listActiveProfiles = async () => {
+      throw new Error('Robinhood must not load Solana alert profiles');
+    };
+
+    const result = await userAlertMatcher.evaluateUpdatedToken({
+      tokenAfter: {
+        chain: 'robinhood',
+        address: '0x1234567890abcdef1234567890abcdef12345678',
+        last_price: 1,
+        last_mcap: 100000,
+      },
+    }, { deps: context.deps });
+
+    assert.deepEqual(result, {
+      evaluatedProfiles: 0,
+      emitted: 0,
+      rearmed: 0,
+      suppressed: 0,
+      errors: 0,
+      events: [],
+    });
+    assert.equal(context.eventWrites.length, 0);
+    assert.equal(context.triggeredWrites.length, 0);
+  });
+
   it('emits an armed custom alert even when no evaluation pair straddles the target', async () => {
     const context = createDeps({
       customRules: [{
         id: 44,
         userId: 15,
+        chain: 'solana',
         tokenAddress: TOKEN_ADDRESS,
         title: 'Mcap drop',
         metric: 'mcap',
@@ -245,6 +284,7 @@ describe('user alert matcher', () => {
       customRules: [{
         id: 45,
         userId: 15,
+        chain: 'solana',
         tokenAddress: TOKEN_ADDRESS,
         title: 'Mcap drop',
         metric: 'mcap',
@@ -277,6 +317,7 @@ describe('user alert matcher', () => {
       customRules: [{
         id: 43,
         userId: 15,
+        chain: 'solana',
         tokenAddress: TOKEN_ADDRESS,
         title: 'Price target',
         metric: 'price',
@@ -289,6 +330,7 @@ describe('user alert matcher', () => {
     const result = await userAlertMatcher.evaluateUpdatedToken({
       tokenBefore: {
         address: TOKEN_ADDRESS,
+        last_evaluated_at: '2026-07-06T05:59:00.000Z',
         last_price: 0.00011,
       },
       tokenAfter: {

@@ -104,7 +104,9 @@ describe('backfill aggregate market buckets', () => {
       assert.match(capturedSql, /COALESCE\(source, ''\) = 'gmgn'/);
       assert.match(capturedSql, /to_timestamp\(/);
       assert.match(capturedSql, /FLOOR\(EXTRACT\(EPOCH FROM b\.bucket_ts\) \/ \(\$2::int \* 60\)\) \* \(\$2::int \* 60\)/);
-      assert.match(capturedSql, /ON CONFLICT \(token_address, granularity_minutes, bucket_ts\) DO UPDATE SET/);
+      assert.match(capturedSql, /INSERT INTO token_market_buckets_agg \(\s+chain,/);
+      assert.match(capturedSql, /SELECT\s+'solana',\s+token_address/);
+      assert.match(capturedSql, /ON CONFLICT \(chain, token_address, granularity_minutes, bucket_ts\) DO UPDATE SET/);
       assert.deepEqual(capturedParams, [[
         'So11111111111111111111111111111111111111112',
       ], 15, 72]);
@@ -134,6 +136,7 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 4);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.match(capturedSql, /WHERE b\.chain = 'solana'/);
       assert.doesNotMatch(capturedSql, /source_stats AS/);
       assert.match(capturedSql, /b\.granularity_minutes = \$3::int/);
       assert.match(capturedSql, /FLOOR\(EXTRACT\(EPOCH FROM b\.bucket_ts\) \/ \(\$2::int \* 60\)\) \* \(\$2::int \* 60\)/);
@@ -194,6 +197,7 @@ describe('backfill aggregate market buckets', () => {
       assert.equal(rowCount, 3);
       assert.match(capturedSql, /INSERT INTO token_market_buckets_agg/);
       assert.match(capturedSql, /FROM token_market_buckets_agg b/);
+      assert.match(capturedSql, /WHERE b\.chain = 'solana'/);
       assert.doesNotMatch(capturedSql, /source_stats AS/);
       assert.match(capturedSql, /b\.granularity_minutes = \$4::int/);
       assert.match(capturedSql, /b\.bucket_ts >= \$2::timestamptz/);

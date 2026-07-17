@@ -15,7 +15,7 @@ function installQueryStub(handler) {
   db.query = async (sql, params = []) => {
     calls.push({ sql, params });
     const normalized = String(sql || '').trim().toUpperCase();
-    if (/admin_token_review_alerts/i.test(sql) && !normalized.startsWith('CREATE')) {
+    if (/admin_token_review_alerts/i.test(sql) && /^(?:INSERT|SELECT|UPDATE|DELETE)/.test(normalized)) {
       return handler(sql, params);
     }
     return { rows: [] };
@@ -26,6 +26,7 @@ function installQueryStub(handler) {
 function buildRow(overrides = {}) {
   return {
     id: 7,
+    chain: 'solana',
     token_address: 'So11111111111111111111111111111111111111112',
     status: 'open',
     priority: 'high',
@@ -52,14 +53,15 @@ describe('admin token review alert model', () => {
   it('enqueues open review alerts with normalized JSON payloads', async () => {
     const calls = installQueryStub((_sql, params) => ({
       rows: [buildRow({
-        token_address: params[0],
-        priority: params[1],
-        alert_kind: params[2],
-        pipeline: params[3],
-        label: params[4],
-        reason_codes: JSON.parse(params[5]),
-        assessment: JSON.parse(params[6]),
-        social_snapshot: JSON.parse(params[7]),
+        chain: params[0],
+        token_address: params[1],
+        priority: params[2],
+        alert_kind: params[3],
+        pipeline: params[4],
+        label: params[5],
+        reason_codes: JSON.parse(params[6]),
+        assessment: JSON.parse(params[7]),
+        social_snapshot: JSON.parse(params[8]),
       })],
     }));
 
@@ -75,18 +77,20 @@ describe('admin token review alert model', () => {
     });
 
     assert.equal(row.tokenAddress, 'So11111111111111111111111111111111111111112');
+    assert.equal(row.chain, 'solana');
     assert.equal(row.priority, 'high');
     assert.equal(row.alertKind, 'manual-review-socials-present');
     assert.deepEqual(row.reasonCodes, ['holder_concentration_extreme']);
     assert.equal(row.socialSnapshot.twitterUrl, 'https://x.com/example');
-    assert.ok(calls.some((call) => /ON CONFLICT \(token_address, alert_kind\)/.test(call.sql)));
+    assert.ok(calls.some((call) => /ON CONFLICT \(chain, token_address, alert_kind\)/.test(call.sql)));
   });
 
   it('lists recent alerts by open status and optional address', async () => {
     const calls = installQueryStub((_sql, params) => {
-      assert.equal(params[0], 'open');
-      assert.equal(params[1], 'So11111111111111111111111111111111111111112');
-      assert.equal(params[2], 25);
+      assert.equal(params[0], 'solana');
+      assert.equal(params[1], 'open');
+      assert.equal(params[2], 'So11111111111111111111111111111111111111112');
+      assert.equal(params[3], 25);
       return { rows: [buildRow()] };
     });
 
@@ -99,6 +103,16 @@ describe('admin token review alert model', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'open');
     assert.ok(calls.some((call) => /ORDER BY\s+CASE priority/.test(call.sql)));
+  });
+
+  it('keeps automatic Robinhood review alerts disabled', async () => {
+    await assert.rejects(
+      () => adminTokenReviewAlert.enqueue({
+        chain: 'robinhood',
+        tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      }),
+      (error) => error.code === 'NON_SOLANA_ADMIN_REVIEW_ALERT_DISABLED'
+    );
   });
 
   it('resolves an open alert with the chosen resolution', async () => {

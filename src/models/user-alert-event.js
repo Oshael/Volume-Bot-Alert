@@ -1,5 +1,8 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+const {
+  assertAutomaticAlertPublicationAuthorized,
+} = require('../services/automatic-alert-publication-guard');
 
 function normalizeUserId(value) {
   const userId = Number.parseInt(String(value || '').trim(), 10);
@@ -31,12 +34,21 @@ function normalizeKind(value) {
   return kind;
 }
 
-function normalizeTokenAddress(value) {
-  const tokenAddress = String(value || '').trim();
-  if (!isValidAddress(tokenAddress)) {
-    throw new Error('Invalid token address format');
-  }
-  return tokenAddress;
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
+
+function assertAutomaticAlertsEnabled(chain) {
+  if (chain === 'solana') return;
+  const error = new Error('Automatic alerts are disabled outside Solana');
+  error.code = 'NON_SOLANA_ALERT_TRIGGER_DISABLED';
+  throw error;
+}
+
+function assertAutomaticEventCreationEnabled(chain, authorization) {
+  if (chain === 'solana') return;
+  assertAutomaticAlertPublicationAuthorized(authorization, chain);
 }
 
 function normalizeDedupeKey(value) {
@@ -77,6 +89,7 @@ function mapEventRow(row) {
     userId: Number(row.user_id) || null,
     ruleKey: row.rule_key || null,
     kind: row.kind || null,
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     dedupeKey: row.dedupe_key || null,
     payload: normalizePayload(row.payload),
@@ -89,7 +102,8 @@ async function createEvent(payload = {}, runner = db) {
   const userId = normalizeUserId(payload.userId);
   const ruleKey = normalizeRuleKey(payload.ruleKey);
   const kind = normalizeKind(payload.kind);
-  const tokenAddress = normalizeTokenAddress(payload.tokenAddress);
+  const identity = normalizeIdentity(payload.tokenAddress, payload.chain || 'solana');
+  assertAutomaticAlertsEnabled(identity.chain);
   const dedupeKey = normalizeDedupeKey(payload.dedupeKey);
   const eventPayload = normalizePayload(payload.payload);
   const triggeredAt = toTimestampOrNull(payload.triggeredAt) || new Date();
@@ -99,13 +113,14 @@ async function createEvent(payload = {}, runner = db) {
        user_id,
        rule_key,
        kind,
+       chain,
        token_address,
        dedupe_key,
        payload,
        triggered_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-     ON CONFLICT (user_id, dedupe_key) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+     ON CONFLICT (user_id, chain, dedupe_key) DO UPDATE SET
        rule_key = EXCLUDED.rule_key,
        kind = EXCLUDED.kind,
        token_address = EXCLUDED.token_address,
@@ -116,7 +131,48 @@ async function createEvent(payload = {}, runner = db) {
       userId,
       ruleKey,
       kind,
-      tokenAddress,
+      identity.chain,
+      identity.address,
+      dedupeKey,
+      JSON.stringify(eventPayload),
+      triggeredAt,
+    ]
+  );
+
+  return mapEventRow(rows[0] || null);
+}
+
+async function createEventOnce(payload = {}, options = {}) {
+  const runner = options.db && typeof options.db.query === 'function' ? options.db : db;
+  const userId = normalizeUserId(payload.userId);
+  const ruleKey = normalizeRuleKey(payload.ruleKey);
+  const kind = normalizeKind(payload.kind);
+  const identity = normalizeIdentity(payload.tokenAddress, payload.chain || 'solana');
+  assertAutomaticEventCreationEnabled(identity.chain, options.authorization);
+  const dedupeKey = normalizeDedupeKey(payload.dedupeKey);
+  const eventPayload = normalizePayload(payload.payload);
+  const triggeredAt = toTimestampOrNull(payload.triggeredAt) || new Date();
+
+  const { rows } = await runner.query(
+    `INSERT INTO user_alert_events (
+       user_id,
+       rule_key,
+       kind,
+       chain,
+       token_address,
+       dedupe_key,
+       payload,
+       triggered_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+     ON CONFLICT (user_id, chain, dedupe_key) DO NOTHING
+     RETURNING *`,
+    [
+      userId,
+      ruleKey,
+      kind,
+      identity.chain,
+      identity.address,
       dedupeKey,
       JSON.stringify(eventPayload),
       triggeredAt,
@@ -128,10 +184,11 @@ async function createEvent(payload = {}, runner = db) {
 
 async function listRecentEvents(filters = {}, runner = db) {
   const userId = normalizeUserId(filters.userId);
+  const chain = normalizeTokenChain(filters.chain || 'solana');
   const limit = Math.max(1, Math.min(Number(filters.limit) || 50, 200));
   const sort = String(filters.sort || 'desc').trim().toLowerCase() === 'asc' ? 'ASC' : 'DESC';
-  const values = [userId];
-  const clauses = ['user_id = $1'];
+  const values = [userId, chain];
+  const clauses = ['user_id = $1', 'chain = $2'];
 
   if (filters.ruleKey != null && String(filters.ruleKey).trim() !== '') {
     values.push(normalizeRuleKey(filters.ruleKey));
@@ -139,7 +196,7 @@ async function listRecentEvents(filters = {}, runner = db) {
   }
 
   if (filters.tokenAddress != null && String(filters.tokenAddress).trim() !== '') {
-    values.push(normalizeTokenAddress(filters.tokenAddress));
+    values.push(normalizeTokenAddress(chain, filters.tokenAddress));
     clauses.push(`token_address = $${values.length}`);
   }
 
@@ -150,6 +207,17 @@ async function listRecentEvents(filters = {}, runner = db) {
     }
     values.push(afterId);
     clauses.push(`id > $${values.length}`);
+  }
+
+  if (filters.dismissedByUserId != null) {
+    values.push(normalizeUserId(filters.dismissedByUserId));
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM alert_event_dismissals dismissal
+      WHERE dismissal.user_id = $${values.length}
+        AND dismissal.rule_key = user_alert_events.rule_key
+        AND dismissal.chain = user_alert_events.chain
+        AND dismissal.event_id = user_alert_events.id
+    )`);
   }
 
   values.push(limit);
@@ -167,7 +235,8 @@ async function listRecentEvents(filters = {}, runner = db) {
 
 async function listChartEvents(filters = {}, runner = db) {
   const userId = normalizeUserId(filters.userId);
-  const tokenAddress = normalizeTokenAddress(filters.tokenAddress);
+  const chain = normalizeTokenChain(filters.chain || 'solana');
+  const tokenAddress = normalizeTokenAddress(chain, filters.tokenAddress);
   const triggeredAfter = toTimestampOrNull(filters.triggeredAfter);
   if (!triggeredAfter) {
     throw new Error('Valid chart alert cutoff is required');
@@ -179,12 +248,13 @@ async function listChartEvents(filters = {}, runner = db) {
     `SELECT *
      FROM user_alert_events
      WHERE user_id = $1
-       AND token_address = $2
-       AND triggered_at >= $3
-       AND rule_key = ANY($4::text[])
+       AND chain = $2
+       AND token_address = $3
+       AND triggered_at >= $4
+       AND rule_key = ANY($5::text[])
      ORDER BY triggered_at ASC, id ASC
-     LIMIT $5`,
-    [userId, tokenAddress, triggeredAfter, ruleKeys, limit]
+     LIMIT $6`,
+    [userId, chain, tokenAddress, triggeredAfter, ruleKeys, limit]
   );
 
   return rows.map((row) => mapEventRow(row));
@@ -192,8 +262,9 @@ async function listChartEvents(filters = {}, runner = db) {
 
 async function getLatestEventId(filters = {}, runner = db) {
   const userId = normalizeUserId(filters.userId);
-  const values = [userId];
-  const clauses = ['user_id = $1'];
+  const chain = normalizeTokenChain(filters.chain || 'solana');
+  const values = [userId, chain];
+  const clauses = ['user_id = $1', 'chain = $2'];
 
   if (filters.ruleKey != null && String(filters.ruleKey).trim() !== '') {
     values.push(normalizeRuleKey(filters.ruleKey));
@@ -201,7 +272,7 @@ async function getLatestEventId(filters = {}, runner = db) {
   }
 
   if (filters.tokenAddress != null && String(filters.tokenAddress).trim() !== '') {
-    values.push(normalizeTokenAddress(filters.tokenAddress));
+    values.push(normalizeTokenAddress(chain, filters.tokenAddress));
     clauses.push(`token_address = $${values.length}`);
   }
 
@@ -236,18 +307,19 @@ async function getEventForUser(eventId, userId, runner = db) {
 
 module.exports = {
   createEvent,
+  createEventOnce,
   getEventForUser,
   getLatestEventId,
   listChartEvents,
   listRecentEvents,
   __private: {
     mapEventRow,
+    normalizeIdentity,
     normalizeDedupeKey,
     normalizeKind,
     normalizePayload,
     normalizeRuleKey,
     normalizeRuleKeys,
-    normalizeTokenAddress,
     normalizeUserId,
     toTimestampOrNull,
   },

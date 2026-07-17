@@ -13,6 +13,12 @@ function normalizeRuleKey(value) {
   return normalized;
 }
 
+function normalizeUserId(value) {
+  const userId = Number.parseInt(String(value || '').trim(), 10);
+  if (!Number.isInteger(userId) || userId <= 0) throw new Error('Valid user id is required');
+  return userId;
+}
+
 function normalizeTokenAddress(value) {
   const tokenAddress = String(value || '').trim();
   if (!isValidAddress(tokenAddress)) {
@@ -93,6 +99,17 @@ async function listRecentEvents(filters = {}, runner = db) {
 
   if (filters.includeBaseline !== true) {
     clauses.push('is_baseline = false');
+  }
+
+  if (filters.dismissedByUserId != null) {
+    values.push(normalizeUserId(filters.dismissedByUserId));
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM alert_event_dismissals dismissal
+      WHERE dismissal.user_id = $${values.length}
+        AND dismissal.rule_key = gmgn_claim_alert_events.rule_key
+        AND dismissal.chain = 'solana'
+        AND dismissal.event_id = gmgn_claim_alert_events.id
+    )`);
   }
 
   values.push(limit);

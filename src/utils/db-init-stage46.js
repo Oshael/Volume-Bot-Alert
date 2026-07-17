@@ -7,6 +7,7 @@ const db = require('../models/db');
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS admin_token_review_alerts (
      id SERIAL PRIMARY KEY,
+     chain VARCHAR(16) NOT NULL DEFAULT 'solana',
      token_address VARCHAR(64) NOT NULL,
      status VARCHAR(24) NOT NULL DEFAULT 'open',
      priority VARCHAR(24) NOT NULL DEFAULT 'normal',
@@ -26,13 +27,15 @@ const STATEMENTS = [
      resolution VARCHAR(32),
      notes TEXT
    )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_token_review_alerts_open_token_kind
-     ON admin_token_review_alerts(token_address, alert_kind)
+  `ALTER TABLE admin_token_review_alerts
+     ADD COLUMN IF NOT EXISTS chain VARCHAR(16) NOT NULL DEFAULT 'solana'`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_review_alerts_open_chain_token_kind
+     ON admin_token_review_alerts(chain, token_address, alert_kind)
      WHERE status = 'open'`,
   `CREATE INDEX IF NOT EXISTS idx_admin_token_review_alerts_status_priority
      ON admin_token_review_alerts(status, priority, created_at DESC, id DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_admin_token_review_alerts_token_created
-     ON admin_token_review_alerts(token_address, created_at DESC, id DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_admin_token_review_alerts_chain_token_created
+     ON admin_token_review_alerts(chain, token_address, created_at DESC, id DESC)`,
 ];
 
 async function init(options = {}) {

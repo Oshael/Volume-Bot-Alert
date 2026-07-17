@@ -1,0 +1,88 @@
+const { normalizeTokenAddress } = require('../utils/token-identity');
+const { normalizeText, sanitizeAssetUrl } = require('../utils/url-safety');
+
+const DEFAULT_BASE_URL = 'https://robinhoodchain.blockscout.com/api/v2/tokens/';
+const DEFAULT_TIMEOUT_MS = 5000;
+
+class RobinhoodBlockscoutMetadataError extends Error {
+  constructor(message, code, details = {}) {
+    super(message);
+    this.name = 'RobinhoodBlockscoutMetadataError';
+    this.code = code;
+    this.httpStatus = details.httpStatus ?? null;
+  }
+}
+
+function boundedTimeout(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? Math.max(1000, Math.min(parsed, 15_000)) : DEFAULT_TIMEOUT_MS;
+}
+
+function normalizePayload(address, payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new RobinhoodBlockscoutMetadataError('Blockscout token response is invalid', 'invalid_response');
+  }
+  const responseAddress = normalizeTokenAddress('robinhood', payload.address_hash);
+  if (responseAddress !== address) {
+    throw new RobinhoodBlockscoutMetadataError('Blockscout token address mismatch', 'address_mismatch');
+  }
+  return Object.freeze({
+    address,
+    available: true,
+    symbol: normalizeText(payload.symbol, 64),
+    name: normalizeText(payload.name, 128),
+    imageUrl: sanitizeAssetUrl(payload.icon_url),
+    decimals: /^\d+$/.test(String(payload.decimals ?? '')) ? Number(payload.decimals) : null,
+    reputation: normalizeText(payload.reputation, 32),
+  });
+}
+
+function createRobinhoodBlockscoutMetadataClient(options = {}) {
+  const fetchImpl = options.fetchImpl || global.fetch;
+  if (typeof fetchImpl !== 'function') throw new TypeError('A fetch implementation is required');
+  const baseUrl = new URL(String(options.baseUrl || DEFAULT_BASE_URL));
+  if (baseUrl.protocol !== 'https:') throw new TypeError('Blockscout metadata URL must use HTTPS');
+  const timeoutMs = boundedTimeout(options.timeoutMs);
+
+  async function getTokenMetadata(tokenAddress) {
+    const address = normalizeTokenAddress('robinhood', tokenAddress);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetchImpl(new URL(address, baseUrl), {
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const timedOut = error?.name === 'AbortError';
+      throw new RobinhoodBlockscoutMetadataError(
+        timedOut ? 'Blockscout metadata request timed out' : 'Blockscout metadata request failed',
+        timedOut ? 'timeout' : 'transport_error'
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (response.status === 404) {
+      return Object.freeze({ address, available: false, symbol: null, name: null, imageUrl: null });
+    }
+    if (!response.ok) {
+      throw new RobinhoodBlockscoutMetadataError(
+        `Blockscout metadata returned HTTP ${response.status}`,
+        'http_error',
+        { httpStatus: response.status }
+      );
+    }
+    return normalizePayload(address, await response.json());
+  }
+
+  return Object.freeze({ getTokenMetadata });
+}
+
+module.exports = {
+  DEFAULT_BASE_URL,
+  DEFAULT_TIMEOUT_MS,
+  RobinhoodBlockscoutMetadataError,
+  createRobinhoodBlockscoutMetadataClient,
+  __private: { boundedTimeout, normalizePayload },
+};

@@ -92,6 +92,7 @@ async function executeFillMissing(options = {}) {
 function buildBadBucketWhereSql(granularityMinutes) {
   const granularityFilter = granularityMinutes === 1 ? '' : '\n       AND granularity_minutes = $4::int';
   return `token_address = $1
+       AND chain = 'solana'
        AND bucket_ts >= $2::timestamptz
        AND bucket_ts <= $3::timestamptz${granularityFilter}
        AND (
@@ -133,6 +134,7 @@ async function listExistingBucketTimestamps(client, context) {
     `SELECT bucket_ts
      FROM ${table}
      WHERE token_address = $1
+       AND chain = 'solana'
        AND bucket_ts >= $2::timestamptz
        AND bucket_ts <= $3::timestamptz${granularityFilter}`,
     params

@@ -75,7 +75,8 @@ async function loadExistingBuckets(client, tokenAddress, range, granularityMinut
          sample_count,
          source
        FROM token_market_buckets_1m
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts <= $3::timestamptz
       ORDER BY bucket_ts ASC`,
@@ -130,7 +131,8 @@ async function loadExistingAggregateBuckets(client, tokenAddress, range, granula
          created_at,
          updated_at
        FROM token_market_buckets_agg
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND granularity_minutes = ANY($4::int[])
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts < $3::timestamptz
@@ -172,7 +174,8 @@ async function deleteExistingRows(client, tokenAddress, range, granularityMinute
     : [tokenAddress, range.from, range.to, granularityMinutes];
   const result = await client.query(
     `DELETE FROM ${table}
-     WHERE token_address = $1
+     WHERE chain = 'solana'
+       AND token_address = $1
        AND bucket_ts >= $2::timestamptz
        AND bucket_ts <= $3::timestamptz${granularityFilter}`,
     params
@@ -209,7 +212,8 @@ function buildInsertBatch(buckets, granularityMinutes) {
       const timestampIndex = granularityMinutes === 1 ? 2 : 3;
       return position === offset + timestampIndex ? `$${position}::timestamptz` : `$${position}`;
     });
-    return `(${values.join(', ')})`;
+    const chainPrefix = "'solana', ";
+    return `(${chainPrefix}${values.join(', ')})`;
   }).join(',\n');
 
   return { params, valuesSql };
@@ -219,10 +223,11 @@ async function insertBackfillBuckets(client, buckets, options = {}) {
   const batchSize = Math.max(1, Number(options.batchSize) || DEFAULT_BATCH_SIZE);
   const granularityMinutes = Number(options.granularityMinutes);
   const targetTable = granularityMinutes === 1 ? 'token_market_buckets_1m' : 'token_market_buckets_agg';
+  const chainColumn = 'chain,\n         ';
   const granularityColumn = granularityMinutes === 1 ? '' : '\n         granularity_minutes,';
   const conflictColumns = granularityMinutes === 1
-    ? 'token_address, bucket_ts'
-    : 'token_address, granularity_minutes, bucket_ts';
+    ? 'chain, token_address, bucket_ts'
+    : 'chain, token_address, granularity_minutes, bucket_ts';
   const conflictAction = options.conflictMode === 'ignore'
     ? `ON CONFLICT (${conflictColumns}) DO NOTHING`
     : `ON CONFLICT (${conflictColumns}) DO UPDATE SET
@@ -244,7 +249,7 @@ async function insertBackfillBuckets(client, buckets, options = {}) {
     const { params, valuesSql } = buildInsertBatch(batch, granularityMinutes);
     const result = await client.query(
       `INSERT INTO ${targetTable} (
-         token_address,${granularityColumn}
+         ${chainColumn}token_address,${granularityColumn}
          bucket_ts,
          pair_address,
          open_mcap,
@@ -341,7 +346,8 @@ function buildAggregateRollupSql(sourceGranularityMinutes) {
          sample_count,
          ${sourceColumn}
        FROM ${sourceTable}
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND bucket_ts >= $2::timestamptz
          AND bucket_ts < $3::timestamptz${sourceFilter}
          AND (close_mcap IS NOT NULL OR close_price IS NOT NULL)
@@ -366,12 +372,12 @@ function buildAggregateRollupSql(sourceGranularityMinutes) {
          ${groupByPrefix}rollup_bucket_ts
      )
      INSERT INTO token_market_buckets_agg (
-       token_address, granularity_minutes, bucket_ts, pair_address,
+       chain, token_address, granularity_minutes, bucket_ts, pair_address,
        open_mcap, high_mcap, low_mcap, close_mcap,
        open_price, high_price, low_price, close_price, sample_count, source
      )
      SELECT
-       token_address, granularity_minutes, bucket_ts, pair_address,
+       'solana', token_address, granularity_minutes, bucket_ts, pair_address,
        open_mcap, high_mcap, low_mcap, close_mcap,
        open_price, high_price, low_price, close_price, sample_count, 'coingecko_backfill_rollup'
      FROM aggregated`;
@@ -385,7 +391,8 @@ async function rebuildDependentAggregates(client, tokenAddress, range, sourceGra
     const alignedRange = getAlignedRange(range, targetGranularity);
     await client.query(
       `DELETE FROM token_market_buckets_agg
-       WHERE token_address = $1
+       WHERE chain = 'solana'
+         AND token_address = $1
          AND granularity_minutes = $2::int
          AND bucket_ts >= $3::timestamptz
          AND bucket_ts < $4::timestamptz`,

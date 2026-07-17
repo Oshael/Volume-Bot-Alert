@@ -125,6 +125,7 @@ async function maybeEnqueueManualReviewSocialAlert({
 
   const alertModel = deps.adminTokenReviewAlertModel || adminTokenReviewAlert;
   return alertModel.enqueue({
+    chain: 'solana',
     tokenAddress: address,
     alertKind: ALERT_KIND_SOCIALS_PRESENT,
     priority: resolvePriority(row, assessment, socialSnapshot),

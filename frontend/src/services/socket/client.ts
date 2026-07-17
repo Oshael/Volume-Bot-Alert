@@ -1,22 +1,26 @@
 import { io, type Socket } from 'socket.io-client';
 import { resolveApiBase } from '../api/base';
-import type { DashboardAlertEvent, TokenSparklineCandleItem } from '../api/catalog';
+import type { DashboardAlertEvent } from '../api/catalog';
+import type { TokenChain } from '../../utils/token-chain';
+import {
+  createMarketEventOrderGate,
+  normalizeMarketBucketUpdate,
+  normalizeMarketSubscription,
+  type MarketBucketUpdateEvent,
+  type MarketSubscriptionIdentity,
+} from './market-events';
+
+export type { MarketBucketUpdateEvent } from './market-events';
 
 let socket: Socket | null = null;
-const desiredMarketSubscriptions = new Set<string>();
+const chartMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
+const workspaceMarketSubscriptions = new Map<string, MarketSubscriptionIdentity>();
+const marketEventOrder = createMarketEventOrderGate();
 let desiredLivePresence: {
   workspace: 'live';
   mode: 'foreground' | 'hidden' | 'inactive';
   hiddenGraceMs?: number;
 } | null = null;
-
-export interface MarketBucketUpdateEvent {
-  address: string;
-  pairAddress?: string | null;
-  granularityMinutes: number;
-  generatedAt?: string | null;
-  candle: TokenSparklineCandleItem;
-}
 
 export function connectSocket(): Socket {
   if (socket) {
@@ -32,6 +36,17 @@ export function connectSocket(): Socket {
   });
 
   return socket;
+}
+
+function getDesiredMarketSubscriptions() {
+  return new Map([...workspaceMarketSubscriptions, ...chartMarketSubscriptions]);
+}
+
+function emitMarketSubscriptionSync(current = socket) {
+  if (!current?.connected) return;
+  const subscriptions = [...getDesiredMarketSubscriptions().values()]
+    .map(({ chain, address }) => ({ chain, address }));
+  current.emit('market:sync', { subscriptions });
 }
 
 export function bindSocketLifecycle(options: {
@@ -53,9 +68,7 @@ export function bindSocketLifecycle(options: {
     if (desiredLivePresence) {
       current.emit('live:presence', desiredLivePresence);
     }
-    for (const address of desiredMarketSubscriptions) {
-      current.emit('market:subscribe', { address });
-    }
+    emitMarketSubscriptionSync(current);
     options.onStatus?.('Socket connected.');
   });
 
@@ -75,8 +88,11 @@ export function bindSocketLifecycle(options: {
     options.onAlertEvent?.(payload);
   });
 
-  current.on('market:bucket', (payload: MarketBucketUpdateEvent) => {
-    options.onMarketBucket?.(payload);
+  current.on('market:bucket', (payload: unknown) => {
+    const event = normalizeMarketBucketUpdate(payload);
+    if (event && marketEventOrder.accept(event)) {
+      options.onMarketBucket?.(event);
+    }
   });
 
   return current;
@@ -90,26 +106,35 @@ export function unsubscribePumpMint(_mint: string) {
   return false;
 }
 
-export function subscribeMarketChart(address: string) {
-  const normalized = String(address || '').trim();
-  if (!normalized) {
-    return false;
-  }
+export function subscribeMarketChart(address: string, chain: TokenChain = 'solana') {
+  const identity = normalizeMarketSubscription(address, chain);
+  if (!identity) return false;
 
-  desiredMarketSubscriptions.add(normalized);
-  connectSocket().emit('market:subscribe', { address: normalized });
+  chartMarketSubscriptions.set(identity.key, identity);
+  emitMarketSubscriptionSync(connectSocket());
   return true;
 }
 
-export function unsubscribeMarketChart(address: string) {
-  const normalized = String(address || '').trim();
-  if (!normalized) {
-    return false;
-  }
+export function unsubscribeMarketChart(address: string, chain: TokenChain = 'solana') {
+  const identity = normalizeMarketSubscription(address, chain);
+  if (!identity) return false;
 
-  desiredMarketSubscriptions.delete(normalized);
-  socket?.emit('market:unsubscribe', { address: normalized });
+  chartMarketSubscriptions.delete(identity.key);
+  if (!workspaceMarketSubscriptions.has(identity.key)) marketEventOrder.clearIdentity(identity);
+  emitMarketSubscriptionSync();
   return true;
+}
+
+export function replaceWorkspaceMarketSubscriptions(items: MarketSubscriptionIdentity[]) {
+  const previousKeys = [...workspaceMarketSubscriptions.keys()].sort().join('|');
+  workspaceMarketSubscriptions.clear();
+  for (const item of items) {
+    const identity = normalizeMarketSubscription(item.address, item.chain);
+    if (identity) workspaceMarketSubscriptions.set(identity.key, identity);
+  }
+  const nextKeys = [...workspaceMarketSubscriptions.keys()].sort().join('|');
+  if (previousKeys !== nextKeys) emitMarketSubscriptionSync();
+  return workspaceMarketSubscriptions.size;
 }
 
 export function getSocket(): Socket | null {
@@ -144,6 +169,8 @@ export function updateLivePresence(payload: {
 }
 
 export function disconnectSocket() {
-  desiredMarketSubscriptions.clear();
+  chartMarketSubscriptions.clear();
+  workspaceMarketSubscriptions.clear();
+  marketEventOrder.clear();
   socket?.disconnect();
 }

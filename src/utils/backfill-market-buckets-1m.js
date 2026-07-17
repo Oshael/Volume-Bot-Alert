@@ -138,7 +138,8 @@ async function resetExistingBuckets(options) {
     )
     DELETE FROM token_market_buckets_1m buckets
     USING candidate_buckets cb
-    WHERE buckets.token_address = cb.token_address
+    WHERE buckets.chain = 'solana'
+      AND buckets.token_address = cb.token_address
       AND buckets.bucket_ts = cb.bucket_ts
   `;
 
@@ -196,6 +197,7 @@ async function backfillBuckets(options) {
       GROUP BY token_address, bucket_ts
     )
     INSERT INTO token_market_buckets_1m (
+      chain,
       token_address,
       bucket_ts,
       open_mcap,
@@ -210,6 +212,7 @@ async function backfillBuckets(options) {
       source
     )
     SELECT
+      'solana',
       token_address,
       bucket_ts,
       open_mcap,
@@ -223,7 +226,7 @@ async function backfillBuckets(options) {
       sample_count,
       'snapshot_backfill'
     FROM aggregated
-    ON CONFLICT (token_address, bucket_ts) DO UPDATE SET
+    ON CONFLICT (chain, token_address, bucket_ts) DO UPDATE SET
       open_mcap = EXCLUDED.open_mcap,
       high_mcap = EXCLUDED.high_mcap,
       low_mcap = EXCLUDED.low_mcap,
@@ -283,7 +286,9 @@ if (require.main === module) {
 module.exports = {
   run,
   __private: {
+    backfillBuckets,
     parseCliArgs,
     parseOptionalInteger,
+    resetExistingBuckets,
   },
 };

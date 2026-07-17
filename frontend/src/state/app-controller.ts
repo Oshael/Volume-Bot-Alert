@@ -1,5 +1,23 @@
-import { createAppState, getManualTokens, getMonitoredTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
+import { createAppState, getAlertFeedAlerts, getManualTokens, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTrackedToken, isMockTradingEnabled, type AddressItem, type AdminTokenReviewAlertEntry, type AlertEntry, type AppState, type AuthPanel, type BidZoneTokenEntry, type BillingOrderEntry, type BillingPlanEntry, type BlockTokenWarningState, type BucketSortCriterion, type BucketSortMode, type BucketSortWindow, type CollapsibleSectionKey, type CustomAlertMetric, type CustomAlertPreviewInput, type CustomAlertRuleEntry, type LinkedIdentityEntry, type ManualTokenEntry, type ManualTokenFolderEntry, type ManualTokenFolderItemEntry, type MeteoraEntry, type MockTradingPositionEntry, type MockTradingTradeEntry, type MockTradingWalletEntry, type MonitoredSortCriterion, type MonitoredSortMode, type MonitoredSortWindow, type ProfileAuthPanel, type PumpTokenEntry, type TokenSparklineCandleEntry, type TokenSparklineEntry, type WorkspaceView } from '../state/app-state';
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
+import {
+  createLegacyCompatibleTokenIdentity,
+  hasEnabledChainCapability,
+  normalizeAvailableTokenChains,
+  normalizeChainFilterPreferences,
+  normalizeStoredTokenIdentityKeys,
+  normalizeTokenChain,
+  parseTokenIdentityKey,
+  toggleEnabledTokenChain,
+  toggleTokenChainForSurface,
+  type TokenChain,
+  type TokenIdentity,
+  type WorkspaceChainCapability,
+} from '../utils/token-chain';
+import {
+  resolveWorkspaceMarketSnapshotMs,
+  selectWorkspaceSnapshotValue,
+} from '../utils/token-valuation';
 import {
   changePassword as changePasswordRequest,
   confirmEmailVerification as confirmEmailVerificationRequest,
@@ -28,9 +46,11 @@ import {
   addManualTokenToFolder as addManualTokenToFolderRequest,
   addManualToken as addManualTokenRequest,
   addBlockedToken as addBlockedTokenRequest,
+  addStarredToken as addStarredTokenRequest,
   createManualTokenFolder as createManualTokenFolderRequest,
   deleteManualTokenFolder as deleteManualTokenFolderRequest,
   fetchAdminTokenReviewAlerts,
+  fetchChainReadiness,
   fetchConfig,
   fetchManualTokenFolders,
   patchConfig,
@@ -39,7 +59,7 @@ import {
   removeManualTokenFromFolder as removeManualTokenFromFolderRequest,
   removeManualToken as removeManualTokenRequest,
   removeBlockedToken as removeBlockedTokenRequest,
-  syncConfig,
+  removeStarredToken as removeStarredTokenRequest,
   updateManualTokenFolder as updateManualTokenFolderRequest,
   type AdminTokenReviewResolution,
   type ConfigPayload,
@@ -57,9 +77,11 @@ import {
 } from '../services/api/account';
 import { createBillingOrder, fetchBillingState, fetchPublicBillingPlans, type BillingStatePayload, type PublicBillingPlansPayload } from '../services/api/billing';
 import { completePreAccessSession, createPreAccessOrder, fetchPreAccessBillingState, fetchPreAccessMe, logoutPreAccessSession, syncPreAccessOrder, type PreAccessBillingStatePayload } from '../services/api/pre-access';
-import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
+import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUnblockTokenRequest, clearDashboardAlertEvents, createCustomAlertRule as createCustomAlertRuleRequest, disableCustomAlertRule as disableCustomAlertRuleRequest, dismissDashboardAlertEvent, fetchCustomAlertRules as fetchCustomAlertRulesRequest, updateCustomAlertRule as updateCustomAlertRuleRequest, type CreateCustomAlertRulePayload, type CustomAlertRule, fetchBidZoneCandidates, fetchDashboardAlertFeeds, fetchDashboardHistoryBootstrap, fetchDashboardMonitored, fetchDashboardTopPerformers, fetchExpandedTokenSparkline, fetchMeteoraBatch, fetchMonitoredMetadataBatch, fetchPumpfunTokenMeta, fetchTokenSparklines, refreshBidZoneSnapshot as refreshBidZoneSnapshotRequest, reportMigratedToken, resetMonitoredPins as resetMonitoredPinsRequest, saveMonitoredPins as saveMonitoredPinsRequest, trackManualToken, updateDashboardAlertCursor, type BidZonePayload, type DashboardAlertEvent, type DashboardHistoryBucketRequest, type DashboardHistoryDebugProbeEntry, type DashboardMonitoredPin, type DashboardMonitoredToken, type DashboardTopPerformersPayload, type MeteoraBatchItem, type TokenSparklinesPayload } from '../services/api/catalog';
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
+import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
+import { normalizeCustomAlertCapabilities, requireCustomAlertCapability } from '../services/alerts/custom-alert-capability';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
   clearRecentRemovalLogStorage,
@@ -73,7 +95,8 @@ import {
   saveDismissedOldWeek,
   saveDismissedRecent,
 } from '../utils/bar-storage';
-import { bindSocketLifecycle, disconnectSocket, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
+import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
+import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, shouldReplaceMarketCandleClose } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
   normalizeInviteCode,
@@ -140,6 +163,10 @@ const SOCIAL_LINK_SYNC_TIMEOUT_MS = 90_000;
 const AUTH_ERROR_COOKIE_BLOCKED = 'Login succeeded, but the secure session cookie was not accepted. Check browser cookie/privacy settings and try again.';
 const SOLANA_ADDR_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+function resolveAppTokenChain(value: unknown): TokenChain {
+  return normalizeTokenChain(value) ?? 'solana';
+}
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 const STANDARD_ALERT_COOLDOWN_MS = 60_000;
@@ -155,6 +182,7 @@ const PUMP_GC_LOW_MCAP_TIME_MS = 13 * 60 * 1000;
 const PUMP_TOAST_TTL_MS = 7 * 1000;
 const PUMP_SILENCE_MIGRATION_MS = 30 * 1000;
 const PUMP_SILENCE_MIGRATION_MIN_MCAP = 30000;
+const DEFAULT_MONITORED_MIN_VALUATION_USD = 30000;
 const PUMP_RENDER_THROTTLE_MS = 500;
 const UPTIME_REFRESH_INTERVAL_MS = 30 * 1000;
 const OLD_WEEK_MIN_AGE_MINUTES = Math.floor(OLD_WEEK_MIN_AGE_MS / (60 * 1000));
@@ -219,7 +247,9 @@ const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const MONITORED_DASHBOARD_POLL_INTERVAL_MS = 15 * 1000;
-const MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE = 500;
+const WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT = 300;
+const MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE = 100;
+const MONITORED_DASHBOARD_HYDRATION_MAX_ITEMS = 500;
 const MOCK_TRADING_MARKET_REFRESH_INTERVAL_MS = 3 * 1000;
 const FLOATING_QUICK_BUY_NOTIONAL_SOL = 0.3;
 const FLOATING_QUICK_BUY_DASHBOARD_REFRESH_INTERVAL_MS = MONITORED_REFRESH_INTERVAL_MS;
@@ -318,12 +348,13 @@ type HistorySyncMonitoredSnapshotMessage = {
 };
 
 type HistoryBootstrapRequestPayload = {
-  starredTokens: string[];
+  chains: TokenChain[];
+  starredTokenIdentities: string[];
   recent: DashboardHistoryBucketRequest;
   oldWeek: DashboardHistoryBucketRequest;
-  recentPinnedAddresses?: string[];
-  oldWeekPinnedAddresses?: string[];
-  recentDebugProbeAddresses?: string[];
+  recentPinnedIdentities?: string[];
+  oldWeekPinnedIdentities?: string[];
+  recentDebugProbeIdentities?: string[];
 };
 
 type HistoryBootstrapPayload = Awaited<ReturnType<typeof fetchDashboardHistoryBootstrap>>;
@@ -380,7 +411,7 @@ type HistoryPeerState = {
 type SparklineBatchRequest = {
   hours: number;
   granularityMinutes: number;
-  addresses: string[];
+  identities: TokenIdentity[];
 };
 
 type WorkspaceSparklineRefreshOptions = {
@@ -440,6 +471,7 @@ type AuthRouteIntent = {
 
 const TRACKED_MARKET_FIELD_KEYS = [
   'mcap',
+  'fdv',
   'priceUsd',
   'liquidityUsd',
   'volume5m',
@@ -453,6 +485,22 @@ const TRACKED_MARKET_FIELD_KEYS = [
   'mcapDelta',
   'prevMcap',
   'prevVolume5mCanonical',
+] as const;
+
+const TRACKED_MARKET_CONTEXT_FIELD_KEYS = [
+  'valuation',
+  'windowEnd',
+  'lastActivityAt',
+  'swaps5m',
+  'swaps1h',
+  'swaps6h',
+  'swaps24h',
+  'coverage',
+  'swapCoverage',
+  'priceChangeCoverage',
+  'activityState',
+  'riskState',
+  'dataQuality',
 ] as const;
 
 const TRACKED_ALERT_PRESERVED_KEYS = [
@@ -498,15 +546,15 @@ export interface AppController {
   logoutAll(): Promise<void>;
   reloadConfig(): Promise<void>;
   saveMonitoringConfig(configs: Record<string, number | string>): Promise<void>;
-  addManualToken(address: string, label?: string | null): Promise<void>;
-  removeManualToken(address: string): Promise<void>;
+  addManualToken(address: string, label?: string | null, chain?: TokenChain): Promise<void>;
+  removeManualToken(address: string, chain?: TokenChain): Promise<void>;
   createManualTokenFolder(name: string): Promise<void>;
   updateManualTokenFolder(folderId: number, input: { name?: string; sortOrder?: number }): Promise<void>;
   deleteManualTokenFolder(folderId: number): Promise<void>;
-  addManualTokenToFolder(folderId: number, address: string): Promise<void>;
-  removeManualTokenFromFolder(folderId: number, address: string): Promise<void>;
+  addManualTokenToFolder(folderId: number, address: string, chain?: TokenChain): Promise<void>;
+  removeManualTokenFromFolder(folderId: number, address: string, chain?: TokenChain): Promise<void>;
   setManualVisibleFolderIds(folderIds: number[]): void;
-  addBlockedToken(address: string, label?: string | null): Promise<void>;
+  addBlockedToken(address: string, label?: string | null, chain?: TokenChain): Promise<void>;
   cancelBlockedTokenWarning(): Promise<void>;
   setBlockedTokenWarningDontShowAgain(enabled: boolean): void;
   confirmBlockedTokenWarning(): Promise<void>;
@@ -536,10 +584,10 @@ export interface AppController {
   cancelFloatingQuickBuy(): void;
   addMockTradingCash(): Promise<void>;
   resetMockTradingPortfolio(): Promise<void>;
-  removeBlockedToken(address: string): Promise<void>;
+  removeBlockedToken(address: string, chain?: TokenChain): Promise<void>;
   removePumpToken(mint: string): void;
-  dismissRecentToken(address: string): void;
-  dismissOldWeekToken(address: string): void;
+  dismissRecentToken(address: string, chain?: TokenChain): void;
+  dismissOldWeekToken(address: string, chain?: TokenChain): void;
   clearAllAlerts(): void;
   removeAlert(id: string): void;
   previewCustomAlert(input: CustomAlertPreviewInput): void;
@@ -547,7 +595,7 @@ export interface AppController {
   loadCustomAlertRules(): Promise<void>;
   updateCustomAlert(ruleId: number, input: CustomAlertPreviewInput): Promise<void>;
   disableCustomAlert(ruleId: number): Promise<void>;
-  openExpandedSparkline(address: string): void;
+  openExpandedSparkline(address: string, chain?: TokenChain): void;
   openAlertExpandedSparkline(alertId: string, address: string): void;
   closeExpandedSparkline(): void;
   setExpandedSparklineGranularity(granularityMinutes: number): void;
@@ -564,6 +612,11 @@ export interface AppController {
   setManualFolderDeleteWarningDismissed(enabled: boolean): void;
   setRecentStarredOnly(enabled: boolean): void;
   setOldWeekStarredOnly(enabled: boolean): void;
+  toggleEnabledChain(chain: TokenChain): void;
+  toggleSurfaceChain(
+    surface: 'radarChains' | 'alertFeedChains' | 'browserNotificationChains',
+    chain: TokenChain,
+  ): void;
   setMonitoredPage(page: number): void;
   setAlertPage(page: number): void;
   setRecentPage(page: number): void;
@@ -573,15 +626,15 @@ export interface AppController {
   setOldWeekPerPage(perPage: number): void;
   setSparklineRangeDays(scope: SparklineRangeScope, days: number): void;
   setSparklineRangeGlobal(enabled: boolean, scope: SparklineRangeScope): void;
-  setTokenSparklineRangeDays(address: string, days: number): void;
-  resetTokenSparklineRangeDays(address: string): void;
+  setTokenSparklineRangeDays(address: string, days: number, chain?: TokenChain): void;
+  resetTokenSparklineRangeDays(address: string, chain?: TokenChain): void;
   setManualSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setRecentSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setOldWeekSort(mode: BucketSortMode, window?: BucketSortWindow): void;
   setHistoryBucketOrderLocked(bucket: 'recent' | 'old-week', locked: boolean): void;
   setMonitoredSort(mode: MonitoredSortMode, window?: MonitoredSortWindow): void;
-  pinMonitoredToken(address: string, position?: number): Promise<void>;
-  unpinMonitoredToken(address: string): Promise<void>;
+  pinMonitoredToken(address: string, position?: number, chain?: TokenChain): Promise<void>;
+  unpinMonitoredToken(address: string, chain?: TokenChain): Promise<void>;
   resetMonitoredTokenPins(): Promise<void>;
   setEnabledTradeTerminals(terminals: AppState['ui']['enabledTradeTerminals']): void;
   setLivePanelSpan(panel: 'monitored' | 'alerts', span: 1 | 2 | 3): void;
@@ -592,7 +645,7 @@ export interface AppController {
   setSoundVolume(volume: number): void;
   enableBrowserNotifications(): Promise<void>;
   disableBrowserNotifications(): void;
-  toggleStarredToken(address: string): Promise<void>;
+  toggleStarredToken(address: string, chain?: TokenChain): Promise<void>;
   setWorkspace(workspace: WorkspaceView): void;
   syncWorkspaceFromLocation(): void;
   refreshRestoredSessionState(options?: { force?: boolean }): Promise<void>;
@@ -706,13 +759,18 @@ function isPreAccessRoutePath(pathname: string | null | undefined) {
   return value === '/access' || value.startsWith('/access/');
 }
 
-function normalizeBlockWarningState(address: string, label?: string | null): BlockTokenWarningState | null {
+function normalizeBlockWarningState(
+  address: string,
+  label?: string | null,
+  chain: TokenChain = 'solana',
+): BlockTokenWarningState | null {
   const normalizedAddress = String(address || '').trim();
   if (!normalizedAddress) {
     return null;
   }
 
   return {
+    chain,
     address: normalizedAddress,
     label: String(label || '').trim() || null,
     dontShowAgain: false,
@@ -931,9 +989,16 @@ function getWorkspacePath(workspace: WorkspaceView) {
   return workspace === 'history' ? '/monitor' : '/alerts';
 }
 
-function getWorkspaceSparklinePath(workspace: WorkspaceView, address: string) {
+function getWorkspaceSparklinePath(
+  workspace: WorkspaceView,
+  address: string,
+  chain: TokenChain = 'solana',
+) {
   const prefix = workspace === 'history' ? '/radar' : '/alerts';
-  return `${prefix}/${encodeURIComponent(address)}`;
+  const identity = createLegacyCompatibleTokenIdentity(chain, address);
+  return identity.chain === 'solana'
+    ? `${prefix}/${encodeURIComponent(identity.address)}`
+    : `${prefix}/${identity.chain}/${encodeURIComponent(identity.address)}`;
 }
 
 function getWorkspaceSparklineBasePath(pathname: string | null | undefined, workspace: WorkspaceView) {
@@ -944,12 +1009,17 @@ function getWorkspaceSparklineBasePath(pathname: string | null | undefined, work
   return getWorkspacePath(workspace);
 }
 
-function parseWorkspaceSparklineRoute(pathname: string | null | undefined): { workspace: WorkspaceView; address: string } | null {
+function parseWorkspaceSparklineRoute(pathname: string | null | undefined): {
+  workspace: WorkspaceView;
+  chain: TokenChain;
+  address: string;
+} | null {
   const rawPath = String(pathname || '').trim().replace(/\/+$/, '');
   const segments = rawPath.split('/').filter(Boolean);
   const isCurrentRoute = segments.length === 2;
   const isLegacyRoute = segments.length === 3 && segments[2].toLowerCase() === 'sparkline';
-  if (!isCurrentRoute && !isLegacyRoute) {
+  const isChainRoute = segments.length === 3 && !isLegacyRoute;
+  if (!isCurrentRoute && !isLegacyRoute && !isChainRoute) {
     return null;
   }
 
@@ -958,7 +1028,7 @@ function parseWorkspaceSparklineRoute(pathname: string | null | undefined): { wo
     return null;
   }
 
-  const rawAddress = segments[1];
+  const rawAddress = isChainRoute ? segments[2] : segments[1];
   let address = rawAddress;
   try {
     address = decodeURIComponent(rawAddress);
@@ -966,14 +1036,17 @@ function parseWorkspaceSparklineRoute(pathname: string | null | undefined): { wo
     address = rawAddress;
   }
 
-  const normalizedAddress = String(address || '').trim();
-  if (!normalizedAddress) {
+  let identity;
+  try {
+    identity = createLegacyCompatibleTokenIdentity(isChainRoute ? segments[1] : 'solana', address);
+  } catch (_) {
     return null;
   }
 
   return {
     workspace: root === 'alerts' ? 'live' : 'history',
-    address: normalizedAddress,
+    chain: identity.chain,
+    address: identity.address,
   };
 }
 
@@ -1107,10 +1180,15 @@ export function createAppController(): AppController {
   let adminTokenReviewAlertRefreshInterval: ReturnType<typeof setInterval> | null = null;
   let pumpfunEmitTimer: ReturnType<typeof setTimeout> | null = null;
   let monitoringPausedForAuthPanel = false;
-  let monitoredRefreshInFlight = false;
+  const monitoredRefreshKeysInFlight = new Set<string>();
   let monitoredPinMutationInFlight = false;
-  let queuedMonitoredPinLayout: DashboardMonitoredPin[] | null = null;
-  let topPerformersRefreshInFlight = false;
+  let queuedMonitoredPinMutation: {
+    pins: DashboardMonitoredPin[];
+    chains: TokenChain[];
+  } | null = null;
+  const topPerformersRefreshKeysInFlight = new Set<string>();
+  let topPerformersRefreshRevision = 0;
+  let chainReadinessRefreshInFlight = false;
   let mockTradingRefreshInFlight = false;
   let adminTokenReviewAlertRefreshInFlight = false;
   let nextMockTradingMarketRefreshAt = 0;
@@ -1133,6 +1211,7 @@ export function createAppController(): AppController {
   let queuedHistoryBootstrapRefresh: HistoryBootstrapRefreshOptions | null = null;
   let historyBootstrapRequestRevision = 0;
   let lastAppliedHistoryBootstrapOrderLockKey = '';
+  let nonSolanaHistoryTrackedIdentities = new Set<string>();
   const historyBucketOrderLocks = {
     recent: false,
     oldWeek: false,
@@ -1145,8 +1224,6 @@ export function createAppController(): AppController {
   let restoredSessionRefreshInFlight = false;
   let nextRestoredSessionRefreshAt = 0;
   let startedAt: number | null = null;
-  let starredPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  let starredPersistRevision = 0;
   let uiPrefsPersistTimer: ReturnType<typeof setTimeout> | null = null;
   let uiPrefsPersistRevision = 0;
   let alertsPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1466,6 +1543,24 @@ export function createAppController(): AppController {
     return isHistoryWorkspace();
   }
 
+  function selectedChainsSupport(capability: WorkspaceChainCapability) {
+    return hasEnabledChainCapability(
+      state.ui.chainFilters,
+      state.data.chainReadiness,
+      capability,
+    );
+  }
+
+  function getReadySelectedChains(capability: WorkspaceChainCapability) {
+    return state.ui.chainFilters.enabledChains.filter((chain) => (
+      state.data.chainReadiness[chain]?.capabilities[capability] === true
+    ));
+  }
+
+  function buildChainRequestKey(chains: TokenChain[]) {
+    return [...chains].sort().join(',');
+  }
+
   function getRequestedPaginationFloor(page: number, perPage: number) {
     const safePage = Math.max(0, Math.floor(page) || 0);
     const safePerPage = Math.max(10, Math.floor(perPage) || ROUTED_BUCKET_DEFAULT_PER_PAGE);
@@ -1474,10 +1569,10 @@ export function createAppController(): AppController {
 
   function getRecentTokenTotalForPagination() {
     if (!usesHistoryBucketBootstrap()) {
-      return state.data.recentTokenAddresses.length;
+      return getRecentTokens(state).length;
     }
     return Math.max(
-      state.data.recentTokenAddresses.length,
+      getRecentTokens(state).length,
       state.bars.recent,
       getRequestedPaginationFloor(state.ui.recentPage, state.ui.recentPerPage),
     );
@@ -1485,10 +1580,10 @@ export function createAppController(): AppController {
 
   function getOldWeekTokenTotalForPagination() {
     if (!usesHistoryBucketBootstrap()) {
-      return state.data.oldWeekTokenAddresses.length;
+      return getOldWeekTokens(state).length;
     }
     return Math.max(
-      state.data.oldWeekTokenAddresses.length,
+      getOldWeekTokens(state).length,
       state.bars.oldWeek,
       getRequestedPaginationFloor(state.ui.oldWeekPage, state.ui.oldWeekPerPage),
     );
@@ -1566,7 +1661,7 @@ export function createAppController(): AppController {
     return true;
   }
 
-  function hasCriticalColdFieldGap(token: ManualTokenEntry | undefined) {
+  function hasCriticalColdFieldGap(token: ManualTokenEntry | null | undefined) {
     if (!token) {
       return true;
     }
@@ -1576,20 +1671,88 @@ export function createAppController(): AppController {
     return !token.symbol || !token.pairUrl || !hasCreatedAt || !hasCatalogFirstSeenAt;
   }
 
-  function replaceTrackedTokenReferences(address: string, nextToken: ManualTokenEntry) {
-    state.data.trackedTokensByAddress[address] = nextToken;
+  function getTrackedTokenKey(address: string, chain: TokenChain | null = 'solana') {
+    return createLegacyCompatibleTokenIdentity(chain, address).key;
+  }
+
+  function getTrackedTokenByIdentity(identityKey: string) {
+    try {
+      const identity = parseTokenIdentityKey(identityKey);
+      return getTrackedToken(state, identity.address, identity.chain);
+    } catch {
+      return null;
+    }
+  }
+
+  function getTokenIdentityKey(token: Pick<ManualTokenEntry, 'address' | 'chain'>) {
+    return getTrackedTokenKey(token.address, token.chain || 'solana');
+  }
+
+  function normalizeStoredHistoryIdentities(values: string[]) {
+    return Array.from(new Set((Array.isArray(values) ? values : []).flatMap((value) => {
+      try {
+        return [parseTokenIdentityKey(value).key];
+      } catch {
+        try {
+          return [getTrackedTokenKey(value, 'solana')];
+        } catch {
+          return [];
+        }
+      }
+    })));
+  }
+
+  function getOptionalTrackedToken(address: string, chain: TokenChain | null = 'solana') {
+    return getTrackedToken(state, address, chain) ?? undefined;
+  }
+
+  function setTrackedToken(nextToken: ManualTokenEntry) {
+    const identity = createLegacyCompatibleTokenIdentity(nextToken.chain, nextToken.address);
+    state.data.trackedTokensByIdentity[identity.key] = {
+      ...nextToken,
+      chain: identity.chain,
+      address: identity.address,
+    };
+  }
+
+  function syncWorkspaceMarketSubscriptions() {
+    const identities = new Map<string, { chain: TokenChain; address: string }>();
+    const tokens = [
+      ...getMonitoredTokens(state),
+      ...getManualTokens(state),
+      ...getRecentTokens(state),
+      ...getOldWeekTokens(state),
+    ];
+    for (const token of tokens) {
+      const chain = token.chain || 'solana';
+      if (chain === 'solana') continue;
+      const identity = createLegacyCompatibleTokenIdentity(chain, token.address);
+      identities.set(identity.key, { chain: identity.chain, address: identity.address });
+      if (identities.size >= WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT) break;
+    }
+    replaceWorkspaceMarketSubscriptions([...identities.values()]);
+  }
+
+  function deleteTrackedToken(address: string, chain: TokenChain | null = 'solana') {
+    delete state.data.trackedTokensByIdentity[getTrackedTokenKey(address, chain)];
+  }
+
+  function replaceTrackedTokenReferences(_address: string, nextToken: ManualTokenEntry) {
+    setTrackedToken(nextToken);
   }
 
   function refreshTrackedTokenStore() {
-    const activeAddresses = new Set([
-      ...state.data.monitoredTokenAddresses,
-      ...state.data.pinnedMonitoredTokenAddresses,
-      ...state.data.manualTokenAddresses,
-      ...state.data.topPerformerAddresses,
+    const activeIdentities = new Set([
+      ...state.data.monitoredTokenIdentities,
+      ...state.data.pinnedMonitoredTokenIdentities,
+      ...state.data.manualTokenIdentities,
+      ...state.data.topPerformerIdentities,
+      ...state.data.recentTokenIdentities,
+      ...state.data.oldWeekTokenIdentities,
     ]);
-    for (const address of Object.keys(state.data.trackedTokensByAddress)) {
-      if (!activeAddresses.has(address)) {
-        delete state.data.trackedTokensByAddress[address];
+    for (const identityKey of Object.keys(state.data.trackedTokensByIdentity)) {
+      if (!activeIdentities.has(identityKey)) {
+        delete state.data.trackedTokensByIdentity[identityKey];
       }
     }
   }
@@ -1638,17 +1801,7 @@ export function createAppController(): AppController {
   }
 
   function getTrackedFreshnessMs(item: ManualTokenEntry | DashboardMonitoredToken | undefined) {
-    if (!item) {
-      return null;
-    }
-
-    const lastSeenAt = toTrackedFreshnessMs(item.lastSeenAt);
-    const lastEvaluatedAt = toTrackedFreshnessMs(item.lastEvaluatedAt);
-    if (lastSeenAt == null && lastEvaluatedAt == null) {
-      return null;
-    }
-
-    return Math.max(lastSeenAt ?? 0, lastEvaluatedAt ?? 0);
+    return item ? resolveWorkspaceMarketSnapshotMs(item) : null;
   }
 
   function shouldApplyTrackedMarketFields(
@@ -1657,6 +1810,14 @@ export function createAppController(): AppController {
   ) {
     if (!dashboardItem) {
       return false;
+    }
+
+    const incomingWindowEnd = toTrackedFreshnessMs(dashboardItem.windowEnd);
+    const existingWindowEnd = toTrackedFreshnessMs(existingItem?.windowEnd);
+    if (incomingWindowEnd != null || existingWindowEnd != null) {
+      if (incomingWindowEnd == null) return false;
+      if (existingWindowEnd == null) return true;
+      return incomingWindowEnd >= existingWindowEnd;
     }
 
     const incomingFreshness = getTrackedFreshnessMs(dashboardItem);
@@ -1717,6 +1878,7 @@ export function createAppController(): AppController {
     const dashboard: Partial<DashboardMonitoredToken> = dashboardItem || {};
 
     return {
+      chain: dashboardItem?.chain || existingItem?.chain || base.chain || 'solana',
       mintAddress: firstDefinedTrackedValue(existing.mintAddress, dashboard.address, base.address),
       pairAddress: selectTrackedColdField(shouldApplyColdFields, dashboard.pairAddress, existing.pairAddress, base.pairAddress),
       pairUrl: selectTrackedColdField(shouldApplyColdFields, dashboard.pairUrl, existing.pairUrl, base.pairUrl),
@@ -1728,6 +1890,12 @@ export function createAppController(): AppController {
       name: selectTrackedColdField(shouldApplyColdFields, dashboard.name, existing.name, base.name),
       createdAt: selectTrackedColdField(shouldApplyColdFields, dashboard.tokenCreatedAt, existing.createdAt, base.createdAt),
       catalogFirstSeenAt: selectTrackedColdField(shouldApplyColdFields, dashboard.catalogFirstSeenAt, existing.catalogFirstSeenAt, base.catalogFirstSeenAt),
+      tokenAgeProvenance: selectTrackedColdField(
+        shouldApplyColdFields,
+        dashboard.tokenAgeProvenance,
+        existing.tokenAgeProvenance,
+        base.tokenAgeProvenance,
+      ),
       tickerPeers: firstDefinedTrackedValue(dashboardItem?.tickerPeers, existing.tickerPeers, base.tickerPeers),
     };
   }
@@ -1741,10 +1909,27 @@ export function createAppController(): AppController {
     const shouldApplyMarketFields = shouldApplyTrackedMarketFields(existingItem, dashboardItem);
 
     for (const key of TRACKED_MARKET_FIELD_KEYS) {
-      nextFields[key] = shouldApplyMarketFields
-        ? firstDefinedTrackedValue(dashboardItem?.[key], existingItem?.[key], base[key])
-        : firstDefinedTrackedValue(existingItem?.[key], base[key], dashboardItem?.[key]);
+      nextFields[key] = selectWorkspaceSnapshotValue(
+        shouldApplyMarketFields,
+        dashboardItem?.[key],
+        existingItem?.[key],
+        base[key],
+      );
     }
+
+    Object.assign(nextFields, Object.fromEntries(TRACKED_MARKET_CONTEXT_FIELD_KEYS.map((key) => [
+      key,
+      shouldApplyMarketFields
+        ? dashboardItem?.[key]
+        : existingItem?.[key] ?? base[key],
+    ])));
+
+    nextFields.valuationType = selectWorkspaceSnapshotValue(
+      shouldApplyMarketFields,
+      dashboardItem?.valuationType,
+      existingItem?.valuationType,
+      base.valuationType,
+    );
 
     nextFields.prevVolume5m = existingItem?.volume5m != null
       ? existingItem.volume5m
@@ -1782,7 +1967,7 @@ export function createAppController(): AppController {
 
   function applyPersistedFrontendAlertFlags(nextTrackedStore: Record<string, ManualTokenEntry>) {
     for (const alert of state.data.alerts) {
-      const token = nextTrackedStore[alert.address];
+      const token = nextTrackedStore[getTrackedTokenKey(alert.address, alert.chain)];
       if (!token) {
         continue;
       }
@@ -1839,7 +2024,7 @@ export function createAppController(): AppController {
     nextTrackedStore: Record<string, ManualTokenEntry>;
     manualTokens: ManualTokenEntry[];
     monitoredMap: Map<string, ManualTokenEntry>;
-    pinnedAddresses: string[];
+    pinnedIdentities: string[];
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
     now: number;
@@ -1848,21 +2033,21 @@ export function createAppController(): AppController {
       nextColdFieldRefreshAt = input.now + COLD_FIELD_RECHECK_MS;
     }
 
-    state.data.trackedTokensByAddress = input.nextTrackedStore;
-    applyPersistedFrontendAlertFlags(state.data.trackedTokensByAddress);
-    state.data.manualTokenAddresses = input.manualTokens.map((item) => item.address);
-    state.data.monitoredTokenAddresses = [...input.monitoredMap.keys()];
-    state.data.pinnedMonitoredTokenAddresses = input.pinnedAddresses;
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.data.trackedTokensByIdentity = input.nextTrackedStore;
+    applyPersistedFrontendAlertFlags(state.data.trackedTokensByIdentity);
+    state.data.manualTokenIdentities = input.manualTokens.map(getTokenIdentityKey);
+    state.data.monitoredTokenIdentities = [...input.monitoredMap.keys()];
+    state.data.pinnedMonitoredTokenIdentities = input.pinnedIdentities;
+    state.bars.manual = state.data.manualTokenIdentities.length;
     if (!usesHistoryBucketBootstrap()) {
-      state.data.recentTokenAddresses = [];
-      state.data.oldWeekTokenAddresses = [];
+      state.data.recentTokenIdentities = [];
+      state.data.oldWeekTokenIdentities = [];
       deriveAgeBuckets();
     }
 
     if (state.runtime.mode === 'active' && shouldRunFrontendAlerts() && input.alertCandidates.size > 0) {
       for (const token of getMonitoredTokens(state)) {
-        if (!input.alertCandidates.has(token.address)) continue;
+        if (!input.alertCandidates.has(getTokenIdentityKey(token))) continue;
         maybeFireSpecialAlerts(token);
         maybeFireLocalAlert(token);
       }
@@ -1870,6 +2055,7 @@ export function createAppController(): AppController {
 
     state.runtime.monitoredRevision += 1;
     refreshMonitoredPanelCounts();
+    syncWorkspaceMarketSubscriptions();
   }
 
   function ensureHistorySyncChannel() {
@@ -2028,11 +2214,13 @@ export function createAppController(): AppController {
       sorts: (request.sorts || []).map((item) => `${item.mode}:${item.window}`).join(','),
       mcapMin: request.mcapMin ?? null,
       mcapMax: request.mcapMax ?? null,
+      fdvMin: request.fdvMin ?? null,
+      fdvMax: request.fdvMax ?? null,
       ageMinMinutes: request.ageMinMinutes ?? null,
       ageMaxMinutes: request.ageMaxMinutes ?? null,
       search: request.searchQuery ? 'set' : '',
       starredOnly: Boolean(request.starredOnly),
-      dismissedCount: request.dismissedAddresses?.length ?? 0,
+      dismissedCount: request.dismissedTokenIdentities?.length ?? 0,
     };
   }
 
@@ -2055,16 +2243,19 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildPreviousRecentDebugMap(addresses: string[]) {
-    return new Map(addresses.map((address, index) => [
-      address,
-      summarizeCompactHistoryToken(address, state.data.trackedTokensByAddress[address], index + 1),
-    ]));
+  function buildPreviousRecentDebugMap(identities: string[]) {
+    return new Map(identities.map((identityKey, index) => {
+      const identity = parseTokenIdentityKey(identityKey);
+      return [
+        identityKey,
+        summarizeCompactHistoryToken(identity.address, getTrackedTokenByIdentity(identityKey) ?? undefined, index + 1),
+      ];
+    }));
   }
 
   function buildPayloadRecentDebugMap(tokens: DashboardMonitoredToken[]) {
     return new Map(tokens.map((item, index) => [
-      item.address,
+      getTrackedTokenKey(item.address, item.chain),
       summarizeCompactHistoryToken(item.address, item, index + 1),
     ]));
   }
@@ -2107,9 +2298,9 @@ export function createAppController(): AppController {
     }
 
     const nextSet = new Set(next);
-    const removedSet = new Set(previous.filter((address) => !nextSet.has(address)));
+    const removedSet = new Set(previous.filter((identityKey) => !nextSet.has(identityKey)));
     return probe
-      .filter((item) => removedSet.has(item.address))
+      .filter((item) => removedSet.has(getTrackedTokenKey(item.address, item.chain || 'solana')))
       .slice(0, 8)
       .map((item) => ({
         address: item.address,
@@ -2194,11 +2385,11 @@ export function createAppController(): AppController {
   function summarizeSparklineDebugBatches(batches: SparklineBatchRequest[] = []) {
     return {
       batchCount: batches.length,
-      addressCount: batches.reduce((total, batch) => total + batch.addresses.length, 0),
+      addressCount: batches.reduce((total, batch) => total + batch.identities.length, 0),
       batches: batches.slice(0, 6).map((batch) => ({
         hours: batch.hours,
         granularityMinutes: batch.granularityMinutes,
-        addresses: summarizeSparklineDebugAddresses(batch.addresses),
+        addresses: summarizeSparklineDebugAddresses(batch.identities.map((identity) => identity.key)),
       })),
     };
   }
@@ -2421,14 +2612,14 @@ export function createAppController(): AppController {
       meta: {
         workspace: state.ui.workspace,
         sessionStatus: state.session.status,
-        trackedTokens: Object.keys(state.data.trackedTokensByAddress).length,
-        monitored: state.data.monitoredTokenAddresses.length,
-        recent: state.data.recentTokenAddresses.length,
-        oldWeek: state.data.oldWeekTokenAddresses.length,
+        trackedTokens: Object.keys(state.data.trackedTokensByIdentity).length,
+        monitored: state.data.monitoredTokenIdentities.length,
+        recent: state.data.recentTokenIdentities.length,
+        oldWeek: state.data.oldWeekTokenIdentities.length,
         barsRecent: state.bars.recent,
         barsOldWeek: state.bars.oldWeek,
-        recentHead: state.data.recentTokenAddresses.slice(0, 8),
-        oldWeekHead: state.data.oldWeekTokenAddresses.slice(0, 8),
+        recentHead: state.data.recentTokenIdentities.slice(0, 8),
+        oldWeekHead: state.data.oldWeekTokenIdentities.slice(0, 8),
         ...meta,
       },
       memory: readRuntimePerfMemory(),
@@ -3009,7 +3200,7 @@ export function createAppController(): AppController {
   }
 
   function getFloatingQuickBuyMarketSnapshot(address: string) {
-    const token = state.data.trackedTokensByAddress[address];
+    const token = getTrackedToken(state, address);
     const priceUsd = Number(token?.priceUsd);
     const mcap = Number(token?.mcap);
     if (!Number.isFinite(mcap) || mcap <= 0) {
@@ -3022,7 +3213,7 @@ export function createAppController(): AppController {
   }
 
   async function addManualTokenForFloatingQuickBuy(address: string, token: string) {
-    if (state.data.manualTokenAddresses.includes(address)) {
+    if (state.data.manualTokenIdentities.includes(getTrackedTokenKey(address))) {
       await trackManualToken(address, token);
       await hydrateManualTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
       return;
@@ -3035,7 +3226,7 @@ export function createAppController(): AppController {
     emit('manual', 'monitored', 'header');
 
     try {
-      await syncManualTokenToBackend(address, null, token);
+      await syncManualTokenToBackend('solana', address, null, token);
       await hydrateManualTokenDashboardFields(address, token, { retryDelaysMs: [0, 750, 2000] });
     } catch (error) {
       revertOptimisticManualToken(address, optimisticSnapshot);
@@ -3164,7 +3355,10 @@ export function createAppController(): AppController {
     floatingQuickBuyDashboardRefreshInFlight = true;
     nextFloatingQuickBuyDashboardRefreshAt = Date.now() + FLOATING_QUICK_BUY_DASHBOARD_REFRESH_INTERVAL_MS;
     try {
-      const monitoredDashboard = await fetchDashboardMonitored(token);
+      const monitoredDashboard = await fetchDashboardMonitored(token, {
+        chains: ['solana'],
+        minMcap: getMonitoredValuationFilters().minMcap,
+      });
       if (state.session.token !== token || state.session.role !== 'admin') {
         return;
       }
@@ -3485,16 +3679,20 @@ export function createAppController(): AppController {
     }
 
     const route = parseWorkspaceSparklineRoute(window.location.pathname);
-    if (!route) {
+    if (!route || state.data.chainReadiness[route.chain]?.capabilities.charts !== true) {
       if (state.ui.expandedSparklineAddress) {
-        unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+        unsubscribeMarketChart(
+          state.ui.expandedSparklineAddress,
+          state.ui.expandedSparklineChain,
+        );
         state.ui.expandedSparklineAddress = null;
+        state.ui.expandedSparklineChain = 'solana';
         emit('overlay');
       }
       return false;
     }
 
-    const canonicalPath = getWorkspaceSparklinePath(route.workspace, route.address);
+    const canonicalPath = getWorkspaceSparklinePath(route.workspace, route.address, route.chain);
     if (window.location.pathname !== canonicalPath) {
       window.history.replaceState({}, document.title, canonicalPath);
     }
@@ -3503,20 +3701,22 @@ export function createAppController(): AppController {
       clearHistoryBucketOrderLocks({ applyPending: false });
       state.ui.workspace = route.workspace;
     }
-    const addressChanged = state.ui.expandedSparklineAddress !== route.address;
-    if (addressChanged && state.ui.expandedSparklineAddress) {
-      unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+    const identityChanged = state.ui.expandedSparklineAddress !== route.address
+      || state.ui.expandedSparklineChain !== route.chain;
+    if (identityChanged && state.ui.expandedSparklineAddress) {
+      unsubscribeMarketChart(state.ui.expandedSparklineAddress, state.ui.expandedSparklineChain);
     }
+    state.ui.expandedSparklineChain = route.chain;
     state.ui.expandedSparklineAddress = route.address;
-    if (addressChanged) {
-      subscribeMarketChart(route.address);
+    if (identityChanged) {
+      subscribeMarketChart(route.address, route.chain);
     }
     state.ui.mockTradingPnlAddress = null;
-    if (!isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(route.address))) {
-      setExpandedSparklineLoading(route.address);
-      void refreshExpandedSparkline(route.address);
+    if (!isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(route.address, undefined, route.chain))) {
+      setExpandedSparklineLoading(route.address, null, undefined, route.chain);
+      void refreshExpandedSparkline(route.address, undefined, undefined, undefined, route.chain);
     }
-    if (addressChanged) {
+    if (identityChanged) {
       emit('overlay');
     }
     return true;
@@ -3853,6 +4053,7 @@ export function createAppController(): AppController {
       manualFolderDeleteWarningDismissed: Boolean(state.ui.manualFolderDeleteWarningDismissed),
       recentStarredOnly: Boolean(state.ui.recentStarredOnly),
       oldWeekStarredOnly: Boolean(state.ui.oldWeekStarredOnly),
+      chainFilters: state.ui.chainFilters,
       monitoredPerPage: normalizeUiPerPage(state.ui.monitoredPerPage, 30),
       recentPerPage: normalizeUiPerPage(state.ui.recentPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
       oldWeekPerPage: normalizeUiPerPage(state.ui.oldWeekPerPage, ROUTED_BUCKET_DEFAULT_PER_PAGE),
@@ -3889,6 +4090,17 @@ export function createAppController(): AppController {
     const value = state.data.configs[key];
     const num = Number(value);
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function getMonitoredValuationFilters() {
+    return {
+      minMcap: Math.max(0, getConfigNumber(
+        'monitored-mcap-min', DEFAULT_MONITORED_MIN_VALUATION_USD,
+      )),
+      minFdv: Math.max(0, getConfigNumber(
+        'monitored-fdv-min', DEFAULT_MONITORED_MIN_VALUATION_USD,
+      )),
+    };
   }
 
   function isConfigEnabled(key: string, fallback = true) {
@@ -4063,12 +4275,13 @@ export function createAppController(): AppController {
   }
 
   function replaceStarredTokens(nextStarredTokens: string[], options?: { resetRevision?: boolean }) {
-    const normalized = [...nextStarredTokens].sort((a, b) => a.localeCompare(b));
-    const current = state.data.starredTokens;
+    const normalized = normalizeStoredTokenIdentityKeys(nextStarredTokens)
+      .sort((a, b) => a.localeCompare(b));
+    const current = state.data.starredTokenIdentities;
     const changed = current.length !== normalized.length
       || current.some((item, index) => item !== normalized[index]);
 
-    state.data.starredTokens = normalized;
+    state.data.starredTokenIdentities = normalized;
 
     if (options?.resetRevision) {
       state.runtime.starredRevision = 0;
@@ -4080,8 +4293,8 @@ export function createAppController(): AppController {
     }
   }
 
-  function openBlockedTokenWarning(address: string, label?: string | null) {
-    const warning = normalizeBlockWarningState(address, label);
+  function openBlockedTokenWarning(address: string, label?: string | null, chain: TokenChain = 'solana') {
+    const warning = normalizeBlockWarningState(address, label, chain);
     if (!warning) {
       return false;
     }
@@ -4115,7 +4328,11 @@ export function createAppController(): AppController {
     return warning;
   }
 
-  async function addBlockedTokenInternal(address: string, label?: string | null) {
+  async function addBlockedTokenInternal(
+    address: string,
+    label?: string | null,
+    chain: TokenChain = 'solana',
+  ) {
     const token = state.session.token;
     if (!token) {
       setError('No authenticated session');
@@ -4129,12 +4346,14 @@ export function createAppController(): AppController {
     emit();
 
     try {
-      const result = await addBlockedTokenRequest(address, label, token);
-      if (!isBlocked(address)) {
-        state.data.blocklist = sortAddresses([...state.data.blocklist, { address, label: label ?? null }]);
+      const result = await addBlockedTokenRequest(chain, address, label, token);
+      if (!isBlocked(address, chain)) {
+        state.data.blocklist = sortAddresses([
+          ...state.data.blocklist, { chain, address, label: label ?? null },
+        ]);
         state.bars.blocklist = state.data.blocklist.length;
       }
-      removeTokenEverywhere(address);
+      removeTokenEverywhere(address, { chain });
       applyBlockedFilters();
       await reloadConfigInternal(token);
       setNotice(result.message);
@@ -4144,46 +4363,6 @@ export function createAppController(): AppController {
       setBusy(false);
       emit();
     }
-  }
-
-  async function persistStarredTokens(snapshot: string[], revision: number) {
-    const token = state.session.token;
-    if (!token) {
-      return;
-    }
-
-    try {
-      const result = await syncConfig({
-        starredTokens: snapshot.map((address) => ({ address })),
-      }, token);
-
-      if (revision == starredPersistRevision) {
-        state.data.configs = result.configs || {};
-        applyUiPreferencesFromConfigs();
-        replaceStarredTokens(result.starredTokens.map((item) => item.address));
-        emit();
-      }
-    } catch (error) {
-      if (revision == starredPersistRevision) {
-        setError(error instanceof Error ? error.message : 'Failed to sync starred tokens');
-        emit();
-      }
-    }
-  }
-
-  function queueStarredTokensPersist() {
-    starredPersistRevision += 1;
-    const revision = starredPersistRevision;
-    const snapshot = [...state.data.starredTokens];
-
-    if (starredPersistTimer) {
-      clearTimeout(starredPersistTimer);
-    }
-
-    starredPersistTimer = setTimeout(() => {
-      starredPersistTimer = null;
-      void persistStarredTokens(snapshot, revision);
-    }, 120);
   }
 
   function queueUiPrefsPersist() {
@@ -4240,6 +4419,10 @@ export function createAppController(): AppController {
     state.ui.manualFolderDeleteWarningDismissed = Boolean(uiPrefs?.manualFolderDeleteWarningDismissed);
     state.ui.recentStarredOnly = Boolean(uiPrefs?.recentStarredOnly);
     state.ui.oldWeekStarredOnly = Boolean(uiPrefs?.oldWeekStarredOnly);
+    state.ui.chainFilters = normalizeChainFilterPreferences(
+      uiPrefs?.chainFilters,
+      state.data.availableChains,
+    );
     applyPaginationUiPreferences(uiPrefs);
     applySortUiPreferences(uiPrefs);
     applyExpandedSparklineUiPreferences(uiPrefs);
@@ -4331,8 +4514,8 @@ export function createAppController(): AppController {
 
   function persistBarStorage() {
     const scope = getStorageScope();
-    saveDismissedRecent(scope, state.data.dismissedRecent);
-    saveDismissedOldWeek(scope, state.data.dismissedOldWeek);
+    saveDismissedRecent(scope, state.data.dismissedRecentIdentities);
+    saveDismissedOldWeek(scope, state.data.dismissedOldWeekIdentities);
     clearRecentRemovalLogStorage(scope);
     clearOldWeekRemovalLogStorage(scope);
     flushAlertsPersist();
@@ -4341,8 +4524,8 @@ export function createAppController(): AppController {
   function hydrateBarStorage() {
     const scope = getStorageScope();
     const beforeAlerts = state.data.alerts.slice();
-    state.data.dismissedRecent = loadDismissedRecent(scope);
-    state.data.dismissedOldWeek = loadDismissedOldWeek(scope);
+    state.data.dismissedRecentIdentities = normalizeStoredHistoryIdentities(loadDismissedRecent(scope));
+    state.data.dismissedOldWeekIdentities = normalizeStoredHistoryIdentities(loadDismissedOldWeek(scope));
     clearRecentRemovalLogStorage(scope);
     clearOldWeekRemovalLogStorage(scope);
     state.data.alerts = loadAlerts(scope);
@@ -4360,8 +4543,11 @@ export function createAppController(): AppController {
     });
   }
 
-  function isBlocked(address: string) {
-    return state.data.blocklist.some((item) => item.address === address);
+  function isBlocked(address: string, chain: TokenChain = 'solana') {
+    const identityKey = getTrackedTokenKey(address, chain);
+    return state.data.blocklist.some((item) => (
+      getTrackedTokenKey(item.address, item.chain || 'solana') === identityKey
+    ));
   }
 
   function syncAlertState() {
@@ -4373,22 +4559,25 @@ export function createAppController(): AppController {
     scheduleAlertsPersist();
   }
 
-  function removeAlertsForAddress(address: string) {
+  function removeAlertsForAddress(address: string, chain: TokenChain = 'solana') {
     const beforeAlerts = state.data.alerts.slice();
-    state.data.alerts = state.data.alerts.filter((item) => item.address !== address);
+    state.data.alerts = state.data.alerts.filter((item) => (
+      item.address !== address || item.chain !== chain
+    ));
     syncAlertState();
     recordAlertMutationDebug('remove.address', beforeAlerts, { address });
   }
 
   function captureRemovedTokenSnapshot(address: string) {
+    const trackedToken = getTrackedToken(state, address);
+    const identityKey = getTrackedTokenKey(address);
     return {
       address,
-      trackedToken: state.data.trackedTokensByAddress[address]
-        ? { ...state.data.trackedTokensByAddress[address] }
-        : null,
-      wasInMonitored: state.data.monitoredTokenAddresses.includes(address),
-      wasPinnedMonitored: state.data.pinnedMonitoredTokenAddresses.includes(address),
-      wasInManual: state.data.manualTokenAddresses.includes(address),
+      trackedToken: trackedToken ? { ...trackedToken } : null,
+      identityKey,
+      wasInMonitored: state.data.monitoredTokenIdentities.includes(identityKey),
+      wasPinnedMonitored: state.data.pinnedMonitoredTokenIdentities.includes(identityKey),
+      wasInManual: state.data.manualTokenIdentities.includes(identityKey),
       wasEligibleCatalog: state.data.eligibleCatalogTokens.includes(address),
       removedPumpTokens: state.data.pumpTokens
         .filter((item) => item.mint === address || item.mintAddress === address)
@@ -4405,29 +4594,29 @@ export function createAppController(): AppController {
           .map((item) => [item.id, state.data.alertSparklineById[item.id]])
           .filter((entry): entry is [string, TokenSparklineEntry] => Boolean(entry[0] && entry[1])),
       ),
-      wasDismissedRecent: state.data.dismissedRecent.includes(address),
-      wasDismissedOldWeek: state.data.dismissedOldWeek.includes(address),
-      wasStarred: state.data.starredTokens.includes(address),
+      wasDismissedRecent: state.data.dismissedRecentIdentities.includes(getTrackedTokenKey(address)),
+      wasDismissedOldWeek: state.data.dismissedOldWeekIdentities.includes(getTrackedTokenKey(address)),
+      wasStarred: state.data.starredTokenIdentities.includes(identityKey),
     };
   }
 
   function restoreTrackedTokenCollections(snapshot: ReturnType<typeof captureRemovedTokenSnapshot>) {
-    const { address } = snapshot;
+    const { address, identityKey } = snapshot;
 
-    if (snapshot.trackedToken && !state.data.trackedTokensByAddress[address]) {
-      state.data.trackedTokensByAddress[address] = snapshot.trackedToken;
+    if (snapshot.trackedToken && !getTrackedToken(state, address)) {
+      setTrackedToken(snapshot.trackedToken);
     }
 
-    if (snapshot.wasInMonitored && !state.data.monitoredTokenAddresses.includes(address)) {
-      state.data.monitoredTokenAddresses = [...state.data.monitoredTokenAddresses, address];
+    if (snapshot.wasInMonitored && !state.data.monitoredTokenIdentities.includes(identityKey)) {
+      state.data.monitoredTokenIdentities = [...state.data.monitoredTokenIdentities, identityKey];
     }
 
-    if (snapshot.wasPinnedMonitored && !state.data.pinnedMonitoredTokenAddresses.includes(address)) {
-      state.data.pinnedMonitoredTokenAddresses = [...state.data.pinnedMonitoredTokenAddresses, address];
+    if (snapshot.wasPinnedMonitored && !state.data.pinnedMonitoredTokenIdentities.includes(identityKey)) {
+      state.data.pinnedMonitoredTokenIdentities = [...state.data.pinnedMonitoredTokenIdentities, identityKey];
     }
 
-    if (snapshot.wasInManual && !state.data.manualTokenAddresses.includes(address)) {
-      state.data.manualTokenAddresses = [...state.data.manualTokenAddresses, address];
+    if (snapshot.wasInManual && !state.data.manualTokenIdentities.includes(identityKey)) {
+      state.data.manualTokenIdentities = [...state.data.manualTokenIdentities, identityKey];
     }
 
     if (snapshot.wasEligibleCatalog && !state.data.eligibleCatalogTokens.includes(address)) {
@@ -4472,27 +4661,26 @@ export function createAppController(): AppController {
       restoredAlerts: snapshot.removedAlerts.length,
     });
 
-    if (snapshot.wasDismissedRecent && !state.data.dismissedRecent.includes(address)) {
-      state.data.dismissedRecent = [...state.data.dismissedRecent, address];
+    const identityKey = getTrackedTokenKey(address);
+    if (snapshot.wasDismissedRecent && !state.data.dismissedRecentIdentities.includes(identityKey)) {
+      state.data.dismissedRecentIdentities = [...state.data.dismissedRecentIdentities, identityKey];
     }
 
-    if (snapshot.wasDismissedOldWeek && !state.data.dismissedOldWeek.includes(address)) {
-      state.data.dismissedOldWeek = [...state.data.dismissedOldWeek, address];
+    if (snapshot.wasDismissedOldWeek && !state.data.dismissedOldWeekIdentities.includes(identityKey)) {
+      state.data.dismissedOldWeekIdentities = [...state.data.dismissedOldWeekIdentities, identityKey];
     }
   }
 
   function restoreRemovedTokenSnapshot(snapshot: ReturnType<typeof captureRemovedTokenSnapshot>) {
-    const { address } = snapshot;
-
     restoreTrackedTokenCollections(snapshot);
     restorePumpAndAlertCollections(snapshot);
 
-    if (snapshot.wasStarred && !state.data.starredTokens.includes(address)) {
-      replaceStarredTokens([...state.data.starredTokens, address]);
+    if (snapshot.wasStarred && !state.data.starredTokenIdentities.includes(snapshot.identityKey)) {
+      replaceStarredTokens([...state.data.starredTokenIdentities, snapshot.identityKey]);
     }
 
-    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.manualTokenIdentities.length;
     deriveAgeBuckets();
     refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
@@ -4500,27 +4688,33 @@ export function createAppController(): AppController {
     persistBarStorage();
   }
 
-  function removeTokenEverywhere(address: string, options: { removeFromStarred?: boolean } = {}) {
-    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => item !== address);
-    state.data.pinnedMonitoredTokenAddresses = state.data.pinnedMonitoredTokenAddresses.filter((item) => item !== address);
-    state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
-    state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
-    state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
-    delete state.data.trackedTokensByAddress[address];
-    state.data.eligibleCatalogTokens = state.data.eligibleCatalogTokens.filter((item) => item !== address);
-    state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== address && item.mintAddress !== address);
-    state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => item.mint !== address);
-    state.data.dismissedRecent = state.data.dismissedRecent.filter((item) => item !== address);
-    state.data.dismissedOldWeek = state.data.dismissedOldWeek.filter((item) => item !== address);
-    removeAlertsForAddress(address);
+  function removeTokenEverywhere(
+    address: string,
+    options: { removeFromStarred?: boolean; chain?: TokenChain } = {},
+  ) {
+    const chain = options.chain || 'solana';
+    const identityKey = getTrackedTokenKey(address, chain);
+    state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.filter((item) => item !== identityKey);
+    state.data.pinnedMonitoredTokenIdentities = state.data.pinnedMonitoredTokenIdentities.filter((item) => item !== identityKey);
+    state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => item !== identityKey);
+    state.data.recentTokenIdentities = state.data.recentTokenIdentities.filter((item) => item !== identityKey);
+    state.data.oldWeekTokenIdentities = state.data.oldWeekTokenIdentities.filter((item) => item !== identityKey);
+    deleteTrackedToken(address, chain);
+    if (chain === 'solana') {
+      state.data.eligibleCatalogTokens = state.data.eligibleCatalogTokens.filter((item) => item !== address);
+      state.data.pumpTokens = state.data.pumpTokens.filter((item) => item.mint !== address && item.mintAddress !== address);
+      state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => item.mint !== address);
+    }
+    state.data.dismissedRecentIdentities = state.data.dismissedRecentIdentities.filter((item) => item !== identityKey);
+    state.data.dismissedOldWeekIdentities = state.data.dismissedOldWeekIdentities.filter((item) => item !== identityKey);
+    removeAlertsForAddress(address, chain);
 
-    if (options.removeFromStarred && state.data.starredTokens.includes(address)) {
-      replaceStarredTokens(state.data.starredTokens.filter((item) => item !== address));
-      queueStarredTokensPersist();
+    if (options.removeFromStarred && state.data.starredTokenIdentities.includes(identityKey)) {
+      replaceStarredTokens(state.data.starredTokenIdentities.filter((item) => item !== identityKey));
     }
 
-    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.manualTokenIdentities.length;
     deriveAgeBuckets();
     refreshTrackedTokenStore();
     refreshMonitoredPanelCounts();
@@ -5213,8 +5407,8 @@ export function createAppController(): AppController {
       oldWeekMax: getConfigNumber('old-week-mcap-max', 100000000),
       oldWeekAgeMinMs: oldWeekAgeMinMinutes * 60 * 1000,
       oldWeekAgeMaxMs: oldWeekAgeMaxMinutes > 0 ? oldWeekAgeMaxMinutes * 60 * 1000 : 0,
-      recentDismissed: new Set(state.data.dismissedRecent),
-      oldWeekDismissed: new Set(state.data.dismissedOldWeek),
+      recentDismissed: new Set(state.data.dismissedRecentIdentities),
+      oldWeekDismissed: new Set(state.data.dismissedOldWeekIdentities),
     };
   }
 
@@ -5223,7 +5417,7 @@ export function createAppController(): AppController {
     context: ReturnType<typeof getRoutedEligibilityContext>,
     options: { preserveWithoutMcap?: boolean } = {},
   ) {
-    if (token._userManual || isBlocked(token.address) || context.recentDismissed.has(token.address)) {
+    if (token._userManual || isBlocked(token.address, token.chain || 'solana') || context.recentDismissed.has(getTokenIdentityKey(token))) {
       return false;
     }
     if (!(typeof token.createdAt === 'number' && token.createdAt > 0)) {
@@ -5248,7 +5442,7 @@ export function createAppController(): AppController {
     context: ReturnType<typeof getRoutedEligibilityContext>,
     options: { preserveWithoutMcap?: boolean } = {},
   ) {
-    if (token._userManual || isBlocked(token.address) || context.oldWeekDismissed.has(token.address)) {
+    if (token._userManual || isBlocked(token.address, token.chain || 'solana') || context.oldWeekDismissed.has(getTokenIdentityKey(token))) {
       return false;
     }
     if (!(typeof token.createdAt === 'number' && token.createdAt > 0)) {
@@ -5277,11 +5471,12 @@ export function createAppController(): AppController {
 
   function getFilteredAlertsForPagination() {
     const normalizedQuery = String(state.ui.alertSearchQuery || '').trim().toLowerCase();
+    const feedAlerts = getAlertFeedAlerts(state);
     if (!normalizedQuery) {
-      return state.data.alerts;
+      return feedAlerts;
     }
 
-    return state.data.alerts.filter((alert) => {
+    return feedAlerts.filter((alert) => {
       const symbol = String(alert.symbol || '').toLowerCase();
       const name = String(alert.name || '').toLowerCase();
       const address = String(alert.address || '').toLowerCase();
@@ -5338,11 +5533,11 @@ export function createAppController(): AppController {
   function finalizeAgeBucketState(
     deriveRecentList: boolean,
     deriveOldWeekList: boolean,
-    nextRecentAddresses: string[],
-    nextOldWeekAddresses: string[],
+    nextRecentIdentities: string[],
+    nextOldWeekIdentities: string[],
   ) {
-    state.data.recentTokenAddresses = deriveRecentList ? nextRecentAddresses : [];
-    state.data.oldWeekTokenAddresses = deriveOldWeekList ? nextOldWeekAddresses : [];
+    state.data.recentTokenIdentities = deriveRecentList ? nextRecentIdentities : [];
+    state.data.oldWeekTokenIdentities = deriveOldWeekList ? nextOldWeekIdentities : [];
     refreshTrackedTokenStore();
     state.bars.recent = getMonitoredTokens(state).filter((item) => item._isRecentRouted).length;
     state.bars.oldWeek = getMonitoredTokens(state).filter((item) => item._isOldWeekRouted).length;
@@ -5359,33 +5554,42 @@ export function createAppController(): AppController {
       'controller.deriveAgeBuckets',
       isRuntimePerfDebugActive(),
       {
-        monitored: state.data.monitoredTokenAddresses.length,
+        monitored: state.data.monitoredTokenIdentities.length,
         workspace: state.ui.workspace,
       },
       () => {
         const context = getRoutedEligibilityContext();
         const deriveRecentList = shouldDeriveRecentList(options);
         const deriveOldWeekList = shouldDeriveOldWeekList(options);
-        const nextRecentAddresses: string[] = [];
-        const nextOldWeekAddresses: string[] = [];
+        const nextRecentIdentities: string[] = [];
+        const nextOldWeekIdentities: string[] = [];
 
         for (const item of getMonitoredTokens(state)) {
           const routedState = deriveRoutedTokenState(item, context);
 
           if (routedState.nextRecent && deriveRecentList) {
-            nextRecentAddresses.push(item.address);
+            nextRecentIdentities.push(getTokenIdentityKey(item));
           }
           if (routedState.nextOldWeek && deriveOldWeekList) {
-            nextOldWeekAddresses.push(item.address);
+            nextOldWeekIdentities.push(getTokenIdentityKey(item));
           }
         }
 
-        finalizeAgeBucketState(deriveRecentList, deriveOldWeekList, nextRecentAddresses, nextOldWeekAddresses);
+        finalizeAgeBucketState(deriveRecentList, deriveOldWeekList, nextRecentIdentities, nextOldWeekIdentities);
       }
     );
   }
   function applyBlockedFilters() {
-    const blocked = new Set(state.data.blocklist.map((item) => item.address));
+    const blocked = new Set(state.data.blocklist
+      .filter((item) => (item.chain || 'solana') === 'solana')
+      .map((item) => item.address));
+    const blockedIdentities = new Set(state.data.blocklist.flatMap((item) => {
+      try {
+        return [getTrackedTokenKey(item.address, item.chain || 'solana')];
+      } catch {
+        return [];
+      }
+    }));
     if (blocked.size === 0) {
       deriveAgeBuckets();
       refreshMonitoredPanelCounts();
@@ -5393,23 +5597,25 @@ export function createAppController(): AppController {
       return;
     }
 
-    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((item) => !blocked.has(item));
-    state.data.pinnedMonitoredTokenAddresses = state.data.pinnedMonitoredTokenAddresses.filter((item) => !blocked.has(item));
-    state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => !blocked.has(item));
-    state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => !blocked.has(item));
-    state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => !blocked.has(item));
-    state.data.topPerformerAddresses = state.data.topPerformerAddresses.filter((item) => !blocked.has(item));
+    state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.filter((item) => !blockedIdentities.has(item));
+    state.data.pinnedMonitoredTokenIdentities = state.data.pinnedMonitoredTokenIdentities.filter((item) => !blockedIdentities.has(item));
+    state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => !blockedIdentities.has(item));
+    state.data.recentTokenIdentities = state.data.recentTokenIdentities.filter((item) => !blockedIdentities.has(item));
+    state.data.oldWeekTokenIdentities = state.data.oldWeekTokenIdentities.filter((item) => !blockedIdentities.has(item));
+    state.data.topPerformerIdentities = state.data.topPerformerIdentities.filter((item) => !blockedIdentities.has(item));
     refreshTrackedTokenStore();
     state.data.pumpTokens = state.data.pumpTokens.filter((item) => !blocked.has(item.mint));
     state.data.recentPumpMigrations = state.data.recentPumpMigrations.filter((item) => !blocked.has(item.mint));
     const beforeAlerts = state.data.alerts.slice();
-    state.data.alerts = state.data.alerts.filter((item) => !blocked.has(item.address));
+    state.data.alerts = state.data.alerts.filter((item) => !blockedIdentities.has(
+      getTrackedTokenKey(item.address, item.chain),
+    ));
     recordAlertMutationDebug('filter.blocked-addresses', beforeAlerts, {
       blockedCount: blocked.size,
     });
-    state.data.dismissedRecent = state.data.dismissedRecent.filter((address) => !blocked.has(address));
-    state.data.dismissedOldWeek = state.data.dismissedOldWeek.filter((address) => !blocked.has(address));
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.data.dismissedRecentIdentities = state.data.dismissedRecentIdentities.filter((identity) => !blockedIdentities.has(identity));
+    state.data.dismissedOldWeekIdentities = state.data.dismissedOldWeekIdentities.filter((identity) => !blockedIdentities.has(identity));
+    state.bars.manual = state.data.manualTokenIdentities.length;
     deriveAgeBuckets();
     refreshMonitoredPanelCounts();
     refreshPumpPanelCounts();
@@ -5424,8 +5630,8 @@ export function createAppController(): AppController {
     }
 
     const removed: string[] = [];
-    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.filter((address) => {
-      const item = state.data.trackedTokensByAddress[address];
+    state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.filter((identityKey) => {
+      const item = getTrackedTokenByIdentity(identityKey);
       if (!item) {
         return false;
       }
@@ -5442,12 +5648,12 @@ export function createAppController(): AppController {
       return keep;
     });
 
-    state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((address) => {
-      const tracked = state.data.trackedTokensByAddress[address];
-      return Boolean(tracked?._userManual) || state.data.monitoredTokenAddresses.includes(address);
+    state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((identityKey) => {
+      const tracked = getTrackedTokenByIdentity(identityKey);
+      return Boolean(tracked?._userManual) || state.data.monitoredTokenIdentities.includes(identityKey);
     });
     refreshTrackedTokenStore();
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.bars.manual = state.data.manualTokenIdentities.length;
     deriveAgeBuckets();
 
     if (removed.length > 0) {
@@ -5636,7 +5842,11 @@ export function createAppController(): AppController {
   }
 
   function buildBackendAlertMetaFields(event: DashboardAlertEvent, address: string) {
+    const mcap = toOptionalNumber(event.mcap);
+    const fdv = toOptionalNumber(event.fdv);
     return {
+      backendEventId: toOptionalNumber(event.id),
+      chain: normalizeTokenChain(event.chain) || 'solana',
       pairAddress: toOptionalText(event.pairAddress),
       symbol: toOptionalText(event.symbol) || address.slice(0, 8),
       name: toOptionalText(event.name),
@@ -5645,6 +5855,11 @@ export function createAppController(): AppController {
       twitterUrl: toOptionalText(event.twitterUrl),
       communityUrl: toOptionalText(event.communityUrl),
       tokenCreatedAt: toOptionalNumber(event.tokenCreatedAt),
+      fdv,
+      valuationType: mcap != null ? 'market-cap' as const : (fdv != null ? 'fdv' as const : null),
+      priceUsd: toOptionalNumber(event.priceUsd),
+      liquidityUsd: toOptionalNumber(event.liquidityUsd),
+      transactions: toOptionalNumber(event.transactions),
     };
   }
 
@@ -5673,11 +5888,11 @@ export function createAppController(): AppController {
         return false;
     }
 
-    const dedupeKey = `${entry.kind}:${entry.address}`;
+    const dedupeKey = `${entry.chain}:${entry.kind}:${entry.address}`;
     const now = Date.now();
     const previous = recentAlertFingerprints.get(dedupeKey);
     const existingAlert = state.data.alerts.find((item) => {
-      if (item.kind !== entry.kind || item.address !== entry.address) {
+      if (item.chain !== entry.chain || item.kind !== entry.kind || item.address !== entry.address) {
         return false;
       }
 
@@ -5726,10 +5941,10 @@ export function createAppController(): AppController {
   }
 
   function pushAlert(entry: AlertEntry) {
-    if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
+    if (isBlocked(entry.address, entry.chain) || !isAlertEntryEnabled(entry)) {
       recordAlertDebug('push.skip-disabled-or-blocked', {
         entry: summarizeAlertDebug([entry]),
-        blocked: isBlocked(entry.address),
+        blocked: isBlocked(entry.address, entry.chain),
         enabled: isAlertEntryEnabled(entry),
       });
       return false;
@@ -5773,10 +5988,10 @@ export function createAppController(): AppController {
   }
 
   function upsertBackendAlertEntry(entry: AlertEntry) {
-    if (isBlocked(entry.address) || !isAlertEntryEnabled(entry)) {
+    if (isBlocked(entry.address, entry.chain) || !isAlertEntryEnabled(entry)) {
       recordAlertDebug('backend.upsert.skip-disabled-or-blocked', {
         entry: summarizeAlertDebug([entry]),
-        blocked: isBlocked(entry.address),
+        blocked: isBlocked(entry.address, entry.chain),
         enabled: isAlertEntryEnabled(entry),
       });
       return false;
@@ -6016,7 +6231,7 @@ export function createAppController(): AppController {
     return events
       .map((item) => buildBackendAlertEntry(item))
       .filter((item): item is AlertEntry => Boolean(item))
-      .filter((item) => !isBlocked(item.address) && isAlertEntryEnabled(item));
+      .filter((item) => !isBlocked(item.address, item.chain) && isAlertEntryEnabled(item));
   }
 
   async function refreshAuthoritativeBackendAlertHistory(reason = 'manual') {
@@ -6071,9 +6286,10 @@ export function createAppController(): AppController {
     return value ?? null;
   }
 
-  function buildCustomAlertPreviewIdentity(address: string, tracked: ManualTokenEntry | null) {
+  function buildCustomAlertPreviewIdentity(chain: TokenChain, address: string, tracked: ManualTokenEntry | null) {
     const symbol = firstCustomPreviewText(tracked?.symbol, tracked?.label, address.slice(0, 8));
     return {
+      chain,
       address,
       mintAddress: firstCustomPreviewText(tracked?.mintAddress, address),
       pairAddress: customPreviewValue(tracked?.pairAddress),
@@ -6097,6 +6313,8 @@ export function createAppController(): AppController {
       volume24h: customPreviewValue(tracked?.volume24h),
       prevMcap: customPreviewValue(tracked?.prevMcap),
       mcap: customPreviewValue(tracked?.mcap),
+      fdv: customPreviewValue(tracked?.fdv),
+      valuationType: tracked?.valuationType ?? null,
     };
   }
 
@@ -6116,7 +6334,8 @@ export function createAppController(): AppController {
   }
 
   function buildCustomAlertPreviewEntry(input: CustomAlertPreviewInput, address: string, now: number): AlertEntry {
-    const tracked = state.data.trackedTokensByAddress[address] || null;
+    const chain = normalizeTokenChain(input.chain) || 'solana';
+    const tracked = getTrackedToken(state, address, chain);
     return {
       id: `custom-preview:${now}:${Math.random().toString(36).slice(2, 8)}`,
       kind: 'custom-alert',
@@ -6124,14 +6343,10 @@ export function createAppController(): AppController {
       createdAt: now,
       pct: 0,
       label: 'CUSTOM',
-      ...buildCustomAlertPreviewIdentity(address, tracked),
+      ...buildCustomAlertPreviewIdentity(chain, address, tracked),
       ...buildCustomAlertPreviewMetrics(tracked),
       ...buildCustomAlertPreviewFields(input),
     };
-  }
-
-  function getCustomAlertBackendMetric(metric: string): 'price' | 'mcap' {
-    return String(metric || '').trim().toLowerCase() === 'price' ? 'price' : 'mcap';
   }
 
   function parseCustomAlertTargetValue(value: string) {
@@ -6160,16 +6375,26 @@ export function createAppController(): AppController {
     return Number.isFinite(hours) && hours > 0 ? hours : null;
   }
 
-  function buildCustomAlertRulePayload(input: CustomAlertPreviewInput) {
+  function buildCustomAlertRulePayload(
+    input: CustomAlertPreviewInput,
+    identityOverride?: { chain: TokenChain; tokenAddress: string },
+  ) {
     const targetValue = parseCustomAlertTargetValue(input.target);
     if (targetValue == null) {
       throw new Error('Custom alert target must be greater than 0.');
     }
 
+    const capability = requireCustomAlertCapability(state.data.customAlertCapabilities, {
+      chain: identityOverride?.chain ?? input.chain ?? 'solana',
+      metric: input.metric,
+      window: input.window ?? 'spot',
+    });
     const payload: CreateCustomAlertRulePayload = {
-      tokenAddress: input.tokenAddress,
+      chain: capability.chain,
+      tokenAddress: identityOverride?.tokenAddress ?? input.tokenAddress,
       title: input.title,
-      metric: getCustomAlertBackendMetric(input.metric),
+      metric: capability.metric,
+      window: capability.window,
       operator: input.operator === 'cross_below' ? 'cross_below' : 'cross_above',
       targetValue,
       colorHex: input.colorHex,
@@ -6190,24 +6415,60 @@ export function createAppController(): AppController {
     return response;
   }
 
+  function getCustomAlertRuleIdentity(rule: CustomAlertRule) {
+    const chain = normalizeTokenChain(rule?.chain);
+    const tokenAddress = String(rule?.tokenAddress || '').trim();
+    if (!chain || !tokenAddress) return null;
+    try {
+      return createLegacyCompatibleTokenIdentity(chain, tokenAddress);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getCustomAlertRuleMetric(value: unknown): CustomAlertMetric | null {
+    return value === 'price' || value === 'mcap' || value === 'fdv' ? value : null;
+  }
+
+  function getCustomAlertRuleBaseline(rule: CustomAlertRule, metric: CustomAlertMetric) {
+    const baselineKey = metric === 'price'
+      ? 'baselinePrice'
+      : metric === 'fdv' ? 'baselineFdv' : 'baselineMcap';
+    const rawValue = rule.metadata?.[baselineKey];
+    if (rawValue == null) return null;
+    const value = Number(rawValue);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function getCustomAlertRuleStatus(value: unknown): CustomAlertRuleEntry['status'] {
+    if (value === 'triggered' || value === 'disabled') return value;
+    return 'active';
+  }
+
   function mapCustomAlertRuleEntry(rule: CustomAlertRule): CustomAlertRuleEntry | null {
     const id = Number(rule?.id);
-    const tokenAddress = String(rule?.tokenAddress || '').trim();
-    if (!Number.isFinite(id) || id <= 0 || !tokenAddress) {
+    const identity = getCustomAlertRuleIdentity(rule);
+    const metric = getCustomAlertRuleMetric(rule?.metric);
+    if (!Number.isFinite(id) || id <= 0 || !identity || !metric || rule.window !== 'spot') {
       return null;
     }
     return {
       id,
-      tokenAddress,
+      chain: identity.chain,
+      identityKey: identity.key,
+      tokenAddress: identity.address,
       title: String(rule.title || 'Custom alert'),
-      metric: rule.metric === 'price' ? 'price' : 'mcap',
+      metric,
+      window: 'spot',
       operator: rule.operator === 'cross_below' ? 'cross_below' : 'cross_above',
       targetValue: Number(rule.targetValue) || 0,
       colorHex: rule.colorHex ?? null,
       soundName: rule.soundName ?? null,
       expiresAt: rule.expiresAt ?? null,
-      status: rule.status === 'triggered' ? 'triggered' : rule.status === 'disabled' ? 'disabled' : 'active',
+      status: getCustomAlertRuleStatus(rule.status),
       triggeredAt: rule.triggeredAt ?? null,
+      baselineValue: getCustomAlertRuleBaseline(rule, metric),
+      baselineAt: rule.metadata?.baselineAt ?? null,
     };
   }
 
@@ -6227,7 +6488,9 @@ export function createAppController(): AppController {
     if (!token || !isAuthenticatedSession()) {
       return;
     }
-    const payload = await fetchCustomAlertRulesRequest(token);
+    const chains = state.data.availableChains.filter((chain) => chain === 'solana' || chain === 'robinhood');
+    const payload = await fetchCustomAlertRulesRequest(token, { chains });
+    state.data.customAlertCapabilities = normalizeCustomAlertCapabilities(payload.capabilities);
     const nextRules = (Array.isArray(payload.rules) ? payload.rules : [])
       .map(mapCustomAlertRuleEntry)
       .filter((rule): rule is CustomAlertRuleEntry => Boolean(rule) && rule?.status !== 'disabled');
@@ -6274,9 +6537,13 @@ export function createAppController(): AppController {
   }
 
   async function markDashboardAlertEventsSeen(token: string, events: DashboardAlertEvent[], ruleKey?: string | null) {
-    const lastSeenEventId = getMaxBackendAlertEventId(events);
     const cursorRuleKey = ruleKey || GMGN_CLAIM_SIGNAL_RULE_KEY;
-    if (!lastSeenEventId) {
+    const eventsByChain = new Map<TokenChain, DashboardAlertEvent[]>();
+    for (const event of events) {
+      const chain = normalizeTokenChain(event.chain) || 'solana';
+      eventsByChain.set(chain, [...(eventsByChain.get(chain) || []), event]);
+    }
+    if (eventsByChain.size === 0) {
       recordAlertDebug('backend.mark-seen.skip-no-event-id', {
         ruleKey: cursorRuleKey,
         events: summarizeDashboardAlertEventsDebug(events),
@@ -6286,23 +6553,29 @@ export function createAppController(): AppController {
 
     try {
       flushAlertsPersist();
-      recordAlertDebug('backend.mark-seen.start', {
-        ruleKey: cursorRuleKey,
-        lastSeenEventId,
-        events: summarizeDashboardAlertEventsDebug(events),
-      });
-      await updateDashboardAlertCursor({
-        ruleKey: cursorRuleKey,
-        lastSeenEventId,
-      }, token);
+      for (const [chain, chainEvents] of eventsByChain) {
+        const lastSeenEventId = getMaxBackendAlertEventId(chainEvents);
+        if (!lastSeenEventId) continue;
+        recordAlertDebug('backend.mark-seen.start', {
+          ruleKey: cursorRuleKey,
+          chain,
+          lastSeenEventId,
+          events: summarizeDashboardAlertEventsDebug(chainEvents),
+        });
+        await updateDashboardAlertCursor({
+          ruleKey: cursorRuleKey,
+          chain,
+          lastSeenEventId,
+        }, token);
+      }
       recordAlertDebug('backend.mark-seen.complete', {
         ruleKey: cursorRuleKey,
-        lastSeenEventId,
+        chains: [...eventsByChain.keys()],
       });
     } catch {
       recordAlertDebug('backend.mark-seen.error', {
         ruleKey: cursorRuleKey,
-        lastSeenEventId,
+        chains: [...eventsByChain.keys()],
       });
     }
   }
@@ -6320,8 +6593,10 @@ export function createAppController(): AppController {
     pct: number,
     extra?: Partial<AlertEntry>,
   ): AlertEntry {
+    const chain = resolveAppTokenChain(token.chain);
     return {
-      id: `${token.address}-${now}-${kind}`,
+      id: `${chain}:${token.address}-${now}-${kind}`,
+      chain,
       kind,
       address: token.address,
       symbol,
@@ -6373,7 +6648,7 @@ export function createAppController(): AppController {
   }
 
   function maybeFireSpecialAlerts(token: ManualTokenEntry) {
-    if (isBlocked(token.address)) {
+    if (isBlocked(token.address, token.chain || 'solana')) {
       return;
     }
 
@@ -6526,7 +6801,7 @@ export function createAppController(): AppController {
   }
 
   function maybeFireLocalAlert(token: ManualTokenEntry) {
-    if (isBlocked(token.address)) {
+    if (isBlocked(token.address, token.chain || 'solana')) {
       return;
     }
     if (shouldUseBackendOwnedMonitoredAlerts()) {
@@ -6583,17 +6858,18 @@ export function createAppController(): AppController {
   ) {
     return Array.from(new Map(
       [...monitoredDashboardTokens, ...pinnedDashboardTokens]
-        .map((item) => [item.address, item]),
+        .map((item) => [getTrackedTokenKey(item.address, item.chain), item]),
     ).values());
   }
 
   function markPinnedTrackedToken(
-    address: string,
+    item: DashboardMonitoredToken,
     pinnedSortOrder: number | null,
     nextTrackedStore: Record<string, ManualTokenEntry>,
     monitoredMap: Map<string, ManualTokenEntry>,
   ) {
-    const existingItem = nextTrackedStore[address] || monitoredMap.get(address);
+    const identityKey = getTrackedTokenKey(item.address, item.chain);
+    const existingItem = nextTrackedStore[identityKey] || monitoredMap.get(identityKey);
     if (!existingItem) {
       return false;
     }
@@ -6603,44 +6879,78 @@ export function createAppController(): AppController {
       _isPinnedMonitored: true,
       pinnedSortOrder,
     };
-    nextTrackedStore[address] = nextItem;
-    monitoredMap.set(address, nextItem);
+    nextTrackedStore[identityKey] = nextItem;
+    monitoredMap.set(identityKey, nextItem);
     return true;
+  }
+
+  function finiteNumberOrNull(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function buildManualConfigTokenBase(item: ConfigPayload['tokens'][number], existingItem?: ManualTokenEntry) {
+    const chain = resolveAppTokenChain(item.chain);
+    return {
+      ...existingItem,
+      chain,
+      address: item.address,
+      label: firstDefinedTrackedValue(item.label, null),
+      symbol: firstDefinedTrackedValue(item.symbol, existingItem?.symbol, null),
+      name: firstDefinedTrackedValue(item.name, existingItem?.name, null),
+      imageUrl: firstDefinedTrackedValue(
+        item.imageUrl, item.last_image_url, existingItem?.imageUrl, null,
+      ),
+      priceUsd: firstDefinedTrackedValue(
+        finiteNumberOrNull(item.last_price), existingItem?.priceUsd, null,
+      ),
+      mcap: chain === 'solana' ? finiteNumberOrNull(item.last_mcap) : null,
+      fdv: chain === 'robinhood' ? finiteNumberOrNull(item.last_fdv) : null,
+      valuationType: chain === 'robinhood' ? 'fdv' as const : 'market-cap' as const,
+      liquidityUsd: finiteNumberOrNull(item.last_liquidity_usd),
+      volume5m: finiteNumberOrNull(item.last_vol_5m),
+      volume1h: finiteNumberOrNull(item.last_vol_1h),
+      volume6h: finiteNumberOrNull(item.last_vol_6h),
+      volume24h: finiteNumberOrNull(item.last_vol_24h),
+      priceChange1h: finiteNumberOrNull(item.last_price_change_1h),
+      priceChange6h: finiteNumberOrNull(item.last_price_change_6h),
+      priceChange24h: finiteNumberOrNull(item.last_price_change_24h),
+      createdAt: finiteNumberOrNull(item.last_token_created_at_ms),
+      catalogFirstSeenAt: item.first_seen_at ? new Date(item.first_seen_at).getTime() : null,
+      lastSeenAt: firstDefinedTrackedValue(item.last_seen_at, null),
+      manual: true,
+      _userManual: true,
+      _isPinnedMonitored: false,
+      pinnedSortOrder: null,
+    };
   }
 
   function buildManualTrackedTokens(input: {
     payload: ConfigPayload;
     blockedSet: Set<string>;
-    dashboardByAddress: Map<string, DashboardMonitoredToken>;
+    dashboardByIdentity: Map<string, DashboardMonitoredToken>;
     existing: Map<string, ManualTokenEntry>;
     nextTrackedStore: Record<string, ManualTokenEntry>;
     alertCandidates: Set<string>;
     coldRefreshDue: boolean;
   }) {
     return sortAddresses(input.payload.tokens)
-      .filter((item) => !input.blockedSet.has(item.address))
+      .filter((item) => !input.blockedSet.has(getTrackedTokenKey(item.address, item.chain || 'solana')))
       .map((item) => {
-        const existingItem = input.existing.get(item.address);
-        const dashboardItem = input.dashboardByAddress.get(item.address);
+        const identityKey = getTrackedTokenKey(item.address, item.chain || 'solana');
+        const existingItem = input.existing.get(identityKey);
+        const dashboardItem = input.dashboardByIdentity.get(identityKey);
         if (existingItem) {
-          input.alertCandidates.add(item.address);
+          input.alertCandidates.add(identityKey);
         }
         const mergedItem = mergeTrackedDashboardFields({
           existingItem,
           dashboardItem,
-          base: {
-            ...existingItem,
-            address: item.address,
-            label: item.label ?? null,
-            manual: true,
-            _userManual: true,
-            _isPinnedMonitored: false,
-            pinnedSortOrder: null,
-          },
+          base: buildManualConfigTokenBase(item, existingItem),
           coldRefreshDue: input.coldRefreshDue,
         });
         const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
-        input.nextTrackedStore[item.address] = nextItem;
+        input.nextTrackedStore[identityKey] = nextItem;
         return nextItem;
       });
   }
@@ -6655,7 +6965,7 @@ export function createAppController(): AppController {
   }) {
     for (const item of input.pinnedDashboardItems) {
       if (markPinnedTrackedToken(
-        item.address,
+        item,
         item.pinnedSortOrder ?? null,
         input.nextTrackedStore,
         input.monitoredMap,
@@ -6663,9 +6973,10 @@ export function createAppController(): AppController {
         continue;
       }
 
-      const existingItem = input.existing.get(item.address);
+      const identityKey = getTrackedTokenKey(item.address, item.chain);
+      const existingItem = input.existing.get(identityKey);
       if (existingItem) {
-        input.alertCandidates.add(item.address);
+        input.alertCandidates.add(identityKey);
       }
       const mergedItem = mergeTrackedDashboardFields({
         existingItem,
@@ -6682,8 +6993,8 @@ export function createAppController(): AppController {
         coldRefreshDue: input.coldRefreshDue,
       });
       const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
-      input.nextTrackedStore[item.address] = nextItem;
-      input.monitoredMap.set(item.address, nextItem);
+      input.nextTrackedStore[identityKey] = nextItem;
+      input.monitoredMap.set(identityKey, nextItem);
     }
   }
 
@@ -6699,11 +7010,12 @@ export function createAppController(): AppController {
     for (const item of input.monitoredDashboardTokens
       .slice()
       .sort((a, b) => a.address.localeCompare(b.address))) {
-      if (input.blockedSet.has(item.address)) continue;
-      if (input.monitoredMap.has(item.address)) continue;
-      const existingItem = input.existing.get(item.address);
+      const identityKey = getTrackedTokenKey(item.address, item.chain);
+      if (input.blockedSet.has(identityKey)) continue;
+      if (input.monitoredMap.has(identityKey)) continue;
+      const existingItem = input.existing.get(identityKey);
       if (existingItem) {
-        input.alertCandidates.add(item.address);
+        input.alertCandidates.add(identityKey);
       }
       const mergedItem = mergeTrackedDashboardFields({
         existingItem,
@@ -6720,8 +7032,8 @@ export function createAppController(): AppController {
         coldRefreshDue: input.coldRefreshDue,
       });
       const nextItem = selectMergedTrackedToken(existingItem, mergedItem);
-      input.nextTrackedStore[item.address] = nextItem;
-      input.monitoredMap.set(item.address, nextItem);
+      input.nextTrackedStore[identityKey] = nextItem;
+      input.monitoredMap.set(identityKey, nextItem);
     }
   }
 
@@ -6734,25 +7046,37 @@ export function createAppController(): AppController {
       ? getCurrentPinnedMonitoredDashboardSnapshot()
       : pinnedDashboardTokens;
     const existing = new Map(
-      Object.entries(state.data.trackedTokensByAddress).length > 0
-        ? Object.entries(state.data.trackedTokensByAddress)
-        : getMonitoredTokens(state).map((item) => [item.address, item]),
+      Object.entries(state.data.trackedTokensByIdentity).length > 0
+        ? Object.entries(state.data.trackedTokensByIdentity)
+        : getMonitoredTokens(state).map((item) => [getTrackedTokenKey(item.address, item.chain), item]),
     );
-    const blockedSet = new Set(payload.blocklist.map((item) => item.address));
+    const blockedSet = new Set(payload.blocklist.map((item) => (
+      getTrackedTokenKey(item.address, item.chain || 'solana')
+    )));
     const allDashboardTokens = mergeDashboardTokenSnapshots(monitoredDashboardTokens, effectivePinnedDashboardTokens);
-    const dashboardByAddress = new Map(allDashboardTokens.map((item) => [item.address, item]));
-    const nextTrackedStore: Record<string, ManualTokenEntry> = {};
+    const dashboardByIdentity = new Map(allDashboardTokens.map((item) => [
+      getTrackedTokenKey(item.address, item.chain),
+      item,
+    ]));
+    const retainedIdentities = new Set([
+      ...state.data.topPerformerIdentities,
+      ...state.data.recentTokenIdentities,
+      ...state.data.oldWeekTokenIdentities,
+    ]);
+    const nextTrackedStore: Record<string, ManualTokenEntry> = Object.fromEntries(
+      [...existing.entries()].filter(([identityKey]) => retainedIdentities.has(identityKey)),
+    );
     const now = Date.now();
     const coldRefreshDue = allDashboardTokens.length > 0 && now >= nextColdFieldRefreshAt;
     const alertCandidates = new Set<string>();
     const pinnedDashboardItems = sortPinnedDashboardTokens(effectivePinnedDashboardTokens)
-      .filter((item) => !blockedSet.has(item.address));
-    const pinnedAddresses = pinnedDashboardItems.map((item) => item.address);
+      .filter((item) => !blockedSet.has(getTrackedTokenKey(item.address, item.chain)));
+    const pinnedIdentities = pinnedDashboardItems.map((item) => getTrackedTokenKey(item.address, item.chain));
 
     const manualTokens = buildManualTrackedTokens({
       payload,
       blockedSet,
-      dashboardByAddress,
+      dashboardByIdentity,
       existing,
       nextTrackedStore,
       alertCandidates,
@@ -6760,7 +7084,7 @@ export function createAppController(): AppController {
     });
     const monitoredMap = new Map<string, ManualTokenEntry>();
     for (const item of manualTokens) {
-      monitoredMap.set(item.address, item);
+      monitoredMap.set(getTokenIdentityKey(item), item);
     }
 
     applyPinnedDashboardItems({
@@ -6785,7 +7109,7 @@ export function createAppController(): AppController {
       nextTrackedStore,
       manualTokens,
       monitoredMap,
-      pinnedAddresses,
+      pinnedIdentities,
       alertCandidates,
       coldRefreshDue,
       now,
@@ -6907,35 +7231,51 @@ export function createAppController(): AppController {
     }
   }
 
-  function getVisibleManualSparklineAddresses() {
-    const selected: string[] = [];
+  function getChartCapableIdentity(chain: unknown, address: unknown) {
+    try {
+      const identity = createLegacyCompatibleTokenIdentity(chain, address);
+      return state.data.chainReadiness[identity.chain]?.capabilities.charts === true
+        ? identity
+        : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getVisibleManualSparklineIdentities() {
+    const selected: TokenIdentity[] = [];
     const seen = new Set<string>();
-    for (const address of state.data.topPerformerAddresses) {
-      if (!address || seen.has(address)) {
+    for (const identityKey of state.data.topPerformerIdentities) {
+      const identity = parseTokenIdentityKey(identityKey);
+      if (
+        state.data.chainReadiness[identity.chain]?.capabilities.charts !== true
+        || seen.has(identity.key)
+      ) {
         continue;
       }
-      seen.add(address);
-      selected.push(address);
+      seen.add(identity.key);
+      selected.push(identity);
     }
 
     for (const item of resolveManualTableRows(getManualTokens(state), {
       starredOnly: state.ui.manualStarredOnly,
-      starredTokens: state.data.starredTokens,
+      starredTokens: state.data.starredTokenIdentities,
       searchQuery: state.ui.manualSearchQuery,
       sortCriteria: state.ui.manualSorts,
     })
       .slice(0, SPARKLINE_VISIBLE_LIMIT_MANUAL)) {
-      if (!item.address || seen.has(item.address)) {
+      const identity = getChartCapableIdentity(item.chain, item.address);
+      if (!identity || seen.has(identity.key)) {
         continue;
       }
-      seen.add(item.address);
-      selected.push(item.address);
+      seen.add(identity.key);
+      selected.push(identity);
     }
 
     return selected;
   }
 
-  function getVisibleMonitoredSparklineAddresses() {
+  function getVisibleMonitoredSparklineIdentities() {
     if (state.ui.livePanelLayout.spans.monitored <= 1) {
       return [];
     }
@@ -6950,46 +7290,52 @@ export function createAppController(): AppController {
     const start = safePage * safePerPage;
     return filteredTracked
       .slice(start, start + safePerPage)
-      .map((item) => item.address)
-      .filter(Boolean);
+      .map((item) => getChartCapableIdentity(item.chain, item.address))
+      .filter((identity): identity is TokenIdentity => Boolean(identity));
   }
 
-  function getVisibleRoutedHistorySparklineAddressScopes() {
-    const recentAddresses = state.data.recentTokenAddresses.filter(Boolean);
-    const oldWeekAddresses = state.data.oldWeekTokenAddresses.filter(Boolean);
-    const selected: Array<{ address: string; scope: SparklineRangeScope }> = [];
-    const seen = new Set();
-    const maxLength = Math.max(recentAddresses.length, oldWeekAddresses.length);
+  function getVisibleRoutedHistorySparklineIdentityScopes() {
+    const recentIdentities = getRecentTokens(state)
+      .map((token) => getChartCapableIdentity(token.chain, token.address))
+      .filter((identity): identity is TokenIdentity => Boolean(identity));
+    const oldWeekIdentities = getOldWeekTokens(state)
+      .map((token) => getChartCapableIdentity(token.chain, token.address))
+      .filter((identity): identity is TokenIdentity => Boolean(identity));
+    const selected: Array<{ identity: TokenIdentity; scope: SparklineRangeScope }> = [];
+    const seen = new Set<string>();
+    const maxLength = Math.max(recentIdentities.length, oldWeekIdentities.length);
 
     for (let index = 0; index < maxLength && selected.length < SPARKLINE_VISIBLE_LIMIT_TOTAL; index += 1) {
-      const recentAddress = recentAddresses[index];
-      if (recentAddress && !seen.has(recentAddress)) {
-        seen.add(recentAddress);
-        selected.push({ address: recentAddress, scope: 'recent' });
+      const recentIdentity = recentIdentities[index];
+      if (recentIdentity && !seen.has(recentIdentity.key)) {
+        seen.add(recentIdentity.key);
+        selected.push({ identity: recentIdentity, scope: 'recent' });
       }
 
       if (selected.length >= SPARKLINE_VISIBLE_LIMIT_TOTAL) {
         break;
       }
 
-      const oldWeekAddress = oldWeekAddresses[index];
-      if (oldWeekAddress && !seen.has(oldWeekAddress)) {
-        seen.add(oldWeekAddress);
-        selected.push({ address: oldWeekAddress, scope: 'oldWeek' });
+      const oldWeekIdentity = oldWeekIdentities[index];
+      if (oldWeekIdentity && !seen.has(oldWeekIdentity.key)) {
+        seen.add(oldWeekIdentity.key);
+        selected.push({ identity: oldWeekIdentity, scope: 'oldWeek' });
       }
     }
 
     return selected;
   }
 
-  function getTokenSparklineRangeDays(address: string) {
-    const normalizedAddress = String(address || '').trim();
-    const days = normalizedAddress ? state.ui.sparklineRange.tokenDaysByAddress[normalizedAddress] : null;
+  function getTokenSparklineRangeDays(identity: TokenIdentity) {
+    const days = state.ui.sparklineRange.tokenDaysByAddress[identity.key]
+      ?? (identity.chain === 'solana'
+        ? state.ui.sparklineRange.tokenDaysByAddress[identity.address]
+        : null);
     return Number.isFinite(Number(days)) ? normalizeSparklineRangeDays(days) : null;
   }
 
-  function getSparklineRangeDays(scope: SparklineRangeScope, address?: string) {
-    const tokenDays = address ? getTokenSparklineRangeDays(address) : null;
+  function getSparklineRangeDays(scope: SparklineRangeScope, identity?: TokenIdentity) {
+    const tokenDays = identity ? getTokenSparklineRangeDays(identity) : null;
     if (tokenDays != null) {
       return tokenDays;
     }
@@ -7020,62 +7366,62 @@ export function createAppController(): AppController {
     return effectiveDays <= 1 ? 1 : 5;
   }
 
-  function getVisibleWorkspaceSparklineAddressScopes() {
+  function getVisibleWorkspaceSparklineIdentityScopes() {
     if (isLiveWorkspace()) {
-      const selected: Array<{ address: string; scope: SparklineRangeScope }> = [];
+      const selected: Array<{ identity: TokenIdentity; scope: SparklineRangeScope }> = [];
       const seen = new Set<string>();
-      for (const address of getVisibleMonitoredSparklineAddresses()) {
-        if (!address || seen.has(address)) {
+      for (const identity of getVisibleMonitoredSparklineIdentities()) {
+        if (seen.has(identity.key)) {
           continue;
         }
-        seen.add(address);
-        selected.push({ address, scope: 'monitored' });
+        seen.add(identity.key);
+        selected.push({ identity, scope: 'monitored' });
       }
-      for (const address of getVisibleManualSparklineAddresses()) {
-        if (!address || seen.has(address)) {
+      for (const identity of getVisibleManualSparklineIdentities()) {
+        if (seen.has(identity.key)) {
           continue;
         }
-        seen.add(address);
-        selected.push({ address, scope: 'monitored' });
+        seen.add(identity.key);
+        selected.push({ identity, scope: 'monitored' });
       }
       return selected;
     }
     if (isHistoryWorkspace()) {
-      return getVisibleRoutedHistorySparklineAddressScopes();
+      return getVisibleRoutedHistorySparklineIdentityScopes();
     }
     return [];
   }
 
   function getVisibleWorkspaceSparklineBatches(referenceTs = Date.now()) {
     const grouped = new Map<string, SparklineBatchRequest>();
-    const selectedAddresses = getVisibleWorkspaceSparklineAddressScopes();
+    const selectedIdentities = getVisibleWorkspaceSparklineIdentityScopes();
 
-    for (const { address, scope } of selectedAddresses) {
-      const trackedToken = getTrackedToken(state, address);
+    for (const { identity, scope } of selectedIdentities) {
+      const trackedToken = getTrackedToken(state, identity.address, identity.chain);
       const sparklineAnchorAt = trackedToken?.catalogFirstSeenAt ?? trackedToken?.createdAt ?? null;
-      const rangeDays = getSparklineRangeDays(scope, address);
+      const rangeDays = getSparklineRangeDays(scope, identity);
       const hours = rangeDays * 24;
       const granularityMinutes = resolveSparklineGranularityMinutes(sparklineAnchorAt, rangeDays, referenceTs);
       const key = `${hours}:${granularityMinutes}`;
       const batch = grouped.get(key);
-      if (batch?.addresses.includes(address)) {
+      if (batch?.identities.some((item) => item.key === identity.key)) {
         continue;
       }
       if (batch) {
-        batch.addresses.push(address);
+        batch.identities.push(identity);
         continue;
       }
 
       grouped.set(key, {
         hours,
         granularityMinutes,
-        addresses: [address],
+        identities: [identity],
       });
     }
 
     return Array.from(grouped.values())
       .sort((left, right) => left.hours - right.hours || left.granularityMinutes - right.granularityMinutes)
-      .filter((item) => item.addresses.length > 0);
+      .filter((item) => item.identities.length > 0);
   }
 
   function resolveAlertSparklineCreatedAt(alertId: string, address: string) {
@@ -7164,26 +7510,25 @@ export function createAppController(): AppController {
 
   function buildSparklineBatchKey(batches: SparklineBatchRequest[]) {
     return batches
-      .map((item) => `${item.hours}:${item.granularityMinutes}:${[...item.addresses].sort((left, right) => left.localeCompare(right)).join(',')}`)
+      .map((item) => `${item.hours}:${item.granularityMinutes}:${item.identities.map((identity) => identity.key).sort().join(',')}`)
       .join('|');
   }
 
-  function collectWorkspaceSparklineAddresses(batches: SparklineBatchRequest[]) {
-    const addresses: string[] = [];
+  function collectWorkspaceSparklineIdentities(batches: SparklineBatchRequest[]) {
+    const identities: TokenIdentity[] = [];
     const seen = new Set<string>();
 
     for (const batch of batches) {
-      for (const address of batch.addresses) {
-        const normalizedAddress = String(address || '').trim();
-        if (!normalizedAddress || seen.has(normalizedAddress)) {
+      for (const identity of batch.identities) {
+        if (seen.has(identity.key)) {
           continue;
         }
-        seen.add(normalizedAddress);
-        addresses.push(normalizedAddress);
+        seen.add(identity.key);
+        identities.push(identity);
       }
     }
 
-    return addresses;
+    return identities;
   }
 
   function hasRenderableSparklineSeries(entry?: TokenSparklineEntry | null) {
@@ -7191,17 +7536,47 @@ export function createAppController(): AppController {
     return series.length >= 2;
   }
 
-  function buildWorkspaceSparklineLoadingEntry(address: string, existing?: TokenSparklineEntry, hours?: number) {
+  function readWorkspaceSparklineCacheEntry(
+    cache: Record<string, TokenSparklineEntry>,
+    identity: TokenIdentity,
+  ) {
+    return cache[identity.key]
+      || (identity.chain === 'solana' ? cache[identity.address] : undefined);
+  }
+
+  function writeWorkspaceSparklineCacheEntry(
+    cache: Record<string, TokenSparklineEntry>,
+    identity: TokenIdentity,
+    entry: TokenSparklineEntry,
+  ) {
+    cache[identity.key] = entry;
+    if (identity.chain === 'solana') cache[identity.address] = entry;
+  }
+
+  function deleteWorkspaceSparklineCacheEntry(
+    cache: Record<string, TokenSparklineEntry>,
+    identity: TokenIdentity,
+  ) {
+    delete cache[identity.key];
+    if (identity.chain === 'solana') delete cache[identity.address];
+  }
+
+  function buildWorkspaceSparklineLoadingEntry(
+    identity: TokenIdentity,
+    existing?: TokenSparklineEntry,
+    hours?: number,
+  ) {
     return {
-      ...(existing || { address, series: [] }),
-      address,
+      ...(existing || { address: identity.address, series: [] }),
+      chain: identity.chain,
+      address: identity.address,
       series: [],
       hours: Number.isFinite(Number(hours)) && Number(hours) > 0 ? Number(hours) : existing?.hours,
       loading: true,
     } satisfies TokenSparklineEntry;
   }
 
-  function ensureWorkspaceSparklineLoadingEntries(addresses: string[]) {
+  function ensureWorkspaceSparklineLoadingEntries(identities: TokenIdentity[]) {
     let nextCache: Record<string, TokenSparklineEntry> | null = null;
     let changed = false;
     const addedLoading: string[] = [];
@@ -7213,19 +7588,24 @@ export function createAppController(): AppController {
       hours?: number;
     }> = [];
 
-    for (const address of addresses) {
-      const existing = (nextCache || state.data.sparklineByAddress)[address];
+    for (const identity of identities) {
+      const cache = nextCache || state.data.sparklineByAddress;
+      const existing = readWorkspaceSparklineCacheEntry(cache, identity);
       if (hasRenderableSparklineSeries(existing) || existing?.loading) {
         continue;
       }
 
       nextCache ||= { ...state.data.sparklineByAddress };
-      nextCache[address] = buildWorkspaceSparklineLoadingEntry(address, existing);
+      writeWorkspaceSparklineCacheEntry(
+        nextCache,
+        identity,
+        buildWorkspaceSparklineLoadingEntry(identity, existing),
+      );
       changed = true;
-      addedLoading.push(address);
+      addedLoading.push(identity.key);
       if (addedDetails.length < 8) {
         addedDetails.push({
-          address,
+          address: identity.key,
           hadEntry: Boolean(existing),
           seriesCount: Array.isArray(existing?.series) ? existing.series.length : 0,
           loading: Boolean(existing?.loading),
@@ -7241,7 +7621,7 @@ export function createAppController(): AppController {
     state.data.sparklineByAddress = nextCache;
     recordSparklineDebug('loading.add', {
       added: summarizeSparklineDebugAddresses(addedLoading),
-      requested: summarizeSparklineDebugAddresses(addresses),
+      requested: summarizeSparklineDebugAddresses(identities.map((identity) => identity.key)),
       addedDetails,
     });
     recordSparklineDebug('loading.without-series', {
@@ -7251,26 +7631,24 @@ export function createAppController(): AppController {
     return true;
   }
 
-  function clearWorkspaceSparklineLoadingEntries(addresses: Iterable<string>) {
+  function clearWorkspaceSparklineLoadingEntries(identities: Iterable<TokenIdentity>) {
     let nextCache: Record<string, TokenSparklineEntry> | null = null;
     let changed = false;
     const clearedLoading: string[] = [];
 
-    for (const address of addresses) {
-      const normalizedAddress = String(address || '').trim();
-      if (!normalizedAddress) {
-        continue;
-      }
-
-      const existing = (nextCache || state.data.sparklineByAddress)[normalizedAddress];
+    for (const identity of identities) {
+      const existing = readWorkspaceSparklineCacheEntry(
+        nextCache || state.data.sparklineByAddress,
+        identity,
+      );
       if (!existing?.loading || hasRenderableSparklineSeries(existing)) {
         continue;
       }
 
       nextCache ||= { ...state.data.sparklineByAddress };
-      delete nextCache[normalizedAddress];
+      deleteWorkspaceSparklineCacheEntry(nextCache, identity);
       changed = true;
-      clearedLoading.push(normalizedAddress);
+      clearedLoading.push(identity.key);
     }
 
     if (!nextCache || !changed) {
@@ -7288,12 +7666,22 @@ export function createAppController(): AppController {
     return state.session.token === token && isAuthenticatedSession() && (isHistoryWorkspace() || isLiveWorkspace());
   }
 
-  function handleWorkspaceSparklineRefreshFailure(visibleAddresses: string[], error: unknown) {
-    if (clearWorkspaceSparklineLoadingEntries(visibleAddresses)) {
+  function handleWorkspaceSparklineRefreshFailure(visibleIdentities: TokenIdentity[], error: unknown) {
+    if (clearWorkspaceSparklineLoadingEntries(visibleIdentities)) {
       emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
 
     console.warn('[AppController] Failed to refresh monitor sparklines:', error instanceof Error ? error.message : error);
+  }
+
+  function buildHistorySparklineChainMetadata(item: TokenSparklinesPayload['items'][number]) {
+    return {
+      chain: item.chain,
+      valuationType: item.valuationType ?? null,
+      resolution: item.resolution ?? null,
+      minuteStartsAt: item.minuteStartsAt ?? null,
+      truncated: item.truncated === true,
+    };
   }
 
   function buildHistorySparklineCacheEntry(
@@ -7307,6 +7695,7 @@ export function createAppController(): AppController {
 
     const series = Array.isArray(item.series) ? item.series : [];
     return {
+      ...buildHistorySparklineChainMetadata(item),
       address: item.address,
       pairAddress: item.pairAddress ?? null,
       bucketCount: Number(item.bucketCount) || 0,
@@ -7315,11 +7704,13 @@ export function createAppController(): AppController {
       granularityMinutes: item.granularityMinutes ?? payload.granularityMinutes ?? SPARKLINE_GRANULARITY_FALLBACK_MINUTES,
       firstBucketAt: item.firstBucketAt ?? null,
       latestBucketAt: item.latestBucketAt ?? null,
+      oneMinuteAvailable: item.oneMinuteAvailable === true,
       generatedAt: payload.generatedAt ?? null,
       refreshedAt,
       hours: Number(payload.hours) || SPARKLINE_WINDOW_HOURS,
       points: Number(payload.points) || SPARKLINE_POINT_COUNT,
       series,
+      candles: Array.isArray(item.candles) ? item.candles : [],
       loading: false,
     } satisfies TokenSparklineEntry;
   }
@@ -7327,24 +7718,26 @@ export function createAppController(): AppController {
   function applyHistorySparklinePayload(payload: TokenSparklinesPayload, expectedBatch?: SparklineBatchRequest) {
     const nextCache: Record<string, TokenSparklineEntry> = { ...state.data.sparklineByAddress };
     const refreshedAt = Date.now();
-    const returnedAddresses = new Set<string>();
+    const returnedKeys = new Set<string>();
     let changed = false;
     for (const item of payload.items || []) {
       const entry = buildHistorySparklineCacheEntry(item, payload, refreshedAt);
       if (!entry) {
         continue;
       }
-      nextCache[entry.address] = entry;
-      returnedAddresses.add(entry.address);
+      const identity = createLegacyCompatibleTokenIdentity(entry.chain, entry.address);
+      writeWorkspaceSparklineCacheEntry(nextCache, identity, entry);
+      returnedKeys.add(identity.key);
       changed = true;
     }
 
-    for (const address of expectedBatch?.addresses || []) {
-      if (returnedAddresses.has(address)) {
+    for (const identity of expectedBatch?.identities || []) {
+      if (returnedKeys.has(identity.key)) {
         continue;
       }
-      nextCache[address] = {
-        address,
+      writeWorkspaceSparklineCacheEntry(nextCache, identity, {
+        chain: identity.chain,
+        address: identity.address,
         generatedAt: payload.generatedAt ?? null,
         refreshedAt,
         hours: expectedBatch?.hours,
@@ -7352,7 +7745,7 @@ export function createAppController(): AppController {
         granularityMinutes: expectedBatch?.granularityMinutes,
         series: [],
         loading: false,
-      };
+      });
       changed = true;
     }
 
@@ -7376,26 +7769,34 @@ export function createAppController(): AppController {
     generatedAt?: string | null,
     points?: number | null,
   ) {
-    const address = String(item?.address || '').trim();
+    if (!item) {
+      return null;
+    }
+    const address = String(item.address || '').trim();
     if (!address) {
       return null;
     }
 
-    const series = normalizeAlertSparklineSeries(item?.series);
+    const series = normalizeAlertSparklineSeries(item.series);
     return {
+      chain: item.chain || 'solana',
       address,
-      pairAddress: item?.pairAddress ?? null,
-      bucketCount: Number(item?.bucketCount) || 0,
-      coverageRatio: toOptionalSparklineNumber(item?.coverageRatio),
-      effectiveHours: toOptionalSparklineNumber(item?.effectiveHours),
-      granularityMinutes: resolveSparklineCount(item?.granularityMinutes, SPARKLINE_GRANULARITY_FALLBACK_MINUTES),
-      firstBucketAt: toOptionalSparklineString(item?.firstBucketAt),
-      latestBucketAt: toOptionalSparklineString(item?.latestBucketAt),
-      oneMinuteAvailable: item?.oneMinuteAvailable === true,
+      valuationType: item.valuationType ?? null,
+      resolution: item.resolution ?? null,
+      minuteStartsAt: item.minuteStartsAt ?? null,
+      truncated: item.truncated === true,
+      pairAddress: item.pairAddress ?? null,
+      bucketCount: Number(item.bucketCount) || 0,
+      coverageRatio: toOptionalSparklineNumber(item.coverageRatio),
+      effectiveHours: toOptionalSparklineNumber(item.effectiveHours),
+      granularityMinutes: resolveSparklineCount(item.granularityMinutes, SPARKLINE_GRANULARITY_FALLBACK_MINUTES),
+      firstBucketAt: toOptionalSparklineString(item.firstBucketAt),
+      latestBucketAt: toOptionalSparklineString(item.latestBucketAt),
+      oneMinuteAvailable: item.oneMinuteAvailable === true,
       generatedAt: toOptionalSparklineString(generatedAt),
       points: resolveSparklineCount(points, EXPANDED_SPARKLINE_POINT_COUNT),
       series,
-      candles: Array.isArray(item?.candles) ? item.candles : [],
+      candles: Array.isArray(item.candles) ? item.candles : [],
       loading: false,
     } satisfies TokenSparklineEntry;
   }
@@ -7418,12 +7819,29 @@ export function createAppController(): AppController {
     return normalizeExpandedSparklineGranularity(state.ui.expandedSparklineGranularityMinutes);
   }
 
+  function getActiveExpandedSparklineIdentity() {
+    if (!state.ui.expandedSparklineAddress) return null;
+    return createLegacyCompatibleTokenIdentity(
+      state.ui.expandedSparklineChain,
+      state.ui.expandedSparklineAddress,
+    );
+  }
+
+  function isActiveExpandedSparklineIdentity(identityKey: string) {
+    return getActiveExpandedSparklineIdentity()?.key === identityKey;
+  }
+
   function restorePreferredExpandedSparklineGranularity() {
     state.ui.expandedSparklineGranularityMinutes = preferredExpandedSparklineGranularityMinutes;
   }
 
-  function isExpandedOneMinuteAgeEligible(address: string, now = Date.now()) {
-    const token = getTrackedToken(state, address);
+  function isExpandedOneMinuteAgeEligible(
+    address: string,
+    now = Date.now(),
+    chain: TokenChain = 'solana',
+  ) {
+    if (chain !== 'solana') return true;
+    const token = getTrackedToken(state, address, chain);
     const createdAt = Number(token?.createdAt);
     if (!Number.isFinite(createdAt) || createdAt <= 0 || createdAt > now) {
       return false;
@@ -7432,8 +7850,14 @@ export function createAppController(): AppController {
     return now - createdAt < EXPANDED_SPARKLINE_ONE_MINUTE_MAX_AGE_MS;
   }
 
-  function restorePreferredExpandedSparklineGranularityForAddress(address: string) {
-    if (preferredExpandedSparklineGranularityMinutes === 1 && !isExpandedOneMinuteAgeEligible(address)) {
+  function restorePreferredExpandedSparklineGranularityForAddress(
+    address: string,
+    chain: TokenChain = 'solana',
+  ) {
+    if (
+      preferredExpandedSparklineGranularityMinutes === 1
+      && !isExpandedOneMinuteAgeEligible(address, Date.now(), chain)
+    ) {
       state.ui.expandedSparklineGranularityMinutes = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
       return;
     }
@@ -7441,34 +7865,63 @@ export function createAppController(): AppController {
     restorePreferredExpandedSparklineGranularity();
   }
 
-  function isExpandedSparklineGranularityAvailable(address: string, granularityMinutes: number) {
+  function isExpandedSparklineGranularityAvailable(
+    address: string,
+    granularityMinutes: number,
+    chain: TokenChain = 'solana',
+  ) {
     if (granularityMinutes !== 1) {
       return true;
     }
-    if (!isExpandedOneMinuteAgeEligible(address)) {
+    if (!isExpandedOneMinuteAgeEligible(address, Date.now(), chain)) {
       return false;
     }
 
-    const entry = getExpandedSparklineCacheEntry(address, EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES);
+    const entry = getExpandedSparklineCacheEntry(
+      address,
+      EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES,
+      chain,
+    );
     return entry?.oneMinuteAvailable === true;
   }
 
-  function isExpandedOneMinutePrefetchEligible(address: string, entry?: TokenSparklineEntry | null, now = Date.now()) {
+  function isExpandedOneMinutePrefetchEligible(
+    address: string,
+    entry?: TokenSparklineEntry | null,
+    now = Date.now(),
+    chain: TokenChain = 'solana',
+  ) {
     if (entry?.oneMinuteAvailable !== true) {
       return false;
     }
 
-    return isExpandedOneMinuteAgeEligible(address, now);
+    return isExpandedOneMinuteAgeEligible(address, now, chain);
   }
 
-  function getExpandedSparklineCacheKey(address: string, granularityMinutes = getActiveExpandedSparklineGranularity()) {
-    return `${String(address || '').trim()}::${normalizeExpandedSparklineGranularity(granularityMinutes)}`;
+  function getExpandedSparklineCacheKey(
+    address: string,
+    granularityMinutes = getActiveExpandedSparklineGranularity(),
+    chain: TokenChain = 'solana',
+  ) {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    return `${identity.key}::${normalizeExpandedSparklineGranularity(granularityMinutes)}`;
   }
 
-  function getExpandedSparklineCacheEntry(address: string, granularityMinutes = getActiveExpandedSparklineGranularity()) {
-    const normalized = String(address || '').trim();
-    return state.data.expandedSparklineByAddress[getExpandedSparklineCacheKey(normalized, granularityMinutes)]
-      || state.data.expandedSparklineByAddress[normalized]
+  function getExpandedSparklineCacheEntry(
+    address: string,
+    granularityMinutes = getActiveExpandedSparklineGranularity(),
+    chain: TokenChain = 'solana',
+  ) {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    return state.data.expandedSparklineByAddress[getExpandedSparklineCacheKey(
+      identity.address,
+      granularityMinutes,
+      identity.chain,
+    )]
+      || (identity.chain === 'solana'
+        ? state.data.expandedSparklineByAddress[`${identity.address}::${granularityMinutes}`]
+          || state.data.expandedSparklineByAddress[identity.address]
+        : null)
       || null;
   }
 
@@ -7492,6 +7945,18 @@ export function createAppController(): AppController {
     return values.length ? Math.min(...values) : null;
   }
 
+  function firstPresent<T>(...values: Array<T | null | undefined>) {
+    return values.find((value) => value != null) ?? null;
+  }
+
+  function mergeLiveClose<T>(
+    existing: T | null | undefined,
+    incoming: T | null | undefined,
+    newerClose: boolean,
+  ) {
+    return newerClose ? firstPresent(incoming, existing) : firstPresent(existing);
+  }
+
   function mergeLiveCandle(
     existing: TokenSparklineCandleEntry | null | undefined,
     incoming: TokenSparklineCandleEntry,
@@ -7510,19 +7975,36 @@ export function createAppController(): AppController {
       };
     }
 
+    const newerClose = shouldReplaceMarketCandleClose(
+      existing.liveSourceBucketTs || existing.bucketTs,
+      existing.liveSequence,
+      incoming.liveSourceBucketTs || incoming.bucketTs,
+      incoming.liveSequence,
+    );
     return {
       ...existing,
-      pairAddress: incoming.pairAddress ?? existing.pairAddress ?? null,
+      pairAddress: firstPresent(incoming.pairAddress, existing.pairAddress),
       granularityMinutes,
-      openMcap: existing.openMcap ?? incoming.openMcap,
+      openMcap: firstPresent(existing.openMcap, incoming.openMcap),
       highMcap: maxNullableNumber(existing.highMcap, incoming.highMcap),
       lowMcap: minNullableNumber(existing.lowMcap, incoming.lowMcap),
-      closeMcap: incoming.closeMcap ?? existing.closeMcap,
-      openPrice: existing.openPrice ?? incoming.openPrice,
+      closeMcap: mergeLiveClose(existing.closeMcap, incoming.closeMcap, newerClose),
+      valuationType: firstPresent(incoming.valuationType, existing.valuationType),
+      openFdvUsd: firstPresent(existing.openFdvUsd, incoming.openFdvUsd),
+      highFdvUsd: maxNullableNumber(existing.highFdvUsd, incoming.highFdvUsd),
+      lowFdvUsd: minNullableNumber(existing.lowFdvUsd, incoming.lowFdvUsd),
+      closeFdvUsd: mergeLiveClose(existing.closeFdvUsd, incoming.closeFdvUsd, newerClose),
+      openPrice: firstPresent(existing.openPrice, incoming.openPrice),
       highPrice: maxNullableNumber(existing.highPrice, incoming.highPrice),
       lowPrice: minNullableNumber(existing.lowPrice, incoming.lowPrice),
-      closePrice: incoming.closePrice ?? existing.closePrice,
+      closePrice: mergeLiveClose(existing.closePrice, incoming.closePrice, newerClose),
+      openPriceUsd: firstPresent(existing.openPriceUsd, incoming.openPriceUsd),
+      highPriceUsd: maxNullableNumber(existing.highPriceUsd, incoming.highPriceUsd),
+      lowPriceUsd: minNullableNumber(existing.lowPriceUsd, incoming.lowPriceUsd),
+      closePriceUsd: mergeLiveClose(existing.closePriceUsd, incoming.closePriceUsd, newerClose),
       sampleCount: Math.max(Number(existing.sampleCount) || 0, Number(incoming.sampleCount) || 0),
+      liveSourceBucketTs: newerClose ? incoming.liveSourceBucketTs : existing.liveSourceBucketTs,
+      liveSequence: newerClose ? incoming.liveSequence : existing.liveSequence,
     };
   }
 
@@ -7555,13 +8037,20 @@ export function createAppController(): AppController {
 
   function getLiveExpandedSparklineContext(payload: MarketBucketUpdateEvent) {
     const address = String(payload?.address || '').trim();
-    if (!address || state.ui.expandedSparklineAddress !== address || !payload?.candle) {
+    const activeIdentity = getActiveExpandedSparklineIdentity();
+    if (
+      !address
+      || !activeIdentity
+      || activeIdentity.address !== address
+      || activeIdentity.chain !== payload.chain
+      || !payload?.candle
+    ) {
       return null;
     }
 
     const granularityMinutes = getActiveExpandedSparklineGranularity();
-    const cacheKey = getExpandedSparklineCacheKey(address, granularityMinutes);
-    const entry = getExpandedSparklineCacheEntry(address, granularityMinutes);
+    const cacheKey = getExpandedSparklineCacheKey(address, granularityMinutes, payload.chain);
+    const entry = getExpandedSparklineCacheEntry(address, granularityMinutes, payload.chain);
     if (!entry || entry.loading || !Array.isArray(entry.candles)) {
       return null;
     }
@@ -7571,7 +8060,8 @@ export function createAppController(): AppController {
 
   function buildLiveExpandedSparklineEntry(payload: MarketBucketUpdateEvent) {
     const context = getLiveExpandedSparklineContext(payload);
-    if (!context) {
+    const liveCandle = buildLiveTokenChartCandle(payload);
+    if (!context || !liveCandle) {
       return null;
     }
 
@@ -7581,20 +8071,23 @@ export function createAppController(): AppController {
       EXPANDED_SPARKLINE_POINT_COUNT,
       Number(entry.points) || EXPANDED_SPARKLINE_POINT_COUNT
     );
-    const visibleCandles = mergeLiveCandleList(candles, payload.candle, granularityMinutes, maxCandles);
+    const visibleCandles = mergeLiveCandleList(candles, liveCandle, granularityMinutes, maxCandles);
     if (!visibleCandles) {
       return null;
     }
 
+    const valuationType = liveCandle.valuationType ?? entry.valuationType;
     const series = visibleCandles
-      .map((candle) => Number(candle.closeMcap))
-      .filter((value) => Number.isFinite(value));
+      .map((candle) => valuationType === 'fdv' ? candle.closeFdvUsd : candle.closeMcap)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
     return {
       cacheKey,
       entry: {
         ...entry,
+        chain: payload.chain,
         address,
+        valuationType,
         pairAddress: payload.pairAddress ?? entry.pairAddress ?? null,
         granularityMinutes,
         generatedAt: payload.generatedAt || new Date().toISOString(),
@@ -7620,9 +8113,44 @@ export function createAppController(): AppController {
     const latestCandle = update.entry.candles?.[update.entry.candles.length - 1];
     if (typeof window !== 'undefined' && latestCandle) {
       window.dispatchEvent(new CustomEvent('trendscope:expanded-chart-live-candle', {
-        detail: { address: update.entry.address, candle: latestCandle },
+        detail: { chain: payload.chain, address: update.entry.address, candle: latestCandle },
       }));
     }
+  }
+
+  function applyLiveTokenMarketUpdate(payload: MarketBucketUpdateEvent) {
+    const existing = getTrackedToken(state, payload.address, payload.chain);
+    const patch = buildRealtimeTokenMarketPatch(payload);
+    if (!existing || !patch) return false;
+
+    const currentSnapshotMs = resolveWorkspaceMarketSnapshotMs(existing) || 0;
+    const currentObservedAt = existing._liveMarketObservedAt
+      || (currentSnapshotMs > 0 ? new Date(currentSnapshotMs).toISOString() : null);
+    if (currentObservedAt && !shouldReplaceMarketCandleClose(
+      currentObservedAt,
+      existing._liveMarketSequence,
+      patch.observedAt,
+      payload.sequence,
+    )) {
+      return false;
+    }
+
+    setTrackedToken({
+      ...existing,
+      priceUsd: patch.priceUsd ?? existing.priceUsd ?? null,
+      fdv: patch.valuationType === 'fdv' ? patch.fdv : existing.fdv ?? null,
+      mcap: patch.valuationType === 'market-cap' ? patch.mcap : existing.mcap ?? null,
+      valuationType: patch.valuationType ?? existing.valuationType ?? null,
+      valuation: patch.valuation ?? existing.valuation ?? null,
+      lastActivityAt: patch.observedAt,
+      lastSeenAt: patch.observedAt,
+      activityState: patch.activityState,
+      _liveMarketObservedAt: patch.observedAt,
+      _liveMarketSequence: payload.sequence,
+    });
+    state.runtime.monitoredRevision += 1;
+    emit('monitored', 'manual', 'recent', 'old-week', 'top-performers');
+    return true;
   }
 
   function isExpandedSparklineCacheFresh(entry?: TokenSparklineEntry | null, now = Date.now()) {
@@ -7638,9 +8166,15 @@ export function createAppController(): AppController {
     return Number.isFinite(generatedAtMs) && now - generatedAtMs < EXPANDED_SPARKLINE_FRONTEND_CACHE_MS;
   }
 
-  function setExpandedSparklineLoading(address: string, seed?: TokenSparklineEntry | null, granularityMinutes = getActiveExpandedSparklineGranularity()) {
-    const compact = state.data.sparklineByAddress[address];
-    const cacheKey = getExpandedSparklineCacheKey(address, granularityMinutes);
+  function setExpandedSparklineLoading(
+    address: string,
+    seed?: TokenSparklineEntry | null,
+    granularityMinutes = getActiveExpandedSparklineGranularity(),
+    chain: TokenChain = 'solana',
+  ) {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    const compact = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
+    const cacheKey = getExpandedSparklineCacheKey(address, granularityMinutes, chain);
     const existing = state.data.expandedSparklineByAddress[cacheKey];
     if (existing?.loading) {
       return;
@@ -7650,6 +8184,7 @@ export function createAppController(): AppController {
       ...state.data.expandedSparklineByAddress,
       [cacheKey]: {
         ...(existing || seed || compact || { address, series: [] }),
+        chain: identity.chain,
         address,
         granularityMinutes,
         loading: true,
@@ -7664,7 +8199,7 @@ export function createAppController(): AppController {
       return null;
     }
 
-    const cacheKey = getExpandedSparklineCacheKey(normalized);
+    const cacheKey = getExpandedSparklineCacheKey(normalized, undefined, 'solana');
     const existing = state.data.expandedSparklineByAddress[cacheKey];
     if (isExpandedSparklineCacheFresh(existing)) {
       return existing;
@@ -7672,6 +8207,7 @@ export function createAppController(): AppController {
 
     const seed = {
       ...alertSparkline,
+      chain: 'solana',
       address: normalized,
       loading: false,
     } satisfies TokenSparklineEntry;
@@ -7682,9 +8218,17 @@ export function createAppController(): AppController {
     return seed;
   }
 
-  function isCurrentExpandedSparklineRequest(address: string, token: string, granularityMinutes: number, options?: { background?: boolean }) {
+  function isCurrentExpandedSparklineRequest(
+    address: string,
+    chain: TokenChain,
+    token: string,
+    granularityMinutes: number,
+    options?: { background?: boolean },
+  ) {
+    const activeIdentity = getActiveExpandedSparklineIdentity();
     return state.session.token === token
-      && state.ui.expandedSparklineAddress === address
+      && activeIdentity?.address === address
+      && activeIdentity.chain === chain
       && (options?.background === true || getActiveExpandedSparklineGranularity() === granularityMinutes);
   }
 
@@ -7693,11 +8237,15 @@ export function createAppController(): AppController {
     cacheKey: string,
     granularityMinutes: number,
     oneMinuteAvailable = false,
+    chain: TokenChain = 'solana',
   ) {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    const compact = readWorkspaceSparklineCacheEntry(state.data.sparklineByAddress, identity);
     state.data.expandedSparklineByAddress = {
       ...state.data.expandedSparklineByAddress,
       [cacheKey]: {
-        ...(state.data.expandedSparklineByAddress[cacheKey] || state.data.sparklineByAddress[address] || { address, series: [] }),
+        ...(state.data.expandedSparklineByAddress[cacheKey] || compact || { address, series: [] }),
+        chain: identity.chain,
         granularityMinutes,
         oneMinuteAvailable,
         loading: false,
@@ -7710,27 +8258,33 @@ export function createAppController(): AppController {
     requestToken: string,
     sourceGranularity: number,
     entry?: TokenSparklineEntry | null,
+    chain: TokenChain = 'solana',
   ) {
-    if (sourceGranularity === 1 || !isExpandedOneMinutePrefetchEligible(address, entry)) {
+    if (sourceGranularity === 1 || !isExpandedOneMinutePrefetchEligible(address, entry, Date.now(), chain)) {
       return;
     }
-    if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, 1))) {
+    if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, 1, chain))) {
       return;
     }
 
-    void refreshExpandedSparkline(address, requestToken, 1, { background: true });
+    void refreshExpandedSparkline(address, requestToken, 1, { background: true }, chain);
   }
 
-  function fallbackExpandedOneMinuteToFiveMinutes(address: string, requestToken: string, options?: { background?: boolean }) {
+  function fallbackExpandedOneMinuteToFiveMinutes(
+    address: string,
+    requestToken: string,
+    options?: { background?: boolean },
+    chain: TokenChain = 'solana',
+  ) {
     if (options?.background === true || getActiveExpandedSparklineGranularity() !== 1) {
       return false;
     }
 
     state.ui.expandedSparklineGranularityMinutes = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
     const fallbackGranularity = EXPANDED_SPARKLINE_DEFAULT_GRANULARITY_MINUTES;
-    if (!isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, fallbackGranularity))) {
-      setExpandedSparklineLoading(address, null, fallbackGranularity);
-      void refreshExpandedSparkline(address, requestToken, fallbackGranularity);
+    if (!isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, fallbackGranularity, chain))) {
+      setExpandedSparklineLoading(address, null, fallbackGranularity, chain);
+      void refreshExpandedSparkline(address, requestToken, fallbackGranularity, undefined, chain);
     }
     emit('overlay');
     return true;
@@ -7741,11 +8295,13 @@ export function createAppController(): AppController {
     token?: string | null,
     granularityMinutes = getActiveExpandedSparklineGranularity(),
     options?: { background?: boolean },
+    chain: TokenChain = 'solana',
   ) {
-    const normalized = String(address || '').trim();
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    const normalized = identity.address;
     const requestToken = token ?? state.session.token;
     const safeGranularity = normalizeExpandedSparklineGranularity(granularityMinutes);
-    const cacheKey = getExpandedSparklineCacheKey(normalized, safeGranularity);
+    const cacheKey = getExpandedSparklineCacheKey(normalized, safeGranularity, identity.chain);
     if (!normalized || !requestToken || expandedSparklineRequests.has(cacheKey)) {
       return;
     }
@@ -7753,16 +8309,26 @@ export function createAppController(): AppController {
     expandedSparklineRequests.add(cacheKey);
     try {
       const payload = await fetchExpandedTokenSparkline(normalized, {
+        chain: identity.chain,
         points: EXPANDED_SPARKLINE_POINT_COUNT,
         granularityMinutes: safeGranularity,
       }, requestToken);
-      if (!isCurrentExpandedSparklineRequest(normalized, requestToken, safeGranularity, options)) {
+      if (!isCurrentExpandedSparklineRequest(
+        normalized,
+        identity.chain,
+        requestToken,
+        safeGranularity,
+        options,
+      )) {
         return;
       }
 
       const entry = buildExpandedSparklineCacheEntry(payload.item, payload.generatedAt, payload.points);
       if (!entry || !hasRenderableSparklineSeries(entry)) {
-        if (safeGranularity === 1 && fallbackExpandedOneMinuteToFiveMinutes(normalized, requestToken, options)) {
+        if (
+          safeGranularity === 1
+          && fallbackExpandedOneMinuteToFiveMinutes(normalized, requestToken, options, identity.chain)
+        ) {
           return;
         }
         const oneMinuteAvailable = payload.item?.oneMinuteAvailable === true;
@@ -7771,13 +8337,15 @@ export function createAppController(): AppController {
           cacheKey,
           safeGranularity,
           oneMinuteAvailable,
+          identity.chain,
         );
         emit('overlay');
         maybePrefetchExpandedOneMinuteSparkline(
           normalized,
           requestToken,
           safeGranularity,
-          { address: normalized, series: [], oneMinuteAvailable },
+          { chain: identity.chain, address: normalized, series: [], oneMinuteAvailable },
+          identity.chain,
         );
         return;
       }
@@ -7787,13 +8355,28 @@ export function createAppController(): AppController {
         [cacheKey]: entry,
       };
       emit('overlay');
-      maybePrefetchExpandedOneMinuteSparkline(normalized, requestToken, safeGranularity, entry);
+      maybePrefetchExpandedOneMinuteSparkline(
+        normalized,
+        requestToken,
+        safeGranularity,
+        entry,
+        identity.chain,
+      );
     } catch (error) {
-      if (state.ui.expandedSparklineAddress === normalized) {
-        if (safeGranularity === 1 && fallbackExpandedOneMinuteToFiveMinutes(normalized, requestToken, options)) {
+      if (isActiveExpandedSparklineIdentity(identity.key)) {
+        if (
+          safeGranularity === 1
+          && fallbackExpandedOneMinuteToFiveMinutes(normalized, requestToken, options, identity.chain)
+        ) {
           return;
         }
-        writeExpandedSparklineFallbackEntry(normalized, cacheKey, safeGranularity);
+        writeExpandedSparklineFallbackEntry(
+          normalized,
+          cacheKey,
+          safeGranularity,
+          false,
+          identity.chain,
+        );
         emit('overlay');
       }
       console.warn('[AppController] Failed to refresh expanded sparkline:', error instanceof Error ? error.message : error);
@@ -7964,7 +8547,9 @@ export function createAppController(): AppController {
                 batch: summarizeSparklineDebugBatches([{
                   hours: SPARKLINE_WINDOW_HOURS,
                   granularityMinutes: batch.granularityMinutes,
-                  addresses: batch.addresses,
+                  identities: batch.addresses.map((address) => (
+                    createLegacyCompatibleTokenIdentity('solana', address)
+                  )),
                 }]),
                 response,
               }),
@@ -8040,20 +8625,20 @@ export function createAppController(): AppController {
   }
 
   function queueWorkspaceSparklineRefreshAfterInFlight(
-    refreshAddresses: string[],
-    visibleAddresses: string[],
+    refreshIdentities: TokenIdentity[],
+    visibleIdentities: TokenIdentity[],
     force: boolean,
     caller: string,
   ) {
-    showWorkspaceSparklineLoadingEntries(refreshAddresses, visibleAddresses);
+    showWorkspaceSparklineLoadingEntries(refreshIdentities, visibleIdentities);
     sparklineRefreshQueued = true;
     sparklineRefreshQueuedForce = sparklineRefreshQueuedForce || force;
     sparklineRefreshQueuedCaller = sparklineRefreshQueuedCaller || caller;
     recordSparklineDebug('refresh.queued-in-flight', {
       caller,
       force,
-      refresh: summarizeSparklineDebugAddresses(refreshAddresses),
-      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      refresh: summarizeSparklineDebugAddresses(refreshIdentities.map((identity) => identity.key)),
+      visible: summarizeSparklineDebugAddresses(visibleIdentities.map((identity) => identity.key)),
     });
   }
 
@@ -8092,12 +8677,14 @@ export function createAppController(): AppController {
   }
 
   function showWorkspaceSparklineLoadingEntries(
-    loadingAddresses: string[],
-    visibleAddresses: string[] = loadingAddresses,
+    loadingIdentities: TokenIdentity[],
+    visibleIdentities: TokenIdentity[] = loadingIdentities,
   ) {
-    const visible = new Set(visibleAddresses.map((address) => String(address || '').trim()).filter(Boolean));
+    const visible = new Set(visibleIdentities.flatMap((identity) => (
+      identity.chain === 'solana' ? [identity.key, identity.address] : [identity.key]
+    )));
     const pruned = pruneWorkspaceSparklineCache(visible);
-    const loadingChanged = ensureWorkspaceSparklineLoadingEntries(loadingAddresses);
+    const loadingChanged = ensureWorkspaceSparklineLoadingEntries(loadingIdentities);
     if (pruned || loadingChanged) {
       emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
@@ -8119,13 +8706,13 @@ export function createAppController(): AppController {
       isRuntimePerfDebugActive(),
       {
         batches: batches.length,
-        addresses: batches.reduce((total, batch) => total + batch.addresses.length, 0),
+        identities: batches.reduce((total, batch) => total + batch.identities.length, 0),
       },
       () => Promise.all(
         batches.map(async (batch): Promise<WorkspaceSparklineBatchResult> => {
           const startedAt = Date.now();
           try {
-            const payload = await fetchTokenSparklines(batch.addresses, {
+            const payload = await fetchTokenSparklines(batch.identities, {
               hours: batch.hours,
               points: SPARKLINE_POINT_COUNT,
               granularityMinutes: batch.granularityMinutes,
@@ -8154,12 +8741,14 @@ export function createAppController(): AppController {
 
   function applyWorkspaceSparklineBatchPayload(payload: TokenSparklinesPayload, batch?: SparklineBatchRequest, caller = 'unknown') {
     const items = Array.isArray(payload.items) ? payload.items : [];
-    const returnedAddresses = items.map((item) => item.address);
-    const requestedAddresses = batch?.addresses || [];
-    const missingAddresses = requestedAddresses.filter((address) => !returnedAddresses.includes(address));
+    const returnedAddresses = items.map((item) => (
+      createLegacyCompatibleTokenIdentity(item.chain, item.address).key
+    ));
+    const requestedAddresses = (batch?.identities || []).map((identity) => identity.key);
+    const missingAddresses = requestedAddresses.filter((key) => !returnedAddresses.includes(key));
     const emptySeriesAddresses = items
       .filter((item) => !Array.isArray(item.series) || item.series.length < 2)
-      .map((item) => item.address);
+      .map((item) => createLegacyCompatibleTokenIdentity(item.chain, item.address).key);
     recordSparklineDebug('payload.apply', {
       caller,
       count: items.length,
@@ -8212,7 +8801,7 @@ export function createAppController(): AppController {
       batch: summarizeSparklineDebugBatches([batch]),
       error: formatDebugErrorMessage(error),
     });
-    if (clearWorkspaceSparklineLoadingEntries(batch.addresses)) {
+    if (clearWorkspaceSparklineLoadingEntries(batch.identities)) {
       emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
     }
 
@@ -8222,13 +8811,13 @@ export function createAppController(): AppController {
     );
   }
 
-  function handleWorkspaceSparklineRefreshError(visibleAddresses: string[], error: unknown, caller: string) {
+  function handleWorkspaceSparklineRefreshError(visibleIdentities: TokenIdentity[], error: unknown, caller: string) {
     recordSparklineDebug('refresh.error', {
       caller,
-      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      visible: summarizeSparklineDebugAddresses(visibleIdentities.map((identity) => identity.key)),
       error: formatDebugErrorMessage(error),
     });
-    handleWorkspaceSparklineRefreshFailure(visibleAddresses, error);
+    handleWorkspaceSparklineRefreshFailure(visibleIdentities, error);
   }
 
   function applyWorkspaceSparklineRefreshResults(
@@ -8267,7 +8856,8 @@ export function createAppController(): AppController {
 
     const visibleBatches = getVisibleWorkspaceSparklineBatches();
     const addressKey = buildSparklineBatchKey(visibleBatches);
-    const visibleAddresses = collectWorkspaceSparklineAddresses(visibleBatches);
+    const visibleIdentities = collectWorkspaceSparklineIdentities(visibleBatches);
+    const visibleKeys = visibleIdentities.map((identity) => identity.key);
     const now = Date.now();
     const refreshBatches = selectWorkspaceSparklineRefreshBatches(
       visibleBatches,
@@ -8278,22 +8868,23 @@ export function createAppController(): AppController {
         refreshIntervalMs: SPARKLINE_REFRESH_INTERVAL_MS,
       },
     );
-    const refreshAddresses = collectWorkspaceSparklineAddresses(refreshBatches);
-    const visibleDiff = summarizeSparklineDebugAddressDiff(lastSparklineVisibleAddresses, visibleAddresses);
+    const refreshIdentities = collectWorkspaceSparklineIdentities(refreshBatches);
+    const refreshKeys = refreshIdentities.map((identity) => identity.key);
+    const visibleDiff = summarizeSparklineDebugAddressDiff(lastSparklineVisibleAddresses, visibleKeys);
     recordSparklineDebug('refresh.request', {
       caller,
       force,
       batches: summarizeSparklineDebugBatches(visibleBatches),
       refreshBatches: summarizeSparklineDebugBatches(refreshBatches),
-      refresh: summarizeSparklineDebugAddresses(refreshAddresses),
-      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      refresh: summarizeSparklineDebugAddresses(refreshKeys),
+      visible: summarizeSparklineDebugAddresses(visibleKeys),
       previousVisible: summarizeSparklineDebugAddresses(lastSparklineVisibleAddresses),
       visibleDiff,
       addressKey: hashSparklineDebugValue(addressKey),
       previousKey: lastSparklineAddressKey ? hashSparklineDebugValue(lastSparklineAddressKey) : '',
       keyChanged: addressKey !== lastSparklineAddressKey,
     });
-    lastSparklineVisibleAddresses = visibleAddresses.slice();
+    lastSparklineVisibleAddresses = visibleKeys.slice();
     if (visibleBatches.length === 0) {
       abortEmptyWorkspaceSparklineBatches();
       return;
@@ -8309,18 +8900,18 @@ export function createAppController(): AppController {
       return;
     }
     if (sparklineRefreshInFlight) {
-      queueWorkspaceSparklineRefreshAfterInFlight(refreshAddresses, visibleAddresses, force, caller);
+      queueWorkspaceSparklineRefreshAfterInFlight(refreshIdentities, visibleIdentities, force, caller);
       return;
     }
 
     sparklineRefreshInFlight = true;
-    showWorkspaceSparklineLoadingEntries(refreshAddresses, visibleAddresses);
+    showWorkspaceSparklineLoadingEntries(refreshIdentities, visibleIdentities);
     recordSparklineDebug('refresh.fetch-start', {
       caller,
       force,
       batches: summarizeSparklineDebugBatches(refreshBatches),
-      refresh: summarizeSparklineDebugAddresses(refreshAddresses),
-      visible: summarizeSparklineDebugAddresses(visibleAddresses),
+      refresh: summarizeSparklineDebugAddresses(refreshKeys),
+      visible: summarizeSparklineDebugAddresses(visibleKeys),
       addressKey: hashSparklineDebugValue(addressKey),
     });
     try {
@@ -8336,7 +8927,7 @@ export function createAppController(): AppController {
 
       applyWorkspaceSparklineRefreshResults(results, visibleBatches, addressKey, caller);
     } catch (error) {
-      handleWorkspaceSparklineRefreshError(refreshAddresses, error, caller);
+      handleWorkspaceSparklineRefreshError(refreshIdentities, error, caller);
     } finally {
       sparklineRefreshInFlight = false;
       const shouldRunQueuedRefresh = sparklineRefreshQueued;
@@ -8363,20 +8954,20 @@ export function createAppController(): AppController {
   }
 
   function refreshWorkspaceSparklinesAfterRangeChange(addresses?: string[], caller = 'range-change') {
-    const normalizedAddresses = (addresses || []).map((address) => String(address || '').trim()).filter(Boolean);
-    if (normalizedAddresses.length > 0) {
+    const targets = new Set((addresses || []).map((address) => String(address || '').trim()).filter(Boolean));
+    if (targets.size > 0) {
       const nextCache = { ...state.data.sparklineByAddress };
-      const selectedScopes = getVisibleWorkspaceSparklineAddressScopes();
-      for (const address of normalizedAddresses) {
-        const scope = selectedScopes.find((item) => item.address === address)?.scope || 'monitored';
-        const hours = getSparklineRangeDays(scope, address) * 24;
-        nextCache[address] = buildWorkspaceSparklineLoadingEntry(address, nextCache[address], hours);
+      for (const { identity } of getVisibleWorkspaceSparklineIdentityScopes()) {
+        if (
+          targets.has(identity.key)
+          || (identity.chain === 'solana' && targets.has(identity.address))
+        ) deleteWorkspaceSparklineCacheEntry(nextCache, identity);
       }
       state.data.sparklineByAddress = nextCache;
       lastSparklineAddressKey = '';
       nextSparklineRefreshAt = 0;
     } else {
-      clearHistorySparklineCache();
+      clearHistorySparklineCache({ debugReason: 'range-change' });
     }
     emit('manual', 'monitored', 'recent', 'old-week');
     if (state.session.token) {
@@ -8532,6 +9123,11 @@ export function createAppController(): AppController {
     }
 
     const requestPayload = buildHistoryBootstrapRequest();
+    if (requestPayload.chains.length === 0) {
+      clearHistorySearchPending({ emitRegions: false });
+      emit('recent', 'old-week', 'header');
+      return;
+    }
     const requestKey = buildHistoryBootstrapRequestKey(token, requestPayload, options?.manualTokensOverride);
     if (queueHistoryBootstrapRefreshIfInFlight(token, requestKey, options)) {
       return;
@@ -8599,10 +9195,16 @@ export function createAppController(): AppController {
     if (isLiveWorkspaceHiddenForUiWork()) {
       return;
     }
+    const requestedChains = getReadySelectedChains('monitored');
+    if (requestedChains.length === 0) {
+      emit('monitored', 'manual', 'top-performers');
+      return;
+    }
 
     if (usesHistoryBucketBootstrap()) {
       await refreshHistoryWorkspaceBootstrap({ token });
       void hydrateManualTokensMetadataBatch(token, getManualTokens(state).map((item) => ({
+        chain: item.chain || 'solana',
         address: item.address,
         label: item.label ?? null,
       })), { emitOnComplete: isLiveWorkspace() });
@@ -8611,13 +9213,15 @@ export function createAppController(): AppController {
 
     clearHistorySearchPending({ emitRegions: false });
 
-    if (monitoredRefreshInFlight) {
+    const requestKey = buildChainRequestKey(requestedChains);
+    if (monitoredRefreshKeysInFlight.has(requestKey)) {
       return;
     }
 
-    monitoredRefreshInFlight = true;
+    monitoredRefreshKeysInFlight.add(requestKey);
     try {
       const manualTokens = getManualTokens(state).map((item) => ({
+        chain: item.chain || 'solana',
         address: item.address,
         label: item.label ?? null,
       }));
@@ -8628,6 +9232,7 @@ export function createAppController(): AppController {
         () => hydratePagedDashboardMonitored(
           token,
           manualTokens,
+          requestedChains,
         ),
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
@@ -8651,6 +9256,9 @@ export function createAppController(): AppController {
         emit('recent', 'old-week', 'header');
       }
     } catch (error) {
+      if (requestKey !== buildChainRequestKey(getReadySelectedChains('monitored'))) {
+        return;
+      }
       if (isApiRateLimitBackoffError(error)) {
         deferMonitoredDashboardPoll(error.retryAfterMs);
         refreshWorkspaceSparklinesForMonitoringCycle();
@@ -8661,33 +9269,55 @@ export function createAppController(): AppController {
       setError(message);
       emit('legacy', 'overlay');
     } finally {
-      monitoredRefreshInFlight = false;
+      monitoredRefreshKeysInFlight.delete(requestKey);
     }
   }
 
   async function refreshDashboardTopPerformers(token = state.session.token) {
-    if (!token || topPerformersRefreshInFlight || !isLiveWorkspace()) {
+    const requestedChains = getReadySelectedChains('topPerformers');
+    const requestKey = buildChainRequestKey(requestedChains);
+    if (
+      !token
+      || requestedChains.length === 0
+      || topPerformersRefreshKeysInFlight.has(requestKey)
+      || !isLiveWorkspace()
+    ) {
       return;
     }
 
-    topPerformersRefreshInFlight = true;
+    const requestRevision = topPerformersRefreshRevision + 1;
+    topPerformersRefreshRevision = requestRevision;
+    topPerformersRefreshKeysInFlight.add(requestKey);
     try {
       const payload = await measureRuntimePerfAsync(
         'api.dashboard.top-performers',
         isRuntimePerfDebugActive(),
         { workspace: state.ui.workspace },
-        () => fetchDashboardTopPerformers(token),
+        () => fetchDashboardTopPerformers(token, {
+          chains: requestedChains,
+          ...getMonitoredValuationFilters(),
+        }),
       );
+      if (
+        requestRevision !== topPerformersRefreshRevision
+        || state.session.token !== token
+        || requestKey !== buildChainRequestKey(getReadySelectedChains('topPerformers'))
+      ) {
+        return;
+      }
       applyDashboardTopPerformers(payload);
       broadcastLiveTopPerformersSnapshot(payload);
       emit('top-performers');
     } catch (error) {
+      if (requestRevision !== topPerformersRefreshRevision) {
+        return;
+      }
       if (isApiRateLimitBackoffError(error)) {
         return;
       }
       console.warn('[AppController] Failed to refresh dashboard top performers:', error instanceof Error ? error.message : error);
     } finally {
-      topPerformersRefreshInFlight = false;
+      topPerformersRefreshKeysInFlight.delete(requestKey);
     }
   }
 
@@ -8778,6 +9408,53 @@ export function createAppController(): AppController {
     monitoringInterval = setInterval(runMonitoringCycle, MONITORED_REFRESH_INTERVAL_MS);
   }
 
+  function getWorkspaceChainReadinessSignature() {
+    return JSON.stringify({
+      availableChains: state.data.availableChains,
+      readiness: state.data.availableChains.map((chain) => {
+        const readiness = state.data.chainReadiness[chain];
+        return {
+          chain,
+          status: readiness?.status,
+          phase: readiness?.phase,
+          publicationReady: readiness?.publicationReady,
+          workspaceReady: readiness?.workspaceReady,
+          message: readiness?.message,
+          capabilities: readiness?.capabilities,
+        };
+      }),
+    });
+  }
+
+  async function refreshWorkspaceChainReadiness() {
+    const token = state.session.token;
+    if (!token || chainReadinessRefreshInFlight || !isAuthenticatedSession()) {
+      return;
+    }
+    chainReadinessRefreshInFlight = true;
+    try {
+      const payload = await fetchChainReadiness(token);
+      if (state.session.token !== token || !isAuthenticatedSession()) {
+        return;
+      }
+      const previous = getWorkspaceChainReadinessSignature();
+      state.data.availableChains = normalizeAvailableTokenChains(payload.availableChains);
+      state.data.chainReadiness = payload.chainReadiness || state.data.chainReadiness;
+      state.ui.chainFilters = normalizeChainFilterPreferences(
+        state.ui.chainFilters,
+        state.data.availableChains,
+      );
+      const next = getWorkspaceChainReadinessSignature();
+      if (previous !== next) {
+        emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
+      }
+    } catch (error) {
+      console.warn('[AppController] Failed to refresh chain readiness:', error instanceof Error ? error.message : error);
+    } finally {
+      chainReadinessRefreshInFlight = false;
+    }
+  }
+
   function startMonitoringTimers() {
     if (state.runtime.mode === 'active') return;
     state.runtime.mode = 'active';
@@ -8788,6 +9465,7 @@ export function createAppController(): AppController {
     syncAdminTokenReviewAlertPolling({ runImmediately: true });
     uptimeInterval = setInterval(() => {
       computeUptimeLabel();
+      void refreshWorkspaceChainReadiness();
       emit('header');
     }, UPTIME_REFRESH_INTERVAL_MS);
   }
@@ -8868,6 +9546,7 @@ export function createAppController(): AppController {
         if (state.runtime.mode !== 'active' || state.session.status !== 'authenticated') {
           return;
         }
+        applyLiveTokenMarketUpdate(payload);
         applyLiveMarketBucketUpdate(payload);
       },
     });
@@ -9240,29 +9919,33 @@ export function createAppController(): AppController {
     state.pumpfun.solPriceUsd = null;
     state.pumpfun.migrationCount = 0;
     state.pumpfun.bondTargetMcap = 35000;
+    const defaultChainReadiness = createAppState().data.chainReadiness;
     state.data = {
       configs: {},
+      availableChains: ['solana'],
+      chainReadiness: defaultChainReadiness,
       runtimeFlags: {
         mockTradingEnabled: true,
       },
-      trackedTokensByAddress: {},
-      monitoredTokenAddresses: [],
-      pinnedMonitoredTokenAddresses: [],
-      manualTokenAddresses: [],
+      trackedTokensByIdentity: {},
+      monitoredTokenIdentities: [],
+      pinnedMonitoredTokenIdentities: [],
+      manualTokenIdentities: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
-      recentTokenAddresses: [],
-      oldWeekTokenAddresses: [],
-      topPerformerAddresses: [],
+      recentTokenIdentities: [],
+      oldWeekTokenIdentities: [],
+      topPerformerIdentities: [],
       topPerformersGeneratedAt: null,
       topPerformersRanking: null,
-      dismissedRecent: [],
-      dismissedOldWeek: [],
+      dismissedRecentIdentities: [],
+      dismissedOldWeekIdentities: [],
       dismissedPump: [],
       blocklist: [],
       adminTokenReviewAlerts: [],
+      customAlertCapabilities: {},
       customAlertRules: [],
-      starredTokens: [],
+      starredTokenIdentities: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
@@ -9278,6 +9961,8 @@ export function createAppController(): AppController {
       recentPumpMigrations: [],
       pumpToasts: [],
     };
+    nonSolanaHistoryTrackedIdentities = new Set<string>();
+    state.ui.chainFilters = normalizeChainFilterPreferences(null, state.data.availableChains);
     state.ui.manualVisibleFolderIds = [];
     state.bars.manual = 0;
     state.bars.recent = 0;
@@ -9462,9 +10147,47 @@ export function createAppController(): AppController {
     );
   }
 
-  function clearTopPerformerFlags(addresses: string[]) {
-    for (const address of addresses) {
-      const existingItem = state.data.trackedTokensByAddress[address];
+  function syncNonSolanaHistoryTrackedTokens(tokens: DashboardMonitoredToken[]) {
+    const nonSolanaTokens = tokens.filter((item) => item.chain !== 'solana');
+    const nextIdentities = new Set(nonSolanaTokens.map((item) => getTrackedTokenKey(item.address, item.chain)));
+    const alertIdentities = new Set(
+      state.data.alerts.map((alert) => getTrackedTokenKey(alert.address, alert.chain)),
+    );
+
+    for (const identityKey of nonSolanaHistoryTrackedIdentities) {
+      if (!nextIdentities.has(identityKey) && !alertIdentities.has(identityKey)) {
+        delete state.data.trackedTokensByIdentity[identityKey];
+      }
+    }
+
+    nonSolanaHistoryTrackedIdentities = nextIdentities;
+    for (const item of nonSolanaTokens) {
+      const identityKey = getTrackedTokenKey(item.address, item.chain);
+      const existingItem = state.data.trackedTokensByIdentity[identityKey];
+      const mergedItem = mergeTrackedDashboardFields({
+        existingItem,
+        dashboardItem: item,
+        base: {
+          ...existingItem,
+          chain: item.chain,
+          address: item.address,
+          label: existingItem?.label ?? item.symbol ?? 'Eligible',
+          manual: false,
+          _userManual: false,
+          _isPinnedMonitored: false,
+          pinnedSortOrder: null,
+        },
+        coldRefreshDue: false,
+      });
+      setTrackedToken(selectMergedTrackedToken(existingItem, mergedItem));
+    }
+
+    applyPersistedFrontendAlertFlags(state.data.trackedTokensByIdentity);
+  }
+
+  function clearTopPerformerFlags(identities: string[]) {
+    for (const identityKey of identities) {
+      const existingItem = getTrackedTokenByIdentity(identityKey);
       if (!existingItem?._isTopPerformer) {
         continue;
       }
@@ -9474,32 +10197,37 @@ export function createAppController(): AppController {
         performanceRank: null,
         performanceScore: null,
       };
-      replaceTrackedTokenReferences(address, nextItem);
+      replaceTrackedTokenReferences(existingItem.address, nextItem);
     }
   }
 
   function applyDashboardTopPerformers(payload: DashboardTopPerformersPayload) {
-    const blocked = new Set(state.data.blocklist.map((item) => item.address));
-    const previousAddresses = state.data.topPerformerAddresses;
-    const nextAddresses: string[] = [];
+    const blocked = new Set(state.data.blocklist.map((item) => (
+      getTrackedTokenKey(item.address, item.chain || 'solana')
+    )));
+    const previousIdentities = state.data.topPerformerIdentities;
+    const nextIdentities: string[] = [];
     const seen = new Set<string>();
 
-    clearTopPerformerFlags(previousAddresses);
+    clearTopPerformerFlags(previousIdentities);
 
     for (const item of payload.tokens || []) {
       const address = String(item.address || '').trim();
-      if (!address || blocked.has(address) || seen.has(address)) {
+      if (!address) continue;
+      const identityKey = getTrackedTokenKey(address, item.chain);
+      if (blocked.has(identityKey) || seen.has(identityKey)) {
         continue;
       }
-      seen.add(address);
-      nextAddresses.push(address);
+      seen.add(identityKey);
+      nextIdentities.push(identityKey);
 
-      const existingItem = state.data.trackedTokensByAddress[address];
+      const existingItem = getOptionalTrackedToken(address, item.chain);
       const mergedItem = mergeTrackedDashboardFields({
         existingItem,
         dashboardItem: item,
         base: {
           ...existingItem,
+          chain: item.chain,
           address,
           label: existingItem?.label ?? item.symbol ?? 'Top performer',
           manual: existingItem?.manual ?? false,
@@ -9510,12 +10238,12 @@ export function createAppController(): AppController {
       replaceTrackedTokenReferences(address, {
         ...selectMergedTrackedToken(existingItem, mergedItem),
         _isTopPerformer: true,
-        performanceRank: item.performanceRank ?? nextAddresses.length,
+        performanceRank: item.performanceRank ?? nextIdentities.length,
         performanceScore: item.performanceScore ?? null,
       });
     }
 
-    state.data.topPerformerAddresses = nextAddresses;
+    state.data.topPerformerIdentities = nextIdentities;
     state.data.topPerformersGeneratedAt = payload.generatedAt ?? null;
     state.data.topPerformersRanking = payload.ranking ?? null;
     refreshTrackedTokenStore();
@@ -9545,13 +10273,14 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildCurrentMonitoredSnapshotToken(address: string) {
-    const item = state.data.trackedTokensByAddress[address];
+  function buildCurrentMonitoredSnapshotToken(address: string, chain: TokenChain = 'solana') {
+    const item = getTrackedToken(state, address, chain);
     if (!item) {
       return null;
     }
 
     return {
+      chain: item.chain || 'solana',
       address: item.address,
       symbol: toNullableTrackedValue(item.symbol),
       name: toNullableTrackedValue(item.name),
@@ -9562,6 +10291,9 @@ export function createAppController(): AppController {
       twitterUrl: toNullableTrackedValue(item.twitterUrl),
       communityUrl: toNullableTrackedValue(item.communityUrl),
       mcap: toNullableTrackedValue(item.mcap),
+      fdv: toNullableTrackedValue(item.fdv),
+      valuationType: toNullableTrackedValue(item.valuationType),
+      valuation: toNullableTrackedValue(item.valuation),
       priceUsd: toNullableTrackedValue(item.priceUsd),
       liquidityUsd: toNullableTrackedValue(item.liquidityUsd),
       volume5m: toNullableTrackedValue(item.volume5m),
@@ -9578,21 +10310,33 @@ export function createAppController(): AppController {
       prevVolume5mCanonical: firstDefinedTrackedValue(item.prevVolume5mCanonical, item.prevVolume5m),
       lastSeenAt: toNullableTrackedValue(item.lastSeenAt),
       lastEvaluatedAt: toNullableTrackedValue(item.lastEvaluatedAt),
+      windowEnd: toNullableTrackedValue(item.windowEnd),
+      lastActivityAt: toNullableTrackedValue(item.lastActivityAt),
+      swaps5m: toNullableTrackedValue(item.swaps5m),
+      swaps1h: toNullableTrackedValue(item.swaps1h),
+      swaps6h: toNullableTrackedValue(item.swaps6h),
+      swaps24h: toNullableTrackedValue(item.swaps24h),
+      coverage: item.coverage,
+      swapCoverage: item.swapCoverage,
+      priceChangeCoverage: item.priceChangeCoverage,
+      activityState: item.activityState,
+      riskState: item.riskState,
+      dataQuality: item.dataQuality,
       tickerPeers: item.tickerPeers ?? null,
       meteora: buildCurrentMonitoredMeteoraSnapshot(address),
     } satisfies DashboardMonitoredToken;
   }
 
   function getCurrentMonitoredDashboardSnapshot(): DashboardMonitoredToken[] {
-    const manualAddresses = new Set(state.data.manualTokenAddresses);
+    const manualIdentities = new Set(state.data.manualTokenIdentities);
     const snapshot: DashboardMonitoredToken[] = [];
 
-    for (const address of state.data.monitoredTokenAddresses) {
-      if (manualAddresses.has(address)) {
+    for (const identityKey of state.data.monitoredTokenIdentities) {
+      if (manualIdentities.has(identityKey)) {
         continue;
       }
-
-      const item = buildCurrentMonitoredSnapshotToken(address);
+      const identity = parseTokenIdentityKey(identityKey);
+      const item = buildCurrentMonitoredSnapshotToken(identity.address, identity.chain);
       if (item) {
         snapshot.push(item);
       }
@@ -9603,57 +10347,68 @@ export function createAppController(): AppController {
 
   function getCurrentPinnedMonitoredDashboardSnapshot(): DashboardMonitoredToken[] {
     const snapshot: DashboardMonitoredToken[] = [];
-    state.data.pinnedMonitoredTokenAddresses.forEach((address) => {
-      const item = buildCurrentMonitoredSnapshotToken(address);
+    state.data.pinnedMonitoredTokenIdentities.forEach((identityKey) => {
+      const identity = parseTokenIdentityKey(identityKey);
+      const item = buildCurrentMonitoredSnapshotToken(identity.address, identity.chain);
       if (item) {
-        snapshot.push({ ...item, pinnedSortOrder: state.data.trackedTokensByAddress[address]?.pinnedSortOrder ?? 0 });
+        snapshot.push({ ...item, pinnedSortOrder: getTrackedTokenByIdentity(identityKey)?.pinnedSortOrder ?? 0 });
       }
     });
     return snapshot;
   }
 
   function captureMonitoredPinLayout() {
-    return state.data.pinnedMonitoredTokenAddresses.map((address) => ({
-      address,
-      sortOrder: state.data.trackedTokensByAddress[address]?.pinnedSortOrder ?? 0,
-    }));
+    return state.data.pinnedMonitoredTokenIdentities.map((identityKey) => {
+      const identity = parseTokenIdentityKey(identityKey);
+      return {
+        chain: identity.chain,
+        address: identity.address,
+        sortOrder: getTrackedTokenByIdentity(identityKey)?.pinnedSortOrder ?? 0,
+      };
+    });
   }
 
   function applyMonitoredPinLayout(pins: DashboardMonitoredPin[]) {
-    const positions = new Map(pins.map((item) => [item.address, item.sortOrder]));
-    const previouslyPinned = new Set(state.data.pinnedMonitoredTokenAddresses);
-    for (const address of new Set([...previouslyPinned, ...positions.keys()])) {
-      const item = state.data.trackedTokensByAddress[address];
+    const positions = new Map(pins.map((item) => [getTrackedTokenKey(item.address, item.chain), item.sortOrder]));
+    const previouslyPinned = new Set(state.data.pinnedMonitoredTokenIdentities);
+    for (const identityKey of new Set([...previouslyPinned, ...positions.keys()])) {
+      const item = getTrackedTokenByIdentity(identityKey);
       if (!item) continue;
-      const sortOrder = positions.get(address);
-      replaceTrackedTokenReferences(address, {
+      const sortOrder = positions.get(identityKey);
+      replaceTrackedTokenReferences(item.address, {
         ...item,
         _isPinnedMonitored: sortOrder != null,
         pinnedSortOrder: sortOrder ?? null,
       });
     }
-    state.data.pinnedMonitoredTokenAddresses = [...positions.entries()]
+    state.data.pinnedMonitoredTokenIdentities = [...positions.entries()]
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
-      .map(([address]) => address);
+      .map(([identityKey]) => identityKey);
     emit('monitored');
   }
 
-  function buildMovedMonitoredPinLayout(address: string, requestedPosition: number) {
+  function buildMovedMonitoredPinLayout(chain: TokenChain, address: string, requestedPosition: number) {
+    const identityKey = getTrackedTokenKey(address, chain);
     const rows = resolveMonitoredTableRows(getMonitoredTokens(state), {
       searchQuery: '',
       sortCriteria: state.ui.monitoredSorts,
-    }).filter((item) => item.address !== address);
+    }).filter((item) => getTokenIdentityKey(item) !== identityKey);
     const position = Math.min(Math.max(0, Math.floor(requestedPosition) || 0), rows.length);
-    rows.splice(position, 0, state.data.trackedTokensByAddress[address]);
-    const pinnedAddresses = new Set([...state.data.pinnedMonitoredTokenAddresses, address]);
-    return rows.flatMap((item, index) => pinnedAddresses.has(item.address)
-      ? [{ address: item.address, sortOrder: index }]
+    const trackedToken = getTrackedToken(state, address, chain);
+    if (!trackedToken) {
+      return captureMonitoredPinLayout();
+    }
+    rows.splice(position, 0, trackedToken);
+    const pinnedIdentities = new Set([...state.data.pinnedMonitoredTokenIdentities, identityKey]);
+    return rows.flatMap((item, index) => pinnedIdentities.has(getTokenIdentityKey(item))
+      ? [{ chain: item.chain || 'solana', address: item.address, sortOrder: index }]
       : []);
   }
 
-  function buildUnpinnedMonitoredPinLayout(address: string) {
+  function buildUnpinnedMonitoredPinLayout(chain: TokenChain, address: string) {
+    const identityKey = getTrackedTokenKey(address, chain);
     const previous = captureMonitoredPinLayout();
-    const removed = previous.find((item) => item.address === address);
+    const removed = previous.find((item) => getTrackedTokenKey(item.address, item.chain) === identityKey);
     if (!removed) {
       return previous;
     }
@@ -9663,19 +10418,19 @@ export function createAppController(): AppController {
       sortCriteria: state.ui.monitoredSorts,
     });
     const movedUpAddresses = new Set<string>();
-    const removedIndex = currentRows.findIndex((item) => item.address === address);
+    const removedIndex = currentRows.findIndex((item) => getTokenIdentityKey(item) === identityKey);
     if (removedIndex >= 0) {
       for (const item of currentRows.slice(removedIndex + 1)) {
         if (!item._isPinnedMonitored) break;
-        movedUpAddresses.add(item.address);
+        movedUpAddresses.add(getTokenIdentityKey(item));
       }
     }
 
     return previous
-      .filter((item) => item.address !== address)
+      .filter((item) => getTrackedTokenKey(item.address, item.chain) !== identityKey)
       .map((item) => ({
         ...item,
-        sortOrder: movedUpAddresses.has(item.address)
+        sortOrder: movedUpAddresses.has(getTrackedTokenKey(item.address, item.chain))
           ? Math.max(0, item.sortOrder - 1)
           : item.sortOrder,
       }));
@@ -9684,6 +10439,7 @@ export function createAppController(): AppController {
   async function refreshMonitoredAfterPinsChanged() {
     if (!state.session.token) return;
     await hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
+      chain: item.chain || 'solana',
       address: item.address,
       label: item.label ?? null,
     })));
@@ -9707,30 +10463,35 @@ export function createAppController(): AppController {
   }
 
   function buildHistoryBootstrapRequest(): HistoryBootstrapRequestPayload {
-    const recentDebugProbeAddresses = isRuntimePerfDebugActive()
-      ? state.data.recentTokenAddresses.slice(0, 30)
+    const recentDebugProbeIdentities = isRuntimePerfDebugActive()
+      ? state.data.recentTokenIdentities.slice(0, 30)
       : [];
-    const recentPinnedAddresses = historyBucketOrderLocks.recent
-      ? state.data.recentTokenAddresses.slice()
+    const recentPinnedIdentities = historyBucketOrderLocks.recent
+      ? state.data.recentTokenIdentities.slice()
       : [];
-    const oldWeekPinnedAddresses = historyBucketOrderLocks.oldWeek
-      ? state.data.oldWeekTokenAddresses.slice()
+    const oldWeekPinnedIdentities = historyBucketOrderLocks.oldWeek
+      ? state.data.oldWeekTokenIdentities.slice()
       : [];
 
     return {
-      starredTokens: [...state.data.starredTokens],
-      recentPinnedAddresses,
-      oldWeekPinnedAddresses,
-      recentDebugProbeAddresses,
+      chains: state.ui.chainFilters.radarChains.filter((chain) => (
+        state.data.chainReadiness[chain]?.capabilities.history === true
+      )),
+      starredTokenIdentities: state.data.starredTokenIdentities,
+      recentPinnedIdentities,
+      oldWeekPinnedIdentities,
+      recentDebugProbeIdentities,
       recent: {
         page: state.ui.recentPage,
         perPage: state.ui.recentPerPage,
         searchQuery: state.ui.recentSearchQuery,
         starredOnly: state.ui.recentStarredOnly,
         sorts: state.ui.recentSorts,
-        dismissedAddresses: [...state.data.dismissedRecent],
+        dismissedTokenIdentities: [...state.data.dismissedRecentIdentities],
         mcapMin: getConfigNumber('old-mcap-min', 120000),
         mcapMax: getConfigNumber('old-mcap-max', 100000000),
+        fdvMin: getConfigNumber('old-fdv-min', 120000),
+        fdvMax: getConfigNumber('old-fdv-max', 100000000),
         ageMinMinutes: getConfigNumber('recent-age-min', 0),
         ageMaxMinutes: getConfigNumber('recent-age-max', RECENT_MAX_AGE_MINUTES),
       },
@@ -9740,9 +10501,11 @@ export function createAppController(): AppController {
         searchQuery: state.ui.oldWeekSearchQuery,
         starredOnly: state.ui.oldWeekStarredOnly,
         sorts: state.ui.oldWeekSorts,
-        dismissedAddresses: [...state.data.dismissedOldWeek],
+        dismissedTokenIdentities: [...state.data.dismissedOldWeekIdentities],
         mcapMin: getConfigNumber('old-week-mcap-min', 120000),
         mcapMax: getConfigNumber('old-week-mcap-max', 100000000),
+        fdvMin: getConfigNumber('old-week-fdv-min', 120000),
+        fdvMax: getConfigNumber('old-week-fdv-max', 100000000),
         ageMinMinutes: getConfigNumber('old-week-age-min', OLD_WEEK_MIN_AGE_MINUTES),
         ageMaxMinutes: getConfigNumber('old-week-age-max', 0),
       },
@@ -9756,18 +10519,20 @@ export function createAppController(): AppController {
 
   function buildComparableHistoryBootstrapRequest(requestPayload: HistoryBootstrapRequestPayload) {
     return {
-      starredTokens: requestPayload.starredTokens,
+      chains: requestPayload.chains,
+      starredTokenIdentities: requestPayload.starredTokenIdentities,
       recent: requestPayload.recent,
       oldWeek: requestPayload.oldWeek,
-      recentPinnedAddresses: requestPayload.recentPinnedAddresses ?? [],
-      oldWeekPinnedAddresses: requestPayload.oldWeekPinnedAddresses ?? [],
+      recentPinnedIdentities: requestPayload.recentPinnedIdentities ?? [],
+      oldWeekPinnedIdentities: requestPayload.oldWeekPinnedIdentities ?? [],
     };
   }
 
   function buildHistoryBootstrapOrderLockKey(requestPayload: HistoryBootstrapRequestPayload) {
     return JSON.stringify({
       token: state.session.token ?? '',
-      starredTokens: requestPayload.starredTokens,
+      chains: requestPayload.chains,
+      starredTokenIdentities: requestPayload.starredTokenIdentities,
       recent: requestPayload.recent,
       oldWeek: requestPayload.oldWeek,
     });
@@ -9832,29 +10597,34 @@ export function createAppController(): AppController {
 
   function mergeLockedHistoryBucketSnapshots(
     tokens: DashboardMonitoredToken[],
-    lockedAddresses: string[],
+    lockedIdentities: string[],
   ) {
-    const byAddress = new Map(tokens.map((item) => [item.address, item]));
-    for (const address of lockedAddresses) {
-      if (byAddress.has(address)) {
+    const byIdentity = new Map(tokens.map((item) => [getTrackedTokenKey(item.address, item.chain), item]));
+    for (const identityKey of lockedIdentities) {
+      if (byIdentity.has(identityKey)) {
         continue;
       }
 
-      const snapshot = buildCurrentMonitoredSnapshotToken(address);
+      const identity = parseTokenIdentityKey(identityKey);
+      const snapshot = buildCurrentMonitoredSnapshotToken(identity.address, identity.chain);
       if (snapshot) {
-        byAddress.set(address, snapshot);
+        byIdentity.set(identityKey, snapshot);
       }
     }
-    return [...byAddress.values()];
+    return [...byIdentity.values()];
   }
 
-  function sanitizeHistoryBucketOrder(bucket: 'recent' | 'old-week', addresses: string[]) {
-    const dismissed = new Set(bucket === 'recent' ? state.data.dismissedRecent : state.data.dismissedOldWeek);
-    const blocked = new Set(state.data.blocklist.map((item) => item.address));
-    return addresses.filter((address) => (
-      !dismissed.has(address)
-      && !blocked.has(address)
-      && Boolean(state.data.trackedTokensByAddress[address])
+  function sanitizeHistoryBucketOrder(bucket: 'recent' | 'old-week', identities: string[]) {
+    const dismissed = new Set(bucket === 'recent'
+      ? state.data.dismissedRecentIdentities
+      : state.data.dismissedOldWeekIdentities);
+    const blocked = new Set(state.data.blocklist.map((item) => (
+      getTrackedTokenKey(item.address, item.chain || 'solana')
+    )));
+    return identities.filter((identity) => (
+      !dismissed.has(identity)
+      && !blocked.has(identity)
+      && Boolean(getTrackedTokenByIdentity(identity))
     ));
   }
 
@@ -9885,7 +10655,7 @@ export function createAppController(): AppController {
       if (!pendingRecentHistoryOrder) {
         return false;
       }
-      state.data.recentTokenAddresses = sanitizeHistoryBucketOrder('recent', pendingRecentHistoryOrder);
+      state.data.recentTokenIdentities = sanitizeHistoryBucketOrder('recent', pendingRecentHistoryOrder);
       pendingRecentHistoryOrder = null;
       state.runtime.routedRevision += 1;
       syncRoutedPagination();
@@ -9895,7 +10665,7 @@ export function createAppController(): AppController {
     if (!pendingOldWeekHistoryOrder) {
       return false;
     }
-    state.data.oldWeekTokenAddresses = sanitizeHistoryBucketOrder('old-week', pendingOldWeekHistoryOrder);
+    state.data.oldWeekTokenIdentities = sanitizeHistoryBucketOrder('old-week', pendingOldWeekHistoryOrder);
     pendingOldWeekHistoryOrder = null;
     state.runtime.routedRevision += 1;
     syncRoutedPagination();
@@ -9933,39 +10703,40 @@ export function createAppController(): AppController {
     manualTokensOverride?: AddressItem[],
     appliedRequestPayload?: HistoryBootstrapRequestPayload,
   ) {
-    const previousRecentAddresses = state.data.recentTokenAddresses.slice();
-    const previousOldWeekAddresses = state.data.oldWeekTokenAddresses.slice();
-    const previousRecentDebugMap = buildPreviousRecentDebugMap(previousRecentAddresses);
+    const previousRecentIdentities = state.data.recentTokenIdentities.slice();
+    const previousOldWeekIdentities = state.data.oldWeekTokenIdentities.slice();
+    const previousRecentDebugMap = buildPreviousRecentDebugMap(previousRecentIdentities);
     const requestedRecentPage = Math.max(0, Number(payload.recent.page) || 0);
     const requestedOldWeekPage = Math.max(0, Number(payload.oldWeek.page) || 0);
     const recentTokens = payload.recent.tokens || [];
     const oldWeekTokens = payload.oldWeek.tokens || [];
     const recentPinnedTokens = payload.recent.pinnedTokens || [];
     const oldWeekPinnedTokens = payload.oldWeek.pinnedTokens || [];
-    const nextRecentAddresses = recentTokens.map((item) => item.address);
-    const nextOldWeekAddresses = oldWeekTokens.map((item) => item.address);
+    const nextRecentIdentities = recentTokens.map((item) => getTrackedTokenKey(item.address, item.chain));
+    const nextOldWeekIdentities = oldWeekTokens.map((item) => getTrackedTokenKey(item.address, item.chain));
     const nextRecentDebugMap = buildPayloadRecentDebugMap(recentTokens);
     const historyRequestDebug = buildHistoryBootstrapRequest();
-    const recentOrder = resolveHistoryBucketOrderForApply('recent', previousRecentAddresses, nextRecentAddresses);
-    const oldWeekOrder = resolveHistoryBucketOrderForApply('old-week', previousOldWeekAddresses, nextOldWeekAddresses);
+    const recentOrder = resolveHistoryBucketOrderForApply('recent', previousRecentIdentities, nextRecentIdentities);
+    const oldWeekOrder = resolveHistoryBucketOrderForApply('old-week', previousOldWeekIdentities, nextOldWeekIdentities);
     const monitoredDashboardTokens = mergeLockedHistoryBucketSnapshots(
       Array.from(new Map(
         [...recentTokens, ...oldWeekTokens, ...recentPinnedTokens, ...oldWeekPinnedTokens]
-          .map((item) => [item.address, item]),
+          .map((item) => [getTrackedTokenKey(item.address, item.chain), item]),
       ).values()),
       [...recentOrder.lockedAddresses, ...oldWeekOrder.lockedAddresses],
     );
 
     applyMonitoredDashboard(
-      monitoredDashboardTokens,
+      monitoredDashboardTokens.filter((item) => item.chain === 'solana'),
       manualTokensOverride,
-      payload.generatedAt ?? null,
+      payload.asOf ?? payload.generatedAt ?? null,
       getCurrentPinnedMonitoredDashboardSnapshot(),
     );
+    syncNonSolanaHistoryTrackedTokens(monitoredDashboardTokens);
     setPendingHistoryOrder('recent', recentOrder.pendingAddresses);
     setPendingHistoryOrder('old-week', oldWeekOrder.pendingAddresses);
-    state.data.recentTokenAddresses = recentOrder.visibleAddresses;
-    state.data.oldWeekTokenAddresses = oldWeekOrder.visibleAddresses;
+    state.data.recentTokenIdentities = recentOrder.visibleAddresses;
+    state.data.oldWeekTokenIdentities = oldWeekOrder.visibleAddresses;
     state.bars.recent = Math.max(0, Number(payload.recent.total) || 0);
     state.bars.oldWeek = Math.max(0, Number(payload.oldWeek.total) || 0);
     state.ui.recentPage = requestedRecentPage;
@@ -9973,18 +10744,20 @@ export function createAppController(): AppController {
     state.runtime.routedRevision += 1;
     lastAppliedHistoryBootstrapOrderLockKey = buildHistoryBootstrapOrderLockKey(appliedRequestPayload ?? historyRequestDebug);
     syncRoutedPagination();
-    const missingRecentTracked = state.data.recentTokenAddresses
-      .filter((address) => !state.data.trackedTokensByAddress[address])
+    syncWorkspaceMarketSubscriptions();
+    const missingRecentTracked = state.data.recentTokenIdentities
+      .filter((identity) => !getTrackedTokenByIdentity(identity))
       .slice(0, 12);
-    const missingOldWeekTracked = state.data.oldWeekTokenAddresses
-      .filter((address) => !state.data.trackedTokensByAddress[address])
+    const missingOldWeekTracked = state.data.oldWeekTokenIdentities
+      .filter((identity) => !getTrackedTokenByIdentity(identity))
       .slice(0, 12);
-    const oldWeekPreviousSet = new Set(previousOldWeekAddresses);
-    const oldWeekNextSet = new Set(state.data.oldWeekTokenAddresses);
-    const oldWeekAddedCount = state.data.oldWeekTokenAddresses.filter((address) => !oldWeekPreviousSet.has(address)).length;
-    const oldWeekRemovedCount = previousOldWeekAddresses.filter((address) => !oldWeekNextSet.has(address)).length;
+    const oldWeekPreviousSet = new Set(previousOldWeekIdentities);
+    const oldWeekNextSet = new Set(state.data.oldWeekTokenIdentities);
+    const oldWeekAddedCount = state.data.oldWeekTokenIdentities.filter((identity) => !oldWeekPreviousSet.has(identity)).length;
+    const oldWeekRemovedCount = previousOldWeekIdentities.filter((identity) => !oldWeekNextSet.has(identity)).length;
     recordRestoreControllerDebug('controller.history-bootstrap.apply', {
       generatedAt: payload.generatedAt ?? null,
+      asOf: payload.asOf ?? null,
       recentReturned: recentTokens.length,
       oldWeekReturned: oldWeekTokens.length,
       recentTotal: state.bars.recent,
@@ -9992,15 +10765,15 @@ export function createAppController(): AppController {
       recentRequest: summarizeHistoryRequestDebug(historyRequestDebug.recent),
       oldWeekRequest: summarizeHistoryRequestDebug(historyRequestDebug.oldWeek),
       recentDelta: summarizeCompactRecentDebugDelta(
-        previousRecentAddresses,
-        state.data.recentTokenAddresses,
+        previousRecentIdentities,
+        state.data.recentTokenIdentities,
         previousRecentDebugMap,
         nextRecentDebugMap,
       ),
       recentProbe: summarizeHistoryDebugProbe(
         payload.debug?.recentProbe,
-        previousRecentAddresses,
-        state.data.recentTokenAddresses,
+        previousRecentIdentities,
+        state.data.recentTokenIdentities,
       ),
       oldWeekDelta: {
         addedCount: oldWeekAddedCount,
@@ -10019,9 +10792,16 @@ export function createAppController(): AppController {
     return {
       configs: state.data.configs,
       uiPrefs: buildUiPrefsPayload(),
-      tokens: (manualTokensOverride ?? getManualTokens(state).map((item) => ({ address: item.address, label: item.label ?? null }))),
-      blocklist: state.data.blocklist.map((item) => ({ address: item.address, label: item.label ?? null })),
-      starredTokens: state.data.starredTokens.map((address) => ({ address })),
+      tokens: (manualTokensOverride ?? getManualTokens(state).map((item) => ({
+        chain: item.chain || 'solana', address: item.address, label: item.label ?? null,
+      }))),
+      blocklist: state.data.blocklist.map((item) => ({
+        chain: item.chain || 'solana', address: item.address, label: item.label ?? null,
+      })),
+      starredTokens: state.data.starredTokenIdentities.flatMap((identityKey) => {
+        const identity = parseTokenIdentityKey(identityKey);
+        return [{ chain: identity.chain, address: identity.address }];
+      }),
     };
   }
 
@@ -10043,16 +10823,18 @@ export function createAppController(): AppController {
       foldersById.set(folder.id, folder);
     }
 
-    const manualAddressSet = new Set(state.data.manualTokenAddresses);
+    const manualAddressSet = new Set(state.data.manualTokenIdentities);
     const items = (Array.isArray(payload?.items) ? payload.items : [])
       .map((item) => ({
         userId: Number(item.userId),
         folderId: Number(item.folderId),
+        chain: resolveAppTokenChain(item.chain),
         address: String(item.address || '').trim(),
         sortOrder: Number(item.sortOrder) || 0,
         addedAt: item.addedAt ?? null,
       }))
-      .filter((item) => foldersById.has(item.folderId) && manualAddressSet.has(item.address));
+      .filter((item) => foldersById.has(item.folderId)
+        && manualAddressSet.has(getTrackedTokenKey(item.address, item.chain)));
 
     return {
       folders: folders.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id - b.id),
@@ -10081,14 +10863,16 @@ export function createAppController(): AppController {
     return {
       configPayload: {
         ...input.configPayload,
-        tokens: input.configPayload.tokens.filter((item) => !removedAddresses.has(String(item.address || '').trim())),
+        tokens: input.configPayload.tokens.filter((item) => !removedAddresses.has(
+          getTrackedTokenKey(item.address, item.chain || 'solana'),
+        )),
       },
       tokenFolders: input.tokenFolders
         ? {
           folders: input.tokenFolders.folders.filter((folder) => !removedFolderIds.has(Number(folder.id))),
           items: input.tokenFolders.items.filter((item) => (
             !removedFolderIds.has(Number(item.folderId))
-            && !removedAddresses.has(String(item.address || '').trim())
+            && !removedAddresses.has(getTrackedTokenKey(item.address, item.chain))
           )),
         }
         : input.tokenFolders,
@@ -10097,6 +10881,7 @@ export function createAppController(): AppController {
 
   function upsertManualTokenFolderItem(item: ManualTokenFolderItemEntry) {
     const folderId = Number(item.folderId);
+    const chain = resolveAppTokenChain(item.chain);
     const address = String(item.address || '').trim();
     if (!Number.isInteger(folderId) || folderId <= 0 || !address) {
       return;
@@ -10109,11 +10894,14 @@ export function createAppController(): AppController {
 
     state.data.manualTokenFolderItems = [
       ...state.data.manualTokenFolderItems.filter((current) => (
-        current.folderId !== folderId || current.address !== address
+        current.folderId !== folderId
+        || current.chain !== chain
+        || current.address !== address
       )),
       {
         userId: Number(item.userId) || 0,
         folderId,
+        chain,
         address,
         sortOrder: Number(item.sortOrder) || 0,
         addedAt: item.addedAt ?? null,
@@ -10131,7 +10919,7 @@ export function createAppController(): AppController {
 
   function syncMeteoraDashboardCache(
     monitoredDashboardTokens: DashboardMonitoredToken[],
-    manualTokens: Array<{ address: string; label?: string | null }>,
+    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
     pinnedDashboardTokens: DashboardMonitoredToken[] = [],
   ) {
     const activeAddresses = new Set([
@@ -10139,7 +10927,7 @@ export function createAppController(): AppController {
       ...pinnedDashboardTokens.map((item) => item.address),
     ]);
     for (const item of manualTokens) {
-      activeAddresses.add(item.address);
+      if (resolveAppTokenChain(item.chain) === 'solana') activeAddresses.add(item.address);
     }
 
     for (const address of Object.keys(state.data.meteoraByAddress)) {
@@ -10185,8 +10973,12 @@ export function createAppController(): AppController {
 
   function getSupplementalMeteoraAddresses(monitoredDashboardTokens: DashboardMonitoredToken[] = []) {
     const activeAddresses = new Set([
-      ...Object.keys(state.data.trackedTokensByAddress),
-      ...monitoredDashboardTokens.map((item) => item.address),
+      ...Object.values(state.data.trackedTokensByIdentity)
+        .filter((item) => (item.chain || 'solana') === 'solana')
+        .map((item) => item.address),
+      ...monitoredDashboardTokens
+        .filter((item) => item.chain === 'solana')
+        .map((item) => item.address),
     ]);
     return [...activeAddresses]
       .filter((address) => {
@@ -10230,19 +11022,26 @@ export function createAppController(): AppController {
       eligibleCatalogTokens: monitoredDashboardTokens.length,
     };
     state.data.configs = payload.configs || {};
+    state.data.availableChains = normalizeAvailableTokenChains(payload.availableChains);
+    state.data.chainReadiness = payload.chainReadiness || state.data.chainReadiness;
     state.data.runtimeFlags = {
       mockTradingEnabled: payload.runtimeFlags?.mockTradingEnabled !== false,
     };
+    applyUiPreferencesFromConfigs();
+    applyUiPreferences(payload.uiPrefs);
     if (!isMockTradingEnabled(state)) {
       clearMockTradingState();
     }
-    applyUiPreferencesFromConfigs();
-    applyUiPreferences(payload.uiPrefs);
     persistSoundSettings();
-    state.data.blocklist = sortAddresses(payload.blocklist);
-    replaceStarredTokens(payload.starredTokens.map((item) => item.address));
+    state.data.blocklist = sortAddresses(payload.blocklist.map((item) => ({
+      ...item,
+      chain: item.chain || 'solana',
+    })));
+    replaceStarredTokens(payload.starredTokens.map((item) => (
+      getTrackedTokenKey(item.address, item.chain || 'solana')
+    )));
     const beforeAlerts = state.data.alerts.slice();
-    state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address));
+    state.data.alerts = state.data.alerts.filter((item) => !isBlocked(item.address, item.chain));
     syncAlertState();
     recordAlertMutationDebug('config.apply-blocklist-filter', beforeAlerts, {
       blocklistCount: state.data.blocklist.length,
@@ -10284,49 +11083,68 @@ export function createAppController(): AppController {
 
   async function fetchMonitoredHydrationPage(input: {
     token: string;
+    chains: TokenChain[];
     page: number;
     perPage: number;
     sorts: MonitoredSortCriterion[];
+    asOf?: string | null;
   }) {
     return measureRuntimePerfAsync(
       'api.dashboard.monitored',
       isRuntimePerfDebugActive(),
       { workspace: state.ui.workspace, mode: 'bootstrap-page', page: input.page, perPage: input.perPage },
       () => fetchDashboardMonitored(input.token, {
+        chains: input.chains,
         page: input.page,
         perPage: input.perPage,
         sorts: input.sorts,
+        ...getMonitoredValuationFilters(),
+        asOf: input.asOf || undefined,
       }),
     );
   }
 
-  function isMonitoredHydrationCurrent(requestRevision: number, token: string) {
-    return requestRevision === monitoredBootstrapHydrationRevision && state.session.token === token;
+  function isMonitoredHydrationCurrent(
+    requestRevision: number,
+    token: string,
+    requestKey: string,
+  ) {
+    return requestRevision === monitoredBootstrapHydrationRevision
+      && state.session.token === token
+      && requestKey === buildChainRequestKey(getReadySelectedChains('monitored'));
   }
 
   async function hydratePagedDashboardMonitored(
     token: string,
     manualTokens: AddressItem[],
+    chains = getReadySelectedChains('monitored'),
   ) {
     const requestRevision = monitoredBootstrapHydrationRevision + 1;
     monitoredBootstrapHydrationRevision = requestRevision;
     const pageSize = MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE;
     const bootstrapSorts = getMonitoredBootstrapSorts();
+    const requestKey = buildChainRequestKey(chains);
     const preserveExistingUntilComplete = getCurrentMonitoredDashboardSnapshot().length > 0;
     const firstPage = await fetchMonitoredHydrationPage({
       token,
+      chains,
       page: 0,
       perPage: pageSize,
       sorts: bootstrapSorts,
     });
-    if (!isMonitoredHydrationCurrent(requestRevision, token)) {
+    if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) {
       return;
     }
 
     let aggregatedTokens = [...(firstPage.tokens || [])];
     const pinnedTokens = firstPage.pinnedTokens || [];
-    const generatedAt = firstPage.generatedAt ?? null;
-    const totalPages = Math.ceil(Math.max(firstPage.total, aggregatedTokens.length) / Math.max(firstPage.perPage || pageSize, 1));
+    const snapshotAsOf = firstPage.asOf ?? firstPage.generatedAt ?? null;
+    const generatedAt = firstPage.generatedAt ?? snapshotAsOf;
+    const totalPages = Math.min(
+      MONITORED_DASHBOARD_HYDRATION_MAX_ITEMS / pageSize,
+      Math.ceil(Math.max(firstPage.total, aggregatedTokens.length)
+        / Math.max(firstPage.perPage || pageSize, 1)),
+    );
     const firstPageComplete = isMonitoredHydrationPageComplete({
       page: 0,
       totalPages,
@@ -10361,17 +11179,28 @@ export function createAppController(): AppController {
     }
 
     for (let page = 1; page < totalPages; page += 1) {
-      if (!isMonitoredHydrationCurrent(requestRevision, token)) {
+      if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) {
         return;
       }
 
       const nextPage = await fetchMonitoredHydrationPage({
         token,
+        chains,
         page,
         perPage: pageSize,
         sorts: bootstrapSorts,
+        asOf: snapshotAsOf,
       });
-      if (!isMonitoredHydrationCurrent(requestRevision, token)) {
+      if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) {
+        return;
+      }
+      const nextSnapshotAsOf = nextPage.asOf ?? nextPage.generatedAt ?? null;
+      if (nextSnapshotAsOf !== snapshotAsOf) {
+        recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.snapshot-mismatch', {
+          expectedAsOf: snapshotAsOf,
+          receivedAsOf: nextSnapshotAsOf,
+          page,
+        });
         return;
       }
 
@@ -10389,7 +11218,7 @@ export function createAppController(): AppController {
       }
 
       aggregatedTokens = Array.from(new Map(
-        [...aggregatedTokens, ...nextPage.tokens].map((item) => [item.address, item]),
+        [...aggregatedTokens, ...nextPage.tokens].map((item) => [getTrackedTokenKey(item.address, item.chain), item]),
       ).values());
       const snapshotComplete = isMonitoredHydrationPageComplete({
         page,
@@ -10426,6 +11255,13 @@ export function createAppController(): AppController {
       manualTokens: manualTokens.length,
       usesHistoryBootstrap: usesHistoryBucketBootstrap(),
     });
+    if (
+      (usesHistoryBucketBootstrap() && !selectedChainsSupport('history'))
+      || (!usesHistoryBucketBootstrap() && !selectedChainsSupport('monitored'))
+    ) {
+      emitMonitoredWorkspaceRegions();
+      return;
+    }
     try {
       if (usesHistoryBucketBootstrap()) {
         await Promise.all([
@@ -10930,12 +11766,17 @@ export function createAppController(): AppController {
     }
   }
 
-  function buildOptimisticManualToken(address: string, label?: string | null) {
-    const existingTracked = state.data.trackedTokensByAddress[address]
-      || getMonitoredTokens(state).find((item) => item.address === address)
-      || getManualTokens(state).find((item) => item.address === address);
+  function buildOptimisticManualToken(
+    address: string,
+    label?: string | null,
+    chain: TokenChain = 'solana',
+  ) {
+    const existingTracked = getTrackedToken(state, address, chain)
+      || getMonitoredTokens(state).find((item) => item.address === address && item.chain === chain)
+      || getManualTokens(state).find((item) => item.address === address && item.chain === chain);
     const nextManualDraft: ManualTokenEntry = {
       ...(existingTracked || {}),
+      chain,
       address,
       label: label ?? existingTracked?.label ?? null,
       manual: true,
@@ -10947,32 +11788,34 @@ export function createAppController(): AppController {
       : nextManualDraft;
   }
 
-  function isValidTokenAddressFormat(address: string) {
+  function isValidTokenAddressFormat(address: string, chain: TokenChain = 'solana') {
     const normalized = String(address || '').trim();
-    return SOLANA_ADDR_RE.test(normalized) || EVM_ADDR_RE.test(normalized);
+    return chain === 'robinhood' ? EVM_ADDR_RE.test(normalized) : SOLANA_ADDR_RE.test(normalized);
   }
 
-  function captureOptimisticManualTokenSnapshot(address: string) {
+  function captureOptimisticManualTokenSnapshot(address: string, chain: TokenChain = 'solana') {
+    const trackedToken = getTrackedToken(state, address, chain);
+    const identityKey = getTrackedTokenKey(address, chain);
     return {
-      trackedToken: state.data.trackedTokensByAddress[address]
-        ? { ...state.data.trackedTokensByAddress[address] }
-        : null,
-      wasManual: state.data.manualTokenAddresses.includes(address),
-      wasMonitored: state.data.monitoredTokenAddresses.includes(address),
+      trackedToken: trackedToken ? { ...trackedToken } : null,
+      identityKey,
+      wasManual: state.data.manualTokenIdentities.includes(identityKey),
+      wasMonitored: state.data.monitoredTokenIdentities.includes(identityKey),
     };
   }
 
   function applyOptimisticManualToken(address: string, nextManual: ManualTokenEntry) {
-    state.data.trackedTokensByAddress[address] = nextManual;
-    state.data.manualTokenAddresses = state.data.manualTokenAddresses.includes(address)
-      ? state.data.manualTokenAddresses
-      : [...state.data.manualTokenAddresses, address];
-    state.data.monitoredTokenAddresses = state.data.monitoredTokenAddresses.includes(address)
-      ? state.data.monitoredTokenAddresses
-      : [...state.data.monitoredTokenAddresses, address];
+    const identityKey = getTrackedTokenKey(address, nextManual.chain || 'solana');
+    setTrackedToken(nextManual);
+    state.data.manualTokenIdentities = state.data.manualTokenIdentities.includes(identityKey)
+      ? state.data.manualTokenIdentities
+      : [...state.data.manualTokenIdentities, identityKey];
+    state.data.monitoredTokenIdentities = state.data.monitoredTokenIdentities.includes(identityKey)
+      ? state.data.monitoredTokenIdentities
+      : [...state.data.monitoredTokenIdentities, identityKey];
 
-    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.manualTokenIdentities.length;
     refreshMonitoredPanelCounts();
     deriveAgeBuckets();
   }
@@ -10981,26 +11824,28 @@ export function createAppController(): AppController {
     address: string,
     snapshot: ReturnType<typeof captureOptimisticManualTokenSnapshot>,
   ) {
+    const identityKey = snapshot.identityKey;
     if (snapshot.trackedToken) {
-      state.data.trackedTokensByAddress[address] = snapshot.trackedToken;
+      setTrackedToken(snapshot.trackedToken);
     } else {
-      delete state.data.trackedTokensByAddress[address];
+      const identity = parseTokenIdentityKey(snapshot.identityKey);
+      deleteTrackedToken(address, identity.chain);
     }
 
-    state.data.manualTokenAddresses = snapshot.wasManual
-      ? state.data.manualTokenAddresses.includes(address)
-        ? state.data.manualTokenAddresses
-        : [...state.data.manualTokenAddresses, address]
-      : state.data.manualTokenAddresses.filter((item) => item !== address);
+    state.data.manualTokenIdentities = snapshot.wasManual
+      ? state.data.manualTokenIdentities.includes(identityKey)
+        ? state.data.manualTokenIdentities
+        : [...state.data.manualTokenIdentities, identityKey]
+      : state.data.manualTokenIdentities.filter((item) => item !== identityKey);
 
-    state.data.monitoredTokenAddresses = snapshot.wasMonitored
-      ? state.data.monitoredTokenAddresses.includes(address)
-        ? state.data.monitoredTokenAddresses
-        : [...state.data.monitoredTokenAddresses, address]
-      : state.data.monitoredTokenAddresses.filter((item) => item !== address);
+    state.data.monitoredTokenIdentities = snapshot.wasMonitored
+      ? state.data.monitoredTokenIdentities.includes(identityKey)
+        ? state.data.monitoredTokenIdentities
+        : [...state.data.monitoredTokenIdentities, identityKey]
+      : state.data.monitoredTokenIdentities.filter((item) => item !== identityKey);
 
-    state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-    state.bars.manual = state.data.manualTokenAddresses.length;
+    state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+    state.bars.manual = state.data.manualTokenIdentities.length;
     refreshMonitoredPanelCounts();
     deriveAgeBuckets();
   }
@@ -11066,7 +11911,7 @@ export function createAppController(): AppController {
   }
 
   function buildManualMetadataBatchCacheCandidate(
-    manualTokens: Array<{ address: string; label?: string | null }>,
+    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
   ) {
     return manualTokens
       .map((item) => item.address)
@@ -11076,13 +11921,13 @@ export function createAppController(): AppController {
 
   function shouldReuseManualMetadataBatch(
     cacheKeyCandidate: string,
-    manualTokens: Array<{ address: string; label?: string | null }>,
+    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
   ) {
     if (cacheKeyCandidate !== manualMetadataBatchCacheKey || Date.now() >= manualMetadataBatchCacheExpiresAt) {
       return false;
     }
 
-    return !manualTokens.some((item) => hasCriticalColdFieldGap(state.data.trackedTokensByAddress[item.address]));
+    return !manualTokens.some((item) => hasCriticalColdFieldGap(getTrackedToken(state, item.address)));
   }
 
   function shouldIncludeMeteoraInManualMetadataBatch(cacheKeyCandidate: string) {
@@ -11108,7 +11953,7 @@ export function createAppController(): AppController {
 
   async function hydrateManualTokensMetadataBatch(
     token: string,
-    manualTokens: Array<{ address: string; label?: string | null }>,
+    manualTokens: Array<{ chain?: TokenChain; address: string; label?: string | null }>,
     options?: { emitOnComplete?: boolean },
   ) {
     if (state.session.token !== token || !isAuthenticatedSession()) {
@@ -11117,7 +11962,9 @@ export function createAppController(): AppController {
 
     const normalizedManualTokens = Array.from(new Map(
       (Array.isArray(manualTokens) ? manualTokens : [])
+        .filter((item) => resolveAppTokenChain(item?.chain) === 'solana')
         .map((item) => ({
+          chain: 'solana' as const,
           address: String(item?.address || '').trim(),
           label: item?.label ?? null,
         }))
@@ -11132,7 +11979,7 @@ export function createAppController(): AppController {
 
     const manualMetadataBatchCacheKeyCandidate = buildManualMetadataBatchCacheCandidate(normalizedManualTokens);
     const criticalGapAddresses = normalizedManualTokens
-      .filter((item) => hasCriticalColdFieldGap(state.data.trackedTokensByAddress[item.address]))
+      .filter((item) => hasCriticalColdFieldGap(getTrackedToken(state, item.address)))
       .map((item) => item.address);
     recordSparklineDebug('metadata.request', {
       addresses: summarizeSparklineDebugAddresses(normalizedManualTokens.map((item) => item.address)),
@@ -11237,7 +12084,7 @@ export function createAppController(): AppController {
 
       const dashboardByAddress = new Map(dashboardItems.map((item) => [item.address, item]));
       for (const manualToken of chunk) {
-        const currentTracked = state.data.trackedTokensByAddress[manualToken.address];
+        const currentTracked = getTrackedToken(state, manualToken.address);
         const dashboardItem = dashboardByAddress.get(manualToken.address);
         if (!currentTracked || !dashboardItem) {
           continue;
@@ -11268,7 +12115,7 @@ export function createAppController(): AppController {
   }
 
   async function hydrateManualTokenDashboardAttempt(address: string, token: string) {
-    const currentTracked = state.data.trackedTokensByAddress[address];
+    const currentTracked = getTrackedToken(state, address);
     if (!currentTracked || !hasCriticalColdFieldGap(currentTracked)) {
       return true;
     }
@@ -11326,10 +12173,15 @@ export function createAppController(): AppController {
     }
   }
 
-  async function syncManualTokenToBackend(address: string, label: string | null | undefined, token: string) {
-    const result = await addManualTokenRequest(address, label ?? null, token);
+  async function syncManualTokenToBackend(
+    chain: TokenChain,
+    address: string,
+    label: string | null | undefined,
+    token: string,
+  ) {
+    const result = await addManualTokenRequest(chain, address, label ?? null, token);
     if (result?.token) {
-      const currentTracked = state.data.trackedTokensByAddress[address];
+      const currentTracked = getTrackedToken(state, address, chain);
       if (currentTracked) {
         const syncedTracked = {
           ...currentTracked,
@@ -11337,6 +12189,11 @@ export function createAppController(): AppController {
         };
         replaceTrackedTokenReferences(address, syncedTracked);
       }
+    }
+
+    if (chain === 'robinhood') {
+      await reloadConfigPreservingMonitoredSnapshot(token);
+      return { followupError: null };
     }
 
     let trackResult: Awaited<ReturnType<typeof trackManualToken>> | null = null;
@@ -11886,11 +12743,12 @@ export function createAppController(): AppController {
       setNotice('PumpFun token removed from the live panel for this session.');
       emit('pumpfun', 'legacy', 'overlay');
     },
-    dismissRecentToken(address: string) {
-      if (!state.data.dismissedRecent.includes(address)) {
+    dismissRecentToken(address: string, chain: TokenChain = 'solana') {
+      const identityKey = getTrackedTokenKey(address, chain);
+      if (!state.data.dismissedRecentIdentities.includes(identityKey)) {
         clearHistoryBucketOrderLock('recent', { applyPending: false });
-        state.data.dismissedRecent = [...state.data.dismissedRecent, address];
-        state.data.recentTokenAddresses = state.data.recentTokenAddresses.filter((item) => item !== address);
+        state.data.dismissedRecentIdentities = [...state.data.dismissedRecentIdentities, identityKey];
+        state.data.recentTokenIdentities = state.data.recentTokenIdentities.filter((item) => item !== identityKey);
         state.bars.recent = Math.max(0, state.bars.recent - 1);
         syncRoutedPagination();
         persistBarStorage();
@@ -11901,11 +12759,12 @@ export function createAppController(): AppController {
         }
       }
     },
-    dismissOldWeekToken(address: string) {
-      if (!state.data.dismissedOldWeek.includes(address)) {
+    dismissOldWeekToken(address: string, chain: TokenChain = 'solana') {
+      const identityKey = getTrackedTokenKey(address, chain);
+      if (!state.data.dismissedOldWeekIdentities.includes(identityKey)) {
         clearHistoryBucketOrderLock('old-week', { applyPending: false });
-        state.data.dismissedOldWeek = [...state.data.dismissedOldWeek, address];
-        state.data.oldWeekTokenAddresses = state.data.oldWeekTokenAddresses.filter((item) => item !== address);
+        state.data.dismissedOldWeekIdentities = [...state.data.dismissedOldWeekIdentities, identityKey];
+        state.data.oldWeekTokenIdentities = state.data.oldWeekTokenIdentities.filter((item) => item !== identityKey);
         state.bars.oldWeek = Math.max(0, state.bars.oldWeek - 1);
         syncRoutedPagination();
         persistBarStorage();
@@ -11919,26 +12778,34 @@ export function createAppController(): AppController {
     async clearAllAlerts() {
       const token = state.session.token;
       const shouldClearBackend = Boolean(token && isAuthenticatedSession());
-      if (state.data.alerts.length === 0 && !shouldClearBackend) {
+      const { chains, clearedAlerts, remainingAlerts } = partitionVisibleAlertEntries(
+        state.data.alerts,
+        state.ui.chainFilters,
+      );
+      if (chains.length === 0) {
         return;
       }
       const beforeAlerts = state.data.alerts.slice();
-      state.data.alerts = [];
+      state.data.alerts = remainingAlerts;
+      if (clearedAlerts.length === 0 && !shouldClearBackend) {
+        return;
+      }
       syncAlertState();
       flushAlertsPersist();
-      recordAlertMutationDebug('user.clear-all', beforeAlerts);
-      setNotice('All alerts cleared.');
+      recordAlertMutationDebug('user.clear-visible', beforeAlerts, { chains });
+      setNotice('Alerts from the selected networks cleared.');
       emit('alerts', 'legacy', 'overlay');
       flushEmit();
-      if (!shouldClearBackend) {
+      if (!token || !isAuthenticatedSession()) {
         return;
       }
 
       try {
         recordAlertDebug('backend.clear-all.start', {
-          localCleared: summarizeAlertDebug(beforeAlerts),
+          chains,
+          localCleared: summarizeAlertDebug(clearedAlerts),
         });
-        const payload = await clearDashboardAlertEvents(token);
+        const payload = await clearDashboardAlertEvents(token, { chains });
         recordAlertDebug('backend.clear-all.complete', {
           cursorCount: Number(payload.count) || 0,
         });
@@ -11951,7 +12818,8 @@ export function createAppController(): AppController {
         flushEmit();
       }
     },
-    removeAlert(id: string) {
+    async removeAlert(id: string) {
+      const removedAlert = state.data.alerts.find((item) => item.id === id);
       const nextAlerts = state.data.alerts.filter((item) => item.id !== id);
       if (nextAlerts.length === state.data.alerts.length) {
         return;
@@ -11962,6 +12830,34 @@ export function createAppController(): AppController {
       recordAlertMutationDebug('user.remove-one', beforeAlerts, { id });
       emit('alerts');
       flushEmit();
+      const token = state.session.token;
+      const backendEventId = removedAlert ? getBackendAlertEventId(removedAlert) : null;
+      if (!removedAlert || !backendEventId || !removedAlert.ruleKey || !token || !isAuthenticatedSession()) {
+        return;
+      }
+      try {
+        await dismissDashboardAlertEvent({
+          ruleKey: removedAlert.ruleKey,
+          chain: removedAlert.chain,
+          eventId: backendEventId,
+        }, token);
+        recordAlertDebug('backend.dismiss-one.complete', {
+          ruleKey: removedAlert.ruleKey,
+          chain: removedAlert.chain,
+          eventId: backendEventId,
+        });
+      } catch (error) {
+        recordAlertDebug('backend.dismiss-one.error', {
+          ruleKey: removedAlert.ruleKey,
+          chain: removedAlert.chain,
+          eventId: backendEventId,
+          error: formatDebugErrorMessage(error),
+        });
+        setError('The alert was hidden locally, but could not be dismissed. Refreshing alert history.');
+        emit('overlay');
+        flushEmit();
+        void refreshAuthoritativeBackendAlertHistory('dismiss-failed');
+      }
     },
     previewCustomAlert(input: CustomAlertPreviewInput) {
       const address = String(input.tokenAddress || '').trim();
@@ -12002,7 +12898,12 @@ export function createAppController(): AppController {
     async updateCustomAlert(ruleId: number, input: CustomAlertPreviewInput) {
       try {
         const token = requireCustomAlertSessionToken();
-        await updateCustomAlertRuleRequest(ruleId, buildCustomAlertRulePayload(input), token);
+        const existing = state.data.customAlertRules.find((rule) => rule.id === ruleId);
+        if (!existing) throw new Error('Custom alert rule not found.');
+        await updateCustomAlertRuleRequest(ruleId, buildCustomAlertRulePayload(input, {
+          chain: existing.chain,
+          tokenAddress: existing.tokenAddress,
+        }), token);
         setNotice('Custom alert updated.');
         emit('overlay');
         flushEmit();
@@ -12015,12 +12916,14 @@ export function createAppController(): AppController {
     },
     async disableCustomAlert(ruleId: number) {
       const previousRules = state.data.customAlertRules;
+      const existing = previousRules.find((rule) => rule.id === ruleId);
+      if (!existing) throw new Error('Custom alert rule not found.');
       state.data.customAlertRules = previousRules.filter((rule) => rule.id !== ruleId);
       emit('alerts');
       flushEmit();
       try {
         const token = requireCustomAlertSessionToken();
-        await disableCustomAlertRuleRequest(ruleId, token);
+        await disableCustomAlertRuleRequest(ruleId, existing.chain, token);
         setNotice('Custom alert canceled.');
         emit('overlay');
         flushEmit();
@@ -12033,38 +12936,50 @@ export function createAppController(): AppController {
         throw error;
       }
     },
-    openExpandedSparkline(address: string) {
-      const normalized = String(address || '').trim();
-      if (!normalized) {
-        return;
-      }
+    openExpandedSparkline(address: string, chain: TokenChain = 'solana') {
+      const identity = createLegacyCompatibleTokenIdentity(chain, address);
+      if (state.data.chainReadiness[identity.chain]?.capabilities.charts !== true) return;
 
-      restorePreferredExpandedSparklineGranularityForAddress(normalized);
+      restorePreferredExpandedSparklineGranularityForAddress(identity.address, identity.chain);
 
-      if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
-        unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+      const activeIdentity = getActiveExpandedSparklineIdentity();
+      if (activeIdentity && activeIdentity.key !== identity.key) {
+        unsubscribeMarketChart(activeIdentity.address, activeIdentity.chain);
       }
-      state.ui.expandedSparklineAddress = normalized;
-      subscribeMarketChart(normalized);
+      state.ui.expandedSparklineChain = identity.chain;
+      state.ui.expandedSparklineAddress = identity.address;
+      subscribeMarketChart(identity.address, identity.chain);
       state.ui.mockTradingPnlAddress = null;
       if (typeof window !== 'undefined') {
-        const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
+        const nextPath = getWorkspaceSparklinePath(
+          state.ui.workspace,
+          identity.address,
+          identity.chain,
+        );
         if (window.location.pathname !== nextPath) {
           window.history.pushState({}, document.title, nextPath);
         }
       }
       emit('overlay');
-      void refreshCustomAlertRules().catch(() => {});
-      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(normalized))) {
+      if (identity.chain === 'solana') void refreshCustomAlertRules().catch(() => {});
+      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(
+        identity.address,
+        undefined,
+        identity.chain,
+      ))) {
         return;
       }
-      setExpandedSparklineLoading(normalized);
+      setExpandedSparklineLoading(identity.address, null, undefined, identity.chain);
       emit('overlay');
-      void refreshExpandedSparkline(normalized);
+      void refreshExpandedSparkline(identity.address, undefined, undefined, undefined, identity.chain);
     },
     openAlertExpandedSparkline(alertId: string, address: string) {
       const normalized = String(address || '').trim();
       if (!normalized) {
+        return;
+      }
+      const sourceAlert = state.data.alerts.find((item) => item.id === alertId);
+      if (sourceAlert && (sourceAlert.chain || 'solana') !== 'solana') {
         return;
       }
 
@@ -12072,11 +12987,15 @@ export function createAppController(): AppController {
       void refreshCustomAlertRules().catch(() => {});
       const seed = seedExpandedSparklineFromAlert(alertId, normalized);
 
-      if (state.ui.expandedSparklineAddress && state.ui.expandedSparklineAddress !== normalized) {
-        unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+      if (state.ui.expandedSparklineAddress && (
+        state.ui.expandedSparklineAddress !== normalized
+        || state.ui.expandedSparklineChain !== 'solana'
+      )) {
+        unsubscribeMarketChart(state.ui.expandedSparklineAddress, state.ui.expandedSparklineChain);
       }
+      state.ui.expandedSparklineChain = 'solana';
       state.ui.expandedSparklineAddress = normalized;
-      subscribeMarketChart(normalized);
+      subscribeMarketChart(normalized, 'solana');
       state.ui.mockTradingPnlAddress = null;
       if (typeof window !== 'undefined') {
         const nextPath = getWorkspaceSparklinePath(state.ui.workspace, normalized);
@@ -12096,8 +13015,12 @@ export function createAppController(): AppController {
       if (!state.ui.expandedSparklineAddress) {
         return;
       }
-      unsubscribeMarketChart(state.ui.expandedSparklineAddress);
+      unsubscribeMarketChart(
+        state.ui.expandedSparklineAddress,
+        state.ui.expandedSparklineChain,
+      );
       state.ui.expandedSparklineAddress = null;
+      state.ui.expandedSparklineChain = 'solana';
       clearWorkspaceSparklineUrl();
       if (deferredExpandedSparklineRenderRegions.size > 0) {
         const deferredRegions = [...deferredExpandedSparklineRenderRegions];
@@ -12118,7 +13041,8 @@ export function createAppController(): AppController {
       }
 
       const address = String(state.ui.expandedSparklineAddress || '').trim();
-      if (address && !isExpandedSparklineGranularityAvailable(address, safeGranularity)) {
+      const chain = state.ui.expandedSparklineChain;
+      if (address && !isExpandedSparklineGranularityAvailable(address, safeGranularity, chain)) {
         emit('overlay');
         return;
       }
@@ -12131,14 +13055,14 @@ export function createAppController(): AppController {
         return;
       }
 
-      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, safeGranularity))) {
+      if (isExpandedSparklineCacheFresh(getExpandedSparklineCacheEntry(address, safeGranularity, chain))) {
         emit('overlay');
         return;
       }
 
-      setExpandedSparklineLoading(address, null, safeGranularity);
+      setExpandedSparklineLoading(address, null, safeGranularity, chain);
       emit('overlay');
-      void refreshExpandedSparkline(address, undefined, safeGranularity);
+      void refreshExpandedSparkline(address, undefined, safeGranularity, undefined, chain);
     },
     setExpandedSparklineTimeZone(timeZone: string) {
       const safeTimeZone = normalizeExpandedChartTimeZone(timeZone);
@@ -12150,7 +13074,7 @@ export function createAppController(): AppController {
       emit('overlay');
     },
     clearDismissedRecent() {
-      state.data.dismissedRecent = [];
+      state.data.dismissedRecentIdentities = [];
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
       } else {
@@ -12161,7 +13085,7 @@ export function createAppController(): AppController {
       emit('recent', 'legacy', 'overlay');
     },
     clearDismissedOldWeek() {
-      state.data.dismissedOldWeek = [];
+      state.data.dismissedOldWeekIdentities = [];
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
       } else {
@@ -12250,6 +13174,76 @@ export function createAppController(): AppController {
       emit('old-week');
       if (usesHistoryBucketBootstrap()) {
         void refreshHistoryWorkspaceBootstrap();
+      }
+    },
+    toggleEnabledChain(chain: TokenChain) {
+      const next = toggleEnabledTokenChain(
+        state.ui.chainFilters,
+        state.data.availableChains,
+        chain,
+      );
+      if (
+        next.enabledChains.length === state.ui.chainFilters.enabledChains.length
+        && next.enabledChains.every((item, index) => item === state.ui.chainFilters.enabledChains[index])
+      ) {
+        return;
+      }
+      state.ui.chainFilters = next;
+      monitoredBootstrapHydrationRevision += 1;
+      topPerformersRefreshRevision += 1;
+      if (!isMockTradingEnabled(state)) {
+        clearMockTradingState();
+      } else {
+        void refreshMockTradingState();
+      }
+      state.ui.alertPage = 0;
+      state.ui.monitoredPage = 0;
+      state.ui.recentPage = 0;
+      state.ui.oldWeekPage = 0;
+      clearHistoryBucketOrderLocks({ applyPending: false });
+      queueUiPrefsPersist();
+      if (usesHistoryBucketBootstrap()) {
+        void refreshHistoryWorkspaceBootstrap();
+      } else {
+        void refreshMonitoredDashboard();
+      }
+      void refreshDashboardTopPerformers();
+      emit('header', 'top-performers', 'manual', 'monitored', 'alerts', 'recent', 'old-week');
+    },
+    toggleSurfaceChain(
+      surface: 'radarChains' | 'alertFeedChains' | 'browserNotificationChains',
+      chain: TokenChain,
+    ) {
+      const currentSelection = state.ui.chainFilters[surface];
+      const next = toggleTokenChainForSurface(
+        state.ui.chainFilters,
+        state.data.availableChains,
+        surface,
+        chain,
+      );
+      const nextSelection = next[surface];
+      if (
+        nextSelection.length === currentSelection.length
+        && nextSelection.every((item, index) => item === currentSelection[index])
+      ) {
+        return;
+      }
+      state.ui.chainFilters = next;
+      if (surface === 'radarChains') {
+        state.ui.recentPage = 0;
+        state.ui.oldWeekPage = 0;
+        clearHistoryBucketOrderLocks({ applyPending: false });
+        if (usesHistoryBucketBootstrap()) {
+          void refreshHistoryWorkspaceBootstrap();
+        }
+      } else if (surface === 'alertFeedChains') {
+        state.ui.alertPage = 0;
+      }
+      queueUiPrefsPersist();
+      if (surface === 'radarChains') {
+        emit('recent', 'old-week');
+      } else {
+        emit('alerts');
       }
     },
     setMonitoredPage(page: number) {
@@ -12354,35 +13348,47 @@ export function createAppController(): AppController {
       queueUiPrefsPersist();
       refreshWorkspaceSparklinesAfterRangeChange(undefined, `range-global:${scope}`);
     },
-    setTokenSparklineRangeDays(address: string, days: number) {
-      const normalizedAddress = String(address || '').trim();
-      if (!normalizedAddress) {
+    setTokenSparklineRangeDays(address: string, days: number, chain: TokenChain = 'solana') {
+      const identity = getChartCapableIdentity(chain, address);
+      if (!identity) {
         return;
       }
 
       const safeDays = normalizeSparklineRangeDays(days);
-      if (state.ui.sparklineRange.tokenDaysByAddress[normalizedAddress] === safeDays) {
+      if (state.ui.sparklineRange.tokenDaysByAddress[identity.key] === safeDays) {
         return;
       }
 
-      state.ui.sparklineRange.tokenDaysByAddress = pruneSparklineRangeTokenDays({
+      const nextTokenDaysByAddress = {
         ...state.ui.sparklineRange.tokenDaysByAddress,
-        [normalizedAddress]: safeDays,
-      });
+        [identity.key]: safeDays,
+      };
+      if (identity.chain === 'solana') {
+        delete nextTokenDaysByAddress[identity.address];
+      }
+      state.ui.sparklineRange.tokenDaysByAddress = pruneSparklineRangeTokenDays(nextTokenDaysByAddress);
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress], 'token-range-days');
+      refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'token-range-days');
     },
-    resetTokenSparklineRangeDays(address: string) {
-      const normalizedAddress = String(address || '').trim();
-      if (!normalizedAddress || state.ui.sparklineRange.tokenDaysByAddress[normalizedAddress] == null) {
+    resetTokenSparklineRangeDays(address: string, chain: TokenChain = 'solana') {
+      const identity = getChartCapableIdentity(chain, address);
+      const hasLegacyOverride = identity?.chain === 'solana'
+        && state.ui.sparklineRange.tokenDaysByAddress[identity.address] != null;
+      if (!identity || (
+        state.ui.sparklineRange.tokenDaysByAddress[identity.key] == null
+        && !hasLegacyOverride
+      )) {
         return;
       }
 
       const nextTokenDaysByAddress = { ...state.ui.sparklineRange.tokenDaysByAddress };
-      delete nextTokenDaysByAddress[normalizedAddress];
+      delete nextTokenDaysByAddress[identity.key];
+      if (identity.chain === 'solana') {
+        delete nextTokenDaysByAddress[identity.address];
+      }
       state.ui.sparklineRange.tokenDaysByAddress = nextTokenDaysByAddress;
       queueUiPrefsPersist();
-      refreshWorkspaceSparklinesAfterRangeChange([normalizedAddress], 'token-range-reset');
+      refreshWorkspaceSparklinesAfterRangeChange([identity.key], 'token-range-reset');
     },
     setManualSort(mode: BucketSortMode, window?: BucketSortWindow) {
       state.ui.manualSorts = toggleSortCriterion(
@@ -12459,35 +13465,44 @@ export function createAppController(): AppController {
       refreshMonitoredSparklinesIfExpanded('monitored-sort');
       if (state.session.token && !usesHistoryBucketBootstrap()) {
         void hydrateDashboardMonitoredInternal(state.session.token, getManualTokens(state).map((item) => ({
+          chain: item.chain || 'solana',
           address: item.address,
           label: item.label ?? null,
         })));
       }
     },
-    async pinMonitoredToken(address: string, position = 0) {
-      if (!state.session.token || !state.data.trackedTokensByAddress[address]) return;
+    async pinMonitoredToken(address: string, position = 0, chain: TokenChain = 'solana') {
+      if (!state.session.token || !getTrackedToken(state, address, chain)) return;
+      const mutationChains = getReadySelectedChains('monitored');
       const previous = captureMonitoredPinLayout();
-      const next = buildMovedMonitoredPinLayout(address, position);
+      const next = buildMovedMonitoredPinLayout(chain, address, position);
       applyMonitoredPinLayout(next);
       if (monitoredPinMutationInFlight) {
-        queuedMonitoredPinLayout = next;
+        queuedMonitoredPinMutation = { pins: next, chains: mutationChains };
         return;
       }
       monitoredPinMutationInFlight = true;
-      let layoutToSave: DashboardMonitoredPin[] | null = next;
+      let mutationToSave: typeof queuedMonitoredPinMutation = {
+        pins: next,
+        chains: mutationChains,
+      };
       let lastConfirmedLayout = previous;
       try {
-        while (layoutToSave) {
-          const savedLayout = await saveMonitoredPinsRequest(layoutToSave, state.session.token);
+        while (mutationToSave) {
+          const savedLayout = await saveMonitoredPinsRequest(
+            mutationToSave.pins,
+            state.session.token,
+            mutationToSave.chains,
+          );
           lastConfirmedLayout = savedLayout;
-          layoutToSave = queuedMonitoredPinLayout;
-          queuedMonitoredPinLayout = null;
-          if (!layoutToSave) {
+          mutationToSave = queuedMonitoredPinMutation;
+          queuedMonitoredPinMutation = null;
+          if (!mutationToSave) {
             applyMonitoredPinLayout(savedLayout);
           }
         }
       } catch (error) {
-        queuedMonitoredPinLayout = null;
+        queuedMonitoredPinMutation = null;
         applyMonitoredPinLayout(lastConfirmedLayout);
         setError(error instanceof Error ? error.message : 'Failed to save monitored pin');
         emit('overlay');
@@ -12495,14 +13510,20 @@ export function createAppController(): AppController {
         monitoredPinMutationInFlight = false;
       }
     },
-    async unpinMonitoredToken(address: string) {
-      if (monitoredPinMutationInFlight || !state.session.token || !state.data.pinnedMonitoredTokenAddresses.includes(address)) return;
+    async unpinMonitoredToken(address: string, chain: TokenChain = 'solana') {
+      const identityKey = getTrackedTokenKey(address, chain);
+      if (monitoredPinMutationInFlight || !state.session.token || !state.data.pinnedMonitoredTokenIdentities.includes(identityKey)) return;
+      const mutationChains = getReadySelectedChains('monitored');
       monitoredPinMutationInFlight = true;
       const previous = captureMonitoredPinLayout();
-      const next = buildUnpinnedMonitoredPinLayout(address);
+      const next = buildUnpinnedMonitoredPinLayout(chain, address);
       applyMonitoredPinLayout(next);
       try {
-        applyMonitoredPinLayout(await saveMonitoredPinsRequest(next, state.session.token));
+        applyMonitoredPinLayout(await saveMonitoredPinsRequest(
+          next,
+          state.session.token,
+          mutationChains,
+        ));
       } catch (error) {
         applyMonitoredPinLayout(previous);
         setError(error instanceof Error ? error.message : 'Failed to remove monitored pin');
@@ -12520,12 +13541,12 @@ export function createAppController(): AppController {
       }
     },
     async resetMonitoredTokenPins() {
-      if (monitoredPinMutationInFlight || !state.session.token || state.data.pinnedMonitoredTokenAddresses.length === 0) return;
+      if (monitoredPinMutationInFlight || !state.session.token || state.data.pinnedMonitoredTokenIdentities.length === 0) return;
       monitoredPinMutationInFlight = true;
       const previous = captureMonitoredPinLayout();
       applyMonitoredPinLayout([]);
       try {
-        await resetMonitoredPinsRequest(state.session.token);
+        await resetMonitoredPinsRequest(state.session.token, state.ui.chainFilters.enabledChains);
       } catch (error) {
         applyMonitoredPinLayout(previous);
         setError(error instanceof Error ? error.message : 'Failed to reset monitored pins');
@@ -12606,17 +13627,39 @@ export function createAppController(): AppController {
       void persistUiConfigs({ 'sound-mode': enabled ? 'on' : 'off' });
       emit('overlay');
     },
-    async toggleStarredToken(address: string) {
-      const wasStarred = state.data.starredTokens.includes(address);
+    async toggleStarredToken(address: string, chain: TokenChain = 'solana') {
+      if (state.data.chainReadiness[chain]?.capabilities.starred !== true) return;
+      const token = state.session.token;
+      if (!token) {
+        setError('No authenticated session');
+        emit();
+        return;
+      }
+      const identityKey = getTrackedTokenKey(address, chain);
+      const wasStarred = state.data.starredTokenIdentities.includes(identityKey);
       replaceStarredTokens(
         wasStarred
-          ? state.data.starredTokens.filter((item) => item !== address)
-          : [...state.data.starredTokens, address],
+          ? state.data.starredTokenIdentities.filter((item) => item !== identityKey)
+          : [...state.data.starredTokenIdentities, identityKey],
       );
       emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
-      queueStarredTokensPersist();
-      if (usesHistoryBucketBootstrap()) {
-        void refreshHistoryWorkspaceBootstrap();
+      try {
+        if (wasStarred) {
+          await removeStarredTokenRequest(chain, address, token);
+        } else {
+          await addStarredTokenRequest(chain, address, token);
+        }
+        if (usesHistoryBucketBootstrap()) {
+          void refreshHistoryWorkspaceBootstrap();
+        }
+      } catch (error) {
+        replaceStarredTokens(
+          wasStarred
+            ? [...state.data.starredTokenIdentities, identityKey]
+            : state.data.starredTokenIdentities.filter((item) => item !== identityKey),
+        );
+        setError(error instanceof Error ? error.message : 'Failed to update starred token');
+        emit('manual', 'recent', 'old-week', 'monitored', 'bid-zone', 'alerts');
       }
     },
     setSoundVolume(volume: number) {
@@ -13244,6 +14287,10 @@ export function createAppController(): AppController {
       }
 
       setError(null);
+      const updatesMonitoredValuationFilters = (
+        Object.prototype.hasOwnProperty.call(configs, 'monitored-mcap-min')
+        || Object.prototype.hasOwnProperty.call(configs, 'monitored-fdv-min')
+      );
       const previousConfigs = { ...state.data.configs };
       state.data.configs = { ...state.data.configs, ...configs };
       applyUiPreferencesFromConfigs();
@@ -13262,6 +14309,10 @@ export function createAppController(): AppController {
         state.data.configs = { ...state.data.configs, ...patchResult.configs };
         applyUiPreferencesFromConfigs();
         persistSoundSettings();
+        if (updatesMonitoredValuationFilters) {
+          state.ui.monitoredPage = 0;
+          void refreshMonitoredDashboard();
+        }
         emit();
       } catch (error) {
         state.data.configs = previousConfigs;
@@ -13277,7 +14328,7 @@ export function createAppController(): AppController {
         emit();
       }
     },
-    async addManualToken(address: string, label?: string | null) {
+    async addManualToken(address: string, label?: string | null, chain: TokenChain = 'solana') {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -13292,7 +14343,7 @@ export function createAppController(): AppController {
         return;
       }
 
-      if (!isValidTokenAddressFormat(normalizedAddress)) {
+      if (!isValidTokenAddressFormat(normalizedAddress, chain)) {
         setError('Invalid token address format');
         setNotice(null);
         emit();
@@ -13304,13 +14355,13 @@ export function createAppController(): AppController {
       setNotice('Adding manual token...');
 
       invalidateWorkspaceHydrationRequests();
-      const optimisticSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress);
-      const nextManual = buildOptimisticManualToken(normalizedAddress, label);
+      const optimisticSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress, chain);
+      const nextManual = buildOptimisticManualToken(normalizedAddress, label, chain);
       applyOptimisticManualToken(normalizedAddress, nextManual);
       emit();
 
       try {
-        const syncResult = await syncManualTokenToBackend(normalizedAddress, label, token);
+        const syncResult = await syncManualTokenToBackend(chain, normalizedAddress, label, token);
         setNotice(syncResult.followupError ? 'Token added; metadata refresh pending' : 'Token added');
       } catch (error) {
         revertOptimisticManualToken(normalizedAddress, optimisticSnapshot);
@@ -13321,7 +14372,7 @@ export function createAppController(): AppController {
         emit();
       }
     },
-    async removeManualToken(address: string) {
+    async removeManualToken(address: string, chain: TokenChain = 'solana') {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -13336,8 +14387,11 @@ export function createAppController(): AppController {
 
       try {
         invalidateWorkspaceHydrationRequests();
-        state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => item !== address);
-        const currentTracked = state.data.trackedTokensByAddress[address];
+        const identityKey = getTrackedTokenKey(address, chain);
+        state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => (
+          item !== identityKey
+        ));
+        const currentTracked = getTrackedToken(state, address, chain);
         if (currentTracked) {
           replaceTrackedTokenReferences(address, {
             ...currentTracked,
@@ -13345,12 +14399,12 @@ export function createAppController(): AppController {
             _userManual: false,
           });
         }
-        state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-        state.bars.manual = state.data.manualTokenAddresses.length;
+        state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+        state.bars.manual = state.data.manualTokenIdentities.length;
         deriveAgeBuckets();
         refreshMonitoredPanelCounts();
         emit();
-        await removeManualTokenRequest(address, token);
+        await removeManualTokenRequest(chain, address, token);
         await reloadConfigPreservingMonitoredSnapshot(token);
         setNotice('Token removed');
       } catch (error) {
@@ -13419,22 +14473,29 @@ export function createAppController(): AppController {
       setBusy(true);
       setError(null);
       setNotice('Deleting manual token folder...');
-      const removedAddresses = Array.from(new Set(
-        state.data.manualTokenFolderItems
-          .filter((item) => item.folderId === folderId)
-          .map((item) => String(item.address || '').trim())
-          .filter(Boolean),
-      ));
+      const removedIdentities = [...new Map(state.data.manualTokenFolderItems
+        .filter((item) => item.folderId === folderId)
+        .map((item) => {
+          const chain = resolveAppTokenChain(item.chain);
+          const address = String(item.address || '').trim();
+          return [getTrackedTokenKey(address, chain), { chain, address }];
+        })).values()].filter((item) => item.address);
       const folderSnapshot = state.data.manualTokenFolders.map((item) => ({ ...item }));
       const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
       const visibleFolderIdsSnapshot = [...state.ui.manualVisibleFolderIds];
-      const manualAddressesSnapshot = [...state.data.manualTokenAddresses];
+      const manualAddressesSnapshot = [...state.data.manualTokenIdentities];
       const trackedTokenSnapshots = Object.fromEntries(
-        removedAddresses
-          .map((item) => [item, state.data.trackedTokensByAddress[item] ? { ...state.data.trackedTokensByAddress[item] } : null] as const),
+        removedIdentities
+          .map((item) => {
+            const identityKey = getTrackedTokenKey(item.address, item.chain);
+            const trackedToken = getTrackedToken(state, item.address, item.chain);
+            return [identityKey, trackedToken ? { ...trackedToken } : null] as const;
+          }),
       );
-      const pendingRemovedAddresses = new Set(removedAddresses);
-      const removedAddressSet = new Set(removedAddresses);
+      const pendingRemovedAddresses = new Set(removedIdentities.map((item) => (
+        getTrackedTokenKey(item.address, item.chain)
+      )));
+      const removedIdentitySet = new Set(pendingRemovedAddresses);
 
       pendingManualFolderDeleteIds.add(folderId);
       for (const item of pendingRemovedAddresses) {
@@ -13442,34 +14503,33 @@ export function createAppController(): AppController {
       }
       state.data.manualTokenFolders = state.data.manualTokenFolders.filter((folder) => folder.id !== folderId);
       state.data.manualTokenFolderItems = state.data.manualTokenFolderItems.filter((item) => (
-        item.folderId !== folderId && !removedAddressSet.has(String(item.address || '').trim())
+        item.folderId !== folderId
+        && !removedIdentitySet.has(getTrackedTokenKey(item.address, item.chain))
       ));
       state.ui.manualVisibleFolderIds = state.ui.manualVisibleFolderIds.filter((id) => id !== folderId);
-      state.data.manualTokenAddresses = state.data.manualTokenAddresses.filter((item) => !removedAddressSet.has(String(item || '').trim()));
-      for (const item of removedAddresses) {
-        const currentTracked = state.data.trackedTokensByAddress[item];
+      state.data.manualTokenIdentities = state.data.manualTokenIdentities.filter((item) => !removedIdentitySet.has(item));
+      for (const item of removedIdentities) {
+        const currentTracked = getTrackedToken(state, item.address, item.chain);
         if (currentTracked) {
-          replaceTrackedTokenReferences(item, {
+          replaceTrackedTokenReferences(item.address, {
             ...currentTracked,
             manual: false,
             _userManual: false,
           });
         }
       }
-      state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-      state.bars.manual = state.data.manualTokenAddresses.length;
+      state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+      state.bars.manual = state.data.manualTokenIdentities.length;
       deriveAgeBuckets();
       refreshMonitoredPanelCounts();
       emit('manual', 'monitored', 'header');
 
       try {
         const result = await deleteManualTokenFolderRequest(folderId, token);
-        for (const item of result.removedTokens || []) {
-          const normalizedAddress = String(item || '').trim();
-          if (normalizedAddress) {
-            pendingRemovedAddresses.add(normalizedAddress);
-            pendingManualFolderDeleteAddresses.add(normalizedAddress);
-          }
+        for (const item of result.removedTokenIdentities || []) {
+          const identityKey = getTrackedTokenKey(item.address, item.chain);
+          pendingRemovedAddresses.add(identityKey);
+          pendingManualFolderDeleteAddresses.add(identityKey);
         }
         await reloadConfigPreservingMonitoredSnapshot(token);
         const removedCount = result.removedTokens.length;
@@ -13482,16 +14542,17 @@ export function createAppController(): AppController {
         state.data.manualTokenFolders = folderSnapshot;
         state.data.manualTokenFolderItems = folderItemsSnapshot;
         state.ui.manualVisibleFolderIds = visibleFolderIdsSnapshot;
-        state.data.manualTokenAddresses = manualAddressesSnapshot;
-        for (const [item, snapshot] of Object.entries(trackedTokenSnapshots)) {
+        state.data.manualTokenIdentities = manualAddressesSnapshot;
+        for (const [identityKey, snapshot] of Object.entries(trackedTokenSnapshots)) {
           if (snapshot) {
-            state.data.trackedTokensByAddress[item] = snapshot;
+            setTrackedToken(snapshot);
           } else {
-            delete state.data.trackedTokensByAddress[item];
+            const identity = parseTokenIdentityKey(identityKey);
+            deleteTrackedToken(identity.address, identity.chain);
           }
         }
-        state.configSummary.manualTokens = state.data.manualTokenAddresses.length;
-        state.bars.manual = state.data.manualTokenAddresses.length;
+        state.configSummary.manualTokens = state.data.manualTokenIdentities.length;
+        state.bars.manual = state.data.manualTokenIdentities.length;
         deriveAgeBuckets();
         refreshMonitoredPanelCounts();
         setError(error instanceof Error ? error.message : 'Failed to delete folder');
@@ -13504,7 +14565,11 @@ export function createAppController(): AppController {
         emit('manual', 'monitored', 'header');
       }
     },
-    async addManualTokenToFolder(folderId: number, address: string) {
+    async addManualTokenToFolder(
+      folderId: number,
+      address: string,
+      chain: TokenChain = 'solana',
+    ) {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -13519,7 +14584,7 @@ export function createAppController(): AppController {
         return;
       }
 
-      if (!isValidTokenAddressFormat(normalizedAddress)) {
+      if (!isValidTokenAddressFormat(normalizedAddress, chain)) {
         setError('Invalid token address format');
         setNotice(null);
         emit('manual');
@@ -13530,12 +14595,16 @@ export function createAppController(): AppController {
       setError(null);
       setNotice('Adding token to folder...');
 
-      const tokenSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress);
+      const tokenSnapshot = captureOptimisticManualTokenSnapshot(normalizedAddress, chain);
       const folderItemsSnapshot = state.data.manualTokenFolderItems.map((item) => ({ ...item }));
-      applyOptimisticManualToken(normalizedAddress, buildOptimisticManualToken(normalizedAddress, null));
+      applyOptimisticManualToken(
+        normalizedAddress,
+        buildOptimisticManualToken(normalizedAddress, null, chain),
+      );
       upsertManualTokenFolderItem({
         userId: 0,
         folderId,
+        chain,
         address: normalizedAddress,
         sortOrder: 0,
         addedAt: null,
@@ -13543,7 +14612,9 @@ export function createAppController(): AppController {
       emit('manual', 'monitored', 'header');
 
       try {
-        const result = await addManualTokenToFolderRequest(folderId, normalizedAddress, token);
+        const result = await addManualTokenToFolderRequest(
+          folderId, chain, normalizedAddress, token,
+        );
         upsertManualTokenFolderItem(result.item);
         void reloadConfigPreservingMonitoredSnapshot(token)
           .then(() => emit('manual', 'monitored', 'header'))
@@ -13566,7 +14637,11 @@ export function createAppController(): AppController {
         emit('manual', 'monitored', 'header');
       }
     },
-    async removeManualTokenFromFolder(folderId: number, address: string) {
+    async removeManualTokenFromFolder(
+      folderId: number,
+      address: string,
+      chain: TokenChain = 'solana',
+    ) {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -13580,7 +14655,7 @@ export function createAppController(): AppController {
       emit('manual');
 
       try {
-        await removeManualTokenFromFolderRequest(folderId, address, token);
+        await removeManualTokenFromFolderRequest(folderId, chain, address, token);
         await reloadConfigPreservingMonitoredSnapshot(token);
         setNotice('Token removed');
       } catch (error) {
@@ -13603,7 +14678,11 @@ export function createAppController(): AppController {
       state.ui.manualVisibleFolderIds = nextFolderIds;
       emit('manual');
     },
-    async addBlockedToken(address: string, label?: string | null) {
+    async addBlockedToken(
+      address: string,
+      label?: string | null,
+      chain: TokenChain = 'solana',
+    ) {
       if (!state.session.token) {
         setError('No authenticated session');
         emit();
@@ -13611,12 +14690,12 @@ export function createAppController(): AppController {
       }
 
       if (shouldShowBlockedTokenWarning()) {
-        if (openBlockedTokenWarning(address, label)) {
+        if (openBlockedTokenWarning(address, label, chain)) {
           return;
         }
       }
 
-      await addBlockedTokenInternal(address, label);
+      await addBlockedTokenInternal(address, label, chain);
     },
     async cancelBlockedTokenWarning() {
       await finalizeBlockedTokenWarning();
@@ -13637,7 +14716,7 @@ export function createAppController(): AppController {
       if (!warning) {
         return;
       }
-      await addBlockedTokenInternal(warning.address, warning.label);
+      await addBlockedTokenInternal(warning.address, warning.label, warning.chain);
     },
     async adminBlockToken(address: string, label?: string | null) {
       const token = state.session.token;
@@ -13663,8 +14742,10 @@ export function createAppController(): AppController {
       try {
         const result = await adminBlockTokenRequest(address, label, token);
         if (removedTokenSnapshot.wasStarred) {
-          replaceStarredTokens(state.data.starredTokens.filter((item) => item !== address));
-          queueStarredTokensPersist();
+          replaceStarredTokens(state.data.starredTokenIdentities.filter((item) => (
+            item !== removedTokenSnapshot.identityKey
+          )));
+          await removeStarredTokenRequest('solana', address, token).catch(() => {});
         }
         setNotice(result.message);
       } catch (error) {
@@ -14331,7 +15412,7 @@ export function createAppController(): AppController {
         emit('header', 'manual', 'recent', 'old-week', 'monitored', 'overlay');
       }
     },
-    async removeBlockedToken(address: string) {
+    async removeBlockedToken(address: string, chain: TokenChain = 'solana') {
       const token = state.session.token;
       if (!token) {
         setError('No authenticated session');
@@ -14345,8 +15426,11 @@ export function createAppController(): AppController {
       emit();
 
       try {
-        const result = await removeBlockedTokenRequest(address, token);
-        state.data.blocklist = state.data.blocklist.filter((item) => item.address !== address);
+        const result = await removeBlockedTokenRequest(chain, address, token);
+        const identityKey = getTrackedTokenKey(address, chain);
+        state.data.blocklist = state.data.blocklist.filter((item) => (
+          getTrackedTokenKey(item.address, item.chain || 'solana') !== identityKey
+        ));
         state.bars.blocklist = state.data.blocklist.length;
         await reloadConfigInternal(token);
         setNotice(result.message);

@@ -1,5 +1,27 @@
+import {
+  buildTokenIdentityKey,
+  createLegacyCompatibleTokenIdentity,
+  filterItemsByEnabledChains,
+  filterItemsByChainSelection,
+  getUnavailableChainCapabilityNotice,
+  isTokenChainSelectedForSurface,
+  parseTokenIdentityKey,
+  type ChainFilterSurface,
+  type ChainFilterPreferences,
+  type TokenChain,
+  type WorkspaceChainCapability,
+  type WorkspaceChainReadinessMap,
+} from '../utils/token-chain';
+import type {
+  TokenMetricCoverageMap,
+  TokenValuationSnapshot,
+  TokenValuationType,
+} from '../utils/token-valuation';
+
 export interface AlertEntry {
   id: string;
+  backendEventId?: number | null;
+  chain: TokenChain;
   kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'gmgn-claim-signal' | 'admin-token-review' | 'custom-alert';
   ruleKey?: string | null;
   address: string;
@@ -30,6 +52,11 @@ export interface AlertEntry {
   volume24h?: number | null;
   prevMcap?: number | null;
   mcap?: number | null;
+  fdv?: number | null;
+  valuationType?: TokenValuationType | null;
+  priceUsd?: number | null;
+  liquidityUsd?: number | null;
+  transactions?: number | null;
   thresholdPct?: number | null;
   signalType?: number | null;
   claimSequence?: number | null;
@@ -62,6 +89,7 @@ export interface AlertEntry {
   isHvnc?: boolean;
   isOldSurge?: boolean;
   tickerPeers?: {
+    chain?: TokenChain | null;
     sourceSymbol?: string | null;
     normalizedSymbol?: string | null;
     count?: number;
@@ -85,9 +113,11 @@ export interface AlertEntry {
 }
 
 export interface CustomAlertPreviewInput {
+  chain?: TokenChain;
   tokenAddress: string;
   title: string;
   metric: string;
+  window?: CustomAlertWindow;
   operator: string;
   target: string;
   repeatMode: string;
@@ -98,11 +128,26 @@ export interface CustomAlertPreviewInput {
   soundDataUrl: string | null;
 }
 
+export type CustomAlertMetric = 'price' | 'mcap' | 'fdv';
+export type CustomAlertWindow = 'spot';
+
+export interface CustomAlertCapabilityEntry {
+  chain: TokenChain;
+  supported: boolean;
+  ready: boolean;
+  metrics: CustomAlertMetric[];
+  windows: CustomAlertWindow[];
+  reason: string | null;
+}
+
 export interface CustomAlertRuleEntry {
   id: number;
+  chain: TokenChain;
+  identityKey: string;
   tokenAddress: string;
   title: string;
-  metric: 'price' | 'mcap';
+  metric: CustomAlertMetric;
+  window: CustomAlertWindow;
   operator: 'cross_above' | 'cross_below';
   targetValue: number;
   colorHex: string | null;
@@ -110,9 +155,12 @@ export interface CustomAlertRuleEntry {
   expiresAt: string | null;
   status: 'active' | 'triggered' | 'disabled';
   triggeredAt: string | null;
+  baselineValue: number | null;
+  baselineAt: string | null;
 }
 
 export interface ManualTokenEntry {
+  chain?: TokenChain;
   address: string;
   mintAddress?: string | null;
   pairAddress?: string | null;
@@ -128,7 +176,11 @@ export interface ManualTokenEntry {
   _userManual?: boolean;
   createdAt?: number | null;
   catalogFirstSeenAt?: number | null;
+  tokenAgeProvenance?: string | null;
   mcap?: number | null;
+  fdv?: number | null;
+  valuationType?: TokenValuationType | null;
+  valuation?: TokenValuationSnapshot | null;
   priceUsd?: number | null;
   liquidityUsd?: number | null;
   volume5m?: number | null;
@@ -145,6 +197,18 @@ export interface ManualTokenEntry {
   prevMcap?: number | null;
   lastSeenAt?: string | null;
   lastEvaluatedAt?: string | null;
+  windowEnd?: string | null;
+  lastActivityAt?: string | null;
+  swaps5m?: number | null;
+  swaps1h?: number | null;
+  swaps6h?: number | null;
+  swaps24h?: number | null;
+  coverage?: TokenMetricCoverageMap;
+  swapCoverage?: TokenMetricCoverageMap;
+  priceChangeCoverage?: TokenMetricCoverageMap;
+  activityState?: 'fresh' | 'stale' | 'unknown';
+  riskState?: string | null;
+  dataQuality?: string[];
   lastAlertAt?: number | null;
   deadCycles?: number;
   _hvncFired?: boolean;
@@ -154,6 +218,8 @@ export interface ManualTokenEntry {
   _lastVolAlertPct?: number | null;
   _lastMcapAlertPct?: number | null;
   _lastAlertKind?: AlertEntry['kind'] | null;
+  _liveMarketObservedAt?: string | null;
+  _liveMarketSequence?: string | null;
   _isRecentRouted?: boolean;
   _isOldWeekRouted?: boolean;
   _isTopPerformer?: boolean;
@@ -178,6 +244,7 @@ export interface ManualTokenFolderEntry {
 export interface ManualTokenFolderItemEntry {
   userId: number;
   folderId: number;
+  chain: TokenChain;
   address: string;
   sortOrder: number;
   addedAt?: string | null;
@@ -270,11 +337,37 @@ export interface TokenSparklineCandleEntry {
   highPrice: number | null;
   lowPrice: number | null;
   closePrice: number | null;
+  sourceGranularityMinutes?: number | null;
+  valuationType?: TokenValuationType | null;
+  openFdvUsd?: number | null;
+  highFdvUsd?: number | null;
+  lowFdvUsd?: number | null;
+  closeFdvUsd?: number | null;
+  openPriceUsd?: number | null;
+  highPriceUsd?: number | null;
+  lowPriceUsd?: number | null;
+  closePriceUsd?: number | null;
   sampleCount: number;
+  activity?: {
+    volumeUsd: number | null;
+    swaps: number | null;
+    buys: number | null;
+    sells: number | null;
+    transactionContributions: number | null;
+    marketCount: number | null;
+    protocols: string[];
+  } | null;
+  liveSourceBucketTs?: string | null;
+  liveSequence?: string | null;
 }
 
 export interface TokenSparklineEntry {
+  chain?: TokenChain;
   address: string;
+  valuationType?: TokenValuationType | null;
+  resolution?: string | null;
+  minuteStartsAt?: string | null;
+  truncated?: boolean;
   pairAddress?: string | null;
   bucketCount?: number;
   coverageRatio?: number | null;
@@ -539,6 +632,7 @@ export interface SolanaWalletOptionState {
 }
 
 export interface AddressItem {
+  chain?: TokenChain;
   address: string;
   label?: string | null;
   imageUrl?: string | null;
@@ -546,6 +640,7 @@ export interface AddressItem {
 
 export interface AdminTokenReviewAlertEntry {
   id: number;
+  chain: TokenChain;
   tokenAddress: string | null;
   status: 'open' | 'resolved' | string | null;
   priority: string | null;
@@ -567,6 +662,7 @@ export interface AdminTokenReviewAlertEntry {
 }
 
 export interface BlockTokenWarningState {
+  chain: TokenChain;
   address: string;
   label?: string | null;
   dontShowAgain: boolean;
@@ -721,26 +817,28 @@ export interface AppState {
   configSummary: ConfigSummary;
   data: {
     configs: Record<string, string | number>;
+    availableChains: TokenChain[];
+    chainReadiness: WorkspaceChainReadinessMap;
     runtimeFlags: {
       mockTradingEnabled: boolean;
     };
-    trackedTokensByAddress: Record<string, ManualTokenEntry>;
-    monitoredTokenAddresses: string[];
-    pinnedMonitoredTokenAddresses: string[];
-    manualTokenAddresses: string[];
+    trackedTokensByIdentity: Record<string, ManualTokenEntry>;
+    monitoredTokenIdentities: string[];
+    pinnedMonitoredTokenIdentities: string[];
+    manualTokenIdentities: string[];
     manualTokenFolders: ManualTokenFolderEntry[];
     manualTokenFolderItems: ManualTokenFolderItemEntry[];
-    recentTokenAddresses: string[];
-    oldWeekTokenAddresses: string[];
-    topPerformerAddresses: string[];
+    recentTokenIdentities: string[];
+    oldWeekTokenIdentities: string[];
+    topPerformerIdentities: string[];
     topPerformersGeneratedAt: string | null;
     topPerformersRanking: string | null;
-    dismissedRecent: string[];
-    dismissedOldWeek: string[];
+    dismissedRecentIdentities: string[];
+    dismissedOldWeekIdentities: string[];
     dismissedPump: string[];
     blocklist: AddressItem[];
     adminTokenReviewAlerts: AdminTokenReviewAlertEntry[];
-    starredTokens: string[];
+    starredTokenIdentities: string[];
     eligibleCatalogTokens: string[];
     meteoraByAddress: Record<string, MeteoraEntry>;
     sparklineByAddress: Record<string, TokenSparklineEntry>;
@@ -752,6 +850,7 @@ export interface AppState {
     mockTradingTradesByAddress: Record<string, MockTradingTradeEntry[]>;
     bidZoneTokens: BidZoneTokenEntry[];
     alerts: AlertEntry[];
+    customAlertCapabilities: Partial<Record<TokenChain, CustomAlertCapabilityEntry>>;
     customAlertRules: CustomAlertRuleEntry[];
     pumpTokens: PumpTokenEntry[];
     recentPumpMigrations: PumpMigrationEntry[];
@@ -779,6 +878,7 @@ export interface AppState {
     oldWeekSearchQuery: string;
     recentSearchPending: boolean;
     oldWeekSearchPending: boolean;
+    expandedSparklineChain: TokenChain;
     expandedSparklineAddress: string | null;
     expandedSparklineGranularityMinutes: number;
     expandedSparklineTimeZone: string;
@@ -801,6 +901,7 @@ export interface AppState {
     manualVisibleFolderIds: number[];
     recentStarredOnly: boolean;
     oldWeekStarredOnly: boolean;
+    chainFilters: ChainFilterPreferences;
     monitoredPage: number;
     alertPage: number;
     recentPage: number;
@@ -922,26 +1023,55 @@ export function createAppState(): AppState {
     },
     data: {
       configs: {},
+      availableChains: ['solana'],
+      chainReadiness: {
+        solana: {
+          chain: 'solana',
+          status: 'ready',
+          phase: 'ready',
+          publicationReady: true,
+          workspaceReady: true,
+          checkedAt: null,
+          blockers: [],
+          message: 'Solana workspace data is ready.',
+          capabilities: {
+            alertFeed: true,
+            radar: true,
+            monitored: true,
+            topPerformers: true,
+            manualTokens: true,
+            starred: true,
+            blocklist: true,
+            history: true,
+            customAlerts: true,
+            charts: true,
+            explorerLinks: true,
+            tradeLinks: true,
+            mockTrading: true,
+            solanaNative: true,
+          },
+        },
+      },
       runtimeFlags: {
         mockTradingEnabled: true,
       },
-      trackedTokensByAddress: {},
-      monitoredTokenAddresses: [],
-      pinnedMonitoredTokenAddresses: [],
-      manualTokenAddresses: [],
+      trackedTokensByIdentity: {},
+      monitoredTokenIdentities: [],
+      pinnedMonitoredTokenIdentities: [],
+      manualTokenIdentities: [],
       manualTokenFolders: [],
       manualTokenFolderItems: [],
-      recentTokenAddresses: [],
-      oldWeekTokenAddresses: [],
-      topPerformerAddresses: [],
+      recentTokenIdentities: [],
+      oldWeekTokenIdentities: [],
+      topPerformerIdentities: [],
       topPerformersGeneratedAt: null,
       topPerformersRanking: null,
-      dismissedRecent: [],
-      dismissedOldWeek: [],
+      dismissedRecentIdentities: [],
+      dismissedOldWeekIdentities: [],
       dismissedPump: [],
       blocklist: [],
       adminTokenReviewAlerts: [],
-      starredTokens: [],
+      starredTokenIdentities: [],
       eligibleCatalogTokens: [],
       meteoraByAddress: {},
       sparklineByAddress: {},
@@ -953,6 +1083,7 @@ export function createAppState(): AppState {
       mockTradingTradesByAddress: {},
       bidZoneTokens: [],
       alerts: [],
+      customAlertCapabilities: {},
       customAlertRules: [],
       pumpTokens: [],
       recentPumpMigrations: [],
@@ -980,6 +1111,7 @@ export function createAppState(): AppState {
       oldWeekSearchQuery: '',
       recentSearchPending: false,
       oldWeekSearchPending: false,
+      expandedSparklineChain: 'solana',
       expandedSparklineAddress: null,
       expandedSparklineGranularityMinutes: 5,
       expandedSparklineTimeZone: 'browser',
@@ -1016,6 +1148,12 @@ export function createAppState(): AppState {
       manualVisibleFolderIds: [],
       recentStarredOnly: false,
       oldWeekStarredOnly: false,
+      chainFilters: {
+        enabledChains: ['solana'],
+        radarChains: ['solana'],
+        alertFeedChains: ['solana'],
+        browserNotificationChains: ['solana'],
+      },
       monitoredPage: 0,
       alertPage: 0,
       recentPage: 0,
@@ -1078,8 +1216,17 @@ export function getStatusMetrics(state: AppState): StatusMetric[] {
   ];
 }
 
-export function getTrackedToken(state: AppState, address: string) {
-  return state.data.trackedTokensByAddress[String(address || '').trim()] || null;
+export function getTrackedToken(
+  state: AppState,
+  address: string,
+  chain: TokenChain | null = 'solana',
+) {
+  try {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    return state.data.trackedTokensByIdentity[identity.key] || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function toLiveMockNumber(value: number | null | undefined) {
@@ -1202,24 +1349,48 @@ export function getMockTradingSummaryView(state: AppState) {
 }
 
 export function isMockTradingEnabled(state: AppState) {
-  return state.data.runtimeFlags.mockTradingEnabled !== false;
+  return state.data.runtimeFlags.mockTradingEnabled !== false
+    && state.ui.chainFilters.enabledChains.some((chain) => (
+      state.data.chainReadiness[chain]?.capabilities.mockTrading === true
+    ));
 }
 
-export function getTokenSparkline(state: AppState, address: string) {
-  return state.data.sparklineByAddress[String(address || '').trim()] || null;
+export function getTokenSparkline(
+  state: AppState,
+  address: string,
+  chain: TokenChain | null = 'solana',
+) {
+  try {
+    const identity = createLegacyCompatibleTokenIdentity(chain, address);
+    return state.data.sparklineByAddress[identity.key]
+      || (identity.chain === 'solana' ? state.data.sparklineByAddress[identity.address] : null)
+      || null;
+  } catch (_) {
+    return null;
+  }
 }
 
-export function getExpandedTokenSparkline(state: AppState, address: string) {
-  const normalized = String(address || '').trim();
+export function getExpandedTokenSparkline(
+  state: AppState,
+  address: string,
+  chain: TokenChain | null = 'solana',
+) {
+  const identity = createLegacyCompatibleTokenIdentity(chain, address);
   const granularityMinutes = Math.max(1, Math.round(Number(state.ui.expandedSparklineGranularityMinutes) || 5));
-  const scopedKey = `${normalized}::${granularityMinutes}`;
-  return state.data.expandedSparklineByAddress[scopedKey] || state.data.expandedSparklineByAddress[normalized] || state.data.sparklineByAddress[normalized] || null;
+  const scopedKey = `${identity.key}::${granularityMinutes}`;
+  return state.data.expandedSparklineByAddress[scopedKey]
+    || (identity.chain === 'solana'
+      ? state.data.expandedSparklineByAddress[`${identity.address}::${granularityMinutes}`]
+        || state.data.expandedSparklineByAddress[identity.address]
+      : null)
+    || getTokenSparkline(state, identity.address, identity.chain);
 }
 
 export function getManualTokens(state: AppState) {
-  return state.data.manualTokenAddresses
-    .map((address) => getTrackedToken(state, address))
+  const tokens = state.data.manualTokenIdentities
+    .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is ManualTokenEntry => Boolean(item));
+  return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
 export function getManualFolderAddressSet(state: AppState, folderIds = state.ui.manualVisibleFolderIds) {
@@ -1229,14 +1400,16 @@ export function getManualFolderAddressSet(state: AppState, folderIds = state.ui.
       .filter((id) => Number.isInteger(id) && id > 0),
   ));
   if (normalizedFolderIds.length === 0) {
-    return new Set(state.data.manualTokenAddresses);
+    return new Set(getManualTokens(state).map((item) => (
+      buildTokenIdentityKey(item.chain || 'solana', item.address)
+    )));
   }
 
   const selected = new Set(normalizedFolderIds);
   const addresses = new Set<string>();
   for (const item of state.data.manualTokenFolderItems) {
     if (selected.has(item.folderId)) {
-      addresses.add(item.address);
+      addresses.add(buildTokenIdentityKey(item.chain, item.address));
     }
   }
   return addresses;
@@ -1244,41 +1417,101 @@ export function getManualFolderAddressSet(state: AppState, folderIds = state.ui.
 
 export function getVisibleManualTokens(state: AppState) {
   const visibleAddresses = getManualFolderAddressSet(state);
-  return getManualTokens(state).filter((item) => visibleAddresses.has(item.address));
+  return getManualTokens(state).filter((item) => visibleAddresses.has(
+    buildTokenIdentityKey(item.chain || 'solana', item.address),
+  ));
 }
 
 export function getMonitoredTokens(state: AppState) {
-  const orderedAddresses = [
-    ...state.data.pinnedMonitoredTokenAddresses,
-    ...state.data.monitoredTokenAddresses,
+  const orderedIdentities = [
+    ...state.data.pinnedMonitoredTokenIdentities,
+    ...state.data.monitoredTokenIdentities,
   ];
   const seen = new Set<string>();
-  return orderedAddresses
-    .filter((address) => {
-      if (seen.has(address)) {
+  const tokens = orderedIdentities
+    .filter((identityKey) => {
+      if (seen.has(identityKey)) {
         return false;
       }
-      seen.add(address);
+      seen.add(identityKey);
       return true;
     })
-    .map((address) => getTrackedToken(state, address))
+    .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is ManualTokenEntry => Boolean(item));
+  return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
 }
 
 export function getRecentTokens(state: AppState) {
-  return state.data.recentTokenAddresses
-    .map((address) => getTrackedToken(state, address))
-    .filter((item): item is ManualTokenEntry => Boolean(item));
+  return getRoutedTokensByIdentity(state, state.data.recentTokenIdentities);
 }
 
 export function getOldWeekTokens(state: AppState) {
-  return state.data.oldWeekTokenAddresses
-    .map((address) => getTrackedToken(state, address))
-    .filter((item): item is ManualTokenEntry => Boolean(item));
+  return getRoutedTokensByIdentity(state, state.data.oldWeekTokenIdentities);
+}
+
+function getRoutedTokensByIdentity(state: AppState, identityKeys: string[]) {
+  const tokens = identityKeys.flatMap((identityKey) => {
+    try {
+      const identity = parseTokenIdentityKey(identityKey);
+      const token = getTrackedToken(state, identity.address, identity.chain);
+      return token ? [token] : [];
+    } catch {
+      return [];
+    }
+  });
+  return filterItemsByChainSelection(tokens, state.ui.chainFilters, 'radarChains');
 }
 
 export function getTopPerformerTokens(state: AppState) {
-  return state.data.topPerformerAddresses
-    .map((address) => getTrackedToken(state, address))
+  const tokens = state.data.topPerformerIdentities
+    .map((identityKey) => getTrackedTokenByStoredIdentity(state, identityKey))
     .filter((item): item is ManualTokenEntry => Boolean(item));
+  return filterItemsByEnabledChains(tokens, state.ui.chainFilters);
+}
+
+export function isTokenStarred(
+  state: AppState,
+  address: string,
+  chain: TokenChain | null = 'solana',
+) {
+  try {
+    return state.data.starredTokenIdentities.includes(
+      createLegacyCompatibleTokenIdentity(chain, address).key,
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+function getTrackedTokenByStoredIdentity(state: AppState, identityKey: string) {
+  try {
+    const identity = parseTokenIdentityKey(identityKey);
+    return getTrackedToken(state, identity.address, identity.chain);
+  } catch (_) {
+    return getTrackedToken(state, identityKey, 'solana');
+  }
+}
+
+export function getChainCapabilityNotice(state: AppState, capability: WorkspaceChainCapability) {
+  return getUnavailableChainCapabilityNotice(
+    state.ui.chainFilters,
+    state.data.chainReadiness,
+    capability,
+  );
+}
+
+export function isChainSelectedForSurface(
+  state: AppState,
+  surface: ChainFilterSurface,
+  chainValue: unknown,
+) {
+  return isTokenChainSelectedForSurface(state.ui.chainFilters, surface, chainValue);
+}
+
+export function getAlertFeedAlerts(state: AppState) {
+  return filterItemsByChainSelection(
+    state.data.alerts,
+    state.ui.chainFilters,
+    'alertFeedChains',
+  );
 }

@@ -1,5 +1,5 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 const VALID_STATUSES = new Set(['idle', 'triggered', 'rearmed']);
 
@@ -22,12 +22,16 @@ function normalizeRuleKey(value) {
   return normalized;
 }
 
-function normalizeTokenAddress(value) {
-  const tokenAddress = String(value || '').trim();
-  if (!isValidAddress(tokenAddress)) {
-    throw new Error('Invalid token address format');
-  }
-  return tokenAddress;
+function normalizeIdentity(address, chainValue = 'solana') {
+  const chain = normalizeTokenChain(chainValue);
+  return { chain, address: normalizeTokenAddress(chain, address) };
+}
+
+function assertAutomaticAlertsEnabled(chain) {
+  if (chain === 'solana') return;
+  const error = new Error('Automatic alerts are disabled outside Solana');
+  error.code = 'NON_SOLANA_ALERT_TRIGGER_DISABLED';
+  throw error;
 }
 
 function normalizeStatus(value) {
@@ -63,6 +67,7 @@ function mapStateRow(row) {
   return {
     userId: Number(row.user_id) || null,
     ruleKey: row.rule_key || null,
+    chain: row.chain || 'solana',
     tokenAddress: row.token_address || null,
     status: normalizeStatus(row.status),
     lastAlertedAt: row.last_alerted_at || null,
@@ -76,19 +81,20 @@ function mapStateRow(row) {
   };
 }
 
-async function getState(userId, ruleKey, tokenAddress, runner = db) {
+async function getState(userId, ruleKey, tokenAddress, runner = db, chainValue = 'solana') {
   const normalizedUserId = normalizeUserId(userId);
   const normalizedRuleKey = normalizeRuleKey(ruleKey);
-  const normalizedTokenAddress = normalizeTokenAddress(tokenAddress);
+  const identity = normalizeIdentity(tokenAddress, chainValue);
 
   const { rows } = await runner.query(
     `SELECT *
      FROM user_alert_rule_state
      WHERE user_id = $1
        AND rule_key = $2
-       AND token_address = $3
+       AND chain = $3
+       AND token_address = $4
      LIMIT 1`,
-    [normalizedUserId, normalizedRuleKey, normalizedTokenAddress]
+    [normalizedUserId, normalizedRuleKey, identity.chain, identity.address]
   );
 
   return mapStateRow(rows[0] || null);
@@ -97,7 +103,8 @@ async function getState(userId, ruleKey, tokenAddress, runner = db) {
 async function upsertState(payload = {}, runner = db) {
   const userId = normalizeUserId(payload.userId);
   const ruleKey = normalizeRuleKey(payload.ruleKey);
-  const tokenAddress = normalizeTokenAddress(payload.tokenAddress);
+  const identity = normalizeIdentity(payload.tokenAddress, payload.chain || 'solana');
+  assertAutomaticAlertsEnabled(identity.chain);
   const status = normalizeStatus(payload.status);
   const lastAlertedAt = toTimestampOrNull(payload.lastAlertedAt);
   const lastAlertedValue = toNumberOrNull(payload.lastAlertedValue);
@@ -111,6 +118,7 @@ async function upsertState(payload = {}, runner = db) {
     `INSERT INTO user_alert_rule_state (
        user_id,
        rule_key,
+       chain,
        token_address,
        status,
        last_alerted_at,
@@ -122,8 +130,8 @@ async function upsertState(payload = {}, runner = db) {
        metadata,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
-     ON CONFLICT (user_id, rule_key, token_address) DO UPDATE SET
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, NOW())
+     ON CONFLICT (user_id, rule_key, chain, token_address) DO UPDATE SET
        status = EXCLUDED.status,
        last_alerted_at = EXCLUDED.last_alerted_at,
        last_alerted_value = EXCLUDED.last_alerted_value,
@@ -137,7 +145,8 @@ async function upsertState(payload = {}, runner = db) {
     [
       userId,
       ruleKey,
-      tokenAddress,
+      identity.chain,
+      identity.address,
       status,
       lastAlertedAt,
       lastAlertedValue,
@@ -156,6 +165,7 @@ async function markTriggered(payload = {}, runner = db) {
   return upsertState({
     userId: payload.userId,
     ruleKey: payload.ruleKey,
+    chain: payload.chain,
     tokenAddress: payload.tokenAddress,
     status: 'triggered',
     lastAlertedAt: payload.lastAlertedAt,
@@ -169,11 +179,13 @@ async function markTriggered(payload = {}, runner = db) {
 }
 
 async function markRearmed(payload = {}, runner = db) {
-  const current = await getState(payload.userId, payload.ruleKey, payload.tokenAddress, runner);
+  const chain = payload.chain || 'solana';
+  const current = await getState(payload.userId, payload.ruleKey, payload.tokenAddress, runner, chain);
   const cooldownUntil = toTimestampOrNull(payload.cooldownUntil) || null;
   return upsertState({
     userId: payload.userId,
     ruleKey: payload.ruleKey,
+    chain,
     tokenAddress: payload.tokenAddress,
     status: 'rearmed',
     lastAlertedAt: current?.lastAlertedAt,
@@ -194,11 +206,11 @@ module.exports = {
   upsertState,
   __private: {
     mapStateRow,
+    normalizeIdentity,
     normalizeFingerprint,
     normalizeMetadata,
     normalizeRuleKey,
     normalizeStatus,
-    normalizeTokenAddress,
     normalizeUserId,
     toNumberOrNull,
     toTimestampOrNull,

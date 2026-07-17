@@ -1,9 +1,10 @@
 ﻿import type { AppController } from '../../state/app-controller';
-import { getManualTokens, getMockTradingPositionsViewByAddress, getVisibleManualTokens, type AppState } from '../../state/app-state';
+import { getChainCapabilityNotice, getManualTokens, getMockTradingPositionsViewByAddress, getVisibleManualTokens, type AppState } from '../../state/app-state';
 import { bindBucketSortControls, bindCompactSearch, bindCopyButtons, bindSparklineHover, bindTokenActions, bindTokenImagePreview, renderManualTokenTable } from './shared';
 import { resolveManualTableRows } from '../../utils/token-table';
 import { resolveLiveMockSolUsdcRate } from '../../utils/mock-trading-display';
 import { escapeHtml } from './html-safety';
+import { normalizeTokenChain, type TokenChain } from '../../utils/token-chain';
 
 let manualFolderCreateModalOpen = false;
 let manualFolderCreateDraft = '';
@@ -17,6 +18,17 @@ export function renderManualTokensSection(state: AppState, controller: AppContro
   const section = document.createElement('section');
   section.id = 'manual-tokens-section';
   section.className = 'legacy-token-bar manual-bar';
+  const capabilityNotice = getChainCapabilityNotice(state, 'manualTokens');
+  if (capabilityNotice) {
+    section.innerHTML = `
+      <div class="legacy-bar-head">
+        <span class="legacy-bar-title manual">\u{1F4CC} MANUAL TOKENS</span>
+        <span class="count-pill">0</span>
+      </div>
+      <p class="chain-readiness-empty" data-chain-readiness-surface="manual">${escapeHtml(capabilityNotice)}</p>
+    `;
+    return section;
+  }
   const isCollapsed = state.ui.collapsed.manual;
   const sortClasses = getManualSortClasses(state);
   const searchQuery = String(state.ui.manualSearchQuery || '').trim();
@@ -146,7 +158,7 @@ function getManualSortClasses(state: AppState) {
 function renderManualFolderAwareTable(state: AppState, searchQuery: string) {
   const filteredManualTokens = resolveManualTableRows(getVisibleManualTokens(state), {
     starredOnly: state.ui.manualStarredOnly,
-    starredTokens: state.data.starredTokens,
+    starredTokens: state.data.starredTokenIdentities,
     searchQuery,
     sortCriteria: state.ui.manualSorts,
   });
@@ -158,7 +170,7 @@ function renderManualFolderAwareTable(state: AppState, searchQuery: string) {
   return renderManualTokenTable(
     filteredManualTokens,
     state.ui.busy,
-    state.data.starredTokens,
+    state.data.starredTokenIdentities,
     state.ui.manualSorts,
     state.data.meteoraByAddress,
     Number(state.data.configs['meteora-min-pool']) || 5000,
@@ -175,7 +187,10 @@ function renderManualFolderAwareTable(state: AppState, searchQuery: string) {
 }
 
 function getManualFolderItemCount(state: AppState, folderId: number) {
-  return state.data.manualTokenFolderItems.filter((item) => item.folderId === folderId).length;
+  const enabledChains = new Set(state.ui.chainFilters.enabledChains);
+  return state.data.manualTokenFolderItems.filter((item) => (
+    item.folderId === folderId && enabledChains.has(item.chain)
+  )).length;
 }
 
 function renderFolderFilterButton(label: string, count: number, active: boolean, action: string, folderId?: number) {
@@ -214,6 +229,9 @@ function renderManualFolderControls(state: AppState) {
                 <button type="button" class="manual-folder-menu-toggle" aria-label="Open actions for ${escapeHtml(folder.name)}" title="Folder actions" aria-expanded="${open ? 'true' : 'false'}">^</button>
                 <span class="manual-folder-actions" role="menu">
                   <span class="manual-folder-add-inline" data-folder-id="${folder.id}">
+                    <select aria-label="Token chain for ${escapeHtml(folder.name)}" data-action="manual-folder-token-chain">
+                      ${renderManualChainOptions(state)}
+                    </select>
                     <input type="text" placeholder="Token CA" aria-label="Token contract address for ${escapeHtml(folder.name)}" data-action="manual-folder-token-input" ${state.ui.busy ? 'disabled' : ''}>
                     <button type="button" data-action="manual-folder-add-token" aria-label="Add token to ${escapeHtml(folder.name)}" title="Add token to folder" ${state.ui.busy ? 'disabled' : ''}>+</button>
                   </span>
@@ -228,9 +246,16 @@ function renderManualFolderControls(state: AppState) {
   `;
 }
 
+function renderManualChainOptions(state: AppState) {
+  return state.ui.chainFilters.enabledChains.map((chain) => (
+    `<option value="${chain}">${chain === 'robinhood' ? 'Robinhood' : 'Solana'}</option>`
+  )).join('');
+}
+
 function renderManualTokenEntryFormMarkup(state: AppState) {
   return `
     <form class="manual-token-form manual-token-inline-form" data-role="manual-token-form">
+      <select name="chain" aria-label="Token chain">${renderManualChainOptions(state)}</select>
       <input name="address" type="text" placeholder="Token address (CA)..." aria-label="Token address" required ${state.ui.busy ? 'disabled' : ''} />
       <button type="button" class="compact-icon-toggle manual-token-inline-trigger" data-action="manual-add" aria-label="Add manual token" title="Add token" ${state.ui.busy ? 'disabled' : ''}><span class="compact-icon-glyph">+</span></button>
     </form>
@@ -240,6 +265,7 @@ function renderManualTokenEntryFormMarkup(state: AppState) {
 function bindManualTokenEntryForm(root: ParentNode, controller: AppController) {
   const form = root.querySelector<HTMLFormElement>('form[data-role="manual-token-form"]');
   const input = root.querySelector<HTMLInputElement>('input[name="address"]');
+  const chainInput = form?.querySelector<HTMLSelectElement>('select[name="chain"]');
   const button = root.querySelector<HTMLButtonElement>('button[data-action="manual-add"]');
 
   const submitManual = () => {
@@ -252,7 +278,8 @@ function bindManualTokenEntryForm(root: ParentNode, controller: AppController) {
     if (active instanceof HTMLElement) {
       active.blur();
     }
-    void controller.addManualToken(value, null);
+    const chain = normalizeTokenChain(chainInput?.value) || 'solana';
+    void controller.addManualToken(value, null, chain);
   };
 
   form?.addEventListener('submit', (event) => {
@@ -496,10 +523,12 @@ function bindManualFolderControls(root: ParentNode, state: AppState, controller:
 
   root.querySelectorAll<HTMLElement>('.manual-folder-add-inline').forEach((inline) => {
     const input = inline.querySelector<HTMLInputElement>('[data-action="manual-folder-token-input"]');
+    const chainInput = inline.querySelector<HTMLSelectElement>('[data-action="manual-folder-token-chain"]');
     const button = inline.querySelector<HTMLButtonElement>('[data-action="manual-folder-add-token"]');
     const submit = () => {
       const folderId = Number(inline.dataset.folderId);
       const address = String(input?.value || '').trim();
+      const chain = (normalizeTokenChain(chainInput?.value) || 'solana') as TokenChain;
       if (!Number.isInteger(folderId) || folderId <= 0 || !address) {
         input?.focus();
         return;
@@ -508,7 +537,7 @@ function bindManualFolderControls(root: ParentNode, state: AppState, controller:
         input.value = '';
       }
       closeFolderMenus();
-      void controller.addManualTokenToFolder(folderId, address);
+      void controller.addManualTokenToFolder(folderId, address, chain);
     };
 
     inline.addEventListener('click', (event) => {

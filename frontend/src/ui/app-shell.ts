@@ -1,8 +1,7 @@
 import type { AppController, AppRenderRegion } from '../state/app-controller';
-import { getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTopPerformerTokens, getTrackedToken, getVisibleManualTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
+import { getAlertFeedAlerts, getExpandedTokenSparkline, getManualTokens, getMockTradingPositionView, getMockTradingSummaryView, getMonitoredTokens, getOldWeekTokens, getRecentTokens, getTokenSparkline, getTopPerformerTokens, getTrackedToken, getVisibleManualTokens, isProfileAuthPanel, type AppState } from '../state/app-state';
 import { renderAlertsSection } from './sections/alerts-section';
 import { renderLegacyShell, renderWorkspaceHeader, renderWorkspaceProfileOverlay } from './sections/layout-sections';
-import { renderBidZoneSection } from './sections/bid-zone-section';
 import { renderManualTokensSection } from './sections/manual-section';
 import { renderMonitoredSection } from './sections/monitored-section';
 import { patchOldWeekSection, patchRecentSection, renderOldWeekSection, renderRecentSection } from './sections/routed-sections';
@@ -10,6 +9,7 @@ import { logTopPerformersDebug, renderTopPerformersSection } from './sections/to
 import { resolveManualTableRows, resolveMonitoredTableRows } from '../utils/token-table';
 import { bindCopyButtons } from './sections/shared';
 import { escapeHtml } from './sections/html-safety';
+import type { TokenChain } from '../utils/token-chain';
 
 type ConfigDraft = {
   values: Record<string, string>;
@@ -296,13 +296,8 @@ export function renderAppShell(
     renderFrame.monitoredSlot.hidden = !isLiveWorkspace;
     renderFrame.pumpfunSlot.hidden = true;
     renderFrame.alertsSlot.hidden = !isLiveWorkspace;
-    renderFrame.bidZoneSlot.hidden = !isHistoryWorkspace;
-
-    if (isHistoryWorkspace) {
-      updateRegionSlot(renderFrame.bidZoneSlot, 'bid-zone', dirtyRegions, getBidZoneRenderKey(state), () => [renderBidZoneSection(state, controller)]);
-    } else {
-      updateRenderSlot(renderFrame.bidZoneSlot, 'hidden', () => []);
-    }
+    renderFrame.bidZoneSlot.hidden = true;
+    updateRenderSlot(renderFrame.bidZoneSlot, 'hidden', () => []);
   } else {
     renderFrame.oldWeekSlot.hidden = true;
     renderFrame.recentSlot.hidden = true;
@@ -993,8 +988,8 @@ function serializeRenderedPctValue(value?: number | null) {
   return value.toFixed(2);
 }
 
-function serializeSparklineForView(state: AppState, address: string) {
-  const entry = state.data.sparklineByAddress[address] || null;
+function serializeSparklineForView(state: AppState, address: string, chain: TokenChain = 'solana') {
+  const entry = getTokenSparkline(state, address, chain);
   const series = Array.isArray(entry?.series) ? entry.series : [];
   return serializePrimitiveList([
     Boolean(entry?.loading),
@@ -1021,7 +1016,7 @@ function getPagedBucketSparklineRenderSnapshot(
   const safePage = Math.min(Math.max(0, Math.floor(page) || 0), totalPages - 1);
   const pageItems = tokens.slice(safePage * safePerPage, safePage * safePerPage + safePerPage);
 
-  return pageItems.map((token) => serializeSparklineForView(state, token.address));
+  return pageItems.map((token) => serializeSparklineForView(state, token.address, token.chain));
 }
 
 function serializeMeteoraForView(state: AppState, address: string) {
@@ -1104,7 +1099,7 @@ function serializeRoutedTokenForView(state: AppState, token: ReturnType<typeof g
     token.twitterUrl,
     token._isRecentRouted,
     token._isOldWeekRouted,
-    serializeSparklineForView(state, token.address),
+    serializeSparklineForView(state, token.address, token.chain),
     serializeMeteoraForView(state, token.address),
     serializeMockTradingForView(state, token.address),
   ]);
@@ -1121,6 +1116,11 @@ function getHeaderRenderKey(state: AppState) {
     state.runtime.monitoredUpdatedAt,
     state.runtime.monitoredFreshnessLabel,
     state.ui.workspace,
+    state.data.availableChains.join(','),
+    state.ui.chainFilters.enabledChains.join(','),
+    state.data.availableChains.map((chain) => (
+      `${chain}:${state.data.chainReadiness[chain]?.status || 'unavailable'}:${state.data.chainReadiness[chain]?.phase || ''}`
+    )).join(','),
     mockTradingSummary?.account.cashUsd,
     mockTradingSummary?.openPositionCount,
     mockTradingSummary?.openPositionValueUsd,
@@ -1350,7 +1350,7 @@ function getTopPerformersRenderKey(state: AppState) {
       token.mcap,
       token.volume24h,
       token.priceChange24h,
-      serializeSparklineForView(state, token.address),
+      serializeSparklineForView(state, token.address, token.chain),
     ])),
   });
 }
@@ -1377,11 +1377,11 @@ function getMonitoredRenderKey(state: AppState) {
     perPage: state.ui.monitoredPerPage,
     sorts: state.ui.monitoredSorts,
     sparklineRange: state.ui.sparklineRange,
-    starred: state.data.starredTokens,
+    starred: state.data.starredTokenIdentities,
     tokens: getMonitoredTokens(state).map(serializeTrackedTokenForView),
     mockTrading: getMonitoredTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
     sparklines: monitoredSpan > 1
-      ? pageItems.map((token) => serializeSparklineForView(state, token.address))
+      ? pageItems.map((token) => serializeSparklineForView(state, token.address, token.chain))
       : [],
   });
 }
@@ -1390,7 +1390,7 @@ function getManualRenderKey(state: AppState) {
   const visibleManualTokens = getVisibleManualTokens(state);
   const filteredManualTokens = resolveManualTableRows(visibleManualTokens, {
     starredOnly: state.ui.manualStarredOnly,
-    starredTokens: state.data.starredTokens,
+    starredTokens: state.data.starredTokenIdentities,
     searchQuery: state.ui.manualSearchQuery,
     sortCriteria: state.ui.manualSorts,
   });
@@ -1406,12 +1406,12 @@ function getManualRenderKey(state: AppState) {
     folderItems: state.data.manualTokenFolderItems,
     starredOnly: state.ui.manualStarredOnly,
     sorts: state.ui.manualSorts,
-    starred: state.data.starredTokens,
+    starred: state.data.starredTokenIdentities,
     meteoraMinPool: Number(state.data.configs['meteora-min-pool']) || 5000,
     tokens: getManualTokens(state).map(serializeTrackedTokenForView),
     mockTrading: getManualTokens(state).map((token) => serializeMockTradingForView(state, token.address)),
     sparklines: filteredManualTokens.map((token) => {
-      const sparkline = state.data.sparklineByAddress[token.address];
+      const sparkline = getTokenSparkline(state, token.address, token.chain);
       const series = Array.isArray(sparkline?.series) ? sparkline.series : [];
       return {
         address: token.address,
@@ -1442,7 +1442,7 @@ function getRecentRenderKey(state: AppState) {
     barsRecent: state.bars.recent,
     oldMcapMin: state.data.configs['old-mcap-min'],
     oldMcapMax: state.data.configs['old-mcap-max'],
-    tokenCount: state.data.recentTokenAddresses.length,
+    tokenCount: getRecentTokens(state).length,
     ageMinute: Math.floor(Date.now() / 60000),
     tokens: getRecentTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
     sparklines: getPagedBucketSparklineRenderSnapshot(
@@ -1470,7 +1470,7 @@ function getOldWeekRenderKey(state: AppState) {
     barsOldWeek: state.bars.oldWeek,
     oldWeekMcapMin: state.data.configs['old-week-mcap-min'],
     oldWeekMcapMax: state.data.configs['old-week-mcap-max'],
-    tokenCount: state.data.oldWeekTokenAddresses.length,
+    tokenCount: getOldWeekTokens(state).length,
     ageMinute: Math.floor(Date.now() / 60000),
     tokens: getOldWeekTokens(state).map((token) => serializeRoutedTokenForView(state, token)),
     sparklines: getPagedBucketSparklineRenderSnapshot(
@@ -1482,34 +1482,19 @@ function getOldWeekRenderKey(state: AppState) {
   });
 }
 
-function getBidZoneRenderKey(state: AppState) {
-  return JSON.stringify({
-    collapsed: state.ui.collapsed.bidZone,
-    busy: state.ui.busy,
-    refreshInFlight: state.runtime.bidZoneRefreshInFlight,
-    role: state.session.role,
-    tradeTerminals: state.ui.enabledTradeTerminals,
-    freshness: state.runtime.bidZoneFreshnessLabel,
-    lastUpdatedAt: state.runtime.bidZoneUpdatedAt,
-    refreshCooldown: state.runtime.bidZoneRefreshCooldownLabel,
-    refreshAvailableAt: state.runtime.bidZoneRefreshAvailableAt,
-    monitoredRevision: state.runtime.monitoredRevision,
-    bidZoneRevision: state.runtime.bidZoneRevision,
-    starredRevision: state.runtime.starredRevision,
-    tokenCount: state.data.bidZoneTokens.length,
-  });
-}
-
 function getAlertsRenderKey(state: AppState) {
+  const feedAlerts = getAlertFeedAlerts(state);
   return JSON.stringify({
     busy: state.ui.busy,
     role: state.session.role,
     tradeTerminals: state.ui.enabledTradeTerminals,
     search: state.ui.alertSearchQuery,
     page: state.ui.alertPage,
-    starred: state.data.starredTokens,
+    starred: state.data.starredTokenIdentities,
     alertRevision: state.runtime.alertRevision,
-    alertCount: state.data.alerts.length,
+    alertCount: feedAlerts.length,
+    enabledChains: state.ui.chainFilters.enabledChains,
+    alertFeedChains: state.ui.chainFilters.alertFeedChains,
     tokenReviewAlerts: state.session.role === 'admin'
       ? state.data.adminTokenReviewAlerts.map((alert) => [
         alert.id,
@@ -1626,8 +1611,10 @@ function getExpandedSparklineOverlaySnapshot(state: AppState) {
     return null;
   }
 
-  const sparkline = getExpandedTokenSparkline(state, address);
+  const chain = state.ui.expandedSparklineChain;
+  const sparkline = getExpandedTokenSparkline(state, address, chain);
   return {
+    chain,
     address,
     granularityMinutes: state.ui.expandedSparklineGranularityMinutes,
     timeZone: state.ui.expandedSparklineTimeZone,

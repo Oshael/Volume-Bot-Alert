@@ -4,6 +4,7 @@ process.env.EMAIL_PROVIDER = 'local';
 process.env.EMAIL_FROM = 'tests@trendscope.local';
 process.env.APP_BASE_URL = 'http://localhost:5173';
 process.env.EMAIL_DEV_EXPOSE_DEBUG = 'true';
+process.env.ROBINHOOD_INGESTION_ENABLED = 'true';
 
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,10 +17,14 @@ const tokenCatalog = require('../src/models/token-catalog');
 const tokenMarketBucket1m = require('../src/models/token-market-bucket-1m');
 const tokenMarketVolumeBucket1m = require('../src/models/token-market-volume-bucket-1m');
 const tokenMeteoraState = require('../src/models/token-meteora-state');
+const userBlocklist = require('../src/models/user-blocklist');
 const userPinnedMonitoredToken = require('../src/models/user-pinned-monitored-token');
 const backendAlertFeed = require('../src/services/backend-alert-feed');
+const dashboardChainReader = require('../src/services/dashboard-chain-reader');
+const dashboardRadarReader = require('../src/services/dashboard-radar-reader');
 const dashboardRoutes = require('../src/routes/dashboard');
 const uiMeteoraSummaryCache = require('../src/services/ui-meteora-summary-cache');
+const workspaceChainReadiness = require('../src/services/workspace-chain-readiness');
 
 const TEST_USER = {
   username: `dashboardtest_${Date.now()}`,
@@ -33,6 +38,75 @@ function getQueryToken(actionUrl) {
   const token = parsed.searchParams.get('token');
   assert.ok(token, 'Expected token query param in actionUrl');
   return token;
+}
+
+function normalizedMonitoredRow(chain, overrides = {}) {
+  const address = chain === 'solana'
+    ? 'So11111111111111111111111111111111111111112' : `0x${'a'.repeat(40)}`;
+  return {
+    identity: { chain, address, key: `${chain}:${address}` },
+    symbol: chain === 'solana' ? 'WSOL' : 'RHA',
+    name: 'Workspace token',
+    source: 'catalog',
+    firstSeenAt: '2026-04-01T12:00:00.000Z',
+    lastSeenAt: '2026-07-15T17:59:00.000Z',
+    lastEvaluatedAt: '2026-07-15T17:59:00.000Z',
+    tokenCreatedAt: Date.UTC(2026, 3, 1, 12, 0, 0),
+    tokenAgeProvenance: 'chain-native',
+    priceUsd: chain === 'solana' ? 123 : 0.03,
+    liquidityUsd: chain === 'solana' ? 90_000 : null,
+    pairAddress: 'pair_test_123',
+    pairUrl: 'https://dexscreener.com/testpair',
+    pairDexId: chain === 'solana' ? 'raydium' : 'uniswap-v3',
+    imageUrl: 'https://example.com/token.png',
+    twitterUrl: 'https://x.com/token',
+    communityUrl: null,
+    monitorPriority: 'normal',
+    valuation: { type: chain === 'solana' ? 'mcap' : 'fdv', usd: 150_000,
+      observedAt: '2026-07-15T17:59:00.000Z', freshness: 'fresh' },
+    windowEnd: '2026-07-15T18:00:00.000Z',
+    lastActivityAt: '2026-07-15T17:59:00.000Z',
+    volume5mUsd: 1_000, volume1hUsd: 5_000,
+    volume6hUsd: 15_000, volume24hUsd: 60_000,
+    coverage: { '5m': 'complete', '1h': 'complete', '6h': 'complete', '24h': 'complete' },
+    activityState: 'fresh', riskState: 'unknown', dataQuality: [],
+    ...overrides,
+  };
+}
+
+function installExactMonitoredStubs(options = {}) {
+  const originals = {
+    monitored: dashboardChainReader.listExactMonitored,
+    pinned: dashboardChainReader.listExactPinned,
+    blocklist: userBlocklist.getAllForChains,
+    pinList: userPinnedMonitoredToken.getAllForChains,
+    readiness: workspaceChainReadiness.getWorkspaceChainReadiness,
+  };
+  dashboardChainReader.listExactMonitored = async (input) => {
+    options.onMonitored?.(input);
+    const rows = options.rows || [];
+    return { asOf: input.asOf, total: options.total ?? rows.length,
+      page: input.page, perPage: input.perPage,
+      hasMore: ((input.page + 1) * input.perPage) < (options.total ?? rows.length), rows };
+  };
+  dashboardChainReader.listExactPinned = async (input) => {
+    options.onPinned?.(input);
+    return options.pinnedRows || [];
+  };
+  userBlocklist.getAllForChains = async () => options.blockedItems || [];
+  userPinnedMonitoredToken.getAllForChains = async () => options.pinnedItems || [];
+  workspaceChainReadiness.getWorkspaceChainReadiness = async () => ({
+    solana: { status: 'ready' }, robinhood: { status: 'ready' },
+  });
+  dashboardRoutes.__private.resetMonitoredCache();
+  return () => {
+    dashboardChainReader.listExactMonitored = originals.monitored;
+    dashboardChainReader.listExactPinned = originals.pinned;
+    userBlocklist.getAllForChains = originals.blocklist;
+    userPinnedMonitoredToken.getAllForChains = originals.pinList;
+    workspaceChainReadiness.getWorkspaceChainReadiness = originals.readiness;
+    dashboardRoutes.__private.resetMonitoredCache();
+  };
 }
 
 async function verifyEmailFromRegisterResponse(registerResponse) {
@@ -131,6 +205,7 @@ describe('Dashboard routes', () => {
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
 
     tokenCatalog.listDashboardMonitored = async () => [{
+      chain: 'solana',
       address: 'So11111111111111111111111111111111111111112',
       symbol: 'WSOL',
       name: 'Wrapped SOL',
@@ -174,6 +249,14 @@ describe('Dashboard routes', () => {
     }));
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+    let exactCalls = 0;
+    const exactInputs = [];
+    const exactOptions = {
+      rows: [normalizedMonitoredRow('solana')],
+      blockedItems: [],
+      onMonitored(input) { exactCalls += 1; exactInputs.push(input); },
+    };
+    const restoreExact = installExactMonitoredStubs(exactOptions);
 
     try {
       const res = await request(app)
@@ -182,6 +265,7 @@ describe('Dashboard routes', () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.body.tokens.length, 1);
+      assert.equal(res.body.tokens[0].chain, 'solana');
       assert.equal(res.body.tokens[0].pairDexId, 'raydium');
       assert.deepEqual(res.body.tokens[0].meteora, {
         address: 'So11111111111111111111111111111111111111112',
@@ -204,7 +288,24 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.tokens[0].effectiveRiskLabel, undefined);
       assert.equal(res.body.tokens[0].structuralRisk, undefined);
       assert.equal(res.body.tokens[0].junkAssessment, undefined);
+      const cachedRes = await request(app)
+        .get('/api/dashboard/monitored')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(cachedRes.status, 200);
+      assert.equal(cachedRes.body.cached, true);
+      assert.equal(exactCalls, 1);
+      exactOptions.blockedItems.push({
+        chain: 'solana', address: '11111111111111111111111111111111',
+      });
+      const afterBlockRes = await request(app)
+        .get('/api/dashboard/monitored')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(afterBlockRes.status, 200);
+      assert.equal(afterBlockRes.body.cached, false);
+      assert.equal(exactCalls, 2);
+      assert.deepEqual(exactInputs[1].excludedIdentities, exactOptions.blockedItems);
     } finally {
+      restoreExact();
       tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
       tokenCatalog.listDashboardPinnedMonitored = originalListDashboardPinnedMonitored;
       tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
@@ -233,6 +334,7 @@ describe('Dashboard routes', () => {
       page,
       perPage,
       rows: [{
+        chain: 'solana',
         address: 'So11111111111111111111111111111111111111112',
         symbol: 'WSOL',
         name: 'Wrapped SOL',
@@ -261,6 +363,10 @@ describe('Dashboard routes', () => {
     tokenMeteoraState.listSummaryByAddresses = async () => [];
     tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
     tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+    const restoreExact = installExactMonitoredStubs({
+      rows: [normalizedMonitoredRow('solana')], total: 5,
+      onMonitored(input) { capturedSorts = input.sorts; },
+    });
 
     try {
       const res = await request(app)
@@ -274,8 +380,10 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.hasMore, true);
       assert.equal(res.body.count, 1);
       assert.equal(res.body.tokens.length, 1);
+      assert.equal(res.body.tokens[0].chain, 'solana');
       assert.deepEqual(capturedSorts, [{ mode: 'mcap', window: 'highest' }]);
     } finally {
+      restoreExact();
       tokenCatalog.listDashboardMonitored = originalListDashboardMonitored;
       tokenCatalog.listDashboardMonitoredSlice = originalListDashboardMonitoredSlice;
       tokenCatalog.listDashboardPinnedMonitored = originalListDashboardPinnedMonitored;
@@ -285,17 +393,96 @@ describe('Dashboard routes', () => {
     }
   });
 
+  it('returns Robinhood monitored rows with FDV kept separate from market cap', async () => {
+    const originalListMonitored = dashboardChainReader.listMonitored;
+    const originalListPinned = tokenCatalog.listDashboardPinnedMonitored;
+    let capturedOptions = null;
+    dashboardChainReader.listMonitored = async (options) => {
+      capturedOptions = options;
+      return {
+        total: 1,
+        page: 0,
+        perPage: 30,
+        rows: [{
+          chain: 'robinhood',
+          address: `0x${'a'.repeat(40)}`,
+          symbol: 'RHA',
+          eligible_for_monitoring: true,
+          last_mcap: '99999',
+          last_fdv: '30000',
+          last_price: '0.03',
+          last_liquidity_usd: '99999',
+          last_vol_5m: '500',
+          last_vol_1h: '5000',
+          last_vol_6h: '12000',
+          last_vol_24h: '250000',
+          last_seen_at: '2026-07-14T18:00:00.000Z',
+        }],
+      };
+    };
+    tokenCatalog.listDashboardPinnedMonitored = async (_userId, chains) => {
+      assert.deepEqual(chains, ['robinhood']);
+      return [];
+    };
+    const restoreExact = installExactMonitoredStubs({
+      rows: [normalizedMonitoredRow('robinhood', {
+        valuation: { type: 'fdv', usd: 30_000,
+          observedAt: '2026-07-15T17:59:00.000Z', freshness: 'fresh' },
+      })],
+      onMonitored(input) { capturedOptions = input; },
+    });
+
+    try {
+      const res = await request(app)
+        .get('/api/dashboard/monitored?chains=robinhood&page=0&perPage=30&minFdv=30000')
+        .set('Authorization', `Bearer ${token}`);
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedOptions.chains, ['robinhood']);
+      assert.equal(capturedOptions.minMcap, 30000);
+      assert.equal(capturedOptions.minFdv, 30000);
+      assert.equal(res.body.tokens[0].mcap, null);
+      assert.equal(res.body.tokens[0].fdv, 30000);
+      assert.equal(res.body.tokens[0].valuationType, 'fdv');
+      assert.equal(res.body.tokens[0].liquidityUsd, null);
+      assert.equal(res.body.tokens[0].meteora, undefined);
+    } finally {
+      restoreExact();
+      dashboardChainReader.listMonitored = originalListMonitored;
+      tokenCatalog.listDashboardPinnedMonitored = originalListPinned;
+    }
+  });
+
+  it('rejects invalid monitored snapshots, deep prefixes, and valuation bounds', async () => {
+    const headers = { Authorization: `Bearer ${token}` };
+    const invalidSnapshot = await request(app)
+      .get('/api/dashboard/monitored?asOf=invalid')
+      .set(headers);
+    const deepPrefix = await request(app)
+      .get('/api/dashboard/monitored?page=5&perPage=100')
+      .set(headers);
+    const invalidBounds = await request(app)
+      .get('/api/dashboard/monitored?minMcap=50000&maxMcap=40000')
+      .set(headers);
+
+    assert.equal(invalidSnapshot.status, 400);
+    assert.equal(deepPrefix.status, 400);
+    assert.equal(invalidBounds.status, 400);
+  });
+
   it('persists monitored pin order through dashboard pin routes', async () => {
-    const originalGetAll = userPinnedMonitoredToken.getAll;
-    const originalSetAll = userPinnedMonitoredToken.setAll;
+    const originalGetAll = userPinnedMonitoredToken.getAllForChains;
+    const originalSetAll = userPinnedMonitoredToken.setAllForChains;
     const captured = [];
 
-    userPinnedMonitoredToken.getAll = async (id) => {
+    userPinnedMonitoredToken.getAllForChains = async (id, chains) => {
       assert.equal(id, userId);
-      return [{ address: 'So11111111111111111111111111111111111111112', sortOrder: 0 }];
+      assert.deepEqual(chains, ['solana']);
+      return [{ chain: 'solana', address: 'So11111111111111111111111111111111111111112', sortOrder: 0 }];
     };
-    userPinnedMonitoredToken.setAll = async (id, pinnedTokens) => {
+    userPinnedMonitoredToken.setAllForChains = async (id, pinnedTokens, chains) => {
       assert.equal(id, userId);
+      assert.deepEqual(chains, ['solana']);
       captured.push(pinnedTokens);
       return pinnedTokens;
     };
@@ -319,28 +506,29 @@ describe('Dashboard routes', () => {
 
       assert.equal(saveRes.status, 200);
       assert.deepEqual(captured[0], [
-        { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', sortOrder: 2 },
-        { address: 'So11111111111111111111111111111111111111112', sortOrder: 7 },
+        { chain: 'solana', address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', sortOrder: 2 },
+        { chain: 'solana', address: 'So11111111111111111111111111111111111111112', sortOrder: 7 },
       ]);
       assert.deepEqual(saveRes.body.pinnedTokens.map((item) => item.sortOrder), [2, 7]);
     } finally {
-      userPinnedMonitoredToken.getAll = originalGetAll;
-      userPinnedMonitoredToken.setAll = originalSetAll;
+      userPinnedMonitoredToken.getAllForChains = originalGetAll;
+      userPinnedMonitoredToken.setAllForChains = originalSetAll;
     }
   });
 
   it('resets monitored pins through dashboard pin routes', async () => {
     const originalRemove = userPinnedMonitoredToken.remove;
-    const originalRemoveAll = userPinnedMonitoredToken.removeAll;
+    const originalRemoveAll = userPinnedMonitoredToken.removeAllForChains;
     const removed = [];
 
-    userPinnedMonitoredToken.remove = async (id, address) => {
+    userPinnedMonitoredToken.remove = async (id, address, chain) => {
       assert.equal(id, userId);
-      removed.push(address);
+      removed.push({ address, chain });
       return true;
     };
-    userPinnedMonitoredToken.removeAll = async (id) => {
+    userPinnedMonitoredToken.removeAllForChains = async (id, chains) => {
       assert.equal(id, userId);
+      assert.deepEqual(chains, ['solana']);
       return 3;
     };
 
@@ -350,7 +538,9 @@ describe('Dashboard routes', () => {
         .set('Authorization', `Bearer ${token}`);
       assert.equal(removeOneRes.status, 200);
       assert.equal(removeOneRes.body.removed, true);
-      assert.deepEqual(removed, ['So11111111111111111111111111111111111111112']);
+      assert.deepEqual(removed, [{
+        address: 'So11111111111111111111111111111111111111112', chain: 'solana',
+      }]);
 
       const resetAllRes = await request(app)
         .delete('/api/dashboard/monitored-pins')
@@ -359,12 +549,170 @@ describe('Dashboard routes', () => {
       assert.equal(resetAllRes.body.removed, 3);
     } finally {
       userPinnedMonitoredToken.remove = originalRemove;
-      userPinnedMonitoredToken.removeAll = originalRemoveAll;
+      userPinnedMonitoredToken.removeAllForChains = originalRemoveAll;
+    }
+  });
+
+  it('exposes custom-alert capabilities and stable readiness/validation errors', async () => {
+    const originalReadiness = workspaceChainReadiness.getWorkspaceChainReadiness;
+    const originalBaseline = tokenCatalog.getMarketBaselineByAddress;
+    let baselineReads = 0;
+    workspaceChainReadiness.getWorkspaceChainReadiness = async () => ({
+      solana: {
+        publicationReady: true,
+        blockers: [],
+        capabilities: { customAlerts: true },
+      },
+      robinhood: {
+        publicationReady: false,
+        blockers: ['rollout_not_publishable'],
+        capabilities: { customAlerts: false },
+      },
+    });
+    tokenCatalog.getMarketBaselineByAddress = async () => {
+      baselineReads += 1;
+      return null;
+    };
+
+    try {
+      const capabilities = await request(app)
+        .get('/api/dashboard/custom-alert-rules?chains=solana,robinhood')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(capabilities.status, 200);
+      assert.equal(capabilities.body.capabilities.solana.ready, true);
+      assert.deepEqual(capabilities.body.capabilities.solana.metrics, ['price', 'mcap']);
+      assert.equal(capabilities.body.capabilities.robinhood.supported, true);
+      assert.equal(capabilities.body.capabilities.robinhood.ready, false);
+      assert.equal(capabilities.body.capabilities.robinhood.reason, 'rollout_not_publishable');
+      assert.deepEqual(capabilities.body.capabilities.robinhood.metrics, ['price', 'fdv']);
+
+      const blocked = await request(app)
+        .post('/api/dashboard/custom-alert-rules')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({
+          chain: 'robinhood', tokenAddress: `0x${'c'.repeat(40)}`,
+          metric: 'fdv', window: 'spot', target: '1m',
+        });
+      assert.equal(blocked.status, 409);
+      assert.equal(blocked.body.code, 'CUSTOM_ALERT_NOT_READY');
+      assert.equal(blocked.body.reason, 'rollout_not_publishable');
+
+      const unsupported = await request(app)
+        .post('/api/dashboard/custom-alert-rules')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({
+          chain: 'robinhood', tokenAddress: `0x${'c'.repeat(40)}`,
+          metric: 'fdv', window: '5m', target: '1m',
+        });
+      assert.equal(unsupported.status, 400);
+      assert.equal(unsupported.body.code, 'CUSTOM_ALERT_WINDOW_UNSUPPORTED');
+      assert.equal(baselineReads, 0);
+    } finally {
+      workspaceChainReadiness.getWorkspaceChainReadiness = originalReadiness;
+      tokenCatalog.getMarketBaselineByAddress = originalBaseline;
+    }
+  });
+
+  it('round-trips Robinhood price and FDV rules with chain-owned mutations', async () => {
+    const originalReadiness = workspaceChainReadiness.getWorkspaceChainReadiness;
+    const originalBaseline = tokenCatalog.getMarketBaselineByAddress;
+    const address = `0x${Number(userId).toString(16).padStart(40, '0')}`;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Origin: 'http://localhost:5173',
+    };
+    const baselineReads = [];
+    workspaceChainReadiness.getWorkspaceChainReadiness = async () => ({
+      solana: {
+        publicationReady: true, blockers: [], capabilities: { customAlerts: true },
+      },
+      robinhood: {
+        publicationReady: true, blockers: [], capabilities: { customAlerts: true },
+      },
+    });
+    tokenCatalog.getMarketBaselineByAddress = async (tokenAddress, chain) => {
+      baselineReads.push({ tokenAddress, chain });
+      return {
+        last_price: '0.02',
+        last_mcap: '999999',
+        last_fdv: baselineReads.length === 1 ? null : '2000000',
+      };
+    };
+
+    try {
+      const price = await request(app)
+        .post('/api/dashboard/custom-alert-rules')
+        .set(headers)
+        .send({ chain: 'robinhood', tokenAddress: address,
+          metric: 'price', window: 'spot', target: '0.03' });
+      const fdv = await request(app)
+        .post('/api/dashboard/custom-alert-rules')
+        .set(headers)
+        .send({ chain: 'robinhood', tokenAddress: address,
+          metric: 'fdv', window: 'spot', target: '3m' });
+
+      assert.equal(price.status, 201);
+      assert.equal(fdv.status, 201);
+      assert.equal(price.body.rule.chain, 'robinhood');
+      assert.equal(price.body.rule.metadata.baselineFdv, null);
+      assert.equal(fdv.body.rule.metric, 'fdv');
+      assert.equal(fdv.body.rule.window, 'spot');
+      assert.equal(fdv.body.rule.metadata.baselineFdv, 2000000);
+      assert.equal(fdv.body.rule.metadata.baselineMcap, null);
+      assert.deepEqual(baselineReads, [
+        { tokenAddress: address, chain: 'robinhood' },
+        { tokenAddress: address, chain: 'robinhood' },
+      ]);
+
+      const listed = await request(app)
+        .get('/api/dashboard/custom-alert-rules?chains=robinhood')
+        .set('Authorization', `Bearer ${token}`);
+      const listedIds = listed.body.rules.map((rule) => rule.id);
+      assert.equal(listed.status, 200);
+      assert.ok(listedIds.includes(price.body.rule.id));
+      assert.ok(listedIds.includes(fdv.body.rule.id));
+
+      const wrongChainUpdate = await request(app)
+        .patch(`/api/dashboard/custom-alert-rules/${fdv.body.rule.id}`)
+        .set(headers)
+        .send({ chain: 'solana', metric: 'price', window: 'spot', target: '4' });
+      assert.equal(wrongChainUpdate.status, 404);
+
+      const updated = await request(app)
+        .patch(`/api/dashboard/custom-alert-rules/${fdv.body.rule.id}`)
+        .set(headers)
+        .send({ chain: 'robinhood', metric: 'fdv', window: 'spot', target: '4m' });
+      assert.equal(updated.status, 200);
+      assert.equal(updated.body.rule.targetValue, 4000000);
+
+      const wrongChainDelete = await request(app)
+        .delete(`/api/dashboard/custom-alert-rules/${price.body.rule.id}?chain=solana`)
+        .set(headers);
+      assert.equal(wrongChainDelete.status, 200);
+      assert.equal(wrongChainDelete.body.disabled, false);
+
+      for (const ruleId of [price.body.rule.id, fdv.body.rule.id]) {
+        const disabled = await request(app)
+          .delete(`/api/dashboard/custom-alert-rules/${ruleId}?chain=robinhood`)
+          .set(headers);
+        assert.equal(disabled.status, 200);
+        assert.equal(disabled.body.disabled, true);
+      }
+    } finally {
+      workspaceChainReadiness.getWorkspaceChainReadiness = originalReadiness;
+      tokenCatalog.getMarketBaselineByAddress = originalBaseline;
+      await db.query(
+        'DELETE FROM user_custom_alert_rules WHERE user_id = $1 AND token_address = $2',
+        [userId, address],
+      );
     }
   });
 
   it('returns cached top performers ranked by mixed 24h change and volume score', async () => {
     const originalListDashboardTopPerformers = tokenCatalog.listDashboardTopPerformers;
+    const originalListTopPerformers = dashboardChainReader.listTopPerformers;
     dashboardRoutes.__private.resetTopPerformersCache();
     const capturedOptions = [];
 
@@ -406,7 +754,10 @@ describe('Dashboard routes', () => {
 
       assert.equal(firstRes.status, 200);
       assert.equal(secondRes.status, 200);
-      assert.deepEqual(capturedOptions, [{ limit: 15, minMcap: 30000, minVol24h: 200000 }]);
+      assert.deepEqual(capturedOptions, [{
+        chains: ['solana'], limit: 15, minMcap: 30000, minFdv: 30000,
+        minVol24h: 200000,
+      }]);
       assert.equal(firstRes.body.cached, false);
       assert.equal(secondRes.body.cached, true);
       assert.equal(firstRes.body.ranking, 'split_volume24h_7_pchange24h_8');
@@ -420,9 +771,32 @@ describe('Dashboard routes', () => {
       assert.equal(firstRes.body.tokens[0].priceChange24h, 42);
       assert.equal(firstRes.body.tokens[0].meteora, undefined);
       assert.equal(firstRes.body.tokens[0].riskReview, undefined);
+
+      dashboardRoutes.__private.resetTopPerformersCache();
+      dashboardChainReader.listTopPerformers = async (options) => {
+        assert.deepEqual(options.chains, ['solana', 'robinhood']);
+        assert.equal(options.minFdv, 30000);
+        return [{
+          chain: 'robinhood',
+          address: `0x${'b'.repeat(40)}`,
+          last_mcap: null,
+          last_fdv: '500000',
+          last_vol_24h: '800000',
+          last_price_change_24h: '20',
+          performance_score: '88',
+        }];
+      };
+      const combinedRes = await request(app)
+        .get('/api/dashboard/top-performers?chains=solana,robinhood&minFdv=30000')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(combinedRes.status, 200);
+      assert.deepEqual(combinedRes.body.chains, ['solana', 'robinhood']);
+      assert.equal(combinedRes.body.minFdv, 30000);
+      assert.equal(combinedRes.body.tokens[0].valuationType, 'fdv');
     } finally {
       dashboardRoutes.__private.resetTopPerformersCache();
       tokenCatalog.listDashboardTopPerformers = originalListDashboardTopPerformers;
+      dashboardChainReader.listTopPerformers = originalListTopPerformers;
     }
   });
 
@@ -583,11 +957,18 @@ describe('Dashboard routes', () => {
 
     try {
       const res = await request(app)
-        .get('/api/dashboard/alert-events?mode=unseen&afterId=22')
+        .get('/api/dashboard/alert-events?mode=unseen&afterId=22&chains=solana,robinhood')
         .set('Authorization', `Bearer ${token}`);
 
       assert.equal(res.status, 200);
-      assert.deepEqual(capturedOptions, { userId, ruleKey: undefined, limit: undefined, mode: 'unseen', afterId: 22 });
+      assert.deepEqual(capturedOptions, {
+        userId,
+        ruleKey: undefined,
+        limit: undefined,
+        mode: 'unseen',
+        afterId: 22,
+        chains: 'solana,robinhood',
+      });
       assert.equal(res.body.mode, 'unseen');
       assert.equal(res.body.cursor.lastSeenEventId, 21);
       assert.equal(res.body.count, 0);
@@ -631,7 +1012,7 @@ describe('Dashboard routes', () => {
 
     try {
       const res = await request(app)
-        .get('/api/dashboard/alert-feeds?mode=unseen&limit=25')
+        .get('/api/dashboard/alert-feeds?mode=unseen&limit=25&chains=solana,robinhood')
         .set('Authorization', `Bearer ${token}`);
 
       assert.equal(res.status, 200);
@@ -640,6 +1021,7 @@ describe('Dashboard routes', () => {
         ruleKeys: undefined,
         limit: '25',
         mode: 'unseen',
+        chains: 'solana,robinhood',
       });
       assert.equal(res.body.mode, 'unseen');
       assert.equal(res.body.count, 2);
@@ -674,14 +1056,43 @@ describe('Dashboard routes', () => {
         .post('/api/dashboard/alert-events/clear')
         .set('Authorization', `Bearer ${token}`)
         .set('Origin', 'http://localhost:5173')
-        .send({ ruleKeys: ['monitored-vol'] });
+        .send({ ruleKeys: ['monitored-vol'], chains: ['solana'] });
 
       assert.equal(res.status, 200);
-      assert.deepEqual(capturedArgs, [userId, { ruleKeys: ['monitored-vol'] }]);
+      assert.deepEqual(capturedArgs, [userId, {
+        ruleKeys: ['monitored-vol'],
+        chains: ['solana'],
+      }]);
       assert.equal(res.body.count, 1);
       assert.equal(res.body.cursors[0].lastAckedEventId, 31);
     } finally {
       backendAlertFeed.clearDashboardAlertFeeds = originalClearDashboardAlertFeeds;
+    }
+  });
+
+  it('dismisses one owned dashboard alert event without advancing a cursor', async () => {
+    const originalDismissDashboardAlertEvent = backendAlertFeed.dismissDashboardAlertEvent;
+    let capturedArgs = null;
+    backendAlertFeed.dismissDashboardAlertEvent = async (dismissUserId, payload) => {
+      capturedArgs = [dismissUserId, payload];
+      return { userId: dismissUserId, ...payload, dismissedAt: '2026-07-16T12:00:00.000Z' };
+    };
+
+    try {
+      const res = await request(app)
+        .post('/api/dashboard/alert-events/dismiss')
+        .set('Authorization', `Bearer ${token}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({ ruleKey: 'custom-alert', chain: 'robinhood', eventId: 91 });
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(capturedArgs, [userId, {
+        ruleKey: 'custom-alert', chain: 'robinhood', eventId: 91,
+      }]);
+      assert.equal(res.body.dismissal.eventId, 91);
+      assert.equal(res.body.dismissal.chain, 'robinhood');
+    } finally {
+      backendAlertFeed.dismissDashboardAlertEvent = originalDismissDashboardAlertEvent;
     }
   });
 
@@ -713,7 +1124,8 @@ describe('Dashboard routes', () => {
     backendAlertFeed.updateDashboardAlertCursor = async (userId, payload) => {
       capturedArgs = [userId, payload];
       return {
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'robinhood',
         lastSeenEventId: 31,
         lastAckedEventId: 29,
         updatedAt: '2026-04-05T18:07:00.000Z',
@@ -725,14 +1137,16 @@ describe('Dashboard routes', () => {
         .post('/api/dashboard/alert-events/cursor')
         .set('Authorization', `Bearer ${token}`)
         .send({
-          ruleKey: 'monitored-vol',
+          ruleKey: 'custom-alert',
+          chain: 'robinhood',
           lastSeenEventId: 31,
           lastAckedEventId: 29,
         });
 
       assert.equal(res.status, 200);
       assert.deepEqual(capturedArgs, [userId, {
-        ruleKey: 'monitored-vol',
+        ruleKey: 'custom-alert',
+        chain: 'robinhood',
         lastSeenEventId: 31,
         lastAckedEventId: 29,
       }]);
@@ -756,192 +1170,56 @@ describe('Dashboard routes', () => {
   it('returns recent and old-week history bootstrap slices without loading full monitored payloads', async () => {
     const originalListDashboardHistoryBucket = tokenCatalog.listDashboardHistoryBucket;
     const originalListDashboardHistoryBucketDebugProbe = tokenCatalog.listDashboardHistoryBucketDebugProbe;
-    const originalListDashboardMetadataByAddresses = tokenCatalog.listDashboardMetadataByAddresses;
-    const originalListSummaryByAddresses = tokenMeteoraState.listSummaryByAddresses;
+    const originalListDashboardMetadataByIdentities = tokenCatalog.listDashboardMetadataByIdentities;
     const originalListCurrentAndBaselineByAddresses = tokenMarketBucket1m.listCurrentAndBaselineByAddresses;
     const originalListVolumeBaselineByAddresses = tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses;
-    const capturedCalls = [];
-    const capturedProbeCalls = [];
-    const capturedPinnedMetadataCalls = [];
+    const originalListExactRadar = dashboardRadarReader.listExactRadar;
+    const originalListRadarPins = dashboardRadarReader.listRadarPins;
+    const originalUserBlocklist = userBlocklist.getAllForChains;
+    const originalUiMeteora = uiMeteoraSummaryCache.listUiSummaryByAddresses;
+    const capturedRadarCalls = [];
+    const capturedRadarPinCalls = [];
+    let solanaNativeCalls = 0;
 
-    tokenCatalog.listDashboardHistoryBucket = async (bucket, options) => {
-      capturedCalls.push([bucket, options]);
-      if (bucket === 'recent') {
-        return {
-          total: 41,
-          page: 1,
-          perPage: 20,
-          rows: [{
-            address: 'So11111111111111111111111111111111111111112',
-            symbol: 'WSOL',
-            name: 'Wrapped SOL',
-            eligible_for_monitoring: true,
-            last_mcap: '150000',
-            last_price: '123',
-            last_vol_5m: '1000',
-            last_vol_1h: '5000',
-            last_vol_6h: '15000',
-            last_vol_24h: '60000',
-            last_price_change_1h: '2',
-            last_price_change_6h: '5',
-            last_price_change_24h: '9',
-            last_token_created_at_ms: Date.UTC(2026, 3, 10, 12, 0, 0),
-            last_pair_address: 'pair_test_123',
-            last_pair_url: 'https://dexscreener.com/solana/testpair',
-            last_image_url: 'https://example.com/token.png',
-            last_twitter_url: 'https://x.com/wsol',
-            monitor_priority: 'normal',
-            first_seen_at: '2026-04-15T21:00:00.000Z',
-            last_seen_at: '2026-04-15T21:10:00.000Z',
-            last_evaluated_at: '2026-04-15T21:09:00.000Z',
-            risk_review_label: null,
-            risk_review_source: null,
-            risk_review_notes: null,
-            risk_review_updated_at: null,
-            blocked_label: null,
-            blocked_created_by: null,
-            blocked_created_at: null,
-            risk_enrichment_last_attempted_at: null,
-            risk_enrichment_last_enriched_at: null,
-            risk_enrichment_last_error: null,
-            risk_holder_count: null,
-            risk_mint_authority_active: false,
-            risk_freeze_authority_active: false,
-            risk_top_10_pct: null,
-            risk_top_20_pct: null,
-            risk_reason_codes: [],
-          }],
-        };
-      }
-
+    dashboardRadarReader.listExactRadar = async (input) => {
+      capturedRadarCalls.push(input);
+      const recentBucket = input.bucket === 'recent';
       return {
-        total: 11,
-        page: 0,
-        perPage: 30,
-        rows: [{
-          address: 'So11111111111111111111111111111111111111113',
-          symbol: 'BONK',
-          name: 'Bonk',
-          eligible_for_monitoring: true,
-          last_mcap: '250000',
-          last_price: '1.2',
-          last_vol_5m: '900',
-          last_vol_1h: '4500',
-          last_vol_6h: '17000',
-          last_vol_24h: '91000',
-          last_price_change_1h: '3',
-          last_price_change_6h: '7',
-          last_price_change_24h: '14',
-          last_token_created_at_ms: Date.UTC(2026, 3, 1, 12, 0, 0),
-          last_pair_address: 'pair_test_456',
-          last_pair_url: 'https://dexscreener.com/solana/testpair2',
-          last_image_url: 'https://example.com/token2.png',
-          last_twitter_url: 'https://x.com/bonk',
-          monitor_priority: 'normal',
-          first_seen_at: '2026-04-15T20:00:00.000Z',
-          last_seen_at: '2026-04-15T20:10:00.000Z',
-          last_evaluated_at: '2026-04-15T20:09:00.000Z',
-          risk_review_label: null,
-          risk_review_source: null,
-          risk_review_notes: null,
-          risk_review_updated_at: null,
-          blocked_label: null,
-          blocked_created_by: null,
-          blocked_created_at: null,
-          risk_enrichment_last_attempted_at: null,
-          risk_enrichment_last_enriched_at: null,
-          risk_enrichment_last_error: null,
-          risk_holder_count: null,
-          risk_mint_authority_active: false,
-          risk_freeze_authority_active: false,
-          risk_top_10_pct: null,
-          risk_top_20_pct: null,
-          risk_reason_codes: [],
-        }],
+        asOf: input.asOf,
+        total: recentBucket ? 41 : 11,
+        page: input.page,
+        perPage: input.perPage,
+        hasMore: recentBucket,
+        rows: [normalizedMonitoredRow('robinhood', {
+          symbol: recentBucket ? 'RREC' : 'ROLD',
+          valuation: { type: 'fdv', usd: recentBucket ? 150_000 : 250_000,
+            observedAt: '2026-07-14T21:00:00.000Z', freshness: 'stale' },
+          tokenCreatedAt: null,
+          tokenAgeProvenance: null,
+          tokenAge: { state: 'known', timestampMs: Date.UTC(2026, 6, recentBucket ? 14 : 1),
+            provenance: 'first-seen' },
+        })],
       };
     };
-    tokenCatalog.listDashboardHistoryBucketDebugProbe = async (bucket, options, addresses) => {
-      capturedProbeCalls.push([bucket, options, addresses]);
-      return [{
-        address: addresses[0],
-        symbol: 'WSOL',
-        included: false,
-        diagnosis: 'eligible_for_monitoring=false:gmgn-low-activity',
-        rank: null,
-        historySortScore: null,
-        eligibleForMonitoring: false,
-        eligibilityState: 'gmgn-low-activity',
-        suppressedReason: 'low_activity_24h',
-        monitorPriority: 'low',
-        mcap: 150000,
-        volume1h: 5000,
-        volume6h: 15000,
-        volume24h: 60000,
-        tokenCreatedAt: Date.UTC(2026, 3, 10, 12, 0, 0),
-        lastSeenAt: '2026-04-15T21:10:00.000Z',
-        lastEvaluatedAt: '2026-04-15T21:09:00.000Z',
-      }];
+    dashboardRadarReader.listRadarPins = async (input) => {
+      capturedRadarPinCalls.push(input);
+      return [normalizedMonitoredRow('robinhood', {
+        symbol: input.bucket === 'recent' ? 'PINREC' : 'PINOLD',
+      })];
     };
-    tokenCatalog.listDashboardMetadataByAddresses = async (addresses) => {
-      capturedPinnedMetadataCalls.push(addresses);
-      return addresses.map((address, index) => ({
-        address,
-        symbol: index === 0 ? 'PINREC' : 'PINOLD',
-        name: index === 0 ? 'Pinned Recent' : 'Pinned Old',
-        eligible_for_monitoring: true,
-        last_mcap: index === 0 ? '180000' : '280000',
-        last_price: '1.5',
-        last_vol_5m: '800',
-        last_vol_1h: '6000',
-        last_vol_6h: '16000',
-        last_vol_24h: '62000',
-        last_price_change_1h: '1',
-        last_price_change_6h: '4',
-        last_price_change_24h: '8',
-        last_token_created_at_ms: Date.UTC(2026, 3, 12, 12, 0, 0),
-        last_pair_address: `pair_pinned_${index}`,
-        last_pair_url: `https://dexscreener.com/solana/pinned${index}`,
-        last_image_url: `https://example.com/pinned${index}.png`,
-        last_twitter_url: null,
-        last_community_url: null,
-        monitor_priority: 'normal',
-        first_seen_at: '2026-04-15T22:00:00.000Z',
-        last_seen_at: '2026-04-15T22:10:00.000Z',
-        last_evaluated_at: '2026-04-15T22:09:00.000Z',
-        risk_review_label: null,
-        risk_review_source: null,
-        risk_review_notes: null,
-        risk_review_updated_at: null,
-        blocked_label: null,
-        blocked_created_by: null,
-        blocked_created_at: null,
-        risk_enrichment_last_attempted_at: null,
-        risk_enrichment_last_enriched_at: null,
-        risk_enrichment_last_error: null,
-        risk_holder_count: null,
-        risk_mint_authority_active: false,
-        risk_freeze_authority_active: false,
-        risk_top_10_pct: null,
-        risk_top_20_pct: null,
-        risk_reason_codes: [],
-      }));
+    userBlocklist.getAllForChains = async () => [{
+      chain: 'robinhood', address: '0x9999999999999999999999999999999999999999',
+    }];
+
+    const failLegacyHistoryCall = async () => {
+      throw new Error('legacy history-bootstrap path must not run');
     };
-    tokenMeteoraState.listSummaryByAddresses = async (addresses) => addresses.map((address) => ({
-      tokenAddress: address,
-      lastCheckedAt: '2026-04-15T21:08:00.000Z',
-      hasPool: false,
-      currentTvl: null,
-      bestPoolAddress: null,
-      poolCount: 0,
-      lastError: null,
-      lastSnapshotAt: '2026-04-15T19:00:00.000Z',
-      baselineTvl1h: null,
-      baselineTvl4h: null,
-      baselineTvl6h: null,
-      baselineTvl24h: null,
-    }));
-    tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => [];
-    tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => [];
+    tokenCatalog.listDashboardHistoryBucket = failLegacyHistoryCall;
+    tokenCatalog.listDashboardHistoryBucketDebugProbe = failLegacyHistoryCall;
+    tokenCatalog.listDashboardMetadataByIdentities = failLegacyHistoryCall;
+    uiMeteoraSummaryCache.listUiSummaryByAddresses = async () => { solanaNativeCalls += 1; return []; };
+    tokenMarketBucket1m.listCurrentAndBaselineByAddresses = async () => { solanaNativeCalls += 1; return []; };
+    tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = async () => { solanaNativeCalls += 1; return []; };
 
     try {
       const res = await request(app)
@@ -949,19 +1227,23 @@ describe('Dashboard routes', () => {
         .set('Authorization', `Bearer ${token}`)
         .set('Origin', 'http://localhost:5173')
         .send({
-          starredTokens: ['So11111111111111111111111111111111111111112'],
-          recentPinnedAddresses: ['So11111111111111111111111111111111111111115'],
-          oldWeekPinnedAddresses: ['So11111111111111111111111111111111111111116'],
-          recentDebugProbeAddresses: ['So11111111111111111111111111111111111111112'],
+          asOf: '2026-07-15T18:00:45.000Z',
+          chains: ['robinhood'],
+          starredTokenIdentities: ['robinhood:0x1111111111111111111111111111111111111111'],
+          recentPinnedIdentities: ['robinhood:0x2222222222222222222222222222222222222222'],
+          oldWeekPinnedIdentities: ['robinhood:0x3333333333333333333333333333333333333333'],
+          recentDebugProbeIdentities: ['robinhood:0x4444444444444444444444444444444444444444'],
           recent: {
             page: 1,
             perPage: 20,
-            searchQuery: 'wsol',
+            searchQuery: 'rrec',
             starredOnly: false,
             sorts: [{ mode: 'vol', window: '1h' }, { mode: 'age', window: 'newest' }],
-            dismissedAddresses: [],
+            dismissedTokenIdentities: ['robinhood:0x8888888888888888888888888888888888888888'],
             mcapMin: 120000,
             mcapMax: 0,
+            fdvMin: 130000,
+            fdvMax: 300000,
             ageMinMinutes: 30,
             ageMaxMinutes: 120,
           },
@@ -971,66 +1253,54 @@ describe('Dashboard routes', () => {
             searchQuery: '',
             starredOnly: true,
             sorts: [{ mode: 'mcap', window: 'highest' }],
-            dismissedAddresses: ['So11111111111111111111111111111111111111114'],
+            dismissedTokenIdentities: [],
             mcapMin: 90000,
             mcapMax: 500000,
+            fdvMin: 140000,
+            fdvMax: 400000,
             ageMinMinutes: 20160,
             ageMaxMinutes: 43200,
           },
         });
 
       assert.equal(res.status, 200);
-      assert.equal(capturedCalls.length, 2);
-      assert.deepEqual(capturedCalls[0], ['recent', {
-        page: 1,
-        perPage: 20,
-        searchQuery: 'wsol',
-        starredOnly: false,
-        sorts: [{ mode: 'vol', window: '1h' }, { mode: 'age', window: 'newest' }],
-        dismissedAddresses: [],
-        mcapMin: 120000,
-        mcapMax: 0,
-        ageMinMinutes: 30,
-        ageMaxMinutes: 120,
-        starredAddresses: ['So11111111111111111111111111111111111111112'],
-      }]);
-      assert.deepEqual(capturedCalls[1], ['oldWeek', {
-        page: 0,
-        perPage: 30,
-        searchQuery: '',
-        starredOnly: true,
-        sorts: [{ mode: 'mcap', window: 'highest' }],
-        dismissedAddresses: ['So11111111111111111111111111111111111111114'],
-        mcapMin: 90000,
-        mcapMax: 500000,
-        ageMinMinutes: 20160,
-        ageMaxMinutes: 43200,
-        starredAddresses: ['So11111111111111111111111111111111111111112'],
-      }]);
+      assert.equal(capturedRadarCalls.length, 2);
+      assert.equal(capturedRadarCalls[0].asOf, '2026-07-15T18:00:00.000Z');
+      assert.deepEqual(capturedRadarCalls[0].chains, ['robinhood']);
+      assert.equal(capturedRadarCalls[0].minFdv, 130000);
+      assert.deepEqual(capturedRadarCalls[0].dismissedIdentities, [
+        'robinhood:0x8888888888888888888888888888888888888888',
+        'robinhood:0x9999999999999999999999999999999999999999',
+      ]);
+      assert.equal(capturedRadarPinCalls.length, 2);
+      assert.deepEqual(capturedRadarPinCalls[0].excludedIdentities,
+        ['robinhood:0x9999999999999999999999999999999999999999']);
+      assert.equal(res.body.asOf, '2026-07-15T18:00:00.000Z');
       assert.equal(res.body.recent.total, 41);
       assert.equal(res.body.recent.page, 1);
       assert.equal(res.body.recent.tokens.length, 1);
-      assert.equal(res.body.recent.tokens[0].catalogFirstSeenAt, Date.parse('2026-04-15T21:00:00.000Z'));
-      assert.deepEqual(capturedPinnedMetadataCalls, [[
-        'So11111111111111111111111111111111111111115',
-        'So11111111111111111111111111111111111111116',
-      ]]);
+      assert.equal(res.body.recent.tokens[0].chain, 'robinhood');
+      assert.equal(res.body.recent.tokens[0].mcap, null);
+      assert.equal(res.body.recent.tokens[0].fdv, 150000);
+      assert.equal(res.body.recent.tokens[0].tokenAgeProvenance, 'first-seen');
       assert.equal(res.body.recent.pinnedTokens.length, 1);
       assert.equal(res.body.recent.pinnedTokens[0].symbol, 'PINREC');
       assert.equal(res.body.oldWeek.total, 11);
-      assert.equal(res.body.oldWeek.tokens[0].symbol, 'BONK');
+      assert.equal(res.body.oldWeek.tokens[0].symbol, 'ROLD');
       assert.equal(res.body.oldWeek.pinnedTokens.length, 1);
       assert.equal(res.body.oldWeek.pinnedTokens[0].symbol, 'PINOLD');
-      assert.deepEqual(capturedProbeCalls, [['recent', capturedCalls[0][1], ['So11111111111111111111111111111111111111112']]]);
-      assert.equal(res.body.debug.recentProbe.length, 1);
-      assert.equal(res.body.debug.recentProbe[0].diagnosis, 'eligible_for_monitoring=false:gmgn-low-activity');
+      assert.equal(res.body.debug, undefined);
+      assert.equal(solanaNativeCalls, 0);
     } finally {
       tokenCatalog.listDashboardHistoryBucket = originalListDashboardHistoryBucket;
       tokenCatalog.listDashboardHistoryBucketDebugProbe = originalListDashboardHistoryBucketDebugProbe;
-      tokenCatalog.listDashboardMetadataByAddresses = originalListDashboardMetadataByAddresses;
-      tokenMeteoraState.listSummaryByAddresses = originalListSummaryByAddresses;
+      tokenCatalog.listDashboardMetadataByIdentities = originalListDashboardMetadataByIdentities;
       tokenMarketBucket1m.listCurrentAndBaselineByAddresses = originalListCurrentAndBaselineByAddresses;
       tokenMarketVolumeBucket1m.listCurrentAndBaselineByAddresses = originalListVolumeBaselineByAddresses;
+      dashboardRadarReader.listExactRadar = originalListExactRadar;
+      dashboardRadarReader.listRadarPins = originalListRadarPins;
+      userBlocklist.getAllForChains = originalUserBlocklist;
+      uiMeteoraSummaryCache.listUiSummaryByAddresses = originalUiMeteora;
     }
   });
 
@@ -1065,5 +1335,16 @@ describe('Dashboard routes', () => {
 
     assert.equal(res.status, 400);
     assert.equal(res.body.error, 'recent.sorts contains an invalid sort criterion');
+  });
+
+  it('rejects history bootstrap chains that are recognized but not available', async () => {
+    const res = await request(app)
+      .post('/api/dashboard/history-bootstrap')
+      .set('Authorization', `Bearer ${token}`)
+      .set('Origin', 'http://localhost:5173')
+      .send({ chains: ['base'] });
+
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'chains contains a chain that is not available');
   });
 });

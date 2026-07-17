@@ -47,6 +47,12 @@ function isTwitterProfileUrl(value) {
   return host === 'x.com' || host === 'twitter.com';
 }
 
+function isTelegramUrl(value) {
+  const url = parseSafeUrl(value);
+  if (!url) return false;
+  return ['t.me', 'telegram.me'].includes(normalizedHostname(url));
+}
+
 function isGenericWebsiteUrl(value) {
   const url = parseSafeUrl(value);
   if (!url || isCommunityUrl(url.toString()) || isTwitterProfileUrl(url.toString())) {
@@ -77,6 +83,10 @@ function extractDexSocialLinks(pair) {
     socials,
     (url, entry) => String(entry?.type || '').toLowerCase() === 'twitter' && isTwitterProfileUrl(url),
   );
+  const telegramUrl = firstMatchingUrl(
+    socials,
+    (url, entry) => String(entry?.type || '').toLowerCase() === 'telegram' && isTelegramUrl(url),
+  );
   const communityUrl = firstMatchingUrl(socials, isCommunityUrl) || firstMatchingUrl(websites, isCommunityUrl);
   const websiteUrl = firstMatchingUrl(
     websites,
@@ -88,6 +98,7 @@ function extractDexSocialLinks(pair) {
 
   return {
     twitterUrl,
+    telegramUrl,
     communityUrl,
     websiteUrl,
   };
@@ -117,5 +128,6 @@ module.exports = {
   isCoinCommunitiesUrl,
   isCommunityUrl,
   isXCommunityUrl,
+  isTelegramUrl,
   normalizeSocialLinkFields,
 };

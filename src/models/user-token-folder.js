@@ -1,5 +1,5 @@
 const db = require('./db');
-const { isValidAddress } = require('./user-token');
+const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
 
 const MAX_FOLDER_NAME_LENGTH = 80;
 
@@ -34,12 +34,13 @@ function normalizeSortOrder(value) {
   return Math.trunc(order);
 }
 
-function normalizeAddress(value) {
-  const address = String(value || '').trim();
-  if (!isValidAddress(address)) {
-    throw modelError('Invalid token address format');
+function normalizeIdentity(value, chainValue = 'solana') {
+  try {
+    const chain = normalizeTokenChain(chainValue);
+    return { chain, address: normalizeTokenAddress(chain, value) };
+  } catch (_) {
+    throw modelError('Invalid token identity');
   }
-  return address;
 }
 
 function mapFolderRow(row) {
@@ -60,6 +61,7 @@ function mapItemRow(row) {
   return {
     userId: row.user_id,
     folderId: row.folder_id,
+    chain: row.chain,
     address: row.address,
     sortOrder: Number(row.sort_order) || 0,
     addedAt: row.added_at ? new Date(row.added_at).toISOString() : null,
@@ -162,22 +164,23 @@ async function updateFolder(userId, folderId, input = {}, runner = db) {
 async function addTokenToFolder(userId, folderId, address, input = {}, runner = db) {
   const normalizedUserId = normalizeId(userId, 'userId');
   const normalizedFolderId = normalizeId(folderId, 'folderId');
-  const normalizedAddress = normalizeAddress(address);
+  const identity = normalizeIdentity(address, input.chain || 'solana');
 
   const { rows } = await runner.query(
-    `INSERT INTO user_token_folder_items (user_id, folder_id, address, sort_order)
-     SELECT $1, $2, $3, $4
+    `INSERT INTO user_token_folder_items (user_id, folder_id, chain, address, sort_order)
+     SELECT $1, $2, $3, $4, $5
      FROM user_token_folders folder
      JOIN user_tokens token
        ON token.user_id = folder.user_id
-      AND token.address = $3
+      AND token.chain = $3
+      AND token.address = $4
      WHERE folder.user_id = $1
        AND folder.id = $2
        AND folder.parent_folder_id IS NULL
-     ON CONFLICT (user_id, folder_id, address) DO UPDATE SET
+     ON CONFLICT (user_id, folder_id, chain, address) DO UPDATE SET
        sort_order = EXCLUDED.sort_order
      RETURNING *`,
-    [normalizedUserId, normalizedFolderId, normalizedAddress, normalizeSortOrder(input.sortOrder)]
+    [normalizedUserId, normalizedFolderId, identity.chain, identity.address, normalizeSortOrder(input.sortOrder)]
   );
   return mapItemRow(rows[0]);
 }
@@ -206,25 +209,37 @@ async function deleteFolderAndManualTokens(userId, folderId, options = {}) {
     }
 
     const addressResult = await client.query(
-      `SELECT DISTINCT address
+      `SELECT DISTINCT chain, address
        FROM user_token_folder_items
        WHERE user_id = $1
          AND folder_id = $2
-       ORDER BY address ASC`,
+       ORDER BY chain ASC, address ASC`,
       [normalizedUserId, normalizedFolderId]
     );
-    const addresses = addressResult.rows.map((row) => String(row.address || '').trim()).filter(Boolean);
+    const identities = addressResult.rows.map((row) => ({
+      chain: String(row.chain || '').trim(),
+      address: String(row.address || '').trim(),
+    })).filter((item) => item.chain && item.address);
 
     let removedAddresses = [];
-    if (addresses.length > 0) {
+    let removedIdentities = [];
+    if (identities.length > 0) {
       const deleteTokensResult = await client.query(
         `DELETE FROM user_tokens
          WHERE user_id = $1
-           AND address = ANY($2::varchar[])
-         RETURNING address`,
-        [normalizedUserId, addresses]
+           AND (chain, address) IN (
+             SELECT identity.chain, identity.address
+             FROM UNNEST($2::varchar[], $3::varchar[]) AS identity(chain, address)
+           )
+         RETURNING chain, address`,
+        [
+          normalizedUserId,
+          identities.map((item) => item.chain),
+          identities.map((item) => item.address),
+        ]
       );
       removedAddresses = deleteTokensResult.rows.map((row) => row.address);
+      removedIdentities = deleteTokensResult.rows.map((row) => ({ chain: row.chain, address: row.address }));
     }
 
     await client.query(
@@ -235,7 +250,7 @@ async function deleteFolderAndManualTokens(userId, folderId, options = {}) {
     );
 
     await client.query('COMMIT');
-    return { deleted: true, removedAddresses };
+    return { deleted: true, removedAddresses, removedIdentities };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -247,7 +262,7 @@ async function deleteFolderAndManualTokens(userId, folderId, options = {}) {
 async function deleteFolderTokenAndManualToken(userId, folderId, address, options = {}) {
   const normalizedUserId = normalizeId(userId, 'userId');
   const normalizedFolderId = normalizeId(folderId, 'folderId');
-  const normalizedAddress = normalizeAddress(address);
+  const identity = normalizeIdentity(address, options.chain || 'solana');
   const database = options.database || db;
   const client = await database.getClient();
 
@@ -263,9 +278,10 @@ async function deleteFolderTokenAndManualToken(userId, folderId, address, option
         AND folder.parent_folder_id IS NULL
        WHERE item.user_id = $1
          AND item.folder_id = $2
-         AND item.address = $3
+         AND item.chain = $3
+         AND item.address = $4
        LIMIT 1`,
-      [normalizedUserId, normalizedFolderId, normalizedAddress]
+      [normalizedUserId, normalizedFolderId, identity.chain, identity.address]
     );
 
     if (membershipResult.rows.length === 0) {
@@ -276,14 +292,16 @@ async function deleteFolderTokenAndManualToken(userId, folderId, address, option
     const deleteResult = await client.query(
       `DELETE FROM user_tokens
        WHERE user_id = $1
-         AND address = $2
-       RETURNING address`,
-      [normalizedUserId, normalizedAddress]
+         AND chain = $2
+         AND address = $3
+       RETURNING chain, address`,
+      [normalizedUserId, identity.chain, identity.address]
     );
 
     await client.query('COMMIT');
     return {
       deleted: deleteResult.rowCount > 0,
+      removedChain: deleteResult.rows[0]?.chain || null,
       removedAddress: deleteResult.rows[0]?.address || null,
     };
   } catch (err) {
