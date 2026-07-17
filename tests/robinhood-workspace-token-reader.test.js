@@ -108,14 +108,19 @@ describe('Robinhood workspace token reader', () => {
     });
   });
 
-  it('uses persistent FDV and equivalent aggregated coverage ordering in SQL', () => {
+  it('prefilters persisted FDV before exact snapshot valuation and activity ranking', () => {
     const sql = __private.buildPrefixSql([
       { mode: 'vol', window: '5m' },
       { mode: 'mcap', window: 'lowest' },
       { mode: 'age', window: 'newest' },
     ]);
 
+    assert.match(sql, /WITH catalog_candidates AS MATERIALIZED/);
     assert.match(sql, /FROM token_catalog tc/);
+    assert.match(sql, /tc\.last_seen_at > \$1::timestamptz/);
+    assert.match(sql, /tc\.last_fdv IS NULL/);
+    assert.match(sql, /tc\.last_fdv >= \$2::numeric/);
+    assert.match(sql, /FROM catalog_candidates tc/);
     assert.match(sql, /robinhood_market_buckets_1m/);
     assert.match(sql, /robinhood_market_buckets_1h/);
     assert.match(sql, /tc\.last_price/);

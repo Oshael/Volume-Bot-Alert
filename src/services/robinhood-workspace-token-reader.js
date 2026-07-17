@@ -100,14 +100,31 @@ function buildActivityJoinSql(sorts) {
 }
 
 function buildPrefixSql(sorts) {
-  return `SELECT
+  return `WITH catalog_candidates AS MATERIALIZED (
+  SELECT tc.*
+  FROM token_catalog tc
+  WHERE tc.chain = 'robinhood'
+    AND (
+      tc.last_seen_at IS NULL
+      OR tc.last_seen_at > $1::timestamptz
+      OR tc.last_fdv IS NULL
+      OR (tc.last_fdv >= $2::numeric
+        AND ($3::numeric IS NULL OR tc.last_fdv <= $3::numeric))
+    )
+    AND tc.address <> ALL($4::varchar[])
+    AND NOT EXISTS (
+      SELECT 1 FROM admin_blocked_tokens blocked
+      WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address
+    )
+)
+SELECT
   tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_token_created_at_ms, valuation.last_fdv_usd,
   valuation.valuation_observed_at, tc.last_price, tc.last_pair_address,
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
   tc.last_seen_at, tc.last_evaluated_at, COUNT(*) OVER() AS total_count
-FROM token_catalog tc
+FROM catalog_candidates tc
 LEFT JOIN LATERAL (
   SELECT coverage_start_timestamp AS coverage_start_at,
     checkpoint_timestamp AS coverage_end_at
@@ -131,11 +148,6 @@ WHERE tc.chain = 'robinhood'
   AND ((valuation.last_fdv_usd IS NULL AND $2::numeric = 0)
     OR (valuation.last_fdv_usd >= $2::numeric
       AND ($3::numeric IS NULL OR valuation.last_fdv_usd <= $3::numeric)))
-  AND tc.address <> ALL($4::varchar[])
-  AND NOT EXISTS (
-    SELECT 1 FROM admin_blocked_tokens blocked
-    WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address
-  )
 ORDER BY ${buildOrderSql(sorts)}
 LIMIT $5::int`;
 }

@@ -129,22 +129,29 @@ describe('Robinhood workspace window metric reader', () => {
 
   it('aggregates supported protocols by token and keeps price on one primary market', () => {
     const sql = __private.WINDOW_METRICS_SQL;
-    assert.match(sql, /SUM\(bucket\.volume_usd\)/);
-    assert.match(sql, /SUM\(bucket\.swaps\)/);
+    assert.match(sql, /SUM\(volume_usd\) FILTER/);
+    assert.match(sql, /SUM\(swaps\) FILTER/);
     assert.match(sql, /'uniswap-v2', 'uniswap-v3', 'uniswap-v4'/);
     assert.match(sql, /DISTINCT ON \(token_address\)/);
     assert.match(sql, /volume_24h_usd DESC, market_last_observed_at DESC/);
+    assert.match(sql, /full_hour_rows AS MATERIALIZED/);
+    assert.match(sql, /start_boundary_rows AS MATERIALIZED/);
+    assert.match(sql, /end_boundary_rows AS MATERIALIZED/);
+    assert.match(sql, /CROSS JOIN LATERAL/);
     assert.match(sql, /bucket\.protocol = primary_market\.protocol/);
+    assert.match(sql, /primary_prices AS/);
     assert.match(sql, /robinhood_ingestion_cursors/);
     assert.match(sql, /coverage_start_timestamp AS coverage_start_at/);
     assert.doesNotMatch(sql, /created_at AS coverage_start_at/);
-    assert.equal((sql.match(/INNER JOIN robinhood_market_buckets_1m bucket/g) || []).length, 1);
+    assert.equal((sql.match(/FROM robinhood_market_buckets_1m bucket/g) || []).length, 4);
+    assert.equal((sql.match(/FROM robinhood_market_buckets_1h bucket/g) || []).length, 2);
     assert.match(sql, /FROM market_activity\s+GROUP BY token_address/);
     assert.match(sql, /MAX\(market_last_observed_at\) AS last_activity_at/);
     assert.match(sql, /COALESCE\(token_activity\.last_activity_at, latest_hour\.last_activity_at\)/);
     assert.doesNotMatch(sql, /\) latest_minute ON TRUE/);
     assert.match(sql, /\) latest_hour ON TRUE/);
     assert.match(sql, /robinhood_market_buckets_1h/);
+    assert.doesNotMatch(sql, /\) prices ON TRUE/);
     assert.doesNotMatch(sql, /robinhood_pool_registry/);
     assert.doesNotMatch(sql, /eligible_for_monitoring/);
     assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/);

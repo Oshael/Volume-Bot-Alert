@@ -16,10 +16,22 @@ const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
 
 const WINDOW_METRICS_SQL = `WITH bounds AS (
   SELECT $2::timestamptz AS window_end,
-    $2::timestamptz - INTERVAL '24 hours' AS window_start
+    date_trunc('hour', $2::timestamptz) AS full_hour_end
 ),
 requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
+),
+raw_windows(window_name, window_start) AS (
+  VALUES ('1h', $2::timestamptz - INTERVAL '1 hour'),
+    ('6h', $2::timestamptz - INTERVAL '6 hours'),
+    ('24h', $2::timestamptz - INTERVAL '24 hours')
+),
+windows AS MATERIALIZED (
+  SELECT window_name, window_start,
+    date_trunc('hour', window_start)
+      + CASE WHEN window_start = date_trunc('hour', window_start)
+        THEN INTERVAL '0 hours' ELSE INTERVAL '1 hour' END AS full_hour_start
+  FROM raw_windows
 ),
 market_cursor AS (
   SELECT coverage_start_timestamp AS coverage_start_at,
@@ -28,32 +40,90 @@ market_cursor AS (
   FROM robinhood_ingestion_cursors
   WHERE chain = 'robinhood' AND stream = 'market'
 ),
+full_hour_rows AS MATERIALIZED (
+  SELECT windows.window_name, bucket.token_address, bucket.protocol,
+    bucket.market_key, bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+  FROM requested CROSS JOIN windows CROSS JOIN bounds
+  CROSS JOIN LATERAL (
+    SELECT bucket.token_address, bucket.protocol, bucket.market_key,
+      bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+    FROM robinhood_market_buckets_1h bucket
+    WHERE bucket.chain = 'robinhood'
+      AND bucket.token_address = requested.token_address
+      AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+      AND bucket.bucket_ts >= windows.full_hour_start
+      AND bucket.bucket_ts < bounds.full_hour_end
+    OFFSET 0
+  ) bucket
+),
+start_boundary_rows AS MATERIALIZED (
+  SELECT windows.window_name, bucket.token_address, bucket.protocol,
+    bucket.market_key, bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+  FROM requested CROSS JOIN windows
+  CROSS JOIN LATERAL (
+    SELECT bucket.token_address, bucket.protocol, bucket.market_key,
+      bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+    FROM robinhood_market_buckets_1m bucket
+    WHERE bucket.chain = 'robinhood'
+      AND bucket.token_address = requested.token_address
+      AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+      AND bucket.bucket_ts >= windows.window_start
+      AND bucket.bucket_ts < windows.full_hour_start
+    OFFSET 0
+  ) bucket
+),
+end_boundary_rows AS MATERIALIZED (
+  SELECT windows.window_name, bucket.token_address, bucket.protocol,
+    bucket.market_key, bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+  FROM requested CROSS JOIN bounds
+  CROSS JOIN LATERAL (
+    SELECT bucket.token_address, bucket.protocol, bucket.market_key,
+      bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+    FROM robinhood_market_buckets_1m bucket
+    WHERE bucket.chain = 'robinhood'
+      AND bucket.token_address = requested.token_address
+      AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+      AND bucket.bucket_ts >= bounds.full_hour_end
+      AND bucket.bucket_ts < bounds.window_end
+    OFFSET 0
+  ) bucket
+  CROSS JOIN windows
+),
+recent_rows AS MATERIALIZED (
+  SELECT '5m'::text AS window_name, bucket.token_address, bucket.protocol,
+    bucket.market_key, bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+  FROM requested CROSS JOIN bounds
+  CROSS JOIN LATERAL (
+    SELECT bucket.token_address, bucket.protocol, bucket.market_key,
+      bucket.volume_usd, bucket.swaps, bucket.last_observed_at
+    FROM robinhood_market_buckets_1m bucket
+    WHERE bucket.chain = 'robinhood'
+      AND bucket.token_address = requested.token_address
+      AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+      AND bucket.bucket_ts >= bounds.window_end - INTERVAL '5 minutes'
+      AND bucket.bucket_ts < bounds.window_end
+    OFFSET 0
+  ) bucket
+),
+activity_rows AS MATERIALIZED (
+  SELECT * FROM full_hour_rows
+  UNION ALL SELECT * FROM start_boundary_rows
+  UNION ALL SELECT * FROM end_boundary_rows
+  UNION ALL SELECT * FROM recent_rows
+),
 market_activity AS MATERIALIZED (
-  SELECT bucket.token_address, bucket.protocol, bucket.market_key,
-    SUM(bucket.volume_usd) FILTER (
-      WHERE bucket.bucket_ts >= bounds.window_end - INTERVAL '5 minutes') AS volume_5m_usd,
-    SUM(bucket.volume_usd) FILTER (
-      WHERE bucket.bucket_ts >= bounds.window_end - INTERVAL '1 hour') AS volume_1h_usd,
-    SUM(bucket.volume_usd) FILTER (
-      WHERE bucket.bucket_ts >= bounds.window_end - INTERVAL '6 hours') AS volume_6h_usd,
-    SUM(bucket.volume_usd) AS volume_24h_usd,
-    SUM(bucket.swaps) FILTER (
-      WHERE bucket.bucket_ts >= bounds.window_end - INTERVAL '5 minutes') AS swaps_5m,
-    SUM(bucket.swaps) FILTER (
-      WHERE bucket.bucket_ts >= bounds.window_end - INTERVAL '1 hour') AS swaps_1h,
-    SUM(bucket.swaps) FILTER (
-      WHERE bucket.bucket_ts >= bounds.window_end - INTERVAL '6 hours') AS swaps_6h,
-    SUM(bucket.swaps) AS swaps_24h,
-    MAX(bucket.last_observed_at) AS market_last_observed_at
-  FROM requested
-  INNER JOIN robinhood_market_buckets_1m bucket
-    ON bucket.chain = 'robinhood'
-   AND bucket.token_address = requested.token_address
-   AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
-  CROSS JOIN bounds
-  WHERE bucket.bucket_ts >= bounds.window_start
-    AND bucket.bucket_ts < bounds.window_end
-  GROUP BY bucket.token_address, bucket.protocol, bucket.market_key
+  SELECT token_address, protocol, market_key,
+    SUM(volume_usd) FILTER (WHERE window_name = '5m') AS volume_5m_usd,
+    SUM(volume_usd) FILTER (WHERE window_name = '1h') AS volume_1h_usd,
+    SUM(volume_usd) FILTER (WHERE window_name = '6h') AS volume_6h_usd,
+    SUM(volume_usd) FILTER (WHERE window_name = '24h') AS volume_24h_usd,
+    SUM(swaps) FILTER (WHERE window_name = '5m') AS swaps_5m,
+    SUM(swaps) FILTER (WHERE window_name = '1h') AS swaps_1h,
+    SUM(swaps) FILTER (WHERE window_name = '6h') AS swaps_6h,
+    SUM(swaps) FILTER (WHERE window_name = '24h') AS swaps_24h,
+    MAX(last_observed_at) FILTER (WHERE window_name = '24h') AS market_last_observed_at
+  FROM activity_rows
+  GROUP BY token_address, protocol, market_key
 ),
 primary_market AS (
   SELECT DISTINCT ON (token_address)
@@ -75,6 +145,47 @@ token_activity AS (
     MAX(market_last_observed_at) AS last_activity_at
   FROM market_activity
   GROUP BY token_address
+),
+price_specs(price_window, range_start, target_at, inclusive_target) AS (
+  VALUES ('current', $2::timestamptz - INTERVAL '15 minutes', $2::timestamptz, false),
+    ('1h', $2::timestamptz - INTERVAL '1 hour 15 minutes',
+      $2::timestamptz - INTERVAL '1 hour', true),
+    ('6h', $2::timestamptz - INTERVAL '6 hours 15 minutes',
+      $2::timestamptz - INTERVAL '6 hours', true),
+    ('24h', $2::timestamptz - INTERVAL '24 hours 15 minutes',
+      $2::timestamptz - INTERVAL '24 hours', true)
+),
+price_points AS MATERIALIZED (
+  SELECT primary_market.token_address, price_specs.price_window,
+    point.close_price_usd, point.last_observed_at
+  FROM primary_market CROSS JOIN price_specs
+  LEFT JOIN LATERAL (
+    SELECT bucket.close_price_usd, bucket.last_observed_at
+    FROM robinhood_market_buckets_1m bucket
+    WHERE bucket.chain = 'robinhood'
+      AND bucket.protocol = primary_market.protocol
+      AND bucket.market_key = primary_market.market_key
+      AND bucket.bucket_ts >= price_specs.range_start
+      AND (bucket.bucket_ts < price_specs.target_at
+        OR (price_specs.inclusive_target AND bucket.bucket_ts = price_specs.target_at))
+      AND (bucket.last_observed_at < price_specs.target_at
+        OR (price_specs.inclusive_target AND bucket.last_observed_at = price_specs.target_at))
+    ORDER BY bucket.last_block_number DESC, bucket.last_log_index DESC
+    LIMIT 1
+  ) point ON TRUE
+),
+primary_prices AS (
+  SELECT token_address,
+    MAX(close_price_usd) FILTER (WHERE price_window = 'current') AS current_price_usd,
+    MAX(last_observed_at) FILTER (WHERE price_window = 'current') AS current_observed_at,
+    MAX(close_price_usd) FILTER (WHERE price_window = '1h') AS price_1h_usd,
+    MAX(last_observed_at) FILTER (WHERE price_window = '1h') AS price_1h_observed_at,
+    MAX(close_price_usd) FILTER (WHERE price_window = '6h') AS price_6h_usd,
+    MAX(last_observed_at) FILTER (WHERE price_window = '6h') AS price_6h_observed_at,
+    MAX(close_price_usd) FILTER (WHERE price_window = '24h') AS price_24h_usd,
+    MAX(last_observed_at) FILTER (WHERE price_window = '24h') AS price_24h_observed_at
+  FROM price_points
+  GROUP BY token_address
 )
 SELECT requested.token_address,
   market_cursor.coverage_start_at, market_cursor.coverage_end_at,
@@ -86,15 +197,16 @@ SELECT requested.token_address,
   COALESCE(token_activity.last_activity_at, latest_hour.last_activity_at) AS last_activity_at,
   primary_market.protocol AS primary_protocol,
   primary_market.market_key AS primary_market_key,
-  prices.current_price_usd, prices.current_observed_at,
-  prices.price_1h_usd, prices.price_1h_observed_at,
-  prices.price_6h_usd, prices.price_6h_observed_at,
-  prices.price_24h_usd, prices.price_24h_observed_at
+  primary_prices.current_price_usd, primary_prices.current_observed_at,
+  primary_prices.price_1h_usd, primary_prices.price_1h_observed_at,
+  primary_prices.price_6h_usd, primary_prices.price_6h_observed_at,
+  primary_prices.price_24h_usd, primary_prices.price_24h_observed_at
 FROM requested
 CROSS JOIN bounds
 LEFT JOIN market_cursor ON TRUE
 LEFT JOIN token_activity ON token_activity.token_address = requested.token_address
 LEFT JOIN primary_market ON primary_market.token_address = requested.token_address
+LEFT JOIN primary_prices ON primary_prices.token_address = requested.token_address
 LEFT JOIN LATERAL (
   SELECT bucket.last_observed_at AS last_activity_at
   FROM robinhood_market_buckets_1h bucket
@@ -106,48 +218,6 @@ LEFT JOIN LATERAL (
     bucket.last_log_index DESC, bucket.protocol ASC, bucket.market_key ASC
   LIMIT 1
 ) latest_hour ON TRUE
-LEFT JOIN LATERAL (
-  SELECT
-    (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at < bounds.window_end
-        AND bucket.last_observed_at >= bounds.window_end - INTERVAL '15 minutes'))[1]
-      AS current_price_usd,
-    (array_agg(bucket.last_observed_at ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at < bounds.window_end
-        AND bucket.last_observed_at >= bounds.window_end - INTERVAL '15 minutes'))[1]
-      AS current_observed_at,
-    (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at <= bounds.window_end
-        - INTERVAL '1 hour' AND bucket.last_observed_at >= bounds.window_end
-        - INTERVAL '1 hour 15 minutes'))[1] AS price_1h_usd,
-    (array_agg(bucket.last_observed_at ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at <= bounds.window_end
-        - INTERVAL '1 hour' AND bucket.last_observed_at >= bounds.window_end
-        - INTERVAL '1 hour 15 minutes'))[1] AS price_1h_observed_at,
-    (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at <= bounds.window_end
-        - INTERVAL '6 hours' AND bucket.last_observed_at >= bounds.window_end
-        - INTERVAL '6 hours 15 minutes'))[1] AS price_6h_usd,
-    (array_agg(bucket.last_observed_at ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at <= bounds.window_end
-        - INTERVAL '6 hours' AND bucket.last_observed_at >= bounds.window_end
-        - INTERVAL '6 hours 15 minutes'))[1] AS price_6h_observed_at,
-    (array_agg(bucket.close_price_usd ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at <= bounds.window_end
-        - INTERVAL '24 hours' AND bucket.last_observed_at >= bounds.window_end
-        - INTERVAL '24 hours 15 minutes'))[1] AS price_24h_usd,
-    (array_agg(bucket.last_observed_at ORDER BY bucket.last_block_number DESC,
-      bucket.last_log_index DESC) FILTER (WHERE bucket.last_observed_at <= bounds.window_end
-        - INTERVAL '24 hours' AND bucket.last_observed_at >= bounds.window_end
-        - INTERVAL '24 hours 15 minutes'))[1] AS price_24h_observed_at
-  FROM robinhood_market_buckets_1m bucket
-  WHERE bucket.chain = 'robinhood'
-    AND bucket.token_address = requested.token_address
-    AND bucket.protocol = primary_market.protocol
-    AND bucket.market_key = primary_market.market_key
-    AND bucket.bucket_ts >= bounds.window_end - INTERVAL '24 hours 15 minutes'
-    AND bucket.bucket_ts < bounds.window_end
-) prices ON TRUE
 ORDER BY requested.token_address ASC`;
 
 function normalizeAddresses(values) {
