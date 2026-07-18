@@ -315,6 +315,7 @@ describe('Admin panel auth and management', () => {
       assert.ok(Object.hasOwn(res.body.robinhoodCatalogStagingWorker, 'sharedLease'));
       assert.ok(res.body.robinhoodCatalogProjectionWorker);
       assert.ok(Object.hasOwn(res.body.robinhoodCatalogProjectionWorker, 'sharedLease'));
+      assert.equal(typeof res.body.robinhoodRealtimeAlertWorker.running, 'boolean');
       assert.equal(res.body.robinhoodRollout.publishable, false);
       assert.equal(res.body.robinhoodRollout.axes.alerts.effective, false);
       assert.ok(Object.hasOwn(res.body.robinhoodRollout, 'telemetry'));

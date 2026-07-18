@@ -129,6 +129,21 @@ describe('Robinhood ingestion worker', () => {
     assert.match(status.lastError.message, /alchemy-free is on chain 1; expected 4663/);
   });
 
+  it('injects the post-commit market emitter into persistent ingestion', async () => {
+    let repositoryOptions = null;
+    const emitMarketBucketUpdate = () => true;
+    const { callbacks, worker } = createHarness(
+      { pollOnce: async () => snapshot() },
+      { repositoryFactory: (options) => { repositoryOptions = options; return {}; } },
+    );
+
+    worker.start({ enabled: true, emitMarketBucketUpdate });
+    await callbacks.shift().callback();
+
+    assert.equal(repositoryOptions.emitMarketBucketUpdate, emitMarketBucketUpdate);
+    await worker.stop();
+  });
+
   it('uses Robinhood public RPC first and only adds configured Alchemy fallback', () => {
     const publicOnly = __private.normalizeOptions({ enabled: true });
     assert.equal(publicOnly.publicRpcUrl, 'https://rpc.mainnet.chain.robinhood.com');
