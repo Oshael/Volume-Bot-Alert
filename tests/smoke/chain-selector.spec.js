@@ -509,7 +509,7 @@ const ROBINHOOD_RADAR_CONFIG = {
     chainFilters: {
       ...ROBINHOOD_MARKET_CONFIG.uiPrefs.chainFilters,
       enabledChains: ['solana', 'robinhood'],
-      radarChains: ['solana', 'robinhood'],
+      radarChains: ['robinhood'],
     },
   },
   chainReadiness: {
@@ -527,8 +527,9 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
   },
   'GET /api/catalog/bid-zone': { generatedAt: null, count: 0, candidates: [] },
   'POST /api/dashboard/history-bootstrap': (request) => {
-    radarBootstrapPayloads.push(request.postDataJSON());
-    const token = {
+    const requestPayload = request.postDataJSON();
+    radarBootstrapPayloads.push(requestPayload);
+    const robinhoodToken = {
       ...marketToken('robinhood', 'RADARST'),
       valuation: {
         type: 'fdv', usd: 350000, observedAt: '2026-07-14T17:30:00.000Z', freshness: 'stale',
@@ -544,10 +545,23 @@ const ROBINHOOD_RADAR_API_FIXTURES = {
       activityState: 'stale',
       createdAt: Date.parse('2026-07-14T16:00:00.000Z'),
     };
+    const solanaToken = {
+      ...marketToken('solana', 'RADARSOL'),
+      address: SOLANA_TOP,
+      valuation: {
+        type: 'mcap', usd: 400000, observedAt: '2026-07-14T17:55:00.000Z', freshness: 'fresh',
+      },
+      coverage: { '1h': 'complete', '6h': 'complete', '24h': 'complete' },
+      priceChangeCoverage: { '1h': 'complete', '6h': 'complete', '24h': 'complete' },
+      createdAt: Date.parse('2026-07-14T15:00:00.000Z'),
+    };
+    const recentTokens = requestPayload.chains?.includes('solana')
+      ? [robinhoodToken, solanaToken]
+      : [robinhoodToken];
     return {
       generatedAt: '2026-07-14T18:00:00.000Z',
       asOf: '2026-07-14T18:00:00.000Z',
-      recent: { total: 1, page: 0, perPage: 15, count: 1, hasMore: false, tokens: [token], pinnedTokens: [] },
+      recent: { total: recentTokens.length, page: 0, perPage: 15, count: recentTokens.length, hasMore: false, tokens: recentTokens, pinnedTokens: [] },
       oldWeek: { total: 0, page: 0, perPage: 15, count: 0, hasMore: false, tokens: [], pinnedTokens: [] },
     };
   },
@@ -987,9 +1001,31 @@ test('renders Radar valuation freshness, coverage and independent chain filters 
   const diagnostics = await openAuthenticatedWorkspace(page, ROBINHOOD_RADAR_API_FIXTURES);
   await page.goto('/radar');
 
+  const radarChainSelector = page.getByRole('group', { name: 'Filter Radar by blockchain' });
+  const solanaChainButton = radarChainSelector.locator('[data-chain="solana"]');
+  const robinhoodChainButton = radarChainSelector.locator('[data-chain="robinhood"]');
+  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(robinhoodChainButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(robinhoodChainButton).toBeDisabled();
+  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
+    payload.chains?.length === 1 && payload.chains[0] === 'robinhood'
+  ))).toBe(true);
+  await solanaChainButton.click();
+  await expect(solanaChainButton).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => radarBootstrapPayloads.some((payload) => (
+    payload.chains?.length === 2
+      && payload.chains.includes('solana')
+      && payload.chains.includes('robinhood')
+  ))).toBe(true);
+  const solanaIdentity = `solana:${SOLANA_TOP}`;
+  const solanaRow = page.locator(`.recent-bar tbody tr[data-token-identity="${solanaIdentity}"]`);
+  await expect(solanaRow).toBeVisible();
+  await expect(solanaRow).toContainText('RADARSOL');
+
   const identity = `robinhood:${ROBINHOOD_TOKEN}`;
   const row = page.locator(`.recent-bar tbody tr[data-token-identity="${identity}"]`);
   await expect(row).toBeVisible();
+  await expect(row.locator('.token-launchpad-uniswap')).toHaveAttribute('aria-label', 'Uniswap');
   await expect(row).toContainText('RADARST');
   await expect(row).toContainText('FDV $350K');
   await expect(row).toContainText('STALE VALUATION');
@@ -1005,9 +1041,29 @@ test('renders Radar valuation freshness, coverage and independent chain filters 
   await expect(recentBar.locator('input[name="old-mcap-min"]')).toHaveValue('120000');
   await expect(recentBar.locator('input[name="old-fdv-min"]')).toHaveValue('130000');
   await expect(recentBar.locator('input[name="old-fdv-max"]')).toHaveValue('90000000');
+  const valuationPopover = recentBar.locator('.history-valuation-popover');
+  await expect(valuationPopover).toBeHidden();
+  await recentBar.locator('[data-action="history-valuation-toggle"]').click();
+  await expect(valuationPopover).toBeVisible();
+  const filterGeometry = await recentBar.locator('.recent-ctrl-filters').evaluate((filters) => {
+    const ageRect = filters.querySelector('input[name="recent-age-min"]')
+      ?.closest('.recent-ctrl-cluster')?.getBoundingClientRect();
+    const sort = filters.querySelector('.recent-ctrl-cluster-sort');
+    const sortRect = sort?.getBoundingClientRect();
+    return {
+      ageCenter: ageRect ? ageRect.top + (ageRect.height / 2) : null,
+      sortCenter: sortRect ? sortRect.top + (sortRect.height / 2) : null,
+      sortButtonTops: [...(sort?.querySelectorAll('.old-filter-btn') || [])]
+        .map((button) => button.getBoundingClientRect().top),
+    };
+  });
+  expect(filterGeometry.ageCenter).toBe(filterGeometry.sortCenter);
+  expect(new Set(filterGeometry.sortButtonTops).size).toBe(1);
+  await expect(recentBar.locator('.recent-ctrl-cluster-sort .sort-menu-wrap').nth(1))
+    .toHaveCSS('border-left-width', '1px');
   const fdvMinInput = recentBar.locator('input[name="old-fdv-min"]');
   await fdvMinInput.fill('175000');
-  await fdvMinInput.dispatchEvent('change');
+  await fdvMinInput.press('Enter');
   await expect.poll(() => radarBootstrapPayloads.some((payload) => (
     payload.recent?.mcapMin === 120000 && payload.recent?.fdvMin === 175000
   ))).toBe(true);

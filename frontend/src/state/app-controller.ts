@@ -13249,7 +13249,7 @@ export function createAppController(): AppController {
       }
       queueUiPrefsPersist();
       if (surface === 'radarChains') {
-        emit('recent', 'old-week');
+        emit('header', 'recent', 'old-week');
       } else {
         emit('alerts');
       }

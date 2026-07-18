@@ -26,7 +26,7 @@ const TRADE_TERMINAL_LABELS: Record<TradeTerminalKey, string> = {
   padre: 'Pump',
 };
 
-type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora';
+type TokenLaunchpadKey = 'pump' | 'bags' | 'bonk' | 'brrr' | 'meteora' | 'uniswap';
 
 const TOKEN_LAUNCHPAD_META: Record<TokenLaunchpadKey, { label: string; mark: string }> = {
   pump: { label: 'Pump.fun', mark: 'P' },
@@ -34,6 +34,7 @@ const TOKEN_LAUNCHPAD_META: Record<TokenLaunchpadKey, { label: string; mark: str
   bonk: { label: 'LetsBonk', mark: 'B' },
   brrr: { label: 'Brrr', mark: 'BR' },
   meteora: { label: 'Meteora', mark: 'M' },
+  uniswap: { label: 'Uniswap', mark: '🦄' },
 };
 
 type TradeTerminalLink = {
@@ -87,7 +88,8 @@ let manualQuickAddDocumentCloseBound = false;
 
 type SparklineRangeControlScope = 'monitored' | 'recent' | 'oldWeek';
 
-export function resolveTokenLaunchpad(address: string): TokenLaunchpadKey {
+export function resolveTokenLaunchpad(address: string, chainValue: unknown = 'solana'): TokenLaunchpadKey {
+  if (normalizeTokenChain(chainValue) === 'robinhood') return 'uniswap';
   const normalized = String(address || '').trim().toLowerCase();
   if (normalized.endsWith('pump')) return 'pump';
   if (normalized.endsWith('bags')) return 'bags';
@@ -96,8 +98,8 @@ export function resolveTokenLaunchpad(address: string): TokenLaunchpadKey {
   return 'meteora';
 }
 
-export function renderTokenLaunchpadBadge(address: string) {
-  const key = resolveTokenLaunchpad(address);
+export function renderTokenLaunchpadBadge(address: string, chainValue: unknown = 'solana') {
+  const key = resolveTokenLaunchpad(address, chainValue);
   const meta = TOKEN_LAUNCHPAD_META[key];
   return `<span class="token-launchpad-badge token-launchpad-${key}" title="${escapeHtml(meta.label)}" aria-label="${escapeHtml(meta.label)}">${escapeHtml(meta.mark)}</span>`;
 }
@@ -2803,7 +2805,7 @@ function renderAvatar(item: ManualTokenEntry, symbol: string) {
   const avatar = imageUrl
     ? `<img src="${safeImageUrl}" alt="" aria-label="${safeSymbol}" class="token-avatar" data-token-image-preview="true" data-token-image-preview-src="${safeImageUrl}" data-token-address="${safeAddress}" />`
     : `<div class="token-avatar placeholder" data-token-address="${safeAddress}">${fallback}</div>`;
-  return `<span class="token-avatar-wrap" data-token-address="${safeAddress}" data-token-fallback="${fallback}"${imageUrl ? ' data-token-image-state="pending"' : ''}>${avatar}${renderTokenLaunchpadBadge(item.address)}</span>`;
+  return `<span class="token-avatar-wrap" data-token-address="${safeAddress}" data-token-fallback="${fallback}"${imageUrl ? ' data-token-image-state="pending"' : ''}>${avatar}${renderTokenLaunchpadBadge(item.address, item.chain)}</span>`;
 }
 
 function renderPctSpan(value?: number | null) {

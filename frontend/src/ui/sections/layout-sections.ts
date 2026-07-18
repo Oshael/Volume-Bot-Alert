@@ -1133,13 +1133,20 @@ function buildWorkspaceChainSelector(state: AppState, controller: AppController)
   const selector = document.createElement('div');
   selector.className = 'workspace-chain-selector';
   selector.setAttribute('role', 'group');
-  selector.setAttribute('aria-label', 'Filter workspace by blockchain');
+  const controlsRadar = state.ui.workspace === 'history';
+  const selectedChains = controlsRadar
+    ? state.ui.chainFilters.radarChains
+    : state.ui.chainFilters.enabledChains;
+  selector.setAttribute('aria-label', controlsRadar
+    ? 'Filter Radar by blockchain'
+    : 'Filter workspace by blockchain');
 
   for (const chain of state.data.availableChains) {
     const title = getTokenChainTitle(chain);
     const readiness = state.data.chainReadiness[chain];
-    const isEnabled = state.ui.chainFilters.enabledChains.includes(chain);
-    const isLastEnabled = isEnabled && state.ui.chainFilters.enabledChains.length === 1;
+    const isMasterEnabled = state.ui.chainFilters.enabledChains.includes(chain);
+    const isEnabled = selectedChains.includes(chain);
+    const isLastEnabled = isEnabled && selectedChains.length === 1;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'workspace-chain-selector-btn';
@@ -1154,13 +1161,16 @@ function buildWorkspaceChainSelector(state: AppState, controller: AppController)
     button.title = readiness?.message
       ? `${selectionTitle} · ${readiness.message}`
       : selectionTitle;
-    button.disabled = isLastEnabled;
+    button.disabled = isLastEnabled || (controlsRadar && !isMasterEnabled);
     button.append(buildTokenChainIcon(chain));
     const readinessDot = document.createElement('span');
     readinessDot.className = 'workspace-chain-readiness-dot';
     readinessDot.setAttribute('aria-hidden', 'true');
     button.append(readinessDot);
-    button.addEventListener('click', () => controller.toggleEnabledChain(chain));
+    button.addEventListener('click', () => {
+      if (controlsRadar) controller.toggleSurfaceChain('radarChains', chain);
+      else controller.toggleEnabledChain(chain);
+    });
     selector.append(button);
   }
 
@@ -4126,7 +4136,7 @@ function renderExpandedSparklineIdentity(
     : `<span class="expanded-sparkline-avatar expanded-sparkline-avatar-placeholder">${escapeHtml(symbol.slice(0, 2).toUpperCase())}</span>`;
   return `
     <div class="expanded-sparkline-identity">
-      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${chain === 'solana' ? renderTokenLaunchpadBadge(address) : ''}</span>
+      <span class="token-avatar-wrap expanded-sparkline-avatar-wrap">${avatar}${renderTokenLaunchpadBadge(address, chain)}</span>
       <span class="expanded-sparkline-identity-copy">
         <strong id="expanded-sparkline-title">${escapeHtml(symbol)} ${buildTokenChainBadge(chain, address).outerHTML}</strong>
         <small>${escapeHtml(name)}</small>

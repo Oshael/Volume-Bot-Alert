@@ -595,6 +595,13 @@ body:has(.workspace-topbar)::before {
   color: transparent;
 }
 
+.token-launchpad-uniswap {
+  overflow: hidden;
+  background: rgba(5, 24, 20, 0.96);
+  box-shadow: none;
+  font-size: 13px;
+}
+
 .token-avatar.placeholder {
   display: inline-flex;
   align-items: center;
@@ -11632,8 +11639,14 @@ TEMP_LEGACY_BAR_TITLE {
   align-items: center;
   gap: 8px;
   margin-left: 24px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+}
+
+@media (max-width: 980px) {
+  :is(.recent-bar, .old-week-bar) .recent-ctrl-filters {
+    flex-wrap: wrap;
+  }
 }
 :is(.recent-bar, .old-week-bar) .legacy-mini-field {
   gap: 4px;
@@ -11829,6 +11842,64 @@ TEMP_LEGACY_BAR_TITLE {
   gap: 4px;
   padding-left: 10px;
   padding-right: 4px;
+  flex-wrap: nowrap;
+}
+
+.recent-bar-controls .recent-ctrl-cluster-sort .sort-menu-wrap + .sort-menu-wrap {
+  margin-left: 2px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(142, 226, 255, 0.24);
+}
+
+.history-valuation-filter {
+  position: relative;
+  padding: 3px 4px !important;
+}
+
+.history-valuation-filter.is-open {
+  z-index: 50;
+}
+
+.recent-bar-controls .history-valuation-toggle {
+  color: var(--cyan);
+  border-color: rgba(0, 212, 255, 0.5) !important;
+  background: rgba(0, 212, 255, 0.08) !important;
+}
+
+.history-valuation-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  gap: 8px;
+  width: 226px;
+  padding: 11px;
+  border: 1.5px solid rgba(142, 226, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(6, 11, 18, 0.99);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.52), 0 0 18px rgba(0, 224, 255, 0.08);
+}
+
+.history-valuation-popover[hidden] {
+  display: none;
+}
+
+.history-valuation-popover .legacy-mini-field {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.recent-bar-controls .history-valuation-popover input {
+  width: 116px !important;
+  border: 1px solid rgba(34, 48, 74, 0.95) !important;
+  background: rgba(8, 11, 16, 0.96) !important;
+}
+
+.history-valuation-hint {
+  color: rgba(142, 226, 255, 0.55);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-align: center;
 }
 
 .recent-bar-controls .recent-ctrl-cluster-sort .old-filter-btn {

@@ -2177,7 +2177,7 @@ function buildAlertRowContent(
 
   const main = document.createElement('div');
   main.className = 'alert-main-v68';
-  main.append(buildAlertAvatar(symbol, imageUrl, alert.address));
+  main.append(buildAlertAvatar(symbol, imageUrl, alert.address, alert.chain));
 
   const copyBlock = document.createElement('div');
   copyBlock.className = 'alert-copy-block';
@@ -2288,7 +2288,7 @@ function buildAdminReviewAlertRowContent(
 
   const main = document.createElement('div');
   main.className = 'alert-main-v68';
-  main.append(buildAlertAvatar(symbol, imageUrl, alert.address));
+  main.append(buildAlertAvatar(symbol, imageUrl, alert.address, alert.chain));
 
   const copyBlock = document.createElement('div');
   copyBlock.className = 'alert-copy-block';
@@ -2459,7 +2459,7 @@ function getAlertAccentColor(toneClass: string) {
   }
 }
 
-function buildAlertAvatar(symbol: string, imageUrl: string | null, address: string) {
+function buildAlertAvatar(symbol: string, imageUrl: string | null, address: string, chain: unknown) {
   const wrapper = document.createElement('span');
   wrapper.className = 'token-avatar-wrap alert-avatar-wrap';
   wrapper.dataset.tokenAddress = address;
@@ -2484,7 +2484,7 @@ function buildAlertAvatar(symbol: string, imageUrl: string | null, address: stri
     wrapper.append(placeholder);
   }
 
-  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address));
+  wrapper.insertAdjacentHTML('beforeend', renderTokenLaunchpadBadge(address, chain));
   return wrapper;
 }
 
@@ -3091,7 +3091,9 @@ function buildTickerPeersControl(alert: AlertEntry) {
 
     const identity = document.createElement('div');
     identity.className = 'alert-ticker-peers-identity';
-    identity.append(buildAlertAvatar(String(item.symbol || '?'), sanitizeOptionalHttpUrl(item.imageUrl), item.address));
+    identity.append(buildAlertAvatar(
+      String(item.symbol || '?'), sanitizeOptionalHttpUrl(item.imageUrl), item.address, alert.chain,
+    ));
 
     const copy = document.createElement('button');
     copy.type = 'button';

@@ -147,6 +147,82 @@ function bindCommittedInputs(
   }
 }
 
+type HistoryValuationFilterOptions = {
+  scope: 'recent' | 'old-week';
+  fields: Array<{ name: string; config: string; value: number }>;
+};
+
+function renderHistoryValuationFilter(options: HistoryValuationFilterOptions) {
+  const fields = options.fields.map((field) => {
+    const label = `${field.name.includes('mcap') ? 'MCAP' : 'FDV'} ${field.name.endsWith('-min') ? 'MIN' : 'MAX'}`;
+    return `
+    <label class="legacy-mini-field">${label}
+      <input type="number" min="0" step="1000" name="${field.name}" value="${field.value}" />
+    </label>`;
+  }).join('');
+  return `<div class="recent-ctrl-cluster history-valuation-filter" data-history-valuation-filter="${options.scope}">
+    <button type="button" class="old-filter-btn history-valuation-toggle" data-action="history-valuation-toggle" aria-haspopup="dialog" aria-expanded="false">MCAP / FDV</button>
+    <div class="history-valuation-popover" role="dialog" aria-label="${options.scope} valuation filters" hidden>
+      ${fields}
+      <span class="history-valuation-hint">ENTER TO APPLY · ESC TO CANCEL</span>
+    </div>
+  </div>`;
+}
+
+function bindHistoryValuationFilter(
+  section: ParentNode,
+  controller: AppController,
+  options: HistoryValuationFilterOptions,
+) {
+  const wrapper = section.querySelector<HTMLElement>(`[data-history-valuation-filter="${options.scope}"]`);
+  const toggle = wrapper?.querySelector<HTMLButtonElement>('[data-action="history-valuation-toggle"]');
+  const popover = wrapper?.querySelector<HTMLElement>('.history-valuation-popover');
+  if (!wrapper || !toggle || !popover) return;
+  const inputs = options.fields.map((field) => wrapper.querySelector<HTMLInputElement>(`input[name="${field.name}"]`));
+  if (inputs.some((input) => !input)) return;
+  let open = false;
+  const setOpen = (next: boolean, focusToggle = false) => {
+    open = next;
+    wrapper.classList.toggle('is-open', next);
+    popover.hidden = !next;
+    toggle.setAttribute('aria-expanded', String(next));
+    if (focusToggle) toggle.focus();
+  };
+  const restore = () => options.fields.forEach((field, index) => {
+    inputs[index]!.value = String(field.value);
+  });
+  const apply = (focusToggle = false) => {
+    const configs = Object.fromEntries(options.fields.map((field, index) => {
+      const parsed = Number(inputs[index]!.value);
+      return [field.config, Number.isFinite(parsed) && parsed >= 0 ? parsed : field.value];
+    }));
+    setOpen(false, focusToggle);
+    void controller.saveMonitoringConfig(configs);
+  };
+  toggle.addEventListener('click', () => {
+    if (open) return apply(true);
+    setOpen(true);
+    inputs[0]!.focus();
+    inputs[0]!.select();
+  });
+  wrapper.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      restore();
+      setOpen(false, true);
+    } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+      event.preventDefault();
+      apply(true);
+    }
+  });
+  wrapper.addEventListener('focusout', (event) => {
+    if (event.relatedTarget instanceof Node && wrapper.contains(event.relatedTarget)) return;
+    window.setTimeout(() => {
+      if (open && !wrapper.contains(document.activeElement)) apply();
+    }, 0);
+  });
+}
+
 function bindHistoryBucketOrderLock(
   section: ParentNode,
   controller: AppController,
@@ -270,18 +346,12 @@ export function renderRecentSection(state: AppState, controller: AppController) 
           <span class="recent-ctrl-range-sep">–</span>
           <input type="text" name="recent-age-max" inputmode="numeric" placeholder="2h / 7d" aria-label="Age max">
         </div>
-        <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
-          <span class="recent-ctrl-cluster-label">MCAP</span>
-          <input type="number" name="old-mcap-min" value="${min}" aria-label="Mcap min">
-          <span class="recent-ctrl-range-sep">–</span>
-          <input type="number" name="old-mcap-max" value="${max}" aria-label="Mcap max">
-        </div>
-        <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
-          <span class="recent-ctrl-cluster-label">FDV</span>
-          <input type="number" name="old-fdv-min" value="${fdvMin}" aria-label="Fdv min">
-          <span class="recent-ctrl-range-sep">–</span>
-          <input type="number" name="old-fdv-max" value="${fdvMax}" aria-label="Fdv max">
-        </div>
+        ${renderHistoryValuationFilter({ scope: 'recent', fields: [
+          { name: 'old-mcap-min', config: 'old-mcap-min', value: Number(min) },
+          { name: 'old-mcap-max', config: 'old-mcap-max', value: Number(max) },
+          { name: 'old-fdv-min', config: 'old-fdv-min', value: Number(fdvMin) },
+          { name: 'old-fdv-max', config: 'old-fdv-max', value: Number(fdvMax) },
+        ] })}
         <div class="recent-ctrl-cluster">
           <span class="recent-ctrl-cluster-label">PER PAGE</span>
           <input type="number" min="10" step="1" data-action="recent-per-page" aria-label="Per page">
@@ -387,19 +457,13 @@ export function renderRecentSection(state: AppState, controller: AppController) 
   bindPagedBucketControls(section, controller, 'recent');
   bindBucketSortControls(section, controller, 'recent');
   bindHistoryBucketOrderLock(section, controller, 'recent');
-  section.querySelectorAll<HTMLInputElement>('input[name="old-mcap-min"], input[name="old-mcap-max"], input[name="old-fdv-min"], input[name="old-fdv-max"]').forEach((input) => {
-    input.addEventListener('change', () => {
-      const minInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-min"]');
-      const maxInput = section.querySelector<HTMLInputElement>('input[name="old-mcap-max"]');
-      const fdvMinInput = section.querySelector<HTMLInputElement>('input[name="old-fdv-min"]');
-      const fdvMaxInput = section.querySelector<HTMLInputElement>('input[name="old-fdv-max"]');
-      void controller.saveMonitoringConfig({
-        'old-mcap-min': Number(minInput?.value || 120000),
-        'old-mcap-max': Number(maxInput?.value || 100000000),
-        'old-fdv-min': Number(fdvMinInput?.value || 120000),
-        'old-fdv-max': Number(fdvMaxInput?.value || 100000000),
-      });
-    });
+  bindHistoryValuationFilter(section, controller, {
+    scope: 'recent', fields: [
+      { name: 'old-mcap-min', config: 'old-mcap-min', value: Number(min) },
+      { name: 'old-mcap-max', config: 'old-mcap-max', value: Number(max) },
+      { name: 'old-fdv-min', config: 'old-fdv-min', value: Number(fdvMin) },
+      { name: 'old-fdv-max', config: 'old-fdv-max', value: Number(fdvMax) },
+    ],
   });
   bindCommittedInputs([recentAgeMinInput, recentAgeMaxInput], () => {
     const minInput = section.querySelector<HTMLInputElement>('input[name="recent-age-min"]');
@@ -541,18 +605,12 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
             <span class="recent-ctrl-range-sep">–</span>
             <input type="text" name="old-week-age-max" inputmode="numeric" placeholder="∞" title="Leave blank for no maximum age limit (∞)" aria-label="Age max">
           </div>
-          <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
-            <span class="recent-ctrl-cluster-label">MCAP</span>
-            <input type="number" name="old-week-mcap-min" value="${min}" aria-label="Mcap min">
-            <span class="recent-ctrl-range-sep">–</span>
-            <input type="number" name="old-week-mcap-max" value="${max}" aria-label="Mcap max">
-          </div>
-          <div class="recent-ctrl-cluster recent-ctrl-cluster-range">
-            <span class="recent-ctrl-cluster-label">FDV</span>
-            <input type="number" name="old-week-fdv-min" value="${fdvMin}" aria-label="Fdv min">
-            <span class="recent-ctrl-range-sep">–</span>
-            <input type="number" name="old-week-fdv-max" value="${fdvMax}" aria-label="Fdv max">
-          </div>
+          ${renderHistoryValuationFilter({ scope: 'old-week', fields: [
+            { name: 'old-week-mcap-min', config: 'old-week-mcap-min', value: Number(min) },
+            { name: 'old-week-mcap-max', config: 'old-week-mcap-max', value: Number(max) },
+            { name: 'old-week-fdv-min', config: 'old-week-fdv-min', value: Number(fdvMin) },
+            { name: 'old-week-fdv-max', config: 'old-week-fdv-max', value: Number(fdvMax) },
+          ] })}
           <div class="recent-ctrl-cluster">
             <span class="recent-ctrl-cluster-label">PER PAGE</span>
             <input type="number" min="10" step="1" data-action="old-week-per-page" aria-label="Per page">
@@ -658,19 +716,13 @@ export function renderOldWeekSection(state: AppState, controller: AppController)
   bindPagedBucketControls(section, controller, 'old-week');
   bindBucketSortControls(section, controller, 'old-week');
   bindHistoryBucketOrderLock(section, controller, 'old-week');
-  section.querySelectorAll<HTMLInputElement>('input[name="old-week-mcap-min"], input[name="old-week-mcap-max"], input[name="old-week-fdv-min"], input[name="old-week-fdv-max"]').forEach((input) => {
-    input.addEventListener('change', () => {
-      const minInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-min"]');
-      const maxInput = section.querySelector<HTMLInputElement>('input[name="old-week-mcap-max"]');
-      const fdvMinInput = section.querySelector<HTMLInputElement>('input[name="old-week-fdv-min"]');
-      const fdvMaxInput = section.querySelector<HTMLInputElement>('input[name="old-week-fdv-max"]');
-      void controller.saveMonitoringConfig({
-        'old-week-mcap-min': Number(minInput?.value || 120000),
-        'old-week-mcap-max': Number(maxInput?.value || 100000000),
-        'old-week-fdv-min': Number(fdvMinInput?.value || 120000),
-        'old-week-fdv-max': Number(fdvMaxInput?.value || 100000000),
-      });
-    });
+  bindHistoryValuationFilter(section, controller, {
+    scope: 'old-week', fields: [
+      { name: 'old-week-mcap-min', config: 'old-week-mcap-min', value: Number(min) },
+      { name: 'old-week-mcap-max', config: 'old-week-mcap-max', value: Number(max) },
+      { name: 'old-week-fdv-min', config: 'old-week-fdv-min', value: Number(fdvMin) },
+      { name: 'old-week-fdv-max', config: 'old-week-fdv-max', value: Number(fdvMax) },
+    ],
   });
   bindCommittedInputs([oldWeekAgeMinInput, oldWeekAgeMaxInput], () => {
     const minInput = section.querySelector<HTMLInputElement>('input[name="old-week-age-min"]');

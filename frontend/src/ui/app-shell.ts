@@ -1118,6 +1118,7 @@ function getHeaderRenderKey(state: AppState) {
     state.ui.workspace,
     state.data.availableChains.join(','),
     state.ui.chainFilters.enabledChains.join(','),
+    state.ui.chainFilters.radarChains.join(','),
     state.data.availableChains.map((chain) => (
       `${chain}:${state.data.chainReadiness[chain]?.status || 'unavailable'}:${state.data.chainReadiness[chain]?.phase || ''}`
     )).join(','),
