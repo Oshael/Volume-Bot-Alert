@@ -48,7 +48,7 @@ describe('Robinhood catalog projection worker', () => {
     });
 
     assert.equal(worker.start({
-      enabled: true, intervalMs: 30000,
+      enabled: true, intervalMs: 90000,
       maxTokens: 9999, concurrency: 99, statementTimeoutMs: 500,
     }), true);
     await clock.scheduled[0].callback();
@@ -60,7 +60,7 @@ describe('Robinhood catalog projection worker', () => {
       blockscoutBatchSize: 10,
       socialDrainLimit: 1,
     });
-    assert.equal(clock.scheduled[1].delayMs, 30000);
+    assert.equal(clock.scheduled[1].delayMs, 90000);
     const telemetry = buildRobinhoodCatalogProjectionTelemetry(
       worker.getStatus(), () => Date.parse('2026-07-14T18:00:00Z')
     );
@@ -86,14 +86,14 @@ describe('Robinhood catalog projection worker', () => {
       },
     });
 
-    worker.start({ enabled: true, intervalMs: 10000, maxErrorBackoffMs: 40000 });
+    worker.start({ enabled: true, intervalMs: 60000, maxErrorBackoffMs: 240000 });
     await clock.scheduled[0].callback();
-    assert.equal(clock.scheduled[1].delayMs, 20000);
+    assert.equal(clock.scheduled[1].delayMs, 120000);
     assert.equal(worker.getStatus().consecutiveErrors, 1);
     assert.match(errors[0], /temporary projection failure/);
 
     await clock.scheduled[1].callback();
-    assert.equal(clock.scheduled[2].delayMs, 10000);
+    assert.equal(clock.scheduled[2].delayMs, 60000);
     assert.equal(worker.getStatus().consecutiveErrors, 0);
     await worker.stop();
   });

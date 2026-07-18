@@ -119,9 +119,9 @@ describe('runtime worker groups config', () => {
     });
   });
 
-  it('runs Robinhood catalog projection on a bounded ten-second default', () => {
+  it('runs Robinhood catalog reconciliation on a bounded one-minute default', () => {
     withEnv({ ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS: undefined }, (config) => {
-      assert.equal(config.robinhoodCatalogProjectionWorker.intervalMs, 10_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.intervalMs, 60_000);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialMetadataEnabled, true);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialBatchSize, 5);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialDrainIntervalMs, 60_000);
@@ -131,7 +131,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_SOCIAL_METADATA_BATCH_SIZE: '50',
       ROBINHOOD_SOCIAL_METADATA_INTERVAL_MS: '1',
     }, (config) => {
-      assert.equal(config.robinhoodCatalogProjectionWorker.intervalMs, 10_000);
+      assert.equal(config.robinhoodCatalogProjectionWorker.intervalMs, 60_000);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialBatchSize, 5);
       assert.equal(config.robinhoodCatalogProjectionWorker.socialDrainIntervalMs, 60_000);
     });
@@ -146,6 +146,7 @@ describe('runtime worker groups config', () => {
       ROBINHOOD_LOOKBACK_BLOCKS: '0',
       ROBINHOOD_CONFIRMATIONS: '-1',
       ROBINHOOD_START_BLOCK: 'invalid',
+      ROBINHOOD_USE_ALCHEMY: '',
       ROBINHOOD_MAX_ADDRESSES_PER_LOG_REQUEST: '9999',
       ROBINHOOD_MARKET_LOG_FILTER_MODE: 'tracked-addresses',
     }, (config) => {

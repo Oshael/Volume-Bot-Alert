@@ -104,6 +104,8 @@ async function loadCandidates(repository, query) {
 }
 
 function projectionSnapshot(candidate) {
+  // The post-commit live worker owns freshness; this remains a cold repair path
+  // for missed events, market identity and asynchronous metadata enrichment.
   return {
     ...candidate,
     volume5mUsd: null,

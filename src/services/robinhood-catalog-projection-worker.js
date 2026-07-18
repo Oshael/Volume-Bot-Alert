@@ -15,7 +15,7 @@ const {
   createRobinhoodBlockscoutMetadataClient,
 } = require('./robinhood-blockscout-metadata');
 
-const DEFAULT_INTERVAL_MS = 10_000;
+const DEFAULT_INTERVAL_MS = 60_000;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -27,9 +27,9 @@ function boundedInteger(value, fallback, minimum, maximum) {
 function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled === true,
-    intervalMs: boundedInteger(options.intervalMs, DEFAULT_INTERVAL_MS, 10_000, 60 * 60_000),
+    intervalMs: boundedInteger(options.intervalMs, DEFAULT_INTERVAL_MS, 60_000, 60 * 60_000),
     maxErrorBackoffMs: boundedInteger(
-      options.maxErrorBackoffMs, 5 * 60_000, 10_000, 60 * 60_000,
+      options.maxErrorBackoffMs, 5 * 60_000, 60_000, 60 * 60_000,
     ),
     maxTokens: boundedInteger(options.maxTokens, 2000, 1, 5000),
     concurrency: boundedInteger(options.concurrency, 4, 1, 10),

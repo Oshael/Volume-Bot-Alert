@@ -687,8 +687,8 @@ module.exports = {
   robinhoodCatalogProjectionWorker: {
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS,
-      10_000,
-      10_000,
+      60_000,
+      60_000,
       60 * 60 * 1000
     ),
     blockscoutBatchSize: parseIntegerInRange(

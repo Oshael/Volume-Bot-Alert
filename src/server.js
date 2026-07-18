@@ -240,6 +240,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
       ...robinhoodCatalogProjectionWorker.getStatus(),
       sharedLease: robinhoodCatalogProjectionLease,
     },
+    robinhoodLiveCatalogWorker: robinhoodLiveCatalogWorker.getStatus(),
     robinhoodRealtimeAlertWorker: robinhoodRealtimeAlertWorker.getStatus(),
     robinhoodRollout: buildRobinhoodRolloutStatus({
       config,
