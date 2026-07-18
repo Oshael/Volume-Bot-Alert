@@ -30,7 +30,15 @@ function catalogRow(address, overrides = {}) {
     monitor_priority: 'dormant',
     last_seen_at: new Date('2026-07-15T17:20:00.000Z'),
     last_evaluated_at: null,
-    total_count: '5',
+    ranking_volume_5m_usd: '0',
+    ranking_volume_1h_usd: '500',
+    ranking_volume_6h_usd: '2000',
+    ranking_volume_24h_usd: '9000',
+    ranking_coverage_5m: 'complete',
+    ranking_coverage_1h: 'complete',
+    ranking_coverage_6h: 'complete',
+    ranking_coverage_24h: 'complete',
+    total_count: '2',
     ...overrides,
   };
 }
@@ -56,6 +64,7 @@ describe('Robinhood workspace token reader', () => {
         calls.push({ sql, params, timeoutMs });
         return { rows: [catalogRow(TOKEN), catalogRow(TOKEN_TWO, {
           last_fdv_usd: '40000',
+          ranking_volume_1h_usd: '0',
         })] };
       },
     };
@@ -77,7 +86,7 @@ describe('Robinhood workspace token reader', () => {
 
     assert.equal(prefix.chain, 'robinhood');
     assert.equal(prefix.asOf, AS_OF);
-    assert.equal(prefix.total, 5);
+    assert.equal(prefix.total, 2);
     assert.equal(prefix.rows.length, 2);
     assert.equal(prefix.rows[0].identity.key, `robinhood:${TOKEN}`);
     assert.deepEqual(prefix.rows[0].valuation, {
@@ -100,7 +109,7 @@ describe('Robinhood workspace token reader', () => {
     });
     assert.equal(prefix.rows[1].volume1hUsd, 0);
     assert.deepEqual(calls[0].params, [
-      new Date(AS_OF), 30_000, 100_000, [EXCLUDED], 2,
+      new Date(AS_OF), 30_000, 100_000, [EXCLUDED], 500,
     ]);
     assert.equal(calls[0].timeoutMs, 15_000);
     assert.deepEqual(calls[1].windowInput, {
@@ -123,6 +132,11 @@ describe('Robinhood workspace token reader', () => {
     assert.match(sql, /FROM catalog_candidates tc/);
     assert.match(sql, /robinhood_market_buckets_1m/);
     assert.match(sql, /robinhood_market_buckets_1h/);
+    assert.match(sql, /activity AS MATERIALIZED/);
+    assert.match(sql, /INNER JOIN catalog_candidates candidate/);
+    assert.match(sql, /LEFT JOIN activity ON activity\.token_address = tc\.address/);
+    assert.match(sql, /activity\.volume_5m_usd AS ranking_volume_5m_usd/);
+    assert.match(sql, /AS ranking_coverage_5m/);
     assert.match(sql, /tc\.last_price/);
     assert.match(sql, /tc\.last_pair_url/);
     assert.match(sql, /robinhood_ingestion_cursors/);
@@ -133,7 +147,11 @@ describe('Robinhood workspace token reader', () => {
     assert.match(sql, /admin_blocked_tokens/);
     assert.match(sql, /tc\.address <> ALL\(\$4::varchar\[\]\)/);
     assert.match(sql, /LIMIT \$5::int/);
+    assert.match(sql, /ORDER BY bucket\.bucket_ts DESC, bucket\.last_observed_at DESC/);
     assert.doesNotMatch(sql, /INTERVAL '15 minutes'/);
+    assert.doesNotMatch(__private.buildActivityCteSql([
+      { mode: 'vol', window: '5m' },
+    ]), /LATERAL/);
     assert.doesNotMatch(sql, /eligible_for_monitoring/);
     assert.doesNotMatch(sql, /is_active_monitor_candidate/);
     assert.doesNotMatch(sql, /robinhood_pool_registry/);
@@ -150,9 +168,27 @@ describe('Robinhood workspace token reader', () => {
 
     assert.match(fiveMinutes, /bucket_ts >= \$1::timestamptz - INTERVAL '5 minutes'/);
     assert.doesNotMatch(fiveMinutes, /bucket_ts >= \$1::timestamptz - INTERVAL '24 hours'/);
+    assert.match(fiveMinutes, /SUM\(bucket\.volume_usd\) FILTER/);
     assert.match(sixHours, /bucket_ts >= \$1::timestamptz - INTERVAL '6 hours'/);
+    assert.match(sixHours, /AS volume_5m_usd/);
+    assert.match(sixHours, /AS volume_6h_usd/);
+    assert.doesNotMatch(sixHours, /AS volume_1h_usd/);
     assert.doesNotMatch(valuationOnly, /robinhood_market_buckets_1m/);
     assert.doesNotMatch(valuationOnly, /\bactivity\./);
+    assert.doesNotMatch(valuationOnly, /robinhood_ingestion_cursors/);
+  });
+
+  it('uses persisted FDV only for an explicitly prioritized first page', () => {
+    const exact = __private.buildPrefixSql([{ mode: 'vol', window: '5m' }]);
+    const priority = __private.buildPrefixSql(
+      [{ mode: 'vol', window: '5m' }],
+      { preferCatalogValuation: true },
+    );
+
+    assert.match(exact, /FROM robinhood_market_buckets_1h bucket/);
+    assert.match(priority, /SELECT tc\.last_fdv AS last_fdv_usd/);
+    assert.match(priority, /tc\.last_seen_at AS valuation_observed_at/);
+    assert.doesNotMatch(priority, /FROM robinhood_market_buckets_1h bucket/);
   });
 
   it('hydrates pinned identities exactly without applying the FDV floor', async () => {
@@ -180,12 +216,14 @@ describe('Robinhood workspace token reader', () => {
     assert.equal(calls[1].windowInput.asOf, AS_OF);
   });
 
-  it('batches bounded hydration and rejects incomplete metrics', async () => {
+  it('reuses one ranked snapshot and hydrates only newly requested prefix rows', async () => {
     const addresses = Array.from({ length: 101 }, (_, index) => (
       `0x${(index + 1).toString(16).padStart(40, '0')}`
     )).sort();
+    let queryCount = 0;
     const database = {
       async query(_sql, params) {
+        queryCount += 1;
         return { rows: addresses.slice(0, params[4]).map((address) => catalogRow(address, {
           total_count: '101',
         })) };
@@ -199,15 +237,23 @@ describe('Robinhood workspace token reader', () => {
       },
     };
     const reader = createRobinhoodWorkspaceTokenReader({ database, windowRead });
-    const prefix = await reader.listMonitoredPrefix({
+    const firstPage = await reader.listMonitoredPrefix({
+      asOf: AS_OF, page: 0, perPage: 100, minFdv: 0,
+    });
+    const secondPagePrefix = await reader.listMonitoredPrefix({
       asOf: AS_OF, page: 1, perPage: 100, minFdv: 0,
     });
 
-    assert.equal(prefix.rows.length, 101);
+    assert.equal(firstPage.rows.length, 100);
+    assert.equal(secondPagePrefix.rows.length, 101);
+    assert.equal(queryCount, 1);
     assert.deepEqual(batches.map((batch) => batch.length), [100, 1]);
-    windowRead.getMetricsByAddresses = async () => [];
+    const incompleteReader = createRobinhoodWorkspaceTokenReader({
+      database,
+      windowRead: { async getMetricsByAddresses() { return []; } },
+    });
     await assert.rejects(
-      reader.listMonitoredPrefix({ asOf: AS_OF, perPage: 1, minFdv: 0 }),
+      incompleteReader.listMonitoredPrefix({ asOf: AS_OF, perPage: 1, minFdv: 0 }),
       /metric hydration returned 0 rows; 1 required/,
     );
   });

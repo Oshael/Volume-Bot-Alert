@@ -434,13 +434,14 @@ describe('Dashboard routes', () => {
 
     try {
       const res = await request(app)
-        .get('/api/dashboard/monitored?chains=robinhood&page=0&perPage=30&minFdv=30000')
+        .get('/api/dashboard/monitored?chains=robinhood&page=0&perPage=30&minFdv=30000&priority=true')
         .set('Authorization', `Bearer ${token}`);
 
       assert.equal(res.status, 200);
       assert.deepEqual(capturedOptions.chains, ['robinhood']);
       assert.equal(capturedOptions.minMcap, 30000);
       assert.equal(capturedOptions.minFdv, 30000);
+      assert.equal(capturedOptions.preferCatalogValuation, true);
       assert.equal(res.body.tokens[0].mcap, null);
       assert.equal(res.body.tokens[0].fdv, 30000);
       assert.equal(res.body.tokens[0].valuationType, 'fdv');
@@ -464,10 +465,14 @@ describe('Dashboard routes', () => {
     const invalidBounds = await request(app)
       .get('/api/dashboard/monitored?minMcap=50000&maxMcap=40000')
       .set(headers);
+    const invalidPriority = await request(app)
+      .get('/api/dashboard/monitored?priority=sometimes')
+      .set(headers);
 
     assert.equal(invalidSnapshot.status, 400);
     assert.equal(deepPrefix.status, 400);
     assert.equal(invalidBounds.status, 400);
+    assert.equal(invalidPriority.status, 400);
   });
 
   it('persists monitored pin order through dashboard pin routes', async () => {

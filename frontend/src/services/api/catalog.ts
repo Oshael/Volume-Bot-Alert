@@ -750,6 +750,7 @@ export interface DashboardMonitoredRequestOptions {
   minMcap?: number;
   minFdv?: number;
   asOf?: string;
+  priority?: boolean;
 }
 
 function setMonitoredSnapshotQuery(
@@ -758,6 +759,7 @@ function setMonitoredSnapshotQuery(
 ) {
   const asOf = String(options?.asOf || '').trim();
   if (asOf) query.set('asOf', asOf);
+  if (options?.priority === true) query.set('priority', 'true');
 }
 
 export function fetchDashboardMonitored(

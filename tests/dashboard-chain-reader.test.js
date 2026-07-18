@@ -102,6 +102,7 @@ describe('exact monitored coordinator', () => {
       minFdv: 40_000, maxFdv: 100_000,
       sorts: [{ mode: 'vol', window: '5m' }],
       statementTimeoutMs: 12_000,
+      preferCatalogValuation: true,
       excludedIdentities: [
         { chain: 'solana', address: EXCLUDED_SOL },
         `robinhood:${EXCLUDED_EVM.toUpperCase()}`,
@@ -121,7 +122,8 @@ describe('exact monitored coordinator', () => {
       { chain: 'robinhood', input: {
         asOf: page.asOf, page: 1, perPage: 2,
         sorts: [{ mode: 'vol', window: '5m' }],
-        statementTimeoutMs: 12_000, minFdv: 40_000, maxFdv: 100_000,
+        statementTimeoutMs: 12_000, preferCatalogValuation: true,
+        minFdv: 40_000, maxFdv: 100_000,
         excludedAddresses: [EXCLUDED_EVM],
       } },
     ]);

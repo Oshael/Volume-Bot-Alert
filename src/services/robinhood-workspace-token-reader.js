@@ -13,6 +13,8 @@ const CHAIN = 'robinhood';
 const DEFAULT_MIN_FDV = 30_000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
 const METRIC_BATCH_SIZE = 100;
+const PREFIX_CACHE_LIMIT = 500;
+const PREFIX_CACHE_MAX_ENTRIES = 8;
 const MAX_EXCLUDED_ADDRESSES = 5000;
 const MAX_REQUESTED_ADDRESSES = 500;
 const AGE_SQL = `COALESCE(
@@ -75,31 +77,76 @@ function buildOrderSql(sorts) {
 }
 
 function buildActivityJoinSql(sorts) {
-  const largestWindow = sorts.reduce((largest, sort) => {
-    if (sort.mode !== 'vol') return largest;
-    return !largest || WINDOW_MINUTES[sort.window] > WINDOW_MINUTES[largest]
-      ? sort.window
+  const windows = [...new Set(sorts.filter((sort) => sort.mode === 'vol')
+    .map((sort) => sort.window))];
+  if (!windows.length) return '';
+  return `LEFT JOIN LATERAL (
+  SELECT coverage_start_timestamp AS coverage_start_at,
+    checkpoint_timestamp AS coverage_end_at
+  FROM robinhood_ingestion_cursors
+  WHERE chain = 'robinhood' AND stream = 'market'
+  LIMIT 1
+) cursor ON TRUE
+LEFT JOIN activity ON activity.token_address = tc.address`;
+}
+
+function buildActivityCteSql(sorts) {
+  const windows = [...new Set(sorts.filter((sort) => sort.mode === 'vol')
+    .map((sort) => sort.window))];
+  const largestWindow = windows.reduce((largest, window) => {
+    return !largest || WINDOW_MINUTES[window] > WINDOW_MINUTES[largest]
+      ? window
       : largest;
   }, null);
   if (!largestWindow) return '';
-  return `LEFT JOIN LATERAL (
-  SELECT
-    SUM(bucket.volume_usd) FILTER (WHERE bucket.bucket_ts >= $1::timestamptz
-      - INTERVAL '5 minutes') AS volume_5m_usd,
-    SUM(bucket.volume_usd) FILTER (WHERE bucket.bucket_ts >= $1::timestamptz
-      - INTERVAL '1 hour') AS volume_1h_usd,
-    SUM(bucket.volume_usd) FILTER (WHERE bucket.bucket_ts >= $1::timestamptz
-      - INTERVAL '6 hours') AS volume_6h_usd,
-    SUM(bucket.volume_usd) AS volume_24h_usd
+  const columns = windows.map((window) => `SUM(bucket.volume_usd) FILTER (
+      WHERE bucket.bucket_ts >= $1::timestamptz
+        - INTERVAL '${WINDOW_INTERVALS[window]}') AS ${VOLUME_COLUMNS[window]}`).join(',\n    ');
+  return `, activity AS MATERIALIZED (
+  SELECT bucket.token_address,
+    ${columns}
   FROM robinhood_market_buckets_1m bucket
-  WHERE bucket.chain = 'robinhood' AND bucket.token_address = tc.address
+  INNER JOIN catalog_candidates candidate ON candidate.address = bucket.token_address
+  WHERE bucket.chain = 'robinhood'
     AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
     AND bucket.bucket_ts >= $1::timestamptz - INTERVAL '${WINDOW_INTERVALS[largestWindow]}'
     AND bucket.bucket_ts < $1::timestamptz
-) activity ON TRUE`;
+  GROUP BY bucket.token_address
+)`;
 }
 
-function buildPrefixSql(sorts) {
+function buildActivitySelectSql(sorts) {
+  const windows = [...new Set(sorts.filter((sort) => sort.mode === 'vol')
+    .map((sort) => sort.window))];
+  return windows.flatMap((window) => [
+    `activity.${VOLUME_COLUMNS[window]} AS ranking_${VOLUME_COLUMNS[window]}`,
+    `(${coverageStateSql(window)}) AS ranking_coverage_${window}`,
+  ]).join(',\n  ');
+}
+
+function buildValuationJoinSql(preferCatalogValuation) {
+  if (preferCatalogValuation) {
+    return `LEFT JOIN LATERAL (
+  SELECT tc.last_fdv AS last_fdv_usd,
+    tc.last_seen_at AS valuation_observed_at
+) valuation ON TRUE`;
+  }
+  return `LEFT JOIN LATERAL (
+  SELECT bucket.close_fdv_usd AS last_fdv_usd,
+    bucket.last_observed_at AS valuation_observed_at
+  FROM robinhood_market_buckets_1h bucket
+  WHERE bucket.chain = 'robinhood' AND bucket.token_address = tc.address
+    AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+    AND bucket.last_observed_at <= $1::timestamptz AND bucket.close_fdv_usd > 0
+  ORDER BY bucket.bucket_ts DESC, bucket.last_observed_at DESC,
+    bucket.last_block_number DESC, bucket.last_log_index DESC,
+    bucket.protocol ASC, bucket.market_key ASC
+  LIMIT 1
+) valuation ON TRUE`;
+}
+
+function buildPrefixSql(sorts, options = {}) {
+  const activitySelect = buildActivitySelectSql(sorts);
   return `WITH catalog_candidates AS MATERIALIZED (
   SELECT tc.*
   FROM token_catalog tc
@@ -117,33 +164,18 @@ function buildPrefixSql(sorts) {
       WHERE blocked.chain = 'robinhood' AND blocked.address = tc.address
     )
 )
+${buildActivityCteSql(sorts)}
 SELECT
   tc.address, tc.symbol, tc.name, tc.source, tc.first_seen_at,
   tc.last_token_created_at_ms, valuation.last_fdv_usd,
   valuation.valuation_observed_at, tc.last_price, tc.last_pair_address,
   tc.last_pair_url, tc.last_dex_id, tc.last_image_url,
   tc.last_twitter_url, tc.last_community_url, tc.monitor_priority,
-  tc.last_seen_at, tc.last_evaluated_at, COUNT(*) OVER() AS total_count
+  tc.last_seen_at, tc.last_evaluated_at${activitySelect ? `,
+  ${activitySelect}` : ''}, COUNT(*) OVER() AS total_count
 FROM catalog_candidates tc
-LEFT JOIN LATERAL (
-  SELECT coverage_start_timestamp AS coverage_start_at,
-    checkpoint_timestamp AS coverage_end_at
-  FROM robinhood_ingestion_cursors
-  WHERE chain = 'robinhood' AND stream = 'market'
-  LIMIT 1
-) cursor ON TRUE
 ${buildActivityJoinSql(sorts)}
-LEFT JOIN LATERAL (
-  SELECT bucket.close_fdv_usd AS last_fdv_usd,
-    bucket.last_observed_at AS valuation_observed_at
-  FROM robinhood_market_buckets_1h bucket
-  WHERE bucket.chain = 'robinhood' AND bucket.token_address = tc.address
-    AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
-    AND bucket.last_observed_at <= $1::timestamptz AND bucket.close_fdv_usd > 0
-  ORDER BY bucket.last_observed_at DESC, bucket.last_block_number DESC,
-    bucket.last_log_index DESC, bucket.protocol ASC, bucket.market_key ASC
-  LIMIT 1
-) valuation ON TRUE
+${buildValuationJoinSql(options.preferCatalogValuation === true)}
 WHERE tc.chain = 'robinhood'
   AND ((valuation.last_fdv_usd IS NULL AND $2::numeric = 0)
     OR (valuation.last_fdv_usd >= $2::numeric
@@ -254,6 +286,26 @@ function normalizeTokenAge(row) {
   };
 }
 
+function applyRankingMetrics(row, metrics, sorts) {
+  const coverage = { ...metrics.coverage };
+  const output = { ...metrics };
+  for (const sort of sorts) {
+    if (sort.mode !== 'vol') continue;
+    const state = String(row[`ranking_coverage_${sort.window}`] || 'unavailable');
+    const rawValue = row[`ranking_${VOLUME_COLUMNS[sort.window]}`];
+    const parsed = rawValue == null ? null : Number(rawValue);
+    if (!['complete', 'partial', 'unavailable'].includes(state)
+      || (parsed != null && (!Number.isFinite(parsed) || parsed < 0))) {
+      throw new Error(`Robinhood ${sort.window} ranking metric is invalid`);
+    }
+    coverage[sort.window] = state;
+    output[`volume${sort.window}Usd`] = state === 'complete'
+      ? (parsed ?? 0)
+      : (state === 'partial' ? parsed : null);
+  }
+  return Object.freeze({ ...output, coverage: Object.freeze(coverage) });
+}
+
 function normalizeCatalogRow(row, metrics, query, filters) {
   const identity = createTokenIdentity(CHAIN, row.address);
   const observedAt = optionalIso(row.valuation_observed_at, 'valuation observedAt');
@@ -308,24 +360,39 @@ function validateCandidateCount(rows, requiredPrefix) {
   return total;
 }
 
-async function hydrateMetrics(rows, query, windowRead, timeoutMs) {
+async function hydrateMetrics(rows, query, windowRead, timeoutMs, cache = new Map()) {
+  const missingRows = rows.filter((row) => (
+    !cache.has(createTokenIdentity(CHAIN, row.address).key)
+  ));
   const hydrated = [];
-  for (let offset = 0; offset < rows.length; offset += METRIC_BATCH_SIZE) {
-    const addresses = rows.slice(offset, offset + METRIC_BATCH_SIZE).map((row) => row.address);
+  for (let offset = 0; offset < missingRows.length; offset += METRIC_BATCH_SIZE) {
+    const addresses = missingRows.slice(offset, offset + METRIC_BATCH_SIZE)
+      .map((row) => row.address);
     hydrated.push(...await windowRead.getMetricsByAddresses({
       addresses, asOf: query.asOf, statementTimeoutMs: timeoutMs,
     }));
   }
-  if (hydrated.length !== rows.length) {
-    throw new Error(`Robinhood metric hydration returned ${hydrated.length} rows; ${rows.length} required`);
+  if (hydrated.length !== missingRows.length) {
+    throw new Error(`Robinhood metric hydration returned ${hydrated.length} rows; ${missingRows.length} required`);
   }
-  const byIdentity = new Map(hydrated.map((row) => [
-    createTokenIdentity(row.chain, row.address).key, row,
-  ]));
+  for (const row of hydrated) {
+    cache.set(createTokenIdentity(row.chain, row.address).key, row);
+  }
   return rows.map((row) => {
-    const metrics = byIdentity.get(createTokenIdentity(CHAIN, row.address).key);
+    const metrics = cache.get(createTokenIdentity(CHAIN, row.address).key);
     if (!metrics) throw new Error(`Robinhood metrics missing for ${row.address}`);
     return metrics;
+  });
+}
+
+function buildPrefixCacheKey(query, filters, excludedAddresses, preferCatalogValuation) {
+  return JSON.stringify({
+    asOf: query.asOf,
+    sorts: query.sorts,
+    minFdv: filters.minFdv,
+    maxFdv: filters.maxFdv,
+    excludedAddresses: [...excludedAddresses].sort(),
+    preferCatalogValuation,
   });
 }
 
@@ -333,26 +400,70 @@ function createRobinhoodWorkspaceTokenReader(options = {}) {
   const database = options.database || db;
   const windowRead = options.windowRead
     || createRobinhoodWorkspaceWindowReadRepository({ database });
+  const prefixCache = new Map();
+
+  function getCachedPrefix(key) {
+    const entry = prefixCache.get(key);
+    if (!entry) return null;
+    prefixCache.delete(key);
+    prefixCache.set(key, entry);
+    return entry;
+  }
+
+  function setCachedPrefix(key, entry) {
+    prefixCache.set(key, entry);
+    while (prefixCache.size > PREFIX_CACHE_MAX_ENTRIES) {
+      prefixCache.delete(prefixCache.keys().next().value);
+    }
+    return entry;
+  }
+
+  async function loadPrefixEntry(input) {
+    const key = buildPrefixCacheKey(
+      input.query, input.filters, input.excludedAddresses, input.preferCatalogValuation,
+    );
+    const cached = getCachedPrefix(key);
+    if (cached) return cached;
+    const sql = buildPrefixSql(input.query.sorts, {
+      preferCatalogValuation: input.preferCatalogValuation,
+    });
+    const params = [new Date(input.query.asOf), input.filters.minFdv, input.filters.maxFdv,
+      input.excludedAddresses, PREFIX_CACHE_LIMIT];
+    const result = typeof database.queryWithStatementTimeout === 'function'
+      ? await database.queryWithStatementTimeout(sql, params, input.timeoutMs)
+      : await database.query(sql, params);
+    const excluded = new Set(input.excludedAddresses);
+    if (result.rows.some((row) => excluded.has(normalizeTokenAddress(CHAIN, row.address)))) {
+      throw new Error('Robinhood SQL prefix contains a user-excluded identity');
+    }
+    return setCachedPrefix(key, {
+      rows: result.rows,
+      total: validateCandidateCount(result.rows, PREFIX_CACHE_LIMIT),
+      metricsByIdentity: new Map(),
+    });
+  }
 
   async function listMonitoredPrefix(input = {}) {
     const query = normalizeMonitoredQuery(input);
     const filters = normalizeFilters(input);
     const excludedAddresses = normalizeExcludedAddresses(input.excludedAddresses);
     const timeoutMs = normalizeTimeout(input.statementTimeoutMs);
-    const sql = buildPrefixSql(query.sorts);
-    const params = [new Date(query.asOf), filters.minFdv, filters.maxFdv,
-      excludedAddresses, query.requiredPrefix];
-    const result = typeof database.queryWithStatementTimeout === 'function'
-      ? await database.queryWithStatementTimeout(sql, params, timeoutMs)
-      : await database.query(sql, params);
-    const excluded = new Set(excludedAddresses);
-    if (result.rows.some((row) => excluded.has(normalizeTokenAddress(CHAIN, row.address)))) {
-      throw new Error('Robinhood SQL prefix contains a user-excluded identity');
+    const entry = await loadPrefixEntry({
+      query, filters, excludedAddresses, timeoutMs,
+      preferCatalogValuation: input.preferCatalogValuation === true,
+    });
+    const required = Math.min(entry.total, query.requiredPrefix);
+    const prefixRows = entry.rows.slice(0, required);
+    if (prefixRows.length !== required) {
+      throw new Error(`Robinhood cached prefix returned ${prefixRows.length} rows; ${required} required`);
     }
-    const total = validateCandidateCount(result.rows, query.requiredPrefix);
-    const metrics = await hydrateMetrics(result.rows, query, windowRead, timeoutMs);
-    const rows = result.rows.map((row, index) => (
-      normalizeCatalogRow(row, metrics[index], query, filters)
+    const metrics = await hydrateMetrics(
+      prefixRows, query, windowRead, timeoutMs, entry.metricsByIdentity,
+    );
+    const rows = prefixRows.map((row, index) => (
+      normalizeCatalogRow(
+        row, applyRankingMetrics(row, metrics[index], query.sorts), query, filters,
+      )
     ));
     for (let index = 1; index < rows.length; index += 1) {
       if (compareNormalizedMonitoredRows(rows[index - 1], rows[index], query.sorts) > 0) {
@@ -360,7 +471,7 @@ function createRobinhoodWorkspaceTokenReader(options = {}) {
       }
     }
     return Object.freeze({
-      chain: CHAIN, asOf: query.asOf, total, rows: Object.freeze(rows),
+      chain: CHAIN, asOf: query.asOf, total: entry.total, rows: Object.freeze(rows),
     });
   }
 
@@ -394,7 +505,8 @@ function createRobinhoodWorkspaceTokenReader(options = {}) {
 module.exports = {
   createRobinhoodWorkspaceTokenReader,
   __private: {
-    PINNED_SQL, buildOrderSql, buildPrefixSql, normalizeCatalogRow,
+    PINNED_SQL, applyRankingMetrics, buildActivityCteSql, buildOrderSql,
+    buildPrefixCacheKey, buildPrefixSql, buildValuationJoinSql, normalizeCatalogRow,
     normalizeExcludedAddresses, normalizeFilters,
   },
 };

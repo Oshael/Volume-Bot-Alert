@@ -117,6 +117,9 @@ function buildExactAdapterInput(chain, query, input, excludedAddresses = []) {
     excludedAddresses,
   };
   if (input.statementTimeoutMs != null) output.statementTimeoutMs = input.statementTimeoutMs;
+  if (chain === 'robinhood' && input.preferCatalogValuation === true) {
+    output.preferCatalogValuation = true;
+  }
   const valuationFields = chain === 'solana'
     ? ['minMcap', 'maxMcap'] : ['minFdv', 'maxFdv'];
   for (const field of valuationFields) {

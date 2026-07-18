@@ -822,6 +822,7 @@ function getMonitoredCacheKey(input) {
     chains: input.chains,
     page: input.page,
     perPage: input.perPage,
+    preferCatalogValuation: input.preferCatalogValuation === true,
     sorts: input.sorts,
     minMcap: input.minMcap,
     maxMcap: input.maxMcap,
@@ -1019,6 +1020,10 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
   if (!monitoredSortsQuery.ok) {
     return res.status(400).json({ error: monitoredSortsQuery.error });
   }
+  const priorityQuery = parseOptionalBoolean(req.query?.priority, 'priority');
+  if (!priorityQuery.ok) {
+    return res.status(400).json({ error: priorityQuery.error });
+  }
 
   let asOf;
   try {
@@ -1038,6 +1043,7 @@ router.get('/monitored', dashboardLimiter, async (req, res) => {
     const requestInput = {
       ...filters, ...monitoredSliceQuery.value, asOf,
       sorts: monitoredSortsQuery.value,
+      preferCatalogValuation: priorityQuery.value,
       excludedIdentities: blockedItems,
     };
     const cacheKey = getMonitoredCacheKey({
