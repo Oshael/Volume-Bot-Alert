@@ -29,6 +29,35 @@ function snapshot(overrides = {}) {
 }
 
 describe('Robinhood dashboard catalog projection', () => {
+  it('upserts committed live valuations without waiting for metadata projection', async () => {
+    const calls = [];
+    const written = await catalog.applyLiveSnapshots([{
+      address: TOKEN.toUpperCase(),
+      observedAt: '2026-07-18T18:00:00.500Z',
+      priceUsd: 1.5,
+      fdvUsd: 600000,
+    }], {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rowCount: 1 };
+      },
+    });
+
+    assert.equal(written, 1);
+    assert.match(calls[0].sql, /jsonb_to_recordset/);
+    assert.match(calls[0].sql, /'robinhood-dashboard-active'/);
+    assert.match(calls[0].sql, /EXCLUDED\.last_seen_at >= token_catalog\.last_seen_at/);
+    assert.match(calls[0].sql, /eligibility_state = 'robinhood-staged'/);
+    assert.doesNotMatch(calls[0].sql, /last_mcap/);
+    assert.deepEqual(JSON.parse(calls[0].params[0]), [{
+      address: TOKEN,
+      observedAt: '2026-07-18T18:00:00.500Z',
+      observedAtMs: 1784397600500,
+      priceUsd: 1.5,
+      fdvUsd: 600000,
+    }]);
+  });
+
   it('creates a durable manual identity without making it monitoring-eligible', async () => {
     const calls = [];
     const row = await catalog.ensureManualToken(TOKEN.toUpperCase(), {

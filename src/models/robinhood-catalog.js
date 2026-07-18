@@ -84,6 +84,76 @@ function normalizeStagedSnapshot(input = {}) {
   });
 }
 
+function normalizeLiveSnapshot(input = {}) {
+  const observedAt = timestamp(input.observedAt, 'observedAt');
+  function metric(value, label) {
+    if (value == null) return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(`${label} must be a non-negative finite number`);
+    }
+    return parsed;
+  }
+  return Object.freeze({
+    address: normalizeTokenAddress(CHAIN, input.address),
+    observedAt: observedAt.toISOString(),
+    observedAtMs: observedAt.getTime(),
+    priceUsd: metric(input.priceUsd, 'priceUsd'),
+    fdvUsd: metric(input.fdvUsd, 'fdvUsd'),
+  });
+}
+
+async function applyLiveSnapshots(inputs, runner = db) {
+  const snapshots = (Array.isArray(inputs) ? inputs : []).map(normalizeLiveSnapshot);
+  if (!snapshots.length) return 0;
+  if (snapshots.length > 100) throw new Error('Robinhood live catalog batch exceeds 100 tokens');
+  const result = await runner.query(
+    `WITH input AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
+         address varchar, "observedAt" timestamptz, "observedAtMs" bigint,
+         "priceUsd" numeric, "fdvUsd" numeric
+       )
+     )
+     INSERT INTO token_catalog (
+       chain, address, source, first_seen_at, last_seen_at,
+       last_price, last_fdv,
+       is_active_monitor_candidate, eligible_for_monitoring,
+       eligibility_state, suppressed_reason, monitor_priority
+     )
+     SELECT
+       'robinhood', address, 'robinhood-onchain', "observedAt", "observedAt",
+       "priceUsd", "fdvUsd",
+       FALSE, FALSE, 'robinhood-dashboard-active',
+       'robinhood-workspace-read-only', 'dormant'
+     FROM input
+     ON CONFLICT (chain, address) DO UPDATE SET
+       source = 'robinhood-onchain',
+       first_seen_at = LEAST(token_catalog.first_seen_at, EXCLUDED.first_seen_at),
+       last_seen_at = GREATEST(token_catalog.last_seen_at, EXCLUDED.last_seen_at),
+       last_price = CASE WHEN EXCLUDED.last_seen_at >= token_catalog.last_seen_at
+         THEN COALESCE(EXCLUDED.last_price, token_catalog.last_price)
+         ELSE token_catalog.last_price END,
+       last_fdv = CASE WHEN EXCLUDED.last_seen_at >= token_catalog.last_seen_at
+         THEN COALESCE(EXCLUDED.last_fdv, token_catalog.last_fdv)
+         ELSE token_catalog.last_fdv END,
+       is_active_monitor_candidate = FALSE,
+       eligible_for_monitoring = FALSE,
+       eligibility_state = CASE
+         WHEN token_catalog.eligibility_state = 'robinhood-staged'
+           THEN token_catalog.eligibility_state
+         ELSE 'robinhood-dashboard-active'
+       END,
+       suppressed_reason = CASE
+         WHEN token_catalog.eligibility_state = 'robinhood-staged'
+           THEN 'robinhood-alerts-disabled'
+         ELSE 'robinhood-workspace-read-only'
+       END,
+       monitor_priority = 'dormant'`,
+    [JSON.stringify(snapshots)]
+  );
+  return result.rowCount || 0;
+}
+
 async function stageSnapshot(input, runner = db) {
   const snapshot = normalizeStagedSnapshot(input);
   const { rows } = await runner.query(
@@ -356,6 +426,7 @@ async function listManualMetadataCandidates(input = {}, runner = db) {
 }
 
 module.exports = {
+  applyLiveSnapshots,
   applyMetadata,
   ensureManualToken,
   listMetadata,
@@ -364,5 +435,5 @@ module.exports = {
   recordBlockscoutMetadata,
   recordDexscreenerMetadata,
   stageSnapshot,
-  __private: { normalizeDashboardSnapshot, normalizeStagedSnapshot },
+  __private: { normalizeDashboardSnapshot, normalizeLiveSnapshot, normalizeStagedSnapshot },
 };

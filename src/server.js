@@ -42,6 +42,7 @@ const { buildRobinhoodCatalogStagingTelemetry } = robinhoodCatalogStagingWorker;
 const robinhoodCatalogProjectionWorker = require('./services/robinhood-catalog-projection-worker');
 const { buildRobinhoodCatalogProjectionTelemetry } = robinhoodCatalogProjectionWorker;
 const robinhoodRealtimeAlertWorker = require('./services/robinhood-realtime-alert-worker');
+const robinhoodLiveCatalogWorker = require('./services/robinhood-live-catalog-worker');
 const {
   buildRobinhoodLeaseTelemetry,
   buildRobinhoodRolloutStatus,
@@ -402,6 +403,7 @@ function startWorkerSet() {
     const ingestionGate = evaluateRobinhoodIngestionGate(config);
     if (ingestionGate.allowed) {
       startLockedWorker('robinhood', ROBINHOOD_INGESTION_LEASE_KEY, 'Robinhood ingestion worker', () => {
+        robinhoodLiveCatalogWorker.start({ enabled: true });
         robinhoodRealtimeAlertWorker.start({
           enabled: true,
           signalConfig: config.robinhoodSignalDryRun,
@@ -422,8 +424,9 @@ function startWorkerSet() {
           socialMetadataEnabled: false,
           emitMarketBucketUpdate: (payload) => {
             const socketEmitted = socketHub.emitMarketBucketUpdate(payload);
+            const catalogQueued = robinhoodLiveCatalogWorker.enqueue(payload);
             const alertQueued = robinhoodRealtimeAlertWorker.enqueue(payload);
-            return socketEmitted || alertQueued;
+            return socketEmitted || catalogQueued || alertQueued;
           },
           onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_INGESTION_LEASE_KEY, error),
         });
@@ -616,6 +619,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodIngestionWorker.stop(),
       robinhoodCatalogStagingWorker.stop(),
       robinhoodCatalogProjectionWorker.stop(),
+      robinhoodLiveCatalogWorker.stop(),
       robinhoodRealtimeAlertWorker.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
