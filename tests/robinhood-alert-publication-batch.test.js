@@ -170,6 +170,42 @@ describe('Robinhood alert publication batch', () => {
     assert.equal(delivered[0].payload.liquidityCoverage, 'partial');
   });
 
+  it('publishes preloaded candidates without invoking the global candidate reader', async () => {
+    const delivered = [];
+    const value = candidate();
+    const batch = createRobinhoodAlertPublicationBatch({
+      userAlertProfileCache: {
+        listActiveProfiles: async () => [{ userId: 7, ruleEnabled: { hvnc: true } }],
+      },
+      delivery: {
+        async deliver(input) {
+          delivered.push(...input.intents);
+          return { status: 'completed', persisted: input.intents.length };
+        },
+      },
+      customAlertAdapter: {
+        evaluate: async () => ({ evaluatedRules: 0, matchedRules: 0, intents: [] }),
+      },
+      stagingOptions: {
+        repository: {
+          async listSignalDryRunCandidates() { throw new Error('global read is forbidden'); },
+        },
+        now: () => Date.parse('2026-07-14T18:00:00.000Z'),
+      },
+    });
+
+    const result = await batch.runCandidates([value], {
+      alertsRequested: true,
+      publishable: true,
+      signalConfig: SIGNAL_CONFIG,
+    });
+
+    assert.equal(result.queried, 1);
+    assert.equal(result.publication.intents, 1);
+    assert.equal(result.publication.delivery.persisted, 1);
+    assert.equal(delivered[0].tokenAddress, value.tokenAddress);
+  });
+
   it('evaluates custom FDV rules from committed candidates even when HVNC is suppressed', async () => {
     const delivered = [];
     let value = candidate({ volumeUsd: '100', transactions: 1 });

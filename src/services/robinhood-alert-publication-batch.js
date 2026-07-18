@@ -73,7 +73,7 @@ function createRobinhoodAlertPublicationBatch(options = {}) {
     || options.stagingOptions?.repository
     || createRobinhoodTokenReadRepository();
 
-  async function evaluateCustomRulesInShadow(input) {
+  function prepareShadow(input) {
     const config = normalizeRobinhoodSignalConfig({
       ...(input.signalConfig || {}),
       enabled: true,
@@ -82,25 +82,21 @@ function createRobinhoodAlertPublicationBatch(options = {}) {
 
     const generatedAtDate = new Date(input.asOf ?? Date.now());
     if (!Number.isFinite(generatedAtDate.getTime())) throw new Error('shadow asOf must be valid');
-    const candidateLimit = boundedInteger(input.candidateLimit, 1000, 5000);
-    const candidates = await shadowRepository.listSignalDryRunCandidates({
-      windowMs: config.windowMs,
-      limit: candidateLimit,
-      asOf: generatedAtDate,
-      statementTimeoutMs: boundedInteger(input.statementTimeoutMs, 10_000, 60_000),
-    });
-    const custom = await customAdapter.evaluate(candidates);
+    return { config, generatedAtDate };
+  }
 
+  async function buildShadowResult(run, candidates, candidateLimitReached) {
+    const custom = await customAdapter.evaluate(candidates);
     return Object.freeze({
       status: 'shadow',
       reason: 'rollout_not_publishable',
-      generatedAt: generatedAtDate.toISOString(),
+      generatedAt: run.generatedAtDate.toISOString(),
       queried: candidates.length,
       expectedSignals: 0,
       staged: 0,
       suppressed: 0,
-      candidateLimitReached: candidates.length === candidateLimit,
-      config,
+      candidateLimitReached,
+      config: run.config,
       publication: Object.freeze({
         mode: 'shadow',
         evaluatedProfiles: 0,
@@ -111,6 +107,19 @@ function createRobinhoodAlertPublicationBatch(options = {}) {
         delivery: shadowDelivery(),
       }),
     });
+  }
+
+  async function evaluateCustomRulesInShadow(input) {
+    const run = prepareShadow(input);
+    if (!run) return null;
+    const candidateLimit = boundedInteger(input.candidateLimit, 1000, 5000);
+    const candidates = await shadowRepository.listSignalDryRunCandidates({
+      windowMs: run.config.windowMs,
+      limit: candidateLimit,
+      asOf: run.generatedAtDate,
+      statementTimeoutMs: boundedInteger(input.statementTimeoutMs, 10_000, 60_000),
+    });
+    return buildShadowResult(run, candidates, candidates.length === candidateLimit);
   }
 
   async function publishApproved(approved, rollout, context = {}) {
@@ -157,7 +166,15 @@ function createRobinhoodAlertPublicationBatch(options = {}) {
     return stagingBatch.runOnce(input);
   }
 
-  return Object.freeze({ runOnce });
+  async function runCandidates(candidates, input = {}) {
+    if (input.alertsRequested === true && input.publishable !== true) {
+      const run = prepareShadow(input);
+      if (run) return buildShadowResult(run, candidates, false);
+    }
+    return stagingBatch.runCandidates(candidates, input);
+  }
+
+  return Object.freeze({ runCandidates, runOnce });
 }
 
 module.exports = {

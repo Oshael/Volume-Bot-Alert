@@ -92,6 +92,28 @@ describe('Robinhood catalog staging batch', () => {
     assert.deepEqual(staged, [rows[0].tokenAddress]);
   });
 
+  it('evaluates preloaded candidates without reading the global repository', async () => {
+    const rows = [candidate(1)];
+    const batch = createRobinhoodCatalogStagingBatch({
+      repository: {
+        async listSignalDryRunCandidates() { throw new Error('global read is forbidden'); },
+      },
+      projector: { async stage() { return { staged: true }; } },
+      now: () => NOW,
+    });
+
+    const result = await batch.runCandidates(rows, {
+      signalConfig: SIGNAL_CONFIG,
+      alertsRequested: true,
+      publishable: true,
+    });
+
+    assert.equal(result.queried, 1);
+    assert.equal(result.expectedSignals, 1);
+    assert.equal(result.staged, 1);
+    assert.equal(result.candidateLimitReached, false);
+  });
+
   it('fails closed before querying when calibrated gates are incomplete', async () => {
     let reads = 0;
     const batch = createRobinhoodCatalogStagingBatch({

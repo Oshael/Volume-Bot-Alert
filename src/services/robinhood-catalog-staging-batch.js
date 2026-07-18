@@ -36,7 +36,7 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
   const evaluatorFactory = options.evaluatorFactory || createRobinhoodSignalDryRunEvaluator;
   const now = options.now || Date.now;
 
-  async function runOnce(input = {}) {
+  function prepareRun(input) {
     const generatedAtDate = new Date(input.asOf ?? now());
     if (!Number.isFinite(generatedAtDate.getTime())) throw new Error('staging asOf must be valid');
     const generatedAt = generatedAtDate.toISOString();
@@ -44,31 +44,29 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
       ...(input.signalConfig || {}),
       enabled: true,
     });
+    return { config, generatedAt, generatedAtDate };
+  }
 
+  function closedResult(input, run) {
     if (input.alertsRequested !== true) {
-      return inactive('disabled', 'alerts_disabled', generatedAt, config);
+      return inactive('disabled', 'alerts_disabled', run.generatedAt, run.config);
     }
     if (input.publishable !== true) {
-      return inactive('blocked', 'rollout_not_publishable', generatedAt, config);
+      return inactive('blocked', 'rollout_not_publishable', run.generatedAt, run.config);
     }
-    if (!config.configured) {
-      return inactive('blocked', 'gates_not_configured', generatedAt, config);
+    if (!run.config.configured) {
+      return inactive('blocked', 'gates_not_configured', run.generatedAt, run.config);
     }
+    return null;
+  }
 
-    const candidateLimit = boundedInteger(input.candidateLimit, 1000, 5000);
-    const statementTimeoutMs = boundedInteger(input.statementTimeoutMs, 10_000, 60_000);
-    const candidates = await repository.listSignalDryRunCandidates({
-      windowMs: config.windowMs,
-      limit: candidateLimit,
-      asOf: generatedAtDate,
-      statementTimeoutMs,
-    });
+  async function evaluateCandidates(candidates, run, candidateLimitReached) {
     const blockedTokens = new Set(
       candidates.filter((candidate) => candidate.adminBlocked).map((candidate) => candidate.tokenAddress)
     );
     const evaluator = evaluatorFactory({
-      config,
-      now: () => generatedAtDate.getTime(),
+      config: run.config,
+      now: () => run.generatedAtDate.getTime(),
       adminBlocklist: { hasAddress: async (address) => blockedTokens.has(address) },
       policyOptions: options.policyOptions,
     });
@@ -97,25 +95,47 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
       ? await options.approvedConsumer(approved, {
           alertsRequested: true,
           publishable: true,
-          generatedAt,
+          generatedAt: run.generatedAt,
         }, { candidates })
       : null;
 
     return Object.freeze({
       status: 'completed',
       reason: null,
-      generatedAt,
+      generatedAt: run.generatedAt,
       queried: candidates.length,
       expectedSignals,
       staged,
       suppressed: candidates.length - expectedSignals,
-      candidateLimitReached: candidates.length === candidateLimit,
-      config,
+      candidateLimitReached,
+      config: run.config,
       publication,
     });
   }
 
-  return Object.freeze({ runOnce });
+  async function runOnce(input = {}) {
+    const run = prepareRun(input);
+    const closed = closedResult(input, run);
+    if (closed) return closed;
+    const candidateLimit = boundedInteger(input.candidateLimit, 1000, 5000);
+    const candidates = await repository.listSignalDryRunCandidates({
+      windowMs: run.config.windowMs,
+      limit: candidateLimit,
+      asOf: run.generatedAtDate,
+      statementTimeoutMs: boundedInteger(input.statementTimeoutMs, 10_000, 60_000),
+    });
+    return evaluateCandidates(candidates, run, candidates.length === candidateLimit);
+  }
+
+  async function runCandidates(candidates, input = {}) {
+    if (!Array.isArray(candidates)) throw new TypeError('staging candidates must be an array');
+    if (candidates.length > 5000) throw new RangeError('staging accepts at most 5000 candidates');
+    const run = prepareRun(input);
+    const closed = closedResult(input, run);
+    return closed || evaluateCandidates(candidates, run, false);
+  }
+
+  return Object.freeze({ runCandidates, runOnce });
 }
 
 module.exports = {
