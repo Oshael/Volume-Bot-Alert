@@ -394,7 +394,7 @@ function init(httpServer) {
     },
     pingInterval: 25000,
     pingTimeout: 20000,
-    maxHttpBufferSize: Math.max(1024, Number(config.security?.socket?.maxHttpBufferSize) || 16384),
+    maxHttpBufferSize: Math.max(1024, Number(config.security?.socket?.maxHttpBufferSize) || 65536),
   });
 
   io.use(async (socket, next) => {

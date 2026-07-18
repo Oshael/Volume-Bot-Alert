@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
 const socketHub = require('../src/services/socket-hub');
+const config = require('../config');
 
 const SOLANA_ADDRESS = 'So11111111111111111111111111111111111111112';
 const EVM_ADDRESS = '0xABCDEF0123456789ABCDEF0123456789ABCDEF01';
@@ -16,6 +17,17 @@ const {
 } = socketHub.__private;
 
 describe('chain-aware socket market protocol', () => {
+  it('fits the maximum subscription sync inside the configured transport buffer', () => {
+    const count = config.security.socket.maxSubscriptionsPerSocket;
+    const subscriptions = Array.from({ length: count }, (_, index) => ({
+      chain: 'robinhood',
+      address: `0x${index.toString(16).padStart(40, '0')}`,
+    }));
+    const packet = `42${JSON.stringify(['market:sync', { subscriptions }])}`;
+
+    assert.ok(Buffer.byteLength(packet) < config.security.socket.maxHttpBufferSize);
+  });
+
   it('separates canonical and legacy address-only request telemetry', () => {
     const telemetry = createMarketSubscriptionProtocolTelemetry('2026-07-16T10:00:00.000Z');
     recordMarketSubscriptionProtocolUsage(telemetry, {
