@@ -5,8 +5,10 @@ const CHAIN = 'robinhood';
 const MINUTE_MS = 60 * 1000;
 const MAX_WINDOW_MS = 14 * 24 * 60 * MINUTE_MS;
 const MAX_LIMIT = 5000;
+const MAX_TARGETED_ADDRESSES = 100;
+const TOKEN_FILTER_MARKER = '/* robinhood_token_filter */';
 
-const AGGREGATE_SIGNAL_SQL = `WITH bounds AS (
+const AGGREGATE_SIGNAL_SQL_TEMPLATE = `WITH bounds AS (
   SELECT CASE WHEN $4::boolean
     THEN date_trunc('minute', COALESCE($3::timestamptz, NOW()))
     ELSE COALESCE($3::timestamptz, NOW())
@@ -52,6 +54,7 @@ market_activity AS MATERIALIZED (
    AND registry.quote_address = bucket.quote_address
    AND registry.active = true
   WHERE bucket.chain = 'robinhood'
+    ${TOKEN_FILTER_MARKER}
     AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
     AND bucket.bucket_ts >= bounds.window_end
       - ($1::bigint * INTERVAL '1 millisecond')
@@ -127,6 +130,16 @@ ORDER BY ranked.token_volume_usd DESC, ranked.token_last_observed_at DESC,
   ranked.token_address ASC
 LIMIT $2::int`;
 
+function buildAggregateSignalSql(targeted = false) {
+  return AGGREGATE_SIGNAL_SQL_TEMPLATE.replace(
+    TOKEN_FILTER_MARKER,
+    targeted ? 'AND bucket.token_address = ANY($5::varchar[])' : '',
+  );
+}
+
+const AGGREGATE_SIGNAL_SQL = buildAggregateSignalSql();
+const TARGETED_SIGNAL_SQL = buildAggregateSignalSql(true);
+
 function normalizeQuery(options = {}) {
   const windowMs = Number(options.windowMs);
   if (!Number.isSafeInteger(windowMs) || windowMs <= 0
@@ -169,6 +182,15 @@ function timestampIso(value, label) {
 
 function normalizeBreakdown(value) {
   return value && typeof value === 'object' ? value : {};
+}
+
+function normalizeTargetAddresses(values) {
+  if (!Array.isArray(values)) throw new TypeError('Robinhood target addresses must be an array');
+  const addresses = [...new Set(values.map((value) => normalizeTokenAddress(CHAIN, value)))];
+  if (addresses.length > MAX_TARGETED_ADDRESSES) {
+    throw new RangeError(`Robinhood targeted read accepts at most ${MAX_TARGETED_ADDRESSES} addresses`);
+  }
+  return addresses;
 }
 
 function normalizeCandidate(row, windowMs) {
@@ -220,26 +242,60 @@ function normalizeCandidate(row, windowMs) {
 function createRobinhoodTokenReadRepository(options = {}) {
   const database = options.database || db;
 
-  async function listSignalDryRunCandidates(input = {}) {
+  async function readCandidates(input, targetAddresses = null) {
     const query = normalizeQuery(input);
     const execute = typeof database.queryWithStatementTimeout === 'function'
       ? (sql, params) => database.queryWithStatementTimeout(sql, params, query.statementTimeoutMs)
       : (sql, params) => database.query(sql, params);
+    const targeted = targetAddresses !== null;
     const result = await execute(
-      AGGREGATE_SIGNAL_SQL,
-      [query.windowMs, query.limit, query.asOf, query.alignToMinute]
+      targeted ? TARGETED_SIGNAL_SQL : AGGREGATE_SIGNAL_SQL,
+      [query.windowMs, query.limit, query.asOf, query.alignToMinute,
+        ...(targeted ? [targetAddresses] : [])],
     );
-    return result.rows.map((row) => normalizeCandidate(row, query.windowMs));
+    const candidates = result.rows.map((row) => normalizeCandidate(row, query.windowMs));
+    if (targeted) {
+      const requested = new Set(targetAddresses);
+      if (candidates.some((candidate) => !requested.has(candidate.tokenAddress))) {
+        throw new Error('Robinhood targeted read returned an unrequested token');
+      }
+    }
+    return candidates;
+  }
+
+  async function listSignalDryRunCandidates(input = {}) {
+    return readCandidates(input);
   }
 
   async function listActiveTokenCandidates(input = {}) {
     return listSignalDryRunCandidates({ ...input, alignToMinute: false });
   }
 
-  return Object.freeze({ listActiveTokenCandidates, listSignalDryRunCandidates });
+  async function listActiveTokenCandidatesByAddresses(input = {}) {
+    const addresses = normalizeTargetAddresses(input.addresses);
+    if (!addresses.length) return [];
+    return readCandidates({
+      ...input,
+      limit: addresses.length,
+      alignToMinute: false,
+    }, addresses);
+  }
+
+  return Object.freeze({
+    listActiveTokenCandidates,
+    listActiveTokenCandidatesByAddresses,
+    listSignalDryRunCandidates,
+  });
 }
 
 module.exports = {
   createRobinhoodTokenReadRepository,
-  __private: { AGGREGATE_SIGNAL_SQL, normalizeCandidate, normalizeQuery },
+  __private: {
+    AGGREGATE_SIGNAL_SQL,
+    TARGETED_SIGNAL_SQL,
+    buildAggregateSignalSql,
+    normalizeCandidate,
+    normalizeQuery,
+    normalizeTargetAddresses,
+  },
 };

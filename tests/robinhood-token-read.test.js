@@ -7,6 +7,7 @@ const {
 } = require('../src/models/robinhood-token-read');
 
 const TOKEN = '0x1111111111111111111111111111111111111111';
+const TOKEN_TWO = '0x3333333333333333333333333333333333333333';
 const QUOTE = '0x2222222222222222222222222222222222222222';
 const MARKET = `robinhood:uniswap-v3:0x${'3'.repeat(40)}`;
 
@@ -112,6 +113,61 @@ describe('Robinhood aggregate token read repository', () => {
     assert.equal(calls[0][3], true);
     assert.equal(calls[1][3], false);
     assert.equal(calls[1][2].toISOString(), '2026-07-14T18:00:10.000Z');
+  });
+
+  it('uses an indexed token filter for immediate reads of touched identities', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenReadRepository({
+      database: {
+        async queryWithStatementTimeout(sql, params, timeoutMs) {
+          calls.push({ sql, params, timeoutMs });
+          return { rows: [aggregateRow()] };
+        },
+      },
+    });
+
+    const rows = await repository.listActiveTokenCandidatesByAddresses({
+      addresses: [TOKEN.toUpperCase(), TOKEN, TOKEN_TWO],
+      windowMs: 300000,
+      asOf: '2026-07-14T18:00:10.000Z',
+      statementTimeoutMs: 1500,
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].tokenAddress, TOKEN);
+    assert.deepEqual(calls[0].params, [
+      300000, 2, new Date('2026-07-14T18:00:10.000Z'), false, [TOKEN, TOKEN_TWO],
+    ]);
+    assert.equal(calls[0].timeoutMs, 1500);
+    assert.match(calls[0].sql, /bucket\.token_address = ANY\(\$5::varchar\[\]\)/);
+    assert.doesNotMatch(__private.AGGREGATE_SIGNAL_SQL, /\$5::varchar\[\]/);
+  });
+
+  it('skips empty targeted reads and rejects invalid or excessive identities', async () => {
+    let calls = 0;
+    const repository = createRobinhoodTokenReadRepository({
+      database: { async query() { calls += 1; return { rows: [] }; } },
+    });
+
+    assert.deepEqual(await repository.listActiveTokenCandidatesByAddresses({
+      addresses: [], windowMs: 300000,
+    }), []);
+    assert.equal(calls, 0);
+    await assert.rejects(
+      repository.listActiveTokenCandidatesByAddresses({
+        addresses: ['invalid'], windowMs: 300000,
+      }),
+      /Invalid robinhood token address/,
+    );
+    await assert.rejects(
+      repository.listActiveTokenCandidatesByAddresses({
+        addresses: Array.from({ length: 101 }, (_, index) => (
+          `0x${index.toString(16).padStart(40, '0')}`
+        )),
+        windowMs: 300000,
+      }),
+      /at most 100 addresses/,
+    );
   });
 
   it('exposes USD liquidity only when every contributing market is covered', () => {
