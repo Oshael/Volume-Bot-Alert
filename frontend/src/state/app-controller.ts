@@ -81,6 +81,11 @@ import { adminBlockToken as adminBlockTokenRequest, adminUnblockToken as adminUn
 import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalletRequest, buyMockTradingToken, cancelMockTradingTakeProfitOrder as cancelMockTradingTakeProfitOrderRequest, createMockTradingTakeProfitOrder, createMockTradingWallet as createMockTradingWalletRequest, fetchMockTradingPositions, fetchMockTradingSummary, fetchMockTradingTrades, fetchMockTradingWallets, resetMockTradingPortfolio as resetMockTradingPortfolioRequest, sellMockTradingToken, setDefaultMockTradingWallet as setDefaultMockTradingWalletRequest, updateMockTradingWallet as updateMockTradingWalletRequest } from '../services/api/mock-trading';
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
+import {
+  mergeMonitoredFirstPage,
+  shouldApplyDashboardValuation,
+  shouldRunFullMonitoredHydration,
+} from './monitored-refresh-policy';
 import { normalizeCustomAlertCapabilities, requireCustomAlertCapability } from '../services/alerts/custom-alert-capability';
 import { loadSoundSettings, saveSoundSettings } from '../utils/sound-storage';
 import {
@@ -247,6 +252,7 @@ const CROSS_ALERT_BLOCK_MS = 5 * 60 * 1000;
 const PUMP_IMAGE_TIMEOUT_MS = 5000;
 const MONITORED_REFRESH_INTERVAL_MS = 3 * 1000;
 const MONITORED_DASHBOARD_POLL_INTERVAL_MS = 15 * 1000;
+const MONITORED_FULL_HYDRATION_INTERVAL_MS = 60 * 1000;
 const WORKSPACE_REALTIME_SUBSCRIPTION_LIMIT = 300;
 const MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE = 100;
 const MONITORED_DASHBOARD_HYDRATION_MAX_ITEMS = 500;
@@ -487,6 +493,22 @@ const TRACKED_MARKET_FIELD_KEYS = [
   'prevVolume5mCanonical',
 ] as const;
 
+const TRACKED_REALTIME_VALUATION_FIELD_KEYS = new Set([
+  'mcap',
+  'fdv',
+  'priceUsd',
+]);
+
+function shouldApplyTrackedMarketField(
+  key: typeof TRACKED_MARKET_FIELD_KEYS[number],
+  marketFieldsAreAuthoritative: boolean,
+  valuationFieldsAreAuthoritative: boolean,
+) {
+  return TRACKED_REALTIME_VALUATION_FIELD_KEYS.has(key)
+    ? valuationFieldsAreAuthoritative
+    : marketFieldsAreAuthoritative;
+}
+
 const TRACKED_MARKET_CONTEXT_FIELD_KEYS = [
   'valuation',
   'windowEnd',
@@ -502,6 +524,16 @@ const TRACKED_MARKET_CONTEXT_FIELD_KEYS = [
   'riskState',
   'dataQuality',
 ] as const;
+
+function shouldApplyTrackedMarketContext(
+  key: typeof TRACKED_MARKET_CONTEXT_FIELD_KEYS[number],
+  marketFieldsAreAuthoritative: boolean,
+  valuationFieldsAreAuthoritative: boolean,
+) {
+  return key === 'valuation' || key === 'activityState'
+    ? valuationFieldsAreAuthoritative
+    : marketFieldsAreAuthoritative;
+}
 
 const TRACKED_ALERT_PRESERVED_KEYS = [
   'lastAlertAt',
@@ -1198,6 +1230,7 @@ export function createAppController(): AppController {
   let floatingQuickBuyResetTimer: ReturnType<typeof setTimeout> | null = null;
   let supplementalMeteoraRefreshInFlight = false;
   let nextMonitoredDashboardPollAt = 0;
+  let nextMonitoredFullHydrationAt = 0;
   let bidZoneRefreshInFlight = false;
   let sparklineRefreshInFlight = false;
   let sparklineRefreshQueued = false;
@@ -1907,10 +1940,18 @@ export function createAppController(): AppController {
   ) {
     const nextFields: Partial<ManualTokenEntry> = {};
     const shouldApplyMarketFields = shouldApplyTrackedMarketFields(existingItem, dashboardItem);
+    const shouldApplyValuationFields = shouldApplyDashboardValuation(
+      existingItem?._liveMarketObservedAt,
+      dashboardItem,
+    );
 
     for (const key of TRACKED_MARKET_FIELD_KEYS) {
       nextFields[key] = selectWorkspaceSnapshotValue(
-        shouldApplyMarketFields,
+        shouldApplyTrackedMarketField(
+          key,
+          shouldApplyMarketFields,
+          shouldApplyValuationFields,
+        ),
         dashboardItem?.[key],
         existingItem?.[key],
         base[key],
@@ -1919,13 +1960,23 @@ export function createAppController(): AppController {
 
     Object.assign(nextFields, Object.fromEntries(TRACKED_MARKET_CONTEXT_FIELD_KEYS.map((key) => [
       key,
-      shouldApplyMarketFields
+      shouldApplyTrackedMarketContext(
+        key,
+        shouldApplyMarketFields,
+        shouldApplyValuationFields,
+      )
         ? dashboardItem?.[key]
         : existingItem?.[key] ?? base[key],
     ])));
 
+    nextFields.lastActivityAt = selectFreshestTrackedTimestamp(
+      dashboardItem?.lastActivityAt,
+      existingItem?.lastActivityAt,
+      base.lastActivityAt,
+    );
+
     nextFields.valuationType = selectWorkspaceSnapshotValue(
-      shouldApplyMarketFields,
+      shouldApplyValuationFields,
       dashboardItem?.valuationType,
       existingItem?.valuationType,
       base.valuationType,
@@ -3053,6 +3104,7 @@ export function createAppController(): AppController {
     configReloadRevision += 1;
     historyBootstrapRequestRevision += 1;
     monitoredBootstrapHydrationRevision += 1;
+    nextMonitoredFullHydrationAt = 0;
     resetManualMetadataBatchState();
   }
 
@@ -9226,6 +9278,11 @@ export function createAppController(): AppController {
         address: item.address,
         label: item.label ?? null,
       }));
+      const hasSnapshot = getCurrentMonitoredDashboardSnapshot().length > 0;
+      const fullHydration = shouldRunFullMonitoredHydration(
+        hasSnapshot,
+        nextMonitoredFullHydrationAt,
+      );
       await measureRuntimePerfAsync(
         'api.dashboard.monitored',
         isRuntimePerfDebugActive(),
@@ -9234,6 +9291,7 @@ export function createAppController(): AppController {
           token,
           manualTokens,
           requestedChains,
+          { fullHydration },
         ),
       );
       const monitoredSnapshot = getCurrentMonitoredDashboardSnapshot();
@@ -11173,17 +11231,108 @@ export function createAppController(): AppController {
     return true;
   }
 
+  async function hydrateRemainingMonitoredPages(input: {
+    token: string;
+    manualTokens: AddressItem[];
+    chains: TokenChain[];
+    requestRevision: number;
+    requestKey: string;
+    pageSize: number;
+    sorts: MonitoredSortCriterion[];
+    totalPages: number;
+    total: number;
+    snapshotAsOf: string | null;
+    generatedAt: string | null;
+    pinnedTokens: DashboardMonitoredToken[];
+    preserveExistingUntilComplete: boolean;
+    aggregatedTokens: DashboardMonitoredToken[];
+  }) {
+    let aggregatedTokens = input.aggregatedTokens;
+    for (let page = 1; page < input.totalPages; page += 1) {
+      if (!isMonitoredHydrationCurrent(input.requestRevision, input.token, input.requestKey)) {
+        return null;
+      }
+
+      const nextPage = await fetchMonitoredHydrationPage({
+        token: input.token,
+        chains: input.chains,
+        page,
+        perPage: input.pageSize,
+        sorts: input.sorts,
+        asOf: input.snapshotAsOf,
+      });
+      if (!isMonitoredHydrationCurrent(input.requestRevision, input.token, input.requestKey)) {
+        return null;
+      }
+      const nextSnapshotAsOf = nextPage.asOf ?? nextPage.generatedAt ?? null;
+      if (nextSnapshotAsOf !== input.snapshotAsOf) {
+        nextMonitoredFullHydrationAt = Date.now() + MONITORED_FULL_HYDRATION_INTERVAL_MS;
+        recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.snapshot-mismatch', {
+          expectedAsOf: input.snapshotAsOf,
+          receivedAsOf: nextSnapshotAsOf,
+          page,
+        });
+        return null;
+      }
+
+      if (nextPage.tokens.length === 0) {
+        applyPagedMonitoredHydrationSnapshot({
+          token: input.token,
+          manualTokens: input.manualTokens,
+          tokens: aggregatedTokens,
+          pinnedTokens: input.pinnedTokens,
+          snapshotComplete: true,
+          preserveExistingUntilComplete: input.preserveExistingUntilComplete,
+          generatedAt: input.generatedAt,
+        });
+        break;
+      }
+
+      aggregatedTokens = Array.from(new Map(
+        [...aggregatedTokens, ...nextPage.tokens]
+          .map((item) => [getTrackedTokenKey(item.address, item.chain), item]),
+      ).values());
+      const snapshotComplete = isMonitoredHydrationPageComplete({
+        page,
+        totalPages: input.totalPages,
+        loadedCount: aggregatedTokens.length,
+        total: input.total,
+        hasMore: nextPage.hasMore,
+      });
+      const applied = applyPagedMonitoredHydrationSnapshot({
+        token: input.token,
+        manualTokens: input.manualTokens,
+        tokens: aggregatedTokens,
+        pinnedTokens: input.pinnedTokens,
+        snapshotComplete,
+        preserveExistingUntilComplete: input.preserveExistingUntilComplete,
+        generatedAt: input.generatedAt,
+      });
+      if (applied) {
+        void hydrateManualTokensMetadataBatch(input.token, input.manualTokens, { emitOnComplete: false });
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+    return aggregatedTokens;
+  }
+
   async function hydratePagedDashboardMonitored(
     token: string,
     manualTokens: AddressItem[],
     chains = getReadySelectedChains('monitored'),
+    options: { fullHydration?: boolean } = {},
   ) {
+    const fullHydration = options.fullHydration !== false;
+    if (fullHydration) {
+      nextMonitoredFullHydrationAt = Date.now() + MONITORED_FULL_HYDRATION_INTERVAL_MS;
+    }
     const requestRevision = monitoredBootstrapHydrationRevision + 1;
     monitoredBootstrapHydrationRevision = requestRevision;
     const pageSize = MONITORED_DASHBOARD_HYDRATION_PAGE_SIZE;
     const bootstrapSorts = getMonitoredBootstrapSorts();
     const requestKey = buildChainRequestKey(chains);
-    const preserveExistingUntilComplete = getCurrentMonitoredDashboardSnapshot().length > 0;
+    const existingSnapshot = getCurrentMonitoredDashboardSnapshot();
+    const preserveExistingUntilComplete = existingSnapshot.length > 0;
     const firstPage = await fetchMonitoredHydrationPage({
       token,
       chains,
@@ -11211,13 +11360,16 @@ export function createAppController(): AppController {
       total: firstPage.total,
       hasMore: firstPage.hasMore,
     });
+    const previewTokens = firstPageComplete
+      ? aggregatedTokens
+      : mergeMonitoredFirstPage(existingSnapshot, aggregatedTokens);
     const firstPageApplied = applyPagedMonitoredHydrationSnapshot({
       token,
       manualTokens,
-      tokens: aggregatedTokens,
+      tokens: previewTokens,
       pinnedTokens,
-      snapshotComplete: firstPageComplete,
-      preserveExistingUntilComplete,
+      snapshotComplete: true,
+      preserveExistingUntilComplete: false,
       generatedAt,
     });
     refreshFirstMonitoredPageSparklines(token, firstPageApplied);
@@ -11230,81 +11382,41 @@ export function createAppController(): AppController {
       payloadHead: summarizeDashboardDebugTokens(firstPage.tokens),
     });
 
-    if (firstPageComplete) {
+    if (firstPageComplete || !fullHydration) {
+      if (fullHydration) {
+        nextMonitoredFullHydrationAt = Date.now() + MONITORED_FULL_HYDRATION_INTERVAL_MS;
+      }
       recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
-        total: aggregatedTokens.length,
-        payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
+        total: previewTokens.length,
+        partialRefresh: !firstPageComplete,
+        payloadHead: summarizeDashboardDebugTokens(previewTokens),
       });
       return;
     }
 
-    for (let page = 1; page < totalPages; page += 1) {
-      if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) {
-        return;
-      }
-
-      const nextPage = await fetchMonitoredHydrationPage({
-        token,
-        chains,
-        page,
-        perPage: pageSize,
-        sorts: bootstrapSorts,
-        asOf: snapshotAsOf,
-      });
-      if (!isMonitoredHydrationCurrent(requestRevision, token, requestKey)) {
-        return;
-      }
-      const nextSnapshotAsOf = nextPage.asOf ?? nextPage.generatedAt ?? null;
-      if (nextSnapshotAsOf !== snapshotAsOf) {
-        recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.snapshot-mismatch', {
-          expectedAsOf: snapshotAsOf,
-          receivedAsOf: nextSnapshotAsOf,
-          page,
-        });
-        return;
-      }
-
-      if (nextPage.tokens.length === 0) {
-        applyPagedMonitoredHydrationSnapshot({
-          token,
-          manualTokens,
-          tokens: aggregatedTokens,
-          pinnedTokens,
-          snapshotComplete: true,
-          preserveExistingUntilComplete,
-          generatedAt,
-        });
-        break;
-      }
-
-      aggregatedTokens = Array.from(new Map(
-        [...aggregatedTokens, ...nextPage.tokens].map((item) => [getTrackedTokenKey(item.address, item.chain), item]),
-      ).values());
-      const snapshotComplete = isMonitoredHydrationPageComplete({
-        page,
-        totalPages,
-        loadedCount: aggregatedTokens.length,
-        total: firstPage.total,
-        hasMore: nextPage.hasMore,
-      });
-      const applied = applyPagedMonitoredHydrationSnapshot({
-        token,
-        manualTokens,
-        tokens: aggregatedTokens,
-        pinnedTokens,
-        snapshotComplete,
-        preserveExistingUntilComplete,
-        generatedAt,
-      });
-      if (applied) {
-        void hydrateManualTokensMetadataBatch(token, manualTokens, { emitOnComplete: false });
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 0));
-    }
+    const completedTokens = await hydrateRemainingMonitoredPages({
+      token,
+      manualTokens,
+      chains,
+      requestRevision,
+      requestKey,
+      pageSize,
+      sorts: bootstrapSorts,
+      totalPages,
+      total: firstPage.total,
+      snapshotAsOf,
+      generatedAt,
+      pinnedTokens,
+      preserveExistingUntilComplete,
+      aggregatedTokens,
+    });
+    if (!completedTokens) return;
+    aggregatedTokens = completedTokens;
     recordRestoreControllerDebug('controller.dashboard-hydrate.monitored.complete', {
       total: aggregatedTokens.length,
       payloadHead: summarizeDashboardDebugTokens(aggregatedTokens),
     });
+    nextMonitoredFullHydrationAt = Date.now() + MONITORED_FULL_HYDRATION_INTERVAL_MS;
   }
 
   async function hydrateDashboardMonitoredInternal(
@@ -13257,6 +13369,7 @@ export function createAppController(): AppController {
       }
       state.ui.chainFilters = next;
       monitoredBootstrapHydrationRevision += 1;
+      nextMonitoredFullHydrationAt = 0;
       topPerformersRefreshRevision += 1;
       if (!isMockTradingEnabled(state)) {
         clearMockTradingState();
