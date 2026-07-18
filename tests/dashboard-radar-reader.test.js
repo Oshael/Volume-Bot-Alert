@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { createDashboardRadarReader } = require('../src/services/dashboard-radar-reader');
+const dashboardRadarReader = require('../src/services/dashboard-radar-reader');
+
+const { createDashboardRadarReader } = dashboardRadarReader;
 
 const AS_OF = '2026-07-15T18:00:00.000Z';
 const SOL = 'So11111111111111111111111111111111111111112';
@@ -30,6 +32,11 @@ function reader(chain, rows, total = rows.length, calls = []) {
 }
 
 describe('dashboard radar reader', () => {
+  it('exports the ready reader contract consumed by dashboard routes', () => {
+    assert.equal(typeof dashboardRadarReader.listExactRadar, 'function');
+    assert.equal(typeof dashboardRadarReader.listRadarPins, 'function');
+  });
+
   it('builds an exact combined page from bounded chain prefixes under one snapshot', async () => {
     const solanaCalls = [];
     const robinhoodCalls = [];

@@ -65,7 +65,7 @@ describe('Robinhood workspace radar reader', () => {
     assert.deepEqual(calls[0].params.slice(1), [
       30_000, 80_000, 0, 10_080, '%persistent%', [DISMISSED], false, [], 30,
     ]);
-    assert.equal(calls[0].timeout, 15_000);
+    assert.equal(calls[0].timeout, 30_000);
   });
 
   it('uses only Robinhood FDV and multiprotocol market sources', () => {
@@ -76,6 +76,13 @@ describe('Robinhood workspace radar reader', () => {
 
     assert.match(sql, /robinhood_market_buckets_1m/);
     assert.match(sql, /robinhood_market_buckets_1h/);
+    assert.match(sql, /WITH catalog_candidates AS MATERIALIZED/);
+    assert.match(sql, /tc\.last_seen_at > \$1::timestamptz/);
+    assert.match(sql, /tc\.last_fdv IS NULL/);
+    assert.match(sql, /tc\.last_fdv >= \$2::numeric/);
+    assert.match(sql, /LIMIT 1\) primary_market ON TRUE/);
+    assert.match(sql, /\) prices ON TRUE/);
+    assert.match(sql, /ORDER BY bucket\.bucket_ts DESC, bucket\.last_observed_at DESC/);
     assert.match(sql, /'uniswap-v2', 'uniswap-v3', 'uniswap-v4'/);
     assert.match(sql, /valuation\.last_fdv_usd ASC NULLS LAST/);
     assert.match(sql, /admin_blocked_tokens/);
@@ -83,6 +90,32 @@ describe('Robinhood workspace radar reader', () => {
     assert.doesNotMatch(sql, /eligible_for_monitoring|is_active_monitor_candidate/);
     assert.doesNotMatch(sql, /last_mcap|meteora|bid.?zone|token_market_buckets_1m/);
     assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/);
+  });
+
+  it('only reads the market data required by the active sort windows', () => {
+    const volume = __private.buildCatalogSql([{ mode: 'vol', window: '1h' }]);
+    const valuation = __private.buildCatalogSql([{ mode: 'mcap', window: 'highest' }]);
+
+    assert.match(volume, /bucket\.token_address = tc\.address/);
+    assert.match(volume, /INTERVAL '1 hour'/);
+    assert.match(volume, /FROM robinhood_market_buckets_1h bucket/);
+    assert.match(volume, /activity_start_1h AS MATERIALIZED/);
+    assert.match(volume, /activity_end AS MATERIALIZED/);
+    assert.match(volume, /LEFT JOIN activity ON activity\.token_address = tc\.address/);
+    assert.match(volume, /date_trunc\('hour', \$1::timestamptz\)/);
+    assert.doesNotMatch(volume, /primary_market ON TRUE/);
+    assert.doesNotMatch(volume, /prices ON TRUE/);
+    assert.doesNotMatch(volume, /24 hours 15 minutes/);
+    assert.match(volume, /activity AS MATERIALIZED/);
+    assert.doesNotMatch(valuation, /robinhood_market_buckets_1m/);
+    assert.doesNotMatch(valuation, /\bactivity\.|\bprices\./);
+  });
+
+  it('orders volume values before their coverage state', () => {
+    const order = __private.buildOrderSql([{ mode: 'vol', window: '24h' }]);
+
+    assert.match(order, /^\(CASE/);
+    assert.match(order, /DESC NULLS LAST,\n {2}CASE/);
   });
 
   it('returns an explicit empty starred result without querying', async () => {

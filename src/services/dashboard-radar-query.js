@@ -187,9 +187,10 @@ function coverage(row, field, window) {
 function compareCriterion(left, right, sort) {
   if (sort.mode === 'vol') {
     const field = VOLUME_FIELDS[sort.window];
+    const valueDelta = compareNullable(finiteOrNull(left[field]), finiteOrNull(right[field]));
     const coverageDelta = COVERAGE_ORDER[coverage(left, 'coverage', sort.window)]
       - COVERAGE_ORDER[coverage(right, 'coverage', sort.window)];
-    return coverageDelta || compareNullable(finiteOrNull(left[field]), finiteOrNull(right[field]));
+    return valueDelta || coverageDelta;
   }
   if (sort.mode === 'pchange') {
     const field = PRICE_CHANGE_FIELDS[sort.window];

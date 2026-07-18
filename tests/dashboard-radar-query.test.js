@@ -114,7 +114,7 @@ describe('dashboard radar query contract', () => {
     assert.equal(isRadarAgeInQuery(future, query), false);
   });
 
-  it('sorts complete zero ahead of partial activity and unavailable values last', () => {
+  it('sorts numeric volume before coverage and keeps unavailable values last', () => {
     const completeZero = row('solana', 'So11111111111111111111111111111111111111112');
     const partialPositive = row('robinhood', '0x1111111111111111111111111111111111111111', {
       volume1hUsd: 100,
@@ -128,7 +128,7 @@ describe('dashboard radar query contract', () => {
       compareRadarRows(left, right, [{ mode: 'vol', window: '1h' }])
     ));
 
-    assert.deepEqual(sorted, [completeZero, partialPositive, unavailable]);
+    assert.deepEqual(sorted, [partialPositive, completeZero, unavailable]);
   });
 
   it('sorts valuation and age without treating missing values as zero', () => {

@@ -95,6 +95,12 @@ describe('Solana workspace radar reader', () => {
     assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/);
   });
 
+  it('orders volume values before their coverage state', () => {
+    const order = __private.buildOrderSql([{ mode: 'vol', window: '24h' }]);
+
+    assert.match(order, /^volume\.close_vol_24h DESC NULLS LAST,\n {2}CASE WHEN/);
+  });
+
   it('applies canonical static filters and returns an explicit empty starred result', async () => {
     let queried = false;
     const reader = createSolanaWorkspaceRadarReader({

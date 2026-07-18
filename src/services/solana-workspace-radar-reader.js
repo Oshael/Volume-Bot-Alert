@@ -53,8 +53,8 @@ function buildOrderSql(sorts) {
   const clauses = [];
   for (const sort of sorts) {
     if (sort.mode === 'vol') {
-      clauses.push(`${volumeCoverageRankSql(sort.window)} ASC`);
       clauses.push(`volume.${VOLUME_COLUMNS[sort.window]} DESC NULLS LAST`);
+      clauses.push(`${volumeCoverageRankSql(sort.window)} ASC`);
     } else if (sort.mode === 'pchange') {
       clauses.push(`${priceCoverageRankSql(sort.window)} ASC`);
       clauses.push(`(${priceValueSql(sort.window)}) DESC NULLS LAST`);

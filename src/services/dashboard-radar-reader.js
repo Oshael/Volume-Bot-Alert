@@ -171,7 +171,10 @@ function createDashboardRadarReader(options = {}) {
   return Object.freeze({ listExactRadar, listRadarPins });
 }
 
+const defaultDashboardRadarReader = createDashboardRadarReader();
+
 module.exports = {
+  ...defaultDashboardRadarReader,
   createDashboardRadarReader,
   __private: { buildAdapterInput, buildExactRadarPage, normalizePrefix },
 };
