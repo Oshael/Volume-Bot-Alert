@@ -127,6 +127,7 @@ describe('frontend realtime market events', () => {
       swaps: 3,
       volumeDeltaUsd: 450.25,
       swapsDelta: 3,
+      canonicalVolume5m: null,
     });
 
     const advanced = marketEvents.buildRealtimeTokenMarketPatch(
@@ -156,6 +157,40 @@ describe('frontend realtime market events', () => {
     assert.equal(degraded.valuationType, null);
     assert.equal(degraded.valuation, null);
     assert.equal(degraded.activity.swapsDelta, 1);
+  });
+
+  it('applies canonical 5m windows and preserves an omitted same-window baseline', () => {
+    const activity = {
+      volumeUsd: '25', swaps: 1,
+      currentVolume5mUsd: '120', prevVolume5mCanonical: '80',
+      volume5mBaselineAt: '2026-07-15T11:55:00.000Z',
+      volume5mWindowEnd: '2026-07-15T12:00:00.000Z',
+      volume5mDeltaCoverage: 'complete',
+    };
+    const current = marketEvents.buildRealtimeTokenMarketPatch(
+      marketEvents.normalizeMarketBucketUpdate(event({ activity })),
+    );
+    assert.deepEqual(current.activity.canonicalVolume5m, {
+      currentVolumeUsd: 120,
+      previousVolumeUsd: 80,
+      baselineAt: '2026-07-15T11:55:00.000Z',
+      windowEnd: '2026-07-15T12:00:00.000Z',
+      coverage: 'complete',
+    });
+
+    const withoutBaseline = { ...activity };
+    delete withoutBaseline.prevVolume5mCanonical;
+    delete withoutBaseline.volume5mBaselineAt;
+    const merged = marketEvents.buildRealtimeTokenMarketPatch(
+      marketEvents.normalizeMarketBucketUpdate(event({ activity: withoutBaseline })),
+      {
+        prevVolume5mCanonical: 80,
+        volume5mBaselineAt: '2026-07-15T11:55:00.000Z',
+        volume5mWindowEnd: '2026-07-15T12:00:00.000Z',
+      },
+    );
+    assert.equal(merged.activity.canonicalVolume5m.previousVolumeUsd, 80);
+    assert.equal(merged.activity.canonicalVolume5m.coverage, 'complete');
   });
 
   it('builds a Robinhood live chart candle without falling back to market cap', () => {

@@ -112,6 +112,9 @@ export interface DashboardMonitoredToken {
   prevMcap?: number | null;
   mcapDelta?: number | null;
   prevVolume5mCanonical?: number | null;
+  volume5mBaselineAt?: string | null;
+  volume5mWindowEnd?: string | null;
+  volume5mDeltaCoverage?: 'complete' | 'partial' | 'unavailable' | null;
   lastSeenAt?: string | null;
   lastEvaluatedAt?: string | null;
   windowEnd?: string | null;

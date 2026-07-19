@@ -8,6 +8,7 @@ import { buildTokenExplorerUrl, buildTokenIdentityKey, buildTokenMarketUrl, norm
 import { resolveCoveredMetric, resolveTokenValuation, type ResolvedCoveredMetric, type TokenMetricCoverage } from '../../utils/token-valuation';
 import { buildTokenIdentityBadgeGroup } from '../token-chain-badge';
 import { resolveMonitoredEmptyStateContent } from '../../utils/monitored-empty-state';
+import { calculateCanonicalVolume5mDelta } from '../../utils/canonical-volume';
 
 const TICKER_PEERS_PANEL_GAP_PX = 8;
 const TICKER_PEERS_VIEWPORT_MARGIN_PX = 12;
@@ -787,10 +788,10 @@ function buildMonitoredRow(item: ManualTokenEntry, manualTokenFolders: AppState[
   const age = item.createdAt ? fmtAge(item.createdAt) : '-';
   const ageToneClass = getAgeToneClassFromCreatedAt(item.createdAt);
   const imageUrl = sanitizeOptionalHttpUrl(item.imageUrl);
-  const volDeltaBaseline = item.prevVolume5mCanonical ?? null;
-  const volDelta = volDeltaBaseline && volDeltaBaseline > 0 && item.volume5m != null
-    ? ((item.volume5m - volDeltaBaseline) / volDeltaBaseline) * 100
-    : null;
+  const volDelta = calculateCanonicalVolume5mDelta(
+    item.volume5m, item.prevVolume5mCanonical,
+    chain === 'robinhood' ? item.volume5mDeltaCoverage : 'complete',
+  );
   const article = document.createElement('article');
   article.className = buildMonitoredRowClassName(
     isStarred,

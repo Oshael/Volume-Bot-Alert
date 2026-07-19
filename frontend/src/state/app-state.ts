@@ -194,6 +194,9 @@ export interface ManualTokenEntry {
   mcapDelta?: number | null;
   prevVolume5m?: number | null;
   prevVolume5mCanonical?: number | null;
+  volume5mBaselineAt?: string | null;
+  volume5mWindowEnd?: string | null;
+  volume5mDeltaCoverage?: 'complete' | 'partial' | 'unavailable' | null;
   prevMcap?: number | null;
   lastSeenAt?: string | null;
   lastEvaluatedAt?: string | null;

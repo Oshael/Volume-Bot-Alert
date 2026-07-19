@@ -332,6 +332,8 @@ Acceptance:
 
 ### Cut 6 - Canonical VOL 5M delta
 
+Status: completed on 2026-07-19 with committed-boundary REST/socket parity
+
 Definition:
 
 ```text

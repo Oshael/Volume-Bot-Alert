@@ -16,6 +16,10 @@ function metricRow(overrides = {}) {
     coverage_end_at: new Date(WINDOW_END),
     caught_up: true,
     volume_5m_usd: null,
+    previous_volume_5m_usd: '500',
+    volume_5m_baseline_at: new Date('2026-07-15T17:55:00.000Z'),
+    volume_5m_window_end: new Date(WINDOW_END),
+    volume_5m_delta_coverage: 'complete',
     volume_1h_usd: '125000',
     volume_6h_usd: '410000',
     volume_24h_usd: '980000',
@@ -57,6 +61,10 @@ describe('Robinhood workspace window metric reader', () => {
     assert.equal(row.windowEnd, WINDOW_END);
     assert.equal(row.lastActivityAt, '2026-07-15T17:20:00.000Z');
     assert.equal(row.volume5mUsd, 0);
+    assert.equal(row.prevVolume5mCanonical, 500);
+    assert.equal(row.volume5mBaselineAt, '2026-07-15T17:55:00.000Z');
+    assert.equal(row.volume5mWindowEnd, WINDOW_END);
+    assert.equal(row.volume5mDeltaCoverage, 'complete');
     assert.equal(row.volume1hUsd, 125000);
     assert.equal(row.swaps5m, 0);
     assert.equal(row.swaps1h, 18);
@@ -88,6 +96,7 @@ describe('Robinhood workspace window metric reader', () => {
           coverage_start_at: new Date('2026-07-15T17:30:00.000Z'),
           coverage_end_at: new Date('2026-07-15T17:58:00.000Z'),
           caught_up: false,
+          volume_5m_delta_coverage: 'partial',
         })] };
       },
     };
@@ -101,6 +110,7 @@ describe('Robinhood workspace window metric reader', () => {
     });
     assert.equal(row.volume5mUsd, null);
     assert.equal(row.volume1hUsd, 125000);
+    assert.equal(row.volume5mDeltaCoverage, 'partial');
     assert.equal(row.coverageProvenance.caughtUp, false);
   });
 
@@ -111,6 +121,9 @@ describe('Robinhood workspace window metric reader', () => {
           coverage_start_at: null,
           coverage_end_at: null,
           caught_up: null,
+          volume_5m_baseline_at: null,
+          volume_5m_window_end: null,
+          volume_5m_delta_coverage: 'unavailable',
         })] };
       },
     };
@@ -125,6 +138,7 @@ describe('Robinhood workspace window metric reader', () => {
     });
     assert.equal(row.volume1hUsd, null);
     assert.equal(row.swaps1h, null);
+    assert.equal(row.prevVolume5mCanonical, null);
   });
 
   it('aggregates supported protocols by token and keeps price on one primary market', () => {
@@ -141,9 +155,12 @@ describe('Robinhood workspace window metric reader', () => {
     assert.match(sql, /bucket\.protocol = primary_market\.protocol/);
     assert.match(sql, /primary_prices AS/);
     assert.match(sql, /robinhood_ingestion_cursors/);
+    assert.match(sql, /FROM robinhood_market_observations observation/);
+    assert.match(sql, /observed_at > canonical_volume_bounds\.volume_window_end - INTERVAL '10 minutes'/);
+    assert.match(sql, /previous_volume_5m_usd/);
     assert.match(sql, /coverage_start_timestamp AS coverage_start_at/);
     assert.doesNotMatch(sql, /created_at AS coverage_start_at/);
-    assert.equal((sql.match(/FROM robinhood_market_buckets_1m bucket/g) || []).length, 4);
+    assert.equal((sql.match(/FROM robinhood_market_buckets_1m bucket/g) || []).length, 3);
     assert.equal((sql.match(/FROM robinhood_market_buckets_1h bucket/g) || []).length, 2);
     assert.match(sql, /FROM market_activity\s+GROUP BY token_address/);
     assert.match(sql, /MAX\(market_last_observed_at\) AS last_activity_at/);

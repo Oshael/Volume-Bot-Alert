@@ -40,6 +40,51 @@ market_cursor AS (
   FROM robinhood_ingestion_cursors
   WHERE chain = 'robinhood' AND stream = 'market'
 ),
+canonical_volume_bounds AS (
+  SELECT coverage_start_at, coverage_end_at,
+    CASE WHEN coverage_end_at IS NULL THEN NULL
+      ELSE LEAST(coverage_end_at, $2::timestamptz) END AS volume_window_end
+  FROM market_cursor
+),
+canonical_volume_5m AS MATERIALIZED (
+  SELECT requested.token_address,
+    canonical_volume_bounds.volume_window_end AS volume_5m_window_end,
+    canonical_volume_bounds.volume_window_end - INTERVAL '5 minutes' AS volume_5m_baseline_at,
+    CASE
+      WHEN canonical_volume_bounds.coverage_start_at IS NULL
+        OR canonical_volume_bounds.coverage_end_at IS NULL
+        OR canonical_volume_bounds.coverage_end_at <= canonical_volume_bounds.coverage_start_at
+        THEN 'unavailable'
+      WHEN canonical_volume_bounds.coverage_start_at
+          > canonical_volume_bounds.volume_window_end - INTERVAL '10 minutes'
+        OR canonical_volume_bounds.coverage_end_at < $2::timestamptz
+        THEN 'partial'
+      ELSE 'complete'
+    END AS volume_5m_delta_coverage,
+    SUM(observation.volume_usd) FILTER (
+      WHERE observation.observed_at > canonical_volume_bounds.volume_window_end - INTERVAL '5 minutes'
+    ) AS current_volume_5m_usd,
+    SUM(observation.volume_usd) FILTER (
+      WHERE observation.observed_at <= canonical_volume_bounds.volume_window_end - INTERVAL '5 minutes'
+    ) AS previous_volume_5m_usd,
+    COUNT(*) FILTER (
+      WHERE observation.observed_at > canonical_volume_bounds.volume_window_end - INTERVAL '5 minutes'
+    ) AS current_swaps_5m
+  FROM requested
+  LEFT JOIN canonical_volume_bounds ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT volume_usd, observed_at
+    FROM robinhood_market_observations observation
+    WHERE observation.chain = 'robinhood'
+      AND observation.token_address = requested.token_address
+      AND observation.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+      AND observation.status = 'accepted'
+      AND observation.observed_at > canonical_volume_bounds.volume_window_end - INTERVAL '10 minutes'
+      AND observation.observed_at <= canonical_volume_bounds.volume_window_end
+  ) observation ON TRUE
+  GROUP BY requested.token_address, canonical_volume_bounds.coverage_start_at,
+    canonical_volume_bounds.coverage_end_at, canonical_volume_bounds.volume_window_end
+),
 full_hour_rows AS MATERIALIZED (
   SELECT windows.window_name, bucket.token_address, bucket.protocol,
     bucket.market_key, bucket.volume_usd, bucket.swaps, bucket.last_observed_at
@@ -89,35 +134,16 @@ end_boundary_rows AS MATERIALIZED (
   ) bucket
   CROSS JOIN windows
 ),
-recent_rows AS MATERIALIZED (
-  SELECT '5m'::text AS window_name, bucket.token_address, bucket.protocol,
-    bucket.market_key, bucket.volume_usd, bucket.swaps, bucket.last_observed_at
-  FROM requested CROSS JOIN bounds
-  CROSS JOIN LATERAL (
-    SELECT bucket.token_address, bucket.protocol, bucket.market_key,
-      bucket.volume_usd, bucket.swaps, bucket.last_observed_at
-    FROM robinhood_market_buckets_1m bucket
-    WHERE bucket.chain = 'robinhood'
-      AND bucket.token_address = requested.token_address
-      AND bucket.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
-      AND bucket.bucket_ts >= bounds.window_end - INTERVAL '5 minutes'
-      AND bucket.bucket_ts < bounds.window_end
-    OFFSET 0
-  ) bucket
-),
 activity_rows AS MATERIALIZED (
   SELECT * FROM full_hour_rows
   UNION ALL SELECT * FROM start_boundary_rows
   UNION ALL SELECT * FROM end_boundary_rows
-  UNION ALL SELECT * FROM recent_rows
 ),
 market_activity AS MATERIALIZED (
   SELECT token_address, protocol, market_key,
-    SUM(volume_usd) FILTER (WHERE window_name = '5m') AS volume_5m_usd,
     SUM(volume_usd) FILTER (WHERE window_name = '1h') AS volume_1h_usd,
     SUM(volume_usd) FILTER (WHERE window_name = '6h') AS volume_6h_usd,
     SUM(volume_usd) FILTER (WHERE window_name = '24h') AS volume_24h_usd,
-    SUM(swaps) FILTER (WHERE window_name = '5m') AS swaps_5m,
     SUM(swaps) FILTER (WHERE window_name = '1h') AS swaps_1h,
     SUM(swaps) FILTER (WHERE window_name = '6h') AS swaps_6h,
     SUM(swaps) FILTER (WHERE window_name = '24h') AS swaps_24h,
@@ -134,11 +160,9 @@ primary_market AS (
 ),
 token_activity AS (
   SELECT token_address,
-    SUM(volume_5m_usd) AS volume_5m_usd,
     SUM(volume_1h_usd) AS volume_1h_usd,
     SUM(volume_6h_usd) AS volume_6h_usd,
     SUM(volume_24h_usd) AS volume_24h_usd,
-    SUM(swaps_5m) AS swaps_5m,
     SUM(swaps_1h) AS swaps_1h,
     SUM(swaps_6h) AS swaps_6h,
     SUM(swaps_24h) AS swaps_24h,
@@ -190,9 +214,15 @@ primary_prices AS (
 SELECT requested.token_address,
   market_cursor.coverage_start_at, market_cursor.coverage_end_at,
   market_cursor.caught_up,
-  token_activity.volume_5m_usd, token_activity.volume_1h_usd,
+  canonical_volume_5m.current_volume_5m_usd AS volume_5m_usd,
+  canonical_volume_5m.previous_volume_5m_usd,
+  canonical_volume_5m.volume_5m_baseline_at,
+  canonical_volume_5m.volume_5m_window_end,
+  canonical_volume_5m.volume_5m_delta_coverage,
+  token_activity.volume_1h_usd,
   token_activity.volume_6h_usd, token_activity.volume_24h_usd,
-  token_activity.swaps_5m, token_activity.swaps_1h,
+  canonical_volume_5m.current_swaps_5m AS swaps_5m,
+  token_activity.swaps_1h,
   token_activity.swaps_6h, token_activity.swaps_24h,
   COALESCE(token_activity.last_activity_at, latest_hour.last_activity_at) AS last_activity_at,
   primary_market.protocol AS primary_protocol,
@@ -204,6 +234,8 @@ SELECT requested.token_address,
 FROM requested
 CROSS JOIN bounds
 LEFT JOIN market_cursor ON TRUE
+LEFT JOIN canonical_volume_5m
+  ON canonical_volume_5m.token_address = requested.token_address
 LEFT JOIN token_activity ON token_activity.token_address = requested.token_address
 LEFT JOIN primary_market ON primary_market.token_address = requested.token_address
 LEFT JOIN primary_prices ON primary_prices.token_address = requested.token_address
@@ -245,6 +277,25 @@ function rowTimestamp(row, name) {
   return parsed.toISOString();
 }
 
+function normalizeCanonicalVolume5m(row) {
+  const coverage = String(row.volume_5m_delta_coverage || 'unavailable');
+  if (!['complete', 'partial', 'unavailable'].includes(coverage)) {
+    throw new Error('volume_5m_delta_coverage is invalid');
+  }
+  const previous = row.previous_volume_5m_usd == null
+    ? (coverage === 'complete' ? 0 : null)
+    : Number(row.previous_volume_5m_usd);
+  if (previous != null && (!Number.isFinite(previous) || previous < 0)) {
+    throw new Error('previous_volume_5m_usd is invalid');
+  }
+  return {
+    prevVolume5mCanonical: coverage === 'unavailable' ? null : previous,
+    volume5mBaselineAt: rowTimestamp(row, 'volume_5m_baseline_at'),
+    volume5mWindowEnd: rowTimestamp(row, 'volume_5m_window_end'),
+    volume5mDeltaCoverage: coverage,
+  };
+}
+
 function normalizeRow(row, windowEnd) {
   const coverage = Object.fromEntries(WINDOWS.map((window) => [window,
     resolveContinuousCoverage({
@@ -278,6 +329,7 @@ function normalizeRow(row, windowEnd) {
   return Object.freeze({
     ...identity,
     ...metrics,
+    ...normalizeCanonicalVolume5m(row),
     primaryMarket: row.primary_protocol && row.primary_market_key
       ? Object.freeze({ protocol: row.primary_protocol, marketKey: row.primary_market_key })
       : null,
@@ -308,5 +360,7 @@ function createRobinhoodWorkspaceWindowReadRepository(options = {}) {
 
 module.exports = {
   createRobinhoodWorkspaceWindowReadRepository,
-  __private: { WINDOW_METRICS_SQL, normalizeAddresses, normalizeRow },
+  __private: {
+    WINDOW_METRICS_SQL, normalizeAddresses, normalizeCanonicalVolume5m, normalizeRow,
+  },
 };

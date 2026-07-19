@@ -67,6 +67,10 @@ function normalizedMonitoredRow(chain, overrides = {}) {
     windowEnd: '2026-07-15T18:00:00.000Z',
     lastActivityAt: '2026-07-15T17:59:00.000Z',
     volume5mUsd: 1_000, volume1hUsd: 5_000,
+    prevVolume5mCanonical: 800,
+    volume5mBaselineAt: '2026-07-15T17:55:00.000Z',
+    volume5mWindowEnd: '2026-07-15T18:00:00.000Z',
+    volume5mDeltaCoverage: 'complete',
     volume6hUsd: 15_000, volume24hUsd: 60_000,
     coverage: { '5m': 'complete', '1h': 'complete', '6h': 'complete', '24h': 'complete' },
     activityState: 'fresh', riskState: 'unknown', dataQuality: [],
@@ -446,6 +450,8 @@ describe('Dashboard routes', () => {
       assert.equal(res.body.tokens[0].fdv, 30000);
       assert.equal(res.body.tokens[0].valuationType, 'fdv');
       assert.equal(res.body.tokens[0].liquidityUsd, null);
+      assert.equal(res.body.tokens[0].prevVolume5mCanonical, 800);
+      assert.equal(res.body.tokens[0].volume5mDeltaCoverage, 'complete');
       assert.equal(res.body.tokens[0].meteora, undefined);
     } finally {
       restoreExact();

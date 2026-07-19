@@ -524,6 +524,9 @@ const TRACKED_MARKET_CONTEXT_FIELD_KEYS = [
   'coverage',
   'swapCoverage',
   'priceChangeCoverage',
+  'volume5mBaselineAt',
+  'volume5mWindowEnd',
+  'volume5mDeltaCoverage',
   'activityState',
   'riskState',
   'dataQuality',
@@ -549,7 +552,25 @@ function getRealtimeActivityState(existing?: ManualTokenEntry | null): RealtimeA
     volumeUsd: existing?._liveActivityVolumeUsd,
     swaps: existing?._liveActivitySwaps,
     windowEnd: existing?.windowEnd,
+    prevVolume5mCanonical: existing?.prevVolume5mCanonical,
+    volume5mBaselineAt: existing?.volume5mBaselineAt,
+    volume5mWindowEnd: existing?.volume5mWindowEnd,
+    volume5mDeltaCoverage: existing?.volume5mDeltaCoverage,
   };
+}
+
+function applyCanonicalVolume5mFields(
+  fields: Partial<ManualTokenEntry>,
+  existing: ManualTokenEntry,
+  canonical: NonNullable<NonNullable<RealtimeTokenMarketPatch['activity']>['canonicalVolume5m']>,
+) {
+  if (canonical.currentVolumeUsd != null) fields.volume5m = canonical.currentVolumeUsd;
+  if (canonical.previousVolumeUsd != null) {
+    fields.prevVolume5mCanonical = canonical.previousVolumeUsd;
+  }
+  fields.volume5mBaselineAt = canonical.baselineAt ?? existing.volume5mBaselineAt ?? null;
+  fields.volume5mWindowEnd = canonical.windowEnd ?? existing.volume5mWindowEnd ?? null;
+  fields.volume5mDeltaCoverage = canonical.coverage;
 }
 
 function buildRealtimeActivityFields(
@@ -566,6 +587,8 @@ function buildRealtimeActivityFields(
   fields._liveActivityBucketTs = activity?.bucketTs ?? existing._liveActivityBucketTs ?? null;
   fields._liveActivityVolumeUsd = activity?.volumeUsd ?? existing._liveActivityVolumeUsd ?? null;
   fields._liveActivitySwaps = activity?.swaps ?? existing._liveActivitySwaps ?? null;
+  const canonical = activity?.canonicalVolume5m;
+  if (canonical) applyCanonicalVolume5mFields(fields, existing, canonical);
   return fields;
 }
 
@@ -1998,6 +2021,43 @@ export function createAppController(): AppController {
     };
   }
 
+  function canonicalSnapshotValue<T>(
+    existing: T | null | undefined,
+    dashboard: T | null | undefined,
+    base: T | null | undefined,
+    applyDashboard: boolean,
+  ) {
+    return applyDashboard
+      ? firstDefinedTrackedValue(dashboard, existing, base)
+      : firstDefinedTrackedValue(existing, base, dashboard);
+  }
+
+  function buildMergedCanonicalVolume5mFields(
+    existing: ManualTokenEntry | undefined,
+    dashboard: DashboardMonitoredToken | undefined,
+    base: ManualTokenEntry,
+    applyDashboard: boolean,
+  ): Partial<ManualTokenEntry> {
+    return {
+      prevVolume5mCanonical: canonicalSnapshotValue(
+        existing?.prevVolume5mCanonical, dashboard?.prevVolume5mCanonical,
+        base.prevVolume5mCanonical, applyDashboard,
+      ),
+      volume5mBaselineAt: canonicalSnapshotValue(
+        existing?.volume5mBaselineAt, dashboard?.volume5mBaselineAt,
+        base.volume5mBaselineAt, applyDashboard,
+      ),
+      volume5mWindowEnd: canonicalSnapshotValue(
+        existing?.volume5mWindowEnd, dashboard?.volume5mWindowEnd,
+        base.volume5mWindowEnd, applyDashboard,
+      ),
+      volume5mDeltaCoverage: canonicalSnapshotValue(
+        existing?.volume5mDeltaCoverage, dashboard?.volume5mDeltaCoverage,
+        base.volume5mDeltaCoverage, applyDashboard,
+      ),
+    };
+  }
+
   function buildMergedTrackedMarketFields(
     existingItem: ManualTokenEntry | undefined,
     dashboardItem: DashboardMonitoredToken | undefined,
@@ -2033,6 +2093,10 @@ export function createAppController(): AppController {
         ? dashboardItem?.[key]
         : existingItem?.[key] ?? base[key],
     ])));
+
+    Object.assign(nextFields, buildMergedCanonicalVolume5mFields(
+      existingItem, dashboardItem, base, shouldApplyMarketFields,
+    ));
 
     nextFields.lastActivityAt = selectFreshestTrackedTimestamp(
       dashboardItem?.lastActivityAt,
@@ -10449,6 +10513,9 @@ export function createAppController(): AppController {
       prevMcap: toNullableTrackedValue(item.prevMcap),
       mcapDelta: toNullableTrackedValue(item.mcapDelta),
       prevVolume5mCanonical: firstDefinedTrackedValue(item.prevVolume5mCanonical, item.prevVolume5m),
+      volume5mBaselineAt: toNullableTrackedValue(item.volume5mBaselineAt),
+      volume5mWindowEnd: toNullableTrackedValue(item.volume5mWindowEnd),
+      volume5mDeltaCoverage: toNullableTrackedValue(item.volume5mDeltaCoverage),
       lastSeenAt: toNullableTrackedValue(item.lastSeenAt),
       lastEvaluatedAt: toNullableTrackedValue(item.lastEvaluatedAt),
       windowEnd: toNullableTrackedValue(item.windowEnd),

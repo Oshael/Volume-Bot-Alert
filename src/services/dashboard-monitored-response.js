@@ -57,6 +57,12 @@ function buildDashboardMonitoredToken(row, options = {}) {
     priceUsd: optionalNumber(row.priceUsd, 'priceUsd'),
     liquidityUsd: optionalNumber(row.liquidityUsd, 'liquidityUsd'),
     volume5m: row.volume5mUsd,
+    prevVolume5mCanonical: optionalNumber(
+      row.prevVolume5mCanonical, 'prevVolume5mCanonical',
+    ),
+    volume5mBaselineAt: optionalValue(row.volume5mBaselineAt),
+    volume5mWindowEnd: optionalValue(row.volume5mWindowEnd),
+    volume5mDeltaCoverage: optionalValue(row.volume5mDeltaCoverage) || 'unavailable',
     volume1h: row.volume1hUsd,
     volume6h: row.volume6hUsd,
     volume24h: row.volume24hUsd,

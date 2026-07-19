@@ -592,7 +592,7 @@ async function insertProcessedLogs(client, rows) {
   return result.rows.map((row) => `${row.transaction_hash}:${row.log_index}`);
 }
 
-async function insertMarketObservations(client, rows) {
+async function insertMarketObservations(client, rows, cursor) {
   if (!rows.length) {
     return { insertedObservations: 0, touchedBuckets: 0, liveBuckets: [] };
   }
@@ -782,6 +782,53 @@ async function insertMarketObservations(client, rows) {
      touched_token_buckets AS (
        SELECT DISTINCT chain, token_address, bucket_ts FROM upserted_buckets
      ),
+     market_coverage AS (
+       SELECT COALESCE((
+         SELECT coverage_start_timestamp
+         FROM robinhood_ingestion_cursors
+         WHERE chain = 'robinhood' AND stream = 'market'
+       ), $2::timestamptz) AS coverage_start_at
+     ),
+     canonical_volume_5m AS (
+       SELECT target.chain, target.token_address,
+         $2::timestamptz AS volume_5m_window_end,
+         $2::timestamptz - INTERVAL '5 minutes' AS volume_5m_baseline_at,
+         CASE
+           WHEN $2::timestamptz IS NULL THEN 'unavailable'
+           WHEN market_coverage.coverage_start_at <= $2::timestamptz - INTERVAL '10 minutes'
+             THEN 'complete'
+           ELSE 'partial'
+         END AS volume_5m_delta_coverage,
+         COALESCE(SUM(observation.volume_usd) FILTER (
+           WHERE observation.observed_at > $2::timestamptz - INTERVAL '5 minutes'
+         ), 0) AS current_volume_5m_usd,
+         COALESCE(SUM(observation.volume_usd) FILTER (
+           WHERE observation.observed_at <= $2::timestamptz - INTERVAL '5 minutes'
+         ), 0) AS previous_volume_5m_usd
+       FROM (
+         SELECT DISTINCT chain, token_address FROM touched_token_buckets
+       ) target
+       CROSS JOIN market_coverage
+       LEFT JOIN LATERAL (
+         SELECT stored.volume_usd, stored.observed_at
+         FROM robinhood_market_observations stored
+         WHERE stored.chain = target.chain
+           AND stored.token_address = target.token_address
+           AND stored.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+           AND stored.status = 'accepted'
+           AND stored.observed_at > $2::timestamptz - INTERVAL '10 minutes'
+           AND stored.observed_at <= $2::timestamptz
+         UNION ALL
+         SELECT inserted.volume_usd, inserted.observed_at
+         FROM inserted_observations inserted
+         WHERE inserted.chain = target.chain
+           AND inserted.token_address = target.token_address
+           AND inserted.status = 'accepted'
+           AND inserted.observed_at > $2::timestamptz - INTERVAL '10 minutes'
+           AND inserted.observed_at <= $2::timestamptz
+       ) observation ON TRUE
+       GROUP BY target.chain, target.token_address, market_coverage.coverage_start_at
+     ),
      all_token_buckets AS (
        SELECT existing.*
        FROM robinhood_market_buckets_1m existing
@@ -851,6 +898,14 @@ async function insertMarketObservations(client, rows) {
         AND diagnostics.token_address = bucket.token_address
         AND diagnostics.bucket_ts = bucket.bucket_ts
        GROUP BY bucket.chain, bucket.token_address, bucket.bucket_ts, diagnostics.protocols
+     ),
+     live_bucket_payloads AS (
+       SELECT bucket.*, canonical.current_volume_5m_usd,
+         canonical.previous_volume_5m_usd, canonical.volume_5m_baseline_at,
+         canonical.volume_5m_window_end, canonical.volume_5m_delta_coverage
+       FROM live_buckets bucket
+       INNER JOIN canonical_volume_5m canonical
+         USING (chain, token_address)
      )
      SELECT
        (SELECT COUNT(*)::int FROM inserted_observations) AS inserted_observations,
@@ -869,6 +924,11 @@ async function insertMarketObservations(client, rows) {
          'lowFdvUsd', low_fdv_usd::text,
          'closeFdvUsd', close_fdv_usd::text,
          'volumeUsd', volume_usd::text,
+         'currentVolume5mUsd', current_volume_5m_usd::text,
+         'prevVolume5mCanonical', previous_volume_5m_usd::text,
+         'volume5mBaselineAt', volume_5m_baseline_at,
+         'volume5mWindowEnd', volume_5m_window_end,
+         'volume5mDeltaCoverage', volume_5m_delta_coverage,
          'swaps', swaps,
          'buys', buys,
          'sells', sells,
@@ -877,8 +937,8 @@ async function insertMarketObservations(client, rows) {
          'lastBlockNumber', last_block_number::text,
          'lastLogIndex', last_log_index::text,
          'protocols', protocols
-       ) ORDER BY token_address, bucket_ts) FROM live_buckets), '[]'::jsonb) AS live_buckets`,
-    [JSON.stringify(rows)]
+       ) ORDER BY token_address, bucket_ts) FROM live_bucket_payloads), '[]'::jsonb) AS live_buckets`,
+    [JSON.stringify(rows), cursor.checkpointTimestamp]
   );
   const counts = result.rows[0] || {};
   const expectedBuckets = Number(counts.expected_buckets || 0);
@@ -918,6 +978,13 @@ function buildRobinhoodMarketBucketUpdate(row, cursor) {
     generatedAt: new Date().toISOString(),
     activity: {
       volumeUsd: String(row.volumeUsd),
+      currentVolume5mUsd: row.currentVolume5mUsd == null
+        ? null : String(row.currentVolume5mUsd),
+      prevVolume5mCanonical: row.prevVolume5mCanonical == null
+        ? null : String(row.prevVolume5mCanonical),
+      volume5mBaselineAt: row.volume5mBaselineAt || null,
+      volume5mWindowEnd: row.volume5mWindowEnd || null,
+      volume5mDeltaCoverage: row.volume5mDeltaCoverage || 'unavailable',
       swaps: countValue(row.swaps, 'live bucket swaps'),
       buys: countValue(row.buys, 'live bucket buys'),
       sells: countValue(row.sells, 'live bucket sells'),
@@ -1164,7 +1231,7 @@ function createRobinhoodPersistenceRepository(options = {}) {
       const observations = entries
         .filter((entry) => entry.observation && insertedIdentities.has(rowIdentity(entry.row)))
         .map((entry) => entry.observation);
-      const marketWrite = await insertMarketObservations(client, observations);
+      const marketWrite = await insertMarketObservations(client, observations, cursor);
       const touchedHourlyBuckets = await refreshHourlyBuckets(client, observations);
       await upsertCursor(client, cursor);
       await client.query('COMMIT');

@@ -39,6 +39,10 @@ function normalizedRow(chain, overrides = {}) {
     windowEnd: '2026-07-15T18:00:00.000Z',
     lastActivityAt: '2026-07-15T17:55:00.000Z',
     volume5mUsd: 0,
+    prevVolume5mCanonical: 80,
+    volume5mBaselineAt: '2026-07-15T17:55:00.000Z',
+    volume5mWindowEnd: '2026-07-15T18:00:00.000Z',
+    volume5mDeltaCoverage: 'complete',
     volume1hUsd: null,
     volume6hUsd: 2_000,
     volume24hUsd: 9_000,
@@ -73,6 +77,9 @@ describe('dashboard monitored response', () => {
       { mcap: null, fdv: 50_000, type: 'fdv' },
     );
     assert.equal(solana.volume5m, 0);
+    assert.equal(robinhood.prevVolume5mCanonical, 80);
+    assert.equal(robinhood.volume5mBaselineAt, '2026-07-15T17:55:00.000Z');
+    assert.equal(robinhood.volume5mDeltaCoverage, 'complete');
     assert.equal(solana.volume1h, null);
     assert.equal(solana.coverage['1h'], 'unavailable');
     assert.equal(solana.catalogFirstSeenAt, Date.parse('2026-07-14T12:00:00.000Z'));

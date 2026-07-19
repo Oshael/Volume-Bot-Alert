@@ -35,6 +35,11 @@ export interface MarketBucketUpdateEvent {
   generatedAt?: string | null;
   activity?: {
     volumeUsd?: unknown;
+    currentVolume5mUsd?: unknown;
+    prevVolume5mCanonical?: unknown;
+    volume5mBaselineAt?: unknown;
+    volume5mWindowEnd?: unknown;
+    volume5mDeltaCoverage?: unknown;
     swaps?: unknown;
     buys?: unknown;
     sells?: unknown;
@@ -70,6 +75,13 @@ export interface RealtimeTokenMarketPatch {
     swaps: number | null;
     volumeDeltaUsd: number | null;
     swapsDelta: number | null;
+    canonicalVolume5m: {
+      currentVolumeUsd: number | null;
+      previousVolumeUsd: number | null;
+      baselineAt: string | null;
+      windowEnd: string | null;
+      coverage: 'complete' | 'partial' | 'unavailable';
+    } | null;
   } | null;
 }
 
@@ -78,6 +90,10 @@ export interface RealtimeActivityState {
   volumeUsd?: number | null;
   swaps?: number | null;
   windowEnd?: string | null;
+  prevVolume5mCanonical?: number | null;
+  volume5mBaselineAt?: string | null;
+  volume5mWindowEnd?: string | null;
+  volume5mDeltaCoverage?: 'complete' | 'partial' | 'unavailable' | null;
 }
 
 function validTimestamp(value: unknown) {
@@ -167,6 +183,39 @@ function activityDelta(current: number | null, previous: number | null, sameBuck
   return sameBucket && previous != null ? Math.max(0, current - previous) : current;
 }
 
+function buildCanonicalVolume5mPatch(
+  activity: MarketBucketUpdateEvent['activity'],
+  previous: RealtimeActivityState,
+) {
+  const keys = [
+    'currentVolume5mUsd', 'prevVolume5mCanonical', 'volume5mBaselineAt',
+    'volume5mWindowEnd', 'volume5mDeltaCoverage',
+  ];
+  if (!activity || !keys.some((key) => Object.hasOwn(activity, key))) return null;
+  const baselineAt = validTimestamp(activity.volume5mBaselineAt);
+  const windowEnd = validTimestamp(activity.volume5mWindowEnd);
+  const coverageValue = String(activity.volume5mDeltaCoverage || 'unavailable');
+  const coverage = ['complete', 'partial', 'unavailable'].includes(coverageValue)
+    ? coverageValue as 'complete' | 'partial' | 'unavailable'
+    : 'unavailable';
+  const sameWindow = windowEnd != null
+    && windowEnd === validTimestamp(previous.volume5mWindowEnd);
+  const resolvedBaselineAt = baselineAt
+    ?? (sameWindow ? validTimestamp(previous.volume5mBaselineAt) : null);
+  const hasCanonicalBounds = resolvedBaselineAt != null && windowEnd != null
+    && Date.parse(windowEnd) - Date.parse(resolvedBaselineAt) === 5 * 60_000;
+  const previousVolume = Object.hasOwn(activity, 'prevVolume5mCanonical')
+    ? nonNegativeMetric(activity.prevVolume5mCanonical)
+    : (sameWindow ? nonNegativeMetric(previous.prevVolume5mCanonical) : null);
+  return {
+    currentVolumeUsd: nonNegativeMetric(activity.currentVolume5mUsd),
+    previousVolumeUsd: previousVolume,
+    baselineAt: resolvedBaselineAt,
+    windowEnd,
+    coverage: hasCanonicalBounds ? coverage : 'unavailable' as const,
+  };
+}
+
 export function buildRealtimeActivityPatch(
   event: MarketBucketUpdateEvent,
   previous: RealtimeActivityState = {},
@@ -192,6 +241,7 @@ export function buildRealtimeActivityPatch(
       ? 0 : activityDelta(volumeUsd, nonNegativeMetric(previous.volumeUsd), sameBucket),
     swapsDelta: bucketAlreadyIncluded
       ? 0 : activityDelta(swaps, nonNegativeMetric(previous.swaps), sameBucket),
+    canonicalVolume5m: buildCanonicalVolume5mPatch(event.activity, previous),
   };
 }
 

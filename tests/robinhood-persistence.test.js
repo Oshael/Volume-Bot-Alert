@@ -190,6 +190,11 @@ function liveBucketRow(overrides = {}) {
     lowFdvUsd: '90000',
     closeFdvUsd: '120000',
     volumeUsd: '450.25',
+    currentVolume5mUsd: '1450.25',
+    prevVolume5mCanonical: '900',
+    volume5mBaselineAt: '2026-07-12T23:55:00.000Z',
+    volume5mWindowEnd: '2026-07-13T00:00:00.000Z',
+    volume5mDeltaCoverage: 'complete',
     swaps: 3,
     buys: 2,
     sells: 1,
@@ -554,6 +559,9 @@ describe('Robinhood persistence repository', () => {
     assert.match(fake.calls[2].sql, /close_liquidity_status = CASE/);
     assert.match(fake.calls[2].sql, /all_token_buckets AS/);
     assert.match(fake.calls[2].sql, /jsonb_object_agg\(protocol/);
+    assert.match(fake.calls[2].sql, /canonical_volume_5m AS/);
+    assert.match(fake.calls[2].sql, /FROM inserted_observations inserted/);
+    assert.match(fake.calls[2].sql, /observed_at > \$2::timestamptz - INTERVAL '10 minutes'/);
     assert.match(fake.calls[2].sql, /SUM\(bucket\.swaps\)/);
     assert.match(fake.calls[2].sql,
       /ORDER BY block_number DESC, log_index DESC/);
@@ -569,6 +577,9 @@ describe('Robinhood persistence repository', () => {
     assert.equal(emitted[0].payload.chain, 'robinhood');
     assert.equal(emitted[0].payload.address, TOKEN);
     assert.equal(emitted[0].payload.activity.volumeUsd, '450.25');
+    assert.equal(emitted[0].payload.activity.currentVolume5mUsd, '1450.25');
+    assert.equal(emitted[0].payload.activity.prevVolume5mCanonical, '900');
+    assert.equal(emitted[0].payload.activity.volume5mDeltaCoverage, 'complete');
     assert.equal(emitted[0].payload.activity.swaps, 3);
     assert.deepEqual(Object.keys(emitted[0].payload.activity.protocols), [
       'uniswap-v2', 'uniswap-v3',
@@ -581,6 +592,7 @@ describe('Robinhood persistence repository', () => {
 
     const logPayload = JSON.parse(fake.calls[1].params[0]);
     const observationPayload = JSON.parse(fake.calls[2].params[0]);
+    assert.equal(fake.calls[2].params[1].toISOString(), '2026-07-13T00:00:00.000Z');
     assert.equal('data' in logPayload[0], false);
     assert.equal(observationPayload[0].status, 'accepted');
     assert.equal(observationPayload[0].tokenAmountRaw, '123456789012345678901234567890');
