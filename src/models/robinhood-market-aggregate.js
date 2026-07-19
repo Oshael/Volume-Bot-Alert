@@ -134,6 +134,22 @@ function foldMarketRows(rows, input) {
 }
 
 function createRobinhoodMarketAggregateRepository(database = db) {
+  async function listRecentSourceBuckets(input = {}) {
+    const since = new Date(input.since);
+    const limit = Math.max(1, Math.min(1000, Math.trunc(Number(input.limit)) || 500));
+    if (!Number.isFinite(since.getTime())) throw new TypeError('since is invalid');
+    const result = await database.query(
+      `SELECT token_address, bucket_ts
+       FROM robinhood_market_buckets_1m
+       WHERE chain = 'robinhood' AND bucket_ts >= $1::timestamptz
+       GROUP BY token_address, bucket_ts
+       ORDER BY bucket_ts DESC, token_address ASC
+       LIMIT $2::int`,
+      [since.toISOString(), limit]
+    );
+    return result.rows;
+  }
+
   async function refreshBucket(rawInput) {
     const input = normalizeRefreshInput(rawInput);
     const sourceResult = await database.query(
@@ -162,7 +178,7 @@ function createRobinhoodMarketAggregateRepository(database = db) {
     return result.rows[0] || aggregate;
   }
 
-  return Object.freeze({ refreshBucket });
+  return Object.freeze({ listRecentSourceBuckets, refreshBucket });
 }
 
 module.exports = {

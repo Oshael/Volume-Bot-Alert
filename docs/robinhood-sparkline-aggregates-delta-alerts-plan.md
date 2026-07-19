@@ -1,6 +1,6 @@
 # Robinhood sparkline, aggregate buckets, delta and standard alerts plan
 
-Status: Cuts 1-2 completed; Cuts 3-8 pending
+Status: Cuts 1-3 completed; Cuts 4-8 pending
 
 Created: 2026-07-18
 
@@ -239,6 +239,8 @@ Validation:
 - `npm run lint`.
 
 ### Cut 3 - Incremental aggregate writer
+
+Status: completed on 2026-07-18; historical population remains in Cut 4
 
 Goal: keep aggregates current without delaying the committed-swap critical
 path.

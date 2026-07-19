@@ -41,6 +41,25 @@ function marketRow(protocol, marketKey, order, values = {}) {
 }
 
 describe('Robinhood market aggregate repository', () => {
+  it('loads only a bounded recent source range for restart recovery', async () => {
+    const calls = [];
+    const repository = createRobinhoodMarketAggregateRepository({
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{ token_address: ADDRESS, bucket_ts: INPUT.bucketTs }] };
+      },
+    });
+
+    const rows = await repository.listRecentSourceBuckets({
+      since: '2026-07-18T11:30:00.000Z',
+      limit: 25,
+    });
+
+    assert.equal(rows.length, 1);
+    assert.match(calls[0].sql, /bucket_ts >= \$1[\s\S]*LIMIT \$2/);
+    assert.deepEqual(calls[0].params, ['2026-07-18T11:30:00.000Z', 25]);
+  });
+
   it('folds V2, V3 and V4 market rows once with deterministic chain-wide ordering', () => {
     const rows = [
       marketRow('uniswap-v3', 'market-b', 2),

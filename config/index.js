@@ -683,6 +683,9 @@ module.exports = {
       60 * 1000
     ),
   },
+  robinhoodMarketAggregateWorker: {
+    enabled: parseBoolean(process.env.ROBINHOOD_MARKET_AGGREGATES_ENABLED, true),
+  },
 
   robinhoodCatalogProjectionWorker: {
     intervalMs: parseIntegerInRange(

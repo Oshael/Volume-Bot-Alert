@@ -43,6 +43,7 @@ const robinhoodCatalogProjectionWorker = require('./services/robinhood-catalog-p
 const { buildRobinhoodCatalogProjectionTelemetry } = robinhoodCatalogProjectionWorker;
 const robinhoodRealtimeAlertWorker = require('./services/robinhood-realtime-alert-worker');
 const robinhoodLiveCatalogWorker = require('./services/robinhood-live-catalog-worker');
+const robinhoodMarketAggregateWorker = require('./services/robinhood-market-aggregate-worker');
 const {
   buildRobinhoodLeaseTelemetry,
   buildRobinhoodRolloutStatus,
@@ -243,6 +244,7 @@ app.get('/api/admin/ws-status', authenticate, requireAdmin, async (req, res) => 
     },
     robinhoodLiveCatalogWorker: robinhoodLiveCatalogWorker.getStatus(),
     robinhoodRealtimeAlertWorker: robinhoodRealtimeAlertWorker.getStatus(),
+    robinhoodMarketAggregateWorker: robinhoodMarketAggregateWorker.getStatus(),
     robinhoodRollout: buildRobinhoodRolloutStatus({
       config,
       ingestionStatus: robinhoodIngestionStatus,
@@ -406,6 +408,7 @@ function startWorkerSet() {
     if (ingestionGate.allowed) {
       startLockedWorker('robinhood', ROBINHOOD_INGESTION_LEASE_KEY, 'Robinhood ingestion worker', () => {
         robinhoodLiveCatalogWorker.start({ enabled: true });
+        robinhoodMarketAggregateWorker.start(config.robinhoodMarketAggregateWorker);
         robinhoodRealtimeAlertWorker.start({
           enabled: true,
           signalConfig: config.robinhoodSignalDryRun,
@@ -429,7 +432,8 @@ function startWorkerSet() {
             const relayQueued = socketEmitted || marketBucketRealtime.enqueue(payload);
             const catalogQueued = robinhoodLiveCatalogWorker.enqueue(payload);
             const alertQueued = robinhoodRealtimeAlertWorker.enqueue(payload);
-            return socketEmitted || relayQueued || catalogQueued || alertQueued;
+            const aggregateQueued = robinhoodMarketAggregateWorker.enqueue(payload);
+            return socketEmitted || relayQueued || catalogQueued || alertQueued || aggregateQueued;
           },
           onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_INGESTION_LEASE_KEY, error),
         });
@@ -627,6 +631,7 @@ async function shutdownGracefully(signal = 'SIGTERM') {
       robinhoodCatalogProjectionWorker.stop(),
       robinhoodLiveCatalogWorker.stop(),
       robinhoodRealtimeAlertWorker.stop(),
+      robinhoodMarketAggregateWorker.stop(),
     ]);
     const releaseResult = await workerLeaseManager.stop({ releaseLeases: true });
     console.log(`[Shutdown] Worker leases released=${releaseResult.released} missed=${releaseResult.missed} errors=${releaseResult.errors}`);
