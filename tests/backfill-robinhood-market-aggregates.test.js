@@ -11,7 +11,7 @@ function options(overrides = {}) {
     sleepMs: 0, fineWindowHours: 1, coarseWindowHours: 24, ...overrides,
   };
 }
-function fakeDatabase(sourceRows = []) {
+function fakeDatabase(sourceRows = [], bounds = {}) {
   const calls = [];
   return {
     calls,
@@ -20,8 +20,8 @@ function fakeDatabase(sourceRows = []) {
       if (/MIN\(bucket_ts\)/.test(sql)) {
         return {
           rows: [{
-            min_ts: '2026-07-18T12:00:00.000Z',
-            max_ts: '2026-07-18T12:59:00.000Z',
+            min_ts: bounds.min || '2026-07-18T12:00:00.000Z',
+            max_ts: bounds.max || '2026-07-18T12:59:00.000Z',
           }],
         };
       }
@@ -83,6 +83,35 @@ describe('Robinhood aggregate backfill', () => {
     assert.ok(database.calls.every((call) => call.timeoutMs === 5000));
     assert.match(database.calls.at(-1).sql, /candidate_tokens[\s\S]*LIMIT \$4/);
   });
+  it('starts fine aggregation at the oldest available 1m source bucket', async () => {
+    const oldest = '2025-01-01T00:00:00.000Z';
+    const database = fakeDatabase([[]], {
+      min: oldest,
+      max: '2026-07-18T12:59:00.000Z',
+    });
+
+    await runBackfill(options(), {
+      database,
+      readCheckpoint: async () => null,
+      writeCheckpoint: async () => {},
+    });
+
+    const sourceCall = database.calls.find((call) => /candidate_tokens/.test(call.sql));
+    assert.equal(sourceCall.params[0], oldest);
+  });
+  it('rejects checkpoints created with the former 14-day fine-history scope', async () => {
+    await assert.rejects(
+      runBackfill(options(), {
+        database: fakeDatabase(),
+        readCheckpoint: async () => ({
+          version: 1,
+          asOf: '2026-07-18T13:00:00.000Z',
+          cursor: { phase: 'fine', windowStart: null, afterToken: null },
+        }),
+      }),
+      /checkpoint is incompatible/
+    );
+  });
   it('writes a coarse chunk and preserves its resume cursor after success', async () => {
     const database = fakeDatabase([[
       { token_address: TOKEN, bucket_ts: '2026-07-18T12:00:00.000Z' },
@@ -90,7 +119,7 @@ describe('Robinhood aggregate backfill', () => {
     const written = [];
     let saved;
     const checkpoint = {
-      version: 1,
+      version: 2,
       asOf: '2026-07-18T13:00:00.000Z',
       cursor: { phase: 'coarse', windowStart: '2026-07-18T12:00:00.000Z', afterToken: null },
     };

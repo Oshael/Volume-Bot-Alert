@@ -7,7 +7,6 @@ const PHASES = Object.freeze({
   coarse: { table: 'robinhood_market_buckets_1h', granularities: [60, 240, 1440], sourceMinutes: 60 },
 });
 const PHASE_ORDER = Object.freeze(Object.keys(PHASES));
-const FINE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 function integer(value, name, fallback, minimum, maximum) {
   if (value == null || value === '') return fallback;
   const parsed = Number.parseInt(String(value), 10);
@@ -139,9 +138,8 @@ function resolvePhaseRange(options, checkpoint, phase, bounds) {
   if (!bounds.min || !bounds.max) return null;
   const asOfMs = new Date(checkpoint.asOf).getTime();
   const configuredStart = options.from?.getTime() ?? bounds.min.getTime();
-  const retentionStart = phase === 'fine' ? asOfMs - FINE_RETENTION_MS : configuredStart;
   return {
-    startMs: Math.max(bounds.min.getTime(), configuredStart, retentionStart),
+    startMs: Math.max(bounds.min.getTime(), configuredStart),
     endMs: Math.min(asOfMs, bounds.max.getTime() + PHASES[phase].sourceMinutes * 60 * 1000),
   };
 }
@@ -150,7 +148,7 @@ function nextPhase(phase) {
   return PHASE_ORDER[PHASE_ORDER.indexOf(phase) + 1] || null;
 }
 function assertCheckpoint(checkpoint) {
-  if (checkpoint.version !== 1 || (checkpoint.cursor?.phase != null && !PHASES[checkpoint.cursor.phase])) {
+  if (checkpoint.version !== 2 || (checkpoint.cursor?.phase != null && !PHASES[checkpoint.cursor.phase])) {
     throw new Error('checkpoint is incompatible');
   }
 }
@@ -231,7 +229,7 @@ async function runBackfill(options, deps = {}) {
   const load = deps.readCheckpoint || readCheckpoint;
   const save = deps.writeCheckpoint || writeCheckpoint;
   const checkpoint = await load(options.checkpointFile) || {
-    version: 1,
+    version: 2,
     asOf: (options.to || new Date()).toISOString(),
     cursor: { phase: 'fine', windowStart: null, afterToken: null },
   };

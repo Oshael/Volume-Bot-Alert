@@ -145,10 +145,12 @@ mistake a single market for total token activity.
 
 Retention target:
 
-- 5m, 15m and 30m: at least the same 14-day detailed horizon as the 1m source;
-- 1h, 4h and 24h: permanent, derived from the permanent 1h source;
-- retention must never delete 1m data before the existing permanent 1h copy is
-  complete.
+- raw 1m buckets: 14 days;
+- 5m, 15m and 30m aggregates: permanent, derived from every available 1m
+  source bucket before raw retention runs;
+- 1h, 4h and 24h aggregates: permanent, derived from the permanent 1h source;
+- retention must never delete 1m data before its permanent 5m, 15m, 30m and 1h
+  parents are complete.
 
 ## Execution cuts
 
@@ -274,7 +276,8 @@ Validation:
 
 ### Cut 4 - Chunked backfill and retention
 
-Status: completed on 2026-07-18; reader migration remains in Cut 5
+Status: completed and corrected for permanent aggregate retention on 2026-07-18;
+reader migration remains in Cut 5
 
 Goal: populate existing RH history without saturating PostgreSQL.
 
@@ -283,9 +286,14 @@ Changes:
 - add dry-run and write modes;
 - backfill by bounded time/token chunks with statement timeout;
 - support resume checkpoints and idempotent reruns;
-- backfill fine resolutions only inside their retention horizon;
+- backfill fine resolutions across the complete available 1m source history;
 - build permanent 1h/4h/24h history from `robinhood_market_buckets_1h`;
 - report scanned, written, skipped, failed and remaining ranges.
+
+For a full-history restore, disable `ROBINHOOD_RETENTION_ENABLED`, import all
+1m buckets, run the aggregate backfill from a fresh checkpoint, and only
+re-enable retention after the fine phase completes. Checkpoints created before
+the permanent-fine-history correction are intentionally incompatible.
 
 Acceptance:
 

@@ -18,12 +18,10 @@ let status = {
   lastDeletedProcessedLogs: 0,
   lastDeletedObservations: 0,
   lastDeletedMinuteBuckets: 0,
-  lastDeletedAggregateBuckets: 0,
   lastProtectedMinuteBuckets: 0,
   totalDeletedProcessedLogs: 0,
   totalDeletedObservations: 0,
   totalDeletedMinuteBuckets: 0,
-  totalDeletedAggregateBuckets: 0,
   totalErrors: 0,
   lastError: null,
 };
@@ -99,7 +97,7 @@ async function deleteExpiredMinuteBuckets(database, options) {
     database,
     `WITH expired AS MATERIALIZED (
        SELECT
-         minute.chain, minute.protocol, minute.market_key, minute.bucket_ts,
+         minute.chain, minute.protocol, minute.market_key, minute.token_address, minute.bucket_ts,
          minute.first_block_number, minute.last_block_number, minute.updated_at
        FROM robinhood_market_buckets_1m minute
        WHERE minute.expires_at <= NOW()
@@ -122,6 +120,25 @@ async function deleteExpiredMinuteBuckets(database, options) {
            AND hourly.last_block_number >= expired.last_block_number
            AND hourly.updated_at >= expired.updated_at
        )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM (VALUES (5), (15), (30)) required(granularity_minutes)
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM robinhood_market_buckets_agg aggregate
+             WHERE aggregate.chain = expired.chain
+               AND aggregate.token_address = expired.token_address
+               AND aggregate.granularity_minutes = required.granularity_minutes
+               AND aggregate.bucket_ts = to_timestamp(
+                 FLOOR(EXTRACT(EPOCH FROM expired.bucket_ts)
+                   / (required.granularity_minutes * 60))
+                 * (required.granularity_minutes * 60)
+               )
+               AND aggregate.first_block_number <= expired.first_block_number
+               AND aggregate.last_block_number >= expired.last_block_number
+               AND aggregate.updated_at >= expired.updated_at
+           )
+         )
      ),
      deleted AS (
        DELETE FROM robinhood_market_buckets_1m minute
@@ -131,27 +148,10 @@ async function deleteExpiredMinuteBuckets(database, options) {
          AND minute.market_key = candidates.market_key
          AND minute.bucket_ts = candidates.bucket_ts
        RETURNING 1
-     ),
-     deleted_aggregates AS (
-       DELETE FROM robinhood_market_buckets_agg aggregate
-       WHERE (aggregate.chain, aggregate.token_address, aggregate.granularity_minutes,
-              aggregate.bucket_ts) IN (
-         SELECT candidate.chain, candidate.token_address, candidate.granularity_minutes,
-                candidate.bucket_ts
-         FROM robinhood_market_buckets_agg candidate
-         WHERE candidate.chain = 'robinhood'
-           AND candidate.granularity_minutes IN (5, 15, 30)
-           AND candidate.bucket_ts < NOW() - INTERVAL '14 days'
-         ORDER BY candidate.bucket_ts ASC
-         LIMIT $1::int
-         FOR UPDATE OF candidate SKIP LOCKED
-       )
-       RETURNING 1
      )
      SELECT
        (SELECT COUNT(*)::int FROM expired) AS examined_buckets,
-       (SELECT COUNT(*)::int FROM deleted) AS minute_buckets,
-       (SELECT COUNT(*)::int FROM deleted_aggregates) AS aggregate_buckets`,
+       (SELECT COUNT(*)::int FROM deleted) AS minute_buckets`,
     [options.batchLimit],
     options.statementTimeoutMs
   );
@@ -159,7 +159,6 @@ async function deleteExpiredMinuteBuckets(database, options) {
   const deleted = Number(result.rows[0]?.minute_buckets || 0);
   return {
     deleted,
-    aggregates: Number(result.rows[0]?.aggregate_buckets || 0),
     examined,
     protected: Math.max(0, examined - deleted),
   };
@@ -171,7 +170,6 @@ function emptySummary() {
     processedLogs: 0,
     observations: 0,
     minuteBuckets: 0,
-    aggregateBuckets: 0,
     protectedMinuteBuckets: 0,
   };
 }
@@ -185,12 +183,9 @@ async function runCleanupBatches(database, options) {
     summary.processedLogs += raw.processedLogs;
     summary.observations += raw.observations;
     summary.minuteBuckets += minute.deleted;
-    summary.aggregateBuckets += minute.aggregates;
     summary.protectedMinuteBuckets += minute.protected;
     if (minute.protected > 0) break;
-    if (raw.processedLogs < options.batchLimit
-      && minute.examined < options.batchLimit
-      && minute.aggregates < options.batchLimit) break;
+    if (raw.processedLogs < options.batchLimit && minute.examined < options.batchLimit) break;
   }
   return summary;
 }
@@ -214,12 +209,10 @@ async function runOnce(options = {}, meta = {}, deps = {}) {
       status.lastDeletedProcessedLogs = summary.processedLogs;
       status.lastDeletedObservations = summary.observations;
       status.lastDeletedMinuteBuckets = summary.minuteBuckets;
-      status.lastDeletedAggregateBuckets = summary.aggregateBuckets;
       status.lastProtectedMinuteBuckets = summary.protectedMinuteBuckets;
       status.totalDeletedProcessedLogs += summary.processedLogs;
       status.totalDeletedObservations += summary.observations;
       status.totalDeletedMinuteBuckets += summary.minuteBuckets;
-      status.totalDeletedAggregateBuckets += summary.aggregateBuckets;
       status.lastCompletedAt = new Date().toISOString();
       status.lastRunDurationMs = Date.now() - startedAtMs;
       return summary;
@@ -240,8 +233,8 @@ function schedule(options, delayMs) {
   timer = setTimeout(async () => {
     try {
       const summary = await runOnce(options, { ifRunning: 'join' });
-      if (summary.processedLogs || summary.minuteBuckets || summary.aggregateBuckets || summary.protectedMinuteBuckets) {
-        console.log(`[RobinhoodRetentionWorker] logs=${summary.processedLogs} observations=${summary.observations} minuteBuckets=${summary.minuteBuckets} aggregateBuckets=${summary.aggregateBuckets} protectedMinuteBuckets=${summary.protectedMinuteBuckets} batches=${summary.batches}`);
+      if (summary.processedLogs || summary.minuteBuckets || summary.protectedMinuteBuckets) {
+        console.log(`[RobinhoodRetentionWorker] logs=${summary.processedLogs} observations=${summary.observations} minuteBuckets=${summary.minuteBuckets} protectedMinuteBuckets=${summary.protectedMinuteBuckets} batches=${summary.batches}`);
       }
     } catch (error) {
       console.error('[RobinhoodRetentionWorker] Cleanup failed:', error.message);
