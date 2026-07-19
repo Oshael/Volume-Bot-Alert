@@ -189,6 +189,8 @@ function liveBucketRow(overrides = {}) {
     highFdvUsd: '140000',
     lowFdvUsd: '90000',
     closeFdvUsd: '120000',
+    valuationProtocol: 'uniswap-v3',
+    valuationMarketKey: `robinhood:uniswap-v3:${POOL}`,
     volumeUsd: '450.25',
     currentVolume5mUsd: '1450.25',
     prevVolume5mCanonical: '900',
@@ -560,6 +562,8 @@ describe('Robinhood persistence repository', () => {
     assert.match(fake.calls[2].sql, /all_token_buckets AS/);
     assert.match(fake.calls[2].sql, /jsonb_object_agg\(protocol/);
     assert.match(fake.calls[2].sql, /canonical_volume_5m AS/);
+    assert.match(fake.calls[2].sql, /AS valuation_protocol/);
+    assert.match(fake.calls[2].sql, /'valuationMarketKey', valuation_market_key/);
     assert.match(fake.calls[2].sql, /FROM inserted_observations inserted/);
     assert.match(fake.calls[2].sql, /observed_at > \$2::timestamptz - INTERVAL '10 minutes'/);
     assert.match(fake.calls[2].sql, /SUM\(bucket\.swaps\)/);
@@ -621,6 +625,31 @@ describe('Robinhood persistence repository', () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  it('builds targeted standard signals only after the market commit', async () => {
+    const fake = createFakeDatabase({ liveBuckets: [liveBucketRow()] });
+    const consumed = [];
+    const sourceCalls = [];
+    const repository = createRobinhoodPersistenceRepository({
+      database: fake.database,
+      emitMarketBucketUpdate() {},
+      standardAlertSignalSource: {
+        async buildFromCommittedBuckets(input) {
+          sourceCalls.push({ input, lastDatabaseCall: fake.calls.at(-1).sql });
+          return [{ id: 'signal-1' }];
+        },
+      },
+      async standardAlertSignalConsumer(signals) { consumed.push(...signals); },
+    });
+
+    await repository.commitMarketRange({ entries: [marketEntry()], cursor: cursor() });
+
+    assert.equal(sourceCalls.length, 1);
+    assert.equal(sourceCalls[0].lastDatabaseCall, 'COMMIT');
+    assert.equal(sourceCalls[0].input.buckets[0].tokenAddress, TOKEN);
+    assert.equal(sourceCalls[0].input.cursor.nextBlock, '8069001');
+    assert.deepEqual(consumed, [{ id: 'signal-1' }]);
   });
 
   it('does not rewrite an observation when its market log is replayed', async () => {

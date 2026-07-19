@@ -1,6 +1,6 @@
 # Robinhood sparkline, aggregate buckets, delta and standard alerts plan
 
-Status: Cuts 1-4 completed; Cuts 5-8 pending
+Status: Cuts 1-7 completed; Cut 8 pending
 
 Created: 2026-07-18
 
@@ -367,6 +367,9 @@ Validation:
 - `npm run lint` and frontend build.
 
 ### Cut 7 - Standard Robinhood alert signal source
+
+Status: completed on 2026-07-19 with targeted post-commit signal construction;
+matcher, state and publication remain isolated in Cut 8
 
 Goal: construct standard signals immediately from each committed token update.
 

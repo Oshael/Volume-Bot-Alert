@@ -882,6 +882,12 @@ async function insertMarketObservations(client, rows, cursor) {
          MIN(bucket.low_fdv_usd) AS low_fdv_usd,
          (array_agg(bucket.close_fdv_usd ORDER BY bucket.last_block_number DESC,
            bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1] AS close_fdv_usd,
+         (array_agg(bucket.protocol ORDER BY bucket.last_block_number DESC,
+           bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1]
+           AS valuation_protocol,
+         (array_agg(bucket.market_key ORDER BY bucket.last_block_number DESC,
+           bucket.last_log_index DESC, bucket.protocol, bucket.market_key))[1]
+           AS valuation_market_key,
          SUM(bucket.volume_usd) AS volume_usd,
          SUM(bucket.swaps)::bigint AS swaps,
          SUM(bucket.buys)::bigint AS buys,
@@ -923,6 +929,8 @@ async function insertMarketObservations(client, rows, cursor) {
          'highFdvUsd', high_fdv_usd::text,
          'lowFdvUsd', low_fdv_usd::text,
          'closeFdvUsd', close_fdv_usd::text,
+         'valuationProtocol', valuation_protocol,
+         'valuationMarketKey', valuation_market_key,
          'volumeUsd', volume_usd::text,
          'currentVolume5mUsd', current_volume_5m_usd::text,
          'prevVolume5mCanonical', previous_volume_5m_usd::text,
@@ -1024,6 +1032,16 @@ function emitRobinhoodMarketBucketUpdates(rows, cursor, emit) {
     } catch (error) {
       console.warn('[RobinhoodPersistence] Failed to emit live bucket update:', error.message);
     }
+  }
+}
+
+async function emitRobinhoodStandardAlertSignals(rows, cursor, source, consume) {
+  if (!source || !consume || !rows.length) return;
+  try {
+    const signals = await source.buildFromCommittedBuckets({ buckets: rows, cursor });
+    if (signals.length) await consume(signals);
+  } catch (error) {
+    console.warn('[RobinhoodPersistence] Failed to build standard alert signals:', error.message);
   }
 }
 
@@ -1167,6 +1185,14 @@ function createRobinhoodPersistenceRepository(options = {}) {
     const socketHub = require('../services/socket-hub');
     return socketHub.emitMarketBucketUpdate(payload);
   });
+  const standardAlertSignalConsumer = typeof options.standardAlertSignalConsumer === 'function'
+    ? options.standardAlertSignalConsumer
+    : null;
+  const standardAlertSignalSource = options.standardAlertSignalSource
+    || (standardAlertSignalConsumer
+      ? require('../services/robinhood-standard-alert-signal-source')
+        .createRobinhoodStandardAlertSignalSource({ database })
+      : null);
 
   async function commitDiscoveryRange(input = {}) {
     const cursor = normalizeCursor('discovery', input.cursor);
@@ -1236,6 +1262,9 @@ function createRobinhoodPersistenceRepository(options = {}) {
       await upsertCursor(client, cursor);
       await client.query('COMMIT');
       emitRobinhoodMarketBucketUpdates(marketWrite.liveBuckets, cursor, emitMarketBucketUpdate);
+      await emitRobinhoodStandardAlertSignals(
+        marketWrite.liveBuckets, cursor, standardAlertSignalSource, standardAlertSignalConsumer
+      );
       const { liveBuckets: _, ...marketCounts } = marketWrite;
       return {
         insertedLogs: insertedIdentities.size,
@@ -1363,6 +1392,7 @@ module.exports = {
     normalizeObservation,
     normalizePool,
     buildRobinhoodMarketBucketUpdate,
+    emitRobinhoodStandardAlertSignals,
     normalizeSignalCandidateQuery,
     normalizeSignalCandidateRow,
   },
