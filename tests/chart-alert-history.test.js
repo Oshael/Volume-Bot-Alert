@@ -48,7 +48,13 @@ describe('chart alert history cache', () => {
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume6h, 34000);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'recent-surge-1h' }).volume24h, 56000);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'monitored-mcap', mcap: null }).mcap, null);
-    assert.equal(history.normalizeChartAlertEvent({ ...base, chain: 'robinhood', ruleKey: 'monitored-mcap' }), null);
+    const robinhood = history.normalizeChartAlertEvent({
+      ...base, chain: 'robinhood', ruleKey: 'monitored-fdv',
+      mcap: null, fdv: '100000', prevFdv: '50000', valuationType: 'fdv',
+    });
+    assert.equal(robinhood.fdv, 100000);
+    assert.equal(robinhood.prevFdv, 50000);
+    assert.equal(robinhood.valuationType, 'fdv');
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'gmgn-claim-signal' }), null);
     assert.equal(history.normalizeChartAlertEvent({ ...base, ruleKey: 'gmgn-vol-1m' }), null);
   });
@@ -60,26 +66,29 @@ describe('chart alert history cache', () => {
     const second = { id: 8, ruleKey: 'hvnc', kind: 'hvnc', address, triggeredAt: '2026-07-03T05:50:00.000Z', mcap: 100000 };
 
     history.upsertRealtimeChartAlert(second, Date.parse(generatedAt));
-    history.mergeChartAlertHistory({ generatedAt, windowHours: 24, address, count: 1, truncated: false, events: [first, second] }, Date.parse(generatedAt));
+    history.mergeChartAlertHistory({ generatedAt, chain: 'solana', windowHours: 24, address, count: 1, truncated: false, events: [first, second] }, Date.parse(generatedAt));
 
-    const result = history.readChartAlertHistory(address, Date.parse(generatedAt));
+    const result = history.readChartAlertHistory('solana', address, Date.parse(generatedAt));
     assert.equal(result.events.map((event) => event.id).join(','), '7,8');
   });
 
-  it('keeps Robinhood realtime alerts out of the Solana address-only cache', () => {
+  it('keeps Robinhood realtime alerts in a chain-scoped FDV cache', () => {
     const address = '0x1234567890123456789012345678901234567890';
+    const now = Date.parse('2026-07-03T06:00:00.000Z');
     const event = history.upsertRealtimeChartAlert({
       id: 9,
       chain: 'robinhood',
-      ruleKey: 'monitored-mcap',
-      kind: 'monitored-mcap',
+      ruleKey: 'monitored-fdv',
+      kind: 'monitored-fdv',
       address,
       triggeredAt: '2026-07-03T05:50:00.000Z',
-      mcap: 100000,
-    });
+      fdv: 100000,
+      valuationType: 'fdv',
+    }, now);
 
-    assert.equal(event, null);
-    assert.equal(history.readChartAlertHistory(address).events.length, 0);
+    assert.equal(event.chain, 'robinhood');
+    assert.equal(history.readChartAlertHistory('robinhood', address, now).events[0].fdv, 100000);
+    assert.equal(history.readChartAlertHistory('solana', address, now).events.length, 0);
   });
 
   it('expires events using the server clock offset', () => {
@@ -87,6 +96,7 @@ describe('chart alert history cache', () => {
     const clientNow = Date.parse('2026-07-03T05:55:00.000Z');
     history.mergeChartAlertHistory({
       generatedAt: '2026-07-03T06:00:00.000Z',
+      chain: 'solana',
       windowHours: 24,
       address,
       count: 2,
@@ -97,7 +107,7 @@ describe('chart alert history cache', () => {
       ],
     }, clientNow);
 
-    const result = history.readChartAlertHistory(address, clientNow);
+    const result = history.readChartAlertHistory('solana', address, clientNow);
     assert.equal(result.events.map((event) => event.id).join(','), '2');
     assert.equal(result.nextExpiryAt, clientNow);
   });

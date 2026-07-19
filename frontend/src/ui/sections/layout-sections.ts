@@ -396,6 +396,7 @@ const CONFIG_FIELDS: ConfigField[] = [
 const ALERT_TOGGLE_FIELDS = [
   { key: 'alert-vol-enabled', label: 'VOL' },
   { key: 'alert-mcap-enabled', label: 'MCAP' },
+  { key: 'alert-fdv-enabled', label: 'FDV (ROBINHOOD)' },
   { key: 'alert-hvnc-enabled', label: 'HIGH VOLUME NEW COIN' },
   { key: 'alert-recent-surge-1h-enabled', label: 'RECENT SURGE 1H' },
   { key: 'alert-recent-surge-6h-enabled', label: 'RECENT SURGE 6H' },
@@ -3064,6 +3065,7 @@ function getChartAlertHeader(event: ChartAlertEvent) {
   if (event.ruleKey === 'old-week-surge-1h' || event.ruleKey === 'old-week-surge-6h') return 'OLD TOKEN SURGE';
   if (event.ruleKey === 'monitored-vol') return 'VOLUME ALERT';
   if (event.ruleKey === 'monitored-mcap') return 'MCAP ALERT';
+  if (event.ruleKey === 'monitored-fdv') return 'FDV ALERT';
   if (event.ruleKey === 'meteora-surge') return 'METEORA SURGE';
   if (event.ruleKey === 'hvnc') return 'HVNC ALERT';
   if (event.ruleKey === 'custom-alert') return 'CUSTOM ALERT';
@@ -3086,6 +3088,7 @@ function getChartAlertMetricLabel(event: ChartAlertEvent) {
   if (event.ruleKey.includes('surge')) return `PCHANGE ${event.surgeWindow || (event.ruleKey.includes('6h') ? '6H' : '1H')}`;
   if (event.ruleKey === 'monitored-vol') return 'VOLUME';
   if (event.ruleKey === 'monitored-mcap') return 'MCAP';
+  if (event.ruleKey === 'monitored-fdv') return 'FDV';
   if (event.ruleKey === 'meteora-surge') return 'TVL';
   if (event.ruleKey === 'custom-alert') return String(event.customMetric || 'TARGET').toUpperCase();
   return 'CHANGE';
@@ -3118,22 +3121,30 @@ function renderChartAlertVolumeChip(label: string, value: number | null, highlig
   `;
 }
 
-function renderChartAlertPrimaryMcap(event: ChartAlertEvent) {
-  const currentMcap = toFiniteAlertNumber(event.mcap);
-  const previousMcap = toFiniteAlertNumber(event.prevMcap);
+function getChartAlertValuation(event: ChartAlertEvent) {
+  const isFdv = event.valuationType === 'fdv' || event.chain === 'robinhood';
+  return {
+    label: isFdv ? 'FDV' : 'MCAP',
+    current: toFiniteAlertNumber(isFdv ? event.fdv : event.mcap),
+    previous: toFiniteAlertNumber(isFdv ? event.prevFdv : event.prevMcap),
+  };
+}
+
+function renderChartAlertPrimaryValuation(event: ChartAlertEvent) {
+  const valuation = getChartAlertValuation(event);
   const isPriceSurge = event.ruleKey === 'recent-surge-1h'
     || event.ruleKey === 'recent-surge-6h'
     || event.ruleKey === 'old-week-surge-1h'
     || event.ruleKey === 'old-week-surge-6h'
     || event.ruleKey === 'surge-continuation-6h';
-  if (!isPriceSurge || previousMcap == null || previousMcap <= 0) {
-    return `<strong>${escapeHtml(fmtMoney(currentMcap))}</strong>`;
+  if (!isPriceSurge || valuation.previous == null || valuation.previous <= 0) {
+    return `<strong>${escapeHtml(fmtMoney(valuation.current))}</strong>`;
   }
   return `
     <strong class="has-transition">
-      <span class="previous">${escapeHtml(fmtMoney(previousMcap))}</span>
+      <span class="previous">${escapeHtml(fmtMoney(valuation.previous))}</span>
       <span class="arrow">→</span>
-      <span>${escapeHtml(fmtMoney(currentMcap))}</span>
+      <span>${escapeHtml(fmtMoney(valuation.current))}</span>
     </strong>
   `;
 }
@@ -3209,7 +3220,8 @@ function renderAlertRecapAvatar(event: ChartAlertEvent) {
 
 function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][number], candles: ChartAlertCandlePoint[]) {
   const event = marker.event;
-  const alertMcap = toFiniteAlertNumber(event.mcap);
+  const valuation = getChartAlertValuation(event);
+  const alertMcap = valuation.current;
   const currentMcap = getAlertRecapCurrentMcap(candles);
   if (alertMcap == null || alertMcap <= 0 || currentMcap == null || currentMcap <= 0) {
     return '';
@@ -3248,11 +3260,11 @@ function renderChartAlertRecapCard(marker: ChartAlertMarkerCluster['markers'][nu
       </main>
       <div class="expanded-chart-alert-recap-stats">
         <span>
-          <small>MCAP @ALERT</small>
+          <small>${escapeHtml(valuation.label)} @ALERT</small>
           <strong>${escapeHtml(fmtMoney(alertMcap))}</strong>
         </span>
         <span>
-          <small>MCAP NOW</small>
+          <small>${escapeHtml(valuation.label)} NOW</small>
           <strong class="is-accent">${escapeHtml(fmtMoney(currentMcap))}</strong>
         </span>
         <span>
@@ -3294,8 +3306,8 @@ function renderChartAlertTooltip(cluster: ChartAlertMarkerCluster, timeZone: str
         <small>· ${escapeHtml(ageLabel)}</small>
       </span>
       <span class="expanded-chart-alert-token-mcap">
-        <small>MCAP</small>
-        ${renderChartAlertPrimaryMcap(event)}
+        <small>${escapeHtml(getChartAlertValuation(event).label)}</small>
+        ${renderChartAlertPrimaryValuation(event)}
       </span>
     </div>
     <div class="expanded-chart-alert-tooltip-mcaps">
@@ -3332,6 +3344,7 @@ function mountExpandedChartAlertOverlay(
   chart: ExpandedChartApi,
   candleSeries: ExpandedCandleSeriesApi,
   data: CandlestickData<UTCTimestamp>[],
+  chain: TokenChain,
   address: string,
   granularityMinutes: number,
   timeZone: string,
@@ -3477,7 +3490,7 @@ function mountExpandedChartAlertOverlay(
 
   const scheduleExpiry = () => {
     window.clearTimeout(expiryTimer);
-    const nextExpiryAt = readChartAlertHistory(address).nextExpiryAt;
+    const nextExpiryAt = readChartAlertHistory(chain, address).nextExpiryAt;
     if (!nextExpiryAt) {
       return;
     }
@@ -3493,7 +3506,7 @@ function mountExpandedChartAlertOverlay(
     if (disposed) {
       return;
     }
-    const events = readChartAlertHistory(address).events;
+    const events = readChartAlertHistory(chain, address).events;
     if (!events.length) {
       clearEmptyAlertOverlay();
       if (debug.enabled) {
@@ -3662,7 +3675,7 @@ function mountExpandedChartAlertOverlay(
 
   const onChartAlert = (event: Event) => {
     const detail = (event as CustomEvent<ChartAlertEvent>).detail;
-    if (detail?.address !== address) {
+    if (detail?.chain !== chain || detail?.address !== address) {
       return;
     }
     scheduleRenderBurst();
@@ -3706,7 +3719,7 @@ function mountExpandedChartAlertOverlay(
 
   if (sessionToken) {
     const alertFetchStartedAt = performance.now();
-    fetchDashboardChartAlertEvents(address, sessionToken)
+    fetchDashboardChartAlertEvents(chain, address, sessionToken)
       .then((payload) => {
         if (disposed) return;
         debug.markTiming('fetchAlertMarkersMs', performance.now() - alertFetchStartedAt);
@@ -3884,12 +3897,10 @@ async function mountExpandedCandlestickChart(
   priceScale.setAutoScale(false);
   const removePriceScaleWheel = bindExpandedPriceScaleWheel(container, priceScale);
   const removeMacTrackpadDrag = bindExpandedMacTrackpadDrag(container, chart, priceScale);
-  const createChartAlertOverlay = () => (chain === 'solana'
-    ? mountExpandedChartAlertOverlay(
-      container, chart, candleSeries, data, address, granularityMinutes,
-      state.ui.expandedSparklineTimeZone, state.session.token, debug,
-    )
-    : { upsertCandle: () => {}, cleanup: () => {} });
+  const createChartAlertOverlay = () => mountExpandedChartAlertOverlay(
+    container, chart, candleSeries, data, chain, address, granularityMinutes,
+    state.ui.expandedSparklineTimeZone, state.session.token, debug,
+  );
   const chartAlertOverlay = createChartAlertOverlay();
   if (legend) {
     legend.textContent = formatExpandedChartLegend(

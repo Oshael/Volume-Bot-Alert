@@ -22,7 +22,7 @@ export interface AlertEntry {
   id: string;
   backendEventId?: number | null;
   chain: TokenChain;
-  kind: 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'gmgn-claim-signal' | 'admin-token-review' | 'custom-alert';
+  kind: 'monitored-vol' | 'monitored-mcap' | 'monitored-fdv' | 'hvnc' | 'old-surge' | 'meteora-surge' | 'gmgn-claim-signal' | 'admin-token-review' | 'custom-alert';
   ruleKey?: string | null;
   address: string;
   mintAddress?: string | null;
@@ -51,6 +51,7 @@ export interface AlertEntry {
   volume6h?: number | null;
   volume24h?: number | null;
   prevMcap?: number | null;
+  prevFdv?: number | null;
   mcap?: number | null;
   fdv?: number | null;
   valuationType?: TokenValuationType | null;

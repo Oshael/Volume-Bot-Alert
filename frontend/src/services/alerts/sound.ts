@@ -20,6 +20,10 @@ const ALERT_PATTERNS: Partial<Record<AlertEntry['kind'], ToneStep[]>> = {
     { frequency: 440, durationMs: 120 },
     { frequency: 587.33, durationMs: 160 },
   ],
+  'monitored-fdv': [
+    { frequency: 440, durationMs: 120 },
+    { frequency: 587.33, durationMs: 160 },
+  ],
   hvnc: [
     { frequency: 523.25, durationMs: 90 },
     { frequency: 659.25, durationMs: 90 },
@@ -61,6 +65,7 @@ const activeCustomAudioElements = new Set<HTMLAudioElement>();
 const SOUND_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-vol': 'sound-vol-enabled',
   'monitored-mcap': 'sound-mcap-enabled',
+  'monitored-fdv': 'sound-mcap-enabled',
   hvnc: 'sound-hvnc-enabled',
   'meteora-surge': 'sound-meteora-surge-enabled',
   'gmgn-claim-signal': 'sound-gmgn-claim-signal-enabled',

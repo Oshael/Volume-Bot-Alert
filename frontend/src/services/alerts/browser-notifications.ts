@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS: BrowserNotificationSettings = {
 const ALERT_KIND_CONFIG_KEY: Partial<Record<AlertEntry['kind'], string>> = {
   'monitored-vol': 'alert-vol-enabled',
   'monitored-mcap': 'alert-mcap-enabled',
+  'monitored-fdv': 'alert-fdv-enabled',
   hvnc: 'alert-hvnc-enabled',
   'meteora-surge': 'alert-meteora-surge-enabled',
 };
@@ -28,6 +29,7 @@ type AlertVolumeKey = 'volume1m' | 'volume5m' | 'volume1h' | 'volume6h' | 'volum
 const ALERT_VOLUME_KEYS: Partial<Record<Exclude<AlertEntry['kind'], 'old-surge'>, AlertVolumeKey[]>> = {
   'monitored-vol': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   'monitored-mcap': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
+  'monitored-fdv': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   hvnc: ['volume24h', 'volume6h', 'volume1h', 'volume5m', 'volume1m'],
   'meteora-surge': ['volume5m', 'volume1m', 'volume1h', 'volume6h', 'volume24h'],
   'gmgn-claim-signal': ['volume5m', 'volume1m', 'volume1h'],
@@ -108,7 +110,7 @@ function isAlertEnabledByConfig(alert: AlertEntry, configs?: Record<string, stri
     ? resolveOldSurgeConfigKey(alert)
     : ALERT_KIND_CONFIG_KEY[alert.kind];
 
-  return configKey ? isConfigEnabled(configs, configKey) : true;
+  return configKey ? isConfigEnabled(configs, configKey, alert.kind !== 'monitored-fdv') : true;
 }
 
 function formatMoney(value?: number | null) {
@@ -178,11 +180,12 @@ function getAlertVolume(alert: AlertEntry) {
   return selectFirstNumber(alert, ALERT_VOLUME_KEYS[alert.kind] || []);
 }
 
-function getNotificationMcapLine(alert: AlertEntry) {
+function getNotificationValuationLine(alert: AlertEntry) {
+  const isFdv = alert.valuationType === 'fdv' || alert.kind === 'monitored-fdv';
   return formatMoneyTransition(
-    'MCAP',
-    alert.prevMcap,
-    alert.mcap,
+    isFdv ? 'FDV' : 'MCAP',
+    isFdv ? alert.prevFdv : alert.prevMcap,
+    isFdv ? alert.fdv : alert.mcap,
   );
 }
 
@@ -229,6 +232,8 @@ function getNotificationTitle(alert: AlertEntry) {
       return `VOL alert: ${symbol}`;
     case 'monitored-mcap':
       return `MCAP alert: ${symbol}`;
+    case 'monitored-fdv':
+      return `FDV alert: ${symbol}`;
     case 'hvnc':
       return `HVNC: ${symbol}`;
     case 'old-surge':
@@ -265,7 +270,7 @@ function buildNotificationBody(alert: AlertEntry) {
   if (alert.kind === 'gmgn-claim-signal') {
     return [
       formatClaimFee(alert),
-      getNotificationMcapLine(alert),
+      getNotificationValuationLine(alert),
       alert.claimedAt ? `claimed ${new Date(alert.claimedAt).toLocaleTimeString()}` : null,
       formatAddressFragment(alert.address),
     ].filter(Boolean).join(' · ');
@@ -280,7 +285,7 @@ function buildNotificationBody(alert: AlertEntry) {
 
   const parts = [
     formatPercent(alert.pct),
-    getNotificationMcapLine(alert),
+    getNotificationValuationLine(alert),
     getNotificationVolumeLine(alert),
     formatAddressFragment(alert.address),
   ];

@@ -392,10 +392,9 @@ Acceptance:
 
 ### Cut 8 - Standard matcher, state and publication
 
-Status: split after repository audit; Cuts 8A-8B and 8C1-8C2 completed on 2026-07-19,
-with Cut 8C3 pending
+Status: completed on 2026-07-19 after repository audit and Cuts 8A-8B and 8C1-8C3
 
-Alert parity follow-up: P1-P3 completed on 2026-07-19; Cut 8C3 remains.
+Alert parity follow-up: P1-P3 completed on 2026-07-19.
 
 Subcuts:
 

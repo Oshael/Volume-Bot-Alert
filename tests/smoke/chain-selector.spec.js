@@ -482,6 +482,22 @@ const ROBINHOOD_MARKET_API_FIXTURES = {
       },
     };
   },
+  'GET /api/dashboard/chart-alert-events': (request) => {
+    const url = new URL(request.url());
+    return {
+      generatedAt: '2026-07-15T12:00:00.000Z',
+      chain: url.searchParams.get('chain'),
+      windowHours: 24,
+      address: url.searchParams.get('address'),
+      count: 1,
+      truncated: false,
+      events: [{
+        id: 91, chain: 'robinhood', ruleKey: 'monitored-fdv', kind: 'monitored-fdv',
+        address: ROBINHOOD_TOKEN, triggeredAt: '2026-07-15T10:30:00.000Z',
+        fdv: 300000, prevFdv: 200000, valuationType: 'fdv', pct: 50, label: 'FDV',
+      }],
+    };
+  },
 };
 
 const ROBINHOOD_RADAR_READINESS = {
@@ -955,6 +971,7 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
     'aria-label',
     'Interactive FDV candlestick chart',
   );
+  await expect(dialog.locator('.expanded-chart-alert-marker')).toHaveCount(1);
   await expect.poll(() => chartRequestPayloads.length).toBe(1);
   expect(chartRequestPayloads[0]).toMatchObject({
     chain: 'robinhood', address: ROBINHOOD_TOKEN, granularityMinutes: 5,
@@ -988,9 +1005,12 @@ test('opens a Robinhood FDV chart and applies only its realtime updates', async 
   });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(legend).not.toContainText('999K');
-  expect(diagnostics.apiRequests.some((requestUrl) => (
+  const alertHistoryRequest = diagnostics.apiRequests.find((requestUrl) => (
     new URL(requestUrl).pathname === '/api/dashboard/chart-alert-events'
-  ))).toBe(false);
+  ));
+  expect(alertHistoryRequest).toBeTruthy();
+  expect(new URL(alertHistoryRequest).searchParams.get('chain')).toBe('robinhood');
+  expect(new URL(alertHistoryRequest).searchParams.get('address')).toBe(ROBINHOOD_TOKEN);
   expect(diagnostics.unexpectedRequests).toEqual([]);
   expect(diagnostics.pageErrors).toEqual([]);
 });

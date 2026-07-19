@@ -111,6 +111,18 @@ describe('chart alert marker projection', () => {
     assert.match(marker.summary, /unavailable/);
   });
 
+  it('projects Robinhood FDV alerts against FDV chart candles', () => {
+    const [marker] = markers.projectChartAlertMarkers([event({
+      chain: 'robinhood', ruleKey: 'monitored-fdv', kind: 'monitored-fdv',
+      mcap: null, fdv: 120_000, valuationType: 'fdv', label: 'FDV',
+    })], candles, scale(), 5);
+
+    assert.equal(marker.code, '$');
+    assert.equal(marker.title, 'FDV');
+    assert.equal(marker.y, 380);
+    assert.match(marker.summary, /\$120\.0K/);
+  });
+
   it('drops events without supported rule, valid time, or projectable candle range', () => {
     const result = markers.projectChartAlertMarkers([
       event({ id: 2, ruleKey: 'gmgn-claim-signal' }),

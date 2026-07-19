@@ -303,6 +303,7 @@ export interface DashboardAlertEvent {
   prevVolume1m?: number | null;
   prevVolume5m?: number | null;
   prevMcap?: number | null;
+  prevFdv?: number | null;
   pct?: number | null;
   label?: string | null;
   isHvnc?: boolean;
@@ -426,7 +427,7 @@ export interface CreateCustomAlertRulePayload {
 
 export interface ChartAlertEvent {
   id: number;
-  chain: 'solana';
+  chain: TokenChain;
   ruleKey: string;
   kind: string;
   address: string;
@@ -439,6 +440,8 @@ export interface ChartAlertEvent {
   tokenCreatedAt?: number | null;
   triggeredAt: string;
   mcap: number | null;
+  fdv?: number | null;
+  valuationType?: TokenValuationType | null;
   pct: number | null;
   label: string | null;
   prevVolume1m?: number | null;
@@ -446,6 +449,7 @@ export interface ChartAlertEvent {
   prevVolume5m?: number | null;
   volume5m?: number | null;
   prevMcap?: number | null;
+  prevFdv?: number | null;
   volume1h?: number | null;
   volume6h?: number | null;
   volume24h?: number | null;
@@ -464,10 +468,12 @@ export interface ChartAlertEvent {
   customCurrentValue?: number | null;
   customPreviousValue?: number | null;
   surgeWindow?: '1H' | '6H' | null;
+  ageBucket?: 'recent' | 'old-week' | null;
 }
 
 export interface ChartAlertEventsPayload {
   generatedAt: string;
+  chain: TokenChain;
   windowHours: number;
   address: string;
   count: number;
@@ -1159,11 +1165,12 @@ export function disableCustomAlertRule(id: number, chain: TokenChain, token?: st
   });
 }
 
-export function fetchDashboardChartAlertEvents(address: string, token?: string | null) {
-  const query = new URLSearchParams({ address: String(address || '').trim() });
+export function fetchDashboardChartAlertEvents(chain: TokenChain, address: string, token?: string | null) {
+  const query = new URLSearchParams({ chain, address: String(address || '').trim() });
   return apiFetch<ChartAlertEventsPayload>(`/api/dashboard/chart-alert-events?${query.toString()}`, { token })
     .then((response) => ({
       generatedAt: response.generatedAt,
+      chain: response.chain,
       windowHours: Number(response.windowHours) || 24,
       address: response.address,
       count: Number(response.count) || 0,

@@ -4310,6 +4310,8 @@ export function createAppController(): AppController {
         return isConfigEnabled('alert-vol-enabled');
       case 'monitored-mcap':
         return isConfigEnabled('alert-mcap-enabled');
+      case 'monitored-fdv':
+        return isConfigEnabled('alert-fdv-enabled', false);
       case 'hvnc':
         return isConfigEnabled('alert-hvnc-enabled');
       case 'meteora-surge':
@@ -6043,7 +6045,9 @@ export function createAppController(): AppController {
       communityUrl: toOptionalText(event.communityUrl),
       tokenCreatedAt: toOptionalNumber(event.tokenCreatedAt),
       fdv,
-      valuationType: mcap != null ? 'market-cap' as const : (fdv != null ? 'fdv' as const : null),
+      valuationType: event.valuationType === 'fdv'
+        ? 'fdv' as const
+        : (mcap != null ? 'market-cap' as const : (fdv != null ? 'fdv' as const : null)),
       priceUsd: toOptionalNumber(event.priceUsd),
       liquidityUsd: toOptionalNumber(event.liquidityUsd),
       transactions: toOptionalNumber(event.transactions),
@@ -6062,6 +6066,13 @@ export function createAppController(): AppController {
           roundAlertMetric(entry.pct),
           roundAlertMetric(entry.prevMcap ?? null),
           roundAlertMetric(entry.mcap ?? null),
+        ].join('|');
+        break;
+      case 'monitored-fdv':
+        fingerprint = [
+          roundAlertMetric(entry.pct),
+          roundAlertMetric(entry.prevFdv ?? null),
+          roundAlertMetric(entry.fdv ?? null),
         ].join('|');
         break;
       case 'meteora-surge':
@@ -6090,6 +6101,13 @@ export function createAppController(): AppController {
             roundAlertMetric(item.pct),
             roundAlertMetric(item.prevMcap ?? null),
             roundAlertMetric(item.mcap ?? null),
+          ].join('|');
+          break;
+        case 'monitored-fdv':
+          existingFingerprint = [
+            roundAlertMetric(item.pct),
+            roundAlertMetric(item.prevFdv ?? null),
+            roundAlertMetric(item.fdv ?? null),
           ].join('|');
           break;
         case 'hvnc':
@@ -6248,7 +6266,7 @@ export function createAppController(): AppController {
     };
   }
 
-  function buildBackendSimpleAlertEntry(event: DashboardAlertEvent, kind: Extract<AlertEntry['kind'], 'monitored-vol' | 'monitored-mcap' | 'hvnc' | 'meteora-surge'>): AlertEntry | null {
+  function buildBackendSimpleAlertEntry(event: DashboardAlertEvent, kind: Extract<AlertEntry['kind'], 'monitored-vol' | 'monitored-mcap' | 'monitored-fdv' | 'hvnc' | 'meteora-surge'>): AlertEntry | null {
     const address = String(event.address || '').trim();
     if (!address) {
       return null;
@@ -6273,6 +6291,8 @@ export function createAppController(): AppController {
             ? 'METEORA 1H'
             : kind === 'monitored-mcap'
               ? 'MCAP'
+              : kind === 'monitored-fdv'
+                ? 'FDV'
               : 'VOL'
       ),
       tickerPeers: event.tickerPeers ?? null,
@@ -6285,7 +6305,9 @@ export function createAppController(): AppController {
       prevVolume1m: toOptionalNumber(event.prevVolume1m),
       prevVolume5m: toOptionalNumber(event.prevVolume5m),
       prevMcap: toOptionalNumber(event.prevMcap),
+      prevFdv: toOptionalNumber(event.prevFdv),
       mcap: toOptionalNumber(event.mcap),
+      fdv: toOptionalNumber(event.fdv),
       pct: toOptionalNumber(event.pct) ?? 0,
       isHvnc: kind === 'hvnc' ? true : undefined,
       meteoraCurrentTvl: toOptionalNumber(event.meteoraCurrentTvl),
@@ -6356,10 +6378,12 @@ export function createAppController(): AppController {
       ? event.ageBucket
       : null;
     const mcap = toOptionalNumber(event.mcap);
+    const fdv = toOptionalNumber(event.fdv);
     const pct = toOptionalNumber(event.pct) ?? 0;
     const mcapRatio = 1 + (pct / 100);
     const prevMcap = toOptionalNumber(event.prevMcap)
       ?? (mcap != null && mcap > 0 && mcapRatio > 0 ? mcap / mcapRatio : null);
+    const prevFdv = toOptionalNumber(event.prevFdv);
 
     return {
       id: `backend:${toOptionalText(event.ruleKey) || 'old-surge'}:${eventId}`,
@@ -6377,7 +6401,9 @@ export function createAppController(): AppController {
       volume6h: toOptionalNumber(event.volume6h),
       volume24h: toOptionalNumber(event.volume24h),
       prevMcap,
+      prevFdv,
       mcap,
+      fdv,
       thresholdPct: toOptionalNumber(event.thresholdPct),
       pct,
       surgeWindow,
@@ -6396,6 +6422,8 @@ export function createAppController(): AppController {
         return buildBackendSimpleAlertEntry(event, 'monitored-vol');
       case 'monitored-mcap':
         return buildBackendSimpleAlertEntry(event, 'monitored-mcap');
+      case 'monitored-fdv':
+        return buildBackendSimpleAlertEntry(event, 'monitored-fdv');
       case 'hvnc':
         return buildBackendSimpleAlertEntry(event, 'hvnc');
       case 'old-surge':

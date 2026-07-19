@@ -169,6 +169,20 @@ describe('browser notification service', () => {
     assert.equal(content.data.navigationTarget, '/alerts/robinhood/0xabcdef0123456789abcdef0123456789abcdef01');
   });
 
+  it('renders standard Robinhood FDV notifications with the FDV anchor', () => {
+    const service = loadBrowserNotificationModule();
+    const content = service.formatBrowserNotificationContent(buildAlert({
+      id: 'rh-fdv-standard-1', chain: 'robinhood', kind: 'monitored-fdv',
+      ruleKey: 'monitored-fdv', address: '0xabcdef0123456789abcdef0123456789abcdef01',
+      symbol: 'rhfdv', valuationType: 'fdv', mcap: null, prevMcap: null,
+      fdv: 1_250_000, prevFdv: 250_000,
+    }));
+
+    assert.equal(content.title, 'FDV alert: RHFDV');
+    assert.match(content.body, /FDV \$250K->\$1\.25M/);
+    assert.doesNotMatch(content.body, /MCAP/);
+  });
+
   it('creates notifications only when eligible and avoids duplicates', () => {
     const Notification = createNotificationMock('granted');
     const documentState = { hidden: true };

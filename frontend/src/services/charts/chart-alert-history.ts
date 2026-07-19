@@ -5,11 +5,13 @@ export const CHART_ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CHART_ALERT_RULE_KEYS = new Set([
   'monitored-vol',
   'monitored-mcap',
+  'monitored-fdv',
   'hvnc',
   'recent-surge-1h',
   'recent-surge-6h',
   'old-week-surge-1h',
   'old-week-surge-6h',
+  'surge-continuation-6h',
   'meteora-surge',
   'custom-alert',
 ]);
@@ -42,20 +44,23 @@ export function normalizeChartAlertEvent(input: Partial<ChartAlertEvent> | Dashb
   const ruleKey = normalizeText(input.ruleKey).toLowerCase();
   const address = normalizeText(input.address);
   const triggeredAtMs = Date.parse(normalizeText(input.triggeredAt));
-  if (chain !== 'solana' || !Number.isInteger(id) || id <= 0 || !isChartAlertRuleKey(ruleKey) || !address || !Number.isFinite(triggeredAtMs)) {
+  if (!['solana', 'robinhood'].includes(chain) || !Number.isInteger(id) || id <= 0 || !isChartAlertRuleKey(ruleKey) || !address || !Number.isFinite(triggeredAtMs)) {
     return null;
   }
 
   return {
     ...input,
     id,
-    chain: 'solana',
+    chain,
     ruleKey,
     kind: normalizeText(input.kind) || ruleKey,
     address,
     triggeredAt: new Date(triggeredAtMs).toISOString(),
     mcap: toOptionalNumber(input.mcap),
+    fdv: toOptionalNumber(input.fdv),
+    valuationType: input.valuationType === 'fdv' || chain === 'robinhood' ? 'fdv' : 'market-cap',
     prevMcap: toOptionalNumber(input.prevMcap),
+    prevFdv: toOptionalNumber(input.prevFdv),
     volume1h: toOptionalNumber(input.volume1h),
     volume6h: toOptionalNumber(input.volume6h),
     volume24h: toOptionalNumber(input.volume24h),
@@ -67,12 +72,16 @@ export function normalizeChartAlertEvent(input: Partial<ChartAlertEvent> | Dashb
   } as ChartAlertEvent;
 }
 
-function getBucket(address: string) {
-  const normalizedAddress = normalizeText(address);
-  let bucket = chartAlertBuckets.get(normalizedAddress);
+function getBucketKey(chain: string, address: string) {
+  return `${normalizeText(chain).toLowerCase() || 'solana'}:${normalizeText(address)}`;
+}
+
+function getBucket(chain: string, address: string) {
+  const key = getBucketKey(chain, address);
+  let bucket = chartAlertBuckets.get(key);
   if (!bucket) {
     bucket = { events: new Map(), serverClockOffsetMs: 0, truncated: false };
-    chartAlertBuckets.set(normalizedAddress, bucket);
+    chartAlertBuckets.set(key, bucket);
   }
   return bucket;
 }
@@ -96,31 +105,32 @@ function pruneBucket(bucket: ChartAlertBucket, clientNowMs = Date.now()) {
 
 export function mergeChartAlertHistory(payload: ChartAlertEventsPayload, clientNowMs = Date.now()) {
   const address = normalizeText(payload.address);
-  const bucket = getBucket(address);
+  const chain = normalizeText(payload.chain).toLowerCase() || 'solana';
+  const bucket = getBucket(chain, address);
   const generatedAtMs = Date.parse(normalizeText(payload.generatedAt));
   bucket.serverClockOffsetMs = Number.isFinite(generatedAtMs) ? generatedAtMs - clientNowMs : 0;
   bucket.truncated = Boolean(payload.truncated);
   for (const input of payload.events || []) {
     const event = normalizeChartAlertEvent(input);
-    if (event && event.address === address) {
+    if (event && event.chain === chain && event.address === address) {
       bucket.events.set(getEventKey(event), event);
     }
   }
   pruneBucket(bucket, clientNowMs);
-  return readChartAlertHistory(address, clientNowMs);
+  return readChartAlertHistory(chain, address, clientNowMs);
 }
 
 export function upsertRealtimeChartAlert(input: DashboardAlertEvent, clientNowMs = Date.now()) {
   const event = normalizeChartAlertEvent(input);
   if (!event) return null;
-  const bucket = getBucket(event.address);
+  const bucket = getBucket(event.chain, event.address);
   bucket.events.set(getEventKey(event), event);
   pruneBucket(bucket, clientNowMs);
   return event;
 }
 
-export function readChartAlertHistory(address: string, clientNowMs = Date.now()) {
-  const bucket = chartAlertBuckets.get(normalizeText(address));
+export function readChartAlertHistory(chain: string, address: string, clientNowMs = Date.now()) {
+  const bucket = chartAlertBuckets.get(getBucketKey(chain, address));
   if (!bucket) return { events: [] as ChartAlertEvent[], truncated: false, nextExpiryAt: null as number | null };
   pruneBucket(bucket, clientNowMs);
   const events = [...bucket.events.values()].sort((left, right) => (

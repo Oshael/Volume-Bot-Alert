@@ -2060,7 +2060,10 @@ function getAlertRowRenderKey(
     prevVolume1m: alert.prevVolume1m,
     prevVolume5m: alert.prevVolume5m,
     prevMcap: alert.prevMcap,
+    prevFdv: alert.prevFdv,
     mcap: alert.mcap,
+    fdv: alert.fdv,
+    valuationType: alert.valuationType,
     tokenCreatedAt: alert.tokenCreatedAt,
     imageUrl: alert.imageUrl,
     pairUrl: alert.pairUrl,
@@ -2690,13 +2693,12 @@ function appendCustomAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
 
 function buildAlertValuationFlowMetric(alert: AlertEntry, tone: 'up' | 'down') {
   const valuation = resolveTokenValuation(alert);
-  const previousMcap = valuation.type === 'market-cap' && alert.prevMcap != null
-    ? fmtMoney(alert.prevMcap)
-    : null;
+  const previousValue = valuation.type === 'fdv' ? alert.prevFdv : alert.prevMcap;
+  const previousValuation = previousValue != null ? fmtMoney(previousValue) : null;
   const currentValuation = fmtMoney(valuation.value);
 
-  return previousMcap
-    ? buildFlowTransition('MCAP', previousMcap, currentValuation, tone)
+  return previousValuation
+    ? buildFlowTransition(valuation.label, previousValuation, currentValuation, tone)
     : buildMetricPair(valuation.label, currentValuation, tone);
 }
 
@@ -2709,7 +2711,10 @@ function appendAlertFlowLine(container: HTMLElement, alert: AlertEntry) {
   const currentVol = fmtMoney(isGmgnVol1m ? alert.volume1m : alert.volume5m);
   const prevVolRaw = isGmgnVol1m ? alert.prevVolume1m : alert.prevVolume5m;
   const prevVol = prevVolRaw != null ? fmtMoney(prevVolRaw) : null;
-  const mcapTone = alert.prevMcap != null && alert.mcap != null && alert.mcap < alert.prevMcap ? 'down' : 'up';
+  const valuation = resolveTokenValuation(alert);
+  const previousValuation = valuation.type === 'fdv' ? alert.prevFdv : alert.prevMcap;
+  const mcapTone = previousValuation != null && valuation.value != null
+    && valuation.value < previousValuation ? 'down' : 'up';
   const volumeLabel = isGmgnVol1m ? 'VOL 1M' : 'VOL 5M';
 
   if (alert.isOldSurge) {
@@ -2772,7 +2777,7 @@ function appendAlertStatsLine(container: HTMLElement, alert: AlertEntry) {
       buildMetricPair('24H', fmtMoney(alert.volume24h), 'white'),
     ]);
   } else {
-    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap' && alert.kind !== 'meteora-surge' && alert.kind !== 'custom-alert';
+    const shouldShowCompactMcap = alert.kind !== 'monitored-vol' && alert.kind !== 'monitored-mcap' && alert.kind !== 'monitored-fdv' && alert.kind !== 'meteora-surge' && alert.kind !== 'custom-alert';
     const valuation = resolveTokenValuation(alert);
     const compactMcap = shouldShowCompactMcap ? buildMetricPair(valuation.label, fmtMoney(valuation.value), 'up', '', 'current-mcap') : null;
     compactMcap?.classList.add('compact-only-metric');

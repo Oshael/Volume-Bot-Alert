@@ -50,6 +50,7 @@ type AlertVisualMeta = {
 const ALERT_VISUAL_META: Record<string, AlertVisualMeta> = {
   'monitored-vol': { code: 'V', tone: 'volume', priority: 10, title: 'Volume alert' },
   'monitored-mcap': { code: '$', tone: 'mcap', priority: 20, title: 'Market cap alert' },
+  'monitored-fdv': { code: '$', tone: 'mcap', priority: 20, title: 'FDV alert' },
   hvnc: { code: 'H', tone: 'hvnc', priority: 50, title: 'HVNC alert' },
   'recent-surge-1h': { code: 'S', tone: 'surge', priority: 40, title: 'Price surge alert' },
   'recent-surge-6h': { code: 'S', tone: 'surge', priority: 40, title: 'Price surge alert' },
@@ -69,9 +70,14 @@ function toFiniteNumber(value: unknown) {
   return Number.isFinite(number) ? number : null;
 }
 
-function formatCompactMoney(value: number | null | undefined) {
+function getEventValuation(event: ChartAlertEvent) {
+  const isFdv = event.valuationType === 'fdv' || event.chain === 'robinhood';
+  return { label: isFdv ? 'FDV' : 'MCAP', value: isFdv ? event.fdv : event.mcap };
+}
+
+function formatCompactMoney(value: number | null | undefined, label = 'MCAP') {
   const number = toFiniteNumber(value);
-  if (number == null) return 'MCAP unavailable';
+  if (number == null) return `${label} unavailable`;
   const abs = Math.abs(number);
   if (abs >= 1_000_000_000) return `$${(number / 1_000_000_000).toFixed(2)}B`;
   if (abs >= 1_000_000) return `$${(number / 1_000_000).toFixed(2)}M`;
@@ -237,9 +243,9 @@ function getMarkerX(candles: ChartAlertCandlePoint[], projection: BucketProjecti
 }
 
 function getMarkerY(event: ChartAlertEvent, candle: ChartAlertCandlePoint, scale: ChartAlertScaleAdapter) {
-  const mcap = toFiniteNumber(event.mcap);
-  if (mcap != null && mcap > 0) {
-    const y = scale.priceToCoordinate(mcap);
+  const valuation = toFiniteNumber(getEventValuation(event).value);
+  if (valuation != null && valuation > 0) {
+    const y = scale.priceToCoordinate(valuation);
     return y == null || !Number.isFinite(y) ? null : { y, mcapAvailable: true };
   }
 
@@ -255,7 +261,9 @@ function getMarkerY(event: ChartAlertEvent, candle: ChartAlertCandlePoint, scale
 
 function buildMarkerSummary(event: ChartAlertEvent) {
   const percent = formatPercent(event.pct ?? event.priceChange1h ?? event.priceChange6h);
-  return percent ? `${formatCompactMoney(event.mcap)} · ${percent}` : formatCompactMoney(event.mcap);
+  const valuation = getEventValuation(event);
+  const money = formatCompactMoney(valuation.value, valuation.label);
+  return percent ? `${money} · ${percent}` : money;
 }
 
 export function projectChartAlertMarkers(
