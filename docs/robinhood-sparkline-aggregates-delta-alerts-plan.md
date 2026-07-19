@@ -394,6 +394,8 @@ Acceptance:
 
 Status: completed on 2026-07-19 after repository audit and Cuts 8A-8B and 8C1-8C3
 
+Post-completion correction: standard RH events now snapshot canonical 1h/6h/24h volumes.
+
 Alert parity follow-up: P1-P3 completed on 2026-07-19.
 
 Subcuts:

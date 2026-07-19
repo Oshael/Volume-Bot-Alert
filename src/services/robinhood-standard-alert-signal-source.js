@@ -8,7 +8,10 @@ const MAX_QUERY_TOKENS = 100;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const BASELINE_TOLERANCE_MS = 15 * 60 * 1000;
 const WINDOWS = Object.freeze(['5m', '1h', '6h']);
-const WINDOW_MS = Object.freeze({ '5m': 5 * 60 * 1000, '1h': HOUR_MS, '6h': 6 * HOUR_MS });
+const VOLUME_WINDOWS = Object.freeze(['1h', '6h', '24h']);
+const WINDOW_MS = Object.freeze({
+  '5m': 5 * 60 * 1000, '1h': HOUR_MS, '6h': 6 * HOUR_MS, '24h': 24 * HOUR_MS,
+});
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 
 const BASELINE_SQL = `WITH input AS MATERIALIZED (
@@ -45,6 +48,41 @@ token_context AS (
   GROUP BY input.token_address, input.protocol, input.market_key,
     catalog.last_token_created_at_ms
 ),
+active_markets AS MATERIALIZED (
+  SELECT context.token_address, registry.protocol, registry.market_key
+  FROM token_context context
+  INNER JOIN robinhood_pool_registry registry
+    ON registry.chain = 'robinhood'
+   AND registry.token_address = context.token_address
+   AND registry.protocol IN ('uniswap-v2', 'uniswap-v3', 'uniswap-v4')
+   AND registry.active = true
+),
+minute_volumes AS (
+  SELECT market.token_address,
+    COALESCE(SUM(bucket.volume_usd) FILTER (
+      WHERE bucket.bucket_ts >= $2::timestamptz - INTERVAL '1 hour'), 0)
+      AS volume_1h_usd,
+    COALESCE(SUM(bucket.volume_usd), 0) AS volume_6h_usd
+  FROM active_markets market
+  LEFT JOIN robinhood_market_buckets_1m bucket
+    ON bucket.chain = 'robinhood'
+   AND bucket.protocol = market.protocol
+   AND bucket.market_key = market.market_key
+   AND bucket.bucket_ts >= $2::timestamptz - INTERVAL '6 hours'
+   AND bucket.bucket_ts < $2::timestamptz
+  GROUP BY market.token_address
+),
+hourly_volumes AS (
+  SELECT market.token_address, COALESCE(SUM(bucket.volume_usd), 0) AS volume_24h_usd
+  FROM active_markets market
+  LEFT JOIN robinhood_market_buckets_1h bucket
+    ON bucket.chain = 'robinhood'
+   AND bucket.protocol = market.protocol
+   AND bucket.market_key = market.market_key
+   AND bucket.bucket_ts >= date_trunc('hour', $2::timestamptz) - INTERVAL '23 hours'
+   AND bucket.bucket_ts < date_trunc('hour', $2::timestamptz) + INTERVAL '1 hour'
+  GROUP BY market.token_address
+),
 specs(window_name, target_at) AS (
   VALUES ('5m', $2::timestamptz - INTERVAL '5 minutes'),
     ('1h', $2::timestamptz - INTERVAL '1 hour'),
@@ -72,6 +110,8 @@ points AS (
 )
 SELECT context.*,
   cursor.coverage_start_at, cursor.coverage_end_at, cursor.caught_up,
+  minute_volumes.volume_1h_usd, minute_volumes.volume_6h_usd,
+  hourly_volumes.volume_24h_usd,
   MAX(points.close_price_usd) FILTER (WHERE window_name = '5m') AS price_5m_usd,
   MAX(points.close_fdv_usd) FILTER (WHERE window_name = '5m') AS fdv_5m_usd,
   MAX(points.last_observed_at) FILTER (WHERE window_name = '5m') AS observed_5m_at,
@@ -89,9 +129,13 @@ SELECT context.*,
   MAX(points.last_observed_at) FILTER (WHERE window_name = 'previous-6h') AS previous_observed_6h_at
 FROM token_context context
 LEFT JOIN points USING (token_address)
+LEFT JOIN minute_volumes USING (token_address)
+LEFT JOIN hourly_volumes USING (token_address)
 LEFT JOIN market_cursor cursor ON TRUE
 GROUP BY context.token_address, context.protocol, context.market_key,
   context.token_created_at, context.token_age_source, context.admin_blocked,
+  minute_volumes.volume_1h_usd, minute_volumes.volume_6h_usd,
+  hourly_volumes.volume_24h_usd,
   cursor.coverage_start_at, cursor.coverage_end_at, cursor.caught_up
 ORDER BY context.token_address`;
 
@@ -210,6 +254,16 @@ function buildSignal(bucket, context, cursor, asOf) {
   const volumeCoverage = String(bucket.volume5mDeltaCoverage || 'unavailable');
   const volumeCurrent = numberOrNull(bucket.currentVolume5mUsd);
   const volumeBaseline = numberOrNull(bucket.prevVolume5mCanonical);
+  const volumeWindows = Object.freeze(Object.fromEntries(VOLUME_WINDOWS.map((window) => {
+    const windowCoverage = exactContinuousCoverage(
+      window, asOf, context.coverage_start_at, context.coverage_end_at,
+    );
+    return [window, Object.freeze({
+      usd: windowCoverage === 'complete'
+        ? numberOrNull(context[`volume_${window}_usd`]) : null,
+      coverage: windowCoverage,
+    })];
+  })));
   return Object.freeze({
     id: `${CHAIN}:${normalizeTokenAddress(CHAIN, bucket.tokenAddress)}:${cursor.nextBlock}`,
     chain: CHAIN,
@@ -223,6 +277,7 @@ function buildSignal(bucket, context, cursor, asOf) {
       baselineAt: timestamp(bucket.volume5mBaselineAt),
       windowEnd: timestamp(bucket.volume5mWindowEnd), coverage: volumeCoverage,
     }),
+    volumeWindows,
     valuation: Object.freeze({
       type: 'fdv', source: 'robinhood-accepted-swaps', current,
       windows: Object.freeze(Object.fromEntries(WINDOWS.map((window) => [window,

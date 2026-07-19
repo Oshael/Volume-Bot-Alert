@@ -39,6 +39,7 @@ function context(overrides = {}) {
     observed_1h_at: new Date('2026-07-19T17:00:00.000Z'),
     price_6h_usd: '0.5', fdv_6h_usd: '50',
     observed_6h_at: new Date('2026-07-19T12:00:00.000Z'),
+    volume_1h_usd: '1200', volume_6h_usd: '3400', volume_24h_usd: '5600',
     previous_price_usd: '1.8', previous_observed_at: new Date('2026-07-19T17:59:00.000Z'),
     previous_price_1h_usd: '1', previous_observed_1h_at: new Date('2026-07-19T16:59:00.000Z'),
     previous_price_6h_usd: '0.6', previous_observed_6h_at: new Date('2026-07-19T11:59:00.000Z'),
@@ -70,6 +71,11 @@ describe('Robinhood standard alert signal source', () => {
       currentUsd: 300, baselineUsd: 100, changePct: 200,
       baselineAt: '2026-07-19T17:55:30.000Z', windowEnd: AS_OF, coverage: 'complete',
     });
+    assert.deepEqual(signal.volumeWindows, {
+      '1h': { usd: 1200, coverage: 'complete' },
+      '6h': { usd: 3400, coverage: 'complete' },
+      '24h': { usd: 5600, coverage: 'complete' },
+    });
     assert.equal(signal.valuation.type, 'fdv');
     assert.equal(signal.valuation.current.marketKey, MARKET);
     assert.deepEqual(signal.valuation.windows['5m'], {
@@ -93,6 +99,8 @@ describe('Robinhood standard alert signal source', () => {
     assert.equal(calls[0].params[1].toISOString(), AS_OF);
     assert.equal(calls[0].timeout, 10_000);
     assert.match(calls[0].sql, /bucket\.market_key = context\.market_key/);
+    assert.match(calls[0].sql, /robinhood_market_buckets_1m/);
+    assert.match(calls[0].sql, /robinhood_market_buckets_1h/);
     assert.doesNotMatch(calls[0].sql, /https?:\/\//);
   });
 
@@ -106,6 +114,9 @@ describe('Robinhood standard alert signal source', () => {
     assert.equal(signal.valuation.windows['1h'].fdvChangePct, null);
     assert.equal(signal.valuation.windows['6h'].coverage, 'partial');
     assert.equal(signal.valuation.windows['6h'].priceChangePct, null);
+    assert.deepEqual(signal.volumeWindows['1h'], { usd: null, coverage: 'partial' });
+    assert.deepEqual(signal.volumeWindows['6h'], { usd: null, coverage: 'partial' });
+    assert.deepEqual(signal.volumeWindows['24h'], { usd: null, coverage: 'partial' });
   });
 
   it('deduplicates touched minutes deterministically for replay-safe input', async () => {

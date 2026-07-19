@@ -59,6 +59,9 @@ function payload(signal, extras = {}) {
     valuationType: VALUATION_TYPE,
     fdv: numberOrNull(signal.valuation.current.fdvUsd),
     volume5m: numberOrNull(signal.volume5m.currentUsd),
+    volume1h: numberOrNull(signal.volumeWindows?.['1h']?.usd),
+    volume6h: numberOrNull(signal.volumeWindows?.['6h']?.usd),
+    volume24h: numberOrNull(signal.volumeWindows?.['24h']?.usd),
     tokenAgeMs: numberOrNull(signal.tokenAge.ageMs),
     ...extras,
   });

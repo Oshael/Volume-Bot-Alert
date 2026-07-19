@@ -10,6 +10,11 @@ function signal(overrides = {}) {
     id: `robinhood:${TOKEN}:101`, chain: 'robinhood', address: TOKEN,
     generatedAt: NOW, source: 'robinhood-committed-swaps',
     volume5m: { currentUsd: 300, baselineUsd: 100, changePct: 200, coverage: 'complete' },
+    volumeWindows: {
+      '1h': { usd: 1200, coverage: 'complete' },
+      '6h': { usd: 3400, coverage: 'complete' },
+      '24h': { usd: 5600, coverage: 'complete' },
+    },
     valuation: {
       type: 'fdv', current: { fdvUsd: 200_000, priceUsd: 2 },
       windows: {
@@ -59,6 +64,11 @@ describe('Robinhood standard alert matcher', () => {
     ] });
     assert.equal(result.evaluations[0].plans[0].action, 'emit');
     assert.equal(result.evaluations[0].plans[0].ruleKey, 'monitored-vol');
+    assert.deepEqual(result.evaluations[0].plans[0].candidate.payload, {
+      address: TOKEN, valuationType: 'fdv', fdv: 200_000,
+      volume5m: 300, volume1h: 1200, volume6h: 3400, volume24h: 5600,
+      tokenAgeMs: 10 * 24 * 60 * 60 * 1000, prevVolume5m: 100,
+    });
     assert.equal(result.evaluations[1].plans.length, 0);
   });
 

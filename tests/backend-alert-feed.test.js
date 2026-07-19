@@ -92,7 +92,10 @@ describe('backend alert feed service', () => {
       return [{
         id: 72, userId: 8, chain: 'robinhood', ruleKey: 'monitored-fdv',
         kind: 'monitored-fdv', tokenAddress: '0x1111111111111111111111111111111111111111',
-        payload: { fdv: 500000, prevFdv: 400000, pct: 25, label: 'FDV' },
+        payload: {
+          fdv: 500000, prevFdv: 400000, pct: 25, label: 'FDV',
+          volume1h: 1200, volume6h: 3400, volume24h: 5600,
+        },
         triggeredAt: '2026-07-03T05:47:42.000Z',
       }];
     };
@@ -107,6 +110,9 @@ describe('backend alert feed service', () => {
       assert.equal(payload.events[0].mcap, null);
       assert.equal(payload.events[0].fdv, 500000);
       assert.equal(payload.events[0].prevFdv, 400000);
+      assert.equal(payload.events[0].volume1h, 1200);
+      assert.equal(payload.events[0].volume6h, 3400);
+      assert.equal(payload.events[0].volume24h, 5600);
     } finally {
       userAlertEvent.listChartEvents = originalListChartEvents;
     }
