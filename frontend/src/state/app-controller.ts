@@ -125,7 +125,10 @@ import { API_RESPONSE_DEBUG_EVENT } from '../services/api/response-metadata';
 import { trimLoginEmailValue } from '../ui/sections/login-form-utils';
 import {
   getWorkspaceSparklineNextRefreshAt,
+  resolveWorkspaceSparklineGranularityMinutes,
+  runWorkspaceSparklineRequestWithTimeout,
   selectWorkspaceSparklineRefreshBatches,
+  splitWorkspaceSparklineBatchesByChain,
 } from './workspace-sparkline-refresh';
 import { evaluateSparklineDebugEvent } from './sparkline-debug-policy';
 import {
@@ -264,6 +267,7 @@ const MOCK_TRADING_ACTIVE_WALLET_KEY = 'mock_trading_active_wallet';
 const BID_ZONE_REFRESH_INTERVAL_MS = 60 * 1000;
 const BID_ZONE_PANEL_LIMIT = 24;
 const SPARKLINE_REFRESH_INTERVAL_MS = 60 * 1000;
+const SPARKLINE_REQUEST_TIMEOUT_MS = 12 * 1000;
 const SPARKLINE_WINDOW_HOURS = 14 * 24;
 const SPARKLINE_POINT_COUNT = 336;
 const EXPANDED_SPARKLINE_POINT_COUNT = 720;
@@ -297,7 +301,6 @@ const SPARKLINE_GRANULARITY_FALLBACK_MINUTES = 30;
 const SPARKLINE_RANGE_MIN_DAYS = 1;
 const SPARKLINE_RANGE_MAX_DAYS = 14;
 const SPARKLINE_RANGE_DEFAULT_DAYS = 14;
-const SPARKLINE_RANGE_DAY_MS = 24 * 60 * 60 * 1000;
 const SPARKLINE_RANGE_TOKEN_OVERRIDE_MAX = 250;
 const METEORA_ALERT_MIN_TVL = 10000;
 const COLD_FIELD_RECHECK_MS = 10 * 60 * 1000;
@@ -7473,19 +7476,6 @@ export function createAppController(): AppController {
     return normalizeSparklineRangeDays(range.monitoredDays);
   }
 
-  function resolveSparklineGranularityMinutes(anchorAt: number | null | undefined, rangeDays: number, referenceTs = Date.now()) {
-    const rangeMs = normalizeSparklineRangeDays(rangeDays) * SPARKLINE_RANGE_DAY_MS;
-    const anchorAtMs = Number(anchorAt);
-    if (!Number.isFinite(anchorAtMs) || anchorAtMs <= 0 || anchorAtMs > referenceTs) {
-      const fallbackDays = Math.ceil(rangeMs / SPARKLINE_RANGE_DAY_MS);
-      return fallbackDays <= 1 ? 1 : 5;
-    }
-
-    const effectiveMs = Math.max(0, Math.min(referenceTs - anchorAtMs, rangeMs));
-    const effectiveDays = Math.max(1, Math.ceil(effectiveMs / SPARKLINE_RANGE_DAY_MS));
-    return effectiveDays <= 1 ? 1 : 5;
-  }
-
   function getVisibleWorkspaceSparklineIdentityScopes() {
     if (isLiveWorkspace()) {
       const selected: Array<{ identity: TokenIdentity; scope: SparklineRangeScope }> = [];
@@ -7518,10 +7508,15 @@ export function createAppController(): AppController {
 
     for (const { identity, scope } of selectedIdentities) {
       const trackedToken = getTrackedToken(state, identity.address, identity.chain);
-      const sparklineAnchorAt = trackedToken?.catalogFirstSeenAt ?? trackedToken?.createdAt ?? null;
+      const sparklineAnchorAt = trackedToken?.createdAt ?? null;
       const rangeDays = getSparklineRangeDays(scope, identity);
       const hours = rangeDays * 24;
-      const granularityMinutes = resolveSparklineGranularityMinutes(sparklineAnchorAt, rangeDays, referenceTs);
+      const granularityMinutes = resolveWorkspaceSparklineGranularityMinutes({
+        anchorAt: sparklineAnchorAt,
+        rangeDays,
+        points: SPARKLINE_POINT_COUNT,
+        referenceTs,
+      });
       const key = `${hours}:${granularityMinutes}`;
       const batch = grouped.get(key);
       if (batch?.identities.some((item) => item.key === identity.key)) {
@@ -7539,7 +7534,7 @@ export function createAppController(): AppController {
       });
     }
 
-    return Array.from(grouped.values())
+    return splitWorkspaceSparklineBatchesByChain(Array.from(grouped.values()))
       .sort((left, right) => left.hours - right.hours || left.granularityMinutes - right.granularityMinutes)
       .filter((item) => item.identities.length > 0);
   }
@@ -8833,19 +8828,23 @@ export function createAppController(): AppController {
         batches.map(async (batch): Promise<WorkspaceSparklineBatchResult> => {
           const startedAt = Date.now();
           try {
-            const payload = await fetchTokenSparklines(batch.identities, {
-              hours: batch.hours,
-              points: SPARKLINE_POINT_COUNT,
-              granularityMinutes: batch.granularityMinutes,
-              allowOneMinuteFallback: true,
-              onResponse: (response) => recordSparklineDebug('http.response', {
-                endpoint: 'sparklines',
-                source: 'workspace',
-                durationMs: Date.now() - startedAt,
-                batch: summarizeSparklineDebugBatches([batch]),
-                response,
-              }),
-            }, token);
+            const payload = await runWorkspaceSparklineRequestWithTimeout(
+              SPARKLINE_REQUEST_TIMEOUT_MS,
+              (signal) => fetchTokenSparklines(batch.identities, {
+                hours: batch.hours,
+                points: SPARKLINE_POINT_COUNT,
+                granularityMinutes: batch.granularityMinutes,
+                allowOneMinuteFallback: true,
+                signal,
+                onResponse: (response) => recordSparklineDebug('http.response', {
+                  endpoint: 'sparklines',
+                  source: 'workspace',
+                  durationMs: Date.now() - startedAt,
+                  batch: summarizeSparklineDebugBatches([batch]),
+                  response,
+                }),
+              }, token),
+            );
             onPayload(batch, payload);
             return { batch, payload };
           } catch (error) {
@@ -8922,9 +8921,22 @@ export function createAppController(): AppController {
       batch: summarizeSparklineDebugBatches([batch]),
       error: formatDebugErrorMessage(error),
     });
-    if (clearWorkspaceSparklineLoadingEntries(batch.identities)) {
-      emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
+    const nextCache = { ...state.data.sparklineByAddress };
+    const refreshedAt = Date.now();
+    for (const identity of batch.identities) {
+      writeWorkspaceSparklineCacheEntry(nextCache, identity, {
+        chain: identity.chain,
+        address: identity.address,
+        refreshedAt,
+        hours: batch.hours,
+        points: SPARKLINE_POINT_COUNT,
+        granularityMinutes: batch.granularityMinutes,
+        series: [],
+        loading: false,
+      });
     }
+    state.data.sparklineByAddress = nextCache;
+    emit('top-performers', 'manual', 'monitored', 'recent', 'old-week');
 
     console.warn(
       `[AppController] Failed to refresh ${batch.granularityMinutes}m workspace sparklines:`,

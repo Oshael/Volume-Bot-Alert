@@ -951,6 +951,7 @@ export function fetchTokenSparklines(
     points?: number;
     granularityMinutes?: number;
     allowOneMinuteFallback?: boolean;
+    signal?: AbortSignal;
     onResponse?: (metadata: ApiResponseMetadata) => void;
   },
   token?: string | null,
@@ -970,6 +971,7 @@ export function fetchTokenSparklines(
       allowOneMinuteFallback: options?.allowOneMinuteFallback ?? false,
     }),
     token,
+    signal: options?.signal,
     onResponse: options?.onResponse,
   }).then((response) => ({
     generatedAt: response.generatedAt ?? null,

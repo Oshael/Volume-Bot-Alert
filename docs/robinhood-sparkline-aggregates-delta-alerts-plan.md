@@ -1,6 +1,6 @@
 # Robinhood sparkline, aggregate buckets, delta and standard alerts plan
 
-Status: approved direction, implementation pending
+Status: Cut 1 completed; Cuts 2-8 pending
 
 Created: 2026-07-18
 
@@ -156,6 +156,8 @@ Each cut must remain below 450 changed lines, stop after validation and wait
 for explicit authorization before the next cut.
 
 ### Cut 1 - Immediate sparkline correctness and load shedding
+
+Status: completed on 2026-07-18
 
 Goal: make the current dashboard usable before introducing new storage.
 

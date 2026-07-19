@@ -2,13 +2,83 @@ const { before, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 let getWorkspaceSparklineNextRefreshAt;
+let resolveWorkspaceSparklineGranularityMinutes;
+let runWorkspaceSparklineRequestWithTimeout;
 let selectWorkspaceSparklineRefreshBatches;
+let splitWorkspaceSparklineBatchesByChain;
 
 before(async () => {
   ({
     getWorkspaceSparklineNextRefreshAt,
+    resolveWorkspaceSparklineGranularityMinutes,
+    runWorkspaceSparklineRequestWithTimeout,
     selectWorkspaceSparklineRefreshBatches,
+    splitWorkspaceSparklineBatchesByChain,
   } = await import('../frontend/src/state/workspace-sparkline-refresh.ts'));
+});
+
+describe('workspace sparkline request shape', () => {
+  it('fits full range resolutions inside the 336 point budget', () => {
+    const cases = [
+      [1, 5],
+      [3, 15],
+      [7, 30],
+      [14, 60],
+    ];
+    for (const [rangeDays, expected] of cases) {
+      assert.equal(resolveWorkspaceSparklineGranularityMinutes({
+        rangeDays,
+        points: 336,
+        referenceTs: Date.UTC(2026, 6, 18),
+      }), expected);
+    }
+  });
+
+  it('keeps one-minute resolution when the token age fits the point budget', () => {
+    const referenceTs = Date.UTC(2026, 6, 18, 12);
+    assert.equal(resolveWorkspaceSparklineGranularityMinutes({
+      anchorAt: referenceTs - (3 * 60 * 60 * 1000),
+      rangeDays: 14,
+      points: 336,
+      referenceTs,
+    }), 1);
+  });
+
+  it('uses the selected-range resolution once a token is older than one day', () => {
+    const referenceTs = Date.UTC(2026, 6, 18, 12);
+    assert.equal(resolveWorkspaceSparklineGranularityMinutes({
+      anchorAt: referenceTs - (5 * 24 * 60 * 60 * 1000),
+      rangeDays: 14,
+      points: 336,
+      referenceTs,
+    }), 60);
+  });
+
+  it('isolates same-shape batches by chain', () => {
+    const solana = { chain: 'solana', address: 'sol', key: 'solana:sol' };
+    const robinhood = { chain: 'robinhood', address: '0x1', key: 'robinhood:0x1' };
+    assert.deepEqual(splitWorkspaceSparklineBatchesByChain([{
+      hours: 336,
+      granularityMinutes: 60,
+      identities: [solana, robinhood],
+    }]), [
+      { hours: 336, granularityMinutes: 60, identities: [solana] },
+      { hours: 336, granularityMinutes: 60, identities: [robinhood] },
+    ]);
+  });
+
+  it('aborts a request that exceeds its time budget', async () => {
+    let observedAbort = false;
+    await assert.rejects(runWorkspaceSparklineRequestWithTimeout(5, (signal) => (
+      new Promise((_, reject) => {
+        signal.addEventListener('abort', () => {
+          observedAbort = true;
+          reject(new Error('aborted'));
+        }, { once: true });
+      })
+    )), /timed out after 5ms/);
+    assert.equal(observedAbort, true);
+  });
 });
 
 describe('workspace sparkline refresh selection', () => {
