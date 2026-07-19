@@ -1,6 +1,6 @@
 # Robinhood sparkline, aggregate buckets, delta and standard alerts plan
 
-Status: Cut 1 completed; Cuts 2-8 pending
+Status: Cuts 1-2 completed; Cuts 3-8 pending
 
 Created: 2026-07-18
 
@@ -209,6 +209,8 @@ Validation:
 - `npm --prefix frontend run build`.
 
 ### Cut 2 - Aggregate schema and repository
+
+Status: completed on 2026-07-18; live writes and reader migration remain in Cuts 3-5
 
 Goal: add the durable RH token-level aggregate contract without changing live
 readers yet.

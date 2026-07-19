@@ -25,6 +25,7 @@ const stage70 = require('../src/utils/db-init-stage70');
 const stage71 = require('../src/utils/db-init-stage71');
 const stage72 = require('../src/utils/db-init-stage72');
 const stage74 = require('../src/utils/db-init-stage74');
+const stage78 = require('../src/utils/db-init-stage78');
 const { SCHEMA_GROUPS } = require('../src/utils/runtime-schema');
 
 describe('Robinhood additive chain schema', () => {
@@ -311,6 +312,25 @@ describe('Robinhood additive chain schema', () => {
     assert.doesNotMatch(sql, /expires_at/);
     assert.equal(group.repair, 'node src/utils/db-init-stage66.js');
     assert.equal(group.tables.length, 1);
+  });
+
+  it('creates and guards token-level Robinhood aggregate buckets', () => {
+    const sql = stage78.STATEMENTS.join('\n');
+    const group = SCHEMA_GROUPS.find((entry) => (
+      entry.key === 'stage78-robinhood-market-buckets-agg'
+    ));
+
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS robinhood_market_buckets_agg/);
+    assert.match(sql, /PRIMARY KEY \(chain, token_address, granularity_minutes, bucket_ts\)/);
+    assert.match(sql, /granularity_minutes IN \(5, 15, 30, 60, 240, 1440\)/);
+    assert.match(sql, /high_price_usd >= GREATEST\(open_price_usd, close_price_usd\)/);
+    assert.match(sql, /idx_robinhood_market_buckets_agg_token_range/);
+    assert.match(sql, /idx_robinhood_market_buckets_agg_cleanup/);
+    assert.equal(group.repair, 'node src/utils/db-init-stage78.js');
+    assert.deepEqual(group.tables[0].indexes.map((index) => index.name), [
+      'idx_robinhood_market_buckets_agg_token_range',
+      'idx_robinhood_market_buckets_agg_cleanup',
+    ]);
   });
 
   it('adds protocol-safe liquidity evidence to exact Robinhood observations', () => {

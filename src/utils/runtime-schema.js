@@ -1730,6 +1730,36 @@ const SCHEMA_GROUPS = [
       },
     ],
   },
+  {
+    key: 'stage78-robinhood-market-buckets-agg',
+    name: 'Stage 78 token-level Robinhood aggregate market buckets',
+    repair: 'node src/utils/db-init-stage78.js',
+    tables: [{
+      table: 'robinhood_market_buckets_agg',
+      columns: [
+        'chain', 'token_address', 'granularity_minutes', 'bucket_ts',
+        'open_price_usd', 'high_price_usd', 'low_price_usd', 'close_price_usd',
+        'open_fdv_usd', 'high_fdv_usd', 'low_fdv_usd', 'close_fdv_usd',
+        'volume_usd', 'swaps', 'buys', 'sells', 'transactions', 'market_count',
+        'protocols', 'source_granularity_minutes', 'source_bucket_count',
+        'first_observed_at', 'first_block_number', 'first_log_index',
+        'last_observed_at', 'last_block_number', 'last_log_index',
+        'created_at', 'updated_at',
+      ],
+      constraints: [
+        { name: 'robinhood_market_buckets_agg_pkey', includes: ['PRIMARY KEY', 'chain', 'token_address', 'granularity_minutes', 'bucket_ts'] },
+        { name: 'robinhood_market_buckets_agg_granularity_check', includes: ['CHECK', 'granularity_minutes', 'source_granularity_minutes'] },
+        { name: 'robinhood_market_buckets_agg_values_check', includes: ['CHECK', 'high_price_usd', 'low_price_usd', 'high_fdv_usd', 'low_fdv_usd'] },
+        { name: 'robinhood_market_buckets_agg_activity_check', includes: ['CHECK', 'volume_usd', 'market_count', 'source_bucket_count'] },
+        { name: 'robinhood_market_buckets_agg_protocols_check', includes: ['CHECK', 'protocols', 'uniswap-v2', 'uniswap-v3', 'uniswap-v4'] },
+        { name: 'robinhood_market_buckets_agg_order_check', includes: ['CHECK', 'first_block_number', 'last_block_number'] },
+      ],
+      indexes: [
+        { name: 'idx_robinhood_market_buckets_agg_token_range', includes: ['chain', 'token_address', 'granularity_minutes', 'bucket_ts DESC'] },
+        { name: 'idx_robinhood_market_buckets_agg_cleanup', includes: ['granularity_minutes', 'bucket_ts'] },
+      ],
+    }],
+  },
 ];
 
 const PROFILE_GROUP_KEYS = {
@@ -1742,6 +1772,7 @@ const PROFILE_GROUP_KEYS = {
     'stage75-structured-volume-coverage',
     'stage76-custom-alert-capabilities',
     'stage77-chain-scoped-alert-state',
+    'stage78-robinhood-market-buckets-agg',
   ],
   runtime: SCHEMA_GROUPS.map((group) => group.key),
 };
@@ -1793,6 +1824,17 @@ function collectMissingConstraints(requirement, tableConstraints) {
   return missingConstraints;
 }
 
+function collectMissingIndexes(requirement, tableIndexes) {
+  return (requirement.indexes || []).flatMap((index) => {
+    const definition = tableIndexes.get(index.name);
+    if (!definition) return [`${requirement.table}.${index.name}`];
+    const missing = (index.includes || []).filter((part) => !definition.includes(String(part)));
+    return missing.length > 0
+      ? [`${requirement.table}.${index.name} missing ${missing.join('/')}`]
+      : [];
+  });
+}
+
 async function loadSchemaSnapshot(tableNames) {
   const normalized = [...new Set(tableNames.map((table) => String(table || '').trim()).filter(Boolean))];
   if (normalized.length === 0) {
@@ -1804,7 +1846,7 @@ async function loadSchemaSnapshot(tableNames) {
     };
   }
 
-  const [tableResult, columnResult, constraintResult] = await Promise.all([
+  const [tableResult, columnResult, constraintResult, indexResult] = await Promise.all([
     query(
       `SELECT table_name
        FROM information_schema.tables
@@ -1831,12 +1873,20 @@ async function loadSchemaSnapshot(tableNames) {
          AND rel.relname = ANY($1::text[])`,
       [normalized]
     ),
+    query(
+      `SELECT tablename AS table_name, indexname AS index_name, indexdef AS index_definition
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND tablename = ANY($1::text[])`,
+      [normalized]
+    ),
   ]);
 
   const tables = new Set(tableResult.rows.map((row) => row.table_name));
   const columnsByTable = new Map();
   const constraintsByTable = new Map();
   const defaultsByTable = new Map();
+  const indexesByTable = new Map();
   for (const row of columnResult.rows) {
     if (!columnsByTable.has(row.table_name)) {
       columnsByTable.set(row.table_name, new Set());
@@ -1856,7 +1906,12 @@ async function loadSchemaSnapshot(tableNames) {
     constraintsByTable.get(row.table_name).set(row.constraint_name, row.constraint_def || '');
   }
 
-  return { tables, columnsByTable, constraintsByTable, defaultsByTable };
+  for (const row of indexResult.rows) {
+    if (!indexesByTable.has(row.table_name)) indexesByTable.set(row.table_name, new Map());
+    indexesByTable.get(row.table_name).set(row.index_name, row.index_definition || '');
+  }
+
+  return { tables, columnsByTable, constraintsByTable, defaultsByTable, indexesByTable };
 }
 
 function buildSchemaReport(groups, snapshot) {
@@ -1866,6 +1921,7 @@ function buildSchemaReport(groups, snapshot) {
     const missingTables = [];
     const missingColumns = [];
     const missingConstraints = [];
+    const missingIndexes = [];
     const mismatchedDefaults = [];
 
     for (const requirement of group.tables) {
@@ -1887,12 +1943,15 @@ function buildSchemaReport(groups, snapshot) {
 
       const tableConstraints = snapshot.constraintsByTable.get(tableName) || new Map();
       missingConstraints.push(...collectMissingConstraints(requirement, tableConstraints));
+      const tableIndexes = snapshot.indexesByTable.get(tableName) || new Map();
+      missingIndexes.push(...collectMissingIndexes(requirement, tableIndexes));
     }
 
     if (
       missingTables.length > 0
       || missingColumns.length > 0
       || missingConstraints.length > 0
+      || missingIndexes.length > 0
       || mismatchedDefaults.length > 0
     ) {
       issues.push({
@@ -1902,6 +1961,7 @@ function buildSchemaReport(groups, snapshot) {
         missingTables,
         missingColumns,
         missingConstraints,
+        missingIndexes,
         mismatchedDefaults,
       });
     }
@@ -1932,6 +1992,9 @@ function createRuntimeSchemaError(report, profile = 'runtime') {
     }
     if (issue.missingConstraints.length > 0) {
       lines.push(`  Missing constraints: ${summarizeList(issue.missingConstraints).join(', ')}`);
+    }
+    if (issue.missingIndexes.length > 0) {
+      lines.push(`  Missing indexes: ${summarizeList(issue.missingIndexes).join(', ')}`);
     }
     if (issue.mismatchedDefaults.length > 0) {
       lines.push(`  Mismatched defaults: ${summarizeList(issue.mismatchedDefaults).join(', ')}`);
