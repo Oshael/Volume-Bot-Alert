@@ -14,8 +14,10 @@ function signal(overrides = {}) {
       type: 'fdv', current: { fdvUsd: 200_000, priceUsd: 2 },
       windows: {
         '5m': { fdvUsd: 100_000, fdvChangePct: 100, coverage: 'complete' },
-        '1h': { fdvUsd: 100_000, priceChangePct: 100, coverage: 'complete' },
-        '6h': { fdvUsd: 50_000, priceChangePct: 300, coverage: 'complete' },
+        '1h': { fdvUsd: 100_000, priceChangePct: 100,
+          previousPriceChangePct: 90, coverage: 'complete' },
+        '6h': { fdvUsd: 50_000, priceChangePct: 300,
+          previousPriceChangePct: 200, coverage: 'complete' },
       },
     },
     tokenAge: {
@@ -93,12 +95,15 @@ describe('Robinhood standard alert matcher', () => {
     assert.deepEqual(evaluate({ signal: recent, profiles: [profile(2, { ruleEnabled: recentRules })] })
       .evaluations[0].candidates.map((candidate) => candidate.ruleKey),
     ['recent-surge-6h', 'recent-surge-1h']);
-    const configured = profile(1, { ruleEnabled: { oldWeekSurge1h: true } });
+    const configured = profile(1, {
+      loadedAt: '2026-07-19T18:00:00.000Z', ruleEnabled: { oldWeekSurge1h: true },
+    });
     const first = evaluate({ profiles: [configured] });
     assert.equal(first.evaluations[0].plans[0].action, 'prime');
     const primed = {
       userId: 1, ruleKey: 'old-week-surge-1h', status: 'triggered', rearmRequired: true,
-      lastAlertedAt: null, lastAlertedPct: 100, metadata: { lastDecision: 'primed-hot' },
+      lastAlertedAt: null, lastAlertedPct: 100,
+      metadata: { lastDecision: 'primed-hot', sessionStartedAt: configured.loadedAt },
     };
     const hotter = signal({
       valuation: {
@@ -109,6 +114,64 @@ describe('Robinhood standard alert matcher', () => {
     });
     const next = evaluate({ signal: hotter, profiles: [configured], states: [primed] });
     assert.equal(next.evaluations[0].plans[0].action, 'emit');
+  });
+  it('requires a fresh 6h crossing after cooldown but accepts an expired cold reset', () => {
+    const configured = profile(1, { ruleEnabled: { oldWeekSurge6h: true } });
+    const state = {
+      userId: 1, ruleKey: 'old-week-surge-6h', status: 'rearmed', rearmRequired: false,
+      lastAlertedAt: '2026-07-19T10:00:00.000Z', lastAlertedPct: 200,
+      metadata: { lastAlertedFdv: 100_000 },
+    };
+    assert.equal(evaluate({ profiles: [configured], states: [state] })
+      .evaluations[0].plans[0].action, 'suppress');
+    const crossed = signal({ valuation: { ...signal().valuation, windows: {
+      ...signal().valuation.windows,
+      '6h': { ...signal().valuation.windows['6h'], previousPriceChangePct: 90 },
+    } } });
+    assert.equal(evaluate({ signal: crossed, profiles: [configured], states: [state] })
+      .evaluations[0].plans[0].action, 'emit');
+    state.metadata.surgeResetPchangeSinceAt = '2026-07-19T15:59:00.000Z';
+    assert.equal(evaluate({ profiles: [configured], states: [state] })
+      .evaluations[0].plans[0].action, 'emit');
+  });
+  it('expires the monitored volume anchor after 30 cold minutes', () => {
+    const state = {
+      userId: 1, ruleKey: 'monitored-vol', status: 'rearmed', rearmRequired: false,
+      lastAlertedValue: 1_000,
+      metadata: { monitoredVolColdSinceAt: '2026-07-19T17:30:00.000Z' },
+    };
+    const result = evaluate({
+      profiles: [profile(1, { ruleEnabled: { monitoredVol: true } })], states: [state],
+    });
+    assert.equal(result.evaluations[0].plans[0].action, 'emit');
+    assert.equal(result.evaluations[0].plans[0].state, null);
+  });
+  it('tracks surge drawdown reset state against FDV', () => {
+    const state = {
+      userId: 1, ruleKey: 'old-week-surge-1h', status: 'rearmed', rearmRequired: false,
+      lastAlertedAt: '2026-07-19T17:00:00.000Z', lastAlertedPct: 100,
+      metadata: { lastAlertedFdv: 100_000, surgePostAlertHighFdv: 400_000 },
+    };
+    const result = evaluate({
+      profiles: [profile(1, { ruleEnabled: { oldWeekSurge1h: true } })], states: [state],
+    });
+    const sync = result.evaluations[0].plans.find((plan) => plan.action === 'rearm');
+    assert.equal(result.evaluations[0].plans[0].action, 'suppress');
+    assert.equal(sync.state.metadata.surgeResetDrawdownSinceAt, NOW);
+    assert.equal(sync.state.metadata.surgePostAlertHighFdv, 400_000);
+  });
+  it('does not carry a primed surge anchor into a later active session', () => {
+    const configured = profile(1, {
+      loadedAt: '2026-07-19T17:00:00.000Z', ruleEnabled: { oldWeekSurge1h: true },
+    });
+    const stalePrime = {
+      userId: 1, ruleKey: 'old-week-surge-1h', status: 'triggered', rearmRequired: true,
+      lastAlertedAt: null, lastAlertedPct: 100,
+      metadata: { lastDecision: 'primed-hot', sessionStartedAt: '2026-07-19T16:00:00.000Z' },
+    };
+    const result = evaluate({ profiles: [configured], states: [stalePrime] });
+    assert.equal(result.evaluations[0].plans[0].action, 'emit');
+    assert.equal(result.evaluations[0].plans[0].state, null);
   });
   it('returns a rearm plan without mutating state when an enabled rule becomes cold', () => {
     const state = {
@@ -121,6 +184,11 @@ describe('Robinhood standard alert matcher', () => {
     });
     assert.equal(result.evaluations[0].plans[0].action, 'rearm');
     assert.equal(state.status, 'triggered');
+    const idle = { ...state, status: 'idle', rearmRequired: false, metadata: {} };
+    const idleResult = evaluate({
+      signal: blocked, profiles: [profile(1, { ruleEnabled: { monitoredVol: true } })], states: [idle],
+    });
+    assert.equal(idleResult.evaluations[0].plans.length, 0);
   });
   it('plans the existing 3x continuation once per base 6h surge event', () => {
     const configured = profile(1, { ruleEnabled: { oldWeekSurge6h: true } });

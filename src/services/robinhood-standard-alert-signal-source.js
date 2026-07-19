@@ -48,7 +48,10 @@ token_context AS (
 specs(window_name, target_at) AS (
   VALUES ('5m', $2::timestamptz - INTERVAL '5 minutes'),
     ('1h', $2::timestamptz - INTERVAL '1 hour'),
-    ('6h', $2::timestamptz - INTERVAL '6 hours')
+    ('6h', $2::timestamptz - INTERVAL '6 hours'),
+    ('previous-current', $2::timestamptz - INTERVAL '1 minute'),
+    ('previous-1h', $2::timestamptz - INTERVAL '1 hour 1 minute'),
+    ('previous-6h', $2::timestamptz - INTERVAL '6 hours 1 minute')
 ),
 points AS (
   SELECT context.token_address, specs.window_name,
@@ -77,7 +80,13 @@ SELECT context.*,
   MAX(points.last_observed_at) FILTER (WHERE window_name = '1h') AS observed_1h_at,
   MAX(points.close_price_usd) FILTER (WHERE window_name = '6h') AS price_6h_usd,
   MAX(points.close_fdv_usd) FILTER (WHERE window_name = '6h') AS fdv_6h_usd,
-  MAX(points.last_observed_at) FILTER (WHERE window_name = '6h') AS observed_6h_at
+  MAX(points.last_observed_at) FILTER (WHERE window_name = '6h') AS observed_6h_at,
+  MAX(points.close_price_usd) FILTER (WHERE window_name = 'previous-current') AS previous_price_usd,
+  MAX(points.last_observed_at) FILTER (WHERE window_name = 'previous-current') AS previous_observed_at,
+  MAX(points.close_price_usd) FILTER (WHERE window_name = 'previous-1h') AS previous_price_1h_usd,
+  MAX(points.last_observed_at) FILTER (WHERE window_name = 'previous-1h') AS previous_observed_1h_at,
+  MAX(points.close_price_usd) FILTER (WHERE window_name = 'previous-6h') AS previous_price_6h_usd,
+  MAX(points.last_observed_at) FILTER (WHERE window_name = 'previous-6h') AS previous_observed_6h_at
 FROM token_context context
 LEFT JOIN points USING (token_address)
 LEFT JOIN market_cursor cursor ON TRUE
@@ -169,12 +178,20 @@ function valuationWindow(row, current, window, asOf, cursorCoverage) {
     : (cursorCoverage === 'partial' || baselineCoverage === 'partial' ? 'partial' : 'complete');
   const priceUsd = numberOrNull(row[`price_${window}_usd`]);
   const fdvUsd = numberOrNull(row[`fdv_${window}_usd`]);
+  const previousAsOf = new Date(asOf.getTime() - 60 * 1000);
+  const previousCoverage = window === '5m' ? 'unavailable' : exactBaselineCoverage(
+    window, previousAsOf, row.previous_observed_at, row[`previous_observed_${window}_at`],
+  );
   return Object.freeze({
     baselineAt, priceUsd, fdvUsd, coverage,
     priceChangePct: coverage === 'complete'
       ? calculatePriceChange(current.priceUsd, priceUsd) : null,
     fdvChangePct: coverage === 'complete'
       ? calculatePriceChange(current.fdvUsd, fdvUsd) : null,
+    ...(window === '5m' ? {} : {
+      previousPriceChangePct: cursorCoverage === 'complete' && previousCoverage === 'complete'
+        ? calculatePriceChange(row.previous_price_usd, row[`previous_price_${window}_usd`]) : null,
+    }),
   });
 }
 

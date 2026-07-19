@@ -131,15 +131,22 @@ describe('Robinhood standard alert publication', () => {
   });
 
   it('applies prime and rearm plans atomically without manufacturing events', async () => {
+    let primedInput;
     const fixture = dependencies({
       evaluateSignal: () => evaluation([
         { action: 'prime', ruleKey: 'old-week-surge-1h', candidate: candidate({
           ruleKey: 'old-week-surge-1h', kind: 'old-surge', fingerprint: 'surge:prime',
+          sessionStartedAt: '2026-07-19T18:00:00.000Z',
+          payload: { fdv: 200_000, ageBucket: 'old-week', surgeWindow: '1H', thresholdPct: 50 },
         }), state: null },
         { action: 'rearm', ruleKey: 'monitored-vol', candidate: null,
           state: { status: 'triggered', cooldownUntil: '2026-07-19T18:01:00.000Z' } },
       ]),
     });
+    fixture.deps.userAlertRuleState.markTriggered = async (input) => {
+      primedInput = input;
+      fixture.calls.triggered += 1;
+    };
     const publication = createRobinhoodStandardAlertPublication(fixture.deps);
     const result = await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
     assert.equal(result.stateWrites, 2);
@@ -147,6 +154,8 @@ describe('Robinhood standard alert publication', () => {
     assert.equal(fixture.calls.triggered, 1);
     assert.equal(fixture.calls.rearmed, 1);
     assert.equal(fixture.calls.events, 0);
+    assert.equal(primedInput.metadata.sessionStartedAt, '2026-07-19T18:00:00.000Z');
+    assert.equal(primedInput.metadata.thresholdPct, 50);
     assert.deepEqual(fixture.transaction, ['BEGIN', 'COMMIT', 'RELEASE']);
   });
 

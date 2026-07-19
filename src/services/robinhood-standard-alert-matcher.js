@@ -3,11 +3,13 @@ const {
   STANDARD_RULE_KEYS,
   VALUATION_TYPE,
 } = require('./robinhood-standard-alert-contract');
+const standardAlertReset = require('./standard-alert-reset');
 const {
   canRepeatSurgeInSession,
   getStandardTransition,
 } = require('./standard-alert-transition');
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
+const SURGE_STARTUP_SUPPRESS_MS = 60 * 1000;
 const SURGE_RULE_KEYS = Object.freeze([
   'recent-surge-1h', 'recent-surge-6h', 'old-week-surge-1h', 'old-week-surge-6h',
 ]);
@@ -26,10 +28,20 @@ const ENABLED_FIELD_BY_RULE = Object.freeze({
   'old-week-surge-1h': 'oldWeekSurge1h',
   'old-week-surge-6h': 'oldWeekSurge6h',
 });
+const ROBINHOOD_SURGE_VALUATION_KEYS = Object.freeze({
+  lastAlerted: 'lastAlertedFdv',
+  high: 'surgePostAlertHighFdv',
+  interrupted: 'surgeResetDrawdownInterruptedFdv',
+});
 function numberOrNull(value) {
   if (value == null || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+function finiteNumberOrNull(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 function passesProfileFilters(profile, signal, minimumFdv = 0) {
   if (signal.filters.adminBlocked === true) return false;
@@ -86,6 +98,8 @@ function surgeCandidate(profile, signal, spec) {
   const window = signal.valuation.windows[windowName];
   const threshold = numberOrNull(profile[thresholdField]);
   const currentPct = numberOrNull(window.priceChangePct);
+  const previousPct = finiteNumberOrNull(window.previousPriceChangePct);
+  const crossedThreshold = previousPct != null && previousPct < threshold && currentPct >= threshold;
   const currentFdv = numberOrNull(signal.valuation.current.fdvUsd) || 0;
   if (!profile.ruleEnabled[enabledField] || threshold == null
     || signal.tokenAge.eligibility[ageField] !== true
@@ -95,8 +109,11 @@ function surgeCandidate(profile, signal, spec) {
     ruleKey, kind: 'old-surge', label: `PCHANGE ${windowName.toUpperCase()}`,
     pct: currentPct, lastAlertedValue: currentPct,
     cooldownMs: windowName === '6h' ? 6 * 60 * 60 * 1000 : 0,
-    repeatStepPct: null, crossedThreshold: false, primeOnFirstSeen: true,
-    fingerprint: `${ruleKey}:${window.baselineAt}:${currentPct}`,
+    repeatStepPct: null, crossedThreshold, primeOnFirstSeen: false,
+    startupSuppressUntilMs: timestampMs(profile.loadedAt) == null
+      ? null : timestampMs(profile.loadedAt) + SURGE_STARTUP_SUPPRESS_MS,
+    sessionStartedAt: profile.loadedAt || null,
+    fingerprint: `${ruleKey}:${window.baselineAt}:${previousPct}:${currentPct}`,
     payload: payload(signal, {
       ageBucket: ageField === 'oldWeekSurge' ? 'old-week' : 'recent',
       prevFdv: numberOrNull(window.fdvUsd),
@@ -118,13 +135,71 @@ function stateIndex(states = []) {
 }
 
 function timestampMs(value) {
+  if (!value) return null;
   const parsed = value instanceof Date ? value : new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.getTime() : null;
 }
-function hasBlockingSurge(candidate, userId, indexedStates, nowMs) {
+function surgeThreshold(profile, ruleKey) {
+  const spec = RULE_SPECS.find((item) => item[0] === ruleKey);
+  return spec ? numberOrNull(profile[spec[2]]) : null;
+}
+function isPreparedStateExpired(ruleKey, state, nowMs) {
+  if (!state) return false;
+  if (ruleKey === 'monitored-vol') {
+    return standardAlertReset.isMonitoredVolAnchorExpired({ ruleKey }, state, nowMs);
+  }
+  const lastAlertedAtMs = timestampMs(state.lastAlertedAt);
+  const cooldownActive = ruleKey.endsWith('-6h') && lastAlertedAtMs != null
+    && nowMs - lastAlertedAtMs < 6 * 60 * 60 * 1000;
+  return standardAlertReset.isSurgeAnchorExpired(
+    { ruleKey }, state, nowMs, { cooldownActive },
+  );
+}
+function prepareRuleState(profile, signal, ruleKey, state, nowMs) {
+  if (!state) return { state: null, changed: false, expired: false };
+  if (isPreparedStateExpired(ruleKey, state, nowMs)) {
+    return { state, changed: false, expired: true };
+  }
+  let reset = { metadata: state.metadata || {}, changed: false };
+  if (ruleKey === 'monitored-vol' && ['triggered', 'rearmed'].includes(state.status)) {
+    reset = standardAlertReset.buildMonitoredVolColdMetadata(
+      state, signal.volume5m.currentUsd, nowMs,
+    );
+  } else if (SURGE_RULE_KEYS.includes(ruleKey) && state.status === 'rearmed') {
+    reset = standardAlertReset.buildSurgeResetMetadata({
+      ruleKey, thresholdPct: surgeThreshold(profile, ruleKey), state, nowMs,
+      observation: {
+        valuation: signal.valuation.current.fdvUsd,
+        priceChange1h: signal.valuation.windows['1h'].priceChangePct,
+        priceChange6h: signal.valuation.windows['6h'].priceChangePct,
+      },
+      valuationKeys: ROBINHOOD_SURGE_VALUATION_KEYS,
+    });
+  }
+  const prepared = reset.changed ? { ...state, metadata: reset.metadata } : state;
+  return {
+    state: prepared,
+    changed: reset.changed,
+    expired: isPreparedStateExpired(ruleKey, prepared, nowMs),
+  };
+}
+function resolveCandidateState(candidate, prepared, profile) {
+  if (prepared.expired) return null;
+  const state = prepared.state;
+  if (candidate?.kind !== 'old-surge' || !state) return state;
+  const primed = state.metadata?.lastDecision === 'primed-hot' && timestampMs(state.lastAlertedAt) == null;
+  const sameSession = profile.loadedAt && state.metadata?.sessionStartedAt === profile.loadedAt;
+  return primed && !sameSession ? null : state;
+}
+function transition(candidate, state, nowMs) {
+  if (!state && candidate?.kind === 'old-surge'
+    && numberOrNull(candidate.startupSuppressUntilMs) > nowMs) return 'prime';
+  return getStandardTransition(candidate, state, nowMs);
+}
+function hasBlockingSurge(candidate, userId, effectiveStates, nowMs) {
   if (candidate?.kind !== 'old-surge') return false;
   return SURGE_RULE_KEYS.some((ruleKey) => {
-    const state = indexedStates.get(`${userId}:${ruleKey}`);
+    const state = effectiveStates.get(`${userId}:${ruleKey}`);
     const lastAlertedAt = timestampMs(state?.lastAlertedAt);
     if (lastAlertedAt == null) return false;
     const elapsed = nowMs - lastAlertedAt;
@@ -163,6 +238,59 @@ function continuationPlan(profile, signal, indexedStates, nowMs) {
   return null;
 }
 
+function prepareProfileStates(profile, signal, indexedStates, nowMs) {
+  const byRule = new Map();
+  const effective = new Map(indexedStates);
+  const prepared = new Map(indexedStates);
+  for (const ruleKey of STANDARD_RULE_KEYS) {
+    const key = `${profile.userId}:${ruleKey}`;
+    const result = prepareRuleState(profile, signal, ruleKey, indexedStates.get(key) || null, nowMs);
+    byRule.set(ruleKey, result);
+    effective.set(key, result.expired ? null : result.state);
+    prepared.set(key, result.state);
+  }
+  return { byRule, effective, prepared };
+}
+
+function appendPrimaryPlan(plans, input) {
+  const { primary, profile, states, nowMs } = input;
+  if (!primary) return;
+  const prepared = states.byRule.get(primary.ruleKey);
+  const state = resolveCandidateState(primary, prepared, profile);
+  const decision = transition(primary, state, nowMs);
+  const blocked = decision !== 'prime'
+    && hasBlockingSurge(primary, profile.userId, states.effective, nowMs);
+  const action = blocked ? 'suppress' : decision;
+  plans.push(Object.freeze({ action, candidate: primary, ruleKey: primary.ruleKey, state }));
+  if (prepared.changed && !prepared.expired && action === 'suppress') {
+    plans.push(Object.freeze({
+      action: 'rearm', candidate: null, ruleKey: primary.ruleKey, state: prepared.state,
+    }));
+  }
+}
+
+function appendInactiveRulePlans(plans, input) {
+  const { profile, qualified, states, nowMs } = input;
+  for (const ruleKey of STANDARD_RULE_KEYS) {
+    if (qualified.has(ruleKey) || !profile.ruleEnabled[ENABLED_FIELD_BY_RULE[ruleKey]]) continue;
+    const prepared = states.byRule.get(ruleKey);
+    if (SURGE_RULE_KEYS.includes(ruleKey)) {
+      if (prepared.changed && !prepared.expired) {
+        plans.push(Object.freeze({
+          action: 'rearm', candidate: null, ruleKey, state: prepared.state,
+        }));
+      }
+      continue;
+    }
+    const shouldRearm = getStandardTransition(null, prepared.state, nowMs) === 'rearm';
+    if (shouldRearm || (prepared.changed && !prepared.expired)) {
+      plans.push(Object.freeze({
+        action: 'rearm', candidate: null, ruleKey, state: prepared.state,
+      }));
+    }
+  }
+}
+
 function assertCanonicalSignal(signal) {
   if (!signal || signal.chain !== CHAIN || signal.valuation.type !== VALUATION_TYPE) {
     throw new Error('Robinhood standard matcher requires a canonical FDV signal');
@@ -180,24 +308,11 @@ function evaluateRobinhoodStandardSignal(input = {}) {
     const candidates = buildCandidates(profile, signal);
     const qualified = new Set(candidates.map((candidate) => candidate.ruleKey));
     const primary = candidates[0] || null;
+    const states = prepareProfileStates(profile, signal, indexedStates, nowMs);
     const plans = [];
-    if (primary) {
-      const state = indexedStates.get(`${profile.userId}:${primary.ruleKey}`) || null;
-      const action = hasBlockingSurge(primary, profile.userId, indexedStates, nowMs)
-        ? 'suppress' : getStandardTransition(primary, state, nowMs);
-      plans.push(Object.freeze({
-        action, candidate: primary, ruleKey: primary.ruleKey, state,
-      }));
-    }
-    for (const ruleKey of STANDARD_RULE_KEYS) {
-      if (qualified.has(ruleKey) || !profile.ruleEnabled[ENABLED_FIELD_BY_RULE[ruleKey]]) continue;
-      if (SURGE_RULE_KEYS.includes(ruleKey)) continue;
-      const state = indexedStates.get(`${profile.userId}:${ruleKey}`) || null;
-      if (getStandardTransition(null, state, nowMs) === 'rearm') {
-        plans.push(Object.freeze({ action: 'rearm', candidate: null, ruleKey, state }));
-      }
-    }
-    const continuation = continuationPlan(profile, signal, indexedStates, nowMs);
+    appendPrimaryPlan(plans, { primary, profile, states, nowMs });
+    appendInactiveRulePlans(plans, { profile, qualified, states, nowMs });
+    const continuation = continuationPlan(profile, signal, states.prepared, nowMs);
     if (continuation) plans.push(continuation);
     evaluations.push(Object.freeze({ userId: profile.userId, candidates, plans }));
   }

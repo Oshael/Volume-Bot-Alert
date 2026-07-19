@@ -39,6 +39,9 @@ function context(overrides = {}) {
     observed_1h_at: new Date('2026-07-19T17:00:00.000Z'),
     price_6h_usd: '0.5', fdv_6h_usd: '50',
     observed_6h_at: new Date('2026-07-19T12:00:00.000Z'),
+    previous_price_usd: '1.8', previous_observed_at: new Date('2026-07-19T17:59:00.000Z'),
+    previous_price_1h_usd: '1', previous_observed_1h_at: new Date('2026-07-19T16:59:00.000Z'),
+    previous_price_6h_usd: '0.6', previous_observed_6h_at: new Date('2026-07-19T11:59:00.000Z'),
     ...overrides,
   };
 }
@@ -76,8 +79,10 @@ describe('Robinhood standard alert signal source', () => {
     assert.deepEqual(signal.valuation.windows['1h'], {
       baselineAt: '2026-07-19T17:00:00.000Z', priceUsd: 1, fdvUsd: 100,
       coverage: 'complete', priceChangePct: 100, fdvChangePct: 100,
+      previousPriceChangePct: 80,
     });
     assert.equal(signal.valuation.windows['6h'].fdvChangePct, 300);
+    assert.equal(signal.valuation.windows['6h'].previousPriceChangePct, 200);
     assert.equal(signal.tokenAge.bucket, '7d-plus');
     assert.equal(signal.tokenAge.source, 'token-catalog');
     assert.equal(signal.tokenAge.eligibility.oldWeekSurge, true);

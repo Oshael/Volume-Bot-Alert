@@ -43,6 +43,7 @@ function buildTriggeredMetadata(plan, event, triggeredAt) {
     lastDecision: 'triggered', lastEventId: event.id,
     lastAlertedFdv: plan.candidate.payload?.fdv ?? null,
     label: plan.candidate.label || null,
+    sessionStartedAt: plan.candidate.sessionStartedAt || null,
     triggeredAt: triggeredAt.toISOString(),
   };
 }
@@ -114,7 +115,12 @@ async function persistPrime(context, plan) {
     metadata: {
       ...(plan.state?.metadata || {}), lastDecision: 'primed-hot',
       lastAlertedFdv: candidate.payload?.fdv ?? null,
+      ageBucket: candidate.payload?.ageBucket || null,
+      label: candidate.label || null,
       primedAt: context.triggeredAt.toISOString(),
+      sessionStartedAt: candidate.sessionStartedAt || null,
+      surgeWindow: candidate.payload?.surgeWindow || null,
+      thresholdPct: candidate.payload?.thresholdPct ?? null,
     },
     authorization: context.authorization,
   }, context.client);
