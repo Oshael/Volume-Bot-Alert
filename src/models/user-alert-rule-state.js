@@ -101,6 +101,26 @@ async function getState(userId, ruleKey, tokenAddress, runner = db, chainValue =
   return mapStateRow(rows[0] || null);
 }
 
+async function listStatesByUsersForToken(input = {}, runner = db) {
+  const userIds = [...new Set((Array.isArray(input.userIds) ? input.userIds : [])
+    .map((userId) => normalizeUserId(userId)))];
+  const ruleKeys = [...new Set((Array.isArray(input.ruleKeys) ? input.ruleKeys : [])
+    .map((ruleKey) => normalizeRuleKey(ruleKey)))];
+  const identity = normalizeIdentity(input.tokenAddress, input.chain || 'solana');
+  if (!userIds.length || !ruleKeys.length) return [];
+  const { rows } = await runner.query(
+    `SELECT *
+     FROM user_alert_rule_state
+     WHERE user_id = ANY($1::bigint[])
+       AND rule_key = ANY($2::text[])
+       AND chain = $3
+       AND token_address = $4
+     ORDER BY user_id, rule_key`,
+    [userIds, ruleKeys, identity.chain, identity.address]
+  );
+  return rows.map(mapStateRow);
+}
+
 async function upsertState(payload = {}, runner = db) {
   const userId = normalizeUserId(payload.userId);
   const ruleKey = normalizeRuleKey(payload.ruleKey);
@@ -205,6 +225,7 @@ async function markRearmed(payload = {}, runner = db) {
 module.exports = {
   VALID_STATUSES,
   getState,
+  listStatesByUsersForToken,
   markRearmed,
   markTriggered,
   upsertState,

@@ -392,14 +392,17 @@ Acceptance:
 
 ### Cut 8 - Standard matcher, state and publication
 
-Status: split after repository audit; Cuts 8A-8B completed on 2026-07-19,
-with Cut 8C pending
+Status: split after repository audit; Cuts 8A-8B and 8C1 completed on 2026-07-19,
+with Cuts 8C2-8C3 pending
 
 Subcuts:
 
 - 8A: explicit `monitored-fdv` contract, opt-in profile config and authorized RH state writes;
 - 8B: RH matcher and chain-neutral transition behavior;
 - 8C: transactional publication, worker rollout, feed/socket and FDV presentation.
+  - 8C1: transactional standard event/state execution and batch state reads;
+  - 8C2: worker rollout, latency telemetry and backend feed/socket contracts;
+  - 8C3: frontend FDV presentation, notifications and chart markers.
 
 Goal: connect RH signals to the existing user-facing rule behavior without
 weakening chain guards.
