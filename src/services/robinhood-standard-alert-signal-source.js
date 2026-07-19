@@ -7,8 +7,8 @@ const HOUR_MS = 60 * 60 * 1000;
 const MAX_QUERY_TOKENS = 100;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const BASELINE_TOLERANCE_MS = 15 * 60 * 1000;
-const WINDOWS = Object.freeze(['1h', '6h']);
-const WINDOW_MS = Object.freeze({ '1h': HOUR_MS, '6h': 6 * HOUR_MS });
+const WINDOWS = Object.freeze(['5m', '1h', '6h']);
+const WINDOW_MS = Object.freeze({ '5m': 5 * 60 * 1000, '1h': HOUR_MS, '6h': 6 * HOUR_MS });
 const PROTOCOLS = new Set(['uniswap-v2', 'uniswap-v3', 'uniswap-v4']);
 
 const BASELINE_SQL = `WITH input AS MATERIALIZED (
@@ -46,7 +46,8 @@ token_context AS (
     catalog.last_token_created_at_ms
 ),
 specs(window_name, target_at) AS (
-  VALUES ('1h', $2::timestamptz - INTERVAL '1 hour'),
+  VALUES ('5m', $2::timestamptz - INTERVAL '5 minutes'),
+    ('1h', $2::timestamptz - INTERVAL '1 hour'),
     ('6h', $2::timestamptz - INTERVAL '6 hours')
 ),
 points AS (
@@ -68,6 +69,9 @@ points AS (
 )
 SELECT context.*,
   cursor.coverage_start_at, cursor.coverage_end_at, cursor.caught_up,
+  MAX(points.close_price_usd) FILTER (WHERE window_name = '5m') AS price_5m_usd,
+  MAX(points.close_fdv_usd) FILTER (WHERE window_name = '5m') AS fdv_5m_usd,
+  MAX(points.last_observed_at) FILTER (WHERE window_name = '5m') AS observed_5m_at,
   MAX(points.close_price_usd) FILTER (WHERE window_name = '1h') AS price_1h_usd,
   MAX(points.close_fdv_usd) FILTER (WHERE window_name = '1h') AS fdv_1h_usd,
   MAX(points.last_observed_at) FILTER (WHERE window_name = '1h') AS observed_1h_at,

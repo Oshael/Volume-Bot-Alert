@@ -12,6 +12,7 @@ const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
 const userAlertProfileCache = require('./user-alert-profile-cache');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { normalizeTokenChain } = require('../utils/token-identity');
+const standardTransition = require('./standard-alert-transition');
 
 const ALERT_CHAIN = 'solana';
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
@@ -861,8 +862,7 @@ function buildSignalInput(tokenBefore, tokenAfter, volumeRow, mcapRow, surgeRow,
 }
 
 function isCooldownActive(state, nowMs) {
-  const cooldownUntilMs = toTimestampMs(state?.cooldownUntil);
-  return cooldownUntilMs != null && cooldownUntilMs > nowMs;
+  return standardTransition.isCooldownActive(state, nowMs);
 }
 
 function canRepeatCandidate(candidate, state) {
@@ -881,19 +881,7 @@ function canRepeatCandidate(candidate, state) {
 }
 
 function hasAdvancedRepeatValue(candidate, state) {
-  const repeatStepPct = toNumberOrNull(candidate?.repeatStepPct);
-  if (!(repeatStepPct > 0)) {
-    return true;
-  }
-
-  const lastAlertedValue = toNumberOrNull(state?.lastAlertedValue);
-  const nextAlertedValue = toNumberOrNull(candidate?.lastAlertedValue);
-  if (lastAlertedValue == null || nextAlertedValue == null) {
-    return true;
-  }
-
-  const requiredNextValue = lastAlertedValue * (1 + (repeatStepPct / 100));
-  return nextAlertedValue >= requiredNextValue;
+  return standardTransition.hasAdvancedRepeatValue(candidate, state);
 }
 
 function getMonitoredVolColdSinceMs(state) {
@@ -1321,51 +1309,18 @@ function isSixHourSurgeCooldownActive(candidate, state, nowMs) {
   return lastAlertedAtMs != null && (nowMs - lastAlertedAtMs) < SURGE_6H_REPEAT_COOLDOWN_MS;
 }
 
-function getRequiredSurgeRepeatAdvancePct(candidate, state) {
-  const sameSessionPrimedHot = toTextOrNull(state?.metadata?.lastDecision) === 'primed-hot'
-    && toTimestampMs(state?.lastAlertedAt) == null;
-  const primedProofStepPct = toNumberOrNull(
-    SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW[candidate?.payload?.surgeWindow]
-  );
-
-  return {
-    sameSessionPrimedHot,
-    requiredAdvancePct: sameSessionPrimedHot && primedProofStepPct != null
-      ? primedProofStepPct
-      : SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
-  };
-}
-
 function hasRequiredSurgePctAdvance(candidate, state) {
-  const lastAlertedPct = toNumberOrNull(state?.lastAlertedPct);
-  const nextPct = toNumberOrNull(candidate?.pct);
-  if (lastAlertedPct == null || nextPct == null) {
-    return false;
-  }
-
-  const { sameSessionPrimedHot, requiredAdvancePct } = getRequiredSurgeRepeatAdvancePct(candidate, state);
-  const requiredNextPct = sameSessionPrimedHot
-    ? lastAlertedPct + requiredAdvancePct
-    : lastAlertedPct * (1 + (requiredAdvancePct / 100));
-
-  return nextPct >= requiredNextPct;
+  return standardTransition.hasRequiredSurgePctAdvance(candidate, state, {
+    primedStepPct: SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW[candidate?.payload?.surgeWindow],
+    postAlertGrowthPct: SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
+  });
 }
 
 function canRepeatSurgeInSession(candidate, state) {
-  if (candidate?.kind !== 'old-surge') {
-    return true;
-  }
-
-  const { sameSessionPrimedHot } = getRequiredSurgeRepeatAdvancePct(candidate, state);
-  if (!sameSessionPrimedHot && candidate?.payload?.surgeWindow === '6H') {
-    return Boolean(candidate?.crossedThreshold);
-  }
-
-  if (!hasRequiredSurgePctAdvance(candidate, state)) {
-    return false;
-  }
-
-  return true;
+  return standardTransition.canRepeatSurgeInSession(candidate, state, {
+    primedStepPct: SURGE_PRIMED_ACTIVITY_PROOF_STEP_PCT_BY_WINDOW[candidate?.payload?.surgeWindow],
+    postAlertGrowthPct: SURGE_POST_ALERT_REPEAT_GROWTH_PCT,
+  });
 }
 
 function isSameSessionMeteoraPrimedState(candidate, state, profile) {

@@ -33,6 +33,8 @@ function context(overrides = {}) {
     token_age_source: 'token-catalog', admin_blocked: false,
     coverage_start_at: new Date('2026-07-01T00:00:00.000Z'),
     coverage_end_at: new Date(AS_OF), caught_up: true,
+    price_5m_usd: '1.5', fdv_5m_usd: '150',
+    observed_5m_at: new Date('2026-07-19T17:55:00.000Z'),
     price_1h_usd: '1', fdv_1h_usd: '100',
     observed_1h_at: new Date('2026-07-19T17:00:00.000Z'),
     price_6h_usd: '0.5', fdv_6h_usd: '50',
@@ -67,6 +69,10 @@ describe('Robinhood standard alert signal source', () => {
     });
     assert.equal(signal.valuation.type, 'fdv');
     assert.equal(signal.valuation.current.marketKey, MARKET);
+    assert.deepEqual(signal.valuation.windows['5m'], {
+      baselineAt: '2026-07-19T17:55:00.000Z', priceUsd: 1.5, fdvUsd: 150,
+      coverage: 'complete', priceChangePct: 33.33333333333333, fdvChangePct: 33.33333333333333,
+    });
     assert.deepEqual(signal.valuation.windows['1h'], {
       baselineAt: '2026-07-19T17:00:00.000Z', priceUsd: 1, fdvUsd: 100,
       coverage: 'complete', priceChangePct: 100, fdvChangePct: 100,
