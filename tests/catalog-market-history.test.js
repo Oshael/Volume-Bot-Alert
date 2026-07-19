@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
   createCatalogMarketHistoryService,
+  __private,
 } = require('../src/services/catalog-market-history');
 
 const SOLANA = 'So11111111111111111111111111111111111111112';
@@ -9,6 +10,18 @@ const ROBINHOOD = '0xabcdef0123456789abcdef0123456789abcdef01';
 const NOW = new Date('2026-07-15T12:00:00.000Z');
 
 describe('chain-aware catalog market history service', () => {
+  it('does not advertise retained 1m data from an older permanent aggregate', () => {
+    const item = __private.buildRobinhoodItem({
+      chain: 'robinhood', address: ROBINHOOD, resolution: 'minute',
+      minuteStartsAt: '2026-07-15T12:00:00.000Z', candles: [{
+        bucketTs: '2026-07-15T11:00:00.000Z', sourceGranularityMinutes: 1,
+        closeFdvUsd: 100,
+      }],
+    });
+
+    assert.equal(item.oneMinuteAvailable, false);
+  });
+
   it('keeps address-only requests on the legacy Solana reader', async () => {
     const calls = [];
     const service = createCatalogMarketHistoryService({
@@ -66,6 +79,7 @@ describe('chain-aware catalog market history service', () => {
     assert.equal(result.valuationType, 'fdv');
     assert.equal(result.item.candles[0].closeFdvUsd, 110);
     assert.deepEqual(result.item.series, [110, 120]);
+    assert.equal(result.item.oneMinuteAvailable, true);
     assert.equal(result.item.candles.some((item) => item.bucketTs.includes('11:05')), false);
     assert.equal('closeMcap' in result.item.candles[0], false);
   });
@@ -104,6 +118,42 @@ describe('chain-aware catalog market history service', () => {
     assert.equal(calls.robinhood[0].startAt.toISOString(), '2026-07-14T12:00:00.000Z');
     assert.deepEqual(result.items.map((item) => item.chain), ['robinhood', 'solana']);
     assert.deepEqual(result.chains, ['robinhood', 'solana']);
+  });
+
+  it('publishes deterministic per-chain metrics after a mixed batch', async () => {
+    const metrics = [];
+    const service = createCatalogMarketHistoryService({
+      now: () => NOW,
+      solanaReader: { async listSparklineByAddresses(addresses, options) {
+        options.onMetrics({ source: 'aggregate', rows: 2, aggregateRows: 2, queryDurationMs: 3 });
+        return [{ address: addresses[0], series: [10] }];
+      } },
+      robinhoodReader: { async getHistories(input) {
+        input.onMetrics({
+          source: 'fallback', rows: 1, fallbackRows: 1,
+          fallbackAddresses: 1, queryDurationMs: 5,
+        });
+        return [{
+          chain: 'robinhood', address: ROBINHOOD, resolution: 'minute',
+          minuteStartsAt: NOW.toISOString(), candles: [],
+        }];
+      } },
+    });
+
+    await service.getSparklineBatch({
+      identities: [
+        { chain: 'solana', address: SOLANA },
+        { chain: 'robinhood', address: ROBINHOOD },
+      ],
+      onMetrics(value) { metrics.push(value); },
+    });
+
+    assert.equal(metrics.length, 1);
+    assert.equal(metrics[0].source, 'solana:aggregate,robinhood:fallback');
+    assert.equal(metrics[0].rows, 3);
+    assert.equal(metrics[0].fallbackAddresses, 1);
+    assert.equal(metrics[0].queryDurationMs, 5);
+    assert.deepEqual(Object.keys(metrics[0].chains), ['solana', 'robinhood']);
   });
 
   it('rejects future EVM chains instead of falling back to Solana', async () => {

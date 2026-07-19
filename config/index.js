@@ -687,6 +687,14 @@ module.exports = {
     enabled: parseBoolean(process.env.ROBINHOOD_MARKET_AGGREGATES_ENABLED, true),
   },
 
+  robinhoodMarketAggregateReader: {
+    enabled: parseBoolean(process.env.ROBINHOOD_MARKET_AGGREGATE_READS_ENABLED, false),
+    fallbackEnabled: parseBoolean(
+      process.env.ROBINHOOD_MARKET_AGGREGATE_FALLBACK_ENABLED,
+      true
+    ),
+  },
+
   robinhoodCatalogProjectionWorker: {
     intervalMs: parseIntegerInRange(
       process.env.ROBINHOOD_CATALOG_PROJECTION_INTERVAL_MS,

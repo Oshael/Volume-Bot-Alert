@@ -24,23 +24,33 @@ function row(overrides = {}) {
 
 describe('Robinhood native market history reader', () => {
   it('selects permanent hours and retained minutes without overlap', () => {
-    assert.match(__private.HISTORY_SQL, /FROM robinhood_market_buckets_1h/);
-    assert.match(__private.HISTORY_SQL, /FROM robinhood_market_buckets_1m/);
-    assert.match(__private.HISTORY_SQL, /bucket\.bucket_ts < \$5::timestamptz/);
-    assert.match(__private.HISTORY_SQL, /bucket\.bucket_ts >= \$5::timestamptz/);
-    assert.match(__private.HISTORY_SQL, /GREATEST\(\$4::int, source_granularity_minutes\)/);
-    assert.match(__private.HISTORY_SQL,
+    assert.match(__private.LEGACY_HISTORY_SQL, /FROM robinhood_market_buckets_1h/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /FROM robinhood_market_buckets_1m/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /bucket\.bucket_ts < \$5::timestamptz/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /bucket\.bucket_ts >= \$5::timestamptz/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /GREATEST\(\$4::int, source_granularity_minutes\)/);
+    assert.match(__private.LEGACY_HISTORY_SQL,
       /ROW_NUMBER\(\) OVER \(PARTITION BY token_address ORDER BY bucket_ts DESC\)/);
-    assert.doesNotMatch(__private.HISTORY_SQL, /bucket\.\*/);
+    assert.doesNotMatch(__private.LEGACY_HISTORY_SQL, /bucket\.\*/);
   });
 
   it('aggregates token-wide activity and deterministic OHLC ordering', () => {
-    assert.match(__private.HISTORY_SQL, /SUM\(volume_usd\)/);
-    assert.match(__private.HISTORY_SQL, /COUNT\(DISTINCT \(protocol, market_key\)\)/);
-    assert.match(__private.HISTORY_SQL,
+    assert.match(__private.LEGACY_HISTORY_SQL, /SUM\(volume_usd\)/);
+    assert.match(__private.LEGACY_HISTORY_SQL, /COUNT\(DISTINCT \(protocol, market_key\)\)/);
+    assert.match(__private.LEGACY_HISTORY_SQL,
       /open_fdv_usd ORDER BY bucket_ts, first_block_number,[\s\S]*protocol, market_key/);
-    assert.match(__private.HISTORY_SQL,
+    assert.match(__private.LEGACY_HISTORY_SQL,
       /close_fdv_usd ORDER BY bucket_ts DESC, last_block_number DESC,[\s\S]*protocol, market_key/);
+  });
+
+  it('reads exact stored aggregate resolutions without regrouping raw buckets', () => {
+    assert.match(__private.AGGREGATE_HISTORY_SQL, /FROM robinhood_market_buckets_agg/);
+    assert.match(__private.AGGREGATE_HISTORY_SQL, /bucket\.granularity_minutes = \$4::int/);
+    assert.match(__private.AGGREGATE_HISTORY_SQL,
+      /date_bin\([\s\S]*\$4::int \* INTERVAL '1 minute', \$2::timestamptz/);
+    assert.match(__private.AGGREGATE_HISTORY_SQL, /bucket\.transactions AS transaction_contributions/);
+    assert.doesNotMatch(__private.AGGREGATE_HISTORY_SQL, /robinhood_market_buckets_1m/);
+    assert.doesNotMatch(__private.AGGREGATE_HISTORY_SQL, /GROUP BY/);
   });
 
   it('returns FDV candles as sparse observations without fabricated zeros', async () => {
@@ -113,6 +123,86 @@ describe('Robinhood native market history reader', () => {
     ]);
     assert.equal(histories[1].truncated, false);
     assert.equal(histories[1].candles.length, 1);
+  });
+
+  it('uses aggregate rows first and reports their rollout metrics', async () => {
+    const calls = [];
+    let metrics;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [row({ granularity_minutes: 5, source_granularity_minutes: 1 })] };
+      } },
+    });
+
+    const [history] = await repository.getHistories({
+      addresses: [ADDRESS], startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-16T00:00:00.000Z', granularityMinutes: 5, limit: 10,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /robinhood_market_buckets_agg/);
+    assert.deepEqual(calls[0].params, [
+      [ADDRESS], new Date('2026-07-14T00:00:00.000Z'),
+      new Date('2026-07-16T00:00:00.000Z'), 5, 11,
+    ]);
+    assert.equal(history.candles.length, 1);
+    assert.equal(metrics.source, 'aggregate');
+    assert.equal(metrics.aggregateRows, 1);
+    assert.equal(metrics.fallbackAddresses, 0);
+  });
+
+  it('falls back only for addresses with no aggregate coverage', async () => {
+    const calls = [];
+    let metrics;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      database: { async query(sql, params) {
+        calls.push({ sql, params });
+        return calls.length === 1
+          ? { rows: [row({ granularity_minutes: 30, source_granularity_minutes: 1 })] }
+          : { rows: [row({ token_address: SECOND_ADDRESS })] };
+      } },
+    });
+
+    const histories = await repository.getHistories({
+      addresses: [ADDRESS, SECOND_ADDRESS], startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-16T00:00:00.000Z', granularityMinutes: 30, limit: 10,
+      onMetrics(value) { metrics = value; },
+    });
+
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].sql, /robinhood_market_buckets_agg/);
+    assert.match(calls[1].sql, /robinhood_market_buckets_1m/);
+    assert.deepEqual(calls[1].params[0], [SECOND_ADDRESS]);
+    assert.deepEqual(histories.map((history) => history.candles.length), [1, 1]);
+    assert.equal(metrics.source, 'mixed');
+    assert.equal(metrics.fallbackAddresses, 1);
+  });
+
+  it('caches successful empty aggregate reads but never caches failures', async () => {
+    let calls = 0;
+    const repository = createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: true,
+      fallbackEnabled: false,
+      now: () => new Date('2026-07-15T12:00:00.000Z'),
+      database: { async query() {
+        calls += 1;
+        if (calls === 1) throw new Error('temporary database failure');
+        return { rows: [] };
+      } },
+    });
+    const input = {
+      address: ADDRESS, startAt: '2026-07-14T00:00:00.000Z',
+      endAt: '2026-07-16T00:00:00.000Z', granularityMinutes: 30, limit: 10,
+    };
+
+    await assert.rejects(repository.getHistory(input), /temporary database failure/);
+    assert.equal((await repository.getHistory(input)).candles.length, 0);
+    assert.equal((await repository.getHistory(input)).candles.length, 0);
+    assert.equal(calls, 2);
   });
 
   it('validates identity, range, granularity and bounded result size', async () => {

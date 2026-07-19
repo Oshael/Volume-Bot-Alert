@@ -1,4 +1,5 @@
 const tokenMarketBucket1m = require('../models/token-market-bucket-1m');
+const config = require('../../config');
 const {
   createRobinhoodMarketHistoryReadRepository,
 } = require('../models/robinhood-market-history-read');
@@ -95,7 +96,10 @@ function buildRobinhoodItem(history) {
     bucketCount: candles.length,
     firstBucketAt: history.firstBucketAt,
     latestBucketAt: history.latestBucketAt,
-    oneMinuteAvailable: candles.some((candle) => candle.sourceGranularityMinutes === 1),
+    oneMinuteAvailable: candles.some((candle) => (
+      candle.sourceGranularityMinutes === 1
+      && Date.parse(candle.bucketTs) >= Date.parse(history.minuteStartsAt)
+    )),
     series: candles.map((candle) => candle.closeFdvUsd),
     candles,
   };
@@ -105,10 +109,30 @@ function buildSolanaItem(item) {
   return { ...item, chain: 'solana', valuationType: 'market-cap' };
 }
 
+function mergeReaderMetrics(byChain) {
+  const entries = Object.entries(byChain);
+  if (entries.length === 1) return { ...entries[0][1], chains: byChain };
+  const values = entries.map(([, value]) => value);
+  const sum = (field) => values.reduce((total, value) => total + (Number(value[field]) || 0), 0);
+  return {
+    source: entries.map(([chain, value]) => `${chain}:${value.source || 'unknown'}`).join(','),
+    rows: sum('rows'), aggregateRows: sum('aggregateRows'), fallbackRows: sum('fallbackRows'),
+    fallbackAddresses: sum('fallbackAddresses'),
+    cacheHit: values.length > 0 && values.every((value) => value.cacheHit === true),
+    queryDurationMs: Math.max(0, ...values.map((value) => Number(value.queryDurationMs) || 0)),
+    buildDurationMs: Math.max(0, ...values.map((value) => Number(value.buildDurationMs) || 0)),
+    totalDurationMs: Math.max(0, ...values.map((value) => Number(value.totalDurationMs) || 0)),
+    chains: byChain,
+  };
+}
+
 function createCatalogMarketHistoryService(options = {}) {
   const solanaReader = options.solanaReader || tokenMarketBucket1m;
   const robinhoodReader = options.robinhoodReader
-    || createRobinhoodMarketHistoryReadRepository();
+    || createRobinhoodMarketHistoryReadRepository({
+      aggregateReadsEnabled: config.robinhoodMarketAggregateReader.enabled,
+      fallbackEnabled: config.robinhoodMarketAggregateReader.fallbackEnabled,
+    });
   const clock = options.now || (() => new Date());
 
   async function getSparklineBatch(input = {}) {
@@ -121,13 +145,14 @@ function createCatalogMarketHistoryService(options = {}) {
     const robinhoodAddresses = request.identities
       .filter((identity) => identity.chain === 'robinhood')
       .map((identity) => identity.address);
+    const readerMetrics = {};
     const solanaOptions = {
       hours: request.hours,
       points: request.points,
       granularityMinutes: request.granularityMinutes,
       allowOneMinuteFallback: request.allowOneMinuteFallback,
     };
-    if (request.onMetrics) solanaOptions.onMetrics = request.onMetrics;
+    if (request.onMetrics) solanaOptions.onMetrics = (value) => { readerMetrics.solana = value; };
 
     const [solanaItems, robinhoodHistories] = await Promise.all([
       solanaAddresses.length
@@ -140,9 +165,14 @@ function createCatalogMarketHistoryService(options = {}) {
           endAt,
           granularityMinutes: request.granularityMinutes,
           limit: request.points,
+          onMetrics: request.onMetrics
+            ? (value) => { readerMetrics.robinhood = value; } : null,
         })
         : [],
     ]);
+    if (request.onMetrics && Object.keys(readerMetrics).length > 0) {
+      request.onMetrics(mergeReaderMetrics(readerMetrics));
+    }
     const byKey = new Map();
     for (const item of solanaItems) {
       byKey.set(createTokenIdentity('solana', item.address).key, buildSolanaItem(item));
@@ -211,6 +241,6 @@ module.exports = {
   createCatalogMarketHistoryService,
   __private: {
     buildRobinhoodItem, buildSolanaItem, buildSolanaPayload,
-    normalizeBatchRequest, normalizeRequest,
+    mergeReaderMetrics, normalizeBatchRequest, normalizeRequest,
   },
 };

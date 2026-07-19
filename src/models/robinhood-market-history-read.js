@@ -7,6 +7,8 @@ const MINUTE_RETENTION_MS = 14 * 24 * 60 * MINUTE_MS;
 const MAX_WINDOW_MS = 10 * 365 * 24 * 60 * MINUTE_MS;
 const MAX_CANDLES = 5000;
 const MAX_ADDRESSES = 100;
+const DEFAULT_CACHE_TTL_MS = 5000;
+const MAX_CACHE_ENTRIES = 250;
 const GRANULARITIES = new Set([1, 5, 15, 30, 60, 240, 1440]);
 const SOURCE_COLUMNS = `bucket.token_address, bucket.protocol, bucket.market_key, bucket.bucket_ts,
   bucket.open_price_usd, bucket.high_price_usd, bucket.low_price_usd,
@@ -16,7 +18,33 @@ const SOURCE_COLUMNS = `bucket.token_address, bucket.protocol, bucket.market_key
   bucket.first_block_number, bucket.first_log_index,
   bucket.last_block_number, bucket.last_log_index`;
 
-const HISTORY_SQL = `WITH requested AS MATERIALIZED (
+const AGGREGATE_HISTORY_SQL = `WITH requested AS MATERIALIZED (
+  SELECT UNNEST($1::varchar[]) AS token_address
+), ranked AS (
+  SELECT bucket.token_address, bucket.bucket_ts, bucket.granularity_minutes,
+    bucket.source_granularity_minutes,
+    bucket.open_fdv_usd, bucket.high_fdv_usd, bucket.low_fdv_usd,
+    bucket.close_fdv_usd, bucket.open_price_usd, bucket.high_price_usd,
+    bucket.low_price_usd, bucket.close_price_usd, bucket.volume_usd,
+    bucket.swaps, bucket.buys, bucket.sells,
+    bucket.transactions AS transaction_contributions,
+    bucket.market_count, bucket.protocols,
+    ROW_NUMBER() OVER (
+      PARTITION BY bucket.token_address ORDER BY bucket.bucket_ts DESC
+    ) AS recency_rank
+  FROM robinhood_market_buckets_agg bucket
+  INNER JOIN requested ON requested.token_address = bucket.token_address
+  WHERE bucket.chain = 'robinhood'
+    AND bucket.granularity_minutes = $4::int
+    AND bucket.bucket_ts >= date_bin(
+      $4::int * INTERVAL '1 minute', $2::timestamptz, TIMESTAMPTZ '1970-01-01')
+    AND bucket.bucket_ts < $3::timestamptz
+)
+SELECT * FROM ranked
+WHERE recency_rank <= $5::int
+ORDER BY token_address ASC, bucket_ts ASC`;
+
+const LEGACY_HISTORY_SQL = `WITH requested AS MATERIALIZED (
   SELECT UNNEST($1::varchar[]) AS token_address
 ), source_rows AS (
   SELECT ${SOURCE_COLUMNS}, 60 AS source_granularity_minutes
@@ -123,6 +151,7 @@ function normalizeQuery(input, now) {
   return {
     addresses, startAt, endAt, granularityMinutes, limit, statementTimeoutMs,
     minuteStartsAt: ceilHour(new Date(now.getTime() - MINUTE_RETENTION_MS)),
+    onMetrics: typeof input.onMetrics === 'function' ? input.onMetrics : null,
   };
 }
 
@@ -199,30 +228,111 @@ function buildHistoryResult(query, address, rows) {
   });
 }
 
+function groupRows(query, rows) {
+  const rowsByAddress = new Map(query.addresses.map((address) => [address, []]));
+  for (const row of rows) {
+    const address = normalizeTokenAddress(CHAIN, row.token_address);
+    if (!rowsByAddress.has(address)) throw new Error('Robinhood history returned an unrequested token');
+    rowsByAddress.get(address).push(row);
+  }
+  return rowsByAddress;
+}
+
+function buildCacheKey(query, cacheTtlMs, aggregateReadsEnabled, fallbackEnabled) {
+  return JSON.stringify([
+    query.addresses,
+    Math.floor(query.startAt.getTime() / cacheTtlMs),
+    Math.floor(query.endAt.getTime() / cacheTtlMs),
+    query.granularityMinutes,
+    query.limit,
+    aggregateReadsEnabled,
+    fallbackEnabled,
+  ]);
+}
+
 function createRobinhoodMarketHistoryReadRepository(options = {}) {
   const database = options.database || db;
   const clock = options.now || (() => new Date());
+  const aggregateReadsEnabled = options.aggregateReadsEnabled === true;
+  const fallbackEnabled = options.fallbackEnabled !== false;
+  const cacheTtlMs = Math.max(1000, Number(options.cacheTtlMs) || DEFAULT_CACHE_TTL_MS);
+  const cache = new Map();
+
+  function readCache(key, nowMs, onMetrics) {
+    const entry = cache.get(key);
+    if (!entry || entry.expiresAt <= nowMs) {
+      if (entry) cache.delete(key);
+      return null;
+    }
+    onMetrics?.({ ...entry.metrics, cacheHit: true, totalDurationMs: 0 });
+    return entry.histories;
+  }
+
+  function writeCache(key, histories, metrics, nowMs) {
+    if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
+    cache.set(key, { histories, metrics, expiresAt: nowMs + cacheTtlMs });
+  }
 
   async function getHistories(input = {}) {
-    const query = normalizeQuery(input, timestamp(clock(), 'now'));
+    const startedAt = Date.now();
+    const now = timestamp(clock(), 'now');
+    const query = normalizeQuery(input, now);
+    const cacheKey = buildCacheKey(
+      query, cacheTtlMs, aggregateReadsEnabled, fallbackEnabled,
+    );
+    const cached = readCache(cacheKey, now.getTime(), query.onMetrics);
+    if (cached) return cached;
     const execute = typeof database.queryWithStatementTimeout === 'function'
       ? (sql, params) => database.queryWithStatementTimeout(
         sql, params, query.statementTimeoutMs,
       )
       : (sql, params) => database.query(sql, params);
-    const result = await execute(HISTORY_SQL, [
-      query.addresses, query.startAt, query.endAt, query.granularityMinutes,
-      query.minuteStartsAt, query.limit + 1,
-    ]);
-    const rowsByAddress = new Map(query.addresses.map((address) => [address, []]));
-    for (const row of result.rows) {
-      const address = normalizeTokenAddress(CHAIN, row.token_address);
-      if (!rowsByAddress.has(address)) throw new Error('Robinhood history returned an unrequested token');
-      rowsByAddress.get(address).push(row);
-    }
-    return Object.freeze(query.addresses.map((address) => (
-      buildHistoryResult(query, address, rowsByAddress.get(address))
-    )));
+    const queryStartedAt = Date.now();
+    const useAggregates = aggregateReadsEnabled && query.granularityMinutes !== 1;
+    const aggregateResult = useAggregates
+      ? await execute(AGGREGATE_HISTORY_SQL, [
+        query.addresses, query.startAt, query.endAt,
+        query.granularityMinutes, query.limit + 1,
+      ])
+      : { rows: [] };
+    const aggregateByAddress = groupRows(query, aggregateResult.rows);
+    const fallbackAddresses = useAggregates
+      ? query.addresses.filter((address) => aggregateByAddress.get(address).length === 0)
+      : query.addresses;
+    const shouldFallback = !useAggregates || (fallbackEnabled && fallbackAddresses.length > 0);
+    const fallbackResult = shouldFallback
+      ? await execute(LEGACY_HISTORY_SQL, [
+        fallbackAddresses, query.startAt, query.endAt, query.granularityMinutes,
+        query.minuteStartsAt, query.limit + 1,
+      ])
+      : { rows: [] };
+    const fallbackQuery = { ...query, addresses: fallbackAddresses };
+    const fallbackByAddress = groupRows(fallbackQuery, fallbackResult.rows);
+    const queryDurationMs = Date.now() - queryStartedAt;
+    const buildStartedAt = Date.now();
+    const histories = Object.freeze(query.addresses.map((address) => {
+      const aggregateRows = aggregateByAddress.get(address);
+      const rows = aggregateRows.length > 0
+        ? aggregateRows : (fallbackByAddress.get(address) || []);
+      return buildHistoryResult(query, address, rows);
+    }));
+    const usedFallbackAddresses = shouldFallback ? fallbackAddresses.length : 0;
+    const metrics = {
+      source: !useAggregates ? 'legacy' : usedFallbackAddresses > 0
+        ? (usedFallbackAddresses === query.addresses.length ? 'fallback' : 'mixed')
+        : 'aggregate',
+      rows: aggregateResult.rows.length + fallbackResult.rows.length,
+      aggregateRows: aggregateResult.rows.length,
+      fallbackRows: fallbackResult.rows.length,
+      fallbackAddresses: usedFallbackAddresses,
+      cacheHit: false,
+      queryDurationMs,
+      buildDurationMs: Date.now() - buildStartedAt,
+      totalDurationMs: Date.now() - startedAt,
+    };
+    writeCache(cacheKey, histories, metrics, now.getTime());
+    query.onMetrics?.(metrics);
+    return histories;
   }
 
   async function getHistory(input = {}) {
@@ -236,7 +346,7 @@ function createRobinhoodMarketHistoryReadRepository(options = {}) {
 module.exports = {
   createRobinhoodMarketHistoryReadRepository,
   __private: {
-    HISTORY_SQL, buildHistoryResult, normalizeAddresses, normalizeCandle,
-    normalizeQuery, resolveResolution,
+    AGGREGATE_HISTORY_SQL, LEGACY_HISTORY_SQL, buildHistoryResult,
+    normalizeAddresses, normalizeCandle, normalizeQuery, resolveResolution,
   },
 };

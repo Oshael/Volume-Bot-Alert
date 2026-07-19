@@ -303,6 +303,9 @@ Acceptance:
 
 ### Cut 5 - Aggregate-backed history readers
 
+Status: completed behind rollout flags on 2026-07-18; aggregate reads remain
+off until backfill coverage is validated
+
 Goal: remove expensive read-time regrouping from normal chart requests.
 
 Changes:
@@ -312,6 +315,13 @@ Changes:
 - batch and limit by canonical token identity;
 - cache successful empty and non-empty results separately from failures;
 - remove the fallback after aggregate coverage is proven.
+
+Rollout controls:
+
+- `ROBINHOOD_MARKET_AGGREGATE_READS_ENABLED=false` keeps the legacy reader;
+- `ROBINHOOD_MARKET_AGGREGATE_FALLBACK_ENABLED=true` temporarily repairs
+  addresses with no aggregate rows during rollout;
+- after full coverage is proven, enable aggregate reads and disable fallback.
 
 Acceptance:
 
