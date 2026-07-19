@@ -63,6 +63,12 @@ function payload(signal, extras = {}) {
     ...extras,
   });
 }
+function presence(profile) {
+  return {
+    presenceMode: profile.presenceMode || null,
+    hiddenSessionKey: profile.hiddenSessionKey || null,
+  };
+}
 function monitoredCandidate(profile, signal, type) {
   const isVolume = type === 'volume';
   const window = isVolume ? signal.volume5m : signal.valuation.windows['5m'];
@@ -90,6 +96,7 @@ function monitoredCandidate(profile, signal, type) {
     cooldownMs: STANDARD_ALERT_COOLDOWN_MS,
     repeatStepPct: threshold,
     fingerprint: `${ruleKey}:${previous}:${current}`,
+    ...presence(profile),
     payload: payload(signal, isVolume ? { prevVolume5m: previous } : { prevFdv: previous }),
   });
 }
@@ -114,6 +121,7 @@ function surgeCandidate(profile, signal, spec) {
       ? null : timestampMs(profile.loadedAt) + SURGE_STARTUP_SUPPRESS_MS,
     sessionStartedAt: profile.loadedAt || null,
     fingerprint: `${ruleKey}:${window.baselineAt}:${previousPct}:${currentPct}`,
+    ...presence(profile),
     payload: payload(signal, {
       ageBucket: ageField === 'oldWeekSurge' ? 'old-week' : 'recent',
       prevFdv: numberOrNull(window.fdvUsd),
@@ -191,9 +199,11 @@ function resolveCandidateState(candidate, prepared, profile) {
   const sameSession = profile.loadedAt && state.metadata?.sessionStartedAt === profile.loadedAt;
   return primed && !sameSession ? null : state;
 }
-function transition(candidate, state, nowMs) {
+function transition(candidate, state, profile, nowMs) {
   if (!state && candidate?.kind === 'old-surge'
     && numberOrNull(candidate.startupSuppressUntilMs) > nowMs) return 'prime';
+  if (profile.presenceMode === 'hidden' && timestampMs(state?.lastAlertedAt) != null
+    && state?.metadata?.lastPresenceMode === 'hidden') return 'suppress';
   return getStandardTransition(candidate, state, nowMs);
 }
 function hasBlockingSurge(candidate, userId, effectiveStates, nowMs) {
@@ -222,16 +232,30 @@ function continuationPlan(profile, signal, indexedStates, nowMs) {
     const baseEventId = numberOrNull(metadata.lastEventId);
     const baseAlertedAt = timestampMs(state.lastAlertedAt);
     const elapsed = baseAlertedAt == null ? null : nowMs - baseAlertedAt;
+    const threshold = numberOrNull(profile?.[thresholdField]);
     if (!profile.ruleEnabled[enabledField] || !signal.tokenAge.eligibility[ageField]
       || !(baseFdv > 0) || !(baseEventId > 0) || !(elapsed >= 60 * 60 * 1000)
-      || change6h < numberOrNull(profile?.[thresholdField]) || currentFdv < baseFdv * 3
+      || change6h < threshold || currentFdv < baseFdv * 3
       || numberOrNull(metadata.surgeContinuation6hLastBaseEventId) === baseEventId) continue;
+    const multiplier = currentFdv / baseFdv;
     return Object.freeze({
       action: 'emit', ruleKey: 'surge-continuation-6h', state,
       candidate: Object.freeze({
         ruleKey: 'surge-continuation-6h', kind: 'old-surge',
+        label: 'SURGE CONTINUATION 6H', pct: change6h,
         fingerprint: `${baseRuleKey}:${baseEventId}:3x`,
-        payload: payload(signal, { baseRuleKey, baseEventId, baseFdv, priceChangePct: change6h }),
+        ...presence(profile),
+        payload: payload(signal, {
+          prevFdv: baseFdv, priceChangePct: change6h,
+          ageBucket: ageField === 'oldWeekSurge' ? 'old-week' : 'recent',
+          isOldSurge: true, surgeWindow: '6H', thresholdPct: threshold,
+          surgeContinuation: true,
+          surgeContinuationBaseEventId: baseEventId,
+          surgeContinuationBaseRuleKey: baseRuleKey,
+          surgeContinuationBaseFdv: baseFdv,
+          surgeContinuationMultiplier: multiplier,
+          surgeContinuationRequiredMultiplier: 3,
+        }),
       }),
     });
   }
@@ -257,7 +281,7 @@ function appendPrimaryPlan(plans, input) {
   if (!primary) return;
   const prepared = states.byRule.get(primary.ruleKey);
   const state = resolveCandidateState(primary, prepared, profile);
-  const decision = transition(primary, state, nowMs);
+  const decision = transition(primary, state, profile, nowMs);
   const blocked = decision !== 'prime'
     && hasBlockingSurge(primary, profile.userId, states.effective, nowMs);
   const action = blocked ? 'suppress' : decision;

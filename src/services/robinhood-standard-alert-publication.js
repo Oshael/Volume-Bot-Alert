@@ -16,6 +16,7 @@ const {
 
 const SURGE_CONTINUATION_RULE_KEY = 'surge-continuation-6h';
 const MUTATING_ACTIONS = new Set(['emit', 'prime', 'rearm']);
+const ANCHORED_REPEAT_RULE_KEYS = new Set(['monitored-vol', 'monitored-fdv']);
 
 function cooldownUntil(candidate, triggeredAt) {
   const cooldownMs = Number(candidate?.cooldownMs);
@@ -23,16 +24,44 @@ function cooldownUntil(candidate, triggeredAt) {
     ? new Date(triggeredAt.getTime() + cooldownMs) : null;
 }
 
+function numberOrNull(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildEventPayload(plan, signal) {
+  const candidate = plan.candidate;
+  const eventPayload = {
+    ...candidate.payload, chain: CHAIN, address: signal.address,
+    label: candidate.label || null, pct: candidate.pct ?? null,
+  };
+  const anchor = numberOrNull(plan.state?.lastAlertedValue);
+  const current = numberOrNull(candidate.lastAlertedValue);
+  if (!ANCHORED_REPEAT_RULE_KEYS.has(plan.ruleKey) || !(anchor > 0) || current == null) {
+    return eventPayload;
+  }
+  eventPayload.pct = ((current - anchor) / anchor) * 100;
+  if (plan.ruleKey === 'monitored-vol') eventPayload.prevVolume5m = anchor;
+  if (plan.ruleKey === 'monitored-fdv') eventPayload.prevFdv = anchor;
+  return eventPayload;
+}
+
+function buildEventDedupeKey(userId, signal, plan) {
+  const candidate = plan.candidate;
+  if (plan.ruleKey !== SURGE_CONTINUATION_RULE_KEY && candidate.presenceMode === 'hidden') {
+    return `${userId}:${plan.ruleKey}:${signal.address}:hidden`;
+  }
+  return `${userId}:${plan.ruleKey}:${signal.address}:${candidate.fingerprint}`;
+}
+
 function buildEventIntent(userId, signal, plan, triggeredAt) {
   const candidate = plan.candidate;
   return {
     userId, chain: CHAIN, ruleKey: plan.ruleKey, kind: candidate.kind,
     tokenAddress: signal.address,
-    dedupeKey: `${userId}:${plan.ruleKey}:${signal.address}:${candidate.fingerprint}`,
-    payload: {
-      ...candidate.payload, chain: CHAIN, address: signal.address,
-      label: candidate.label || null, pct: candidate.pct ?? null,
-    },
+    dedupeKey: buildEventDedupeKey(userId, signal, plan),
+    payload: buildEventPayload(plan, signal),
     triggeredAt,
   };
 }
@@ -43,6 +72,8 @@ function buildTriggeredMetadata(plan, event, triggeredAt) {
     lastDecision: 'triggered', lastEventId: event.id,
     lastAlertedFdv: plan.candidate.payload?.fdv ?? null,
     label: plan.candidate.label || null,
+    lastHiddenSessionKey: plan.candidate.hiddenSessionKey || null,
+    lastPresenceMode: plan.candidate.presenceMode || null,
     sessionStartedAt: plan.candidate.sessionStartedAt || null,
     triggeredAt: triggeredAt.toISOString(),
   };
@@ -75,15 +106,18 @@ async function rearmSurgeAfterEmit(context, plan, metadata) {
 }
 
 async function persistContinuation(context, plan, event) {
-  const baseRuleKey = plan.candidate.payload.baseRuleKey;
+  const payload = plan.candidate.payload;
+  const baseRuleKey = payload.surgeContinuationBaseRuleKey;
   await context.stateModel.markRearmed({
     userId: context.userId, chain: CHAIN, tokenAddress: context.signal.address,
     ruleKey: baseRuleKey, cooldownUntil: plan.state?.cooldownUntil || null,
     metadata: {
       ...(plan.state?.metadata || {}), lastDecision: 'rearmed',
-      surgeContinuation6hLastBaseEventId: plan.candidate.payload.baseEventId,
+      surgeContinuation6hLastBaseEventId: payload.surgeContinuationBaseEventId,
       surgeContinuation6hEventId: event.id,
       surgeContinuation6hAlertedAt: context.triggeredAt.toISOString(),
+      surgeContinuation6hFdv: payload.fdv ?? null,
+      surgeContinuation6hMultiplier: payload.surgeContinuationMultiplier ?? null,
     },
     authorization: context.authorization,
   }, context.client);
@@ -117,6 +151,8 @@ async function persistPrime(context, plan) {
       lastAlertedFdv: candidate.payload?.fdv ?? null,
       ageBucket: candidate.payload?.ageBucket || null,
       label: candidate.label || null,
+      lastHiddenSessionKey: candidate.hiddenSessionKey || null,
+      lastPresenceMode: candidate.presenceMode || null,
       primedAt: context.triggeredAt.toISOString(),
       sessionStartedAt: candidate.sessionStartedAt || null,
       surgeWindow: candidate.payload?.surgeWindow || null,

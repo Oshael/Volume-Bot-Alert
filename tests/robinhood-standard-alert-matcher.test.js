@@ -173,6 +173,22 @@ describe('Robinhood standard alert matcher', () => {
     assert.equal(result.evaluations[0].plans[0].action, 'emit');
     assert.equal(result.evaluations[0].plans[0].state, null);
   });
+  it('suppresses repeats while the user remains in hidden presence', () => {
+    const configured = profile(1, {
+      presenceMode: 'hidden', hiddenSessionKey: 'hidden:1',
+      ruleEnabled: { monitoredFdv: true },
+    });
+    const state = {
+      userId: 1, ruleKey: 'monitored-fdv', status: 'rearmed', rearmRequired: false,
+      lastAlertedAt: '2026-07-19T17:00:00.000Z', lastAlertedValue: 100_000,
+      metadata: { lastPresenceMode: 'hidden', lastHiddenSessionKey: 'hidden:1' },
+    };
+    const hidden = evaluate({ profiles: [configured], states: [state] });
+    assert.equal(hidden.evaluations[0].plans[0].action, 'suppress');
+    state.metadata.lastPresenceMode = 'foreground';
+    const foregroundAnchor = evaluate({ profiles: [configured], states: [state] });
+    assert.equal(foregroundAnchor.evaluations[0].plans[0].action, 'emit');
+  });
   it('returns a rearm plan without mutating state when an enabled rule becomes cold', () => {
     const state = {
       userId: 1, ruleKey: 'monitored-vol', status: 'triggered', rearmRequired: true,
@@ -195,7 +211,13 @@ describe('Robinhood standard alert matcher', () => {
     const base = { userId: 1, ruleKey: 'old-week-surge-6h', lastAlertedAt: '2026-07-19T16:00:00Z',
       metadata: { lastAlertedFdv: 50_000, lastEventId: 9 } };
     const result = evaluate({ profiles: [configured], states: [base] });
-    assert.equal(result.evaluations[0].plans.at(-1).ruleKey, 'surge-continuation-6h');
+    const continuation = result.evaluations[0].plans.at(-1);
+    assert.equal(continuation.ruleKey, 'surge-continuation-6h');
+    assert.equal(continuation.candidate.label, 'SURGE CONTINUATION 6H');
+    assert.equal(continuation.candidate.pct, 300);
+    assert.equal(continuation.candidate.payload.prevFdv, 50_000);
+    assert.equal(continuation.candidate.payload.surgeContinuationBaseEventId, 9);
+    assert.equal(continuation.candidate.payload.surgeContinuationMultiplier, 4);
     base.metadata.surgeContinuation6hLastBaseEventId = 9;
     assert.equal(evaluate({ profiles: [configured], states: [base] })
       .evaluations[0].plans.some((plan) => plan.ruleKey === 'surge-continuation-6h'), false);

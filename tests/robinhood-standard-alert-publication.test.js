@@ -130,6 +130,36 @@ describe('Robinhood standard alert publication', () => {
     assert.deepEqual(fixture.transaction, ['BEGIN', 'COMMIT', 'RELEASE', 'BEGIN', 'COMMIT', 'RELEASE']);
   });
 
+  it('renders monitored repeats against the persisted anchor and coalesces hidden dedupe', async () => {
+    const fixture = dependencies();
+    let intent;
+    let triggeredInput;
+    fixture.deps.evaluateSignal = () => evaluation([{ action: 'emit', ruleKey: 'monitored-fdv',
+      state: { lastAlertedValue: 100_000, metadata: {} },
+      candidate: candidate({
+        lastAlertedValue: 200_000, pct: 33,
+        presenceMode: 'hidden', hiddenSessionKey: 'hidden:1',
+        payload: { fdv: 200_000, prevFdv: 150_000 },
+      }),
+    }]);
+    fixture.deps.userAlertEvent.createEventOnce = async (value) => {
+      intent = value;
+      fixture.calls.events += 1;
+      return { id: 92, ...value };
+    };
+    fixture.deps.userAlertRuleState.markTriggered = async (value) => {
+      triggeredInput = value;
+      fixture.calls.triggered += 1;
+    };
+    const publication = createRobinhoodStandardAlertPublication(fixture.deps);
+    await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
+    assert.equal(intent.dedupeKey, `7:monitored-fdv:${TOKEN}:hidden`);
+    assert.equal(intent.payload.prevFdv, 100_000);
+    assert.equal(intent.payload.pct, 100);
+    assert.equal(triggeredInput.metadata.lastPresenceMode, 'hidden');
+    assert.equal(triggeredInput.metadata.lastHiddenSessionKey, 'hidden:1');
+  });
+
   it('applies prime and rearm plans atomically without manufacturing events', async () => {
     let primedInput;
     const fixture = dependencies({
@@ -162,18 +192,36 @@ describe('Robinhood standard alert publication', () => {
   it('records a continuation event on its base 6h state', async () => {
     const fixture = dependencies();
     let rearmInput;
-    fixture.deps.userAlertRuleState.markRearmed = async (input) => { rearmInput = input; };
+    fixture.deps.userAlertRuleState.markRearmed = async (input) => {
+      rearmInput = input;
+      fixture.calls.rearmed += 1;
+    };
+    fixture.deps.userAlertEvent.createEventOnce = async (intent) => {
+      fixture.calls.events += 1;
+      return fixture.calls.events === 1 ? { id: 93, ...intent } : null;
+    };
     fixture.deps.evaluateSignal = () => evaluation([{ action: 'emit',
       ruleKey: 'surge-continuation-6h', state: { metadata: { lastEventId: 9 } },
       candidate: candidate({
         ruleKey: 'surge-continuation-6h', kind: 'old-surge', fingerprint: 'base:9:3x',
-        payload: { fdv: 300_000, baseRuleKey: 'old-week-surge-6h', baseEventId: 9 },
+        label: 'SURGE CONTINUATION 6H', pct: 250,
+        payload: {
+          fdv: 300_000, surgeContinuationBaseRuleKey: 'old-week-surge-6h',
+          surgeContinuationBaseEventId: 9, surgeContinuationMultiplier: 3,
+        },
       }),
     }]);
     const publication = createRobinhoodStandardAlertPublication(fixture.deps);
-    await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
+    const first = await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
+    const replay = await publication.consume({ signals: [signal()], alertsRequested: true, publishable: true });
+    assert.equal(first.persisted, 1);
+    assert.equal(replay.duplicates, 1);
     assert.equal(rearmInput.ruleKey, 'old-week-surge-6h');
     assert.equal(rearmInput.metadata.surgeContinuation6hLastBaseEventId, 9);
+    assert.equal(rearmInput.metadata.surgeContinuation6hFdv, 300_000);
+    assert.equal(rearmInput.metadata.surgeContinuation6hMultiplier, 3);
+    assert.equal(fixture.calls.rearmed, 1);
+    assert.equal(fixture.calls.published, 1);
   });
 
   it('rolls back the event when its state transition fails and never publishes it', async () => {
