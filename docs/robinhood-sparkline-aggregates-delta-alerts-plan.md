@@ -1,6 +1,6 @@
 # Robinhood sparkline, aggregate buckets, delta and standard alerts plan
 
-Status: Cuts 1-3 completed; Cuts 4-8 pending
+Status: Cuts 1-4 completed; Cuts 5-8 pending
 
 Created: 2026-07-18
 
@@ -273,6 +273,8 @@ Validation:
 - `npm run lint`.
 
 ### Cut 4 - Chunked backfill and retention
+
+Status: completed on 2026-07-18; reader migration remains in Cut 5
 
 Goal: populate existing RH history without saturating PostgreSQL.
 

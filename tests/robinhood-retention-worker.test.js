@@ -25,6 +25,7 @@ function createFakeDatabase(rawBatches = [], minuteBatches = []) {
           rows: [{
             examined_buckets: row.examined,
             minute_buckets: row.deleted,
+            aggregate_buckets: row.aggregates || 0,
           }],
         };
       }
@@ -69,6 +70,7 @@ describe('Robinhood retention worker', () => {
       processedLogs: 125,
       observations: 100,
       minuteBuckets: 104,
+      aggregateBuckets: 0,
       protectedMinuteBuckets: 0,
     });
     assert.equal(database.calls.length, 4);
@@ -90,6 +92,7 @@ describe('Robinhood retention worker', () => {
     assert.match(minuteCall.sql, /hourly\.updated_at >= expired\.updated_at/);
     assert.match(minuteCall.sql, /hourly\.first_block_number <= expired\.first_block_number/);
     assert.match(minuteCall.sql, /FOR UPDATE OF minute SKIP LOCKED/);
+    assert.match(minuteCall.sql, /granularity_minutes IN \(5, 15, 30\)/);
     assert.doesNotMatch(minuteCall.sql, /DELETE FROM robinhood_market_buckets_1h/);
   });
 
@@ -103,6 +106,7 @@ describe('Robinhood retention worker', () => {
       processedLogs: 0,
       observations: 0,
       minuteBuckets: 0,
+      aggregateBuckets: 0,
       protectedMinuteBuckets: 0,
     });
     assert.equal(database.calls.length, 0);
@@ -124,6 +128,7 @@ describe('Robinhood retention worker', () => {
       processedLogs: 100,
       observations: 100,
       minuteBuckets: 7,
+      aggregateBuckets: 0,
       protectedMinuteBuckets: 3,
     });
     assert.equal(database.calls.length, 2);
