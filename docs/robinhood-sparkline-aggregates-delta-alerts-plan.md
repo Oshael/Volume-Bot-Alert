@@ -157,36 +157,48 @@ for explicit authorization before the next cut.
 
 ### Cut 1 - Immediate sparkline correctness and load shedding
 
-Status: completed on 2026-07-18
+Status: request correctness and failure isolation completed on 2026-07-18;
+fast Robinhood 30m reads depend on Cuts 2-5
 
 Goal: make the current dashboard usable before introducing new storage.
 
 Changes:
 
-- derive chart granularity from effective range divided by requested points;
-- snap to supported resolutions;
-- expected mapping for a full range:
-  - 1D -> 5m;
-  - 3D -> 15m;
-  - 7D -> 30m;
-  - 14D -> 60m;
-- keep finer resolution for genuinely young tokens only when it fits the point
-  budget;
+- use the same tiered resolution rule as Solana mini-sparklines;
+- keep the exact selected window, but choose its granularity from the next
+  canonical tier:
+  - 1D -> 1D tier -> 1m;
+  - 2-3D -> 3D tier -> 5m;
+  - 4-7D -> 7D tier -> 15m;
+  - 8-11D -> 11D tier -> 15m;
+  - 12-14D -> 14D tier -> 30m;
+- apply the same table to Solana and Robinhood workspace mini-sparklines;
+- use the effective selected range for genuinely young tokens;
 - split workspace sparkline batches by chain so a Robinhood timeout cannot
   discard an otherwise successful Solana result;
 - add a bounded request timeout/abort path that clears loading state and exposes
   a retryable unavailable state instead of an indefinite spinner.
 
-The 14D Robinhood request will then use the existing permanent 1h source.
+Until the Robinhood 30m aggregates exist, the correct 14D request still falls
+back to the 1m source and can time out. The bounded timeout/failure state avoids
+an indefinite spinner; Cuts 2-5 remove the expensive read-time aggregation.
 
 Acceptance:
 
-- a 14D request never queries the RH 1m table for its full range;
-- dense 14D tokens return approximately one point per hour, capped at 336;
+- a 14D request uses the canonical 30m resolution on both chains;
+- dense 14D source data is downsampled to the 336-point response budget;
 - a failed RH batch does not remove Solana charts;
 - loading state always terminates on success, empty history, timeout or abort;
-- measured first-page batch stays below the backend statement timeout under the
-  same database load used in the incident measurement.
+- timeout failures remain cached for the normal refresh interval instead of
+  retrying on every monitoring cycle.
+
+Measured limitation after correcting 14D to 30m:
+
+```text
+three-token RH 30m batch: 15,199 ms -> statement timeout
+```
+
+This is the baseline Cuts 2-5 must eliminate with persisted 30m aggregates.
 
 Validation:
 

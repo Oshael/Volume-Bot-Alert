@@ -1,8 +1,6 @@
 import type { TokenChain } from '../utils/token-chain';
 
-const MINUTE_MS = 60_000;
-const FINE_RESOLUTION_MAX_AGE_MINUTES = 24 * 60;
-const WORKSPACE_SPARKLINE_GRANULARITIES = Object.freeze([1, 5, 15, 30, 60, 240, 1440]);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type WorkspaceSparklineIdentity = {
   chain: TokenChain;
@@ -34,24 +32,21 @@ export type WorkspaceSparklineCacheValue = {
 export function resolveWorkspaceSparklineGranularityMinutes(input: {
   anchorAt?: number | null;
   rangeDays: number;
-  points: number;
   referenceTs?: number;
 }) {
   const referenceTs = Number.isFinite(Number(input.referenceTs))
     ? Number(input.referenceTs)
     : Date.now();
-  const rangeMinutes = Math.max(1, Number(input.rangeDays) || 1) * 24 * 60;
+  const rangeMs = Math.max(1, Number(input.rangeDays) || 1) * DAY_MS;
   const anchorAt = Number(input.anchorAt);
-  const tokenAgeMinutes = Number.isFinite(anchorAt) && anchorAt > 0 && anchorAt <= referenceTs
-    ? Math.max(1, Math.ceil((referenceTs - anchorAt) / MINUTE_MS))
-    : rangeMinutes;
-  const pointBudget = Math.max(1, Math.floor(Number(input.points) || 1));
-  const resolutionMinutes = tokenAgeMinutes <= FINE_RESOLUTION_MAX_AGE_MINUTES
-    ? Math.min(rangeMinutes, tokenAgeMinutes)
-    : rangeMinutes;
-  const minimumGranularity = Math.max(1, Math.ceil(resolutionMinutes / pointBudget));
-  return WORKSPACE_SPARKLINE_GRANULARITIES.find((value) => value >= minimumGranularity)
-    ?? WORKSPACE_SPARKLINE_GRANULARITIES.at(-1)!;
+  const tokenAgeMs = Number.isFinite(anchorAt) && anchorAt > 0 && anchorAt <= referenceTs
+    ? Math.max(0, referenceTs - anchorAt)
+    : rangeMs;
+  const effectiveSpanMs = Math.min(rangeMs, tokenAgeMs);
+  if (effectiveSpanMs <= DAY_MS) return 1;
+  if (effectiveSpanMs <= 3 * DAY_MS) return 5;
+  if (effectiveSpanMs <= 11 * DAY_MS) return 15;
+  return 30;
 }
 
 export function splitWorkspaceSparklineBatchesByChain(

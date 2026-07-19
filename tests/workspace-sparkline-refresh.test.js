@@ -18,40 +18,47 @@ before(async () => {
 });
 
 describe('workspace sparkline request shape', () => {
-  it('fits full range resolutions inside the 336 point budget', () => {
+  it('uses the canonical Solana resolution tier for every selectable range', () => {
     const cases = [
-      [1, 5],
-      [3, 15],
-      [7, 30],
-      [14, 60],
+      [1, 1],
+      [2, 5],
+      [3, 5],
+      [4, 15],
+      [5, 15],
+      [6, 15],
+      [7, 15],
+      [8, 15],
+      [9, 15],
+      [10, 15],
+      [11, 15],
+      [12, 30],
+      [13, 30],
+      [14, 30],
     ];
     for (const [rangeDays, expected] of cases) {
       assert.equal(resolveWorkspaceSparklineGranularityMinutes({
         rangeDays,
-        points: 336,
         referenceTs: Date.UTC(2026, 6, 18),
       }), expected);
     }
   });
 
-  it('keeps one-minute resolution when the token age fits the point budget', () => {
+  it('keeps one-minute resolution when the effective token lifespan is under one day', () => {
     const referenceTs = Date.UTC(2026, 6, 18, 12);
     assert.equal(resolveWorkspaceSparklineGranularityMinutes({
       anchorAt: referenceTs - (3 * 60 * 60 * 1000),
       rangeDays: 14,
-      points: 336,
       referenceTs,
     }), 1);
   });
 
-  it('uses the selected-range resolution once a token is older than one day', () => {
+  it('uses 15m for a five-day token inside the 14-day view', () => {
     const referenceTs = Date.UTC(2026, 6, 18, 12);
     assert.equal(resolveWorkspaceSparklineGranularityMinutes({
       anchorAt: referenceTs - (5 * 24 * 60 * 60 * 1000),
       rangeDays: 14,
-      points: 336,
       referenceTs,
-    }), 60);
+    }), 15);
   });
 
   it('isolates same-shape batches by chain', () => {
@@ -59,11 +66,11 @@ describe('workspace sparkline request shape', () => {
     const robinhood = { chain: 'robinhood', address: '0x1', key: 'robinhood:0x1' };
     assert.deepEqual(splitWorkspaceSparklineBatchesByChain([{
       hours: 336,
-      granularityMinutes: 60,
+      granularityMinutes: 30,
       identities: [solana, robinhood],
     }]), [
-      { hours: 336, granularityMinutes: 60, identities: [solana] },
-      { hours: 336, granularityMinutes: 60, identities: [robinhood] },
+      { hours: 336, granularityMinutes: 30, identities: [solana] },
+      { hours: 336, granularityMinutes: 30, identities: [robinhood] },
     ]);
   });
 

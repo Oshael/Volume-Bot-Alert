@@ -7514,7 +7514,6 @@ export function createAppController(): AppController {
       const granularityMinutes = resolveWorkspaceSparklineGranularityMinutes({
         anchorAt: sparklineAnchorAt,
         rangeDays,
-        points: SPARKLINE_POINT_COUNT,
         referenceTs,
       });
       const key = `${hours}:${granularityMinutes}`;
