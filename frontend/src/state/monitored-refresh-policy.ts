@@ -51,3 +51,17 @@ export function shouldApplyDashboardValuation(
     ?? timestampMs(incoming.windowEnd);
   return incomingMs != null && incomingMs >= liveMs;
 }
+
+export function addUnincludedLiveActivity(
+  snapshotValue: number | null | undefined,
+  snapshotWindowEnd: string | null | undefined,
+  liveBucketTs: string | null | undefined,
+  liveValue: number | null | undefined,
+) {
+  if (snapshotValue == null || liveValue == null || liveValue < 0) return snapshotValue ?? null;
+  const windowEndMs = timestampMs(snapshotWindowEnd);
+  const bucketMs = timestampMs(liveBucketTs);
+  return windowEndMs != null && bucketMs != null && bucketMs >= windowEndMs
+    ? snapshotValue + liveValue
+    : snapshotValue;
+}

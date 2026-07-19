@@ -220,6 +220,9 @@ export interface ManualTokenEntry {
   _lastAlertKind?: AlertEntry['kind'] | null;
   _liveMarketObservedAt?: string | null;
   _liveMarketSequence?: string | null;
+  _liveActivityBucketTs?: string | null;
+  _liveActivityVolumeUsd?: number | null;
+  _liveActivitySwaps?: number | null;
   _isRecentRouted?: boolean;
   _isOldWeekRouted?: boolean;
   _isTopPerformer?: boolean;

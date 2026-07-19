@@ -82,6 +82,7 @@ import { addMockTradingCash, archiveMockTradingWallet as archiveMockTradingWalle
 import { clearLegacyAuthToken } from '../utils/auth-storage';
 import { getBackendAlertEventId, partitionVisibleAlertEntries } from './alert-feed-actions';
 import {
+  addUnincludedLiveActivity,
   mergeMonitoredFirstPage,
   shouldApplyDashboardValuation,
   shouldRunFullMonitoredHydration,
@@ -101,7 +102,7 @@ import {
   saveDismissedRecent,
 } from '../utils/bar-storage';
 import { bindSocketLifecycle, disconnectSocket, replaceWorkspaceMarketSubscriptions, subscribeMarketChart, subscribePumpMint, unsubscribeMarketChart, unsubscribePumpMint, type MarketBucketUpdateEvent } from '../services/socket/client';
-import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, shouldReplaceMarketCandleClose } from '../services/socket/market-events';
+import { buildLiveTokenChartCandle, buildRealtimeTokenMarketPatch, shouldReplaceMarketCandleClose, type RealtimeActivityState, type RealtimeTokenMarketPatch } from '../services/socket/market-events';
 import { clearChartAlertHistory, publishRealtimeChartAlert } from '../services/charts/chart-alert-history';
 import {
   normalizeInviteCode,
@@ -524,6 +525,67 @@ const TRACKED_MARKET_CONTEXT_FIELD_KEYS = [
   'riskState',
   'dataQuality',
 ] as const;
+
+const TRACKED_ROLLING_VOLUME_FIELDS = [
+  'volume5m', 'volume1h', 'volume6h', 'volume24h',
+] as const;
+const TRACKED_ROLLING_SWAP_FIELDS = [
+  'swaps5m', 'swaps1h', 'swaps6h', 'swaps24h',
+] as const;
+
+function addTrackedRealtimeDelta(
+  current: number | null | undefined,
+  delta: number | null | undefined,
+) {
+  return current != null && delta != null ? current + delta : current ?? null;
+}
+
+function getRealtimeActivityState(existing?: ManualTokenEntry | null): RealtimeActivityState {
+  return {
+    bucketTs: existing?._liveActivityBucketTs,
+    volumeUsd: existing?._liveActivityVolumeUsd,
+    swaps: existing?._liveActivitySwaps,
+    windowEnd: existing?.windowEnd,
+  };
+}
+
+function buildRealtimeActivityFields(
+  existing: ManualTokenEntry,
+  activity: RealtimeTokenMarketPatch['activity'],
+): Partial<ManualTokenEntry> {
+  const fields: Partial<ManualTokenEntry> = {};
+  for (const key of TRACKED_ROLLING_VOLUME_FIELDS) {
+    fields[key] = addTrackedRealtimeDelta(existing[key], activity?.volumeDeltaUsd);
+  }
+  for (const key of TRACKED_ROLLING_SWAP_FIELDS) {
+    fields[key] = addTrackedRealtimeDelta(existing[key], activity?.swapsDelta);
+  }
+  fields._liveActivityBucketTs = activity?.bucketTs ?? existing._liveActivityBucketTs ?? null;
+  fields._liveActivityVolumeUsd = activity?.volumeUsd ?? existing._liveActivityVolumeUsd ?? null;
+  fields._liveActivitySwaps = activity?.swaps ?? existing._liveActivitySwaps ?? null;
+  return fields;
+}
+
+function overlayLiveActivityOnDashboardSnapshot(
+  fields: Partial<ManualTokenEntry>,
+  existing: ManualTokenEntry | undefined,
+  dashboard: DashboardMonitoredToken | undefined,
+  applyDashboardFields: boolean,
+) {
+  if (!applyDashboardFields || !existing || !dashboard) return;
+  for (const key of TRACKED_ROLLING_VOLUME_FIELDS) {
+    fields[key] = addUnincludedLiveActivity(
+      fields[key], dashboard.windowEnd,
+      existing._liveActivityBucketTs, existing._liveActivityVolumeUsd,
+    );
+  }
+  for (const key of TRACKED_ROLLING_SWAP_FIELDS) {
+    fields[key] = addUnincludedLiveActivity(
+      fields[key], dashboard.windowEnd,
+      existing._liveActivityBucketTs, existing._liveActivitySwaps,
+    );
+  }
+}
 
 function shouldApplyTrackedMarketContext(
   key: typeof TRACKED_MARKET_CONTEXT_FIELD_KEYS[number],
@@ -1973,6 +2035,12 @@ export function createAppController(): AppController {
       dashboardItem?.lastActivityAt,
       existingItem?.lastActivityAt,
       base.lastActivityAt,
+    );
+    overlayLiveActivityOnDashboardSnapshot(
+      nextFields,
+      existingItem,
+      dashboardItem,
+      shouldApplyMarketFields,
     );
 
     nextFields.valuationType = selectWorkspaceSnapshotValue(
@@ -8172,7 +8240,7 @@ export function createAppController(): AppController {
 
   function applyLiveTokenMarketUpdate(payload: MarketBucketUpdateEvent) {
     const existing = getTrackedToken(state, payload.address, payload.chain);
-    const patch = buildRealtimeTokenMarketPatch(payload);
+    const patch = buildRealtimeTokenMarketPatch(payload, getRealtimeActivityState(existing));
     if (!existing || !patch) return false;
 
     const currentSnapshotMs = resolveWorkspaceMarketSnapshotMs(existing) || 0;
@@ -8194,6 +8262,7 @@ export function createAppController(): AppController {
       mcap: patch.valuationType === 'market-cap' ? patch.mcap : existing.mcap ?? null,
       valuationType: patch.valuationType ?? existing.valuationType ?? null,
       valuation: patch.valuation ?? existing.valuation ?? null,
+      ...buildRealtimeActivityFields(existing, patch.activity),
       lastActivityAt: patch.observedAt,
       lastSeenAt: patch.observedAt,
       activityState: patch.activityState,

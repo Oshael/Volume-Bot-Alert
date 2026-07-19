@@ -58,6 +58,7 @@ const mockTradingTakeProfitWorker = require('./services/mock-trading-take-profit
 const gmgnDiscoveryWorker = require('./services/gmgn-discovery-worker');
 const gmgnClaimSignalWorker = require('./services/gmgn-claim-signal-worker');
 const backendAlertRealtime = require('./services/backend-alert-realtime');
+const marketBucketRealtime = require('./services/market-bucket-realtime');
 const userConfigSync = require('./services/user-config-sync');
 const gmgnClient = require('./services/gmgn-client');
 const dexscreener = require('./services/dexscreener');
@@ -425,9 +426,10 @@ function startWorkerSet() {
           socialMetadataEnabled: false,
           emitMarketBucketUpdate: (payload) => {
             const socketEmitted = socketHub.emitMarketBucketUpdate(payload);
+            const relayQueued = socketEmitted || marketBucketRealtime.enqueue(payload);
             const catalogQueued = robinhoodLiveCatalogWorker.enqueue(payload);
             const alertQueued = robinhoodRealtimeAlertWorker.enqueue(payload);
-            return socketEmitted || catalogQueued || alertQueued;
+            return socketEmitted || relayQueued || catalogQueued || alertQueued;
           },
           onFatal: (error) => workerLeaseManager.halt(ROBINHOOD_INGESTION_LEASE_KEY, error),
         });
@@ -509,6 +511,9 @@ function bootstrapWebRuntime(httpServer) {
   socketHub.init(httpServer);
   backendAlertRealtime.start().catch((err) => {
     console.error('[BackendAlertRealtime] Failed to start listener:', err.message);
+  });
+  marketBucketRealtime.start().catch((err) => {
+    console.error('[MarketBucketRealtime] Failed to start listener:', err.message);
   });
 }
 

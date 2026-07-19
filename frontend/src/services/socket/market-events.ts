@@ -64,6 +64,20 @@ export interface RealtimeTokenMarketPatch {
   } | null;
   fdv: number | null;
   mcap: number | null;
+  activity: {
+    bucketTs: string;
+    volumeUsd: number | null;
+    swaps: number | null;
+    volumeDeltaUsd: number | null;
+    swapsDelta: number | null;
+  } | null;
+}
+
+export interface RealtimeActivityState {
+  bucketTs?: string | null;
+  volumeUsd?: number | null;
+  swaps?: number | null;
+  windowEnd?: string | null;
 }
 
 function validTimestamp(value: unknown) {
@@ -143,6 +157,44 @@ function finiteMetric(value: unknown) {
   return Number.isFinite(metric) ? metric : null;
 }
 
+function nonNegativeMetric(value: unknown) {
+  const metric = finiteMetric(value);
+  return metric != null && metric >= 0 ? metric : null;
+}
+
+function activityDelta(current: number | null, previous: number | null, sameBucket: boolean) {
+  if (current == null) return null;
+  return sameBucket && previous != null ? Math.max(0, current - previous) : current;
+}
+
+export function buildRealtimeActivityPatch(
+  event: MarketBucketUpdateEvent,
+  previous: RealtimeActivityState = {},
+) {
+  const volumeUsd = nonNegativeMetric(event.activity?.volumeUsd);
+  const rawSwaps = nonNegativeMetric(event.activity?.swaps);
+  const swaps = rawSwaps != null ? Math.trunc(rawSwaps) : null;
+  if (volumeUsd == null && swaps == null) return null;
+
+  const previousBucketMs = Date.parse(previous.bucketTs || '');
+  const bucketMs = Date.parse(event.bucketTs);
+  if (Number.isFinite(previousBucketMs) && previousBucketMs > bucketMs) return null;
+  const sameBucket = previousBucketMs === bucketMs;
+  const includedThroughMs = Date.parse(previous.windowEnd || '');
+  const bucketAlreadyIncluded = !sameBucket
+    && Number.isFinite(includedThroughMs)
+    && bucketMs < includedThroughMs;
+  return {
+    bucketTs: event.bucketTs,
+    volumeUsd,
+    swaps,
+    volumeDeltaUsd: bucketAlreadyIncluded
+      ? 0 : activityDelta(volumeUsd, nonNegativeMetric(previous.volumeUsd), sameBucket),
+    swapsDelta: bucketAlreadyIncluded
+      ? 0 : activityDelta(swaps, nonNegativeMetric(previous.swaps), sameBucket),
+  };
+}
+
 export function buildLiveTokenChartCandle(event: MarketBucketUpdateEvent): LiveTokenChartCandle {
   const candle = event.candle;
   const valuationType = candle.valuationType === 'fdv' || event.valuation?.type === 'fdv'
@@ -189,13 +241,17 @@ function normalizeRealtimeValuation(value: MarketBucketUpdateEvent['valuation'])
   return { type: null, usd: null };
 }
 
-export function buildRealtimeTokenMarketPatch(event: MarketBucketUpdateEvent) {
+export function buildRealtimeTokenMarketPatch(
+  event: MarketBucketUpdateEvent,
+  previousActivity: RealtimeActivityState = {},
+) {
   const valuation = event.valuation;
   const normalizedValuation = normalizeRealtimeValuation(valuation);
   const valuationType = normalizedValuation.type;
   const valuationUsd = normalizedValuation.usd;
   const applicableValuationType = valuationUsd == null ? null : valuationType;
   const observedAt = validTimestamp(valuation?.observedAt) || event.bucketTs;
+  const activity = buildRealtimeActivityPatch(event, previousActivity);
   const patch: RealtimeTokenMarketPatch = {
     observedAt,
     priceUsd: finiteMetric(valuation?.priceUsd),
@@ -206,8 +262,9 @@ export function buildRealtimeTokenMarketPatch(event: MarketBucketUpdateEvent) {
       : null,
     fdv: applicableValuationType === 'fdv' ? valuationUsd : null,
     mcap: applicableValuationType === 'mcap' ? valuationUsd : null,
+    activity,
   };
-  return patch.valuation || patch.priceUsd != null || event.activity ? patch : null;
+  return patch.valuation || patch.priceUsd != null || patch.activity ? patch : null;
 }
 
 export function createMarketEventOrderGate(maxEntries = 4096) {

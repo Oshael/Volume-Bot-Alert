@@ -48,4 +48,25 @@ describe('frontend monitored refresh policy', () => {
       valuation: { observedAt: '2026-07-18T22:59:58.000Z' },
     }), true);
   });
+
+  it('overlays only live activity excluded by the REST window boundary', () => {
+    assert.equal(policy.addUnincludedLiveActivity(
+      1_000,
+      '2026-07-18T23:00:00.000Z',
+      '2026-07-18T23:00:00.000Z',
+      125,
+    ), 1_125);
+    assert.equal(policy.addUnincludedLiveActivity(
+      1_000,
+      '2026-07-18T23:01:00.000Z',
+      '2026-07-18T23:00:00.000Z',
+      125,
+    ), 1_000);
+    assert.equal(policy.addUnincludedLiveActivity(
+      null,
+      '2026-07-18T23:00:00.000Z',
+      '2026-07-18T23:00:00.000Z',
+      125,
+    ), null);
+  });
 });

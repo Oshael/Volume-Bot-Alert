@@ -102,7 +102,7 @@ describe('frontend realtime market events', () => {
     assert.equal(compareClose(currentTs, 'source:2', currentTs, 'source:1'), false);
   });
 
-  it('builds a fresh FDV token patch without fabricating rolling volume', () => {
+  it('builds a fresh FDV patch with monotonic committed activity deltas', () => {
     const patch = marketEvents.buildRealtimeTokenMarketPatch(
       marketEvents.normalizeMarketBucketUpdate(event({
         activity: { volumeUsd: '450.25', swaps: 3 },
@@ -121,8 +121,31 @@ describe('frontend realtime market events', () => {
     assert.deepEqual(patch.valuation, {
       type: 'fdv', usd: 120000, observedAt: '2026-07-15T12:00:20.000Z', freshness: 'fresh',
     });
-    assert.equal('volume5m' in patch, false);
-    assert.equal('volume1h' in patch, false);
+    assert.deepEqual(patch.activity, {
+      bucketTs: '2026-07-15T12:00:00.000Z',
+      volumeUsd: 450.25,
+      swaps: 3,
+      volumeDeltaUsd: 450.25,
+      swapsDelta: 3,
+    });
+
+    const advanced = marketEvents.buildRealtimeTokenMarketPatch(
+      marketEvents.normalizeMarketBucketUpdate(event({
+        activity: { volumeUsd: '500', swaps: 5 },
+      })),
+      { bucketTs: event().bucketTs, volumeUsd: 450.25, swaps: 3 },
+    );
+    assert.equal(advanced.activity.volumeDeltaUsd, 49.75);
+    assert.equal(advanced.activity.swapsDelta, 2);
+
+    const alreadyIncluded = marketEvents.buildRealtimeTokenMarketPatch(
+      marketEvents.normalizeMarketBucketUpdate(event({
+        activity: { volumeUsd: '500', swaps: 5 },
+      })),
+      { windowEnd: '2026-07-15T12:01:00.000Z' },
+    );
+    assert.equal(alreadyIncluded.activity.volumeDeltaUsd, 0);
+    assert.equal(alreadyIncluded.activity.swapsDelta, 0);
 
     const degraded = marketEvents.buildRealtimeTokenMarketPatch(
       marketEvents.normalizeMarketBucketUpdate(event({
@@ -132,6 +155,7 @@ describe('frontend realtime market events', () => {
     );
     assert.equal(degraded.valuationType, null);
     assert.equal(degraded.valuation, null);
+    assert.equal(degraded.activity.swapsDelta, 1);
   });
 
   it('builds a Robinhood live chart candle without falling back to market cap', () => {
