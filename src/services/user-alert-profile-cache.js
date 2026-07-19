@@ -112,6 +112,7 @@ function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
     ruleEnabled: {
       monitoredVol: isEnabled(configs, 'alert-vol-enabled'),
       monitoredMcap: isEnabled(configs, 'alert-mcap-enabled'),
+      monitoredFdv: isEnabled(configs, 'alert-fdv-enabled', false),
       hvnc: isEnabled(configs, 'alert-hvnc-enabled'),
       recentSurge1h: resolveEnabledWithFallback(
         configs,
@@ -141,9 +142,12 @@ function buildNormalizedAlertProfile(userId, configs = {}, options = {}) {
     },
     thresholdPct: getNumber(configs, 'threshold', 50),
     mcapThresholdPct: getNumber(configs, 'mcap-threshold', 50),
+    fdvThresholdPct: getNumber(configs, 'fdv-threshold', 50),
     minVol: getNumber(configs, 'min-vol', 10000),
     minMcap: getNumber(configs, 'min-mcap', 30000),
     maxMcap: getNumber(configs, 'max-mcap', 0),
+    minFdv: getNumber(configs, 'monitored-fdv-min', 30000),
+    maxFdv: getNumber(configs, 'monitored-fdv-max', 0),
     hvncMinVol: getNumber(configs, 'hvnc-min-vol', 300000),
     recentSurge1hThresholdPct: resolveNumberWithFallback(
       configs,

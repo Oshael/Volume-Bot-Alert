@@ -5,6 +5,7 @@ const db = require('./db');
 const CONFIG_SCHEMA = {
   threshold:        { type: 'number', min: 0, max: 10000, default: 50 },
   'mcap-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
+  'fdv-threshold':  { type: 'number', min: 0, max: 10000, default: 50 },
   'min-vol':        { type: 'number', min: 0, max: 1e12, default: 10000 },
   'min-mcap':       { type: 'number', min: 30000, max: 1e12, default: 30000 },
   'max-mcap':       { type: 'number', min: 0, max: 1e15, default: 0 },
@@ -28,6 +29,7 @@ const CONFIG_SCHEMA = {
   'old-week-per-page': { type: 'number', min: 10, max: 500, default: 15 },
   'monitored-mcap-min': { type: 'number', min: 0, max: 1e15, default: 30000 },
   'monitored-fdv-min': { type: 'number', min: 0, max: 1e15, default: 30000 },
+  'monitored-fdv-max': { type: 'number', min: 0, max: 1e15, default: 0 },
   'hvnc-min-vol':    { type: 'number', min: 0, max: 1e15, default: 300000 },
   'old-alert-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
   'old-alert-6h-threshold': { type: 'number', min: 0, max: 10000, default: 100 },
@@ -38,6 +40,7 @@ const CONFIG_SCHEMA = {
   'meteora-alert-1h-threshold': { type: 'number', min: 0, max: 10000, default: 50 },
   'alert-vol-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-mcap-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
+  'alert-fdv-enabled': { type: 'string', allowed: ['on', 'off'], default: 'off' },
   'alert-hvnc-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-old-surge-1h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },
   'alert-old-surge-6h-enabled': { type: 'string', allowed: ['on', 'off'], default: 'on' },

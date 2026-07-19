@@ -1,6 +1,6 @@
 # Robinhood sparkline, aggregate buckets, delta and standard alerts plan
 
-Status: Cuts 1-7 completed; Cut 8 pending
+Status: Cuts 1-7 and 8A completed; Cuts 8B-8C pending
 
 Created: 2026-07-18
 
@@ -391,6 +391,15 @@ Acceptance:
 - missing baselines arm/fail closed according to the existing rule contract.
 
 ### Cut 8 - Standard matcher, state and publication
+
+Status: split after repository audit; Cut 8A completed on 2026-07-19,
+with Cuts 8B-8C pending
+
+Subcuts:
+
+- 8A: explicit `monitored-fdv` contract, opt-in profile config and authorized RH state writes;
+- 8B: RH matcher and chain-neutral transition behavior;
+- 8C: transactional publication, worker rollout, feed/socket and FDV presentation.
 
 Goal: connect RH signals to the existing user-facing rule behavior without
 weakening chain guards.

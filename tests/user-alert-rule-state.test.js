@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 
 const db = require('../src/models/db');
 const userAlertRuleState = require('../src/models/user-alert-rule-state');
+const {
+  issueAutomaticAlertPublicationAuthorization,
+} = require('../src/services/automatic-alert-publication-guard');
 
 describe('user alert rule state model', () => {
   it('upserts persisted per-user rule state with normalized payload', async () => {
@@ -280,15 +283,65 @@ describe('user alert rule state model', () => {
     }
   });
 
-  it('keeps Robinhood automatic state writes disabled', async () => {
+  it('keeps Robinhood state fail-closed and accepts only rollout authorization', async () => {
+    let queries = 0;
+    const runner = {
+      async query(_sql, params) {
+        queries += 1;
+        if (params.length === 4) {
+          return { rows: [{
+            user_id: params[0], rule_key: params[1], chain: params[2],
+            token_address: params[3], status: 'triggered',
+            last_alerted_value: '250000', last_alerted_pct: '75',
+            rearm_required: true, metadata: {},
+          }] };
+        }
+        return { rows: [{
+          user_id: params[0], rule_key: params[1], chain: params[2],
+          token_address: params[3], status: params[4],
+          last_alerted_value: params[6], last_alerted_pct: params[7],
+          rearm_required: params[9], metadata: JSON.parse(params[11]),
+        }] };
+      },
+    };
+    const payload = {
+      userId: 9,
+      ruleKey: 'monitored-fdv',
+      chain: 'robinhood',
+      tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      lastAlertedValue: 250000,
+      lastAlertedPct: 75,
+    };
     await assert.rejects(
-      () => userAlertRuleState.upsertState({
-        userId: 9,
-        ruleKey: 'monitored-vol',
-        chain: 'robinhood',
-        tokenAddress: '0x1234567890abcdef1234567890abcdef12345678',
-      }),
+      () => userAlertRuleState.markTriggered(payload, runner),
       (error) => error.code === 'NON_SOLANA_ALERT_TRIGGER_DISABLED'
     );
+    await assert.rejects(
+      () => userAlertRuleState.markTriggered({ ...payload, authorization: {} }, runner),
+      (error) => error.code === 'NON_SOLANA_ALERT_TRIGGER_DISABLED'
+    );
+    await assert.rejects(
+      () => userAlertRuleState.markRearmed(payload, runner),
+      (error) => error.code === 'NON_SOLANA_ALERT_TRIGGER_DISABLED'
+    );
+    assert.equal(queries, 0);
+
+    const authorization = issueAutomaticAlertPublicationAuthorization({
+      chain: 'robinhood', alertsRequested: true, publishable: true,
+    });
+    const state = await userAlertRuleState.markTriggered({
+      ...payload, authorization,
+    }, runner);
+    assert.equal(queries, 1);
+    assert.equal(state.chain, 'robinhood');
+    assert.equal(state.ruleKey, 'monitored-fdv');
+    assert.equal(state.lastAlertedValue, 250000);
+
+    const rearmed = await userAlertRuleState.markRearmed({
+      ...payload, authorization,
+    }, runner);
+    assert.equal(queries, 3);
+    assert.equal(rearmed.status, 'rearmed');
+    assert.equal(rearmed.rearmRequired, false);
   });
 });

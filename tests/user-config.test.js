@@ -4,6 +4,21 @@ const assert = require('node:assert/strict');
 const userConfig = require('../src/models/user-config');
 
 describe('user config', () => {
+  it('defines opt-in Robinhood FDV alert preferences', () => {
+    const defaults = userConfig.buildDefaultConfigs();
+    assert.equal(defaults['alert-fdv-enabled'], 'off');
+    assert.equal(defaults['fdv-threshold'], 50);
+    assert.equal(defaults['monitored-fdv-min'], 30000);
+    assert.equal(defaults['monitored-fdv-max'], 0);
+
+    const validation = userConfig.validateConfigs({
+      'alert-fdv-enabled': 'on', 'fdv-threshold': 75,
+      'monitored-fdv-min': 50000, 'monitored-fdv-max': 2000000,
+    });
+    assert.equal(validation.valid, true);
+    assert.equal(validation.configs['fdv-threshold'], 75);
+  });
+
   it('supports separate GMGN claim alert origin toggles', () => {
     const defaults = userConfig.buildDefaultConfigs();
     assert.equal(defaults['alert-gmgn-claim-pump-enabled'], 'on');

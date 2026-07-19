@@ -1,5 +1,8 @@
 const db = require('./db');
 const { normalizeTokenAddress, normalizeTokenChain } = require('../utils/token-identity');
+const {
+  assertAutomaticAlertPublicationAuthorized,
+} = require('../services/automatic-alert-publication-guard');
 
 const VALID_STATUSES = new Set(['idle', 'triggered', 'rearmed']);
 
@@ -27,11 +30,9 @@ function normalizeIdentity(address, chainValue = 'solana') {
   return { chain, address: normalizeTokenAddress(chain, address) };
 }
 
-function assertAutomaticAlertsEnabled(chain) {
+function assertAutomaticAlertsEnabled(chain, authorization) {
   if (chain === 'solana') return;
-  const error = new Error('Automatic alerts are disabled outside Solana');
-  error.code = 'NON_SOLANA_ALERT_TRIGGER_DISABLED';
-  throw error;
+  assertAutomaticAlertPublicationAuthorized(authorization, chain);
 }
 
 function normalizeStatus(value) {
@@ -104,7 +105,7 @@ async function upsertState(payload = {}, runner = db) {
   const userId = normalizeUserId(payload.userId);
   const ruleKey = normalizeRuleKey(payload.ruleKey);
   const identity = normalizeIdentity(payload.tokenAddress, payload.chain || 'solana');
-  assertAutomaticAlertsEnabled(identity.chain);
+  assertAutomaticAlertsEnabled(identity.chain, payload.authorization);
   const status = normalizeStatus(payload.status);
   const lastAlertedAt = toTimestampOrNull(payload.lastAlertedAt);
   const lastAlertedValue = toNumberOrNull(payload.lastAlertedValue);
@@ -175,11 +176,13 @@ async function markTriggered(payload = {}, runner = db) {
     rearmRequired: payload.rearmRequired == null ? true : payload.rearmRequired,
     lastFingerprint: payload.lastFingerprint,
     metadata: payload.metadata,
+    authorization: payload.authorization,
   }, runner);
 }
 
 async function markRearmed(payload = {}, runner = db) {
   const chain = payload.chain || 'solana';
+  assertAutomaticAlertsEnabled(normalizeTokenChain(chain), payload.authorization);
   const current = await getState(payload.userId, payload.ruleKey, payload.tokenAddress, runner, chain);
   const cooldownUntil = toTimestampOrNull(payload.cooldownUntil) || null;
   return upsertState({
@@ -195,6 +198,7 @@ async function markRearmed(payload = {}, runner = db) {
     rearmRequired: false,
     lastFingerprint: payload.lastFingerprint ?? current?.lastFingerprint ?? null,
     metadata: payload.metadata ?? current?.metadata ?? {},
+    authorization: payload.authorization,
   }, runner);
 }
 

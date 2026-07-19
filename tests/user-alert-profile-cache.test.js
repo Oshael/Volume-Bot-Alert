@@ -9,15 +9,19 @@ describe('user alert profile cache', () => {
     const profile = userAlertProfileCache.buildNormalizedAlertProfile(9, {
       threshold: 80,
       'mcap-threshold': 65,
+      'fdv-threshold': 70,
       'min-vol': 15000,
       'min-mcap': 40000,
       'max-mcap': 900000,
+      'monitored-fdv-min': 50000,
+      'monitored-fdv-max': 1500000,
       'hvnc-min-vol': 450000,
       'old-alert-1h-threshold': 32,
       'old-alert-6h-threshold': 88,
       'meteora-alert-1h-threshold': 75,
       'alert-vol-enabled': 'on',
       'alert-mcap-enabled': 'off',
+      'alert-fdv-enabled': 'on',
       'alert-hvnc-enabled': 'on',
       'alert-old-surge-1h-enabled': 'off',
       'alert-old-surge-6h-enabled': 'on',
@@ -28,6 +32,7 @@ describe('user alert profile cache', () => {
     assert.deepEqual(profile.ruleEnabled, {
       monitoredVol: true,
       monitoredMcap: false,
+      monitoredFdv: true,
       hvnc: true,
       recentSurge1h: false,
       recentSurge6h: true,
@@ -37,15 +42,23 @@ describe('user alert profile cache', () => {
     });
     assert.equal(profile.thresholdPct, 80);
     assert.equal(profile.mcapThresholdPct, 65);
+    assert.equal(profile.fdvThresholdPct, 70);
     assert.equal(profile.minVol, 15000);
     assert.equal(profile.minMcap, 40000);
     assert.equal(profile.maxMcap, 900000);
+    assert.equal(profile.minFdv, 50000);
+    assert.equal(profile.maxFdv, 1500000);
     assert.equal(profile.hvncMinVol, 450000);
     assert.equal(profile.recentSurge1hThresholdPct, 32);
     assert.equal(profile.recentSurge6hThresholdPct, 88);
     assert.equal(profile.oldWeekSurge1hThresholdPct, 32);
     assert.equal(profile.oldWeekSurge6hThresholdPct, 88);
     assert.equal(profile.meteoraAlert1hThreshold, 75);
+  });
+
+  it('keeps monitored-fdv disabled when the user has not opted in', () => {
+    const profile = userAlertProfileCache.buildNormalizedAlertProfile(12, {});
+    assert.equal(profile.ruleEnabled.monitoredFdv, false);
   });
 
   it('prefers explicit recent and old-week surge config keys over legacy surge values', () => {
