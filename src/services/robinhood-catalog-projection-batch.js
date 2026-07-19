@@ -88,12 +88,14 @@ async function enrichFromBlockscout(input) {
 }
 
 async function loadCandidates(repository, query) {
-  const read = repository.listActiveTokenCandidates
+  const read = repository.listColdRepairCandidates
+    || repository.listActiveTokenCandidates
     || repository.listSignalDryRunCandidates;
   const rows = await read.call(repository, {
     asOf: query.asOf,
     windowMs: FRESH_MS,
     limit: query.maxTokens,
+    alignToMinute: false,
     statementTimeoutMs: query.statementTimeoutMs,
   });
   return {

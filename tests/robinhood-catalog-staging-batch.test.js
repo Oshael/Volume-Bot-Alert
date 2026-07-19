@@ -71,7 +71,10 @@ describe('Robinhood catalog staging batch', () => {
       },
     });
     const batch = createRobinhoodCatalogStagingBatch({
-      repository: { listSignalDryRunCandidates: async () => rows },
+      repository: {
+        listColdRepairCandidates: async () => rows,
+        listSignalDryRunCandidates: async () => { throw new Error('global read is forbidden'); },
+      },
       projector,
       now: () => NOW,
     });

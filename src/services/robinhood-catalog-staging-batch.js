@@ -117,8 +117,10 @@ function createRobinhoodCatalogStagingBatch(options = {}) {
     const run = prepareRun(input);
     const closed = closedResult(input, run);
     if (closed) return closed;
-    const candidateLimit = boundedInteger(input.candidateLimit, 1000, 5000);
-    const candidates = await repository.listSignalDryRunCandidates({
+    const candidateLimit = boundedInteger(input.candidateLimit, 25, 25);
+    const read = repository.listColdRepairCandidates
+      || repository.listSignalDryRunCandidates;
+    const candidates = await read.call(repository, {
       windowMs: run.config.windowMs,
       limit: candidateLimit,
       asOf: run.generatedAtDate,

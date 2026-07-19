@@ -20,7 +20,7 @@ describe('Robinhood catalog projection batch', () => {
   it('projects active tokens without mutating lifecycle when activity becomes stale', async () => {
     const calls = { reads: [], projected: [], applied: [], enqueued: [] };
     const repository = {
-      async listActiveTokenCandidates(input) {
+      async listColdRepairCandidates(input) {
         calls.reads.push(input);
         return [candidate(), candidate(TOKEN_2)];
       },
@@ -66,6 +66,7 @@ describe('Robinhood catalog projection batch', () => {
     assert.deepEqual(calls.projected, [TOKEN, TOKEN_2]);
     assert.equal(calls.reads[0].windowMs, 900000);
     assert.equal(calls.reads[0].limit, 10);
+    assert.equal(calls.reads[0].alignToMinute, false);
     assert.deepEqual(calls.applied[0], {
       address: TOKEN, name: 'Token One', symbol: 'ONE',
     });

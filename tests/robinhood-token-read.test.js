@@ -143,6 +143,30 @@ describe('Robinhood aggregate token read repository', () => {
     assert.doesNotMatch(__private.AGGREGATE_SIGNAL_SQL, /\$5::varchar\[\]/);
   });
 
+  it('turns cold repair into a bounded targeted read', async () => {
+    const calls = [];
+    const repository = createRobinhoodTokenReadRepository({
+      database: {
+        async query(sql, params) {
+          calls.push({ sql, params });
+          return /FROM token_catalog/.test(sql)
+            ? { rows: [{ address: TOKEN, repair_seen_at: new Date('2026-07-14T17:59:00Z') }] }
+            : { rows: [aggregateRow()] };
+        },
+      },
+    });
+
+    const rows = await repository.listColdRepairCandidates({
+      windowMs: 900000, limit: 5000, alignToMinute: false,
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(calls[0].params[0], 25);
+    assert.doesNotMatch(calls[0].sql, /robinhood_market_buckets_1m/);
+    assert.match(calls[1].sql, /bucket\.token_address = ANY\(\$5::varchar\[\]\)/);
+    assert.deepEqual(calls[1].params.slice(3), [false, [TOKEN]]);
+  });
+
   it('skips empty targeted reads and rejects invalid or excessive identities', async () => {
     let calls = 0;
     const repository = createRobinhoodTokenReadRepository({

@@ -87,7 +87,10 @@ describe('Robinhood alert publication batch', () => {
         },
       },
       stagingOptions: {
-        repository: { listSignalDryRunCandidates: async () => [candidate()] },
+        repository: {
+          listColdRepairCandidates: async () => [candidate()],
+          listSignalDryRunCandidates: async () => { throw new Error('global read is forbidden'); },
+        },
       },
     });
 
@@ -190,6 +193,7 @@ describe('Robinhood alert publication batch', () => {
         repository: {
           async listSignalDryRunCandidates() { throw new Error('global read is forbidden'); },
         },
+        projector: { async stage() { return { staged: true }; } },
         now: () => Date.parse('2026-07-14T18:00:00.000Z'),
       },
     });

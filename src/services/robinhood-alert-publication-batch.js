@@ -112,8 +112,10 @@ function createRobinhoodAlertPublicationBatch(options = {}) {
   async function evaluateCustomRulesInShadow(input) {
     const run = prepareShadow(input);
     if (!run) return null;
-    const candidateLimit = boundedInteger(input.candidateLimit, 1000, 5000);
-    const candidates = await shadowRepository.listSignalDryRunCandidates({
+    const candidateLimit = boundedInteger(input.candidateLimit, 25, 25);
+    const read = shadowRepository.listColdRepairCandidates
+      || shadowRepository.listSignalDryRunCandidates;
+    const candidates = await read.call(shadowRepository, {
       windowMs: run.config.windowMs,
       limit: candidateLimit,
       asOf: run.generatedAtDate,

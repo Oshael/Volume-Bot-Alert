@@ -6,7 +6,25 @@ const MINUTE_MS = 60 * 1000;
 const MAX_WINDOW_MS = 14 * 24 * 60 * MINUTE_MS;
 const MAX_LIMIT = 5000;
 const MAX_TARGETED_ADDRESSES = 100;
+const MAX_COLD_REPAIR_ADDRESSES = 25;
 const TOKEN_FILTER_MARKER = '/* robinhood_token_filter */';
+
+const COLD_REPAIR_CURSOR_MARKER = '/* cold_repair_cursor */';
+const COLD_REPAIR_ADDRESSES_SQL = `SELECT address, last_seen_at AS repair_seen_at
+FROM token_catalog
+WHERE chain = 'robinhood'
+  AND source = 'robinhood-onchain'
+  AND last_seen_at IS NOT NULL
+  ${COLD_REPAIR_CURSOR_MARKER}
+ORDER BY last_seen_at DESC, address DESC
+LIMIT $1::int`;
+
+function buildColdRepairAddressesSql(targeted = false) {
+  return COLD_REPAIR_ADDRESSES_SQL.replace(
+    COLD_REPAIR_CURSOR_MARKER,
+    targeted ? 'AND (last_seen_at, address) < ($2::timestamptz, $3::varchar)' : '',
+  );
+}
 
 const AGGREGATE_SIGNAL_SQL_TEMPLATE = `WITH bounds AS (
   SELECT CASE WHEN $4::boolean
@@ -241,6 +259,7 @@ function normalizeCandidate(row, windowMs) {
 
 function createRobinhoodTokenReadRepository(options = {}) {
   const database = options.database || db;
+  let coldRepairCursor = null;
 
   async function readCandidates(input, targetAddresses = null) {
     const query = normalizeQuery(input);
@@ -281,9 +300,30 @@ function createRobinhoodTokenReadRepository(options = {}) {
     }, addresses);
   }
 
+  async function listColdRepairCandidates(input = {}) {
+    const requestedLimit = input.limit == null ? MAX_COLD_REPAIR_ADDRESSES : Number(input.limit);
+    const query = normalizeQuery({
+      ...input,
+      limit: Math.min(requestedLimit, MAX_COLD_REPAIR_ADDRESSES),
+    });
+    const result = await database.query(buildColdRepairAddressesSql(Boolean(coldRepairCursor)),
+      coldRepairCursor
+        ? [query.limit, coldRepairCursor.seenAt, coldRepairCursor.address]
+        : [query.limit]);
+    const addresses = result.rows.map((row) => normalizeTokenAddress(CHAIN, row.address));
+    const last = result.rows.at(-1);
+    coldRepairCursor = last && result.rows.length === query.limit ? {
+      address: normalizeTokenAddress(CHAIN, last.address),
+      seenAt: timestampIso(last.repair_seen_at, 'cold repair seen_at'),
+    } : null;
+    if (!addresses.length) return [];
+    return readCandidates({ ...query, limit: addresses.length }, addresses);
+  }
+
   return Object.freeze({
     listActiveTokenCandidates,
     listActiveTokenCandidatesByAddresses,
+    listColdRepairCandidates,
     listSignalDryRunCandidates,
   });
 }
@@ -292,8 +332,10 @@ module.exports = {
   createRobinhoodTokenReadRepository,
   __private: {
     AGGREGATE_SIGNAL_SQL,
+    COLD_REPAIR_ADDRESSES_SQL,
     TARGETED_SIGNAL_SQL,
     buildAggregateSignalSql,
+    buildColdRepairAddressesSql,
     normalizeCandidate,
     normalizeQuery,
     normalizeTargetAddresses,

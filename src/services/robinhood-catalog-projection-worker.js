@@ -31,7 +31,7 @@ function normalizeOptions(options = {}) {
     maxErrorBackoffMs: boundedInteger(
       options.maxErrorBackoffMs, 5 * 60_000, 60_000, 60 * 60_000,
     ),
-    maxTokens: boundedInteger(options.maxTokens, 2000, 1, 5000),
+    maxTokens: boundedInteger(options.maxTokens, 25, 1, 25),
     concurrency: boundedInteger(options.concurrency, 4, 1, 10),
     statementTimeoutMs: boundedInteger(options.statementTimeoutMs, 10_000, 1000, 60_000),
     blockscoutBatchSize: boundedInteger(options.blockscoutBatchSize, 10, 1, 50),
