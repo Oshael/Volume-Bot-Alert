@@ -12,7 +12,21 @@ const tokenAlertSignalBuilder = require('./token-alert-signal-builder');
 const userAlertProfileCache = require('./user-alert-profile-cache');
 const { normalizeSocialLinkFields } = require('../utils/dex-social-links');
 const { normalizeTokenChain } = require('../utils/token-identity');
+const standardAlertReset = require('./standard-alert-reset');
 const standardTransition = require('./standard-alert-transition');
+const {
+  MONITORED_VOL_COLD_RESET_DURATION_MS,
+  MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS,
+  MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M,
+  SURGE_6H_RESET_MAX_PCHANGE_PCT,
+  SURGE_6H_RESET_PCHANGE_DURATION_MS,
+  SURGE_6H_RESET_DRAWDOWN_RATIO,
+  SURGE_6H_RESET_DRAWDOWN_DURATION_MS,
+  SURGE_1H_RESET_PCHANGE_THRESHOLD_RATIO,
+  SURGE_1H_RESET_PCHANGE_DURATION_MS,
+  SURGE_1H_RESET_DRAWDOWN_RATIO,
+  SURGE_1H_RESET_DRAWDOWN_DURATION_MS,
+} = standardAlertReset;
 
 const ALERT_CHAIN = 'solana';
 const STANDARD_ALERT_COOLDOWN_MS = 60 * 1000;
@@ -37,22 +51,11 @@ const METEORA_POST_ALERT_REPEAT_STEP_PCT = 50;
 const METEORA_REPEAT_TVL_GROWTH_PCT = 15;
 const METEORA_FINGERPRINT_CHANGE_BUCKET_PCT = 5;
 const METEORA_FINGERPRINT_TVL_BUCKET_USD = 10_000;
-const MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M = 5_000;
-const MONITORED_VOL_COLD_RESET_DURATION_MS = 30 * 60 * 1000;
-const MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS = 60 * 1000;
-const MONITORED_VOL_COLD_SINCE_METADATA_KEY = 'monitoredVolColdSinceAt';
-const MONITORED_VOL_HOT_SINCE_METADATA_KEY = 'monitoredVolHotSinceAt';
-const SURGE_6H_RESET_MAX_PCHANGE_PCT = 25;
-const SURGE_6H_RESET_PCHANGE_DURATION_MS = 2 * 60 * 60 * 1000;
-const SURGE_6H_RESET_DRAWDOWN_RATIO = 0.60;
-const SURGE_6H_RESET_DRAWDOWN_DURATION_MS = 60 * 60 * 1000;
-const SURGE_1H_RESET_PCHANGE_THRESHOLD_RATIO = 0.40;
-const SURGE_1H_RESET_PCHANGE_DURATION_MS = 30 * 60 * 1000;
-const SURGE_1H_RESET_DRAWDOWN_RATIO = 0.60;
-const SURGE_1H_RESET_DRAWDOWN_DURATION_MS = 30 * 60 * 1000;
-const SURGE_RESET_PCHANGE_SINCE_METADATA_KEY = 'surgeResetPchangeSinceAt';
-const SURGE_RESET_DRAWDOWN_SINCE_METADATA_KEY = 'surgeResetDrawdownSinceAt';
-const SURGE_POST_ALERT_HIGH_MCAP_METADATA_KEY = 'surgePostAlertHighMcap';
+const SOLANA_SURGE_VALUATION_KEYS = Object.freeze({
+  lastAlerted: 'lastAlertedMcap',
+  high: 'surgePostAlertHighMcap',
+  interrupted: 'surgeResetDrawdownInterruptedMcap',
+});
 const GMGN_VOL_1M_RULE_KEY = 'gmgn-vol-1m';
 const GMGN_VOL_1M_ALERT_THRESHOLD_PCT = 50;
 const GMGN_VOL_1M_ALERT_COOLDOWN_MS = 60 * 1000;
@@ -884,21 +887,8 @@ function hasAdvancedRepeatValue(candidate, state) {
   return standardTransition.hasAdvancedRepeatValue(candidate, state);
 }
 
-function getMonitoredVolColdSinceMs(state) {
-  return toTimestampMs(state?.metadata?.[MONITORED_VOL_COLD_SINCE_METADATA_KEY]);
-}
-
-function getMonitoredVolHotSinceMsFromMetadata(metadata) {
-  return toTimestampMs(metadata?.[MONITORED_VOL_HOT_SINCE_METADATA_KEY]);
-}
-
 function isMonitoredVolAnchorExpired(candidate, state, nowMs) {
-  if (candidate?.ruleKey !== 'monitored-vol' || state?.status !== 'rearmed') {
-    return false;
-  }
-
-  const coldSinceMs = getMonitoredVolColdSinceMs(state);
-  return coldSinceMs != null && (nowMs - coldSinceMs) >= MONITORED_VOL_COLD_RESET_DURATION_MS;
+  return standardAlertReset.isMonitoredVolAnchorExpired(candidate, state, nowMs);
 }
 
 function isSixHourSurgeRuleKey(ruleKey) {
@@ -919,199 +909,42 @@ function getSurgeThresholdPct(profile, ruleKey) {
   return null;
 }
 
-function getSurgeResetConfig(profile, ruleKey) {
-  if (isSixHourSurgeRuleKey(ruleKey)) {
-    return {
-      maxPchangePct: SURGE_6H_RESET_MAX_PCHANGE_PCT,
-      pchangeDurationMs: SURGE_6H_RESET_PCHANGE_DURATION_MS,
-      drawdownRatio: SURGE_6H_RESET_DRAWDOWN_RATIO,
-      drawdownDurationMs: SURGE_6H_RESET_DRAWDOWN_DURATION_MS,
-      window: '6H',
-    };
-  }
-  if (!isOneHourSurgeRuleKey(ruleKey)) {
-    return null;
-  }
-
-  const thresholdPct = getSurgeThresholdPct(profile, ruleKey);
-  return {
-    maxPchangePct: thresholdPct == null ? null : thresholdPct * SURGE_1H_RESET_PCHANGE_THRESHOLD_RATIO,
-    pchangeDurationMs: SURGE_1H_RESET_PCHANGE_DURATION_MS,
-    drawdownRatio: SURGE_1H_RESET_DRAWDOWN_RATIO,
-    drawdownDurationMs: SURGE_1H_RESET_DRAWDOWN_DURATION_MS,
-    window: '1H',
-  };
-}
-
-function getSurgeResetPchangeSinceMs(state) {
-  return toTimestampMs(state?.metadata?.[SURGE_RESET_PCHANGE_SINCE_METADATA_KEY]);
-}
-
-function getSurgeResetDrawdownSinceMs(state) {
-  return toTimestampMs(state?.metadata?.[SURGE_RESET_DRAWDOWN_SINCE_METADATA_KEY]);
-}
-
 function isSurgeAnchorExpired(candidate, state, nowMs) {
-  const config = getSurgeResetConfig(null, candidate?.ruleKey);
-  if (!config || state?.status !== 'rearmed') {
-    return false;
-  }
-
-  if (isSixHourSurgeRuleKey(candidate?.ruleKey)
-    && isSixHourSurgeCooldownActive(candidate, state, nowMs)) {
-    return false;
-  }
-
-  const pchangeSinceMs = getSurgeResetPchangeSinceMs(state);
-  if (pchangeSinceMs != null && (nowMs - pchangeSinceMs) >= config.pchangeDurationMs) {
-    return true;
-  }
-
-  const drawdownSinceMs = getSurgeResetDrawdownSinceMs(state);
-  return drawdownSinceMs != null && (nowMs - drawdownSinceMs) >= config.drawdownDurationMs;
-}
-
-function updateSurgePchangeResetMetadata(metadata, state, signals, nowMs, config) {
-  const currentPchange = config.window === '6H'
-    ? toNumberOrNull(signals?.last_price_change_6h ?? signals?.currentPriceChange6h)
-    : toNumberOrNull(signals?.last_price_change_1h ?? signals?.currentPriceChange1h);
-  if (currentPchange == null || config.maxPchangePct == null) {
-    return false;
-  }
-
-  if (currentPchange <= config.maxPchangePct) {
-    if (getSurgeResetPchangeSinceMs(state) != null) {
-      return false;
-    }
-    metadata[SURGE_RESET_PCHANGE_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
-    metadata.surgeResetPchangeMaxPct = config.maxPchangePct;
-    return true;
-  }
-
-  if (getSurgeResetPchangeSinceMs(state) == null) {
-    return false;
-  }
-
-  delete metadata[SURGE_RESET_PCHANGE_SINCE_METADATA_KEY];
-  delete metadata.surgeResetPchangeMaxPct;
-  metadata.surgeResetPchangeInterruptedAt = new Date(nowMs).toISOString();
-  metadata.surgeResetPchangeInterruptedPct = currentPchange;
-  return true;
-}
-
-function updateSurgeDrawdownResetMetadata(metadata, state, signals, nowMs, config) {
-  const currentMcap = toNumberOrNull(signals?.last_mcap ?? signals?.currentMcap ?? signals?.mcap);
-  if (!(currentMcap > 0)) {
-    return false;
-  }
-
-  const previousHigh = toNumberOrNull(metadata[SURGE_POST_ALERT_HIGH_MCAP_METADATA_KEY])
-    ?? toNumberOrNull(state?.metadata?.lastAlertedMcap)
-    ?? currentMcap;
-  const nextHigh = Math.max(previousHigh, currentMcap);
-  const highChanged = nextHigh !== previousHigh;
-  metadata[SURGE_POST_ALERT_HIGH_MCAP_METADATA_KEY] = nextHigh;
-
-  if (currentMcap <= nextHigh * config.drawdownRatio) {
-    if (getSurgeResetDrawdownSinceMs(state) != null) {
-      return highChanged;
-    }
-    metadata[SURGE_RESET_DRAWDOWN_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
-    metadata.surgeResetDrawdownRatio = config.drawdownRatio;
-    return true;
-  }
-
-  if (getSurgeResetDrawdownSinceMs(state) == null) {
-    return highChanged;
-  }
-
-  delete metadata[SURGE_RESET_DRAWDOWN_SINCE_METADATA_KEY];
-  delete metadata.surgeResetDrawdownRatio;
-  metadata.surgeResetDrawdownInterruptedAt = new Date(nowMs).toISOString();
-  metadata.surgeResetDrawdownInterruptedMcap = currentMcap;
-  return true;
+  return standardAlertReset.isSurgeAnchorExpired(candidate, state, nowMs, {
+    cooldownActive: isSixHourSurgeCooldownActive(candidate, state, nowMs),
+  });
 }
 
 function buildSurgeResetMetadata(profile, ruleKey, state, signals, nowMs) {
-  const metadata = { ...(state?.metadata || {}) };
-  const config = getSurgeResetConfig(profile, ruleKey);
-  if (!config) {
-    return { metadata, changed: false };
-  }
-
-  const pchangeChanged = updateSurgePchangeResetMetadata(metadata, state, signals, nowMs, config);
-  const drawdownChanged = updateSurgeDrawdownResetMetadata(metadata, state, signals, nowMs, config);
-  return { metadata, changed: pchangeChanged || drawdownChanged };
+  return standardAlertReset.buildSurgeResetMetadata({
+    ruleKey,
+    thresholdPct: getSurgeThresholdPct(profile, ruleKey),
+    state,
+    observation: {
+      valuation: toNumberOrNull(signals?.last_mcap ?? signals?.currentMcap ?? signals?.mcap),
+      priceChange1h: toNumberOrNull(signals?.last_price_change_1h ?? signals?.currentPriceChange1h),
+      priceChange6h: toNumberOrNull(signals?.last_price_change_6h ?? signals?.currentPriceChange6h),
+    },
+    nowMs,
+    valuationKeys: SOLANA_SURGE_VALUATION_KEYS,
+  });
 }
 
 function buildSurgePostAlertHighMetadata(ruleKey, state, signals) {
-  const metadata = { ...(state?.metadata || {}) };
-  const currentMcap = toNumberOrNull(signals?.last_mcap ?? signals?.currentMcap ?? signals?.mcap);
-  if (!isResettableSurgeRuleKey(ruleKey) || !(currentMcap > 0)) {
-    return { metadata, changed: false };
-  }
-
-  const previousHigh = toNumberOrNull(metadata[SURGE_POST_ALERT_HIGH_MCAP_METADATA_KEY])
-    ?? toNumberOrNull(state?.metadata?.lastAlertedMcap)
-    ?? currentMcap;
-  if (currentMcap <= previousHigh) {
-    return { metadata, changed: false };
-  }
-
-  metadata[SURGE_POST_ALERT_HIGH_MCAP_METADATA_KEY] = currentMcap;
-  return { metadata, changed: true };
+  return standardAlertReset.buildSurgePostAlertHighMetadata({
+    ruleKey,
+    state,
+    valuation: toNumberOrNull(signals?.last_mcap ?? signals?.currentMcap ?? signals?.mcap),
+    valuationKeys: SOLANA_SURGE_VALUATION_KEYS,
+  });
 }
 
 function buildMonitoredVolColdMetadata(state, signals, nowMs) {
-  const metadata = { ...(state?.metadata || {}) };
-  const currentVolume5m = toNumberOrNull(signals?.currentVolume5m ?? signals?.volume5m ?? signals?.last_vol_5m);
-  const existingColdSinceMs = getMonitoredVolColdSinceMs(state);
-  const existingHotSinceMs = getMonitoredVolHotSinceMsFromMetadata(metadata);
-
-  if (currentVolume5m == null) {
-    return { metadata, changed: false };
-  }
-
-  if (currentVolume5m <= MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M) {
-    if (existingColdSinceMs != null) {
-      if (existingHotSinceMs != null) {
-        delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
-        delete metadata.monitoredVolHotVolume5m;
-        return { metadata, changed: true };
-      }
-      return { metadata, changed: false };
-    }
-
-    metadata[MONITORED_VOL_COLD_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
-    metadata.monitoredVolColdMaxVolume5m = MONITORED_VOL_COLD_RESET_MAX_VOLUME_5M;
-    delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
-    delete metadata.monitoredVolHotVolume5m;
-    delete metadata.monitoredVolColdInterruptedAt;
-    delete metadata.monitoredVolColdInterruptedVolume5m;
-    return { metadata, changed: true };
-  }
-
-  if (existingColdSinceMs == null) {
-    return { metadata, changed: false };
-  }
-
-  if (existingHotSinceMs == null) {
-    metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY] = new Date(nowMs).toISOString();
-    metadata.monitoredVolHotVolume5m = currentVolume5m;
-    return { metadata, changed: true };
-  }
-
-  if ((nowMs - existingHotSinceMs) <= MONITORED_VOL_COLD_HOT_BLIP_GRACE_MS) {
-    metadata.monitoredVolHotVolume5m = currentVolume5m;
-    return { metadata, changed: true };
-  }
-
-  delete metadata[MONITORED_VOL_COLD_SINCE_METADATA_KEY];
-  delete metadata[MONITORED_VOL_HOT_SINCE_METADATA_KEY];
-  delete metadata.monitoredVolHotVolume5m;
-  metadata.monitoredVolColdInterruptedAt = new Date(nowMs).toISOString();
-  metadata.monitoredVolColdInterruptedVolume5m = currentVolume5m;
-  return { metadata, changed: true };
+  return standardAlertReset.buildMonitoredVolColdMetadata(
+    state,
+    toNumberOrNull(signals?.currentVolume5m ?? signals?.volume5m ?? signals?.last_vol_5m),
+    nowMs,
+  );
 }
 
 async function syncRearmedMonitoredVolColdState(

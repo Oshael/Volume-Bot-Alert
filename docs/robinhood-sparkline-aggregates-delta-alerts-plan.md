@@ -395,6 +395,8 @@ Acceptance:
 Status: split after repository audit; Cuts 8A-8B and 8C1-8C2 completed on 2026-07-19,
 with Cut 8C3 pending
 
+Alert parity follow-up: P1 completed on 2026-07-19; P2-P3 remain before Cut 8C3.
+
 Subcuts:
 
 - 8A: explicit `monitored-fdv` contract, opt-in profile config and authorized RH state writes;
